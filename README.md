@@ -116,4 +116,8 @@ mvn clean package
 ## 📄 许可证
 本项目基于 [MIT License](LICENSE) 开源。
 
+欢迎打赏
+<img width="1182" height="1772" alt="20260626-162729" src="https://github.com/user-attachments/assets/5396fc2f-dab9-42c6-ae5d-d48e4e179540" />
+
+
 Copyright (c) 2026 CogniCodeGen
