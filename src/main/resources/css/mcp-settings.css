@@ -1,0 +1,171 @@
+/* =====================================================================
+   MCP 服务器设置面板专属样式（按设计稿 modal_mcp.jsx 重构）
+   仅补充 chat.css 未覆盖的局部规格；所有颜色走 -jc-* 令牌，禁止硬编码。
+   在视图加载 chat.css 之后追加，故可安全复用其令牌与基础类。
+   ===================================================================== */
+
+/* ---------- 概览条：面板底色圆角条 ---------- */
+.mcp-overview-bar {
+    -fx-background-color: -jc-surface-panel;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 10;
+    -fx-border-radius: 10;
+    -fx-padding: 10 14 10 14;
+}
+
+/* 概览条文字：mono 灰字 */
+.mcp-overview-text {
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-size: 12px;
+    -fx-font-weight: 500;
+    -fx-text-fill: -jc-text-muted;
+}
+
+/* 概览条内的失败提示：红色 */
+.mcp-overview-fail {
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-size: 12px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-danger;
+}
+
+/* ---------- 服务器卡片：浮起白卡 + 轻阴影 ---------- */
+.mcp-server-card {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 12;
+    -fx-border-radius: 12;
+    -fx-padding: 11 13 11 13;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.05), 6, 0, 0, 1);
+}
+
+.mcp-server-card:hover {
+    -fx-border-color: -jc-border-strong;
+}
+
+/* 卡片服务器名（粗体，标题色） */
+.mcp-server-name {
+    -fx-font-weight: 600;
+    -fx-font-size: 14px;
+    -fx-text-fill: -jc-text-title;
+}
+
+/* 卡片元信息（· N 个工具 · 运行时长）：mono 浅灰 */
+.mcp-server-meta {
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-size: 11px;
+    -fx-font-weight: 500;
+    -fx-text-fill: -jc-text-hint;
+}
+
+/* transport 小标签：mono 描边小胶囊 */
+.mcp-transport-pill {
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-size: 10px;
+    -fx-font-weight: 500;
+    -fx-text-fill: -jc-text-hint;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 6;
+    -fx-background-radius: 6;
+    -fx-padding: 1 6 1 6;
+}
+
+/* 卡片命令 / URL 摘要行：mono 灰字 */
+.mcp-server-summary {
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-size: 11px;
+    -fx-text-fill: -jc-text-muted;
+}
+
+/* 卡片环境变量 / Headers 摘要：mono 更浅灰 */
+.mcp-server-kv {
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-size: 11px;
+    -fx-text-fill: -jc-text-hint;
+}
+
+/* 失败错误信息：红字 */
+.mcp-error-text {
+    -fx-font-size: 11.5px;
+    -fx-text-fill: -jc-danger;
+}
+
+/* ---------- 可展开工具浏览器 ---------- */
+/* 顶部细分线（卡片内分隔） */
+.mcp-tools-pane {
+    -fx-text-fill: -jc-text-muted;
+    -fx-border-color: -jc-border transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+}
+
+.mcp-tools-pane > .title {
+    -fx-background-color: transparent;
+    -fx-padding: 7 0 0 0;
+    -fx-font-size: 12px;
+    -fx-font-weight: 500;
+    -fx-text-fill: -jc-text-muted;
+}
+
+.mcp-tools-pane > .title:hover {
+    -fx-text-fill: -jc-text-title;
+}
+
+.mcp-tools-pane > .content {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 0;
+}
+
+/* 单个工具条：sunken 圆角小条 */
+.mcp-tool-row {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 8;
+    -fx-border-radius: 8;
+    -fx-border-color: transparent;
+    -fx-padding: 7 11 7 11;
+}
+
+.mcp-tool-name {
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-size: 12px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-title;
+}
+
+.mcp-tool-desc {
+    -fx-font-size: 11px;
+    -fx-text-fill: -jc-text-muted;
+}
+
+/* ---------- 底部配置文件路径提示：mono ---------- */
+.mcp-path-hint {
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-size: 11px;
+    -fx-text-fill: -jc-text-hint;
+}
+
+/* ---------- 内联添加表单（品牌浅色卡片，预留可用） ---------- */
+.mcp-add-card {
+    -fx-background-color: -jc-primary-50;
+    -fx-border-color: -jc-primary-100;
+    -fx-border-width: 1;
+    -fx-background-radius: 12;
+    -fx-border-radius: 12;
+    -fx-padding: 16;
+}
+
+/* 状态行成功/失败着色（沿用设计稿 status-ok / status-err 语义） */
+.mcp-status-ok {
+    -fx-text-fill: -jc-success;
+    -fx-font-size: 12px;
+    -fx-font-weight: 500;
+}
+
+.mcp-status-err {
+    -fx-text-fill: -jc-danger;
+    -fx-font-size: 12px;
+    -fx-font-weight: 500;
+}

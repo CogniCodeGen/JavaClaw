@@ -1,0 +1,13 @@
+{
+  "id": "feishu",
+  "name": "飞书消息助手",
+  "version": "1.0.0",
+  "apiVersion": "1.0",
+  "main": "com.javaclaw.plugins.feishu.FeishuPlugin",
+  "description": "通过飞书自建应用长连接(WebSocket)接收用户消息并调用 AI 对话回复；向聊天提供 feishu_send(主动发消息，区别单向通知)与 feishu_messages(查看收到的消息)两个工具；动态注册飞书回复规范/消息格式技能。需在飞书开放平台建自建应用、开通机器人、订阅 im.message.receive_v1(长连接模式)，并申请发消息权限。",
+  "capabilities": ["CHAT"],
+  "config": [
+    { "key": "appId", "label": "App ID", "secret": false },
+    { "key": "appSecret", "label": "App Secret", "secret": true }
+  ]
+}

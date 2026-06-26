@@ -1,0 +1,84 @@
+<!--
+    JavaClaw 日志配置
+    使用 Logback 作为 SLF4J 的实现。
+    日志输出到控制台 + 按天滚动的文件（工作区 logs/ 目录）。
+    系统操作日志和定时任务执行日志分文件保存。
+    日志目录通过系统属性 workspace.log.dir 动态指定，默认 logs/。
+-->
+<configuration>
+
+    <!-- 工作区日志目录（由 WorkspaceManager 设置系统属性） -->
+    <property name="LOG_DIR" value="${workspace.log.dir:-logs}" />
+
+    <!-- ==================== 控制台输出 ==================== -->
+    <!-- 开发调试时使用，显示时间、线程、级别、类名和消息 -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- ==================== 系统操作日志（按天滚动） ==================== -->
+    <!-- 记录应用整体运行日志：智能体调用、工具执行、配置变更等 -->
+    <appender name="APP_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/javaclaw.log</file>
+
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <!-- 按天归档，同一天内超大则分卷 -->
+            <fileNamePattern>${LOG_DIR}/app-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>10MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>500MB</totalSizeCap>
+        </rollingPolicy>
+
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{50} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- ==================== 定时任务执行日志（按天滚动） ==================== -->
+    <!-- 单独记录定时任务的调度、执行过程和结果，便于排查任务问题 -->
+    <appender name="TASK_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/task.log</file>
+
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/task-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>10MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>200MB</totalSizeCap>
+        </rollingPolicy>
+
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- ==================== 日志级别配置 ==================== -->
+
+    <!-- 应用自身日志：INFO 级别，需要调试时可改为 DEBUG -->
+    <logger name="com.javaclaw" level="INFO"/>
+
+    <!-- 定时任务执行日志：独立写入 TASK_FILE，同时也输出到控制台和系统日志 -->
+    <logger name="com.javaclaw.schedule.TaskExecution" level="INFO" additivity="true">
+        <appender-ref ref="TASK_FILE"/>
+    </logger>
+
+    <!-- AgentScope 框架日志：INFO 级别，需要调试时可改为 DEBUG -->
+    <logger name="io.agentscope" level="INFO"/>
+
+    <!-- OkHttp 网络库日志：INFO 级别，避免过多网络细节 -->
+    <logger name="okhttp3" level="INFO"/>
+
+    <!-- JavaFX 相关日志 -->
+    <logger name="javafx" level="INFO"/>
+
+    <!-- 根日志级别：INFO，所有未单独配置的 logger 使用此级别 -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="APP_FILE"/>
+    </root>
+
+</configuration>

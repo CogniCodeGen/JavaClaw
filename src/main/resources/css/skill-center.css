@@ -1,0 +1,150 @@
+/* =====================================================================
+   技能中心弹窗专属样式
+   仅承载本视图独有的细节，骨架/按钮/徽标/标题体系复用 chat.css 中的
+   modal-* / jc-btn-* / jc-badge-* / sec-title / grp-title 等通用类。
+   令牌 -jc-* 由 chat.css 的 .root 定义，此处可直接引用，禁止硬编码颜色。
+   ===================================================================== */
+
+/* 左面板：技能列表区滚动容器透明，融入面板底色 */
+.skill-left-scroll,
+.skill-left-scroll > .viewport {
+    -fx-background-color: transparent;
+}
+
+/* 左面板底部路径提示（等宽字体，可换行） */
+.skill-path-hint {
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-size: 10.5px;
+    -fx-text-fill: -jc-text-hint;
+    -fx-wrap-text: true;
+}
+
+/* 左侧技能列表行：复用 modal-nav-btn 的留白/圆角/手型，叠加省略与对齐 */
+.skill-nav-row .skill-nav-name {
+    -fx-font-size: 13px;
+    -fx-text-fill: -jc-text-body;
+}
+
+.skill-nav-row.modal-nav-btn-selected .skill-nav-name {
+    -fx-text-fill: -jc-primary-600;
+    -fx-font-weight: 600;
+}
+
+/* 启用 / 停用状态点 */
+.skill-dot-on {
+    -fx-text-fill: -jc-primary-500;
+    -fx-font-size: 11px;
+}
+
+.skill-dot-off {
+    -fx-text-fill: -jc-text-hint;
+    -fx-font-size: 11px;
+}
+
+/* 内容区滚动容器透明，露出 modal-content-area 的页面底色 */
+.skill-content-scroll,
+.skill-content-scroll > .viewport {
+    -fx-background-color: transparent;
+}
+
+/* 提案 / 技能包卡片：圆角描边卡片 */
+.skill-card {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 12;
+    -fx-background-radius: 12;
+    -fx-padding: 14;
+}
+
+/* 卡片内的等宽预览块（提案变更预览） */
+.skill-preview-block {
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-size: 11.5px;
+    -fx-text-fill: -jc-text-body;
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 9;
+    -fx-border-radius: 9;
+    -fx-padding: 10 12 10 12;
+}
+
+/* 提案标题（技能名，加粗深色） */
+.skill-card-title {
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-title;
+}
+
+/* 提案时间戳（等宽淡色） */
+.skill-card-time {
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-size: 11px;
+    -fx-text-fill: -jc-text-hint;
+}
+
+/* user-modified 覆盖警示红字 */
+.skill-warn {
+    -fx-text-fill: -jc-danger;
+    -fx-font-size: 12px;
+}
+
+/* 技能包行内的副标题（技能名清单，等宽淡色） */
+.skill-bundle-sub {
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-size: 11px;
+    -fx-text-fill: -jc-text-hint;
+}
+
+/* 目录结构 mono 预览块（沉陷底） */
+.skill-dir-block {
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-size: 12px;
+    -fx-text-fill: -jc-text-muted;
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 10;
+    -fx-border-radius: 10;
+    -fx-padding: 10 14 10 14;
+    -fx-line-spacing: 2;
+}
+
+/* 字段标签（左对齐固定宽） */
+.skill-field-label {
+    -fx-font-size: 13px;
+    -fx-font-weight: 500;
+    -fx-text-fill: -jc-text-body;
+}
+
+/* 表单输入框（圆角沉陷底，聚焦浮起） */
+.skill-field {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-border-color: transparent;
+    -fx-border-radius: 10;
+    -fx-background-radius: 10;
+    -fx-font-size: 13px;
+    -fx-text-fill: -jc-text-body;
+    -fx-prompt-text-fill: -jc-text-hint;
+    -fx-padding: 9 13 9 13;
+}
+
+.skill-field:focused {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-primary-200;
+    -fx-effect: dropshadow(gaussian, -jc-focus-ring, 6, 0, 0, 0);
+}
+
+/* 行内运行提示（小淡字） */
+.skill-inline-hint {
+    -fx-font-size: 11px;
+    -fx-text-fill: -jc-text-hint;
+}
+
+/* 启用开关副文案（开关行内主文案下方的提示） */
+.skill-toggle-sub {
+    -fx-font-size: 11px;
+    -fx-text-fill: -jc-text-hint;
+}
+
+/* 使用统计徽标：等宽字体（设计稿 font-mono） */
+.skill-usage-badge {
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+}

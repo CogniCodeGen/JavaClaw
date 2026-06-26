@@ -1,0 +1,75 @@
+/*
+ * 插件中心专属样式 —— plugins.css
+ *
+ * 依赖 chat.css 的 -jc-* 设计令牌，须在 chat.css 之后追加加载。
+ * 颜色一律走令牌，深色主题随 ThemeManager 自动适配，禁止硬编码（状态语义色除外）。
+ */
+
+/* ==================== 插件卡片 ==================== */
+
+.plugin-card {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 12;
+    -fx-border-radius: 12;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.04), 6, 0, 0, 1);
+}
+
+.plugin-card:hover {
+    -fx-border-color: -jc-primary-200;
+}
+
+.plugin-card-name {
+    -fx-font-size: 13.5px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-title;
+}
+
+.plugin-card-meta {
+    -fx-font-size: 10.5px;
+    -fx-text-fill: -jc-text-hint;
+}
+
+.plugin-card-desc {
+    -fx-font-size: 12px;
+    -fx-text-fill: -jc-text-muted;
+}
+
+/* 图标方块 */
+.plugin-glyph {
+    -fx-min-width: 38px;
+    -fx-pref-width: 38px;
+    -fx-min-height: 38px;
+    -fx-pref-height: 38px;
+    -fx-alignment: center;
+    -fx-font-size: 18px;
+    -fx-text-fill: -jc-text-muted;
+    -fx-background-color: -jc-surface-sunken;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 10;
+    -fx-border-radius: 10;
+}
+
+.plugin-glyph-lg {
+    -fx-min-width: 56px;
+    -fx-pref-width: 56px;
+    -fx-min-height: 56px;
+    -fx-pref-height: 56px;
+    -fx-alignment: center;
+    -fx-font-size: 26px;
+    -fx-text-fill: white;
+    -fx-background-color: linear-gradient(to bottom right, -jc-accent-400, -jc-primary-400);
+    -fx-background-radius: 12;
+}
+
+.plugin-detail-desc {
+    -fx-font-size: 13.5px;
+    -fx-text-fill: -jc-text-body;
+}
+
+.plugin-perm-text {
+    -fx-font-size: 12.5px;
+    -fx-text-fill: -jc-text-body;
+}

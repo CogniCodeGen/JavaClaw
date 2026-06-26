@@ -1,0 +1,57 @@
+/*
+ * 定时任务视图专属样式 —— schedule.css
+ *
+ * 依赖 chat.css 在 .root 上定义的 -jc-* 设计令牌，须在 chat.css 之后追加加载。
+ * 颜色一律走令牌，深色主题随 ThemeManager 自动适配，禁止硬编码（状态语义色除外）。
+ */
+
+/* ==================== 左侧任务列表行 ==================== */
+
+.schedule-list-row {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 10;
+    -fx-border-radius: 10;
+    -fx-padding: 10 11 10 11;
+    -fx-cursor: hand;
+}
+
+.schedule-list-row:hover {
+    -fx-border-color: -jc-primary-200;
+}
+
+.schedule-list-row-selected {
+    -fx-background-color: -jc-primary-50;
+    -fx-border-color: -jc-primary-200;
+}
+
+.schedule-row-meta {
+    -fx-font-size: 11px;
+    -fx-font-weight: 500;
+    -fx-text-fill: -jc-text-muted;
+}
+
+.schedule-row-sub {
+    -fx-font-size: 10.5px;
+    -fx-text-fill: -jc-text-hint;
+}
+
+/* ==================== 头部状态卡内可编辑标题 ==================== */
+
+.schedule-name-field {
+    -fx-font-size: 18px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-title;
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 2 4 2 0;
+    -fx-background-radius: 6;
+}
+
+.schedule-name-field:focused {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-border-color: -jc-primary-200;
+    -fx-border-radius: 6;
+    -fx-padding: 2 6 2 6;
+}

@@ -1,0 +1,12 @@
+{
+  "id": "hello",
+  "name": "示例插件 Hello",
+  "version": "1.0.0",
+  "apiVersion": "1.0",
+  "main": "com.example.hello.HelloPlugin",
+  "description": "示例插件：在宿主托管的虚拟线程上跑心跳后台循环，演示同步调用、CHAT 能力与配置注入。",
+  "capabilities": ["CHAT"],
+  "config": [
+    { "key": "greeting", "label": "问候语", "secret": false }
+  ]
+}

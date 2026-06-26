@@ -1,0 +1,59 @@
+/*
+ * 通用自定义控件样式表 —— controls.css
+ *
+ * 约定：本表只承载 com.javaclaw.ui.javafx.control 包下的自定义控件样式，
+ * 依赖 chat.css 在 .root 上定义的 -jc-* 设计令牌（looked-up colors），
+ * 因此必须在 chat.css 之后追加加载（场景：scene.getStylesheets().add(controls.css)）。
+ * 颜色一律走令牌，深色主题随 ThemeManager 自动适配，禁止硬编码颜色。
+ */
+
+/* ==================== ToggleSwitch 滑块开关 ==================== */
+/*
+ * 设计稿规格（kit.css .toggle）：
+ *   轨道 38×22 圆角胶囊；滑块 18×18 白色圆形带轻阴影；
+ *   off 轨道 -jc-border-strong / on 轨道 -jc-primary-500；约 150ms 平移过渡。
+ * 控件结构：ToggleSwitch(Region) 内含 .jc-switch（轨道）+ .jc-switch-thumb（滑块）。
+ */
+
+/* 轨道（off 态） */
+.jc-switch {
+    -fx-background-color: -jc-border-strong;
+    -fx-background-radius: 999px;
+    -fx-border-radius: 999px;
+    -fx-min-width: 38px;
+    -fx-pref-width: 38px;
+    -fx-max-width: 38px;
+    -fx-min-height: 22px;
+    -fx-pref-height: 22px;
+    -fx-max-height: 22px;
+    -fx-cursor: hand;
+}
+
+/* 轨道（on 态，主色） */
+.jc-switch.jc-switch-on {
+    -fx-background-color: -jc-primary-500;
+}
+
+/* 焦点态：品牌焦点环 */
+.jc-switch:focused {
+    -fx-effect: dropshadow(gaussian, -jc-focus-ring, 6, 0, 0, 0);
+}
+
+/* 滑块：18×18 白色圆形 + 轻阴影 */
+.jc-switch .jc-switch-thumb {
+    -fx-background-color: white;
+    -fx-background-radius: 999px;
+    -fx-min-width: 18px;
+    -fx-pref-width: 18px;
+    -fx-max-width: 18px;
+    -fx-min-height: 18px;
+    -fx-pref-height: 18px;
+    -fx-max-height: 18px;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.18), 4, 0, 0, 1);
+}
+
+/* 禁用态：整体降透明度 */
+.jc-switch:disabled {
+    -fx-opacity: 0.45;
+    -fx-cursor: default;
+}
