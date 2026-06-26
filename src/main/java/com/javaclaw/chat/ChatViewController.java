@@ -13,8 +13,6 @@ import com.javaclaw.api.conversation.ConversationMode;
 import com.javaclaw.api.conversation.ConversationRequest;
 import com.javaclaw.api.conversation.Mode;
 import com.javaclaw.api.conversation.ModeRegistry;
-import com.javaclaw.agent.hook.LoopDetectionHook;
-import com.javaclaw.agent.evaluation.EvaluationResult;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.SettingsView;

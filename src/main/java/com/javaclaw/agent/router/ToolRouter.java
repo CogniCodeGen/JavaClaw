@@ -3,7 +3,6 @@ package com.javaclaw.agent.router;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.agent.TokenTracker;
-import com.javaclaw.mcp.McpClient;
 import com.javaclaw.mcp.McpClientManager;
 import com.javaclaw.prompt.RouterPrompts;
 import com.javaclaw.skill.Skill;
@@ -21,7 +20,6 @@ import org.slf4j.LoggerFactory;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 

@@ -3,7 +3,6 @@ package com.javaclaw.agent.expert;
 import com.javaclaw.agent.memory.MemoryManager;
 import com.javaclaw.agent.model.ModelFactory;
 import io.agentscope.core.ReActAgent;
-import io.agentscope.core.message.ContentBlock;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;

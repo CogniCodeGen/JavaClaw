@@ -8,7 +8,6 @@ import com.javaclaw.task.sdd.TaskContext;
 import com.javaclaw.task.sdd.spec.Capability;
 import com.javaclaw.task.sdd.spec.OpenSpecChange;
 import com.javaclaw.task.sdd.spec.Proposal;
-import com.javaclaw.task.sdd.spec.TaskItem;
 
 import java.util.stream.Collectors;
 
