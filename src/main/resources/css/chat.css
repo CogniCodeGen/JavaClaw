@@ -1533,12 +1533,12 @@
 
 .input-field {
     -fx-background-color: -jc-neutral-100;
-    -fx-background-radius: 24;
+    -fx-background-radius: 16;
     -fx-padding: 12 20 12 20;
     -fx-font-size: 14px;
     -fx-text-fill: -jc-text-title;
     -fx-border-color: -jc-neutral-200;
-    -fx-border-radius: 24;
+    -fx-border-radius: 16;
     -fx-border-width: 1.5;
     -fx-prompt-text-fill: -jc-neutral-400;
 }

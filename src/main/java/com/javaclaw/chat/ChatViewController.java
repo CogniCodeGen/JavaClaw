@@ -556,8 +556,9 @@ public class ChatViewController {
                 )
         );
         StackPane inputWrapper = new StackPane(inputField, placeholder);
-        StackPane.setAlignment(placeholder, Pos.CENTER_LEFT);
-        placeholder.setPadding(new Insets(0, 0, 0, 20));
+        // 占位提示与正文同为顶部左对齐，二者位置重合，避免输入时文字相对占位符“跳动”的不协调感
+        StackPane.setAlignment(placeholder, Pos.TOP_LEFT);
+        placeholder.setPadding(new Insets(14, 0, 0, 21));
         HBox.setHgrow(inputWrapper, Priority.ALWAYS);
 
         // 附件按钮
@@ -574,7 +575,9 @@ public class ChatViewController {
 
         HBox inputBar = new HBox(12, attachButton, inputWrapper, sendButton);
         inputBar.getStyleClass().add("input-bar");
-        inputBar.setAlignment(Pos.CENTER);
+        // 多行输入框会随内容向上增高，按钮锚定底部，保持与输入框最后一行对齐
+        inputBar.setAlignment(Pos.BOTTOM_CENTER);
+        inputBar.setFillHeight(false);
         inputBar.setPadding(new Insets(12, 20, 4, 20));
 
         // 底部状态栏：只保留一个紧凑的摘要徽标（Tooltip 展开今日/本月/耗时）
