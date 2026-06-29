@@ -278,6 +278,7 @@ public class ChatViewController {
         sidebarView.setOnBatchDeleteSessions(this::onBatchDeleteSessions);
         sidebarView.setOnOpenSettings(this::openSettings);
         sidebarView.setOnOpenSkillCenter(this::openSkillCenter);
+        sidebarView.setOnOpenMemoryCenter(this::openMemoryCenter);
         sidebarView.setOnOpenScheduler(this::openScheduler);
         sidebarView.setOnOpenKnowledgeBase(this::openKnowledgeBase);
         sidebarView.setOnOpenTaskManager(this::openTaskManager);
@@ -3302,6 +3303,12 @@ public class ChatViewController {
         javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
         SkillCenterView skillCenterView = new SkillCenterView(ownerStage);
         skillCenterView.show();
+    }
+
+    private void openMemoryCenter() {
+        log.info("打开记忆中心");
+        javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
+        new com.javaclaw.ui.javafx.memory.MemoryCenterView(ownerStage, chatService.getMemoryService()).show();
     }
 
     /**

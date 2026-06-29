@@ -115,17 +115,17 @@ public class ChatService {
     private final com.javaclaw.agent.clarify.ClarifyTools clarifyTools =
             new com.javaclaw.agent.clarify.ClarifyTools();
 
-    /** 工作区上下文文件（AGENTS.md / MEMORY.md，借鉴 Harness Workspace） */
-    private final com.javaclaw.agent.persona.WorkspaceContextFiles contextFiles;
-
-    /** 长期记忆维护器（蒸馏 + 合并，借鉴 Harness MemoryFlushManager + MemoryConsolidator） */
-    private final com.javaclaw.agent.persona.MemoryCurator memoryCurator;
+    /** 记忆服务（EclipseStore 统一记忆基座：人格 + 语义事实 + 情景 + 检查点 + 变更日志） */
+    private final com.javaclaw.memory.MemoryService memoryService;
 
     /** 技能蒸馏器（程序性记忆：轮后从执行轨迹蒸馏可沉淀的工作流经验，借鉴 hermes-agent） */
     private final com.javaclaw.skill.curation.SkillCurator skillCurator;
 
     /** 本轮显式路由注入的技能名（全量注入时为空列表，不计入使用统计） */
     private volatile List<String> turnInjectedSkills = List.of();
+
+    /** 本轮用户输入（供按 query 检索相关记忆注入；每轮重建编排器时读取） */
+    private volatile String currentUserInput = "";
 
     /**
      * 构造并初始化普通模式服务。
@@ -137,21 +137,12 @@ public class ChatService {
         AgentConfig config = AgentConfig.getInstance();
         log.info("========== 初始化 ChatService 普通模式 ==========");
 
-        // 0. 工作区上下文文件（AGENTS.md 不存在则自动生成骨架）
-        this.contextFiles = new com.javaclaw.agent.persona.WorkspaceContextFiles(
-                com.javaclaw.config.WorkspaceManager.getInstance().getCurrentWorkspacePath());
-        if (this.contextFiles.ensureAgentsMdSkeleton()) {
-            log.info("当前工作区首次启动，已生成 AGENTS.md 骨架");
-        }
-        log.info("人格文件路径: {}", contextFiles.getAgentsMdPath());
-
-        // 长期记忆维护器（用轻量模型异步蒸馏 + 合并）
-        this.memoryCurator = new com.javaclaw.agent.persona.MemoryCurator(
-                runtime.getModelFactory().createLightChatModel(),
-                this.contextFiles,
-                runtime.getTokenTracker());
-        // 启动时异步检查是否需要合并历史日流水到 MEMORY.md（不阻塞构造）
-        this.memoryCurator.consolidateIfNeeded().subscribe();
+        // 0. 记忆服务：打开当前工作区的 EclipseStore 记忆库（人格默认骨架自动写入）
+        this.memoryService = new com.javaclaw.memory.MemoryService(
+                runtime.getModelFactory(), runtime.getTokenTracker());
+        this.memoryService.open(
+                com.javaclaw.config.WorkspaceManager.getInstance()
+                        .getCurrentWorkspacePath().resolve("data").resolve("memory-store"));
 
         // 技能蒸馏器（程序性记忆）：提案队列同时接收 skill_manage 主动路径与本蒸馏器的兜底路径，
         // 两路按变更指纹统一去重；auto 模式 Toast 经 ToolConfirmationManager 注入的交互端口
@@ -219,10 +210,10 @@ public class ChatService {
                 config.getGepaFeedbackMaxRounds());
 
         // 6. 构建初始 orchestrator（全量工具，供会话恢复等场景）
-        // AGENTS.md / MEMORY.md 通过 buildContextInjection 注入：注入 8000 字符上限，避免长 MEMORY.md 抢占预算
+        // 记忆注入：初始构建无 query，仅注入人格（每轮重建时按 query 检索相关事实/情景）
         this.orchestrator = buildOrchestrator(
                 baseSystemPrompt
-                        + contextFiles.buildContextInjection(8000)
+                        + memoryService.recall("")
                         + SkillManager.getInstance().buildSkillCatalogPrompt()
                         + SkillManager.getInstance().buildEnabledSkillsPrompt()
                         + runtime.getMcpClientManager().buildToolsPrompt());
@@ -365,6 +356,7 @@ public class ChatService {
     public void streamChat(ConversationRequest request, ConversationCallbacks callbacks) {
         String userInput = request.userInput();
         List<File> attachments = request.attachments();
+        this.currentUserInput = userInput == null ? "" : userInput;
 
         log.info("收到用户消息（普通模式）: {}", userInput);
 
@@ -398,7 +390,7 @@ public class ChatService {
         final AtomicInteger outputCharCount = new AtomicInteger(0);
         runtime.getTokenTracker().beginStreaming(inputCharCount);
 
-        // 记忆蒸馏：收集助手回复文本，结束后异步喂给 MemoryCurator
+        // 记忆：收集助手回复文本，结束后异步交给 MemoryService（落情景 + 蒸馏事实）
         // 上限 12000 字符 —— 过长回复对蒸馏来说也只关心结论，无须全文
         final StringBuilder collectedReply = new StringBuilder();
         final int REPLY_COLLECT_CAP = 12000;
@@ -598,10 +590,8 @@ public class ChatService {
                             runtime.getTokenTracker().recordUsage(inputCharCount, outputCharCount.get());
                             // 注入技能的轮次成败归因（滑窗成功率达标视为成功）
                             recordSkillTurnOutcome(isTurnSuccessful());
-                            // 异步蒸馏本轮对话到日流水账；蒸馏完成后顺手检查一次合并阈值
-                            memoryCurator.distillFromTurn(userInput, collectedReply.toString())
-                                    .then(memoryCurator.consolidateIfNeeded())
-                                    .subscribe();
+                            // 记忆：轮后异步落情景 + 向量去重蒸馏事实（替代旧 distill/consolidate 批处理）
+                            memoryService.rememberTurn("chat", userInput, collectedReply.toString(), null);
                             // 技能蒸馏（程序性记忆）：达门槛时从执行轨迹蒸馏可沉淀的工作流经验
                             skillCurator.distillFromChatTurn(userInput, collectedReply.toString(),
                                             executionMonitor.getTraces(), executionMonitor.successRate())
@@ -741,8 +731,8 @@ public class ChatService {
                 log.info("GEPA 目标上下文已注入 — {} 个目标", goals.getGoals().size());
             }
 
-            // AGENTS.md / MEMORY.md 每轮重新读取 —— 用户中途编辑下一轮即可生效
-            String personaContext = contextFiles.buildContextInjection(8000);
+            // 记忆注入：按本轮 query 检索人格 + 相关事实 + 相关情景（替代旧整文件注入）
+            String personaContext = memoryService.recall(currentUserInput);
             // 已启用插件贡献的工具清单注入提示词，agent 据此直接 plugin_call_tool 调用
             String pluginPrompt = com.javaclaw.plugin.PluginManager.getInstance().buildToolsPrompt();
             String fullSysPrompt = baseSystemPrompt + personaContext + skillCatalog + skillsPrompt
@@ -792,15 +782,45 @@ public class ChatService {
     }
 
     public void saveSession(String sessionId) {
-        runtime.getMemoryManager().saveSession(sessionId, orchestrator);
+        try {
+            List<Msg> msgs = orchestrator.getMemory().getMessages();
+            String json = io.agentscope.core.util.JsonUtils.getJsonCodec().toJson(msgs);
+            memoryService.checkpoint(sessionId, json);
+            log.info("会话已检查点入记忆库: {} ({} 条消息)", sessionId, msgs.size());
+        } catch (Exception e) {
+            log.error("保存会话检查点失败: {}", sessionId, e);
+        }
     }
 
     public void loadSession(String sessionId) {
-        runtime.getMemoryManager().loadSession(sessionId, orchestrator);
+        try {
+            com.javaclaw.memory.model.AgentCheckpoint ckpt = memoryService.loadCheckpoint(sessionId);
+            if (ckpt == null || ckpt.messagesJson == null || ckpt.messagesJson.isBlank()) {
+                log.info("无会话检查点，使用空白状态: {}", sessionId);
+                return;
+            }
+            List<Msg> msgs = io.agentscope.core.util.JsonUtils.getJsonCodec()
+                    .fromJson(ckpt.messagesJson, new com.fasterxml.jackson.core.type.TypeReference<List<Msg>>() {});
+            io.agentscope.core.memory.Memory mem = orchestrator.getMemory();
+            mem.clear();
+            for (Msg m : msgs) {
+                mem.addMessage(m);
+            }
+            // 恢复后自愈悬空工具调用（上次可能停在 tool_call 与结果之间）
+            runtime.getMemoryManager().healDanglingToolCalls(mem, "orchestrator");
+            log.info("会话已从记忆库检查点恢复: {} ({} 条消息)", sessionId, msgs.size());
+        } catch (Exception e) {
+            log.warn("恢复会话检查点失败（使用空白状态）: {}", sessionId, e);
+        }
     }
 
     public void deleteSession(String sessionId) {
-        runtime.getMemoryManager().deleteSession(sessionId);
+        memoryService.deleteCheckpoint(sessionId);
+    }
+
+    /** 记忆服务（供记忆中心 UI 查看/编辑）。 */
+    public com.javaclaw.memory.MemoryService getMemoryService() {
+        return memoryService;
     }
 
     /**
@@ -834,10 +854,15 @@ public class ChatService {
 
     // ==================== 生命周期 ====================
 
-    /** 关闭服务：取消活跃流即可，共享资源由 AgentRuntime 统一关闭 */
+    /** 关闭服务：取消活跃流 + 关闭记忆库（释放 EclipseStore 锁与写线程）；其余共享资源由 AgentRuntime 统一关闭 */
     public void shutdown() {
         log.info("正在关闭 ChatService...");
         cancelStream();
+        try {
+            memoryService.close();
+        } catch (Exception e) {
+            log.warn("关闭记忆服务异常: {}", e.getMessage());
+        }
         log.info("ChatService 已关闭");
     }
 

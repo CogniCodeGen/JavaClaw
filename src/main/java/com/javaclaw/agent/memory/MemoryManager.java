@@ -2,7 +2,6 @@ package com.javaclaw.agent.memory;
 
 import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.config.AgentConfig;
-import com.javaclaw.config.WorkspaceManager;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.memory.Memory;
 import io.agentscope.core.memory.autocontext.AutoContextConfig;
@@ -11,12 +10,9 @@ import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.ToolResultBlock;
 import io.agentscope.core.message.ToolUseBlock;
-import io.agentscope.core.session.JsonSession;
-import io.agentscope.core.session.SessionManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -38,7 +34,6 @@ import java.util.concurrent.ConcurrentHashMap;
  *       调用后通过 {@link #captureMemory} 捕获</li>
  *   <li><b>规划模式记忆</b>：协调者和专家的记忆在讨论期间由此管理器管理，
  *       讨论结束后统一清除</li>
- *   <li><b>会话持久化</b>：通过 {@link JsonSession} 统一保存/恢复编排器状态</li>
  * </ul>
  *
  * @author JavaClaw
@@ -58,9 +53,6 @@ public class MemoryManager {
 
     /** 子智能体快照最大消息数（超出时截断旧消息） */
     private static final int MAX_SNAPSHOT_MESSAGES = 30;
-
-    /** 会话状态持久化 */
-    private final JsonSession jsonSession;
 
     /** AutoContextMemory 配置（用于日志和重建） */
     private final AutoContextConfig autoContextConfig;
@@ -86,12 +78,6 @@ public class MemoryManager {
         log.info("编排器记忆已创建 — maxToken: {}, msgThreshold: {}, lastKeep: {}, tokenRatio: {}",
                 config.getMemoryMaxToken(), config.getMemoryMsgThreshold(),
                 config.getMemoryLastKeep(), config.getMemoryTokenRatio());
-
-        // 初始化会话持久化
-        Path agentSessionsDir = WorkspaceManager.getInstance()
-                .getCurrentWorkspacePath().resolve("data").resolve("agent-sessions");
-        this.jsonSession = new JsonSession(agentSessionsDir);
-        log.info("会话状态持久化已初始化: {}", agentSessionsDir);
     }
 
     // ==================== 编排器记忆 ====================
@@ -338,57 +324,4 @@ public class MemoryManager {
         return new ArrayList<>(memorySnapshots.keySet());
     }
 
-    // ==================== 会话持久化 ====================
-
-    /**
-     * 保存编排器状态到指定会话
-     *
-     * @param sessionId    会话 ID
-     * @param orchestrator 编排器智能体
-     */
-    public void saveSession(String sessionId, ReActAgent orchestrator) {
-        try {
-            SessionManager.forSessionId(sessionId)
-                    .withSession(jsonSession)
-                    .addComponent(orchestrator)
-                    .saveSession();
-            log.info("智能体状态已保存到会话: {}", sessionId);
-        } catch (Exception e) {
-            log.error("保存智能体会话状态失败: {}", sessionId, e);
-        }
-    }
-
-    /**
-     * 从指定会话恢复编排器状态
-     *
-     * @param sessionId    会话 ID
-     * @param orchestrator 编排器智能体
-     */
-    public void loadSession(String sessionId, ReActAgent orchestrator) {
-        try {
-            SessionManager.forSessionId(sessionId)
-                    .withSession(jsonSession)
-                    .addComponent(orchestrator)
-                    .loadIfExists();
-            log.info("智能体状态已从会话恢复: {}", sessionId);
-        } catch (Exception e) {
-            log.warn("恢复智能体会话状态失败（将使用空白状态）: {}", sessionId, e);
-        }
-    }
-
-    /**
-     * 删除指定会话的智能体状态
-     *
-     * @param sessionId 会话 ID
-     */
-    public void deleteSession(String sessionId) {
-        try {
-            SessionManager.forSessionId(sessionId)
-                    .withSession(jsonSession)
-                    .deleteIfExists();
-            log.info("智能体会话状态已删除: {}", sessionId);
-        } catch (Exception e) {
-            log.error("删除智能体会话状态失败: {}", sessionId, e);
-        }
-    }
 }

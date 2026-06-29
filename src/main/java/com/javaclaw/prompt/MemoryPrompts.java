@@ -1,15 +1,13 @@
 package com.javaclaw.prompt;
 
 /**
- * 长期记忆维护相关提示词集中管理 —— 记忆蒸馏器（{@code MemoryCurator}）的蒸馏 / 合并系统提示词。
+ * 长期记忆提示词集中管理 —— 当前承载记忆蒸馏器 {@code Distiller} 的蒸馏系统提示词。
  *
  * <p>统一收口在 {@code com.javaclaw.prompt} 包下，便于集中优化。本类仅承载提示词正文；
- * 蒸馏 / 合并的触发时机、字符截断、文件 I/O 等逻辑仍留在
- * {@link com.javaclaw.agent.persona.MemoryCurator} 与
- * {@link com.javaclaw.agent.persona.WorkspaceContextFiles}。</p>
+ * 蒸馏的触发时机、向量去重、入库等逻辑在 {@code com.javaclaw.memory.curation.Distiller}。</p>
  *
- * <p>{@link #DEFAULT_AGENTS_SKELETON} 是工作区 AGENTS.md 的默认骨架（首次写入磁盘的模板），
- * 其正文每轮会被注入系统提示词作为 Agent 人格约定，故一并收口于本类。</p>
+ * <p>{@link #DEFAULT_AGENTS_SKELETON} 是默认人格骨架，由 {@code MemoryService} 在记忆库
+ * 首次打开且无人格时写入对象图（取代旧 AGENTS.md 文件）。</p>
  */
 public final class MemoryPrompts {
 
@@ -33,27 +31,6 @@ public final class MemoryPrompts {
             示例输出：
             - 用户偏好 Python 3.12
             - 用户对网络爬虫主题感兴趣
-            """;
-
-    /** 长期记忆合并系统提示词（把已有 MEMORY.md 与近期事实条目合并为新的全文） */
-    public static final String CONSOLIDATE_PROMPT = """
-            你是长期记忆整理助手。请把"已有长期记忆"与"近期事实条目"合并为新的长期记忆全文。
-
-            规则：
-            1. 保留所有不重复的事实；相同主题归类到同一章节。
-            2. 去重、压缩；冗余/过时表述以新的为准。
-            3. 按主题划分二级章节，常见章节：
-               - ## 用户画像
-               - ## 偏好与工具栈
-               - ## 项目背景
-               - ## 工作环境与目录
-               - ## 长期目标
-               - ## 其他事实
-            4. 输出完整的 Markdown 内容，作为新的 MEMORY.md 全文。
-            5. 第一行必须是 `# 长期记忆 (MEMORY.md)`。
-            6. 中文输出。
-
-            禁止输出任何说明文字、代码块包裹、前后缀，直接输出 Markdown 内容本体。
             """;
 
     /** 工作区 AGENTS.md 默认骨架（首次创建时写入磁盘，正文每轮注入系统提示词作为 Agent 人格约定） */

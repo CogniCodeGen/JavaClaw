@@ -1,6 +1,8 @@
 package com.javaclaw.agent.model;
 
 import com.javaclaw.config.AgentConfig;
+import io.agentscope.core.embedding.EmbeddingModel;
+import io.agentscope.core.embedding.openai.OpenAITextEmbedding;
 import io.agentscope.core.formatter.anthropic.AnthropicMultiAgentFormatter;
 import io.agentscope.core.formatter.dashscope.DashScopeMultiAgentFormatter;
 import io.agentscope.core.formatter.gemini.GeminiMultiAgentFormatter;
@@ -217,6 +219,35 @@ public class ModelFactory {
         if (url == null) return false;
         String u = url.toLowerCase();
         return u.contains("dashscope") || u.contains("aliyuncs");
+    }
+
+    // ==================== 嵌入模型 ====================
+
+    /**
+     * 创建文本嵌入模型（OpenAI 兼容），统一复用 {@code rag.embedding.*} 配置。
+     *
+     * <p>供知识库 RAG 与长期记忆向量索引共用。构造本身不发起网络请求；
+     * 端点/Key 未配置时，失败发生在实际 embed 调用，由调用方降级处理。</p>
+     */
+    public EmbeddingModel createEmbeddingModel() {
+        AgentConfig config = AgentConfig.getInstance();
+        String modelName = config.getRagEmbeddingModelName();
+        int dimensions = config.getRagEmbeddingDimensions();
+        String apiKey = config.getRagEmbeddingApiKey();
+        String baseUrl = config.getRagEmbeddingBaseUrl();
+
+        OpenAITextEmbedding.Builder builder = OpenAITextEmbedding.builder()
+                .modelName(modelName)
+                .dimensions(dimensions);
+        if (apiKey != null && !apiKey.isBlank()) {
+            builder.apiKey(apiKey);
+        }
+        if (baseUrl != null && !baseUrl.isBlank()) {
+            builder.baseUrl(baseUrl);
+        }
+        log.info("嵌入模型已创建（OpenAI 兼容）— model: {}, dimensions: {}, baseUrl: {}",
+                modelName, dimensions, baseUrl);
+        return builder.build();
     }
 
     // ==================== 内部分发 ====================

@@ -72,6 +72,7 @@ public class SidebarView {
 
     /** 技能中心回调 */
     private Runnable onOpenSkillCenter;
+    private Runnable onOpenMemoryCenter;
 
     /** 定时任务回调 */
     private Runnable onOpenScheduler;
@@ -212,7 +213,10 @@ public class SidebarView {
         HBox pluginRow = buildNavRow("🧩", "插件中心", null, null, false, () -> {
             if (onOpenPluginCenter != null) onOpenPluginCenter.run();
         });
-        VBox actionButtons = new VBox(2, skillRow, mcpRow, scheduleRow, knowledgeRow, taskMgrRow, pluginRow, settingsRow);
+        HBox memoryRow = buildNavRow("🧠", "记忆中心", null, null, false, () -> {
+            if (onOpenMemoryCenter != null) onOpenMemoryCenter.run();
+        });
+        VBox actionButtons = new VBox(2, skillRow, mcpRow, scheduleRow, knowledgeRow, memoryRow, taskMgrRow, pluginRow, settingsRow);
         actionButtons.setPadding(new Insets(8, 8, 8, 8));
 
         // ==================== 任务/会话列表区域 ====================
@@ -564,6 +568,10 @@ public class SidebarView {
 
     public void setOnOpenSkillCenter(Runnable callback) {
         this.onOpenSkillCenter = callback;
+    }
+
+    public void setOnOpenMemoryCenter(Runnable callback) {
+        this.onOpenMemoryCenter = callback;
     }
 
     public void setOnOpenScheduler(Runnable callback) {

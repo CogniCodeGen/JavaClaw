@@ -886,6 +886,38 @@ public final class AgentConfig {
         properties.setProperty(KEY_MEMORY_TOKEN_RATIO, String.valueOf(value));
     }
 
+    // ==================== 记忆检索 / 蒸馏（EclipseStore 记忆基座） ====================
+
+    /** 每轮注入的事实 Top-K（默认 8） */
+    public int getMemoryRecallTopK() {
+        return getInt("memory.recall.topk", 8);
+    }
+
+    /** 每轮注入的相关情景条数（默认 3） */
+    public int getMemoryRecallEpisodes() {
+        return getInt("memory.recall.episodes", 3);
+    }
+
+    /** 检索相似度下限（默认 0.3，低于此值不注入） */
+    public double getMemoryRecallThreshold() {
+        return getDouble("memory.recall.threshold", 0.3);
+    }
+
+    /** 注入字符预算上限（默认 8000） */
+    public int getMemoryRecallMaxChars() {
+        return getInt("memory.recall.maxchars", 8000);
+    }
+
+    /** 蒸馏去重相似度阈值：候选与既有事实相似度≥此值则合并而非新增（默认 0.9） */
+    public double getMemoryDistillDedupThreshold() {
+        return getDouble("memory.distill.dedup.threshold", 0.9);
+    }
+
+    /** 蒸馏所需最短用户输入字符数（默认 10） */
+    public int getMemoryDistillMinInput() {
+        return getInt("memory.distill.min.input", 10);
+    }
+
     // ==================== 规划模式配置 ====================
 
     /**

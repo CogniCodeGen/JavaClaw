@@ -439,6 +439,11 @@ public final class AgentRuntime {
     public void shutdown() {
         log.info("正在关闭 AgentRuntime...");
         mcpClientManager.stopAll();
+        try {
+            knowledgeExpert.close();
+        } catch (Exception e) {
+            log.warn("关闭知识库存储异常: {}", e.getMessage());
+        }
         log.info("AgentRuntime 已关闭");
     }
 }

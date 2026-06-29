@@ -28,6 +28,7 @@
         <pdfbox.version>3.0.4</pdfbox.version>
         <richtextfx.version>0.11.7</richtextfx.version>
         <commonmark.version>0.24.0</commonmark.version>
+        <eclipsestore.version>4.1.0</eclipsestore.version>
     </properties>
 
     <!--
@@ -194,6 +195,23 @@
             <artifactId>playwright</artifactId>
             <version>1.52.0</version>
         </dependency>
+
+        <!--
+            EclipseStore（Java 原生对象图持久化）+ GigaMap JVector 向量索引
+            作为重构后记忆/知识子系统的统一存储基座：对象图持久化 + ANN 语义检索
+            注意：JVector 走 jdk.incubator.vector（JDK 25 仍为孵化模块），
+            运行需在 JVM 参数加 add-modules jdk.incubator.vector（见 javafx-maven-plugin options）
+        -->
+        <dependency>
+            <groupId>org.eclipse.store</groupId>
+            <artifactId>storage-embedded</artifactId>
+            <version>${eclipsestore.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.store</groupId>
+            <artifactId>gigamap-jvector</artifactId>
+            <version>${eclipsestore.version}</version>
+        </dependency>
     </dependencies>
 
     <build>
@@ -205,6 +223,11 @@
                 <version>3.13.0</version>
                 <configuration>
                     <release>25</release>
+                    <!-- JVector 使用孵化中的向量 API（JDK 25 仍为 incubator），编译期需放行该模块 -->
+                    <compilerArgs>
+                        <arg>--add-modules</arg>
+                        <arg>jdk.incubator.vector</arg>
+                    </compilerArgs>
                 </configuration>
             </plugin>
 
@@ -219,6 +242,12 @@
                 <version>0.0.8</version>
                 <configuration>
                     <mainClass>com.javaclaw.app.Launcher</mainClass>
+                    <!-- 运行期放行 JVector 的孵化向量 API + EclipseStore/JVector 的 FFM 原生访问（FFM 在 JDK 25 已 GA，无需 enable-preview） -->
+                    <options>
+                        <option>--add-modules</option>
+                        <option>jdk.incubator.vector</option>
+                        <option>--enable-native-access=ALL-UNNAMED</option>
+                    </options>
                 </configuration>
             </plugin>
         </plugins>
