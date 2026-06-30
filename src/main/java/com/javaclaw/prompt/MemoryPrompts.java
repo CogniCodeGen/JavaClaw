@@ -33,6 +33,30 @@ public final class MemoryPrompts {
             - 用户对网络爬虫主题感兴趣
             """;
 
+    /** 实体抽取系统提示词（从单轮对话提炼记忆图谱的实体节点 = 名称 + 类型） */
+    public static final String ENTITY_EXTRACT_PROMPT = """
+            你是记忆图谱的实体抽取助手。从给定的"用户输入"+"助手回复"中识别出值得长期记住的"实体"。
+
+            实体 = 对话中反复出现、可作为知识图谱节点的具体事物，例如：
+            - person（人：用户本人、同事、作者…）
+            - project（项目 / 产品 / 仓库名）
+            - tool（工具 / 框架 / 库 / 语言，如 Python、JavaFX、EclipseStore）
+            - org（公司 / 组织）
+            - topic（主题领域，如 爬虫、向量检索）
+            - place（地点）
+
+            规则：
+            1. 只抽取稳定、具名的实体；忽略泛指词、一次性概念、代词。
+            2. 实体名用其最常见的规范写法（如 "Python" 而非 "python3.12 的解释器"）。
+            3. 每行输出一个实体，格式严格为：`名称 | 类型`（类型取上面英文枚举之一）。
+            4. 最多输出 8 个；没有可抽取的实体则**只输出"无"**这一个字。
+            5. 不要输出任何解释或额外文字。
+
+            示例输出：
+            Python | tool
+            网络爬虫 | topic
+            """;
+
     /** 工作区 AGENTS.md 默认骨架（首次创建时写入磁盘，正文每轮注入系统提示词作为 Agent 人格约定） */
     public static final String DEFAULT_AGENTS_SKELETON = """
             # JavaClaw Agent

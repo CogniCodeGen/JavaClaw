@@ -918,6 +918,21 @@ public final class AgentConfig {
         return getInt("memory.distill.min.input", 10);
     }
 
+    /** 是否在蒸馏轮后抽取实体并关联到事实（构成记忆图谱的 entity 节点与 about 边，默认开） */
+    public boolean getMemoryGraphEntitiesEnabled() {
+        return Boolean.parseBoolean(properties.getProperty("memory.graph.entities.enabled", "true"));
+    }
+
+    /** 记忆图谱语义近邻边的最小相似度阈值（0~1，默认 0.78） */
+    public double getMemoryGraphSemanticThreshold() {
+        return getDouble("memory.graph.semantic.threshold", 0.78);
+    }
+
+    /** 记忆图谱单次可视化纳入的事实节点上限（默认 300） */
+    public int getMemoryGraphMaxNodes() {
+        return getInt("memory.graph.max.nodes", 300);
+    }
+
     // ==================== 规划模式配置 ====================
 
     /**

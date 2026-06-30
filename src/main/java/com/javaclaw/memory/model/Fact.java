@@ -37,6 +37,9 @@ public class Fact {
     /** 用户是否手动改过 —— 保护位：蒸馏不得静默覆盖 */
     public boolean userEdited;
 
+    /** 置顶 —— 钉住重要事实（UI 排序靠前；语义上等同强保护，不被淘汰） */
+    public boolean pinned;
+
     /** 来源情景（对象引用 = 记忆图的一条边，可空） */
     public Episode source;
 

@@ -2,6 +2,7 @@ package com.javaclaw.memory.store;
 
 import com.javaclaw.memory.model.AgentCheckpoint;
 import com.javaclaw.memory.model.ChangeLogEntry;
+import com.javaclaw.memory.model.EntityNode;
 import com.javaclaw.memory.model.Episode;
 import com.javaclaw.memory.model.Fact;
 import com.javaclaw.memory.model.KnowledgeChunk;
@@ -154,6 +155,15 @@ public class MemoryStore implements AutoCloseable {
         }
     }
 
+    /** 在单写线程上执行有返回值的变更并阻塞等待结果(用于 get-or-create 等需原子读改写的场景)。 */
+    private <T> T writeCall(java.util.concurrent.Callable<T> task) {
+        try {
+            return writer.submit(task).get();
+        } catch (Exception e) {
+            throw new RuntimeException("[" + label + "] 记忆写入失败", e);
+        }
+    }
+
     /** 已在写线程内部调用,不再 submit。 */
     private void logInternal(String op, String type, String id, String actor, String detail) {
         root.changeLog.add(new ChangeLogEntry(System.currentTimeMillis(), op, type, id, actor, detail));
@@ -229,6 +239,48 @@ public class MemoryStore implements AutoCloseable {
         return search(episodeIndex, query, topK, threshold);
     }
 
+    /** 全部情景(只读快照,供记忆图谱构建/列举)。 */
+    public List<Episode> allEpisodes() {
+        List<Episode> out = new ArrayList<>();
+        root.episodes.iterate(out::add);
+        return out;
+    }
+
+    // ==================== 记忆图实体节点 ====================
+
+    /**
+     * 按规范化名称 get-or-create 实体节点(整个读改写在单写线程内原子完成,遵循单写纪律)。
+     * 命中既有同名实体则直接返回(不覆盖类型);否则新建并入库。embedding 暂留空(实体级语义检索为 P5)。
+     *
+     * @return 既有或新建的实体节点
+     */
+    public EntityNode getOrCreateEntity(String name, String type, String actor) {
+        String norm = name == null ? "" : name.strip();
+        if (norm.isEmpty()) return null;
+        return writeCall(() -> {
+            EntityNode[] found = {null};
+            root.entities.iterate(e -> {
+                if (found[0] == null && e.name != null && e.name.equalsIgnoreCase(norm)) {
+                    found[0] = e;
+                }
+            });
+            if (found[0] != null) return found[0];
+            EntityNode node = new EntityNode(norm, type == null ? "topic" : type.strip());
+            node.id = UUID.randomUUID().toString();
+            node.entityId = root.entities.add(node);
+            root.entities.store();
+            logInternal("ADD", "EntityNode", node.id, actor, norm + "(" + node.type + ")");
+            return node;
+        });
+    }
+
+    /** 全部实体节点(只读快照,供记忆图谱构建/列举)。 */
+    public List<EntityNode> allEntities() {
+        List<EntityNode> out = new ArrayList<>();
+        root.entities.iterate(out::add);
+        return out;
+    }
+
     // ==================== 知识库 ====================
 
     public void addKnowledgeChunk(KnowledgeChunk c, String actor) {
@@ -278,6 +330,15 @@ public class MemoryStore implements AutoCloseable {
         });
     }
 
+    /** 原地更新知识分块(通过 GigaMap.update 通知索引重建),供重建索引时回填新向量。 */
+    public void updateKnowledgeChunk(KnowledgeChunk c, java.util.function.Consumer<KnowledgeChunk> mutator, String actor) {
+        write(() -> {
+            root.knowledge.update(c, mutator::accept);
+            root.knowledge.store();
+            logInternal("UPDATE", "KnowledgeChunk", c.id, actor, trunc(c.docName));
+        });
+    }
+
     // ==================== 工作记忆检查点 ====================
 
     public void checkpoint(String key, String messagesJson) {
@@ -317,6 +378,18 @@ public class MemoryStore implements AutoCloseable {
             mgr.store(root.persona);
             mgr.store(root);
             logInternal("PERSONA_EDIT", "Persona", null, actor, trunc(content));
+        });
+    }
+
+    /** 原地更新人格(结构化字段 + 组装正文统一在 mutator 内完成),不存在则新建。 */
+    public void updatePersona(java.util.function.Consumer<Persona> mutator, String actor) {
+        write(() -> {
+            if (root.persona == null) root.persona = new Persona("");
+            mutator.accept(root.persona);
+            root.persona.updatedAt = System.currentTimeMillis();
+            mgr.store(root.persona);
+            mgr.store(root);
+            logInternal("PERSONA_EDIT", "Persona", null, actor, trunc(root.persona.content));
         });
     }
 

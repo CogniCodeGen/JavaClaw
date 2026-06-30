@@ -1,0 +1,334 @@
+/* =====================================================================
+   记忆中心专属样式（设计稿 1a · 温室 Refined Classic）
+   追加在 chat.css 之后加载，全部引用 chat.css .root 上的 -jc-* 令牌，
+   随主题换肤；不得硬编码颜色（状态语义色除外）。
+   ===================================================================== */
+
+/* ---- 顶部全局检索栏 ---- */
+.mc-header {
+    -fx-background-color: -jc-surface-page;
+    -fx-border-color: transparent transparent -jc-border transparent;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 0 22 0 22;
+    -fx-min-height: 56;
+    -fx-pref-height: 56;
+    -fx-alignment: CENTER_LEFT;
+    -fx-spacing: 14;
+}
+
+.mc-search {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 9;
+    -fx-border-radius: 9;
+    -fx-padding: 2 11 2 11;
+    -fx-alignment: CENTER_LEFT;
+    -fx-spacing: 8;
+}
+
+.mc-search-field {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-font-size: 13px;
+    -fx-text-fill: -jc-text-title;
+    -fx-prompt-text-fill: -jc-text-hint;
+    -fx-padding: 6 0 6 0;
+}
+
+.mc-search-field:focused {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+
+.mc-header-tag {
+    -fx-font-size: 12px;
+    -fx-text-fill: -jc-text-muted;
+    -fx-background-color: -jc-surface-sunken;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+    -fx-padding: 3 8 3 8;
+}
+
+/* ---- 左导航底部「记忆规模」卡 ---- */
+.mc-scale-card {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 10;
+    -fx-border-radius: 10;
+    -fx-padding: 11 12 11 12;
+}
+
+.mc-scale-cap   { -fx-font-size: 11px;   -fx-text-fill: -jc-text-hint; }
+.mc-scale-main  { -fx-font-size: 13px;   -fx-font-weight: 600; -fx-text-fill: -jc-text-body; }
+.mc-scale-sub   { -fx-font-size: 11.5px; -fx-text-fill: -jc-text-muted; }
+
+/* ---- 总览：大数字统计卡 ---- */
+.mc-stat-card {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 12;
+    -fx-border-radius: 12;
+    -fx-padding: 16 17 16 17;
+}
+
+.mc-stat-cap   { -fx-font-size: 12.5px; -fx-text-fill: -jc-text-muted; }
+.mc-stat-num   { -fx-font-size: 27px;   -fx-font-weight: 700; -fx-text-fill: -jc-text-title; }
+.mc-stat-delta { -fx-font-size: 11.5px; -fx-text-fill: -jc-primary-600; }
+.mc-stat-note  { -fx-font-size: 11.5px; -fx-text-fill: -jc-text-hint; }
+
+/* 记忆构成进度条 */
+.mc-bar-track {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 4;
+    -fx-min-height: 7;
+    -fx-pref-height: 7;
+    -fx-max-height: 7;
+}
+.mc-bar-fill {
+    -fx-background-radius: 4;
+    -fx-min-height: 7;
+    -fx-pref-height: 7;
+    -fx-max-height: 7;
+}
+
+/* ---- 通用卡片标题 ---- */
+.mc-card-title { -fx-font-size: 14.5px; -fx-font-weight: 700; -fx-text-fill: -jc-text-title; }
+
+/* ---- 事实分组卡 ---- */
+.mc-group-card {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 12;
+    -fx-border-radius: 12;
+}
+
+.mc-group-head {
+    -fx-padding: 12 16 12 16;
+    -fx-alignment: CENTER_LEFT;
+    -fx-spacing: 10;
+    -fx-cursor: hand;
+}
+
+.mc-group-title { -fx-font-size: 14.5px; -fx-font-weight: 700; -fx-text-fill: -jc-text-title; }
+.mc-group-hint  { -fx-font-size: 12px;   -fx-text-fill: -jc-text-hint; }
+
+.mc-group-count {
+    -fx-font-size: 12px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-muted;
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 20;
+    -fx-border-radius: 20;
+    -fx-padding: 2 10 2 10;
+}
+
+/* 事实行 */
+.mc-fact-row {
+    -fx-padding: 10 12 10 12;
+    -fx-background-radius: 9;
+    -fx-spacing: 10;
+    -fx-alignment: CENTER_LEFT;
+}
+.mc-fact-row:hover { -fx-background-color: -jc-surface-sunken; }
+
+.mc-fact-text { -fx-font-size: 13.5px; -fx-text-fill: -jc-text-title; }
+.mc-fact-meta { -fx-font-size: 11.5px; -fx-text-fill: -jc-text-hint; }
+
+.mc-fact-edit-area {
+    -fx-background-color: -jc-primary-50;
+    -fx-border-color: -jc-primary-200;
+    -fx-border-width: 1;
+    -fx-background-radius: 8;
+    -fx-border-radius: 8;
+    -fx-font-size: 13.5px;
+    -fx-text-fill: -jc-text-title;
+}
+
+.mc-icon-btn {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 13px;
+    -fx-padding: 4 7 4 7;
+    -fx-background-radius: 7;
+    -fx-cursor: hand;
+}
+.mc-icon-btn:hover { -fx-background-color: -jc-surface-sunken; -fx-text-fill: -jc-text-title; }
+.mc-icon-btn-danger:hover { -fx-background-color: -jc-danger-bg; -fx-text-fill: -jc-danger; }
+
+/* 批量选择条 */
+.mc-batch-bar {
+    -fx-background-color: -jc-success-bg;
+    -fx-border-color: -jc-success;
+    -fx-border-width: 1;
+    -fx-background-radius: 10;
+    -fx-border-radius: 10;
+    -fx-padding: 9 15 9 15;
+    -fx-alignment: CENTER_LEFT;
+    -fx-spacing: 12;
+}
+.mc-batch-count { -fx-font-size: 13px; -fx-font-weight: 600; -fx-text-fill: -jc-success; }
+
+.mc-check {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border-strong;
+    -fx-border-width: 1.5;
+    -fx-min-width: 18; -fx-min-height: 18;
+    -fx-max-width: 18; -fx-max-height: 18;
+    -fx-background-radius: 5;
+    -fx-border-radius: 5;
+    -fx-font-size: 11px;
+    -fx-padding: 0;
+    -fx-cursor: hand;
+    -fx-text-fill: white;
+}
+.mc-check-on {
+    -fx-background-color: -jc-primary-500;
+    -fx-border-color: -jc-primary-500;
+}
+
+/* ---- 情景时间线 ---- */
+.mc-episode-card {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 12;
+    -fx-border-radius: 12;
+    -fx-padding: 14 16 14 16;
+}
+.mc-ep-time  { -fx-font-size: 11.5px; -fx-text-fill: -jc-text-hint; }
+.mc-ep-role-user { -fx-font-size: 11px; -fx-font-weight: 600; -fx-text-fill: -jc-accent-600; }
+.mc-ep-role-asst { -fx-font-size: 11px; -fx-font-weight: 600; -fx-text-fill: -jc-success; }
+.mc-ep-user  { -fx-font-size: 13px; -fx-text-fill: -jc-text-title; }
+.mc-ep-reply { -fx-font-size: 13px; -fx-text-fill: -jc-text-muted; }
+
+.mc-tool-chip {
+    -fx-font-size: 11px;
+    -fx-text-fill: -jc-text-muted;
+    -fx-background-color: -jc-surface-sunken;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+    -fx-padding: 2 8 2 8;
+}
+
+.mc-timeline-dot {
+    -fx-background-color: -jc-warning;
+    -fx-background-radius: 999;
+    -fx-min-width: 10; -fx-min-height: 10;
+    -fx-max-width: 10; -fx-max-height: 10;
+}
+.mc-timeline-rail { -fx-background-color: -jc-border; }
+
+/* ---- 实体卡 ---- */
+.mc-entity-card {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 11;
+    -fx-border-radius: 11;
+    -fx-padding: 12 15 12 15;
+    -fx-cursor: hand;
+}
+.mc-entity-card:hover { -fx-border-color: -jc-border-strong; }
+.mc-entity-name  { -fx-font-size: 13.5px; -fx-font-weight: 600; -fx-text-fill: -jc-text-title; }
+
+/* ---- 知识库表 ---- */
+.mc-dropzone {
+    -fx-border-color: -jc-border-strong;
+    -fx-border-width: 1.5;
+    -fx-border-style: segments(6, 5);
+    -fx-border-radius: 12;
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 12;
+    -fx-padding: 26;
+    -fx-alignment: CENTER;
+    -fx-spacing: 4;
+}
+
+/* ---- 人格注入预览（深色控制台块，刻意保持字面深色，见 chat.css 约定） ---- */
+.mc-persona-preview {
+    -fx-background-color: #27251F;
+    -fx-background-radius: 12;
+    -fx-border-radius: 12;
+    -fx-padding: 16;
+}
+.mc-persona-preview-title { -fx-font-size: 11.5px; -fx-font-weight: 600; -fx-text-fill: #9C9587; }
+.mc-persona-preview-text {
+    -fx-font-family: "JetBrains Mono", monospace;
+    -fx-font-size: 11.5px;
+    -fx-text-fill: #D3CDBF;
+}
+
+/* ---- 人格语气芯片（单选） ---- */
+.mc-tone-chip {
+    -fx-font-size: 12.5px;
+    -fx-font-weight: 500;
+    -fx-text-fill: -jc-text-muted;
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 8;
+    -fx-border-radius: 8;
+    -fx-padding: 7 15 7 15;
+    -fx-cursor: hand;
+}
+.mc-tone-chip:hover { -fx-text-fill: -jc-text-title; }
+.mc-tone-chip-on {
+    -fx-background-color: -jc-success;
+    -fx-text-fill: white;
+    -fx-font-weight: 600;
+}
+
+/* ---- 变更日志筛选芯片 ---- */
+.mc-filter-chip {
+    -fx-font-size: 12px;
+    -fx-font-weight: 500;
+    -fx-text-fill: -jc-text-muted;
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 8;
+    -fx-border-radius: 8;
+    -fx-padding: 5 13 5 13;
+    -fx-cursor: hand;
+}
+.mc-filter-chip:hover { -fx-text-fill: -jc-text-title; }
+.mc-filter-chip-on {
+    -fx-background-color: -jc-neutral-800;
+    -fx-text-fill: -jc-on-brand;
+    -fx-border-color: -jc-neutral-800;
+    -fx-font-weight: 600;
+}
+
+.mc-log-card {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 12;
+    -fx-border-radius: 12;
+}
+.mc-log-row {
+    -fx-padding: 12 16 12 16;
+    -fx-border-color: -jc-border transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+    -fx-alignment: CENTER_LEFT;
+    -fx-spacing: 13;
+}
+.mc-log-detail { -fx-font-size: 13px; -fx-text-fill: -jc-text-title; }
+.mc-log-type   { -fx-font-size: 11.5px; -fx-text-fill: -jc-text-muted; }
+.mc-log-time   { -fx-font-size: 11.5px; -fx-text-fill: -jc-text-hint; -fx-font-family: "JetBrains Mono", monospace; }
+
+/* 操作徽标（新增/编辑/删除/合并）— 沿用 chat.css 状态语义底色 */
+.mc-op-badge {
+    -fx-font-size: 11px;
+    -fx-font-weight: 600;
+    -fx-padding: 3 9 3 9;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+}

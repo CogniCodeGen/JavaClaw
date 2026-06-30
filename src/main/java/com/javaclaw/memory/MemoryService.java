@@ -143,6 +143,48 @@ public class MemoryService implements AutoCloseable {
         if (store != null) store.setPersona(content, actor);
     }
 
+    /** 保存结构化人格：组装为 markdown 正文（实际注入文本）并持久化结构化字段。 */
+    public void setPersonaStructured(String identity, String tone,
+                                     List<String> preferences, List<String> taboos) {
+        if (store == null) return;
+        List<String> prefs = preferences == null ? List.of() : preferences;
+        List<String> tabs = taboos == null ? List.of() : taboos;
+        String content = assemblePersona(identity, tone, prefs, tabs);
+        store.updatePersona(p -> {
+            p.structured = true;
+            p.identity = identity;
+            p.tone = tone;
+            p.preferences = new java.util.ArrayList<>(prefs);
+            p.taboos = new java.util.ArrayList<>(tabs);
+            p.content = content;
+        }, "user");
+    }
+
+    /** 把结构化人格字段组装成注入用 markdown 正文。 */
+    public static String assemblePersona(String identity, String tone,
+                                         List<String> preferences, List<String> taboos) {
+        StringBuilder sb = new StringBuilder("# 人格\n");
+        if (identity != null && !identity.isBlank()) {
+            sb.append("\n## 身份\n").append(identity.strip()).append('\n');
+        }
+        if (tone != null && !tone.isBlank()) {
+            sb.append("\n## 语气\n").append(tone.strip()).append('\n');
+        }
+        if (preferences != null && !preferences.isEmpty()) {
+            sb.append("\n## 偏好\n");
+            for (String p : preferences) {
+                if (p != null && !p.isBlank()) sb.append("- ").append(p.strip()).append('\n');
+            }
+        }
+        if (taboos != null && !taboos.isEmpty()) {
+            sb.append("\n## 禁忌\n");
+            for (String t : taboos) {
+                if (t != null && !t.isBlank()) sb.append("- ").append(t.strip()).append('\n');
+            }
+        }
+        return sb.toString();
+    }
+
     public void checkpoint(String key, String messagesJson) {
         if (store != null) store.checkpoint(key, messagesJson);
     }
@@ -169,6 +211,12 @@ public class MemoryService implements AutoCloseable {
         if (store != null) store.removeFact(f, "user");
     }
 
+    /** 切换事实置顶位（钉住/取消钉住）。 */
+    public void togglePin(com.javaclaw.memory.model.Fact f) {
+        if (store == null) return;
+        store.updateFact(f, x -> x.pinned = !x.pinned, "user");
+    }
+
     /** 编辑事实正文：重新嵌入并置 userEdited 保护位（蒸馏不得再静默覆盖）。 */
     public void editFact(com.javaclaw.memory.model.Fact f, String newText) {
         if (store == null) return;
@@ -178,6 +226,72 @@ public class MemoryService implements AutoCloseable {
             if (vec != null) x.embedding = vec;
             x.userEdited = true;
         }, "user");
+    }
+
+    /** 新增一条事实：先嵌入再入库（嵌入不可用则仅落库、不进向量索引）。 */
+    public void addFact(String section, String text) {
+        if (store == null || text == null || text.isBlank()) return;
+        float[] vec = gate.embed(text);
+        com.javaclaw.memory.model.Fact f = new com.javaclaw.memory.model.Fact(
+                section == null || section.isBlank() ? "其它" : section.trim(), text.trim(), vec);
+        f.userEdited = true; // 手动新增等同用户保护，蒸馏不得静默覆盖
+        store.addFact(f, "user");
+    }
+
+    public List<com.javaclaw.memory.model.Episode> episodes() {
+        return store != null ? store.allEpisodes() : List.of();
+    }
+
+    public List<com.javaclaw.memory.model.EntityNode> entities() {
+        return store != null ? store.allEntities() : List.of();
+    }
+
+    public List<com.javaclaw.memory.model.KnowledgeChunk> knowledge() {
+        return store != null ? store.allKnowledge() : List.of();
+    }
+
+    /** 删除某文档的全部分块，返回删除数量。 */
+    public int deleteKnowledgeDoc(String docName) {
+        return store != null ? store.removeKnowledgeByDoc(docName, "user") : 0;
+    }
+
+    /**
+     * 重建某文档的向量索引：对每个分块重新嵌入并回填向量（嵌入不可用则跳过该块）。
+     * 返回成功重嵌入的分块数。建议后台线程调用。
+     */
+    public int reindexKnowledgeDoc(String docName) {
+        if (store == null || docName == null) return 0;
+        int n = 0;
+        for (com.javaclaw.memory.model.KnowledgeChunk c : store.allKnowledge()) {
+            if (!docName.equals(c.docName)) continue;
+            float[] vec = gate.embed(c.content);
+            if (vec != null) {
+                store.updateKnowledgeChunk(c, x -> x.embedding = vec, "user");
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /** 记忆统计（累计召回 / 命中 / 蒸馏 / 合并）；服务未就绪或无统计时返回 null。 */
+    public com.javaclaw.memory.model.MemoryStats stats() {
+        return store != null && store.root() != null ? store.root().stats : null;
+    }
+
+    /**
+     * 物化一张记忆图谱快照（事实/情景/实体节点 + source/about/semantic 边）供 UI 渲染。
+     * 纯读、含向量近邻即时检索；建议在后台线程调用（不阻塞 JavaFX 线程）。
+     * 服务未就绪时返回空图。
+     */
+    public com.javaclaw.memory.graph.MemoryGraph graph() {
+        if (store == null) {
+            return com.javaclaw.memory.graph.MemoryGraph.empty();
+        }
+        double semThreshold = com.javaclaw.config.AgentConfig.getInstance().getMemoryGraphSemanticThreshold();
+        int maxNodes = com.javaclaw.config.AgentConfig.getInstance().getMemoryGraphMaxNodes();
+        var opt = new com.javaclaw.memory.graph.MemoryGraphBuilder.Options(
+                maxNodes, semThreshold, 3, true, 36);
+        return com.javaclaw.memory.graph.MemoryGraphBuilder.build(store, opt);
     }
 
     public MemoryStore store() {

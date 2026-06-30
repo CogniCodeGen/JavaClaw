@@ -3,6 +3,7 @@ package com.javaclaw.memory.curation;
 import com.javaclaw.agent.TokenTracker;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.memory.embed.EmbeddingGate;
+import com.javaclaw.memory.model.EntityNode;
 import com.javaclaw.memory.model.Episode;
 import com.javaclaw.memory.model.Fact;
 import com.javaclaw.memory.store.MemoryStore;
@@ -84,6 +85,9 @@ public class Distiller {
             return;
         }
 
+        // 实体抽取（阶段二）：本轮先抽一次实体并 get-or-create，供新增事实按名称匹配关联 about 边。
+        List<EntityNode> turnEntities = extractEntities(conversation);
+
         double dedup = AgentConfig.getInstance().getMemoryDistillDedupThreshold();
         int added = 0, merged = 0, skipped = 0;
         for (String raw : factsText.lines().toList()) {
@@ -104,11 +108,60 @@ public class Distiller {
             } else {
                 Fact f = new Fact(null, line, vec);
                 f.source = ep;
+                f.about = matchEntities(line, turnEntities); // 关联本轮实体（记忆图 about 边）
                 store.addFact(f, "distiller");
                 added++;
             }
         }
-        log.info("记忆蒸馏完成：新增 {}，合并 {}，跳过 {}（无嵌入）", added, merged, skipped);
+        log.info("记忆蒸馏完成：新增 {}，合并 {}，跳过 {}（无嵌入），实体 {}", added, merged, skipped, turnEntities.size());
+    }
+
+    /**
+     * 从对话抽取实体并 get-or-create 入库（记忆图谱 entity 节点）。
+     * 受 {@code memory.graph.entities.enabled} 闸门；失败/关闭时返回空列表（蒸馏不受影响）。
+     */
+    private List<EntityNode> extractEntities(String conversation) {
+        if (!AgentConfig.getInstance().getMemoryGraphEntitiesEnabled()) {
+            return List.of();
+        }
+        List<EntityNode> out = new java.util.ArrayList<>();
+        try {
+            Msg sys = Msg.builder().role(MsgRole.SYSTEM).name("system")
+                    .textContent(MemoryPrompts.ENTITY_EXTRACT_PROMPT).build();
+            Msg user = Msg.builder().role(MsgRole.USER).name("user").textContent(conversation).build();
+            String text = streamCollect(sys, user).trim();
+            if (text.isEmpty() || "无".equals(text) || text.equalsIgnoreCase("none")) {
+                return out;
+            }
+            for (String raw : text.lines().toList()) {
+                String line = raw.strip();
+                if (line.startsWith("- ")) line = line.substring(2).strip();
+                if (line.isEmpty() || !line.contains("|")) continue;
+                String[] parts = line.split("\\|", 2);
+                String name = parts[0].strip();
+                String type = parts.length > 1 ? parts[1].strip() : "topic";
+                if (name.length() < 2) continue;
+                EntityNode node = store.getOrCreateEntity(name, type, "distiller");
+                if (node != null) out.add(node);
+            }
+        } catch (Exception e) {
+            log.warn("实体抽取失败（已静默忽略）: {}", e.getMessage());
+        }
+        return out;
+    }
+
+    /** 在事实文本中按名称（忽略大小写、子串包含）匹配本轮实体，作为 about 边。 */
+    private static List<EntityNode> matchEntities(String factText, List<EntityNode> entities) {
+        if (entities.isEmpty() || factText == null) return new java.util.ArrayList<>();
+        String lower = factText.toLowerCase();
+        List<EntityNode> matched = new java.util.ArrayList<>();
+        for (EntityNode en : entities) {
+            if (en.name != null && en.name.length() >= 2
+                    && lower.contains(en.name.toLowerCase()) && !matched.contains(en)) {
+                matched.add(en);
+            }
+        }
+        return matched;
     }
 
     /** 轻量模型流式收集文本 + token 簿记（与旧 MemoryCurator 一致）。 */
