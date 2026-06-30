@@ -159,6 +159,12 @@
             <artifactId>commonmark</artifactId>
             <version>${commonmark.version}</version>
         </dependency>
+        <!-- 表情检测（纯 Java，当前 Unicode 覆盖；用于对话气泡把表情替换为 Java2D 渲染的图片） -->
+        <dependency>
+            <groupId>net.fellbaum</groupId>
+            <artifactId>jemoji</artifactId>
+            <version>1.5.2</version>
+        </dependency>
         <dependency>
             <groupId>org.commonmark</groupId>
             <artifactId>commonmark-ext-gfm-tables</artifactId>

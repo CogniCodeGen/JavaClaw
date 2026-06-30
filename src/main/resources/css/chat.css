@@ -30,7 +30,7 @@
  *
  * 字体
  *   UI:   "Inter", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif
- *   Mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace
+ *   Mono: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace
  *
  * 阴影
  *   轻: dropshadow(gaussian, rgba(0,0,0,0.04), 8, 0, 0, 2)
@@ -126,14 +126,19 @@
     -jc-overlay: rgba(21,19,14,0.5);
     -jc-thinking-bg: #F0F9F3;
     -jc-on-brand: white;
+
+    /* —— 基准字体（全局唯一来源，所有窗口/弹窗/气泡继承） ——
+       系统原生优先：macOS→SF Pro+PingFang，Windows→Segoe UI+YaHei；
+       Inter / Noto Sans SC 为打包回退，保证缺字体的机器也一致渲染。
+       注意：JavaFX -fx-font-family 按字形逐一回退，拉丁字体在前、CJK 在后即可。
+       FontManager 在用户自定义时会在此之上叠加一张 data: 用户样式表覆盖。 */
+    -fx-font-family: "SF Pro Text", "Segoe UI", "Inter", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    -fx-font-size: 13px;
 }
 /* ==== TOKEN-DEFS-END（脚本替换标记，勿删） ==== */
 
 .chat-root {
-    /* —— UI 字体栈（先 Inter 等拉丁字体，再彩色表情字体，后 CJK，最后系统回落） ——
-       彩色表情字体须排在 CJK 字体之前：PingFang SC 等中文字体自带单色表情字形，
-       排在前面会被逐字形回退命中，把表情渲染成难看的单色字形。 */
-    -fx-font-family: "Inter", "-apple-system", "Helvetica Neue", "Segoe UI", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "PingFang SC", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
+    /* 字体由 .root 基准栈全局继承（单一来源），此处不再单独声明 -fx-font-family。 */
     -fx-background-color: -jc-surface-page;
 }
 
@@ -609,21 +614,21 @@
     -fx-background-radius: 4;
     -fx-font-size: 10.5px;
     -fx-font-weight: 600;
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
 }
 
 /* 时间（19:23） */
 .msg-header-time {
     -fx-text-fill: -jc-neutral-400;
     -fx-font-size: 11px;
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
 }
 
 /* 右侧对齐的耗时/Token 指标 */
 .msg-header-meta {
     -fx-text-fill: -jc-neutral-400;
     -fx-font-size: 11px;
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
 }
 
 /* 内容容器：无气泡底色（设计稿的 plain paragraph） */
@@ -646,7 +651,7 @@
     -fx-background-radius: 4;
     -fx-font-size: 10.5px;
     -fx-font-weight: 600;
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
 }
 
 /* 消息底部操作行（采纳 / 重新生成 / 引用） */
@@ -715,7 +720,7 @@
 
 /* 已耗时 mono 数字 */
 .tp-elapsed {
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 11px;
     -fx-text-fill: -jc-neutral-400;
 }
@@ -769,7 +774,7 @@
 }
 
 .tp-metric-value {
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 13px;
     -fx-font-weight: 600;
     -fx-text-fill: -jc-neutral-800;
@@ -790,20 +795,20 @@
 }
 
 .tp-tool-name {
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 11.5px;
     -fx-font-weight: 600;
     -fx-text-fill: -jc-neutral-800;
 }
 
 .tp-tool-input {
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 11px;
     -fx-text-fill: -jc-neutral-400;
 }
 
 .tp-tool-status {
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 11px;
     -fx-font-weight: 600;
 }
@@ -845,7 +850,7 @@
 }
 
 .tp-pipeline-status {
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 10.5px;
     -fx-font-weight: 600;
     -fx-padding: 0 6 0 6;
@@ -926,7 +931,7 @@
 .sidebar-nav-shortcut {
     -fx-text-fill: -jc-neutral-400;
     -fx-font-size: 11px;
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
 }
 
 .sidebar-nav-badge {
@@ -948,7 +953,7 @@
     -fx-border-radius: 4;
     -fx-background-radius: 4;
     -fx-padding: 1 6 1 6;
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 10px;
     -fx-text-fill: -jc-neutral-500;
 }
@@ -1313,7 +1318,7 @@
 .chat-top-meta {
     -fx-text-fill: -jc-neutral-500;
     -fx-font-size: 11.5px;
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
 }
 
 .chat-top-help-btn {
@@ -2058,7 +2063,7 @@
 .browser-console-area {
     -fx-control-inner-background: #15130E;
     -fx-text-fill: #E8E4DB;
-    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 12px;
     -fx-border-width: 0;
     -fx-background-color: #15130E;
@@ -2515,7 +2520,7 @@
     -fx-border-radius: 10;
     -fx-background-radius: 10;
     -fx-font-size: 13px;
-    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-padding: 14;
 }
 
@@ -2563,7 +2568,7 @@
 }
 
 .skill-dir-structure {
-    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 12px;
     -fx-text-fill: -jc-neutral-500;
     -fx-line-spacing: 2;
@@ -2640,7 +2645,7 @@
 .schedule-log-area {
     -fx-background-color: #15130E;
     -fx-text-fill: #E8E4DB;
-    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 11px;
     -fx-border-color: #27251F;
     -fx-border-radius: 12;
@@ -3166,7 +3171,7 @@
     -fx-font-weight: 500;
     -fx-padding: 0;
     -fx-cursor: hand;
-    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
 }
 
 .token-counter-label:hover {
@@ -3178,7 +3183,7 @@
     -fx-font-size: 11px;
     -fx-font-weight: 500;
     -fx-padding: 0;
-    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
 }
 
 .status-bar-sep {
@@ -3744,7 +3749,7 @@
     -fx-border-radius: 10;
     -fx-background-radius: 10;
     -fx-font-size: 13px;
-    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-padding: 10;
 }
 
@@ -3829,7 +3834,7 @@
 
 .mcp-tool-name {
     -fx-text-fill: -jc-neutral-700;
-    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 12px;
     -fx-font-weight: 600;
 }
@@ -3853,7 +3858,7 @@
 
 .mcp-template-tools {
     -fx-text-fill: -jc-primary-500;
-    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 11px;
 }
 
@@ -3931,7 +3936,7 @@
 .agent-header-sub {
     -fx-font-size: 12px;
     -fx-text-fill: -jc-neutral-400;
-    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
 }
 
 .agent-header-badge {
@@ -4617,7 +4622,6 @@
     -fx-font-size: 13px;
     -fx-text-fill: -jc-neutral-900;
     -fx-prompt-text-fill: -jc-neutral-300;
-    -fx-font-family: "-apple-system", "SF Pro Text", "Segoe UI", "PingFang SC", sans-serif;
 }
 
 .task-dialog-textarea .content {
@@ -5682,7 +5686,7 @@
 }
 
 .sb-brand-ver {
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 10px;
     -fx-font-weight: 500;
     -fx-text-fill: -jc-text-hint;
@@ -5715,7 +5719,7 @@
 
 /* 会话行右侧时间（mono 小字） */
 .sidebar-conv-time {
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 10px;
     -fx-font-weight: 500;
     -fx-text-fill: -jc-text-hint;

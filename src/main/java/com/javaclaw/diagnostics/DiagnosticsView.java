@@ -61,7 +61,7 @@ public final class DiagnosticsView {
 
         // 结果列表
         ListView<String> resultList = new ListView<>();
-        resultList.setStyle("-fx-font-family: 'JetBrains Mono', 'Menlo', monospace; -fx-font-size: 11px;");
+        resultList.setStyle("-fx-font-family: " + com.javaclaw.ui.javafx.theme.FontManager.MONO_FONT_STACK + "; -fx-font-size: 11px;");
 
         Label summary = new Label("请点击「查询」加载事件");
         summary.setStyle("-fx-text-fill: -jc-text-muted; -fx-font-size: 12px;");

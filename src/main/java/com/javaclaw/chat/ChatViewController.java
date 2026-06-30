@@ -2978,7 +2978,7 @@ public class ChatViewController {
         content.setWrapText(false);
         content.setPrefRowCount(15);
         content.setPrefColumnCount(40);
-        content.setStyle("-fx-font-family: 'JetBrains Mono', 'Menlo', monospace; -fx-font-size: 12.5px;");
+        content.setStyle("-fx-font-family: " + com.javaclaw.ui.javafx.theme.FontManager.MONO_FONT_STACK + "; -fx-font-size: 12.5px;");
         dialog.getDialogPane().setContent(content);
         dialog.initOwner(outerRoot.getScene().getWindow());
         dialog.showAndWait();
@@ -3638,6 +3638,9 @@ public class ChatViewController {
 
                         // 12.5. 重新加载新工作区记忆的界面风格
                         com.javaclaw.ui.javafx.theme.ThemeManager.reload();
+
+                        // 12.6. 重新加载新工作区记忆的字体（族 / 等宽 / 密度）
+                        com.javaclaw.ui.javafx.theme.FontManager.reload();
 
                         log.info("工作区切换完成: {} ({})",
                                 wsMgr.getCurrentWorkspace().getName(), targetWorkspaceId);

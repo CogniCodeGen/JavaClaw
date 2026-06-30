@@ -180,8 +180,11 @@ public class MarkdownBubble {
         // 主题切换时实时刷新已渲染气泡的配色（dispose 时解除，避免泄漏）
         com.javaclaw.ui.javafx.theme.ThemeManager.themeProperty().addListener(themeListener);
 
-        // 加载 HTML 模板
-        engine.loadContent(HTML_TEMPLATE);
+        // 加载 HTML 模板（对话密度由 FontManager 注入：正文字号 / 行高随「设置 › 字体」生效）
+        String shell = HTML_TEMPLATE
+                .replace("%CHAT_FS%", String.valueOf(com.javaclaw.ui.javafx.theme.FontManager.chatFontPx()))
+                .replace("%CHAT_LH%", String.valueOf(com.javaclaw.ui.javafx.theme.FontManager.chatLineHeight()));
+        engine.loadContent(shell);
 
         // 将 MarkdownBubble 实例附加到 WebView 上，便于外部定位并在清空场景图时 dispose
         webView.getProperties().put("markdownBubble", this);
@@ -320,6 +323,8 @@ public class MarkdownBubble {
         if (disposed) return;
         String markdown = content.toString();
         String html = toHtml(markdown);
+        // 彩色表情图片化（纯 Java：JEmoji 检测 + Java2D 渲染）：规避 WebKit 无法在正文字号栅格化彩色表情字形的限制
+        html = EmojiImageRenderer.imageifyHtml(html);
         log.debug("Markdown 原文: {}", markdown.length() > 500 ? markdown.substring(0, 500) + "..." : markdown);
         log.debug("渲染 HTML: {}", html.length() > 800 ? html.substring(0, 800) + "..." : html);
         String escaped = escapeForJs(html);
@@ -486,14 +491,18 @@ public class MarkdownBubble {
                 box-sizing: border-box;
             }
             body {
-                /* 表情字体必须排在 CJK 字体之前：PingFang SC / Hiragino Sans GB 等中文字体
-                   自带单色（text-presentation）表情字形，若排在前面会被 WebKit 逐字形回退命中，
-                   把 😊 渲染成难看的单色梳齿状字形。彩色表情字体置于拉丁字体之后、CJK 字体之前，
-                   既不抢占数字/#/* 等键帽基字（由拉丁字体先命中），又能让真正的表情走彩色字体。 */
-                font-family: "Inter", system-ui, -apple-system, "Segoe UI", "Helvetica Neue", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "PingFang SC", "Noto Sans CJK SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-                font-size: 14px;
+                /* 系统字体统一走 -apple-system / system-ui 关键字解析（macOS→SF Pro，Windows→Segoe UI），
+                   再 Inter（打包回退），彩色表情字体排在拉丁之后、CJK 之前，最后 CJK 与 sans 兜底。
+                   表情字体须排在 CJK 之前：PingFang SC 等中文字体自带单色表情字形，排前面会被逐字形
+                   回退命中、把 😊 渲染成单色字形。
+                   已知限制（JavaFX WebView/WebKit）：内联表情在正文字号下（实测 14.5–40px）无论字体栈如何
+                   排序、即使换装 COLR 矢量表情字体，仍渲染为梳齿乱码（仅独立大字号可出彩色）—— 这是
+                   WebKit 对 sbix/COLR 字形在文本流内的栅格化限制，非本字体栈所能修复；彩色表情改走
+                   <img> 替换（renderToWebView 内调 EmojiImageRenderer：纯 Java JEmoji 检测 + Java2D 渲染）。 */
+                font-family: -apple-system, system-ui, "Inter", "Segoe UI", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "PingFang SC", "Noto Sans CJK SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+                font-size: %CHAT_FS%px;
                 font-weight: 400;
-                line-height: 1.6;
+                line-height: %CHAT_LH%;
                 color: var(--md-fg, #27251F);
                 background: transparent;
                 padding: 0;
@@ -502,6 +511,14 @@ public class MarkdownBubble {
                 overflow-wrap: break-word;
                 -webkit-font-smoothing: antialiased;
                 -moz-osx-font-smoothing: grayscale;
+            }
+            /* Twemoji 图片化的彩色表情：随正文字号缩放、基线对齐，不撑高行 */
+            img.emoji {
+                height: 1.15em;
+                width: 1.15em;
+                margin: 0 0.05em 0 0.1em;
+                vertical-align: -0.2em;
+                display: inline-block;
             }
             /* 强制所有内联格式化元素不改变字重和样式 */
             strong, b, em, i {
@@ -536,7 +553,7 @@ public class MarkdownBubble {
                 color: var(--md-code-fg, #1F7E54);
                 padding: 1px 5px;
                 border-radius: 4px;
-                font-family: "JetBrains Mono", "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+                font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", Consolas, Menlo, monospace;
                 font-size: 13px;
             }
             /* 代码块 */

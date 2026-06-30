@@ -80,6 +80,9 @@ public final class AgentConfig {
     private static final String KEY_FIRST_USE_GUIDANCE_DONE = "ui.first.use.guidance.done";
     private static final String KEY_TRAY_MINIMIZE_ON_CLOSE = "ui.tray.minimize.on.close";
     private static final String KEY_UI_THEME = "ui.theme";
+    private static final String KEY_UI_FONT_FAMILY = "ui.font.family";
+    private static final String KEY_UI_FONT_MONO = "ui.font.mono";
+    private static final String KEY_UI_FONT_DENSITY = "ui.font.density";
     private static final String KEY_CONFIRMATION_TIMEOUT_DEFAULT = "confirmation.timeout.default.seconds";
     private static final String KEY_CONFIRMATION_TIMEOUT_MANAGED = "confirmation.timeout.managed.seconds";
     private static final String KEY_TASK_EVENTS_RETENTION_DAYS = "task.events.retention.days";
@@ -1164,6 +1167,18 @@ public final class AgentConfig {
     public void setUiTheme(String value) {
         properties.setProperty(KEY_UI_THEME, value);
     }
+
+    /** 界面字体族 id（native/inter/noto/system，默认 native，按工作区记忆） */
+    public String getUiFontFamily() { return properties.getProperty(KEY_UI_FONT_FAMILY, "native"); }
+    public void setUiFontFamily(String v) { properties.setProperty(KEY_UI_FONT_FAMILY, v); }
+
+    /** 等宽字体 id（cascadia/jetbrains/sfmono，默认 cascadia） */
+    public String getUiFontMono() { return properties.getProperty(KEY_UI_FONT_MONO, "cascadia"); }
+    public void setUiFontMono(String v) { properties.setProperty(KEY_UI_FONT_MONO, v); }
+
+    /** 对话密度 id（compact/cozy/relaxed，默认 cozy） */
+    public String getUiFontDensity() { return properties.getProperty(KEY_UI_FONT_DENSITY, "cozy"); }
+    public void setUiFontDensity(String v) { properties.setProperty(KEY_UI_FONT_DENSITY, v); }
 
     /** 普通场景工具确认超时（秒） */
     public int getConfirmationTimeoutDefault() {

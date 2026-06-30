@@ -33,7 +33,7 @@
 
 /* 计数摘要：N 运行中 · M 待人工 · 共 X（mono 小字） */
 .sdd-left-count {
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 11px;
     -fx-font-weight: 500;
     -fx-text-fill: -jc-text-hint;
@@ -94,7 +94,7 @@
 
 /* 卡片进度百分比（mono 小字） */
 .sdd-card-pct {
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 10px;
     -fx-font-weight: 600;
     -fx-text-fill: -jc-text-hint;
@@ -171,7 +171,7 @@
 
 /* 中心百分比数字（mono 大号）与 % 号 */
 .sdd-donut-pct {
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 18px;
     -fx-font-weight: 700;
     -fx-text-fill: -jc-text-title;
@@ -200,7 +200,7 @@
 }
 
 .sdd-stat-value {
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 15px;
     -fx-font-weight: 700;
     -fx-text-fill: -jc-text-title;
@@ -259,7 +259,7 @@
     -fx-background-radius: 999;
     -fx-border-radius: 999;
     -fx-border-width: 2;
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 11px;
     -fx-font-weight: 700;
 }
@@ -414,7 +414,7 @@
 
 /* 变更条目序号章（01/02…） */
 .sdd-change-num {
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 11px;
     -fx-font-weight: 700;
     -fx-text-fill: -jc-primary-500;
@@ -425,7 +425,7 @@
 
 /* 真相路径脚注（mono hint） */
 .sdd-truth-path {
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 11px;
     -fx-text-fill: -jc-text-hint;
 }
@@ -462,7 +462,7 @@
 
 /* Given/When/Then 键（mono，sunken 章底，按键着色） */
 .sdd-gwt-key {
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 10px;
     -fx-font-weight: 700;
     -fx-min-width: 46;
@@ -513,7 +513,7 @@
 }
 
 .sdd-checklist-counter {
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 11px;
     -fx-font-weight: 600;
     -fx-text-fill: -jc-text-muted;
@@ -616,7 +616,7 @@
 
 /* 时间戳列（mono，固定 62 宽） */
 .sdd-log-time {
-    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 10.5px;
     -fx-font-weight: 500;
     -fx-text-fill: -jc-text-hint;

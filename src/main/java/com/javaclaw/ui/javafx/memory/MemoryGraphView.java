@@ -249,7 +249,7 @@ public class MemoryGraphView {
             <style>
               * { margin:0; padding:0; box-sizing:border-box; }
               html, body { width:100%; height:100%; overflow:hidden; }
-              body { font-family:"Inter","PingFang SC","Microsoft YaHei",system-ui,sans-serif; }
+              body { font-family:"Inter",system-ui,-apple-system,"Segoe UI","Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif; }
               #cv { display:block; width:100%; height:100%; cursor:grab; }
               #cv.grabbing { cursor:grabbing; }
               #empty { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);

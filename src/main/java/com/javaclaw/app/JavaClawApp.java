@@ -104,6 +104,9 @@ public class JavaClawApp extends Application {
             log.info("正在初始化工作区管理器...");
             WorkspaceManager.getInstance().init();
 
+            // 0.1 注册打包字体（须在创建任何 Scene 之前；下方首启向导即会构建 Scene）
+            com.javaclaw.ui.javafx.theme.FontManager.loadBundledFonts();
+
             // 0.5 注入 UI 交互端口（让 ToolConfirmationManager 等领域层能请求确认/通知，
             //     而不直接依赖 JavaFX）。未来接入 Web 前端时替换成对应的 Port 实现即可。
             log.info("正在装配 UI 交互端口（JavaFX）...");
@@ -188,6 +191,9 @@ public class JavaClawApp extends Application {
 
             // 5.5 初始化主题管理器：读取工作区记忆的界面风格并对所有窗口（含后续弹窗）生效
             com.javaclaw.ui.javafx.theme.ThemeManager.init();
+
+            // 5.6 初始化字体管理器：挂全局窗口监听 + 应用工作区记忆的字体（默认系统原生时不注入覆盖）
+            com.javaclaw.ui.javafx.theme.FontManager.init();
 
             // 6. 配置并显示主窗口
             this.primaryStage = primaryStage;

@@ -262,7 +262,7 @@
 }
 .mc-persona-preview-title { -fx-font-size: 11.5px; -fx-font-weight: 600; -fx-text-fill: #9C9587; }
 .mc-persona-preview-text {
-    -fx-font-family: "JetBrains Mono", monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 11.5px;
     -fx-text-fill: #D3CDBF;
 }
@@ -322,7 +322,7 @@
 }
 .mc-log-detail { -fx-font-size: 13px; -fx-text-fill: -jc-text-title; }
 .mc-log-type   { -fx-font-size: 11.5px; -fx-text-fill: -jc-text-muted; }
-.mc-log-time   { -fx-font-size: 11.5px; -fx-text-fill: -jc-text-hint; -fx-font-family: "JetBrains Mono", monospace; }
+.mc-log-time   { -fx-font-size: 11.5px; -fx-text-fill: -jc-text-hint; -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace; }
 
 /* 操作徽标（新增/编辑/删除/合并）— 沿用 chat.css 状态语义底色 */
 .mc-op-badge {

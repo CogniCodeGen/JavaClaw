@@ -16,7 +16,7 @@
 
 /* 概览条文字：mono 灰字 */
 .mcp-overview-text {
-    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 12px;
     -fx-font-weight: 500;
     -fx-text-fill: -jc-text-muted;
@@ -24,7 +24,7 @@
 
 /* 概览条内的失败提示：红色 */
 .mcp-overview-fail {
-    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 12px;
     -fx-font-weight: 600;
     -fx-text-fill: -jc-danger;
@@ -54,7 +54,7 @@
 
 /* 卡片元信息（· N 个工具 · 运行时长）：mono 浅灰 */
 .mcp-server-meta {
-    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 11px;
     -fx-font-weight: 500;
     -fx-text-fill: -jc-text-hint;
@@ -62,7 +62,7 @@
 
 /* transport 小标签：mono 描边小胶囊 */
 .mcp-transport-pill {
-    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 10px;
     -fx-font-weight: 500;
     -fx-text-fill: -jc-text-hint;
@@ -75,14 +75,14 @@
 
 /* 卡片命令 / URL 摘要行：mono 灰字 */
 .mcp-server-summary {
-    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 11px;
     -fx-text-fill: -jc-text-muted;
 }
 
 /* 卡片环境变量 / Headers 摘要：mono 更浅灰 */
 .mcp-server-kv {
-    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 11px;
     -fx-text-fill: -jc-text-hint;
 }
@@ -129,7 +129,7 @@
 }
 
 .mcp-tool-name {
-    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 12px;
     -fx-font-weight: 600;
     -fx-text-fill: -jc-text-title;
@@ -142,7 +142,7 @@
 
 /* ---------- 底部配置文件路径提示：mono ---------- */
 .mcp-path-hint {
-    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 11px;
     -fx-text-fill: -jc-text-hint;
 }

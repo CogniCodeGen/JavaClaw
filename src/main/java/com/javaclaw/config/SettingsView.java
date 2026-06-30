@@ -348,6 +348,12 @@ public class SettingsView {
                 "主题 theme 风格 外观 配色 深色 暗色 dark emerald midnight carbon sapphire ocean plum graphite terracotta honey 翡翠 午夜 碳黑 蓝宝石 海洋 梅紫 石墨 陶土 蜂蜜");
         registerPanelActions(appearancePanel, PanelActions.none());
 
+        // 字体：组件型面板，选择即时全局生效并按工作区记忆
+        Node fontPanel = buildFontPanel();
+        addCategory("字体", fontPanel, false,
+                "字体 font typeface sans mono 等宽 字号 密度 缩放 inter noto cascadia jetbrains 排版 对话");
+        registerPanelActions(fontPanel, PanelActions.none());
+
         // 通用：界面与后台行为
         addCategoryGroup("通用");
 
@@ -2066,6 +2072,132 @@ public class SettingsView {
                 groupTitle, grid,
                 new Separator(),
                 noteTitle, note);
+        panel.setPadding(new Insets(4));
+
+        ScrollPane scrollPane = new ScrollPane();
+        scrollPane.setFitToWidth(true);
+        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        scrollPane.getStyleClass().add("settings-scroll-pane");
+        scrollPane.setContent(panel);
+        return scrollPane;
+    }
+
+    /**
+     * 「设置 › 字体」面板（组件型，选择即时全局生效，无保存按钮）。
+     * 与「界面风格」共用样式类：界面字体双列卡片 + 等宽分段 + 密度分段 + 实时说明。
+     * 字体选择经 {@link com.javaclaw.ui.javafx.theme.FontManager} 立即应用到全部窗口并按工作区记忆。
+     */
+    private Node buildFontPanel() {
+        Label sectionTitle = new Label("字体");
+        sectionTitle.getStyleClass().add("sec-title");
+
+        Label hint = new Label(
+                "选择界面与对话使用的字体，立即生效并记忆到本工作区 —— 应用于所有窗口、弹窗与对话气泡。"
+                        + "系统原生为默认，缺字体时自动回退到打包字体。");
+        hint.getStyleClass().add("sec-hint");
+        hint.setWrapText(true);
+
+        // ===== 界面字体（双列卡片，预览以该字体渲染样张）=====
+        Label uiTitle = new Label("界面字体");
+        uiTitle.getStyleClass().add("grp-title");
+
+        GridPane grid = new GridPane();
+        grid.setHgap(12);
+        grid.setVgap(12);
+        ColumnConstraints half = new ColumnConstraints();
+        half.setPercentWidth(50);
+        grid.getColumnConstraints().addAll(half, half);
+
+        java.util.List<Runnable> refreshers = new java.util.ArrayList<>();
+        int idx = 0;
+        for (com.javaclaw.ui.javafx.theme.FontManager.FontOption opt : com.javaclaw.ui.javafx.theme.FontManager.FONT_OPTIONS) {
+            Label name = new Label(opt.name());
+            name.getStyleClass().add("theme-card-name");
+            Label sub = new Label(opt.subtitle());
+            sub.getStyleClass().add("theme-card-sub");
+            VBox text = new VBox(1, name, sub);
+            HBox.setHgrow(text, Priority.ALWAYS);
+
+            Label check = new Label("✓");
+            check.getStyleClass().add("theme-card-check");
+
+            HBox head = new HBox(8, text, check);
+            head.setAlignment(Pos.CENTER_LEFT);
+
+            // 样张：以该字体族渲染（直观对比字形）
+            Label sample = new Label("现代极简 Studio 字体 Ag");
+            sample.setStyle("-fx-font-family: " + opt.stack() + "; -fx-font-size: 18px; -fx-text-fill: -jc-text-title;");
+
+            VBox card = new VBox(8, head, sample);
+            card.getStyleClass().add("theme-card");
+            card.setPadding(new Insets(13, 15, 14, 15));
+            card.setOnMouseClicked(e -> com.javaclaw.ui.javafx.theme.FontManager.setFontFamily(opt.id()));
+
+            Runnable refresh = () -> {
+                boolean on = opt.id().equals(com.javaclaw.ui.javafx.theme.FontManager.getFontFamily());
+                card.getStyleClass().remove("theme-card-selected");
+                if (on) card.getStyleClass().add("theme-card-selected");
+                check.setVisible(on);
+            };
+            refresh.run();
+            refreshers.add(refresh);
+
+            grid.add(card, idx % 2, idx / 2);
+            idx++;
+        }
+
+        // ===== 等宽字体（分段控件）=====
+        Label monoTitle = new Label("等宽字体");
+        monoTitle.getStyleClass().add("grp-title");
+        HBox monoSeg = new HBox(2);
+        monoSeg.getStyleClass().add("seg-container");
+        monoSeg.setAlignment(Pos.CENTER_LEFT);
+        ToggleGroup monoGroup = new ToggleGroup();
+        for (com.javaclaw.ui.javafx.theme.FontManager.MonoOption m : com.javaclaw.ui.javafx.theme.FontManager.MONO_OPTIONS) {
+            ToggleButton tb = new ToggleButton(m.name());
+            tb.getStyleClass().add("seg-btn");
+            tb.setToggleGroup(monoGroup);
+            tb.setSelected(m.id().equals(com.javaclaw.ui.javafx.theme.FontManager.getMonoFamily()));
+            tb.setOnAction(e -> { if (tb.isSelected()) com.javaclaw.ui.javafx.theme.FontManager.setMonoFamily(m.id()); else tb.setSelected(true); });
+            Runnable r = () -> tb.setSelected(m.id().equals(com.javaclaw.ui.javafx.theme.FontManager.getMonoFamily()));
+            refreshers.add(r);
+            monoSeg.getChildren().add(tb);
+        }
+
+        // ===== 字号 / 密度（分段控件）=====
+        Label densTitle = new Label("字号 / 密度");
+        densTitle.getStyleClass().add("grp-title");
+        HBox densSeg = new HBox(2);
+        densSeg.getStyleClass().add("seg-container");
+        densSeg.setAlignment(Pos.CENTER_LEFT);
+        ToggleGroup densGroup = new ToggleGroup();
+        for (com.javaclaw.ui.javafx.theme.FontManager.Density d : com.javaclaw.ui.javafx.theme.FontManager.DENSITIES) {
+            ToggleButton tb = new ToggleButton(d.name());
+            tb.getStyleClass().add("seg-btn");
+            tb.setToggleGroup(densGroup);
+            tb.setSelected(d.id().equals(com.javaclaw.ui.javafx.theme.FontManager.getDensity()));
+            tb.setOnAction(e -> { if (tb.isSelected()) com.javaclaw.ui.javafx.theme.FontManager.setDensity(d.id()); else tb.setSelected(true); });
+            Runnable r = () -> tb.setSelected(d.id().equals(com.javaclaw.ui.javafx.theme.FontManager.getDensity()));
+            refreshers.add(r);
+            densSeg.getChildren().add(tb);
+        }
+
+        Label note = new Label(
+                "选择后立即应用到全部已打开窗口，并写入本工作区配置（ui.font.*）。"
+                        + "等宽字体影响代码块、token 计数与时间戳；密度影响对话正文字号与行高。");
+        note.getStyleClass().add("sec-hint");
+        note.setWrapText(true);
+
+        // 外部变更（如别处切换工作区 reload）时统一刷新本面板选中态
+        com.javaclaw.ui.javafx.theme.FontManager.revisionProperty().addListener((obs, o, n) -> refreshers.forEach(Runnable::run));
+
+        VBox panel = new VBox(8,
+                sectionTitle, hint,
+                uiTitle, grid,
+                monoTitle, monoSeg,
+                densTitle, densSeg,
+                new Separator(),
+                note);
         panel.setPadding(new Insets(4));
 
         ScrollPane scrollPane = new ScrollPane();

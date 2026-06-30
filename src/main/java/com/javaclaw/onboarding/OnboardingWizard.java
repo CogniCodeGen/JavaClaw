@@ -389,7 +389,7 @@ public class OnboardingWizard {
                 "提供商：" + selectedTemplate.displayName() + "\n" +
                 "模型：" + config.getModelName() + "\n" +
                 "Base URL：" + config.getBaseUrl());
-        summary.setStyle("-fx-font-family: 'JetBrains Mono', 'Menlo', monospace; -fx-font-size: 12px;");
+        summary.setStyle("-fx-font-family: " + com.javaclaw.ui.javafx.theme.FontManager.MONO_FONT_STACK + "; -fx-font-size: 12px;");
 
         Label tips = new Label(
                 "小贴士：\n" +
