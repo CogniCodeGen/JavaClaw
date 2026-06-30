@@ -486,7 +486,11 @@ public class MarkdownBubble {
                 box-sizing: border-box;
             }
             body {
-                font-family: "Inter", "PingFang SC", "Noto Sans CJK SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, -apple-system, "Segoe UI", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
+                /* 表情字体必须排在 CJK 字体之前：PingFang SC / Hiragino Sans GB 等中文字体
+                   自带单色（text-presentation）表情字形，若排在前面会被 WebKit 逐字形回退命中，
+                   把 😊 渲染成难看的单色梳齿状字形。彩色表情字体置于拉丁字体之后、CJK 字体之前，
+                   既不抢占数字/#/* 等键帽基字（由拉丁字体先命中），又能让真正的表情走彩色字体。 */
+                font-family: "Inter", system-ui, -apple-system, "Segoe UI", "Helvetica Neue", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "PingFang SC", "Noto Sans CJK SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
                 font-size: 14px;
                 font-weight: 400;
                 line-height: 1.6;

@@ -27,7 +27,7 @@ public record RoutingResult(
     public static final List<String> ALL_TOOL_GROUPS = List.of(
             "coding", "knowledge", "web", "email",
             "system", "desktop", "notification", "evaluator", "dynamic_task", "command", "mcp",
-            "task_manage", "schedule",
+            "task_manage", "schedule", "media",
             "clarify"
     );
 

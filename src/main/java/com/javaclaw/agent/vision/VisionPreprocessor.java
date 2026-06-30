@@ -48,8 +48,21 @@ public class VisionPreprocessor {
             不要加开场白或总结。如果无法辨认，就写"无法辨认具体内容"。
             """;
 
+    /** OCR 文字识别提示词：只输出文字本身，尽量保留排版 */
+    private static final String OCR_PROMPT = """
+            你是 OCR 文字识别引擎。请提取图片中的全部可见文字，要求：
+            - 按自然阅读顺序输出（自上而下、从左到右）
+            - 保留原文语言、标点、换行与分段，尽量还原排版
+            - 表格用 Markdown 表格还原
+            - 只输出识别到的文字本身，不要添加任何解释、标题或开场白
+            - 若图中没有可识别文字，仅输出：（未检测到文字）
+            """;
+
     /** 视觉预处理的硬超时，超时则回退为 null（让调用方继续原路径） */
     private static final Duration TIMEOUT = Duration.ofSeconds(45);
+
+    /** OCR 单图超时（识别通常比描述更耗时，放宽到 90 秒） */
+    private static final Duration OCR_TIMEOUT = Duration.ofSeconds(90);
 
     private final ChatModelBase model;
     private final GenerateOptions generateOptions;
@@ -126,6 +139,64 @@ public class VisionPreprocessor {
             return desc;
         } catch (Exception e) {
             log.warn("视觉预处理失败（回退为直传图片）: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 对单张图片做 OCR 文字识别。
+     *
+     * <p>复用多模态模型与 {@link #buildImageBlock}，仅替换提示词为 OCR 专用指令。</p>
+     *
+     * @param image 图片文件
+     * @return 识别出的文字；失败 / 超时 / 无内容时返回 null（调用方据此降级）
+     */
+    public String ocrImage(File image) {
+        if (image == null || !image.isFile()) {
+            return null;
+        }
+        ImageBlock block = buildImageBlock(image);
+        if (block == null) {
+            return null;
+        }
+
+        List<ContentBlock> blocks = new ArrayList<>();
+        blocks.add(block);
+        blocks.add(TextBlock.builder().text("请识别这张图片中的全部文字，按要求输出。").build());
+
+        Msg sysMsg = Msg.builder().role(MsgRole.SYSTEM).name("system").textContent(OCR_PROMPT).build();
+        Msg userMsg = Msg.builder().role(MsgRole.USER).name("user").content(blocks).build();
+
+        try {
+            StringBuilder out = new StringBuilder();
+            List<ChatResponse> responses = model.stream(
+                    List.of(sysMsg, userMsg), List.of(), generateOptions
+            ).collectList().block(OCR_TIMEOUT);
+
+            if (responses != null) {
+                for (ChatResponse resp : responses) {
+                    if (resp.getContent() == null) continue;
+                    for (ContentBlock b : resp.getContent()) {
+                        if (b instanceof TextBlock tb && tb.getText() != null) {
+                            out.append(tb.getText());
+                        }
+                    }
+                }
+            }
+            if (tokenTracker != null) {
+                long[] usage = TokenTracker.extractUsage(responses);
+                tokenTracker.recordModelUsage("OcrRecognize", usage[0], usage[1]);
+            }
+
+            String text = out.toString().trim();
+            if (text.isEmpty()) {
+                log.warn("OCR 返回空内容: {}", image.getName());
+                return null;
+            }
+            log.info("OCR 完成 — {}，识别 {} 字符", image.getName(), text.length());
+            return text;
+        } catch (Exception e) {
+            log.warn("OCR 识别失败: {} — {}", image.getName(), e.getMessage());
             return null;
         }
     }

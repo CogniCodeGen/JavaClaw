@@ -130,8 +130,10 @@
 /* ==== TOKEN-DEFS-END（脚本替换标记，勿删） ==== */
 
 .chat-root {
-    /* —— UI 字体栈（先 Inter，后 CJK，再系统回落） —— */
-    -fx-font-family: "Inter", "-apple-system", "Helvetica Neue", "Segoe UI", "PingFang SC", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
+    /* —— UI 字体栈（先 Inter 等拉丁字体，再彩色表情字体，后 CJK，最后系统回落） ——
+       彩色表情字体须排在 CJK 字体之前：PingFang SC 等中文字体自带单色表情字形，
+       排在前面会被逐字形回退命中，把表情渲染成难看的单色字形。 */
+    -fx-font-family: "Inter", "-apple-system", "Helvetica Neue", "Segoe UI", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "PingFang SC", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
     -fx-background-color: -jc-surface-page;
 }
 
@@ -5783,4 +5785,23 @@
 .jc-mode-chip:selected:hover {
     -fx-background-color: -jc-primary-700;
     -fx-text-fill: white;
+}
+
+/* ===== 图片查看弹窗（双击大图，缩放/拖拽） ===== */
+.image-viewer-root {
+    -fx-background-color: -jc-surface-page;
+}
+.image-viewer-viewport,
+.image-viewer-canvas {
+    /* 深色底，便于查看透明/浅色图片 */
+    -fx-background-color: #1e1e1e;
+}
+.image-viewer-toolbar {
+    -fx-background-color: -jc-surface-panel;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1 0 0 0;
+}
+.image-viewer-name {
+    -fx-text-fill: -jc-text-body;
+    -fx-font-size: 12.5px;
 }

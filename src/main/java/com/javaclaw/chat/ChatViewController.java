@@ -1118,6 +1118,7 @@ public class ChatViewController {
                     imgView.setFitHeight(180);
                     imgView.setPreserveRatio(true);
                     imgView.getStyleClass().add("attachment-thumbnail");
+                    enableImageZoom(imgView, file);
                     attachFlow.getChildren().add(imgView);
                 } else {
                     String ext = ChatMessage.getFileExtension(file).toUpperCase();
@@ -1612,6 +1613,7 @@ public class ChatViewController {
                 imageView.setPreserveRatio(true);
                 imageView.setSmooth(true);
                 imageView.getStyleClass().add("screenshot-image");
+                enableImageZoom(imageView, file);
 
                 container.getChildren().add(imageView);
                 displayedImagePaths.add(path);
@@ -1620,6 +1622,30 @@ public class ChatViewController {
                 log.warn("内联显示图片失败: {}", path, e);
             }
         }
+    }
+
+    /**
+     * 为对话中的图片视图启用双击放大查看。
+     *
+     * <p>双击后弹出 {@link ImageViewerDialog}，支持滚轮缩放与拖拽平移；
+     * 鼠标悬停显示手型并提示可点击。</p>
+     *
+     * @param imageView 图片视图
+     * @param file      对应的图片文件（弹窗加载原图）
+     */
+    private void enableImageZoom(ImageView imageView, File file) {
+        if (imageView == null || file == null) return;
+        imageView.setCursor(javafx.scene.Cursor.HAND);
+        javafx.scene.control.Tooltip.install(imageView,
+                new javafx.scene.control.Tooltip("双击查看大图（可缩放/拖拽）"));
+        imageView.setOnMouseClicked(e -> {
+            if (e.getButton() == javafx.scene.input.MouseButton.PRIMARY && e.getClickCount() == 2) {
+                javafx.stage.Window owner = imageView.getScene() != null
+                        ? imageView.getScene().getWindow() : null;
+                ImageViewerDialog.show(owner, file);
+                e.consume();
+            }
+        });
     }
 
     /**
@@ -2289,6 +2315,7 @@ public class ChatViewController {
                 imageView.setPreserveRatio(true);
                 imageView.setSmooth(true);
                 imageView.getStyleClass().add("screenshot-image");
+                enableImageZoom(imageView, file);
                 historyImages.add(imageView);
             } catch (Exception e) {
                 log.warn("历史图片加载失败: {}", path, e);
@@ -3311,7 +3338,8 @@ public class ChatViewController {
     private void openMemoryCenter() {
         log.info("打开记忆中心");
         javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
-        new com.javaclaw.ui.javafx.memory.MemoryCenterView(ownerStage, chatService.getMemoryService()).show();
+        new com.javaclaw.ui.javafx.memory.MemoryCenterView(
+                ownerStage, chatService.getMemoryService(), runtime.getKnowledgeExpert()).show();
     }
 
     /**

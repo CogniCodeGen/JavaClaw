@@ -1,5 +1,6 @@
 package com.javaclaw.ui.javafx.memory;
 
+import com.javaclaw.agent.expert.KnowledgeExpert;
 import com.javaclaw.memory.MemoryService;
 import com.javaclaw.memory.graph.MemoryGraph;
 import com.javaclaw.memory.model.ChangeLogEntry;
@@ -91,6 +92,8 @@ public class MemoryCenterView {
 
     private final Stage stage;
     private final MemoryService svc;
+    /** 知识库读写：记忆中心「知识库」页签的真实数据源（独立于 memory-store 的 knowledge/store）。 */
+    private final KnowledgeExpert knowledgeExpert;
 
     private final StackPane contentArea = new StackPane();
     private final Map<String, Region> panels = new HashMap<>();
@@ -131,8 +134,9 @@ public class MemoryCenterView {
     private Label scaleMain;
     private Label scaleSub;
 
-    public MemoryCenterView(Stage owner, MemoryService svc) {
+    public MemoryCenterView(Stage owner, MemoryService svc, KnowledgeExpert knowledgeExpert) {
         this.svc = svc;
+        this.knowledgeExpert = knowledgeExpert;
         this.stage = new Stage();
         stage.initOwner(owner);
         stage.initModality(Modality.NONE);
@@ -293,7 +297,7 @@ public class MemoryCenterView {
         int facts = svc.facts().size();
         int eps = svc.episodes().size();
         int ents = svc.entities().size();
-        long docs = svc.knowledge().stream().map(k -> k.docName).distinct().count();
+        long docs = knowledgeChunks().stream().map(k -> k.docName).distinct().count();
         scaleMain.setText(facts + " 事实 · " + eps + " 情景");
         scaleSub.setText(ents + " 实体 · " + docs + " 文档");
     }
@@ -423,7 +427,7 @@ public class MemoryCenterView {
         int facts = svc.facts().size();
         int eps = svc.episodes().size();
         int ents = svc.entities().size();
-        int chunks = svc.knowledge().size();
+        int chunks = knowledgeChunks().size();
         int max = Math.max(1, Math.max(Math.max(facts, eps), Math.max(ents, chunks)));
         VBox bars = new VBox(13,
                 compBar("事实", facts, max, "-jc-success"),
@@ -1097,7 +1101,7 @@ public class MemoryCenterView {
         // 按文档聚合：[分块数, 累计字符数]
         Map<String, long[]> docs = new LinkedHashMap<>();
         Map<String, String> imported = new HashMap<>();
-        for (KnowledgeChunk k : svc.knowledge()) {
+        for (KnowledgeChunk k : knowledgeChunks()) {
             if (!matches(k.docName, k.content)) continue;
             long[] agg = docs.computeIfAbsent(k.docName, x -> new long[]{0, 0});
             agg[0]++;
@@ -1159,10 +1163,16 @@ public class MemoryCenterView {
         knowledgeBox.getChildren().add(table);
     }
 
+    /** 知识库分块数据源：真实的 KnowledgeExpert（knowledge/store），expert 未注入时回退空。 */
+    private List<KnowledgeChunk> knowledgeChunks() {
+        return knowledgeExpert != null ? knowledgeExpert.allKnowledgeChunks() : List.of();
+    }
+
     private void reindexDoc(String doc) {
+        if (knowledgeExpert == null) return;
         toast("正在后台重建「" + doc + "」索引…");
         Thread t = new Thread(() -> {
-            int n = svc.reindexKnowledgeDoc(doc);
+            int n = knowledgeExpert.reindexDocument(doc);
             Platform.runLater(() -> { rebuildKnowledge(); toast("已重建 " + n + " 个分块的索引"); });
         }, "knowledge-reindex");
         t.setDaemon(true);
@@ -1170,14 +1180,15 @@ public class MemoryCenterView {
     }
 
     private void deleteKnowledgeDoc(String doc) {
+        if (knowledgeExpert == null) return;
         Alert a = new Alert(Alert.AlertType.CONFIRMATION,
                 "删除文档「" + doc + "」及其全部分块？", ButtonType.OK, ButtonType.CANCEL);
         a.initOwner(stage);
         if (a.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
-        int n = svc.deleteKnowledgeDoc(doc);
+        knowledgeExpert.knowledge_delete(doc);
         rebuildKnowledge();
         updateScaleCard();
-        toast("已删除 " + n + " 个分块");
+        toast("已删除文档「" + doc + "」");
     }
 
     private static String humanSize(long chars) {

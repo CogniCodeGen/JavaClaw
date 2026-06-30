@@ -202,11 +202,17 @@ public class KnowledgeExpert {
                 return ToolResponse.error("knowledge_import_file", "文件不存在: " + filePath);
             }
             String name = path.getFileName().toString();
+            String lower = name.toLowerCase();
             List<Document> docs;
-            if (name.toLowerCase().endsWith(".pdf")) {
+            if (lower.endsWith(".pdf")) {
                 docs = pdfReader.read(ReaderInput.fromString(filePath)).block();
-            } else {
+            } else if (isTextLike(lower)) {
+                // 纯文本与 Markdown：按文本读取并分块。Markdown 保留原文结构（标题/列表/代码块），
+                // 对检索友好，无需先转纯文本。读取失败（如二进制/编码错误）由外层 catch 返回明确原因。
                 docs = textReader.read(ReaderInput.fromString(Files.readString(path))).block();
+            } else {
+                return ToolResponse.error("knowledge_import_file",
+                        "不支持的文件类型: " + name + "（目前支持 PDF 与 TXT / Markdown 等文本文件）");
             }
             if (docs == null || docs.isEmpty()) {
                 return ToolResponse.error("knowledge_import_file", "文件内容为空或无法解析: " + filePath);
@@ -214,7 +220,7 @@ public class KnowledgeExpert {
             int added = storeChunks(name, scope, docs);
             String scopeLabel = scope == Scope.GLOBAL ? "全局" : "工作区";
             if (added == 0) {
-                return ToolResponse.error("knowledge_import_file", "嵌入不可用，未能写入任何分块（请检查嵌入模型配置）");
+                return ToolResponse.error("knowledge_import_file", embedFailureDetail());
             }
             return ToolResponse.success("knowledge_import_file",
                     String.format("已导入文件 [%s] 到%s知识库，写入 %d 个分块，总计 %d 个分块",
@@ -248,7 +254,7 @@ public class KnowledgeExpert {
             int added = storeChunks(docName, scope, docs);
             String scopeLabel = scope == Scope.GLOBAL ? "全局" : "工作区";
             if (added == 0) {
-                return ToolResponse.error("knowledge_import_text", "嵌入不可用，未能写入任何分块（请检查嵌入模型配置）");
+                return ToolResponse.error("knowledge_import_text", embedFailureDetail());
             }
             return ToolResponse.success("knowledge_import_text",
                     String.format("已导入文本 [%s] 到%s知识库，写入 %d 个分块，总计 %d 个分块",
@@ -259,16 +265,34 @@ public class KnowledgeExpert {
         }
     }
 
+    /** 受支持的文本类文件扩展名（含 Markdown）；其余非 PDF 类型视为不支持。 */
+    private boolean isTextLike(String lowerName) {
+        return lowerName.endsWith(".txt") || lowerName.endsWith(".text")
+                || lowerName.endsWith(".md") || lowerName.endsWith(".markdown")
+                || lowerName.endsWith(".log") || lowerName.endsWith(".csv")
+                || lowerName.endsWith(".json") || lowerName.endsWith(".xml")
+                || lowerName.endsWith(".html") || lowerName.endsWith(".htm");
+    }
+
     /** 把分块嵌入后写入指定 scope 的库，返回成功写入数（嵌入失败的分块跳过）。 */
     private int storeChunks(String docName, Scope scope, List<Document> docs) {
         String now = LocalDateTime.now().format(TIME_FMT);
         MemoryStore store = storeOf(scope);
+        int expectedDim = gate.dimensions();
         int added = 0, idx = 0;
         for (Document doc : docs) {
             String content = doc.getMetadata().getContentText();
             if (content == null || content.isBlank()) continue;
             float[] vec = gate.embed(content);
             if (vec == null) continue; // 无嵌入 → 跳过（不写无向量分块）
+            // 维度不匹配：配置的 rag.embedding.dimensions 与模型实际输出不一致，
+            // 直接抛出明确原因（JVector 索引按 expectedDim 建库，写入会失败/语义错乱）。
+            if (vec.length != expectedDim) {
+                throw new IllegalStateException(String.format(
+                        "嵌入维度不匹配：模型实际返回 %d 维，但 rag.embedding.dimensions 配置为 %d。"
+                                + "请把维度改为模型实际值，并清空 data/knowledge/store 与 data/memory-store 后重建索引。",
+                        vec.length, expectedDim));
+            }
             KnowledgeChunk kc = new KnowledgeChunk(docName, scope.name(), content, vec);
             kc.chunkIndex = idx++;
             kc.importTime = now;
@@ -276,6 +300,19 @@ public class KnowledgeExpert {
             added++;
         }
         return added;
+    }
+
+    /**
+     * 构造"未能写入任何分块"时的明确失败原因：优先带上嵌入端点的真实报错
+     * （鉴权 / 端点 / 网络等），帮助用户定位为何配置了向量模型仍导入失败。
+     */
+    private String embedFailureDetail() {
+        String why = gate == null ? null : gate.lastError();
+        if (why == null || why.isBlank()) {
+            return "嵌入不可用，未能写入任何分块（请检查 rag.embedding.* 配置：模型名 / baseUrl / API Key / 维度）";
+        }
+        return "嵌入调用失败：" + why
+                + "（请确认 rag.embedding.* 配置：baseUrl 指向 embeddings 端点、API Key 有效、模型名为嵌入模型）";
     }
 
     // ==================== 列表 / 删除 / 清空 ====================
@@ -476,6 +513,33 @@ public class KnowledgeExpert {
 
     public int getDocumentCount() {
         return getDocumentNames().size();
+    }
+
+    // ==================== 供 UI（记忆中心知识库页签）读取 ====================
+
+    /** 返回全局 + 工作区两个知识库的全部分块（供 UI 按文档聚合展示）。 */
+    public List<KnowledgeChunk> allKnowledgeChunks() {
+        return allChunks();
+    }
+
+    /**
+     * 重建某文档的向量索引：对其全部分块重新嵌入并回填向量（嵌入不可用则跳过该块）。
+     * 跨全局 + 工作区两库处理，返回成功重嵌入的分块数。建议后台线程调用。
+     */
+    public int reindexDocument(String docName) {
+        if (!ragEnabled || docName == null) return 0;
+        int n = 0;
+        for (MemoryStore store : new MemoryStore[]{globalStore, workspaceStore}) {
+            for (KnowledgeChunk c : store.allKnowledge()) {
+                if (!docName.equals(c.docName)) continue;
+                float[] vec = gate.embed(c.content);
+                if (vec != null) {
+                    store.updateKnowledgeChunk(c, x -> x.embedding = vec, "user");
+                    n++;
+                }
+            }
+        }
+        return n;
     }
 
     // ==================== 内部辅助 ====================

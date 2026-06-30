@@ -239,9 +239,10 @@ public class ModelFactory {
         OpenAITextEmbedding.Builder builder = OpenAITextEmbedding.builder()
                 .modelName(modelName)
                 .dimensions(dimensions);
-        if (apiKey != null && !apiKey.isBlank()) {
-            builder.apiKey(apiKey);
-        }
+        // 始终设置 apiKey：本地 OpenAI 兼容端点（如 LM Studio / Ollama）无需密钥，但嵌入客户端
+        // build() 在 apiKey 为空时会抛异常，导致整个嵌入模型创建失败（表现为"嵌入模型未创建"）。
+        // 故空密钥时填占位符，本地端点会忽略它，远端端点用户本就需填真实密钥。
+        builder.apiKey(apiKey != null && !apiKey.isBlank() ? apiKey : "not-needed");
         if (baseUrl != null && !baseUrl.isBlank()) {
             builder.baseUrl(baseUrl);
         }

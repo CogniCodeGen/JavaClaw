@@ -426,8 +426,9 @@ public class KnowledgeBaseView {
         FileChooser fileChooser = new FileChooser();
         fileChooser.setTitle("选择要导入到知识库的文件");
         fileChooser.getExtensionFilters().addAll(
-                new FileChooser.ExtensionFilter("支持的文档格式", "*.txt", "*.md", "*.pdf"),
-                new FileChooser.ExtensionFilter("文本文件", "*.txt", "*.md"),
+                new FileChooser.ExtensionFilter("支持的文档格式",
+                        "*.txt", "*.text", "*.md", "*.markdown", "*.log", "*.csv", "*.json", "*.xml", "*.html", "*.htm", "*.pdf"),
+                new FileChooser.ExtensionFilter("Markdown / 文本", "*.txt", "*.text", "*.md", "*.markdown"),
                 new FileChooser.ExtensionFilter("PDF 文件", "*.pdf"),
                 new FileChooser.ExtensionFilter("所有文件", "*.*")
         );
@@ -445,11 +446,10 @@ public class KnowledgeBaseView {
         File dir = dirChooser.showDialog(stage);
         if (dir == null) return;
 
-        File[] files = dir.listFiles(f ->
-                f.isFile() && (f.getName().endsWith(".txt") || f.getName().endsWith(".md") || f.getName().endsWith(".pdf")));
+        File[] files = dir.listFiles(f -> f.isFile() && isSupportedImportFile(f.getName()));
 
         if (files == null || files.length == 0) {
-            setStatus("目录中没有找到支持的文件（TXT/MD/PDF）", "#e67e22");
+            setStatus("目录中没有找到支持的文件（PDF / TXT / Markdown 等文本文件）", "#e67e22");
             return;
         }
 
@@ -458,6 +458,15 @@ public class KnowledgeBaseView {
 
     /** 单个文件最大导入大小（50MB） */
     private static final long MAX_IMPORT_FILE_SIZE = 50 * 1024 * 1024;
+
+    /** 目录导入时识别的受支持文件类型（与 {@code KnowledgeExpert.importFile} 保持一致）。 */
+    private boolean isSupportedImportFile(String name) {
+        String lower = name.toLowerCase();
+        return lower.endsWith(".pdf") || lower.endsWith(".txt") || lower.endsWith(".text")
+                || lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".log")
+                || lower.endsWith(".csv") || lower.endsWith(".json") || lower.endsWith(".xml")
+                || lower.endsWith(".html") || lower.endsWith(".htm");
+    }
 
     private void importFiles(File[] files) {
         int total = files.length;
@@ -471,6 +480,8 @@ public class KnowledgeBaseView {
         Thread importThread = new Thread(() -> {
             int successCount = 0;
             int failCount = 0;
+            // 收集每个失败文件的原因，导入结束后弹窗展示，避免用户只看到"X 失败"却不知缘由
+            List<String> failures = new java.util.ArrayList<>();
 
             for (int i = 0; i < files.length; i++) {
                 File file = files[i];
@@ -483,8 +494,12 @@ public class KnowledgeBaseView {
                     result = knowledgeExpert.importFile(file.getAbsolutePath(), scope);
                 }
                 boolean ok = ToolResponse.isSuccess(result);
-                if (ok) successCount++;
-                else failCount++;
+                if (ok) {
+                    successCount++;
+                } else {
+                    failCount++;
+                    failures.add(file.getName() + " — " + cleanReason(result));
+                }
 
                 int idx = i + 1;
                 boolean success = ok;
@@ -499,12 +514,14 @@ public class KnowledgeBaseView {
 
             int finalSuccess = successCount;
             int finalFail = failCount;
+            List<String> finalFailures = failures;
             Platform.runLater(() -> {
                 hideProgress();
                 if (finalFail == 0) {
                     setStatus("全部导入成功（共 " + finalSuccess + " 个文件）", "#27ae60");
                 } else {
-                    setStatus(String.format("导入完成：%d 成功，%d 失败", finalSuccess, finalFail), "#e67e22");
+                    setStatus(String.format("导入完成：%d 成功，%d 失败（详见弹窗）", finalSuccess, finalFail), "#e67e22");
+                    showImportFailures(finalFailures);
                 }
                 onRefreshList();
             });
@@ -627,6 +644,43 @@ public class KnowledgeBaseView {
                 onRefreshList();
             }
         });
+    }
+
+    /**
+     * 从 {@link ToolResponse} 格式字符串（{@code [工具名][状态] 原因}）中提取可读的失败原因，
+     * 去掉前缀的两段方括号标记。
+     */
+    private String cleanReason(String toolResponse) {
+        if (toolResponse == null || toolResponse.isBlank()) return "未知错误";
+        int firstClose = toolResponse.indexOf(']');
+        int secondClose = firstClose >= 0 ? toolResponse.indexOf(']', firstClose + 1) : -1;
+        if (secondClose >= 0 && secondClose + 1 < toolResponse.length()) {
+            return toolResponse.substring(secondClose + 1).trim();
+        }
+        return toolResponse.trim();
+    }
+
+    /**
+     * 弹窗展示导入失败明细：每个文件一行「文件名 — 失败原因」，置于可展开区域便于查看与复制。
+     */
+    private void showImportFailures(List<String> failures) {
+        if (failures == null || failures.isEmpty()) return;
+        Alert alert = UIHelper.createWarningAlert(
+                "有 " + failures.size() + " 个文件导入失败，下方列出具体原因。", stage);
+        alert.setTitle("知识库导入失败");
+
+        TextArea detail = new TextArea(String.join("\n", failures));
+        detail.setEditable(false);
+        detail.setWrapText(true);
+        detail.setPrefRowCount(Math.min(12, failures.size() + 1));
+        detail.setMaxWidth(Double.MAX_VALUE);
+        detail.setMaxHeight(Double.MAX_VALUE);
+        GridPane.setVgrow(detail, Priority.ALWAYS);
+        GridPane.setHgrow(detail, Priority.ALWAYS);
+
+        alert.getDialogPane().setExpandableContent(detail);
+        alert.getDialogPane().setExpanded(true);
+        alert.show();
     }
 
     private void setStatus(String text, String color) {

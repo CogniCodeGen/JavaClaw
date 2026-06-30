@@ -51,6 +51,18 @@ public interface UserInteractionPort {
     void notify(ToastRequest request);
 
     /**
+     * 在界面中预览一张图片（非阻塞）。
+     *
+     * <p>供工具层把图片直观展示给用户，典型为弹出可缩放/拖拽的图片查看窗口。
+     * 实现端应立即返回并在内部完成线程切换；UI 未就绪或不支持时静默降级为日志。</p>
+     *
+     * @param imagePath 图片文件的绝对路径
+     */
+    default void previewImage(java.nio.file.Path imagePath) {
+        // 默认无 UI：静默忽略
+    }
+
+    /**
      * 端口是否可用（UI 已就绪）。
      *
      * <p>默认认为总是可用。实现可覆盖以避免在 UI 未就绪时阻塞调用者。</p>

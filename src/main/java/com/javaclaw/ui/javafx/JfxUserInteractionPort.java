@@ -75,6 +75,23 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
     }
 
     @Override
+    public void previewImage(java.nio.file.Path imagePath) {
+        if (imagePath == null) return;
+        java.io.File file = imagePath.toFile();
+        if (!file.isFile()) {
+            log.warn("预览图片失败：文件不存在 {}", imagePath);
+            return;
+        }
+        Platform.runLater(() -> {
+            try {
+                com.javaclaw.chat.ImageViewerDialog.show(null, file);
+            } catch (Exception e) {
+                log.warn("打开图片查看窗口失败: {}", imagePath, e);
+            }
+        });
+    }
+
+    @Override
     public boolean isAvailable() {
         // JavaFX Platform 已启动即视为可用；Toolkit 未初始化时 Platform.runLater 抛 IllegalStateException
         try {

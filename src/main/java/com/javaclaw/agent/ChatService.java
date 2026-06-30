@@ -315,6 +315,11 @@ public class ChatService {
                 .group("agents").apply();
         log.info("长任务/定时/智能体列举工具已注册到编排器");
 
+        // 媒体工具：图片查看（view_image）+ 图片/PDF OCR（ocr_recognize），按路由激活
+        toolkit.registration().tool(new com.javaclaw.media.MediaTools(runtime.getVisionPreprocessor()))
+                .group("media").apply();
+        log.info("媒体工具（图片查看 / OCR）已注册到编排器");
+
         log.info("Master Toolkit 已构建 — 工具组: {}", toolkit.getActiveGroups());
         return toolkit;
     }
