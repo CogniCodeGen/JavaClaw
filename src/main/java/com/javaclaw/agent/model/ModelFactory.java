@@ -16,6 +16,8 @@ import org.slf4j.LoggerFactory;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * 模型工厂 — 负责创建 HTTP 传输层和 ChatModel 实例
@@ -62,6 +64,17 @@ public class ModelFactory {
 
     /** 单次模型请求总超时（秒）— 覆盖 AgentScope MODEL_DEFAULTS 的 5 分钟默认 */
     private final long modelRequestTimeoutSeconds;
+
+    /**
+     * 模型构建器 —— 每个 provider 一条，签名对齐既有 {@code createXxxModel(spec, options, multiAgent)}。
+     */
+    @FunctionalInterface
+    private interface ChatModelBuilder {
+        ChatModelBase build(TierSpec spec, GenerateOptions options, boolean multiAgent);
+    }
+
+    /** providerType → 构建器的注册表；未命中回退 OpenAI 兼容（等价旧 switch 的 default 分支） */
+    private final Map<String, ChatModelBuilder> chatModelRegistry = new HashMap<>();
 
     public ModelFactory() {
         AgentConfig config = AgentConfig.getInstance();
@@ -123,6 +136,15 @@ public class ModelFactory {
                 highSpec.modelName(), highSpec.providerType(),
                 normalSpec.modelName(), normalSpec.providerType(), config.isNormalTierConfigured(),
                 lightSpec.modelName(), lightSpec.providerType(), config.isLightTierConfigured());
+
+        // —— 模型提供商注册表：OpenAI 为默认兜底，其余登记入表 ——
+        // 新增 provider 只需在此加一行，无须再改 createModel 的分发逻辑。
+        chatModelRegistry.put("OpenAI", this::createOpenAIModel);
+        chatModelRegistry.put("DashScope", this::createDashScopeModel);
+        chatModelRegistry.put("Anthropic", this::createAnthropicModel);
+        chatModelRegistry.put("Gemini", this::createGeminiModel);
+        // Ollama 不使用 options，适配到统一签名
+        chatModelRegistry.put("Ollama", (spec, options, multiAgent) -> createOllamaModel(spec, multiAgent));
     }
 
     // ==================== 公共入口 ====================
@@ -254,17 +276,17 @@ public class ModelFactory {
     // ==================== 内部分发 ====================
 
     /**
-     * 统一的模型创建方法，按 tier 配置 + multiAgent 决定 provider 与 formatter
+     * 统一的模型创建方法，按 tier 配置 + multiAgent 从注册表查表决定 provider 与 formatter。
+     * <p>未注册（或未配置）的 providerType 一律回退 OpenAI 兼容，与旧 switch 的 default 分支行为一致。</p>
      */
     private ChatModelBase createModel(TierSpec spec, boolean multiAgent) {
         GenerateOptions options = buildGenerateOptions(spec);
-        return switch (spec.providerType()) {
-            case "DashScope" -> createDashScopeModel(spec, options, multiAgent);
-            case "Anthropic" -> createAnthropicModel(spec, options, multiAgent);
-            case "Gemini" -> createGeminiModel(spec, options, multiAgent);
-            case "Ollama" -> createOllamaModel(spec, multiAgent);
-            default -> createOpenAIModel(spec, options, multiAgent);
-        };
+        ChatModelBuilder builder = chatModelRegistry.get(spec.providerType());
+        if (builder == null) {
+            log.debug("未注册的 providerType「{}」，回退 OpenAI 兼容", spec.providerType());
+            builder = this::createOpenAIModel;
+        }
+        return builder.build(spec, options, multiAgent);
     }
 
     /**

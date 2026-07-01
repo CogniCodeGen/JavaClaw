@@ -984,9 +984,12 @@ public class SettingsView {
         Label providerTitle = new Label("模型提供商");
         providerTitle.getStyleClass().add("settings-group-title");
 
+        // 默认仅暴露 OpenAI 兼容格式；其余提供商由模型注册表按需接入，需要时把名称加回此数组即可。
+        String[] providers = {"OpenAI"};
+
         // providerCombo 作为状态载体保留（loadSettings/save 仍读写它），展示换为设计稿分段控件
         providerCombo = new ComboBox<>();
-        providerCombo.getItems().addAll("OpenAI", "DashScope", "Anthropic", "Gemini", "Ollama");
+        providerCombo.getItems().addAll(providers);
         providerCombo.getStyleClass().add("settings-combo");
         providerCombo.setOnAction(e -> applyProviderPreset(providerCombo.getValue()));
 
@@ -995,7 +998,7 @@ public class SettingsView {
         HBox providerSeg = new HBox(2);
         providerSeg.getStyleClass().add("seg-container");
         providerSeg.setAlignment(Pos.CENTER_LEFT);
-        for (String p : new String[]{"OpenAI", "DashScope", "Anthropic", "Gemini", "Ollama"}) {
+        for (String p : providers) {
             ToggleButton tb = new ToggleButton(p);
             tb.getStyleClass().add("seg-btn");
             tb.setToggleGroup(providerSegGroup);
