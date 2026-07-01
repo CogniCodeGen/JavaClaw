@@ -40,6 +40,12 @@ public class Fact {
     /** 置顶 —— 钉住重要事实（UI 排序靠前；语义上等同强保护，不被淘汰） */
     public boolean pinned;
 
+    /**
+     * 待嵌入标记 —— 嵌入服务不可用时降级落在 {@code pendingFacts}（无向量、不可召回），
+     * 服务恢复后重嵌入迁入正式 {@code facts} 索引。true 时增删改须路由到 pending 存储。
+     */
+    public boolean pending;
+
     /** 来源情景（对象引用 = 记忆图的一条边，可空） */
     public Episode source;
 

@@ -105,6 +105,10 @@ public class MemoryCenterView {
     private final TextField searchField = new TextField();
     private String query = "";
 
+    // —— 嵌入降级横幅（嵌入服务不可用时提示，读取 EmbeddingGate.lastError） ——
+    private HBox degradeBanner;
+    private Label degradeText;
+
     // —— 事实页状态 ——
     private boolean batchMode = false;
     private final Set<String> selectedFacts = new HashSet<>();
@@ -153,6 +157,7 @@ public class MemoryCenterView {
         stage.setOnHidden(e -> graphView.dispose());
 
         selectSection("overview");
+        probeEmbeddingAsync();
     }
 
     public void show() {
@@ -250,7 +255,8 @@ public class MemoryCenterView {
         foot.getStyleClass().add("modal-foot");
         foot.setAlignment(Pos.CENTER_RIGHT);
 
-        VBox rightPane = new VBox(header, contentArea, foot);
+        degradeBanner = buildDegradeBanner();
+        VBox rightPane = new VBox(header, degradeBanner, contentArea, foot);
         HBox.setHgrow(rightPane, Priority.ALWAYS);
 
         HBox layout = new HBox(leftPane, rightPane);
@@ -258,8 +264,7 @@ public class MemoryCenterView {
     }
 
     private HBox buildHeader() {
-        Label icon = new Label("🔍");
-        icon.setStyle("-fx-text-fill: -jc-text-hint;");
+        javafx.scene.Node icon = searchIcon();
         searchField.setPromptText("搜索记忆 — 事实 / 情景 / 实体…");
         searchField.getStyleClass().add("mc-search-field");
         HBox.setHgrow(searchField, Priority.ALWAYS);
@@ -267,11 +272,14 @@ public class MemoryCenterView {
             query = nv == null ? "" : nv.trim();
             refreshSection(currentSection);
         });
-        HBox searchBox = new HBox(icon, searchField);
+        HBox searchBox = new HBox(9, icon, searchField);
         searchBox.getStyleClass().add("mc-search");
         searchBox.setAlignment(Pos.CENTER_LEFT);
-        searchBox.setPrefWidth(420);
-        searchBox.setMaxWidth(440);
+        HBox.setHgrow(searchBox, Priority.ALWAYS);
+        searchBox.setMaxWidth(420);
+        // 关键：不随 header HBox 的 fillHeight 拉伸到整条 56px（否则搜索框显得臃肿），
+        // 固定为自身首选高度并由 header 垂直居中，贴合设计稿紧凑高度。
+        searchBox.setMaxHeight(Region.USE_PREF_SIZE);
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
@@ -283,6 +291,72 @@ public class MemoryCenterView {
         header.getStyleClass().add("mc-header");
         header.setAlignment(Pos.CENTER_LEFT);
         return header;
+    }
+
+    /** 细线放大镜图标（描边随主题令牌 -jc-text-hint），替代表情符号，贴合设计稿 SVG。 */
+    private javafx.scene.Node searchIcon() {
+        javafx.scene.shape.Circle ring = new javafx.scene.shape.Circle(6.9, 6.9, 4.4);
+        ring.setFill(null);
+        ring.setStrokeWidth(1.6);
+        ring.getStyleClass().add("mc-search-icon");
+        javafx.scene.shape.Line handle = new javafx.scene.shape.Line(10.2, 10.2, 13.4, 13.4);
+        handle.setStrokeWidth(1.6);
+        handle.setStrokeLineCap(javafx.scene.shape.StrokeLineCap.ROUND);
+        handle.getStyleClass().add("mc-search-icon");
+        javafx.scene.Group g = new javafx.scene.Group(ring, handle);
+        g.setManaged(true);
+        return g;
+    }
+
+    /** 嵌入降级横幅：嵌入端点不可用/存在待嵌入暂存时显示，解释「为何没有数据」。 */
+    private HBox buildDegradeBanner() {
+        Label ic = new Label("⚠");
+        ic.getStyleClass().add("mc-degrade-icon");
+        degradeText = new Label();
+        degradeText.getStyleClass().add("mc-degrade-text");
+        degradeText.setWrapText(true);
+        HBox.setHgrow(degradeText, Priority.ALWAYS);
+        degradeText.setMaxWidth(Double.MAX_VALUE);
+        HBox bar = new HBox(9, ic, degradeText);
+        bar.getStyleClass().add("mc-degrade-banner");
+        bar.setAlignment(Pos.CENTER_LEFT);
+        bar.setVisible(false);
+        bar.setManaged(false);
+        return bar;
+    }
+
+    /** 刷新降级横幅：按 embeddingError / pendingCount 决定是否显示与文案。 */
+    private void updateBanner() {
+        if (degradeBanner == null) return;
+        int pending = svc.pendingCount();
+        String err = svc.embeddingError();
+        boolean degraded = pending > 0 || (err != null && !err.isBlank());
+        degradeBanner.setVisible(degraded);
+        degradeBanner.setManaged(degraded);
+        if (!degraded) return;
+        StringBuilder sb = new StringBuilder("嵌入服务不可用");
+        if (err != null && !err.isBlank()) sb.append("：").append(oneLine(err, 88));
+        sb.append("。事实/情景已降级为纯文本暂存");
+        if (pending > 0) {
+            sb.append("（").append(pending).append(" 条待嵌入，服务恢复后自动重嵌入并可被向量召回）");
+        } else {
+            sb.append("，恢复嵌入服务后新记忆将带向量入库。");
+        }
+        degradeText.setText(sb.toString());
+    }
+
+    /** 后台探测嵌入端点可用性，回到 UI 线程刷新横幅（打开记忆中心时主动检测）。 */
+    private void probeEmbeddingAsync() {
+        Thread t = new Thread(() -> {
+            try {
+                svc.probeEmbedding();
+            } catch (Exception ignore) {
+                // 探测失败即视为不可用，lastError 已由 gate 记录
+            }
+            Platform.runLater(this::updateBanner);
+        }, "memory-embed-probe");
+        t.setDaemon(true);
+        t.start();
     }
 
     private VBox buildScaleCard() {
@@ -332,6 +406,7 @@ public class MemoryCenterView {
         }
         refreshSection(id);
         updateScaleCard();
+        updateBanner();
     }
 
     /** 重建指定分区的动态内容（受搜索/筛选/编辑影响的分区）。 */
@@ -656,6 +731,12 @@ public class MemoryCenterView {
             meta.setAlignment(Pos.CENTER_LEFT);
             meta.getChildren().add(metaLabel("更新 " + fmt(f.updatedAt)));
             meta.getChildren().add(metaLabel("· 命中 " + f.hitCount));
+            if (f.pending) {
+                Label pend = new Label("待嵌入");
+                pend.getStyleClass().addAll("jc-badge", "jc-badge-amber");
+                pend.setTooltip(new javafx.scene.control.Tooltip("嵌入服务不可用时暂存（无向量、暂不可召回）；服务恢复后自动重嵌入"));
+                meta.getChildren().add(pend);
+            }
             if (f.userEdited) {
                 Label prot = new Label("用户保护");
                 prot.getStyleClass().addAll("jc-badge", "jc-badge-soft");
@@ -978,6 +1059,11 @@ public class MemoryCenterView {
         derived.getStyleClass().addAll("jc-badge", "jc-badge-soft");
         HBox top = new HBox(time, sp, derived);
         top.setAlignment(Pos.CENTER_LEFT);
+        if (e.pending) {
+            Label pend = new Label("待嵌入");
+            pend.getStyleClass().addAll("jc-badge", "jc-badge-amber");
+            top.getChildren().add(pend);
+        }
 
         HBox userRow = roleLine("用户", "mc-ep-role-user", e.userInput, "mc-ep-user");
         HBox asstRow = roleLine("助手", "mc-ep-role-asst", e.assistantReply, "mc-ep-reply");
@@ -1501,6 +1587,7 @@ public class MemoryCenterView {
         if (op == null) return new String[]{"?", "jc-badge-stopped"};
         return switch (op.toUpperCase()) {
             case "ADD" -> new String[]{"新增", "jc-badge-ok"};
+            case "ADD_PENDING" -> new String[]{"暂存", "jc-badge-amber"};
             case "UPDATE" -> new String[]{"编辑", "jc-badge-amber"};
             case "REMOVE" -> new String[]{"删除", "jc-badge-fail"};
             case "MERGE" -> new String[]{"合并", "jc-badge-indigo"};

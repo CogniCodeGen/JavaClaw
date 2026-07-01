@@ -97,8 +97,13 @@ public class Distiller {
 
             float[] vec = gate.embed(line);
             if (vec == null) {
+                // 嵌入不可用 → 降级：纯文本落 pending 暂存区（无向量、不进索引，仍在记忆中心可见）
+                Fact pf = new Fact(null, line, null);
+                pf.source = ep;
+                pf.about = matchEntities(line, turnEntities);
+                store.addPendingFact(pf, "distiller");
                 skipped++;
-                continue; // 嵌入不可用 → 跳过（不写无向量事实）
+                continue;
             }
             List<MemoryStore.Scored<Fact>> hit = store.searchFacts(vec, 1, dedup);
             if (!hit.isEmpty() && !hit.get(0).entity().userEdited) {
@@ -113,7 +118,7 @@ public class Distiller {
                 added++;
             }
         }
-        log.info("记忆蒸馏完成：新增 {}，合并 {}，跳过 {}（无嵌入），实体 {}", added, merged, skipped, turnEntities.size());
+        log.info("记忆蒸馏完成：新增 {}，合并 {}，降级暂存 {}（无嵌入），实体 {}", added, merged, skipped, turnEntities.size());
     }
 
     /**

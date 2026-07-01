@@ -124,8 +124,14 @@ public class MemoryService implements AutoCloseable {
                     ep.embedding = gate.embed(cap(userInput) + " " + cap(reply));
                     if (ep.embedding != null) {
                         store.addEpisode(ep, "system");
+                        // 嵌入可用 → 顺带把此前降级暂存的条目重嵌入迁回正式索引（有界）
+                        if (pendingCount() > 0) {
+                            int moved = promotePending(25);
+                            if (moved > 0) log.info("嵌入恢复，已迁回 {} 条暂存记忆", moved);
+                        }
                     } else {
-                        log.debug("情景嵌入不可用，跳过情景落库（本轮记忆降级）");
+                        store.addPendingEpisode(ep, "system"); // 降级：纯文本暂存，仍可见
+                        log.debug("情景嵌入不可用，降级暂存情景（本轮记忆无向量）");
                     }
                 })
                 .subscribeOn(Schedulers.boundedElastic())
@@ -203,24 +209,48 @@ public class MemoryService implements AutoCloseable {
 
     // ==================== 记忆中心 UI 便捷方法 ====================
 
+    /** 全部事实：正式（已索引）+ pending（降级暂存）合并，供 UI 展示。 */
     public List<com.javaclaw.memory.model.Fact> facts() {
-        return store != null ? store.allFacts() : List.of();
+        if (store == null) return List.of();
+        List<com.javaclaw.memory.model.Fact> out = new java.util.ArrayList<>(store.allFacts());
+        out.addAll(store.allPendingFacts());
+        return out;
     }
 
     public void deleteFact(com.javaclaw.memory.model.Fact f) {
-        if (store != null) store.removeFact(f, "user");
+        if (store == null) return;
+        if (f.pending) store.removePendingFact(f, "user");
+        else store.removeFact(f, "user");
     }
 
-    /** 切换事实置顶位（钉住/取消钉住）。 */
+    /** 切换事实置顶位（钉住/取消钉住）；pending 事实路由到暂存区。 */
     public void togglePin(com.javaclaw.memory.model.Fact f) {
         if (store == null) return;
-        store.updateFact(f, x -> x.pinned = !x.pinned, "user");
+        if (f.pending) store.updatePendingFact(f, x -> x.pinned = !x.pinned, "user");
+        else store.updateFact(f, x -> x.pinned = !x.pinned, "user");
     }
 
-    /** 编辑事实正文：重新嵌入并置 userEdited 保护位（蒸馏不得再静默覆盖）。 */
+    /**
+     * 编辑事实正文：重新嵌入并置 userEdited 保护位（蒸馏不得再静默覆盖）。
+     * pending 事实编辑时若嵌入已恢复 → 顺带迁入正式索引；否则仍留暂存区。
+     */
     public void editFact(com.javaclaw.memory.model.Fact f, String newText) {
         if (store == null) return;
         float[] vec = gate.embed(newText);
+        if (f.pending) {
+            if (vec != null) {
+                // 嵌入恢复：迁入正式索引
+                f.text = newText;
+                f.embedding = vec;
+                f.userEdited = true;
+                f.pending = false;
+                store.removePendingFact(f, "user");
+                store.addFact(f, "user");
+            } else {
+                store.updatePendingFact(f, x -> { x.text = newText; x.userEdited = true; }, "user");
+            }
+            return;
+        }
         store.updateFact(f, x -> {
             x.text = newText;
             if (vec != null) x.embedding = vec;
@@ -228,18 +258,75 @@ public class MemoryService implements AutoCloseable {
         }, "user");
     }
 
-    /** 新增一条事实：先嵌入再入库（嵌入不可用则仅落库、不进向量索引）。 */
+    /** 新增一条事实：先嵌入再入库（嵌入不可用则降级落 pending 暂存区，仍可见）。 */
     public void addFact(String section, String text) {
         if (store == null || text == null || text.isBlank()) return;
         float[] vec = gate.embed(text);
         com.javaclaw.memory.model.Fact f = new com.javaclaw.memory.model.Fact(
                 section == null || section.isBlank() ? "其它" : section.trim(), text.trim(), vec);
         f.userEdited = true; // 手动新增等同用户保护，蒸馏不得静默覆盖
-        store.addFact(f, "user");
+        if (vec != null) store.addFact(f, "user");
+        else store.addPendingFact(f, "user");
     }
 
+    /** 全部情景：正式 + pending 合并，供 UI 展示。 */
     public List<com.javaclaw.memory.model.Episode> episodes() {
-        return store != null ? store.allEpisodes() : List.of();
+        if (store == null) return List.of();
+        List<com.javaclaw.memory.model.Episode> out = new java.util.ArrayList<>(store.allEpisodes());
+        out.addAll(store.allPendingEpisodes());
+        return out;
+    }
+
+    // ==================== 降级暂存：状态与迁回 ====================
+
+    /** 最近一次嵌入失败原因；嵌入健康时为 null（供 UI 降级横幅）。 */
+    public String embeddingError() {
+        return gate.lastError();
+    }
+
+    /** 主动探测嵌入端点：发一次极短嵌入，刷新 {@link #embeddingError()}。建议后台线程调用。 */
+    public String probeEmbedding() {
+        if (store == null) return "记忆库未打开";
+        gate.embed("记忆嵌入健康探测");
+        return gate.lastError();
+    }
+
+    /** 待嵌入暂存条数（事实 + 情景），>0 表示曾发生嵌入降级。 */
+    public int pendingCount() {
+        if (store == null) return 0;
+        return store.allPendingFacts().size() + store.allPendingEpisodes().size();
+    }
+
+    /**
+     * 尝试将 pending 暂存的事实/情景重新嵌入并迁入正式索引（嵌入恢复后调用）。
+     * 有界处理（各至多 {@code limit} 条），失败/仍不可用的保留在暂存区。返回成功迁回条数。
+     * 建议后台线程调用。
+     */
+    public int promotePending(int limit) {
+        if (store == null) return 0;
+        int moved = 0;
+        for (com.javaclaw.memory.model.Fact f : store.allPendingFacts()) {
+            if (moved >= limit) break;
+            float[] vec = gate.embed(f.text);
+            if (vec == null) return moved; // 嵌入仍不可用，停止（避免逐条空转）
+            f.embedding = vec;
+            f.pending = false;
+            store.removePendingFact(f, "system");
+            store.addFact(f, "system");
+            moved++;
+        }
+        int movedEp = 0;
+        for (com.javaclaw.memory.model.Episode e : store.allPendingEpisodes()) {
+            if (movedEp >= limit) break;
+            float[] vec = gate.embed(cap(e.userInput) + " " + cap(e.assistantReply));
+            if (vec == null) break;
+            e.embedding = vec;
+            e.pending = false;
+            store.removePendingEpisode(e, "system");
+            store.addEpisode(e, "system");
+            movedEp++;
+        }
+        return moved + movedEp;
     }
 
     public List<com.javaclaw.memory.model.EntityNode> entities() {

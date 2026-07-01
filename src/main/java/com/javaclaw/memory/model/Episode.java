@@ -25,6 +25,9 @@ public class Episode {
 
     public long timestamp;
 
+    /** 待嵌入标记 —— 嵌入服务不可用时降级落在 {@code pendingEpisodes}（无向量、不可召回）。 */
+    public boolean pending;
+
     public Episode() {}
 
     public Episode(String sessionId, String userInput, String assistantReply) {

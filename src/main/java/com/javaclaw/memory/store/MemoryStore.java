@@ -110,6 +110,15 @@ public class MemoryStore implements AutoCloseable {
         }
         this.root = r;
 
+        // 旧库迁移：pending 暂存区为反序列化后新增字段，缺失时补建并落盘（无向量索引）。
+        boolean migrated = false;
+        if (root.pendingFacts == null) { root.pendingFacts = GigaMap.New(); migrated = true; }
+        if (root.pendingEpisodes == null) { root.pendingEpisodes = GigaMap.New(); migrated = true; }
+        if (migrated) {
+            mgr.store(root);
+            log.info("[{}] 已补建 pending 暂存区（旧库迁移）", label);
+        }
+
         this.factIndex = ensureIndex(root.facts, new FactVectorizer());
         this.episodeIndex = ensureIndex(root.episodes, new EpisodeVectorizer());
         this.knowledgeIndex = ensureIndex(root.knowledge, new KnowledgeVectorizer());
@@ -223,6 +232,51 @@ public class MemoryStore implements AutoCloseable {
         return out;
     }
 
+    // ==================== 待嵌入事实(降级暂存,无向量索引) ====================
+
+    /** 降级新增事实到 pending 暂存区(嵌入不可用时,纯文本落库、不进向量索引)。 */
+    public void addPendingFact(Fact f, String actor) {
+        write(() -> {
+            if (f.id == null) f.id = UUID.randomUUID().toString();
+            long now = System.currentTimeMillis();
+            if (f.createdAt == 0) f.createdAt = now;
+            f.updatedAt = now;
+            f.pending = true;
+            f.embedding = null; // 暂存区不持有向量
+            f.entityId = root.pendingFacts.add(f);
+            root.pendingFacts.store();
+            logInternal("ADD_PENDING", "Fact", f.id, actor, trunc(f.text));
+        });
+    }
+
+    /** 原地更新 pending 事实(仍留在暂存区,如离线编辑正文)。 */
+    public void updatePendingFact(Fact f, java.util.function.Consumer<Fact> mutator, String actor) {
+        write(() -> {
+            root.pendingFacts.update(f, x -> {
+                mutator.accept(x);
+                x.updatedAt = System.currentTimeMillis();
+            });
+            root.pendingFacts.store();
+            logInternal("UPDATE", "Fact", f.id, actor, trunc(f.text));
+        });
+    }
+
+    /** 从 pending 暂存区删除事实。 */
+    public void removePendingFact(Fact f, String actor) {
+        write(() -> {
+            root.pendingFacts.removeById(f.entityId);
+            root.pendingFacts.store();
+            logInternal("REMOVE", "Fact", f.id, actor, trunc(f.text));
+        });
+    }
+
+    /** 全部 pending 事实(只读快照)。 */
+    public List<Fact> allPendingFacts() {
+        List<Fact> out = new ArrayList<>();
+        root.pendingFacts.iterate(out::add);
+        return out;
+    }
+
     // ==================== 情景记忆 ====================
 
     public void addEpisode(Episode e, String actor) {
@@ -243,6 +297,37 @@ public class MemoryStore implements AutoCloseable {
     public List<Episode> allEpisodes() {
         List<Episode> out = new ArrayList<>();
         root.episodes.iterate(out::add);
+        return out;
+    }
+
+    // ==================== 待嵌入情景(降级暂存,无向量索引) ====================
+
+    /** 降级新增情景到 pending 暂存区(嵌入不可用时,纯文本落库、不进向量索引)。 */
+    public void addPendingEpisode(Episode e, String actor) {
+        write(() -> {
+            if (e.id == null) e.id = UUID.randomUUID().toString();
+            if (e.timestamp == 0) e.timestamp = System.currentTimeMillis();
+            e.pending = true;
+            e.embedding = null;
+            e.entityId = root.pendingEpisodes.add(e);
+            root.pendingEpisodes.store();
+            logInternal("ADD_PENDING", "Episode", e.id, actor, trunc(e.userInput));
+        });
+    }
+
+    /** 从 pending 暂存区删除情景。 */
+    public void removePendingEpisode(Episode e, String actor) {
+        write(() -> {
+            root.pendingEpisodes.removeById(e.entityId);
+            root.pendingEpisodes.store();
+            logInternal("REMOVE", "Episode", e.id, actor, trunc(e.userInput));
+        });
+    }
+
+    /** 全部 pending 情景(只读快照)。 */
+    public List<Episode> allPendingEpisodes() {
+        List<Episode> out = new ArrayList<>();
+        root.pendingEpisodes.iterate(out::add);
         return out;
     }
 

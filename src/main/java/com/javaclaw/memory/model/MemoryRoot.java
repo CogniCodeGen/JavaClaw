@@ -21,6 +21,16 @@ public class MemoryRoot {
     /** 情景记忆：对话轮/事件 */
     public GigaMap<Episode> episodes = GigaMap.New();
 
+    /**
+     * 待嵌入事实 —— 嵌入服务不可用时的降级暂存区（<b>无向量索引</b>）。
+     * 服务恢复后由 {@code MemoryService.promotePending} 重嵌入并迁入 {@link #facts}。
+     * 旧库无此字段，{@code MemoryStore.open()} 反序列化后按需补建。
+     */
+    public GigaMap<Fact> pendingFacts = GigaMap.New();
+
+    /** 待嵌入情景 —— 同 {@link #pendingFacts}，无向量索引。 */
+    public GigaMap<Episode> pendingEpisodes = GigaMap.New();
+
     /** 知识库分块 */
     public GigaMap<KnowledgeChunk> knowledge = GigaMap.New();
 

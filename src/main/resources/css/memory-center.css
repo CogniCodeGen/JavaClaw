@@ -22,9 +22,15 @@
     -fx-border-width: 1;
     -fx-background-radius: 9;
     -fx-border-radius: 9;
-    -fx-padding: 2 11 2 11;
+    -fx-padding: 6 13 6 13;
     -fx-alignment: CENTER_LEFT;
-    -fx-spacing: 8;
+    -fx-spacing: 9;
+}
+
+/* 细线放大镜（Circle+Line），描边随主题令牌 */
+.mc-search-icon {
+    -fx-stroke: -jc-text-hint;
+    -fx-fill: transparent;
 }
 
 .mc-search-field {
@@ -33,12 +39,31 @@
     -fx-font-size: 13px;
     -fx-text-fill: -jc-text-title;
     -fx-prompt-text-fill: -jc-text-hint;
-    -fx-padding: 6 0 6 0;
+    -fx-padding: 2 0 2 0;
 }
 
 .mc-search-field:focused {
     -fx-background-color: transparent;
     -fx-border-color: transparent;
+}
+
+/* ---- 嵌入降级横幅（解释「为何没有数据」）---- */
+.mc-degrade-banner {
+    -fx-background-color: -jc-warning-bg;
+    -fx-border-color: -jc-warning;
+    -fx-border-width: 0 0 0 3;
+    -fx-background-radius: 0;
+    -fx-padding: 9 22 9 19;
+}
+
+.mc-degrade-icon {
+    -fx-font-size: 14px;
+    -fx-text-fill: -jc-warning;
+}
+
+.mc-degrade-text {
+    -fx-font-size: 12.5px;
+    -fx-text-fill: -jc-text-body;
 }
 
 .mc-header-tag {
