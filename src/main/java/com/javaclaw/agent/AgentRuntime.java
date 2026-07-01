@@ -353,7 +353,8 @@ public final class AgentRuntime {
         if (!knowledgeExpert.isRagEnabled() || !knowledgeExpert.hasDocuments()) {
             return userInput;
         }
-        Set<String> selected = selectedKnowledgeDocs;
+        // 检索范围 = 知识库中心持久化的「参与检索」文档集合（默认全部启用，可逐篇停用）。
+        Set<String> selected = knowledgeExpert.getEnabledDocs();
         if (selected == null || selected.isEmpty()) {
             return userInput;
         }

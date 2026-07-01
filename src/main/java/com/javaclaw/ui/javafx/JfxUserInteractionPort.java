@@ -45,6 +45,11 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
         this.toastHandler = handler;
     }
 
+    /** 返回当前 Toast 渲染器（可能为 null）；供临时接管者（如模态窗口）保存后还原。 */
+    public Consumer<String> getToastHandler() {
+        return toastHandler;
+    }
+
     @Override
     public boolean confirm(ConfirmRequest request) {
         return confirmEx(request).isAllow();

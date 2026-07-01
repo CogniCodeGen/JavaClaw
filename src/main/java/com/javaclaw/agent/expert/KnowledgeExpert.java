@@ -67,6 +67,17 @@ public class KnowledgeExpert {
     private TextReader textReader;
     private PDFReader pdfReader;
 
+    /**
+     * 「不参与检索」的文档名集合（持久化到工作区 {@code data/knowledge-doc-prefs.json}）。
+     * 检索默认启用全部已导入文档（设计稿语义：默认全部启用、可在知识库中心逐篇停用）；
+     * 故此处只记录被显式停用的文档名 —— 新导入文档自动启用，无需写入。
+     * 全局文档名也记于此（按工作区维度决定是否参与本工作区会话检索）。
+     */
+    private final Set<String> disabledDocs = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** 检索命中片段（供知识库中心「检索测试」结构化展示）。 */
+    public record KnowledgeHit(String docName, String scope, double score, String content) {}
+
     // ==================== 构造 ====================
 
     public KnowledgeExpert(ModelFactory modelFactory) {
@@ -92,6 +103,8 @@ public class KnowledgeExpert {
 
                 migrateLegacyJson(Scope.GLOBAL, DataManager.getInstance().getGlobalKnowledgeDir());
                 migrateLegacyJson(Scope.WORKSPACE, DataManager.getInstance().getKnowledgeDir());
+
+                loadDocPrefs();
 
                 builtAgent = buildRagAgent(modelFactory);
             } catch (Exception e) {
@@ -541,6 +554,151 @@ public class KnowledgeExpert {
         }
         return n;
     }
+
+    // ==================== 检索启用状态（按文档，持久化） ====================
+
+    /** 该文档是否参与对话检索（默认启用；仅显式停用的文档返回 false）。 */
+    public boolean isDocEnabled(String docName) {
+        return docName != null && !disabledDocs.contains(docName);
+    }
+
+    /** 设置某文档是否参与检索，并持久化。 */
+    public void setDocEnabled(String docName, boolean enabled) {
+        if (docName == null) return;
+        boolean changed = enabled ? disabledDocs.remove(docName) : disabledDocs.add(docName);
+        if (changed) saveDocPrefs();
+    }
+
+    /**
+     * 批量设置文档检索启用状态：scope 为 null 时作用于全部文档，否则仅该作用域文档。
+     */
+    public void setAllEnabled(boolean enabled, Scope scope) {
+        List<String> names = scope == null ? getDocumentNames() : getDocumentNames(scope);
+        boolean changed = false;
+        for (String name : names) {
+            changed |= enabled ? disabledDocs.remove(name) : disabledDocs.add(name);
+        }
+        if (changed) saveDocPrefs();
+    }
+
+    /** 当前参与检索的文档名集合（全部已导入文档去掉被停用的）。 */
+    public Set<String> getEnabledDocs() {
+        Set<String> enabled = new LinkedHashSet<>(getDocumentNames());
+        enabled.removeAll(disabledDocs);
+        return enabled;
+    }
+
+    /** 参与检索的文档篇数（启用计数）。 */
+    public int getEnabledDocCount() {
+        return getEnabledDocs().size();
+    }
+
+    // ==================== 检索测试（结构化结果，供知识库中心） ====================
+
+    /**
+     * 检索测试：返回与查询最相关的若干片段（向量优先，失败降级关键词），仅命中已启用文档。
+     * 不进入对话，仅用于在知识库中心验证召回质量。
+     */
+    public List<KnowledgeHit> searchTest(String query, int topK) {
+        List<KnowledgeHit> out = new ArrayList<>();
+        if (!ragEnabled || query == null || query.isBlank() || getTotalChunkCount() == 0) return out;
+        Set<String> enabled = getEnabledDocs();
+        if (enabled.isEmpty()) return out;
+        double threshold = AgentConfig.getInstance().getRagScoreThreshold();
+
+        float[] q = gate == null ? null : gate.embed(query);
+        if (q != null) {
+            List<MemoryStore.Scored<KnowledgeChunk>> hits = new ArrayList<>();
+            hits.addAll(globalStore.searchKnowledge(q, topK * 3, threshold));
+            hits.addAll(workspaceStore.searchKnowledge(q, topK * 3, threshold));
+            hits.sort((a, b) -> Float.compare(b.score(), a.score()));
+            for (MemoryStore.Scored<KnowledgeChunk> h : hits) {
+                KnowledgeChunk c = h.entity();
+                if (!enabled.contains(c.docName)) continue;
+                out.add(new KnowledgeHit(c.docName, c.scope, h.score(), c.content));
+                if (out.size() >= topK) break;
+            }
+            if (!out.isEmpty()) return out;
+        }
+        // 降级：关键词命中数排序
+        String[] terms = query.toLowerCase().split("\\s+");
+        record SC(KnowledgeChunk c, int hits) {}
+        List<SC> scored = new ArrayList<>();
+        for (KnowledgeChunk c : allChunks()) {
+            if (!enabled.contains(c.docName) || c.content == null || c.content.isBlank()) continue;
+            String lower = c.content.toLowerCase();
+            int n = 0;
+            for (String t : terms) if (!t.isEmpty() && lower.contains(t)) n++;
+            if (n > 0) scored.add(new SC(c, n));
+        }
+        scored.sort((a, b) -> Integer.compare(b.hits(), a.hits()));
+        for (SC s : scored.subList(0, Math.min(topK, scored.size()))) {
+            // 关键词降级无相似度分数，用命中比例粗略归一供进度条展示
+            out.add(new KnowledgeHit(s.c().docName, s.c().scope,
+                    Math.min(1.0, s.hits() / (double) Math.max(1, terms.length)), s.c().content));
+        }
+        return out;
+    }
+
+    /** 某文档前 max 个片段的正文（按 chunkIndex 排序），供详情抽屉「片段预览」。 */
+    public List<String> getDocumentChunkPreviews(String docName, int max) {
+        if (!ragEnabled || docName == null) return List.of();
+        List<KnowledgeChunk> chunks = new ArrayList<>();
+        for (KnowledgeChunk c : allChunks()) if (docName.equals(c.docName)) chunks.add(c);
+        chunks.sort((a, b) -> Integer.compare(a.chunkIndex, b.chunkIndex));
+        List<String> out = new ArrayList<>();
+        for (KnowledgeChunk c : chunks) {
+            if (c.content != null && !c.content.isBlank()) out.add(c.content);
+            if (out.size() >= max) break;
+        }
+        return out;
+    }
+
+    /** 重建全部文档的向量索引（对所有分块重新嵌入回填）；建议后台线程调用，返回成功重嵌入的分块数。 */
+    public int reindexAll() {
+        if (!ragEnabled) return 0;
+        int n = 0;
+        for (MemoryStore store : new MemoryStore[]{globalStore, workspaceStore}) {
+            for (KnowledgeChunk c : store.allKnowledge()) {
+                float[] vec = gate.embed(c.content);
+                if (vec != null) {
+                    store.updateKnowledgeChunk(c, x -> x.embedding = vec, "user");
+                    n++;
+                }
+            }
+        }
+        return n;
+    }
+
+    // ==================== 文档检索启用状态持久化 ====================
+
+    private Path docPrefsFile() {
+        return DataManager.getInstance().getDataRoot().resolve("knowledge-doc-prefs.json");
+    }
+
+    private void loadDocPrefs() {
+        Path f = docPrefsFile();
+        if (!Files.exists(f)) return;
+        try {
+            DocPrefs prefs = JSON.readValue(f.toFile(), DocPrefs.class);
+            disabledDocs.clear();
+            if (prefs != null && prefs.disabled != null) disabledDocs.addAll(prefs.disabled);
+        } catch (Exception e) {
+            log.warn("读取知识库文档检索偏好失败（忽略，按默认全部启用）: {}", e.getMessage());
+        }
+    }
+
+    private void saveDocPrefs() {
+        try {
+            DocPrefs prefs = new DocPrefs();
+            prefs.disabled = new ArrayList<>(disabledDocs);
+            JSON.writerWithDefaultPrettyPrinter().writeValue(docPrefsFile().toFile(), prefs);
+        } catch (Exception e) {
+            log.warn("保存知识库文档检索偏好失败: {}", e.getMessage());
+        }
+    }
+
+    static class DocPrefs { public List<String> disabled; }
 
     // ==================== 内部辅助 ====================
 

@@ -15,9 +15,9 @@
  * 控件结构：ToggleSwitch(Region) 内含 .jc-switch（轨道）+ .jc-switch-thumb（滑块）。
  */
 
-/* 轨道（off 态） */
+/* 轨道（off 态）—— 较 -jc-border-strong 压深一档，避免浅色卡片上"隐形" */
 .jc-switch {
-    -fx-background-color: -jc-border-strong;
+    -fx-background-color: derive(-jc-border-strong, -14%);
     -fx-background-radius: 999px;
     -fx-border-radius: 999px;
     -fx-min-width: 38px;
@@ -56,4 +56,24 @@
 .jc-switch:disabled {
     -fx-opacity: 0.45;
     -fx-cursor: default;
+}
+
+/* ==================== WindowToast 窗内提示浮层 ==================== */
+/*
+ * 通用「窗内 Toast」浮层（com.javaclaw.ui.javafx.control.WindowToast）：
+ * 底部居中的胶囊提示，鼠标穿透、随主题换肤。
+ */
+.jc-toast-layer {
+    -fx-padding: 0 0 28 0;
+}
+.jc-toast {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border-strong;
+    -fx-border-width: 1;
+    -fx-background-radius: 10;
+    -fx-border-radius: 10;
+    -fx-padding: 10 18 10 18;
+    -fx-font-size: 12.5px;
+    -fx-text-fill: -jc-text-title;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.18), 16, 0, 0, 4);
 }

@@ -1,0 +1,442 @@
+/* ============================================================
+   知识库中心（KnowledgeCenterView）专属样式
+   依赖 chat.css 中挂在 .root 上的 -jc-* 令牌；颜色一律引用令牌，随主题换肤。
+   追加加载在 chat.css / controls.css 之后。
+   ============================================================ */
+
+.kc-root {
+    -fx-background-color: -jc-surface-card;
+}
+
+/* ---------------- 顶栏 ---------------- */
+.kc-header {
+    -fx-min-height: 60;
+    -fx-pref-height: 60;
+    -fx-padding: 0 22 0 22;
+    -fx-background-color: -jc-neutral-50;
+    -fx-border-color: transparent transparent -jc-border transparent;
+    -fx-border-width: 0 0 1 0;
+}
+.kc-logo {
+    -fx-min-width: 26; -fx-min-height: 26; -fx-pref-width: 26; -fx-pref-height: 26;
+    -fx-background-color: linear-gradient(to bottom right, -jc-primary-500, -jc-accent-500);
+    -fx-background-radius: 8;
+    -fx-text-fill: white;
+    -fx-font-weight: 700;
+    -fx-font-size: 13px;
+    -fx-alignment: center;
+}
+.kc-title {
+    -fx-font-size: 15px;
+    -fx-font-weight: 700;
+    -fx-text-fill: -jc-text-title;
+}
+.kc-rag-badge {
+    -fx-padding: 0 9 0 9;
+    -fx-min-height: 22; -fx-pref-height: 22; -fx-max-height: 22;
+    -fx-background-color: -jc-primary-50;
+    -fx-background-radius: 11;
+}
+.kc-rag-badge .label {
+    -fx-text-fill: -jc-primary-600;
+    -fx-font-size: 11px;
+    -fx-font-weight: 600;
+}
+.kc-rag-badge-off { -fx-background-color: -jc-surface-sunken; }
+.kc-rag-badge-off .label { -fx-text-fill: -jc-text-muted; }
+.kc-badge-dot {
+    -fx-min-width: 6; -fx-min-height: 6; -fx-pref-width: 6; -fx-pref-height: 6;
+    -fx-max-width: 6; -fx-max-height: 6;
+    -fx-background-color: -jc-primary-500;
+    -fx-background-radius: 3;
+}
+.kc-rag-badge-off .kc-badge-dot { -fx-background-color: -jc-text-hint; }
+
+.kc-emb-chip {
+    -fx-padding: 0 11 0 11;
+    -fx-min-height: 30; -fx-pref-height: 30; -fx-max-height: 30;
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 9;
+    -fx-background-radius: 9;
+    -fx-cursor: hand;
+}
+.kc-emb-chip:hover { -fx-border-color: -jc-border-strong; -fx-background-color: -jc-surface-page; }
+.kc-dot-on, .kc-dot-off {
+    -fx-min-width: 7; -fx-min-height: 7; -fx-pref-width: 7; -fx-pref-height: 7;
+    -fx-max-width: 7; -fx-max-height: 7;
+    -fx-background-radius: 4;
+}
+.kc-dot-on { -fx-background-color: -jc-primary-500; }
+.kc-dot-off { -fx-background-color: -jc-text-hint; }
+.kc-emb-tag { -fx-text-fill: -jc-text-hint; -fx-font-size: 12px; }
+.kc-emb-name {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-title;
+    -fx-font-size: 12px;
+}
+.kc-emb-sep { -fx-text-fill: -jc-border-strong; }
+.kc-emb-dim {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 12px;
+}
+
+/* ---------------- 左导航 ---------------- */
+.kc-rail {
+    -fx-background-color: -jc-surface-page;
+    -fx-border-color: transparent -jc-border transparent transparent;
+    -fx-border-width: 0 1 0 0;
+    -fx-padding: 16 12 16 12;
+    -fx-spacing: 0;
+}
+.kc-ws-chip {
+    -fx-padding: 9 11 9 11;
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 10;
+    -fx-background-radius: 10;
+}
+.kc-ws-icon {
+    -fx-min-width: 24; -fx-min-height: 24; -fx-pref-width: 24; -fx-pref-height: 24;
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 7;
+    -fx-alignment: center;
+    -fx-font-size: 12px;
+}
+.kc-ws-caption { -fx-font-size: 10px; -fx-text-fill: -jc-text-hint; }
+.kc-ws-name { -fx-font-size: 12.5px; -fx-font-weight: 600; -fx-text-fill: -jc-text-title; }
+.kc-rail-group {
+    -fx-font-size: 10.5px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-hint;
+    -fx-padding: 18 10 8 10;
+}
+.kc-rail-item {
+    -fx-padding: 0 10 0 10;
+    -fx-min-height: 38; -fx-pref-height: 38;
+    -fx-background-radius: 9;
+    -fx-cursor: hand;
+}
+.kc-rail-item:hover { -fx-background-color: -jc-surface-sunken; }
+.kc-rail-item-active { -fx-background-color: -jc-primary-50; }
+.kc-rail-icon { -fx-font-size: 14px; -fx-min-width: 18; -fx-alignment: center; }
+.kc-rail-label { -fx-font-size: 13px; -fx-text-fill: -jc-text-body; }
+.kc-rail-item-active .kc-rail-label { -fx-font-weight: 700; -fx-text-fill: -jc-primary-700; }
+.kc-rail-count {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 11px;
+    -fx-text-fill: -jc-text-hint;
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 9;
+    -fx-padding: 1 7 1 7;
+}
+.kc-rail-item-active .kc-rail-count { -fx-text-fill: -jc-primary-600; -fx-background-color: -jc-primary-100; }
+.kc-rail-divider { -fx-min-height: 1; -fx-pref-height: 1; -fx-background-color: -jc-border; }
+.kc-rail-stats { -fx-padding: 14 10 4 10; -fx-border-color: -jc-border transparent transparent transparent; -fx-border-width: 1 0 0 0; }
+.kc-stat-label { -fx-font-size: 11.5px; -fx-text-fill: -jc-text-muted; }
+.kc-stat-value, .kc-stat-value-accent {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 12px;
+    -fx-font-weight: 600;
+}
+.kc-stat-value { -fx-text-fill: -jc-text-title; }
+.kc-stat-value-accent { -fx-text-fill: -jc-primary-600; }
+
+/* ---------------- 主区通用 ---------------- */
+.kc-main { -fx-background-color: -jc-surface-card; }
+.kc-scroll { -fx-background-color: transparent; }
+.kc-scroll > .viewport { -fx-background-color: transparent; }
+.kc-pane-title { -fx-font-size: 18px; -fx-font-weight: 700; -fx-text-fill: -jc-text-title; }
+.kc-pane-sub { -fx-font-size: 12.5px; -fx-text-fill: -jc-text-muted; }
+.kc-centered-col { -fx-max-width: 760; }
+.kc-empty-title { -fx-font-size: 16px; -fx-font-weight: 700; -fx-text-fill: -jc-text-title; }
+.kc-empty-desc { -fx-font-size: 13px; -fx-text-fill: -jc-text-hint; -fx-text-alignment: center; }
+
+/* ---------------- 文档视图 ---------------- */
+.kc-toolbar { -fx-padding: 20 24 14 24; }
+
+/* 搜索/筛选输入容器（图标 + 无边框输入；边框在容器上） */
+.kc-field-input {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-border-color: transparent;
+    -fx-padding: 0;
+    -fx-font-size: 13px;
+}
+.kc-filter-box {
+    -fx-min-height: 34; -fx-pref-height: 34; -fx-max-height: 34;
+    -fx-padding: 0 11 0 11;
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 9;
+    -fx-background-radius: 9;
+}
+.kc-search-icon {
+    -fx-stroke: -jc-text-hint;
+    -fx-stroke-width: 1.4;
+    -fx-fill: transparent;
+}
+.kc-import-popover {
+    -fx-padding: 14 16 14 16;
+    -fx-background-color: -jc-surface-page;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 12;
+    -fx-background-radius: 12;
+}
+.kc-import-title { -fx-font-size: 12.5px; -fx-font-weight: 600; -fx-text-fill: -jc-text-title; }
+.kc-import-card {
+    -fx-padding: 12;
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 10;
+    -fx-background-radius: 10;
+    -fx-cursor: hand;
+}
+.kc-import-card:hover { -fx-border-color: -jc-primary-600; }
+.kc-import-card-title { -fx-font-size: 12.5px; -fx-font-weight: 600; -fx-text-fill: -jc-text-title; }
+.kc-import-card-sub { -fx-font-size: 11px; -fx-text-fill: -jc-text-hint; }
+
+.kc-col-header { -fx-padding: 0 24 8 24; }
+.kc-col-head { -fx-font-size: 10.5px; -fx-font-weight: 600; -fx-text-fill: -jc-text-hint; }
+.kc-doc-list { -fx-padding: 0 16 16 16; }
+.kc-doc-empty { -fx-padding: 60 20 60 20; -fx-text-fill: -jc-text-hint; -fx-font-size: 13px; }
+
+.kc-doc-row {
+    -fx-padding: 11 8 11 8;
+    -fx-background-radius: 11;
+    -fx-border-radius: 11;
+    -fx-border-color: transparent;
+    -fx-border-width: 1;
+    -fx-cursor: hand;
+}
+.kc-doc-row:hover { -fx-background-color: -jc-surface-page; }
+.kc-doc-row-selected { -fx-background-color: -jc-surface-page; -fx-border-color: -jc-primary-100; }
+.kc-doc-name { -fx-font-size: 13.5px; -fx-font-weight: 600; -fx-text-fill: -jc-text-title; }
+.kc-doc-desc { -fx-font-size: 11.5px; -fx-text-fill: -jc-text-hint; }
+.kc-doc-chunks {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 12px;
+    -fx-text-fill: -jc-text-muted;
+}
+.kc-doc-time {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 11.5px;
+    -fx-text-fill: -jc-text-hint;
+}
+.kc-doc-arrow { -fx-text-fill: -jc-border-strong; -fx-font-size: 16px; }
+
+/* 类型徽标 */
+.kc-type-badge {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 10px;
+    -fx-font-weight: 700;
+    -fx-padding: 3 7 3 7;
+    -fx-background-radius: 6;
+}
+.kc-type-pdf { -fx-background-color: -jc-tint-terra-bg; -fx-text-fill: -jc-tint-terra-fg; }
+.kc-type-md  { -fx-background-color: -jc-primary-50; -fx-text-fill: -jc-primary-600; }
+.kc-type-csv { -fx-background-color: -jc-tint-gold-bg; -fx-text-fill: -jc-tint-gold-fg; }
+.kc-type-txt { -fx-background-color: -jc-surface-sunken; -fx-text-fill: -jc-text-muted; }
+
+/* 作用域标签 */
+.kc-scope-tag { -fx-font-size: 10px; -fx-font-weight: 600; -fx-padding: 2 7 2 7; -fx-background-radius: 7; }
+.kc-scope-global { -fx-background-color: -jc-tint-gold-bg; -fx-text-fill: -jc-tint-gold-fg; }
+.kc-scope-workspace { -fx-background-color: -jc-primary-50; -fx-text-fill: -jc-primary-600; }
+
+/* 开关：复用通用 ToggleSwitch 控件（.jc-switch，样式见 controls.css） */
+
+/* 批量提示 */
+.kc-bulk-hint {
+    -fx-padding: 11 14 11 14;
+    -fx-background-color: -jc-surface-page;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 10;
+    -fx-background-radius: 10;
+    -fx-border-style: dashed;
+}
+.kc-bulk-text { -fx-font-size: 11.5px; -fx-text-fill: -jc-text-muted; }
+.kc-bulk-link { -fx-font-size: 11.5px; -fx-font-weight: 600; -fx-text-fill: -jc-primary-600; -fx-border-color: transparent; -fx-padding: 0; }
+.kc-bulk-link:hover { -fx-underline: true; }
+.kc-bulk-sep { -fx-text-fill: -jc-border-strong; }
+
+/* ---------------- 详情抽屉 ---------------- */
+.kc-detail-drawer {
+    -fx-background-color: -jc-neutral-50;
+    -fx-border-color: -jc-border transparent transparent transparent;
+    -fx-border-width: 0 0 0 1;
+}
+.kc-detail-head { -fx-padding: 18 20 14 20; -fx-border-color: transparent transparent -jc-border transparent; -fx-border-width: 0 0 1 0; }
+.kc-detail-name { -fx-font-size: 15px; -fx-font-weight: 700; -fx-text-fill: -jc-text-title; }
+.kc-detail-close { -fx-min-width: 26; -fx-min-height: 26; -fx-alignment: center; -fx-background-radius: 7; -fx-text-fill: -jc-text-hint; -fx-font-size: 16px; -fx-cursor: hand; }
+.kc-detail-close:hover { -fx-background-color: -jc-surface-sunken; }
+.kc-meta-card {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 10;
+    -fx-background-radius: 10;
+    -fx-padding: 11 13 11 13;
+}
+.kc-meta-label { -fx-font-size: 10.5px; -fx-text-fill: -jc-text-hint; }
+.kc-meta-value { -fx-font-size: 14px; -fx-font-weight: 600; -fx-text-fill: -jc-text-title; }
+.kc-meta-value-accent { -fx-font-size: 14px; -fx-font-weight: 600; -fx-text-fill: -jc-primary-600; }
+.kc-meta-value-muted { -fx-font-size: 14px; -fx-font-weight: 600; -fx-text-fill: -jc-text-hint; }
+.kc-meta-value-lg {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 18px; -fx-font-weight: 600; -fx-text-fill: -jc-text-title;
+}
+.kc-meta-value-time {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 13px; -fx-text-fill: -jc-text-title;
+}
+.kc-detail-section { -fx-font-size: 11px; -fx-font-weight: 600; -fx-text-fill: -jc-text-hint; }
+.kc-preview-card {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 10;
+    -fx-background-radius: 10;
+    -fx-padding: 11 13 11 13;
+}
+.kc-preview-id {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 10px;
+    -fx-text-fill: -jc-primary-600;
+}
+.kc-preview-text { -fx-font-size: 12.5px; -fx-text-fill: -jc-text-body; -fx-line-spacing: 3; }
+.kc-detail-actions { -fx-padding: 14 20 14 20; -fx-border-color: -jc-border transparent transparent transparent; -fx-border-width: 1 0 0 0; -fx-spacing: 10; }
+
+/* ---------------- 检索测试 ---------------- */
+.kc-search-box {
+    -fx-min-height: 44; -fx-pref-height: 44; -fx-max-height: 44;
+    -fx-padding: 0 14 0 14;
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 11;
+    -fx-background-radius: 11;
+}
+.kc-search-input { -fx-font-size: 14px; }
+.kc-search-btn { -fx-padding: 11 24 11 24; -fx-font-size: 14px; }
+.kc-search-meta { -fx-font-size: 11.5px; -fx-text-fill: -jc-text-hint; }
+.kc-search-meta-accent { -fx-font-size: 11.5px; -fx-font-weight: 600; -fx-text-fill: -jc-primary-600; }
+.kc-result-summary { -fx-font-size: 12.5px; -fx-text-fill: -jc-text-muted; }
+.kc-result-card {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 13;
+    -fx-background-radius: 13;
+    -fx-padding: 15 17 15 17;
+}
+.kc-result-doc { -fx-font-size: 12px; -fx-font-weight: 600; -fx-text-fill: -jc-text-title; }
+.kc-result-score {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 11.5px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-primary-600;
+}
+.kc-result-snippet { -fx-line-spacing: 4; }
+.kc-snippet-text { -fx-fill: -jc-text-body; -fx-font-size: 13px; }
+.kc-snippet-hit {
+    -fx-background-color: -jc-primary-50;
+    -fx-text-fill: -jc-primary-600;
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+    -fx-padding: 0 3 0 3;
+    -fx-background-radius: 3;
+}
+.kc-score-bar { -fx-min-height: 5; -fx-pref-height: 5; -fx-max-height: 5; -fx-background-color: -jc-surface-sunken; -fx-background-radius: 3; }
+.kc-score-fill { -fx-min-height: 5; -fx-pref-height: 5; -fx-max-height: 5; -fx-background-color: -jc-primary-500; -fx-background-radius: 3; }
+
+/* ---------------- 索引设置 ---------------- */
+.kc-emb-card {
+    -fx-background-color: -jc-neutral-50;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 14;
+    -fx-background-radius: 14;
+    -fx-padding: 18 20 18 20;
+}
+.kc-emb-card-icon {
+    -fx-min-width: 38; -fx-min-height: 38; -fx-pref-width: 38; -fx-pref-height: 38;
+    -fx-background-color: -jc-primary-50;
+    -fx-background-radius: 10;
+    -fx-alignment: center;
+    -fx-font-size: 18px;
+}
+.kc-emb-card-title { -fx-font-size: 13.5px; -fx-font-weight: 700; -fx-text-fill: -jc-text-title; }
+.kc-emb-connected { -fx-font-size: 10.5px; -fx-font-weight: 600; -fx-text-fill: -jc-primary-600; }
+.kc-emb-card-model {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 12px;
+    -fx-text-fill: -jc-text-body;
+}
+.kc-emb-card-provider { -fx-font-size: 11px; -fx-text-fill: -jc-text-hint; }
+.kc-emb-go { -fx-padding: 7 14 7 14; }
+.kc-emb-card-bottom { -fx-padding: 14 0 0 0; -fx-border-color: -jc-border transparent transparent transparent; -fx-border-width: 1 0 0 0; }
+.kc-emb-note { -fx-font-size: 11px; -fx-text-fill: -jc-text-hint; }
+.kc-mini-stat { -fx-font-size: 13px; -fx-font-weight: 600; -fx-text-fill: -jc-text-title; }
+.kc-mini-stat-mono {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 14px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-title;
+}
+
+.kc-param-card {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 14;
+    -fx-background-radius: 14;
+    -fx-padding: 20;
+}
+.kc-param-title { -fx-font-size: 13.5px; -fx-font-weight: 600; -fx-text-fill: -jc-text-title; }
+.kc-param-sub { -fx-font-size: 11.5px; -fx-text-fill: -jc-text-hint; }
+.kc-param-value {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 14px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-primary-600;
+}
+.kc-slider-scale { -fx-padding: 4 0 0 0; }
+.kc-slider-scale .label {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 10.5px;
+    -fx-text-fill: -jc-border-strong;
+}
+.kc-param-divider { -fx-min-height: 1; -fx-pref-height: 1; -fx-background-color: -jc-neutral-100; }
+.kc-param-foot {
+    -fx-padding: 11 13 11 13;
+    -fx-background-color: -jc-surface-page;
+    -fx-background-radius: 10;
+}
+.kc-param-foot-text { -fx-font-size: 11.5px; -fx-text-fill: -jc-text-muted; }
+
+.kc-danger-zone {
+    -fx-background-color: -jc-tint-terra-soft;
+    -fx-border-color: -jc-tint-terra-line;
+    -fx-border-width: 1;
+    -fx-border-radius: 14;
+    -fx-background-radius: 14;
+    -fx-padding: 18 20 18 20;
+}
+.kc-danger-title { -fx-font-size: 13px; -fx-font-weight: 600; -fx-text-fill: -jc-tint-terra-fg; }
+.kc-danger-desc { -fx-font-size: 11.5px; -fx-text-fill: -jc-tint-terra-muted; }
+
+/* 软删除/危险按钮（白底陶土字，与设计稿一致） */
+.jc-btn-danger-soft {
+    -fx-background-color: -jc-surface-card;
+    -fx-text-fill: -jc-tint-terra-fg;
+    -fx-border-color: -jc-tint-terra-line;
+}
+.jc-btn-danger-soft:hover { -fx-background-color: -jc-tint-terra-hover; }

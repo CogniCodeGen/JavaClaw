@@ -97,6 +97,8 @@ public class MemoryCenterView {
 
     private final StackPane contentArea = new StackPane();
     private final Map<String, Region> panels = new HashMap<>();
+    /** 通用窗内 Toast 浮层（非阻塞提示，替代旧的阻塞 Alert）。 */
+    private final com.javaclaw.ui.javafx.control.WindowToast windowToast = new com.javaclaw.ui.javafx.control.WindowToast();
     private final Map<String, Button> navButtons = new HashMap<>();
     private String currentSection = "overview";
 
@@ -143,7 +145,9 @@ public class MemoryCenterView {
         stage.setTitle("记忆中心");
 
         HBox root = buildLayout();
-        Scene scene = new Scene(root, 1000, 680);
+        // 根容器叠一层窗内 Toast 浮层（底部居中、鼠标穿透，不遮挡交互）
+        StackPane sceneRoot = new StackPane(root, windowToast.node());
+        Scene scene = new Scene(sceneRoot, 1000, 680);
         loadStylesheets(scene, owner);
         stage.setScene(scene);
         stage.setOnHidden(e -> graphView.dispose());
@@ -1527,10 +1531,7 @@ public class MemoryCenterView {
     }
 
     private void toast(String msg) {
-        Alert a = new Alert(Alert.AlertType.INFORMATION, msg, ButtonType.OK);
-        a.initOwner(stage);
-        a.setHeaderText(null);
-        a.showAndWait();
+        windowToast.show(msg);
     }
 
     private static String fmt(long epochMs) {

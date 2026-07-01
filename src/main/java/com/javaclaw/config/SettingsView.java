@@ -173,15 +173,14 @@ public class SettingsView {
     private TextField customWebhookField;
     private TextField customBodyTemplateField;
 
-    // RAG 知识库配置表单控件
+    // 嵌入模型（知识库 RAG 向量模型）配置表单控件
+    // 注：分块大小/重叠已迁移到「知识库中心 › 索引设置」，此处不再承载。
     private ToggleSwitch ragEnabledCheck;
     private ComboBox<String> ragProviderCombo;
     private TextField ragBaseUrlField;
     private PasswordField ragApiKeyField;
     private TextField ragModelNameField;
     private TextField ragDimensionsField;
-    private TextField ragChunkSizeField;
-    private TextField ragChunkOverlapField;
     private TextField ragRetrieveLimitField;
     private TextField ragScoreThresholdField;
 
@@ -289,6 +288,14 @@ public class SettingsView {
         registerPanelActions(tieredModelPanel, PanelActions.saveOnly(
                 this::saveTieredModelSettings, this::modelConfigSavedTip));
 
+        // 嵌入模型（知识库向量模型）：保存（含重建回调）+ 测试嵌入。
+        // 文档导入/检索/分块管理已迁移到「知识库中心」，此处仅统一配置向量嵌入模型。
+        Node embeddingPanel = buildEmbeddingPanel();
+        addCategory("嵌入模型", embeddingPanel, false,
+                "rag embedding 嵌入 向量 vector 检索 文档 knowledge 知识库 维度 dimension");
+        registerPanelActions(embeddingPanel, PanelActions.saveAndTest(
+                this::saveRagSettings, this::modelConfigSavedTip, this::runRagEmbeddingTest, "测试嵌入"));
+
         // 智能体：组件型面板，自管理（全局保存/测试禁用）
         AgentSettingsView agentSettingsView = new AgentSettingsView();
         agentSettingsView.setOnConfigChanged(onModelConfigChanged);
@@ -313,12 +320,6 @@ public class SettingsView {
                 "skill 技能 自学习 进化 沉淀 提案 hermes");
         registerPanelActions(skillEvolutionPanel, PanelActions.saveOnly(
                 this::saveSkillEvolutionSettings));
-
-        Node ragPanel = buildRagPanel();
-        addCategory("知识库", ragPanel, false,
-                "rag embedding 嵌入 向量 chunk 检索 文档 knowledge");
-        registerPanelActions(ragPanel, PanelActions.saveAndTest(
-                this::saveRagSettings, this::modelConfigSavedTip, this::runRagEmbeddingTest, "测试嵌入"));
 
         // 外部集成：连接外部系统与资源
         addCategoryGroup("外部集成");
@@ -1556,10 +1557,8 @@ public class SettingsView {
         // 技能进化
         attachLiveIntRange(skillEvolutionMinToolsField, 1, 50);
         attachLiveDoubleRange(skillEvolutionSuccessThresholdField, 0.0, 1.0);
-        // 知识库
+        // 嵌入模型（向量维度/检索）
         attachLiveIntRange(ragDimensionsField, 1, Integer.MAX_VALUE);
-        attachLiveIntRange(ragChunkSizeField, 1, Integer.MAX_VALUE);
-        attachLiveIntRange(ragChunkOverlapField, 1, Integer.MAX_VALUE);
         attachLiveIntRange(ragRetrieveLimitField, 1, Integer.MAX_VALUE);
         attachLiveDoubleRange(ragScoreThresholdField, 0.0, 1.0);
         // 邮件端口
@@ -2539,16 +2538,16 @@ public class SettingsView {
         log.info("通知设置已保存");
     }
 
-    // ==================== RAG 知识库配置面板 ====================
+    // ==================== 嵌入模型（知识库向量模型）配置面板 ====================
 
-    private Node buildRagPanel() {
-        Label sectionTitle = new Label("知识库配置（RAG）");
+    private Node buildEmbeddingPanel() {
+        Label sectionTitle = new Label("嵌入模型（知识库 RAG）");
         sectionTitle.getStyleClass().add("settings-section-title");
 
         // 启用开关
         ragEnabledCheck = new ToggleSwitch();
         HBox ragEnableRow = toggleRow(ragEnabledCheck, "本地知识库（RAG）",
-                "启用后，知识专家将具备文档导入和语义检索能力");
+                "启用后，知识专家将具备文档导入和语义检索能力；嵌入向量模型在此统一配置，文档导入/检索/分块管理在「知识库中心」");
 
         // 嵌入模型配置
         Label embeddingTitle = new Label("嵌入模型");
@@ -2588,23 +2587,6 @@ public class SettingsView {
         embeddingGrid.add(createLabel("向量维度："), 0, 3);
         embeddingGrid.add(ragDimensionsField, 1, 3);
 
-        // 文档处理参数
-        Label chunkTitle = new Label("文档处理");
-        chunkTitle.getStyleClass().add("settings-group-title");
-
-        ragChunkSizeField = createTextField("分块大小");
-        ragChunkSizeField.setPrefWidth(80);
-        ragChunkOverlapField = createTextField("重叠大小");
-        ragChunkOverlapField.setPrefWidth(80);
-
-        HBox chunkRow = new HBox(10,
-                createLabel("分块大小："), ragChunkSizeField,
-                createLabel("重叠大小："), ragChunkOverlapField);
-        chunkRow.setAlignment(Pos.CENTER_LEFT);
-
-        Label chunkHint = new Label("分块大小 256~1024 字符，重叠 10%~20% 保持上下文连续性");
-        chunkHint.getStyleClass().add("settings-hint");
-
         // 检索参数
         Label retrieveTitle = new Label("检索参数");
         retrieveTitle.getStyleClass().add("settings-group-title");
@@ -2629,14 +2611,12 @@ public class SettingsView {
             ragApiKeyField.setDisable(!newVal);
             ragModelNameField.setDisable(!newVal);
             ragDimensionsField.setDisable(!newVal);
-            ragChunkSizeField.setDisable(!newVal);
-            ragChunkOverlapField.setDisable(!newVal);
             ragRetrieveLimitField.setDisable(!newVal);
             ragScoreThresholdField.setDisable(!newVal);
         });
 
         // 提示信息（保存上移全局页脚）
-        Label restartHint = new Label("修改保存后立即生效，当前对话的智能体服务将重建");
+        Label restartHint = new Label("修改保存后立即生效，当前对话的智能体服务将重建 · 分块大小/重叠在「知识库中心 › 索引设置」调整");
         restartHint.getStyleClass().add("settings-hint");
 
         // 组装面板
@@ -2650,8 +2630,6 @@ public class SettingsView {
                 ragEnableRow,
                 new Separator(),
                 embeddingTitle, providerRow, providerHint, embeddingGrid,
-                new Separator(),
-                chunkTitle, chunkRow, chunkHint,
                 new Separator(),
                 retrieveTitle, retrieveRow, retrieveHint,
                 new Separator(),
@@ -2699,8 +2677,6 @@ public class SettingsView {
         ragApiKeyField.setText(agentConfig.getRagEmbeddingApiKey());
         ragModelNameField.setText(agentConfig.getRagEmbeddingModelName());
         ragDimensionsField.setText(String.valueOf(agentConfig.getRagEmbeddingDimensions()));
-        ragChunkSizeField.setText(String.valueOf(agentConfig.getRagChunkSize()));
-        ragChunkOverlapField.setText(String.valueOf(agentConfig.getRagChunkOverlap()));
         ragRetrieveLimitField.setText(String.valueOf(agentConfig.getRagRetrieveLimit()));
         ragScoreThresholdField.setText(String.valueOf(agentConfig.getRagScoreThreshold()));
 
@@ -2711,8 +2687,6 @@ public class SettingsView {
         ragApiKeyField.setDisable(!enabled);
         ragModelNameField.setDisable(!enabled);
         ragDimensionsField.setDisable(!enabled);
-        ragChunkSizeField.setDisable(!enabled);
-        ragChunkOverlapField.setDisable(!enabled);
         ragRetrieveLimitField.setDisable(!enabled);
         ragScoreThresholdField.setDisable(!enabled);
     }
@@ -2727,8 +2701,6 @@ public class SettingsView {
         agentConfig.setRagEmbeddingApiKey(ragApiKeyField.getText().trim());
         agentConfig.setRagEmbeddingModelName(ragModelNameField.getText().trim());
         setIntSafe(ragDimensionsField, agentConfig::setRagEmbeddingDimensions, 1024);
-        setIntSafe(ragChunkSizeField, agentConfig::setRagChunkSize, 512);
-        setIntSafe(ragChunkOverlapField, agentConfig::setRagChunkOverlap, 50);
         setIntSafe(ragRetrieveLimitField, agentConfig::setRagRetrieveLimit, 5);
         try {
             agentConfig.setRagScoreThreshold(
@@ -2933,6 +2905,30 @@ public class SettingsView {
         dirtyPanels.clear();
         refreshFooter();
         stage.showAndWait();
+    }
+
+    /**
+     * 打开设置并直达指定分类（按分类名精确匹配，如「嵌入模型」）；找不到则退化为默认分类。
+     * 供「知识库中心 › 前往模型设置」等深链入口复用。
+     */
+    public void show(String categoryName) {
+        if (categoryName != null) {
+            for (NavGroup group : navGroups) {
+                for (ToggleButton btn : group.categories) {
+                    if (categoryName.equals(btn.getText())) {
+                        group.expanded = true;
+                        applyNavVisibility();
+                        btn.setSelected(true);
+                        if (btn.getProperties().get("navPanel") instanceof Node panel) {
+                            showPanel(panel);
+                        }
+                        show();
+                        return;
+                    }
+                }
+            }
+        }
+        show();
     }
 
     // ==================== UI 辅助方法 ====================

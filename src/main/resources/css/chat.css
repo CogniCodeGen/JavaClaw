@@ -96,6 +96,17 @@
     -jc-warning:    #F59E0B;
     -jc-warning-bg: #FFFBEB;
 
+    /* —— 装饰性文件类型 / 柔和危险色（跨主题固定，与设计稿一致；
+          区别于上面用于错误/警告语义的鲜亮 danger/warning） —— */
+    -jc-tint-terra-fg:     #B45046;   /* 陶土：PDF 徽标、危险区标题、删除文字 */
+    -jc-tint-terra-bg:     #F6E7E4;   /* PDF 徽标底 */
+    -jc-tint-terra-soft:   #FCF7F5;   /* 危险区底 */
+    -jc-tint-terra-line:   #EAD9D5;   /* 危险区/删除按钮描边 */
+    -jc-tint-terra-hover:  #FBF2F0;   /* 危险按钮悬停底 */
+    -jc-tint-terra-muted:  #A88E88;   /* 危险区描述文字 */
+    -jc-tint-gold-fg:      #9A6B1F;   /* 金：CSV 徽标、全局作用域标签 */
+    -jc-tint-gold-bg:      #F3EBDA;
+
     /* —— 处理阶段状态色（思考/规划/执行/回复） —— */
     -jc-stage-thinking:  #6B7CC7;
     -jc-stage-planning:  #D49A47;

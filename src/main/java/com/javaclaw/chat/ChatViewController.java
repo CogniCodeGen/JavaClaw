@@ -1742,7 +1742,7 @@ public class ChatViewController {
 
         var expert = runtime.getKnowledgeExpert();
         if (!expert.isRagEnabled()) {
-            MenuItem hint = new MenuItem("RAG 未启用（请在设置 → 知识库中开启）");
+            MenuItem hint = new MenuItem("RAG 未启用（请在设置 → 嵌入模型中开启）");
             hint.setDisable(true);
             knowledgeMenu.getItems().add(hint);
             return;
@@ -1756,13 +1756,14 @@ public class ChatViewController {
             hint.setDisable(true);
             knowledgeMenu.getItems().add(hint);
             knowledgeMenu.getItems().add(new SeparatorMenuItem());
-            MenuItem manageItem = new MenuItem("管理知识库...");
+            MenuItem manageItem = new MenuItem("知识库中心...");
             manageItem.setOnAction(e -> openKnowledgeBase());
             knowledgeMenu.getItems().add(manageItem);
             return;
         }
 
-        Set<String> currentSelected = runtime.getSelectedKnowledgeDocs();
+        // 选中态 = 知识库中心持久化的「参与检索」文档集合（默认全部启用），与知识库中心一致
+        Set<String> currentSelected = expert.getEnabledDocs();
         int totalDocs = globalDocs.size() + workspaceDocs.size();
         List<CheckMenuItem> allCheckItems = new ArrayList<>();
 
@@ -1814,7 +1815,7 @@ public class ChatViewController {
 
         // 管理知识库入口
         knowledgeMenu.getItems().add(new SeparatorMenuItem());
-        MenuItem manageItem = new MenuItem("管理知识库...");
+        MenuItem manageItem = new MenuItem("知识库中心...");
         manageItem.getStyleClass().add("knowledge-manage-entry");
         manageItem.setOnAction(e -> openKnowledgeBase());
         knowledgeMenu.getItems().add(manageItem);
@@ -1836,20 +1837,20 @@ public class ChatViewController {
      * 知识库文档勾选状态变更回调
      */
     private void onKnowledgeSelectionChanged(List<CheckMenuItem> docItems, CheckMenuItem selectAllItem) {
-        Set<String> selected = new HashSet<>();
+        var expert = runtime.getKnowledgeExpert();
+        int selectedCount = 0;
         for (CheckMenuItem item : docItems) {
-            if (item.isSelected()) {
-                String text = item.getText();
-                // 解析文档名：去掉末尾的 "  N 片段"
-                int sep = text.lastIndexOf("  ");
-                String docName = sep > 0 ? text.substring(0, sep) : text;
-                selected.add(docName);
-            }
+            String text = item.getText();
+            // 解析文档名：去掉末尾的 "  N 片段"
+            int sep = text.lastIndexOf("  ");
+            String docName = sep > 0 ? text.substring(0, sep) : text;
+            // 直接落到知识库中心的持久化启用状态，使顶栏临时调整与中心保持一致
+            expert.setDocEnabled(docName, item.isSelected());
+            if (item.isSelected()) selectedCount++;
         }
 
-        runtime.setSelectedKnowledgeDocs(selected);
-        selectAllItem.setSelected(selected.size() == docItems.size());
-        updateKnowledgeMenuStyle(selected.size());
+        selectAllItem.setSelected(selectedCount == docItems.size());
+        updateKnowledgeMenuStyle(selectedCount);
     }
 
     /**
@@ -1868,10 +1869,11 @@ public class ChatViewController {
     }
 
     /**
-     * 清空知识库选中状态（工作区切换时调用）
+     * 重置知识库按钮显示（工作区切换时调用）。
+     * 文档「参与检索」状态已按工作区持久化在 KnowledgeExpert，切换工作区时随服务重建自动加载，
+     * 此处仅复位顶栏按钮文案，菜单将在下次打开时按新工作区的启用状态重建。
      */
     private void clearKnowledgeSelection() {
-        runtime.setSelectedKnowledgeDocs(Set.of());
         updateKnowledgeMenuStyle(0);
     }
 
@@ -3151,14 +3153,21 @@ public class ChatViewController {
      * 打开设置对话框（供顶栏按钮与系统托盘菜单复用）
      */
     public void openSettings() {
-        log.info("打开设置对话框");
+        openSettings(null);
+    }
+
+    /**
+     * 打开设置对话框并可直达指定分类（如「嵌入模型」）；category 为 null 时打开默认分类。
+     */
+    public void openSettings(String category) {
+        log.info("打开设置对话框{}", category != null ? "（直达：" + category + "）" : "");
         javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
         SettingsView settingsView = new SettingsView(ownerStage,
                 runtime != null ? runtime.getMcpClientManager() : null,
                 runtime != null ? runtime.getModelFactory() : null,
                 runtime != null ? runtime.getTokenTracker() : null);
         settingsView.setOnModelConfigChanged(this::rebuildAgentService);
-        settingsView.show();
+        settingsView.show(category);
     }
 
     /**
@@ -3400,15 +3409,19 @@ public class ChatViewController {
     }
 
     /**
-     * 打开知识库管理对话框
+     * 打开知识库中心（全窗口视图，按设计稿重建）
      */
     private void openKnowledgeBase() {
-        log.info("打开知识库管理");
+        log.info("打开知识库中心");
         javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
-        KnowledgeBaseView knowledgeBaseView = new KnowledgeBaseView(
-                ownerStage, runtime.getKnowledgeExpert());
-        knowledgeBaseView.setOnConfigChanged(this::rebuildAgentService);
-        knowledgeBaseView.show();
+        var view = new com.javaclaw.ui.javafx.knowledge.KnowledgeCenterView(
+                ownerStage, runtime.getKnowledgeExpert(),
+                com.javaclaw.agent.ToolConfirmationManager.getPort(),
+                this::rebuildAgentService,
+                () -> openSettings("嵌入模型"));
+        // 关闭后重建顶栏知识库菜单（文档增删 / 启用状态可能已变化）
+        view.setOnHidden(this::rebuildKnowledgeMenu);
+        view.show();
     }
 
     /**
