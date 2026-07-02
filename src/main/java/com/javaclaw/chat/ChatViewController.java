@@ -423,9 +423,9 @@ public class ChatViewController {
         scrollPane.setFitToWidth(true);
         scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
 
-        // 气泡内嵌 WebView / InlineCssTextArea 会吞掉滚轮事件，导致鼠标悬停在气泡上时列表无法滚动。
+        // 气泡内嵌的可滚动控件（RichTextArea / InlineCssTextArea）会吞掉滚轮事件，导致鼠标悬停在气泡上时列表无法滚动。
         // 在 ScrollPane 的 capture 阶段抢先处理所有向下路由的 ScrollEvent，确保列表始终响应滚轮。
-        // 所有气泡都做过高度自适应（USE_PREF_SIZE / autoFitHeight），无需内部滚动，抢占是安全的。
+        // 所有气泡都做过高度自适应（useContentHeight / USE_PREF_SIZE / autoFitHeight），无需内部滚动，抢占是安全的。
         scrollPane.addEventFilter(javafx.scene.input.ScrollEvent.SCROLL, event -> {
             double deltaY = event.getDeltaY();
             if (deltaY == 0) return;
@@ -948,7 +948,7 @@ public class ChatViewController {
         thinkingPanel.startNewStream();
 
         // 重活推迟到下一帧 —— saveChatHistory（智能体状态落盘）+ createStreamingBubble
-        // （新建 WebView，WebKit 实例化重）若同步执行会让用户气泡的首帧推迟约 1 秒。
+        // 若同步执行会让用户气泡的首帧推迟。
         // 用 Platform.runLater 让上面的 UI 改动先完成布局/重绘，然后下一脉冲再做这些重活。
         // 捕获当前代次，所有回调中检查代次是否匹配，会话切换/删除后旧回调自动失效。
         final int gen = streamGeneration;
@@ -1213,9 +1213,9 @@ public class ChatViewController {
         activeToolResultsBox.setVisible(false);
         activeToolResultsBox.setManaged(false);
 
-        // ---- 回复气泡（Markdown WebView） ----
+        // ---- 回复气泡（Markdown） ----
         activeReplyBubble = new MarkdownBubble(520);
-        // 首个回复 chunk 到达前隐藏空 WebView，改由占位动画占位（避免空白气泡）
+        // 首个回复 chunk 到达前隐藏空气泡，改由占位动画占位
         activeReplyBubble.getView().setVisible(false);
         activeReplyBubble.getView().setManaged(false);
 
@@ -1405,7 +1405,7 @@ public class ChatViewController {
     }
 
     /**
-     * 移除「生成中」占位，恢复 WebView 显示。幂等：可在首 chunk 与各终态重复调用。
+     * 移除「生成中」占位，恢复气泡显示。幂等：可在首 chunk 与各终态重复调用。
      */
     private void dismissGenPlaceholder() {
         if (activeGenPlaceholderAnim != null) {
@@ -1501,7 +1501,7 @@ public class ChatViewController {
         Label agentLabel = new Label(displayName);
         agentLabel.getStyleClass().add("agent-name-sub");
 
-        // 回复区域（Markdown WebView，宽度提升至 540 便于阅读长结果）
+        // 回复区域（Markdown 气泡，宽度提升至 540 便于阅读长结果）
         activeToolResultBubble = new MarkdownBubble(540);
         final MarkdownBubble bubbleRef = activeToolResultBubble;
 
@@ -2043,7 +2043,7 @@ public class ChatViewController {
             finalizeCurrentPlanAgent();
         }
 
-        // 移除「生成中」占位，恢复 WebView（无论是否有回复内容）
+        // 移除「生成中」占位，恢复气泡显示（无论是否有回复内容）
         dismissGenPlaceholder();
 
         try {

@@ -108,6 +108,8 @@ public class MemoryCenterView {
     // —— 嵌入降级横幅（嵌入服务不可用时提示，读取 EmbeddingGate.lastError） ——
     private HBox degradeBanner;
     private Label degradeText;
+    private Button degradeRefillBtn;
+    private volatile boolean refilling = false;
 
     // —— 事实页状态 ——
     private boolean batchMode = false;
@@ -317,12 +319,50 @@ public class MemoryCenterView {
         degradeText.setWrapText(true);
         HBox.setHgrow(degradeText, Priority.ALWAYS);
         degradeText.setMaxWidth(Double.MAX_VALUE);
-        HBox bar = new HBox(9, ic, degradeText);
+        degradeRefillBtn = new Button("立即回填");
+        degradeRefillBtn.getStyleClass().add("jc-btn-primary");
+        degradeRefillBtn.setVisible(false);
+        degradeRefillBtn.setManaged(false);
+        degradeRefillBtn.setOnAction(e -> refillPendingAsync());
+        HBox bar = new HBox(9, ic, degradeText, degradeRefillBtn);
         bar.getStyleClass().add("mc-degrade-banner");
         bar.setAlignment(Pos.CENTER_LEFT);
         bar.setVisible(false);
         bar.setManaged(false);
         return bar;
+    }
+
+    /** 手动回填全部 pending：后台一次性重嵌入迁回正式索引，完成后刷新横幅/规模/当前分区/图谱。 */
+    private void refillPendingAsync() {
+        if (refilling || svc.pendingCount() <= 0) return;
+        refilling = true;
+        degradeRefillBtn.setDisable(true);
+        degradeRefillBtn.setText("回填中…");
+        Thread t = new Thread(() -> {
+            int moved = 0;
+            try {
+                moved = svc.promoteAllPending();
+            } catch (Exception ignore) {
+                // 嵌入仍不可用则原地保留 pending，横幅继续提示
+            }
+            final int movedFinal = moved;
+            Platform.runLater(() -> {
+                refilling = false;
+                degradeRefillBtn.setDisable(false);
+                degradeRefillBtn.setText("立即回填");
+                onPendingChanged(movedFinal);
+            });
+        }, "memory-pending-refill");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /** pending 迁回后统一刷新：横幅 + 规模卡 + 当前分区，若图谱已加载则重建。 */
+    private void onPendingChanged(int moved) {
+        updateBanner();
+        updateScaleCard();
+        if (currentSection != null) refreshSection(currentSection);
+        if (moved > 0 && graphLoaded) loadGraph();
     }
 
     /** 刷新降级横幅：按 embeddingError / pendingCount 决定是否显示与文案。 */
@@ -333,27 +373,51 @@ public class MemoryCenterView {
         boolean degraded = pending > 0 || (err != null && !err.isBlank());
         degradeBanner.setVisible(degraded);
         degradeBanner.setManaged(degraded);
+        // 「立即回填」按钮：仅在存在待嵌入暂存且嵌入端点可用时可用（否则回填必然空转）
+        boolean canRefill = pending > 0 && (err == null || err.isBlank());
+        if (degradeRefillBtn != null) {
+            degradeRefillBtn.setVisible(canRefill);
+            degradeRefillBtn.setManaged(canRefill);
+        }
         if (!degraded) return;
-        StringBuilder sb = new StringBuilder("嵌入服务不可用");
-        if (err != null && !err.isBlank()) sb.append("：").append(oneLine(err, 88));
-        sb.append("。事实/情景已降级为纯文本暂存");
+        StringBuilder sb = new StringBuilder();
+        boolean embedOk = err == null || err.isBlank();
+        if (!embedOk) sb.append("嵌入服务不可用：").append(oneLine(err, 88)).append("。事实/情景已降级为纯文本暂存");
         if (pending > 0) {
-            sb.append("（").append(pending).append(" 条待嵌入，服务恢复后自动重嵌入并可被向量召回）");
-        } else {
+            if (embedOk) {
+                sb.append("有 ").append(pending).append(" 条降级暂存记忆待回填（嵌入服务已恢复，可点右侧「立即回填」重嵌入并纳入向量召回/图谱）");
+            } else {
+                sb.append("（").append(pending).append(" 条待嵌入，服务恢复后自动重嵌入并可被向量召回）");
+            }
+        } else if (!embedOk) {
             sb.append("，恢复嵌入服务后新记忆将带向量入库。");
         }
         degradeText.setText(sb.toString());
     }
 
-    /** 后台探测嵌入端点可用性，回到 UI 线程刷新横幅（打开记忆中心时主动检测）。 */
+    /**
+     * 后台探测嵌入端点可用性；若可用且存在待嵌入暂存，则自动回填全部 pending（服务恢复后免手动），
+     * 最后回到 UI 线程刷新横幅/规模/当前分区/图谱。打开记忆中心时主动检测。
+     */
     private void probeEmbeddingAsync() {
         Thread t = new Thread(() -> {
+            String err = null;
             try {
-                svc.probeEmbedding();
+                err = svc.probeEmbedding();
             } catch (Exception ignore) {
                 // 探测失败即视为不可用，lastError 已由 gate 记录
+                err = svc.embeddingError();
             }
-            Platform.runLater(this::updateBanner);
+            int moved = 0;
+            if ((err == null || err.isBlank()) && svc.pendingCount() > 0) {
+                try {
+                    moved = svc.promoteAllPending();
+                } catch (Exception ignore) {
+                    // 迁移失败则保留 pending，横幅仍提示可手动回填
+                }
+            }
+            final int movedFinal = moved;
+            Platform.runLater(() -> onPendingChanged(movedFinal));
         }, "memory-embed-probe");
         t.setDaemon(true);
         t.start();
@@ -893,7 +957,7 @@ public class MemoryCenterView {
         left.setPrefWidth(196);
         left.setMinWidth(176);
 
-        // —— 中：画布 ——（WebView 包一层便于描边/圆角）
+        // —— 中：画布 ——（图谱视图包一层便于描边/圆角）
         StackPane canvas = new StackPane(graphView.getView());
         VBox.setVgrow(canvas, Priority.ALWAYS);
         HBox.setHgrow(canvas, Priority.ALWAYS);

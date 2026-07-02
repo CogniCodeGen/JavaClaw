@@ -79,9 +79,9 @@ public final class FontManager {
     public static final String DEFAULT_MONO = "cascadia";
     public static final String DEFAULT_DENSITY = "cozy";
 
-    /** 默认界面字体栈（与 chat.css .root 一致），供内联样式/WebView 复用。 */
+    /** 默认界面字体栈（与 chat.css .root 一致），供内联样式复用。 */
     public static final String UI_FONT_STACK = FONT_OPTIONS.get(0).stack();
-    /** 默认等宽字体栈，供内联样式/WebView 复用，避免字符串再次漂移。 */
+    /** 默认等宽字体栈，供内联样式复用，避免字符串再次漂移。 */
     public static final String MONO_FONT_STACK = MONO_OPTIONS.get(0).stack();
 
     /** chat.css 中使用等宽字体的类（用户切换等宽时由生成样式表统一重指向）。 */
@@ -163,7 +163,7 @@ public final class FontManager {
     public static double chatFontPx()     { return density().fontPx(); }
     public static double chatLineHeight() { return density().lineHeight(); }
 
-    /** 当前界面字体的完整回退栈（供 WebView body / 内联样式复用）。 */
+    /** 当前界面字体的完整回退栈（供内联样式复用）。 */
     public static String uiStack()   { return fontOption().stack(); }
     public static String monoStack() { return monoOption().stack(); }
 

@@ -22,8 +22,9 @@ import java.util.Set;
  * 在调用线程执行（建议放后台线程，见 {@code MemoryGraphView}）。</p>
  *
  * <p>构图规则见 {@link MemoryGraph} 文档：事实/情景/实体三类节点 + source/about/semantic 三类边。
- * 为控制规模，事实按更新时间倒序取前 {@code maxNodes} 个，情景与实体仅纳入被选中事实实际引用到的部分
- * （避免孤立节点淹没图）。</p>
+ * 为控制规模，事实按更新时间倒序取前 {@code maxNodes} 个，情景与实体优先纳入被选中事实实际引用到的部分；
+ * 之后再兜底纳入其余已抽取实体与已落库情景（呈独立散点），避免「有实体/情景零事实」时图谱全空。
+ * 节点总数统一受 {@code maxNodes} 约束。</p>
  *
  * @author JavaClaw
  */
@@ -146,6 +147,42 @@ public final class MemoryGraphBuilder {
                     edges.add(new MemoryGraph.Edge(factNodeId, enNodeId, "about", 1.0));
                 }
             }
+        }
+
+        // 孤立实体兜底：把已抽取但未被任何纳入事实的 about 引用到的实体也纳入图。
+        // 场景：对话产生了实体却没沉淀出事实（如闲聊类），否则「有实体零事实」时图谱全空。
+        // 此类节点无边，呈独立散点，weight 按被引用度缺省 1。
+        for (EntityNode en : store.allEntities()) {
+            if (nodes.size() >= opt.maxNodes()) break;
+            if (en == null || en.name == null || en.name.isBlank()) continue;
+            String enKey = entityKey(en);
+            if (entityKeyToNodeId.containsKey(enKey)) continue;
+            String enNodeId = "entity:" + enKey;
+            entityKeyToNodeId.put(enKey, enNodeId);
+            nodes.add(new MemoryGraph.Node(
+                    enNodeId,
+                    truncate(en.name, opt.labelMaxChars()),
+                    "entity",
+                    blankToDefault(en.type, "topic"),
+                    en.name + (en.type == null ? "" : "（" + en.type + "）"),
+                    1));
+        }
+
+        // 孤立情景兜底：把已落库但未被任何纳入事实 source 引用到的情景也纳入图（同上，独立散点）。
+        for (Episode ep : store.allEpisodes()) {
+            if (nodes.size() >= opt.maxNodes()) break;
+            if (ep == null) continue;
+            String epKey = episodeKey(ep);
+            if (episodeKeyToNodeId.containsKey(epKey)) continue;
+            String epNodeId = "episode:" + epKey;
+            episodeKeyToNodeId.put(epKey, epNodeId);
+            nodes.add(new MemoryGraph.Node(
+                    epNodeId,
+                    truncate(ep.userInput, opt.labelMaxChars()),
+                    "episode",
+                    "情景",
+                    episodeDetail(ep),
+                    1));
         }
 
         // 语义近邻边（事实↔事实，无向去重）

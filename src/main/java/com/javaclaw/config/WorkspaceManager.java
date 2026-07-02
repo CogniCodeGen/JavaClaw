@@ -29,8 +29,7 @@ import java.util.function.Consumer;
  *   │   │   ├── screenshots/
  *   │   │   ├── chat/sessions/
  *   │   │   └── scheduled-tasks.json
- *   │   ├── browser/                   # 浏览器状态
- *   │   │   └── cookies.json
+ *   │   ├── browser/                   # 浏览器状态（Playwright pw-cookies.json 等）
  *   │   └── logs/                      # 日志
  *   │       ├── javaclaw.log
  *   │       └── task.log

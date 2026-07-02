@@ -1,13 +1,10 @@
 package com.javaclaw.memory.graph;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
 import java.util.List;
 
 /**
  * 记忆图谱快照 —— 由 {@link MemoryGraphBuilder} 从记忆库一次性物化的只读节点/边集合，
- * 供 UI（{@code MemoryGraphView}）序列化为 JSON 后在 WebView 中渲染。
+ * 供 UI（{@code MemoryGraphView}）以 Canvas 力导向图直接渲染。
  *
  * <p>三类节点：</p>
  * <ul>
@@ -52,16 +49,5 @@ public record MemoryGraph(List<Node> nodes, List<Edge> edges) {
     /** 空图。 */
     public static MemoryGraph empty() {
         return new MemoryGraph(List.of(), List.of());
-    }
-
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-
-    /** 序列化为 JSON（供 WebView 注入）；失败返回空图 JSON。 */
-    public String toJson() {
-        try {
-            return MAPPER.writeValueAsString(this);
-        } catch (JsonProcessingException e) {
-            return "{\"nodes\":[],\"edges\":[]}";
-        }
     }
 }

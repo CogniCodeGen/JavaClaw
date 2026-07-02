@@ -337,6 +337,11 @@ public class MemoryService implements AutoCloseable {
         return moved + movedEp;
     }
 
+    /** 回填全部 pending（嵌入可用时一次性迁回正式索引，无条数上限）。返回成功迁回条数；建议后台线程调用。 */
+    public int promoteAllPending() {
+        return promotePending(Integer.MAX_VALUE);
+    }
+
     public List<com.javaclaw.memory.model.EntityNode> entities() {
         return store != null ? store.allEntities() : List.of();
     }

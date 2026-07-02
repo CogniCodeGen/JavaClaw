@@ -80,7 +80,12 @@ public class Distiller {
         Msg sys = Msg.builder().role(MsgRole.SYSTEM).name("system").textContent(MemoryPrompts.DISTILL_PROMPT).build();
         Msg user = Msg.builder().role(MsgRole.USER).name("user").textContent(conversation).build();
         String factsText = streamCollect(sys, user).trim();
-        if (factsText.isEmpty() || "无".equals(factsText) || factsText.equalsIgnoreCase("none")) {
+        if (factsText.isEmpty()) {
+            // 与「判定为无」区分开：空响应通常意味着轻量模型未配置/超时/限流，需可见告警
+            log.warn("记忆蒸馏模型无响应，本轮跳过（请检查轻量模型配置/网络）");
+            return;
+        }
+        if (isNoneAnswer(factsText)) {
             log.debug("本轮无值得记忆的事实");
             return;
         }
@@ -93,7 +98,7 @@ public class Distiller {
         for (String raw : factsText.lines().toList()) {
             String line = raw.strip();
             if (line.startsWith("- ")) line = line.substring(2).strip();
-            if (line.isEmpty()) continue;
+            if (line.isEmpty() || isNoneAnswer(line)) continue; // 混排输出中的「无」行不落库
 
             float[] vec = gate.embed(line);
             if (vec == null) {
@@ -135,7 +140,11 @@ public class Distiller {
                     .textContent(MemoryPrompts.ENTITY_EXTRACT_PROMPT).build();
             Msg user = Msg.builder().role(MsgRole.USER).name("user").textContent(conversation).build();
             String text = streamCollect(sys, user).trim();
-            if (text.isEmpty() || "无".equals(text) || text.equalsIgnoreCase("none")) {
+            if (text.isEmpty()) {
+                log.warn("实体抽取模型无响应，本轮跳过（请检查轻量模型配置/网络）");
+                return out;
+            }
+            if (isNoneAnswer(text)) {
                 return out;
             }
             for (String raw : text.lines().toList()) {
@@ -153,6 +162,25 @@ public class Distiller {
             log.warn("实体抽取失败（已静默忽略）: {}", e.getMessage());
         }
         return out;
+    }
+
+    /**
+     * 判定模型输出是否为「无」类回答。提示词要求只输出"无"一个字，但实际模型常输出
+     * 「无。」「- 无」「None.」「没有值得记录的事实」等变体——严格 equals 会把这类回答
+     * 当成事实落库（产生垃圾记忆），故做归一化后再比对。
+     */
+    static boolean isNoneAnswer(String text) {
+        if (text == null) return true;
+        String s = text.strip();
+        if (s.startsWith("- ")) s = s.substring(2).strip();
+        // 去掉尾部标点/空白（中英文句号、逗号、感叹号、波浪号）
+        s = s.replaceAll("[\\s。．.,，!！~～]+$", "").strip();
+        return s.isEmpty()
+                || "无".equals(s) || "没有".equals(s)
+                || s.equalsIgnoreCase("none")
+                || "没有值得记录的事实".equals(s)
+                || "没有值得记忆的事实".equals(s)
+                || "无可抽取的实体".equals(s) || "没有可抽取的实体".equals(s);
     }
 
     /** 在事实文本中按名称（忽略大小写、子串包含）匹配本轮实体，作为 about 边。 */
