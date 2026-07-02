@@ -91,6 +91,18 @@
         </dependency>
 
         <!--
+            JavaFX 孵化富文本控件（RichTextArea/CodeArea，JavaFX 24 起孵化）
+            2B 方案 POC：评估用纯 JavaFX 节点替换 MarkdownBubble 的 WebView 渲染。
+            classpath（Launcher）模式下无需额外 JVM 参数；mvn javafx:run（module path）
+            需要 add-modules jfx.incubator.richtext（见 javafx-maven-plugin options）。
+        -->
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>jfx-incubator-richtext</artifactId>
+            <version>${javafx.version}</version>
+        </dependency>
+
+        <!--
             Jakarta Mail（邮件收发）
             提供 SMTP 发送和 IMAP 接收能力
         -->
@@ -158,12 +170,6 @@
             <groupId>org.commonmark</groupId>
             <artifactId>commonmark</artifactId>
             <version>${commonmark.version}</version>
-        </dependency>
-        <!-- 表情检测（纯 Java，当前 Unicode 覆盖；用于对话气泡把表情替换为 Java2D 渲染的图片） -->
-        <dependency>
-            <groupId>net.fellbaum</groupId>
-            <artifactId>jemoji</artifactId>
-            <version>1.5.2</version>
         </dependency>
         <dependency>
             <groupId>org.commonmark</groupId>
@@ -266,11 +272,22 @@
                 <version>0.0.8</version>
                 <configuration>
                     <mainClass>com.javaclaw.app.Launcher</mainClass>
-                    <!-- 运行期放行 JVector 的孵化向量 API + EclipseStore/JVector 的 FFM 原生访问（FFM 在 JDK 25 已 GA，无需 enable-preview） -->
+                    <!-- 运行期放行 JVector 的孵化向量 API + EclipseStore/JVector 的 FFM 原生访问（FFM 在 JDK 25 已 GA，无需 enable-preview）。
+                         三条 add-exports 服务于 Markdown 气泡（chat.markdown）依赖的 JavaFX 孵化富文本控件：
+                         本插件只把 javafx-* 前缀构件放 module path，jfx-incubator-richtext 落在 classpath
+                        （unnamed module），而 JavaFX 核心对 com.sun 内部包只做了面向 jfx.incubator.richtext
+                         命名模块的定向导出，故需显式向 ALL-UNNAMED 开放（清单由 jdeps 对两个孵化 jar 实测得出）。
+                         IDE 直跑（JavaFX 全在 classpath）不需要这三条参数。 -->
                     <options>
                         <option>--add-modules</option>
                         <option>jdk.incubator.vector</option>
                         <option>--enable-native-access=ALL-UNNAMED</option>
+                        <option>--add-exports</option>
+                        <option>javafx.base/com.sun.javafx=ALL-UNNAMED</option>
+                        <option>--add-exports</option>
+                        <option>javafx.graphics/com.sun.javafx.util=ALL-UNNAMED</option>
+                        <option>--add-exports</option>
+                        <option>javafx.graphics/com.sun.javafx.scene.text=ALL-UNNAMED</option>
                     </options>
                 </configuration>
             </plugin>

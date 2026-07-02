@@ -28,8 +28,8 @@ import java.util.List;
  *   <li><b>全局可配置</b>：用户在「设置 › 字体」选择字体族 / 等宽 / 密度后，本管理器监听
  *       {@link Window#getWindows()}，给每个窗口的 Scene 追加一张<b>动态生成的用户样式表</b>
  *       （排在 chat.css 之后，按 CSS 顺序覆盖），即可整窗实时换字、立即生效。
- *       对话气泡（WebView）的字号/行高由 {@link #chatFontPx()} / {@link #chatLineHeight()}
- *       供 MarkdownBubble 读取。</li>
+ *       对话气泡的字号/行高由 {@link #chatFontPx()} / {@link #chatLineHeight()}
+ *       供 MarkdownBubble 的渲染器读取（密度变更经 {@link #revisionProperty()} 触发气泡重渲染）。</li>
  * </ol>
  *
  * <p>选择持久化到当前工作区配置（{@code ui.font.*}），切换工作区时 {@link #reload()} 重新读取。
@@ -159,7 +159,7 @@ public final class FontManager {
     public static String getMonoFamily() { return monoId; }
     public static String getDensity()    { return densityId; }
 
-    /** 对话气泡（WebView）正文字号；MarkdownBubble 构建 HTML 时读取。 */
+    /** 对话气泡正文字号；MarkdownBubble 的段落渲染器（chat.markdown）读取。 */
     public static double chatFontPx()     { return density().fontPx(); }
     public static double chatLineHeight() { return density().lineHeight(); }
 

@@ -1503,14 +1503,6 @@
     -fx-opacity: 0;
 }
 
-/* ==================== Markdown WebView 气泡 ==================== */
-
-.markdown-webview {
-    -fx-background-color: transparent;
-    -fx-border-width: 0;
-    -fx-padding: 0;
-}
-
 /* 输入框占位提示 */
 .input-placeholder {
     -fx-text-fill: -jc-neutral-400;
@@ -5820,3 +5812,85 @@
     -fx-text-fill: -jc-text-body;
     -fx-font-size: 12.5px;
 }
+
+/* ==================== Markdown 气泡（孵化 RichTextArea 纯节点渲染） ==================== */
+/* 文字颜色由 .md-* 样式类挂 -jc-* 令牌，随主题换肤；字号/字重/斜体等由渲染器内联注入
+   （随「设置 › 字体」密度重渲染）。代码卡按深色控制台块惯例保持字面深色，勿令牌化。 */
+
+.md-bubble {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+.md-bubble .content {
+    -fx-background-color: transparent;
+}
+.md-bubble .scroll-bar {
+    -fx-pref-width: 0;
+    -fx-pref-height: 0;
+    -fx-opacity: 0;
+}
+
+/* 正文与结构文字（Text 节点用 -fx-fill） */
+.md-body        { -fx-fill: -jc-neutral-800; }
+.md-muted       { -fx-fill: -jc-neutral-500; }
+.md-h1          { -fx-fill: -jc-neutral-800; }
+.md-h2          { -fx-fill: -jc-neutral-800; }
+.md-h3          { -fx-fill: -jc-neutral-500; }
+.md-h4          { -fx-fill: -jc-neutral-500; }
+.md-list-marker { -fx-fill: -jc-neutral-500; }
+.md-quote-text  { -fx-fill: -jc-neutral-500; }
+.md-inline-code { -fx-fill: -jc-primary-600; }
+.md-link        { -fx-fill: -jc-primary-600; }
+
+/* 代码块卡片（字面深色：与 .browser-console-* 同惯例） */
+.md-code-card {
+    -fx-background-color: #27251F;
+    -fx-background-radius: 10;
+    -fx-padding: 8 12 12 12;
+}
+.md-code-text { -fx-fill: #E8E4DB; }
+.md-code-lang {
+    -fx-text-fill: #A19A8A;
+    -fx-font-size: 11px;
+}
+.md-code-copy {
+    -fx-background-color: transparent;
+    -fx-text-fill: #D3CDBF;
+    -fx-border-color: #3B382F;
+    -fx-border-radius: 6;
+    -fx-background-radius: 6;
+    -fx-font-size: 11px;
+    -fx-padding: 1 8;
+    -fx-cursor: hand;
+}
+.md-code-copy:hover {
+    -fx-background-color: #3B382F;
+}
+
+/* GFM 表格（GridPane 缝隙露出容器底色作为网格线） */
+.md-table {
+    -fx-background-color: -jc-neutral-200;
+    -fx-padding: 1;
+}
+.md-table-header {
+    -fx-background-color: -jc-neutral-100;
+    -fx-text-fill: -jc-neutral-800;
+    -fx-font-weight: 600;
+    -fx-font-size: 12.5px;
+    -fx-padding: 5 10;
+}
+.md-table-cell {
+    -fx-background-color: -jc-surface-card;
+    -fx-text-fill: -jc-neutral-800;
+    -fx-font-size: 12.5px;
+    -fx-padding: 5 10;
+}
+.md-table-cell-stripe {
+    -fx-background-color: -jc-neutral-50;
+    -fx-text-fill: -jc-neutral-800;
+    -fx-font-size: 12.5px;
+    -fx-padding: 5 10;
+}
+
+/* 分隔线 */
+.md-hr { -fx-background-color: -jc-neutral-200; }

@@ -2453,8 +2453,6 @@ public class ChatViewController {
             for (ChatMessage msg : messages) {
                 addStaticBubbleFromHistory(msg);
             }
-            // 启动时同样批量新建 WebView，错峰重绘规避空白气泡
-            refreshMarkdownBubblesStaggered();
             // 恢复智能体状态（Memory + PlanNotebook）
             chatService.loadSession(currentSession.getId());
             log.info("已恢复会话 [{}] 的 {} 条消息", currentSession.getTitle(), messages.size());
@@ -2607,8 +2605,6 @@ public class ChatViewController {
                     addStaticBubbleFromHistory(msg);
                 }
             }
-            // 批量重建 WebView 后错峰强制重绘，规避 WebKit「已加载未绘制」导致的空白气泡
-            refreshMarkdownBubblesStaggered();
         }
 
         updateTopTitle();
@@ -2637,48 +2633,13 @@ public class ChatViewController {
                 finished.getTitle(), currentSession.getTitle());
     }
 
-    /** 释放挂起的流式场景图节点（含其中的 MarkdownBubble WebView） */
+    /** 释放挂起的流式场景图节点（含其中的 MarkdownBubble） */
     private void disposeSuspendedStreamingNodes() {
         if (suspendedStreamingNodes.isEmpty()) return;
         for (javafx.scene.Node n : suspendedStreamingNodes) {
             collectAndDisposeBubbles(n);
         }
         suspendedStreamingNodes.clear();
-    }
-
-    /**
-     * 错峰强制重绘消息区内全部 Markdown 气泡。
-     *
-     * <p>会话切换会一次性 dispose 旧 WebView 并批量新建，macOS 的 WebKit 在这种
-     * 高峰下偶发「引擎已加载但合成层未绘制」——表现为整段对话空白。等场景图安定
-     * 后按 60ms 间隔依次重写 innerHTML 强制重绘（与窗口焦点恢复的兜底同机制）。</p>
-     */
-    private void refreshMarkdownBubblesStaggered() {
-        java.util.List<MarkdownBubble> bubbles = new ArrayList<>();
-        collectMarkdownBubbles(messageList, bubbles);
-        if (bubbles.isEmpty()) return;
-        int slot = 0;
-        for (MarkdownBubble bubble : bubbles) {
-            javafx.animation.PauseTransition delay = new javafx.animation.PauseTransition(
-                    Duration.millis(350 + 60L * slot++));
-            delay.setOnFinished(e -> bubble.refresh());
-            delay.play();
-        }
-    }
-
-    private void collectMarkdownBubbles(javafx.scene.Node node, java.util.List<MarkdownBubble> out) {
-        if (node instanceof javafx.scene.web.WebView wv) {
-            Object attached = wv.getProperties().get("markdownBubble");
-            if (attached instanceof MarkdownBubble bubble) {
-                out.add(bubble);
-            }
-            return;
-        }
-        if (node instanceof javafx.scene.Parent parent) {
-            for (javafx.scene.Node child : parent.getChildrenUnmodifiable()) {
-                collectMarkdownBubbles(child, out);
-            }
-        }
     }
 
     /**
@@ -3059,11 +3020,11 @@ public class ChatViewController {
     }
 
     /**
-     * 清空消息列表并释放内嵌的 MarkdownBubble（含其 WebView）资源。
+     * 清空消息列表并释放内嵌的 MarkdownBubble 资源。
      *
-     * <p>仅 {@link MarkdownBubble#getView()} 产生的 WebView 上挂有 {@code markdownBubble}
-     * 属性；深度遍历 messageList 所有后代，对命中的 WebView 调用 dispose，
-     * 斩断它与主 Stage 的 focusedProperty 之间的 listener 引用链。</p>
+     * <p>{@link MarkdownBubble#getView()} 产生的视图节点上挂有 {@code markdownBubble}
+     * 属性；深度遍历 messageList 所有后代，对命中节点调用 dispose，
+     * 解除气泡与 FontManager 等全局对象之间的 listener 引用链。</p>
      */
     private void disposeMessageList() {
         collectAndDisposeBubbles(messageList);
@@ -3071,11 +3032,9 @@ public class ChatViewController {
     }
 
     private void collectAndDisposeBubbles(javafx.scene.Node node) {
-        if (node instanceof javafx.scene.web.WebView wv) {
-            Object attached = wv.getProperties().get("markdownBubble");
-            if (attached instanceof MarkdownBubble bubble) {
-                bubble.dispose();
-            }
+        if (node.hasProperties()
+                && node.getProperties().get("markdownBubble") instanceof MarkdownBubble bubble) {
+            bubble.dispose();
             return;
         }
         if (node instanceof javafx.scene.Parent parent) {
