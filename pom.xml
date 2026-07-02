@@ -218,6 +218,14 @@
             <artifactId>gigamap-jvector</artifactId>
             <version>${eclipsestore.version}</version>
         </dependency>
+
+        <!-- JUnit 5（单元测试；运行 mvn test） -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.11.4</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -242,6 +250,16 @@
                 使用 Launcher 类作为入口，避免非模块化 JavaFX 的启动问题
                 运行命令：mvn javafx:run
             -->
+            <!-- Surefire：跑 JUnit 5 测试；argLine 与编译参数对齐（JVector 孵化向量 API） -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.2</version>
+                <configuration>
+                    <argLine>--add-modules jdk.incubator.vector --enable-native-access=ALL-UNNAMED</argLine>
+                </configuration>
+            </plugin>
+
             <plugin>
                 <groupId>org.openjfx</groupId>
                 <artifactId>javafx-maven-plugin</artifactId>

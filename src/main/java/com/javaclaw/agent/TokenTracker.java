@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.javaclaw.config.DataManager;
+import com.javaclaw.util.AtomicFileWriter;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.model.ChatResponse;
 import io.agentscope.core.model.ChatUsage;
@@ -425,7 +426,7 @@ public class TokenTracker {
             Map<String, Object> root = new HashMap<>();
             root.put("schemaVersion", SCHEMA_VERSION);
             root.put("data", dailyUsage);
-            mapper.writeValue(file, root);
+            AtomicFileWriter.writeJson(mapper, file, root);
         } catch (Exception e) {
             log.warn("保存 token 用量数据失败: {}", e.getMessage());
         }

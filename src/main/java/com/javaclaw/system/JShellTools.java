@@ -168,6 +168,10 @@ public final class JShellTools {
         if (!target.startsWith(scriptsDir) || !Files.isRegularFile(target)) {
             return null;
         }
+        // 符号链接防护：真实位置必须仍在 scripts/ 内（防 symlink 逃逸执行外部脚本）
+        if (!com.javaclaw.util.PathGuard.isInside(scriptsDir, target)) {
+            return null;
+        }
         return target;
     }
 

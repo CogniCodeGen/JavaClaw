@@ -210,12 +210,16 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
         return ConfirmDecision.DENY;
     }
 
+    /** 配置为 0/负数时的兜底超时：与托管场景上限一致，避免 UI 线程卡死时调用线程永久阻塞 */
+    private static final int FALLBACK_TIMEOUT_SEC = 600;
+
     private ConfirmDecision awaitDecision(CompletableFuture<ConfirmDecision> future,
                                           String toolName, int timeoutSec) {
+        int effective = timeoutSec > 0 ? timeoutSec : FALLBACK_TIMEOUT_SEC;
         try {
-            return timeoutSec > 0 ? future.get(timeoutSec, TimeUnit.SECONDS) : future.get();
+            return future.get(effective, TimeUnit.SECONDS);
         } catch (Exception e) {
-            log.warn("等待用户交互超时或异常 [{}]（{}s）", toolName, timeoutSec);
+            log.warn("等待用户交互超时或异常 [{}]（{}s）", toolName, effective);
             return ConfirmDecision.DENY;
         }
     }

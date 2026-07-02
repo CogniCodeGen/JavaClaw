@@ -7,6 +7,7 @@ import com.javaclaw.agent.ScheduledTaskAgent;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.util.AtomicFileWriter;
 import org.quartz.CronExpression;
 import org.quartz.CronScheduleBuilder;
 import org.quartz.JobBuilder;
@@ -197,7 +198,7 @@ public class ScheduleManager {
 
     private void saveAll() {
         try {
-            objectMapper.writeValue(tasksFile.toFile(), tasks);
+            AtomicFileWriter.writeJson(objectMapper, tasksFile.toFile(), tasks);
         } catch (IOException e) {
             log.error("保存定时任务失败", e);
         }

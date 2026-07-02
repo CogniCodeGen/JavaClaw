@@ -3,6 +3,7 @@ package com.javaclaw.skill;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.DataManager;
+import com.javaclaw.util.AtomicFileWriter;
 import com.javaclaw.util.DebouncedPersister;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,6 +15,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 技能使用统计 —— 数据驱动技能进化的依据。
@@ -61,24 +63,24 @@ public final class SkillUsageTracker {
      * 单技能统计模型（Jackson 序列化友好）
      */
     public static class SkillUsageStat {
-        /** 路由命中次数 */
-        public long routeHits;
+        /** 路由命中次数（多线程并发埋点，须原子累加；Jackson 对 AtomicLong 按数值序列化，JSON 格式不变） */
+        public AtomicLong routeHits = new AtomicLong();
         /** skill_read 读取次数 */
-        public long reads;
+        public AtomicLong reads = new AtomicLong();
         /** 注入后轮次成功数 */
-        public long turnSuccess;
+        public AtomicLong turnSuccess = new AtomicLong();
         /** 注入后轮次失败数 */
-        public long turnFail;
+        public AtomicLong turnFail = new AtomicLong();
 
         /** 轮次成功率；无样本时返回 -1（不可判定） */
         public double successRate() {
-            long total = turnSuccess + turnFail;
-            return total == 0 ? -1 : (double) turnSuccess / total;
+            long total = turnSuccess.get() + turnFail.get();
+            return total == 0 ? -1 : (double) turnSuccess.get() / total;
         }
 
         /** 轮次样本数 */
         public long samples() {
-            return turnSuccess + turnFail;
+            return turnSuccess.get() + turnFail.get();
         }
     }
 
@@ -89,7 +91,7 @@ public final class SkillUsageTracker {
         if (skillName == null || skillName.isBlank()) {
             return;
         }
-        statOf(skillName).routeHits++;
+        statOf(skillName).routeHits.incrementAndGet();
         persister.request();
     }
 
@@ -98,7 +100,7 @@ public final class SkillUsageTracker {
         if (skillName == null || skillName.isBlank()) {
             return;
         }
-        statOf(skillName).reads++;
+        statOf(skillName).reads.incrementAndGet();
         persister.request();
     }
 
@@ -115,9 +117,9 @@ public final class SkillUsageTracker {
             }
             SkillUsageStat stat = statOf(name);
             if (success) {
-                stat.turnSuccess++;
+                stat.turnSuccess.incrementAndGet();
             } else {
-                stat.turnFail++;
+                stat.turnFail.incrementAndGet();
             }
         }
         persister.request();
@@ -169,10 +171,16 @@ public final class SkillUsageTracker {
         persister.flush();
     }
 
+    /** 应用退出：落盘并停掉防抖调度线程 */
+    public void shutdown() {
+        persister.flush();
+        persister.shutdown();
+    }
+
     private synchronized void save() {
         try {
             File file = new File(DataManager.getInstance().getDataRoot().toFile(), DATA_FILE);
-            mapper.writerWithDefaultPrettyPrinter().writeValue(file, stats);
+            AtomicFileWriter.writeJson(mapper.writerWithDefaultPrettyPrinter(), file, stats);
         } catch (Exception e) {
             log.warn("保存技能使用统计失败: {}", e.getMessage());
         }

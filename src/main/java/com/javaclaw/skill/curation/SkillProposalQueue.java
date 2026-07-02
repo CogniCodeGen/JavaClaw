@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.DataManager;
 import com.javaclaw.skill.SkillChangeRequest;
+import com.javaclaw.util.AtomicFileWriter;
 import com.javaclaw.skill.SkillManageTools;
 import com.javaclaw.util.DebouncedPersister;
 import org.slf4j.Logger;
@@ -206,10 +207,16 @@ public final class SkillProposalQueue implements SkillManageTools.ProposalSink {
         persister.flush();
     }
 
+    /** 应用退出：落盘并停掉防抖调度线程 */
+    public void shutdown() {
+        persister.flush();
+        persister.shutdown();
+    }
+
     private synchronized void save() {
         try {
             File file = new File(DataManager.getInstance().getDataRoot().toFile(), DATA_FILE);
-            mapper.writerWithDefaultPrettyPrinter().writeValue(file, new ArrayList<>(proposals));
+            AtomicFileWriter.writeJson(mapper.writerWithDefaultPrettyPrinter(), file, new ArrayList<>(proposals));
         } catch (Exception e) {
             log.warn("保存技能提案队列失败: {}", e.getMessage());
         }

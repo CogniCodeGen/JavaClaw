@@ -55,6 +55,14 @@ public class MemoryService implements AutoCloseable {
         this.tokenTracker = tokenTracker;
     }
 
+    /**
+     * 设置嵌入降级通知回调（首次失败触发一次）。
+     * 嵌入端点配错/失效时记忆全链路静默降级，若无此通知用户可能长期毫无感知。
+     */
+    public void setOnEmbeddingDegraded(java.util.function.Consumer<String> callback) {
+        gate.setOnDegraded(callback);
+    }
+
     // ==================== 生命周期 ====================
 
     /** 打开指定工作区的记忆库（目录如 {workspace}/data/memory-store）。 */

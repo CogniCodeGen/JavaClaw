@@ -117,6 +117,21 @@ public class ChatViewController {
                 return t;
             });
 
+    /**
+     * 应用退出时排空聊天持久化队列：等待在途的会话落盘任务完成（最多 2 秒），
+     * 避免退出瞬间丢最后一段聊天历史。由 JavaClawApp.shutdownResources 调用。
+     */
+    public void shutdownPersistence() {
+        persistExecutor.shutdown();
+        try {
+            if (!persistExecutor.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                log.warn("聊天持久化队列 2 秒内未排空，放弃等待");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     // ==================== 多会话管理 ====================
 
     /** 所有会话列表（内存索引） */

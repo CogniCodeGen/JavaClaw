@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.javaclaw.config.WorkspaceManager;
+import com.javaclaw.util.AtomicFileWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -89,7 +90,7 @@ public class McpConfigManager {
         Path path = getConfigPath();
         try {
             Files.createDirectories(path.getParent());
-            objectMapper.writeValue(path.toFile(), new ArrayList<>(servers.values()));
+            AtomicFileWriter.writeJson(objectMapper, path.toFile(), new ArrayList<>(servers.values()));
             log.info("MCP 配置已保存: {}", path);
         } catch (IOException e) {
             log.error("保存 MCP 配置失败", e);

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.javaclaw.config.DataManager;
+import com.javaclaw.util.AtomicFileWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -100,7 +101,7 @@ public class ChatHistoryManager {
                 record.put("createdAt", session.getCreatedAt().format(TIMESTAMP_FORMATTER));
                 records.add(record);
             }
-            objectMapper.writeValue(dataManager.getSessionsIndexFile().toFile(), records);
+            AtomicFileWriter.writeJson(objectMapper, dataManager.getSessionsIndexFile().toFile(), records);
             log.info("会话索引已保存: {} 个会话", sessions.size());
         } catch (IOException e) {
             log.error("保存会话索引失败", e);
@@ -189,7 +190,7 @@ public class ChatHistoryManager {
                 }
                 records.add(record);
             }
-            objectMapper.writeValue(dataManager.getSessionFile(sessionId).toFile(), records);
+            AtomicFileWriter.writeJson(objectMapper, dataManager.getSessionFile(sessionId).toFile(), records);
             log.debug("会话消息已保存: {} ({} 条)", sessionId, messages.size());
         } catch (IOException e) {
             log.error("保存会话消息失败: {}", sessionId, e);

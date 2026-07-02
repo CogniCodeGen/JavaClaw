@@ -778,12 +778,12 @@ public class SkillCenterView {
                 + (skill.getSource() == SkillSource.AGENT ? " 🤖" : "")
                 + (skill.isUserModified() ? "（已被用户修改）" : ""));
         var stat = com.javaclaw.skill.SkillUsageTracker.getInstance().peek(skill.getName());
-        if (stat == null || (stat.routeHits == 0 && stat.reads == 0 && stat.samples() == 0)) {
+        if (stat == null || (stat.routeHits.get() == 0 && stat.reads.get() == 0 && stat.samples() == 0)) {
             usageLabel.setText("尚无使用统计");
         } else {
             String rate = stat.successRate() < 0 ? "—"
                     : Math.round(stat.successRate() * 100) + "%";
-            usageLabel.setText("命中 " + stat.routeHits + " · 读取 " + stat.reads + " · 成功率 " + rate);
+            usageLabel.setText("命中 " + stat.routeHits.get() + " · 读取 " + stat.reads.get() + " · 成功率 " + rate);
         }
 
         // 版本历史下拉

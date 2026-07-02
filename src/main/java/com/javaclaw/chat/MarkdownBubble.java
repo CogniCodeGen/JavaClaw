@@ -323,6 +323,10 @@ public class MarkdownBubble {
         if (disposed) return;
         String markdown = content.toString();
         String html = toHtml(markdown);
+        // 折叠正文里连续的全角空格 / 不换行空格：CommonMark 原样保留 U+3000/U+00A0，而 WebView 的
+        // white-space:normal 只折叠 ASCII 空格、不折叠这两类，模型排版常用它们对齐会渲染成大片空白
+        // （看似"内容缺失"）；仅处理标签外文本、跳过 <pre>/<code> 以保留代码块与行内代码的原始空白
+        html = collapseWideSpaces(html);
         // 彩色表情图片化（纯 Java：JEmoji 检测 + Java2D 渲染）：规避 WebKit 无法在正文字号栅格化彩色表情字形的限制
         html = EmojiImageRenderer.imageifyHtml(html);
         log.debug("Markdown 原文: {}", markdown.length() > 500 ? markdown.substring(0, 500) + "..." : markdown);
@@ -420,6 +424,48 @@ public class MarkdownBubble {
         return RENDERER.render(document);
     }
 
+    /** 匹配 HTML 标签，用于按"标签 / 标签外文本"切分（与 EmojiImageRenderer 同思路） */
+    private static final java.util.regex.Pattern HTML_TAG =
+            java.util.regex.Pattern.compile("<[^>]+>");
+    /** 连续 2 个及以上的全角空格 / 不换行空格 / 窄不换行空格 */
+    private static final java.util.regex.Pattern WIDE_SPACE_RUN =
+            java.util.regex.Pattern.compile("[\\u3000\\u00A0\\u202F]{2,}");
+
+    /**
+     * 折叠正文文本里连续的全角空格（U+3000）/ 不换行空格（U+00A0/U+202F）为单个普通空格。
+     *
+     * <p>只处理标签之外的文本，且跳过 {@code <pre>}/{@code <code>} 内部——代码块与行内代码的
+     * 空白是有意义的，不能折叠。表格、引用等普通文本正常折叠。</p>
+     */
+    static String collapseWideSpaces(String html) {
+        if (html == null || html.isEmpty()) return html;
+        java.util.regex.Matcher m = HTML_TAG.matcher(html);
+        StringBuilder out = new StringBuilder(html.length());
+        int last = 0;
+        int preDepth = 0;   // <pre> 嵌套深度
+        int codeDepth = 0;  // <code> 嵌套深度
+        while (m.find()) {
+            String textSeg = html.substring(last, m.start());
+            out.append(preDepth == 0 && codeDepth == 0 ? collapseRun(textSeg) : textSeg);
+            String tag = html.substring(m.start(), m.end());
+            out.append(tag);
+            String lower = tag.toLowerCase();
+            if (lower.startsWith("<pre")) preDepth++;
+            else if (lower.startsWith("</pre")) preDepth = Math.max(0, preDepth - 1);
+            else if (lower.startsWith("<code")) codeDepth++;
+            else if (lower.startsWith("</code")) codeDepth = Math.max(0, codeDepth - 1);
+            last = m.end();
+        }
+        String tail = html.substring(last);
+        out.append(preDepth == 0 && codeDepth == 0 ? collapseRun(tail) : tail);
+        return out.toString();
+    }
+
+    private static String collapseRun(String text) {
+        if (text.isEmpty()) return text;
+        return WIDE_SPACE_RUN.matcher(text).replaceAll(" ");
+    }
+
     /**
      * 转义字符串以安全嵌入 JavaScript 单引号字符串
      */
@@ -495,11 +541,17 @@ public class MarkdownBubble {
                    再 Inter（打包回退），彩色表情字体排在拉丁之后、CJK 之前，最后 CJK 与 sans 兜底。
                    表情字体须排在 CJK 之前：PingFang SC 等中文字体自带单色表情字形，排前面会被逐字形
                    回退命中、把 😊 渲染成单色字形。
+                   ⚠️ 关键：表情字体（Apple Color Emoji 等）自带 ASCII 数字 0-9 的键帽字形（2️⃣ 之类），
+                   一旦排在具体拉丁字体之前，而 JavaFX WebKit 又解析不了 -apple-system/system-ui 关键字、
+                   且 Inter/Segoe UI 未安装时，普通数字会逐字形回退命中表情字体、被渲染成全角键帽宽字形
+                   （表现为 "２ ５ ℃" 这种撑开的大间距数字）。故必须在表情字体之前放一组"必然存在"的
+                   拉丁字体（macOS→Helvetica Neue/Helvetica，Windows→Arial/Segoe UI），保证数字/拉丁先被
+                   真实文本字体命中，永不落到表情字体。
                    已知限制（JavaFX WebView/WebKit）：内联表情在正文字号下（实测 14.5–40px）无论字体栈如何
                    排序、即使换装 COLR 矢量表情字体，仍渲染为梳齿乱码（仅独立大字号可出彩色）—— 这是
                    WebKit 对 sbix/COLR 字形在文本流内的栅格化限制，非本字体栈所能修复；彩色表情改走
                    <img> 替换（renderToWebView 内调 EmojiImageRenderer：纯 Java JEmoji 检测 + Java2D 渲染）。 */
-                font-family: -apple-system, system-ui, "Inter", "Segoe UI", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "PingFang SC", "Noto Sans CJK SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+                font-family: -apple-system, system-ui, "Inter", "Segoe UI", "Helvetica Neue", "Helvetica", "Arial", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "PingFang SC", "Noto Sans CJK SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
                 font-size: %CHAT_FS%px;
                 font-weight: 400;
                 line-height: %CHAT_LH%;

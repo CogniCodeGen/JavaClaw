@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 记忆存储基座 —— 一个目录对应一个 EclipseStore 对象图(一个工作区库或全局库)。
@@ -143,7 +144,16 @@ public class MemoryStore implements AutoCloseable {
     @Override
     public synchronized void close() {
         if (writer != null) {
+            // 先排空在途写任务再关存储：shutdown() 只拒收新任务不等待执行中任务，
+            // 不等待就 mgr.shutdown() 会让在途记忆写入丢失
             writer.shutdown();
+            try {
+                if (!writer.awaitTermination(5, TimeUnit.SECONDS)) {
+                    log.warn("[{}] 写线程 5 秒内未排空，可能丢失在途写入", label);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
             writer = null;
         }
         if (mgr != null) {
@@ -157,8 +167,12 @@ public class MemoryStore implements AutoCloseable {
 
     /** 在单写线程上执行变更并阻塞等待完成;异常包装上抛。 */
     private void write(Runnable task) {
+        ExecutorService w = this.writer;
+        if (w == null) {
+            throw new IllegalStateException("[" + label + "] 记忆存储已关闭，拒绝写入");
+        }
         try {
-            writer.submit(task).get();
+            w.submit(task).get();
         } catch (Exception e) {
             throw new RuntimeException("[" + label + "] 记忆写入失败", e);
         }
@@ -166,8 +180,12 @@ public class MemoryStore implements AutoCloseable {
 
     /** 在单写线程上执行有返回值的变更并阻塞等待结果(用于 get-or-create 等需原子读改写的场景)。 */
     private <T> T writeCall(java.util.concurrent.Callable<T> task) {
+        ExecutorService w = this.writer;
+        if (w == null) {
+            throw new IllegalStateException("[" + label + "] 记忆存储已关闭，拒绝写入");
+        }
         try {
-            return writer.submit(task).get();
+            return w.submit(task).get();
         } catch (Exception e) {
             throw new RuntimeException("[" + label + "] 记忆写入失败", e);
         }

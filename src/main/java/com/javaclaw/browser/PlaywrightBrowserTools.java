@@ -449,7 +449,8 @@ public class PlaywrightBrowserTools {
             if (page == null) return ToolResponse.error("web_snapshot", "浏览器未启动");
 
             String result = snapshotManager.snapshot(page, interactiveOnly, showUrls, -1);
-            return ToolResponse.success("web_snapshot", result);
+            return ToolResponse.success("web_snapshot",
+                    com.javaclaw.util.ExternalContentGuard.wrap("网页 " + page.url(), result));
         } catch (Exception e) {
             return ToolResponse.fromException("web_snapshot", (Exception) e);
         }
@@ -867,7 +868,8 @@ public class PlaywrightBrowserTools {
             if (locator == null) return ToolResponse.error("web_get_text", "未找到目标元素: " + target);
 
             String text = locator.innerText();
-            return ToolResponse.success("web_get_text", text);
+            return ToolResponse.success("web_get_text",
+                    com.javaclaw.util.ExternalContentGuard.wrap("网页 " + page.url(), text));
         } catch (Exception e) {
             return ToolResponse.fromException("web_get_text", (Exception) e);
         }
@@ -889,7 +891,8 @@ public class PlaywrightBrowserTools {
             if (html.length() > 5000) {
                 html = html.substring(0, 5000) + "\n... (HTML 内容已截断，共 " + html.length() + " 字符)";
             }
-            return ToolResponse.success("web_get_html", html);
+            return ToolResponse.success("web_get_html",
+                    com.javaclaw.util.ExternalContentGuard.wrap("网页 " + page.url(), html));
         } catch (Exception e) {
             return ToolResponse.fromException("web_get_html", (Exception) e);
         }

@@ -140,6 +140,15 @@ public class ChatService {
         // 0. 记忆服务：打开当前工作区的 EclipseStore 记忆库（人格默认骨架自动写入）
         this.memoryService = new com.javaclaw.memory.MemoryService(
                 runtime.getModelFactory(), runtime.getTokenTracker());
+        // 嵌入降级可感知：首次嵌入失败弹一次 Toast，避免端点配错时记忆系统静默失效而用户长期不知情
+        this.memoryService.setOnEmbeddingDegraded(reason -> {
+            com.javaclaw.api.interaction.UserInteractionPort port = ToolConfirmationManager.getPort();
+            if (port != null) {
+                port.notify(new com.javaclaw.api.interaction.ToastRequest(
+                        "记忆嵌入已降级",
+                        "长期记忆检索/蒸馏暂不可用：" + reason + "（详见 记忆中心 → 嵌入诊断）"));
+            }
+        });
         this.memoryService.open(
                 com.javaclaw.config.WorkspaceManager.getInstance()
                         .getCurrentWorkspacePath().resolve("data").resolve("memory-store"));

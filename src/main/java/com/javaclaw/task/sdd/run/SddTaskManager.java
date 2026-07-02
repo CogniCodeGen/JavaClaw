@@ -10,6 +10,7 @@ import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.skill.SkillManager;
 import com.javaclaw.task.sdd.SddOutcome;
+import com.javaclaw.util.AtomicFileWriter;
 import com.javaclaw.task.sdd.SddProgress;
 import com.javaclaw.task.sdd.SddTaskRunner;
 import com.javaclaw.task.sdd.TaskContext;
@@ -127,7 +128,7 @@ public final class SddTaskManager {
         if (indexFile == null) return;
         try {
             Files.createDirectories(indexFile.getParent());
-            mapper.writeValue(indexFile.toFile(), tasks);
+            AtomicFileWriter.writeJson(mapper, indexFile.toFile(), tasks);
         } catch (Exception e) {
             log.warn("[SDD] 保存任务索引失败: {}", e.getMessage());
         }

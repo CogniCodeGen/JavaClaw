@@ -26,6 +26,11 @@ public class EmbeddingGate {
     /** 最近一次嵌入失败的原因（供上层在导入失败时呈现给用户）；成功时清空为 null。 */
     private volatile String lastError;
 
+    /** 降级通知回调（整个实例生命周期只触发一次，避免每轮刷 Toast）；由上层接到 UI 通知端口。 */
+    private volatile java.util.function.Consumer<String> onDegraded;
+    private final java.util.concurrent.atomic.AtomicBoolean degradedNotified =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
     public EmbeddingGate(ModelFactory modelFactory) {
         EmbeddingModel m = null;
         try {
@@ -53,6 +58,23 @@ public class EmbeddingGate {
         return model != null;
     }
 
+    /** 设置降级通知回调（首次嵌入失败时触发一次，让用户可感知记忆系统已降级）。 */
+    public void setOnDegraded(java.util.function.Consumer<String> callback) {
+        this.onDegraded = callback;
+    }
+
+    /** 首次失败时通知上层（幂等，只触发一次；回调异常不影响降级语义）。 */
+    private void notifyDegradedOnce() {
+        java.util.function.Consumer<String> cb = onDegraded;
+        if (cb != null && degradedNotified.compareAndSet(false, true)) {
+            try {
+                cb.accept(lastError);
+            } catch (Exception e) {
+                log.warn("降级通知回调异常（忽略）: {}", e.getMessage());
+            }
+        }
+    }
+
     /**
      * 文本转向量；模型不可用 / 文本空 / 调用失败 一律返回 null（上层降级）。
      * 失败原因记录到 {@link #lastError()} 供上层呈现。
@@ -63,6 +85,7 @@ public class EmbeddingGate {
             if (lastError == null || lastError.isBlank()) {
                 lastError = "嵌入模型未创建（请检查 rag.embedding.* 配置：模型名 / baseUrl / API Key）";
             }
+            notifyDegradedOnce();
             return null;
         }
         if (text == null || text.isBlank()) {
@@ -72,6 +95,7 @@ public class EmbeddingGate {
             double[] d = model.embed(TextBlock.builder().text(text).build()).block();
             if (d == null) {
                 lastError = "嵌入服务返回空结果（请检查模型名是否为嵌入模型、baseUrl 是否指向 embeddings 端点）";
+                notifyDegradedOnce();
                 return null;
             }
             float[] f = new float[d.length];
@@ -83,6 +107,7 @@ public class EmbeddingGate {
         } catch (Exception e) {
             lastError = describe(e);
             log.warn("文本嵌入失败（已降级跳过）: {}", lastError);
+            notifyDegradedOnce();
             return null;
         }
     }

@@ -455,6 +455,10 @@ public class SkillManager {
         if (target.getFileName().toString().equals(Skill.SKILL_FILE) && base.equals(target.getParent())) {
             return null;
         }
+        // 符号链接防护：真实位置必须仍在技能目录内（目标可尚不存在，按最近已存在祖先解析）
+        if (!com.javaclaw.util.PathGuard.isInside(base, target)) {
+            return null;
+        }
         return target;
     }
 
@@ -973,8 +977,9 @@ public class SkillManager {
         }
         Path refsDir = skill.getDirectory().resolve(Skill.REFERENCES_DIR).toAbsolutePath().normalize();
         Path target = refsDir.resolve(cleaned).normalize();
-        // 穿越防护：必须落在 references/ 内
-        if (!target.startsWith(refsDir) || !Files.isRegularFile(target) || !isTextFile(target)) {
+        // 穿越防护：必须落在 references/ 内（含符号链接真实位置校验）
+        if (!target.startsWith(refsDir) || !Files.isRegularFile(target) || !isTextFile(target)
+                || !com.javaclaw.util.PathGuard.isInside(refsDir, target)) {
             return null;
         }
         try {

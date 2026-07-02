@@ -355,6 +355,10 @@ public class JavaClawApp extends Application {
         if (!resourcesReleased.compareAndSet(false, true)) return;
         log.info("JavaClaw 应用正在关闭...");
 
+        // 先排空各防抖/异步持久化队列，再关各子系统，避免退出丢最后一段数据
+        if (chatView != null) safeShutdown("聊天持久化线程", chatView::shutdownPersistence);
+        safeShutdown("技能使用统计", () -> com.javaclaw.skill.SkillUsageTracker.getInstance().shutdown());
+        safeShutdown("技能提案队列", () -> com.javaclaw.skill.curation.SkillProposalQueue.getInstance().shutdown());
         safeShutdown("任务管理器", () -> SddTaskManager.getInstance().shutdown());
         safeShutdown("插件系统", () -> com.javaclaw.plugin.PluginManager.getInstance().shutdown());
         safeShutdown("定时任务调度器", () -> ScheduleManager.getInstance().shutdown());

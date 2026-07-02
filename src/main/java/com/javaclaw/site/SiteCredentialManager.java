@@ -3,7 +3,10 @@ package com.javaclaw.site;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.javaclaw.config.CredentialEncryptor;
 import com.javaclaw.config.WorkspaceManager;
+import com.javaclaw.util.AtomicFileWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -22,7 +25,9 @@ import java.util.*;
  *   {workspace}/data/site-sessions/{id}.json   ← 每条目的 Playwright storageState
  * </pre>
  *
- * <p>密码字段以明文写入 JSON，与本项目对 API Key 等敏感配置的约定一致；
+ * <p>密码字段落盘时经 {@link CredentialEncryptor} 加密（ENC(...) 格式，与 API Key 一致），
+ * 读取时解密；旧明文文件可直接读取（decrypt 对非 ENC 前缀值透传），下次保存自动完成加密迁移。
+ * 内存中的 {@link SiteCredential} 始终持有明文（供 Playwright 自动登录使用）。
  * 该文件位于工作区目录内，请勿提交到版本控制。</p>
  *
  * @author JavaClaw
@@ -89,6 +94,8 @@ public class SiteCredentialManager {
                 if (c.getId() == null || c.getId().isBlank()) {
                     c.setId(UUID.randomUUID().toString());
                 }
+                // 解密密码（旧明文值原样透传，天然向后兼容）
+                c.setPassword(CredentialEncryptor.decrypt(c.getPassword()));
                 c.setHasSession(Files.exists(sessionFile(c.getId())));
                 credentials.put(c.getId(), c);
             }
@@ -102,7 +109,17 @@ public class SiteCredentialManager {
         Path path = configPath();
         try {
             Files.createDirectories(path.getParent());
-            objectMapper.writeValue(path.toFile(), new ArrayList<>(credentials.values()));
+            // 落盘边界加密密码：序列化副本上替换 password 字段，内存对象保持明文
+            List<ObjectNode> out = new ArrayList<>();
+            for (SiteCredential c : credentials.values()) {
+                ObjectNode node = objectMapper.valueToTree(c);
+                String pw = c.getPassword();
+                if (pw != null && !pw.isEmpty()) {
+                    node.put("password", CredentialEncryptor.encrypt(pw));
+                }
+                out.add(node);
+            }
+            AtomicFileWriter.writeJson(objectMapper, path.toFile(), out);
             log.info("已保存站点凭据到: {}", path);
         } catch (IOException e) {
             log.error("保存站点凭据失败", e);
@@ -223,7 +240,7 @@ public class SiteCredentialManager {
         try {
             Path dir = sessionDir();
             Files.createDirectories(dir);
-            Files.writeString(sessionFile(id), storageStateJson);
+            AtomicFileWriter.writeString(sessionFile(id), storageStateJson);
             SiteCredential c = credentials.get(id);
             if (c != null) {
                 c.setHasSession(true);

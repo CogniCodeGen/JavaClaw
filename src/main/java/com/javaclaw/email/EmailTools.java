@@ -198,7 +198,8 @@ public class EmailTools {
                         from, msgSubject, date));
             }
 
-            return ToolResponse.success("email_list_inbox", sb.toString());
+            return ToolResponse.success("email_list_inbox",
+                    com.javaclaw.util.ExternalContentGuard.wrap("邮件收件箱列表", sb.toString()));
         } catch (Exception e) {
             log.error("获取收件箱失败", e);
             return ToolResponse.fromException("email_list_inbox", e);
@@ -251,7 +252,8 @@ public class EmailTools {
             String bodyText = extractTextContent(msg);
             sb.append(bodyText);
 
-            return ToolResponse.success("email_read", sb.toString());
+            return ToolResponse.success("email_read",
+                    com.javaclaw.util.ExternalContentGuard.wrap("邮件（发件人: " + from + "）", sb.toString()));
         } catch (Exception e) {
             log.error("读取邮件失败", e);
             return ToolResponse.fromException("email_read", e);
@@ -313,7 +315,8 @@ public class EmailTools {
                 sb.insert(sb.indexOf("\n\n") + 2, "找到 " + found + " 封匹配邮件：\n");
             }
 
-            return ToolResponse.success("email_search", sb.toString());
+            return ToolResponse.success("email_search",
+                    com.javaclaw.util.ExternalContentGuard.wrap("邮件搜索结果", sb.toString()));
         } catch (Exception e) {
             log.error("搜索邮件失败", e);
             return ToolResponse.fromException("email_search", e);
