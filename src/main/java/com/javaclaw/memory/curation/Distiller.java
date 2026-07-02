@@ -112,8 +112,8 @@ public class Distiller {
             }
             List<MemoryStore.Scored<Fact>> hit = store.searchFacts(vec, 1, dedup);
             if (!hit.isEmpty() && !hit.get(0).entity().userEdited) {
-                // 命中既有相似事实 → 记一次合并（不重复落库，避免冗余）
-                store.appendChangeLog("MERGE", "Fact", hit.get(0).entity().id, "distiller", line);
+                // 命中既有相似事实 → 合并强化（mergeCount++，不重复落库，避免冗余）
+                store.mergeFact(hit.get(0).entity(), "distiller", line);
                 merged++;
             } else {
                 Fact f = new Fact(null, line, vec);

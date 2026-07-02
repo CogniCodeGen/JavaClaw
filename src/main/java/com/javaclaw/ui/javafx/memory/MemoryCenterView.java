@@ -795,6 +795,9 @@ public class MemoryCenterView {
             meta.setAlignment(Pos.CENTER_LEFT);
             meta.getChildren().add(metaLabel("更新 " + fmt(f.updatedAt)));
             meta.getChildren().add(metaLabel("· 命中 " + f.hitCount));
+            if (f.mergeCount > 0) {
+                meta.getChildren().add(metaLabel("· 提及 " + f.mergeCount));
+            }
             if (f.pending) {
                 Label pend = new Label("待嵌入");
                 pend.getStyleClass().addAll("jc-badge", "jc-badge-amber");

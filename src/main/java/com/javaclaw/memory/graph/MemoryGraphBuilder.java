@@ -87,7 +87,7 @@ public final class MemoryGraphBuilder {
                     "fact",
                     blankToDefault(f.section, "未分类"),
                     f.text == null ? "" : f.text,
-                    Math.max(1, f.hitCount)));
+                    Math.max(1, f.hitCount + f.mergeCount)));
         }
 
         // 情景节点（仅纳入被选中事实 source 引用到的）+ source 边

@@ -34,6 +34,12 @@ public class Fact {
     /** 命中归因计数（被检索注入的次数），反哺保留 / 淘汰 */
     public int hitCount;
 
+    /**
+     * 重复提及计数（蒸馏去重 MERGE 命中次数）—— 强化侧信号：同一事实被后续对话反复提到的次数。
+     * 与 {@link #hitCount}（使用侧信号：被召回注入次数）刻意分开，勿混算；图谱节点权重取两者之和。
+     */
+    public int mergeCount;
+
     /** 用户是否手动改过 —— 保护位：蒸馏不得静默覆盖 */
     public boolean userEdited;
 

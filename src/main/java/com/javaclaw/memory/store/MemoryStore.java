@@ -229,6 +229,23 @@ public class MemoryStore implements AutoCloseable {
         });
     }
 
+    /**
+     * 蒸馏去重命中既有事实时的合并强化：{@code mergeCount++} 并刷新 {@code updatedAt}
+     * (让被反复提到的事实自然变重、且稳定留在图谱时间窗内)，审计记 MERGE 而非泛化的 UPDATE。
+     *
+     * @param candidateText 本次被合并掉的候选事实原文(仅入审计,不改事实正文)
+     */
+    public void mergeFact(Fact f, String actor, String candidateText) {
+        write(() -> {
+            root.facts.update(f, x -> {
+                x.mergeCount++;
+                x.updatedAt = System.currentTimeMillis();
+            });
+            root.facts.store();
+            logInternal("MERGE", "Fact", f.id, actor, trunc(candidateText));
+        });
+    }
+
     /** 删除事实。 */
     public void removeFact(Fact f, String actor) {
         write(() -> {
