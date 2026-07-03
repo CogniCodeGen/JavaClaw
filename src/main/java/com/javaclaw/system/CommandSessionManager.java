@@ -61,14 +61,36 @@ public final class CommandSessionManager {
     private final Map<String, ShellSession> sessions = new ConcurrentHashMap<>();
     private final ScheduledExecutorService janitor;
 
+    /** 自动回收回调（回收数量）：供定时任务模块把自动清理计入执行记录；可空。 */
+    private volatile java.util.function.IntConsumer onCleanup;
+
     private CommandSessionManager() {
         janitor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "cmd-session-janitor");
             t.setDaemon(true);
             return t;
         });
-        janitor.scheduleAtFixedRate(this::cleanupIdle, 5, 5, TimeUnit.MINUTES);
+        janitor.scheduleAtFixedRate(this::janitorTick, 5, 5, TimeUnit.MINUTES);
         Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown, "cmd-session-shutdown"));
+    }
+
+    /** 设置自动回收回调（定时任务模块注册，用于记录自动清理结果）。 */
+    public void setOnCleanup(java.util.function.IntConsumer onCleanup) {
+        this.onCleanup = onCleanup;
+    }
+
+    /** 手动立即清理一次空闲/失效会话，返回回收数量（供定时任务模块「立即执行」调用）。 */
+    public int cleanupIdleNow() {
+        return cleanupIdle();
+    }
+
+    /** 定时器 tick：清理后回调通知回收数量。 */
+    private void janitorTick() {
+        int n = cleanupIdle();
+        java.util.function.IntConsumer cb = onCleanup;
+        if (cb != null) {
+            try { cb.accept(n); } catch (Exception ignored) {}
+        }
     }
 
     /**
@@ -130,8 +152,10 @@ public final class CommandSessionManager {
         return sessions.size();
     }
 
-    private void cleanupIdle() {
+    /** 清理空闲/失效会话，返回本次回收数量。 */
+    private int cleanupIdle() {
         long now = System.currentTimeMillis();
+        int[] reclaimed = {0};
         sessions.entrySet().removeIf(e -> {
             ShellSession s = e.getValue();
             boolean dead = !s.isAlive();
@@ -139,10 +163,12 @@ public final class CommandSessionManager {
             if (dead || idle) {
                 log.info("自动回收命令行会话: {} (alive={}, idleMs={})", e.getKey(), s.isAlive(), now - s.lastActivity());
                 s.terminate();
+                reclaimed[0]++;
                 return true;
             }
             return false;
         });
+        return reclaimed[0];
     }
 
     private void shutdown() {

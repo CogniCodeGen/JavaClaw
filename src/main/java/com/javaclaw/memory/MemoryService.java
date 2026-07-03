@@ -78,6 +78,14 @@ public class MemoryService implements AutoCloseable {
         this.distiller = new Distiller(lightModel, store, gate, tokenTracker);
         this.habitReviewer = new HabitReviewer(lightModel, store, gate, tokenTracker);
         seedDefaultPersona();
+        // 把「习惯回顾」注册为定时任务模块的系统内置任务手动动作（支持「立即执行」）；
+        // lambda 运行时读取 this.habitReviewer，切工作区重载后自动指向新实例。
+        com.javaclaw.schedule.ScheduleManager.getInstance().registerBuiltinAction(
+                "sys:habit-review", () -> {
+                    HabitReviewer r = this.habitReviewer;
+                    if (r == null) return "记忆服务未就绪，习惯回顾不可用";
+                    return r.reviewNow();
+                });
         log.info("记忆服务已打开: {}", memoryDir);
     }
 

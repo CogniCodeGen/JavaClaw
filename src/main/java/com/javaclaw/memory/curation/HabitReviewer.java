@@ -68,7 +68,7 @@ public class HabitReviewer {
                     if (!AgentConfig.getInstance().getMemoryHabitReviewEnabled()) return;
                     if (!reviewing.compareAndSet(false, true)) return;
                     try {
-                        reviewSync();
+                        reviewSync(false);
                     } finally {
                         reviewing.set(false);
                     }
@@ -82,16 +82,36 @@ public class HabitReviewer {
                 .then();
     }
 
-    private void reviewSync() {
+    /**
+     * 手动强制回顾一次（绕过间隔水位闸门），阻塞执行并返回结果摘要。
+     * 供定时任务模块「立即执行」调用；正在回顾中或已关闭时返回相应提示。
+     */
+    public String reviewNow() {
+        if (!AgentConfig.getInstance().getMemoryHabitReviewEnabled()) return "习惯回顾已关闭（memory.habit.review.enabled=false）";
+        if (!reviewing.compareAndSet(false, true)) return "习惯回顾正在进行中，已跳过本次触发";
+        try {
+            return reviewSync(true);
+        } finally {
+            reviewing.set(false);
+        }
+    }
+
+    /**
+     * 执行一次习惯回顾。
+     *
+     * @param force true=手动强制（绕过间隔水位）；false=轮后自动（受间隔与情景数闸门约束）
+     * @return 结果摘要（供手动触发展示；自动触发忽略返回值）
+     */
+    private String reviewSync(boolean force) {
         AgentConfig cfg = AgentConfig.getInstance();
         long last = store.lastHabitReviewAt();
         long now = System.currentTimeMillis();
-        if (now - last < cfg.getMemoryHabitReviewIntervalHours() * 3600_000L) {
-            return;
+        if (!force && now - last < cfg.getMemoryHabitReviewIntervalHours() * 3600_000L) {
+            return "未到回顾间隔，本次跳过";
         }
         List<Episode> episodes = store.episodesSince(last, cfg.getMemoryHabitReviewMaxEpisodes());
         if (episodes.size() < cfg.getMemoryHabitReviewMinEpisodes()) {
-            return;
+            return "自上次回顾以来仅 " + episodes.size() + " 轮情景，未达最小归纳量，跳过";
         }
 
         String digest = buildDigest(episodes);
@@ -102,12 +122,12 @@ public class HabitReviewer {
         if (text.isEmpty()) {
             // 空响应 ≠ 判定为无：不推进水位，下次触发条件满足时重试
             log.warn("习惯回顾模型无响应，本次跳过（请检查轻量模型配置/网络）");
-            return;
+            return "轻量模型无响应，本次跳过（请检查模型配置/网络）";
         }
         if (Distiller.isNoneAnswer(text)) {
             store.markHabitReview(now, "habit-reviewer", "回顾 " + episodes.size() + " 轮，无可归纳模式");
             log.info("习惯回顾完成：回顾 {} 轮，无可归纳模式", episodes.size());
-            return;
+            return "回顾 " + episodes.size() + " 轮，无可归纳模式";
         }
 
         double dedup = cfg.getMemoryDistillDedupThreshold();
@@ -135,9 +155,10 @@ public class HabitReviewer {
                 added++;
             }
         }
-        store.markHabitReview(now, "habit-reviewer",
-                "回顾 " + episodes.size() + " 轮：归纳新增 " + added + "、合并 " + merged + "、暂存 " + pending);
+        String summary = "回顾 " + episodes.size() + " 轮：归纳新增 " + added + "、合并 " + merged + "、暂存 " + pending;
+        store.markHabitReview(now, "habit-reviewer", summary);
         log.info("习惯回顾完成：回顾 {} 轮，新增 {}，合并 {}，降级暂存 {}", episodes.size(), added, merged, pending);
+        return summary;
     }
 
     /** 把情景批次压成带编号的对话摘要（供跨轮归纳，逐条截断控制 token）。 */

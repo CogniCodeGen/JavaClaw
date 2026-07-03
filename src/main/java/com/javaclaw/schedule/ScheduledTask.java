@@ -89,6 +89,22 @@ public class ScheduledTask {
     private List<ExecRecord> execRecords;
 
     /**
+     * 系统内置任务标记：为 true 时该任务代表「代码内部的周期性机制」（如命令会话清理、习惯回顾、
+     * 记忆蒸馏），仅在定时任务模块中<b>只读展示</b>——不参与 Quartz 调度、不写入 scheduled-tasks.json，
+     * 且不可被用户或智能体编辑 / 停用 / 删除 / 手动运行。默认 false（普通用户任务），向后兼容。
+     */
+    private boolean builtin;
+
+    /**
+     * 内置任务的触发描述覆盖（仅内置任务使用）；非空时 {@link #describeTrigger()} 直接返回它，
+     * 用于表达「每轮对话后」这类无法用 interval/daily/cron 精确表达的事件驱动周期。普通任务为 null。
+     */
+    private String triggerSummary;
+
+    /** 内置任务的来源模块说明（仅内置任务使用，如 "CommandSessionManager"）。普通任务为 null。 */
+    private String sourceModule;
+
+    /**
      * 一条结构化执行记录（POJO 以兼容 Jackson 无 -parameters 反序列化）。
      */
     public static class ExecRecord {
@@ -191,6 +207,7 @@ public class ScheduledTask {
 
     /** 人类可读的触发描述（如 "每天 08:30" / "每 30 分钟" / "一次性 06-10 08:30"）。 */
     public String describeTrigger() {
+        if (triggerSummary != null && !triggerSummary.isBlank()) return triggerSummary;
         return switch (triggerType == null ? "interval" : triggerType) {
             case "once" -> "一次性 " + (onceDateTime == null || onceDateTime.isBlank() ? "未设置" : onceDateTime);
             case "daily" -> "每天 " + (dailyTime == null || dailyTime.isBlank() ? "09:00" : dailyTime);
@@ -271,4 +288,13 @@ public class ScheduledTask {
 
     public List<ExecRecord> getExecRecords() { return execRecords; }
     public void setExecRecords(List<ExecRecord> execRecords) { this.execRecords = execRecords; }
+
+    public boolean isBuiltin() { return builtin; }
+    public void setBuiltin(boolean builtin) { this.builtin = builtin; }
+
+    public String getTriggerSummary() { return triggerSummary; }
+    public void setTriggerSummary(String triggerSummary) { this.triggerSummary = triggerSummary; }
+
+    public String getSourceModule() { return sourceModule; }
+    public void setSourceModule(String sourceModule) { this.sourceModule = sourceModule; }
 }

@@ -73,11 +73,20 @@ public class ScheduleManager {
     /** JobDataMap 中 task id 的 key */
     private static final String JOB_DATA_TASK_ID = "taskId";
 
+    /** 系统内置任务 id 前缀（据此识别只读内置项，拒绝一切写操作） */
+    private static final String BUILTIN_ID_PREFIX = "sys:";
+
     private static ScheduleManager instance;
 
     private Path tasksFile;
     private final ObjectMapper objectMapper;
     private final List<ScheduledTask> tasks;
+    /**
+     * 系统内置定时任务（只读）——把「代码内部的周期性机制」纳入定时任务模块统一呈现。
+     * 这些任务仍在各自模块原地运行；此处仅为只读展示，不参与 Quartz 调度、不持久化到
+     * scheduled-tasks.json，也不可被编辑 / 停用 / 删除 / 手动运行。
+     */
+    private final List<ScheduledTask> builtinTasks;
     private final Scheduler quartz;
 
     /** 定时任务专用编排器（与交互聊天完全隔离，独立子智能体/toolkit/订阅，可与聊天并行不互相干扰） */
@@ -102,9 +111,28 @@ public class ScheduleManager {
         resolveTasksFile();
         this.objectMapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
         this.tasks = new ArrayList<>();
+        this.builtinTasks = buildBuiltinTasks();
         this.quartz = buildQuartzScheduler();
         ensureDataDir();
         loadAll();
+        wireBuiltinActions();
+    }
+
+    /**
+     * 注册就近可达的内置任务手动动作（命令会话清理为单例，直接接线）。
+     * 习惯回顾由 MemoryService 在创建/重载时经 {@link #registerBuiltinAction} 注册（需其模型/存储引用）。
+     */
+    private void wireBuiltinActions() {
+        // 命令会话清理：单例，可直接手动触发
+        registerBuiltinAction(BUILTIN_ID_PREFIX + "cmd-session-cleanup", () -> {
+            int n = com.javaclaw.system.CommandSessionManager.getInstance().cleanupIdleNow();
+            return "回收 " + n + " 个空闲/失效会话";
+        });
+        // 自动回收（每 5 分钟）也记入执行记录：仅在有回收时记，避免刷屏
+        com.javaclaw.system.CommandSessionManager.getInstance().setOnCleanup(n -> {
+            if (n > 0) recordBuiltinRun(BUILTIN_ID_PREFIX + "cmd-session-cleanup", true, 0,
+                    "自动回收 " + n + " 个空闲/失效会话");
+        });
     }
 
     /**
@@ -204,14 +232,126 @@ public class ScheduleManager {
         }
     }
 
+    // ==================== 系统内置任务（只读） ====================
+
+    /**
+     * 构建系统内置定时任务清单（只读）。把代码内部真正的周期性后台机制纳入定时任务模块统一呈现，
+     * 供用户可见与审计；它们仍在各自模块原地运行，此处不接管其真实调度。
+     */
+    private List<ScheduledTask> buildBuiltinTasks() {
+        List<ScheduledTask> list = new ArrayList<>();
+        list.add(builtin(BUILTIN_ID_PREFIX + "cmd-session-cleanup", "命令会话清理",
+                "定期清理空闲的命令行会话，回收 PTY/进程资源", "每 5 分钟", "CommandSessionManager"));
+        list.add(builtin(BUILTIN_ID_PREFIX + "habit-review", "习惯回顾",
+                "跨轮归纳重复模式为「习惯偏好」事实，补逐轮蒸馏只见单轮的盲区", "每轮对话后检查（间隔 ≥24h 且情景数达标才归纳）", "HabitReviewer"));
+        return list;
+    }
+
+    private ScheduledTask builtin(String id, String name, String desc, String triggerSummary, String sourceModule) {
+        ScheduledTask t = new ScheduledTask(id, name);
+        t.setDescription(desc);
+        t.setBuiltin(true);
+        t.setEnabled(true);         // 内置机制常驻运行
+        t.setTriggerSummary(triggerSummary);
+        t.setSourceModule(sourceModule);
+        t.setPrompt("");
+        return t;
+    }
+
+    /** 该 id 是否为系统内置任务（只读，禁止一切写操作）。 */
+    public boolean isBuiltin(String id) {
+        return id != null && id.startsWith(BUILTIN_ID_PREFIX);
+    }
+
+    /**
+     * 系统内置任务的手动触发动作：返回一句结果备注，允许抛异常（会被记为失败）。
+     * 由拥有该机制的子系统注册（如 {@link com.javaclaw.system.CommandSessionManager}、
+     * {@link com.javaclaw.memory.curation.HabitReviewer} 经 MemoryService）；未注册则该内置任务不支持「立即执行」。
+     */
+    @FunctionalInterface
+    public interface BuiltinRunner {
+        String run() throws Exception;
+    }
+
+    /** 内置任务 id → 手动触发动作 */
+    private final java.util.Map<String, BuiltinRunner> builtinActions =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 注册内置任务的手动触发动作（同 id 覆盖，供工作区重载时更新引用）。 */
+    public void registerBuiltinAction(String builtinId, BuiltinRunner runner) {
+        if (builtinId == null || runner == null) return;
+        builtinActions.put(builtinId, runner);
+    }
+
+    /** 该内置任务是否支持「立即执行」（已注册手动动作）。 */
+    public boolean hasBuiltinAction(String id) {
+        return builtinActions.containsKey(id);
+    }
+
+    /**
+     * 记录一次内置任务的执行（手动或自动均可调用）：更新上次时间/状态/计数 + 追加历史 + 通知 UI 刷新。
+     * 内置任务不持久化，故记录仅存于本次会话内存。
+     */
+    public void recordBuiltinRun(String id, boolean success, long durationMs, String note) {
+        ScheduledTask t = getTask(id);
+        if (t == null || !t.isBuiltin()) return;
+        t.recordExecution(success);
+        String dur = durationMs <= 0 ? "—"
+                : (durationMs < 1000 ? durationMs + "ms" : String.format("%.1fs", durationMs / 1000.0));
+        t.setLastDuration(dur);
+        String n = (note == null || note.isBlank()) ? "—"
+                : (note.length() > 60 ? note.substring(0, 60) + "…" : note);
+        t.addExecRecord(new ScheduledTask.ExecRecord(
+                LocalDateTime.now().format(ScheduledTask.FORMATTER), success ? "成功" : "失败", dur, n));
+        notifyExecutionComplete(id);
+    }
+
+    /** 在单写串行器上执行一次内置任务的手动动作，并记录结果。 */
+    private void runBuiltinNow(String id) {
+        BuiltinRunner runner = builtinActions.get(id);
+        ScheduledTask t = getTask(id);
+        if (runner == null || t == null) {
+            log.warn("系统内置任务无手动触发动作，忽略: {}", id);
+            return;
+        }
+        scheduledExec.submit(() -> {
+            runningTaskIds.add(id);
+            notifyExecutionStart(id);
+            long start = System.nanoTime();
+            try {
+                String note = runner.run();
+                recordBuiltinRun(id, true, (System.nanoTime() - start) / 1_000_000L, note);
+                taskLog.info("[内置:{}] 手动执行成功：{}", t.getName(), note);
+            } catch (Exception e) {
+                String msg = e.getMessage() == null ? e.toString() : e.getMessage();
+                recordBuiltinRun(id, false, (System.nanoTime() - start) / 1_000_000L, msg);
+                taskLog.warn("[内置:{}] 手动执行失败：{}", t.getName(), msg);
+            } finally {
+                runningTaskIds.remove(id);
+                notifyExecutionComplete(id);
+            }
+        });
+    }
+
     // ==================== 查询 ====================
 
+    /**
+     * 返回全部定时任务：用户任务在前、系统内置任务在后。
+     * 内置任务只读，UI/工具据 {@link ScheduledTask#isBuiltin()} 区分呈现与禁改。
+     */
     public List<ScheduledTask> getAllTasks() {
-        return new ArrayList<>(tasks);
+        List<ScheduledTask> all = new ArrayList<>(tasks);
+        all.addAll(builtinTasks);
+        return all;
     }
 
     public ScheduledTask getTask(String id) {
-        return tasks.stream()
+        ScheduledTask user = tasks.stream()
+                .filter(t -> t.getId().equals(id))
+                .findFirst()
+                .orElse(null);
+        if (user != null) return user;
+        return builtinTasks.stream()
                 .filter(t -> t.getId().equals(id))
                 .findFirst()
                 .orElse(null);
@@ -252,6 +392,10 @@ public class ScheduleManager {
     }
 
     public void updateTask(ScheduledTask task) {
+        if (task != null && (task.isBuiltin() || isBuiltin(task.getId()))) {
+            log.warn("系统内置任务不可编辑，已忽略更新: {}", task.getId());
+            return;
+        }
         saveAll();
         cancelTask(task.getId());
         if (task.isEnabled()) {
@@ -263,6 +407,10 @@ public class ScheduleManager {
     }
 
     public void deleteTask(String id) {
+        if (isBuiltin(id)) {
+            log.warn("系统内置任务不可删除，已忽略: {}", id);
+            return;
+        }
         cancelTask(id);
         tasks.removeIf(t -> t.getId().equals(id));
         saveAll();
@@ -272,11 +420,14 @@ public class ScheduleManager {
 
     public void deleteTasks(List<String> ids) {
         if (ids == null || ids.isEmpty()) return;
-        ids.forEach(this::cancelTask);
-        tasks.removeIf(t -> ids.contains(t.getId()));
+        // 过滤掉系统内置任务，仅删除用户任务
+        List<String> deletable = ids.stream().filter(id -> !isBuiltin(id)).toList();
+        if (deletable.isEmpty()) return;
+        deletable.forEach(this::cancelTask);
+        tasks.removeIf(t -> deletable.contains(t.getId()));
         saveAll();
-        log.info("已批量删除 {} 个定时任务", ids.size());
-        taskLog.info("批量删除定时任务: {}", ids);
+        log.info("已批量删除 {} 个定时任务", deletable.size());
+        taskLog.info("批量删除定时任务: {}", deletable);
     }
 
     /**
@@ -284,6 +435,10 @@ public class ScheduleManager {
      * 若任务未启用尚未注册到 Quartz，回退到直接同步执行。
      */
     public void runNow(String id) {
+        if (isBuiltin(id)) {
+            runBuiltinNow(id);   // 内置任务走手动动作路径（已注册才执行）
+            return;
+        }
         ScheduledTask task = getTask(id);
         if (task == null) return;
         taskLog.info("手动触发任务: {} ({})", task.getName(), id);

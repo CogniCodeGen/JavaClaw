@@ -90,6 +90,7 @@ public final class ScheduleTools {
         StringBuilder sb = new StringBuilder("共 ").append(all.size()).append(" 个定时任务：\n");
         for (ScheduledTask t : all) {
             sb.append("· [").append(t.getId()).append("] ").append(t.getName())
+                    .append(t.isBuiltin() ? "（系统内置·只读）" : "")
                     .append(" — ").append(triggerDesc(t))
                     .append(t.isEnabled() ? "，启用" : "，停用");
             if (t.getLastRunTime() != null && !t.getLastRunTime().isBlank()) {
@@ -119,6 +120,7 @@ public final class ScheduleTools {
     public String scheduleDisable(@ToolParam(name = "id", description = "定时任务 id") String id) {
         ScheduledTask t = mgr().getTask(id);
         if (t == null) return ToolResponse.error("schedule_disable", "未找到定时任务: " + id);
+        if (t.isBuiltin()) return ToolResponse.error("schedule_disable", "系统内置任务不可停用: " + id);
         t.setEnabled(false);
         mgr().updateTask(t);
         return ToolResponse.success("schedule_disable", "已停用定时任务: " + id);
@@ -126,19 +128,24 @@ public final class ScheduleTools {
 
     @Tool(name = "schedule_delete", description = "删除一个定时任务（不可恢复）。")
     public String scheduleDelete(@ToolParam(name = "id", description = "定时任务 id") String id) {
-        if (mgr().getTask(id) == null) return ToolResponse.error("schedule_delete", "未找到定时任务: " + id);
+        ScheduledTask t = mgr().getTask(id);
+        if (t == null) return ToolResponse.error("schedule_delete", "未找到定时任务: " + id);
+        if (t.isBuiltin()) return ToolResponse.error("schedule_delete", "系统内置任务不可删除: " + id);
         mgr().deleteTask(id);
         return ToolResponse.success("schedule_delete", "已删除定时任务: " + id);
     }
 
     @Tool(name = "schedule_run_now", description = "立即手动执行一次某个定时任务（不影响其后续调度）。")
     public String scheduleRunNow(@ToolParam(name = "id", description = "定时任务 id") String id) {
-        if (mgr().getTask(id) == null) return ToolResponse.error("schedule_run_now", "未找到定时任务: " + id);
+        ScheduledTask t = mgr().getTask(id);
+        if (t == null) return ToolResponse.error("schedule_run_now", "未找到定时任务: " + id);
+        if (t.isBuiltin()) return ToolResponse.error("schedule_run_now", "系统内置任务由系统自动运行，不可手动触发: " + id);
         mgr().runNow(id);
         return ToolResponse.success("schedule_run_now", "已触发立即执行: " + id);
     }
 
     private static String triggerDesc(ScheduledTask t) {
+        if (t.isBuiltin()) return t.describeTrigger();  // 内置任务用触发描述覆盖
         return switch (t.getTriggerType() == null ? "" : t.getTriggerType()) {
             case "interval" -> "每 " + t.getIntervalMinutes() + " 分钟";
             case "daily" -> "每天 " + t.getDailyTime();

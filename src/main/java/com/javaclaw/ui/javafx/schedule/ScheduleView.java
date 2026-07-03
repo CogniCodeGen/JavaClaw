@@ -253,7 +253,14 @@ public class ScheduleView {
 
         HBox line1 = new HBox(7, dot, name);
         line1.setAlignment(Pos.CENTER_LEFT);
-        if (running) {
+        if (task.isBuiltin()) {
+            Label tag = new Label("系统内置");
+            tag.getStyleClass().addAll("jc-badge", "jc-badge-stopped");
+            tag.setStyle("-fx-font-size:9.5px; -fx-padding:1 7 1 7;");
+            Region sp = new Region();
+            HBox.setHgrow(sp, Priority.ALWAYS);
+            line1.getChildren().addAll(sp, tag);
+        } else if (running) {
             Label tag = new Label("运行中");
             tag.getStyleClass().addAll("jc-badge", "jc-badge-running");
             tag.setStyle("-fx-font-size:9.5px; -fx-padding:1 7 1 7;");
@@ -290,6 +297,7 @@ public class ScheduleView {
 
     private String nextLineText(ScheduledTask task) {
         if (scheduleManager.isRunning(task.getId())) return "执行中…";
+        if (task.isBuiltin()) return "系统常驻 · " + task.getSourceModule();
         if (!task.isEnabled()) return "已暂停";
         LocalDateTime n = scheduleManager.getNextFireTime(task.getId());
         if (n == null) return "等待调度…";
@@ -315,6 +323,12 @@ public class ScheduleView {
         detailPanel.setSpacing(12);
         detailPanel.setPadding(new Insets(2));
 
+        // 系统内置任务：只读展示，不渲染任何可编辑控件
+        if (task.isBuiltin()) {
+            buildBuiltinDetail(task);
+            return;
+        }
+
         currentTriggerType = task.getTriggerType() == null ? "interval" : task.getTriggerType();
 
         detailPanel.getChildren().addAll(
@@ -329,6 +343,52 @@ public class ScheduleView {
                 buildDeleteRow());
 
         refreshDetailStatus();
+    }
+
+    /** 系统内置任务的只读详情：不含任何可编辑控件、不可删除。 */
+    private void buildBuiltinDetail(ScheduledTask task) {
+        Label name = new Label(task.getName());
+        name.getStyleClass().add("jc-stat-value");
+        name.setStyle("-fx-font-size:16px; -fx-font-weight:700;");
+
+        Label badge = new Label("系统内置");
+        badge.getStyleClass().addAll("jc-badge", "jc-badge-stopped");
+
+        Label state = new Label("常驻运行");
+        state.getStyleClass().add("sec-hint");
+
+        HBox head = new HBox(10, name, badge);
+        head.setAlignment(Pos.CENTER_LEFT);
+
+        Label desc = new Label(task.getDescription() == null ? "" : task.getDescription());
+        desc.getStyleClass().add("sec-hint");
+        desc.setWrapText(true);
+        desc.setMaxWidth(Double.MAX_VALUE);
+
+        Label triggerVal = new Label(task.describeTrigger());
+        Label sourceVal = new Label(task.getSourceModule() == null ? "—" : task.getSourceModule());
+        HBox stats = new HBox(24,
+                buildStat("触发", triggerVal, null, null),
+                buildStat("来源模块", sourceVal, null, null),
+                buildStat("状态", state, null, null));
+        stats.setAlignment(Pos.CENTER_LEFT);
+
+        VBox card = new VBox(12, head, desc, stats);
+        card.getStyleClass().add("jc-card");
+        card.setPadding(new Insets(14, 16, 14, 16));
+
+        boolean runnable = scheduleManager.hasBuiltinAction(task.getId());
+        String noteText = runnable
+                ? "这是代码内部的周期性机制，纳入定时任务模块统一呈现；由系统自动运行，"
+                    + "不可编辑 / 停用 / 删除，但可点击页脚「▶ 立即运行一次」手动触发一次。"
+                : "这是代码内部的周期性机制，纳入定时任务模块统一呈现；由系统自动运行，"
+                    + "不可编辑 / 停用 / 删除 / 手动触发。";
+        Label note = new Label(noteText);
+        note.getStyleClass().addAll("sec-hint", "empty-state-hint");
+        note.setWrapText(true);
+        note.setMaxWidth(Double.MAX_VALUE);
+
+        detailPanel.getChildren().addAll(card, note, new Separator(), buildHistorySection(task));
     }
 
     /** 头部状态卡：名称（可编辑）+ 启停开关 + 4 个 Stat。 */
@@ -604,7 +664,7 @@ public class ScheduleView {
     private void refreshDetailStatus() {
         if (selectedTaskId == null || statTriggerVal == null) return;
         ScheduledTask t = scheduleManager.getTask(selectedTaskId);
-        if (t == null) return;
+        if (t == null || t.isBuiltin()) return;  // 内置任务为只读面板，无动态状态控件
         boolean running = scheduleManager.isRunning(t.getId());
 
         headerStateLabel.setText(running ? "运行中" : (t.isEnabled() ? "已启用" : "已暂停"));
@@ -709,7 +769,9 @@ public class ScheduleView {
 
     private void onRunNow() {
         if (selectedTaskId == null) return;
-        onSaveTask();
+        ScheduledTask t = scheduleManager.getTask(selectedTaskId);
+        if (t == null) return;
+        if (!t.isBuiltin()) onSaveTask();   // 内置任务只读，不吸收表单
         scheduleManager.runNow(selectedTaskId);
         statusHint.setText("正在执行…");
     }
@@ -739,9 +801,12 @@ public class ScheduleView {
     }
 
     private void updateFootButtons() {
-        boolean has = selectedTaskId != null && scheduleManager.getTask(selectedTaskId) != null;
-        if (runNowBtn != null) { runNowBtn.setDisable(!has); }
-        if (saveBtn != null) { saveBtn.setDisable(!has); }
+        ScheduledTask sel = selectedTaskId == null ? null : scheduleManager.getTask(selectedTaskId);
+        boolean editable = sel != null && !sel.isBuiltin();  // 内置任务只读，禁用保存
+        // 立即运行：普通任务恒可；内置任务仅当注册了手动动作时可用
+        boolean canRun = sel != null && (editable || scheduleManager.hasBuiltinAction(sel.getId()));
+        if (runNowBtn != null) { runNowBtn.setDisable(!canRun); }
+        if (saveBtn != null) { saveBtn.setDisable(!editable); }
     }
 
     public void show() {
