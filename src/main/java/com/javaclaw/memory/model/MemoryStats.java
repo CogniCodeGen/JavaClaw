@@ -21,5 +21,8 @@ public class MemoryStats {
     /** 累计蒸馏去重合并数 */
     public long totalFactsMerged;
 
+    /** 上次习惯回顾蒸馏的时间戳（0 = 从未回顾）；回顾只归纳此时刻之后的新情景 */
+    public long lastHabitReviewAt;
+
     public MemoryStats() {}
 }

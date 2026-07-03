@@ -3,6 +3,7 @@ package com.javaclaw.memory;
 import com.javaclaw.agent.TokenTracker;
 import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.memory.curation.Distiller;
+import com.javaclaw.memory.curation.HabitReviewer;
 import com.javaclaw.memory.embed.EmbeddingGate;
 import com.javaclaw.memory.model.AgentCheckpoint;
 import com.javaclaw.memory.model.ChangeLogEntry;
@@ -48,6 +49,7 @@ public class MemoryService implements AutoCloseable {
     private MemoryStore store;
     private Recaller recaller;
     private Distiller distiller;
+    private HabitReviewer habitReviewer;
 
     public MemoryService(ModelFactory modelFactory, TokenTracker tokenTracker) {
         this.gate = new EmbeddingGate(modelFactory);
@@ -74,6 +76,7 @@ public class MemoryService implements AutoCloseable {
         this.store.open();
         this.recaller = new Recaller(store, gate);
         this.distiller = new Distiller(lightModel, store, gate, tokenTracker);
+        this.habitReviewer = new HabitReviewer(lightModel, store, gate, tokenTracker);
         seedDefaultPersona();
         log.info("记忆服务已打开: {}", memoryDir);
     }
@@ -91,6 +94,7 @@ public class MemoryService implements AutoCloseable {
             store = null;
             recaller = null;
             distiller = null;
+            habitReviewer = null;
         }
     }
 
@@ -123,7 +127,8 @@ public class MemoryService implements AutoCloseable {
      * 嵌入不可用时跳过（无向量则不入索引，记忆本轮降级）。
      */
     public void rememberTurn(String sessionId, String userInput, String reply, String toolTraceJson) {
-        if (store == null || distiller == null) {
+        HabitReviewer reviewer = this.habitReviewer; // 本地引用，防 close() 竞态置空
+        if (store == null || distiller == null || reviewer == null) {
             return;
         }
         Episode ep = new Episode(sessionId, userInput, reply);
@@ -144,6 +149,7 @@ public class MemoryService implements AutoCloseable {
                 })
                 .subscribeOn(Schedulers.boundedElastic())
                 .then(distiller.distill(ep))
+                .then(reviewer.maybeReview()) // 轮后顺带检查习惯回顾水位，条件满足才真正跑
                 .subscribe(null, e -> log.warn("rememberTurn 失败（静默）: {}", e.getMessage()));
     }
 

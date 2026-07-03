@@ -46,7 +46,7 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
-
+/
     <dependencies>
         <!--
             AgentScope 全功能包

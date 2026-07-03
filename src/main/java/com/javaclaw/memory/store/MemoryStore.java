@@ -115,6 +115,7 @@ public class MemoryStore implements AutoCloseable {
         boolean migrated = false;
         if (root.pendingFacts == null) { root.pendingFacts = GigaMap.New(); migrated = true; }
         if (root.pendingEpisodes == null) { root.pendingEpisodes = GigaMap.New(); migrated = true; }
+        if (root.stats == null) { root.stats = new com.javaclaw.memory.model.MemoryStats(); migrated = true; }
         if (migrated) {
             mgr.store(root);
             log.info("[{}] 已补建 pending 暂存区（旧库迁移）", label);
@@ -326,6 +327,32 @@ public class MemoryStore implements AutoCloseable {
 
     public List<Scored<Episode>> searchEpisodes(float[] query, int topK, double threshold) {
         return search(episodeIndex, query, topK, threshold);
+    }
+
+    /**
+     * 取时间戳晚于 {@code since} 的情景(含 pending 暂存区,按时间升序,超限时保留最近的 {@code limit} 条)。
+     * 供习惯回顾蒸馏批量归纳"上次回顾之后"的新对话。
+     */
+    public List<Episode> episodesSince(long since, int limit) {
+        List<Episode> out = new ArrayList<>();
+        root.episodes.iterate(e -> { if (e.timestamp > since) out.add(e); });
+        root.pendingEpisodes.iterate(e -> { if (e.timestamp > since) out.add(e); });
+        out.sort((a, b) -> Long.compare(a.timestamp, b.timestamp));
+        return out.size() > limit ? new ArrayList<>(out.subList(out.size() - limit, out.size())) : out;
+    }
+
+    /** 上次习惯回顾时间戳(0 = 从未回顾)。 */
+    public long lastHabitReviewAt() {
+        return root.stats.lastHabitReviewAt;
+    }
+
+    /** 记录一次习惯回顾完成(推进回顾水位,下次只看此后的新情景)。 */
+    public void markHabitReview(long timestamp, String actor, String summary) {
+        write(() -> {
+            root.stats.lastHabitReviewAt = timestamp;
+            mgr.store(root.stats);
+            logInternal("HABIT_REVIEW", "Episode", null, actor, trunc(summary));
+        });
     }
 
     /** 全部情景(只读快照,供记忆图谱构建/列举)。 */

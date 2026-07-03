@@ -936,6 +936,26 @@ public final class AgentConfig {
         return getInt("memory.graph.max.nodes", 300);
     }
 
+    /** 习惯回顾蒸馏总闸（默认开）：定期批量看近期情景，归纳跨轮重复模式为偏好事实 */
+    public boolean getMemoryHabitReviewEnabled() {
+        return Boolean.parseBoolean(properties.getProperty("memory.habit.review.enabled", "true"));
+    }
+
+    /** 触发一次习惯回顾所需的新情景条数下限（默认 20，自上次回顾起算） */
+    public int getMemoryHabitReviewMinEpisodes() {
+        return getInt("memory.habit.review.min.episodes", 20);
+    }
+
+    /** 两次习惯回顾的最小间隔小时数（默认 24） */
+    public int getMemoryHabitReviewIntervalHours() {
+        return getInt("memory.habit.review.interval.hours", 24);
+    }
+
+    /** 单次习惯回顾纳入的情景条数上限（默认 60，超出取最近的） */
+    public int getMemoryHabitReviewMaxEpisodes() {
+        return getInt("memory.habit.review.max.episodes", 60);
+    }
+
     // ==================== 规划模式配置 ====================
 
     /**
