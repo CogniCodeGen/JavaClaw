@@ -28,3 +28,4 @@ replay_pid*
 /logs/
 /plugins/
 /.idea/
+/AGENTS.md

@@ -19,12 +19,38 @@
 
 ## 📖 简介
 
-JavaClaw 是一个开箱即用的桌面端多智能体系统基于JavaFX。它面向真实任务场景，把即时对话、多专家方案讨论、长时可验收的托管执行整合到统一界面，配合丰富的工具生态与可自我进化的技能体系，让智能体「越用越顺手」。
+JavaClaw 是一个基于 JavaFX 的开箱即用桌面端多智能体系统。它面向真实任务场景，把即时对话、多专家方案讨论、长时可验收的托管执行整合到统一界面，配合丰富的工具生态与可自我进化的技能体系，让智能体「越用越顺手」。
+
+## 🖼️ 界面截图
+
+### 主界面概览
+
+<img width="2382" height="1440" alt="JavaClaw 主界面概览" src="https://github.com/user-attachments/assets/23d6c59e-c889-4ae7-8a66-bccd10ac496e" />
+
+主界面把会话列表、对话区、知识库选择、主题切换、Token 用量与托管任务入口放在同一工作台内。用户可以在「对话 / 研讨 / 托管任务」之间切换，也可以从侧边栏进入记忆中心、技能中心、MCP、插件、定时任务等扩展功能。
+
+## 🔎 项目功能分析
+
+JavaClaw 不只是聊天壳，而是一个「桌面智能体工作台」。从代码结构看，它的能力可以分为六层：
+
+| 功能层 | 面向用户的能力 | 关键实现模块 |
+|--------|----------------|--------------|
+| 交互入口 | 多会话聊天、普通对话、研讨模式、托管任务入口、附件输入、Markdown 气泡、图片查看 | `chat`、`mode`、`api.conversation`、`ui.javafx` |
+| 智能体编排 | 主 ReAct 编排、多专家委派、目标拆解、执行监控、中段评估、计划演进、主动澄清 | `agent`、`agent.goal`、`agent.execution`、`agent.evaluation`、`agent.planning`、`agent.clarify` |
+| 工具执行 | 浏览器、系统、桌面自动化、命令行、邮件、通知、媒体 OCR、站点凭据自动登录 | `browser`、`system`、`desktop`、`email`、`notification`、`media`、`site` |
+| 记忆与知识 | 长期事实记忆、对话情景、人格、知识库 RAG、记忆图谱、审计日志 | `memory`、`memory.store`、`memory.retrieval`、`memory.graph`、`ui.javafx.memory`、`ui.javafx.knowledge` |
+| 长时任务 | SDD 托管任务，按提案、规格、设计、任务拆解、实现、验收推进，支持暂停恢复与预算闸门 | `task.sdd`、`task.sdd.run`、`task.sdd.verify`、`ui.javafx.task` |
+| 扩展生态 | 技能自学习、MCP Server、插件系统、定时任务、工作区隔离、主题换肤 | `skill`、`mcp`、`plugin`、`schedule`、`config`、`ui.javafx.theme` |
+
+按使用场景理解，项目主要覆盖这些工作流：
+
+- **日常智能助理**：多会话对话、附件理解、联网浏览、文件处理、命令行与系统操作。
+- **方案研讨助手**：规划模式下让多个专家围绕同一问题讨论，输出更稳妥的设计或执行方案。
+- **工程任务托管**：把复杂需求转成 OpenSpec 风格的验收场景和任务清单，逐步实现、核验、补做。
+- **个人知识与记忆工作台**：沉淀长期事实、人格偏好、对话情景和知识文档，并通过向量召回注入上下文。
+- **可扩展智能体平台**：通过技能、MCP、插件和定时任务持续扩展能力边界。
 
 ## ✨ 功能特性
-主页概览
-<img width="2382" height="1440" alt="image" src="https://github.com/user-attachments/assets/23d6c59e-c889-4ae7-8a66-bccd10ac496e" />
-
 
 ### 💬 智能对话与编排
 - **三种工作模式**
