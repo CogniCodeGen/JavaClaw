@@ -4,20 +4,10 @@ import java.nio.file.Path;
 import java.util.Locale;
 
 /**
- * OpenSpec 产物的路径约定 —— 与 {@code skills/spec-driven-development/SKILL.md} 的目录布局对齐。
+ * OpenSpec 文档名与提示路径约定。
  *
- * <pre>
- * {workDir}/.agent/openspec/
- * ├── project.md                          # 项目级长期约定（可选、跨变更复用）
- * ├── changes/{slug}/                      # 一次变更一个目录
- * │   ├── proposal.md
- * │   ├── design.md
- * │   ├── tasks.md
- * │   └── specs/{能力}/spec.md
- * └── specs/{能力}/spec.md                 # 已归档的"当前真相"
- * </pre>
- *
- * <p>纯路径计算，不触盘、不抛异常。{@code workDir} 为空时返回 {@code null}，调用方据此跳过。</p>
+ * <p>SDD 当前真相已存入 H2 {@code sdd_spec_docs} 表。本类仅保留文件名常量、
+ * slug 生成逻辑，以及提示词中展示给执行体的路径格式。</p>
  *
  * @author JavaClaw
  */
@@ -36,7 +26,7 @@ public final class SpecPaths {
 
     private SpecPaths() {}
 
-    /** {workDir}/.agent/openspec 根；workDir 空返回 null。 */
+    /** 旧版 {workDir}/.agent/openspec 根；workDir 空返回 null。 */
     public static Path openspecRoot(String workDir) {
         if (workDir == null || workDir.isBlank()) return null;
         try {

@@ -1,14 +1,16 @@
 package com.javaclaw.skill;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.config.AgentConfig;
-import com.javaclaw.config.DataManager;
-import com.javaclaw.util.AtomicFileWriter;
+import com.javaclaw.config.AppDatabase;
 import com.javaclaw.util.DebouncedPersister;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -29,7 +31,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * 低成功率技能经 {@link #lowSuccessCandidates()} 反哺 SkillCurator，引导模型优先产 patch 修补
  * 而非新建技能。</p>
  *
- * <p>持久化：工作区维度 {@code {workspace}/data/skill-usage.json}（技能本体是全局的，
+ * <p>持久化：全局 H2 {@code skill_usage} 表，按 {@code workspace_id} 隔离（技能本体是全局的，
  * 但同一技能在不同项目的命中率与成功率不同）。写入经 {@link DebouncedPersister} 防抖；
  * 切换工作区时由外部调用 {@link #reload()}。</p>
  *
@@ -39,11 +41,7 @@ public final class SkillUsageTracker {
 
     private static final Logger log = LoggerFactory.getLogger(SkillUsageTracker.class);
 
-    private static final String DATA_FILE = "skill-usage.json";
-
     private static final SkillUsageTracker INSTANCE = new SkillUsageTracker();
-
-    private final ObjectMapper mapper = new ObjectMapper();
 
     /** 技能名 → 统计；技能以 name（而非目录 id）为键，与路由/注入层使用的标识一致 */
     private final Map<String, SkillUsageStat> stats = new ConcurrentHashMap<>();
@@ -158,7 +156,7 @@ public final class SkillUsageTracker {
 
     // ==================== 持久化 ====================
 
-    /** 切换工作区后重新加载（路径已指向新工作区 data/） */
+    /** 切换工作区后重新加载 H2 中该工作区的统计 */
     public synchronized void reload() {
         persister.flush();
         stats.clear();
@@ -178,26 +176,57 @@ public final class SkillUsageTracker {
     }
 
     private synchronized void save() {
-        try {
-            File file = new File(DataManager.getInstance().getDataRoot().toFile(), DATA_FILE);
-            AtomicFileWriter.writeJson(mapper.writerWithDefaultPrettyPrinter(), file, stats);
+        String insert = """
+                INSERT INTO skill_usage(
+                    workspace_id, skill_name, route_hits, reads, turn_success, turn_fail, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """;
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement del = c.prepareStatement("DELETE FROM skill_usage WHERE workspace_id = ?");
+             PreparedStatement ps = c.prepareStatement(insert)) {
+            c.setAutoCommit(false);
+            String workspaceId = AppDatabase.currentWorkspaceId();
+            del.setString(1, workspaceId);
+            del.executeUpdate();
+            for (Map.Entry<String, SkillUsageStat> entry : stats.entrySet()) {
+                SkillUsageStat stat = entry.getValue();
+                ps.setString(1, workspaceId);
+                ps.setString(2, entry.getKey());
+                ps.setLong(3, stat.routeHits.get());
+                ps.setLong(4, stat.reads.get());
+                ps.setLong(5, stat.turnSuccess.get());
+                ps.setLong(6, stat.turnFail.get());
+                ps.addBatch();
+            }
+            ps.executeBatch();
+            c.commit();
         } catch (Exception e) {
             log.warn("保存技能使用统计失败: {}", e.getMessage());
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void load() {
         try {
-            File file = new File(DataManager.getInstance().getDataRoot().toFile(), DATA_FILE);
-            if (!file.exists()) {
-                return;
+            String sql = """
+                    SELECT skill_name, route_hits, reads, turn_success, turn_fail
+                    FROM skill_usage
+                    WHERE workspace_id = ?
+                    """;
+            try (Connection c = AppDatabase.getConnection();
+                 PreparedStatement ps = c.prepareStatement(sql)) {
+                ps.setString(1, AppDatabase.currentWorkspaceId());
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        SkillUsageStat stat = new SkillUsageStat();
+                        stat.routeHits.set(rs.getLong("route_hits"));
+                        stat.reads.set(rs.getLong("reads"));
+                        stat.turnSuccess.set(rs.getLong("turn_success"));
+                        stat.turnFail.set(rs.getLong("turn_fail"));
+                        stats.put(rs.getString("skill_name"), stat);
+                    }
+                }
             }
-            Map<String, Object> raw = mapper.readValue(file, Map.class);
-            for (Map.Entry<String, Object> entry : raw.entrySet()) {
-                stats.put(entry.getKey(), mapper.convertValue(entry.getValue(), SkillUsageStat.class));
-            }
-            log.info("已加载技能使用统计: {} 条", stats.size());
+            log.info("已从 H2 加载技能使用统计: {} 条", stats.size());
         } catch (Exception e) {
             log.warn("加载技能使用统计失败", e);
         }

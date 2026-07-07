@@ -22,17 +22,17 @@ import java.util.function.BooleanSupplier;
  * SDD 任务编排器 —— 取代 v5 的 3881 行 {@code TaskExecutor}。
  *
  * <p>本类是<b>确定性控制流</b>：按 OpenSpec change 生命周期推进六阶段，状态全部经
- * {@link SpecStore} 落在 {@code .agent/openspec/}（markdown 即真相），验收统一走
+ * {@link SpecStore} 落在 H2 OpenSpec 文档表，验收统一走
  * {@link ScenarioVerifier}。所有模型驱动的行为（阶段智能体、critic、命令执行、人机评审）
  * 都是注入的端口（{@link SddAgents}/{@link ReviewGate}/verifier 的 runner&critic），
  * 本类不含任何 LLM 调用，因而可独立测试。</p>
  *
- * <p>核心循环：取 tasks.md 首个未勾项 → 执行（或就地懒拆解）→ 勾选 → 直到全勾 →
+ * <p>核心循环：取 H2 tasks.md 文档首个未勾项 → 执行（或就地懒拆解）→ 勾选 → 直到全勾 →
  * 综合核验全部能力场景 → 全过则归档完成；有未过则按未过场景补做（追加任务、保留已完成），
  * 受 {@link #maxReplanRounds} 轮上限约束，超限升级人工而非假完成。</p>
  *
  * <p>没有 FAST/SINGLE/MULTI 预分类：深度由 {@code executeTask} 在遇到过大项时请求懒拆解
- * 长出来。没有独立状态机：进度即 tasks.md 勾选折叠。</p>
+ * 长出来。没有独立状态机：进度即 H2 tasks.md 文档勾选折叠。</p>
  *
  * @author JavaClaw
  */
@@ -137,7 +137,7 @@ public final class SddOrchestrator {
     }
 
     /**
-     * 从既有 change 续跑 —— 恢复中断任务的入口。读 {@code .agent/openspec/changes/{slug}/}：
+     * 从既有 change 续跑 —— 恢复中断任务的入口。读 H2 中 slug 对应的 OpenSpec 文档：
      * 若已拆解出 tasks 则跳过澄清/规格/计划，直接进实现+验收循环（实现循环天然从首个未勾项继续）；
      * 否则回退到从头 {@link #run()}。
      */

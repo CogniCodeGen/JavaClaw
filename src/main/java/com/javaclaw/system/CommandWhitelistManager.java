@@ -1,15 +1,14 @@
 package com.javaclaw.system;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.javaclaw.config.WorkspaceManager;
+import com.javaclaw.config.AppDatabase;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -24,19 +23,17 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * <p>管理已获批准的高风险命令，按（命令前缀、工作目录）配对存储。
  * 白名单中的命令在对应目录下执行时无需用户再次确认。</p>
  *
- * <p>白名单持久化到当前工作区的 {@code data/command-whitelist.json}。</p>
+ * <p>白名单持久化到全局 H2 数据库的 {@code command_whitelist} 表，并按 {@code workspace_id} 隔离。</p>
  *
  * @author JavaClaw
  */
 public class CommandWhitelistManager {
 
     private static final Logger log = LoggerFactory.getLogger(CommandWhitelistManager.class);
-    private static final String WHITELIST_FILE = "command-whitelist.json";
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private static volatile CommandWhitelistManager instance;
 
-    private final ObjectMapper objectMapper;
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
     private List<WhitelistEntry> entries = new ArrayList<>();
 
@@ -52,7 +49,6 @@ public class CommandWhitelistManager {
     ) {}
 
     private CommandWhitelistManager() {
-        this.objectMapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
         load();
     }
 
@@ -188,23 +184,32 @@ public class CommandWhitelistManager {
 
     // ==================== 持久化 ====================
 
-    private Path getWhitelistFile() {
-        return WorkspaceManager.getInstance().getCurrentWorkspacePath()
-                .resolve("data").resolve(WHITELIST_FILE);
-    }
-
     private void load() {
         lock.writeLock().lock();
         try {
-            Path file = getWhitelistFile();
-            if (Files.exists(file)) {
-                entries = objectMapper.readValue(file.toFile(),
-                        new TypeReference<List<WhitelistEntry>>() {});
-                log.info("命令白名单已加载: {} 条", entries.size());
-            } else {
-                entries = new ArrayList<>();
+            entries = new ArrayList<>();
+            String sql = """
+                    SELECT id, command_prefix, work_dir, added_at, use_count
+                    FROM command_whitelist
+                    WHERE workspace_id = ?
+                    ORDER BY added_at, id
+                    """;
+            try (Connection c = AppDatabase.getConnection();
+                 PreparedStatement ps = c.prepareStatement(sql)) {
+                ps.setString(1, AppDatabase.currentWorkspaceId());
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        entries.add(new WhitelistEntry(
+                                rs.getString("id"),
+                                rs.getString("command_prefix"),
+                                rs.getString("work_dir"),
+                                rs.getString("added_at"),
+                                rs.getInt("use_count")));
+                    }
+                }
+                log.info("命令白名单已从 H2 加载: {} 条", entries.size());
             }
-        } catch (IOException e) {
+        } catch (SQLException e) {
             log.error("加载命令白名单失败", e);
             entries = new ArrayList<>();
         } finally {
@@ -213,12 +218,31 @@ public class CommandWhitelistManager {
     }
 
     private void save() {
-        try {
-            Path file = getWhitelistFile();
-            Files.createDirectories(file.getParent());
-            objectMapper.writeValue(file.toFile(), entries);
-        } catch (IOException e) {
-            log.error("保存命令白名单失败", e);
+        String insert = """
+                INSERT INTO command_whitelist(
+                    workspace_id, id, command_prefix, work_dir, added_at, use_count, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """;
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement del = c.prepareStatement("DELETE FROM command_whitelist WHERE workspace_id = ?");
+             PreparedStatement ps = c.prepareStatement(insert)) {
+            c.setAutoCommit(false);
+            String workspaceId = AppDatabase.currentWorkspaceId();
+            del.setString(1, workspaceId);
+            del.executeUpdate();
+            for (WhitelistEntry entry : entries) {
+                ps.setString(1, workspaceId);
+                ps.setString(2, entry.id());
+                ps.setString(3, entry.commandPrefix());
+                ps.setString(4, entry.workDir());
+                ps.setString(5, entry.addedAt());
+                ps.setInt(6, entry.useCount());
+                ps.addBatch();
+            }
+            ps.executeBatch();
+            c.commit();
+        } catch (SQLException e) {
+            log.error("保存命令白名单到 H2 失败", e);
         }
     }
 

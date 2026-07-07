@@ -67,7 +67,7 @@ public class MemoryService implements AutoCloseable {
 
     // ==================== 生命周期 ====================
 
-    /** 打开指定工作区的记忆库（目录如 {workspace}/data/memory-store）。 */
+    /** 打开指定工作区的记忆库文件资产目录（例如 data/memory-stores/{workspace_id}）。 */
     public synchronized void open(Path memoryDir) {
         if (store != null) {
             return;

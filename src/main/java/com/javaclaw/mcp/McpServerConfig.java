@@ -77,7 +77,7 @@ public class McpServerConfig {
      * 推断的传输类型：{@code "http"} 或 {@code "stdio"}。
      *
      * <p>{@link JsonIgnore} 防止 Jackson 把这个派生字段写入 JSON：
-     * 一旦持久化到 {@code mcp-servers.json}，下次读取时 Jackson 找不到对应 setter 会抛
+     * 一旦持久化为结构化配置，下次读取时 Jackson 找不到对应 setter 会抛
      * {@code UnrecognizedPropertyException}，导致整份配置加载失败、表象上像"配置丢了"。</p>
      */
     @JsonIgnore

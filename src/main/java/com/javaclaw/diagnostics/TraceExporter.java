@@ -93,17 +93,10 @@ public final class TraceExporter {
     }
 
     /**
-     * 读取当前工作区的 agent properties，剔除敏感字段
+     * 读取全局 H2 中当前工作区的 agent properties，剔除敏感字段。
      */
     private static byte[] redactedAgentProperties() throws IOException {
-        Path cfgFile = WorkspaceManager.getInstance().getCurrentWorkspacePath()
-                .resolve("javaclaw-agent.properties");
-        Properties props = new Properties();
-        if (Files.exists(cfgFile)) {
-            try (InputStream in = Files.newInputStream(cfgFile)) {
-                props.load(in);
-            }
-        }
+        Properties props = AgentConfig.getInstance().snapshotProperties();
         for (String key : new ArrayList<>(props.stringPropertyNames())) {
             String lower = key.toLowerCase();
             for (String pat : SECRET_KEY_PATTERNS) {
@@ -126,7 +119,9 @@ public final class TraceExporter {
         sb.append("os.name=").append(System.getProperty("os.name")).append('\n');
         sb.append("os.arch=").append(System.getProperty("os.arch")).append('\n');
         sb.append("os.version=").append(System.getProperty("os.version")).append('\n');
-        sb.append("workspace=").append(WorkspaceManager.getInstance().getCurrentWorkspacePath()).append('\n');
+        WorkspaceManager wm = WorkspaceManager.getInstance();
+        sb.append("workspace.id=").append(wm.getCurrentWorkspaceId()).append('\n');
+        sb.append("workspace.name=").append(wm.getCurrentWorkspace() == null ? "" : wm.getCurrentWorkspace().getName()).append('\n');
         sb.append("provider=").append(AgentConfig.getInstance().getProviderType()).append('\n');
         sb.append("model=").append(AgentConfig.getInstance().getModelName()).append('\n');
         sb.append("base.url=").append(AgentConfig.getInstance().getBaseUrl()).append('\n');

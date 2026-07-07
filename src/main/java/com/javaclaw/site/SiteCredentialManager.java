@@ -3,41 +3,35 @@ package com.javaclaw.site;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.javaclaw.config.AppDatabase;
 import com.javaclaw.config.CredentialEncryptor;
-import com.javaclaw.config.WorkspaceManager;
-import com.javaclaw.util.AtomicFileWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
 import java.net.URI;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.*;
 
 /**
  * 站点凭据与会话管理（单例 / 工作区维度）
  *
- * <p>持久化布局：</p>
- * <pre>
- *   {workspace}/data/site-credentials.json     ← 凭据列表
- *   {workspace}/data/site-sessions/{id}.json   ← 每条目的 Playwright storageState
- * </pre>
+ * <p>持久化到全局 H2 数据库的 {@code site_credentials} 与
+ * {@code site_sessions} 表，并按 {@code workspace_id} 隔离；启动时只从 H2 读取。</p>
  *
  * <p>密码字段落盘时经 {@link CredentialEncryptor} 加密（ENC(...) 格式，与 API Key 一致），
- * 读取时解密；旧明文文件可直接读取（decrypt 对非 ENC 前缀值透传），下次保存自动完成加密迁移。
+ * 读取时解密。
  * 内存中的 {@link SiteCredential} 始终持有明文（供 Playwright 自动登录使用）。
- * 该文件位于工作区目录内，请勿提交到版本控制。</p>
+ * 数据存储在 H2 中，请勿提交本地数据库文件。</p>
  *
  * @author JavaClaw
  */
 public class SiteCredentialManager {
 
     private static final Logger log = LoggerFactory.getLogger(SiteCredentialManager.class);
-
-    private static final String CONFIG_FILE_NAME = "data/site-credentials.json";
-    private static final String SESSION_DIR_NAME = "data/site-sessions";
 
     private static SiteCredentialManager INSTANCE;
 
@@ -57,72 +51,80 @@ public class SiteCredentialManager {
         return INSTANCE;
     }
 
-    // ==================== 路径 ====================
-
-    private Path configPath() {
-        return WorkspaceManager.getInstance()
-                .getCurrentWorkspacePath().resolve(CONFIG_FILE_NAME);
-    }
-
-    private Path sessionDir() {
-        return WorkspaceManager.getInstance()
-                .getCurrentWorkspacePath().resolve(SESSION_DIR_NAME);
-    }
-
-    /** 指定条目的会话文件路径（即使文件不存在也返回路径） */
-    public Path sessionFile(String id) {
-        return sessionDir().resolve(id + ".json");
-    }
-
     public String getConfigFilePath() {
-        return configPath().toString();
+        return AppDatabase.databaseDisplayPath();
     }
 
     // ==================== 加载/保存 ====================
 
     public void load() {
         credentials.clear();
-        Path path = configPath();
-        if (!Files.exists(path)) {
-            log.info("站点凭据文件不存在，使用空配置: {}", path);
-            return;
-        }
-        try {
-            List<SiteCredential> list = objectMapper.readValue(
-                    path.toFile(), new TypeReference<List<SiteCredential>>() {});
-            for (SiteCredential c : list) {
-                if (c.getId() == null || c.getId().isBlank()) {
-                    c.setId(UUID.randomUUID().toString());
+        String sql = """
+                SELECT id, name, host_pattern, login_url, username, password_enc, notes,
+                       created_at, last_used_at, has_session
+                FROM site_credentials
+                WHERE workspace_id = ?
+                ORDER BY created_at, name
+                """;
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, AppDatabase.currentWorkspaceId());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    SiteCredential cred = new SiteCredential();
+                    cred.setId(rs.getString("id"));
+                    cred.setName(rs.getString("name"));
+                    cred.setHostPattern(rs.getString("host_pattern"));
+                    cred.setLoginUrl(rs.getString("login_url"));
+                    cred.setUsername(rs.getString("username"));
+                    cred.setPassword(CredentialEncryptor.decrypt(rs.getString("password_enc")));
+                    cred.setNotes(rs.getString("notes"));
+                    cred.setCreatedAt(rs.getLong("created_at"));
+                    cred.setLastUsedAt(rs.getLong("last_used_at"));
+                    cred.setHasSession(sessionExists(c, cred.getId()));
+                    credentials.put(cred.getId(), cred);
                 }
-                // 解密密码（旧明文值原样透传，天然向后兼容）
-                c.setPassword(CredentialEncryptor.decrypt(c.getPassword()));
-                c.setHasSession(Files.exists(sessionFile(c.getId())));
-                credentials.put(c.getId(), c);
             }
-            log.info("已加载 {} 条站点凭据", credentials.size());
-        } catch (IOException e) {
-            log.warn("加载站点凭据失败: {}", e.getMessage());
+            log.info("已从 H2 加载 {} 条站点凭据", credentials.size());
+        } catch (SQLException e) {
+            log.warn("从 H2 加载站点凭据失败: {}", e.getMessage(), e);
         }
+
     }
 
     public void save() {
-        Path path = configPath();
-        try {
-            Files.createDirectories(path.getParent());
-            // 落盘边界加密密码：序列化副本上替换 password 字段，内存对象保持明文
-            List<ObjectNode> out = new ArrayList<>();
-            for (SiteCredential c : credentials.values()) {
-                ObjectNode node = objectMapper.valueToTree(c);
-                String pw = c.getPassword();
-                if (pw != null && !pw.isEmpty()) {
-                    node.put("password", CredentialEncryptor.encrypt(pw));
-                }
-                out.add(node);
+        String upsert = """
+                MERGE INTO site_credentials(
+                    workspace_id, id, name, host_pattern, login_url, username, password_enc, notes,
+                    created_at, last_used_at, has_session, updated_at
+                )
+                KEY(workspace_id, id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """;
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement ps = c.prepareStatement(upsert)) {
+            c.setAutoCommit(false);
+            deleteRemovedCredentials(c);
+            String workspaceId = AppDatabase.currentWorkspaceId();
+            for (SiteCredential cred : credentials.values()) {
+                ps.setString(1, workspaceId);
+                ps.setString(2, cred.getId());
+                ps.setString(3, cred.getName());
+                ps.setString(4, cred.getHostPattern());
+                ps.setString(5, cred.getLoginUrl());
+                ps.setString(6, cred.getUsername());
+                ps.setString(7, CredentialEncryptor.encrypt(cred.getPassword()));
+                ps.setString(8, cred.getNotes());
+                ps.setLong(9, cred.getCreatedAt());
+                ps.setLong(10, cred.getLastUsedAt());
+                ps.setBoolean(11, cred.isHasSession());
+                ps.addBatch();
             }
-            AtomicFileWriter.writeJson(objectMapper, path.toFile(), out);
-            log.info("已保存站点凭据到: {}", path);
-        } catch (IOException e) {
-            log.error("保存站点凭据失败", e);
+            ps.executeBatch();
+            c.commit();
+            log.info("已保存站点凭据到 H2: {}", AppDatabase.databaseDisplayPath());
+        } catch (SQLException e) {
+            log.error("保存站点凭据到 H2 失败", e);
         }
     }
 
@@ -151,7 +153,7 @@ public class SiteCredentialManager {
         if (cred.getCreatedAt() == 0) {
             cred.setCreatedAt(System.currentTimeMillis());
         }
-        cred.setHasSession(Files.exists(sessionFile(cred.getId())));
+        cred.setHasSession(readSession(cred.getId()) != null);
         credentials.put(cred.getId(), cred);
         save();
         return cred;
@@ -237,29 +239,31 @@ public class SiteCredentialManager {
      */
     public void writeSession(String id, String storageStateJson) {
         if (id == null || storageStateJson == null) return;
-        try {
-            Path dir = sessionDir();
-            Files.createDirectories(dir);
-            AtomicFileWriter.writeString(sessionFile(id), storageStateJson);
-            SiteCredential c = credentials.get(id);
-            if (c != null) {
-                c.setHasSession(true);
-                c.setLastUsedAt(System.currentTimeMillis());
+        try (Connection conn = AppDatabase.getConnection()) {
+            writeSessionToDb(conn, id, storageStateJson);
+            SiteCredential cred = credentials.get(id);
+            if (cred != null) {
+                cred.setHasSession(true);
+                cred.setLastUsedAt(System.currentTimeMillis());
             }
             save();
             log.info("已保存站点会话: {}", id);
-        } catch (IOException e) {
+        } catch (SQLException e) {
             log.error("保存站点会话失败: {}", id, e);
         }
     }
 
     /** 读取 storageState；不存在返回 null */
     public String readSession(String id) {
-        Path file = sessionFile(id);
-        if (!Files.exists(file)) return null;
-        try {
-            return Files.readString(file);
-        } catch (IOException e) {
+        String sql = "SELECT storage_state_json FROM site_sessions WHERE workspace_id = ? AND credential_id = ?";
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, AppDatabase.currentWorkspaceId());
+            ps.setString(2, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString("storage_state_json") : null;
+            }
+        } catch (SQLException e) {
             log.warn("读取站点会话失败: {}", id, e);
             return null;
         }
@@ -276,17 +280,75 @@ public class SiteCredentialManager {
 
     /** 清除某条目的会话文件（凭据本身保留） */
     public void clearSession(String id) {
-        Path file = sessionFile(id);
-        try {
-            Files.deleteIfExists(file);
-            SiteCredential c = credentials.get(id);
-            if (c != null) {
-                c.setHasSession(false);
+        String sql = "DELETE FROM site_sessions WHERE workspace_id = ? AND credential_id = ?";
+        try (Connection conn = AppDatabase.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, AppDatabase.currentWorkspaceId());
+            ps.setString(2, id);
+            ps.executeUpdate();
+            SiteCredential cred = credentials.get(id);
+            if (cred != null) {
+                cred.setHasSession(false);
                 save();
             }
             log.info("已清除站点会话: {}", id);
-        } catch (IOException e) {
+        } catch (SQLException e) {
             log.warn("清除站点会话失败: {}", id, e);
+        }
+    }
+
+    private void deleteRemovedCredentials(Connection c) throws SQLException {
+        Set<String> existing = new HashSet<>();
+        try (PreparedStatement ps = c.prepareStatement("SELECT id FROM site_credentials WHERE workspace_id = ?")) {
+            ps.setString(1, AppDatabase.currentWorkspaceId());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) existing.add(rs.getString("id"));
+            }
+        }
+        existing.removeAll(credentials.keySet());
+        if (existing.isEmpty()) return;
+
+        try (PreparedStatement sessionPs = c.prepareStatement(
+                     "DELETE FROM site_sessions WHERE workspace_id = ? AND credential_id = ?");
+             PreparedStatement ps = c.prepareStatement(
+                     "DELETE FROM site_credentials WHERE workspace_id = ? AND id = ?")) {
+            String workspaceId = AppDatabase.currentWorkspaceId();
+            for (String id : existing) {
+                sessionPs.setString(1, workspaceId);
+                sessionPs.setString(2, id);
+                sessionPs.addBatch();
+
+                ps.setString(1, workspaceId);
+                ps.setString(2, id);
+                ps.addBatch();
+            }
+            sessionPs.executeBatch();
+            ps.executeBatch();
+        }
+    }
+
+    private boolean sessionExists(Connection c, String id) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT 1 FROM site_sessions WHERE workspace_id = ? AND credential_id = ?")) {
+            ps.setString(1, AppDatabase.currentWorkspaceId());
+            ps.setString(2, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private void writeSessionToDb(Connection c, String id, String storageStateJson) throws SQLException {
+        String sql = """
+                MERGE INTO site_sessions(workspace_id, credential_id, storage_state_json, updated_at)
+                KEY(workspace_id, credential_id)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                """;
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, AppDatabase.currentWorkspaceId());
+            ps.setString(2, id);
+            ps.setString(3, storageStateJson);
+            ps.executeUpdate();
         }
     }
 }

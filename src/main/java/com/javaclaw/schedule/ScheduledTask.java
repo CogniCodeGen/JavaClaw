@@ -90,7 +90,7 @@ public class ScheduledTask {
 
     /**
      * 系统内置任务标记：为 true 时该任务代表「代码内部的周期性机制」（如命令会话清理、习惯回顾、
-     * 记忆蒸馏），仅在定时任务模块中<b>只读展示</b>——不参与 Quartz 调度、不写入 scheduled-tasks.json，
+     * 记忆蒸馏），仅在定时任务模块中<b>只读展示</b>——不参与 Quartz 调度、不写入 scheduled_tasks 表，
      * 且不可被用户或智能体编辑 / 停用 / 删除 / 手动运行。默认 false（普通用户任务），向后兼容。
      */
     private boolean builtin;

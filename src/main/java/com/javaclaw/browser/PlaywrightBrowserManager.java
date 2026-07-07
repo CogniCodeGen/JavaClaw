@@ -1,11 +1,15 @@
 package com.javaclaw.browser;
 
+import com.javaclaw.config.AppDatabase;
 import com.microsoft.playwright.*;
 import com.microsoft.playwright.options.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -24,6 +28,7 @@ import java.util.List;
 public class PlaywrightBrowserManager {
 
     private static final Logger log = LoggerFactory.getLogger(PlaywrightBrowserManager.class);
+    private static final String STORAGE_STATE_KEY = "playwright-storage-state";
 
     /** 默认视口宽度 */
     private static final int DEFAULT_VIEWPORT_WIDTH = 1280;
@@ -257,12 +262,21 @@ public class PlaywrightBrowserManager {
     public synchronized void saveCookies() {
         if (context == null || browserDir == null || browser == null || !browser.isConnected()) return;
         try {
-            Path cookiePath = browserDir.resolve("pw-cookies.json");
             List<Cookie> cookies = context.cookies();
             // 使用 Playwright 的 storageState 保存完整状态
             String state = context.storageState();
-            java.nio.file.Files.writeString(cookiePath, state);
-            log.info("已保存 {} 个 Cookie 到 {}", cookies.size(), cookiePath);
+            try (Connection c = AppDatabase.getConnection();
+                 PreparedStatement ps = c.prepareStatement("""
+                         MERGE INTO browser_state(workspace_id, state_key, state_json, updated_at)
+                         KEY(workspace_id, state_key)
+                         VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                         """)) {
+                ps.setString(1, AppDatabase.currentWorkspaceId());
+                ps.setString(2, STORAGE_STATE_KEY);
+                ps.setString(3, state);
+                ps.executeUpdate();
+            }
+            log.info("已保存 {} 个 Cookie 到 H2", cookies.size());
         } catch (Exception e) {
             log.error("保存 Cookie 失败", e);
         }
@@ -273,11 +287,10 @@ public class PlaywrightBrowserManager {
      */
     private void loadCookies() {
         if (browserDir == null) return;
-        Path cookiePath = browserDir.resolve("pw-cookies.json");
-        if (!java.nio.file.Files.exists(cookiePath)) return;
 
         try {
-            String state = java.nio.file.Files.readString(cookiePath);
+            String state = loadStorageStateJson();
+            if (state == null || state.isBlank()) return;
             // 解析 storageState JSON 并恢复 Cookie
             // storageState 格式: {"cookies":[...], "origins":[...]}
             // 这里使用简单方式：关闭当前 context 并用 storageState 重新创建
@@ -316,6 +329,23 @@ public class PlaywrightBrowserManager {
         } catch (Exception e) {
             log.warn("加载 Cookie 失败: {}", e.getMessage());
         }
+    }
+
+    private String loadStorageStateJson() {
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT state_json FROM browser_state WHERE workspace_id = ? AND state_key = ?")) {
+            ps.setString(1, AppDatabase.currentWorkspaceId());
+            ps.setString(2, STORAGE_STATE_KEY);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getString("state_json");
+                }
+            }
+        } catch (Exception e) {
+            log.warn("从 H2 读取浏览器状态失败: {}", e.getMessage());
+        }
+        return null;
     }
 
     // ==================== 视口与配置 ====================

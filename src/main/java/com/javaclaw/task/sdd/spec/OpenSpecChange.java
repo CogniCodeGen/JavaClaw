@@ -6,11 +6,10 @@ import java.util.Optional;
 /**
  * 一次 OpenSpec 变更 —— 托管任务在 SDD 架构下的<b>聚合根</b>。
  *
- * <p>一个 change 对应工作目录下 {@code .agent/openspec/changes/{slug}/} 一整个目录，含
+ * <p>一个 change 对应 H2 {@code sdd_spec_docs} 表中同一 slug 的一组 OpenSpec 文档，含
  * {@link Proposal}（proposal.md）、若干 {@link Capability}（specs/{能力}/spec.md）、可选
- * 设计说明（design.md）、有序可勾选的实现项（tasks.md）。本 record 是从这些 markdown
- * 文件折叠出的<b>派生只读视图</b>，由 {@code SpecStore} 读出；任何写入都改 markdown 后
- * 重新折叠，markdown 始终是唯一真相。</p>
+ * 设计说明（design.md）、有序可勾选的实现项（tasks.md）。本 record 是由 {@code SpecStore}
+ * 从 H2 文档折叠出的<b>派生只读视图</b>。</p>
  *
  * <p>没有独立的状态机字段：进度与完成度全部从 {@link #tasks} 的勾选态派生
  * （{@link #progressPercent()} / {@link #allTasksDone()} / {@link #nextPendingTask()}）。</p>

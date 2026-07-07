@@ -8,9 +8,9 @@ import com.javaclaw.agent.router.RoutingResult;
 import com.javaclaw.agent.router.ToolRouter;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.config.AppDatabase;
 import com.javaclaw.skill.SkillManager;
 import com.javaclaw.task.sdd.SddOutcome;
-import com.javaclaw.util.AtomicFileWriter;
 import com.javaclaw.task.sdd.SddProgress;
 import com.javaclaw.task.sdd.SddTaskRunner;
 import com.javaclaw.task.sdd.TaskContext;
@@ -24,6 +24,10 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -37,12 +41,11 @@ import java.util.concurrent.Executors;
 /**
  * SDD 托管任务管理器 —— 取代 v5 的 {@code TaskManager}（生命周期 + 持久化 + 执行驱动）。
  *
- * <p><b>自包含、增量、不耦合 legacy</b>：用 {@link SddTaskRunner} 真正驱动任务，持久化精简
- * {@link SddManagedTask} 索引到 {@code {dataDir}/sdd-tasks.json}，状态/进度全部从 change 目录
- * （{@code .agent/openspec}）派生或由运行结果回填。恢复 = 扫 change 目录续跑首个未勾任务。</p>
+ * <p><b>自包含、增量</b>：用 {@link SddTaskRunner} 真正驱动任务，持久化精简
+ * {@link SddManagedTask} 索引到全局 H2 {@code sdd_tasks} 表，OpenSpec 文档存到
+ * {@code sdd_spec_docs} 表，并按 {@code workspace_id} 隔离。状态/进度从 H2 文档派生或由运行结果回填。</p>
  *
- * <p>本类刻意不接入 {@code TaskFacade}/{@code JavaClawApp}，以免改动 legacy 破坏现有构建——
- * 它是"新侧"完整实现，最终切换时把 app 指向它即可（见类注释外的迁移配方）。</p>
+ * <p>本类通过 H2 管理任务索引与 OpenSpec 文档，工作区差异由 {@code workspace_id} 隔离。</p>
  *
  * <p>线程：每个运行中任务占一个后台线程跑同步的 {@code SddTaskRunner.run()/resume()}；
  * {@code cancel} 在阶段/循环边界生效。</p>
@@ -52,7 +55,6 @@ import java.util.concurrent.Executors;
 public final class SddTaskManager {
 
     private static final Logger log = LoggerFactory.getLogger(SddTaskManager.class);
-    public static final String INDEX_FILE = "sdd-tasks.json";
 
     private final ObjectMapper mapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
     private final List<SddManagedTask> tasks = new ArrayList<>();
@@ -70,7 +72,6 @@ public final class SddTaskManager {
         return INSTANCE;
     }
 
-    private Path indexFile;
     private ModelFactory modelFactory;
     private Map<String, Object> capabilityTools = Map.of();
     private SkillManager skills;
@@ -80,9 +81,9 @@ public final class SddTaskManager {
     // ==================== 配置 / 持久化 ====================
 
     /**
-     * 注入运行期协作者并从 dataDir 加载任务索引。工作区切换时重新调用即可重定向。
+     * 注入运行期协作者并从 H2 加载任务索引。工作区切换时重新调用即可重定向。
      *
-     * @param dataDir         任务索引落盘目录（如 {@code {workspace}/data}）
+     * @param dataDir         保留给调用方传入当前数据根；任务索引从 H2 读取
      * @param modelFactory    模型工厂
      * @param capabilityTools 能力→工具表
      * @param skills          技能管理器（可空）
@@ -91,7 +92,6 @@ public final class SddTaskManager {
     public synchronized void configure(Path dataDir, ModelFactory modelFactory,
                                        Map<String, Object> capabilityTools, SkillManager skills,
                                        UserInteractionPort interactionPort) {
-        this.indexFile = dataDir.resolve(INDEX_FILE);
         this.modelFactory = modelFactory;
         this.capabilityTools = capabilityTools == null ? Map.of() : capabilityTools;
         this.skills = skills;
@@ -115,20 +115,39 @@ public final class SddTaskManager {
 
     private synchronized void loadAll() {
         tasks.clear();
-        if (indexFile == null || !Files.isRegularFile(indexFile)) return;
         try {
-            SddManagedTask[] arr = mapper.readValue(indexFile.toFile(), SddManagedTask[].class);
-            for (SddManagedTask t : arr) tasks.add(t);
+            try (Connection c = AppDatabase.getConnection();
+                 PreparedStatement ps = c.prepareStatement(
+                         "SELECT task_json FROM sdd_tasks WHERE workspace_id = ? ORDER BY updated_at, id")) {
+                ps.setString(1, AppDatabase.currentWorkspaceId());
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        tasks.add(mapper.readValue(rs.getString("task_json"), SddManagedTask.class));
+                    }
+                }
+            }
         } catch (Exception e) {
             log.warn("[SDD] 加载任务索引失败: {}", e.getMessage());
         }
     }
 
     private synchronized void saveAll() {
-        if (indexFile == null) return;
-        try {
-            Files.createDirectories(indexFile.getParent());
-            AtomicFileWriter.writeJson(mapper, indexFile.toFile(), tasks);
+        String insert = "INSERT INTO sdd_tasks(workspace_id, id, task_json, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)";
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement del = c.prepareStatement("DELETE FROM sdd_tasks WHERE workspace_id = ?");
+             PreparedStatement ps = c.prepareStatement(insert)) {
+            c.setAutoCommit(false);
+            String workspaceId = AppDatabase.currentWorkspaceId();
+            del.setString(1, workspaceId);
+            del.executeUpdate();
+            for (SddManagedTask task : tasks) {
+                ps.setString(1, workspaceId);
+                ps.setString(2, task.id);
+                ps.setString(3, mapper.writeValueAsString(task));
+                ps.addBatch();
+            }
+            ps.executeBatch();
+            c.commit();
         } catch (Exception e) {
             log.warn("[SDD] 保存任务索引失败: {}", e.getMessage());
         }
@@ -326,8 +345,41 @@ public final class SddTaskManager {
 
     public synchronized void delete(String id) {
         cancel(id);
+        SddManagedTask task = get(id);
+        if (task != null) {
+            deleteSpecDocs(task);
+        }
         tasks.removeIf(t -> t.id.equals(id));
         saveAll();
+    }
+
+    private void deleteSpecDocs(SddManagedTask task) {
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement spec = c.prepareStatement("""
+                     DELETE FROM sdd_spec_docs
+                     WHERE workspace_id = ? AND work_dir = ? AND slug = ?
+                     """);
+             PreparedStatement cache = c.prepareStatement("""
+                     DELETE FROM sdd_verify_cache
+                     WHERE workspace_id = ? AND work_dir = ? AND slug = ?
+                     """)) {
+            String normalizedWorkDir = task.workDir == null || task.workDir.isBlank()
+                    ? null
+                    : Path.of(task.workDir).toAbsolutePath().normalize().toString();
+            if (normalizedWorkDir == null) return;
+            String workspaceId = AppDatabase.currentWorkspaceId();
+            String slug = SpecPaths.makeSlug(task.id, task.title);
+            spec.setString(1, workspaceId);
+            spec.setString(2, normalizedWorkDir);
+            spec.setString(3, slug);
+            spec.executeUpdate();
+            cache.setString(1, workspaceId);
+            cache.setString(2, normalizedWorkDir);
+            cache.setString(3, slug);
+            cache.executeUpdate();
+        } catch (Exception e) {
+            log.warn("[SDD] 删除任务规格文档失败 task={}: {}", task.id, e.getMessage());
+        }
     }
 
     // ==================== 启动恢复 ====================

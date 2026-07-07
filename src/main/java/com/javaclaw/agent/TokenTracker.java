@@ -1,17 +1,18 @@
 package com.javaclaw.agent;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.javaclaw.config.DataManager;
-import com.javaclaw.util.AtomicFileWriter;
+import com.javaclaw.config.AppDatabase;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.model.ChatResponse;
 import io.agentscope.core.model.ChatUsage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
@@ -24,15 +25,12 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Token 用量追踪器
  *
- * <p>按会话和日期统计 token 消耗（区分输入/输出），持久化到工作区数据目录，供 UI 状态栏与成本估算使用。</p>
+ * <p>按会话和日期统计 token 消耗（区分输入/输出），持久化到全局 H2 数据库并按 {@code workspace_id} 隔离，
+ * 供 UI 状态栏与成本估算使用。</p>
  */
 public class TokenTracker {
 
     private static final Logger log = LoggerFactory.getLogger(TokenTracker.class);
-    private static final String DATA_FILE = "token-usage.json";
-    private static final int SCHEMA_VERSION = 2;
-    private static final ObjectMapper mapper = new ObjectMapper()
-            .enable(SerializationFeature.INDENT_OUTPUT);
 
     /** 每日输入/输出 token 明细 */
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -421,45 +419,57 @@ public class TokenTracker {
     // ==================== 持久化 ====================
 
     private void save() {
-        try {
-            File file = new File(DataManager.getInstance().getDataRoot().toFile(), DATA_FILE);
-            Map<String, Object> root = new HashMap<>();
-            root.put("schemaVersion", SCHEMA_VERSION);
-            root.put("data", dailyUsage);
-            AtomicFileWriter.writeJson(mapper, file, root);
+        String sql = """
+                MERGE INTO token_usage_daily(
+                    workspace_id, usage_date, input_tokens, output_tokens, metered_input, cached_input, updated_at
+                )
+                KEY(workspace_id, usage_date)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """;
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            String workspaceId = AppDatabase.currentWorkspaceId();
+            for (Map.Entry<String, DailyUsage> entry : dailyUsage.entrySet()) {
+                DailyUsage usage = entry.getValue();
+                ps.setString(1, workspaceId);
+                ps.setString(2, entry.getKey());
+                ps.setLong(3, usage.input);
+                ps.setLong(4, usage.output);
+                ps.setLong(5, usage.meteredInput);
+                ps.setLong(6, usage.cachedInput);
+                ps.addBatch();
+            }
+            ps.executeBatch();
         } catch (Exception e) {
             log.warn("保存 token 用量数据失败: {}", e.getMessage());
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void load() {
         try {
-            File file = new File(DataManager.getInstance().getDataRoot().toFile(), DATA_FILE);
-            if (!file.exists()) return;
-            Map<String, Object> root = mapper.readValue(file, Map.class);
-            if (root.containsKey("schemaVersion")) {
-                Map<String, Object> data = (Map<String, Object>) root.get("data");
-                if (data != null) {
-                    for (var entry : data.entrySet()) {
-                        DailyUsage u = mapper.convertValue(entry.getValue(), DailyUsage.class);
-                        dailyUsage.put(entry.getKey(), u);
+            String sql = """
+                    SELECT usage_date, input_tokens, output_tokens, metered_input, cached_input
+                    FROM token_usage_daily
+                    WHERE workspace_id = ?
+                    ORDER BY usage_date
+                    """;
+            try (Connection c = AppDatabase.getConnection();
+                 PreparedStatement ps = c.prepareStatement(sql)) {
+                ps.setString(1, AppDatabase.currentWorkspaceId());
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        DailyUsage u = new DailyUsage();
+                        u.input = rs.getLong("input_tokens");
+                        u.output = rs.getLong("output_tokens");
+                        u.meteredInput = rs.getLong("metered_input");
+                        u.cachedInput = rs.getLong("cached_input");
+                        dailyUsage.put(rs.getString("usage_date"), u);
                     }
                 }
-            } else {
-                // 旧格式迁移：Map<String, Long> → 全部计入 input（无法区分历史输入输出）
-                for (var entry : root.entrySet()) {
-                    Object val = entry.getValue();
-                    if (val instanceof Number n) {
-                        long total = n.longValue();
-                        dailyUsage.put(entry.getKey(), new DailyUsage(total, 0));
-                    }
-                }
-                log.info("检测到旧版 token-usage.json 格式，已迁移 {} 条记录", dailyUsage.size());
             }
-            log.info("已加载 token 用量数据: {} 天记录", dailyUsage.size());
+            log.info("已从 H2 加载 token 用量数据: {} 天记录", dailyUsage.size());
         } catch (Exception e) {
-            // 带堆栈输出便于定位 JSON 损坏或 schema 不兼容的根因
+            // 带堆栈输出便于定位数据库或 schema 不兼容的根因
             log.warn("加载 token 用量数据失败", e);
         }
     }

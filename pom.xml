@@ -29,6 +29,7 @@
         <richtextfx.version>0.11.7</richtextfx.version>
         <commonmark.version>0.24.0</commonmark.version>
         <eclipsestore.version>4.1.0</eclipsestore.version>
+        <h2.version>2.3.232</h2.version>
     </properties>
 
     <!--
@@ -216,6 +217,13 @@
             <groupId>org.eclipse.store</groupId>
             <artifactId>gigamap-jvector</artifactId>
             <version>${eclipsestore.version}</version>
+        </dependency>
+
+        <!-- H2：工作区本地结构化配置数据库（data/javaclaw.mv.db） -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <version>${h2.version}</version>
         </dependency>
 
         <!-- JUnit 5（单元测试；运行 mvn test） -->

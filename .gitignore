@@ -24,6 +24,7 @@ hs_err_pid*
 replay_pid*
 /CLAUDE.md
 /workspaces/
+/data/
 /target/
 /logs/
 /plugins/

@@ -1,9 +1,9 @@
 package com.javaclaw.agent.expert;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.config.AppDatabase;
 import com.javaclaw.config.DataManager;
 import com.javaclaw.memory.embed.EmbeddingGate;
 import com.javaclaw.memory.model.KnowledgeChunk;
@@ -25,6 +25,10 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -38,11 +42,10 @@ import java.util.Set;
  * 知识专家子智能体（EclipseStore + JVector 重建）
  *
  * <p>双知识库（全局 + 工作区）各由一个 {@link MemoryStore} 承载（EclipseStore 对象图 + JVector 向量索引），
- * 取代旧 AgentScope {@code InMemoryStore}/{@code SimpleKnowledge} + 手写 {@code knowledge-store.json}。
- * 来源文档名随 {@link KnowledgeChunk} 实体持久化 —— 彻底消除旧 InMemoryStore 不复制 vectorName 的绕路。</p>
+ * 使用 {@link MemoryStore} 直接持久化知识分块与来源文档名。</p>
  *
- * <p>存储目录：全局 {@code global/data/knowledge/store}、工作区 {@code {ws}/data/knowledge/store}；
- * 首次打开时一次性迁移同目录旧 {@code knowledge-store.json}（迁移后改名为 .migrated 留痕）。</p>
+ * <p>存储目录：全局 {@code data/knowledge/global/store}、工作区 {@code data/knowledge/workspaces/{workspace_id}/store}；
+ * 启动时只打开当前 H2 指向的存储目录。</p>
  *
  * @author JavaClaw
  */
@@ -51,9 +54,6 @@ public class KnowledgeExpert {
     private static final Logger log = LoggerFactory.getLogger(KnowledgeExpert.class);
 
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-    private static final ObjectMapper JSON = new ObjectMapper()
-            .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-
     /** 知识库作用域 */
     public enum Scope { GLOBAL, WORKSPACE }
 
@@ -100,9 +100,6 @@ public class KnowledgeExpert {
                 int chunkOverlap = config.getRagChunkOverlap();
                 this.textReader = new TextReader(chunkSize, SplitStrategy.PARAGRAPH, chunkOverlap);
                 this.pdfReader = new PDFReader(chunkSize, SplitStrategy.PARAGRAPH, chunkOverlap);
-
-                migrateLegacyJson(Scope.GLOBAL, DataManager.getInstance().getGlobalKnowledgeDir());
-                migrateLegacyJson(Scope.WORKSPACE, DataManager.getInstance().getKnowledgeDir());
 
                 loadDocPrefs();
 
@@ -160,41 +157,6 @@ public class KnowledgeExpert {
     private void closeStores() {
         if (globalStore != null) { globalStore.close(); globalStore = null; }
         if (workspaceStore != null) { workspaceStore.close(); workspaceStore = null; }
-    }
-
-    // ==================== 旧 JSON 一次性迁移 ====================
-
-    private void migrateLegacyJson(Scope scope, Path knowledgeDir) {
-        Path json = knowledgeDir.resolve("knowledge-store.json");
-        if (!Files.exists(json)) return;
-        try {
-            MigStore data = JSON.readValue(json.toFile(), MigStore.class);
-            int migrated = 0;
-            if (data != null && data.documents != null) {
-                for (Map.Entry<String, MigDoc> de : data.documents.entrySet()) {
-                    String docName = de.getKey();
-                    MigDoc doc = de.getValue();
-                    if (doc.chunks == null) continue;
-                    for (MigChunk ch : doc.chunks) {
-                        if (ch.content == null || ch.embedding == null) continue;
-                        KnowledgeChunk kc = new KnowledgeChunk(docName, scope.name(), ch.content, toFloat(ch.embedding));
-                        kc.importTime = doc.importTime;
-                        storeOf(scope).addKnowledgeChunk(kc, "migration");
-                        migrated++;
-                    }
-                }
-            }
-            Files.move(json, knowledgeDir.resolve("knowledge-store.json.migrated"));
-            log.info("[{}] 已迁移旧知识库 JSON：{} 个分块 → EclipseStore", scope, migrated);
-        } catch (Exception e) {
-            log.warn("[{}] 旧知识库 JSON 迁移失败（跳过，不影响新库）: {}", scope, e.getMessage());
-        }
-    }
-
-    private static float[] toFloat(double[] d) {
-        float[] f = new float[d.length];
-        for (int i = 0; i < d.length; i++) f[i] = (float) d[i];
-        return f;
     }
 
     // ==================== 导入工具 ====================
@@ -303,7 +265,7 @@ public class KnowledgeExpert {
             if (vec.length != expectedDim) {
                 throw new IllegalStateException(String.format(
                         "嵌入维度不匹配：模型实际返回 %d 维，但 rag.embedding.dimensions 配置为 %d。"
-                                + "请把维度改为模型实际值，并清空 data/knowledge/store 与 data/memory-store 后重建索引。",
+                                + "请把维度改为模型实际值，并清空 data/knowledge 与 data/memory-stores 后重建索引。",
                         vec.length, expectedDim));
             }
             KnowledgeChunk kc = new KnowledgeChunk(docName, scope.name(), content, vec);
@@ -672,33 +634,51 @@ public class KnowledgeExpert {
 
     // ==================== 文档检索启用状态持久化 ====================
 
-    private Path docPrefsFile() {
-        return DataManager.getInstance().getDataRoot().resolve("knowledge-doc-prefs.json");
-    }
-
     private void loadDocPrefs() {
-        Path f = docPrefsFile();
-        if (!Files.exists(f)) return;
         try {
-            DocPrefs prefs = JSON.readValue(f.toFile(), DocPrefs.class);
             disabledDocs.clear();
-            if (prefs != null && prefs.disabled != null) disabledDocs.addAll(prefs.disabled);
+            try (Connection c = AppDatabase.getConnection();
+                 PreparedStatement ps = c.prepareStatement("""
+                         SELECT doc_name
+                         FROM knowledge_doc_prefs
+                         WHERE workspace_id = ? AND scope = 'all' AND excluded = TRUE
+                         ORDER BY doc_name
+                         """)) {
+                ps.setString(1, AppDatabase.currentWorkspaceId());
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        disabledDocs.add(rs.getString("doc_name"));
+                    }
+                }
+            }
         } catch (Exception e) {
             log.warn("读取知识库文档检索偏好失败（忽略，按默认全部启用）: {}", e.getMessage());
         }
     }
 
     private void saveDocPrefs() {
-        try {
-            DocPrefs prefs = new DocPrefs();
-            prefs.disabled = new ArrayList<>(disabledDocs);
-            JSON.writerWithDefaultPrettyPrinter().writeValue(docPrefsFile().toFile(), prefs);
+        String insert = """
+                INSERT INTO knowledge_doc_prefs(workspace_id, scope, doc_name, excluded, updated_at)
+                VALUES (?, 'all', ?, TRUE, CURRENT_TIMESTAMP)
+                """;
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement del = c.prepareStatement("DELETE FROM knowledge_doc_prefs WHERE workspace_id = ? AND scope = 'all'");
+             PreparedStatement ps = c.prepareStatement(insert)) {
+            c.setAutoCommit(false);
+            String workspaceId = AppDatabase.currentWorkspaceId();
+            del.setString(1, workspaceId);
+            del.executeUpdate();
+            for (String doc : disabledDocs) {
+                ps.setString(1, workspaceId);
+                ps.setString(2, doc);
+                ps.addBatch();
+            }
+            ps.executeBatch();
+            c.commit();
         } catch (Exception e) {
             log.warn("保存知识库文档检索偏好失败: {}", e.getMessage());
         }
     }
-
-    static class DocPrefs { public List<String> disabled; }
 
     // ==================== 内部辅助 ====================
 
@@ -724,9 +704,4 @@ public class KnowledgeExpert {
         }
     }
 
-    // ==================== 旧 JSON 迁移 DTO ====================
-
-    static class MigStore { public Map<String, MigDoc> documents; }
-    static class MigDoc { public String importTime; public List<MigChunk> chunks; }
-    static class MigChunk { public String content; public double[] embedding; }
 }

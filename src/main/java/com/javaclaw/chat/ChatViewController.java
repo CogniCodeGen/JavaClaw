@@ -3186,7 +3186,7 @@ public class ChatViewController {
     /**
      * 刷新底部 Token 徽标摘要 + Tooltip 详情
      *
-     * <p>主显示「今日 + 会话」两个维度：今日累计来自持久化的 token-usage.json，
+     * <p>主显示「今日 + 会话」两个维度：今日累计来自 H2 token_usage_daily 表，
      * 应用重启后立即可见；会话仅在本次进程内累加。避免重启后状态栏一直显示 0 的体感问题。</p>
      */
     private void refreshStatusBar() {

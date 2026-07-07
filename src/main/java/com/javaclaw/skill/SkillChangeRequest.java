@@ -9,7 +9,7 @@ import java.util.List;
  * <p>承载一次 create / patch / edit / delete / write_file / remove_file 动作的全部参数：
  * 直接落盘（auto 模式）时由 {@link SkillManager} 消费；走提案（suggest 模式或
  * user-modified 保护降级）时包进 SkillProposal 排队待审，采纳后再消费。
- * 公开字段 + 无参构造，Jackson 序列化友好（随提案持久化到 skill-proposals.json）。</p>
+ * 公开字段 + 无参构造，Jackson 序列化友好（随提案持久化到 H2）。</p>
  *
  * @author JavaClaw
  */

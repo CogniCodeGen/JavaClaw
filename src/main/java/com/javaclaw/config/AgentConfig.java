@@ -3,18 +3,17 @@ package com.javaclaw.config;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.*;
-import java.nio.file.Path;
 import java.util.Properties;
 
 /**
- * 智能体配置管理器（持久化到本地文件）
+ * 智能体配置管理器（持久化到全局 H2 数据库）
  *
- * <p>负责读取和保存智能体相关配置项，配置文件保存在程序运行目录下的 {@code javaclaw-agent.properties}。
+ * <p>负责读取和保存智能体相关配置项，配置保存在全局 {@code javaclaw.mv.db}
+ * 的 {@code app_properties} 表中，并按 {@code workspace_id} 隔离。
  * 采用单例模式，全局共享同一份配置。</p>
  *
  * <p>系统提示词等不常修改的内容保留为类常量，
- * API 连接、模型参数、超时等运行时可调配置项存储在配置文件中。</p>
+ * API 连接、模型参数、超时等运行时可调配置项存储在 H2 中。</p>
  *
  * @author JavaClaw
  */
@@ -22,13 +21,11 @@ public final class AgentConfig {
 
     private static final Logger log = LoggerFactory.getLogger(AgentConfig.class);
 
-    /** 配置文件名 */
-    private static final String CONFIG_FILE_NAME = "javaclaw-agent.properties";
+    private static final String CONFIG_NAMESPACE = "agent";
 
     /** 单例实例 */
     private static AgentConfig INSTANCE;
 
-    private Path configFilePath;
     private final Properties properties;
 
     // ==================== 配置项 key ====================
@@ -325,7 +322,6 @@ public final class AgentConfig {
 
     private AgentConfig() {
         this.properties = new Properties();
-        resolveConfigPath();
         load();
     }
 
@@ -341,35 +337,23 @@ public final class AgentConfig {
      */
     public void reload() {
         properties.clear();
-        resolveConfigPath();
         load();
-        log.info("智能体配置已重新加载: {}", configFilePath);
+        log.info("智能体配置已重新加载: {}", AppDatabase.databaseDisplayPath());
     }
 
-    private void resolveConfigPath() {
-        this.configFilePath = WorkspaceManager.getInstance()
-                .getCurrentWorkspacePath().resolve(CONFIG_FILE_NAME);
-    }
-
-    // ==================== 文件读写 ====================
+    // ==================== H2 读写 ====================
 
     /**
-     * 从文件加载配置，文件不存在时使用默认值
+     * 从 H2 加载配置。
      */
     private void load() {
-        File file = configFilePath.toFile();
-        if (file.exists()) {
-            try (InputStream in = new FileInputStream(file)) {
-                properties.load(new InputStreamReader(in, "UTF-8"));
-                log.info("智能体配置已从文件加载: {}", configFilePath);
-            } catch (IOException e) {
-                log.warn("加载智能体配置文件失败，使用默认值: {}", e.getMessage());
-                setDefaults();
-            }
-        } else {
-            log.info("智能体配置文件不存在，使用默认值: {}", configFilePath);
+        Properties loaded = SqlPropertyStore.load(CONFIG_NAMESPACE);
+        properties.putAll(loaded);
+        if (properties.isEmpty()) {
+            log.info("智能体配置数据库为空，使用默认值: {}", AppDatabase.databaseDisplayPath());
             setDefaults();
-            save();
+        } else {
+            log.info("智能体配置已从 H2 加载: {}", AppDatabase.databaseDisplayPath());
         }
     }
 
@@ -425,15 +409,11 @@ public final class AgentConfig {
     }
 
     /**
-     * 保存配置到文件
+     * 保存配置到 H2
      */
     public synchronized void save() {
-        try (OutputStream out = new FileOutputStream(configFilePath.toFile())) {
-            properties.store(new OutputStreamWriter(out, "UTF-8"),
-                    "JavaClaw 智能体配置");
-            log.info("智能体配置已保存: {}", configFilePath);
-        } catch (IOException e) {
-            log.error("保存智能体配置文件失败", e);
+        if (SqlPropertyStore.save(CONFIG_NAMESPACE, properties)) {
+            log.info("智能体配置已保存到 H2: {}", AppDatabase.databaseDisplayPath());
         }
     }
 
@@ -1424,7 +1404,16 @@ public final class AgentConfig {
      * 获取配置文件路径（用于界面显示）
      */
     public String getConfigFilePath() {
-        return configFilePath.toString();
+        return AppDatabase.databaseDisplayPath();
+    }
+
+    /**
+     * 获取原始配置快照（敏感字段仍保持加密存储值），供诊断导出脱敏使用。
+     */
+    public Properties snapshotProperties() {
+        Properties copy = new Properties();
+        copy.putAll(properties);
+        return copy;
     }
 
     private int getInt(String key, int defaultValue) {

@@ -6,8 +6,8 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
  * SDD 托管任务的精简持久化模型 —— 取代 v5 那个塞满状态机字段的 ManagedTask。
  *
  * <p>只保留任务<b>身份与运行账目</b>；变更的实质内容（提案/规格/计划/进度）全在
- * {@code {workDir}/.agent/openspec/changes/{slug}/}，由 {@code SpecStore} 读出，不在此重复。
- * 进度（{@link #progress}）是 tasks.md 勾选折叠的缓存值，便于列表展示而不必每次读盘。</p>
+ * H2 {@code sdd_spec_docs} 表，由 {@code SpecStore} 读出，不在此重复。
+ * 进度（{@link #progress}）是 tasks.md 文档勾选折叠的缓存值，便于列表展示。</p>
  *
  * @author JavaClaw
  */

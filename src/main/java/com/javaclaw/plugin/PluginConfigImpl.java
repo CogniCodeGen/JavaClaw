@@ -7,7 +7,7 @@ import java.util.Map;
 /**
  * 插件配置只读视图实现 —— P1 以内存键值表承载（用户在插件中心填写的值，由 PluginManager 注入）。
  *
- * <p>P2 将接通工作区维度持久化（{@code data/plugins.json}）与 secret 字段加解密。</p>
+ * <p>P2 将接通工作区维度 H2 持久化与 secret 字段加解密。</p>
  *
  * @author JavaClaw
  */

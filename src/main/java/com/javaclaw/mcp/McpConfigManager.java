@@ -4,30 +4,29 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import com.javaclaw.config.WorkspaceManager;
-import com.javaclaw.util.AtomicFileWriter;
+import com.javaclaw.config.AppDatabase;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.*;
 
 /**
  * MCP 服务器配置管理器
  *
- * <p>管理 MCP 服务器配置的增删改查，持久化到工作区的
- * {@code data/mcp-servers.json} 文件。</p>
+ * <p>管理 MCP 服务器配置的增删改查，持久化到全局 H2 数据库的
+ * {@code mcp_servers} 表，并按 {@code workspace_id} 隔离；启动时只从 H2 读取。</p>
  *
  * @author JavaClaw
  */
 public class McpConfigManager {
 
     private static final Logger log = LoggerFactory.getLogger(McpConfigManager.class);
-
-    /** 配置文件名 */
-    private static final String CONFIG_FILE_NAME = "data/mcp-servers.json";
 
     /** 单例 */
     private static McpConfigManager INSTANCE;
@@ -53,47 +52,71 @@ public class McpConfigManager {
     }
 
     /**
-     * 获取配置文件路径
-     */
-    private Path getConfigPath() {
-        return WorkspaceManager.getInstance()
-                .getCurrentWorkspacePath().resolve(CONFIG_FILE_NAME);
-    }
-
-    /**
-     * 从文件加载配置
+     * 从 H2 加载配置。
      */
     public void load() {
         servers.clear();
-        Path path = getConfigPath();
-        if (Files.exists(path)) {
-            try {
-                List<McpServerConfig> list = objectMapper.readValue(
-                        path.toFile(), new TypeReference<List<McpServerConfig>>() {});
-                for (McpServerConfig config : list) {
+        String sql = """
+                SELECT name, command, args_json, env_json, url, headers_json, enabled
+                FROM mcp_servers
+                WHERE workspace_id = ?
+                ORDER BY name
+                """;
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, AppDatabase.currentWorkspaceId());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    McpServerConfig config = new McpServerConfig();
+                    config.setName(rs.getString("name"));
+                    config.setCommand(rs.getString("command"));
+                    config.setArgs(readStringList(rs.getString("args_json")));
+                    config.setEnv(readStringMap(rs.getString("env_json")));
+                    config.setUrl(rs.getString("url"));
+                    config.setHeaders(readStringMap(rs.getString("headers_json")));
+                    config.setEnabled(rs.getBoolean("enabled"));
                     servers.put(config.getName(), config);
                 }
-                log.info("MCP 配置已加载，共 {} 个服务器", servers.size());
-            } catch (IOException e) {
-                log.error("加载 MCP 配置失败（文件存在但解析出错），路径: {}，错误: {}",
-                        path, e.getMessage(), e);
             }
-        } else {
-            log.info("MCP 配置文件不存在，使用空配置: {}", path);
+            log.info("MCP 配置已从 H2 加载，共 {} 个服务器", servers.size());
+        } catch (SQLException e) {
+            log.error("从 H2 加载 MCP 配置失败", e);
         }
+
     }
 
     /**
-     * 保存配置到文件
+     * 保存配置到 H2
      */
     public void save() {
-        Path path = getConfigPath();
-        try {
-            Files.createDirectories(path.getParent());
-            AtomicFileWriter.writeJson(objectMapper, path.toFile(), new ArrayList<>(servers.values()));
-            log.info("MCP 配置已保存: {}", path);
-        } catch (IOException e) {
-            log.error("保存 MCP 配置失败", e);
+        String insert = """
+                INSERT INTO mcp_servers(
+                    workspace_id, name, command, args_json, env_json, url, headers_json, enabled, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """;
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement del = c.prepareStatement("DELETE FROM mcp_servers WHERE workspace_id = ?");
+             PreparedStatement ps = c.prepareStatement(insert)) {
+            c.setAutoCommit(false);
+            String workspaceId = AppDatabase.currentWorkspaceId();
+            del.setString(1, workspaceId);
+            del.executeUpdate();
+            for (McpServerConfig config : servers.values()) {
+                ps.setString(1, workspaceId);
+                ps.setString(2, config.getName());
+                ps.setString(3, config.getCommand());
+                ps.setString(4, objectMapper.writeValueAsString(config.getArgs()));
+                ps.setString(5, objectMapper.writeValueAsString(config.getEnv()));
+                ps.setString(6, config.getUrl());
+                ps.setString(7, objectMapper.writeValueAsString(config.getHeaders()));
+                ps.setBoolean(8, config.isEnabled());
+                ps.addBatch();
+            }
+            ps.executeBatch();
+            c.commit();
+            log.info("MCP 配置已保存到 H2: {}", AppDatabase.databaseDisplayPath());
+        } catch (SQLException | IOException e) {
+            log.error("保存 MCP 配置到 H2 失败", e);
         }
     }
 
@@ -157,6 +180,26 @@ public class McpConfigManager {
      * 获取配置文件路径（用于界面显示）
      */
     public String getConfigFilePath() {
-        return getConfigPath().toString();
+        return AppDatabase.databaseDisplayPath();
+    }
+
+    private List<String> readStringList(String json) {
+        if (json == null || json.isBlank()) return List.of();
+        try {
+            return objectMapper.readValue(json, new TypeReference<List<String>>() {});
+        } catch (IOException e) {
+            log.warn("解析 MCP 参数列表失败，使用空列表", e);
+            return List.of();
+        }
+    }
+
+    private Map<String, String> readStringMap(String json) {
+        if (json == null || json.isBlank()) return Map.of();
+        try {
+            return objectMapper.readValue(json, new TypeReference<Map<String, String>>() {});
+        } catch (IOException e) {
+            log.warn("解析 MCP Map 配置失败，使用空 Map", e);
+            return Map.of();
+        }
     }
 }

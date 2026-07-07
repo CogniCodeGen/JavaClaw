@@ -26,7 +26,7 @@ import java.util.stream.Stream;
  * 插件管理器（单例）—— 插件系统的总控：发现、授权、启停、卸载、持久化、生命周期管理。
  *
  * <p>插件 jar 放在运行目录下的全局 {@code plugins/}（与 {@code skills/} 同级、同为全局约定）；
- * 启用态与能力授权按工作区持久化到 {@code {workspace}/data/plugins.json}。每个插件由一个
+ * 启用态与能力授权按工作区持久化到 H2 {@code plugin_state} 表。每个插件由一个
  * {@link PluginRuntime} 容器托管，所有线程与资源经容器统一管理与回收。</p>
  *
  * <p>能力授权门控：插件 {@code plugin.json} 声明的能力 = 权限申请；首次启用时经

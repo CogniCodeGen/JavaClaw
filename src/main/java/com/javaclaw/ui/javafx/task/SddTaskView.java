@@ -589,7 +589,7 @@ public final class SddTaskView {
 
         if (ch == null || ch.proposal() == null) {
             overviewPane.getChildren().add(mutedLine(
-                    "（尚无 change 产物：任务未开始或工作目录未生成 .agent/openspec）"));
+                    "（尚无任务规格：任务未开始或 H2 中尚未生成 OpenSpec 文档）"));
             return;
         }
         Proposal p = ch.proposal();
@@ -634,7 +634,7 @@ public final class SddTaskView {
             overviewPane.getChildren().add(osCard);
         }
 
-        Label path = new Label("markdown 即真相 · .agent/openspec/changes/" + ch.slug() + "/");
+        Label path = new Label("H2 OpenSpec · " + ch.slug());
         path.getStyleClass().add("sdd-truth-path");
         overviewPane.getChildren().add(path);
     }

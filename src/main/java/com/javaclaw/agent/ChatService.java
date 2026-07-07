@@ -149,9 +149,11 @@ public class ChatService {
                         "长期记忆检索/蒸馏暂不可用：" + reason + "（详见 记忆中心 → 嵌入诊断）"));
             }
         });
-        this.memoryService.open(
-                com.javaclaw.config.WorkspaceManager.getInstance()
-                        .getCurrentWorkspacePath().resolve("data").resolve("memory-store"));
+        com.javaclaw.config.WorkspaceManager workspaceManager =
+                com.javaclaw.config.WorkspaceManager.getInstance();
+        this.memoryService.open(workspaceManager.getGlobalDataPath()
+                .resolve("memory-stores")
+                .resolve(workspaceManager.getCurrentWorkspaceId()));
 
         // 技能蒸馏器（程序性记忆）：提案队列同时接收 skill_manage 主动路径与本蒸馏器的兜底路径，
         // 两路按变更指纹统一去重；auto 模式 Toast 经 ToolConfirmationManager 注入的交互端口

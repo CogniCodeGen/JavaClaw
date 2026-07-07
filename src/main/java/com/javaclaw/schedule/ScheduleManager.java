@@ -7,7 +7,7 @@ import com.javaclaw.agent.ScheduledTaskAgent;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.config.AgentConfig;
-import com.javaclaw.util.AtomicFileWriter;
+import com.javaclaw.config.AppDatabase;
 import org.quartz.CronExpression;
 import org.quartz.CronScheduleBuilder;
 import org.quartz.JobBuilder;
@@ -30,8 +30,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
@@ -42,7 +45,9 @@ import java.util.function.Consumer;
 /**
  * 定时任务管理器（基于 Quartz）
  *
- * <p>持久化、调度、执行定时任务。底层使用 Quartz 2.5.2（通过 AgentScope
+ * <p>持久化、调度、执行定时任务。用户任务持久化到全局 H2 数据库的
+ * {@code scheduled_tasks} 表，并按 {@code workspace_id} 隔离；启动时只从 H2 读取。
+ * 底层使用 Quartz 2.5.2（通过 AgentScope
  * scheduler-quartz 扩展引入），由 Quartz 接管 cron 解析与触发器机制；
  * 任务到点后调用 {@link ChatService#streamChat} 执行（定时任务固定走普通模式）。</p>
  *
@@ -53,8 +58,8 @@ import java.util.function.Consumer;
  *   <li><b>cron</b> — Quartz 标准 6 段表达式（秒 分 时 日 月 周，可选 7 段含年）</li>
  * </ul>
  *
- * <p>注意：从旧 simple-cron（5 段：分 时 日 月 周）迁移到 Quartz Cron 是破坏性变更；
- * 旧表达式会被启动时拒绝并跳过，需要用户重新填写为 6 段标准 Quartz Cron。</p>
+ * <p>注意：5 段 simple-cron（分 时 日 月 周）不是 Quartz Cron；
+ * 这类表达式会被启动时拒绝并跳过，需要用户重新填写为 6 段标准 Quartz Cron。</p>
  *
  * @author JavaClaw
  */
@@ -64,8 +69,6 @@ public class ScheduleManager {
 
     /** 定时任务执行专用日志（独立写入 logs/task-YYYY-MM-DD.log） */
     private static final Logger taskLog = LoggerFactory.getLogger("com.javaclaw.schedule.TaskExecution");
-
-    private static final String TASKS_FILE = "scheduled-tasks.json";
 
     /** Quartz Job/Trigger group name（隔离 JavaClaw 任务与其它可能的 Quartz 使用方）*/
     private static final String JOB_GROUP = "javaclaw-scheduled-tasks";
@@ -78,13 +81,12 @@ public class ScheduleManager {
 
     private static ScheduleManager instance;
 
-    private Path tasksFile;
     private final ObjectMapper objectMapper;
     private final List<ScheduledTask> tasks;
     /**
      * 系统内置定时任务（只读）——把「代码内部的周期性机制」纳入定时任务模块统一呈现。
-     * 这些任务仍在各自模块原地运行；此处仅为只读展示，不参与 Quartz 调度、不持久化到
-     * scheduled-tasks.json，也不可被编辑 / 停用 / 删除 / 手动运行。
+     * 这些任务仍在各自模块原地运行；此处仅为只读展示，不参与 Quartz 调度、不写入
+     * H2 scheduled_tasks 表，也不可被编辑 / 停用 / 删除 / 手动运行。
      */
     private final List<ScheduledTask> builtinTasks;
     private final Scheduler quartz;
@@ -108,12 +110,10 @@ public class ScheduleManager {
     private Consumer<String> onTaskExecutionStart;
 
     private ScheduleManager() {
-        resolveTasksFile();
         this.objectMapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
         this.tasks = new ArrayList<>();
         this.builtinTasks = buildBuiltinTasks();
         this.quartz = buildQuartzScheduler();
-        ensureDataDir();
         loadAll();
         wireBuiltinActions();
     }
@@ -137,7 +137,7 @@ public class ScheduleManager {
 
     /**
      * 构造一个独占的 Quartz Scheduler 实例（避免与潜在的全局默认调度器冲突）。
-     * RAMJobStore：任务/触发器仅在内存中，重启不残留；持久化由 JavaClaw 自己用 JSON 管。
+     * RAMJobStore：任务/触发器仅在内存中，重启不残留；持久化由 JavaClaw 自己写入 H2。
      */
     private Scheduler buildQuartzScheduler() {
         try {
@@ -161,11 +161,6 @@ public class ScheduleManager {
         }
     }
 
-    private void resolveTasksFile() {
-        this.tasksFile = com.javaclaw.config.WorkspaceManager.getInstance()
-                .getCurrentWorkspacePath().resolve("data").resolve(TASKS_FILE);
-    }
-
     /**
      * 重新加载定时任务（工作区切换时调用）
      */
@@ -177,8 +172,6 @@ public class ScheduleManager {
         }
         tasks.clear();
 
-        resolveTasksFile();
-        ensureDataDir();
         loadAll();
 
         ScheduledTaskAgent old = this.scheduledAgent;
@@ -203,32 +196,124 @@ public class ScheduleManager {
 
     // ==================== 持久化 ====================
 
-    private void ensureDataDir() {
-        try {
-            Files.createDirectories(tasksFile.getParent());
-        } catch (IOException e) {
-            log.error("创建数据目录失败", e);
-        }
-    }
-
     private void loadAll() {
         tasks.clear();
-        if (!Files.exists(tasksFile)) return;
-        try {
-            List<ScheduledTask> loaded = objectMapper.readValue(
-                    tasksFile.toFile(), new TypeReference<>() {});
-            tasks.addAll(loaded);
-            log.info("已加载 {} 个定时任务", tasks.size());
-        } catch (IOException e) {
-            log.warn("加载定时任务失败", e);
+        String sql = """
+                SELECT id, name, description, trigger_type, interval_minutes, interval_value,
+                       interval_unit, daily_time, cron_expression, once_date_time, prompt,
+                       enabled, last_run_time, last_run_status, last_duration, run_count,
+                       fail_count, notify_enabled, notify_channel, execution_history_json,
+                       exec_records_json
+                FROM scheduled_tasks
+                WHERE workspace_id = ?
+                ORDER BY name, id
+                """;
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, AppDatabase.currentWorkspaceId());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    ScheduledTask task = new ScheduledTask();
+                    task.setId(rs.getString("id"));
+                    task.setName(rs.getString("name"));
+                    task.setDescription(rs.getString("description"));
+                    task.setTriggerType(rs.getString("trigger_type"));
+                    task.setIntervalMinutes(rs.getInt("interval_minutes"));
+                    task.setIntervalValue(rs.getInt("interval_value"));
+                    task.setIntervalUnit(rs.getString("interval_unit"));
+                    task.setDailyTime(rs.getString("daily_time"));
+                    task.setCronExpression(rs.getString("cron_expression"));
+                    task.setOnceDateTime(rs.getString("once_date_time"));
+                    task.setPrompt(rs.getString("prompt"));
+                    task.setEnabled(rs.getBoolean("enabled"));
+                    task.setLastRunTime(rs.getString("last_run_time"));
+                    task.setLastRunStatus(rs.getString("last_run_status"));
+                    task.setLastDuration(rs.getString("last_duration"));
+                    task.setRunCount(rs.getInt("run_count"));
+                    task.setFailCount(rs.getInt("fail_count"));
+                    task.setNotifyEnabled(rs.getBoolean("notify_enabled"));
+                    task.setNotifyChannel(rs.getString("notify_channel"));
+                    task.setExecutionHistory(readStringList(rs.getString("execution_history_json")));
+                    task.setExecRecords(readExecRecords(rs.getString("exec_records_json")));
+                    tasks.add(task);
+                }
+            }
+            log.info("已从 H2 加载 {} 个定时任务", tasks.size());
+        } catch (SQLException e) {
+            log.warn("从 H2 加载定时任务失败", e);
         }
+
     }
 
     private void saveAll() {
+        String insert = """
+                INSERT INTO scheduled_tasks(
+                    workspace_id, id, name, description, trigger_type, interval_minutes, interval_value,
+                    interval_unit, daily_time, cron_expression, once_date_time, prompt,
+                    enabled, last_run_time, last_run_status, last_duration, run_count,
+                    fail_count, notify_enabled, notify_channel, execution_history_json,
+                    exec_records_json, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """;
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement del = c.prepareStatement("DELETE FROM scheduled_tasks WHERE workspace_id = ?");
+             PreparedStatement ps = c.prepareStatement(insert)) {
+            c.setAutoCommit(false);
+            String workspaceId = AppDatabase.currentWorkspaceId();
+            del.setString(1, workspaceId);
+            del.executeUpdate();
+            for (ScheduledTask task : tasks) {
+                ps.setString(1, workspaceId);
+                ps.setString(2, task.getId());
+                ps.setString(3, task.getName());
+                ps.setString(4, task.getDescription());
+                ps.setString(5, task.getTriggerType());
+                ps.setInt(6, task.getIntervalMinutes());
+                ps.setInt(7, task.getIntervalValue());
+                ps.setString(8, task.getIntervalUnit());
+                ps.setString(9, task.getDailyTime());
+                ps.setString(10, task.getCronExpression());
+                ps.setString(11, task.getOnceDateTime());
+                ps.setString(12, task.getPrompt());
+                ps.setBoolean(13, task.isEnabled());
+                ps.setString(14, task.getLastRunTime());
+                ps.setString(15, task.getLastRunStatus());
+                ps.setString(16, task.getLastDuration());
+                ps.setInt(17, task.getRunCount());
+                ps.setInt(18, task.getFailCount());
+                ps.setBoolean(19, task.isNotifyEnabled());
+                ps.setString(20, task.getNotifyChannel());
+                ps.setString(21, objectMapper.writeValueAsString(task.getExecutionHistory()));
+                ps.setString(22, objectMapper.writeValueAsString(task.getExecRecords()));
+                ps.addBatch();
+            }
+            ps.executeBatch();
+            c.commit();
+        } catch (SQLException | IOException e) {
+            log.error("保存定时任务到 H2 失败", e);
+        }
+    }
+
+    private List<String> readStringList(String json) {
+        if (json == null || json.isBlank()) return new ArrayList<>();
         try {
-            AtomicFileWriter.writeJson(objectMapper, tasksFile.toFile(), tasks);
+            List<String> out = objectMapper.readValue(json, new TypeReference<>() {});
+            return out != null ? out : new ArrayList<>();
         } catch (IOException e) {
-            log.error("保存定时任务失败", e);
+            log.warn("解析定时任务执行历史失败，使用空列表", e);
+            return new ArrayList<>();
+        }
+    }
+
+    private List<ScheduledTask.ExecRecord> readExecRecords(String json) {
+        if (json == null || json.isBlank()) return new ArrayList<>();
+        try {
+            List<ScheduledTask.ExecRecord> out = objectMapper.readValue(json, new TypeReference<>() {});
+            return out != null ? out : new ArrayList<>();
+        } catch (IOException e) {
+            log.warn("解析定时任务结构化执行历史失败，使用空列表", e);
+            return new ArrayList<>();
         }
     }
 

@@ -15,14 +15,14 @@ package com.javaclaw.site;
  *   <li>{@link #password} — 与 API Key 一致，落盘时经 CredentialEncryptor 加密为 ENC(...) 格式，
  *       内存中持有明文。绝不进入 LLM 上下文：浏览器工具内部通过 {@code SiteCredentialManager} 直接读取。</li>
  *   <li>{@link #hasSession} — 是否已经为该条目持久化过 storageState；
- *       仅用于 UI 显示徽章，真实文件存在性以 {@code SiteCredentialManager.sessionFile(id)} 判断。</li>
+ *       仅用于 UI 显示徽章，真实状态以 H2 {@code site_sessions} 表为准。</li>
  * </ul>
  *
  * @author JavaClaw
  */
 public class SiteCredential {
 
-    /** 唯一 ID（UUID 字符串），同时用作会话文件名 */
+    /** 唯一 ID（UUID 字符串） */
     private String id;
 
     /** 用户友好的展示名 */
@@ -49,7 +49,7 @@ public class SiteCredential {
     /** 最近一次成功使用的时间戳；恢复会话或登录成功后更新 */
     private long lastUsedAt;
 
-    /** 是否已持久化过会话（持久化文件存在与否的快照） */
+    /** 是否已持久化过会话（H2 状态快照） */
     private boolean hasSession;
 
     public SiteCredential() {}

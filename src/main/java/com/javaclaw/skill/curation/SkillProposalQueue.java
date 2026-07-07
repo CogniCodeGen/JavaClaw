@@ -2,15 +2,17 @@ package com.javaclaw.skill.curation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.config.AgentConfig;
-import com.javaclaw.config.DataManager;
+import com.javaclaw.config.AppDatabase;
 import com.javaclaw.skill.SkillChangeRequest;
-import com.javaclaw.util.AtomicFileWriter;
 import com.javaclaw.skill.SkillManageTools;
 import com.javaclaw.util.DebouncedPersister;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.Statement;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -31,7 +33,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *       {@link #reject} 记冷却指纹</li>
  * </ul>
  *
- * <p>持久化：工作区维度 {@code {workspace}/data/skill-proposals.json}（防抖落盘）；
+ * <p>持久化：全局 H2 {@code skill_proposals} 表，按 {@code workspace_id} 隔离（防抖落盘）；
  * 切换工作区时由外部调用 {@link #reload()}。监听器用于 UI 角标/列表增量刷新。</p>
  *
  * @author JavaClaw
@@ -39,8 +41,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public final class SkillProposalQueue implements SkillManageTools.ProposalSink {
 
     private static final Logger log = LoggerFactory.getLogger(SkillProposalQueue.class);
-
-    private static final String DATA_FILE = "skill-proposals.json";
 
     private static final SkillProposalQueue INSTANCE = new SkillProposalQueue();
 
@@ -214,9 +214,29 @@ public final class SkillProposalQueue implements SkillManageTools.ProposalSink {
     }
 
     private synchronized void save() {
-        try {
-            File file = new File(DataManager.getInstance().getDataRoot().toFile(), DATA_FILE);
-            AtomicFileWriter.writeJson(mapper.writerWithDefaultPrettyPrinter(), file, new ArrayList<>(proposals));
+        String insert = """
+                INSERT INTO skill_proposals(
+                    workspace_id, id, request_json, created_at, status, resolved_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """;
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement del = c.prepareStatement("DELETE FROM skill_proposals WHERE workspace_id = ?");
+             PreparedStatement ps = c.prepareStatement(insert)) {
+            c.setAutoCommit(false);
+            String workspaceId = AppDatabase.currentWorkspaceId();
+            del.setString(1, workspaceId);
+            del.executeUpdate();
+            for (SkillProposal p : proposals) {
+                ps.setString(1, workspaceId);
+                ps.setString(2, p.id);
+                ps.setString(3, mapper.writeValueAsString(p.request));
+                ps.setLong(4, p.createdAt);
+                ps.setString(5, p.status.name());
+                ps.setLong(6, p.resolvedAt);
+                ps.addBatch();
+            }
+            ps.executeBatch();
+            c.commit();
         } catch (Exception e) {
             log.warn("保存技能提案队列失败: {}", e.getMessage());
         }
@@ -224,13 +244,28 @@ public final class SkillProposalQueue implements SkillManageTools.ProposalSink {
 
     private void load() {
         try {
-            File file = new File(DataManager.getInstance().getDataRoot().toFile(), DATA_FILE);
-            if (!file.exists()) {
-                return;
+            String sql = """
+                    SELECT id, request_json, created_at, status, resolved_at
+                    FROM skill_proposals
+                    WHERE workspace_id = ?
+                    ORDER BY created_at
+                    """;
+            try (Connection c = AppDatabase.getConnection();
+                 PreparedStatement ps = c.prepareStatement(sql)) {
+                ps.setString(1, AppDatabase.currentWorkspaceId());
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        SkillProposal p = new SkillProposal();
+                        p.id = rs.getString("id");
+                        p.request = mapper.readValue(rs.getString("request_json"), SkillChangeRequest.class);
+                        p.createdAt = rs.getLong("created_at");
+                        p.status = SkillProposal.Status.valueOf(rs.getString("status"));
+                        p.resolvedAt = rs.getLong("resolved_at");
+                        proposals.add(p);
+                    }
+                }
             }
-            SkillProposal[] loaded = mapper.readValue(file, SkillProposal[].class);
-            proposals.addAll(List.of(loaded));
-            log.info("已加载技能提案队列: {} 条（待审 {}）", proposals.size(), pendingCount());
+            log.info("已从 H2 加载技能提案队列: {} 条（待审 {}）", proposals.size(), pendingCount());
         } catch (Exception e) {
             log.warn("加载技能提案队列失败", e);
         }

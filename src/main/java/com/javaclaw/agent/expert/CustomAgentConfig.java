@@ -1,22 +1,22 @@
 package com.javaclaw.agent.expert;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.javaclaw.config.WorkspaceManager;
+import com.javaclaw.config.AppDatabase;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 自定义智能体配置管理器
  *
- * <p>管理用户自定义智能体定义的增删改查和 JSON 持久化。
- * 数据存储在当前工作区 {@code data/custom-agents.json}。</p>
+ * <p>管理用户自定义智能体定义的增删改查，持久化到全局 H2 数据库的
+ * {@code custom_agents} 表，并按 {@code workspace_id} 隔离；启动时只从 H2 读取。</p>
  *
  * <p>自定义智能体为纯推理型（无内置工具），可配置名称、描述、系统提示词和最大迭代次数。</p>
  *
@@ -25,11 +25,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public class CustomAgentConfig {
 
     private static final Logger log = LoggerFactory.getLogger(CustomAgentConfig.class);
-
-    private static final String CONFIG_FILE = "custom-agents.json";
-
-    private static final ObjectMapper JSON = new ObjectMapper()
-            .enable(SerializationFeature.INDENT_OUTPUT);
 
     private static CustomAgentConfig INSTANCE;
 
@@ -127,39 +122,65 @@ public class CustomAgentConfig {
 
     // ==================== 持久化 ====================
 
-    private Path getConfigFile() {
-        Path workspacePath = WorkspaceManager.getInstance().getCurrentWorkspacePath();
-        return workspacePath.resolve("data").resolve(CONFIG_FILE);
-    }
-
     private void load() {
-        Path file = getConfigFile();
-        if (!Files.exists(file)) {
-            log.info("无自定义智能体配置文件，使用空列表");
-            return;
-        }
-
-        try {
-            CustomAgentDef[] defs = JSON.readValue(file.toFile(), CustomAgentDef[].class);
-            for (CustomAgentDef def : defs) {
-                if (def.id != null) {
-                    agents.put(def.id, def);
+        String sql = """
+                SELECT id, name, tool_name, description, sys_prompt, max_iters, enabled
+                FROM custom_agents
+                WHERE workspace_id = ?
+                ORDER BY name, id
+                """;
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, AppDatabase.currentWorkspaceId());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    CustomAgentDef def = new CustomAgentDef();
+                    def.id = rs.getString("id");
+                    def.name = rs.getString("name");
+                    def.toolName = rs.getString("tool_name");
+                    def.description = rs.getString("description");
+                    def.sysPrompt = rs.getString("sys_prompt");
+                    def.maxIters = rs.getInt("max_iters");
+                    def.enabled = rs.getBoolean("enabled");
+                    if (def.id != null) agents.put(def.id, def);
                 }
             }
-            log.info("已加载 {} 个自定义智能体", agents.size());
-        } catch (IOException e) {
-            log.error("加载自定义智能体配置失败", e);
+            log.info("已从 H2 加载 {} 个自定义智能体", agents.size());
+        } catch (SQLException e) {
+            log.error("从 H2 加载自定义智能体配置失败", e);
         }
     }
 
     private void save() {
-        Path file = getConfigFile();
-        try {
-            Files.createDirectories(file.getParent());
-            JSON.writeValue(file.toFile(), agents.values());
-            log.info("自定义智能体配置已保存，共 {} 个", agents.size());
-        } catch (IOException e) {
-            log.error("保存自定义智能体配置失败", e);
+        String insert = """
+                INSERT INTO custom_agents(
+                    workspace_id, id, name, tool_name, description, sys_prompt, max_iters, enabled, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """;
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement del = c.prepareStatement("DELETE FROM custom_agents WHERE workspace_id = ?");
+             PreparedStatement ps = c.prepareStatement(insert)) {
+            c.setAutoCommit(false);
+            String workspaceId = AppDatabase.currentWorkspaceId();
+            del.setString(1, workspaceId);
+            del.executeUpdate();
+            for (CustomAgentDef def : agents.values()) {
+                ps.setString(1, workspaceId);
+                ps.setString(2, def.id);
+                ps.setString(3, def.name);
+                ps.setString(4, def.toolName);
+                ps.setString(5, def.description);
+                ps.setString(6, def.sysPrompt);
+                ps.setInt(7, def.maxIters);
+                ps.setBoolean(8, def.enabled);
+                ps.addBatch();
+            }
+            ps.executeBatch();
+            c.commit();
+            log.info("自定义智能体配置已保存到 H2，共 {} 个", agents.size());
+        } catch (SQLException e) {
+            log.error("保存自定义智能体配置到 H2 失败", e);
         }
     }
+
 }

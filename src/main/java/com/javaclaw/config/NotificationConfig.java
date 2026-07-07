@@ -3,15 +3,14 @@ package com.javaclaw.config;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.*;
-import java.nio.file.Path;
 import java.util.Properties;
 
 /**
- * 通知渠道配置管理器（持久化到本地文件）
+ * 通知渠道配置管理器（持久化到全局 H2 数据库）
  *
  * <p>管理多种通知渠道的配置：钉钉机器人、企业微信机器人、飞书机器人、邮件通知、自定义 Webhook。
- * 采用单例模式，配置保存在 {@code javaclaw-notification.properties}。</p>
+ * 采用单例模式，配置保存在全局 {@code javaclaw.mv.db}
+ * 的 {@code app_properties} 表中，并按 {@code workspace_id} 隔离。</p>
  *
  * @author JavaClaw
  */
@@ -19,10 +18,9 @@ public final class NotificationConfig {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationConfig.class);
 
-    private static final String CONFIG_FILE_NAME = "javaclaw-notification.properties";
+    private static final String CONFIG_NAMESPACE = "notification";
     private static NotificationConfig INSTANCE;
 
-    private Path configFilePath;
     private final Properties properties;
 
     // ==================== 配置项 key ====================
@@ -56,7 +54,6 @@ public final class NotificationConfig {
 
     private NotificationConfig() {
         this.properties = new Properties();
-        resolveConfigPath();
         load();
     }
 
@@ -72,32 +69,20 @@ public final class NotificationConfig {
      */
     public void reload() {
         properties.clear();
-        resolveConfigPath();
         load();
-        log.info("通知配置已重新加载: {}", configFilePath);
+        log.info("通知配置已重新加载: {}", AppDatabase.databaseDisplayPath());
     }
 
-    private void resolveConfigPath() {
-        this.configFilePath = WorkspaceManager.getInstance()
-                .getCurrentWorkspacePath().resolve(CONFIG_FILE_NAME);
-    }
-
-    // ==================== 文件读写 ====================
+    // ==================== H2 读写 ====================
 
     private void load() {
-        File file = configFilePath.toFile();
-        if (file.exists()) {
-            try (InputStream in = new FileInputStream(file)) {
-                properties.load(new InputStreamReader(in, "UTF-8"));
-                log.info("通知配置已从文件加载: {}", configFilePath);
-            } catch (IOException e) {
-                log.warn("加载通知配置文件失败，使用默认值: {}", e.getMessage());
-                setDefaults();
-            }
-        } else {
-            log.info("通知配置文件不存在，使用默认值: {}", configFilePath);
+        Properties loaded = SqlPropertyStore.load(CONFIG_NAMESPACE);
+        properties.putAll(loaded);
+        if (properties.isEmpty()) {
+            log.info("通知配置数据库为空，使用默认值: {}", AppDatabase.databaseDisplayPath());
             setDefaults();
-            save();
+        } else {
+            log.info("通知配置已从 H2 加载: {}", AppDatabase.databaseDisplayPath());
         }
     }
 
@@ -120,12 +105,8 @@ public final class NotificationConfig {
     }
 
     public void save() {
-        try (OutputStream out = new FileOutputStream(configFilePath.toFile())) {
-            properties.store(new OutputStreamWriter(out, "UTF-8"),
-                    "JavaClaw 通知渠道配置");
-            log.info("通知配置已保存: {}", configFilePath);
-        } catch (IOException e) {
-            log.error("保存通知配置文件失败", e);
+        if (SqlPropertyStore.save(CONFIG_NAMESPACE, properties)) {
+            log.info("通知配置已保存到 H2: {}", AppDatabase.databaseDisplayPath());
         }
     }
 
@@ -264,7 +245,7 @@ public final class NotificationConfig {
     // ==================== 辅助方法 ====================
 
     public String getConfigFilePath() {
-        return configFilePath.toString();
+        return AppDatabase.databaseDisplayPath();
     }
 
     /**

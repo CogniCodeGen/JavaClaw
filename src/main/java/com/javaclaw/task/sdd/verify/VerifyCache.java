@@ -1,21 +1,24 @@
 package com.javaclaw.task.sdd.verify;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.javaclaw.config.AppDatabase;
 import com.javaclaw.task.sdd.spec.Scenario;
-import com.javaclaw.task.sdd.spec.SpecPaths;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.stream.Stream;
 
 /**
- * 验收证据缓存 —— 把"已通过场景"连同当时的工作目录源码指纹落盘到
- * {@code {workDir}/.agent/openspec/changes/{slug}/verify-cache.json}。
+ * 验收证据缓存 —— 把"已通过场景"连同当时的工作目录源码指纹存到全局 H2
+ * {@code sdd_verify_cache} 表，并按 {@code workspace_id} 隔离。
  *
  * <p>动机：原先每轮补做、每次 resume 都对全部场景从头重验（每个 freeform 场景一次带文件重读的
  * critic 模型调用），是 token 的头号浪费。本缓存让"源码未变 + 上次已通过"的场景直接复用结论、
@@ -35,30 +38,37 @@ public final class VerifyCache {
             "/.agent/", "/target/", "/build/", "/.git/", "/node_modules/", "/.gradle/", "/dist/", "/out/"};
 
     private final Path workDir;
-    private final Path cacheFile;
+    private final String workDirKey;
+    private final String slug;
     private String fingerprint = "";
     private Map<String, String> passes = new LinkedHashMap<>();
 
-    private VerifyCache(Path workDir, Path cacheFile) {
+    private VerifyCache(Path workDir, String workDirKey, String slug) {
         this.workDir = workDir;
-        this.cacheFile = cacheFile;
+        this.workDirKey = workDirKey;
+        this.slug = slug;
     }
 
-    /** 加载（或新建）某变更的验收缓存。workDir/slug 无效时返回一个不落盘的空缓存。 */
-    @SuppressWarnings("unchecked")
+    /** 加载（或新建）某变更的验收缓存。workDir/slug 无效时返回一个不持久化的空缓存。 */
     public static VerifyCache load(String workDir, String slug) {
-        Path dir = SpecPaths.changeDir(workDir, slug);
         Path wd = (workDir == null || workDir.isBlank()) ? null : Path.of(workDir).toAbsolutePath();
-        if (dir == null || wd == null) return new VerifyCache(wd, null);
-        VerifyCache c = new VerifyCache(wd, dir.resolve("verify-cache.json"));
+        if (wd == null || slug == null || slug.isBlank()) return new VerifyCache(wd, null, slug);
+        VerifyCache c = new VerifyCache(wd, wd.normalize().toString(), slug);
         try {
-            if (Files.exists(c.cacheFile)) {
-                Map<String, Object> raw = MAPPER.readValue(c.cacheFile.toFile(), Map.class);
-                Object fp = raw.get("fingerprint");
-                Object ps = raw.get("passes");
-                c.fingerprint = fp == null ? "" : fp.toString();
-                if (ps instanceof Map<?, ?> m) {
-                    m.forEach((k, v) -> c.passes.put(String.valueOf(k), String.valueOf(v)));
+            try (Connection conn = AppDatabase.getConnection();
+                 PreparedStatement ps = conn.prepareStatement("""
+                         SELECT fingerprint, passes_json
+                         FROM sdd_verify_cache
+                         WHERE workspace_id = ? AND work_dir = ? AND slug = ?
+                         """)) {
+                ps.setString(1, AppDatabase.currentWorkspaceId());
+                ps.setString(2, c.workDirKey);
+                ps.setString(3, slug);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        c.fingerprint = rs.getString("fingerprint") == null ? "" : rs.getString("fingerprint");
+                        c.passes = readPasses(rs.getString("passes_json"));
+                    }
                 }
             }
         } catch (Exception e) {
@@ -120,17 +130,36 @@ public final class VerifyCache {
         passes.put(scenarioKey, detail == null ? "" : detail);
     }
 
-    /** 落盘。无 cacheFile（无效工作目录）时静默跳过。 */
+    /** 持久化到 H2。无效工作目录时静默跳过。 */
     public void save() {
-        if (cacheFile == null) return;
-        try {
-            Files.createDirectories(cacheFile.getParent());
-            Map<String, Object> out = new LinkedHashMap<>();
-            out.put("fingerprint", fingerprint);
-            out.put("passes", passes);
-            MAPPER.writerWithDefaultPrettyPrinter().writeValue(cacheFile.toFile(), out);
+        if (workDirKey == null || slug == null || slug.isBlank()) return;
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement ps = c.prepareStatement("""
+                     MERGE INTO sdd_verify_cache(workspace_id, work_dir, slug, fingerprint, passes_json, updated_at)
+                     KEY(workspace_id, work_dir, slug)
+                     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                     """)) {
+            ps.setString(1, AppDatabase.currentWorkspaceId());
+            ps.setString(2, workDirKey);
+            ps.setString(3, slug);
+            ps.setString(4, fingerprint);
+            ps.setString(5, MAPPER.writeValueAsString(passes));
+            ps.executeUpdate();
         } catch (Exception e) {
             log.debug("[VerifyCache] 写缓存失败（忽略）：{}", e.getMessage());
         }
+    }
+
+    private static Map<String, String> readPasses(String json) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (json == null || json.isBlank()) return out;
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> raw = MAPPER.readValue(json, Map.class);
+            raw.forEach((k, v) -> out.put(String.valueOf(k), String.valueOf(v)));
+        } catch (Exception e) {
+            log.debug("[VerifyCache] 解析 H2 passes_json 失败（忽略）：{}", e.getMessage());
+        }
+        return out;
     }
 }

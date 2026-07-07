@@ -16,7 +16,7 @@ import java.util.function.BooleanSupplier;
  * SDD 任务的<b>装配与运行入口</b> —— 把真相层、验证层、编排器、AgentScope 智能体、命令执行器、
  * critic、评审闸门组装成一个可运行单元。
  *
- * <p>这是 B5d 接缝层调用的统一入口：legacy {@code TaskManager}（或未来任何前端）只需提供运行期
+ * <p>这是 B5d 接缝层调用的统一入口：任务管理器（或未来任何前端）只需提供运行期
  * 协作者（{@link ModelFactory}、能力工具表、{@link SkillManager}、token 汇聚、{@link ReviewGate}、
  * {@link SddProgress}）与一个 {@link TaskContext}，即可驱动完整的 SDD 生命周期，无需感知内部装配。</p>
  *

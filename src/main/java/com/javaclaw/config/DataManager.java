@@ -8,12 +8,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * 数据目录管理器（工作区感知）
+ * 数据目录管理器。
  *
- * <p>统一管理应用运行数据的存储路径。所有数据保存在当前工作区目录下的 {@code data/} 文件夹中：
+ * <p>结构化业务数据统一存储在根目录 {@code data/javaclaw.mv.db} 中。此类只管理仍需文件系统承载
+ * 的运行资产路径，如截图、EclipseStore/JVector 索引文件：
  * <ul>
- *   <li>{@code data/screenshots/} — 截图文件</li>
- *   <li>{@code data/chat/} — 聊天记录</li>
+ *   <li>{@code data/screenshots/{workspace_id}/} — 截图文件</li>
+ *   <li>{@code data/knowledge/workspaces/{workspace_id}/} — 工作区知识库对象图/向量索引</li>
+ *   <li>{@code data/knowledge/global/} — 全局知识库对象图/向量索引</li>
  * </ul>
  * </p>
  *
@@ -22,9 +24,6 @@ import java.nio.file.Path;
 public class DataManager {
 
     private static final Logger log = LoggerFactory.getLogger(DataManager.class);
-
-    /** 数据根目录名称 */
-    private static final String DATA_DIR = "data";
 
     /** 截图子目录 */
     private static final String SCREENSHOTS_DIR = "screenshots";
@@ -84,12 +83,15 @@ public class DataManager {
      * 根据当前工作区计算所有路径
      */
     private void resolvePaths() {
-        Path workspacePath = WorkspaceManager.getInstance().getCurrentWorkspacePath();
-        dataRoot = workspacePath.resolve(DATA_DIR);
-        screenshotsDir = dataRoot.resolve(SCREENSHOTS_DIR);
+        WorkspaceManager wm = WorkspaceManager.getInstance();
+        String workspaceId = wm.getCurrentWorkspaceId();
+        Path globalData = wm.getGlobalDataPath();
+        dataRoot = globalData.resolve("workspace-data").resolve(workspaceId);
+        screenshotsDir = globalData.resolve(SCREENSHOTS_DIR).resolve(workspaceId);
         chatDir = dataRoot.resolve(CHAT_DIR);
-        knowledgeDir = dataRoot.resolve(KNOWLEDGE_DIR);
-        globalKnowledgeDir = WorkspaceManager.getInstance().getGlobalDataPath().resolve(KNOWLEDGE_DIR);
+        knowledgeDir = wm.getGlobalDataPath()
+                .resolve(KNOWLEDGE_DIR).resolve("workspaces").resolve(workspaceId);
+        globalKnowledgeDir = wm.getGlobalDataPath().resolve(KNOWLEDGE_DIR).resolve("global");
         sessionsDir = chatDir.resolve(SESSIONS_DIR);
         sessionsIndexFile = chatDir.resolve(SESSIONS_INDEX_FILE);
         chatHistoryFile = chatDir.resolve(CHAT_HISTORY_FILE);
@@ -102,11 +104,8 @@ public class DataManager {
     private void initDirectories() {
         try {
             Files.createDirectories(screenshotsDir);
-            Files.createDirectories(chatDir);
             Files.createDirectories(knowledgeDir);
             Files.createDirectories(globalKnowledgeDir);
-            Files.createDirectories(sessionsDir);
-            Files.createDirectories(taskEventsDir);
             log.info("数据目录已初始化: {}", dataRoot.toAbsolutePath());
         } catch (IOException e) {
             log.error("创建数据目录失败", e);

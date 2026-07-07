@@ -22,7 +22,7 @@ import java.util.List;
  * {@link Window#getWindows()}，给每个窗口（含弹窗/Popup）的 Scene 根节点
  * 追加 {@code theme-{id}} style class，即可整体换肤、运行时立即生效。</p>
  *
- * <p>选择持久化到当前工作区的 javaclaw-agent.properties（{@code ui.theme}），
+ * <p>选择持久化到全局 H2 配置库的 agent namespace（{@code ui.theme}，按 workspace_id 隔离），
  * 切换工作区时由 {@link #reload()} 重新读取。</p>
  */
 public final class ThemeManager {

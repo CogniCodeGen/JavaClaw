@@ -3,34 +3,27 @@ package com.javaclaw.chat;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import com.javaclaw.config.DataManager;
-import com.javaclaw.util.AtomicFileWriter;
+import com.javaclaw.config.AppDatabase;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
- * 多会话聊天记录持久化管理器
+ * 多会话聊天记录持久化管理器。
  *
- * <p>支持多会话管理，数据存储结构：
- * <ul>
- *   <li>{@code data/chat/sessions_index.json} — 会话索引（ID、标题、创建时间）</li>
- *   <li>{@code data/chat/sessions/{id}.json} — 每个会话的消息记录</li>
- * </ul>
- * </p>
- *
- * @author JavaClaw
+ * <p>数据存储在全局 H2 数据库的 {@code chat_sessions}/{@code chat_messages}
+ * 表中，并按 {@code workspace_id} 隔离。启动时只从 H2 读取。</p>
  */
 public class ChatHistoryManager {
 
@@ -40,124 +33,104 @@ public class ChatHistoryManager {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final ObjectMapper objectMapper;
-    private final DataManager dataManager;
-    /** 保护会话索引的读写；按会话单独的消息文件用同一锁也够用（会话文件读多写少） */
     private final ReentrantReadWriteLock fileLock = new ReentrantReadWriteLock();
 
     public ChatHistoryManager() {
         this.objectMapper = new ObjectMapper();
         this.objectMapper.enable(SerializationFeature.INDENT_OUTPUT);
-        this.dataManager = DataManager.getInstance();
     }
 
-    // ==================== 会话索引管理 ====================
-
-    /**
-     * 加载所有会话的元信息（不含消息内容）
-     *
-     * @return 会话列表（按创建时间排序，最新在前）
-     */
     public List<ChatSession> loadSessionIndex() {
-        Path indexFile = dataManager.getSessionsIndexFile();
-        if (!Files.exists(indexFile)) {
-            return migrateOldHistory();
-        }
-        fileLock.readLock().lock();
+        fileLock.writeLock().lock();
         try {
-            List<Map<String, String>> records = objectMapper.readValue(
-                    indexFile.toFile(),
-                    new TypeReference<>() {}
-            );
-
             List<ChatSession> sessions = new ArrayList<>();
-            for (Map<String, String> record : records) {
-                String id = record.get("id");
-                String title = record.get("title");
-                LocalDateTime createdAt = LocalDateTime.parse(
-                        record.get("createdAt"), TIMESTAMP_FORMATTER);
-                sessions.add(new ChatSession(id, title, createdAt, null));
+            String sql = """
+                    SELECT id, title, created_at
+                    FROM chat_sessions
+                    WHERE workspace_id = ?
+                    ORDER BY created_at DESC
+                    """;
+            try (Connection c = AppDatabase.getConnection();
+                 PreparedStatement ps = c.prepareStatement(sql)) {
+                ps.setString(1, AppDatabase.currentWorkspaceId());
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        sessions.add(new ChatSession(
+                                rs.getString("id"),
+                                rs.getString("title"),
+                                LocalDateTime.parse(rs.getString("created_at"), TIMESTAMP_FORMATTER),
+                                null));
+                    }
+                }
             }
-            log.info("会话索引已加载: {} 个会话", sessions.size());
+            log.info("会话索引已从 H2 加载: {} 个会话", sessions.size());
             return sessions;
-        } catch (Exception e) {
+        } catch (SQLException e) {
             log.error("加载会话索引失败", e);
             return Collections.emptyList();
         } finally {
-            fileLock.readLock().unlock();
+            fileLock.writeLock().unlock();
         }
     }
 
-    /**
-     * 保存会话索引
-     */
     public void saveSessionIndex(List<ChatSession> sessions) {
         fileLock.writeLock().lock();
         try {
-            List<Map<String, String>> records = new ArrayList<>();
-            for (ChatSession session : sessions) {
-                Map<String, String> record = new LinkedHashMap<>();
-                record.put("id", session.getId());
-                record.put("title", session.getTitle());
-                record.put("createdAt", session.getCreatedAt().format(TIMESTAMP_FORMATTER));
-                records.add(record);
+            String upsert = """
+                    MERGE INTO chat_sessions(workspace_id, id, title, created_at, updated_at)
+                    KEY(workspace_id, id)
+                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    """;
+            try (Connection c = AppDatabase.getConnection();
+                 PreparedStatement ps = c.prepareStatement(upsert)) {
+                c.setAutoCommit(false);
+                deleteRemovedSessions(c, sessions);
+                String workspaceId = AppDatabase.currentWorkspaceId();
+                for (ChatSession session : sessions) {
+                    ps.setString(1, workspaceId);
+                    ps.setString(2, session.getId());
+                    ps.setString(3, session.getTitle());
+                    ps.setString(4, session.getCreatedAt().format(TIMESTAMP_FORMATTER));
+                    ps.addBatch();
+                }
+                ps.executeBatch();
+                c.commit();
             }
-            AtomicFileWriter.writeJson(objectMapper, dataManager.getSessionsIndexFile().toFile(), records);
-            log.info("会话索引已保存: {} 个会话", sessions.size());
-        } catch (IOException e) {
+            log.info("会话索引已保存到 H2: {} 个会话", sessions.size());
+        } catch (SQLException e) {
             log.error("保存会话索引失败", e);
         } finally {
             fileLock.writeLock().unlock();
         }
     }
 
-    // ==================== 单会话消息管理 ====================
-
-    /**
-     * 加载指定会话的消息列表
-     *
-     * @param sessionId 会话 ID
-     * @return 消息列表
-     */
     public List<ChatMessage> loadSessionMessages(String sessionId) {
-        Path sessionFile = dataManager.getSessionFile(sessionId);
-        if (!Files.exists(sessionFile)) {
-            log.info("会话消息文件不存在: {}", sessionId);
-            return Collections.emptyList();
-        }
-
         fileLock.readLock().lock();
         try {
-            List<Map<String, Object>> records = objectMapper.readValue(
-                    sessionFile.toFile(),
-                    new TypeReference<>() {}
-            );
-
             List<ChatMessage> messages = new ArrayList<>();
-            for (Map<String, Object> record : records) {
-                ChatMessage.Role role = ChatMessage.Role.valueOf((String) record.get("role"));
-                String content = (String) record.get("content");
-                LocalDateTime timestamp = LocalDateTime.parse(
-                        (String) record.get("timestamp"), TIMESTAMP_FORMATTER);
-
-                List<String> imagePaths = Collections.emptyList();
-                Object imgObj = record.get("imagePaths");
-                if (imgObj instanceof List<?> imgList) {
-                    imagePaths = new ArrayList<>();
-                    for (Object item : imgList) {
-                        if (item instanceof String s) {
-                            imagePaths.add(s);
-                        }
+            String sql = """
+                    SELECT role, content, timestamp, image_paths_json, adopted
+                    FROM chat_messages
+                    WHERE workspace_id = ? AND session_id = ?
+                    ORDER BY position
+                    """;
+            try (Connection c = AppDatabase.getConnection();
+                 PreparedStatement ps = c.prepareStatement(sql)) {
+                ps.setString(1, AppDatabase.currentWorkspaceId());
+                ps.setString(2, sessionId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        ChatMessage msg = new ChatMessage(
+                                ChatMessage.Role.valueOf(rs.getString("role")),
+                                rs.getString("content"),
+                                LocalDateTime.parse(rs.getString("timestamp"), TIMESTAMP_FORMATTER),
+                                readStringList(rs.getString("image_paths_json")));
+                        msg.setAdopted(rs.getBoolean("adopted"));
+                        messages.add(msg);
                     }
                 }
-                ChatMessage msg = new ChatMessage(role, content, timestamp, imagePaths);
-                Object adoptedObj = record.get("adopted");
-                if (adoptedObj instanceof Boolean b) {
-                    msg.setAdopted(b);
-                }
-                messages.add(msg);
             }
-
-            log.info("会话消息已加载: {} [{}] {} 条消息", sessionId, "", messages.size());
+            log.info("会话消息已从 H2 加载: {} [{}] {} 条消息", sessionId, "", messages.size());
             return messages;
         } catch (Exception e) {
             log.error("加载会话消息失败: {}", sessionId, e);
@@ -167,134 +140,156 @@ public class ChatHistoryManager {
         }
     }
 
-    /**
-     * 保存指定会话的消息列表
-     *
-     * @param sessionId 会话 ID
-     * @param messages  消息列表
-     */
     public void saveSessionMessages(String sessionId, List<ChatMessage> messages) {
         fileLock.writeLock().lock();
         try {
-            List<Map<String, Object>> records = new ArrayList<>();
-            for (ChatMessage msg : messages) {
-                Map<String, Object> record = new LinkedHashMap<>();
-                record.put("role", msg.getRole().name());
-                record.put("content", msg.getContent());
-                record.put("timestamp", msg.getTimestamp().format(TIMESTAMP_FORMATTER));
-                if (!msg.getImagePaths().isEmpty()) {
-                    record.put("imagePaths", msg.getImagePaths());
+            String insert = """
+                    INSERT INTO chat_messages(
+                        workspace_id, session_id, position, role, content, timestamp, image_paths_json, adopted
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """;
+            try (Connection c = AppDatabase.getConnection();
+                 PreparedStatement del = c.prepareStatement("DELETE FROM chat_messages WHERE workspace_id = ? AND session_id = ?");
+                 PreparedStatement ps = c.prepareStatement(insert)) {
+                c.setAutoCommit(false);
+                ensureSessionRow(c, sessionId);
+                String workspaceId = AppDatabase.currentWorkspaceId();
+                del.setString(1, workspaceId);
+                del.setString(2, sessionId);
+                del.executeUpdate();
+                int pos = 0;
+                for (ChatMessage msg : messages) {
+                    ps.setString(1, workspaceId);
+                    ps.setString(2, sessionId);
+                    ps.setInt(3, pos++);
+                    ps.setString(4, msg.getRole().name());
+                    ps.setString(5, msg.getContent());
+                    ps.setString(6, msg.getTimestamp().format(TIMESTAMP_FORMATTER));
+                    ps.setString(7, objectMapper.writeValueAsString(msg.getImagePaths()));
+                    ps.setBoolean(8, msg.isAdopted());
+                    ps.addBatch();
                 }
-                if (msg.isAdopted()) {
-                    record.put("adopted", true);
-                }
-                records.add(record);
+                ps.executeBatch();
+                c.commit();
             }
-            AtomicFileWriter.writeJson(objectMapper, dataManager.getSessionFile(sessionId).toFile(), records);
-            log.debug("会话消息已保存: {} ({} 条)", sessionId, messages.size());
-        } catch (IOException e) {
+            log.debug("会话消息已保存到 H2: {} ({} 条)", sessionId, messages.size());
+        } catch (Exception e) {
             log.error("保存会话消息失败: {}", sessionId, e);
         } finally {
             fileLock.writeLock().unlock();
         }
     }
 
-    /**
-     * 检查指定会话是否有已持久化的消息（消息文件存在）
-     */
     public boolean hasSessionMessages(String sessionId) {
-        return Files.exists(dataManager.getSessionFile(sessionId));
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT 1 FROM chat_messages WHERE workspace_id = ? AND session_id = ? LIMIT 1")) {
+            ps.setString(1, AppDatabase.currentWorkspaceId());
+            ps.setString(2, sessionId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            log.warn("检查会话消息失败: {}", sessionId, e);
+            return false;
+        }
     }
 
-    /**
-     * 删除指定会话的消息文件
-     */
     public void deleteSession(String sessionId) {
         fileLock.writeLock().lock();
-        try {
-            Files.deleteIfExists(dataManager.getSessionFile(sessionId));
-            log.info("会话消息文件已删除: {}", sessionId);
-        } catch (IOException e) {
-            log.error("删除会话消息文件失败: {}", sessionId, e);
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement msgPs = c.prepareStatement(
+                     "DELETE FROM chat_messages WHERE workspace_id = ? AND session_id = ?");
+             PreparedStatement ps = c.prepareStatement(
+                     "DELETE FROM chat_sessions WHERE workspace_id = ? AND id = ?")) {
+            String workspaceId = AppDatabase.currentWorkspaceId();
+            msgPs.setString(1, workspaceId);
+            msgPs.setString(2, sessionId);
+            msgPs.executeUpdate();
+            ps.setString(1, workspaceId);
+            ps.setString(2, sessionId);
+            ps.executeUpdate();
+            log.info("会话已从 H2 删除: {}", sessionId);
+        } catch (SQLException e) {
+            log.error("删除会话失败: {}", sessionId, e);
         } finally {
             fileLock.writeLock().unlock();
         }
     }
 
-    // ==================== 旧版数据迁移 ====================
-
-    /**
-     * 将旧版 chat_history.json 迁移为多会话格式
-     *
-     * @return 迁移后的会话列表（0 或 1 个）
-     */
-    private List<ChatSession> migrateOldHistory() {
-        Path oldFile = dataManager.getChatHistoryFile();
-        if (!Files.exists(oldFile)) {
-            log.info("无旧版聊天记录，跳过迁移");
-            return Collections.emptyList();
+    private void deleteRemovedSessions(Connection c, List<ChatSession> sessions) throws SQLException {
+        List<String> ids = sessions.stream().map(ChatSession::getId).toList();
+        List<String> existing = new ArrayList<>();
+        try (PreparedStatement ps = c.prepareStatement("SELECT id FROM chat_sessions WHERE workspace_id = ?")) {
+            ps.setString(1, AppDatabase.currentWorkspaceId());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) existing.add(rs.getString("id"));
+            }
         }
+        existing.removeAll(ids);
+        if (existing.isEmpty()) return;
+        try (PreparedStatement msgPs = c.prepareStatement(
+                     "DELETE FROM chat_messages WHERE workspace_id = ? AND session_id = ?");
+             PreparedStatement ps = c.prepareStatement(
+                     "DELETE FROM chat_sessions WHERE workspace_id = ? AND id = ?")) {
+            String workspaceId = AppDatabase.currentWorkspaceId();
+            for (String id : existing) {
+                msgPs.setString(1, workspaceId);
+                msgPs.setString(2, id);
+                msgPs.addBatch();
 
+                ps.setString(1, workspaceId);
+                ps.setString(2, id);
+                ps.addBatch();
+            }
+            msgPs.executeBatch();
+            ps.executeBatch();
+        }
+    }
+
+    private void ensureSessionRow(Connection c, String sessionId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("""
+                MERGE INTO chat_sessions(workspace_id, id, title, created_at, updated_at)
+                KEY(workspace_id, id)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """)) {
+            ps.setString(1, AppDatabase.currentWorkspaceId());
+            ps.setString(2, sessionId);
+            ps.setString(3, sessionId);
+            ps.setString(4, LocalDateTime.now().format(TIMESTAMP_FORMATTER));
+            ps.executeUpdate();
+        }
+    }
+
+    private List<String> readStringList(String json) {
+        if (json == null || json.isBlank()) return Collections.emptyList();
         try {
-            List<Map<String, String>> records = objectMapper.readValue(
-                    oldFile.toFile(),
-                    new TypeReference<>() {}
-            );
-
-            if (records.isEmpty()) {
-                return Collections.emptyList();
-            }
-
-            // 从旧记录中恢复消息
-            List<ChatMessage> messages = new ArrayList<>();
-            for (Map<String, String> record : records) {
-                ChatMessage.Role role = ChatMessage.Role.valueOf(record.get("role"));
-                String content = record.get("content");
-                LocalDateTime timestamp = LocalDateTime.parse(
-                        record.get("timestamp"), TIMESTAMP_FORMATTER);
-                messages.add(new ChatMessage(role, content, timestamp));
-            }
-
-            // 创建一个迁移会话
-            ChatSession session = new ChatSession("迁移的会话");
-            session.getMessages().addAll(messages);
-            session.autoTitle();
-
-            // 保存为新格式
-            List<ChatSession> sessions = new ArrayList<>();
-            sessions.add(session);
-            saveSessionMessages(session.getId(), messages);
-            saveSessionIndex(sessions);
-
-            log.info("旧版聊天记录已迁移为会话: {} ({} 条消息)", session.getId(), messages.size());
-            return sessions;
+            return objectMapper.readValue(json, new TypeReference<List<String>>() {});
         } catch (Exception e) {
-            log.error("迁移旧版聊天记录失败", e);
+            log.warn("解析消息图片路径失败，使用空列表", e);
             return Collections.emptyList();
         }
     }
 
-    // ==================== 兼容旧接口（废弃） ====================
+    private List<String> readObjectStringList(Object imgObj) {
+        if (!(imgObj instanceof List<?> imgList)) return Collections.emptyList();
+        List<String> imagePaths = new ArrayList<>();
+        for (Object item : imgList) {
+            if (item instanceof String s) imagePaths.add(s);
+        }
+        return imagePaths;
+    }
 
-    /**
-     * @deprecated 使用 {@link #saveSessionMessages(String, List)} 替代
-     */
     @Deprecated
     public void save(List<ChatMessage> messages) {
         // 保留空实现，防止旧调用方编译报错
     }
 
-    /**
-     * @deprecated 使用 {@link #loadSessionMessages(String)} 替代
-     */
     @Deprecated
     public List<ChatMessage> load() {
         return Collections.emptyList();
     }
 
-    /**
-     * @deprecated 使用 {@link #deleteSession(String)} 替代
-     */
     @Deprecated
     public void clear() {
         // 保留空实现

@@ -111,14 +111,14 @@ public class MemoryStore implements AutoCloseable {
         }
         this.root = r;
 
-        // 旧库迁移：pending 暂存区为反序列化后新增字段，缺失时补建并落盘（无向量索引）。
+        // schema 补齐：pending 暂存区为反序列化后新增字段，缺失时补建并落盘（无向量索引）。
         boolean migrated = false;
         if (root.pendingFacts == null) { root.pendingFacts = GigaMap.New(); migrated = true; }
         if (root.pendingEpisodes == null) { root.pendingEpisodes = GigaMap.New(); migrated = true; }
         if (root.stats == null) { root.stats = new com.javaclaw.memory.model.MemoryStats(); migrated = true; }
         if (migrated) {
             mgr.store(root);
-            log.info("[{}] 已补建 pending 暂存区（旧库迁移）", label);
+            log.info("[{}] 已补建 pending 暂存区（schema 补齐）", label);
         }
 
         this.factIndex = ensureIndex(root.facts, new FactVectorizer());
