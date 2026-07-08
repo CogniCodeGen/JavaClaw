@@ -5794,6 +5794,31 @@
     -fx-text-fill: white;
 }
 
+.review-mode-combo {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 8;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+    -fx-cursor: hand;
+}
+
+.review-mode-combo:hover {
+    -fx-background-color: -jc-primary-50;
+    -fx-border-color: -jc-border-strong;
+}
+
+.review-mode-combo > .list-cell {
+    -fx-text-fill: -jc-text-body;
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+    -fx-padding: 5 4 5 10;
+}
+
+.review-mode-combo > .arrow-button {
+    -fx-padding: 0 8 0 2;
+}
+
 /* ===== 图片查看弹窗（双击大图，缩放/拖拽） ===== */
 .image-viewer-root {
     -fx-background-color: -jc-surface-page;

@@ -16,6 +16,7 @@ import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.SettingsView;
+import com.javaclaw.config.ToolReviewMode;
 import com.javaclaw.ui.javafx.schedule.ScheduleView;
 import com.javaclaw.ui.javafx.skill.SkillCenterView;
 import com.javaclaw.ui.javafx.task.SddTaskView;
@@ -222,6 +223,10 @@ public class ChatViewController {
     /** 知识库多选菜单按钮 */
     private MenuButton knowledgeMenu;
 
+    /** 工具执行审核策略下拉框 */
+    private ComboBox<ToolReviewMode> reviewModeCombo;
+    private boolean reviewModeUpdating;
+
     /** Token 用量摘要徽标（单一合并标签） */
     private Label tokenLabel;
     /** Token 徽标 Tooltip（内容在 refreshStatusBar 中刷新） */
@@ -362,6 +367,8 @@ public class ChatViewController {
         Button taskModeChip = new Button("托管任务");
         taskModeChip.getStyleClass().add("jc-mode-chip");
         taskModeChip.setOnAction(e -> openTaskManager());
+
+        reviewModeCombo = buildReviewModeCombo();
 
         // 知识库多选菜单按钮（带图标 + "N 已选"内置徽章）
         knowledgeMenu = new MenuButton("📖 知识库");
@@ -627,7 +634,7 @@ public class ChatViewController {
         Region hintSpacer = new Region();
         HBox.setHgrow(hintSpacer, Priority.ALWAYS);
         // 模式 chips 置于提示行左侧（设计稿 composer-hints：对话/研讨/托管任务 + 右侧键位提示）
-        HBox modeChips = new HBox(6, chatModeBtn, planModeBtn, taskModeChip);
+        HBox modeChips = new HBox(6, chatModeBtn, planModeBtn, taskModeChip, reviewModeCombo);
         modeChips.setAlignment(Pos.CENTER_LEFT);
         HBox shortcutHintRow = new HBox(8,
                 modeChips,
@@ -3431,21 +3438,53 @@ public class ChatViewController {
         saveCurrentSession();
     }
 
-    // ==================== 工作区切换 ====================
+    // ==================== 顶栏 / 输入区控件 ====================
 
     /**
-     * 切换到指定工作区
+     * 构建工具审核策略下拉框。
      *
-     * <p>工作区切换时依次执行：
-     * <ol>
-     *   <li>保存当前会话和 Cookie</li>
-     *   <li>切换 WorkspaceManager 的当前工作区</li>
-     *   <li>重新加载所有配置</li>
-     *   <li>重建智能体服务</li>
-     *   <li>重新加载会话和定时任务</li>
-     * </ol>
-     * </p>
+     * <p>该配置按工作区持久化：手动审核会让所有受管工具弹窗确认；智能审核沿用风险等级和
+     * 托管任务范围评估；全自动则全部默认同意。</p>
      */
+    private ComboBox<ToolReviewMode> buildReviewModeCombo() {
+        ComboBox<ToolReviewMode> combo = new ComboBox<>();
+        combo.getItems().setAll(ToolReviewMode.values());
+        combo.getStyleClass().add("review-mode-combo");
+        combo.setVisibleRowCount(ToolReviewMode.values().length);
+        combo.setMinWidth(106);
+        combo.setPrefWidth(112);
+        combo.setMaxWidth(126);
+        combo.setTooltip(new Tooltip(reviewModeTooltip(AgentConfig.getInstance().getToolReviewMode())));
+
+        reviewModeUpdating = true;
+        combo.getSelectionModel().select(AgentConfig.getInstance().getToolReviewMode());
+        reviewModeUpdating = false;
+
+        combo.valueProperty().addListener((obs, oldMode, newMode) -> {
+            if (reviewModeUpdating || newMode == null || newMode == oldMode) return;
+            AgentConfig cfg = AgentConfig.getInstance();
+            cfg.setToolReviewMode(newMode);
+            cfg.save();
+            combo.setTooltip(new Tooltip(reviewModeTooltip(newMode)));
+            log.info("工具审核模式切换为：{} ({})", newMode.displayName(), newMode.id());
+        });
+        return combo;
+    }
+
+    private void refreshReviewModeCombo() {
+        if (reviewModeCombo == null) return;
+        ToolReviewMode mode = AgentConfig.getInstance().getToolReviewMode();
+        reviewModeUpdating = true;
+        reviewModeCombo.getSelectionModel().select(mode);
+        reviewModeUpdating = false;
+        reviewModeCombo.setTooltip(new Tooltip(reviewModeTooltip(mode)));
+    }
+
+    private String reviewModeTooltip(ToolReviewMode mode) {
+        ToolReviewMode m = mode == null ? ToolReviewMode.SMART : mode;
+        return "工具审核：" + m.displayName() + "\n" + m.description();
+    }
+
     /**
      * 构建顶栏「风格」切换菜单（设计稿 ThemeMenu 的 JavaFX 实现）：
      * 按钮 = 当前主题色块 + 「风格」；下拉项 = 三联色块预览 + 名称/副标题 + 当前 ✓。
@@ -3512,6 +3551,21 @@ public class ChatViewController {
         return btn;
     }
 
+    // ==================== 工作区切换 ====================
+
+    /**
+     * 切换到指定工作区
+     *
+     * <p>工作区切换时依次执行：
+     * <ol>
+     *   <li>保存当前会话和 Cookie</li>
+     *   <li>切换 WorkspaceManager 的当前工作区</li>
+     *   <li>重新加载所有配置</li>
+     *   <li>重建智能体服务</li>
+     *   <li>重新加载会话和定时任务</li>
+     * </ol>
+     * </p>
+     */
     private void onSwitchWorkspace(String targetWorkspaceId) {
         com.javaclaw.config.WorkspaceManager wsMgr = com.javaclaw.config.WorkspaceManager.getInstance();
         String fromId = wsMgr.getCurrentWorkspaceId();
@@ -3628,6 +3682,9 @@ public class ChatViewController {
 
                         // 12.6. 重新加载新工作区记忆的字体（族 / 等宽 / 密度）
                         com.javaclaw.ui.javafx.theme.FontManager.reload();
+
+                        // 12.7. 刷新新工作区的工具审核模式
+                        refreshReviewModeCombo();
 
                         log.info("工作区切换完成: {} ({})",
                                 wsMgr.getCurrentWorkspace().getName(), targetWorkspaceId);

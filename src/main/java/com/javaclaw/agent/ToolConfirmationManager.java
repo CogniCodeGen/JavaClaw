@@ -9,6 +9,7 @@ import com.javaclaw.agent.risk.ReadOnlyCommands;
 import com.javaclaw.agent.risk.ScopeVerdict;
 import com.javaclaw.agent.risk.ToolScopeAssessor;
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.config.ToolReviewMode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.nio.file.Path;
@@ -165,7 +166,8 @@ public class ToolConfirmationManager {
      * 由 {@link #requestConfirmation(String, String)} 内部按等级分派处理。</p>
      */
     public static boolean requiresConfirmation(String toolName) {
-        return enabled && ToolRiskRegistry.isManaged(toolName);
+        if (!enabled || !ToolRiskRegistry.isManaged(toolName)) return false;
+        return AgentConfig.getInstance().getToolReviewMode() != ToolReviewMode.AUTO;
     }
 
     /**
@@ -180,9 +182,20 @@ public class ToolConfirmationManager {
         ToolRiskLevel level = ToolRiskRegistry.levelOf(toolName);
         if (level == null) return true;
 
-        // 0. 任务级"同意全部"授权：命中即静默放行所有工具，连 Toast 都不弹避免打扰
+        ToolReviewMode reviewMode = AgentConfig.getInstance().getToolReviewMode();
+        if (reviewMode == ToolReviewMode.AUTO) {
+            log.info("[全自动审核] 默认放行 tool={} desc={}", toolName, description);
+            return true;
+        }
+        boolean manualReview = reviewMode == ToolReviewMode.MANUAL;
+        ToolRiskLevel effectiveLevel = manualReview && level == ToolRiskLevel.NOTIFY
+                ? ToolRiskLevel.CONFIRM
+                : level;
+
+        // 0. 任务级"同意全部"授权：命中即静默放行所有工具，连 Toast 都不弹避免打扰。
+        // 手动审核模式要求每次操作都由用户确认，因此不使用任务白名单。
         String taskId = currentTaskId;
-        if (isTaskAllowAll(taskId)) {
+        if (!manualReview && isTaskAllowAll(taskId)) {
             log.info("[任务·同意全部] tool={} desc={}", toolName, description);
             return true;
         }
@@ -196,15 +209,15 @@ public class ToolConfirmationManager {
         int timeoutSec = timeoutSeconds();
         boolean managed = isInManagedTask();
 
-        // NOTIFY 直接放行（仅 Toast 通知）；CONFIRM / DOUBLE_CONFIRM 走三态弹窗
-        if (level == ToolRiskLevel.NOTIFY) {
+        // 智能审核下 NOTIFY 直接放行（仅 Toast 通知）；手动审核会把 NOTIFY 升级为确认弹窗。
+        if (!manualReview && level == ToolRiskLevel.NOTIFY) {
             p.notify(new ToastRequest(toolName, description));
             return true;
         }
 
         // 风险评估智能体「目录内自动放行」：仅在托管任务内、目录作用域工具、评估器就绪、开关开启时尝试。
         // 智能体判定影响范围限于任务工作目录、且其给出的受影响路径经确定性校验确实全部落在目录内 → 免人工。
-        if (managed && ToolRiskRegistry.isDirScopedTool(toolName)
+        if (!manualReview && managed && ToolRiskRegistry.isDirScopedTool(toolName)
                 && AgentConfig.getInstance().isTaskRiskAutoApproveEnabled()) {
             // 0) 确定性只读命令直接放行：零副作用，越界读取（如 ls ~/.m2）也无需人工，且省一次范围评估调用。
             //    无人值守时这类命令走人工确认只会等满超时按拒绝处理，浪费时间且诱发执行体重试。
@@ -225,15 +238,15 @@ public class ToolConfirmationManager {
             }
         }
 
-        ConfirmKind kind = (level == ToolRiskLevel.DOUBLE_CONFIRM)
+        ConfirmKind kind = (effectiveLevel == ToolRiskLevel.DOUBLE_CONFIRM)
                 ? ConfirmKind.DOUBLE_CONFIRM : ConfirmKind.CONFIRM;
         ConfirmDecision decision = p.confirmEx(new ConfirmRequest(
-                toolName, riskLabel(level), description,
+                toolName, riskLabel(effectiveLevel), description,
                 kind, timeoutSec,
                 kind == ConfirmKind.DOUBLE_CONFIRM ? DOUBLE_CONFIRM_KEYWORD : "",
-                managed));
+                managed && !manualReview));
 
-        if (decision == ConfirmDecision.ALLOW_ALL && taskId != null) {
+        if (!manualReview && decision == ConfirmDecision.ALLOW_ALL && taskId != null) {
             recordAllowAll(taskId);
             log.info("[同意全部] taskId={} 已开启全部放行，后续高风险工具调用不再弹窗", taskId);
             notifyToast(toolName, "已开启本任务「全部放行」，所有后续高风险操作将自动执行");

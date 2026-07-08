@@ -82,6 +82,7 @@ public final class AgentConfig {
     private static final String KEY_UI_FONT_DENSITY = "ui.font.density";
     private static final String KEY_CONFIRMATION_TIMEOUT_DEFAULT = "confirmation.timeout.default.seconds";
     private static final String KEY_CONFIRMATION_TIMEOUT_MANAGED = "confirmation.timeout.managed.seconds";
+    private static final String KEY_TOOL_REVIEW_MODE = "tool.review.mode";
     private static final String KEY_TASK_EVENTS_RETENTION_DAYS = "task.events.retention.days";
     private static final String KEY_SCHEDULE_THREAD_POOL_SIZE = "schedule.thread.pool.size";
     private static final String KEY_TASK_VERIFICATION_ENABLED = "task.verification.enabled";
@@ -172,6 +173,7 @@ public final class AgentConfig {
     private static final int DEFAULT_PLAN_MODE_MAX_EXPERTS = 4;
     private static final int DEFAULT_CONFIRMATION_TIMEOUT_DEFAULT = 60;
     private static final int DEFAULT_CONFIRMATION_TIMEOUT_MANAGED = 600;
+    private static final ToolReviewMode DEFAULT_TOOL_REVIEW_MODE = ToolReviewMode.SMART;
     private static final int DEFAULT_TASK_EVENTS_RETENTION_DAYS = 30;
     private static final int DEFAULT_SCHEDULE_THREAD_POOL_SIZE = 4;
     private static final int DEFAULT_TASK_AGENT_MAX_ITERS = 15;
@@ -390,6 +392,7 @@ public final class AgentConfig {
         properties.setProperty(KEY_RETRY_MAX_BACKOFF, String.valueOf(DEFAULT_RETRY_MAX_BACKOFF));
         properties.setProperty(KEY_PLAN_MODE_MAX_ROUNDS, String.valueOf(DEFAULT_PLAN_MODE_MAX_ROUNDS));
         properties.setProperty(KEY_PLAN_MODE_MAX_EXPERTS, String.valueOf(DEFAULT_PLAN_MODE_MAX_EXPERTS));
+        properties.setProperty(KEY_TOOL_REVIEW_MODE, DEFAULT_TOOL_REVIEW_MODE.id());
         properties.setProperty(KEY_SCHEDULE_THREAD_POOL_SIZE, String.valueOf(DEFAULT_SCHEDULE_THREAD_POOL_SIZE));
         properties.setProperty(KEY_GEPA_GOAL_ENABLED, String.valueOf(DEFAULT_GEPA_GOAL_ENABLED));
         properties.setProperty(KEY_GEPA_EVAL_INTERVAL, String.valueOf(DEFAULT_GEPA_EVAL_INTERVAL));
@@ -1198,6 +1201,16 @@ public final class AgentConfig {
         properties.setProperty(KEY_CONFIRMATION_TIMEOUT_MANAGED, String.valueOf(value));
     }
 
+    /** 工具执行审核策略（manual/smart/auto，默认 smart） */
+    public ToolReviewMode getToolReviewMode() {
+        return ToolReviewMode.fromId(properties.getProperty(KEY_TOOL_REVIEW_MODE, DEFAULT_TOOL_REVIEW_MODE.id()));
+    }
+
+    public void setToolReviewMode(ToolReviewMode mode) {
+        properties.setProperty(KEY_TOOL_REVIEW_MODE,
+                (mode == null ? DEFAULT_TOOL_REVIEW_MODE : mode).id());
+    }
+
     /** 任务事件 JSONL 保留天数（0 或负数 = 不清理） */
     public int getTaskEventsRetentionDays() {
         return getInt(KEY_TASK_EVENTS_RETENTION_DAYS, DEFAULT_TASK_EVENTS_RETENTION_DAYS);
@@ -1396,6 +1409,7 @@ public final class AgentConfig {
         properties.setProperty(KEY_SCHEDULE_THREAD_POOL_SIZE, String.valueOf(DEFAULT_SCHEDULE_THREAD_POOL_SIZE));
         properties.setProperty(KEY_CONFIRMATION_TIMEOUT_DEFAULT, String.valueOf(DEFAULT_CONFIRMATION_TIMEOUT_DEFAULT));
         properties.setProperty(KEY_CONFIRMATION_TIMEOUT_MANAGED, String.valueOf(DEFAULT_CONFIRMATION_TIMEOUT_MANAGED));
+        properties.setProperty(KEY_TOOL_REVIEW_MODE, DEFAULT_TOOL_REVIEW_MODE.id());
         save();
         log.info("配置已重置为默认值");
     }

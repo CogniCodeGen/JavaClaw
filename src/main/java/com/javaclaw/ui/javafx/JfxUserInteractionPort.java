@@ -158,6 +158,7 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
         CompletableFuture<ConfirmDecision> future = new CompletableFuture<>();
         int timeoutSec = req.timeoutSeconds();
         String keyword = req.keyword();
+        boolean managed = req.managedTask();
 
         Platform.runLater(() -> {
             try {
@@ -165,8 +166,9 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
                 dialog.setTitle("二次确认（不可逆操作）");
                 dialog.setHeaderText("即将执行不可逆高风险操作：" + req.toolName());
 
-                Label hint = new Label("请输入关键词「" + keyword + "」以启用允许按钮；"
-                        + "选择「同意全部」后，本任务内所有后续高风险操作将自动放行不再弹窗。");
+                Label hint = new Label(managed
+                        ? "请输入关键词「" + keyword + "」以启用允许按钮；选择「同意全部」后，本任务内所有后续高风险操作将自动放行不再弹窗。"
+                        : "请输入关键词「" + keyword + "」以启用允许按钮。");
                 hint.setWrapText(true);
 
                 Label desc = new Label(req.description());
@@ -179,16 +181,20 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
                 VBox box = new VBox(8, desc, hint, input);
                 box.setPadding(new Insets(8, 4, 4, 4));
                 dialog.getDialogPane().setContent(box);
-                dialog.getDialogPane().getButtonTypes().setAll(BTN_DENY, BTN_ALLOW_ONCE, BTN_ALLOW_ALL);
+                if (managed) {
+                    dialog.getDialogPane().getButtonTypes().setAll(BTN_DENY, BTN_ALLOW_ONCE, BTN_ALLOW_ALL);
+                } else {
+                    dialog.getDialogPane().getButtonTypes().setAll(BTN_DENY, BTN_ALLOW);
+                }
 
-                javafx.scene.Node btnAllowOnce = dialog.getDialogPane().lookupButton(BTN_ALLOW_ONCE);
+                javafx.scene.Node btnAllowOnce = dialog.getDialogPane().lookupButton(managed ? BTN_ALLOW_ONCE : BTN_ALLOW);
                 javafx.scene.Node btnAllowAll  = dialog.getDialogPane().lookupButton(BTN_ALLOW_ALL);
                 btnAllowOnce.setDisable(true);
-                btnAllowAll.setDisable(true);
+                if (btnAllowAll != null) btnAllowAll.setDisable(true);
                 input.textProperty().addListener((obs, o, n) -> {
                     boolean ok = keyword.equals(n == null ? "" : n.trim());
                     btnAllowOnce.setDisable(!ok);
-                    btnAllowAll.setDisable(!ok);
+                    if (btnAllowAll != null) btnAllowAll.setDisable(!ok);
                 });
 
                 dialog.setResultConverter(this::toDecision);

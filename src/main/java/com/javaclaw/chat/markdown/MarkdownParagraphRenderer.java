@@ -275,7 +275,7 @@ public final class MarkdownParagraphRenderer {
         ctx.ensureParagraph();
         for (Node n = parent.getFirstChild(); n != null; n = n.getNext()) {
             switch (n) {
-                case org.commonmark.node.Text t -> emitText(ctx, t.getLiteral(), st);
+                case org.commonmark.node.Text t -> emitTextWithPercentBoundaryFix(ctx, t, st);
                 case StrongEmphasis se -> renderInlines(se, ctx, st.withBold());
                 case Emphasis em -> renderInlines(em, ctx, st.withItalic());
                 case Strikethrough sk -> renderInlines(sk, ctx, st.withStrike());
@@ -305,6 +305,25 @@ public final class MarkdownParagraphRenderer {
         }
     }
 
+    /**
+     * JavaFX 25 RichTextArea 对相邻不同样式段的首个标点偶发测量贴边，
+     * {@code **1.26**%} 会被 CommonMark 拆成 StrongEmphasis("1.26") + Text("%")，
+     * 百分号在部分字体/缩放下会显示不全。百分号语义上属于前面的数字，视觉上并入粗体段。
+     */
+    private static void emitTextWithPercentBoundaryFix(Ctx ctx, org.commonmark.node.Text node, InlineStyle st) {
+        String literal = node.getLiteral();
+        if (literal == null || literal.isEmpty()) return;
+        if (startsWithPercent(literal) && node.getPrevious() instanceof StrongEmphasis) {
+            emitText(ctx, literal.substring(0, 1), st.withBold());
+            literal = literal.substring(1);
+        }
+        emitText(ctx, literal, st);
+    }
+
+    private static boolean startsWithPercent(String text) {
+        return text.startsWith("%") || text.startsWith("％");
+    }
+
     /** 输出一个文本段：样式类管颜色（随主题），内联样式管字号/字重/斜体/删除线/下划线 */
     private static void emitText(Ctx ctx, String text, InlineStyle st) {
         if (text == null || text.isEmpty()) return;
@@ -324,6 +343,9 @@ public final class MarkdownParagraphRenderer {
             css.append("-fx-underline: true;");
         } else {
             classes.add(ctx.baseClass);
+        }
+        if (!st.code()) {
+            css.append("-fx-font-family: ").append(FontManager.uiStack()).append(";");
         }
         css.append("-fx-font-size: ").append(fmt(fs)).append(";");
         if (st.bold()) css.append("-fx-font-weight: bold;");
