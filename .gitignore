@@ -31,3 +31,6 @@ replay_pid*
 /.idea/
 /AGENTS.md
 /html/
+
+# macOS 目录元数据
+.DS_Store

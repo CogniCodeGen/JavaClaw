@@ -1,5 +1,6 @@
 package com.javaclaw.task.sdd.run;
 
+import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import io.agentscope.core.tool.Tool;
@@ -22,6 +23,13 @@ public final class SddTaskManageTools {
     private static final Logger log = LoggerFactory.getLogger(SddTaskManageTools.class);
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
+    /** 调用来源令牌（装配期绑定），高风险确认随调用传给 ToolConfirmationManager。 */
+    private final ToolCallOrigin origin;
+
+    public SddTaskManageTools(ToolCallOrigin origin) {
+        this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
+    }
+
     private SddTaskManager mgr() {
         return SddTaskManager.getInstance();
     }
@@ -40,7 +48,7 @@ public final class SddTaskManageTools {
         if (desc.isEmpty()) {
             return ToolResponse.error("task_create", "任务描述不能为空");
         }
-        if (!ToolConfirmationManager.requestConfirmation("task_create", "创建长任务：" + desc)) {
+        if (!ToolConfirmationManager.requestConfirmation(origin, "task_create", "创建长任务：" + desc)) {
             return ToolResponse.error("task_create", "用户取消了创建");
         }
         long budget = 0L;

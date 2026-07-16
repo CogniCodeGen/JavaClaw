@@ -104,6 +104,10 @@ public class JavaClawApp extends Application {
             log.info("正在初始化工作区管理器...");
             WorkspaceManager.getInstance().init();
 
+            // 0.05 预热凭据主密钥：H2 已就绪，趁健康期解析并缓存持久主密钥，
+            //      避免此后某次瞬时不可用时加密回退漂移口令、埋下主机名变化后解不开的隐患
+            com.javaclaw.config.CredentialEncryptor.warmUpMasterKey();
+
             // 0.1 注册打包字体（须在创建任何 Scene 之前；下方首启向导即会构建 Scene）
             com.javaclaw.ui.javafx.theme.FontManager.loadBundledFonts();
 
@@ -145,6 +149,9 @@ public class JavaClawApp extends Application {
             modeRegistry = new ModeRegistry(disabledModes);
             modeRegistry.register(new ChatMode(chatService));
             modeRegistry.register(new PlanMode(planModeService));
+            // 循环模式：反复推进同一目标，确定性引擎判定完成/继续/停止（与聊天隔离，可并行）
+            modeRegistry.register(new com.javaclaw.mode.LoopMode(
+                    new com.javaclaw.loop.LoopService(runtime)));
             // 命令模式：确定性命令管理长任务/智能体/定时工作（与对话内的同名工具共用 Manager）
             modeRegistry.register(new com.javaclaw.mode.ShellMode(
                     new com.javaclaw.agent.ShellCommandService(chatService)));
@@ -165,7 +172,7 @@ public class JavaClawApp extends Application {
             SddTaskManager.getInstance().configure(
                     DataManager.getInstance().getDataRoot(),
                     runtime.getModelFactory(),
-                    runtime.getCapabilityTools(),
+                    runtime::buildCapabilityTools,
                     SkillManager.getInstance(),
                     interactionPort);
 

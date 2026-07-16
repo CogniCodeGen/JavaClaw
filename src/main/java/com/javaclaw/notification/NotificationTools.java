@@ -1,5 +1,6 @@
 package com.javaclaw.notification;
 
+import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.config.EmailConfig;
@@ -36,12 +37,23 @@ public class NotificationTools {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationTools.class);
 
+    /**
+     * 全局共享 HttpClient：自带连接池/selector 线程，无 close 只能靠 GC 回收——本工具随
+     * ExpertManager 逐 run 重建（定时任务逐 tick），每实例一个客户端会持续搅拌套接字与线程；
+     * 客户端无令牌语义，来源令牌只绑在工具包装层。
+     */
+    private static final HttpClient SHARED_HTTP_CLIENT = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(10))
+            .build();
+
     private final HttpClient httpClient;
 
-    public NotificationTools() {
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .build();
+    /** 调用来源令牌（装配期绑定），高风险确认随调用传给 ToolConfirmationManager。 */
+    private final ToolCallOrigin origin;
+
+    public NotificationTools(ToolCallOrigin origin) {
+        this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
+        this.httpClient = SHARED_HTTP_CLIENT;
     }
 
     // ==================== 发送通知工具 ====================
@@ -52,7 +64,7 @@ public class NotificationTools {
             @ToolParam(name = "message", description = "要发送的通知消息内容") String message,
             @ToolParam(name = "title", description = "通知标题，部分渠道会显示标题") String title) {
         log.debug("工具调用: notify_send(title={})", title);
-        if (!ToolConfirmationManager.requestConfirmation("notify_send",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "notify_send",
                 "向所有已启用渠道发送通知: " + (title == null ? "" : title))) {
             return ToolResponse.error("notify_send", "用户取消了操作");
         }
@@ -114,7 +126,7 @@ public class NotificationTools {
             @ToolParam(name = "message", description = "消息内容，支持 Markdown 格式") String message,
             @ToolParam(name = "is_markdown", description = "是否使用 Markdown 格式，true 为 Markdown，false 为纯文本") boolean isMarkdown) {
         log.debug("工具调用: notify_dingtalk(title={})", title);
-        if (!ToolConfirmationManager.requestConfirmation("notify_dingtalk",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "notify_dingtalk",
                 "向钉钉机器人发送通知: " + (title == null ? "" : title))) {
             return ToolResponse.error("notify_dingtalk", "用户取消了操作");
         }
@@ -154,7 +166,7 @@ public class NotificationTools {
             @ToolParam(name = "message", description = "消息内容，支持 Markdown 格式") String message,
             @ToolParam(name = "is_markdown", description = "是否使用 Markdown 格式") boolean isMarkdown) {
         log.debug("工具调用: notify_wechat");
-        if (!ToolConfirmationManager.requestConfirmation("notify_wechat",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "notify_wechat",
                 "向企业微信机器人发送通知")) {
             return ToolResponse.error("notify_wechat", "用户取消了操作");
         }
@@ -193,7 +205,7 @@ public class NotificationTools {
             @ToolParam(name = "title", description = "消息标题") String title,
             @ToolParam(name = "message", description = "消息内容") String message) {
         log.debug("工具调用: notify_feishu(title={})", title);
-        if (!ToolConfirmationManager.requestConfirmation("notify_feishu",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "notify_feishu",
                 "向飞书机器人发送通知: " + (title == null ? "" : title))) {
             return ToolResponse.error("notify_feishu", "用户取消了操作");
         }
@@ -239,7 +251,7 @@ public class NotificationTools {
             @ToolParam(name = "subject", description = "邮件主题") String subject,
             @ToolParam(name = "body", description = "邮件正文") String body) {
         log.debug("工具调用: notify_email(to={}, subject={})", to, subject);
-        if (!ToolConfirmationManager.requestConfirmation("notify_email",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "notify_email",
                 "发送通知邮件到 " + (to == null || to.isBlank() ? "默认收件人" : to)
                         + " (主题: " + subject + ")")) {
             return ToolResponse.error("notify_email", "用户取消了操作");
@@ -299,7 +311,7 @@ public class NotificationTools {
     public String sendCustomWebhook(
             @ToolParam(name = "message", description = "通知消息内容") String message) {
         log.debug("工具调用: notify_custom_webhook");
-        if (!ToolConfirmationManager.requestConfirmation("notify_custom_webhook",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "notify_custom_webhook",
                 "通过自定义 Webhook 发送通知")) {
             return ToolResponse.error("notify_custom_webhook", "用户取消了操作");
         }

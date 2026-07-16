@@ -52,7 +52,7 @@ public final class SddHeadlessDriver {
         // 2. 配置 SDD 管理器（注入自动放行端口 → PortReviewGate 评审直接批准）
         SddTaskManager mgr = SddTaskManager.getInstance();
         mgr.configure(DataManager.getInstance().getDataRoot(),
-                runtime.getModelFactory(), runtime.getCapabilityTools(),
+                runtime.getModelFactory(), runtime::buildCapabilityTools,
                 SkillManager.getInstance(), port);
 
         mgr.subscribe(new SddTaskListener() {

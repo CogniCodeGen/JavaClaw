@@ -2,29 +2,21 @@ package com.javaclaw.task.sdd.agent;
 
 import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.agent.model.ModelTier;
-import com.javaclaw.config.AgentConfig;
+import com.javaclaw.agent.model.StructuredCalls;
 import com.javaclaw.prompt.SddPrompts;
 import com.javaclaw.task.TaskTokenHook;
 import com.javaclaw.task.ValidationInspectionTools;
 import com.javaclaw.task.sdd.SddTokenSink;
 import com.javaclaw.task.sdd.spec.Scenario;
 import com.javaclaw.task.sdd.verify.CriticJudge;
-import io.agentscope.core.memory.autocontext.AutoContextConfig;
 import io.agentscope.core.memory.autocontext.AutoContextMemory;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.message.Msg;
-import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.tool.Toolkit;
-import io.agentscope.core.util.JsonSchemaUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import reactor.core.Disposable;
-import reactor.core.scheduler.Schedulers;
 
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * {@link CriticJudge} 的 AgentScope 实现 —— 描述性场景（freeform/external_check）的判定器。
@@ -53,14 +45,7 @@ public final class AgentScopeCriticJudge implements CriticJudge {
     }
 
     private AutoContextMemory buildMemory() {
-        AgentConfig cfg = AgentConfig.getInstance();
-        AutoContextConfig mc = AutoContextConfig.builder()
-                .maxToken(cfg.getMemoryMaxToken())
-                .msgThreshold(cfg.getMemoryMsgThreshold())
-                .lastKeep(cfg.getMemoryLastKeep())
-                .tokenRatio(cfg.getMemoryTokenRatio())
-                .build();
-        return new AutoContextMemory(mc, modelFactory.createChatModel());
+        return modelFactory.defaultAutoContextMemory();
     }
 
     public AgentScopeCriticJudge timeoutSec(long s) { this.timeoutSec = s; return this; }
@@ -91,49 +76,15 @@ public final class AgentScopeCriticJudge implements CriticJudge {
                     + "判据：" + (s.criterion() == null ? "" : s.criterion().predicate()) + "\n"
                     + "工作目录：" + workDir;
 
-            Msg result = blockingStructured(critic, user, SddDrafts.CriticVerdictDraft.class);
-            SddDrafts.CriticVerdictDraft d = extract(result);
+            Msg result = StructuredCalls.blockingCall(critic, user,
+                    SddDrafts.CriticVerdictDraft.class, timeoutSec, "critic 判定");
+            SddDrafts.CriticVerdictDraft d =
+                    StructuredCalls.extractStructured(result, SddDrafts.CriticVerdictDraft.class);
             if (d == null) return new Verdict(false, "critic 未产出结构化判定（保守判不通过）");
             return new Verdict(d.pass, nz(d.reason));
         } catch (Exception e) {
             log.warn("[Verify] critic 判定异常（保守判不通过）：{}", e.getMessage());
             return new Verdict(false, "critic 判定异常：" + e.getMessage());
-        }
-    }
-
-    private Msg blockingStructured(ReActAgent agent, String userPrompt, Class<?> cls) {
-        Msg userMsg = Msg.builder().role(MsgRole.USER).name("user").textContent(userPrompt).build();
-        AtomicReference<Msg> ref = new AtomicReference<>();
-        AtomicReference<Throwable> err = new AtomicReference<>();
-        CountDownLatch latch = new CountDownLatch(1);
-        Disposable d = agent.call(List.of(userMsg), cls)
-                .subscribeOn(Schedulers.boundedElastic())
-                .subscribe(ref::set, e -> { err.set(e); latch.countDown(); }, latch::countDown);
-        try {
-            if (!latch.await(Math.max(1, timeoutSec), TimeUnit.SECONDS)) {
-                d.dispose();
-                throw new RuntimeException("critic 判定超时（" + timeoutSec + "s）");
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            d.dispose();
-            throw new RuntimeException("critic 判定被中断", e);
-        }
-        if (err.get() != null) {
-            Throwable t = err.get();
-            throw (t instanceof RuntimeException re) ? re : new RuntimeException(t);
-        }
-        return ref.get();
-    }
-
-    private static SddDrafts.CriticVerdictDraft extract(Msg msg) {
-        if (msg == null || msg.getMetadata() == null) return null;
-        Object raw = msg.getMetadata().get("_structured_output");
-        if (raw == null) return null;
-        try {
-            return JsonSchemaUtils.convertToObject(raw, SddDrafts.CriticVerdictDraft.class);
-        } catch (Exception e) {
-            return null;
         }
     }
 

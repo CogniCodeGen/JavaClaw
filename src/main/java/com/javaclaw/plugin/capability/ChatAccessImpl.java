@@ -18,10 +18,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * CHAT 能力实现 —— 背靠 {@link ScheduledTaskAgent}（与交互聊天<b>完全隔离</b>的非交互编排器，
  * 每轮独立上下文与记忆），为插件提供一轮 AI 对话。
  *
- * <p>每个插件独占一个本实例与一个 {@link ScheduledTaskAgent}（懒建：仅当插件确实调用 CHAT 时才创建，
- * 避免未用 CHAT 的插件白白构建昂贵编排器）。{@code ScheduledTaskAgent.run} 复用单一 toolkit/子智能体、
- * 阻塞且需串行，故 {@link #ask}/{@link #stream} 经实例锁串行化——插件从多个后台虚拟线程并发发起对话时
- * 自动排队，互不踩踏。</p>
+ * <p>每个插件独占一个本实例与一个 {@link ScheduledTaskAgent}（懒建：仅当插件确实调用 CHAT 时才创建）。
+ * {@code ScheduledTaskAgent.run} 阻塞且需串行，故 {@link #ask}/{@link #stream} 经实例锁串行化——插件
+ * 从多个后台虚拟线程并发发起对话时自动排队，互不踩踏。来源令牌按 {@code plugin:<id>} 逐 run 绑定：
+ * 该 id 永不出现在定时任务授权窗里，插件对话的高风险工具确认永远走逐次人工（保守语义）。</p>
  *
  * @author JavaClaw
  */
@@ -49,7 +49,9 @@ public final class ChatAccessImpl implements ChatAccess {
 
         synchronized (lock) {
             log.debug("插件[{}]发起同步对话，prompt 长度={}", pluginId, prompt == null ? 0 : prompt.length());
-            agent().run(prompt, new ConversationCallbacks() {
+            // 插件路径不开授权窗：逐次构造的令牌只承载归属标识，永远走常规确认
+            agent().run(com.javaclaw.agent.ToolCallOrigin.scheduled("plugin:" + pluginId),
+                    prompt, new ConversationCallbacks() {
                 @Override
                 public void onEvent(ConversationEvent event) {
                     if (event instanceof ConversationEvent.Reply r) {
@@ -82,7 +84,8 @@ public final class ChatAccessImpl implements ChatAccess {
         CapabilityGuard.require(Capability.CHAT);
         synchronized (lock) {
             log.debug("插件[{}]发起流式对话", pluginId);
-            agent().run(prompt, new ConversationCallbacks() {
+            agent().run(com.javaclaw.agent.ToolCallOrigin.scheduled("plugin:" + pluginId),
+                    prompt, new ConversationCallbacks() {
                 @Override
                 public void onEvent(ConversationEvent event) {
                     if (event instanceof ConversationEvent.Reply r) {

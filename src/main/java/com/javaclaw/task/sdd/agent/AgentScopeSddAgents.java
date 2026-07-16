@@ -3,7 +3,7 @@ package com.javaclaw.task.sdd.agent;
 import com.javaclaw.agent.hook.LoopDetectionHook;
 import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.agent.model.ModelTier;
-import com.javaclaw.config.AgentConfig;
+import com.javaclaw.agent.model.StructuredCalls;
 import com.javaclaw.prompt.SddPrompts;
 import com.javaclaw.skill.SkillManager;
 import com.javaclaw.task.TaskTokenHook;
@@ -12,7 +12,6 @@ import com.javaclaw.task.sdd.SddAgents;
 import com.javaclaw.task.sdd.SddTokenSink;
 import com.javaclaw.task.sdd.SddWorkNotes;
 import com.javaclaw.task.sdd.TaskContext;
-import io.agentscope.core.memory.autocontext.AutoContextConfig;
 import io.agentscope.core.memory.autocontext.AutoContextMemory;
 import com.javaclaw.task.sdd.spec.Capability;
 import com.javaclaw.task.sdd.spec.Criterion;
@@ -23,22 +22,15 @@ import com.javaclaw.task.sdd.spec.Scenario;
 import com.javaclaw.task.sdd.spec.TaskItem;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.message.Msg;
-import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.tool.Toolkit;
-import io.agentscope.core.util.JsonSchemaUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import reactor.core.Disposable;
-import reactor.core.scheduler.Schedulers;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
@@ -51,7 +43,7 @@ import java.util.stream.Collectors;
  * {@code _structured_output} 再映射为领域记录；实现阶段（executeTask）用带能力工具 + 只读自检工具
  * 的执行体跑出文本摘要，并识别懒拆解请求。</p>
  *
- * <p>所有调用同步阻塞（编排器在后台线程驱动），用 CountDownLatch 收敛 reactive 流。</p>
+ * <p>所有调用同步阻塞（编排器在后台线程驱动），经 {@link StructuredCalls} 收敛 reactive 流。</p>
  *
  * @author JavaClaw
  */
@@ -90,14 +82,7 @@ public final class AgentScopeSddAgents implements SddAgents {
      * 每个 agent 须用独立实例（记忆有状态）。
      */
     private AutoContextMemory buildMemory() {
-        AgentConfig cfg = AgentConfig.getInstance();
-        AutoContextConfig mc = AutoContextConfig.builder()
-                .maxToken(cfg.getMemoryMaxToken())
-                .msgThreshold(cfg.getMemoryMsgThreshold())
-                .lastKeep(cfg.getMemoryLastKeep())
-                .tokenRatio(cfg.getMemoryTokenRatio())
-                .build();
-        return new AutoContextMemory(mc, modelFactory.createChatModel());
+        return modelFactory.defaultAutoContextMemory();
     }
 
     public AgentScopeSddAgents structuredTimeoutSec(long s) { this.structuredTimeoutSec = s; return this; }
@@ -356,60 +341,17 @@ public final class AgentScopeSddAgents implements SddAgents {
             "sys_mouse_scroll", "sys_key_type", "sys_key_press", "sys_key_combo",
             "sys_get_info", "sys_get_time");
 
-    /** 结构化调用：同步阻塞取 _structured_output 并转 POJO。 */
+    /** 结构化调用：同步阻塞取 _structured_output 并转 POJO（单一实现见 {@link StructuredCalls}）。 */
     private <T> T structured(ReActAgent agent, String userPrompt, Class<T> cls) {
-        Msg result = blockingCall(agent, userPrompt, cls, structuredTimeoutSec);
-        return extractStructuredOutput(result, cls);
+        Msg result = StructuredCalls.blockingCall(agent, userPrompt, cls,
+                structuredTimeoutSec, "智能体调用");
+        return StructuredCalls.extractStructured(result, cls);
     }
 
     /** 文本调用：同步阻塞取最终文本。 */
     private String textCall(ReActAgent agent, String userPrompt, long timeoutSec) {
-        Msg result = blockingCall(agent, userPrompt, null, timeoutSec);
+        Msg result = StructuredCalls.blockingCall(agent, userPrompt, null, timeoutSec, "智能体调用");
         return extractTextResult(result);
-    }
-
-    /** 统一的阻塞订阅：cls 非空走结构化 call，否则走普通 call。失败/超时抛 RuntimeException。 */
-    private Msg blockingCall(ReActAgent agent, String userPrompt, Class<?> cls, long timeoutSec) {
-        Msg userMsg = Msg.builder().role(MsgRole.USER).name("user").textContent(userPrompt).build();
-        AtomicReference<Msg> ref = new AtomicReference<>();
-        AtomicReference<Throwable> err = new AtomicReference<>();
-        CountDownLatch latch = new CountDownLatch(1);
-        var flux = (cls == null) ? agent.call(List.of(userMsg)) : agent.call(List.of(userMsg), cls);
-        Disposable d = flux.subscribeOn(Schedulers.boundedElastic())
-                .subscribe(ref::set, e -> { err.set(e); latch.countDown(); }, latch::countDown);
-        try {
-            if (!latch.await(Math.max(1, timeoutSec), TimeUnit.SECONDS)) {
-                d.dispose();
-                throw new RuntimeException("智能体调用超时（" + timeoutSec + "s）");
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            d.dispose();
-            throw new RuntimeException("智能体调用被中断", e);
-        }
-        if (err.get() != null) {
-            Throwable t = err.get();
-            throw (t instanceof RuntimeException re) ? re : new RuntimeException(t);
-        }
-        return ref.get();
-    }
-
-    private static <T> T extractStructuredOutput(Msg msg, Class<T> cls) {
-        if (msg == null || msg.getMetadata() == null) {
-            log.warn("[SDD] 结构化输出缺失（{}）", cls.getSimpleName());
-            return null;
-        }
-        Object raw = msg.getMetadata().get("_structured_output");
-        if (raw == null) {
-            log.warn("[SDD] metadata 无 _structured_output（{}）", cls.getSimpleName());
-            return null;
-        }
-        try {
-            return JsonSchemaUtils.convertToObject(raw, cls);
-        } catch (Exception e) {
-            log.warn("[SDD] 结构化输出解析失败（{}）：{}", cls.getSimpleName(), e.getMessage());
-            return null;
-        }
     }
 
     private static String extractTextResult(Msg msg) {

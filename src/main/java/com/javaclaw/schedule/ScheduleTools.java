@@ -1,5 +1,6 @@
 package com.javaclaw.schedule;
 
+import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import io.agentscope.core.tool.Tool;
@@ -22,6 +23,13 @@ import java.util.List;
 public final class ScheduleTools {
 
     private static final Logger log = LoggerFactory.getLogger(ScheduleTools.class);
+
+    /** 调用来源令牌（装配期绑定），高风险确认随调用传给 ToolConfirmationManager。 */
+    private final ToolCallOrigin origin;
+
+    public ScheduleTools(ToolCallOrigin origin) {
+        this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
+    }
 
     private ScheduleManager mgr() {
         return ScheduleManager.getInstance();
@@ -48,7 +56,7 @@ public final class ScheduleTools {
         if (!List.of("interval", "daily", "cron").contains(type)) {
             return ToolResponse.error("schedule_create", "triggerType 必须是 interval / daily / cron 之一");
         }
-        if (!ToolConfirmationManager.requestConfirmation("schedule_create",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "schedule_create",
                 "创建定时任务「" + nm + "」（" + type + "：" + val + "）：" + pr)) {
             return ToolResponse.error("schedule_create", "用户取消了创建");
         }

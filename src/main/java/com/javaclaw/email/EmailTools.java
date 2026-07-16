@@ -1,5 +1,6 @@
 package com.javaclaw.email;
 
+import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.config.EmailConfig;
@@ -26,6 +27,13 @@ import java.util.Properties;
 public class EmailTools {
 
     private static final Logger log = LoggerFactory.getLogger(EmailTools.class);
+
+    /** 调用来源令牌（装配期绑定），高风险确认随调用传给 ToolConfirmationManager。 */
+    private final ToolCallOrigin origin;
+
+    public EmailTools(ToolCallOrigin origin) {
+        this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
+    }
 
     /**
      * 获取 SMTP 发送会话
@@ -85,7 +93,7 @@ public class EmailTools {
             @ToolParam(name = "body", description = "邮件正文内容") String body,
             @ToolParam(name = "is_html", description = "是否为 HTML 格式，true 为 HTML，false 为纯文本") boolean isHtml) {
         log.debug("工具调用: email_send(to={}, subject={})", to, subject);
-        if (!ToolConfirmationManager.requestConfirmation("email_send",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "email_send",
                 "发送邮件给: " + to + "\n主题: " + subject)) {
             return ToolResponse.error("email_send", "用户取消了发送操作");
         }
@@ -122,7 +130,7 @@ public class EmailTools {
             @ToolParam(name = "body", description = "邮件正文内容") String body,
             @ToolParam(name = "is_html", description = "是否为 HTML 格式") boolean isHtml) {
         log.debug("工具调用: email_send_with_cc(to={}, cc={}, subject={})", to, cc, subject);
-        if (!ToolConfirmationManager.requestConfirmation("email_send_with_cc",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "email_send_with_cc",
                 "发送邮件给: " + to + (cc != null && !cc.isBlank() ? "\n抄送: " + cc : "") + "\n主题: " + subject)) {
             return ToolResponse.error("email_send_with_cc", "用户取消了发送操作");
         }
@@ -379,7 +387,7 @@ public class EmailTools {
             @ToolParam(name = "body", description = "回复正文内容") String body,
             @ToolParam(name = "reply_all", description = "是否回复全部（包括所有收件人和抄送人）") boolean replyAll) {
         log.debug("工具调用: email_reply(messageNumber={}, replyAll={})", messageNumber, replyAll);
-        if (!ToolConfirmationManager.requestConfirmation("email_reply",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "email_reply",
                 "回复邮件 #" + messageNumber + (replyAll ? "（回复全部）" : ""))) {
             return ToolResponse.error("email_reply", "用户取消了操作");
         }

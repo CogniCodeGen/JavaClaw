@@ -5919,3 +5919,43 @@
 
 /* 分隔线 */
 .md-hr { -fx-background-color: -jc-neutral-200; }
+
+/* ==================== 循环模式状态面板 ==================== */
+.loop-status-card {
+    -fx-background-color: -jc-surface-panel;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 10;
+    -fx-background-radius: 10;
+}
+.loop-status-title {
+    -fx-text-fill: -jc-text-title;
+    -fx-font-weight: bold;
+    -fx-font-size: 13px;
+}
+.loop-status-iter {
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 12px;
+}
+.loop-status-meta {
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 11px;
+}
+.loop-status-reason {
+    -fx-text-fill: -jc-text-body;
+    -fx-font-size: 12px;
+}
+/* 决策徽章：语义色跨主题固定（进行中/完成/停止） */
+.loop-badge {
+    -fx-padding: 2 10;
+    -fx-background-radius: 10;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+}
+.loop-badge-run  { -fx-background-color: -jc-primary-100; -fx-text-fill: -jc-primary-600; }
+.loop-badge-done { -fx-background-color: -jc-success-bg;  -fx-text-fill: -jc-success; }
+.loop-badge-stop { -fx-background-color: -jc-danger-bg;   -fx-text-fill: -jc-danger; }
+/* 准则进度条 */
+.loop-progress { -fx-pref-height: 8px; }
+.loop-progress > .track { -fx-background-color: -jc-surface-sunken; -fx-background-radius: 4; }
+.loop-progress > .bar   { -fx-background-color: -jc-accent-500; -fx-background-radius: 4; -fx-padding: 0; }

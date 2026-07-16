@@ -1,5 +1,6 @@
 package com.javaclaw.browser;
 
+import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.site.SiteCredential;
@@ -53,9 +54,13 @@ public class PlaywrightBrowserTools {
     private final PlaywrightBrowserManager browserManager;
     private final SnapshotManager snapshotManager;
 
-    public PlaywrightBrowserTools(PlaywrightBrowserManager browserManager) {
+    /** 调用来源令牌（装配期绑定），高风险确认随调用传给 ToolConfirmationManager。 */
+    private final ToolCallOrigin origin;
+
+    public PlaywrightBrowserTools(PlaywrightBrowserManager browserManager, ToolCallOrigin origin) {
         this.browserManager = browserManager;
         this.snapshotManager = new SnapshotManager();
+        this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
     }
 
     /**
@@ -75,7 +80,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_navigate", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_navigate", "导航到: " + url)) {
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_navigate", "导航到: " + url)) {
                 return ToolResponse.error("web_navigate", "用户取消了操作");
             }
 
@@ -137,7 +142,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("site_login_now", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("site_login_now",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "site_login_now",
                     "在当前页面 [" + page.url() + "] 用已登记凭据自动登录")) {
                 return ToolResponse.error("site_login_now", "用户取消了操作");
             }
@@ -205,7 +210,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("site_fill_password", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("site_fill_password",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "site_fill_password",
                     "填入已登记密码到: " + targetSelector)) {
                 return ToolResponse.error("site_fill_password", "用户取消了操作");
             }
@@ -241,7 +246,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("site_save_session", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("site_save_session",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "site_save_session",
                     "保存当前会话: " + page.url())) {
                 return ToolResponse.error("site_save_session", "用户取消了操作");
             }
@@ -269,7 +274,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("site_clear_session", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("site_clear_session",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "site_clear_session",
                     "清除站点会话: " + page.url())) {
                 return ToolResponse.error("site_clear_session", "用户取消了操作");
             }
@@ -387,7 +392,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_go_back", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_go_back", "浏览器后退到上一页")) {
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_go_back", "浏览器后退到上一页")) {
                 return ToolResponse.error("web_go_back", "用户取消了操作");
             }
 
@@ -405,7 +410,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_go_forward", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_go_forward", "浏览器前进到下一页")) {
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_go_forward", "浏览器前进到下一页")) {
                 return ToolResponse.error("web_go_forward", "用户取消了操作");
             }
 
@@ -423,7 +428,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_reload", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_reload", "刷新页面: " + page.url())) {
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_reload", "刷新页面: " + page.url())) {
                 return ToolResponse.error("web_reload", "用户取消了操作");
             }
 
@@ -526,7 +531,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_click", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_click", "点击元素: " + target)) {
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_click", "点击元素: " + target)) {
                 return ToolResponse.error("web_click", "用户取消了操作");
             }
 
@@ -550,7 +555,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_dblclick", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_dblclick", "双击元素: " + target)) {
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_dblclick", "双击元素: " + target)) {
                 return ToolResponse.error("web_dblclick", "用户取消了操作");
             }
 
@@ -574,7 +579,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_fill", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_fill",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_fill",
                     "在 " + target + " 中填充文本: " + text)) {
                 return ToolResponse.error("web_fill", "用户取消了操作");
             }
@@ -598,7 +603,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_type", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_type",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_type",
                     (target != null && !target.isBlank() ? "在 " + target + " 中" : "在焦点元素") + "键入: " + text)) {
                 return ToolResponse.error("web_type", "用户取消了操作");
             }
@@ -623,7 +628,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_hover", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_hover", "悬停元素: " + target)) {
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_hover", "悬停元素: " + target)) {
                 return ToolResponse.error("web_hover", "用户取消了操作");
             }
 
@@ -645,7 +650,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_select", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_select",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_select",
                     "下拉选择 " + target + " = " + value)) {
                 return ToolResponse.error("web_select", "用户取消了操作");
             }
@@ -677,7 +682,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_check", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_check",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_check",
                     (checked ? "勾选" : "取消勾选") + "复选框: " + target)) {
                 return ToolResponse.error("web_check", "用户取消了操作");
             }
@@ -700,7 +705,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_focus", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_focus", "聚焦元素: " + target)) {
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_focus", "聚焦元素: " + target)) {
                 return ToolResponse.error("web_focus", "用户取消了操作");
             }
 
@@ -722,7 +727,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_upload", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_upload",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_upload",
                     "上传文件 " + filePath + " 到 " + target)) {
                 return ToolResponse.error("web_upload", "用户取消了操作");
             }
@@ -745,7 +750,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_drag", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_drag",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_drag",
                     "拖拽 " + source + " 到 " + targetElement)) {
                 return ToolResponse.error("web_drag", "用户取消了操作");
             }
@@ -773,7 +778,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_press_key", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_press_key", "按下按键: " + key)) {
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_press_key", "按下按键: " + key)) {
                 return ToolResponse.error("web_press_key", "用户取消了操作");
             }
 
@@ -796,7 +801,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_scroll", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_scroll",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_scroll",
                     "向" + direction + "滚动 " + (amount <= 0 ? 500 : amount) + " 像素")) {
                 return ToolResponse.error("web_scroll", "用户取消了操作");
             }
@@ -839,7 +844,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_scroll_to_element", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_scroll_to_element",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_scroll_to_element",
                     "滚动到元素: " + target)) {
                 return ToolResponse.error("web_scroll_to_element", "用户取消了操作");
             }
@@ -1131,7 +1136,7 @@ public class PlaywrightBrowserTools {
             @ToolParam(name = "url", description = "初始 URL，传空字符串打开空白页") String url) {
         log.debug("工具调用: web_tab_new({})", url);
         try {
-            if (!ToolConfirmationManager.requestConfirmation("web_tab_new",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_tab_new",
                     "新建浏览器 Tab" + (url != null && !url.isBlank() ? ": " + url : ""))) {
                 return ToolResponse.error("web_tab_new", "用户取消了操作");
             }
@@ -1161,7 +1166,7 @@ public class PlaywrightBrowserTools {
             @ToolParam(name = "index", description = "Tab 索引，-1 表示关闭当前 Tab") int index) {
         log.debug("工具调用: web_tab_close({})", index);
         try {
-            if (!ToolConfirmationManager.requestConfirmation("web_tab_close",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_tab_close",
                     "关闭浏览器 Tab " + (index == -1 ? "(当前)" : "索引 " + index))) {
                 return ToolResponse.error("web_tab_close", "用户取消了操作");
             }
@@ -1182,7 +1187,7 @@ public class PlaywrightBrowserTools {
             @ToolParam(name = "index", description = "目标 Tab 索引") int index) {
         log.debug("工具调用: web_tab_switch({})", index);
         try {
-            if (!ToolConfirmationManager.requestConfirmation("web_tab_switch",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_tab_switch",
                     "切换到浏览器 Tab 索引 " + index)) {
                 return ToolResponse.error("web_tab_switch", "用户取消了操作");
             }
@@ -1208,7 +1213,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_eval_js", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_eval_js",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_eval_js",
                     "执行 JS: " + (script != null && script.length() > 120 ? script.substring(0, 120) + "..." : script))) {
                 return ToolResponse.error("web_eval_js", "用户取消了操作");
             }
@@ -1266,7 +1271,7 @@ public class PlaywrightBrowserTools {
             @ToolParam(name = "path", description = "Cookie 路径，默认 /") String path) {
         log.debug("工具调用: web_cookie_set({}, {}, {})", name, domain, path);
         try {
-            if (!ToolConfirmationManager.requestConfirmation("web_cookie_set",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_cookie_set",
                     String.format("设置 Cookie %s=%s (domain=%s)", name, value, domain))) {
                 return ToolResponse.error("web_cookie_set", "用户取消了操作");
             }
@@ -1285,7 +1290,7 @@ public class PlaywrightBrowserTools {
     public String cookieClear() {
         log.debug("工具调用: web_cookie_clear()");
         try {
-            if (!ToolConfirmationManager.requestConfirmation("web_cookie_clear",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_cookie_clear",
                     "清除所有浏览器 Cookie")) {
                 return ToolResponse.error("web_cookie_clear", "用户取消了操作");
             }
@@ -1304,7 +1309,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_save_pdf", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_save_pdf",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_save_pdf",
                     "保存当前页面为 PDF: " + page.url())) {
                 return ToolResponse.error("web_save_pdf", "用户取消了操作");
             }
@@ -1337,7 +1342,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_mouse_move", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_mouse_move",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_mouse_move",
                     String.format("鼠标移动到 (%d, %d)", x, y))) {
                 return ToolResponse.error("web_mouse_move", "用户取消了操作");
             }
@@ -1357,7 +1362,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_mouse_click_at", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_mouse_click_at",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_mouse_click_at",
                     String.format("鼠标在 (%d, %d) 处点击", x, y))) {
                 return ToolResponse.error("web_mouse_click_at", "用户取消了操作");
             }
@@ -1382,7 +1387,7 @@ public class PlaywrightBrowserTools {
         try {
             Page page = browserManager.getActivePage();
             if (page == null) return ToolResponse.error("web_dialog_handle", "浏览器未启动");
-            if (!ToolConfirmationManager.requestConfirmation("web_dialog_handle",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_dialog_handle",
                     "处理浏览器原生对话框: " + (accept ? "接受" : "拒绝")
                             + (promptText != null && !promptText.isEmpty() ? "（输入：" + promptText + "）" : ""))) {
                 return ToolResponse.error("web_dialog_handle", "用户取消了操作");
@@ -1418,7 +1423,7 @@ public class PlaywrightBrowserTools {
             @ToolParam(name = "height", description = "视口高度（像素）") int height) {
         log.debug("工具调用: web_set_viewport({}, {})", width, height);
         try {
-            if (!ToolConfirmationManager.requestConfirmation("web_set_viewport",
+            if (!ToolConfirmationManager.requestConfirmation(origin, "web_set_viewport",
                     String.format("设置浏览器视口为 %dx%d", width, height))) {
                 return ToolResponse.error("web_set_viewport", "用户取消了操作");
             }

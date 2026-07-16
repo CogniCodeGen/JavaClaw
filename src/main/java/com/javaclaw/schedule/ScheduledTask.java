@@ -82,6 +82,14 @@ public class ScheduledTask {
     /** 通知渠道 key（none/all/dingtalk/wechat/feishu/email/custom） */
     private String notifyChannel;
 
+    /**
+     * 无人值守高风险工具授权：用户对本定时任务<b>显式授权</b>后，其无人值守执行期间遇到
+     * CONFIRM/DOUBLE_CONFIRM 级工具（如 jshell_exec）自动放行，不再弹确认（弹了也无人应答、
+     * 只会超时按拒绝而静默失败）。默认 false——保持"定时任务不能无人值守跑高风险工具"的安全默认，
+     * 只有用户逐任务打开此开关才放行。必须是<b>人</b>的动作（UI 开关），agent 不能自授权。
+     */
+    private boolean unattendedToolsAuthorized;
+
     /** 执行历史记录（旧：纯文本字符串，保留向后兼容） */
     private List<String> executionHistory;
 
@@ -279,6 +287,9 @@ public class ScheduledTask {
 
     public boolean isNotifyEnabled() { return notifyEnabled; }
     public void setNotifyEnabled(boolean notifyEnabled) { this.notifyEnabled = notifyEnabled; }
+
+    public boolean isUnattendedToolsAuthorized() { return unattendedToolsAuthorized; }
+    public void setUnattendedToolsAuthorized(boolean v) { this.unattendedToolsAuthorized = v; }
 
     public String getNotifyChannel() { return notifyChannel; }
     public void setNotifyChannel(String notifyChannel) { this.notifyChannel = notifyChannel; }

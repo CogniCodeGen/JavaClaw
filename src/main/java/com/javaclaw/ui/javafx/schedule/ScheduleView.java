@@ -59,6 +59,7 @@ public class ScheduleView {
     private TextField cronField;
     private Label cronParseHint;
     private ToggleSwitch notifyToggle;
+    private ToggleSwitch authorizeToggle;
     private ComboBox<String> channelCombo;
 
     // ---- 头部状态卡可刷新引用 ----
@@ -339,6 +340,8 @@ public class ScheduleView {
                 new Separator(),
                 buildNotifySection(task),
                 new Separator(),
+                buildAuthorizationSection(task),
+                new Separator(),
                 buildHistorySection(task),
                 buildDeleteRow());
 
@@ -584,6 +587,31 @@ public class ScheduleView {
         return new VBox(6, gt, row);
     }
 
+    /** 无人值守安全授权：允许本定时任务在无人值守时自动放行高风险工具确认。 */
+    private VBox buildAuthorizationSection(ScheduledTask task) {
+        Label gt = new Label("无人值守授权");
+        gt.getStyleClass().add("grp-title");
+
+        Label main = new Label("允许无人值守执行高风险工具");
+        main.getStyleClass().add("jc-stat-value");
+        Label sub = new Label("开启后，本任务定时执行时遇到 jshell、命令执行等高风险确认将自动放行"
+                + "（无人值守下确认弹窗无人应答，只会超时按拒绝、任务静默失败）。仅对本任务生效，请仅在信任其提示词时开启。"
+                + "注意：工具审核模式为「手动」时本授权失效（手动审核承诺每次操作都由用户确认，"
+                + "不吃任何自动放行），无人值守执行仍会因弹窗超时而失败。");
+        sub.getStyleClass().add("sec-hint");
+        sub.setWrapText(true);
+        VBox texts = new VBox(2, main, sub);
+        HBox.setHgrow(texts, Priority.ALWAYS);
+
+        authorizeToggle = new ToggleSwitch(task.isUnattendedToolsAuthorized());
+
+        HBox row = new HBox(12, texts, authorizeToggle);
+        row.setAlignment(Pos.CENTER_LEFT);
+        row.getStyleClass().add("jc-card-sunken");
+        row.setPadding(new Insets(10, 12, 10, 12));
+        return new VBox(6, gt, row);
+    }
+
     /** 运行历史表。 */
     private VBox buildHistorySection(ScheduledTask task) {
         Label gt = new Label("运行历史");
@@ -764,6 +792,9 @@ public class ScheduleView {
             t.setNotifyEnabled(notifyToggle.isSelected());
             t.setNotifyChannel(channelCombo != null
                     ? TaskNotificationChannel.fromLabel(channelCombo.getValue()) : "none");
+        }
+        if (authorizeToggle != null) {
+            t.setUnattendedToolsAuthorized(authorizeToggle.isSelected());
         }
     }
 

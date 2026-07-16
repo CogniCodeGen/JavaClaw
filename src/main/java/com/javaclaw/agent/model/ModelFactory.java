@@ -3,6 +3,8 @@ package com.javaclaw.agent.model;
 import com.javaclaw.config.AgentConfig;
 import io.agentscope.core.embedding.EmbeddingModel;
 import io.agentscope.core.embedding.openai.OpenAITextEmbedding;
+import io.agentscope.core.memory.autocontext.AutoContextConfig;
+import io.agentscope.core.memory.autocontext.AutoContextMemory;
 import io.agentscope.core.formatter.anthropic.AnthropicMultiAgentFormatter;
 import io.agentscope.core.formatter.dashscope.DashScopeMultiAgentFormatter;
 import io.agentscope.core.formatter.gemini.GeminiMultiAgentFormatter;
@@ -155,6 +157,26 @@ public class ModelFactory {
      */
     public ChatModelBase createChatModel() {
         return createModel(normalSpec, false);
+    }
+
+    /**
+     * 构建一份默认工作记忆（{@link AutoContextMemory}）：从 {@link AgentConfig} 的记忆配置派生
+     * 上下文压缩策略，摘要模型用 NORMAL 档 {@link #createChatModel()}。
+     *
+     * <p>隔离型编排路径（定时任务 / 循环执行体 / SDD 各阶段 / 验收员 / 进展仲裁）每次各建一份
+     * 互不串记忆——此前这段 config→memory 构造在 5 处逐字重复，记忆策略一变（新增
+     * {@code AutoContextConfig} 字段或换摘要模型）就得五处齐改、漏一处即留旧行为。集中在此
+     * 单点收口。</p>
+     */
+    public AutoContextMemory defaultAutoContextMemory() {
+        AgentConfig cfg = AgentConfig.getInstance();
+        AutoContextConfig mc = AutoContextConfig.builder()
+                .maxToken(cfg.getMemoryMaxToken())
+                .msgThreshold(cfg.getMemoryMsgThreshold())
+                .lastKeep(cfg.getMemoryLastKeep())
+                .tokenRatio(cfg.getMemoryTokenRatio())
+                .build();
+        return new AutoContextMemory(mc, createChatModel());
     }
 
     /**

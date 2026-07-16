@@ -203,7 +203,7 @@ public class ScheduleManager {
                        interval_unit, daily_time, cron_expression, once_date_time, prompt,
                        enabled, last_run_time, last_run_status, last_duration, run_count,
                        fail_count, notify_enabled, notify_channel, execution_history_json,
-                       exec_records_json
+                       exec_records_json, unattended_authorized
                 FROM scheduled_tasks
                 WHERE workspace_id = ?
                 ORDER BY name, id
@@ -235,6 +235,7 @@ public class ScheduleManager {
                     task.setNotifyChannel(rs.getString("notify_channel"));
                     task.setExecutionHistory(readStringList(rs.getString("execution_history_json")));
                     task.setExecRecords(readExecRecords(rs.getString("exec_records_json")));
+                    task.setUnattendedToolsAuthorized(rs.getBoolean("unattended_authorized"));
                     tasks.add(task);
                 }
             }
@@ -252,9 +253,9 @@ public class ScheduleManager {
                     interval_unit, daily_time, cron_expression, once_date_time, prompt,
                     enabled, last_run_time, last_run_status, last_duration, run_count,
                     fail_count, notify_enabled, notify_channel, execution_history_json,
-                    exec_records_json, updated_at
+                    exec_records_json, unattended_authorized, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """;
         try (Connection c = AppDatabase.getConnection();
              PreparedStatement del = c.prepareStatement("DELETE FROM scheduled_tasks WHERE workspace_id = ?");
@@ -286,6 +287,7 @@ public class ScheduleManager {
                 ps.setString(20, task.getNotifyChannel());
                 ps.setString(21, objectMapper.writeValueAsString(task.getExecutionHistory()));
                 ps.setString(22, objectMapper.writeValueAsString(task.getExecRecords()));
+                ps.setBoolean(23, task.isUnattendedToolsAuthorized());
                 ps.addBatch();
             }
             ps.executeBatch();
@@ -721,7 +723,16 @@ public class ScheduleManager {
                 + "再调用 schedule_disable 工具并传入 id=" + task.getId() + " 停止本定时任务，避免继续轮询。\n\n"
                 + prompt;
 
-        agent.run(contextualPrompt, new ConversationCallbacks() {
+        // 显式授权：本任务打开授权开关后，其无人值守执行期内本次 run 令牌的高风险工具确认自动放行。
+        // run 阻塞返回后于下方 finally 清除，串行执行器保证不会与其它定时任务的授权期交叠。
+        // 归属安全：beginAuthorizedScheduledRun 构造本次 run 专属的令牌实例并同时充当授权窗匹配键，
+        // agent.run 用同一实例装配全部工具——确认层按实例身份（==）匹配，上一次执行超时残存的
+        // 僵尸线程携带旧 run 的令牌实例（即便同一任务的下个 tick，taskId 相同也对不上），
+        // 结构上不可能借放行（旧的时长冷却期猜测机制已随之移除）。
+        com.javaclaw.agent.ToolCallOrigin runOrigin =
+                com.javaclaw.agent.ToolConfirmationManager.beginAuthorizedScheduledRun(
+                        task.getId(), task.isUnattendedToolsAuthorized());
+        agent.run(runOrigin, contextualPrompt, new ConversationCallbacks() {
             @Override
             public void onEvent(ConversationEvent event) {
                 switch (event) {
@@ -781,6 +792,7 @@ public class ScheduleManager {
             }
         });
         } finally {
+            com.javaclaw.agent.ToolConfirmationManager.endScheduledRun(); // 清除本次定时执行的授权标记
             runningTaskIds.remove(task.getId());
             // 一次性任务跑完即自动停用（取消 Quartz job + 持久化），避免残留
             if ("once".equals(task.getTriggerType()) && task.isEnabled()) {
@@ -811,7 +823,8 @@ public class ScheduleManager {
             String title = "定时任务「" + task.getName() + "」" + (success ? "执行完成" : "执行失败");
             String body = (success ? "✅ " : "⚠️ ") + title + "\n"
                     + (detail == null || detail.isBlank() ? "" : detail);
-            String r = new com.javaclaw.notification.NotificationTools().sendByChannel(channel, title, body);
+            String r = new com.javaclaw.notification.NotificationTools(
+                    com.javaclaw.agent.ToolCallOrigin.SCHEDULED).sendByChannel(channel, title, body);
             taskLog.info("[{}] 完成通知（{}）: {}", task.getName(), channel, r);
         } catch (Exception e) {
             log.warn("定时任务完成通知发送失败: {}", task.getName(), e);

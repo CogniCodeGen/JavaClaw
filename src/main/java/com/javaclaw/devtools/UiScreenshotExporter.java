@@ -109,7 +109,7 @@ public final class UiScreenshotExporter {
             SddTaskManager.getInstance().configure(
                     DataManager.getInstance().getDataRoot(),
                     runtime.getModelFactory(),
-                    runtime.getCapabilityTools(),
+                    runtime::buildCapabilityTools,
                     SkillManager.getInstance(),
                     port);
 

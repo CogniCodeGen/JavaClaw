@@ -1,5 +1,7 @@
 package com.javaclaw.skill;
 
+import com.javaclaw.agent.ToolCallOrigin;
+import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.config.AgentConfig;
 import io.agentscope.core.tool.Tool;
@@ -32,6 +34,22 @@ import java.util.List;
 public final class SkillManageTools {
 
     private static final Logger log = LoggerFactory.getLogger(SkillManageTools.class);
+
+    /** 调用来源令牌（装配期绑定），直接落盘前的风险确认随调用传给 ToolConfirmationManager。 */
+    private final ToolCallOrigin origin;
+
+    public SkillManageTools(ToolCallOrigin origin) {
+        this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
+    }
+
+    /**
+     * 直接落盘前的风险确认：等级由 ToolRiskRegistry 决定（写入类 NOTIFY 仅 Toast、
+     * 删除类 CONFIRM 弹窗）。只拦「直接落盘」分支——提案分支本身零副作用，
+     * 采纳时由用户在技能中心逐条审阅，无需此处再确认。
+     */
+    private boolean confirmApply(String toolName, String description) {
+        return ToolConfirmationManager.requestConfirmation(origin, toolName, description);
+    }
 
     /**
      * 提案接收器：suggest 模式（及 auto 模式下的 user-modified 保护降级）时，
@@ -93,6 +111,9 @@ public final class SkillManageTools {
             return propose("skill_create", req);
         }
 
+        if (!confirmApply("skill_create", "创建技能「" + skillName + "」")) {
+            return ToolResponse.error("skill_create", "用户拒绝创建该技能。");
+        }
         Skill skill = SkillManager.getInstance().createAgentSkill(
                 skillName, safe(description), content, safe(category), splitTags(tags));
         if (skill == null) {
@@ -133,6 +154,9 @@ public final class SkillManageTools {
             return propose("skill_patch", req);
         }
 
+        if (!confirmApply("skill_patch", "修补技能「" + skill.getName() + "」")) {
+            return ToolResponse.error("skill_patch", "用户拒绝修补该技能。");
+        }
         String error = SkillManager.getInstance().applyPatch(skill.getName(), oldString, newString);
         if (error != null) {
             return ToolResponse.error("skill_patch", error + "。");
@@ -169,6 +193,9 @@ public final class SkillManageTools {
             return propose("skill_edit", req);
         }
 
+        if (!confirmApply("skill_edit", "重写技能「" + skill.getName() + "」正文")) {
+            return ToolResponse.error("skill_edit", "用户拒绝重写该技能。");
+        }
         String error = SkillManager.getInstance().applyEdit(skill.getName(), newContent);
         if (error != null) {
             return ToolResponse.error("skill_edit", error + "。");
@@ -203,6 +230,10 @@ public final class SkillManageTools {
             return propose("skill_delete", req);
         }
 
+        if (!confirmApply("skill_delete",
+                "删除技能「" + skill.getName() + "」（整个目录含版本历史，不可恢复）")) {
+            return ToolResponse.error("skill_delete", "用户拒绝删除该技能。");
+        }
         SkillManager.getInstance().deleteSkill(skill.getId());
         return ToolResponse.success("skill_delete", "已删除技能「" + skill.getName() + "」。");
     }
@@ -234,6 +265,10 @@ public final class SkillManageTools {
             return propose("skill_write_file", req);
         }
 
+        if (!confirmApply("skill_write_file",
+                "向技能「" + skill.getName() + "」写入支持文件 " + relPath)) {
+            return ToolResponse.error("skill_write_file", "用户拒绝写入该文件。");
+        }
         String error = SkillManager.getInstance().writeSupportFile(skill.getName(), relPath, fileContent);
         if (error != null) {
             return ToolResponse.error("skill_write_file", error + "。");
@@ -266,6 +301,10 @@ public final class SkillManageTools {
             return propose("skill_remove_file", req);
         }
 
+        if (!confirmApply("skill_remove_file",
+                "删除技能「" + skill.getName() + "」的支持文件 " + relPath)) {
+            return ToolResponse.error("skill_remove_file", "用户拒绝删除该文件。");
+        }
         String error = SkillManager.getInstance().removeSupportFile(skill.getName(), relPath);
         if (error != null) {
             return ToolResponse.error("skill_remove_file", error + "。");

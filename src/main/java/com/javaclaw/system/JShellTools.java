@@ -1,5 +1,7 @@
 package com.javaclaw.system;
 
+import com.javaclaw.agent.ToolCallOrigin;
+import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.skill.Skill;
@@ -37,6 +39,13 @@ public final class JShellTools {
 
     private static final Logger log = LoggerFactory.getLogger(JShellTools.class);
 
+    /** 调用来源令牌（装配期绑定），执行前确认随调用传给 ToolConfirmationManager。 */
+    private final ToolCallOrigin origin;
+
+    public JShellTools(ToolCallOrigin origin) {
+        this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
+    }
+
     /** 超时硬上限（秒） */
     private static final int MAX_TIMEOUT_SECONDS = 600;
 
@@ -57,6 +66,16 @@ public final class JShellTools {
                     required = false) Integer timeoutSeconds) {
         if (code == null || code.isBlank()) {
             return ToolResponse.error("jshell_exec", "code 为空，请提供要求值的 Java 代码。");
+        }
+        // 执行前确认：任意 Java 片段在独立 JVM 中求值，能力等同任意命令执行；
+        // 风险等级（CONFIRM）登记在 ToolRiskRegistry，此处是它的执行闸门。
+        // 走高风险命令同款人工底线入口（AUTO 总闸不生效）：任意代码破坏力上不封顶，
+        // AUTO 若静默放行，cmd_execute 保留的人工底线会被 jshell 通道整体绕过
+        // （Runtime.exec 即可复现任意命令），无人工任意代码执行链重新打通
+        String preview = code.length() > 300 ? code.substring(0, 300) + "…" : code;
+        if (!ToolConfirmationManager.requestHighRiskCommandConfirmation(origin, "jshell_exec",
+                "执行 Java 代码片段：\n" + preview).isAllow()) {
+            return ToolResponse.error("jshell_exec", "用户拒绝执行该代码。");
         }
         return toResponse("jshell_exec",
                 JShellRunner.run(code, List.of(), resolveTimeout(timeoutSeconds)),
@@ -97,6 +116,16 @@ public final class JShellTools {
             code = Files.readString(scriptFile, StandardCharsets.UTF_8);
         } catch (Exception e) {
             return ToolResponse.error("jshell_run_script", "读取脚本失败：" + e.getMessage());
+        }
+
+        // 执行前确认：脚本可由智能体经 skill_write_file（NOTIFY 级）自行写入，执行端
+        // 若无确认闸门会形成无人工干预的任意代码执行链（见 CLAUDE.md 对本工具等级的约束）。
+        // 与 jshell_exec 同走人工底线入口（AUTO 总闸不生效）：否则 AUTO 下
+        // skill_write_file（NOTIFY 直放）写脚本 + 本工具静默放行 = 该链重新打通
+        if (!ToolConfirmationManager.requestHighRiskCommandConfirmation(origin, "jshell_run_script",
+                "运行技能脚本：" + skill.getName() + "/scripts/" + scriptFile.getFileName()
+                        + (args == null || args.isBlank() ? "" : "\n参数：" + args)).isAllow()) {
+            return ToolResponse.error("jshell_run_script", "用户拒绝运行该脚本。");
         }
 
         int timeout = resolveTimeout(timeoutSeconds);

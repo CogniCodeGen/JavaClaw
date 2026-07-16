@@ -1,6 +1,7 @@
 package com.javaclaw.agent.hook;
 
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.util.TextSimilarity;
 import io.agentscope.core.hook.Hook;
 import io.agentscope.core.hook.HookEvent;
 import io.agentscope.core.hook.PostActingEvent;
@@ -162,7 +163,7 @@ public class LoopDetectionHook implements Hook {
         synchronized (historyLock) {
             if (!toolResultHistory.isEmpty()) {
                 String lastResult = toolResultHistory.get(toolResultHistory.size() - 1);
-                double similarity = computeSimilarity(lastResult, normalized);
+                double similarity = TextSimilarity.bigramJaccard(lastResult, normalized);
 
                 if (similarity >= similarityThreshold) {
                     repeatsAfterUpdate = consecutiveRepeats.incrementAndGet();
@@ -300,53 +301,6 @@ public class LoopDetectionHook implements Hook {
             }
         }
         return sb.toString();
-    }
-
-    /**
-     * 计算两个字符串的相似度（基于 bigram Jaccard 系数）
-     *
-     * <p>将字符串拆分为连续的双字符组（bigram），计算两个集合的 Jaccard 系数。
-     * 相比逐位置字符匹配，该算法对内容偏移、插入/删除更鲁棒，
-     * 能更准确地检测内容实质相似的重复调用。</p>
-     *
-     * @return 相似度值 0.0~1.0
-     */
-    private double computeSimilarity(String a, String b) {
-        if (a.equals(b)) {
-            return 1.0;
-        }
-        if (a.isEmpty() || b.isEmpty()) {
-            return 0.0;
-        }
-        // 字符串太短时退化为精确比较
-        if (a.length() < 2 || b.length() < 2) {
-            return a.equals(b) ? 1.0 : 0.0;
-        }
-        // 构建 bigram 多重集合（使用 Map 记录频次）
-        Map<String, Integer> bigramsA = buildBigramMap(a);
-        Map<String, Integer> bigramsB = buildBigramMap(b);
-
-        // 计算交集和并集大小
-        int intersection = 0;
-        int union = 0;
-        Set<String> allBigrams = new java.util.HashSet<>(bigramsA.keySet());
-        allBigrams.addAll(bigramsB.keySet());
-        for (String bigram : allBigrams) {
-            int countA = bigramsA.getOrDefault(bigram, 0);
-            int countB = bigramsB.getOrDefault(bigram, 0);
-            intersection += Math.min(countA, countB);
-            union += Math.max(countA, countB);
-        }
-        return union == 0 ? 0.0 : (double) intersection / union;
-    }
-
-    private Map<String, Integer> buildBigramMap(String s) {
-        Map<String, Integer> map = new java.util.HashMap<>();
-        for (int i = 0; i < s.length() - 1; i++) {
-            String bigram = s.substring(i, i + 2);
-            map.merge(bigram, 1, Integer::sum);
-        }
-        return map;
     }
 
     /**

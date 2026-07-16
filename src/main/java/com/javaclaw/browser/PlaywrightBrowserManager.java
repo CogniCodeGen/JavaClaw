@@ -57,10 +57,25 @@ public class PlaywrightBrowserManager {
     /** 是否无头模式 */
     private final boolean headless;
 
+    /**
+     * 是否把浏览器会话状态（storageState/Cookie）写回 H2。默认 {@code true}。
+     *
+     * <p>置 {@code false} 时 {@link #saveCookies()} 变为空操作——用于与主浏览器<b>并行</b>运行的
+     * 隔离浏览器（如循环模式的独立实例）：它仍在启动时加载共享的登录态（继承会话），但退出时
+     * 不回写，避免其临时会话覆盖交互浏览器仍在使用的同一 {@code browser_state} 行（按工作区单行）。</p>
+     */
+    private final boolean persistCookies;
+
     public PlaywrightBrowserManager(boolean headless, Path browserDir, Path screenshotDir) {
+        this(headless, browserDir, screenshotDir, true);
+    }
+
+    public PlaywrightBrowserManager(boolean headless, Path browserDir, Path screenshotDir,
+                                    boolean persistCookies) {
         this.headless = headless;
         this.browserDir = browserDir;
         this.screenshotDir = screenshotDir;
+        this.persistCookies = persistCookies;
     }
 
     /**
@@ -260,6 +275,8 @@ public class PlaywrightBrowserManager {
      * 保存 Cookie 到磁盘
      */
     public synchronized void saveCookies() {
+        // 隔离浏览器（persistCookies=false）不回写共享会话行，避免覆盖交互浏览器仍在用的登录态
+        if (!persistCookies) return;
         if (context == null || browserDir == null || browser == null || !browser.isConnected()) return;
         try {
             List<Cookie> cookies = context.cookies();

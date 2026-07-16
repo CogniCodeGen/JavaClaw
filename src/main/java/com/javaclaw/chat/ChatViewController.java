@@ -197,6 +197,7 @@ public class ChatViewController {
 
     /** 规划模式开关状态 */
     private boolean planModeEnabled = false;
+    private boolean loopModeEnabled = false;
 
     /** 规划模式下当前正在流式填充的智能体 Markdown 气泡 */
     private MarkdownBubble activePlanAgentBubble;
@@ -219,6 +220,7 @@ public class ChatViewController {
     /** 模式切换分段控件 */
     private ToggleButton chatModeBtn;
     private ToggleButton planModeBtn;
+    private ToggleButton loopModeBtn;
 
     /** 知识库多选菜单按钮 */
     private MenuButton knowledgeMenu;
@@ -246,6 +248,21 @@ public class ChatViewController {
 
     /** 流式输出代次计数器（会话切换/删除时递增，使旧流回调失效） */
     private volatile int streamGeneration = 0;
+
+    /** 重建进行中再次触发重建时置位：收尾后补一轮，保证「后到的配置」不被静默丢弃。 */
+    private final java.util.concurrent.atomic.AtomicBoolean rebuildQueued =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /**
+     * 服务重建进行中标志：重建改为后台线程异步执行后，UI 事件可能落在
+     * shutdown→重建→rewireModeRegistry 的窗口内。两重职责：
+     * ① stopActiveStream 在置位期间直接忽略——否则会对正在关闭的服务调 cancelStream
+     * 并提前 setInputEnabled(true) 解锁输入，用户此刻发消息会打到半重建的服务上；
+     * ② rebuildAgentService 入口 CAS 抢占——setInputEnabled 锁不住设置对话框的保存按钮，
+     * 连续两次保存会起两个并发重建线程互相 shutdown 对方刚建好的服务。
+     */
+    private final java.util.concurrent.atomic.AtomicBoolean rebuildInProgress =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
 
     /** 正在流式生成回复的会话（可能不是当前展示的会话；null = 无活跃流） */
     private ChatSession streamingSession;
@@ -353,14 +370,30 @@ public class ChatViewController {
         planModeBtn.setToggleGroup(modeGroup);
         planModeBtn.getStyleClass().add("jc-mode-chip");
 
-        // 防止取消选中；对话模式与规划模式互斥
+        loopModeBtn = new ToggleButton("循环");
+        loopModeBtn.setToggleGroup(modeGroup);
+        loopModeBtn.getStyleClass().add("jc-mode-chip");
+
+        // chips 的悬浮说明取自注册表里各 Mode 的 tooltip 元数据（单一来源，不在 UI 再手写一份；
+        // chip 文本保持设计稿的短标签）。完全按 listByPlacement(TOP_SEGMENT) 动态渲染需先把
+        // planModeEnabled/loopModeEnabled 双布尔收敛为单一选中态，暂未收敛——新增会话模式时
+        // 除注册 Mode 外仍需在此处接一个 chip，路由判定则已收敛到 conversationTargetId 单点
+        modeRegistry.getById("chat").ifPresent(m -> chatModeBtn.setTooltip(new Tooltip(m.tooltip())));
+        modeRegistry.getById("plan").ifPresent(m -> planModeBtn.setTooltip(new Tooltip(m.tooltip())));
+        modeRegistry.getById("loop").ifPresent(m -> loopModeBtn.setTooltip(new Tooltip(m.tooltip())));
+
+        // 防止取消选中；对话 / 规划 / 循环三种会话模式互斥
         chatModeBtn.setOnAction(e -> {
             if (!chatModeBtn.isSelected()) chatModeBtn.setSelected(true);
-            else { planModeEnabled = false; log.info("切换到对话模式"); }
+            else { planModeEnabled = false; loopModeEnabled = false; log.info("切换到对话模式"); }
         });
         planModeBtn.setOnAction(e -> {
             if (!planModeBtn.isSelected()) planModeBtn.setSelected(true);
-            else { planModeEnabled = true; log.info("切换到规划模式"); }
+            else { planModeEnabled = true; loopModeEnabled = false; log.info("切换到规划模式"); }
+        });
+        loopModeBtn.setOnAction(e -> {
+            if (!loopModeBtn.isSelected()) loopModeBtn.setSelected(true);
+            else { loopModeEnabled = true; planModeEnabled = false; log.info("切换到循环模式"); }
         });
 
         // 托管任务 chip：非会话模式，点击直接打开任务视图（不改变对话/规划选中态）
@@ -634,7 +667,7 @@ public class ChatViewController {
         Region hintSpacer = new Region();
         HBox.setHgrow(hintSpacer, Priority.ALWAYS);
         // 模式 chips 置于提示行左侧（设计稿 composer-hints：对话/研讨/托管任务 + 右侧键位提示）
-        HBox modeChips = new HBox(6, chatModeBtn, planModeBtn, taskModeChip, reviewModeCombo);
+        HBox modeChips = new HBox(6, chatModeBtn, planModeBtn, loopModeBtn, taskModeChip, reviewModeCombo);
         modeChips.setAlignment(Pos.CENTER_LEFT);
         HBox shortcutHintRow = new HBox(8,
                 modeChips,
@@ -941,6 +974,21 @@ public class ChatViewController {
         // 复制附件列表用于发送（发送后清空预览）
         List<File> attachmentsToSend = new ArrayList<>(pendingAttachments);
 
+        // 附件能力闸门：目标模式声明不支持附件（如循环模式）时诚实拒发——
+        // 否则附件在用户气泡里看似已送达，模式却静默丢弃，模型对着看不见的内容空转
+        if (!attachmentsToSend.isEmpty()) {
+            String attachTargetId = conversationTargetId(forcePlanMode);
+            boolean supportsAttachments = modeRegistry.getById(attachTargetId)
+                    .map(m -> m.capabilities().supportsAttachments())
+                    .orElse(true);
+            if (!supportsAttachments) {
+                addStaticBubble(ChatMessage.Role.SYSTEM,
+                        "当前模式不支持附件：请移除附件后再发送，或切回对话模式处理附件内容");
+                com.javaclaw.app.UiMotion.error(inputField);
+                return;
+            }
+        }
+
         // 立即同步执行的轻量 UI 反馈：用户气泡入场景图、清输入框、禁用输入、思考指示器。
         // 这些 setter 不会自己触发渲染，仍要等当前事件处理器返回后下一次脉冲才能上屏。
         addUserBubbleWithAttachments(userText, attachmentsToSend);
@@ -968,8 +1016,7 @@ public class ChatViewController {
             createStreamingBubble();
 
             // 按当前选中模式（或 /plan 强制）从注册表取出对应的 ConversationMode。
-            // 未来扩展新对话模式只需实现 ConversationMode 并注册到 registry，这里无需改动。
-            String targetId = (usePlanMode || planModeEnabled) ? "plan" : "chat";
+            String targetId = conversationTargetId(usePlanMode);
             Mode mode = modeRegistry.getById(targetId).orElse(null);
             if (!(mode instanceof ConversationMode convMode)) {
                 log.error("模式 [{}] 未注册或不是对话模式", targetId);
@@ -980,6 +1027,20 @@ public class ChatViewController {
                     new ConversationRequest(requestText, attachmentsToSend),
                     buildConversationCallbacks(gen));
         });
+    }
+
+    /**
+     * 当前消息应路由到的会话模式 id（"plan" / "loop" / "chat"）。
+     *
+     * <p>附件能力闸门与发送路由必须共用同一判定——此前两处各写一份三元判断，
+     * 新增模式漏改一处就会出现「闸门按 A 模式校验、消息却发给 B 模式」的错位。</p>
+     *
+     * @param forcePlan 本条消息是否被 /研讨 斜杠命令强制走研讨模式
+     */
+    private String conversationTargetId(boolean forcePlan) {
+        if (forcePlan || planModeEnabled) return "plan";
+        if (loopModeEnabled) return "loop";
+        return "chat";
     }
 
     /**
@@ -1021,6 +1082,9 @@ public class ChatViewController {
                                 // 确保模型若仍残留事件也被新的 streamGeneration 拦掉。
                                 appendClarifyCard(cp.reason(), cp.question());
                                 stopActiveStream(false);
+                            } else if (com.javaclaw.loop.LoopConstants.EVENT_STATUS_KIND.equals(c.kind())
+                                    && c.payload() instanceof com.javaclaw.loop.model.LoopStatus ls) {
+                                updateLoopStatus(ls);
                             } else {
                                 log.debug("收到自定义事件 [{}] {}", c.kind(), c.payload());
                             }
@@ -1188,6 +1252,9 @@ public class ChatViewController {
      * </pre>
      */
     private void createStreamingBubble() {
+        // 新一轮发送：重置循环状态面板引用，使循环模式本次运行获得独立的状态卡
+        activeLoopStatusView = null;
+
         // ---- 助手头像（白底翡翠火花） ----
         Label avatar = new Label("✦");
         avatar.getStyleClass().add("msg-avatar-assistant");
@@ -2313,6 +2380,33 @@ public class ChatViewController {
         log.info("已渲染澄清卡片: reason='{}' question='{}'", reason, question);
     }
 
+    /** 当前循环运行的状态面板；每次新发送重置，一次循环内跨轮复用并原地刷新。 */
+    private com.javaclaw.ui.javafx.loop.LoopStatusView activeLoopStatusView;
+
+    /**
+     * 处理循环状态事件（{@code loop_status}）：首个事件建面板行，后续原地刷新。
+     */
+    private void updateLoopStatus(com.javaclaw.loop.model.LoopStatus status) {
+        if (activeLoopStatusView == null) {
+            activeLoopStatusView = new com.javaclaw.ui.javafx.loop.LoopStatusView();
+            Label avatar = new Label("🔁");
+            avatar.getStyleClass().add("msg-avatar-assistant");
+            HBox.setHgrow(activeLoopStatusView, Priority.ALWAYS);
+            HBox row = new HBox(10, avatar, activeLoopStatusView);
+            row.setAlignment(Pos.TOP_LEFT);
+            row.setPadding(new Insets(6, 12, 6, 12));
+            // 首个 loop_status 在第 1 轮结束才到（可能数分钟），期间用户可能已切走会话——
+            // 流所属会话的场景图此时挂起在 suspendedStreamingNodes，新建的状态卡必须
+            // 归入挂起集（切回时随场景图一并恢复），否则会被塞进当前展示的无关会话
+            if (streamingSession != null && streamingSession != currentSession) {
+                suspendedStreamingNodes.add(row);
+            } else {
+                messageList.getChildren().add(row);
+            }
+        }
+        activeLoopStatusView.update(status);
+    }
+
     /**
      * 添加一条静态消息气泡（设计稿：头像 + 姓名/时间头部 + 纯文本正文）
      */
@@ -2472,6 +2566,9 @@ public class ChatViewController {
      * 新建会话
      */
     private void onNewSession() {
+        if (rejectIfRebuilding("新建会话")) {
+            return;
+        }
         log.info("用户请求新建会话");
 
         final boolean streamRunning = streamingActive && streamingSession != null;
@@ -2529,6 +2626,9 @@ public class ChatViewController {
      */
     private void onSwitchSession(String targetSessionId) {
         if (currentSession != null && currentSession.getId().equals(targetSessionId)) {
+            return;
+        }
+        if (rejectIfRebuilding("切换会话")) {
             return;
         }
 
@@ -2653,6 +2753,9 @@ public class ChatViewController {
      * 删除指定会话
      */
     private void onDeleteSession(String sessionId) {
+        if (rejectIfRebuilding("删除会话")) {
+            return;
+        }
         log.info("用户请求删除会话: {}", sessionId);
 
         // 删除的是正在后台流式的会话：先停流并清理挂起节点
@@ -2666,10 +2769,11 @@ public class ChatViewController {
         chatHistoryManager.deleteSession(sessionId);
         chatService.deleteSession(sessionId);
 
-        // 如果删除的是当前会话，终止流式调用并切换到其他会话
+        // 如果删除的是当前会话，切换到其他会话。注意：属于被删会话的流/循环已在
+        // 方法开头停掉；其它会话仍在后台跑的流/循环（如另一会话里盯 CI 的 @loop）
+        // 不受当前会话删除影响，这里只兜底「流活跃但无归属会话」的异常状态
         if (currentSession != null && currentSession.getId().equals(sessionId)) {
-            stopActiveStream();
-            clearAllHistory();
+            stopAndClearForCurrentSessionDeleted();
 
             if (sessions.isEmpty()) {
                 // 没有剩余会话，创建新会话
@@ -2691,6 +2795,9 @@ public class ChatViewController {
      * 批量删除会话
      */
     private void onBatchDeleteSessions(java.util.List<String> sessionIds) {
+        if (rejectIfRebuilding("删除会话")) {
+            return;
+        }
         log.info("用户请求批量删除 {} 个会话", sessionIds.size());
 
         // 批量删除包含正在后台流式的会话：先停流并清理挂起节点
@@ -2708,8 +2815,7 @@ public class ChatViewController {
         }
 
         if (currentDeleted) {
-            stopActiveStream();
-            clearAllHistory();
+            stopAndClearForCurrentSessionDeleted();
 
             if (sessions.isEmpty()) {
                 onNewSession();
@@ -2814,7 +2920,7 @@ public class ChatViewController {
      * 清除所有活动 UI 引用
      */
     /**
-     * 终止当前活跃的流式调用（普通模式 + 规划模式），递增代次使旧回调失效，重置 UI 状态。
+     * 终止当前活跃的流式调用（普通模式 + 规划模式 + 循环模式），递增代次使旧回调失效，重置 UI 状态。
      * 用户主动按"停止"或 Esc 时调用：附带输入框抖动作为"已取消"的视觉反馈。
      */
     private void stopActiveStream() {
@@ -2826,9 +2932,18 @@ public class ChatViewController {
      *                           false=静默停止（如模型主动澄清中断，已经有醒目卡片，不需再抖）
      */
     private void stopActiveStream(boolean showCancelFeedback) {
+        if (rebuildInProgress.get()) {
+            log.info("服务重建进行中，忽略停止请求（重建收尾会自行恢复输入）");
+            return;
+        }
         streamGeneration++;
         chatService.cancelStream();
         planModeService.cancel();
+        // 循环的 CANCELLED 终态事件必然晚于本方法（异步回调），会被上面递增的代次拦掉——
+        // 真取消了循环就同步把状态卡定格为「已停止」，否则卡片永远停在「进行中/⏳ 等下一轮」
+        if (cancelLoopMode() && activeLoopStatusView != null) {
+            activeLoopStatusView.markCancelled();
+        }
         streamingSession = null;
         disposeSuspendedStreamingNodes();
         clearActiveReferences();
@@ -3256,63 +3371,166 @@ public class ChatViewController {
      * 再按顺序新建 runtime → chatService → planModeService；并把新的
      * ChatService 交给 ScheduleManager，把新 runtime 的模型工厂和能力工具
      * 交给 TaskManager。重建期间任何异常都会尝试再执行一次新建链路以恢复服务。</p>
+     *
+     * <p>重建在后台线程执行（与切工作区同范式）：停循环的 cancelAndAwait 最长等 5 秒、
+     * runtime 重建本身也是重活，放 FX 线程会整段冻结界面。期间禁用输入防止消息发到
+     * 半重建的服务上，收尾回 FX 线程恢复。</p>
      */
     private void rebuildAgentService() {
-        log.info("配置变更，重建三条路径服务");
-        try {
-            // 1. 关闭旧服务
-            chatService.shutdown();
-            planModeService.shutdown();
-            runtime.shutdown();
-            // 2. 按依赖顺序重建
-            runtime = new AgentRuntime(browserManager);
-            chatService = new ChatService(runtime);
-            planModeService = new PlanModeService(runtime);
-            chatService.setLoopInteractiveHandler(this::showLoopInteractionBubble);
-            // 3. 把 registry 中持有旧 service 引用的 Mode 壳替换为新实例
-            rewireModeRegistry();
-            // 4. 通知外部订阅方
-            com.javaclaw.schedule.ScheduleManager.getInstance().reload(
-                    new com.javaclaw.agent.ScheduledTaskAgent(runtime));
-            com.javaclaw.task.sdd.run.SddTaskManager.getInstance().reload(
-                    com.javaclaw.config.DataManager.getInstance().getDataRoot(),
-                    runtime.getModelFactory(), runtime.getCapabilityTools());
-            log.info("三条路径服务重建完成");
-        } catch (Exception e) {
-            log.error("重建服务失败，尝试恢复", e);
-            try {
-                runtime = new AgentRuntime(browserManager);
-                chatService = new ChatService(runtime);
-                planModeService = new PlanModeService(runtime);
-                chatService.setLoopInteractiveHandler(this::showLoopInteractionBubble);
-                rewireModeRegistry();
-                com.javaclaw.schedule.ScheduleManager.getInstance().reload(
-                    new com.javaclaw.agent.ScheduledTaskAgent(runtime));
-                com.javaclaw.task.sdd.run.SddTaskManager.getInstance().reload(
-                        com.javaclaw.config.DataManager.getInstance().getDataRoot(),
-                        runtime.getModelFactory(), runtime.getCapabilityTools());
-            } catch (Exception ex) {
-                log.error("恢复服务也失败", ex);
-            }
+        // 0. 先停活跃流/循环并使旧回调失效（stopActiveStream 内部递增代次）：必须在抢占
+        // 重建旗标之前——stopActiveStream 对重建期间的停止请求会忽略。不先停流的话，
+        // 后台线程 shutdown 掐断的流/循环终态回调仍持有效代次，会在重建窗口内
+        // setInputEnabled(true) 提前解锁输入、并对已关闭的 chatService 保存/加载会话
+        if (streamingActive) {
+            stopActiveStream(false);
         }
-        // 重建后清空知识库菜单和选中状态
-        knowledgeMenu.getItems().clear();
-        clearKnowledgeSelection();
-        // 重新绑定 TokenTracker 回调
-        wireTokenTracker();
+        // CAS 抢占：重建已在进行时忽略本次触发（如设置对话框连续两次保存），
+        // 两个重建线程并发跑 shutdown→重建会互相关掉对方刚建好的服务
+        if (!rebuildInProgress.compareAndSet(false, true)) {
+            // 在飞重建可能已越过构造点（配置在构造时读取），刚保存的新配置不会被它拾取——
+            // 排队补一轮而非静默丢弃，否则新 API Key 已持久化却永不生效且无任何提示
+            rebuildQueued.set(true);
+            log.info("服务重建已在进行中，本次触发已排队（收尾后自动补一轮以拾取最新配置）");
+            return;
+        }
+        log.info("配置变更，重建三条路径服务");
+        setInputEnabled(false);
+        Thread rebuildThread = new Thread(() -> {
+            try {
+                // 1. 关闭旧服务（先停循环并等它停稳：它在后台跑，晚于 runtime 关闭会踩到已释放的资源）
+                shutdownLoopMode();
+                chatService.shutdown();
+                planModeService.shutdown();
+                runtime.shutdown();
+                // 2. 按依赖顺序重建 + 重接线
+                rebuildOnce();
+                log.info("三条路径服务重建完成");
+            } catch (Exception e) {
+                log.error("重建服务失败，尝试恢复", e);
+                // 重试前先尽力关掉首次重建半建成的实例：首次 rebuildOnce 若在
+                // new ChatService 成功之后失败，新实例已持有本工作区 EclipseStore
+                // 记忆库的文件锁，不关就重试会在第二次 new ChatService 时撞锁必然失败。
+                // 各 shutdown 均幂等，字段仍指向已关旧实例时重复关闭无害
+                shutdownServicesQuietly();
+                try {
+                    rebuildOnce();
+                    log.info("服务恢复重建完成");
+                } catch (Exception ex) {
+                    log.error("恢复服务也失败", ex);
+                }
+            } finally {
+                // UI 收尾放 finally：Error（如 OOM / 类初始化失败）逃逸上方 catch 时旗标也必须
+                // 复位，否则 rejectIfRebuilding 永久拦截会话操作、输入框永久禁用，应用只能重启
+                Platform.runLater(() -> {
+                    try {
+                        // 知识库配置可能变化：直接按新 runtime 重建菜单（清空选中态后重建，
+                        // 而非只清空——关知识库中心的 onHidden 重建在异步重建期间被跳过，
+                        // 此处是它的唯一补偿点）
+                        clearKnowledgeSelection();
+                        rebuildKnowledgeMenu();
+                        wireTokenTracker();
+                    } finally {
+                        rebuildInProgress.set(false);
+                        setInputEnabled(true);
+                        // 重建期间又有配置保存被排队：补一轮拾取最新配置
+                        if (rebuildQueued.getAndSet(false)) {
+                            rebuildAgentService();
+                        }
+                    }
+                });
+            }
+        }, "agent-service-rebuild");
+        rebuildThread.setDaemon(true);
+        rebuildThread.start();
     }
 
     /**
-     * 重新把 ChatMode / PlanMode 壳注册到 {@link ModeRegistry}。
+     * 尽力关闭三条路径服务的当前实例（恢复重试前的清理，逐项隔离异常）。
+     *
+     * <p>专供 {@link #rebuildAgentService} 的失败恢复路径：首次重建半途失败后，字段可能
+     * 指向半建成的新实例（持有 EclipseStore 锁等资源）或已关闭的旧实例——各 shutdown
+     * 均幂等，统一补关一遍即可安全重试。</p>
+     */
+    private void shutdownServicesQuietly() {
+        try {
+            chatService.shutdown();
+        } catch (Exception e) {
+            log.warn("恢复前关闭 ChatService 异常: {}", e.getMessage());
+        }
+        try {
+            planModeService.shutdown();
+        } catch (Exception e) {
+            log.warn("恢复前关闭 PlanModeService 异常: {}", e.getMessage());
+        }
+        try {
+            runtime.shutdown();
+        } catch (Exception e) {
+            log.warn("恢复前关闭 AgentRuntime 异常: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 执行一遍完整的重建链：runtime → chatService → planModeService → 重接 Mode 壳 →
+     * 通知外部订阅方。首次重建与失败恢复共用此单一实现，避免两份拷贝漏改一处
+     * 重建出「半接线」的服务。
+     */
+    private void rebuildOnce() {
+        runtime = new AgentRuntime(browserManager);
+        chatService = new ChatService(runtime);
+        planModeService = new PlanModeService(runtime);
+        chatService.setLoopInteractiveHandler(this::showLoopInteractionBubble);
+        // 把 registry 中持有旧 service 引用的 Mode 壳替换为新实例
+        rewireModeRegistry();
+        // 通知外部订阅方
+        com.javaclaw.schedule.ScheduleManager.getInstance().reload(
+                new com.javaclaw.agent.ScheduledTaskAgent(runtime));
+        com.javaclaw.task.sdd.run.SddTaskManager.getInstance().reload(
+                com.javaclaw.config.DataManager.getInstance().getDataRoot(),
+                runtime.getModelFactory(), runtime::buildCapabilityTools);
+    }
+
+    /**
+     * 重新把 ChatMode / PlanMode / LoopMode 壳注册到 {@link ModeRegistry}。
      *
      * <p>服务实例重建后，Mode 壳里捕获的引用是旧实例，需要注销并重新注册新壳。
+     * LoopMode 持有的 LoopService 绑定旧 AgentRuntime，同样必须重建（先 shutdown
+     * 停掉可能在跑的旧循环），否则重建后启动循环会用已关闭的 runtime / 旧模型凭据。
      * TaskMode 持有的是 {@code Supplier<Stage>} 懒引用，不受影响，无需重建。</p>
      */
     private void rewireModeRegistry() {
+        modeRegistry.getById("loop").ifPresent(Mode::shutdown);
         modeRegistry.unregister("chat");
         modeRegistry.unregister("plan");
+        modeRegistry.unregister("loop");
         modeRegistry.register(new com.javaclaw.mode.ChatMode(chatService));
         modeRegistry.register(new com.javaclaw.mode.PlanMode(planModeService));
+        modeRegistry.register(new com.javaclaw.mode.LoopMode(new com.javaclaw.loop.LoopService(runtime)));
+    }
+
+    /**
+     * 取消运行中的循环（无活跃循环时为空操作）。
+     *
+     * <p>循环在 {@code boundedElastic} 后台跑、可跨会话存续，停止入口必须与
+     * chat/plan 一样挂在 {@link #stopActiveStream} 上，否则 UI 复位后循环
+     * 仍在后台烧 token 且单活跃闸拒绝新循环，用户无路可停。</p>
+     */
+    private boolean cancelLoopMode() {
+        boolean[] cancelled = {false};
+        modeRegistry.getById("loop").ifPresent(m -> {
+            if (m instanceof ConversationMode cm && cm.cancel()) {
+                cancelled[0] = true;
+                log.info("已取消运行中的循环");
+            }
+        });
+        return cancelled[0];
+    }
+
+    /**
+     * 停掉循环并<b>等待线程停稳</b>（服务重建/切工作区专用，随后会关闭共享基础设施）。
+     * 用户按停止/Esc 走非阻塞的 {@link #cancelLoopMode()}，不在 UI 线程上等。
+     */
+    private void shutdownLoopMode() {
+        modeRegistry.getById("loop").ifPresent(Mode::shutdown);
     }
 
     /**
@@ -3326,6 +3544,11 @@ public class ChatViewController {
     }
 
     private void openMemoryCenter() {
+        // 重建窗口内旧 MemoryService/EclipseStore 正被后台线程关闭：此刻构建视图会读到已关库
+        // （加载抛异常或空数据），在陈旧视图里做的事实编辑/人格保存也会写进旧服务而丢失
+        if (rejectIfRebuilding("打开记忆中心")) {
+            return;
+        }
         log.info("打开记忆中心");
         javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
         new com.javaclaw.ui.javafx.memory.MemoryCenterView(
@@ -3393,6 +3616,10 @@ public class ChatViewController {
      * 打开知识库中心（全窗口视图，按设计稿重建）
      */
     private void openKnowledgeBase() {
+        // 同 openMemoryCenter：重建窗口内 runtime.getKnowledgeExpert() 的 EclipseStore 正被关闭
+        if (rejectIfRebuilding("打开知识库")) {
+            return;
+        }
         log.info("打开知识库中心");
         javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
         var view = new com.javaclaw.ui.javafx.knowledge.KnowledgeCenterView(
@@ -3401,7 +3628,13 @@ public class ChatViewController {
                 this::rebuildAgentService,
                 () -> openSettings("嵌入模型"));
         // 关闭后重建顶栏知识库菜单（文档增删 / 启用状态可能已变化）
-        view.setOnHidden(this::rebuildKnowledgeMenu);
+        // 重建进行中跳过：此刻旧 runtime 正被后台线程关闭（EclipseStore 知识库已 close），
+        // 读它会抛异常且刚建好的菜单也会被重建收尾清掉——收尾的 rebuildKnowledgeMenu 补偿
+        view.setOnHidden(() -> {
+            if (!rebuildInProgress.get()) {
+                rebuildKnowledgeMenu();
+            }
+        });
         view.show();
     }
 
@@ -3410,6 +3643,10 @@ public class ChatViewController {
      */
     private void onClearHistory() {
         if (currentSession == null) return;
+        // 全局快捷键 Ctrl/Cmd+L 不受输入禁用影响：重建窗口内会对已关闭服务清空/删检查点
+        if (rejectIfRebuilding("清空对话")) {
+            return;
+        }
         // 流在别的会话后台运行时，清空会误伤其智能体上下文，先行拦截
         if (streamingActive && streamingSession != null && currentSession != streamingSession) {
             addStaticBubble(ChatMessage.Role.SYSTEM, "另一会话正在生成回复，完成后再清空本会话");
@@ -3575,8 +3812,24 @@ public class ChatViewController {
         log.info("切换工作区: {} -> {}", fromId, targetWorkspaceId);
 
         // 0. 工作区切换会重建全部服务，后台流式无法跨工作区延续：先停流并清理挂起节点
+        //（必须在抢占重建旗标之前：stopActiveStream 对重建期间的停止请求会忽略）
         if (streamingActive) {
             stopActiveStream(false);
+        }
+
+        // 0.5 与设置保存触发的服务重建互斥：共用 rebuildInProgress 旗标，两条线程并发跑
+        // shutdown→重建会互相关掉对方刚建好的服务；持旗期间会话操作被 rejectIfRebuilding 挡住
+        if (!rebuildInProgress.compareAndSet(false, true)) {
+            log.warn("服务重建/工作区切换已在进行中，忽略本次切换: {}", targetWorkspaceId);
+            // 下拉框选中项在回调触发前已变成目标工作区：必须回滚显示，否则 UI 声称在 B
+            // 而实际仍在 A，后续聊天/记忆/知识库全落错工作区且用户无从察觉
+            sidebarView.refreshWorkspaceCombo();
+            var busyPort = com.javaclaw.agent.ToolConfirmationManager.getPort();
+            if (busyPort != null) {
+                busyPort.notify(new com.javaclaw.api.interaction.ToastRequest(
+                        "系统", "服务重建中，工作区切换未执行，请稍候重试"));
+            }
+            return;
         }
 
         // 1. 保存当前状态（在旧工作区路径下，UI 线程操作）
@@ -3600,7 +3853,8 @@ public class ChatViewController {
         // 在后台线程执行非 UI 操作（步骤 2-7）
         Thread switchThread = new Thread(() -> {
             try {
-                // 2. 依次关闭三条路径，并断开共享基础设施（MCP 等）
+                // 2. 依次关闭各路径（先停后台循环并等它停稳），并断开共享基础设施（MCP 等）
+                shutdownLoopMode();
                 chatService.shutdown();
                 planModeService.shutdown();
                 runtime.shutdown();
@@ -3627,19 +3881,10 @@ public class ChatViewController {
                 // 5.5 切换诊断日志文件到新工作区
                 com.javaclaw.diagnostics.TraceRecorder.getInstance().reload();
 
-                // 6. 重建共享基础设施和三条路径服务（加载新工作区的知识库等）
-                runtime = new AgentRuntime(browserManager);
-                chatService = new ChatService(runtime);
-                planModeService = new PlanModeService(runtime);
-                chatService.setLoopInteractiveHandler(this::showLoopInteractionBubble);
-                rewireModeRegistry();
-
-                // 7. 重新加载定时任务和任务管理器
-                com.javaclaw.schedule.ScheduleManager.getInstance().reload(
-                    new com.javaclaw.agent.ScheduledTaskAgent(runtime));
-                com.javaclaw.task.sdd.run.SddTaskManager.getInstance().reload(
-                        com.javaclaw.config.DataManager.getInstance().getDataRoot(),
-                        runtime.getModelFactory(), runtime.getCapabilityTools());
+                // 6-7. 重建共享基础设施 + 三条路径服务 + 重接 Mode 壳 + 通知外部订阅方：
+                // 与配置变更重建共用 rebuildOnce 单一实现——此前这里逐字复制其六条语句，
+                // 重建链加环（新 rewire/新订阅方）只改一边就会切出「半接线」的服务
+                rebuildOnce();
 
                 // 7a. 重载插件系统（旧 runtime 的能力句柄已失效，切到新 runtime 后重新发现）
                 com.javaclaw.plugin.PluginManager.getInstance().reload(runtime);
@@ -3668,9 +3913,11 @@ public class ChatViewController {
                         // 10.5. 重新绑定 TokenTracker 回调（新工作区的追踪器）
                         wireTokenTracker();
 
-                        // 11. 重置规划模式
-                        if (planModeEnabled) {
+                        // 11. 重置会话模式回对话（规划/循环同等对待：切工作区后残留循环
+                        // chip 会把用户随手一问路由成最多几十轮的自动循环）
+                        if (planModeEnabled || loopModeEnabled) {
                             planModeEnabled = false;
+                            loopModeEnabled = false;
                             chatModeBtn.setSelected(true);
                         }
 
@@ -3697,6 +3944,17 @@ public class ChatViewController {
             } catch (Exception e) {
                 log.error("工作区切换异常", e);
                 Platform.runLater(() -> chatPane.setCenter(chatCenter));
+            } finally {
+                // 旗标复位收敛到 finally 单一出口：Error 逃逸上方 catch 时也必须复位，否则
+                // 会话操作被永久拦截、停流被永久忽略。此 runLater 在成功路径的 UI 重载
+                // runLater 之后入队（FIFO），不会提前放行用户操作；重复置 false 无害
+                Platform.runLater(() -> {
+                    rebuildInProgress.set(false);
+                    // 切换期间保存过设置：补一轮重建拾取（按新工作区的配置重建，无害且必要）
+                    if (rebuildQueued.getAndSet(false)) {
+                        rebuildAgentService();
+                    }
+                });
             }
         }, "workspace-switch-thread");
         switchThread.setDaemon(true);
@@ -3713,6 +3971,46 @@ public class ChatViewController {
     private void clearAllHistory() {
         chatService.clearHistory();
         planModeService.clearHistory();
+    }
+
+    /**
+     * 当前会话被删除后的停流与上下文清理（单删/批删共用，语义微妙勿散落拷贝）：
+     * ① 兜底停掉「流活跃但无归属会话」的异常状态（归属被删会话的流已在调用方停掉）；
+     * ② 后台流式期间智能体上下文归属流所在会话（不是被删的当前会话），此刻清空会掏空
+     * 在跑流的工作记忆、且流结束时被保存回其会话造成永久丢失——仅在无后台流时清空，
+     * 有后台流则留待 finishBackgroundStreamIfAway 统一把上下文对齐到当前展示会话。
+     */
+    private void stopAndClearForCurrentSessionDeleted() {
+        if (streamingActive && streamingSession == null) {
+            stopActiveStream();
+        }
+        if (!(streamingActive && streamingSession != null)) {
+            clearAllHistory();
+        }
+    }
+
+    /**
+     * 服务重建/工作区切换期间拒绝会话操作。
+     *
+     * <p>重建在后台线程跑 shutdown→重建，窗口期内 chatService/planModeService 已关闭
+     * （MemoryService/EclipseStore 已 close），此时保存/加载/删除会话会静默失败或抛异常：
+     * 离开会话的检查点丢失、已删会话的记忆检查点在重建后复活、侧边栏与索引不一致。
+     * 旧实现在 FX 线程同步重建天然不可交错，改异步后必须显式挡住这些入口。</p>
+     *
+     * @param action 操作名（用于日志与提示）
+     * @return true=正在重建，调用方应立即返回
+     */
+    private boolean rejectIfRebuilding(String action) {
+        if (!rebuildInProgress.get()) {
+            return false;
+        }
+        log.warn("服务重建进行中，忽略操作：{}", action);
+        var port = com.javaclaw.agent.ToolConfirmationManager.getPort();
+        if (port != null) {
+            port.notify(new com.javaclaw.api.interaction.ToastRequest(
+                    "系统", "服务重建中，请稍候再" + action));
+        }
+        return true;
     }
 
     /** 获取共享基础设施容器（供外部使用） */

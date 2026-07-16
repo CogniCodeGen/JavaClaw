@@ -1430,9 +1430,74 @@ public final class AgentConfig {
         return copy;
     }
 
+    // ==================== 循环模式（Loop）配置 ====================
+    // 说明：默认值在此本地声明，不引用 loop 包常量，避免 config ↔ loop 包互相依赖成环。
+
+    private static final String KEY_LOOP_MAX_ITERATIONS = "loop.max.iterations";
+    private static final String KEY_LOOP_TOKEN_BUDGET = "loop.token.budget";
+    private static final String KEY_LOOP_MAX_WALLCLOCK_SECONDS = "loop.max.wallclock.seconds";
+    private static final String KEY_LOOP_INTERVAL_DELAY_SECONDS = "loop.interval.delay.seconds";
+    private static final String KEY_LOOP_ITERATION_TIMEOUT_SECONDS = "loop.iteration.timeout.seconds";
+    private static final String KEY_LOOP_VERIFY_TIMEOUT_SECONDS = "loop.verify.timeout.seconds";
+    private static final String KEY_LOOP_JUDGE_ENABLED = "loop.judge.enabled";
+
+    private static final int DEFAULT_LOOP_MAX_ITERATIONS = 25;
+    private static final long DEFAULT_LOOP_TOKEN_BUDGET = 0L; // 0 表示不限
+    private static final long DEFAULT_LOOP_MAX_WALLCLOCK_SECONDS = 3600L;
+    private static final long DEFAULT_LOOP_INTERVAL_DELAY_SECONDS = 300L;
+    private static final long DEFAULT_LOOP_ITERATION_TIMEOUT_SECONDS = 720L;
+    // 与 SDD 的 task.sdd.exec.timeout.seconds 同源考量：循环旗舰场景「盯着 mvn test 直到
+    // 通过」恰是分钟级慢命令，ProcessCommandRunner 默认 120s 会逐轮误杀、done 永不可达
+    private static final long DEFAULT_LOOP_VERIFY_TIMEOUT_SECONDS = 900L;
+    private static final boolean DEFAULT_LOOP_JUDGE_ENABLED = false;
+
+    /** 循环最大迭代轮数上限。 */
+    public int getLoopMaxIterations() {
+        return getInt(KEY_LOOP_MAX_ITERATIONS, DEFAULT_LOOP_MAX_ITERATIONS);
+    }
+
+    /** 循环用量额度上限；{@code <= 0} 不限。 */
+    public long getLoopTokenBudget() {
+        return getLong(KEY_LOOP_TOKEN_BUDGET, DEFAULT_LOOP_TOKEN_BUDGET);
+    }
+
+    /** 单个循环整体墙钟超时秒数；{@code <= 0} 不限。 */
+    public long getLoopMaxWallClockSeconds() {
+        return getLong(KEY_LOOP_MAX_WALLCLOCK_SECONDS, DEFAULT_LOOP_MAX_WALLCLOCK_SECONDS);
+    }
+
+    /** 定时节奏的默认轮间延迟秒数。 */
+    public long getLoopIntervalDelaySeconds() {
+        return getLong(KEY_LOOP_INTERVAL_DELAY_SECONDS, DEFAULT_LOOP_INTERVAL_DELAY_SECONDS);
+    }
+
+    /** 单轮执行阻塞超时秒数。 */
+    public long getLoopIterationTimeoutSeconds() {
+        return getLong(KEY_LOOP_ITERATION_TIMEOUT_SECONDS, DEFAULT_LOOP_ITERATION_TIMEOUT_SECONDS);
+    }
+
+    /** 循环验证命令（command_exit_zero 准则核验）的单次执行超时秒数。 */
+    public long getLoopVerifyTimeoutSeconds() {
+        return getLong(KEY_LOOP_VERIFY_TIMEOUT_SECONDS, DEFAULT_LOOP_VERIFY_TIMEOUT_SECONDS);
+    }
+
+    /** 是否默认启用模型验收员。 */
+    public boolean isLoopJudgeEnabled() {
+        return Boolean.parseBoolean(properties.getProperty(KEY_LOOP_JUDGE_ENABLED,
+                String.valueOf(DEFAULT_LOOP_JUDGE_ENABLED)));
+    }
+
     private int getInt(String key, int defaultValue) {
         try {
             return Integer.parseInt(properties.getProperty(key, String.valueOf(defaultValue)));
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
+    private long getLong(String key, long defaultValue) {
+        try {
+            return Long.parseLong(properties.getProperty(key, String.valueOf(defaultValue)));
         } catch (NumberFormatException e) {
             return defaultValue;
         }

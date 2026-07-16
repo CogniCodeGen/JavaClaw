@@ -57,8 +57,9 @@ public class KnowledgeExpert {
     /** 知识库作用域 */
     public enum Scope { GLOBAL, WORKSPACE }
 
-    private final ReActAgent agent;
     private final SubAgentTool tool;
+    /** 保留以便 {@link #provideAgent()} 每次调用构建全新子智能体实例（见其注释）。 */
+    private final ModelFactory modelFactory;
 
     private final boolean ragEnabled;
     private EmbeddingGate gate;
@@ -83,7 +84,7 @@ public class KnowledgeExpert {
     public KnowledgeExpert(ModelFactory modelFactory) {
         AgentConfig config = AgentConfig.getInstance();
         boolean enabled = config.isRagEnabled();
-        ReActAgent builtAgent;
+        this.modelFactory = modelFactory;
 
         if (enabled) {
             try {
@@ -102,20 +103,14 @@ public class KnowledgeExpert {
                 this.pdfReader = new PDFReader(chunkSize, SplitStrategy.PARAGRAPH, chunkOverlap);
 
                 loadDocPrefs();
-
-                builtAgent = buildRagAgent(modelFactory);
             } catch (Exception e) {
                 log.warn("RAG 知识库初始化失败，回退到纯推理模式: {}", e.getMessage());
                 closeStores();
                 this.gate = null;
-                builtAgent = buildSimpleAgent(modelFactory);
                 enabled = false;
             }
-        } else {
-            builtAgent = buildSimpleAgent(modelFactory);
         }
         this.ragEnabled = enabled;
-        this.agent = builtAgent;
 
         log.info("知识专家子智能体已创建: {}, RAG: {}", AgentConfig.KNOWLEDGE_AGENT_NAME,
                 enabled ? "已启用(EclipseStore+JVector)" : "未启用");
@@ -125,8 +120,32 @@ public class KnowledgeExpert {
                 .description(AgentConfig.KNOWLEDGE_AGENT_DESCRIPTION)
                 .forwardEvents(true)
                 .build();
-        this.tool = new SubAgentTool(() -> agent, subConfig);
+        // 每次子智能体调用构建全新 ReActAgent 实例（provideAgent）：SubAgentTool 按其文档契约
+        // 每会话调用 provider.provide() 获取独立实例以保证线程安全；此前的 () -> 单例写法让循环
+        // 与聊天并行调用时共享同一 agent 内存而竞争。底层知识存储（MemoryStore）读并发安全，故
+        // 唯一被隔离的是各调用的推理上下文。
+        this.tool = new SubAgentTool(this::provideAgent, subConfig);
         log.info("已注册子智能体工具: knowledge_expert");
+    }
+
+    /**
+     * 为单次子智能体会话构建全新 {@link ReActAgent} 实例（RAG 或纯推理，取决于初始化结果）。
+     *
+     * <p>由 {@link SubAgentTool} 每次调用触发；工具方法（{@code this})读取共享的
+     * {@link MemoryStore}（向量检索为并发安全的读操作），故多实例共享检索能力而各自隔离对话内存。</p>
+     */
+    private ReActAgent provideAgent() {
+        if (!ragEnabled) {
+            return buildSimpleAgent(modelFactory);
+        }
+        // RAG agent 组装若在调用期抛异常（模型/toolkit 构建失败），降级到纯推理简单 agent 仍能答，
+        // 而非让委派轮整体报错——对齐旧的构造期 try/catch 兜底语义（改为每次调用构建后此处补回）
+        try {
+            return buildRagAgent(modelFactory);
+        } catch (Exception e) {
+            log.warn("知识专家 RAG agent 构建失败，本次降级为纯推理简单 agent: {}", e.getMessage());
+            return buildSimpleAgent(modelFactory);
+        }
     }
 
     private ReActAgent buildSimpleAgent(ModelFactory modelFactory) {

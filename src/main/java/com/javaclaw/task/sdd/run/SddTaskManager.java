@@ -73,7 +73,8 @@ public final class SddTaskManager {
     }
 
     private ModelFactory modelFactory;
-    private Map<String, Object> capabilityTools = Map.of();
+    private java.util.function.Function<com.javaclaw.agent.ToolCallOrigin, Map<String, Object>>
+            capabilityToolsFactory = origin -> Map.of();
     private SkillManager skills;
     private UserInteractionPort interactionPort;
     private volatile SddTaskListener listener = new SddTaskListener() {};
@@ -85,15 +86,20 @@ public final class SddTaskManager {
      *
      * @param dataDir         保留给调用方传入当前数据根；任务索引从 H2 读取
      * @param modelFactory    模型工厂
-     * @param capabilityTools 能力→工具表
+     * @param capabilityToolsFactory 能力→工具表工厂：任务启动时以该任务的来源令牌
+     *                               （taskId/workDir）逐任务构建，使高风险确认按任务归属
+     *                               命中白名单/目录放行（共享实例承载不了逐任务归属）
      * @param skills          技能管理器（可空）
      * @param interactionPort 人机交互端口（评审闸门用；可空 → 自动放行）
      */
     public synchronized void configure(Path dataDir, ModelFactory modelFactory,
-                                       Map<String, Object> capabilityTools, SkillManager skills,
+                                       java.util.function.Function<com.javaclaw.agent.ToolCallOrigin,
+                                               Map<String, Object>> capabilityToolsFactory,
+                                       SkillManager skills,
                                        UserInteractionPort interactionPort) {
         this.modelFactory = modelFactory;
-        this.capabilityTools = capabilityTools == null ? Map.of() : capabilityTools;
+        this.capabilityToolsFactory = capabilityToolsFactory == null
+                ? origin -> Map.of() : capabilityToolsFactory;
         this.skills = skills;
         this.interactionPort = interactionPort;
         loadAll();
@@ -105,8 +111,9 @@ public final class SddTaskManager {
      * 复用既有的技能管理器与交互端口（这两者跨工作区不变）。
      */
     public synchronized void reload(Path dataDir, ModelFactory modelFactory,
-                                    Map<String, Object> capabilityTools) {
-        configure(dataDir, modelFactory, capabilityTools, this.skills, this.interactionPort);
+                                    java.util.function.Function<com.javaclaw.agent.ToolCallOrigin,
+                                            Map<String, Object>> capabilityToolsFactory) {
+        configure(dataDir, modelFactory, capabilityToolsFactory, this.skills, this.interactionPort);
     }
 
     public void subscribe(SddTaskListener l) {
@@ -229,7 +236,10 @@ public final class SddTaskManager {
                 TaskContext ctx = new TaskContext(task.id, task.title, task.description, task.workDir, resolvedCaps);
                 SddProgress progress = new ProgressAdapter(task);
                 var gate = interactionPort != null ? new PortReviewGate(interactionPort) : new AutoApproveReviewGate();
-                runner = new SddTaskRunner(ctx, modelFactory, capabilityTools, skills,
+                runner = new SddTaskRunner(ctx, modelFactory,
+                        capabilityToolsFactory.apply(
+                                com.javaclaw.agent.ToolCallOrigin.managedTask(id, task.workDir)),
+                        skills,
                         (phase, in, out) -> recordTokens(task, phase, in, out), gate, progress, completionStamp)
                         .budgetGuard(() -> isOverBudget(task))
                         .execTimeoutSec(cfg.getSddExecTimeoutSeconds())
@@ -251,16 +261,14 @@ public final class SddTaskManager {
             }
 
             SddOutcome outcome;
-            // 进入托管场景：放宽工具确认超时（60s→600s）、绑定任务级"同意全部"白名单，
-            // 并把工作目录作为风险评估"影响范围"基准（目录内高风险操作可经评估智能体自动放行）
-            ToolConfirmationManager.enterManagedTask(id, task.workDir);
+            // 确认待遇（放宽超时/「同意全部」白名单/目录放行基准）由能力工具构建时绑定的
+            // 来源令牌（taskId + workDir）承载，无需再登记全局托管场景
             try {
                 outcome = resume ? runner.resume() : runner.run();
             } catch (Exception e) {
                 log.error("[SDD] 任务 {} 运行异常", id, e);
                 outcome = SddOutcome.failed("运行异常：" + e.getMessage());
             } finally {
-                ToolConfirmationManager.exitManagedTask();
                 running.remove(id);
             }
             applyOutcome(task, outcome);

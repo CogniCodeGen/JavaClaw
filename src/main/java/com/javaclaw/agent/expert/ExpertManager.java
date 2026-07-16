@@ -1,5 +1,6 @@
 package com.javaclaw.agent.expert;
 
+import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.browser.PlaywrightBrowserTools;
@@ -48,10 +49,15 @@ public class ExpertManager {
      *
      * @param agentName   智能体名称
      * @param sysPrompt   系统提示词
-     * @param toolName    子智能体工具名称（用于 SubAgentTool 注册）
+     * @param toolName     子智能体工具名称（用于 SubAgentTool 注册）
      * @param description 子智能体描述
      * @param maxIters    最大迭代次数
-     * @param tools       工具实例（null 表示纯推理型）
+     * @param tools       工具实例（null 表示纯推理型）——<b>整个专家共享同一实例</b>，跨会话复用。
+     *                    子智能体 agent 本身每会话新建（隔离对话内存），但工具实例故意共享：像
+     *                    {@code DesktopTools.lastElements}（@ref 映射）这类状态需在<b>同一会话的
+     *                    多次委派间延续</b>（先 desktop_inspect 再 desktop_click_ref 常分属两次委派），
+     *                    每会话新建工具会清空 @ref 令其失效。桌面本是物理单例（一套屏幕/鼠标/键盘），
+     *                    并发桌面自动化本就无法共存，故共享实例的理论竞争无需为之牺牲顺序流的正确性
      * @param groupName   工具分组名（用于路由器按组激活/禁用）
      */
     public record ExpertDef(
@@ -70,20 +76,38 @@ public class ExpertManager {
     /** 普通模式的 SubAgentTool 集合（toolName → SubAgentTool） */
     private final Map<String, SubAgentTool> subAgentTools = new LinkedHashMap<>();
 
-    /** 能力 → 工具实例映射（供 DynamicTaskTool 按能力组合工具集） */
+    /** 能力 → 工具实例映射（供 DynamicTaskTool 按能力组合工具集），以本管理器的来源令牌构建 */
     private final Map<String, Object> capabilityTools = new LinkedHashMap<>();
+
+    /** 浏览器管理器（能力工具工厂需要，跨次构建复用同一浏览器实例） */
+    private final PlaywrightBrowserManager browserManager;
+
+    /** 本管理器所属编排路径的调用来源令牌（构造期绑定，注入到全部带工具专家） */
+    private final ToolCallOrigin origin;
 
     /**
      * 构造专家管理器并创建所有普通模式子智能体
      *
      * @param modelFactory    模型工厂
      * @param browserManager  浏览器管理器
+     * @param origin          本编排路径的调用来源令牌（聊天=INTERACTIVE、定时=SCHEDULED、
+     *                        循环=managedTask(loopId, workDir)），注入到全部带工具专家
      */
-    public ExpertManager(ModelFactory modelFactory, PlaywrightBrowserManager browserManager) {
-        this.expertDefs = buildExpertDefs(browserManager);
+    public ExpertManager(ModelFactory modelFactory, PlaywrightBrowserManager browserManager,
+                         ToolCallOrigin origin) {
+        this.browserManager = browserManager;
+        this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
+        this.expertDefs = buildExpertDefs(browserManager, this.origin);
 
-        // 构建能力 → 工具实例映射（供 DynamicTaskTool 使用）
-        buildCapabilityTools(browserManager);
+        // 能力 → 工具实例映射（供 DynamicTaskTool 使用）：直接复用专家定义里的同一批实例
+        // （令牌相同），而非再 new 一套——否则不仅白付双份构造（含 AWT Robot），还会把
+        // DesktopTools.lastElements 这类需跨委派延续的 @ref 状态劈成互不可见的两份
+        // （桌面专家 desktop_inspect 产生的 @ref 对动态任务的 desktop_click_ref 失效）
+        for (ExpertDef def : expertDefs) {
+            if (def.tools() != null) {
+                capabilityTools.put(def.groupName(), def.tools());
+            }
+        }
 
         // 创建内置专家
         for (ExpertDef def : expertDefs) {
@@ -101,8 +125,9 @@ public class ExpertManager {
             subAgentTools.put(def.toolName(), tool);
         }
 
-        log.info("专家管理器已初始化，内置 {} 个 + 自定义 {} 个子智能体",
-                expertDefs.size(), customAgents.size());
+        // 同上：本构造器在定时任务路径逐 tick 执行，降为 debug 防刷屏
+        log.debug("专家管理器已初始化，内置 {} 个 + 自定义 {} 个子智能体（来源={}）",
+                expertDefs.size(), customAgents.size(), this.origin.kind());
     }
 
     /**
@@ -110,7 +135,8 @@ public class ExpertManager {
      *
      * <p>扩展新专家只需在此处添加一行 ExpertDef。</p>
      */
-    private static List<ExpertDef> buildExpertDefs(PlaywrightBrowserManager browserManager) {
+    private static List<ExpertDef> buildExpertDefs(PlaywrightBrowserManager browserManager,
+                                                    ToolCallOrigin origin) {
         AgentConfig config = AgentConfig.getInstance();
 
         List<ExpertDef> defs = new ArrayList<>();
@@ -130,14 +156,15 @@ public class ExpertManager {
                 AgentConfig.EVALUATOR_AGENT_DESCRIPTION,
                 1, null, "evaluator"));
 
-        // 带工具的专家
+        // 带工具的专家：工具实例整个专家共享、跨会话复用（见 ExpertDef.tools 注释——@ref 等
+        // 会话内多次委派间延续的状态需要共享实例，每会话新建会清空之）
         defs.add(new ExpertDef(
                 AgentConfig.WEB_AGENT_NAME,
                 AgentPrompts.WEB_AGENT_SYS_PROMPT,
                 "web_expert",
                 AgentConfig.WEB_AGENT_DESCRIPTION,
                 config.getWebAgentMaxIters(),
-                new PlaywrightBrowserTools(browserManager), "web"));
+                new PlaywrightBrowserTools(browserManager, origin), "web"));
 
         defs.add(new ExpertDef(
                 AgentConfig.EMAIL_AGENT_NAME,
@@ -145,7 +172,7 @@ public class ExpertManager {
                 "email_expert",
                 AgentConfig.EMAIL_AGENT_DESCRIPTION,
                 config.getEmailAgentMaxIters(),
-                new EmailTools(), "email"));
+                new EmailTools(origin), "email"));
 
         defs.add(new ExpertDef(
                 AgentConfig.SYSTEM_AGENT_NAME,
@@ -153,7 +180,7 @@ public class ExpertManager {
                 "system_expert",
                 AgentConfig.SYSTEM_AGENT_DESCRIPTION,
                 config.getSystemAgentMaxIters(),
-                new SystemTools(), "system"));
+                new SystemTools(origin), "system"));
 
         defs.add(new ExpertDef(
                 AgentConfig.DESKTOP_AGENT_NAME,
@@ -161,7 +188,7 @@ public class ExpertManager {
                 "desktop_expert",
                 AgentConfig.DESKTOP_AGENT_DESCRIPTION,
                 config.getSystemAgentMaxIters(),
-                new DesktopTools(), "desktop"));
+                new DesktopTools(origin), "desktop"));
 
         defs.add(new ExpertDef(
                 AgentConfig.NOTIFICATION_AGENT_NAME,
@@ -169,7 +196,7 @@ public class ExpertManager {
                 "notification_expert",
                 AgentConfig.NOTIFICATION_AGENT_DESCRIPTION,
                 config.getNotificationAgentMaxIters(),
-                new NotificationTools(), "notification"));
+                new NotificationTools(origin), "notification"));
 
         defs.add(new ExpertDef(
                 AgentConfig.COMMAND_AGENT_NAME,
@@ -177,25 +204,30 @@ public class ExpertManager {
                 "command_expert",
                 AgentConfig.COMMAND_AGENT_DESCRIPTION,
                 config.getCommandAgentMaxIters(),
-                new CommandLineTools(), "command"));
+                new CommandLineTools(origin), "command"));
 
         return defs;
     }
 
     /**
-     * 构建能力 → 工具实例映射
+     * 按来源令牌构建一套全新的能力 → 工具实例映射。
      *
-     * <p>DynamicTaskTool 根据编排器指定的能力名按需组合工具集。
-     * 工具实例在此处统一创建，避免重复实例化。</p>
+     * <p>专供 SDD 任务启动时逐任务调用（令牌带该任务的 taskId/workDir），使能力工具的
+     * 高风险确认按任务归属走白名单/目录放行——共享实例无法承载逐任务变化的归属。
+     * 本管理器自身的能力映射（{@link #getCapabilityTools}）不走此方法：它直接复用专家
+     * 定义里的同一批工具实例（令牌相同，且 @ref 等跨委派状态必须同源，见构造器注释）。</p>
      */
-    private void buildCapabilityTools(PlaywrightBrowserManager browserManager) {
-        capabilityTools.put("web", new PlaywrightBrowserTools(browserManager));
-        capabilityTools.put("email", new EmailTools());
-        capabilityTools.put("system", new SystemTools());
-        capabilityTools.put("desktop", new DesktopTools());
-        capabilityTools.put("notification", new NotificationTools());
-        capabilityTools.put("command", new CommandLineTools());
-        log.info("能力工具注册表已构建: {}", capabilityTools.keySet());
+    public Map<String, Object> buildCapabilityTools(ToolCallOrigin toolOrigin) {
+        ToolCallOrigin effective = toolOrigin == null ? ToolCallOrigin.UNKNOWN : toolOrigin;
+        Map<String, Object> tools = new LinkedHashMap<>();
+        tools.put("web", new PlaywrightBrowserTools(browserManager, effective));
+        tools.put("email", new EmailTools(effective));
+        tools.put("system", new SystemTools(effective));
+        tools.put("desktop", new DesktopTools(effective));
+        tools.put("notification", new NotificationTools(effective));
+        tools.put("command", new CommandLineTools(effective));
+        log.info("能力工具集已构建: {} (来源={})", tools.keySet(), effective.kind());
+        return tools;
     }
 
     // ==================== 普通模式（AgentService 使用） ====================
@@ -269,17 +301,22 @@ public class ExpertManager {
      * 创建 SubAgentTool（普通模式使用）
      */
     private static SubAgentTool createSubAgentTool(ChatModelBase model, ExpertDef def) {
-        ReActAgent agent = createAgent(model, def.agentName(), def.sysPrompt(),
-                def.maxIters(), def.tools());
-
         SubAgentConfig config = SubAgentConfig.builder()
                 .toolName(def.toolName())
                 .description(def.description())
                 .forwardEvents(true)
                 .build();
 
-        SubAgentTool tool = new SubAgentTool(() -> agent, config);
-        log.info("已注册子智能体工具: {}", def.toolName());
+        // 每次子智能体调用构建全新 ReActAgent 实例：对齐 SubAgentTool 的线程安全契约——其文档
+        // 要求 provider.provide() 每会话返回独立实例，此前的 () -> 单例写法让并行调用（如循环
+        // 与聊天同时委派同一专家）共享同一 agent 对话内存而竞争。工具实例（def.tools()）则故意
+        // 跨会话共享：像 DesktopTools 的 @ref 映射需在同一会话多次委派间延续，每会话新建会清空它
+        // （见 ExpertDef.tools 注释）；被隔离的只有各调用的对话内存。
+        SubAgentTool tool = new SubAgentTool(
+                () -> createAgent(model, def.agentName(), def.sysPrompt(), def.maxIters(), def.tools()),
+                config);
+        // 定时/循环路径逐 run 重建专家集（令牌归属），info 会每 tick 刷屏，降为 debug
+        log.debug("已注册子智能体工具: {}", def.toolName());
         return tool;
     }
 
@@ -301,7 +338,8 @@ public class ExpertManager {
         }
 
         ReActAgent agent = builder.build();
-        log.info("智能体已创建: {}, maxIters: {}", agentName, maxIters);
+        // 普通模式下每次子智能体调用都会构建全新实例（见 createSubAgentTool），故降为 debug 避免刷屏
+        log.debug("智能体已创建: {}, maxIters: {}", agentName, maxIters);
         return agent;
     }
 }

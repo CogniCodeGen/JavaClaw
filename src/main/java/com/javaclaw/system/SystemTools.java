@@ -1,5 +1,6 @@
 package com.javaclaw.system;
 
+import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.config.DataManager;
@@ -42,15 +43,40 @@ public class SystemTools {
 
     private static final Logger log = LoggerFactory.getLogger(SystemTools.class);
 
-    private final Robot robot;
+    /** AWT Robot：惰性初始化，见 {@link #robot()}。 */
+    private volatile Robot robot;
 
-    public SystemTools() {
-        try {
-            this.robot = new Robot();
-            robot.setAutoDelay(50);
-            log.info("系统操作工具初始化完成");
-        } catch (AWTException e) {
-            throw new RuntimeException("无法初始化 AWT Robot，请确保运行环境支持桌面操作", e);
+    /** 调用来源令牌（装配期绑定），高风险确认随调用传给 ToolConfirmationManager。 */
+    private final ToolCallOrigin origin;
+
+    public SystemTools(ToolCallOrigin origin) {
+        this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
+    }
+
+    /**
+     * 惰性获取 AWT Robot（首次真正用到键鼠/截屏时才初始化）。
+     *
+     * <p>构造期不再创建：本工具随 ExpertManager 逐 run 装配（来源令牌是构造期事实），
+     * headless / 受限图形环境下构造即抛会把整个 run 在装配期炸掉——哪怕本次执行根本
+     * 不碰键鼠。惰性化后仅在真正调用键鼠/截屏类工具时报错，由各 @Tool 方法折成错误响应。</p>
+     */
+    private Robot robot() {
+        Robot r = robot;
+        if (r != null) {
+            return r;
+        }
+        synchronized (this) {
+            if (robot == null) {
+                try {
+                    Robot created = new Robot();
+                    created.setAutoDelay(50);
+                    robot = created;
+                    log.info("AWT Robot 已初始化（键鼠/截屏基座就绪）");
+                } catch (AWTException e) {
+                    throw new IllegalStateException("无法初始化 AWT Robot，请确保运行环境支持桌面操作", e);
+                }
+            }
+            return robot;
         }
     }
 
@@ -108,12 +134,12 @@ public class SystemTools {
     @Tool(name = "sys_screenshot", description = "截取整个屏幕的截图并保存为 PNG 文件。返回保存的文件路径。")
     public String screenshot() {
         log.debug("工具调用: sys_screenshot()");
-        if (!ToolConfirmationManager.requestConfirmation("sys_screenshot", "截取整个屏幕")) {
+        if (!ToolConfirmationManager.requestConfirmation(origin, "sys_screenshot", "截取整个屏幕")) {
             return ToolResponse.error("sys_screenshot", "用户取消了操作");
         }
         try {
             Rectangle screenRect = new Rectangle(Toolkit.getDefaultToolkit().getScreenSize());
-            BufferedImage capture = robot.createScreenCapture(screenRect);
+            BufferedImage capture = robot().createScreenCapture(screenRect);
 
             String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
             String fileName = "screenshot_" + timestamp + ".png";
@@ -135,12 +161,12 @@ public class SystemTools {
             @ToolParam(name = "x", description = "目标 X 坐标（像素）") int x,
             @ToolParam(name = "y", description = "目标 Y 坐标（像素）") int y) {
         log.debug("工具调用: sys_mouse_move({}, {})", x, y);
-        if (!ToolConfirmationManager.requestConfirmation("sys_mouse_move",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "sys_mouse_move",
                 "鼠标移动到 (" + x + ", " + y + ")")) {
             return ToolResponse.error("sys_mouse_move", "用户取消了操作");
         }
         try {
-            robot.mouseMove(x, y);
+            robot().mouseMove(x, y);
             return ToolResponse.success("sys_mouse_move", "鼠标已移动到 (" + x + ", " + y + ")");
         } catch (Exception e) {
             log.error("sys_mouse_move 执行异常", e);
@@ -153,7 +179,7 @@ public class SystemTools {
             @ToolParam(name = "button", description = "鼠标按钮: left（左键）、right（右键）、middle（中键）") String button,
             @ToolParam(name = "clicks", description = "点击次数，1 为单击，2 为双击") int clicks) {
         log.debug("工具调用: sys_mouse_click({}, {})", button, clicks);
-        if (!ToolConfirmationManager.requestConfirmation("sys_mouse_click",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "sys_mouse_click",
                 button + " 键点击 " + clicks + " 次")) {
             return ToolResponse.error("sys_mouse_click", "用户取消了操作");
         }
@@ -164,10 +190,10 @@ public class SystemTools {
                 default -> InputEvent.BUTTON1_DOWN_MASK;
             };
             for (int i = 0; i < clicks; i++) {
-                robot.mousePress(btnMask);
-                robot.mouseRelease(btnMask);
+                robot().mousePress(btnMask);
+                robot().mouseRelease(btnMask);
                 if (i < clicks - 1) {
-                    robot.delay(50);
+                    robot().delay(50);
                 }
             }
             return ToolResponse.success("sys_mouse_click",
@@ -183,15 +209,15 @@ public class SystemTools {
             @ToolParam(name = "x", description = "目标 X 坐标（像素）") int x,
             @ToolParam(name = "y", description = "目标 Y 坐标（像素）") int y) {
         log.debug("工具调用: sys_mouse_click_at({}, {})", x, y);
-        if (!ToolConfirmationManager.requestConfirmation("sys_mouse_click_at",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "sys_mouse_click_at",
                 "在 (" + x + ", " + y + ") 处左键点击")) {
             return ToolResponse.error("sys_mouse_click_at", "用户取消了操作");
         }
         try {
-            robot.mouseMove(x, y);
-            robot.delay(100);
-            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
-            robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
+            robot().mouseMove(x, y);
+            robot().delay(100);
+            robot().mousePress(InputEvent.BUTTON1_DOWN_MASK);
+            robot().mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
             return ToolResponse.success("sys_mouse_click_at",
                     "已点击位置 (" + x + ", " + y + ")");
         } catch (Exception e) {
@@ -204,12 +230,12 @@ public class SystemTools {
     public String mouseScroll(
             @ToolParam(name = "amount", description = "滚动量，正数向下，负数向上") int amount) {
         log.debug("工具调用: sys_mouse_scroll({})", amount);
-        if (!ToolConfirmationManager.requestConfirmation("sys_mouse_scroll",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "sys_mouse_scroll",
                 (amount > 0 ? "向下" : "向上") + "滚动 " + Math.abs(amount) + " 格")) {
             return ToolResponse.error("sys_mouse_scroll", "用户取消了操作");
         }
         try {
-            robot.mouseWheel(amount);
+            robot().mouseWheel(amount);
             String direction = amount > 0 ? "向下" : "向上";
             return ToolResponse.success("sys_mouse_scroll",
                     direction + "滚动 " + Math.abs(amount) + " 格");
@@ -225,7 +251,7 @@ public class SystemTools {
     public String keyType(
             @ToolParam(name = "text", description = "要输入的文本内容") String text) {
         log.debug("工具调用: sys_key_type('{}')", text);
-        if (!ToolConfirmationManager.requestConfirmation("sys_key_type",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "sys_key_type",
                 "键盘输入文本: " + text)) {
             return ToolResponse.error("sys_key_type", "用户取消了操作");
         }
@@ -245,7 +271,7 @@ public class SystemTools {
     public String keyPress(
             @ToolParam(name = "key", description = "键名，如 ENTER、TAB、ESCAPE 等") String key) {
         log.debug("工具调用: sys_key_press('{}')", key);
-        if (!ToolConfirmationManager.requestConfirmation("sys_key_press",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "sys_key_press",
                 "按下按键: " + key)) {
             return ToolResponse.error("sys_key_press", "用户取消了操作");
         }
@@ -254,8 +280,8 @@ public class SystemTools {
             if (keyCode == -1) {
                 return ToolResponse.error("sys_key_press", "未知的键名: " + key);
             }
-            robot.keyPress(keyCode);
-            robot.keyRelease(keyCode);
+            robot().keyPress(keyCode);
+            robot().keyRelease(keyCode);
             return ToolResponse.success("sys_key_press", "已按下按键: " + key);
         } catch (Exception e) {
             log.error("sys_key_press 执行异常", e);
@@ -268,7 +294,7 @@ public class SystemTools {
     public String keyCombo(
             @ToolParam(name = "combo", description = "组合键描述，如 CTRL+C、ALT+TAB、META+SPACE") String combo) {
         log.debug("工具调用: sys_key_combo('{}')", combo);
-        if (!ToolConfirmationManager.requestConfirmation("sys_key_combo",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "sys_key_combo",
                 "执行组合键: " + combo)) {
             return ToolResponse.error("sys_key_combo", "用户取消了操作");
         }
@@ -289,11 +315,11 @@ public class SystemTools {
 
             // 按顺序按下所有键
             for (int keyCode : keyCodes) {
-                robot.keyPress(keyCode);
+                robot().keyPress(keyCode);
             }
             // 逆序释放所有键
             for (int i = keyCodes.length - 1; i >= 0; i--) {
-                robot.keyRelease(keyCodes[i]);
+                robot().keyRelease(keyCodes[i]);
             }
 
             return ToolResponse.success("sys_key_combo", "已执行组合键: " + combo);
@@ -379,7 +405,7 @@ public class SystemTools {
             @ToolParam(name = "path", description = "文件路径") String path,
             @ToolParam(name = "content", description = "要写入的文本内容") String content) {
         log.debug("工具调用: sys_file_write('{}')", path);
-        if (!ToolConfirmationManager.requestConfirmation("sys_file_write",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "sys_file_write",
                 "写入文件: " + path)) {
             return ToolResponse.error("sys_file_write", "用户取消了操作");
         }
@@ -404,7 +430,7 @@ public class SystemTools {
     public String fileDelete(
             @ToolParam(name = "path", description = "要删除的文件或空目录路径") String path) {
         log.debug("工具调用: sys_file_delete('{}')", path);
-        if (!ToolConfirmationManager.requestConfirmation("sys_file_delete",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "sys_file_delete",
                 "删除文件: " + path)) {
             return ToolResponse.error("sys_file_delete", "用户取消了操作");
         }
@@ -430,7 +456,7 @@ public class SystemTools {
             @ToolParam(name = "source", description = "源文件路径") String source,
             @ToolParam(name = "target", description = "目标路径") String target) {
         log.debug("工具调用: sys_file_copy('{}' -> '{}')", source, target);
-        if (!ToolConfirmationManager.requestConfirmation("sys_file_copy",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "sys_file_copy",
                 "复制文件: " + source + " -> " + target)) {
             return ToolResponse.error("sys_file_copy", "用户取消了操作");
         }
@@ -461,7 +487,7 @@ public class SystemTools {
             @ToolParam(name = "source", description = "源路径") String source,
             @ToolParam(name = "target", description = "目标路径") String target) {
         log.debug("工具调用: sys_file_move('{}' -> '{}')", source, target);
-        if (!ToolConfirmationManager.requestConfirmation("sys_file_move",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "sys_file_move",
                 "移动文件: " + source + " -> " + target)) {
             return ToolResponse.error("sys_file_move", "用户取消了操作");
         }
@@ -491,7 +517,7 @@ public class SystemTools {
     public String fileMkdir(
             @ToolParam(name = "path", description = "要创建的目录路径") String path) {
         log.debug("工具调用: sys_file_mkdir('{}')", path);
-        if (!ToolConfirmationManager.requestConfirmation("sys_file_mkdir",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "sys_file_mkdir",
                 "创建目录: " + path)) {
             return ToolResponse.error("sys_file_mkdir", "用户取消了操作");
         }
@@ -553,11 +579,11 @@ public class SystemTools {
         // 使用 Cmd+V (macOS) 或 Ctrl+V (其他系统) 粘贴
         int pasteModifier = System.getProperty("os.name").toLowerCase().contains("mac")
                 ? KeyEvent.VK_META : KeyEvent.VK_CONTROL;
-        robot.keyPress(pasteModifier);
-        robot.keyPress(KeyEvent.VK_V);
-        robot.keyRelease(KeyEvent.VK_V);
-        robot.keyRelease(pasteModifier);
-        robot.delay(20);
+        robot().keyPress(pasteModifier);
+        robot().keyPress(KeyEvent.VK_V);
+        robot().keyRelease(KeyEvent.VK_V);
+        robot().keyRelease(pasteModifier);
+        robot().delay(20);
     }
 
     /**

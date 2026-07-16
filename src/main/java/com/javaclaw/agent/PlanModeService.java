@@ -10,7 +10,6 @@ import com.javaclaw.config.AgentConfig;
 import com.javaclaw.prompt.PlanModePrompts;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.AgentBase;
-import io.agentscope.core.agent.EventType;
 import io.agentscope.core.agent.StreamOptions;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
@@ -95,17 +94,8 @@ public class PlanModeService {
         log.info("规划协调者已创建: {}，可选专家 {} 个",
                 AgentConfig.PLAN_COORDINATOR_NAME, expertAgents.size());
 
-        StreamOptions.Builder streamBuilder = StreamOptions.builder().incremental(true);
-        if (config.isThinkingEnabled()) {
-            streamBuilder.includeReasoningChunk(true)
-                    .includeReasoningResult(false)
-                    .eventTypes(EventType.REASONING, EventType.TOOL_RESULT,
-                            EventType.HINT, EventType.AGENT_RESULT);
-        } else {
-            streamBuilder.eventTypes(EventType.TOOL_RESULT,
-                    EventType.HINT, EventType.AGENT_RESULT);
-        }
-        this.streamOptions = streamBuilder.build();
+        // 流式输出选项：三条编排路径共用 ToolkitAssembler.buildStreamOptions 单一来源
+        this.streamOptions = ToolkitAssembler.buildStreamOptions(config);
 
         log.info("========== 规划模式服务初始化完成 ==========");
     }

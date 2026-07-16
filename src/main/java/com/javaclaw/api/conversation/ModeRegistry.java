@@ -20,8 +20,11 @@ import java.util.Set;
  * <p>支持按配置禁用：构造时传入 {@code disabledIds} 集合，命中其中的模式会被 skip。
  * 保持注册顺序：按 {@link #register} 调用顺序遍历，UI 按此顺序渲染。</p>
  *
- * <p>线程安全说明：注册发生在应用启动阶段（单线程），后续 list/getById 读取可跨线程；
- * 生产使用中 UI 一般不再变动注册表。</p>
+ * <p>线程安全说明：全方法 {@code synchronized}——服务重建（ChatViewController 的
+ * rewireModeRegistry）在<b>后台线程</b>做 unregister/register 结构性变更，而 UI 在 FX 线程
+ * 随时 getById/list；无同步的 LinkedHashMap 在并发读写下可能读到断链甚至结构损坏。
+ * 所有操作均为低频短临界区（reload/shutdown 广播的模式回调耗时较长，但只发生在
+ * 切工作区/关闭等本就串行的窗口），锁竞争可忽略。</p>
  */
 public final class ModeRegistry {
 
@@ -40,7 +43,7 @@ public final class ModeRegistry {
     /**
      * 注册一个模式。重复 id 会抛出 {@link IllegalStateException}；命中禁用列表会被忽略。
      */
-    public void register(Mode mode) {
+    public synchronized void register(Mode mode) {
         if (mode == null) {
             throw new IllegalArgumentException("mode 不能为空");
         }
@@ -60,7 +63,7 @@ public final class ModeRegistry {
     }
 
     /** 取消注册；不存在或已禁用返回 false */
-    public boolean unregister(String id) {
+    public synchronized boolean unregister(String id) {
         Mode removed = modes.remove(id);
         if (removed != null) {
             log.info("已取消注册模式: {} ({})", removed.displayName(), id);
@@ -69,16 +72,16 @@ public final class ModeRegistry {
         return false;
     }
 
-    public Optional<Mode> getById(String id) {
+    public synchronized Optional<Mode> getById(String id) {
         return Optional.ofNullable(modes.get(id));
     }
 
     /** 所有已注册模式的不可变快照，按注册顺序 */
-    public List<Mode> list() {
+    public synchronized List<Mode> list() {
         return Collections.unmodifiableList(new ArrayList<>(modes.values()));
     }
 
-    public List<Mode> listByPlacement(Placement placement) {
+    public synchronized List<Mode> listByPlacement(Placement placement) {
         List<Mode> result = new ArrayList<>();
         for (Mode m : modes.values()) {
             if (m.placement() == placement) {
@@ -92,7 +95,7 @@ public final class ModeRegistry {
      * 广播"工作区切换"事件：依次调用每个模式的 {@link Mode#reload()}。
      * 单个模式 reload 异常不影响其他模式。
      */
-    public void reloadAll() {
+    public synchronized void reloadAll() {
         log.info("工作区切换：依次重载 {} 个模式", modes.size());
         for (Mode m : modes.values()) {
             try {
@@ -106,7 +109,7 @@ public final class ModeRegistry {
     /**
      * 广播"应用关闭"事件：按注册顺序的反向执行（后注册的先关）。
      */
-    public void shutdownAll() {
+    public synchronized void shutdownAll() {
         log.info("应用关闭：依次关闭 {} 个模式", modes.size());
         List<Mode> list = new ArrayList<>(modes.values());
         Collections.reverse(list);

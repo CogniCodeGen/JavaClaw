@@ -1,10 +1,8 @@
 package com.javaclaw.system;
 
+import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
-import com.javaclaw.api.interaction.ConfirmKind;
-import com.javaclaw.api.interaction.ConfirmRequest;
-import com.javaclaw.api.interaction.UserInteractionPort;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
@@ -35,6 +33,13 @@ import java.util.concurrent.TimeUnit;
 public class CommandLineTools {
 
     private static final Logger log = LoggerFactory.getLogger(CommandLineTools.class);
+
+    /** 调用来源令牌（装配期绑定）：托管任务来源走统一确认路径（白名单/目录放行），其余走本地白名单机制。 */
+    private final ToolCallOrigin origin;
+
+    public CommandLineTools(ToolCallOrigin origin) {
+        this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
+    }
 
     /** 严格禁止的文件操作命令（必须通过 system_expert 处理） */
     private static final Set<String> BLOCKED_FILE_COMMANDS = Set.of(
@@ -134,8 +139,31 @@ public class CommandLineTools {
             return ToolResponse.error("cmd_whitelist_add", "命令前缀不能为空");
         }
 
-        String effectiveDir = (workDir == null || workDir.isBlank()) ? "" :
-                resolveWorkDir(workDir) != null ? resolveWorkDir(workDir) : workDir.trim();
+        String effectiveDir;
+        if (workDir == null || workDir.isBlank()) {
+            effectiveDir = "";
+        } else {
+            String resolved = resolveWorkDir(workDir);
+            effectiveDir = resolved != null ? resolved : workDir.trim();
+        }
+
+        // 永久授权必须真实人工点击落库：白名单条目 = 跨任务、跨重启的免确认授权，任何策略
+        // 自动放行（AUTO 总闸 / 任务「同意全部」/ 定时授权窗）替用户做这种授权都会打开
+        // 自授权链——托管任务模型先自写白名单、再经 checkBeforeExec 的白名单读取零确认
+        // 执行任意高风险命令。走高风险命令同款人工底线入口（AUTO 总闸不生效），且只认
+        // ALLOWED_HUMAN（与 checkBeforeExec「确认即记住」只在人工点击落库同一纪律）
+        ToolConfirmationManager.ConfirmOutcome outcome =
+                ToolConfirmationManager.requestHighRiskCommandConfirmation(origin, "cmd_whitelist_add",
+                        "将命令前缀永久加入免确认白名单：\n命令前缀: " + commandPrefix.trim()
+                                + "\n工作目录: " + (effectiveDir.isBlank() ? "（所有目录）" : effectiveDir)
+                                + "\n理由: " + (reason != null && !reason.isBlank() ? reason : "未说明")
+                                + "\n\n加入后该前缀命令在该目录下执行不再弹确认（跨任务、跨重启生效）");
+        if (outcome != ToolConfirmationManager.ConfirmOutcome.ALLOWED_HUMAN) {
+            return ToolResponse.error("cmd_whitelist_add", outcome.isAllow()
+                    ? "白名单添加需用户真实人工确认（策略自动放行不足以授予跨任务永久免确认），本次未落库；"
+                            + "请改在对话中让用户对该命令的执行确认一次（确认即自动入白名单）"
+                    : "用户未确认，白名单添加已取消");
+        }
 
         String id = whitelist.addEntry(commandPrefix.trim(), effectiveDir);
         return ToolResponse.success("cmd_whitelist_add",
@@ -426,27 +454,77 @@ public class CommandLineTools {
                     "请将此任务转交给 system_expert。");
         }
 
-        if (ToolConfirmationManager.isInManagedTask()) {
+        boolean highRisk = isHighRiskCommand(trimmedCmd);
+        com.javaclaw.config.ToolReviewMode reviewMode =
+                com.javaclaw.config.AgentConfig.getInstance().getToolReviewMode();
+        boolean manualReview = reviewMode == com.javaclaw.config.ToolReviewMode.MANUAL;
+
+        // 「确认即记住」白名单读取：托管与交互/定时来源共用的<b>单一短路点</b>（写仍只在下方
+        // 交互分支的真实人工点击落库）——白名单条目是用户对「该命令前缀 @ 该目录」的明确
+        // 人工授权（确认弹窗写明"后续无需再次确认"），托管任务不读会让过夜 SDD/循环对已
+        // 授权命令反复弹 600s 弹窗直至连败停止。MANUAL（手动审核）不吃短路：该模式承诺
+        // 每次操作都由用户确认，短路发生在 ToolConfirmationManager（唯一感知审核模式之处）
+        // 之前，不加闸会静默绕过手动审核。此前两分支各持一份此逻辑，策略变更漏改一边
+        // 会让不同来源对同一条目表现不一致
+        if (highRisk && !manualReview && whitelist.isWhitelisted(trimmedCmd, effectiveWorkDir)) {
+            whitelist.incrementUseCount(trimmedCmd, effectiveWorkDir);
+            log.info("白名单命令（来源={}），跳过确认: {}", origin.kind(), trimmedCmd);
+            return SecurityCheck.allow();
+        }
+
+        if (origin.isManagedTask()) {
             String dirForMatch = effectiveWorkDir.endsWith(File.separator)
                     ? effectiveWorkDir : effectiveWorkDir + File.separator;
-            String confirmDesc = "命令: " + trimmedCmd + " | 目录: " + dirForMatch;
-            boolean confirmed = ToolConfirmationManager.requestConfirmation("cmd_execute", confirmDesc);
+            // 描述格式经单一来源拼装：只读命令免确认通道靠 ToolConfirmationManager 反解析
+            // 此描述还原命令文本，自拼字面量会让格式失配后解析静默失灵
+            String confirmDesc = ToolConfirmationManager.buildCommandDescription(trimmedCmd, dirForMatch);
+            // AUTO（全自动审核）下高风险命令仍会弹人工确认（刻意的人工底线，见下方分支
+            // 同一考量）——对显式选择全自动的用户这是行为收紧，须在弹窗里说明缘由与
+            // 预授权途径，否则无人值守被静默拒绝后用户无从排查
+            if (highRisk && reviewMode == com.javaclaw.config.ToolReviewMode.AUTO) {
+                confirmDesc += "\n\n（全自动审核模式对任意高风险命令仍保留人工底线。免弹窗途径："
+                        + "本弹窗选「同意全部」为本任务后续操作放行；或先在对话中确认同命令，"
+                        + "使其加入白名单后跨任务免确认）";
+            }
+            // 高风险命令走人工底线入口（AUTO 总闸不生效）：托管任务恰是模型自发破坏性命令
+            // 最可能出现的半无人值守路径，这道底线不能只护交互来源；漏斗其余环节
+            // （任务白名单/只读直放/目录范围评估）照常生效。
+            // 其余命令保持统一路径（AUTO 放行是用户对注册表工具可预期的授权）
+            boolean confirmed = highRisk
+                    ? ToolConfirmationManager.requestHighRiskCommandConfirmation(
+                            origin, "cmd_execute", confirmDesc).isAllow()
+                    : ToolConfirmationManager.requestConfirmation(origin, "cmd_execute", confirmDesc);
             return confirmed
                     ? SecurityCheck.allow()
                     : SecurityCheck.deny("用户拒绝执行命令：" + trimmedCmd);
         }
 
-        if (isHighRiskCommand(trimmedCmd)) {
-            if (whitelist.isWhitelisted(trimmedCmd, effectiveWorkDir)) {
-                whitelist.incrementUseCount(trimmedCmd, effectiveWorkDir);
-                log.info("白名单命令，跳过确认: {}", trimmedCmd);
-            } else {
-                String confirmDesc = "命令: " + trimmedCmd + "\n目录: " + effectiveWorkDir +
-                        "\n\n确认后此命令将自动加入白名单，后续在该目录下执行时无需再次确认。";
-                boolean confirmed = requestConfirmation(trimmedCmd, confirmDesc);
-                if (!confirmed) {
-                    return SecurityCheck.deny("用户拒绝执行该高风险命令");
-                }
+        if (highRisk) {
+            // 白名单「写」规则：只在「真实人工点击」时落库（由确认结果 ALLOWED_HUMAN 判定，
+            // 而非按来源/模式推断）——AUTO 总闸、定时授权窗等自动放行落库等于把一次临时放行
+            // 升级成跨模式、跨重启的永久免确认，用户从未作出这种授权。
+            // MANUAL 下白名单读取不生效（见上方统一读闸），弹窗承诺与写入随之关闭：否则用户
+            // 每次都被要求确认、弹窗却每次承诺「无需再次确认」，且白名单静默积累一批仅在
+            // 日后切换审核模式时才突然生效的免确认授权，生效时点不可感知
+            String confirmDesc = "命令: " + trimmedCmd + "\n目录: " + effectiveWorkDir +
+                    (manualReview
+                            ? "\n\n（手动审核模式：每次执行均需确认，本次确认不会加入白名单）"
+                            : "\n\n确认后此命令将自动加入白名单，后续在该目录下执行时无需再次确认。");
+            // 高风险命令专用确认：定时任务显式授权窗等统一漏斗生效（此前本地 bespoke 弹窗
+            // 使已授权定时任务跑 shell 命令仍被 60s 超时拒绝），但 AUTO 总闸对其不生效——
+            // 任意破坏性命令在全自动审核下仍保留人工底线（与注册表单一工具不同，破坏力
+            // 上不封顶；同 jshell 保持 CONFIRM 级的考量）
+            ToolConfirmationManager.ConfirmOutcome outcome =
+                    ToolConfirmationManager.requestHighRiskCommandConfirmation(
+                            origin, "cmd_execute", confirmDesc);
+            if (!outcome.isAllow()) {
+                return SecurityCheck.deny("用户拒绝执行该高风险命令");
+            }
+            // 落库条件与弹窗承诺严格对应：仅真实人工点击 + 非 MANUAL（该模式弹窗已声明
+            // 不落库）+ 尚未在库（防重复条目）
+            if (outcome == ToolConfirmationManager.ConfirmOutcome.ALLOWED_HUMAN
+                    && !manualReview
+                    && !whitelist.isWhitelisted(trimmedCmd, effectiveWorkDir)) {
                 String cmdPrefix = extractCommandPrefix(trimmedCmd);
                 whitelist.addEntry(cmdPrefix, effectiveWorkDir);
                 log.info("已自动加入白名单: [{}] @ {}", cmdPrefix, effectiveWorkDir);
@@ -517,27 +595,6 @@ public class CommandLineTools {
         Path path = Path.of(workDir.trim());
         if (!Files.isDirectory(path)) return null;
         return path.toAbsolutePath().normalize().toString();
-    }
-
-    /**
-     * 高风险命令确认对话框（阻塞，最多等待 60 秒）
-     *
-     * <p>通过 {@link UserInteractionPort} 发起确认；未注入端口时拒绝执行。</p>
-     */
-    private static boolean requestConfirmation(String command, String description) {
-        UserInteractionPort port = ToolConfirmationManager.getPort();
-        if (port == null || !port.isAvailable()) {
-            log.warn("UserInteractionPort 未就绪，拒绝高风险命令: {}", command);
-            return false;
-        }
-        return port.confirm(new ConfirmRequest(
-                "cmd_execute",
-                "高风险",
-                "即将执行高风险命令：\n\n" + description,
-                ConfirmKind.CONFIRM,
-                60,
-                "",
-                ToolConfirmationManager.isInManagedTask()));
     }
 
     /**

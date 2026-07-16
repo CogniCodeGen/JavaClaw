@@ -184,10 +184,14 @@ public final class AppDatabase {
                         notify_channel VARCHAR(64),
                         execution_history_json CLOB,
                         exec_records_json CLOB,
+                        unattended_authorized BOOLEAN DEFAULT FALSE,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         PRIMARY KEY (workspace_id, id)
                     )
                     """);
+            // 既有库迁移：为早于本列的 scheduled_tasks 补列（IF NOT EXISTS 幂等，新库已由上面 CREATE 带列）
+            st.execute("ALTER TABLE scheduled_tasks "
+                    + "ADD COLUMN IF NOT EXISTS unattended_authorized BOOLEAN DEFAULT FALSE");
 
             st.execute("""
                     CREATE TABLE IF NOT EXISTS custom_agents (

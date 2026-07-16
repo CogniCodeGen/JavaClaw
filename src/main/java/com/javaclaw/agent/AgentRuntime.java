@@ -97,8 +97,6 @@ public final class AgentRuntime {
     /** 浏览器管理器（由 App 层创建并注入，供 WebExpert 使用） */
     private final PlaywrightBrowserManager browserManager;
 
-    /** 能力 → 工具实例映射（供托管任务按能力组装工具） */
-    private final Map<String, Object> capabilityTools;
 
     /** 模型执行重试配置（超时 / 最大重试次数 / 指数退避），三模式共用 */
     private final ExecutionConfig modelExecConfig;
@@ -132,12 +130,12 @@ public final class AgentRuntime {
         //    注意依赖 modelFactory，因此必须在其之后创建
         this.memoryManager = new MemoryManager(modelFactory);
 
-        // 4. ExpertManager + KnowledgeExpert：子智能体定义的中心
-        this.expertManager = new ExpertManager(modelFactory, browserManager);
+        // 4. ExpertManager + KnowledgeExpert：子智能体定义的中心。
+        //    runtime 的共享专家只服务交互路径（聊天/规划），来源令牌固定 INTERACTIVE；
+        //    定时/循环路径各建独立 ExpertManager 并绑定各自令牌，SDD 逐任务经
+        //    buildCapabilityTools(origin) 产带任务归属的工具实例
+        this.expertManager = new ExpertManager(modelFactory, browserManager, ToolCallOrigin.INTERACTIVE);
         this.knowledgeExpert = new KnowledgeExpert(modelFactory);
-
-        // 5. 能力 → 工具映射（从 ExpertManager 暴露，TaskExecutor 按能力选择）
-        this.capabilityTools = expertManager.getCapabilityTools();
 
         // 6. MCP 客户端：启动所有启用的 MCP Server
         this.mcpClientManager = new McpClientManager();
@@ -182,8 +180,17 @@ public final class AgentRuntime {
     public McpClientManager getMcpClientManager() { return mcpClientManager; }
     public VisionPreprocessor getVisionPreprocessor() { return visionPreprocessor; }
     public PlaywrightBrowserManager getBrowserManager() { return browserManager; }
-    public Map<String, Object> getCapabilityTools() { return capabilityTools; }
     public ExecutionConfig getModelExecConfig() { return modelExecConfig; }
+
+    /**
+     * 按来源令牌构建一套全新的能力 → 工具实例映射（委托 {@link ExpertManager}）。
+     *
+     * <p>SDD 任务启动时逐任务调用，令牌带该任务的 taskId/workDir，使能力工具的
+     * 高风险确认按任务归属命中「同意全部」白名单与目录范围放行。</p>
+     */
+    public Map<String, Object> buildCapabilityTools(ToolCallOrigin origin) {
+        return expertManager.buildCapabilityTools(origin);
+    }
 
     // ==================== 共享状态：知识库文档勾选 ====================
 

@@ -2,7 +2,6 @@ package com.javaclaw.agent;
 
 import com.javaclaw.agent.evaluation.EvaluationPipeline;
 import com.javaclaw.agent.execution.ExecutionMonitor;
-import com.javaclaw.agent.expert.DynamicTaskTool;
 import com.javaclaw.agent.goal.GoalDecomposition;
 import com.javaclaw.agent.goal.GoalManager;
 import com.javaclaw.agent.planning.PlanEvolver;
@@ -18,11 +17,9 @@ import com.javaclaw.api.conversation.ConversationRequest;
 import com.javaclaw.chat.ChatMessage;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.prompt.AgentPrompts;
-import com.javaclaw.mcp.McpTools;
 import com.javaclaw.skill.SkillManager;
 import com.javaclaw.util.AtomicDisposable;
 import io.agentscope.core.ReActAgent;
-import io.agentscope.core.agent.EventType;
 import io.agentscope.core.agent.StreamOptions;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.session.InMemorySession;
@@ -155,181 +152,113 @@ public class ChatService {
                 .resolve("memory-stores")
                 .resolve(workspaceManager.getCurrentWorkspaceId()));
 
-        // 技能蒸馏器（程序性记忆）：提案队列同时接收 skill_manage 主动路径与本蒸馏器的兜底路径，
-        // 两路按变更指纹统一去重；auto 模式 Toast 经 ToolConfirmationManager 注入的交互端口
-        this.skillCurator = new com.javaclaw.skill.curation.SkillCurator(
-                runtime.getModelFactory(),
-                runtime.getTokenTracker(),
-                com.javaclaw.skill.curation.SkillProposalQueue.getInstance(),
-                ToolConfirmationManager::getPort);
-        com.javaclaw.skill.SkillManageTools.setProposalSink(
-                com.javaclaw.skill.curation.SkillProposalQueue.getInstance());
+        // 此后任一初始化步骤失败都必须随本次失败关闭刚打开的记忆库：构造器抛出后本实例
+        // 不可达、无人能补 close，悬置的 EclipseStore 文件锁会让同工作区的下一次构造
+        // （服务重建的恢复路径）必然撞锁。catch 必定重抛，final 字段的确定性赋值不受影响
+        try {
+            // 技能蒸馏器（程序性记忆）：提案队列同时接收 skill_manage 主动路径与本蒸馏器的兜底路径，
+            // 两路按变更指纹统一去重；auto 模式 Toast 经 ToolConfirmationManager 注入的交互端口
+            this.skillCurator = new com.javaclaw.skill.curation.SkillCurator(
+                    runtime.getModelFactory(),
+                    runtime.getTokenTracker(),
+                    com.javaclaw.skill.curation.SkillProposalQueue.getInstance(),
+                    ToolConfirmationManager::getPort);
+            com.javaclaw.skill.SkillManageTools.setProposalSink(
+                    com.javaclaw.skill.curation.SkillProposalQueue.getInstance());
 
-        // 1. 构建 masterToolkit：按分组注册工具，后续按路由激活/禁用
-        this.masterToolkit = buildMasterToolkit(runtime);
+            // 1. 构建 masterToolkit：按分组注册工具，后续按路由激活/禁用
+            this.masterToolkit = buildMasterToolkit(runtime);
 
-        // 2. 三个钩子
-        this.loopDetectionHook = new LoopDetectionHook();
-        this.toolFallbackHook = new ToolFallbackHook();
-        this.loggingHook = new AgentLoggingHook();
+            // 2. 三个钩子
+            this.loopDetectionHook = new LoopDetectionHook();
+            this.toolFallbackHook = new ToolFallbackHook();
+            this.loggingHook = new AgentLoggingHook();
 
-        // 3. 基础系统提示词（不含动态技能和 MCP，每轮按路由拼接）
-        String verificationPrompt = "";
-        if (config.isTaskVerificationEnabled()) {
-            verificationPrompt = AgentPrompts.ORCHESTRATOR_VERIFICATION_SUFFIX;
-            log.info("已启用执行后验证机制");
+            // 3. 基础系统提示词（不含动态技能和 MCP，每轮按路由拼接）
+            String verificationPrompt = "";
+            if (config.isTaskVerificationEnabled()) {
+                verificationPrompt = AgentPrompts.ORCHESTRATOR_VERIFICATION_SUFFIX;
+                log.info("已启用执行后验证机制");
+            }
+            this.baseSystemPrompt = AgentPrompts.ORCHESTRATOR_SYS_PROMPT + verificationPrompt;
+
+            // 4. 工具路由器（使用轻量模型，强制关闭 thinking 避免分类调用阻塞数分钟）
+            if (config.isToolRoutingEnabled()) {
+                this.toolRouter = new ToolRouter(runtime.getModelFactory().createLightChatModel(),
+                        runtime.getTokenTracker());
+                log.info("工具路由器已创建（启用状态，thinking 关闭）");
+            } else {
+                this.toolRouter = null;
+                log.info("工具路由已禁用，每轮加载全部工具");
+            }
+
+            // 5. GEPA 组件
+            if (config.isGepaGoalEnabled()) {
+                this.goalManager = new GoalManager(runtime.getModelFactory().createChatModel(),
+                        runtime.getTokenTracker());
+                log.info("GEPA 目标管理器已启用");
+            } else {
+                this.goalManager = null;
+                log.info("GEPA 目标分解已禁用");
+            }
+            // 评估走轻量模型，控制 GEPA 旁路成本
+            this.evaluationPipeline = new EvaluationPipeline(
+                    runtime.getModelFactory().createLightChatModel(),
+                    runtime.getTokenTracker(),
+                    config.getGepaEvalInterval(),
+                    config.getGepaEvalThreshold(),
+                    config.getGepaFeedbackMaxRounds());
+            this.planningEngineAccessor = new PlanEvolverAccessor(
+                    config.isGepaPlanAdaptive()
+                            ? new PlanEvolver(runtime.getModelFactory().createHighChatModel(),
+                                    runtime.getTokenTracker())
+                            : null);
+            this.executionMonitor = new ExecutionMonitor();
+            // 同入参收敛卡死也强制评估（与连续失败共用 forceEvaluate 入口）
+            this.executionMonitor.setOnConvergenceStuck(toolName ->
+                    log.warn("GEPA 监控：工具 [{}] 同入参收敛，建议评估调整策略", toolName));
+            log.info("GEPA 过程评估已启用 — 间隔: {} 次工具调用, 阈值: {}, 最大反馈轮: {}",
+                    config.getGepaEvalInterval(), config.getGepaEvalThreshold(),
+                    config.getGepaFeedbackMaxRounds());
+
+            // 6. 构建初始 orchestrator（全量工具，供会话恢复等场景）
+            // 记忆注入：初始构建无 query，仅注入人格（每轮重建时按 query 检索相关事实/情景）
+            this.orchestrator = buildOrchestrator(
+                    baseSystemPrompt
+                            + memoryService.recall("")
+                            + SkillManager.getInstance().buildSkillCatalogPrompt()
+                            + SkillManager.getInstance().buildEnabledSkillsPrompt()
+                            + runtime.getMcpClientManager().buildToolsPrompt());
+            log.info("主编排智能体已创建 — name: {}, maxIters: {}, plan: enabled, memory: AutoContext, retry: enabled",
+                    AgentConfig.AGENT_NAME, config.getOrchestratorMaxIters());
+
+            // 7. 流式输出选项（thinking 开关决定是否订阅思考事件）——三条编排路径共用
+            // ToolkitAssembler.buildStreamOptions 单一来源，勿再本地拷贝构建规则
+            this.streamOptions = ToolkitAssembler.buildStreamOptions(config);
+
+            // 8. 事件处理器
+            this.eventHandler = new StreamEventHandler();
+        } catch (RuntimeException | Error e) {
+            try {
+                memoryService.close();
+            } catch (Exception ce) {
+                log.warn("构造失败后关闭记忆服务异常: {}", ce.getMessage());
+            }
+            throw e;
         }
-        this.baseSystemPrompt = AgentPrompts.ORCHESTRATOR_SYS_PROMPT + verificationPrompt;
-
-        // 4. 工具路由器（使用轻量模型，强制关闭 thinking 避免分类调用阻塞数分钟）
-        if (config.isToolRoutingEnabled()) {
-            this.toolRouter = new ToolRouter(runtime.getModelFactory().createLightChatModel(),
-                    runtime.getTokenTracker());
-            log.info("工具路由器已创建（启用状态，thinking 关闭）");
-        } else {
-            this.toolRouter = null;
-            log.info("工具路由已禁用，每轮加载全部工具");
-        }
-
-        // 5. GEPA 组件
-        if (config.isGepaGoalEnabled()) {
-            this.goalManager = new GoalManager(runtime.getModelFactory().createChatModel(),
-                    runtime.getTokenTracker());
-            log.info("GEPA 目标管理器已启用");
-        } else {
-            this.goalManager = null;
-            log.info("GEPA 目标分解已禁用");
-        }
-        // 评估走轻量模型，控制 GEPA 旁路成本
-        this.evaluationPipeline = new EvaluationPipeline(
-                runtime.getModelFactory().createLightChatModel(),
-                runtime.getTokenTracker(),
-                config.getGepaEvalInterval(),
-                config.getGepaEvalThreshold(),
-                config.getGepaFeedbackMaxRounds());
-        this.planningEngineAccessor = new PlanEvolverAccessor(
-                config.isGepaPlanAdaptive()
-                        ? new PlanEvolver(runtime.getModelFactory().createHighChatModel(),
-                                runtime.getTokenTracker())
-                        : null);
-        this.executionMonitor = new ExecutionMonitor();
-        // 同入参收敛卡死也强制评估（与连续失败共用 forceEvaluate 入口）
-        this.executionMonitor.setOnConvergenceStuck(toolName ->
-                log.warn("GEPA 监控：工具 [{}] 同入参收敛，建议评估调整策略", toolName));
-        log.info("GEPA 过程评估已启用 — 间隔: {} 次工具调用, 阈值: {}, 最大反馈轮: {}",
-                config.getGepaEvalInterval(), config.getGepaEvalThreshold(),
-                config.getGepaFeedbackMaxRounds());
-
-        // 6. 构建初始 orchestrator（全量工具，供会话恢复等场景）
-        // 记忆注入：初始构建无 query，仅注入人格（每轮重建时按 query 检索相关事实/情景）
-        this.orchestrator = buildOrchestrator(
-                baseSystemPrompt
-                        + memoryService.recall("")
-                        + SkillManager.getInstance().buildSkillCatalogPrompt()
-                        + SkillManager.getInstance().buildEnabledSkillsPrompt()
-                        + runtime.getMcpClientManager().buildToolsPrompt());
-        log.info("主编排智能体已创建 — name: {}, maxIters: {}, plan: enabled, memory: AutoContext, retry: enabled",
-                AgentConfig.AGENT_NAME, config.getOrchestratorMaxIters());
-
-        // 7. 配置流式输出选项（含/不含思考事件）
-        StreamOptions.Builder streamBuilder = StreamOptions.builder().incremental(true);
-        if (config.isThinkingEnabled()) {
-            streamBuilder.includeReasoningChunk(true)
-                    .includeReasoningResult(false)
-                    .eventTypes(EventType.REASONING, EventType.TOOL_RESULT,
-                            EventType.HINT, EventType.AGENT_RESULT);
-        } else {
-            streamBuilder.eventTypes(EventType.TOOL_RESULT,
-                    EventType.HINT, EventType.AGENT_RESULT);
-        }
-        this.streamOptions = streamBuilder.build();
-
-        // 8. 事件处理器
-        this.eventHandler = new StreamEventHandler();
 
         log.info("========== ChatService 普通模式初始化完成 ==========");
     }
 
     private Toolkit buildMasterToolkit(AgentRuntime runtime) {
-        Toolkit toolkit = new Toolkit();
+        // 标准工具集统一装配（单一来源见 ToolkitAssembler，三条编排路径共用）；
+        // 交互路径注册媒体工具（view_image 弹窗需有人在场）
+        Toolkit toolkit = ToolkitAssembler.buildBaseToolkit(
+                runtime, runtime.getExpertManager(), true, ToolCallOrigin.INTERACTIVE);
 
-        for (String group : RoutingResult.ALL_TOOL_GROUPS) {
-            toolkit.createToolGroup(group, group, true);
-        }
-
-        var expertManager = runtime.getExpertManager();
-
-        for (var def : expertManager.getExpertDefs()) {
-            var tool = expertManager.getAllTools().stream()
-                    .filter(t -> t.getName().equals(def.toolName()))
-                    .findFirst().orElse(null);
-            if (tool != null) {
-                toolkit.registration().agentTool(tool).group(def.groupName()).apply();
-            }
-        }
-
-        // 自定义/动态智能体统一进常驻 agents 组：原先每个自定义专家用自己的 toolName 作组名，
-        // 既不在 ALL_TOOL_GROUPS 也不在 ALWAYS_ACTIVE_GROUPS，导致永不被路由激活。归入常驻 agents 组后
-        // 所有自定义智能体每轮可用（含对话中新建的、供定时任务调用的）。
-        toolkit.createToolGroup("agents", "agents", true);
-        for (var tool : expertManager.getAllTools()) {
-            if (!toolkit.getToolNames().contains(tool.getName())) {
-                toolkit.registration().agentTool(tool).group("agents").apply();
-            }
-        }
-
-        toolkit.registration().agentTool(runtime.getKnowledgeExpert().getTool())
-                .group("knowledge").apply();
-
-        DynamicTaskTool dynamicTaskTool = new DynamicTaskTool(
-                runtime.getModelFactory(), runtime.getMemoryManager(),
-                runtime.getCapabilityTools());
-        toolkit.registration().tool(dynamicTaskTool).group("dynamic_task").apply();
-
-        // MCP 工具始终注册：McpTools 内部对 McpClientManager 是动态引用，
-        // 后续通过设置面板热启动新 server 时无需重建 toolkit；启动时没有活跃 server
-        // 也不影响绑定，工具调用时会返回明确的"无可用服务器"错误。
-        McpTools mcpTools = new McpTools(runtime.getMcpClientManager());
-        toolkit.registration().tool(mcpTools).group("mcp").apply();
-        log.info("MCP 工具已注册到编排器（活跃服务器数: {}）",
-                runtime.getMcpClientManager().getAllTools().size());
-
-        // 插件工具桥：把已启用插件贡献的工具暴露给编排器（host → plugin 方向）。
-        // 独立成组并每轮强制激活（见 rebuildOrchestratorForTurn），与路由解耦，避免动态工具被路由漏判。
-        toolkit.createToolGroup("plugins", "plugins", true);
-        toolkit.registration().tool(new com.javaclaw.plugin.PluginTools()).group("plugins").apply();
-        log.info("插件工具桥已注册到编排器（始终可用）");
-
-        // 澄清中断工具：模型主动打断本轮并向用户提问；任何路由场景都保留可用
+        // 澄清中断工具：模型主动打断本轮并向用户提问——交互路径专属，
+        // 无头路径（定时任务/循环）无人在场不注册
         toolkit.registration().tool(clarifyTools).group("clarify").apply();
-        log.info("澄清工具已注册到编排器（始终可用）");
-
-        // 技能按需读取工具（skill_read）：渐进式暴露的 L2 拉取入口，配合常驻的 L1 技能目录使用；
-        // 独立成组且不在 ALL_TOOL_GROUPS 中，由 ALWAYS_ACTIVE_GROUPS 每轮强制激活
-        toolkit.createToolGroup("skill", "skill", true);
-        toolkit.registration().tool(new com.javaclaw.skill.SkillTools()).group("skill").apply();
-        // 技能自管理工具（skill_create/patch/edit/delete/write_file/remove_file）：
-        // 智能体的程序性记忆写入口，受 skill.evolution.mode 三态闸门约束，与 skill_read 同组常驻
-        toolkit.registration().tool(new com.javaclaw.skill.SkillManageTools()).group("skill").apply();
-        // JShell 执行工具（jshell_exec/jshell_run_script）：技能 scripts/ 脚本的执行通道，
-        // 常驻以保证技能指令引用的脚本不受路由漏判影响；两工具均为 CONFIRM 级
-        toolkit.registration().tool(new com.javaclaw.system.JShellTools()).group("skill").apply();
-        log.info("技能读取/自管理/JShell 执行工具已注册到编排器（始终可用）");
-
-        // 内置能力工具：长任务管理（task_manage）+ 定时工作管理（schedule），按路由激活；
-        // 智能体管理（agent_*）进常驻 agents 组，创建后热注册的新智能体即在同组。
-        toolkit.registration().tool(new com.javaclaw.task.sdd.run.SddTaskManageTools())
-                .group("task_manage").apply();
-        toolkit.registration().tool(new com.javaclaw.schedule.ScheduleTools())
-                .group("schedule").apply();
-        toolkit.registration().tool(new com.javaclaw.agent.expert.ExpertManageTools(expertManager))
-                .group("agents").apply();
-        log.info("长任务/定时/智能体列举工具已注册到编排器");
-
-        // 媒体工具：图片查看（view_image）+ 图片/PDF OCR（ocr_recognize），按路由激活
-        toolkit.registration().tool(new com.javaclaw.media.MediaTools(runtime.getVisionPreprocessor()))
-                .group("media").apply();
-        log.info("媒体工具（图片查看 / OCR）已注册到编排器");
 
         log.info("Master Toolkit 已构建 — 工具组: {}", toolkit.getActiveGroups());
         return toolkit;
@@ -461,6 +390,10 @@ public class ChatService {
         // 管道顺序：视觉预处理 → 意图识别（工具路由）→ 目标分解 → 知识库检索 → 上下文整理 → 编排执行
         // 每个阶段都通过 ConversationEvent.Progress 向 UI 实时报告 RUNNING / DONE / SKIPPED 状态
         final AtomicReference<List<File>> effectiveAttachments = new AtomicReference<>(attachments);
+        // doFinally 只清「本轮自己」的订阅引用：上一轮订阅被 set() 顶替时其取消信号会
+        // 同步触发 doFinally，无条件 clear() 会抹掉刚 set 进去的新订阅，令停止按钮的
+        // dispose 扑空、在途流杀不掉（与 AgentScopeLoopRunner 的 clearIf 同一模式）
+        final AtomicReference<Disposable> selfSub = new AtomicReference<>();
         Disposable sub = Mono.fromCallable(() -> {
                     String processedInput = userInput;
 
@@ -581,7 +514,7 @@ public class ChatService {
                     return snapshot.stream(userMsg, streamOptions);
                 })
                 .doFinally(signal -> {
-                    activeSubscription.clear();
+                    activeSubscription.clearIf(selfSub.get());
                     clarifyTools.unbind(clarifyBindHandle);
                     // 编排阶段最终标记 — 由 doFinally 兜底，cancel/error 不会漏掉
                     emitProgress(callbacks, "orchestrate", "编排执行",
@@ -615,6 +548,7 @@ public class ChatService {
                             callbacks.onComplete();
                         }
                 );
+        selfSub.set(sub);
         activeSubscription.set(sub);
     }
 
@@ -699,13 +633,9 @@ public class ChatService {
             List<String> groups = (routing.isFallback() || !routing.hasToolGroups())
                     ? new ArrayList<>(RoutingResult.ALL_TOOL_GROUPS)
                     : new ArrayList<>(routing.toolGroups());
-            // 任何路由场景（含全量降级）都强制保留 ALWAYS_ACTIVE_GROUPS：
-            // clarify（主动向用户澄清）、skill（skill_read 按需拉取技能正文），二者均与路由解耦
-            for (String g : RoutingResult.ALWAYS_ACTIVE_GROUPS) {
-                if (!groups.contains(g)) groups.add(g);
-            }
-            // 插件工具桥同样每轮常驻（动态工具，路由器不感知）
-            if (!groups.contains("plugins")) groups.add("plugins");
+            // 任何路由场景（含全量降级）都强制保留常驻组（clarify/skill/agents/plugins），
+            // 单一来源见 ToolkitAssembler.appendResidentGroups（交互路径含 clarify）
+            ToolkitAssembler.appendResidentGroups(groups, true);
             masterToolkit.setActiveGroups(groups);
             log.info("本轮活跃工具组: {}", masterToolkit.getActiveGroups());
 

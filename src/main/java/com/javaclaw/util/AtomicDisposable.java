@@ -43,6 +43,19 @@ public final class AtomicDisposable {
         ref.set(null);
     }
 
+    /**
+     * 仅当当前引用正是 {@code expected}（同一实例）时清除引用，不 dispose。
+     *
+     * <p>供可能<b>迟到</b>的收尾回调使用：跨轮/跨代的 doFinally 若无条件 {@link #clear()}
+     * 会抹掉后继订阅的引用，使后续 {@link #dispose()} 扑空、在途流杀不掉。
+     * {@code expected} 为 null 时不做任何事。</p>
+     *
+     * @return 是否发生了清除
+     */
+    public boolean clearIf(Disposable expected) {
+        return expected != null && ref.compareAndSet(expected, null);
+    }
+
     public boolean isActive() {
         Disposable current = ref.get();
         return current != null && !current.isDisposed();

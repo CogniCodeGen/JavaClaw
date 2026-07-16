@@ -37,4 +37,18 @@ class CredentialEncryptorTest {
         assertNull(CredentialEncryptor.encrypt(null));
         assertEquals("", CredentialEncryptor.encrypt(""));
     }
+
+    @Test
+    void 无法解密的密文原样返回_非破坏防止重存抹空() {
+        // 随机字节拼出的合法格式 ENC 值：任何密钥都解不开（模拟密钥丢失/主机名漂移后的旧密文）。
+        // 契约：原样返回 ENC(...) 密文而非空串——返回空串会在上层「重新加密全部凭据回写」时把
+        // encrypt("")=="" 覆盖掉好端端的密文，一次瞬时失败即永久毁凭据；返回原密文则密文完好、可自愈
+        byte[] junk = new byte[60];
+        new java.util.Random(42).nextBytes(junk);
+        String bogus = "ENC(" + java.util.Base64.getEncoder().encodeToString(junk) + ")";
+        assertEquals(bogus, CredentialEncryptor.decrypt(bogus), "解密失败应原样返回密文（非破坏），而非空串");
+        // 且解密失败值经 encrypt() 往返保持不变（isEncrypted 守卫跳过），故重存不会覆盖存量密文
+        assertEquals(bogus, CredentialEncryptor.encrypt(CredentialEncryptor.decrypt(bogus)),
+                "解密失败的密文重新加密应原样保留");
+    }
 }

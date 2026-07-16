@@ -45,6 +45,11 @@ public final class ToolRiskRegistry {
         put(levels, labels, "sys_file_delete", ToolRiskLevel.DOUBLE_CONFIRM, "文件删除");
         put(levels, labels, "sys_file_mkdir", ToolRiskLevel.NOTIFY, "创建目录");
         put(levels, labels, "cmd_execute", ToolRiskLevel.CONFIRM, "命令行执行");
+        // 白名单添加 = 授予「跨任务、跨重启的永久免确认」，与任意命令执行同级的授权动作。
+        // 不登记的话 confirmInternal 对未登记工具直接放行，模型可先自写白名单再经托管分支的
+        // 白名单读取零确认执行任意高风险命令（自授权链，与 jshell 必须保持 CONFIRM 同一考量）；
+        // cmd_whitelist_remove 只收窄授权面，无需登记
+        put(levels, labels, "cmd_whitelist_add", ToolRiskLevel.CONFIRM, "添加命令白名单");
 
         // ==================== 系统鼠键 / 截图（NOTIFY） ====================
         put(levels, labels, "sys_screenshot", ToolRiskLevel.NOTIFY, "系统截图");
@@ -121,6 +126,12 @@ public final class ToolRiskRegistry {
         // 若不设确认将形成无人工闸门的任意代码执行链
         put(levels, labels, "jshell_exec", ToolRiskLevel.CONFIRM, "执行 Java 代码（JShell）");
         put(levels, labels, "jshell_run_script", ToolRiskLevel.CONFIRM, "运行技能 Java 脚本");
+
+        // ==================== 循环模式 ====================
+        // 循环验证命令由目标分解（LLM）生成、验证器每轮反复执行且不再经工具确认闸门，
+        // 必须保持 CONFIRM 级：未注册会命中 ToolConfirmationManager 的「未登记工具直接放行」
+        // 兜底分支，令 LoopService 启动前的一次性确认形同虚设
+        put(levels, labels, "loop_verify", ToolRiskLevel.CONFIRM, "循环验证命令（反复执行）");
 
         // ==================== 长任务 / 定时任务管理 ====================
         // 创建长任务、定时任务会反复自主消耗 token，需人工确认。查询/控制类（list/status/pause/disable/delete 等）

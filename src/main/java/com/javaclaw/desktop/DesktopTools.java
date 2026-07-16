@@ -1,5 +1,6 @@
 package com.javaclaw.desktop;
 
+import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.config.DataManager;
@@ -51,10 +52,21 @@ public class DesktopTools {
      */
     private final Map<String, UiElement> lastElements = new ConcurrentHashMap<>();
 
-    public DesktopTools() {
+    /** 调用来源令牌（装配期绑定），高风险确认随调用传给 ToolConfirmationManager。 */
+    private final ToolCallOrigin origin;
+
+    /**
+     * 全局共享的键鼠/截屏基座：AWT Robot 是原生资源（触碰图形工具链，macOS 走辅助功能层），
+     * 且桌面本是物理单例——来源令牌化只要求薄工具包装层逐 run 重建，底层基座无令牌语义，
+     * 逐 tick 新建（定时任务一分钟一次）纯属原生资源搅拌。
+     */
+    private static final RobotInput SHARED_INPUT = new RobotInput();
+
+    public DesktopTools(ToolCallOrigin origin) {
+        this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
         this.port = DesktopAutomation.get();
-        this.input = new RobotInput();
-        log.info("桌面自动化工具初始化完成: 适配器={}, 键鼠基座可用={}", port.platform(), input.isAvailable());
+        this.input = SHARED_INPUT;
+        log.debug("桌面自动化工具初始化完成: 适配器={}, 键鼠基座可用={}", port.platform(), input.isAvailable());
     }
 
     // ==================== 能力探测 ====================
@@ -84,7 +96,7 @@ public class DesktopTools {
             @ToolParam(name = "app", description = "应用名或可执行文件路径，可空", required = false) String app,
             @ToolParam(name = "path", description = "要打开的文件 / 目录路径，可空", required = false) String path) {
         log.debug("工具调用: desktop_launch(app={}, path={})", app, path);
-        if (!ToolConfirmationManager.requestConfirmation("desktop_launch",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "desktop_launch",
                 "启动程序: " + firstNonBlank(app, path))) {
             return ToolResponse.error("desktop_launch", "用户取消了操作");
         }
@@ -124,7 +136,7 @@ public class DesktopTools {
     public String activate(
             @ToolParam(name = "target", description = "目标应用名或窗口标题的关键词（模糊匹配）") String target) {
         log.debug("工具调用: desktop_activate(target={})", target);
-        if (!ToolConfirmationManager.requestConfirmation("desktop_activate", "激活窗口: " + target)) {
+        if (!ToolConfirmationManager.requestConfirmation(origin, "desktop_activate", "激活窗口: " + target)) {
             return ToolResponse.error("desktop_activate", "用户取消了操作");
         }
         try {
@@ -150,7 +162,7 @@ public class DesktopTools {
             @ToolParam(name = "target", description = "目标应用名或窗口标题关键词，可空（空则整屏截图）",
                     required = false) String target) {
         log.debug("工具调用: desktop_capture(target={})", target);
-        if (!ToolConfirmationManager.requestConfirmation("desktop_capture",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "desktop_capture",
                 target == null || target.isBlank() ? "截取整个屏幕" : "截取窗口: " + target)) {
             return ToolResponse.error("desktop_capture", "用户取消了操作");
         }
@@ -188,7 +200,7 @@ public class DesktopTools {
             @ToolParam(name = "target", description = "目标应用名或窗口标题关键词，可空（空则检视当前前台窗口）",
                     required = false) String target) {
         log.debug("工具调用: desktop_inspect(target={})", target);
-        if (!ToolConfirmationManager.requestConfirmation("desktop_inspect",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "desktop_inspect",
                 "检视窗口元素: " + (target == null || target.isBlank() ? "前台窗口" : target))) {
             return ToolResponse.error("desktop_inspect", "用户取消了操作");
         }
@@ -277,7 +289,7 @@ public class DesktopTools {
             return ToolResponse.error("desktop_click_ref",
                     "无效编号 " + ref + "，请先调用 desktop_inspect 获取元素编号");
         }
-        if (!ToolConfirmationManager.requestConfirmation("desktop_click_ref",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "desktop_click_ref",
                 "点击元素 " + ref + " " + elementLabel(element))) {
             return ToolResponse.error("desktop_click_ref", "用户取消了操作");
         }
@@ -304,7 +316,7 @@ public class DesktopTools {
             return ToolResponse.error("desktop_type_ref",
                     "无效编号 " + ref + "，请先调用 desktop_inspect 获取元素编号");
         }
-        if (!ToolConfirmationManager.requestConfirmation("desktop_type_ref",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "desktop_type_ref",
                 "向元素 " + ref + " 输入: " + preview(text))) {
             return ToolResponse.error("desktop_type_ref", "用户取消了操作");
         }
@@ -335,7 +347,7 @@ public class DesktopTools {
         int n = clicks <= 0 ? 1 : clicks;
         String btn = button == null || button.isBlank() ? "left" : button;
         log.debug("工具调用: desktop_click({}, {}, {}, {})", x, y, btn, n);
-        if (!ToolConfirmationManager.requestConfirmation("desktop_click",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "desktop_click",
                 String.format("%s键点击 (%d,%d) %d 次", btn, x, y, n))) {
             return ToolResponse.error("desktop_click", "用户取消了操作");
         }
@@ -355,7 +367,7 @@ public class DesktopTools {
     public String type(
             @ToolParam(name = "text", description = "要输入的文本") String text) {
         log.debug("工具调用: desktop_type(len={})", text == null ? 0 : text.length());
-        if (!ToolConfirmationManager.requestConfirmation("desktop_type",
+        if (!ToolConfirmationManager.requestConfirmation(origin, "desktop_type",
                 "输入文本: " + preview(text))) {
             return ToolResponse.error("desktop_type", "用户取消了操作");
         }
@@ -374,7 +386,7 @@ public class DesktopTools {
     public String key(
             @ToolParam(name = "combo", description = "按键 / 组合键，用 + 连接，如 ctrl+s") String combo) {
         log.debug("工具调用: desktop_key(combo={})", combo);
-        if (!ToolConfirmationManager.requestConfirmation("desktop_key", "按键: " + combo)) {
+        if (!ToolConfirmationManager.requestConfirmation(origin, "desktop_key", "按键: " + combo)) {
             return ToolResponse.error("desktop_key", "用户取消了操作");
         }
         try {
