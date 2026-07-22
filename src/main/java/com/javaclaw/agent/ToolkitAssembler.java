@@ -63,6 +63,9 @@ public final class ToolkitAssembler {
             }
         }
         tk.registration().agentTool(runtime.getKnowledgeExpert().getTool()).group("knowledge").apply();
+        // 代码工程直接工具（读区间/grep/glob/精确编辑/插入/项目根）进 coding 组，与「编程」子智能体同组，
+        // 编程意图路由命中即激活；带本路径来源令牌（写类工具的确认归属须与所在路径一致）
+        tk.registration().tool(new com.javaclaw.code.CodeTools(origin)).group("coding").apply();
         // 动态任务工具的能力工具集取自本路径的 expertManager（带本路径来源令牌），
         // 而非 runtime 的交互路径实例——高风险确认归属须与所在路径一致
         tk.registration().tool(new DynamicTaskTool(runtime.getModelFactory(),

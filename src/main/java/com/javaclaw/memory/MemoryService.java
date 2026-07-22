@@ -265,6 +265,7 @@ public class MemoryService implements AutoCloseable {
                 f.text = newText;
                 f.embedding = vec;
                 f.userEdited = true;
+                f.superseded = false; // 用户显式编辑 = 断言现行有效，复活被取代的事实
                 f.pending = false;
                 store.removePendingFact(f, "user");
                 store.addFact(f, "user");
@@ -277,6 +278,7 @@ public class MemoryService implements AutoCloseable {
             x.text = newText;
             if (vec != null) x.embedding = vec;
             x.userEdited = true;
+            x.superseded = false; // 用户显式编辑 = 断言现行有效，复活被取代的事实（userEdited 保护契约优先于软删除）
         }, "user");
     }
 

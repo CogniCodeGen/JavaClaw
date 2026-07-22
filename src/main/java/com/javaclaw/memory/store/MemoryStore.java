@@ -49,6 +49,9 @@ public class MemoryStore implements AutoCloseable {
 
     private static final String IDX = "embedding";
 
+    /** searchFacts 过滤软删除事实时的 over-fetch 补偿量(多取若干条以填补被剔除的槽位)。 */
+    private static final int SUPERSEDE_OVERFETCH = 8;
+
     private final Path dir;
     private final int dimension;
     private final String label;
@@ -247,6 +250,24 @@ public class MemoryStore implements AutoCloseable {
         });
     }
 
+    /**
+     * 将旧事实标记为「被取代」(软删除):置 {@code superseded=true},刷新 updatedAt,审计记 SUPERSEDE。
+     * 被取代的事实保留在库中(记忆中心可见、可恢复),但 {@link #searchFacts} 统一过滤——
+     * 不再被召回、去重或取代候选检索返回,从而杜绝新旧矛盾事实并存导致召回到过时记忆。
+     *
+     * @param replacedByText 取代它的新事实原文(仅入审计)
+     */
+    public void supersedeFact(Fact f, String actor, String replacedByText) {
+        write(() -> {
+            root.facts.update(f, x -> {
+                x.superseded = true;
+                x.updatedAt = System.currentTimeMillis();
+            });
+            root.facts.store();
+            logInternal("SUPERSEDE", "Fact", f.id, actor, trunc(replacedByText));
+        });
+    }
+
     /** 删除事实。 */
     public void removeFact(Fact f, String actor) {
         write(() -> {
@@ -256,9 +277,27 @@ public class MemoryStore implements AutoCloseable {
         });
     }
 
-    /** 向量 Top-K 检索事实,按分数阈值过滤。 */
+    /**
+     * 向量 Top-K 检索事实,按分数阈值过滤,并<b>剔除被取代({@code superseded})的软删除事实</b>。
+     * 过滤在 Top-K 截断后进行,故先 over-fetch 补偿被剔除的槽位;若某主题堆积大量被取代事实、
+     * 一次窗口内仍凑不满 topK,则**有界扩窗重取**(翻倍,最多 4 次),直到满额或检索窗口见底,
+     * 避免有效事实被挤到窗口外导致召回静默不足 topK。
+     */
     public List<Scored<Fact>> searchFacts(float[] query, int topK, double threshold) {
-        return search(factIndex, query, topK, threshold);
+        if (factIndex == null || query == null || topK <= 0) return new ArrayList<>();
+        int fetch = topK + SUPERSEDE_OVERFETCH;
+        for (int attempt = 0; ; attempt++) {
+            List<Scored<Fact>> raw = search(factIndex, query, fetch, threshold);
+            List<Scored<Fact>> out = new ArrayList<>(Math.min(topK, raw.size()));
+            for (Scored<Fact> s : raw) {
+                if (s.entity().superseded) continue;
+                out.add(s);
+                if (out.size() >= topK) break;
+            }
+            // 满额 / 检索窗口见底(raw 未取满 fetch，说明库里没有更多匹配) / 到达重试上限 → 收敛返回
+            if (out.size() >= topK || raw.size() < fetch || attempt >= 3) return out;
+            fetch *= 2;
+        }
     }
 
     /** 全部事实(只读快照,供 UI/蒸馏去重遍历)。 */

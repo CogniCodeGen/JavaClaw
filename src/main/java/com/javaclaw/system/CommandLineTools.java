@@ -57,8 +57,10 @@ public class CommandLineTools {
             "crontab", "nohup"
     );
 
-    /** 命令执行超时（秒） */
-    private static final int EXEC_TIMEOUT_SECONDS = 60;
+    /** 命令执行默认超时（秒），可由调用方经 timeout_seconds 覆盖 */
+    private static final int DEFAULT_EXEC_TIMEOUT_SECONDS = 60;
+    /** 命令执行超时上限（秒）：慢构建/测试常超 60s，放宽到 10 分钟，但设硬顶防失控挂死 */
+    private static final int MAX_EXEC_TIMEOUT_SECONDS = 600;
 
     /** 输出截断：保留头部行数（构建/测试输出的开头通常是环境与配置信息） */
     private static final int HEAD_OUTPUT_LINES = 100;
@@ -78,13 +80,16 @@ public class CommandLineTools {
                     "文件的创建、复制、移动、删除必须通过系统操作专家（system_expert）完成。" +
                     "高风险命令（sudo/kill/chmod 等）首次执行需用户确认，确认后自动加入白名单，后续无需再次确认。" +
                     "支持的命令类型：编译构建（mvn/gradle/npm）、版本控制（git）、" +
-                    "进程查看（ps/top）、网络诊断（ping/curl）、脚本执行（python/node）等。")
+                    "进程查看（ps/top）、网络诊断（ping/curl）、脚本执行（python/node）等。" +
+                    "慢构建/测试可用 timeout_seconds 放宽超时（默认 60 秒，上限 600 秒）。")
     public String executeCommand(
             @ToolParam(name = "command", description = "要执行的 Shell 命令") String command,
             @ToolParam(name = "work_dir",
-                    description = "命令执行的工作目录（绝对路径），留空则使用用户主目录") String workDir) {
+                    description = "命令执行的工作目录（绝对路径），留空则使用用户主目录") String workDir,
+            @ToolParam(name = "timeout_seconds",
+                    description = "执行超时秒数（默认 60，上限 600）；0 或不传用默认。慢构建/测试请调大") int timeoutSeconds) {
 
-        log.info("命令执行工具: {} @ {}", command, workDir);
+        log.info("命令执行工具: {} @ {} (timeout={}s)", command, workDir, timeoutSeconds);
 
         if (command == null || command.isBlank()) {
             return ToolResponse.error("cmd_execute", "命令不能为空");
@@ -101,7 +106,9 @@ public class CommandLineTools {
         if (!chk.ok()) {
             return ToolResponse.error("cmd_execute", chk.denyReason());
         }
-        return doExecute(trimmedCmd, effectiveWorkDir);
+        int timeout = timeoutSeconds <= 0 ? DEFAULT_EXEC_TIMEOUT_SECONDS
+                : Math.min(timeoutSeconds, MAX_EXEC_TIMEOUT_SECONDS);
+        return doExecute(trimmedCmd, effectiveWorkDir, timeout);
     }
 
     @Tool(name = "cmd_whitelist_list",
@@ -600,7 +607,7 @@ public class CommandLineTools {
     /**
      * 实际执行 Shell 命令
      */
-    private String doExecute(String command, String workDir) {
+    private String doExecute(String command, String workDir, int timeoutSeconds) {
         try {
             ProcessBuilder pb;
             String os = System.getProperty("os.name", "").toLowerCase();
@@ -621,7 +628,7 @@ public class CommandLineTools {
             Process process = pb.start();
 
             // 后台线程抽干 stdout：避免旧写法"先把流读到 EOF 再 waitFor"——命令一旦挂起且
-            // stdout 不关闭，readLine 会无限阻塞，导致 EXEC_TIMEOUT_SECONDS 这道 60s 上限永远到不了。
+            // stdout 不关闭，readLine 会无限阻塞，导致 timeoutSeconds 这道超时上限永远到不了。
             final Process proc = process;
             // 头尾双保留：头部 HEAD_OUTPUT_LINES 行 + 尾部 TAIL_OUTPUT_LINES 行环形缓冲。
             // 旧实现保头弃尾，Maven/Gradle 的报错恰在尾部——执行体看不到错误就会换参数重跑，
@@ -654,7 +661,7 @@ public class CommandLineTools {
             reader.setDaemon(true);
             reader.start();
 
-            boolean finished = process.waitFor(EXEC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
             if (!finished) {
                 process.destroyForcibly();
                 // destroyForcibly 异步触发 kill；等待子进程实际退出再返回，避免留下僵尸
@@ -665,7 +672,8 @@ public class CommandLineTools {
                 }
                 reader.interrupt();
                 return ToolResponse.error("cmd_execute",
-                        "命令执行超时（" + EXEC_TIMEOUT_SECONDS + " 秒），已强制终止");
+                        "命令执行超时（" + timeoutSeconds + " 秒），已强制终止。慢构建可调大 timeout_seconds（上限 "
+                                + MAX_EXEC_TIMEOUT_SECONDS + "）");
             }
             // 进程已退出，等读线程把剩余输出抽完（封顶 2s，避免极端情况下卡住）
             reader.join(2000);

@@ -47,6 +47,13 @@ public class Fact {
     public boolean pinned;
 
     /**
+     * 被取代 —— 软删除标记：本事实已被后续更新的事实否定/替代（如换工作、改工具、状态变更）。
+     * 由蒸馏轮后的取代检测置位；置位后不再被召回与去重/取代候选检索返回（{@code searchFacts} 统一过滤），
+     * 但仍留在库中（记忆中心可见、可恢复），不静默物理删除。缺省 false，向后兼容旧对象图。
+     */
+    public boolean superseded;
+
+    /**
      * 待嵌入标记 —— 嵌入服务不可用时降级落在 {@code pendingFacts}（无向量、不可召回），
      * 服务恢复后重嵌入迁入正式 {@code facts} 索引。true 时增删改须路由到 pending 存储。
      */

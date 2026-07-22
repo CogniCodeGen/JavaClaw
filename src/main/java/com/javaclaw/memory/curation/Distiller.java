@@ -116,6 +116,8 @@ public class Distiller {
                 store.mergeFact(hit.get(0).entity(), "distiller", line);
                 merged++;
             } else {
+                // 非近重复的新事实：入库前先做取代检测，软删除被本条否定/替代的旧事实（防新旧矛盾并存）
+                supersedeStale(line, vec, dedup);
                 Fact f = new Fact(null, line, vec);
                 f.source = ep;
                 f.about = matchEntities(line, turnEntities); // 关联本轮实体（记忆图 about 边）
@@ -124,6 +126,93 @@ public class Distiller {
             }
         }
         log.info("记忆蒸馏完成：新增 {}，合并 {}，降级暂存 {}（无嵌入），实体 {}", added, merged, skipped, turnEntities.size());
+    }
+
+    /**
+     * 取代检测 —— 新事实入库前，检索「相关但不重复」的旧事实，交轻量模型判定哪些被本条取代 / 否定，
+     * 命中则将旧事实软删除（{@code superseded=true}）。杜绝新旧矛盾事实并存、导致召回到过时记忆。
+     *
+     * <p>受 {@code memory.supersede.enabled} 闸门；只对 [supersedeThreshold, dedup) 中区间候选生效
+     * （≥dedup 的近重复由蒸馏合并处理，不在取代范围）；跳过 userEdited / pinned 保护事实；
+     * 无候选时不调用模型（成本控制）；全程失败静默，不影响蒸馏主流程。</p>
+     */
+    private void supersedeStale(String newFact, float[] vec, double dedup) {
+        AgentConfig cfg = AgentConfig.getInstance();
+        if (!cfg.getMemorySupersedeEnabled()) return;
+        double threshold = cfg.getMemorySupersedeThreshold();
+        if (threshold >= dedup) return; // 阈值配置异常：取代区间须严格低于去重区间，否则无候选可判
+        int maxCand = cfg.getMemorySupersedeMaxCandidates();
+
+        // 中区间候选：相关但未达去重线，且非用户保护 / 置顶（保护事实不被自动取代）。
+        // 多取一些再过滤——高分槽位可能被 ≥dedup 近重复或保护事实占据，若只取 maxCand 会把
+        // 排在其后、真正矛盾的旧事实挤出候选窗口；故先取 maxCand*2+4，过滤后再截断到 maxCand。
+        List<MemoryStore.Scored<Fact>> cands = store.searchFacts(vec, maxCand * 2 + 4, threshold).stream()
+                .filter(s -> s.score() < dedup)
+                .filter(s -> !s.entity().userEdited && !s.entity().pinned)
+                .limit(maxCand)
+                .toList();
+        if (cands.isEmpty()) return;
+
+        try {
+            StringBuilder u = new StringBuilder("【新事实】\n").append(newFact).append("\n\n【已有事实】\n");
+            for (int i = 0; i < cands.size(); i++) {
+                u.append(i + 1).append(". ").append(cands.get(i).entity().text).append('\n');
+            }
+            Msg sys = Msg.builder().role(MsgRole.SYSTEM).name("system")
+                    .textContent(MemoryPrompts.SUPERSEDE_JUDGE_PROMPT).build();
+            Msg user = Msg.builder().role(MsgRole.USER).name("user").textContent(u.toString()).build();
+            String verdict = streamCollect(sys, user).trim();
+            if (verdict.isEmpty()) {
+                log.warn("取代检测模型无响应，本条跳过（请检查轻量模型配置/网络）");
+                return;
+            }
+            if (isNoneAnswer(verdict)) return;
+
+            int superseded = 0;
+            for (int idx : parseIndexes(verdict, cands.size())) {
+                store.supersedeFact(cands.get(idx).entity(), "distiller", newFact);
+                superseded++;
+            }
+            if (superseded > 0) {
+                log.info("取代检测：新事实取代了 {} 条旧事实 —— {}", superseded, trunc(newFact));
+            }
+        } catch (Exception e) {
+            log.warn("取代检测失败（已静默忽略）: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 解析取代判定输出（如 {@code "1,3"} / {@code "1、3"} / {@code "输出：1,3"}）为 0 基下标集合。
+     *
+     * <p><b>严格校验，误删优先保守</b>：软删除不可逆地影响召回，故只接受「纯编号 + 分隔符」的干净输出
+     * （允许剥离一个前缀标签如「输出：」）。判定文本一旦掺杂其它文字（复述事实、版本号、解释、
+     * 「取代」等字样），说明模型未按协议输出，宁可**整体跳过**也不冒把无关数字当编号误删的风险。</p>
+     *
+     * <p>越界编号丢弃、去重保序；限定 1~3 位数字，规避模型异常长串导致的解析越界。</p>
+     */
+    static List<Integer> parseIndexes(String verdict, int size) {
+        if (verdict == null) return new java.util.ArrayList<>();
+        String s = verdict.strip();
+        // 剥离可能的前缀标签（如「输出：」「取代:」），只保留冒号后的正文
+        int colon = Math.max(s.lastIndexOf('：'), s.lastIndexOf(':'));
+        if (colon >= 0 && colon < s.length() - 1) s = s.substring(colon + 1).strip();
+        // 严格：正文只允许「数字 + 分隔符（逗号/顿号/空白/和/及）+ 尾随标点」；掺杂其它文字则保守跳过
+        if (!s.matches("[0-9,，、\\s和及。．.!！~～]*")) {
+            log.warn("取代判定输出非纯编号格式，保守跳过（不冒误删风险）: {}", trunc(s));
+            return new java.util.ArrayList<>();
+        }
+        java.util.LinkedHashSet<Integer> out = new java.util.LinkedHashSet<>();
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\d{1,3}").matcher(s);
+        while (m.find()) {
+            int n = Integer.parseInt(m.group());
+            if (n >= 1 && n <= size) out.add(n - 1);
+        }
+        return new java.util.ArrayList<>(out);
+    }
+
+    private static String trunc(String s) {
+        if (s == null) return "";
+        return s.length() > 80 ? s.substring(0, 80) + "…" : s;
     }
 
     /**

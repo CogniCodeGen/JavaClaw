@@ -51,6 +51,15 @@ public final class ToolRiskRegistry {
         // cmd_whitelist_remove 只收窄授权面，无需登记
         put(levels, labels, "cmd_whitelist_add", ToolRiskLevel.CONFIRM, "添加命令白名单");
 
+        // ==================== 代码工程（code 工具组） ====================
+        // 写类精确编辑走 CONFIRM（与 sys_file_write 同级）；只读类（code_read/grep/glob）不登记、直接执行。
+        // 设项目根无文件副作用但影响后续操作范围，NOTIFY 告知。
+        put(levels, labels, "code_edit", ToolRiskLevel.CONFIRM, "代码精确编辑");
+        put(levels, labels, "code_insert", ToolRiskLevel.CONFIRM, "代码插入");
+        put(levels, labels, "code_set_project_root", ToolRiskLevel.NOTIFY, "设置项目根目录");
+        // git 写类（提交）需确认；只读 git_status/git_diff/git_log 不登记、直接执行
+        put(levels, labels, "git_commit", ToolRiskLevel.CONFIRM, "git 提交");
+
         // ==================== 系统鼠键 / 截图（NOTIFY） ====================
         put(levels, labels, "sys_screenshot", ToolRiskLevel.NOTIFY, "系统截图");
         put(levels, labels, "sys_mouse_move", ToolRiskLevel.NOTIFY, "系统鼠标移动");
@@ -165,7 +174,8 @@ public final class ToolRiskRegistry {
      * 例如 {@code cat /path/to/file}，命中后可跳过确认）。</p>
      */
     private static final Set<String> DIR_SCOPED_TOOLS = Set.of(
-            "sys_file_write", "sys_file_move", "sys_file_copy", "sys_file_delete", "cmd_execute"
+            "sys_file_write", "sys_file_move", "sys_file_copy", "sys_file_delete", "cmd_execute",
+            "code_edit", "code_insert"
     );
 
     private ToolRiskRegistry() {}

@@ -904,6 +904,24 @@ public final class AgentConfig {
         return getInt("memory.distill.min.input", 10);
     }
 
+    /** 取代检测总闸：新事实入库前判定并软删除被其取代的旧事实（默认开），杜绝新旧矛盾并存召回到过时记忆 */
+    public boolean getMemorySupersedeEnabled() {
+        return Boolean.parseBoolean(properties.getProperty("memory.supersede.enabled", "true"));
+    }
+
+    /**
+     * 取代检测候选相似度下限：仅 [此值, dedup) 中区间的「相关但不重复」旧事实参与取代判定
+     * （默认 0.55，须 &lt; dedup 0.9；≥dedup 的近重复由蒸馏合并处理，不在取代范围）
+     */
+    public double getMemorySupersedeThreshold() {
+        return getDouble("memory.supersede.threshold", 0.55);
+    }
+
+    /** 取代检测单条新事实的最大候选数（默认 5，限制轻量模型判定的规模与成本） */
+    public int getMemorySupersedeMaxCandidates() {
+        return getInt("memory.supersede.max.candidates", 5);
+    }
+
     /** 是否在蒸馏轮后抽取实体并关联到事实（构成记忆图谱的 entity 节点与 about 边，默认开） */
     public boolean getMemoryGraphEntitiesEnabled() {
         return Boolean.parseBoolean(properties.getProperty("memory.graph.entities.enabled", "true"));
