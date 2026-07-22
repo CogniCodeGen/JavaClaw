@@ -33,8 +33,17 @@ public final class AppDatabase {
             throw new SQLException("创建数据库目录失败: " + dbBase.getParent(), e);
         }
         Connection c = openConnection(dbBase);
-        initSchema(c);
-        return c;
+        try {
+            initSchema(c);
+            return c;
+        } catch (SQLException | RuntimeException e) {
+            try {
+                c.close();
+            } catch (SQLException closeFailure) {
+                e.addSuppressed(closeFailure);
+            }
+            throw e;
+        }
     }
 
     public static String currentWorkspaceId() {

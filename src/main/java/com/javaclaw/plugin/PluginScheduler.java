@@ -18,6 +18,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Semaphore;
@@ -93,16 +94,23 @@ public final class PluginScheduler implements PluginExecutor {
     public ManagedTask submit(PluginTask task) {
         ensureActive();
         ManagedTaskImpl handle = new ManagedTaskImpl();
-        Future<?> f = vexec.submit(() -> {
-            try {
-                runGuarded(task, "异步任务");
-            } finally {
-                liveHandles.remove(handle);
-            }
-        });
-        handle.bind(f, () -> liveHandles.remove(handle));
+        handle.onCancel(() -> liveHandles.remove(handle));
+        // 先登记再提交，避免任务先完成、随后才被加入造成幽灵句柄。
         liveHandles.add(handle);
-        return handle;
+        try {
+            Future<?> f = vexec.submit(() -> {
+                try {
+                    runGuarded(task, "异步任务");
+                } finally {
+                    handle.complete();
+                }
+            });
+            handle.bind(f);
+            return handle;
+        } catch (RuntimeException e) {
+            liveHandles.remove(handle);
+            throw e;
+        }
     }
 
     @Override
@@ -136,59 +144,71 @@ public final class PluginScheduler implements PluginExecutor {
         AtomicBoolean cancelled = new AtomicBoolean(false);
         Cancellation signal = cancelled::get;
         ServiceHandleImpl handle = new ServiceHandleImpl(cancelled);
-        Future<?> f = vexec.submit(() -> {
-            log.info("插件[{}]后台服务[{}]已启动", pluginId, name);
-            try {
-                ScopedValue.where(PluginScope.CURRENT, identity).run(() -> {
-                    try {
-                        loop.run(signal);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        log.info("插件[{}]后台服务[{}]被中断退出", pluginId, name);
-                    } catch (Exception e) {
-                        log.warn("插件[{}]后台服务[{}]异常退出：{}", pluginId, name, e.toString(), e);
-                    }
-                });
-            } finally {
-                liveHandles.remove(handle);
-                log.info("插件[{}]后台服务[{}]已结束", pluginId, name);
-            }
-        });
-        handle.bind(f, () -> liveHandles.remove(handle));
+        handle.onCancel(() -> liveHandles.remove(handle));
         liveHandles.add(handle);
-        return handle;
+        try {
+            Future<?> f = vexec.submit(() -> {
+                log.info("插件[{}]后台服务[{}]已启动", pluginId, name);
+                try {
+                    ScopedValue.where(PluginScope.CURRENT, identity).run(() -> {
+                        try {
+                            loop.run(signal);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            log.info("插件[{}]后台服务[{}]被中断退出", pluginId, name);
+                        } catch (Exception e) {
+                            log.warn("插件[{}]后台服务[{}]异常退出：{}", pluginId, name, e.toString(), e);
+                        }
+                    });
+                } finally {
+                    liveHandles.remove(handle);
+                    log.info("插件[{}]后台服务[{}]已结束", pluginId, name);
+                }
+            });
+            handle.bind(f);
+            return handle;
+        } catch (RuntimeException e) {
+            liveHandles.remove(handle);
+            throw e;
+        }
     }
 
     @Override
     public ManagedTask schedule(Duration delay, PluginTask task) {
         ensureActive();
         ManagedTaskImpl handle = new ManagedTaskImpl();
-        ScheduledFuture<?> sf = timer.schedule(
-                () -> vexec.submit(() -> {
-                    try {
-                        runGuarded(task, "延时任务");
-                    } finally {
-                        liveHandles.remove(handle);
-                    }
-                }),
-                Math.max(0, delay.toMillis()), TimeUnit.MILLISECONDS);
-        handle.bind(sf, () -> liveHandles.remove(handle));
+        handle.onCancel(() -> liveHandles.remove(handle));
         liveHandles.add(handle);
-        return handle;
+        try {
+            ScheduledFuture<?> sf = timer.schedule(
+                    () -> dispatchOneShot(handle, task),
+                    Math.max(0, delay.toMillis()), TimeUnit.MILLISECONDS);
+            handle.bind(sf);
+            return handle;
+        } catch (RuntimeException e) {
+            liveHandles.remove(handle);
+            throw e;
+        }
     }
 
     @Override
     public ManagedTask scheduleAtRate(Duration period, PluginTask task) {
         ensureActive();
         ManagedTaskImpl handle = new ManagedTaskImpl();
+        handle.onCancel(() -> liveHandles.remove(handle));
         long ms = Math.max(1, period.toMillis());
-        // 周期任务：每次触发派发到虚拟线程执行；句柄保留至显式取消
-        ScheduledFuture<?> sf = timer.scheduleAtFixedRate(
-                () -> vexec.submit(() -> runGuarded(task, "周期任务")),
-                ms, ms, TimeUnit.MILLISECONDS);
-        handle.bind(sf, () -> liveHandles.remove(handle));
         liveHandles.add(handle);
-        return handle;
+        try {
+            // 周期任务：每次触发派发到虚拟线程执行；句柄保留至显式取消
+            ScheduledFuture<?> sf = timer.scheduleAtFixedRate(
+                    () -> dispatchPeriodic(handle, task),
+                    ms, ms, TimeUnit.MILLISECONDS);
+            handle.bind(sf);
+            return handle;
+        } catch (RuntimeException e) {
+            liveHandles.remove(handle);
+            throw e;
+        }
     }
 
     // ==================== 生命周期（宿主调用） ====================
@@ -207,6 +227,11 @@ public final class PluginScheduler implements PluginExecutor {
         if (n > 0) {
             log.info("插件[{}]已取消 {} 个活跃任务/服务句柄", pluginId, n);
         }
+    }
+
+    /** 当前仍在宿主注册表中的句柄数，供生命周期诊断与回归测试使用。 */
+    int activeHandleCount() {
+        return liveHandles.size();
     }
 
     /** 关闭执行器（停用回收第 3 步）：取消句柄 → 中断全部虚拟线程 → 关定时线程。 */
@@ -245,12 +270,63 @@ public final class PluginScheduler implements PluginExecutor {
             ScopedValue.where(PluginScope.CURRENT, identity).run(() -> {
                 try {
                     task.run();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    log.debug("插件[{}]{}被中断", pluginId, label);
                 } catch (Exception e) {
                     log.warn("插件[{}]{}执行异常：{}", pluginId, label, e.toString(), e);
                 }
             });
         } finally {
             concurrencyGate.release();
+        }
+    }
+
+    private void dispatchOneShot(ManagedTaskImpl handle, PluginTask task) {
+        if (handle.isDone()) {
+            return;
+        }
+        FutureTask<Void> execution = new FutureTask<>(() -> {
+            runGuarded(task, "延时任务");
+            return null;
+        }) {
+            @Override
+            protected void done() {
+                handle.complete();
+            }
+        };
+        dispatch(handle, execution, true);
+    }
+
+    private void dispatchPeriodic(ManagedTaskImpl handle, PluginTask task) {
+        if (handle.isDone()) {
+            return;
+        }
+        FutureTask<Void> execution = new FutureTask<>(() -> {
+            runGuarded(task, "周期任务");
+            return null;
+        }) {
+            @Override
+            protected void done() {
+                handle.unbind(this);
+            }
+        };
+        dispatch(handle, execution, false);
+    }
+
+    private void dispatch(ManagedTaskImpl handle, FutureTask<Void> execution, boolean oneShot) {
+        handle.bind(execution);
+        if (handle.isDone()) {
+            return;
+        }
+        try {
+            vexec.execute(execution);
+        } catch (RuntimeException e) {
+            execution.cancel(true);
+            if (!oneShot) {
+                handle.cancel();
+            }
+            log.debug("插件[{}]定时任务派发失败：{}", pluginId, e.toString());
         }
     }
 
@@ -263,28 +339,52 @@ public final class PluginScheduler implements PluginExecutor {
 
     /** {@link ManagedTask} 实现：包裹 Future/ScheduledFuture，对外仅暴露取消与状态查询。 */
     private static final class ManagedTaskImpl implements ManagedTask, Live {
-        private volatile Future<?> future;
+        private final Set<Future<?>> futures = ConcurrentHashMap.newKeySet();
         private volatile Runnable onCancel = () -> {
         };
+        private final AtomicBoolean done = new AtomicBoolean();
 
-        void bind(Future<?> f, Runnable onCancel) {
-            this.future = f;
-            this.onCancel = onCancel;
+        void onCancel(Runnable action) {
+            this.onCancel = action;
+        }
+
+        void bind(Future<?> f) {
+            if (done.get()) {
+                f.cancel(true);
+                return;
+            }
+            futures.add(f);
+            if (done.get() && futures.remove(f)) {
+                f.cancel(true);
+            }
+        }
+
+        void unbind(Future<?> f) {
+            futures.remove(f);
+        }
+
+        void complete() {
+            if (done.compareAndSet(false, true)) {
+                futures.clear();
+                onCancel.run();
+            }
         }
 
         @Override
         public void cancel() {
-            Future<?> f = future;
-            if (f != null) {
+            if (!done.compareAndSet(false, true)) {
+                return;
+            }
+            for (Future<?> f : futures) {
                 f.cancel(true);
             }
+            futures.clear();
             onCancel.run();
         }
 
         @Override
         public boolean isDone() {
-            Future<?> f = future;
-            return f != null && f.isDone();
+            return done.get();
         }
     }
 
@@ -299,9 +399,13 @@ public final class PluginScheduler implements PluginExecutor {
             this.cancelled = cancelled;
         }
 
-        void bind(Future<?> f, Runnable onCancel) {
+        void onCancel(Runnable action) {
+            this.onCancel = action;
+        }
+
+        void bind(Future<?> f) {
             this.future = f;
-            this.onCancel = onCancel;
+            if (cancelled.get()) f.cancel(true);
         }
 
         @Override

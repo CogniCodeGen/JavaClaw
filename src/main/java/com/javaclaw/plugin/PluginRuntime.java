@@ -91,16 +91,29 @@ final class PluginRuntime {
             return;
         }
         URL[] urls = resolveClasspath();
-        classLoader = new PluginClassLoader(descriptor.id(), urls, appClassLoader);
-
-        Class<?> clazz = Class.forName(descriptor.mainClass(), true, classLoader);
-        Object obj = clazz.getDeclaredConstructor().newInstance();
-        if (!(obj instanceof JavaClawPlugin plugin)) {
-            throw new IllegalStateException("入口类 " + descriptor.mainClass() + " 未实现 JavaClawPlugin");
+        PluginClassLoader loader = new PluginClassLoader(descriptor.id(), urls, appClassLoader);
+        try {
+            Class<?> clazz = Class.forName(descriptor.mainClass(), true, loader);
+            Object obj = clazz.getDeclaredConstructor().newInstance();
+            if (!(obj instanceof JavaClawPlugin plugin)) {
+                throw new IllegalStateException("入口类 " + descriptor.mainClass() + " 未实现 JavaClawPlugin");
+            }
+            this.classLoader = loader;
+            this.instance = plugin;
+            this.state = PluginState.LOADED;
+            this.errorMessage = "";
+            log.info("插件[{}]已加载（入口类 {}，classpath 条目 {}）", descriptor.id(), descriptor.mainClass(), urls.length);
+        } catch (Exception e) {
+            closeLoader(loader);
+            this.state = PluginState.FAILED;
+            this.errorMessage = e.getMessage() == null ? e.toString() : e.getMessage();
+            throw e;
+        } catch (Error e) {
+            closeLoader(loader);
+            this.state = PluginState.FAILED;
+            this.errorMessage = e.getMessage() == null ? e.toString() : e.getMessage();
+            throw e;
         }
-        this.instance = plugin;
-        this.state = PluginState.LOADED;
-        log.info("插件[{}]已加载（入口类 {}，classpath 条目 {}）", descriptor.id(), descriptor.mainClass(), urls.length);
     }
 
     /**
@@ -116,72 +129,80 @@ final class PluginRuntime {
         if (instance == null) {
             load();
         }
-        this.grantedCapabilities = Set.copyOf(granted);
-        this.identity = new PluginScope.PluginIdentity(descriptor.id(), grantedCapabilities);
-        this.scheduler = new PluginScheduler(descriptor.id(), identity, MAX_CONCURRENT_TASKS);
+        try {
+            this.grantedCapabilities = Set.copyOf(granted);
+            this.identity = new PluginScope.PluginIdentity(descriptor.id(), grantedCapabilities);
+            this.scheduler = new PluginScheduler(descriptor.id(), identity, MAX_CONCURRENT_TASKS);
 
-        // 仅装配已授权能力的句柄；未授权能力在网关里为 null → 调用即抛未授权
-        ChatAccess chat = null;
-        if (granted.contains(Capability.CHAT)) {
-            chatImpl = new ChatAccessImpl(descriptor.id(), agentRuntime);
-            chat = chatImpl;
-        }
-        ScheduleAccess schedule = null;
-        if (granted.contains(Capability.SCHEDULE)) {
-            scheduleImpl = new ScheduleAccessImpl(descriptor.id());
-            schedule = scheduleImpl;
-        }
-        MemoryAccess memory = granted.contains(Capability.MEMORY)
-                ? new MemoryAccessImpl(descriptor.id(), agentRuntime.getMemoryManager()) : null;
-        StorageAccess storage = granted.contains(Capability.STORAGE)
-                ? new StorageAccessImpl(descriptor.id(), dataRoot) : null;
+            // 仅装配已授权能力的句柄；未授权能力在网关里为 null → 调用即抛未授权
+            ChatAccess chat = null;
+            if (granted.contains(Capability.CHAT)) {
+                chatImpl = new ChatAccessImpl(descriptor.id(), agentRuntime);
+                chat = chatImpl;
+            }
+            ScheduleAccess schedule = null;
+            if (granted.contains(Capability.SCHEDULE)) {
+                scheduleImpl = new ScheduleAccessImpl(descriptor.id());
+                schedule = scheduleImpl;
+            }
+            MemoryAccess memory = granted.contains(Capability.MEMORY)
+                    ? new MemoryAccessImpl(descriptor.id(), agentRuntime.getMemoryManager()) : null;
+            StorageAccess storage = granted.contains(Capability.STORAGE)
+                    ? new StorageAccessImpl(descriptor.id(), dataRoot) : null;
 
-        PluginContext ctx = new PluginContextImpl(descriptor.id(), scheduler,
-                new PluginConfigImpl(config), chat, schedule, memory, storage);
+            PluginContext ctx = new PluginContextImpl(descriptor.id(), scheduler,
+                    new PluginConfigImpl(config), chat, schedule, memory, storage);
 
-        // 在插件身份作用域内调用 start()，使 start() 内直接发起的能力调用也能被鉴权/审计
-        ScopedValue.where(PluginScope.CURRENT, identity).call(() -> {
-            instance.start(ctx);
-            return null;
-        });
+            // 在插件身份作用域内调用 start()，使 start() 内直接发起的能力调用也能被鉴权/审计
+            ScopedValue.where(PluginScope.CURRENT, identity).call(() -> {
+                instance.start(ctx);
+                return null;
+            });
 
-        // 捕获插件对编排器贡献的工具（可选实现 ToolProvider）
-        providedTools.clear();
-        if (instance instanceof ToolProvider provider) {
-            List<PluginTool> tools = provider.tools();
-            if (tools != null) {
-                for (PluginTool t : tools) {
-                    if (t != null && t.name() != null && !t.name().isBlank()) {
-                        providedTools.put(t.name(), t);
+            // 捕获插件对编排器贡献的工具（可选实现 ToolProvider）
+            providedTools.clear();
+            if (instance instanceof ToolProvider provider) {
+                List<PluginTool> tools = provider.tools();
+                if (tools != null) {
+                    for (PluginTool t : tools) {
+                        if (t != null && t.name() != null && !t.name().isBlank()) {
+                            providedTools.put(t.name(), t);
+                        }
                     }
                 }
-            }
-            if (!providedTools.isEmpty()) {
-                log.info("插件[{}]贡献 {} 个编排器工具：{}", descriptor.id(),
-                        providedTools.size(), providedTools.keySet());
-            }
-        }
-
-        // 动态注册插件提供的技能（可选实现 SkillProvider）：并入渐进式暴露，不落盘
-        providedSkills.clear();
-        if (instance instanceof SkillProvider provider) {
-            List<com.javaclaw.plugin.api.PluginSkill> ps = provider.skills();
-            if (ps != null && !ps.isEmpty()) {
-                SkillManager sm = SkillManager.getInstance();
-                List<com.javaclaw.skill.Skill> dyn = new ArrayList<>();
-                for (var s : ps) {
-                    if (s != null && s.name() != null && !s.name().isBlank()) {
-                        dyn.add(sm.buildDynamicSkill(descriptor.id(), s.name(), s.description(), s.content()));
-                        providedSkills.add(s);
-                    }
+                if (!providedTools.isEmpty()) {
+                    log.info("插件[{}]贡献 {} 个编排器工具：{}", descriptor.id(),
+                            providedTools.size(), providedTools.keySet());
                 }
-                sm.registerDynamicSkills(descriptor.id(), dyn);
             }
-        }
 
-        this.state = PluginState.ACTIVE;
-        this.errorMessage = "";
-        log.info("插件[{}]已启用（授权能力：{}）", descriptor.id(), grantedCapabilities);
+            // 动态注册插件提供的技能（可选实现 SkillProvider）：并入渐进式暴露，不落盘
+            providedSkills.clear();
+            if (instance instanceof SkillProvider provider) {
+                List<com.javaclaw.plugin.api.PluginSkill> ps = provider.skills();
+                if (ps != null && !ps.isEmpty()) {
+                    SkillManager sm = SkillManager.getInstance();
+                    List<com.javaclaw.skill.Skill> dyn = new ArrayList<>();
+                    for (var s : ps) {
+                        if (s != null && s.name() != null && !s.name().isBlank()) {
+                            dyn.add(sm.buildDynamicSkill(descriptor.id(), s.name(), s.description(), s.content()));
+                            providedSkills.add(s);
+                        }
+                    }
+                    sm.registerDynamicSkills(descriptor.id(), dyn);
+                }
+            }
+
+            this.state = PluginState.ACTIVE;
+            this.errorMessage = "";
+            log.info("插件[{}]已启用（授权能力：{}）", descriptor.id(), grantedCapabilities);
+        } catch (Exception e) {
+            rollbackFailedStart(e);
+            throw e;
+        } catch (Error e) {
+            rollbackFailedStart(e);
+            throw e;
+        }
     }
 
     /**
@@ -220,24 +241,7 @@ final class PluginRuntime {
         log.info("插件[{}]开始停用...", descriptor.id());
         // 第 1 步：调插件 stop()（限时，避免卡死回收流程）
         callStopWithTimeout();
-        // 第 2 步：取消该插件全部活跃句柄
-        if (scheduler != null) {
-            scheduler.cancelAllHandles();
-        }
-        // 第 3 步：清理插件创建的定时任务、释放 CHAT 编排器
-        if (scheduleImpl != null) {
-            scheduleImpl.cleanup();
-        }
-        if (chatImpl != null) {
-            chatImpl.shutdown();
-        }
-        // 第 4 步：关执行器（中断全部虚拟线程 + 定时线程）
-        if (scheduler != null) {
-            scheduler.shutdown();
-        }
-        providedTools.clear();   // 工具随插件下线
-        providedSkills.clear();
-        SkillManager.getInstance().unregisterDynamicSkills(descriptor.id());   // 动态技能同步移除
+        cleanupOperationalResources();
         this.state = PluginState.STOPPED;
         log.info("插件[{}]已停用并回收资源", descriptor.id());
     }
@@ -246,19 +250,17 @@ final class PluginRuntime {
     synchronized void unload() {
         if (state == PluginState.ACTIVE) {
             stop();
+        } else {
+            cleanupOperationalResources();
         }
-        if (classLoader != null) {
-            try {
-                classLoader.close();
-            } catch (Exception e) {
-                log.debug("插件[{}]关闭类加载器忽略异常：{}", descriptor.id(), e.toString());
-            }
-        }
+        closeLoader(classLoader);
         this.instance = null;
         this.classLoader = null;
         this.scheduler = null;
         this.chatImpl = null;
         this.scheduleImpl = null;
+        this.identity = null;
+        this.grantedCapabilities = Set.of();
         log.info("插件[{}]已卸载", descriptor.id());
     }
 
@@ -311,6 +313,69 @@ final class PluginRuntime {
         }
         if (t.isAlive()) {
             log.warn("插件[{}]stop() 超时（>{}ms），继续强制回收资源", descriptor.id(), STOP_TIMEOUT_MS);
+            t.interrupt();
+        }
+    }
+
+    private void rollbackFailedStart(Throwable failure) {
+        log.warn("插件[{}]启动失败，回滚已创建资源：{}", descriptor.id(), failure.toString());
+        callStopWithTimeout();
+        cleanupOperationalResources();
+        closeLoader(classLoader);
+        instance = null;
+        classLoader = null;
+        identity = null;
+        grantedCapabilities = Set.of();
+        state = PluginState.FAILED;
+        errorMessage = failure.getMessage() == null ? failure.toString() : failure.getMessage();
+    }
+
+    /** 回收一次启用周期内的所有宿主资源，每项都独立容错且可重复调用。 */
+    private void cleanupOperationalResources() {
+        PluginScheduler currentScheduler = scheduler;
+        scheduler = null;
+        if (currentScheduler != null) {
+            try {
+                currentScheduler.shutdown();
+            } catch (RuntimeException e) {
+                log.warn("插件[{}]关闭执行器失败（继续回收）：{}", descriptor.id(), e.toString());
+            }
+        }
+        ScheduleAccessImpl currentSchedule = scheduleImpl;
+        scheduleImpl = null;
+        if (currentSchedule != null) {
+            try {
+                currentSchedule.cleanup();
+            } catch (RuntimeException e) {
+                log.warn("插件[{}]清理定时任务失败（继续回收）：{}", descriptor.id(), e.toString());
+            }
+        }
+        ChatAccessImpl currentChat = chatImpl;
+        chatImpl = null;
+        if (currentChat != null) {
+            try {
+                currentChat.shutdown();
+            } catch (RuntimeException e) {
+                log.warn("插件[{}]关闭聊天能力失败（继续回收）：{}", descriptor.id(), e.toString());
+            }
+        }
+        providedTools.clear();
+        providedSkills.clear();
+        try {
+            SkillManager.getInstance().unregisterDynamicSkills(descriptor.id());
+        } catch (RuntimeException e) {
+            log.warn("插件[{}]注销动态技能失败（继续回收）：{}", descriptor.id(), e.toString());
+        }
+    }
+
+    private void closeLoader(PluginClassLoader loader) {
+        if (loader == null) {
+            return;
+        }
+        try {
+            loader.close();
+        } catch (Exception e) {
+            log.debug("插件[{}]关闭类加载器忽略异常：{}", descriptor.id(), e.toString());
         }
     }
 

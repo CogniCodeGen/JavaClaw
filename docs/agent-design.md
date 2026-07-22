@@ -1,7 +1,7 @@
 # JavaClaw 智能体编排系统 — 设计文档
 
-> 适用版本：JavaFX 25 + JDK 21 · AgentScope Java 1.0.11
-> 最近更新：2026-06 · 配套阅读《[功能文档](./功能文档.md)》与仓库根 `CLAUDE.md`
+> 适用版本：JavaFX 25 + JDK 25 · AgentScope Java 1.0.12
+> 最近更新：2026-07 · 配套阅读《[功能文档](./功能文档.md)》与仓库根 `AGENTS.md`
 
 ---
 
@@ -53,11 +53,17 @@ JavaClaw 是一个多智能体桌面应用，核心是 **三种编排模式 + �
 
 ```
 WorkspaceManager 初始化（最先：确定当前工作区路径）
-    → AgentConfig / EmailConfig / NotificationConfig 等单例加载
-    → AgentRuntime 构建（基础设施容器，依赖注入）
-    → ModeRegistry 注册三种模式（ChatMode / PlanMode / TaskMode）
-    → ChatViewController 构建 UI 并绑定端口
-stop() 时按相反顺序优雅关闭（浏览器、MCP 连接、线程池）。
+    → 全局交互端口 + PlaywrightBrowserManager（懒启动）
+    → ApplicationKernel.initialize()
+        → WorkspaceContext 捕获不可变路径快照
+        → RuntimeFactory 事务式创建 WorkspaceRuntime
+          （AgentRuntime + Chat/Plan 服务 + Chat/Plan/Loop/Shell/Task ModeRegistry）
+        → ScheduleManager / PluginManager / SddTaskManager 接管新运行时
+    → ChatViewController 采用整个 WorkspaceRuntime 并构建 UI
+stop() 统一委派 ApplicationKernel，按依赖反序关闭。
+
+配置重建与工作区切换也只允许经过 `ApplicationKernel`。切换前先停靠 Schedule/Plugin/SDD，
+失败时内核切回原工作区并重建；UI 不直接创建或销毁 AgentRuntime/ChatService。
 ```
 
 ---
@@ -332,7 +338,7 @@ skill.evolution.mode 总闸（off / suggest / auto，默认 suggest）：
 | **新子智能体** | 创建 Expert 配置 → `ExpertManager.buildExpertDefs()` 加一行 ExpertDef → SubAgentTool 自动注册 |
 | **新工具** | 对应 Tools 类加 `@Tool` 方法，返回 `ToolResponse.success()/error()/timeout()`（格式 `[toolName][状态] 消息`）；高风险在 `ToolRiskRegistry` 注册等级 |
 | **新技能** | `skills/{id}/SKILL.md`（frontmatter）+ 可选 scripts/references/assets；或经 skill_create / 待审提案采纳沉淀 |
-| **新交互模式** | 实现 `Mode` 接口并注册到 `ModeRegistry`，UI 经 list() 自动渲染 |
+| **新交互模式** | 实现 `Mode` 接口并在 `RuntimeFactory` 注册，UI 经 list() 自动渲染 |
 | **新 UI 框架** | 重写 `api.*` 端口的适配实现，不动领域代码 |
 | **新主题** | chat.css 复制一个 `.theme-{id}` 块 + `ThemeManager.THEMES` 加一项（禁止硬编码颜色，引用 `-jc-*` 令牌） |
 
@@ -343,6 +349,9 @@ skill.evolution.mode 总闸（off / suggest / auto，默认 suggest）：
 | 文件 | 职责 |
 |------|------|
 | `app/JavaClawApp.java` · `app/Launcher.java` | 应用入口；Launcher 绕过 JavaFX 非模块化启动限制 |
+| `runtime/ApplicationKernel.java` | 唯一组合根；重建、工作区切换/回滚与全局订阅方接管 |
+| `runtime/WorkspaceRuntime.java` · `runtime/RuntimeFactory.java` | 工作区运行时聚合根 · 事务式完整装配 |
+| `runtime/WorkspaceContext.java` | 工作区不可变路径快照 |
 | `agent/AgentRuntime.java` | 基础设施容器，依赖注入与共享工具 |
 | `agent/ChatService.java` | 普通聊天编排器，GEPA 闭环 |
 | `agent/PlanModeService.java` | 规划模式编排（MsgHub 对等广播） |

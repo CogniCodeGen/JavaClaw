@@ -17,6 +17,8 @@ import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.SettingsView;
 import com.javaclaw.config.ToolReviewMode;
+import com.javaclaw.runtime.ApplicationKernel;
+import com.javaclaw.runtime.WorkspaceRuntime;
 import com.javaclaw.ui.javafx.schedule.ScheduleView;
 import com.javaclaw.ui.javafx.skill.SkillCenterView;
 import com.javaclaw.ui.javafx.task.SddTaskView;
@@ -99,7 +101,9 @@ public class ChatViewController {
     /** 规划模式服务入口 */
     private PlanModeService planModeService;
     /** 模式注册表（对话模式 / 动作模式 统一管理，支持运行期扩展） */
-    private final ModeRegistry modeRegistry;
+    private ModeRegistry modeRegistry;
+    /** 应用组合根：服务重建、工作区切换和回滚的唯一生命周期入口。 */
+    private final ApplicationKernel applicationKernel;
     private final PlaywrightBrowserManager browserManager;
     private ChatHistoryManager chatHistoryManager;
     private final SidebarView sidebarView;
@@ -255,7 +259,7 @@ public class ChatViewController {
 
     /**
      * 服务重建进行中标志：重建改为后台线程异步执行后，UI 事件可能落在
-     * shutdown→重建→rewireModeRegistry 的窗口内。两重职责：
+     * shutdown→重建→采用新 WorkspaceRuntime 的窗口内。两重职责：
      * ① stopActiveStream 在置位期间直接忽略——否则会对正在关闭的服务调 cancelStream
      * 并提前 setInputEnabled(true) 解锁输入，用户此刻发消息会打到半重建的服务上；
      * ② rebuildAgentService 入口 CAS 抢占——setInputEnabled 锁不住设置对话框的保存按钮，
@@ -288,22 +292,16 @@ public class ChatViewController {
      * 从注册表中取出 {@link ConversationMode} 并调用 {@code start}；未来扩展新模式
      * 只需实现 {@link Mode} 接口并注册到 registry，UI 层无需调整。</p>
      *
-     * @param runtime           共享基础设施容器
-     * @param chatService       普通模式门面
-     * @param planModeService   规划模式门面
-     * @param modeRegistry      模式注册表（已预先注册好 chat / plan / task 三种内置模式）
-     * @param browserManager    浏览器管理器（供 UI 层面直接操作使用）
+     * @param applicationKernel 应用组合根（已完成首个工作区运行时初始化）
      */
-    public ChatViewController(AgentRuntime runtime,
-                              ChatService chatService,
-                              PlanModeService planModeService,
-                              ModeRegistry modeRegistry,
-                              PlaywrightBrowserManager browserManager) {
-        this.runtime = runtime;
-        this.chatService = chatService;
-        this.planModeService = planModeService;
-        this.modeRegistry = modeRegistry;
-        this.browserManager = browserManager;
+    public ChatViewController(ApplicationKernel applicationKernel) {
+        this.applicationKernel = java.util.Objects.requireNonNull(applicationKernel, "applicationKernel");
+        WorkspaceRuntime initialRuntime = applicationKernel.current();
+        this.runtime = initialRuntime.agentRuntime();
+        this.chatService = initialRuntime.chatService();
+        this.planModeService = initialRuntime.planModeService();
+        this.modeRegistry = initialRuntime.modeRegistry();
+        this.browserManager = applicationKernel.browserManager();
         this.chatHistoryManager = new ChatHistoryManager();
         log.info("开始构建聊天界面");
 
@@ -3395,28 +3393,21 @@ public class ChatViewController {
         }
         log.info("配置变更，重建三条路径服务");
         setInputEnabled(false);
+        java.util.concurrent.atomic.AtomicBoolean runtimeReady =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
         Thread rebuildThread = new Thread(() -> {
             try {
-                // 1. 关闭旧服务（先停循环并等它停稳：它在后台跑，晚于 runtime 关闭会踩到已释放的资源）
-                shutdownLoopMode();
-                chatService.shutdown();
-                planModeService.shutdown();
-                runtime.shutdown();
-                // 2. 按依赖顺序重建 + 重接线
-                rebuildOnce();
+                adoptRuntime(applicationKernel.rebuildCurrent());
+                runtimeReady.set(true);
                 log.info("三条路径服务重建完成");
             } catch (Exception e) {
-                log.error("重建服务失败，尝试恢复", e);
-                // 重试前先尽力关掉首次重建半建成的实例：首次 rebuildOnce 若在
-                // new ChatService 成功之后失败，新实例已持有本工作区 EclipseStore
-                // 记忆库的文件锁，不关就重试会在第二次 new ChatService 时撞锁必然失败。
-                // 各 shutdown 均幂等，字段仍指向已关旧实例时重复关闭无害
-                shutdownServicesQuietly();
+                log.error("重建服务失败", e);
+                // Kernel 会自行重试；若恢复成功但后续订阅方激活抛错，仍采用其当前快照。
                 try {
-                    rebuildOnce();
-                    log.info("服务恢复重建完成");
-                } catch (Exception ex) {
-                    log.error("恢复服务也失败", ex);
+                    adoptRuntime(applicationKernel.current());
+                    runtimeReady.set(true);
+                } catch (IllegalStateException unavailable) {
+                    log.error("服务恢复失败，当前没有可用运行时", unavailable);
                 }
             } finally {
                 // UI 收尾放 finally：Error（如 OOM / 类初始化失败）逃逸上方 catch 时旗标也必须
@@ -3431,7 +3422,14 @@ public class ChatViewController {
                         wireTokenTracker();
                     } finally {
                         rebuildInProgress.set(false);
-                        setInputEnabled(true);
+                        setInputEnabled(runtimeReady.get());
+                        if (!runtimeReady.get()) {
+                            var port = com.javaclaw.agent.ToolConfirmationManager.getPort();
+                            if (port != null) {
+                                port.notify(new com.javaclaw.api.interaction.ToastRequest(
+                                        "系统", "运行时恢复失败，请修正设置后再次保存或重启应用"));
+                            }
+                        }
                         // 重建期间又有配置保存被排队：补一轮拾取最新配置
                         if (rebuildQueued.getAndSet(false)) {
                             rebuildAgentService();
@@ -3445,66 +3443,15 @@ public class ChatViewController {
     }
 
     /**
-     * 尽力关闭三条路径服务的当前实例（恢复重试前的清理，逐项隔离异常）。
-     *
-     * <p>专供 {@link #rebuildAgentService} 的失败恢复路径：首次重建半途失败后，字段可能
-     * 指向半建成的新实例（持有 EclipseStore 锁等资源）或已关闭的旧实例——各 shutdown
-     * 均幂等，统一补关一遍即可安全重试。</p>
+     * 原子采用一个完整的工作区运行时。Factory 每次会连同 ShellMode 一起新建，避免命令模式
+     * 在模型重建后继续持有已经关闭的 ChatService。
      */
-    private void shutdownServicesQuietly() {
-        try {
-            chatService.shutdown();
-        } catch (Exception e) {
-            log.warn("恢复前关闭 ChatService 异常: {}", e.getMessage());
-        }
-        try {
-            planModeService.shutdown();
-        } catch (Exception e) {
-            log.warn("恢复前关闭 PlanModeService 异常: {}", e.getMessage());
-        }
-        try {
-            runtime.shutdown();
-        } catch (Exception e) {
-            log.warn("恢复前关闭 AgentRuntime 异常: {}", e.getMessage());
-        }
-    }
-
-    /**
-     * 执行一遍完整的重建链：runtime → chatService → planModeService → 重接 Mode 壳 →
-     * 通知外部订阅方。首次重建与失败恢复共用此单一实现，避免两份拷贝漏改一处
-     * 重建出「半接线」的服务。
-     */
-    private void rebuildOnce() {
-        runtime = new AgentRuntime(browserManager);
-        chatService = new ChatService(runtime);
-        planModeService = new PlanModeService(runtime);
+    private void adoptRuntime(WorkspaceRuntime workspaceRuntime) {
+        runtime = workspaceRuntime.agentRuntime();
+        chatService = workspaceRuntime.chatService();
+        planModeService = workspaceRuntime.planModeService();
+        modeRegistry = workspaceRuntime.modeRegistry();
         chatService.setLoopInteractiveHandler(this::showLoopInteractionBubble);
-        // 把 registry 中持有旧 service 引用的 Mode 壳替换为新实例
-        rewireModeRegistry();
-        // 通知外部订阅方
-        com.javaclaw.schedule.ScheduleManager.getInstance().reload(
-                new com.javaclaw.agent.ScheduledTaskAgent(runtime));
-        com.javaclaw.task.sdd.run.SddTaskManager.getInstance().reload(
-                com.javaclaw.config.DataManager.getInstance().getDataRoot(),
-                runtime.getModelFactory(), runtime::buildCapabilityTools);
-    }
-
-    /**
-     * 重新把 ChatMode / PlanMode / LoopMode 壳注册到 {@link ModeRegistry}。
-     *
-     * <p>服务实例重建后，Mode 壳里捕获的引用是旧实例，需要注销并重新注册新壳。
-     * LoopMode 持有的 LoopService 绑定旧 AgentRuntime，同样必须重建（先 shutdown
-     * 停掉可能在跑的旧循环），否则重建后启动循环会用已关闭的 runtime / 旧模型凭据。
-     * TaskMode 持有的是 {@code Supplier<Stage>} 懒引用，不受影响，无需重建。</p>
-     */
-    private void rewireModeRegistry() {
-        modeRegistry.getById("loop").ifPresent(Mode::shutdown);
-        modeRegistry.unregister("chat");
-        modeRegistry.unregister("plan");
-        modeRegistry.unregister("loop");
-        modeRegistry.register(new com.javaclaw.mode.ChatMode(chatService));
-        modeRegistry.register(new com.javaclaw.mode.PlanMode(planModeService));
-        modeRegistry.register(new com.javaclaw.mode.LoopMode(new com.javaclaw.loop.LoopService(runtime)));
     }
 
     /**
@@ -3523,14 +3470,6 @@ public class ChatViewController {
             }
         });
         return cancelled[0];
-    }
-
-    /**
-     * 停掉循环并<b>等待线程停稳</b>（服务重建/切工作区专用，随后会关闭共享基础设施）。
-     * 用户按停止/Esc 走非阻塞的 {@link #cancelLoopMode()}，不在 UI 线程上等。
-     */
-    private void shutdownLoopMode() {
-        modeRegistry.getById("loop").ifPresent(Mode::shutdown);
     }
 
     /**
@@ -3837,7 +3776,6 @@ public class ChatViewController {
         if (currentSession != null) {
             chatService.saveSession(currentSession.getId());
         }
-        browserManager.saveCookies();
 
         // 显示加载遮罩
         ProgressIndicator spinner = new ProgressIndicator();
@@ -3853,41 +3791,8 @@ public class ChatViewController {
         // 在后台线程执行非 UI 操作（步骤 2-7）
         Thread switchThread = new Thread(() -> {
             try {
-                // 2. 依次关闭各路径（先停后台循环并等它停稳），并断开共享基础设施（MCP 等）
-                shutdownLoopMode();
-                chatService.shutdown();
-                planModeService.shutdown();
-                runtime.shutdown();
-
-                // 3. 切换工作区
-                if (!wsMgr.switchWorkspace(targetWorkspaceId)) {
-                    log.error("切换工作区失败: {}", targetWorkspaceId);
-                    Platform.runLater(() -> chatPane.setCenter(chatCenter));
-                    return;
-                }
-
-                // 4. 重新加载所有配置（路径切换到新工作区）
-                com.javaclaw.config.AgentConfig.getInstance().reload();
-                com.javaclaw.config.EmailConfig.getInstance().reload();
-                com.javaclaw.config.NotificationConfig.getInstance().reload();
-                com.javaclaw.config.DataManager.getInstance().reload();
-                com.javaclaw.site.SiteCredentialManager.getInstance().reload();
-                com.javaclaw.skill.SkillUsageTracker.getInstance().reload();
-                com.javaclaw.skill.curation.SkillProposalQueue.getInstance().reload();
-
-                // 5. 清除旧 Cookie
-                browserManager.clearCookies();
-
-                // 5.5 切换诊断日志文件到新工作区
-                com.javaclaw.diagnostics.TraceRecorder.getInstance().reload();
-
-                // 6-7. 重建共享基础设施 + 三条路径服务 + 重接 Mode 壳 + 通知外部订阅方：
-                // 与配置变更重建共用 rebuildOnce 单一实现——此前这里逐字复制其六条语句，
-                // 重建链加环（新 rewire/新订阅方）只改一边就会切出「半接线」的服务
-                rebuildOnce();
-
-                // 7a. 重载插件系统（旧 runtime 的能力句柄已失效，切到新 runtime 后重新发现）
-                com.javaclaw.plugin.PluginManager.getInstance().reload(runtime);
+                // 生命周期、配置重载、浏览器重绑定和失败回滚统一由应用内核完成。
+                adoptRuntime(applicationKernel.switchWorkspace(targetWorkspaceId));
 
                 // UI 更新回到 JavaFX 线程（步骤 8-12）
                 Platform.runLater(() -> {
@@ -3943,7 +3848,21 @@ public class ChatViewController {
                 });
             } catch (Exception e) {
                 log.error("工作区切换异常", e);
-                Platform.runLater(() -> chatPane.setCenter(chatCenter));
+                // Kernel 已尝试回滚；采用恢复后的运行时，并把侧边栏选择恢复为真实工作区。
+                try {
+                    adoptRuntime(applicationKernel.current());
+                } catch (IllegalStateException unavailable) {
+                    log.error("工作区切换后无可用运行时", unavailable);
+                }
+                Platform.runLater(() -> {
+                    sidebarView.refreshWorkspaceCombo();
+                    chatPane.setCenter(chatCenter);
+                    var port = com.javaclaw.agent.ToolConfirmationManager.getPort();
+                    if (port != null) {
+                        port.notify(new com.javaclaw.api.interaction.ToastRequest(
+                                "系统", "工作区切换失败，已恢复原工作区"));
+                    }
+                });
             } finally {
                 // 旗标复位收敛到 finally 单一出口：Error 逃逸上方 catch 时也必须复位，否则
                 // 会话操作被永久拦截、停流被永久忽略。此 runLater 在成功路径的 UI 重载

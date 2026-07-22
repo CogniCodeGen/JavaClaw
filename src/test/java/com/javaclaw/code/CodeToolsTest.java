@@ -79,6 +79,17 @@ class CodeToolsTest {
     }
 
     @Test
+    void code_grep_根层glob按相对路径匹配(@TempDir Path dir) throws IOException {
+        Files.writeString(dir.resolve("a.java"), "needle here\n");
+        Files.createDirectories(dir.resolve("nested"));
+        Files.writeString(dir.resolve("nested/b.java"), "needle here\n");
+
+        String out = tools().grep("needle", dir.toString(), "*.java", false, 100);
+        assertTrue(out.contains("a.java"), out);
+        assertFalse(out.contains("nested"), "*.java 只应匹配检索根层文件: " + out);
+    }
+
+    @Test
     void code_grep_忽略大小写(@TempDir Path dir) throws IOException {
         Files.writeString(dir.resolve("a.txt"), "HELLO World\n");
         assertTrue(tools().grep("hello", dir.toString(), null, true, 100).contains("a.txt"));
@@ -143,6 +154,20 @@ class CodeToolsTest {
         String out = tools().build("rm -rf /", 0);
         assertTrue(out.contains("失败"), out);
         assertTrue(out.contains("只允许构建/测试工具") || out.contains("拒绝"), out);
+    }
+
+    @Test
+    void code_build_拒绝白名单命令后的shell注入() {
+        String out = tools().build("mvn -q test; touch should-not-exist", 1);
+        assertTrue(out.contains("失败"), out);
+        assertTrue(out.contains("不支持 shell"), out);
+    }
+
+    @Test
+    void parseCommand_保留引号参数且不经过shell() {
+        assertEquals(List.of("mvn", "-Dname=hello world", "test"),
+                CodeTools.parseCommand("mvn '-Dname=hello world' test"));
+        assertEquals(List.of(".\\gradlew", "test"), CodeTools.parseCommand(".\\gradlew test"));
     }
 
     // ==================== git（端到端，需 git 可用） ====================

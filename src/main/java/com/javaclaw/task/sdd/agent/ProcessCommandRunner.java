@@ -1,6 +1,7 @@
 package com.javaclaw.task.sdd.agent;
 
 import com.javaclaw.task.sdd.verify.CommandRunner;
+import com.javaclaw.util.ProcessTerminator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -55,24 +56,34 @@ public final class ProcessCommandRunner implements CommandRunner {
             pb.redirectErrorStream(true);
             proc = pb.start();
 
-            StringBuilder out = new StringBuilder();
-            try (BufferedReader r = new BufferedReader(
-                    new InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = r.readLine()) != null) {
-                    if (out.length() < MAX_OUTPUT_CHARS) out.append(line).append('\n');
+            StringBuffer out = new StringBuffer();
+            Process started = proc;
+            Thread outputPump = new Thread(() -> {
+                try (BufferedReader r = new BufferedReader(
+                        new InputStreamReader(started.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = r.readLine()) != null) {
+                        if (out.length() < MAX_OUTPUT_CHARS) out.append(line).append('\n');
+                    }
+                } catch (Exception e) {
+                    log.debug("[Verify] 输出读取结束: {}", e.getMessage());
                 }
-            }
+            }, "sdd-verify-output");
+            outputPump.setDaemon(true);
+            outputPump.start();
+
             boolean finished = proc.waitFor(timeoutSeconds, TimeUnit.SECONDS);
             if (!finished) {
-                proc.destroyForcibly();
+                ProcessTerminator.destroyTreeForcibly(proc);
+                outputPump.join(2_000);
                 log.warn("[Verify] 命令超时（{}s）：{}", timeoutSeconds, command);
                 return new Result(-2, out + "\n（命令执行超时 " + timeoutSeconds + "s，已强制终止）");
             }
+            outputPump.join(2_000);
             return new Result(proc.exitValue(), out.toString());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            if (proc != null) proc.destroyForcibly();
+            ProcessTerminator.destroyTreeForcibly(proc);
             return new Result(-3, "（命令执行被中断）");
         } catch (Exception e) {
             log.warn("[Verify] 命令执行异常：{} — {}", command, e.getMessage());

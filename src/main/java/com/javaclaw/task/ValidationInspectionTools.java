@@ -1,6 +1,7 @@
 package com.javaclaw.task;
 
 import com.javaclaw.agent.model.ToolResponse;
+import com.javaclaw.util.ProcessTerminator;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
@@ -299,6 +300,7 @@ public final class ValidationInspectionTools {
         }
 
         // 4) 实际执行
+        Process process = null;
         try {
             ProcessBuilder pb;
             String os = System.getProperty("os.name", "").toLowerCase();
@@ -311,34 +313,43 @@ public final class ValidationInspectionTools {
             pb.redirectErrorStream(true);
 
             log.info("{} 执行：{} @ {}", tool, trimmed, cwd);
-            Process process = pb.start();
+            process = pb.start();
 
-            StringBuilder output = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(process.getInputStream()))) {
-                String line;
-                int lineCount = 0;
-                while ((line = reader.readLine()) != null && lineCount < MAX_OUTPUT_LINES) {
-                    output.append(line).append("\n");
-                    lineCount++;
+            StringBuffer output = new StringBuffer();
+            java.util.concurrent.atomic.AtomicBoolean outputTruncated = new java.util.concurrent.atomic.AtomicBoolean();
+            Process started = process;
+            Thread outputPump = new Thread(() -> {
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(started.getInputStream()))) {
+                    String line;
+                    int lineCount = 0;
+                    while ((line = reader.readLine()) != null) {
+                        if (lineCount++ < MAX_OUTPUT_LINES) output.append(line).append("\n");
+                        else outputTruncated.set(true);
+                    }
+                } catch (java.io.IOException ignored) {
+                    // 超时终止进程时输出流关闭属正常情况。
                 }
-                if (lineCount >= MAX_OUTPUT_LINES) {
-                    output.append("\n...（输出已截断，超过 ").append(MAX_OUTPUT_LINES).append(" 行）");
-                }
-            }
+            }, "inspect-command-output");
+            outputPump.setDaemon(true);
+            outputPump.start();
 
             boolean finished = process.waitFor(timeoutSec, TimeUnit.SECONDS);
             if (!finished) {
-                process.destroyForcibly();
+                ProcessTerminator.destroyTreeForcibly(process);
                 try {
                     process.waitFor(2, TimeUnit.SECONDS);
                 } catch (InterruptedException ignored) {
                     Thread.currentThread().interrupt();
                 }
+                outputPump.join(2_000);
+                appendTruncationNotice(output, outputTruncated.get());
                 return ToolResponse.timeout(tool, timeoutSec,
                         "已强制终止。\n命令: " + trimmed
                                 + "\n已捕获输出:\n" + truncated(output));
             }
+            outputPump.join(2_000);
+            appendTruncationNotice(output, outputTruncated.get());
 
             int exitCode = process.exitValue();
             String body = "命令: " + trimmed
@@ -351,9 +362,19 @@ public final class ValidationInspectionTools {
             }
             return ToolResponse.error(tool, body);
 
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            ProcessTerminator.destroyTreeForcibly(process);
+            return ToolResponse.error(tool, "命令执行被中断");
         } catch (Exception e) {
             log.warn("{} 执行异常：{}", tool, e.getMessage());
             return ToolResponse.fromException(tool, e);
+        }
+    }
+
+    private static void appendTruncationNotice(StringBuffer output, boolean wasTruncated) {
+        if (wasTruncated) {
+            output.append("\n...（输出已截断，超过 ").append(MAX_OUTPUT_LINES).append(" 行）");
         }
     }
 
@@ -366,6 +387,8 @@ public final class ValidationInspectionTools {
      * @return 命中的危险标记字符串；为 null 表示安全
      */
     private static String findDangerousShellSyntax(String command) {
+        if (command.contains("\n")) return "换行";
+        if (command.contains("\r")) return "回车";
         if (command.contains("&&")) return "&&";
         if (command.contains("||")) return "||";
         if (command.contains(";")) return ";";
@@ -378,7 +401,7 @@ public final class ValidationInspectionTools {
         return null;
     }
 
-    private static String truncated(StringBuilder sb) {
+    private static String truncated(CharSequence sb) {
         String s = sb.toString().trim();
         return s.isEmpty() ? "（无输出）" : s;
     }

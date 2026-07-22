@@ -10,8 +10,9 @@ import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
 import java.nio.file.WatchService;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
@@ -31,6 +32,8 @@ final class PluginWatcher {
 
     /** 去抖窗口：收到事件后等待该时长再统一回调一次 */
     private static final long DEBOUNCE_MS = 500;
+    /** 标准 WatchService 在部分平台延迟较高；周期快照保证变化在此窗口内被发现。 */
+    private static final long SNAPSHOT_POLL_MS = 1_000;
 
     private final Path root;
     private final Runnable onChange;
@@ -38,8 +41,9 @@ final class PluginWatcher {
     private WatchService watchService;
     private Thread thread;
     private volatile boolean running = false;
-    /** 已登记监听的目录（根 + 各插件子目录），避免重复注册 */
-    private final Set<Path> registered = new HashSet<>();
+    /** 已登记监听的目录及 key（根 + 各插件子目录），失效 key 会被移除以允许同名目录重建。 */
+    private final Map<Path, WatchKey> registered = new HashMap<>();
+    private Map<Path, FileStamp> snapshot = Map.of();
 
     PluginWatcher(Path root, Runnable onChange) {
         this.root = root;
@@ -54,7 +58,10 @@ final class PluginWatcher {
         try {
             watchService = FileSystems.getDefault().newWatchService();
             registerAll();
+            snapshot = scanSnapshot();
         } catch (Exception e) {
+            closeWatchService();
+            registered.clear();
             log.warn("插件目录热感知启动失败（将仅支持手动刷新）：{}", e.toString());
             return;
         }
@@ -66,19 +73,38 @@ final class PluginWatcher {
     }
 
     /** 停止监听（幂等）。 */
-    synchronized void stop() {
-        running = false;
-        if (watchService != null) {
+    void stop() {
+        Thread stoppingThread;
+        synchronized (this) {
+            running = false;
+            stoppingThread = thread;
+            closeWatchService();
+            if (stoppingThread != null) stoppingThread.interrupt();
+        }
+        if (stoppingThread != null && stoppingThread != Thread.currentThread()) {
             try {
-                watchService.close();   // 唤醒阻塞中的 take()
-            } catch (Exception e) {
-                log.debug("关闭 WatchService 忽略异常：{}", e.toString());
+                stoppingThread.join(2_000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
         }
-        if (thread != null) {
-            thread.interrupt();
+        synchronized (this) {
+            thread = null;
+            registered.clear();
+            snapshot = Map.of();
         }
         log.info("插件目录热感知已停止");
+    }
+
+    private void closeWatchService() {
+        if (watchService == null) return;
+        try {
+            watchService.close();
+        } catch (Exception e) {
+            log.debug("关闭 WatchService 忽略异常：{}", e.toString());
+        } finally {
+            watchService = null;
+        }
     }
 
     /** 登记根目录与全部一级子目录的监听（已登记的跳过）。 */
@@ -94,9 +120,10 @@ final class PluginWatcher {
         }
     }
 
-    @SuppressWarnings("removal")
     private void registerDir(Path dir) {
-        if (registered.contains(dir) || !Files.isDirectory(dir)) {
+        Path normalized = dir.toAbsolutePath().normalize();
+        WatchKey existing = registered.get(normalized);
+        if ((existing != null && existing.isValid()) || !Files.isDirectory(normalized)) {
             return;
         }
         WatchEvent.Kind<?>[] kinds = {
@@ -105,36 +132,42 @@ final class PluginWatcher {
                 StandardWatchEventKinds.ENTRY_MODIFY
         };
         try {
-            // macOS 轮询 WatchService 用 HIGH 灵敏度降到 ~2s（API 标记 deprecated-for-removal，JDK25 仍可用）
-            try {
-                dir.register(watchService, kinds, com.sun.nio.file.SensitivityWatchEventModifier.HIGH);
-            } catch (Throwable t) {
-                dir.register(watchService, kinds);
-            }
-            registered.add(dir);
+            WatchService service = watchService;
+            if (service == null) return;
+            registered.put(normalized, normalized.register(service, kinds));
         } catch (Exception e) {
-            log.debug("登记目录监听失败 {}：{}", dir, e.toString());
+            log.debug("登记目录监听失败 {}：{}", normalized, e.toString());
         }
     }
 
     private void loop() {
+        WatchService service = watchService;
+        if (service == null) return;
         while (running) {
-            WatchKey key;
+            boolean changed = false;
             try {
-                key = watchService.take();
+                WatchKey key = service.poll(SNAPSHOT_POLL_MS, TimeUnit.MILLISECONDS);
+                if (key != null) {
+                    consume(key);
+                    changed = true;
+                }
             } catch (Exception e) {
                 break;   // 关闭或中断
             }
-            key.pollEvents();   // 消费事件（具体内容不重要，任何变化都重扫）
-            key.reset();
+
+            Map<Path, FileStamp> currentSnapshot = scanSnapshot();
+            if (!currentSnapshot.equals(snapshot)) changed = true;
+            if (!changed) continue;
+
             // 去抖：吸收文件复制/批量变更的后续事件，再统一回调一次
-            drainFor(DEBOUNCE_MS);
+            drainFor(service, DEBOUNCE_MS);
             if (!running) {
                 break;
             }
             // 补登新出现的插件子目录，使其内 jar 的后续变化也能被感知
             synchronized (this) {
                 registerAll();
+                snapshot = scanSnapshot();
             }
             log.info("检测到插件目录变化，触发重扫");
             try {
@@ -145,8 +178,15 @@ final class PluginWatcher {
         }
     }
 
+    private void consume(WatchKey key) {
+        key.pollEvents();
+        if (!key.reset()) {
+            registered.values().removeIf(candidate -> candidate == key);
+        }
+    }
+
     /** 在去抖窗口内吸收并丢弃后续事件，避免连续触发。 */
-    private void drainFor(long millis) {
+    private void drainFor(WatchService service, long millis) {
         long deadline = System.nanoTime() + millis * 1_000_000;
         try {
             while (running) {
@@ -154,14 +194,37 @@ final class PluginWatcher {
                 if (remain <= 0) {
                     break;
                 }
-                WatchKey k = watchService.poll(remain / 1_000_000 + 1, TimeUnit.MILLISECONDS);
+                WatchKey k = service.poll(remain / 1_000_000 + 1, TimeUnit.MILLISECONDS);
                 if (k != null) {
-                    k.pollEvents();
-                    k.reset();
+                    consume(k);
                 }
             }
         } catch (Exception e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /** 快照覆盖插件根下三层：插件目录、顶层 jar 以及 lib/ 依赖。 */
+    private Map<Path, FileStamp> scanSnapshot() {
+        if (!Files.isDirectory(root)) return Map.of();
+        Map<Path, FileStamp> result = new LinkedHashMap<>();
+        try (Stream<Path> paths = Files.walk(root, 3)) {
+            paths.sorted().forEach(path -> {
+                try {
+                    boolean directory = Files.isDirectory(path);
+                    long size = directory ? 0L : Files.size(path);
+                    long modified = Files.getLastModifiedTime(path).toMillis();
+                    result.put(root.relativize(path), new FileStamp(directory, size, modified));
+                } catch (Exception ignored) {
+                    // 文件可能正在被复制/替换；下一轮快照会再次观察。
+                }
+            });
+        } catch (Exception e) {
+            log.debug("扫描插件目录快照失败：{}", e.toString());
+        }
+        return Map.copyOf(result);
+    }
+
+    private record FileStamp(boolean directory, long size, long modified) {
     }
 }

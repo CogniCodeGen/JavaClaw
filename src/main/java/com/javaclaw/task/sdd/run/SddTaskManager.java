@@ -37,6 +37,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * SDD 托管任务管理器 —— 取代 v5 的 {@code TaskManager}（生命周期 + 持久化 + 执行驱动）。
@@ -59,6 +61,9 @@ public final class SddTaskManager {
     private final ObjectMapper mapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
     private final List<SddManagedTask> tasks = new ArrayList<>();
     private final Map<String, SddTaskRunner> running = new ConcurrentHashMap<>();
+    /** 每次启动的世代号；暂停/取消会使旧执行线程的迟到结果失效。 */
+    private final Map<String, Long> runEpochs = new ConcurrentHashMap<>();
+    private final AtomicLong epochSequence = new AtomicLong();
     private final ExecutorService pool = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "sdd-task");
         t.setDaemon(true);
@@ -205,74 +210,85 @@ public final class SddTaskManager {
     }
 
     private void launch(String id, String completionStamp, boolean resume) {
-        SddManagedTask task = get(id);
-        if (task == null) return;
-        if (running.containsKey(id) || task.state == SddTaskState.RUNNING) {
-            log.warn("[SDD] 任务 {} 已在运行，忽略重复启动", id);
-            return;
-        }
-        if (modelFactory == null) {
-            log.warn("[SDD] 未配置 modelFactory，无法启动任务 {}", id);
-            return;
-        }
-        if (isOverBudget(task)) {
-            // 启动前已超预算：不进线程白跑，直接停为待人工（调高预算后再启动）
-            setState(task, SddTaskState.NEEDS_HUMAN, "token 预算已耗尽（已用 "
-                    + (task.totalInputTokens + task.totalOutputTokens) + " / 预算 "
-                    + task.tokenBudget + "），请调高预算后续跑");
-            return;
-        }
-        // 工作目录留空：默认在程序运行目录的 task/ 下为本任务建独立子目录（spec 产物落盘地）
-        ensureWorkDir(task);
-        // 先置 RUNNING 再进后台：能力路由 + 装配在后台线程做（路由有 15s 阻塞上限，不能卡 UI 线程）
-        setState(task, SddTaskState.RUNNING, null);
-
-        pool.submit(() -> {
-            SddTaskRunner runner;
-            try {
-                // 能力按需路由（auto → 具体能力清单），失败回退全量
-                String resolvedCaps = resolveCapabilities(task);
-                AgentConfig cfg = AgentConfig.getInstance();
-                TaskContext ctx = new TaskContext(task.id, task.title, task.description, task.workDir, resolvedCaps);
-                SddProgress progress = new ProgressAdapter(task);
-                var gate = interactionPort != null ? new PortReviewGate(interactionPort) : new AutoApproveReviewGate();
-                runner = new SddTaskRunner(ctx, modelFactory,
-                        capabilityToolsFactory.apply(
-                                com.javaclaw.agent.ToolCallOrigin.managedTask(id, task.workDir)),
-                        skills,
-                        (phase, in, out) -> recordTokens(task, phase, in, out), gate, progress, completionStamp)
-                        .budgetGuard(() -> isOverBudget(task))
-                        .execTimeoutSec(cfg.getSddExecTimeoutSeconds())
-                        .structuredTimeoutSec(cfg.getSddStructuredTimeoutSeconds())
-                        .execMaxIters(cfg.getSddExecMaxIters());
-            } catch (Exception e) {
-                // 装配失败不能让任务卡死在 RUNNING
-                log.error("[SDD] 任务 {} 启动装配失败", id, e);
-                applyOutcome(task, SddOutcome.failed("启动装配失败：" + e.getMessage()));
+        final SddManagedTask task;
+        final long epoch;
+        synchronized (this) {
+            task = get(id);
+            if (task == null) return;
+            if (runEpochs.containsKey(id) || running.containsKey(id) || task.state == SddTaskState.RUNNING) {
+                log.warn("[SDD] 任务 {} 已在启动或运行，忽略重复启动", id);
                 return;
             }
-            synchronized (this) {
-                if (task.state != SddTaskState.RUNNING) {
-                    // 路由/装配窗口内被暂停或取消，不再起跑
-                    log.info("[SDD] 任务 {} 在启动装配期间被 {}，放弃本次启动", id, task.state);
+            if (modelFactory == null) {
+                log.warn("[SDD] 未配置 modelFactory，无法启动任务 {}", id);
+                return;
+            }
+            if (isOverBudget(task)) {
+                // 启动前已超预算：不进线程白跑，直接停为待人工（调高预算后再启动）
+                setState(task, SddTaskState.NEEDS_HUMAN, "token 预算已耗尽（已用 "
+                        + (task.totalInputTokens + task.totalOutputTokens) + " / 预算 "
+                        + task.tokenBudget + "），请调高预算后续跑");
+                return;
+            }
+            // 工作目录留空：默认在程序运行目录的 task/ 下为本任务建独立子目录（spec 产物落盘地）
+            ensureWorkDir(task);
+            epoch = epochSequence.incrementAndGet();
+            runEpochs.put(id, epoch);
+            // 先置 RUNNING 再进后台：能力路由 + 装配在后台线程做（路由有 15s 阻塞上限，不能卡 UI 线程）
+            setState(task, SddTaskState.RUNNING, null);
+        }
+
+        try {
+            pool.submit(() -> {
+                SddTaskRunner runner;
+                try {
+                    // 能力按需路由（auto → 具体能力清单），失败回退全量
+                    String resolvedCaps = resolveCapabilities(task);
+                    AgentConfig cfg = AgentConfig.getInstance();
+                    TaskContext ctx = new TaskContext(task.id, task.title, task.description, task.workDir, resolvedCaps);
+                    SddProgress progress = new ProgressAdapter(task);
+                    var gate = interactionPort != null ? new PortReviewGate(interactionPort) : new AutoApproveReviewGate();
+                    runner = new SddTaskRunner(ctx, modelFactory,
+                            capabilityToolsFactory.apply(
+                                    com.javaclaw.agent.ToolCallOrigin.managedTask(id, task.workDir)),
+                            skills,
+                            (phase, in, out) -> recordTokens(task, phase, in, out), gate, progress, completionStamp)
+                            .budgetGuard(() -> isOverBudget(task))
+                            .execTimeoutSec(cfg.getSddExecTimeoutSeconds())
+                            .structuredTimeoutSec(cfg.getSddStructuredTimeoutSeconds())
+                            .execMaxIters(cfg.getSddExecMaxIters());
+                } catch (Exception e) {
+                    // 装配失败不能让任务卡死在 RUNNING
+                    log.error("[SDD] 任务 {} 启动装配失败", id, e);
+                    applyOutcomeIfCurrent(task, epoch, SddOutcome.failed("启动装配失败：" + e.getMessage()));
                     return;
                 }
-                running.put(id, runner);
-            }
+                synchronized (this) {
+                    if (task.state != SddTaskState.RUNNING
+                            || !java.util.Objects.equals(runEpochs.get(id), epoch)) {
+                        // 路由/装配窗口内被暂停或取消，不再起跑
+                        log.info("[SDD] 任务 {} 在启动装配期间被 {}，放弃本次启动", id, task.state);
+                        return;
+                    }
+                    running.put(id, runner);
+                }
 
-            SddOutcome outcome;
-            // 确认待遇（放宽超时/「同意全部」白名单/目录放行基准）由能力工具构建时绑定的
-            // 来源令牌（taskId + workDir）承载，无需再登记全局托管场景
-            try {
-                outcome = resume ? runner.resume() : runner.run();
-            } catch (Exception e) {
-                log.error("[SDD] 任务 {} 运行异常", id, e);
-                outcome = SddOutcome.failed("运行异常：" + e.getMessage());
-            } finally {
-                running.remove(id);
-            }
-            applyOutcome(task, outcome);
-        });
+                SddOutcome outcome;
+                // 确认待遇（放宽超时/「同意全部」白名单/目录放行基准）由能力工具构建时绑定的
+                // 来源令牌（taskId + workDir）承载，无需再登记全局托管场景
+                try {
+                    outcome = resume ? runner.resume() : runner.run();
+                } catch (Exception e) {
+                    log.error("[SDD] 任务 {} 运行异常", id, e);
+                    outcome = SddOutcome.failed("运行异常：" + e.getMessage());
+                } finally {
+                    running.remove(id, runner);
+                }
+                applyOutcomeIfCurrent(task, epoch, outcome);
+            });
+        } catch (RejectedExecutionException e) {
+            applyOutcomeIfCurrent(task, epoch, SddOutcome.failed("任务执行器已关闭"));
+        }
     }
 
     /**
@@ -336,14 +352,31 @@ public final class SddTaskManager {
     }
 
     /** 暂停：取消运行线程并置 PAUSED（change 已落盘，可后续 resume 续跑）。 */
-    public void pause(String id) {
+    public synchronized void pause(String id) {
+        runEpochs.remove(id);
         SddTaskRunner r = running.remove(id);
         if (r != null) r.cancel();
         SddManagedTask t = get(id);
         if (t != null && t.state.isActive()) setState(t, SddTaskState.PAUSED, "已暂停");
     }
 
-    public void cancel(String id) {
+    /**
+     * 运行时替换前把所有运行中任务安全停在 PAUSED；OpenSpec 真相层已落盘，用户可在新运行时
+     * 接管后继续。包括仍处于能力路由/装配窗口、尚未放入 running map 的任务。
+     */
+    public synchronized void suspendForRuntimeTransition() {
+        java.util.List<String> activeIds = tasks.stream()
+                .filter(task -> task.state == SddTaskState.RUNNING
+                        || runEpochs.containsKey(task.id)
+                        || running.containsKey(task.id))
+                .map(task -> task.id)
+                .toList();
+        activeIds.forEach(this::pause);
+        log.info("[SDD] 运行时切换前已暂停 {} 个运行中任务", activeIds.size());
+    }
+
+    public synchronized void cancel(String id) {
+        runEpochs.remove(id);
         SddTaskRunner r = running.remove(id);
         if (r != null) r.cancel();
         ToolConfirmationManager.clearTaskAllowlist(id);
@@ -420,6 +453,18 @@ public final class SddTaskManager {
         if (st == SddTaskState.COMPLETED) {
             distillSkillFromTask(task, outcome);
         }
+    }
+
+    /** 仅接纳当前启动世代的结果，防止暂停后旧线程把 PAUSED 覆盖成 CANCELLED。 */
+    private synchronized void applyOutcomeIfCurrent(SddManagedTask task, long epoch, SddOutcome outcome) {
+        if (!java.util.Objects.equals(runEpochs.get(task.id), epoch)
+                || task.state != SddTaskState.RUNNING) {
+            log.info("[SDD] 忽略任务 {} 的迟到结果（epoch={}，当前状态={}）",
+                    task.id, epoch, task.state);
+            return;
+        }
+        runEpochs.remove(task.id, epoch);
+        applyOutcome(task, outcome);
     }
 
     /** 从完成的托管任务异步蒸馏技能（程序性记忆，借鉴 hermes-agent；失败静默不影响任务终态） */
@@ -503,7 +548,8 @@ public final class SddTaskManager {
                 .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
     }
 
-    public void shutdown() {
+    public synchronized void shutdown() {
+        runEpochs.clear();
         running.values().forEach(SddTaskRunner::cancel);
         running.clear();
         pool.shutdownNow();

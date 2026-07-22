@@ -13,9 +13,8 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
 /**
@@ -36,8 +35,8 @@ public class WorkspaceManager {
 
     private final Path projectRoot;
 
-    private final List<Workspace> workspaces = new ArrayList<>();
-    private String currentWorkspaceId;
+    private final List<Workspace> workspaces = new CopyOnWriteArrayList<>();
+    private volatile String currentWorkspaceId;
 
     /** 工作区切换回调 */
     private Consumer<Workspace> onWorkspaceSwitched;
@@ -94,8 +93,13 @@ public class WorkspaceManager {
             return true;
         }
 
+        String previousWorkspaceId = currentWorkspaceId;
         currentWorkspaceId = workspaceId;
-        saveCurrentWorkspace();
+        if (!saveCurrentWorkspace()) {
+            currentWorkspaceId = previousWorkspaceId;
+            log.warn("工作区状态持久化失败，已取消切换: {}", workspaceId);
+            return false;
+        }
         updateLogDirProperty();
 
         log.info("已切换到工作区: {} ({})", target.getName(), workspaceId);
@@ -113,11 +117,12 @@ public class WorkspaceManager {
 
         Workspace ws = findById(workspaceId);
         if (ws == null) return false;
+        if (workspaceId.equals(currentWorkspaceId)) {
+            log.warn("不能直接删除当前工作区，请先完成切换: {}", workspaceId);
+            return false;
+        }
 
         workspaces.remove(ws);
-        if (workspaceId.equals(currentWorkspaceId)) {
-            currentWorkspaceId = workspaces.getFirst().getId();
-        }
         deleteWorkspaceRows(workspaceId);
         saveIndex();
 
@@ -157,7 +162,7 @@ public class WorkspaceManager {
     }
 
     public List<Workspace> getWorkspaces() {
-        return Collections.unmodifiableList(workspaces);
+        return List.copyOf(workspaces);
     }
 
     public void setOnWorkspaceSwitched(Consumer<Workspace> callback) {
@@ -191,8 +196,10 @@ public class WorkspaceManager {
             configurator.setContext(context);
             context.reset();
 
-            InputStream configStream = getClass().getResourceAsStream("/logback.xml");
-            if (configStream != null) {
+            try (InputStream configStream = getClass().getResourceAsStream("/logback.xml")) {
+                if (configStream == null) {
+                    throw new IOException("未找到 /logback.xml");
+                }
                 configurator.doConfigure(configStream);
                 log.info("Logback 已重新配置，日志目录: {}", System.getProperty("workspace.log.dir"));
             }
@@ -265,7 +272,7 @@ public class WorkspaceManager {
         }
     }
 
-    private void saveCurrentWorkspace() {
+    private boolean saveCurrentWorkspace() {
         try (Connection c = AppDatabase.getConnection();
              PreparedStatement ps = c.prepareStatement("""
                      MERGE INTO app_state(state_key, state_value, updated_at)
@@ -275,8 +282,10 @@ public class WorkspaceManager {
             ps.setString(1, STATE_CURRENT_WORKSPACE);
             ps.setString(2, currentWorkspaceId);
             ps.executeUpdate();
+            return true;
         } catch (Exception e) {
             log.warn("保存当前工作区状态失败: {}", e.getMessage());
+            return false;
         }
     }
 

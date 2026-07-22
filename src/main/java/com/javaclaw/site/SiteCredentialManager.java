@@ -37,6 +37,8 @@ public class SiteCredentialManager {
 
     private final ObjectMapper objectMapper;
     private final Map<String, SiteCredential> credentials = new LinkedHashMap<>();
+    /** 内存凭据快照所属工作区，一次操作中不再重读可变的全局当前值。 */
+    private String loadedWorkspaceId;
 
     private SiteCredentialManager() {
         this.objectMapper = new ObjectMapper();
@@ -57,8 +59,9 @@ public class SiteCredentialManager {
 
     // ==================== 加载/保存 ====================
 
-    public void load() {
-        credentials.clear();
+    public synchronized void load() {
+        String workspaceId = AppDatabase.currentWorkspaceId();
+        Map<String, SiteCredential> loaded = new LinkedHashMap<>();
         String sql = """
                 SELECT id, name, host_pattern, login_url, username, password_enc, notes,
                        created_at, last_used_at, has_session
@@ -68,7 +71,7 @@ public class SiteCredentialManager {
                 """;
         try (Connection c = AppDatabase.getConnection();
              PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setString(1, AppDatabase.currentWorkspaceId());
+            ps.setString(1, workspaceId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     SiteCredential cred = new SiteCredential();
@@ -81,10 +84,13 @@ public class SiteCredentialManager {
                     cred.setNotes(rs.getString("notes"));
                     cred.setCreatedAt(rs.getLong("created_at"));
                     cred.setLastUsedAt(rs.getLong("last_used_at"));
-                    cred.setHasSession(sessionExists(c, cred.getId()));
-                    credentials.put(cred.getId(), cred);
+                    cred.setHasSession(sessionExists(c, workspaceId, cred.getId()));
+                    loaded.put(cred.getId(), cred);
                 }
             }
+            credentials.clear();
+            credentials.putAll(loaded);
+            loadedWorkspaceId = workspaceId;
             log.info("已从 H2 加载 {} 条站点凭据", credentials.size());
         } catch (SQLException e) {
             log.warn("从 H2 加载站点凭据失败: {}", e.getMessage(), e);
@@ -92,7 +98,12 @@ public class SiteCredentialManager {
 
     }
 
-    public void save() {
+    public synchronized void save() {
+        String workspaceId = loadedWorkspaceId;
+        if (workspaceId == null) {
+            log.warn("站点凭据尚未成功绑定工作区，跳过保存");
+            return;
+        }
         String upsert = """
                 MERGE INTO site_credentials(
                     workspace_id, id, name, host_pattern, login_url, username, password_enc, notes,
@@ -102,10 +113,9 @@ public class SiteCredentialManager {
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """;
         try (Connection c = AppDatabase.getConnection();
-             PreparedStatement ps = c.prepareStatement(upsert)) {
+            PreparedStatement ps = c.prepareStatement(upsert)) {
             c.setAutoCommit(false);
-            deleteRemovedCredentials(c);
-            String workspaceId = AppDatabase.currentWorkspaceId();
+            deleteRemovedCredentials(c, workspaceId);
             for (SiteCredential cred : credentials.values()) {
                 ps.setString(1, workspaceId);
                 ps.setString(2, cred.getId());
@@ -135,18 +145,18 @@ public class SiteCredentialManager {
 
     // ==================== CRUD ====================
 
-    public List<SiteCredential> all() {
+    public synchronized List<SiteCredential> all() {
         return new ArrayList<>(credentials.values());
     }
 
-    public SiteCredential get(String id) {
+    public synchronized SiteCredential get(String id) {
         return credentials.get(id);
     }
 
     /**
      * 添加或更新凭据。如果 id 为空会自动生成。
      */
-    public SiteCredential put(SiteCredential cred) {
+    public synchronized SiteCredential put(SiteCredential cred) {
         if (cred.getId() == null || cred.getId().isBlank()) {
             cred.setId(UUID.randomUUID().toString());
         }
@@ -162,7 +172,7 @@ public class SiteCredentialManager {
     /**
      * 删除凭据，并连带删除其持久化的会话文件
      */
-    public void remove(String id) {
+    public synchronized void remove(String id) {
         SiteCredential removed = credentials.remove(id);
         if (removed != null) {
             clearSession(id);
@@ -184,7 +194,7 @@ public class SiteCredentialManager {
      *
      * @return 匹配的凭据；找不到返回 null
      */
-    public SiteCredential findByUrl(String url) {
+    public synchronized SiteCredential findByUrl(String url) {
         if (url == null || url.isBlank()) return null;
         String host = extractHost(url);
         if (host == null) return null;
@@ -203,7 +213,7 @@ public class SiteCredentialManager {
             String pat = normalizePattern(c.getHostPattern());
             if (pat == null || !pat.startsWith("*.")) continue;
             String suffix = pat.substring(2);
-            if (host.endsWith("." + suffix) || host.equals(suffix)) {
+            if (wildcardMatches(host, suffix)) {
                 if (suffix.length() > bestLen) {
                     bestLen = suffix.length();
                     best = c;
@@ -211,6 +221,11 @@ public class SiteCredentialManager {
             }
         }
         return best;
+    }
+
+    /** {@code *.example.com} 只匹配真正的子域，不把子域凭据泄露给根域。 */
+    static boolean wildcardMatches(String host, String suffix) {
+        return host != null && suffix != null && host.endsWith("." + suffix);
     }
 
     private static String normalizePattern(String pattern) {
@@ -237,10 +252,15 @@ public class SiteCredentialManager {
      * @param id              凭据 ID
      * @param storageStateJson Playwright {@code BrowserContext.storageState()} 返回的 JSON 文本
      */
-    public void writeSession(String id, String storageStateJson) {
+    public synchronized void writeSession(String id, String storageStateJson) {
         if (id == null || storageStateJson == null) return;
+        String workspaceId = loadedWorkspaceId;
+        if (workspaceId == null || !credentials.containsKey(id)) {
+            log.warn("忽略不属于当前凭据快照的会话写入: {}", id);
+            return;
+        }
         try (Connection conn = AppDatabase.getConnection()) {
-            writeSessionToDb(conn, id, storageStateJson);
+            writeSessionToDb(conn, workspaceId, id, storageStateJson);
             SiteCredential cred = credentials.get(id);
             if (cred != null) {
                 cred.setHasSession(true);
@@ -254,11 +274,13 @@ public class SiteCredentialManager {
     }
 
     /** 读取 storageState；不存在返回 null */
-    public String readSession(String id) {
+    public synchronized String readSession(String id) {
+        String workspaceId = loadedWorkspaceId;
+        if (workspaceId == null) return null;
         String sql = "SELECT storage_state_json FROM site_sessions WHERE workspace_id = ? AND credential_id = ?";
         try (Connection c = AppDatabase.getConnection();
              PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setString(1, AppDatabase.currentWorkspaceId());
+            ps.setString(1, workspaceId);
             ps.setString(2, id);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? rs.getString("storage_state_json") : null;
@@ -270,7 +292,7 @@ public class SiteCredentialManager {
     }
 
     /** 标记凭据被成功使用过（用于 UI 显示） */
-    public void touchUsage(String id) {
+    public synchronized void touchUsage(String id) {
         SiteCredential c = credentials.get(id);
         if (c != null) {
             c.setLastUsedAt(System.currentTimeMillis());
@@ -279,11 +301,13 @@ public class SiteCredentialManager {
     }
 
     /** 清除某条目的会话文件（凭据本身保留） */
-    public void clearSession(String id) {
+    public synchronized void clearSession(String id) {
+        String workspaceId = loadedWorkspaceId;
+        if (workspaceId == null) return;
         String sql = "DELETE FROM site_sessions WHERE workspace_id = ? AND credential_id = ?";
         try (Connection conn = AppDatabase.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, AppDatabase.currentWorkspaceId());
+            ps.setString(1, workspaceId);
             ps.setString(2, id);
             ps.executeUpdate();
             SiteCredential cred = credentials.get(id);
@@ -297,10 +321,10 @@ public class SiteCredentialManager {
         }
     }
 
-    private void deleteRemovedCredentials(Connection c) throws SQLException {
+    private void deleteRemovedCredentials(Connection c, String workspaceId) throws SQLException {
         Set<String> existing = new HashSet<>();
         try (PreparedStatement ps = c.prepareStatement("SELECT id FROM site_credentials WHERE workspace_id = ?")) {
-            ps.setString(1, AppDatabase.currentWorkspaceId());
+            ps.setString(1, workspaceId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) existing.add(rs.getString("id"));
             }
@@ -312,7 +336,6 @@ public class SiteCredentialManager {
                      "DELETE FROM site_sessions WHERE workspace_id = ? AND credential_id = ?");
              PreparedStatement ps = c.prepareStatement(
                      "DELETE FROM site_credentials WHERE workspace_id = ? AND id = ?")) {
-            String workspaceId = AppDatabase.currentWorkspaceId();
             for (String id : existing) {
                 sessionPs.setString(1, workspaceId);
                 sessionPs.setString(2, id);
@@ -327,10 +350,10 @@ public class SiteCredentialManager {
         }
     }
 
-    private boolean sessionExists(Connection c, String id) throws SQLException {
+    private boolean sessionExists(Connection c, String workspaceId, String id) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
                 "SELECT 1 FROM site_sessions WHERE workspace_id = ? AND credential_id = ?")) {
-            ps.setString(1, AppDatabase.currentWorkspaceId());
+            ps.setString(1, workspaceId);
             ps.setString(2, id);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next();
@@ -338,14 +361,15 @@ public class SiteCredentialManager {
         }
     }
 
-    private void writeSessionToDb(Connection c, String id, String storageStateJson) throws SQLException {
+    private void writeSessionToDb(Connection c, String workspaceId, String id, String storageStateJson)
+            throws SQLException {
         String sql = """
                 MERGE INTO site_sessions(workspace_id, credential_id, storage_state_json, updated_at)
                 KEY(workspace_id, credential_id)
                 VALUES (?, ?, ?, CURRENT_TIMESTAMP)
                 """;
         try (PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setString(1, AppDatabase.currentWorkspaceId());
+            ps.setString(1, workspaceId);
             ps.setString(2, id);
             ps.setString(3, storageStateJson);
             ps.executeUpdate();

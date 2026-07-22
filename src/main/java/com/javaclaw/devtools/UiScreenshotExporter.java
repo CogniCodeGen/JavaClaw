@@ -2,9 +2,7 @@ package com.javaclaw.devtools;
 
 import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.ChatService;
-import com.javaclaw.agent.PlanModeService;
 import com.javaclaw.agent.ToolConfirmationManager;
-import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.api.interaction.ConfirmRequest;
 import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
@@ -13,14 +11,7 @@ import com.javaclaw.chat.ChatViewController;
 import com.javaclaw.config.DataManager;
 import com.javaclaw.config.SettingsView;
 import com.javaclaw.config.WorkspaceManager;
-import com.javaclaw.mode.ChatMode;
-import com.javaclaw.mode.PlanMode;
-import com.javaclaw.mode.ShellMode;
-import com.javaclaw.mode.TaskMode;
-import com.javaclaw.plugin.PluginManager;
-import com.javaclaw.schedule.ScheduleManager;
-import com.javaclaw.skill.SkillManager;
-import com.javaclaw.task.sdd.run.SddTaskManager;
+import com.javaclaw.runtime.ApplicationKernel;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeCenterView;
 import com.javaclaw.ui.javafx.memory.MemoryCenterView;
 import com.javaclaw.ui.javafx.mcp.McpSettingsView;
@@ -46,7 +37,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 
 /**
  * 本地文档截图导出器：启动 JavaClaw 的真实 JavaFX 界面，逐个打开主要功能窗口，
@@ -66,7 +56,7 @@ public final class UiScreenshotExporter {
         private final List<Shot> shots = new ArrayList<>();
         private AgentRuntime runtime;
         private ChatService chatService;
-        private PlaywrightBrowserManager browserManager;
+        private ApplicationKernel applicationKernel;
 
         @Override
         public void start(Stage primaryStage) {
@@ -91,30 +81,16 @@ public final class UiScreenshotExporter {
             };
             ToolConfirmationManager.setPort(port);
 
-            browserManager = new PlaywrightBrowserManager(true,
+            PlaywrightBrowserManager browserManager = new PlaywrightBrowserManager(true,
                     WorkspaceManager.getInstance().getCurrentBrowserDir(),
                     DataManager.getInstance().getScreenshotsDir());
-            runtime = new AgentRuntime(browserManager);
-            chatService = new ChatService(runtime);
-            PlanModeService planModeService = new PlanModeService(runtime);
+            applicationKernel = new ApplicationKernel(
+                    browserManager, port, () -> new SddTaskView(primaryStage).show());
+            var workspaceRuntime = applicationKernel.initialize();
+            runtime = workspaceRuntime.agentRuntime();
+            chatService = workspaceRuntime.chatService();
 
-            ModeRegistry registry = new ModeRegistry(Set.of());
-            registry.register(new ChatMode(chatService));
-            registry.register(new PlanMode(planModeService));
-            registry.register(new ShellMode(new com.javaclaw.agent.ShellCommandService(chatService)));
-            registry.register(new TaskMode(() -> new SddTaskView(primaryStage).show()));
-
-            ScheduleManager.getInstance().init(new com.javaclaw.agent.ScheduledTaskAgent(runtime));
-            PluginManager.getInstance().init(runtime, port);
-            SddTaskManager.getInstance().configure(
-                    DataManager.getInstance().getDataRoot(),
-                    runtime.getModelFactory(),
-                    runtime::buildCapabilityTools,
-                    SkillManager.getInstance(),
-                    port);
-
-            ChatViewController chatView = new ChatViewController(runtime, chatService, planModeService,
-                    registry, browserManager);
+            ChatViewController chatView = new ChatViewController(applicationKernel);
             Scene scene = new Scene(chatView.getOuterRoot(), 1200, 700);
             addStyles(scene);
             com.javaclaw.ui.javafx.theme.ThemeManager.init();
@@ -219,11 +195,7 @@ public final class UiScreenshotExporter {
 
         private void cleanupAndExit(int code) {
             try {
-                if (runtime != null) runtime.shutdown();
-            } catch (Throwable ignore) {
-            }
-            try {
-                if (browserManager != null) browserManager.shutdown();
+                if (applicationKernel != null) applicationKernel.close();
             } catch (Throwable ignore) {
             }
             Platform.exit();

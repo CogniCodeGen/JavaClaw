@@ -1,27 +1,17 @@
 package com.javaclaw.app;
 
-import com.javaclaw.agent.AgentRuntime;
-import com.javaclaw.agent.ChatService;
-import com.javaclaw.agent.PlanModeService;
 import com.javaclaw.agent.ToolConfirmationManager;
-import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.chat.ChatViewController;
 import com.javaclaw.config.DataManager;
 import com.javaclaw.config.WorkspaceManager;
-import com.javaclaw.mode.ChatMode;
-import com.javaclaw.mode.PlanMode;
-import com.javaclaw.mode.TaskMode;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.onboarding.OnboardingWizard;
-import com.javaclaw.schedule.ScheduleManager;
-import com.javaclaw.skill.SkillManager;
-import com.javaclaw.task.sdd.run.SddTaskManager;
+import com.javaclaw.runtime.ApplicationKernel;
 import com.javaclaw.ui.javafx.task.SddTaskView;
 import com.javaclaw.ui.javafx.JfxUserInteractionPort;
 import com.javaclaw.ui.javafx.SystemTrayManager;
 
-import java.util.Set;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.scene.Scene;
@@ -55,20 +45,8 @@ public class JavaClawApp extends Application {
     /** 聊天界面控制器（持有三模式服务引用） */
     private ChatViewController chatView;
 
-    /** Playwright 浏览器管理器 */
-    private PlaywrightBrowserManager browserManager;
-
-    /** 共享基础设施容器（启动时创建，应用退出时关闭） */
-    private AgentRuntime runtime;
-
-    /** 普通聊天模式服务 */
-    private ChatService chatService;
-
-    /** 规划模式服务 */
-    private PlanModeService planModeService;
-
-    /** 模式注册表（对话 / 动作模式统一入口，支持运行期扩展或禁用） */
-    private ModeRegistry modeRegistry;
+    /** 应用组合根：统一拥有浏览器、工作区运行时及依赖它们的全局管理器。 */
+    private ApplicationKernel applicationKernel;
 
     /** 主窗口引用（托盘恢复/隐藏时使用） */
     private Stage primaryStage;
@@ -119,7 +97,7 @@ public class JavaClawApp extends Application {
 
             // 1. 创建 Playwright 浏览器管理器（懒加载，首次使用浏览器工具时才启动）
             log.info("正在创建 Playwright 浏览器管理器（懒加载模式）...");
-            browserManager = new PlaywrightBrowserManager(true,
+            PlaywrightBrowserManager browserManager = new PlaywrightBrowserManager(true,
                     WorkspaceManager.getInstance().getCurrentBrowserDir(),
                     DataManager.getInstance().getScreenshotsDir()
             );
@@ -127,59 +105,16 @@ public class JavaClawApp extends Application {
             // 1.5. 首次使用向导（仅未完成时弹出，阻塞直到用户关闭）
             OnboardingWizard.showIfNeeded(primaryStage);
 
-            // 2. 初始化共享基础设施容器（模型工厂、专家库、记忆、MCP 等）
-            log.info("正在初始化 AgentRuntime 基础设施...");
-            runtime = new AgentRuntime(browserManager);
-
-            // 2.0 装配风险评估智能体：托管任务中影响范围限于任务目录的高风险工具可经其判定自动放行
-            ToolConfirmationManager.setScopeAssessor(
-                    new com.javaclaw.agent.risk.LlmToolScopeAssessor(
-                            runtime.getModelFactory(), runtime.getTokenTracker()));
-
-            // 2a. 创建三条路径的独立服务（平行关系，互不持有）
-            log.info("正在创建普通聊天模式服务...");
-            chatService = new ChatService(runtime);
-            log.info("正在创建规划模式服务...");
-            planModeService = new PlanModeService(runtime);
-
-            // 2b. 创建模式注册表并注册三种内置模式
-            //     未来扩展新模式：实现 ConversationMode/ActionMode 并在此注册即可
-            //     禁用内置模式：扩展配置项后把 id 加入 disabledIds 集合
-            Set<String> disabledModes = Set.of();
-            modeRegistry = new ModeRegistry(disabledModes);
-            modeRegistry.register(new ChatMode(chatService));
-            modeRegistry.register(new PlanMode(planModeService));
-            // 循环模式：反复推进同一目标，确定性引擎判定完成/继续/停止（与聊天隔离，可并行）
-            modeRegistry.register(new com.javaclaw.mode.LoopMode(
-                    new com.javaclaw.loop.LoopService(runtime)));
-            // 命令模式：确定性命令管理长任务/智能体/定时工作（与对话内的同名工具共用 Manager）
-            modeRegistry.register(new com.javaclaw.mode.ShellMode(
-                    new com.javaclaw.agent.ShellCommandService(chatService)));
-            // TaskMode 接收一个"如何打开任务视图"的动作，JavaFX 实现为：创建 SddTaskView 并 show
-            modeRegistry.register(new TaskMode(() -> new SddTaskView(primaryStage).show()));
-
-            // 3. 初始化定时任务管理器（注入定时任务专用编排器：与交互聊天完全隔离，可并行不互扰）
-            log.info("正在初始化定时任务调度...");
-            ScheduleManager.getInstance().init(new com.javaclaw.agent.ScheduledTaskAgent(runtime));
-
-            // 3a. 初始化插件系统（发现 plugins/ 插件、后台自动恢复上次启用项；能力授权经交互端口确认）
-            log.info("正在初始化插件系统...");
-            com.javaclaw.plugin.PluginManager.getInstance().init(runtime, interactionPort);
-
-            // 3b. 初始化 SDD 托管任务管理器（从 runtime 取模型工厂和能力工具以创建任务智能体；
-            //     注入交互端口供 PortReviewGate 评审闸门弹确认）
-            log.info("正在初始化 SDD 托管任务管理器...");
-            SddTaskManager.getInstance().configure(
-                    DataManager.getInstance().getDataRoot(),
-                    runtime.getModelFactory(),
-                    runtime::buildCapabilityTools,
-                    SkillManager.getInstance(),
-                    interactionPort);
+            // 2-3. 应用内核是唯一组合根：整体创建工作区运行时，并装配定时任务、插件与 SDD。
+            log.info("正在初始化应用内核与工作区运行时...");
+            applicationKernel = new ApplicationKernel(
+                    browserManager, interactionPort,
+                    () -> new SddTaskView(primaryStage).show());
+            applicationKernel.initialize();
 
             // 4. 构建聊天界面
             log.info("正在构建聊天界面...");
-            chatView = new ChatViewController(runtime, chatService, planModeService,
-                    modeRegistry, browserManager);
+            chatView = new ChatViewController(applicationKernel);
 
             // 5. 创建场景并加载 CSS 样式
             Scene scene = new Scene(chatView.getOuterRoot(), 1200, 700);
@@ -233,6 +168,13 @@ public class JavaClawApp extends Application {
 
         } catch (Exception e) {
             log.error("应用启动失败", e);
+            if (applicationKernel != null) {
+                try {
+                    applicationKernel.close();
+                } catch (Throwable closeFailure) {
+                    e.addSuppressed(closeFailure);
+                }
+            }
             throw new RuntimeException("JavaClaw 启动失败: " + e.getMessage(), e);
         }
     }
@@ -366,14 +308,7 @@ public class JavaClawApp extends Application {
         if (chatView != null) safeShutdown("聊天持久化线程", chatView::shutdownPersistence);
         safeShutdown("技能使用统计", () -> com.javaclaw.skill.SkillUsageTracker.getInstance().shutdown());
         safeShutdown("技能提案队列", () -> com.javaclaw.skill.curation.SkillProposalQueue.getInstance().shutdown());
-        safeShutdown("任务管理器", () -> SddTaskManager.getInstance().shutdown());
-        safeShutdown("插件系统", () -> com.javaclaw.plugin.PluginManager.getInstance().shutdown());
-        safeShutdown("定时任务调度器", () -> ScheduleManager.getInstance().shutdown());
-        if (modeRegistry != null) safeShutdown("模式注册表", modeRegistry::shutdownAll);
-        if (chatService != null) safeShutdown("普通模式服务", chatService::shutdown);
-        if (planModeService != null) safeShutdown("规划模式服务", planModeService::shutdown);
-        if (runtime != null) safeShutdown("AgentRuntime（MCP）", runtime::shutdown);
-        if (browserManager != null) safeShutdown("Playwright 浏览器", browserManager::shutdown);
+        if (applicationKernel != null) safeShutdown("应用内核", applicationKernel::close);
 
         log.info("JavaClaw 应用已关闭");
     }

@@ -2,6 +2,7 @@ package com.javaclaw.desktop.adapter;
 
 import com.javaclaw.desktop.DesktopAutomationPort;
 import com.javaclaw.desktop.DesktopException;
+import com.javaclaw.util.ProcessTerminator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -65,14 +66,14 @@ abstract class AbstractCliAdapter implements DesktopAutomationPort {
         Thread tErr = pump(proc.getErrorStream(), err);
         try {
             if (!proc.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
-                proc.destroyForcibly();
+                ProcessTerminator.destroyTreeForcibly(proc);
                 throw new DesktopException("命令超时(" + timeoutSeconds + "s): " + command[0]);
             }
             tOut.join(1000);
             tErr.join(1000);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            proc.destroyForcibly();
+            ProcessTerminator.destroyTreeForcibly(proc);
             throw new DesktopException("命令执行被中断: " + command[0], e);
         }
         return new CliResult(proc.exitValue(), out.toString(), err.toString());

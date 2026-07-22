@@ -15,7 +15,7 @@ import java.nio.file.StandardCopyOption;
  * 原子文件写入工具：先写同目录临时文件，再原子 rename 覆盖目标文件。
  *
  * <p>解决直接 {@code writeValue(file, ...)} 覆盖写的完整性问题：进程被杀 / 磁盘满时
- * 半截内容只会留在 {@code *.tmp} 残留文件里，目标文件要么是旧的完整版本、要么是新的完整版本，
+ * 半截内容只会留在同目录临时文件里，目标文件要么是旧的完整版本、要么是新的完整版本，
  * 绝不会出现损坏的半截 JSON 导致下次启动加载失败数据全丢。</p>
  *
  * <p>失败时上抛 {@link IOException}，由调用方按各自既有语义处理（多为记日志告警继续）。</p>
@@ -42,20 +42,27 @@ public final class AtomicFileWriter {
     }
 
     /**
-     * 原子写入字符串内容（UTF-8）：写 {@code target.tmp} → 原子 move 覆盖 {@code target}；
+     * 原子写入字符串内容（UTF-8）：写同目录唯一临时文件 → 原子 move 覆盖 {@code target}；
      * 文件系统不支持原子 move 时回退普通 REPLACE_EXISTING move。
      */
     public static void writeString(Path target, String content) throws IOException {
-        Path dir = target.toAbsolutePath().getParent();
-        if (dir != null) {
-            Files.createDirectories(dir);
-        }
-        Path tmp = target.resolveSibling(target.getFileName() + ".tmp");
-        Files.writeString(tmp, content, StandardCharsets.UTF_8);
+        Path absoluteTarget = target.toAbsolutePath().normalize();
+        Path dir = absoluteTarget.getParent();
+        if (dir == null) throw new IOException("目标文件缺少父目录: " + target);
+        Files.createDirectories(dir);
+        String prefix = absoluteTarget.getFileName() + ".";
+        if (prefix.length() < 3) prefix = "tmp";
+        Path tmp = Files.createTempFile(dir, prefix, ".tmp");
         try {
-            Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } catch (AtomicMoveNotSupportedException e) {
-            Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
+            Files.writeString(tmp, content, StandardCharsets.UTF_8);
+            try {
+                Files.move(tmp, absoluteTarget,
+                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(tmp, absoluteTarget, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(tmp);
         }
     }
 }

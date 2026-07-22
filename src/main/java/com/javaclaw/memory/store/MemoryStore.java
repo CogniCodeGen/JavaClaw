@@ -96,38 +96,59 @@ public class MemoryStore implements AutoCloseable {
     /** 启动/恢复存储,确保根对象与三个向量索引就绪。 */
     public synchronized void open() {
         if (mgr != null) return;
-        this.writer = Executors.newSingleThreadExecutor(r -> {
+        ExecutorService newWriter = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "memory-writer-" + label);
             t.setDaemon(true);
             return t;
         });
-        this.mgr = EmbeddedStorage.start(dir);
-        MemoryRoot r = mgr.root();
-        if (r == null) {
-            r = new MemoryRoot();
-            mgr.setRoot(r);
-            mgr.storeRoot();
-            log.info("[{}] 新建记忆存储: {}", label, dir);
-        } else {
-            log.info("[{}] 已恢复记忆存储: {} (facts={}, episodes={}, knowledge={})",
-                    label, dir, r.facts.size(), r.episodes.size(), r.knowledge.size());
-        }
-        this.root = r;
+        EmbeddedStorageManager started = null;
+        try {
+            started = EmbeddedStorage.start(dir);
+            this.mgr = started;
+            MemoryRoot r = mgr.root();
+            if (r == null) {
+                r = new MemoryRoot();
+                mgr.setRoot(r);
+                mgr.storeRoot();
+                log.info("[{}] 新建记忆存储: {}", label, dir);
+            } else {
+                log.info("[{}] 已恢复记忆存储: {} (facts={}, episodes={}, knowledge={})",
+                        label, dir, r.facts.size(), r.episodes.size(), r.knowledge.size());
+            }
+            this.root = r;
 
-        // schema 补齐：pending 暂存区为反序列化后新增字段，缺失时补建并落盘（无向量索引）。
-        boolean migrated = false;
-        if (root.pendingFacts == null) { root.pendingFacts = GigaMap.New(); migrated = true; }
-        if (root.pendingEpisodes == null) { root.pendingEpisodes = GigaMap.New(); migrated = true; }
-        if (root.stats == null) { root.stats = new com.javaclaw.memory.model.MemoryStats(); migrated = true; }
-        if (migrated) {
-            mgr.store(root);
-            log.info("[{}] 已补建 pending 暂存区（schema 补齐）", label);
-        }
+            // schema 补齐：pending 暂存区为反序列化后新增字段，缺失时补建并落盘（无向量索引）。
+            boolean migrated = false;
+            if (root.pendingFacts == null) { root.pendingFacts = GigaMap.New(); migrated = true; }
+            if (root.pendingEpisodes == null) { root.pendingEpisodes = GigaMap.New(); migrated = true; }
+            if (root.stats == null) { root.stats = new com.javaclaw.memory.model.MemoryStats(); migrated = true; }
+            if (migrated) {
+                mgr.store(root);
+                log.info("[{}] 已补建 pending 暂存区（schema 补齐）", label);
+            }
 
-        this.factIndex = ensureIndex(root.facts, new FactVectorizer());
-        this.episodeIndex = ensureIndex(root.episodes, new EpisodeVectorizer());
-        this.knowledgeIndex = ensureIndex(root.knowledge, new KnowledgeVectorizer());
-        log.info("[{}] 向量索引就绪 (dim={}, COSINE)", label, dimension);
+            this.factIndex = ensureIndex(root.facts, new FactVectorizer());
+            this.episodeIndex = ensureIndex(root.episodes, new EpisodeVectorizer());
+            this.knowledgeIndex = ensureIndex(root.knowledge, new KnowledgeVectorizer());
+            this.writer = newWriter;
+            log.info("[{}] 向量索引就绪 (dim={}, COSINE)", label, dimension);
+        } catch (RuntimeException | Error failure) {
+            newWriter.shutdownNow();
+            if (started != null) {
+                try {
+                    started.shutdown();
+                } catch (RuntimeException cleanupFailure) {
+                    failure.addSuppressed(cleanupFailure);
+                }
+            }
+            this.writer = null;
+            this.mgr = null;
+            this.root = null;
+            this.factIndex = null;
+            this.episodeIndex = null;
+            this.knowledgeIndex = null;
+            throw failure;
+        }
     }
 
     /** 获取或创建某 GigaMap 的向量索引(首次 register+add,重开 get)。 */

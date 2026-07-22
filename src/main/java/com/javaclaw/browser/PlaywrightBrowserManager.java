@@ -480,6 +480,21 @@ public class PlaywrightBrowserManager {
     }
 
     /**
+     * 切换浏览器所属工作区。
+     *
+     * <p>调用方必须在切换全局 workspace id 之前显式调用 {@link #saveCookies()}。这里关闭旧
+     * 浏览器时刻意不再保存，否则旧上下文会被写进已经切换完成的新工作区记录。下一次使用
+     * 浏览器时会按新工作区的 H2 状态懒启动并恢复会话。</p>
+     */
+    public synchronized void rebindWorkspace(Path newBrowserDir, Path newScreenshotDir) {
+        closeBrowserResources(false);
+        this.browserDir = newBrowserDir;
+        this.screenshotDir = newScreenshotDir;
+        log.info("浏览器已绑定新工作区路径: browser={}, screenshots={}",
+                newBrowserDir, newScreenshotDir);
+    }
+
+    /**
      * 任务结束后重置浏览器状态 — 关闭多余 Tab、导航到空白页、保存 Cookie
      *
      * <p>不关闭浏览器本身（保留进程复用），仅清理任务产生的 Tab 和页面状态。</p>
@@ -521,8 +536,16 @@ public class PlaywrightBrowserManager {
     public synchronized void shutdown() {
         log.info("正在关闭 Playwright 浏览器...");
 
+        closeBrowserResources(true);
+
+        log.info("Playwright 浏览器已关闭");
+    }
+
+    /** 释放当前 Playwright 对象；工作区切换时可禁止把旧上下文保存到新的 workspace id。 */
+    private void closeBrowserResources(boolean saveState) {
+
         // 保存 Cookie
-        saveCookies();
+        if (saveState) saveCookies();
 
         // 关闭所有页面
         for (Page page : pages) {
@@ -560,6 +583,5 @@ public class PlaywrightBrowserManager {
             playwright = null;
         }
 
-        log.info("Playwright 浏览器已关闭");
     }
 }

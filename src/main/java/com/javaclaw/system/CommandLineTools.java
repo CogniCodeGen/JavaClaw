@@ -3,6 +3,7 @@ package com.javaclaw.system;
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
+import com.javaclaw.util.ProcessTerminator;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
@@ -663,7 +664,7 @@ public class CommandLineTools {
 
             boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
             if (!finished) {
-                process.destroyForcibly();
+                ProcessTerminator.destroyTreeForcibly(process);
                 // destroyForcibly 异步触发 kill；等待子进程实际退出再返回，避免留下僵尸
                 try {
                     process.waitFor(2, TimeUnit.SECONDS);

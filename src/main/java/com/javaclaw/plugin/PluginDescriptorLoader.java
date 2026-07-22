@@ -15,6 +15,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
@@ -30,6 +31,8 @@ final class PluginDescriptorLoader {
     private static final Logger log = LoggerFactory.getLogger(PluginDescriptorLoader.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final String DESCRIPTOR_ENTRY = "plugin.json";
+    /** 同时用于目录名、数据库键与线程名前缀，必须是单个安全路径段。 */
+    private static final Pattern SAFE_ID = Pattern.compile("[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?");
 
     private PluginDescriptorLoader() {
     }
@@ -56,6 +59,10 @@ final class PluginDescriptorLoader {
 
     private static PluginDescriptor parse(JsonNode root, Path jarPath) throws IOException {
         String id = requireText(root, "id", jarPath);
+        if (!SAFE_ID.matcher(id).matches()) {
+            throw new IOException("插件 " + jarPath.getFileName()
+                    + " 的 id 非法；仅允许 1-64 位小写字母、数字和中间短横线");
+        }
         String mainClass = requireText(root, "main", jarPath);
         String name = optText(root, "name", id);
         String version = optText(root, "version", "0.0.0");

@@ -3,6 +3,7 @@ package com.javaclaw.mcp;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.javaclaw.util.ProcessTerminator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -209,7 +210,7 @@ public class McpClient {
                     process.getOutputStream(), StandardCharsets.UTF_8));
         } catch (Throwable t) {
             // writer 构造失败（OOM 等）必须立即回收子进程，否则变僵尸
-            process.destroyForcibly();
+            ProcessTerminator.destroyTreeForcibly(process);
             throw t;
         }
         running = true;
@@ -600,12 +601,12 @@ public class McpClient {
             process.destroy();
             try {
                 if (!process.waitFor(5, TimeUnit.SECONDS)) {
-                    process.destroyForcibly();
+                    ProcessTerminator.destroyTreeForcibly(process);
                     log.warn("MCP 服务器 {} 强制终止", config.getName());
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                process.destroyForcibly();
+                ProcessTerminator.destroyTreeForcibly(process);
             }
         }
 

@@ -3,7 +3,9 @@ package com.javaclaw.code;
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
+import com.javaclaw.util.AtomicFileWriter;
 import com.javaclaw.util.PathGuard;
+import com.javaclaw.util.ProcessTerminator;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
@@ -193,6 +195,9 @@ public class CodeTools {
             }
             PathMatcher matcher = (glob == null || glob.isBlank()) ? null
                     : FileSystems.getDefault().getPathMatcher("glob:" + glob);
+            PathMatcher altMatcher = (glob != null && glob.startsWith("**/"))
+                    ? FileSystems.getDefault().getPathMatcher("glob:" + glob.substring(3))
+                    : null;
             int cap = maxResults <= 0 ? 100 : Math.min(maxResults, 500);
 
             List<String> hits = new ArrayList<>();
@@ -203,7 +208,9 @@ public class CodeTools {
                     if (hits.size() >= cap) break;
                     if (Files.isDirectory(p)) continue;
                     if (isSkipped(base, p)) continue;
-                    if (matcher != null && !matcher.matches(p)) continue;
+                    Path rel = base.relativize(p);
+                    if (matcher != null && !matcher.matches(rel)
+                            && (altMatcher == null || !altMatcher.matches(p.getFileName()))) continue;
                     if (++scanned[0] > MAX_SCAN_FILES) { scanCapped[0] = true; break; }
                     grepFile(base, p, re, hits, cap);
                 }
@@ -330,7 +337,7 @@ public class CodeTools {
             }
             String updated = content.substring(0, first) + newString
                     + content.substring(first + oldString.length());
-            Files.writeString(file, updated, StandardCharsets.UTF_8);
+            AtomicFileWriter.writeString(file, updated);
             int oldLines = countLines(oldString), newLines = countLines(newString);
             return ToolResponse.success("code_edit",
                     "已编辑 " + file + "（替换 1 处，行数 " + oldLines + " → " + newLines + "）");
@@ -366,7 +373,7 @@ public class CodeTools {
             }
             List<String> toInsert = List.of(text.split("\n", -1));
             lines.addAll(line, toInsert);
-            Files.writeString(file, String.join("\n", lines), StandardCharsets.UTF_8);
+            AtomicFileWriter.writeString(file, String.join("\n", lines));
             return ToolResponse.success("code_insert",
                     "已在 " + file + " 第 " + line + " 行后插入 " + toInsert.size() + " 行");
         } catch (PathReject e) {
@@ -427,7 +434,13 @@ public class CodeTools {
                 return ToolResponse.error(tool,
                         "无法自动探测构建/测试命令（未识别项目类型），请显式传 command");
             }
-            String first = firstToken(cmd);
+            List<String> argv;
+            try {
+                argv = parseCommand(cmd);
+            } catch (IllegalArgumentException e) {
+                return ToolResponse.error(tool, "构建命令格式非法: " + e.getMessage());
+            }
+            String first = executableName(argv.getFirst());
             if (!BUILD_TOOLS.contains(first)) {
                 return ToolResponse.error(tool,
                         "只允许构建/测试工具（" + String.join("/", new java.util.TreeSet<>(BUILD_TOOLS))
@@ -436,7 +449,7 @@ public class CodeTools {
             int timeout = timeoutSeconds <= 0 ? DEFAULT_BUILD_TIMEOUT_SECONDS
                     : Math.min(timeoutSeconds, MAX_BUILD_TIMEOUT_SECONDS);
 
-            ExecResult r = exec(cmd, base, timeout);
+            ExecResult r = execArgv(argv, base, timeout);
             if (r.timedOut) {
                 return ToolResponse.error(tool, "执行超时（" + timeout + " 秒），已强制终止：" + cmd
                         + "。可调大 timeout_seconds（上限 " + MAX_BUILD_TIMEOUT_SECONDS + "）");
@@ -509,22 +522,77 @@ public class CodeTools {
     static String firstToken(String cmd) {
         String[] parts = cmd.trim().split("\\s+");
         String w = parts.length == 0 ? "" : parts[0];
+        return executableName(w);
+    }
+
+    private static String executableName(String executable) {
+        String w = executable == null ? "" : executable;
         int slash = Math.max(w.lastIndexOf('/'), w.lastIndexOf('\\'));
         return slash >= 0 ? w.substring(slash + 1) : w;
     }
 
+    /**
+     * 把构建命令解析为 argv，避免把已通过首词白名单的剩余文本交给 shell 再解释。
+     * 支持常见的单/双引号与反斜杠转义；管道、重定向、命令连接等 shell 语法明确拒绝。
+     */
+    static List<String> parseCommand(String command) {
+        if (command == null || command.isBlank()) {
+            throw new IllegalArgumentException("命令不能为空");
+        }
+        List<String> argv = new ArrayList<>();
+        StringBuilder token = new StringBuilder();
+        char quote = 0;
+        boolean escaping = false;
+        boolean tokenStarted = false;
+        for (int i = 0; i < command.length(); i++) {
+            char c = command.charAt(i);
+            if (escaping) {
+                token.append(c);
+                tokenStarted = true;
+                escaping = false;
+                continue;
+            }
+            if (c == '\\' && quote != '\'') {
+                char next = i + 1 < command.length() ? command.charAt(i + 1) : 0;
+                if (next == '\\' || next == '"' || Character.isWhitespace(next)) {
+                    escaping = true;
+                } else {
+                    // Windows 路径中的反斜杠不是转义符（如 .\gradlew、C:\work）。
+                    token.append(c);
+                }
+                tokenStarted = true;
+                continue;
+            }
+            if (quote != 0) {
+                if (c == quote) quote = 0;
+                else token.append(c);
+                tokenStarted = true;
+                continue;
+            }
+            if (c == '\'' || c == '"') {
+                quote = c;
+                tokenStarted = true;
+            } else if (Character.isWhitespace(c)) {
+                if (tokenStarted) {
+                    argv.add(token.toString());
+                    token.setLength(0);
+                    tokenStarted = false;
+                }
+            } else if ("|&;<>`\n\r".indexOf(c) >= 0 || (c == '$' && i + 1 < command.length() && command.charAt(i + 1) == '(')) {
+                throw new IllegalArgumentException("不支持 shell 管道、重定向或命令连接符");
+            } else {
+                token.append(c);
+                tokenStarted = true;
+            }
+        }
+        if (escaping || quote != 0) throw new IllegalArgumentException("引号或转义未闭合");
+        if (tokenStarted) argv.add(token.toString());
+        if (argv.isEmpty()) throw new IllegalArgumentException("命令不能为空");
+        return List.copyOf(argv);
+    }
+
     /** 构建/测试执行结果。 */
     private record ExecResult(int exitCode, String output, boolean timedOut) {}
-
-    /** 在指定目录跑一条命令（shell），头尾截断收集输出，stdin 接空设备防终端探测挂死。 */
-    private static ExecResult exec(String command, Path dir, int timeoutSeconds) throws IOException, InterruptedException {
-        String os = System.getProperty("os.name", "").toLowerCase();
-        ProcessBuilder pb = os.contains("win")
-                ? new ProcessBuilder("cmd.exe", "/c", command)
-                : new ProcessBuilder("/bin/sh", "-c", command);
-        pb.directory(dir.toFile());
-        return runProcess(pb, timeoutSeconds);
-    }
 
     /**
      * 直接按 argv 执行（<b>不经 shell</b>），参数原样传给进程——git 提交信息等含特殊字符的
@@ -566,7 +634,7 @@ public class CodeTools {
 
         boolean finished = proc.waitFor(timeoutSeconds, TimeUnit.SECONDS);
         if (!finished) {
-            proc.destroyForcibly();
+            ProcessTerminator.destroyTreeForcibly(proc);
             try { proc.waitFor(2, TimeUnit.SECONDS); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
             reader.interrupt();
             return new ExecResult(-1, "", true);

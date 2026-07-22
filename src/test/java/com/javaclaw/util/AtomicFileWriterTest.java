@@ -8,6 +8,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Executors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -42,6 +44,13 @@ class AtomicFileWriterTest {
     }
 
     @Test
+    void 支持短文件名(@TempDir Path dir) throws Exception {
+        Path target = dir.resolve("a");
+        AtomicFileWriter.writeString(target, "short-name");
+        assertEquals("short-name", Files.readString(target));
+    }
+
+    @Test
     void writeJson序列化往返一致(@TempDir Path dir) throws Exception {
         Path target = dir.resolve("data.json");
         Map<String, Object> value = Map.of("name", "测试", "list", List.of(1, 2, 3));
@@ -57,5 +66,28 @@ class AtomicFileWriterTest {
         Path target = dir.resolve("pretty.json");
         AtomicFileWriter.writeJson(mapper.writerWithDefaultPrettyPrinter(), target.toFile(), Map.of("k", "v"));
         assertTrue(Files.readString(target).contains("\n"), "pretty 输出应有换行");
+    }
+
+    @Test
+    void 同一目标并发写入不会临时文件冲突或产生半截内容(@TempDir Path dir) throws Exception {
+        Path target = dir.resolve("shared.txt");
+        List<String> payloads = java.util.stream.IntStream.range(0, 40)
+                .mapToObj(i -> "payload-" + i + "-" + "x".repeat(2_000))
+                .toList();
+        try (var pool = Executors.newFixedThreadPool(8)) {
+            List<Callable<Void>> writes = payloads.stream()
+                    .<Callable<Void>>map(payload -> () -> {
+                        AtomicFileWriter.writeString(target, payload);
+                        return null;
+                    })
+                    .toList();
+            for (var future : pool.invokeAll(writes)) future.get();
+        }
+
+        assertTrue(payloads.contains(Files.readString(target)), "最终文件必须等于某次完整写入");
+        try (var files = Files.list(dir)) {
+            assertFalse(files.anyMatch(p -> p.getFileName().toString().endsWith(".tmp")),
+                    "成功后不应残留临时文件");
+        }
     }
 }

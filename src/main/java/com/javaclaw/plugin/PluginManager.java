@@ -9,6 +9,7 @@ import com.javaclaw.config.DataManager;
 import com.javaclaw.plugin.api.Capability;
 import com.javaclaw.plugin.api.PluginDescriptor;
 import com.javaclaw.plugin.api.PluginTool;
+import com.javaclaw.util.PathGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -57,6 +58,8 @@ public final class PluginManager {
     private PluginWatcher watcher;
     /** UI 注册的变化监听（热感知/重扫后回调，UI 实现内部自行切回 FX 线程） */
     private volatile Runnable changeListener;
+    /** init/reload/shutdown 每次推进；旧世代的异步自动启用线程不得再启动插件。 */
+    private long lifecycleGeneration;
 
     private PluginManager() {
     }
@@ -77,6 +80,7 @@ public final class PluginManager {
      * @param interactionPort 用户交互端口，供能力授权确认
      */
     public synchronized void init(AgentRuntime runtime, UserInteractionPort interactionPort) {
+        lifecycleGeneration++;
         this.agentRuntime = runtime;
         this.interactionPort = interactionPort;
         this.appClassLoader = PluginManager.class.getClassLoader();
@@ -95,6 +99,7 @@ public final class PluginManager {
      */
     public synchronized void reload(AgentRuntime newRuntime) {
         log.info("插件系统随工作区切换重载...");
+        lifecycleGeneration++;
         unloadAll();
         this.agentRuntime = newRuntime;
         store.bind(DataManager.getInstance().getDataRoot());
@@ -103,9 +108,21 @@ public final class PluginManager {
         autoEnablePersistedAsync();
     }
 
+    /**
+     * 运行时替换前卸载所有插件能力句柄，防止插件线程在旧 AgentRuntime 关闭后继续调用它。
+     * watcher 保持运行，随后 {@link #reload(AgentRuntime)} 会重新发现并恢复启用项。
+     */
+    public synchronized void suspendForRuntimeTransition() {
+        lifecycleGeneration++;
+        unloadAll();
+        agentRuntime = null;
+        log.info("插件系统已暂停，等待新运行时接管");
+    }
+
     /** 关闭插件系统（应用退出时调用）：停止热感知、停用并卸载全部插件。 */
     public synchronized void shutdown() {
         log.info("插件系统关闭中...");
+        lifecycleGeneration++;
         if (watcher != null) {
             watcher.stop();
             watcher = null;
@@ -215,7 +232,11 @@ public final class PluginManager {
                 log.warn("从文件安装失败：插件[{}]apiVersion={} 与宿主不兼容", d.id(), d.apiVersion());
                 return null;
             }
-            Path destDir = pluginsDir.resolve(d.id());
+            Path destDir = pluginsDir.resolve(d.id()).toAbsolutePath().normalize();
+            if (!PathGuard.isInside(pluginsDir, destDir)) {
+                log.warn("从文件安装失败：插件 id 导致目标目录越界：{}", d.id());
+                return null;
+            }
             Files.createDirectories(destDir);
             Files.copy(jar, destDir.resolve(jar.getFileName()),
                     java.nio.file.StandardCopyOption.REPLACE_EXISTING);
@@ -239,6 +260,10 @@ public final class PluginManager {
         if (rt == null) return false;
         disable(id);
         Path dir = rt.jarPath().getParent();
+        if (!PathGuard.isInside(pluginsDir, dir)) {
+            log.error("拒绝卸载插件[{}]的越界目录：{}", id, dir);
+            return false;
+        }
         plugins.remove(id);
         rt.unload();
         try {
@@ -255,9 +280,8 @@ public final class PluginManager {
     private void deleteRecursively(Path root) throws IOException {
         if (root == null || !Files.exists(root)) return;
         try (Stream<Path> s = Files.walk(root)) {
-            s.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
-                try { Files.deleteIfExists(p); } catch (IOException ignore) {}
-            });
+            List<Path> paths = s.sorted(java.util.Comparator.reverseOrder()).toList();
+            for (Path path : paths) Files.deleteIfExists(path);
         }
     }
 
@@ -395,6 +419,11 @@ public final class PluginManager {
         try (Stream<Path> stream = Files.list(pluginsDir)) {
             List<Path> subdirs = stream
                     .filter(Files::isDirectory)
+                    .filter(path -> {
+                        boolean safe = PathGuard.isInside(pluginsDir, path);
+                        if (!safe) log.warn("跳过指向插件根外部的目录：{}", path);
+                        return safe;
+                    })
                     .sorted()
                     .toList();
             for (Path dir : subdirs) {
@@ -445,6 +474,7 @@ public final class PluginManager {
 
     /** 后台线程自动恢复上次已启用、且授权充分的插件（不阻塞启动、不弹窗）。 */
     private void autoEnablePersistedAsync() {
+        long generation = lifecycleGeneration;
         List<PluginRuntime> toEnable = plugins.values().stream()
                 .filter(rt -> store.isEnabled(rt.id()))
                 .toList();
@@ -462,6 +492,11 @@ public final class PluginManager {
                 }
                 try {
                     synchronized (PluginManager.this) {
+                        if (generation != lifecycleGeneration) {
+                            log.info("插件[{}]所属生命周期已失效，跳过迟到的自动恢复", id);
+                            return;
+                        }
+                        if (plugins.get(id) != rt) continue;
                         rt.start(granted, configFor(id));
                     }
                     log.info("插件[{}]已自动恢复启用", id);

@@ -1,5 +1,6 @@
 package com.javaclaw.system;
 
+import com.javaclaw.util.ProcessTerminator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -307,7 +308,7 @@ public final class CommandSessionManager {
             process.destroy();
             try {
                 if (!process.waitFor(2, TimeUnit.SECONDS)) {
-                    process.destroyForcibly();
+                    ProcessTerminator.destroyTreeForcibly(process);
                     process.waitFor(2, TimeUnit.SECONDS);
                 }
             } catch (InterruptedException e) {

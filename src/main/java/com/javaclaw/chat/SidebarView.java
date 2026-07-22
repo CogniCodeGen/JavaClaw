@@ -637,23 +637,12 @@ public class SidebarView {
             if (btn == ButtonType.OK) {
                 boolean isCurrent = selected.getId().equals(wsMgr.getCurrentWorkspaceId());
                 if (isCurrent) {
-                    // 删除当前工作区前，先切换到另一个工作区
-                    Workspace switchTarget = wsMgr.getWorkspaces().stream()
-                            .filter(ws -> !ws.getId().equals(selected.getId()))
-                            .findFirst().orElse(null);
-                    if (switchTarget != null && onSwitchWorkspace != null) {
-                        onSwitchWorkspace.accept(switchTarget.getId());
-                    }
+                    UIHelper.createWarningAlert("当前工作区仍被聊天、定时任务和插件服务使用，"
+                            + "请先切换到其他工作区，待切换完成后再删除。", null).showAndWait();
+                    return;
                 }
-                wsMgr.deleteWorkspace(selected.getId());
+                if (!wsMgr.deleteWorkspace(selected.getId())) return;
                 workspaceCombo.getItems().remove(selected);
-                if (isCurrent) {
-                    // 选中切换后的当前工作区
-                    Workspace current = wsMgr.findById(wsMgr.getCurrentWorkspaceId());
-                    if (current != null) {
-                        workspaceCombo.getSelectionModel().select(current);
-                    }
-                }
             }
         });
     }

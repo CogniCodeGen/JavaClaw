@@ -73,15 +73,14 @@ public final class CredentialEncryptor {
     /**
      * 预热主密钥：在启动时（H2 确定可用）解析并缓存持久主密钥。
      *
-     * <p>作用是杜绝这条丢凭据路径：若首次用到密钥恰逢某次瞬时 H2 不可用，{@link #masterPassphrase}
-     * 会回退到会随主机名漂移的旧版设备口令，此刻 {@code encrypt()} 存下的密文在主机名变化后就再也
-     * 解不开。启动期 H2 健康，预热后 {@link #cachedMasterSecret} 持有持久密钥，此后加解密只命中缓存、
-     * 绝不回退 legacy。失败静默（不缓存），留待按需重试。由 {@code JavaClawApp.start} 在
+     * <p>作用是杜绝这条丢凭据路径：若首次用到密钥恰逢某次瞬时 H2 不可用，{@link #masterPassphrase(boolean)}
+     * 旧实现会回退到随主机名漂移的设备口令，使故障窗口内的新密文可能永久无法解开。
+     * 现在加密路径必须取得持久主密钥，只有解密兼容路径允许旧口令回退。由 {@code JavaClawApp.start} 在
      * {@code WorkspaceManager.init()}（建库）之后调用。</p>
      */
     public static void warmUpMasterKey() {
         try {
-            masterPassphrase();
+            masterPassphrase(false);
             if (cachedMasterSecret != null) {
                 log.info("凭据主密钥已预热（持久密钥已缓存，此后加密不会回退漂移口令）");
             } else {
@@ -119,7 +118,7 @@ public final class CredentialEncryptor {
             byte[] iv = new byte[IV_LENGTH];
             SECURE_RANDOM.nextBytes(iv);
 
-            SecretKey key = deriveKey(salt, masterPassphrase());
+            SecretKey key = deriveKey(salt, masterPassphrase(false));
             Cipher cipher = Cipher.getInstance(ALGORITHM);
             cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_LENGTH, iv));
             byte[] cipherText = cipher.doFinal(plainText.getBytes(StandardCharsets.UTF_8));
@@ -132,8 +131,8 @@ public final class CredentialEncryptor {
 
             return ENC_PREFIX + Base64.getEncoder().encodeToString(buffer.array()) + ENC_SUFFIX;
         } catch (Exception e) {
-            log.error("加密失败，将使用明文存储", e);
-            return plainText;
+            log.error("加密失败，已拒绝返回明文", e);
+            throw new IllegalStateException("凭据加密失败，未保存明文", e);
         }
     }
 
@@ -170,7 +169,7 @@ public final class CredentialEncryptor {
 
         // 1) 主密钥（H2 库内，当前方案）
         try {
-            return doDecrypt(salt, iv, cipherText, masterPassphrase());
+            return doDecrypt(salt, iv, cipherText, masterPassphrase(true));
         } catch (Exception primaryFailure) {
             // 2) 旧版设备派生口令（用户名@主机名）：主机名未漂移的存量密文可无感解开
             try {
@@ -212,7 +211,7 @@ public final class CredentialEncryptor {
      * 缓存会让整个 JVM 生命周期都用漂移的主机名口令加密新凭据，库恢复后重启就再也解不开；不缓存则
      * 下次调用重试，故障窗口一过即自愈。</p>
      */
-    private static String masterPassphrase() {
+    private static String masterPassphrase(boolean allowLegacyFallback) {
         String cached = cachedMasterSecret;
         if (cached != null) {
             return cached;
@@ -246,8 +245,11 @@ public final class CredentialEncryptor {
                 return secret;
             } catch (Exception e) {
                 // 不缓存 fallback：下次调用重试 H2，避免瞬时故障毒化整个 JVM 生命周期
-                log.error("H2 主密钥读写失败，本次运行回退旧版设备派生口令（不缓存，下次重试）", e);
-                return legacyPassphrase();
+                if (allowLegacyFallback) {
+                    log.error("H2 主密钥读写失败，本次解密回退旧版设备派生口令（不缓存）", e);
+                    return legacyPassphrase();
+                }
+                throw new IllegalStateException("H2 持久主密钥不可用，拒绝用临时口令加密", e);
             }
         }
     }

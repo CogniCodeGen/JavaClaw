@@ -26,14 +26,32 @@ public final class SqlPropertyStore {
     }
 
     public static boolean save(String namespace, Properties props) {
+        try (Connection c = AppDatabase.getConnection()) {
+            String workspaceId = AppDatabase.currentWorkspaceId();
+            c.setAutoCommit(false);
+            replaceNamespace(c, workspaceId, namespace, props);
+            c.commit();
+            return true;
+        } catch (SQLException e) {
+            log.error("保存 H2 配置失败: namespace={}", namespace, e);
+            return false;
+        }
+    }
+
+    /** 在调用方事务内完整替换命名空间，使内存中已删除的键不会在重载时复活。 */
+    static void replaceNamespace(Connection c, String workspaceId, String namespace, Properties props)
+            throws SQLException {
+        try (PreparedStatement delete = c.prepareStatement(
+                "DELETE FROM app_properties WHERE workspace_id = ? AND namespace = ?")) {
+            delete.setString(1, workspaceId);
+            delete.setString(2, namespace);
+            delete.executeUpdate();
+        }
         String sql = """
-                MERGE INTO app_properties(workspace_id, namespace, prop_key, prop_value, updated_at)
-                KEY(workspace_id, namespace, prop_key)
+                INSERT INTO app_properties(workspace_id, namespace, prop_key, prop_value, updated_at)
                 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """;
-        try (Connection c = AppDatabase.getConnection();
-             PreparedStatement ps = c.prepareStatement(sql)) {
-            String workspaceId = AppDatabase.currentWorkspaceId();
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
             for (String key : props.stringPropertyNames()) {
                 ps.setString(1, workspaceId);
                 ps.setString(2, namespace);
@@ -42,10 +60,6 @@ public final class SqlPropertyStore {
                 ps.addBatch();
             }
             ps.executeBatch();
-            return true;
-        } catch (SQLException e) {
-            log.error("保存 H2 配置失败: namespace={}", namespace, e);
-            return false;
         }
     }
 

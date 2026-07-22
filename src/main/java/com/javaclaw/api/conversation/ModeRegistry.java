@@ -20,9 +20,9 @@ import java.util.Set;
  * <p>支持按配置禁用：构造时传入 {@code disabledIds} 集合，命中其中的模式会被 skip。
  * 保持注册顺序：按 {@link #register} 调用顺序遍历，UI 按此顺序渲染。</p>
  *
- * <p>线程安全说明：全方法 {@code synchronized}——服务重建（ChatViewController 的
- * rewireModeRegistry）在<b>后台线程</b>做 unregister/register 结构性变更，而 UI 在 FX 线程
- * 随时 getById/list；无同步的 LinkedHashMap 在并发读写下可能读到断链甚至结构损坏。
+ * <p>线程安全说明：全方法 {@code synchronized}——插件或未来的运行时扩展可能在后台线程
+ * 做 register/unregister 结构性变更，而 UI 在 FX 线程随时 getById/list；无同步的
+ * LinkedHashMap 在并发读写下可能读到断链甚至结构损坏。
  * 所有操作均为低频短临界区（reload/shutdown 广播的模式回调耗时较长，但只发生在
  * 切工作区/关闭等本就串行的窗口），锁竞争可忽略。</p>
  */
