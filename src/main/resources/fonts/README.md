@@ -1,8 +1,9 @@
-# 打包字体 — 放置说明
+# 可选打包字体 — 放置说明
 
-把以下字体文件放到本目录（`src/main/resources/fonts/`）。
-`FontManager.loadBundledFonts()` 会在启动时全部注册；缺失文件只记一条 warn 日志、不影响启动
-（届时 named family 回退到系统已安装字体）。
+如需让指定字体在所有平台保持完全一致，可把以下字体文件放到本目录
+（`src/main/resources/fonts/`）。`FontManager.loadBundledFonts()` 只注册实际存在的资源；
+未随包提供且系统未安装的字体不会出现在设置面板中，应用会使用系统原生字体，
+不会产生逐文件缺失警告。
 
 ## 需要的文件（与 `FontManager.BUNDLED_FONTS` 对应）
 

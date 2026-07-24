@@ -4,6 +4,7 @@ import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.ChatService;
 import com.javaclaw.agent.PlanModeService;
 import com.javaclaw.api.conversation.ModeRegistry;
+import com.javaclaw.workflow.service.WorkflowService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,6 +24,7 @@ public final class WorkspaceRuntime implements AutoCloseable {
     private final AgentRuntime agentRuntime;
     private final ChatService chatService;
     private final PlanModeService planModeService;
+    private final WorkflowService workflowService;
     private final ModeRegistry modeRegistry;
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
@@ -30,11 +32,13 @@ public final class WorkspaceRuntime implements AutoCloseable {
                      AgentRuntime agentRuntime,
                      ChatService chatService,
                      PlanModeService planModeService,
+                     WorkflowService workflowService,
                      ModeRegistry modeRegistry) {
         this.context = Objects.requireNonNull(context, "context");
         this.agentRuntime = Objects.requireNonNull(agentRuntime, "agentRuntime");
         this.chatService = Objects.requireNonNull(chatService, "chatService");
         this.planModeService = Objects.requireNonNull(planModeService, "planModeService");
+        this.workflowService = Objects.requireNonNull(workflowService, "workflowService");
         this.modeRegistry = Objects.requireNonNull(modeRegistry, "modeRegistry");
     }
 
@@ -54,6 +58,8 @@ public final class WorkspaceRuntime implements AutoCloseable {
         return planModeService;
     }
 
+    public WorkflowService workflowService() { return workflowService; }
+
     public ModeRegistry modeRegistry() {
         return modeRegistry;
     }
@@ -67,6 +73,7 @@ public final class WorkspaceRuntime implements AutoCloseable {
     public void close() {
         if (!closed.compareAndSet(false, true)) return;
         closeQuietly("模式注册表", modeRegistry::shutdownAll);
+        closeQuietly("工作流运行时", workflowService::close);
         closeQuietly("普通聊天服务", chatService::shutdown);
         closeQuietly("规划模式服务", planModeService::shutdown);
         closeQuietly("AgentRuntime", agentRuntime::shutdown);

@@ -12,6 +12,13 @@ import com.javaclaw.mode.LoopMode;
 import com.javaclaw.mode.PlanMode;
 import com.javaclaw.mode.ShellMode;
 import com.javaclaw.mode.TaskMode;
+import com.javaclaw.mode.WorkflowCenterMode;
+import com.javaclaw.mode.WorkflowMode;
+import com.javaclaw.workflow.node.PublicNodeCatalog;
+import com.javaclaw.workflow.service.SystemGraphRegistry;
+import com.javaclaw.workflow.service.WorkflowService;
+import com.javaclaw.workflow.store.H2GraphCheckpointStore;
+import com.javaclaw.workflow.store.H2WorkflowDefinitionStore;
 
 import java.util.Objects;
 import java.util.Set;
@@ -21,13 +28,19 @@ public final class RuntimeFactory {
 
     private final PlaywrightBrowserManager browserManager;
     private final Runnable openTaskView;
+    private final Runnable openWorkflowView;
+    private final Runnable closeWorkflowView;
     private final Set<String> disabledModes;
 
     public RuntimeFactory(PlaywrightBrowserManager browserManager,
                           Runnable openTaskView,
+                          Runnable openWorkflowView,
+                          Runnable closeWorkflowView,
                           Set<String> disabledModes) {
         this.browserManager = Objects.requireNonNull(browserManager, "browserManager");
         this.openTaskView = Objects.requireNonNull(openTaskView, "openTaskView");
+        this.openWorkflowView = Objects.requireNonNull(openWorkflowView, "openWorkflowView");
+        this.closeWorkflowView = Objects.requireNonNull(closeWorkflowView, "closeWorkflowView");
         this.disabledModes = disabledModes == null ? Set.of() : Set.copyOf(disabledModes);
     }
 
@@ -41,22 +54,33 @@ public final class RuntimeFactory {
         ChatService chat = null;
         PlanModeService plan = null;
         ModeRegistry modes = null;
+        WorkflowService workflows = null;
         try {
             runtime = new AgentRuntime(browserManager);
-            chat = new ChatService(runtime);
-            plan = new PlanModeService(runtime);
+            var nodeRegistry = PublicNodeCatalog.createRegistry(runtime);
+            var checkpoints = new H2GraphCheckpointStore(context.workspaceId());
+            var definitions = new H2WorkflowDefinitionStore(context.workspaceId());
+            var systemGraphs = new SystemGraphRegistry();
+            systemGraphs.register(com.javaclaw.workflow.service.SystemGraphFactory.sdd());
+            workflows = new WorkflowService(context.workspaceId(), runtime, nodeRegistry,
+                    definitions, checkpoints, systemGraphs);
+            chat = new ChatService(runtime, workflows);
+            plan = new PlanModeService(runtime, workflows);
 
             modes = new ModeRegistry(disabledModes);
             modes.register(new ChatMode(chat));
             modes.register(new PlanMode(plan));
-            modes.register(new LoopMode(new LoopService(runtime)));
+            modes.register(new LoopMode(new LoopService(runtime, workflows)));
+            modes.register(new WorkflowMode(workflows));
             modes.register(new ShellMode(new ShellCommandService(chat)));
             modes.register(new TaskMode(openTaskView));
-            return new WorkspaceRuntime(context, runtime, chat, plan, modes);
+            modes.register(new WorkflowCenterMode(openWorkflowView, closeWorkflowView));
+            return new WorkspaceRuntime(context, runtime, chat, plan, workflows, modes);
         } catch (RuntimeException | Error failure) {
             if (modes != null) safeClose(modes::shutdownAll);
             if (chat != null) safeClose(chat::shutdown);
             if (plan != null) safeClose(plan::shutdown);
+            if (workflows != null) safeClose(workflows::close);
             if (runtime != null) safeClose(runtime::shutdown);
             throw failure;
         }

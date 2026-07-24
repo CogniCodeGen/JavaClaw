@@ -26,14 +26,37 @@ public final class SqlPropertyStore {
     }
 
     public static boolean save(String namespace, Properties props) {
+        return save(namespace, props, AppDatabase.currentWorkspaceId());
+    }
+
+    static boolean save(String namespace, Properties props, String workspaceId) {
         try (Connection c = AppDatabase.getConnection()) {
-            String workspaceId = AppDatabase.currentWorkspaceId();
             c.setAutoCommit(false);
             replaceNamespace(c, workspaceId, namespace, props);
             c.commit();
             return true;
         } catch (SQLException e) {
             log.error("保存 H2 配置失败: namespace={}", namespace, e);
+            return false;
+        }
+    }
+
+    static boolean saveProperty(String namespace, String key, String value, String workspaceId) {
+        String sql = """
+                MERGE INTO app_properties(workspace_id, namespace, prop_key, prop_value, updated_at)
+                KEY (workspace_id, namespace, prop_key)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """;
+        try (Connection c = AppDatabase.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, workspaceId);
+            ps.setString(2, namespace);
+            ps.setString(3, key);
+            ps.setString(4, value);
+            ps.executeUpdate();
+            return true;
+        } catch (SQLException e) {
+            log.error("保存 H2 配置项失败: namespace={}, key={}", namespace, key, e);
             return false;
         }
     }

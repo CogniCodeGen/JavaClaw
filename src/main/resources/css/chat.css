@@ -5794,7 +5794,8 @@
     -fx-text-fill: white;
 }
 
-.review-mode-combo {
+/* Composer 内并列的会话模式 / 工具审核下拉框共用同一视觉基线。 */
+.composer-select {
     -fx-background-color: -jc-surface-sunken;
     -fx-background-radius: 8;
     -fx-border-color: -jc-border;
@@ -5803,20 +5804,33 @@
     -fx-cursor: hand;
 }
 
-.review-mode-combo:hover {
+.composer-select:hover {
     -fx-background-color: -jc-primary-50;
     -fx-border-color: -jc-border-strong;
 }
 
-.review-mode-combo > .list-cell {
+.composer-select:focused,
+.composer-select:showing {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-primary-200;
+    -fx-effect: dropshadow(gaussian, -jc-focus-ring, 6, 0, 0, 0);
+}
+
+.composer-select > .list-cell,
+.composer-select > .label {
+    -fx-background-color: transparent;
     -fx-text-fill: -jc-text-body;
     -fx-font-size: 13px;
     -fx-font-weight: 600;
     -fx-padding: 5 4 5 10;
 }
 
-.review-mode-combo > .arrow-button {
+.composer-select > .arrow-button {
     -fx-padding: 0 8 0 2;
+}
+
+.composer-select > .arrow-button > .arrow {
+    -fx-background-color: -jc-text-muted;
 }
 
 /* ===== 图片查看弹窗（双击大图，缩放/拖拽） ===== */

@@ -369,6 +369,75 @@ public final class AppDatabase {
                         PRIMARY KEY (workspace_id, state_key)
                     )
                     """);
+
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS workflow_definitions (
+                        workspace_id VARCHAR(128) NOT NULL,
+                        id VARCHAR(128) NOT NULL,
+                        name VARCHAR(512) NOT NULL,
+                        description CLOB,
+                        draft_json CLOB NOT NULL,
+                        published_json CLOB,
+                        draft_revision INT NOT NULL,
+                        published_version INT NOT NULL,
+                        archived BOOLEAN NOT NULL,
+                        created_at BIGINT NOT NULL,
+                        updated_at BIGINT NOT NULL,
+                        PRIMARY KEY (workspace_id, id)
+                    )
+                    """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_workflow_defs_archived "
+                    + "ON workflow_definitions(workspace_id, archived, updated_at)");
+
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS workflow_threads (
+                        workspace_id VARCHAR(128) NOT NULL,
+                        workflow_id VARCHAR(128) NOT NULL,
+                        thread_id VARCHAR(512) NOT NULL,
+                        state_json CLOB NOT NULL,
+                        updated_at BIGINT NOT NULL,
+                        PRIMARY KEY (workspace_id, workflow_id, thread_id)
+                    )
+                    """);
+
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS workflow_runs (
+                        workspace_id VARCHAR(128) NOT NULL,
+                        id VARCHAR(128) NOT NULL,
+                        workflow_id VARCHAR(128) NOT NULL,
+                        workflow_version INT NOT NULL,
+                        thread_id VARCHAR(512) NOT NULL,
+                        definition_json CLOB NOT NULL,
+                        state_json CLOB NOT NULL,
+                        status VARCHAR(32) NOT NULL,
+                        current_node_id VARCHAR(256),
+                        next_node_id VARCHAR(256),
+                        step_count INT NOT NULL,
+                        output_text CLOB,
+                        error_text CLOB,
+                        interrupt_json CLOB,
+                        created_at BIGINT NOT NULL,
+                        updated_at BIGINT NOT NULL,
+                        PRIMARY KEY (workspace_id, id)
+                    )
+                    """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_workflow_runs_thread "
+                    + "ON workflow_runs(workspace_id, workflow_id, thread_id, updated_at)");
+            st.execute("CREATE INDEX IF NOT EXISTS idx_workflow_runs_status "
+                    + "ON workflow_runs(workspace_id, status, updated_at)");
+
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS workflow_checkpoints (
+                        workspace_id VARCHAR(128) NOT NULL,
+                        run_id VARCHAR(128) NOT NULL,
+                        seq INT NOT NULL,
+                        node_id VARCHAR(256),
+                        phase VARCHAR(32) NOT NULL,
+                        state_json CLOB NOT NULL,
+                        created_at BIGINT NOT NULL,
+                        PRIMARY KEY (workspace_id, run_id, seq)
+                    )
+                    """);
         }
         log.debug("全局 H2 数据库已就绪: {}", databaseFilePath());
     }

@@ -82,6 +82,7 @@ public final class SddTaskManager {
             capabilityToolsFactory = origin -> Map.of();
     private SkillManager skills;
     private UserInteractionPort interactionPort;
+    private com.javaclaw.workflow.service.WorkflowService workflowService;
     private volatile SddTaskListener listener = new SddTaskListener() {};
 
     // ==================== 配置 / 持久化 ====================
@@ -102,11 +103,22 @@ public final class SddTaskManager {
                                                Map<String, Object>> capabilityToolsFactory,
                                        SkillManager skills,
                                        UserInteractionPort interactionPort) {
+        // 兼容旧调用方，但不能沿用上一个工作区的 WorkflowService：它可能已经随
+        // WorkspaceRuntime 关闭。未显式传入新服务时安全降级到 SDD 原生编排器。
+        configure(dataDir, modelFactory, capabilityToolsFactory, skills, interactionPort, null);
+    }
+
+    public synchronized void configure(Path dataDir, ModelFactory modelFactory,
+                                       java.util.function.Function<com.javaclaw.agent.ToolCallOrigin,
+                                               Map<String, Object>> capabilityToolsFactory,
+                                       SkillManager skills, UserInteractionPort interactionPort,
+                                       com.javaclaw.workflow.service.WorkflowService workflowService) {
         this.modelFactory = modelFactory;
         this.capabilityToolsFactory = capabilityToolsFactory == null
                 ? origin -> Map.of() : capabilityToolsFactory;
         this.skills = skills;
         this.interactionPort = interactionPort;
+        this.workflowService = workflowService;
         loadAll();
         recoverInterrupted();
     }
@@ -118,7 +130,16 @@ public final class SddTaskManager {
     public synchronized void reload(Path dataDir, ModelFactory modelFactory,
                                     java.util.function.Function<com.javaclaw.agent.ToolCallOrigin,
                                             Map<String, Object>> capabilityToolsFactory) {
-        configure(dataDir, modelFactory, capabilityToolsFactory, this.skills, this.interactionPort);
+        // 同上：旧签名无法表达新工作区的 WorkflowService，禁止保留已关闭实例。
+        configure(dataDir, modelFactory, capabilityToolsFactory, this.skills, this.interactionPort, null);
+    }
+
+    public synchronized void reload(Path dataDir, ModelFactory modelFactory,
+                                    java.util.function.Function<com.javaclaw.agent.ToolCallOrigin,
+                                            Map<String, Object>> capabilityToolsFactory,
+                                    com.javaclaw.workflow.service.WorkflowService workflowService) {
+        configure(dataDir, modelFactory, capabilityToolsFactory, this.skills, this.interactionPort,
+                workflowService);
     }
 
     public void subscribe(SddTaskListener l) {
@@ -252,7 +273,8 @@ public final class SddTaskManager {
                             capabilityToolsFactory.apply(
                                     com.javaclaw.agent.ToolCallOrigin.managedTask(id, task.workDir)),
                             skills,
-                            (phase, in, out) -> recordTokens(task, phase, in, out), gate, progress, completionStamp)
+                            (phase, in, out) -> recordTokens(task, phase, in, out), gate, progress,
+                            completionStamp, workflowService)
                             .budgetGuard(() -> isOverBudget(task))
                             .execTimeoutSec(cfg.getSddExecTimeoutSeconds())
                             .structuredTimeoutSec(cfg.getSddStructuredTimeoutSeconds())

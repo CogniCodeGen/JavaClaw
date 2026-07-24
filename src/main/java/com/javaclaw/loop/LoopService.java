@@ -1,5 +1,6 @@
 package com.javaclaw.loop;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.goal.GoalDecomposition;
@@ -35,8 +36,13 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class LoopService {
 
     private static final Logger log = LoggerFactory.getLogger(LoopService.class);
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final com.javaclaw.workflow.model.GraphDefinition SYSTEM_GRAPH =
+            com.javaclaw.workflow.service.SystemGraphFactory.loop();
 
     private final AgentRuntime runtime;
+    private final com.javaclaw.workflow.service.WorkflowService workflowService;
+    private volatile String activeSystemSessionId;
     private final GoalManager goalManager;
 
     /** 当前活跃循环控制器（供取消）；无活跃循环为 null。 */
@@ -69,7 +75,13 @@ public final class LoopService {
     private static final long TERMINATION_WAIT_MILLIS = 5_000L;
 
     public LoopService(AgentRuntime runtime) {
+        this(runtime, null);
+    }
+
+    public LoopService(AgentRuntime runtime, com.javaclaw.workflow.service.WorkflowService workflowService) {
         this.runtime = runtime;
+        this.workflowService = workflowService;
+        if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
         // skipLength=0：聊天模式的「短请求免分解」优化不适用于循环——循环目标多为短祈使句，
         // 而成功准则是循环完成判定的承重墙（不是可有可无的优化），必须对任意长度目标分解。
         this.goalManager = new GoalManager(runtime.getModelFactory().createChatModel(),
@@ -80,6 +92,61 @@ public final class LoopService {
      * 启动一次循环（立即返回，异步执行；终态经 {@code callbacks} 通告）。
      */
     public void start(ConversationRequest request, ConversationCallbacks callbacks) {
+        if (workflowService == null) {
+            executeLoopPipeline(request, callbacks);
+            return;
+        }
+        activeSystemSessionId = request.sessionId();
+        workflowService.runSystem(SYSTEM_GRAPH, request.sessionId(),
+                com.javaclaw.workflow.service.SystemInvocationState.from(request), callbacks,
+                this::executeLoopGraphStage);
+    }
+
+    private void executeLoopPipeline(ConversationRequest request, ConversationCallbacks callbacks) {
+        executeLoopPipeline(request, null, false, callbacks);
+    }
+
+    private com.javaclaw.workflow.runtime.NodeResult executeLoopGraphStage(
+            String stageId, com.javaclaw.workflow.runtime.NodeExecutionContext context) throws Exception {
+        ConversationRequest request = com.javaclaw.workflow.service.SystemInvocationState.request(context);
+        return switch (stageId) {
+            case "preflight" -> {
+                Plan plan = buildPlan(request);
+                // buildPlan 是阻塞模型调用；期间收到取消后不得继续弹出风险确认框。
+                context.cancellation().throwIfCancelled();
+                boolean commandsApproved = confirmVerifyCommands(plan.spec());
+                // 确认框显示期间也可能取消；此时以 CANCELLED 收束而不是误报“未批准”。
+                context.cancellation().throwIfCancelled();
+                if (!commandsApproved) {
+                    throw new IllegalStateException(
+                            "循环验证命令未获批准，已取消启动。可修改目标或允许执行后重试");
+                }
+                yield com.javaclaw.workflow.runtime.NodeResult.next(
+                        com.javaclaw.workflow.model.StatePatch.builder()
+                                .set("system.loop.spec", plan.spec())
+                                .set("system.loop.contextPrompt", plan.contextPrompt())
+                                .set("system.loop.explicitWorkDir", plan.explicitWorkDir())
+                                .build());
+            }
+            case "run" -> {
+                LoopSpec spec = MAPPER.treeToValue(
+                        context.state().get("system.loop.spec"), LoopSpec.class);
+                Plan plan = new Plan(spec,
+                        context.state().get("system.loop.contextPrompt").asText(),
+                        context.state().get("system.loop.explicitWorkDir").asBoolean());
+                yield com.javaclaw.workflow.service.SystemPipelineAwaiter.await(
+                        context,
+                        inner -> executeLoopPipeline(request, plan, true, inner),
+                        context.require(ConversationCallbacks.class),
+                        this::cancelPipeline);
+            }
+            default -> throw new IllegalArgumentException("未知循环系统阶段: " + stageId);
+        };
+    }
+
+    private void executeLoopPipeline(ConversationRequest request, Plan preparedPlan,
+                                     boolean verificationConfirmed,
+                                     ConversationCallbacks callbacks) {
         java.util.concurrent.CountDownLatch latch;
         synchronized (lifecycleLock) {
             if (!running.compareAndSet(false, true)) {
@@ -96,7 +163,7 @@ public final class LoopService {
             String loopId = "loop-" + System.nanoTime();
             AgentScopeLoopRunner runner = null;
             try {
-                Plan plan = buildPlan(request);
+                Plan plan = preparedPlan == null ? buildPlan(request) : preparedPlan;
                 // 启动检查点①：目标分解（阻塞数秒）期间被取消 → 不再弹确认、不启动
                 if (cancelRequested) {
                     log.info("循环在目标分解阶段被取消，未启动");
@@ -107,7 +174,7 @@ public final class LoopService {
                 // 验证命令治理：command 类准则由目标分解（LLM）产出、将被验证器反复执行且不经
                 // 工具确认闸门——非只读命令必须先经用户确认一次（对齐 SDD 提案评审思想），
                 // 拒绝则不启动循环（诚实失败，而非静默跑 LLM 生成的命令）
-                if (!confirmVerifyCommands(plan.spec())) {
+                if (!verificationConfirmed && !confirmVerifyCommands(plan.spec())) {
                     callbacks.onError(new IllegalStateException(
                             "循环验证命令未获批准，已取消启动。可修改目标或允许执行后重试"));
                     return;
@@ -180,6 +247,12 @@ public final class LoopService {
      * 烧 token 直到单轮超时（默认 12 分钟）才回到取消检查点。</p>
      */
     public boolean cancelActive() {
+        boolean graphCancelled = workflowService != null
+                && workflowService.cancelSystem(SYSTEM_GRAPH.id(), activeSystemSessionId);
+        return cancelPipeline() || graphCancelled;
+    }
+
+    private boolean cancelPipeline() {
         LoopController controller;
         AgentScopeLoopRunner runner;
         // 锁内置标志 + 读快照：与 start() 的三步锁段互斥，取消请求绝不会落在 CAS 与复位之间被清掉。

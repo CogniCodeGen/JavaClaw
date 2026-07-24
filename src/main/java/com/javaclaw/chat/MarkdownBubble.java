@@ -5,6 +5,7 @@ import com.javaclaw.chat.markdown.MarkdownParagraphRenderer;
 import com.javaclaw.chat.markdown.MarkdownParagraphRenderer.BlockRender;
 import com.javaclaw.chat.markdown.MarkdownParagraphRenderer.LinkRange;
 import com.javaclaw.ui.javafx.theme.FontManager;
+import com.javaclaw.ui.javafx.theme.ThemeManager;
 import javafx.animation.PauseTransition;
 import javafx.beans.value.ChangeListener;
 import javafx.scene.Cursor;
@@ -74,6 +75,10 @@ public class MarkdownBubble {
     private final ChangeListener<Number> fontRevListener =
             (obs, o, n) -> { if (!disposed) rerenderAll(); };
 
+    /** RichTextArea 会缓存 Text 节点的已解析颜色；主题应用完成后需重建稳定段落。 */
+    private final ChangeListener<Number> themeRevListener =
+            (obs, o, n) -> { if (!disposed) rerenderAll(); };
+
     /**
      * 创建 Markdown 渲染气泡
      *
@@ -119,6 +124,8 @@ public class MarkdownBubble {
 
         // 字体密度切换（设置 › 字体）实时生效
         FontManager.revisionProperty().addListener(fontRevListener);
+        // 主题令牌切换后重建 RichParagraph，避免历史正文沿用切换前的已解析颜色
+        ThemeManager.revisionProperty().addListener(themeRevListener);
 
         // 将 MarkdownBubble 实例附加到视图节点，便于外部遍历定位并在清空场景图时 dispose
         view.getProperties().put("markdownBubble", this);
@@ -185,7 +192,7 @@ public class MarkdownBubble {
     }
 
     /**
-     * 释放此气泡持有的资源：停止节流器、解除 FontManager 监听、清空缓存。
+     * 释放此气泡持有的资源：停止节流器、解除全局外观监听、清空缓存。
      * 纯 JavaFX 节点无本地资源，其余交给 GC。
      */
     public void dispose() {
@@ -193,6 +200,7 @@ public class MarkdownBubble {
         disposed = true;
         renderThrottle.stop();
         FontManager.revisionProperty().removeListener(fontRevListener);
+        ThemeManager.revisionProperty().removeListener(themeRevListener);
         view.getProperties().remove("markdownBubble");
         blockCache.clear();
         absoluteLinks.clear();

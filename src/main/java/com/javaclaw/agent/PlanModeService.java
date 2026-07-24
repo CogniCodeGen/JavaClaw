@@ -44,6 +44,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class PlanModeService {
 
     private static final Logger log = LoggerFactory.getLogger(PlanModeService.class);
+    private static final com.javaclaw.workflow.model.GraphDefinition SYSTEM_GRAPH =
+            com.javaclaw.workflow.service.SystemGraphFactory.plan();
 
     /** 协调者结束讨论的标记 */
     private static final String PLAN_COMPLETE_MARKER = "[PLAN_COMPLETE]";
@@ -62,6 +64,8 @@ public class PlanModeService {
 
     /** 共享基础设施（模型工厂 / 记忆 / 知识 / token 追踪等） */
     private final AgentRuntime runtime;
+    private final com.javaclaw.workflow.service.WorkflowService workflowService;
+    private volatile String activeSystemSessionId;
 
     /** 统一记忆管理器（从 runtime 取出的快捷引用） */
     private final MemoryManager memoryManager;
@@ -73,7 +77,13 @@ public class PlanModeService {
     private volatile Disposable activeSubscription;
 
     public PlanModeService(AgentRuntime runtime) {
+        this(runtime, null);
+    }
+
+    public PlanModeService(AgentRuntime runtime, com.javaclaw.workflow.service.WorkflowService workflowService) {
         this.runtime = runtime;
+        this.workflowService = workflowService;
+        if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
         this.memoryManager = runtime.getMemoryManager();
         AgentConfig config = AgentConfig.getInstance();
         log.info("========== 初始化规划模式服务 ==========");
@@ -109,6 +119,57 @@ public class PlanModeService {
      * @param callbacks 事件与生命周期回调
      */
     public void planChat(ConversationRequest request, ConversationCallbacks callbacks) {
+        if (workflowService == null) {
+            executePlanPipeline(request, callbacks);
+            return;
+        }
+        activeSystemSessionId = request.sessionId();
+        workflowService.runSystem(SYSTEM_GRAPH, request.sessionId(),
+                com.javaclaw.workflow.service.SystemInvocationState.from(request), callbacks,
+                this::executePlanGraphStage);
+    }
+
+    private void executePlanPipeline(ConversationRequest request, ConversationCallbacks callbacks) {
+        Mono.fromCallable(() -> runtime.enrichWithKnowledge(request.userInput()))
+                .subscribeOn(Schedulers.boundedElastic())
+                .subscribe(enrichedInput -> executePlanWithEnrichedInput(request, enrichedInput, callbacks),
+                        error -> {
+                            log.error("知识库检索异常，降级为原始输入", error);
+                            executePlanWithEnrichedInput(request, request.userInput(), callbacks);
+                        });
+    }
+
+    private com.javaclaw.workflow.runtime.NodeResult executePlanGraphStage(
+            String stageId, com.javaclaw.workflow.runtime.NodeExecutionContext context) throws Exception {
+        ConversationRequest request = com.javaclaw.workflow.service.SystemInvocationState.request(context);
+        return switch (stageId) {
+            case "knowledge" -> {
+                String enriched;
+                try {
+                    enriched = runtime.enrichWithKnowledge(request.userInput());
+                } catch (Exception failure) {
+                    log.warn("规划图知识增强失败，降级为原始输入: {}", failure.getMessage());
+                    enriched = request.userInput();
+                }
+                yield com.javaclaw.workflow.runtime.NodeResult.next(
+                        com.javaclaw.workflow.model.StatePatch.builder()
+                                .set("system.plan.enrichedInput", enriched).build());
+            }
+            case "discussion" -> {
+                String enriched = context.state().get("system.plan.enrichedInput")
+                        .asText(request.userInput());
+                yield com.javaclaw.workflow.service.SystemPipelineAwaiter.await(
+                        context,
+                        inner -> executePlanWithEnrichedInput(request, enriched, inner),
+                        context.require(ConversationCallbacks.class),
+                        this::cancelPipeline);
+            }
+            default -> throw new IllegalArgumentException("未知研讨系统阶段: " + stageId);
+        };
+    }
+
+    private void executePlanWithEnrichedInput(
+            ConversationRequest request, String enrichedInput, ConversationCallbacks callbacks) {
         String userInput = request.userInput();
         List<File> attachments = request.attachments();
 
@@ -148,17 +209,8 @@ public class PlanModeService {
             }
         };
 
-        // 知识库增强在后台线程执行，避免阻塞调用方
-        Mono.fromCallable(() -> runtime.enrichWithKnowledge(userInput))
-                .subscribeOn(Schedulers.boundedElastic())
-                .subscribe(enrichedInput -> {
-                    Msg userMsg = runtime.buildUserMsg(enrichedInput, attachments);
-                    runPlanDiscussion(userMsg, domainCallbacks);
-                }, error -> {
-                    log.error("知识库检索异常，降级为原始输入", error);
-                    Msg userMsg = runtime.buildUserMsg(userInput, attachments);
-                    runPlanDiscussion(userMsg, domainCallbacks);
-                });
+        Msg userMsg = runtime.buildUserMsg(enrichedInput, attachments);
+        runPlanDiscussion(userMsg, domainCallbacks);
     }
 
     /**
@@ -472,6 +524,12 @@ public class PlanModeService {
      * @return true 表示成功取消
      */
     public boolean cancel() {
+        boolean graphCancelled = workflowService != null
+                && workflowService.cancelSystem(SYSTEM_GRAPH.id(), activeSystemSessionId);
+        return cancelPipeline() || graphCancelled;
+    }
+
+    private boolean cancelPipeline() {
         cancelled = true;
         Disposable sub = activeSubscription;
         if (sub != null && !sub.isDisposed()) {

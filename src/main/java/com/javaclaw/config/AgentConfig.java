@@ -420,6 +420,26 @@ public final class AgentConfig {
         }
     }
 
+    /** 后台保存工具审核模式；按单键 upsert，避免覆盖同一时刻由设置页保存的其他配置。 */
+    public void saveToolReviewModeAsync(java.util.concurrent.Executor executor) {
+        if (executor == null) {
+            save();
+            return;
+        }
+        String workspaceId;
+        String value;
+        synchronized (this) {
+            workspaceId = AppDatabase.currentWorkspaceId();
+            value = properties.getProperty(KEY_TOOL_REVIEW_MODE, DEFAULT_TOOL_REVIEW_MODE.id());
+        }
+        executor.execute(() -> {
+            if (SqlPropertyStore.saveProperty(
+                    CONFIG_NAMESPACE, KEY_TOOL_REVIEW_MODE, value, workspaceId)) {
+                log.info("工具审核模式已异步保存到 H2: workspace={}, mode={}", workspaceId, value);
+            }
+        });
+    }
+
     // ==================== API 连接配置 ====================
 
     /**

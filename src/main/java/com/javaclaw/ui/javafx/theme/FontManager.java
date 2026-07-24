@@ -14,7 +14,9 @@ import org.slf4j.LoggerFactory;
 import java.io.InputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 全局字体管理器 —— 字体的「单一来源」+ 运行时实时切换（与 {@link ThemeManager} 同构）。
@@ -23,8 +25,8 @@ import java.util.List;
  * <ol>
  *   <li><b>系统原生优先</b>：默认（未自定义）时不注入任何覆盖，界面直接继承
  *       {@code chat.css} 的 {@code .root} 基准栈，各平台命中本地最佳字体。</li>
- *   <li><b>打包回退保证一致</b>：{@link #loadBundledFonts()} 在启动时注册
- *       Inter / Noto Sans SC / Cascadia Code，named family 在缺字体的机器上也能解析。</li>
+ *   <li><b>可选打包字体</b>：{@link #loadBundledFonts()} 注册实际随包提供的字体资源；
+ *       未随包提供且系统也没有的字体不会出现在设置面板中，避免展示无效选项。</li>
  *   <li><b>全局可配置</b>：用户在「设置 › 字体」选择字体族 / 等宽 / 密度后，本管理器监听
  *       {@link Window#getWindows()}，给每个窗口的 Scene 追加一张<b>动态生成的用户样式表</b>
  *       （排在 chat.css 之后，按 CSS 顺序覆盖），即可整窗实时换字、立即生效。
@@ -40,10 +42,11 @@ public final class FontManager {
     private static final Logger log = LoggerFactory.getLogger(FontManager.class);
 
     /** 界面字体选项（id 持久化；stack 为该选项展开后的完整回退栈）。 */
-    public record FontOption(String id, String name, String subtitle, String stack) {}
+    public record FontOption(
+            String id, String name, String subtitle, String stack, String requiredFamily) {}
 
     /** 等宽字体选项。 */
-    public record MonoOption(String id, String name, String stack) {}
+    public record MonoOption(String id, String name, String stack, String requiredFamily) {}
 
     /** 密度选项：对话正文字号(px) + 行高。 */
     public record Density(String id, String name, double fontPx, double lineHeight) {}
@@ -54,21 +57,27 @@ public final class FontManager {
 
     public static final List<FontOption> FONT_OPTIONS = List.of(
         new FontOption("native", "系统原生", "macOS SF Pro · Windows Segoe UI",
-            "\"SF Pro Text\", \"Segoe UI\", \"Inter\", " + CJK_FALLBACK + ", sans-serif"),
-        new FontOption("inter", "Inter", "打包 · 拉丁正文",
-            "\"Inter\", " + CJK_FALLBACK + ", sans-serif"),
-        new FontOption("noto", "Noto Sans SC", "打包 · 中文字形优美",
-            "\"Noto Sans SC\", \"PingFang SC\", \"Inter\", sans-serif"),
+            "\"SF Pro Text\", \"Segoe UI\", \"Inter\", " + CJK_FALLBACK + ", sans-serif", null),
+        new FontOption("inter", "Inter", "可用 · 拉丁正文",
+            "\"Inter\", " + CJK_FALLBACK + ", sans-serif", "Inter"),
+        new FontOption("noto", "Noto Sans SC", "可用 · 中文字形优美",
+            "\"Noto Sans SC\", \"PingFang SC\", \"Inter\", sans-serif", "Noto Sans SC"),
         new FontOption("system", "跟随系统 UI", "System default",
-            "\"System\", " + CJK_FALLBACK + ", sans-serif"));
+            "\"System\", " + CJK_FALLBACK + ", sans-serif", null));
 
     public static final List<MonoOption> MONO_OPTIONS = List.of(
+        new MonoOption("native", "系统等宽",
+            "\"SF Mono\", \"JetBrains Mono\", \"Cascadia Code\", \"Consolas\", \"Menlo\", monospace",
+            null),
         new MonoOption("cascadia", "Cascadia Code",
-            "\"Cascadia Code\", \"SF Mono\", \"JetBrains Mono\", \"Consolas\", \"Menlo\", monospace"),
+            "\"Cascadia Code\", \"SF Mono\", \"JetBrains Mono\", \"Consolas\", \"Menlo\", monospace",
+            "Cascadia Code"),
         new MonoOption("jetbrains", "JetBrains Mono",
-            "\"JetBrains Mono\", \"SF Mono\", \"Cascadia Code\", \"Consolas\", \"Menlo\", monospace"),
+            "\"JetBrains Mono\", \"SF Mono\", \"Cascadia Code\", \"Consolas\", \"Menlo\", monospace",
+            "JetBrains Mono"),
         new MonoOption("sfmono", "SF Mono",
-            "\"SF Mono\", \"Cascadia Code\", \"JetBrains Mono\", \"Consolas\", \"Menlo\", monospace"));
+            "\"SF Mono\", \"Cascadia Code\", \"JetBrains Mono\", \"Consolas\", \"Menlo\", monospace",
+            "SF Mono"));
 
     public static final List<Density> DENSITIES = List.of(
         new Density("compact", "紧凑", 13.5, 1.55),
@@ -76,7 +85,7 @@ public final class FontManager {
         new Density("relaxed", "宽松", 15.5, 1.80));
 
     public static final String DEFAULT_FONT = "native";
-    public static final String DEFAULT_MONO = "cascadia";
+    public static final String DEFAULT_MONO = "native";
     public static final String DEFAULT_DENSITY = "cozy";
 
     /** 默认界面字体栈（与 chat.css .root 一致），供内联样式复用。 */
@@ -109,6 +118,7 @@ public final class FontManager {
 
     private static boolean loaded = false;
     private static boolean initialized = false;
+    private static Set<String> availableFamilies = Set.of();
 
     private FontManager() {}
 
@@ -117,15 +127,29 @@ public final class FontManager {
     /** 注册全部打包字体。幂等。须在构建任何 Scene 之前调用一次。 */
     public static synchronized void loadBundledFonts() {
         if (loaded) return;
+        int bundled = 0;
+        int missing = 0;
         for (String path : BUNDLED_FONTS) {
             try (InputStream in = FontManager.class.getResourceAsStream(path)) {
-                if (in == null) { log.warn("未找到打包字体: {}", path); continue; }
-                if (Font.loadFont(in, -1) == null) log.warn("字体加载失败: {}", path);
+                if (in == null) {
+                    missing++;
+                    continue;
+                }
+                if (Font.loadFont(in, -1) == null) {
+                    log.warn("字体加载失败: {}", path);
+                } else {
+                    bundled++;
+                }
             } catch (Exception e) {
                 log.warn("读取字体异常 {}: {}", path, e.getMessage());
             }
         }
+        availableFamilies = snapshotAvailableFamilies();
         loaded = true;
+        if (missing > 0) {
+            log.info("可选打包字体资源：已注册 {} 个，未随包提供 {} 个；设置仅展示系统实际可用项",
+                    bundled, missing);
+        }
     }
 
     /**
@@ -135,8 +159,9 @@ public final class FontManager {
     public static synchronized void init() {
         if (initialized) return;
         AgentConfig cfg = AgentConfig.getInstance();
-        fontId = normalize(cfg.getUiFontFamily(), FONT_OPTIONS.stream().map(FontOption::id).toList(), DEFAULT_FONT);
-        monoId = normalize(cfg.getUiFontMono(), MONO_OPTIONS.stream().map(MonoOption::id).toList(), DEFAULT_MONO);
+        if (!loaded) loadBundledFonts();
+        fontId = normalize(cfg.getUiFontFamily(), availableFontOptions().stream().map(FontOption::id).toList(), DEFAULT_FONT);
+        monoId = normalize(cfg.getUiFontMono(), availableMonoOptions().stream().map(MonoOption::id).toList(), DEFAULT_MONO);
         densityId = normalize(cfg.getUiFontDensity(), DENSITIES.stream().map(Density::id).toList(), DEFAULT_DENSITY);
 
         Window.getWindows().addListener((ListChangeListener<Window>) change -> {
@@ -169,6 +194,22 @@ public final class FontManager {
 
     /** 变更可观察属性（面板据此刷新）。 */
     public static ReadOnlyIntegerProperty revisionProperty() { return revision; }
+
+    /** 当前运行环境中真实可选的界面字体；系统回退项始终保留。 */
+    public static List<FontOption> availableFontOptions() {
+        ensureFamilySnapshot();
+        return FONT_OPTIONS.stream()
+                .filter(option -> isAvailable(option.requiredFamily()))
+                .toList();
+    }
+
+    /** 当前运行环境中真实可选的等宽字体；系统回退项始终保留。 */
+    public static List<MonoOption> availableMonoOptions() {
+        ensureFamilySnapshot();
+        return MONO_OPTIONS.stream()
+                .filter(option -> isAvailable(option.requiredFamily()))
+                .toList();
+    }
 
     /** 工作区切换后重读该工作区记忆的字体。 */
     public static void reload() {
@@ -245,9 +286,28 @@ public final class FontManager {
         return DENSITIES.stream().filter(d -> d.id().equals(densityId)).findFirst().orElse(DENSITIES.get(1));
     }
 
-    private static String normalizeFont(String id)    { return normalize(id, FONT_OPTIONS.stream().map(FontOption::id).toList(), DEFAULT_FONT); }
-    private static String normalizeMono(String id)    { return normalize(id, MONO_OPTIONS.stream().map(MonoOption::id).toList(), DEFAULT_MONO); }
+    private static String normalizeFont(String id)    { return normalize(id, availableFontOptions().stream().map(FontOption::id).toList(), DEFAULT_FONT); }
+    private static String normalizeMono(String id)    { return normalize(id, availableMonoOptions().stream().map(MonoOption::id).toList(), DEFAULT_MONO); }
     private static String normalizeDensity(String id) { return normalize(id, DENSITIES.stream().map(Density::id).toList(), DEFAULT_DENSITY); }
+
+    private static void ensureFamilySnapshot() {
+        if (availableFamilies.isEmpty()) {
+            availableFamilies = snapshotAvailableFamilies();
+        }
+    }
+
+    private static Set<String> snapshotAvailableFamilies() {
+        Set<String> families = new HashSet<>();
+        for (String family : Font.getFamilies()) {
+            families.add(family.toLowerCase(java.util.Locale.ROOT));
+        }
+        return Set.copyOf(families);
+    }
+
+    private static boolean isAvailable(String requiredFamily) {
+        return requiredFamily == null
+                || availableFamilies.contains(requiredFamily.toLowerCase(java.util.Locale.ROOT));
+    }
 
     private static String normalize(String id, List<String> valid, String fallback) {
         return (id != null && valid.contains(id)) ? id : fallback;

@@ -1,0 +1,463 @@
+/* JavaClaw Graph — 复用 chat.css 设计令牌与 modal/jc-* 组件体系。 */
+
+.workflow-center {
+    -fx-background-color: -jc-surface-page;
+}
+
+/* ==================== 左侧工作流导航 ==================== */
+
+.workflow-left {
+    -fx-min-width: 258;
+    -fx-pref-width: 258;
+    -fx-max-width: 258;
+}
+
+.workflow-left-head {
+    -fx-padding: 18 16 12 16;
+}
+
+.workflow-brand-glyph {
+    -fx-font-size: 17px;
+    -fx-font-weight: 700;
+    -fx-text-fill: -jc-primary-500;
+}
+
+.workflow-left-hint {
+    -fx-font-size: 11px;
+    -fx-text-fill: -jc-text-hint;
+}
+
+.workflow-create-row {
+    -fx-padding: 0 12 10 12;
+}
+
+.workflow-list,
+.workflow-list .virtual-flow,
+.workflow-list .viewport {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+
+.workflow-list .list-cell {
+    -fx-background-color: transparent;
+    -fx-padding: 8 12 8 12;
+    -fx-background-insets: 2 9 2 9;
+    -fx-background-radius: 9;
+    -fx-cursor: hand;
+}
+
+.workflow-list .list-cell:hover {
+    -fx-background-color: -jc-neutral-200;
+}
+
+.workflow-list .list-cell:selected {
+    -fx-background-color: -jc-primary-50;
+}
+
+.workflow-list-icon {
+    -fx-font-size: 12px;
+    -fx-text-fill: -jc-primary-500;
+}
+
+.workflow-list-name {
+    -fx-font-size: 12.5px;
+    -fx-font-weight: 500;
+    -fx-text-fill: -jc-text-body;
+}
+
+.workflow-list .list-cell:selected .workflow-list-name {
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-primary-600;
+}
+
+.workflow-badge-system {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-text-fill: -jc-text-muted;
+    -fx-padding: 2 7 2 7;
+    -fx-font-size: 9.5px;
+}
+
+/* ==================== 编辑工具栏 ==================== */
+
+.workflow-toolbar {
+    -fx-min-height: 72;
+    -fx-pref-height: 72;
+    -fx-padding: 12 18 12 20;
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: transparent transparent -jc-border transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.workflow-title {
+    -fx-font-size: 18px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-title;
+}
+
+.workflow-title-hint {
+    -fx-font-size: 11.5px;
+    -fx-text-fill: -jc-text-hint;
+}
+
+.workflow-save-badge {
+    -fx-background-color: -jc-primary-50;
+    -fx-text-fill: -jc-primary-600;
+    -fx-font-size: 10px;
+    -fx-padding: 2 8 2 8;
+}
+
+.workflow-save-pending {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-text-fill: -jc-warning;
+}
+
+.workflow-save-readonly {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-text-fill: -jc-text-muted;
+}
+
+.workflow-icon-btn {
+    -fx-min-width: 34;
+    -fx-pref-width: 34;
+    -fx-padding: 7 0 7 0;
+}
+
+.workflow-add-node {
+    -fx-min-width: 118;
+}
+
+/* ==================== 画布与悬浮工具 ==================== */
+
+.workflow-canvas-shell {
+    -fx-background-color: -jc-surface-sunken;
+}
+
+.workflow-viewport,
+.workflow-viewport > .viewport {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-border-color: transparent;
+}
+
+.workflow-canvas {
+    -fx-background-color: -jc-surface-sunken;
+}
+
+.workflow-canvas-head {
+    -fx-max-height: 50;
+    -fx-padding: 9 12 9 14;
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: transparent transparent -jc-border transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.workflow-canvas-hint {
+    -fx-font-size: 11.5px;
+    -fx-text-fill: -jc-text-hint;
+}
+
+.workflow-zoom-controls {
+    -fx-padding: 2;
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 9;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 9;
+}
+
+.workflow-zoom-controls .label {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", monospace;
+    -fx-font-size: 10.5px;
+    -fx-text-fill: -jc-text-muted;
+    -fx-min-width: 42;
+    -fx-alignment: center;
+}
+
+.workflow-zoom-btn,
+.workflow-fit-btn {
+    -fx-padding: 4 9 4 9;
+    -fx-background-radius: 7;
+}
+
+.workflow-fit-btn {
+    -fx-font-size: 10.5px;
+}
+
+.workflow-grid-line {
+    -fx-stroke: -jc-border;
+    -fx-opacity: 0.28;
+    -fx-stroke-width: 0.6;
+}
+
+.workflow-grid-major {
+    -fx-stroke: -jc-border-strong;
+    -fx-opacity: 0.22;
+    -fx-stroke-width: 0.8;
+}
+
+/* ==================== 图节点与连线 ==================== */
+
+.workflow-node {
+    -fx-min-width: 184;
+    -fx-pref-width: 184;
+    -fx-max-width: 184;
+    -fx-min-height: 74;
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 12;
+    -fx-background-radius: 12;
+    -fx-padding: 11 12 10 12;
+    -fx-effect: dropshadow(gaussian, -jc-shadow-brand, 8, 0.08, 0, 2);
+    -fx-cursor: hand;
+}
+
+.workflow-node:hover {
+    -fx-border-color: -jc-primary-200;
+}
+
+.workflow-node-selected {
+    -fx-background-color: -jc-primary-50;
+    -fx-border-color: -jc-primary-500;
+    -fx-border-width: 1.5;
+    -fx-effect: dropshadow(gaussian, -jc-focus-ring, 10, 0, 0, 1);
+}
+
+.workflow-node-connecting {
+    -fx-background-color: -jc-primary-50;
+    -fx-border-color: -jc-primary-500;
+    -fx-border-width: 2;
+    -fx-effect: dropshadow(gaussian, -jc-focus-ring, 12, 0, 0, 1);
+}
+
+.workflow-node-connect-target {
+    -fx-border-color: -jc-primary-200;
+    -fx-border-style: segments(5, 4);
+}
+
+.workflow-node-connect-target:hover {
+    -fx-background-color: -jc-primary-50;
+    -fx-border-color: -jc-primary-500;
+    -fx-border-style: solid;
+}
+
+.workflow-node-glyph {
+    -fx-font-size: 15px;
+    -fx-font-weight: 700;
+    -fx-text-fill: -jc-primary-500;
+}
+
+.workflow-node-title {
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-title;
+}
+
+.workflow-node-id {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", monospace;
+    -fx-font-size: 10px;
+    -fx-text-fill: -jc-text-hint;
+}
+
+.workflow-node-badge {
+    -fx-font-size: 9.5px;
+    -fx-padding: 2 7 2 7;
+    -fx-background-color: -jc-surface-sunken;
+    -fx-text-fill: -jc-text-muted;
+}
+
+.workflow-node-start .workflow-node-glyph,
+.workflow-node-end .workflow-node-glyph,
+.workflow-node-output .workflow-node-glyph {
+    -fx-text-fill: -jc-success;
+}
+
+.workflow-node-condition .workflow-node-glyph,
+.workflow-node-human_input .workflow-node-glyph {
+    -fx-text-fill: -jc-warning;
+}
+
+.workflow-node-tool .workflow-node-glyph {
+    -fx-text-fill: -jc-stage-thinking;
+}
+
+.workflow-edge {
+    -fx-fill: transparent;
+    -fx-stroke: -jc-border-strong;
+    -fx-stroke-width: 1.8px;
+}
+
+.workflow-edge-conditional { -fx-stroke: -jc-warning; }
+.workflow-edge-error { -fx-stroke: -jc-danger; -fx-stroke-dash-array: 7 5; }
+
+.workflow-edge-arrow { -fx-fill: -jc-border-strong; }
+.workflow-edge-arrow-conditional { -fx-fill: -jc-warning; }
+.workflow-edge-arrow-error { -fx-fill: -jc-danger; }
+
+/* ==================== 节点属性检查器 ==================== */
+
+.workflow-inspector {
+    -fx-background-color: -jc-surface-panel;
+    -fx-border-color: -jc-border transparent transparent -jc-border;
+    -fx-border-width: 0 0 0 1;
+}
+
+.workflow-inspector-head {
+    -fx-padding: 16 16 13 16;
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: transparent transparent -jc-border transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.workflow-eyebrow {
+    -fx-font-size: 10.5px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-hint;
+}
+
+.workflow-inspector-title {
+    -fx-font-size: 16px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-title;
+}
+
+.workflow-inspector-form {
+    -fx-padding: 16;
+}
+
+.workflow-field-label {
+    -fx-font-size: 11.5px;
+    -fx-font-weight: 500;
+    -fx-text-fill: -jc-text-muted;
+}
+
+.workflow-field,
+.workflow-spinner {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-border-color: transparent;
+    -fx-background-radius: 9;
+    -fx-border-radius: 9;
+}
+
+.workflow-json-editor {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", monospace;
+    -fx-font-size: 11px;
+    -fx-control-inner-background: -jc-surface-sunken;
+    -fx-text-fill: -jc-text-body;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 9;
+    -fx-background-radius: 9;
+}
+
+.workflow-inspector-actions {
+    -fx-padding: 12 14 14 14;
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+}
+
+.workflow-inspector-empty-icon {
+    -fx-font-size: 30px;
+    -fx-text-fill: -jc-primary-300;
+}
+
+.workflow-empty-title {
+    -fx-font-size: 14px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-title;
+}
+
+/* ==================== 底部运行台 ==================== */
+
+.workflow-dock {
+    -fx-min-height: 168;
+    -fx-pref-height: 190;
+    -fx-max-height: 220;
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+}
+
+.workflow-dock-tabs {
+    -fx-min-height: 39;
+    -fx-pref-height: 39;
+    -fx-padding: 4 14 0 14;
+    -fx-alignment: center-left;
+}
+
+.workflow-dock-tab {
+    -fx-background-color: transparent;
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 11.5px;
+    -fx-font-weight: 500;
+    -fx-padding: 8 12 8 12;
+    -fx-border-color: transparent;
+    -fx-cursor: hand;
+}
+
+.workflow-dock-tab:selected {
+    -fx-text-fill: -jc-primary-600;
+    -fx-font-weight: 600;
+    -fx-border-color: transparent transparent -jc-primary-500 transparent;
+    -fx-border-width: 0 0 2 0;
+}
+
+.workflow-dock-hint,
+.workflow-footer-hint {
+    -fx-font-size: 10.5px;
+    -fx-text-fill: -jc-text-hint;
+}
+
+.workflow-dock-content {
+    -fx-padding: 0 14 10 14;
+}
+
+.workflow-console {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", monospace;
+    -fx-font-size: 11px;
+    -fx-control-inner-background: #151a22;
+    -fx-text-fill: #d7e0ea;
+    -fx-border-color: transparent;
+    -fx-background-radius: 9;
+    -fx-border-radius: 9;
+}
+
+.workflow-run-actions {
+    -fx-padding: 4 0 0 0;
+}
+
+.workflow-resume-input {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 9;
+    -fx-border-radius: 9;
+}
+
+.workflow-run-list,
+.workflow-run-list .viewport,
+.workflow-run-list .virtual-flow {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+
+.workflow-run-list .list-cell {
+    -fx-background-color: transparent;
+    -fx-padding: 6 8 6 8;
+    -fx-background-radius: 8;
+}
+
+.workflow-run-list .list-cell:hover {
+    -fx-background-color: -jc-surface-sunken;
+}
+
+.workflow-run-list .list-cell:selected {
+    -fx-background-color: -jc-primary-50;
+}
+
+.workflow-run-id {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", monospace;
+    -fx-font-size: 11px;
+    -fx-text-fill: -jc-text-body;
+}
+
+.workflow-run-meta {
+    -fx-font-size: 10.5px;
+    -fx-text-fill: -jc-text-hint;
+}

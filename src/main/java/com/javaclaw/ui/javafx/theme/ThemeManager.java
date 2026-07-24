@@ -2,6 +2,8 @@ package com.javaclaw.ui.javafx.theme;
 
 import com.javaclaw.config.AgentConfig;
 import javafx.application.Platform;
+import javafx.beans.property.ReadOnlyIntegerProperty;
+import javafx.beans.property.SimpleIntegerProperty;
 import javafx.beans.property.ReadOnlyStringProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
@@ -50,6 +52,14 @@ public final class ThemeManager {
 
     private static final StringProperty current = new SimpleStringProperty(DEFAULT_THEME);
 
+    /**
+     * 主题样式类已经应用到全部窗口后的修订号。
+     *
+     * <p>普通 JavaFX 控件会自动重新解析 looked-up colors；RichTextArea 的稳定段落会缓存其
+     * 内部 Text 节点，需要在主题真正落到 Scene 根节点后主动重建。</p>
+     */
+    private static final SimpleIntegerProperty revision = new SimpleIntegerProperty(0);
+
     private static boolean initialized = false;
 
     private ThemeManager() {}
@@ -73,6 +83,7 @@ public final class ThemeManager {
         for (Window w : Window.getWindows()) {
             hookWindow(w);
         }
+        revision.set(revision.get() + 1);
         initialized = true;
         log.info("主题管理器已初始化，当前主题: {}", current.get());
     }
@@ -93,6 +104,8 @@ public final class ThemeManager {
                     applyToRoot(scene.getRoot());
                 }
             }
+            // 必须在根节点主题类全部更新后再通知 RichTextArea 等缓存型控件。
+            revision.set(revision.get() + 1);
         };
         if (Platform.isFxApplicationThread()) {
             apply.run();
@@ -118,6 +131,11 @@ public final class ThemeManager {
     /** 主题变更可观察属性（顶栏「风格」菜单等据此刷新色块） */
     public static ReadOnlyStringProperty themeProperty() {
         return current;
+    }
+
+    /** 主题已应用完成的修订属性，供缓存型自定义控件刷新。 */
+    public static ReadOnlyIntegerProperty revisionProperty() {
+        return revision;
     }
 
     /** 工作区切换后重新读取该工作区记忆的主题 */

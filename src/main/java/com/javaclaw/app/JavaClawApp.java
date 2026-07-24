@@ -9,12 +9,14 @@ import com.javaclaw.config.AgentConfig;
 import com.javaclaw.onboarding.OnboardingWizard;
 import com.javaclaw.runtime.ApplicationKernel;
 import com.javaclaw.ui.javafx.task.SddTaskView;
+import com.javaclaw.ui.javafx.workflow.WorkflowCenterView;
 import com.javaclaw.ui.javafx.JfxUserInteractionPort;
 import com.javaclaw.ui.javafx.SystemTrayManager;
 
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.scene.Scene;
+import javafx.scene.image.Image;
 import javafx.stage.Stage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,6 +49,8 @@ public class JavaClawApp extends Application {
 
     /** 应用组合根：统一拥有浏览器、工作区运行时及依赖它们的全局管理器。 */
     private ApplicationKernel applicationKernel;
+    /** 工作流中心为工作区级单实例，避免多窗口草稿互相覆盖。 */
+    private volatile WorkflowCenterView workflowCenterView;
 
     /** 主窗口引用（托盘恢复/隐藏时使用） */
     private Stage primaryStage;
@@ -109,7 +113,9 @@ public class JavaClawApp extends Application {
             log.info("正在初始化应用内核与工作区运行时...");
             applicationKernel = new ApplicationKernel(
                     browserManager, interactionPort,
-                    () -> new SddTaskView(primaryStage).show());
+                    () -> new SddTaskView(primaryStage).show(),
+                    this::openWorkflowCenter,
+                    this::closeWorkflowCenter);
             applicationKernel.initialize();
 
             // 4. 构建聊天界面
@@ -140,6 +146,12 @@ public class JavaClawApp extends Application {
             // 6. 配置并显示主窗口
             this.primaryStage = primaryStage;
             primaryStage.setTitle("JavaClaw 智能助手");
+            var appIcon = getClass().getResource("/images/javaclaw-app-icon-capabilities.png");
+            if (appIcon != null) {
+                primaryStage.getIcons().add(new Image(appIcon.toExternalForm()));
+            } else {
+                log.warn("未找到应用图标 /images/javaclaw-app-icon-capabilities.png");
+            }
             primaryStage.setMinWidth(600);   // 最小宽度
             primaryStage.setMinHeight(500);  // 最小高度
             primaryStage.setScene(scene);
@@ -177,6 +189,42 @@ public class JavaClawApp extends Application {
             }
             throw new RuntimeException("JavaClaw 启动失败: " + e.getMessage(), e);
         }
+    }
+
+    private void openWorkflowCenter() {
+        if (applicationKernel == null || applicationKernel.isTransitioning()) {
+            log.warn("工作区运行时切换中，暂不打开工作流中心");
+            return;
+        }
+        WorkflowCenterView currentView = workflowCenterView;
+        if (currentView != null && currentView.isShowing()) {
+            currentView.show();
+            return;
+        }
+        final com.javaclaw.runtime.WorkspaceRuntime currentRuntime;
+        try {
+            currentRuntime = applicationKernel.current();
+        } catch (IllegalStateException unavailable) {
+            log.warn("当前没有可用运行时，暂不打开工作流中心");
+            return;
+        }
+        WorkflowCenterView created = new WorkflowCenterView(
+                primaryStage,
+                currentRuntime.workflowService(),
+                published -> {
+                    if (chatView != null) {
+                        chatView.onWorkflowPublished(published.id(), published.name());
+                    }
+                });
+        workflowCenterView = created;
+        created.show();
+    }
+
+    private void closeWorkflowCenter() {
+        WorkflowCenterView currentView = workflowCenterView;
+        if (currentView == null) return;
+        currentView.close();
+        workflowCenterView = null;
     }
 
     /**

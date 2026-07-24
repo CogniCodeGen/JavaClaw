@@ -100,6 +100,16 @@ public final class SddOrchestrator {
     // ==================== 主流程 ====================
 
     public SddOutcome run() {
+        SddOutcome stop = prepare();
+        return stop == null ? implementPrepared() : stop;
+    }
+
+    /**
+     * 图执行的前半段真实边界：完成提案、规格、设计和任务拆解。
+     *
+     * @return {@code null} 表示可以进入实现阶段；非空表示流程需要提前收束
+     */
+    public SddOutcome prepare() {
         String slug = ctx.slug();
         try {
             if (overBudget()) return budgetStop();
@@ -127,12 +137,26 @@ public final class SddOrchestrator {
             if (!planWithReview(slug, proposal, caps, design)) {
                 return cancelled ? SddOutcome.cancelled() : SddOutcome.needsHuman("计划多轮未获用户确认");
             }
-
-            // 阶段 6：实现循环 + 综合验收 + 有界补做
-            return implementAndAccept(slug, proposal, caps, design);
+            return null;
         } catch (Exception e) {
             log.error("[SDD] {} 编排异常", slug, e);
             return SddOutcome.failed("编排异常：" + e.getMessage());
+        }
+    }
+
+    /** 图执行的后半段真实边界：从 OpenSpec 真相层读取计划并执行实现、验收和归档。 */
+    public SddOutcome implementPrepared() {
+        String slug = ctx.slug();
+        try {
+            if (overBudget()) return budgetStop();
+            OpenSpecChange change = store.readChange(slug, ctx.id(), ctx.title());
+            if (change.tasks().isEmpty()) {
+                return SddOutcome.needsHuman("OpenSpec 尚未生成实现任务，无法进入实现阶段");
+            }
+            return implementAndAccept(slug, change.proposal(), change.capabilities(), change.design());
+        } catch (Exception e) {
+            log.error("[SDD] {} 实现与验收异常", slug, e);
+            return SddOutcome.failed("实现与验收异常：" + e.getMessage());
         }
     }
 
@@ -151,7 +175,7 @@ public final class SddOrchestrator {
                 return run();
             }
             progress.log("从既有 change 续跑（当前 " + change.progressPercent() + "%）");
-            return implementAndAccept(slug, change.proposal(), change.capabilities(), change.design());
+            return implementPrepared();
         } catch (Exception e) {
             log.error("[SDD] {} 续跑异常", slug, e);
             return SddOutcome.failed("续跑异常：" + e.getMessage());

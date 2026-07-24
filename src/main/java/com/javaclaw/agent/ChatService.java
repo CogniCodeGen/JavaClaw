@@ -59,9 +59,13 @@ import java.util.concurrent.atomic.AtomicReference;
 public class ChatService {
 
     private static final Logger log = LoggerFactory.getLogger(ChatService.class);
+    private static final com.javaclaw.workflow.model.GraphDefinition SYSTEM_GRAPH =
+            com.javaclaw.workflow.service.SystemGraphFactory.chat();
 
     /** 共享基础设施容器 */
     private final AgentRuntime runtime;
+    private final com.javaclaw.workflow.service.WorkflowService workflowService;
+    private volatile String activeSystemSessionId;
 
     /** 主编排工具集（带工具分组，每轮按路由结果激活子集） */
     private final Toolkit masterToolkit;
@@ -130,7 +134,13 @@ public class ChatService {
      * @param runtime 共享基础设施
      */
     public ChatService(AgentRuntime runtime) {
+        this(runtime, null);
+    }
+
+    public ChatService(AgentRuntime runtime, com.javaclaw.workflow.service.WorkflowService workflowService) {
         this.runtime = runtime;
+        this.workflowService = workflowService;
+        if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
         AgentConfig config = AgentConfig.getInstance();
         log.info("========== 初始化 ChatService 普通模式 ==========");
 
@@ -299,8 +309,73 @@ public class ChatService {
      * @param callbacks 事件与生命周期回调
      */
     public void streamChat(ConversationRequest request, ConversationCallbacks callbacks) {
+        if (workflowService == null) {
+            executeChatPipeline(request, callbacks);
+            return;
+        }
+        activeSystemSessionId = request.sessionId();
+        workflowService.runSystem(SYSTEM_GRAPH, request.sessionId(),
+                com.javaclaw.workflow.service.SystemInvocationState.from(request), callbacks,
+                this::executeChatGraphStage);
+    }
+
+    private void executeChatPipeline(ConversationRequest request, ConversationCallbacks callbacks) {
+        executeChatPipeline(request, callbacks, false, null, null);
+    }
+
+    private com.javaclaw.workflow.runtime.NodeResult executeChatGraphStage(
+            String stageId, com.javaclaw.workflow.runtime.NodeExecutionContext context) throws Exception {
+        ConversationRequest request = com.javaclaw.workflow.service.SystemInvocationState.request(context);
+        return switch (stageId) {
+            case "vision" -> {
+                String processedInput = request.userInput();
+                List<File> effectiveAttachments = request.attachments();
+                if (runtime.hasImageAttachment(request.attachments())) {
+                    String visionDesc = runtime.getVisionPreprocessor()
+                            .describe(request.userInput(), request.attachments());
+                    if (visionDesc != null) {
+                        processedInput = "[附件图片分析]\n" + visionDesc
+                                + "\n\n[用户提问]\n" + request.userInput();
+                        effectiveAttachments = request.attachments().stream()
+                                .filter(file -> !ChatMessage.isImageFile(file)).toList();
+                    }
+                }
+                yield com.javaclaw.workflow.runtime.NodeResult.next(
+                        com.javaclaw.workflow.model.StatePatch.builder()
+                                .set("system.chat.processedInput", processedInput)
+                                .set("system.chat.attachments", effectiveAttachments.stream()
+                                        .map(File::getAbsolutePath).toList())
+                                .build());
+            }
+            case "orchestrate" -> {
+                String processedInput = context.state().get("system.chat.processedInput")
+                        .asText(request.userInput());
+                List<File> effectiveAttachments = new ArrayList<>();
+                var storedAttachments = context.state().get("system.chat.attachments");
+                if (storedAttachments.isArray()) {
+                    storedAttachments.forEach(path -> effectiveAttachments.add(new File(path.asText())));
+                } else {
+                    effectiveAttachments.addAll(request.attachments());
+                }
+                List<File> preparedAttachments = List.copyOf(effectiveAttachments);
+                yield com.javaclaw.workflow.service.SystemPipelineAwaiter.await(
+                        context,
+                        inner -> executeChatPipeline(request, inner, true,
+                                processedInput, preparedAttachments),
+                        context.require(ConversationCallbacks.class),
+                        this::cancelPipelineStream);
+            }
+            default -> throw new IllegalArgumentException("未知对话系统阶段: " + stageId);
+        };
+    }
+
+    private void executeChatPipeline(ConversationRequest request, ConversationCallbacks callbacks,
+                                     boolean visionPrepared, String preparedInput,
+                                     List<File> preparedAttachments) {
         String userInput = request.userInput();
-        List<File> attachments = request.attachments();
+        List<File> attachments = preparedAttachments == null
+                ? request.attachments() : preparedAttachments;
+        String initialProcessedInput = preparedInput == null ? userInput : preparedInput;
         this.currentUserInput = userInput == null ? "" : userInput;
 
         log.info("收到用户消息（普通模式）: {}", userInput);
@@ -395,10 +470,10 @@ public class ChatService {
         // dispose 扑空、在途流杀不掉（与 AgentScopeLoopRunner 的 clearIf 同一模式）
         final AtomicReference<Disposable> selfSub = new AtomicReference<>();
         Disposable sub = Mono.fromCallable(() -> {
-                    String processedInput = userInput;
+                    String processedInput = initialProcessedInput;
 
                     // ── 阶段 1：视觉预处理（仅当含图片附件） ──
-                    if (runtime.hasImageAttachment(attachments)) {
+                    if (!visionPrepared && runtime.hasImageAttachment(attachments)) {
                         emitProgress(callbacks, "vision", "视觉预处理",
                                 ConversationEvent.Progress.Status.RUNNING, "正在分析图片内容…");
                         callbacks.onEvent(new ConversationEvent.Hint("[视觉] 正在分析图片内容..."));
@@ -422,7 +497,7 @@ public class ChatService {
                                     ConversationEvent.Progress.Status.SKIPPED,
                                     "未生成描述，原图直传");
                         }
-                    } else {
+                    } else if (!visionPrepared) {
                         emitProgress(callbacks, "vision", "视觉预处理",
                                 ConversationEvent.Progress.Status.SKIPPED, "无图片附件");
                     }
@@ -696,6 +771,13 @@ public class ChatService {
      * @return true 表示成功取消，false 表示没有活跃的流
      */
     public boolean cancelStream() {
+        boolean graphCancelled = workflowService != null
+                && workflowService.cancelSystem(SYSTEM_GRAPH.id(), activeSystemSessionId);
+        boolean disposed = cancelPipelineStream();
+        return graphCancelled || disposed;
+    }
+
+    private boolean cancelPipelineStream() {
         boolean disposed = activeSubscription.dispose();
         if (disposed) {
             log.info("流式调用已手动取消");

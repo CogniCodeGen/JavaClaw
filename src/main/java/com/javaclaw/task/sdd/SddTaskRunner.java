@@ -6,6 +6,7 @@ import com.javaclaw.task.sdd.agent.AgentScopeCriticJudge;
 import com.javaclaw.task.sdd.agent.AgentScopeSddAgents;
 import com.javaclaw.task.sdd.agent.ProcessCommandRunner;
 import com.javaclaw.task.sdd.gate.AutoApproveReviewGate;
+import com.javaclaw.task.sdd.spec.OpenSpecChange;
 import com.javaclaw.task.sdd.spec.SpecStore;
 import com.javaclaw.task.sdd.verify.ScenarioVerifier;
 
@@ -26,8 +27,12 @@ import java.util.function.BooleanSupplier;
  * @author JavaClaw
  */
 public final class SddTaskRunner {
+    private static final com.javaclaw.workflow.model.GraphDefinition SYSTEM_GRAPH =
+            com.javaclaw.workflow.service.SystemGraphFactory.sdd();
 
     private final SddOrchestrator orchestrator;
+    private final TaskContext context;
+    private final com.javaclaw.workflow.service.WorkflowService workflowService;
     private final SpecStore store;
     private final AgentScopeSddAgents agents;
     /** 验证层子件引用：用于把核验超时与实现/结构化阶段超时对齐（避免默认 120s 误杀慢构建/慢 critic）。 */
@@ -47,6 +52,16 @@ public final class SddTaskRunner {
     public SddTaskRunner(TaskContext ctx, ModelFactory modelFactory, Map<String, Object> capabilityTools,
                          SkillManager skills, SddTokenSink tokenSink, ReviewGate gate,
                          SddProgress progress, String completionStamp) {
+        this(ctx, modelFactory, capabilityTools, skills, tokenSink, gate, progress, completionStamp, null);
+    }
+
+    public SddTaskRunner(TaskContext ctx, ModelFactory modelFactory, Map<String, Object> capabilityTools,
+                         SkillManager skills, SddTokenSink tokenSink, ReviewGate gate,
+                         SddProgress progress, String completionStamp,
+                         com.javaclaw.workflow.service.WorkflowService workflowService) {
+        this.context = ctx;
+        this.workflowService = workflowService;
+        if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
         this.store = new SpecStore(ctx.workDir());
         this.agents = new AgentScopeSddAgents(modelFactory, capabilityTools, skills, tokenSink);
         this.commandRunner = new ProcessCommandRunner();
@@ -91,16 +106,91 @@ public final class SddTaskRunner {
     }
 
     public SddOutcome run() {
-        return orchestrator.run();
+        return workflowService == null ? orchestrator.run() : runViaGraph(false);
     }
 
     /** 从既有 change 续跑（恢复中断任务）。 */
     public SddOutcome resume() {
-        return orchestrator.resume();
+        return workflowService == null ? orchestrator.resume() : runViaGraph(true);
     }
 
     public void cancel() {
+        if (workflowService != null) workflowService.cancelSystem(SYSTEM_GRAPH.id(), context.id());
         orchestrator.cancel();
+    }
+
+    private SddOutcome runViaGraph(boolean resume) {
+        var outcome = new java.util.concurrent.atomic.AtomicReference<SddOutcome>();
+        var error = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+        var done = new java.util.concurrent.CountDownLatch(1);
+        com.javaclaw.api.conversation.ConversationCallbacks callbacks =
+                new com.javaclaw.api.conversation.ConversationCallbacks() {
+                    @Override
+                    public void onEvent(com.javaclaw.api.conversation.ConversationEvent event) {
+                        if (event instanceof com.javaclaw.api.conversation.ConversationEvent.Custom custom
+                                && custom.payload() instanceof com.javaclaw.workflow.runtime.GraphEvent.RunFinished finished
+                                && workflowService != null) {
+                            if (finished.status() == com.javaclaw.workflow.model.RunStatus.CANCELLED) {
+                                outcome.compareAndSet(null, SddOutcome.cancelled());
+                            } else if (outcome.get() == null) {
+                                var saved = workflowService.loadRun(finished.runId());
+                                if (saved != null) {
+                                    String result = saved.state().get("sdd.result").asText();
+                                    String message = saved.state().get("sdd.message").asText();
+                                    if (!result.isBlank()) {
+                                        outcome.compareAndSet(null, new SddOutcome(
+                                                SddOutcome.Result.valueOf(result), message));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    @Override public void onComplete() { done.countDown(); }
+                    @Override public void onError(Throwable failure) { error.set(failure); done.countDown(); }
+                };
+        workflowService.runSystem(SYSTEM_GRAPH, context.id(), resume ? "resume" : "run", callbacks,
+                (stageId, graphCtx) -> {
+            try (AutoCloseable ignored = graphCtx.cancellation().onCancel(orchestrator::cancel)) {
+                if ("prepare".equals(stageId)) {
+                    OpenSpecChange existing = resume
+                            ? store.readChange(context.slug(), context.id(), context.title())
+                            : null;
+                    SddOutcome stop = requiresPreparation(resume, existing)
+                            ? orchestrator.prepare()
+                            : null;
+                    if (stop != null) outcome.set(stop);
+                    var patch = com.javaclaw.workflow.model.StatePatch.builder()
+                            .set("sdd.proceed", stop == null);
+                    if (stop != null) {
+                        patch.set("sdd.result", stop.result().name())
+                                .set("sdd.message", stop.message());
+                    }
+                    return com.javaclaw.workflow.runtime.NodeResult.next(patch.build());
+                }
+                if (!"implement".equals(stageId)) {
+                    throw new IllegalArgumentException("未知 SDD 系统阶段: " + stageId);
+                }
+                SddOutcome value = orchestrator.implementPrepared();
+                outcome.set(value);
+                return com.javaclaw.workflow.runtime.NodeResult.output(
+                        com.javaclaw.workflow.model.StatePatch.builder()
+                                .set("sdd.result", value.result().name())
+                                .set("sdd.message", value.message()).build(), value.message());
+            }
+        }, com.javaclaw.workflow.service.SystemRecoveryPolicy.RESUME_ONLY);
+        try {
+            while (!done.await(500, java.util.concurrent.TimeUnit.MILLISECONDS)) { /* 后台管理线程等待图终态 */ }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            cancel();
+            return SddOutcome.cancelled();
+        }
+        if (error.get() != null) return SddOutcome.failed(error.get().getMessage());
+        return outcome.get() == null ? SddOutcome.failed("SDD 图未返回结果") : outcome.get();
+    }
+
+    static boolean requiresPreparation(boolean resume, OpenSpecChange existing) {
+        return !resume || existing == null || existing.tasks().isEmpty();
     }
 
     /** 暴露真相层，供调用方读取 change 状态（进度、tasks 勾选、归档等）用于 UI 渲染/恢复。 */

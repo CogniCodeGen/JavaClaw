@@ -2095,7 +2095,7 @@ public class SettingsView {
 
         Label hint = new Label(
                 "选择界面与对话使用的字体，立即生效并记忆到本工作区 —— 应用于所有窗口、弹窗与对话气泡。"
-                        + "系统原生为默认，缺字体时自动回退到打包字体。");
+                        + "系统原生为默认，仅展示本机或应用包中实际可用的字体。");
         hint.getStyleClass().add("sec-hint");
         hint.setWrapText(true);
 
@@ -2112,7 +2112,8 @@ public class SettingsView {
 
         java.util.List<Runnable> refreshers = new java.util.ArrayList<>();
         int idx = 0;
-        for (com.javaclaw.ui.javafx.theme.FontManager.FontOption opt : com.javaclaw.ui.javafx.theme.FontManager.FONT_OPTIONS) {
+        for (com.javaclaw.ui.javafx.theme.FontManager.FontOption opt
+                : com.javaclaw.ui.javafx.theme.FontManager.availableFontOptions()) {
             Label name = new Label(opt.name());
             name.getStyleClass().add("theme-card-name");
             Label sub = new Label(opt.subtitle());
@@ -2155,7 +2156,8 @@ public class SettingsView {
         monoSeg.getStyleClass().add("seg-container");
         monoSeg.setAlignment(Pos.CENTER_LEFT);
         ToggleGroup monoGroup = new ToggleGroup();
-        for (com.javaclaw.ui.javafx.theme.FontManager.MonoOption m : com.javaclaw.ui.javafx.theme.FontManager.MONO_OPTIONS) {
+        for (com.javaclaw.ui.javafx.theme.FontManager.MonoOption m
+                : com.javaclaw.ui.javafx.theme.FontManager.availableMonoOptions()) {
             ToggleButton tb = new ToggleButton(m.name());
             tb.getStyleClass().add("seg-btn");
             tb.setToggleGroup(monoGroup);

@@ -82,6 +82,7 @@ public class SidebarView {
 
     /** 任务管理回调 */
     private Runnable onOpenTaskManager;
+    private Runnable onOpenWorkflowCenter;
 
     /** 工作区切换回调（参数为目标工作区 ID） */
     private Consumer<String> onSwitchWorkspace;
@@ -205,6 +206,9 @@ public class SidebarView {
         HBox taskMgrRow = buildNavRow("\u25A6", "托管任务", null, null, false, () -> {
             if (onOpenTaskManager != null) onOpenTaskManager.run();
         });
+        HBox workflowRow = buildNavRow("⎇", "工作流中心", null, null, false, () -> {
+            if (onOpenWorkflowCenter != null) onOpenWorkflowCenter.run();
+        });
         this.taskNavRow = taskMgrRow;
         HBox settingsRow = buildNavRow("\u2699", "设置", "\u2318,", null, false, () -> {
             if (onOpenSettings != null) onOpenSettings.run();
@@ -216,7 +220,8 @@ public class SidebarView {
         HBox memoryRow = buildNavRow("🧠", "记忆中心", null, null, false, () -> {
             if (onOpenMemoryCenter != null) onOpenMemoryCenter.run();
         });
-        VBox actionButtons = new VBox(2, skillRow, mcpRow, scheduleRow, knowledgeRow, memoryRow, taskMgrRow, pluginRow, settingsRow);
+        VBox actionButtons = new VBox(2, skillRow, mcpRow, scheduleRow, knowledgeRow, memoryRow,
+                workflowRow, taskMgrRow, pluginRow, settingsRow);
         actionButtons.setPadding(new Insets(8, 8, 8, 8));
 
         // ==================== 任务/会话列表区域 ====================
@@ -584,6 +589,10 @@ public class SidebarView {
 
     public void setOnOpenTaskManager(Runnable callback) {
         this.onOpenTaskManager = callback;
+    }
+
+    public void setOnOpenWorkflowCenter(Runnable callback) {
+        this.onOpenWorkflowCenter = callback;
     }
 
     public void setOnOpenMcp(Runnable callback) {

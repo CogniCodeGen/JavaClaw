@@ -45,10 +45,27 @@ public final class ApplicationKernel implements AutoCloseable {
 
     public ApplicationKernel(PlaywrightBrowserManager browserManager,
                              UserInteractionPort interactionPort,
-                             Runnable openTaskView) {
+                             Runnable openTaskView,
+                             Runnable openWorkflowView,
+                             Runnable closeWorkflowView) {
         this.browserManager = Objects.requireNonNull(browserManager, "browserManager");
         this.interactionPort = Objects.requireNonNull(interactionPort, "interactionPort");
-        this.runtimeFactory = new RuntimeFactory(browserManager, openTaskView, java.util.Set.of());
+        this.runtimeFactory = new RuntimeFactory(browserManager, openTaskView,
+                openWorkflowView, closeWorkflowView, java.util.Set.of());
+    }
+
+    public ApplicationKernel(PlaywrightBrowserManager browserManager,
+                             UserInteractionPort interactionPort,
+                             Runnable openTaskView,
+                             Runnable openWorkflowView) {
+        this(browserManager, interactionPort, openTaskView, openWorkflowView, () -> {});
+    }
+
+    /** 兼容无工作流 UI 的无头/截图驱动。 */
+    public ApplicationKernel(PlaywrightBrowserManager browserManager,
+                             UserInteractionPort interactionPort,
+                             Runnable openTaskView) {
+        this(browserManager, interactionPort, openTaskView, () -> {}, () -> {});
     }
 
     /** 创建首个工作区运行时并装配依赖它的全局子系统。 */
@@ -223,13 +240,14 @@ public final class ApplicationKernel implements AutoCloseable {
             SddTaskManager.getInstance().configure(
                     workspaceRuntime.context().dataRoot(),
                     runtime.getModelFactory(), runtime::buildCapabilityTools,
-                    SkillManager.getInstance(), interactionPort);
+                    SkillManager.getInstance(), interactionPort, workspaceRuntime.workflowService());
         } else {
             ScheduleManager.getInstance().reload(new ScheduledTaskAgent(runtime));
             PluginManager.getInstance().reload(runtime);
             SddTaskManager.getInstance().reload(
                     workspaceRuntime.context().dataRoot(),
-                    runtime.getModelFactory(), runtime::buildCapabilityTools);
+                    runtime.getModelFactory(), runtime::buildCapabilityTools,
+                    workspaceRuntime.workflowService());
         }
     }
 

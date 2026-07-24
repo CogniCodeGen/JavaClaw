@@ -278,7 +278,7 @@ public final class SpecStore {
             ps.setString(3, slug);
             ps.setString(4, docPath);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? rs.getString("doc_text") : null;
+                return rs.next() ? rs.getString(1) : null;
             }
         } catch (Exception e) {
             log.debug("[Spec] 读取 H2 失败 slug={}, path={}: {}", slug, docPath, e.getMessage());
