@@ -13,6 +13,7 @@ import java.util.List;
 public final class SystemInvocationState {
     private static final String ATTACHMENTS = "_system.request.attachments";
     private static final String SESSION_ID = "_system.request.sessionId";
+    private static final String PLAN_PROFILE = "_system.request.planProfile";
 
     private SystemInvocationState() {}
 
@@ -24,6 +25,7 @@ public final class SystemInvocationState {
                 .set("input", safe.userInput())
                 .set(ATTACHMENTS, paths)
                 .set(SESSION_ID, safe.sessionId() == null ? "" : safe.sessionId())
+                .set(PLAN_PROFILE, safe.options().planProfile().name())
                 .build());
     }
 
@@ -37,7 +39,15 @@ public final class SystemInvocationState {
             if (path.isTextual() && !path.asText().isBlank()) attachments.add(new File(path.asText()));
         }
         String sessionId = state.get(SESSION_ID).asText();
+        String profileText = state.get(PLAN_PROFILE).asText("AUTO");
+        com.javaclaw.api.conversation.PlanProfile profile;
+        try {
+            profile = com.javaclaw.api.conversation.PlanProfile.valueOf(profileText);
+        } catch (IllegalArgumentException e) {
+            profile = com.javaclaw.api.conversation.PlanProfile.AUTO;
+        }
         return new ConversationRequest(state.get("input").asText(), attachments,
-                sessionId.isBlank() ? null : sessionId);
+                sessionId.isBlank() ? null : sessionId,
+                new com.javaclaw.api.conversation.ConversationOptions(profile));
     }
 }

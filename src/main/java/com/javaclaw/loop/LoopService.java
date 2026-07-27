@@ -6,6 +6,7 @@ import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.goal.GoalDecomposition;
 import com.javaclaw.agent.goal.GoalManager;
 import com.javaclaw.api.conversation.ConversationCallbacks;
+import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.api.conversation.ConversationRequest;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.loop.agent.AgentScopeCompletionJudge;
@@ -42,7 +43,8 @@ public final class LoopService {
 
     private final AgentRuntime runtime;
     private final com.javaclaw.workflow.service.WorkflowService workflowService;
-    private volatile String activeSystemSessionId;
+    private final com.javaclaw.api.conversation.SingleConversationRun conversationRun =
+            new com.javaclaw.api.conversation.SingleConversationRun();
     private final GoalManager goalManager;
 
     /** 当前活跃循环控制器（供取消）；无活跃循环为 null。 */
@@ -91,12 +93,18 @@ public final class LoopService {
     /**
      * 启动一次循环（立即返回，异步执行；终态经 {@code callbacks} 通告）。
      */
-    public void start(ConversationRequest request, ConversationCallbacks callbacks) {
+    public com.javaclaw.api.conversation.ConversationHandle start(
+            ConversationRequest request, ConversationCallbacks callbacks) {
+        return conversationRun.start(callbacks,
+                guarded -> startLoopPipeline(request, guarded),
+                ignored -> cancelActive(request.sessionId()));
+    }
+
+    private void startLoopPipeline(ConversationRequest request, ConversationCallbacks callbacks) {
         if (workflowService == null) {
             executeLoopPipeline(request, callbacks);
             return;
         }
-        activeSystemSessionId = request.sessionId();
         workflowService.runSystem(SYSTEM_GRAPH, request.sessionId(),
                 com.javaclaw.workflow.service.SystemInvocationState.from(request), callbacks,
                 this::executeLoopGraphStage);
@@ -150,7 +158,8 @@ public final class LoopService {
         java.util.concurrent.CountDownLatch latch;
         synchronized (lifecycleLock) {
             if (!running.compareAndSet(false, true)) {
-                callbacks.onError(new IllegalStateException("已有循环正在运行，请先停止当前循环"));
+                callbacks.onTerminal(ConversationOutcome.failed(
+                        new IllegalStateException("已有循环正在运行，请先停止当前循环")));
                 return;
             }
             // 三步锁内原子完成：抢占运行位 + 装本代次停稳闩 + 复位取消标志（见 lifecycleLock 注释）
@@ -167,7 +176,7 @@ public final class LoopService {
                 // 启动检查点①：目标分解（阻塞数秒）期间被取消 → 不再弹确认、不启动
                 if (cancelRequested) {
                     log.info("循环在目标分解阶段被取消，未启动");
-                    callbacks.onComplete();
+                    callbacks.onTerminal(ConversationOutcome.completed());
                     return;
                 }
 
@@ -175,14 +184,14 @@ public final class LoopService {
                 // 工具确认闸门——非只读命令必须先经用户确认一次（对齐 SDD 提案评审思想），
                 // 拒绝则不启动循环（诚实失败，而非静默跑 LLM 生成的命令）
                 if (!verificationConfirmed && !confirmVerifyCommands(plan.spec())) {
-                    callbacks.onError(new IllegalStateException(
-                            "循环验证命令未获批准，已取消启动。可修改目标或允许执行后重试"));
+                    callbacks.onTerminal(ConversationOutcome.failed(new IllegalStateException(
+                            "循环验证命令未获批准，已取消启动。可修改目标或允许执行后重试")));
                     return;
                 }
                 // 启动检查点②：确认弹窗（最长 60 秒）期间被取消 → 不启动
                 if (cancelRequested) {
                     log.info("循环在验证命令确认阶段被取消，未启动");
-                    callbacks.onComplete();
+                    callbacks.onTerminal(ConversationOutcome.completed());
                     return;
                 }
 
@@ -222,7 +231,7 @@ public final class LoopService {
                 }
             } catch (Exception e) {
                 log.error("循环执行异常", e);
-                callbacks.onError(e);
+                callbacks.onTerminal(ConversationOutcome.failed(e));
             } finally {
                 if (runner != null) {
                     runner.shutdown();
@@ -247,8 +256,14 @@ public final class LoopService {
      * 烧 token 直到单轮超时（默认 12 分钟）才回到取消检查点。</p>
      */
     public boolean cancelActive() {
+        return conversationRun.cancelActive(
+                com.javaclaw.api.conversation.CancellationReason.USER_REQUEST);
+    }
+
+    /** 只取消指定会话对应的系统图运行；由本轮句柄捕获调用。 */
+    public boolean cancelActive(String sessionId) {
         boolean graphCancelled = workflowService != null
-                && workflowService.cancelSystem(SYSTEM_GRAPH.id(), activeSystemSessionId);
+                && workflowService.cancelSystem(SYSTEM_GRAPH.id(), sessionId);
         return cancelPipeline() || graphCancelled;
     }
 
@@ -300,12 +315,12 @@ public final class LoopService {
 
     /** 工作区切换：停掉当前循环并等待停稳（随后共享基础设施会被关闭，不能带着在途轮切换）。 */
     public void reload() {
-        cancelAndAwait();
+        cancelAndAwait(com.javaclaw.api.conversation.CancellationReason.RUNTIME_REBUILD);
     }
 
     /** 应用退出/服务重建：停掉当前循环并等待停稳。 */
     public void shutdown() {
-        cancelAndAwait();
+        cancelAndAwait(com.javaclaw.api.conversation.CancellationReason.SHUTDOWN);
     }
 
     /**
@@ -313,8 +328,8 @@ public final class LoopService {
      * HttpTransport/MCP/知识库时会与在途循环轮实际并发（验收员调用踩已关资源、
      * 旧循环的 clearTaskAllowlist 与新循环的「同意全部」授权交错弄乱确认白名单）。
      */
-    private void cancelAndAwait() {
-        if (!cancelActive()) {
+    private void cancelAndAwait(com.javaclaw.api.conversation.CancellationReason reason) {
+        if (!conversationRun.cancelActive(reason)) {
             return;
         }
         if (!awaitTermination(TERMINATION_WAIT_MILLIS)) {

@@ -3,9 +3,12 @@ package com.javaclaw.agent;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.agent.memory.MemoryManager;
+import com.javaclaw.agent.expert.PlanRole;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
+import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.api.conversation.ConversationRequest;
+import com.javaclaw.api.conversation.PlanProfile;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.prompt.PlanModePrompts;
 import io.agentscope.core.ReActAgent;
@@ -17,6 +20,9 @@ import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.message.ThinkingBlock;
 import io.agentscope.core.message.ToolResultBlock;
 import io.agentscope.core.model.ChatUsage;
+import io.agentscope.core.model.ChatModelBase;
+import io.agentscope.core.model.ChatResponse;
+import io.agentscope.core.model.GenerateOptions;
 import io.agentscope.core.pipeline.MsgHub;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,11 +31,14 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.io.File;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
 
 /**
  * 规划模式服务 — 基于 MsgHub 的多智能体协作讨论（UI 无关）
@@ -61,11 +70,15 @@ public class PlanModeService {
 
     /** 所有可用的规划模式专家（名称 → 智能体） */
     private final Map<String, ReActAgent> expertAgents = new LinkedHashMap<>();
+    private final Map<String, PlanRole> planRoles;
+    private final ChatModelBase profileClassifier;
+    private final GenerateOptions profileGenerateOptions = GenerateOptions.builder().build();
 
     /** 共享基础设施（模型工厂 / 记忆 / 知识 / token 追踪等） */
     private final AgentRuntime runtime;
     private final com.javaclaw.workflow.service.WorkflowService workflowService;
-    private volatile String activeSystemSessionId;
+    private final com.javaclaw.api.conversation.SingleConversationRun conversationRun =
+            new com.javaclaw.api.conversation.SingleConversationRun();
 
     /** 统一记忆管理器（从 runtime 取出的快捷引用） */
     private final MemoryManager memoryManager;
@@ -92,8 +105,10 @@ public class PlanModeService {
         // 避免协调者只看到静态常量里写死的子集（参见 issue：内置评估/命令行专家与自定义专家被漏选）。
         expertAgents.putAll(runtime.getExpertManager()
                 .createPlanModeAgents(runtime.getModelFactory()));
+        this.planRoles = runtime.getExpertManager().getPlanRoles();
+        this.profileClassifier = runtime.getModelFactory().createLightChatModel();
 
-        String coordinatorSysPrompt = PlanModePrompts.coordinatorSysPrompt(expertAgents.keySet());
+        String coordinatorSysPrompt = PlanModePrompts.coordinatorSysPrompt(domainExpertNames());
 
         this.coordinator = ReActAgent.builder()
                 .name(AgentConfig.PLAN_COORDINATOR_NAME)
@@ -118,12 +133,18 @@ public class PlanModeService {
      * @param request   用户请求（文本 + 附件）
      * @param callbacks 事件与生命周期回调
      */
-    public void planChat(ConversationRequest request, ConversationCallbacks callbacks) {
+    public com.javaclaw.api.conversation.ConversationHandle planChat(
+            ConversationRequest request, ConversationCallbacks callbacks) {
+        return conversationRun.start(callbacks,
+                guarded -> startPlanPipeline(request, guarded),
+                ignored -> cancel(request.sessionId()));
+    }
+
+    private void startPlanPipeline(ConversationRequest request, ConversationCallbacks callbacks) {
         if (workflowService == null) {
             executePlanPipeline(request, callbacks);
             return;
         }
-        activeSystemSessionId = request.sessionId();
         workflowService.runSystem(SYSTEM_GRAPH, request.sessionId(),
                 com.javaclaw.workflow.service.SystemInvocationState.from(request), callbacks,
                 this::executePlanGraphStage);
@@ -197,36 +218,35 @@ public class PlanModeService {
             }
 
             @Override
-            public void onComplete() {
+            public void onTerminal(ConversationOutcome outcome) {
                 runtime.getTokenTracker().recordUsage(inputCharCount, outputCharCount.get());
-                callbacks.onComplete();
-            }
-
-            @Override
-            public void onError(Throwable error) {
-                runtime.getTokenTracker().recordUsage(inputCharCount, outputCharCount.get());
-                callbacks.onError(error);
+                callbacks.onTerminal(outcome);
             }
         };
 
         Msg userMsg = runtime.buildUserMsg(enrichedInput, attachments);
-        runPlanDiscussion(userMsg, domainCallbacks);
+        runPlanDiscussion(userMsg, request.options().planProfile(), domainCallbacks);
     }
 
     /**
      * 启动规划模式多智能体协作讨论（已拿到用户 Msg）。
      */
-    private void runPlanDiscussion(Msg userMsg, ConversationCallbacks callbacks) {
+    private void runPlanDiscussion(Msg userMsg, PlanProfile requestedProfile,
+                                   ConversationCallbacks callbacks) {
         cancelled = false;
-        AgentConfig config = AgentConfig.getInstance();
-        int maxRounds = config.getPlanModeMaxRounds();
-        int maxExperts = config.getPlanModeMaxExperts();
-
-        log.info("规划模式启动 — maxRounds: {}, maxExperts: {}", maxRounds, maxExperts);
 
         activeSubscription = Mono.fromRunnable(() -> {
                     try {
-                        executePlanDiscussion(userMsg, maxRounds, maxExperts, callbacks);
+                        ProfileResolution resolution =
+                                resolveProfile(requestedProfile, userMsg.getTextContent(), callbacks);
+                        PlanLimits limits = PlanLimits.forProfile(resolution.profile());
+                        PlanBudget budget = new PlanBudget(limits, resolution.classifierTokens());
+                        callbacks.onEvent(new ConversationEvent.Hint(
+                                "[规划·档位] " + resolution.profile()
+                                        + " · 最多 " + limits.maxExperts() + " 位专家 / "
+                                        + limits.rounds() + " 轮 / "
+                                        + limits.tokenBudget() + " tokens"));
+                        executePlanDiscussion(userMsg, limits, budget, callbacks);
                     } catch (Exception e) {
                         throw new RuntimeException(e);
                     }
@@ -239,12 +259,12 @@ public class PlanModeService {
                             Throwable cause = error instanceof RuntimeException && error.getCause() != null
                                     ? error.getCause() : error;
                             log.error("规划模式讨论出错", cause);
-                            callbacks.onError(cause);
+                            callbacks.onTerminal(ConversationOutcome.failed(cause));
                         },
                         () -> {
                             activeSubscription = null;
                             log.info("规划模式讨论完成");
-                            callbacks.onComplete();
+                            callbacks.onTerminal(ConversationOutcome.completed());
                         }
                 );
     }
@@ -253,31 +273,31 @@ public class PlanModeService {
      * 执行规划讨论的核心流程（在 boundedElastic 线程中运行，流式输出）。
      */
     private void executePlanDiscussion(Msg userMsg,
-                                       int maxRounds,
-                                       int maxExperts,
+                                       PlanLimits limits,
+                                       PlanBudget budget,
                                        ConversationCallbacks callbacks) {
         String coordinatorName = AgentConfig.PLAN_COORDINATOR_NAME;
 
         // 1. 协调者分析任务并选择专家（流式输出）
         callbacks.onEvent(new ConversationEvent.Hint(
                 "[规划·" + coordinatorName + "] 正在分析任务并挑选专家..."));
-        coordinator.observe(userMsg).block();
+        observe(coordinator, userMsg, budget, false);
         if (cancelled) return;
 
-        String firstResponse = streamAgentResponse(coordinator, callbacks);
+        String firstResponse = streamAgentResponse(coordinator, callbacks, budget, false);
         log.info("协调者首轮发言: {} 字符", firstResponse.length());
 
         // 2. 解析参与专家列表（含重试机制）
-        List<ReActAgent> selectedExperts = selectExperts(firstResponse, maxExperts);
-        if (selectedExperts.isEmpty() && !cancelled) {
+        List<ReActAgent> selectedExperts = selectExperts(firstResponse, limits.maxExperts());
+        if (selectedExperts.isEmpty() && !cancelled && budget.canStartDiscussionCall()) {
             log.warn("首轮专家选择 JSON 解析失败，发送修正提示进行重试...");
             callbacks.onEvent(new ConversationEvent.Hint(
                     "[规划·" + coordinatorName + "] 专家选择 JSON 解析失败，正在重试..."));
-            String retryPrompt = PlanModePrompts.expertSelectionRetry(expertAgents.keySet());
-            coordinator.observe(Msg.builder().role(MsgRole.USER).name("system")
-                    .textContent(retryPrompt).build()).block();
-            String retryResponse = streamAgentResponse(coordinator, callbacks);
-            selectedExperts = selectExperts(retryResponse, maxExperts);
+            String retryPrompt = PlanModePrompts.expertSelectionRetry(domainExpertNames());
+            observe(coordinator, Msg.builder().role(MsgRole.USER).name("system")
+                    .textContent(retryPrompt).build(), budget, false);
+            String retryResponse = streamAgentResponse(coordinator, callbacks, budget, false);
+            selectedExperts = selectExperts(retryResponse, limits.maxExperts());
         }
         if (selectedExperts.isEmpty()) {
             log.warn("重试后仍未能解析参与专家，使用默认专家（编程 + 知识）");
@@ -285,6 +305,8 @@ public class PlanModeService {
             callbacks.onEvent(new ConversationEvent.Hint(
                     "[规划·" + coordinatorName + "] 未能选择专家，已使用默认专家组合"));
         }
+        selectedExperts = ensureMinimumExperts(
+                selectedExperts, limits.minExperts(), limits.maxExperts());
         List<String> selectedNames = selectedExperts.stream()
                 .map(AgentBase::getName).toList();
         log.info("选中专家: {}", selectedNames);
@@ -332,10 +354,18 @@ public class PlanModeService {
                     "[规划·MsgHub] 协作通道建立，参与者 " + participants.size()
                             + " 位（含协调者）"));
 
-            for (int round = 1; round <= maxRounds; round++) {
+            String finalDraft = "";
+            boolean discussionStoppedForBudget = false;
+            for (int round = 1; round <= limits.rounds(); round++) {
                 if (cancelled) break;
+                if (!budget.canStartDiscussionCall()) {
+                    discussionStoppedForBudget = true;
+                    callbacks.onEvent(new ConversationEvent.Hint(
+                            "[规划·预算] 已到 80% 预留线，停止新讨论并进入最终汇总"));
+                    break;
+                }
 
-                String roundTag = "[规划·第 " + round + "/" + maxRounds + " 轮]";
+                String roundTag = "[规划·第 " + round + "/" + limits.rounds() + " 轮]";
                 callbacks.onEvent(new ConversationEvent.Hint(
                         roundTag + " 讨论开始（" + selectedExperts.size() + " 位专家依次发言）"));
                 log.info("===== 第 {} 轮讨论 =====", round);
@@ -343,19 +373,25 @@ public class PlanModeService {
                 int idx = 0;
                 for (ReActAgent expert : selectedExperts) {
                     if (cancelled) break;
+                    if (!budget.canStartDiscussionCall()) {
+                        discussionStoppedForBudget = true;
+                        break;
+                    }
                     idx++;
                     callbacks.onEvent(new ConversationEvent.Hint(
                             roundTag + " (" + idx + "/" + selectedExperts.size() + ") "
                                     + expert.getName() + " 正在发言..."));
-                    String expertText = streamAgentResponse(expert, callbacks);
+                    String expertText = streamAgentResponse(expert, callbacks, budget, false);
                     log.info("[{}] 发言: {} 字符", expert.getName(), expertText.length());
                 }
 
                 if (cancelled) break;
+                if (discussionStoppedForBudget) break;
 
                 callbacks.onEvent(new ConversationEvent.Hint(
                         roundTag + " " + coordinatorName + " 正在汇总本轮发言..."));
-                String coordText = streamAgentResponse(coordinator, callbacks);
+                String coordText = streamAgentResponse(coordinator, callbacks, budget, false);
+                finalDraft = coordText;
                 log.info("[协调者] 汇总: {} 字符", coordText.length());
 
                 if (coordText.contains(PLAN_COMPLETE_MARKER)) {
@@ -367,9 +403,228 @@ public class PlanModeService {
 
                 callbacks.onEvent(new ConversationEvent.Hint(roundTag + " 本轮讨论完成"));
             }
+
+            if (!cancelled && !finalDraft.contains(PLAN_COMPLETE_MARKER)
+                    && budget.canStartFinalCall()) {
+                callbacks.onEvent(new ConversationEvent.Hint(
+                        "[规划·最终汇总] 正在使用预留预算生成完整方案..."));
+                Msg finalRequest = Msg.builder().role(MsgRole.USER).name("system")
+                        .textContent("请基于全部讨论输出最终可执行方案。必须以 "
+                                + PLAN_COMPLETE_MARKER + " 结束，不再发起新讨论。")
+                        .build();
+                observe(coordinator, finalRequest, budget, true);
+                finalDraft = streamAgentResponse(coordinator, callbacks, budget, true);
+            }
+
+            String completedDraft = finalDraft;
+            boolean shouldRunCritic = limits.profile() != PlanProfile.QUICK
+                    && budget.canStartFinalCall();
+            publishFinalDraftAndReview(completedDraft, callbacks, shouldRunCritic,
+                    () -> cancelled, () -> {
+                        ReActAgent critic = criticAgent();
+                        if (critic == null) return;
+                        callbacks.onEvent(new ConversationEvent.Hint(
+                                "[规划·评审] 任务评估专家正在审阅最终方案..."));
+                        observe(critic, Msg.builder().role(MsgRole.USER).name("system")
+                                .textContent("仅评审以下最终方案，指出关键风险、遗漏和可执行修正；"
+                                        + "不要参与前序讨论：\n\n" + completedDraft)
+                                .build(), budget, true);
+                        streamAgentResponse(critic, callbacks, budget, true);
+                    });
         } catch (Exception e) {
             log.error("MsgHub 讨论过程中出错", e);
             throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * 先锁定协调者最终方案，再把 Critic 作为可降级的附加评审运行。
+     *
+     * <p>包级可见以便验证事件顺序；Critic 失败不得把已经完成的方案改成失败终态。</p>
+     */
+    static void publishFinalDraftAndReview(String finalDraft,
+                                           ConversationCallbacks callbacks,
+                                           boolean shouldRunCritic,
+                                           BooleanSupplier cancellation,
+                                           Runnable criticAction) {
+        if (finalDraft == null || finalDraft.isBlank() || cancellation.getAsBoolean()) return;
+        callbacks.onEvent(new ConversationEvent.Custom(
+                "plan_final", finalDraft.replace(PLAN_COMPLETE_MARKER, "").strip()));
+        if (!shouldRunCritic || cancellation.getAsBoolean()) return;
+        try {
+            criticAction.run();
+        } catch (RuntimeException reviewFailure) {
+            if (cancellation.getAsBoolean()) return;
+            log.warn("最终方案 Critic 评审失败，保留协调者方案: {}",
+                    reviewFailure.getMessage());
+            callbacks.onEvent(new ConversationEvent.Hint(
+                    "[规划·评审] 评审未完成，已保留协调者最终方案"));
+        }
+    }
+
+    private ProfileResolution resolveProfile(PlanProfile requested, String input,
+                                             ConversationCallbacks callbacks) {
+        if (requested != null && requested != PlanProfile.AUTO) {
+            return new ProfileResolution(requested, 0);
+        }
+        try {
+            if (cancelled) throw new java.util.concurrent.CancellationException("研讨已取消");
+            Msg system = Msg.builder().role(MsgRole.SYSTEM).name("system")
+                    .textContent("""
+                            只判断研讨深度，严格输出一个枚举：QUICK、STANDARD 或 DEEP。
+                            QUICK=简单决策/单领域；STANDARD=跨领域且有明确取舍；
+                            DEEP=高风险、复杂系统设计或需要多轮反驳。
+                            """).build();
+            Msg user = Msg.builder().role(MsgRole.USER).name("user")
+                    .textContent(input == null ? "" : input).build();
+            List<ChatResponse> responses = profileClassifier.stream(
+                    List.of(system, user), List.of(), profileGenerateOptions)
+                    .collectList().block(Duration.ofSeconds(8));
+            if (cancelled) throw new java.util.concurrent.CancellationException("研讨已取消");
+            long[] usage = TokenTracker.extractUsage(responses);
+            callbacks.onEvent(new ConversationEvent.Usage(usage[0], usage[1]));
+            StringBuilder text = new StringBuilder();
+            if (responses != null) {
+                for (ChatResponse response : responses) {
+                    if (response.getContent() == null) continue;
+                    for (var block : response.getContent()) {
+                        if (block instanceof TextBlock value && value.getText() != null) {
+                            text.append(value.getText());
+                        }
+                    }
+                }
+            }
+            PlanProfile resolved = parsePlanProfile(text.toString()).orElse(PlanProfile.QUICK);
+            return new ProfileResolution(resolved, usage[0] + usage[1]);
+        } catch (Exception e) {
+            log.warn("研讨档位自动分类失败，回退 QUICK: {}", e.getMessage());
+            callbacks.onEvent(new ConversationEvent.Hint(
+                    "[规划·档位] 自动分类超时或失败，已回退 QUICK"));
+            return new ProfileResolution(PlanProfile.QUICK, 0);
+        }
+    }
+
+    /**
+     * 从分类器输出中只接受唯一一种规划档位。多个不同枚举同时出现说明模型没有遵守
+     * 单值输出契约，宁可回退也不按子串顺序猜测。
+     */
+    static java.util.Optional<PlanProfile> parsePlanProfile(String output) {
+        if (output == null || output.isBlank()) return java.util.Optional.empty();
+        java.util.EnumSet<PlanProfile> matches = java.util.EnumSet.noneOf(PlanProfile.class);
+        var matcher = java.util.regex.Pattern.compile(
+                "\\b(QUICK|STANDARD|DEEP)\\b",
+                java.util.regex.Pattern.CASE_INSENSITIVE).matcher(output);
+        while (matcher.find()) {
+            matches.add(PlanProfile.valueOf(
+                    matcher.group(1).toUpperCase(java.util.Locale.ROOT)));
+        }
+        return matches.size() == 1
+                ? java.util.Optional.of(matches.iterator().next())
+                : java.util.Optional.empty();
+    }
+
+    private void observe(ReActAgent agent, Msg message, PlanBudget budget, boolean finalPhase) {
+        budget.requireCallAllowed(finalPhase);
+        agent.observe(message).block(Duration.ofMillis(budget.remainingMillis()));
+        budget.requireWithinHardLimits();
+    }
+
+    private java.util.Set<String> domainExpertNames() {
+        java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>();
+        for (String name : expertAgents.keySet()) {
+            if (planRoles.getOrDefault(name, PlanRole.DOMAIN) == PlanRole.DOMAIN) names.add(name);
+        }
+        return names;
+    }
+
+    private ReActAgent criticAgent() {
+        for (Map.Entry<String, ReActAgent> entry : expertAgents.entrySet()) {
+            if (planRoles.get(entry.getKey()) == PlanRole.CRITIC) return entry.getValue();
+        }
+        return null;
+    }
+
+    private List<ReActAgent> ensureMinimumExperts(List<ReActAgent> selected,
+                                                   int minimum, int maximum) {
+        List<ReActAgent> result = new ArrayList<>(selected);
+        for (String name : domainExpertNames()) {
+            if (result.size() >= minimum || result.size() >= maximum) break;
+            ReActAgent candidate = expertAgents.get(name);
+            if (candidate != null && !result.contains(candidate)) result.add(candidate);
+        }
+        return result;
+    }
+
+    private record ProfileResolution(PlanProfile profile, long classifierTokens) {}
+
+    private record PlanLimits(
+            PlanProfile profile,
+            int minExperts,
+            int maxExperts,
+            int rounds,
+            int timeoutSeconds,
+            long tokenBudget
+    ) {
+        static PlanLimits forProfile(PlanProfile profile) {
+            return switch (profile) {
+                case QUICK, AUTO -> new PlanLimits(PlanProfile.QUICK, 1, 2, 1, 60, 20_000);
+                case STANDARD -> new PlanLimits(PlanProfile.STANDARD, 2, 3, 2, 120, 50_000);
+                case DEEP -> new PlanLimits(PlanProfile.DEEP, 3, 4, 3, 180, 100_000);
+            };
+        }
+    }
+
+    private final class PlanBudget {
+        private final PlanLimits limits;
+        private final long startedNanos = System.nanoTime();
+        private final AtomicLong tokens = new AtomicLong();
+
+        private PlanBudget(PlanLimits limits, long initialTokens) {
+            this.limits = limits;
+            this.tokens.set(Math.max(0, initialTokens));
+        }
+
+        void addUsage(long input, long output) {
+            tokens.addAndGet(Math.max(0, input) + Math.max(0, output));
+        }
+
+        boolean canStartDiscussionCall() {
+            return !cancelled
+                    && tokens.get() < Math.round(limits.tokenBudget() * 0.8)
+                    && elapsedMillis() < limits.timeoutSeconds() * 800L;
+        }
+
+        boolean canStartFinalCall() {
+            return !cancelled
+                    && tokens.get() < limits.tokenBudget()
+                    && elapsedMillis() < limits.timeoutSeconds() * 1000L;
+        }
+
+        void requireCallAllowed(boolean finalPhase) {
+            if (cancelled) throw new java.util.concurrent.CancellationException("研讨已取消");
+            if (finalPhase ? !canStartFinalCall() : !canStartDiscussionCall()) {
+                throw new IllegalStateException(finalPhase
+                        ? "研讨最终汇总预算或时间已耗尽"
+                        : "研讨已到 80% 预留线");
+            }
+        }
+
+        void requireWithinHardLimits() {
+            if (cancelled) throw new java.util.concurrent.CancellationException("研讨已取消");
+            if (elapsedMillis() >= limits.timeoutSeconds() * 1000L) {
+                throw new IllegalStateException("研讨超过 " + limits.timeoutSeconds() + " 秒时间预算");
+            }
+            if (tokens.get() >= limits.tokenBudget()) {
+                throw new IllegalStateException("研讨超过 " + limits.tokenBudget() + " token 预算");
+            }
+        }
+
+        long remainingMillis() {
+            return Math.max(1, limits.timeoutSeconds() * 1000L - elapsedMillis());
+        }
+
+        private long elapsedMillis() {
+            return Math.max(0, (System.nanoTime() - startedNanos) / 1_000_000L);
         }
     }
 
@@ -378,7 +633,9 @@ public class PlanModeService {
      *
      * @return 智能体的完整回复文本
      */
-    private String streamAgentResponse(ReActAgent agent, ConversationCallbacks callbacks) {
+    private String streamAgentResponse(ReActAgent agent, ConversationCallbacks callbacks,
+                                       PlanBudget budget, boolean finalPhase) {
+        budget.requireCallAllowed(finalPhase);
         String agentName = agent.getName();
         callbacks.onEvent(new ConversationEvent.AgentStart(agentName));
         StringBuilder fullText = new StringBuilder();
@@ -397,6 +654,7 @@ public class PlanModeService {
                                     && (usage.getInputTokens() > 0 || usage.getOutputTokens() > 0)) {
                                 callbacks.onEvent(new ConversationEvent.Usage(
                                         usage.getInputTokens(), usage.getOutputTokens()));
+                                budget.addUsage(usage.getInputTokens(), usage.getOutputTokens());
                             }
                         } catch (Throwable t) {
                             log.debug("读取规划模式 ChatUsage 失败，忽略", t);
@@ -452,10 +710,13 @@ public class PlanModeService {
                             default -> { /* HINT 等其他事件类型 */ }
                         }
                     })
-                    .blockLast();
+                    .blockLast(Duration.ofMillis(budget.remainingMillis()));
+            budget.requireWithinHardLimits();
         } catch (Exception e) {
             if (!cancelled) {
                 log.error("规划模式智能体 [{}] 流式调用异常", agentName, e);
+                throw e instanceof RuntimeException runtimeFailure
+                        ? runtimeFailure : new RuntimeException(e);
             }
         }
 
@@ -484,8 +745,11 @@ public class PlanModeService {
             for (JsonNode nameNode : expertsNode) {
                 String name = nameNode.asText("").trim();
                 ReActAgent agent = expertAgents.get(name);
-                if (agent != null && selected.size() < maxExperts) {
+                PlanRole role = planRoles.getOrDefault(name, PlanRole.DOMAIN);
+                if (agent != null && role == PlanRole.DOMAIN && selected.size() < maxExperts) {
                     selected.add(agent);
+                } else if (agent != null && role != PlanRole.DOMAIN) {
+                    log.info("专家 [{}] 角色为 {}，不进入讨论轮", name, role);
                 } else if (agent == null && !name.isEmpty()) {
                     log.warn("未知专家名称: {}", name);
                 }
@@ -524,8 +788,14 @@ public class PlanModeService {
      * @return true 表示成功取消
      */
     public boolean cancel() {
+        return conversationRun.cancelActive(
+                com.javaclaw.api.conversation.CancellationReason.USER_REQUEST);
+    }
+
+    /** 只取消指定会话对应的系统图运行；由本轮句柄捕获调用。 */
+    public boolean cancel(String sessionId) {
         boolean graphCancelled = workflowService != null
-                && workflowService.cancelSystem(SYSTEM_GRAPH.id(), activeSystemSessionId);
+                && workflowService.cancelSystem(SYSTEM_GRAPH.id(), sessionId);
         return cancelPipeline() || graphCancelled;
     }
 
@@ -556,7 +826,8 @@ public class PlanModeService {
     }
 
     public void shutdown() {
-        cancel();
+        conversationRun.cancelActive(
+                com.javaclaw.api.conversation.CancellationReason.SHUTDOWN);
         log.info("规划模式服务已关闭");
     }
 }

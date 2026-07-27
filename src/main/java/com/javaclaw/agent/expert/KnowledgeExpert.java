@@ -5,7 +5,8 @@ import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.AppDatabase;
 import com.javaclaw.config.DataManager;
-import com.javaclaw.memory.embed.EmbeddingGate;
+import com.javaclaw.memory.embed.EmbeddingGateway;
+import com.javaclaw.memory.embed.EmbeddingPurpose;
 import com.javaclaw.memory.model.KnowledgeChunk;
 import com.javaclaw.memory.store.MemoryStore;
 import com.javaclaw.prompt.AgentPrompts;
@@ -62,7 +63,8 @@ public class KnowledgeExpert {
     private final ModelFactory modelFactory;
 
     private final boolean ragEnabled;
-    private EmbeddingGate gate;
+    private final EmbeddingGateway gate;
+    private final String ragInitializationError;
     private MemoryStore globalStore;
     private MemoryStore workspaceStore;
     private TextReader textReader;
@@ -82,13 +84,18 @@ public class KnowledgeExpert {
     // ==================== 构造 ====================
 
     public KnowledgeExpert(ModelFactory modelFactory) {
+        this(modelFactory, new EmbeddingGateway(modelFactory));
+    }
+
+    public KnowledgeExpert(ModelFactory modelFactory, EmbeddingGateway embeddingGateway) {
         AgentConfig config = AgentConfig.getInstance();
         boolean enabled = config.isRagEnabled();
         this.modelFactory = modelFactory;
+        this.gate = java.util.Objects.requireNonNull(embeddingGateway, "embeddingGateway");
+        String initializationError = null;
 
         if (enabled) {
             try {
-                this.gate = new EmbeddingGate(modelFactory);
                 int dim = gate.dimensions();
                 this.globalStore = new MemoryStore(
                         DataManager.getInstance().getGlobalKnowledgeDir().resolve("store"), dim, "knowledge-global");
@@ -106,11 +113,13 @@ public class KnowledgeExpert {
             } catch (Exception e) {
                 log.warn("RAG 知识库初始化失败，回退到纯推理模式: {}", e.getMessage());
                 closeStores();
-                this.gate = null;
+                initializationError = e.getMessage() == null
+                        ? e.getClass().getSimpleName() : e.getMessage();
                 enabled = false;
             }
         }
         this.ragEnabled = enabled;
+        this.ragInitializationError = initializationError;
 
         log.info("知识专家子智能体已创建: {}, RAG: {}", AgentConfig.KNOWLEDGE_AGENT_NAME,
                 enabled ? "已启用(EclipseStore+JVector)" : "未启用");
@@ -277,7 +286,7 @@ public class KnowledgeExpert {
         for (Document doc : docs) {
             String content = doc.getMetadata().getContentText();
             if (content == null || content.isBlank()) continue;
-            float[] vec = gate.embed(content);
+            float[] vec = gate.embed(content, EmbeddingPurpose.BACKGROUND_INDEX);
             if (vec == null) continue; // 无嵌入 → 跳过（不写无向量分块）
             // 维度不匹配：配置的 rag.embedding.dimensions 与模型实际输出不一致，
             // 直接抛出明确原因（JVector 索引按 expectedDim 建库，写入会失败/语义错乱）。
@@ -301,7 +310,7 @@ public class KnowledgeExpert {
      * （鉴权 / 端点 / 网络等），帮助用户定位为何配置了向量模型仍导入失败。
      */
     private String embedFailureDetail() {
-        String why = gate == null ? null : gate.lastError();
+        String why = gate.lastError();
         if (why == null || why.isBlank()) {
             return "嵌入不可用，未能写入任何分块（请检查 rag.embedding.* 配置：模型名 / baseUrl / API Key / 维度）";
         }
@@ -399,7 +408,7 @@ public class KnowledgeExpert {
         double threshold = cfg.getRagScoreThreshold();
         boolean filter = selectedDocs != null && !selectedDocs.isEmpty();
 
-        float[] q = gate.embed(query);
+        float[] q = gate.embed(query, EmbeddingPurpose.INTERACTIVE_RECALL);
         if (q != null) {
             List<MemoryStore.Scored<KnowledgeChunk>> hits = new ArrayList<>();
             hits.addAll(globalStore.searchKnowledge(q, filter ? limit * 3 : limit, threshold));
@@ -465,6 +474,9 @@ public class KnowledgeExpert {
 
     public boolean isRagEnabled() { return ragEnabled; }
 
+    /** 知识库存储初始化失败原因；与共享嵌入端点健康状态相互独立。 */
+    public String ragInitializationError() { return ragInitializationError; }
+
     public boolean hasDocuments() { return getTotalChunkCount() > 0; }
 
     public int getTotalChunkCount() {
@@ -509,6 +521,15 @@ public class KnowledgeExpert {
         return getDocumentNames().size();
     }
 
+    public com.javaclaw.memory.embed.EmbeddingHealthSnapshot embeddingHealth() {
+        return gate.healthSnapshot();
+    }
+
+    public AutoCloseable onEmbeddingHealthChanged(
+            java.util.function.Consumer<com.javaclaw.memory.embed.EmbeddingHealthSnapshot> listener) {
+        return gate.addHealthListener(java.util.Objects.requireNonNull(listener, "listener"));
+    }
+
     // ==================== 供 UI（记忆中心知识库页签）读取 ====================
 
     /** 返回全局 + 工作区两个知识库的全部分块（供 UI 按文档聚合展示）。 */
@@ -526,7 +547,7 @@ public class KnowledgeExpert {
         for (MemoryStore store : new MemoryStore[]{globalStore, workspaceStore}) {
             for (KnowledgeChunk c : store.allKnowledge()) {
                 if (!docName.equals(c.docName)) continue;
-                float[] vec = gate.embed(c.content);
+                float[] vec = gate.embed(c.content, EmbeddingPurpose.BACKGROUND_INDEX);
                 if (vec != null) {
                     store.updateKnowledgeChunk(c, x -> x.embedding = vec, "user");
                     n++;
@@ -587,7 +608,7 @@ public class KnowledgeExpert {
         if (enabled.isEmpty()) return out;
         double threshold = AgentConfig.getInstance().getRagScoreThreshold();
 
-        float[] q = gate == null ? null : gate.embed(query);
+        float[] q = gate.embed(query, EmbeddingPurpose.INTERACTIVE_RECALL);
         if (q != null) {
             List<MemoryStore.Scored<KnowledgeChunk>> hits = new ArrayList<>();
             hits.addAll(globalStore.searchKnowledge(q, topK * 3, threshold));
@@ -641,7 +662,7 @@ public class KnowledgeExpert {
         int n = 0;
         for (MemoryStore store : new MemoryStore[]{globalStore, workspaceStore}) {
             for (KnowledgeChunk c : store.allKnowledge()) {
-                float[] vec = gate.embed(c.content);
+                float[] vec = gate.embed(c.content, EmbeddingPurpose.BACKGROUND_INDEX);
                 if (vec != null) {
                     store.updateKnowledgeChunk(c, x -> x.embedding = vec, "user");
                     n++;

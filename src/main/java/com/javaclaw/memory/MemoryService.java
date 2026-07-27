@@ -4,7 +4,8 @@ import com.javaclaw.agent.TokenTracker;
 import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.memory.curation.Distiller;
 import com.javaclaw.memory.curation.HabitReviewer;
-import com.javaclaw.memory.embed.EmbeddingGate;
+import com.javaclaw.memory.embed.EmbeddingGateway;
+import com.javaclaw.memory.embed.EmbeddingPurpose;
 import com.javaclaw.memory.model.AgentCheckpoint;
 import com.javaclaw.memory.model.ChangeLogEntry;
 import com.javaclaw.memory.model.Episode;
@@ -42,7 +43,7 @@ public class MemoryService implements AutoCloseable {
 
     private static final int EMBED_TEXT_CAP = 2000;
 
-    private final EmbeddingGate gate;
+    private final EmbeddingGateway gate;
     private final ChatModelBase lightModel;
     private final TokenTracker tokenTracker;
 
@@ -52,7 +53,12 @@ public class MemoryService implements AutoCloseable {
     private HabitReviewer habitReviewer;
 
     public MemoryService(ModelFactory modelFactory, TokenTracker tokenTracker) {
-        this.gate = new EmbeddingGate(modelFactory);
+        this(modelFactory, tokenTracker, new EmbeddingGateway(modelFactory));
+    }
+
+    public MemoryService(ModelFactory modelFactory, TokenTracker tokenTracker,
+                         EmbeddingGateway gateway) {
+        this.gate = java.util.Objects.requireNonNull(gateway, "gateway");
         this.lightModel = modelFactory.createLightChatModel();
         this.tokenTracker = tokenTracker;
     }
@@ -142,7 +148,8 @@ public class MemoryService implements AutoCloseable {
         Episode ep = new Episode(sessionId, userInput, reply);
         ep.toolTraceJson = toolTraceJson;
         Mono.fromRunnable(() -> {
-                    ep.embedding = gate.embed(cap(userInput) + " " + cap(reply));
+                    ep.embedding = gate.embed(cap(userInput) + " " + cap(reply),
+                            EmbeddingPurpose.BACKGROUND_INDEX);
                     if (ep.embedding != null) {
                         store.addEpisode(ep, "system");
                         // 嵌入可用 → 顺带把此前降级暂存的条目重嵌入迁回正式索引（有界）
@@ -258,7 +265,7 @@ public class MemoryService implements AutoCloseable {
      */
     public void editFact(com.javaclaw.memory.model.Fact f, String newText) {
         if (store == null) return;
-        float[] vec = gate.embed(newText);
+        float[] vec = gate.embed(newText, EmbeddingPurpose.BACKGROUND_INDEX);
         if (f.pending) {
             if (vec != null) {
                 // 嵌入恢复：迁入正式索引
@@ -285,7 +292,7 @@ public class MemoryService implements AutoCloseable {
     /** 新增一条事实：先嵌入再入库（嵌入不可用则降级落 pending 暂存区，仍可见）。 */
     public void addFact(String section, String text) {
         if (store == null || text == null || text.isBlank()) return;
-        float[] vec = gate.embed(text);
+        float[] vec = gate.embed(text, EmbeddingPurpose.BACKGROUND_INDEX);
         com.javaclaw.memory.model.Fact f = new com.javaclaw.memory.model.Fact(
                 section == null || section.isBlank() ? "其它" : section.trim(), text.trim(), vec);
         f.userEdited = true; // 手动新增等同用户保护，蒸馏不得静默覆盖
@@ -308,10 +315,19 @@ public class MemoryService implements AutoCloseable {
         return gate.lastError();
     }
 
+    public com.javaclaw.memory.embed.EmbeddingHealthSnapshot embeddingHealth() {
+        return gate.healthSnapshot();
+    }
+
+    public AutoCloseable onEmbeddingHealthChanged(
+            java.util.function.Consumer<com.javaclaw.memory.embed.EmbeddingHealthSnapshot> listener) {
+        return gate.addHealthListener(listener);
+    }
+
     /** 主动探测嵌入端点：发一次极短嵌入，刷新 {@link #embeddingError()}。建议后台线程调用。 */
     public String probeEmbedding() {
         if (store == null) return "记忆库未打开";
-        gate.embed("记忆嵌入健康探测");
+        gate.probe();
         return gate.lastError();
     }
 
@@ -331,7 +347,7 @@ public class MemoryService implements AutoCloseable {
         int moved = 0;
         for (com.javaclaw.memory.model.Fact f : store.allPendingFacts()) {
             if (moved >= limit) break;
-            float[] vec = gate.embed(f.text);
+            float[] vec = gate.embed(f.text, EmbeddingPurpose.BACKGROUND_INDEX);
             if (vec == null) return moved; // 嵌入仍不可用，停止（避免逐条空转）
             f.embedding = vec;
             f.pending = false;
@@ -342,7 +358,8 @@ public class MemoryService implements AutoCloseable {
         int movedEp = 0;
         for (com.javaclaw.memory.model.Episode e : store.allPendingEpisodes()) {
             if (movedEp >= limit) break;
-            float[] vec = gate.embed(cap(e.userInput) + " " + cap(e.assistantReply));
+            float[] vec = gate.embed(cap(e.userInput) + " " + cap(e.assistantReply),
+                    EmbeddingPurpose.BACKGROUND_INDEX);
             if (vec == null) break;
             e.embedding = vec;
             e.pending = false;
@@ -380,7 +397,7 @@ public class MemoryService implements AutoCloseable {
         int n = 0;
         for (com.javaclaw.memory.model.KnowledgeChunk c : store.allKnowledge()) {
             if (!docName.equals(c.docName)) continue;
-            float[] vec = gate.embed(c.content);
+            float[] vec = gate.embed(c.content, EmbeddingPurpose.BACKGROUND_INDEX);
             if (vec != null) {
                 store.updateKnowledgeChunk(c, x -> x.embedding = vec, "user");
                 n++;

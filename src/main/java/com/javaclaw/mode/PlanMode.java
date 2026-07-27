@@ -2,6 +2,7 @@ package com.javaclaw.mode;
 
 import com.javaclaw.agent.PlanModeService;
 import com.javaclaw.api.conversation.Capabilities;
+import com.javaclaw.api.conversation.ConversationHandle;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationMode;
 import com.javaclaw.api.conversation.ConversationRequest;
@@ -33,13 +34,8 @@ public final class PlanMode implements ConversationMode {
     }
 
     @Override
-    public void start(ConversationRequest request, ConversationCallbacks callbacks) {
-        service.planChat(request, callbacks);
-    }
-
-    @Override
-    public boolean cancel() {
-        return service.cancel();
+    public ConversationHandle start(ConversationRequest request, ConversationCallbacks callbacks) {
+        return service.planChat(request, callbacks);
     }
 
     @Override

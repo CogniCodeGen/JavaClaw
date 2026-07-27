@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.javaclaw.agent.ScheduledTaskAgent;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
+import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.AppDatabase;
 import org.quartz.CronExpression;
@@ -277,12 +278,12 @@ public class ScheduleManager {
         }
     }
 
-    private void saveAll() {
+    private boolean saveAll() {
         synchronized (persistenceLock) {
             String workspaceId = loadedWorkspaceId;
             if (workspaceId == null) {
                 log.warn("定时任务尚未绑定工作区，跳过保存");
-                return;
+                return false;
             }
             List<ScheduledTask> snapshot = List.copyOf(tasks);
             String insert = """
@@ -302,35 +303,37 @@ public class ScheduleManager {
                 del.setString(1, workspaceId);
                 del.executeUpdate();
                 for (ScheduledTask task : snapshot) {
-                ps.setString(1, workspaceId);
-                ps.setString(2, task.getId());
-                ps.setString(3, task.getName());
-                ps.setString(4, task.getDescription());
-                ps.setString(5, task.getTriggerType());
-                ps.setInt(6, task.getIntervalMinutes());
-                ps.setInt(7, task.getIntervalValue());
-                ps.setString(8, task.getIntervalUnit());
-                ps.setString(9, task.getDailyTime());
-                ps.setString(10, task.getCronExpression());
-                ps.setString(11, task.getOnceDateTime());
-                ps.setString(12, task.getPrompt());
-                ps.setBoolean(13, task.isEnabled());
-                ps.setString(14, task.getLastRunTime());
-                ps.setString(15, task.getLastRunStatus());
-                ps.setString(16, task.getLastDuration());
-                ps.setInt(17, task.getRunCount());
-                ps.setInt(18, task.getFailCount());
-                ps.setBoolean(19, task.isNotifyEnabled());
-                ps.setString(20, task.getNotifyChannel());
-                ps.setString(21, objectMapper.writeValueAsString(task.getExecutionHistory()));
-                ps.setString(22, objectMapper.writeValueAsString(task.getExecRecords()));
-                ps.setBoolean(23, task.isUnattendedToolsAuthorized());
+                    ps.setString(1, workspaceId);
+                    ps.setString(2, task.getId());
+                    ps.setString(3, task.getName());
+                    ps.setString(4, task.getDescription());
+                    ps.setString(5, task.getTriggerType());
+                    ps.setInt(6, task.getIntervalMinutes());
+                    ps.setInt(7, task.getIntervalValue());
+                    ps.setString(8, task.getIntervalUnit());
+                    ps.setString(9, task.getDailyTime());
+                    ps.setString(10, task.getCronExpression());
+                    ps.setString(11, task.getOnceDateTime());
+                    ps.setString(12, task.getPrompt());
+                    ps.setBoolean(13, task.isEnabled());
+                    ps.setString(14, task.getLastRunTime());
+                    ps.setString(15, task.getLastRunStatus());
+                    ps.setString(16, task.getLastDuration());
+                    ps.setInt(17, task.getRunCount());
+                    ps.setInt(18, task.getFailCount());
+                    ps.setBoolean(19, task.isNotifyEnabled());
+                    ps.setString(20, task.getNotifyChannel());
+                    ps.setString(21, objectMapper.writeValueAsString(task.getExecutionHistory()));
+                    ps.setString(22, objectMapper.writeValueAsString(task.getExecRecords()));
+                    ps.setBoolean(23, task.isUnattendedToolsAuthorized());
                     ps.addBatch();
                 }
                 ps.executeBatch();
                 c.commit();
+                return true;
             } catch (SQLException | IOException e) {
                 log.error("保存定时任务到 H2 失败", e);
+                return false;
             }
         }
     }
@@ -507,13 +510,30 @@ public class ScheduleManager {
     // ==================== 增删改 ====================
 
     public ScheduledTask createTask(String name) {
-        String id = UUID.randomUUID().toString().substring(0, 8);
-        ScheduledTask task = new ScheduledTask(id, name);
-        tasks.add(task);
-        saveAll();
-        log.info("已创建定时任务: {} ({})", name, id);
-        taskLog.info("创建定时任务: {} ({})", name, id);
+        ScheduledTask task = createDraft(name);
+        saveNewTask(task);
         return task;
+    }
+
+    /** 仅创建内存草稿，不加入管理器、不持久化。 */
+    public ScheduledTask createDraft(String name) {
+        String id = UUID.randomUUID().toString().substring(0, 8);
+        return new ScheduledTask(id, name);
+    }
+
+    /** 首次保存 UI 草稿；保存后才成为正式定时任务。 */
+    public synchronized void saveNewTask(ScheduledTask task) {
+        if (task == null || task.isBuiltin() || getTask(task.getId()) != null) {
+            throw new IllegalArgumentException("无效或重复的定时任务草稿");
+        }
+        tasks.add(task);
+        if (!saveAll()) {
+            tasks.remove(task);
+            throw new IllegalStateException("定时任务持久化失败，草稿未保存");
+        }
+        if (task.isEnabled()) scheduleTask(task);
+        log.info("已创建定时任务: {} ({})", task.getName(), task.getId());
+        taskLog.info("创建定时任务: {} ({})", task.getName(), task.getId());
     }
 
     public void updateTask(ScheduledTask task) {
@@ -797,7 +817,17 @@ public class ScheduleManager {
             }
 
             @Override
-            public void onComplete() {
+            public void onTerminal(ConversationOutcome outcome) {
+                if (outcome instanceof ConversationOutcome.Failed failed) {
+                    recordScheduledFailure(task, epoch, startNanos, failed.error());
+                    return;
+                }
+                if (outcome instanceof ConversationOutcome.Cancelled cancelled) {
+                    recordScheduledFailure(task, epoch, startNanos,
+                            new java.util.concurrent.CancellationException(
+                                    "定时任务已取消: " + cancelled.reason()));
+                    return;
+                }
                 String summary = resultBuilder.length() > 500
                         ? resultBuilder.substring(0, 500) + "..." : resultBuilder.toString();
                 String dur;
@@ -821,26 +851,6 @@ public class ScheduleManager {
                 maybeNotify(task, true, summary);
             }
 
-            @Override
-            public void onError(Throwable error) {
-                String msg = error.getMessage() == null ? error.toString() : error.getMessage();
-                synchronized (persistenceLock) {
-                    if (!isExecutionCurrent(epoch, task)) return;
-                    task.recordExecution(false);
-                    String dur = formatDuration(startNanos);
-                    task.setLastDuration(dur);
-                    task.addExecRecord(new ScheduledTask.ExecRecord(
-                            LocalDateTime.now().format(ScheduledTask.FORMATTER), "失败", "—", msg));
-                    task.addExecutionRecord(LocalDateTime.now().format(ScheduledTask.FORMATTER)
-                            + " [失败] " + msg);
-                    saveAll();
-                }
-                taskLog.error("[{}] 执行失败: {}", task.getName(), msg, error);
-                taskLog.info("========== 任务结束（失败） ==========");
-                emitLog(task.getName(), "执行失败: " + msg);
-                log.error("定时任务执行失败: {}", task.getName(), error);
-                maybeNotify(task, false, msg);
-            }
         });
         } finally {
             com.javaclaw.agent.ToolConfirmationManager.endScheduledRun(); // 清除本次定时执行的授权标记
@@ -859,6 +869,27 @@ public class ScheduleManager {
             notifyExecutionComplete(task.getId());
         }
         });
+    }
+
+    private void recordScheduledFailure(ScheduledTask task, long epoch, long startNanos,
+                                        Throwable error) {
+        String msg = error.getMessage() == null ? error.toString() : error.getMessage();
+        synchronized (persistenceLock) {
+            if (!isExecutionCurrent(epoch, task)) return;
+            task.recordExecution(false);
+            String dur = formatDuration(startNanos);
+            task.setLastDuration(dur);
+            task.addExecRecord(new ScheduledTask.ExecRecord(
+                    LocalDateTime.now().format(ScheduledTask.FORMATTER), "失败", "—", msg));
+            task.addExecutionRecord(LocalDateTime.now().format(ScheduledTask.FORMATTER)
+                    + " [失败] " + msg);
+            saveAll();
+        }
+        taskLog.error("[{}] 执行失败: {}", task.getName(), msg, error);
+        taskLog.info("========== 任务结束（失败） ==========");
+        emitLog(task.getName(), "执行失败: " + msg);
+        log.error("定时任务执行失败: {}", task.getName(), error);
+        maybeNotify(task, false, msg);
     }
 
     /** 任务仍属于提交时的工作区，且未被删除/替换。 */

@@ -325,7 +325,7 @@ class GraphRuntimeTest {
     }
 
     @Test
-    void 启动前校验失败仍会落失败终态并通知监听器() throws Exception {
+    void 启动前校验失败会同步拒绝且不创建运行() {
         NodeExecutorRegistry registry = baseRegistry();
         MemoryStore store = new MemoryStore();
         manager = new GraphExecutionManager(registry, store);
@@ -333,13 +333,13 @@ class GraphRuntimeTest {
                 List.of(node("start", NodeType.START, "start"),
                         node("end", NodeType.END, "missing-executor")),
                 List.of(edge("a", "start", "end")), 10);
-        CountDownLatch done = new CountDownLatch(1);
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                () -> manager.start(invalid, "thread", new GraphState(), event -> {
+                    fail("同步校验失败不应产生运行事件");
+                }, Map.of()));
 
-        GraphRun run = manager.start(invalid, "thread", new GraphState(), finishLatch(done), Map.of());
-
-        assertTrue(done.await(3, TimeUnit.SECONDS));
-        assertEquals(RunStatus.FAILED, store.loadRun(run.id()).status());
-        assertTrue(store.loadRun(run.id()).error().contains("图定义无效"));
+        assertTrue(failure.getMessage().contains("图定义无效"));
+        assertTrue(store.runs.isEmpty());
     }
 
     @Test

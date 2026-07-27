@@ -3,9 +3,13 @@ package com.javaclaw.mode;
 import com.javaclaw.agent.ShellCommandService;
 import com.javaclaw.api.conversation.Capabilities;
 import com.javaclaw.api.conversation.ConversationCallbacks;
+import com.javaclaw.api.conversation.ConversationHandle;
 import com.javaclaw.api.conversation.ConversationMode;
 import com.javaclaw.api.conversation.ConversationRequest;
+import com.javaclaw.api.conversation.ConversationOutcome;
+import com.javaclaw.api.conversation.DefaultConversationHandle;
 import com.javaclaw.api.conversation.Placement;
+import com.javaclaw.api.conversation.TerminalCallbackGuard;
 
 /**
  * 命令（Shell）模式 —— 用确定性命令管理长任务 / 智能体 / 定时工作，不走 LLM。
@@ -28,7 +32,14 @@ public final class ShellMode implements ConversationMode {
     @Override public Capabilities capabilities() { return Capabilities.minimal(); }
 
     @Override
-    public void start(ConversationRequest request, ConversationCallbacks callbacks) {
-        service.handle(request, callbacks);
+    public ConversationHandle start(ConversationRequest request, ConversationCallbacks callbacks) {
+        var guarded = new TerminalCallbackGuard(callbacks);
+        var handle = new DefaultConversationHandle(guarded, ignored -> false);
+        try {
+            service.handle(request, guarded);
+        } catch (Throwable failure) {
+            guarded.onTerminal(ConversationOutcome.failed(failure));
+        }
+        return handle;
     }
 }

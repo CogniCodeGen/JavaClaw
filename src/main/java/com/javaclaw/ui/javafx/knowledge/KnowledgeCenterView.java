@@ -9,6 +9,8 @@ import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.app.UIHelper;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.WorkspaceManager;
+import com.javaclaw.memory.embed.EmbeddingHealthSnapshot;
+import com.javaclaw.memory.embed.EmbeddingHealthStatus;
 import com.javaclaw.ui.javafx.control.ToggleSwitch;
 import com.javaclaw.ui.javafx.control.WindowToast;
 import javafx.application.Platform;
@@ -73,6 +75,15 @@ public class KnowledgeCenterView {
     // ---- 容器引用 ----
     private VBox leftRail;
     private StackPane mainPane;
+    private HBox ragHealthBadge;
+    private Label ragHealthLabel;
+    private Region headerEmbeddingDot;
+    private HBox headerEmbeddingChip;
+    private Tooltip headerEmbeddingTooltip;
+    private Region settingsEmbeddingDot;
+    private Label settingsEmbeddingStatus;
+    private AutoCloseable embeddingHealthSubscription;
+    private boolean embeddingHealthClosed;
 
     public KnowledgeCenterView(Stage owner, KnowledgeExpert expert, UserInteractionPort interaction,
                                Runnable onConfigChanged, Runnable onOpenModelSettings) {
@@ -88,9 +99,11 @@ public class KnowledgeCenterView {
         stage.setMinWidth(1040);
         stage.setMinHeight(680);
         buildUI();
+        subscribeEmbeddingHealth();
         // 打开期间让窗内浮层接管端口的 Toast 渲染器（模态子窗置顶，主窗横幅会被遮挡），隐藏时自动还原
         windowToast.bindToPort(stage, interaction);
         stage.setOnHidden(e -> {
+            closeEmbeddingHealthSubscription();
             if (chunkParamsDirty && onConfigChanged != null) {
                 log.info("分块参数已变更，关闭知识库中心后重建知识服务");
                 onConfigChanged.run();
@@ -148,26 +161,20 @@ public class KnowledgeCenterView {
         Label title = new Label("知识库中心");
         title.getStyleClass().add("kc-title");
 
-        Label ragBadge = new Label();
+        ragHealthLabel = new Label();
         Region dot = new Region();
         dot.getStyleClass().add("kc-badge-dot");
-        HBox badge = new HBox(6, dot, ragBadge);
-        badge.setAlignment(Pos.CENTER_LEFT);
-        badge.getStyleClass().add("kc-rag-badge");
-        if (expert.isRagEnabled()) {
-            ragBadge.setText("RAG 已启用");
-        } else {
-            ragBadge.setText("RAG 未启用");
-            badge.getStyleClass().add("kc-rag-badge-off");
-        }
+        ragHealthBadge = new HBox(6, dot, ragHealthLabel);
+        ragHealthBadge.setAlignment(Pos.CENTER_LEFT);
+        ragHealthBadge.getStyleClass().add("kc-rag-badge");
 
-        HBox left = new HBox(12, logo, title, badge);
+        HBox left = new HBox(12, logo, title, ragHealthBadge);
         left.setAlignment(Pos.CENTER_LEFT);
 
         // 嵌入模型小卡（点击跳转模型设置）
         AgentConfig cfg = AgentConfig.getInstance();
-        Region embDot = new Region();
-        embDot.getStyleClass().add(expert.isRagEnabled() ? "kc-dot-on" : "kc-dot-off");
+        headerEmbeddingDot = new Region();
+        headerEmbeddingDot.getStyleClass().add("kc-health-dot");
         Label embTag = new Label("嵌入");
         embTag.getStyleClass().add("kc-emb-tag");
         Label embName = new Label(shortModel(cfg.getRagEmbeddingModelName()));
@@ -176,16 +183,18 @@ public class KnowledgeCenterView {
         embSep.getStyleClass().add("kc-emb-sep");
         Label embDim = new Label(cfg.getRagEmbeddingDimensions() + "维");
         embDim.getStyleClass().add("kc-emb-dim");
-        HBox embChip = new HBox(8, embDot, embTag, embName, embSep, embDim);
-        embChip.setAlignment(Pos.CENTER_LEFT);
-        embChip.getStyleClass().add("kc-emb-chip");
-        embChip.setOnMouseClicked(e -> openModelSettings());
-        Tooltip.install(embChip, new Tooltip("前往「设置 › 嵌入模型」配置向量模型"));
+        headerEmbeddingChip =
+                new HBox(8, headerEmbeddingDot, embTag, embName, embSep, embDim);
+        headerEmbeddingChip.setAlignment(Pos.CENTER_LEFT);
+        headerEmbeddingChip.getStyleClass().add("kc-emb-chip");
+        headerEmbeddingChip.setOnMouseClicked(e -> openModelSettings());
+        headerEmbeddingTooltip = new Tooltip("前往「设置 › 嵌入模型」配置向量模型");
+        Tooltip.install(headerEmbeddingChip, headerEmbeddingTooltip);
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        HBox header = new HBox(left, spacer, embChip);
+        HBox header = new HBox(left, spacer, headerEmbeddingChip);
         header.setAlignment(Pos.CENTER_LEFT);
         header.getStyleClass().add("kc-header");
         return header;
@@ -316,11 +325,16 @@ public class KnowledgeCenterView {
     }
 
     private Region buildDisabledNotice() {
+        String initializationError = expert.ragInitializationError();
+        boolean storageFailed = initializationError != null && !initializationError.isBlank();
         Label icon = new Label("🧬");
         icon.setStyle("-fx-font-size: 40px;");
-        Label title = new Label("知识库（RAG）未启用");
+        Label title = new Label(storageFailed ? "知识库存储不可用" : "知识库（RAG）未启用");
         title.getStyleClass().add("kc-empty-title");
-        Label desc = new Label("请先在「设置 › 嵌入模型」中开启知识库并配置向量嵌入模型，即可导入文档与检索。");
+        Label desc = new Label(storageFailed
+                ? "嵌入端点状态仍由顶部共享健康状态显示，但本地知识库存储初始化失败："
+                        + initializationError
+                : "请先在「设置 › 嵌入模型」中开启知识库并配置向量嵌入模型，即可导入文档与检索。");
         desc.getStyleClass().add("kc-empty-desc");
         desc.setWrapText(true);
         desc.setMaxWidth(420);
@@ -916,11 +930,11 @@ public class KnowledgeCenterView {
 
         Label name = new Label("嵌入模型");
         name.getStyleClass().add("kc-emb-card-title");
-        Region dot = new Region();
-        dot.getStyleClass().add("kc-dot-on");
-        Label connected = new Label("已连接");
-        connected.getStyleClass().add("kc-emb-connected");
-        HBox titleRow = new HBox(8, name, dot, connected);
+        settingsEmbeddingDot = new Region();
+        settingsEmbeddingDot.getStyleClass().add("kc-health-dot");
+        settingsEmbeddingStatus = new Label();
+        settingsEmbeddingStatus.getStyleClass().add("kc-emb-connected");
+        HBox titleRow = new HBox(8, name, settingsEmbeddingDot, settingsEmbeddingStatus);
         titleRow.setAlignment(Pos.CENTER_LEFT);
 
         Label model = new Label(blankTo(cfg.getRagEmbeddingModelName(), "未配置"));
@@ -954,8 +968,86 @@ public class KnowledgeCenterView {
 
         VBox card = new VBox(14, top, bottom);
         card.getStyleClass().add("kc-emb-card");
+        applyEmbeddingHealth(expert.embeddingHealth());
         return card;
     }
+
+    private void subscribeEmbeddingHealth() {
+        embeddingHealthClosed = false;
+        embeddingHealthSubscription = expert.onEmbeddingHealthChanged(snapshot -> {
+            Runnable update = () -> {
+                if (!embeddingHealthClosed) applyEmbeddingHealth(snapshot);
+            };
+            if (Platform.isFxApplicationThread()) update.run();
+            else Platform.runLater(update);
+        });
+    }
+
+    private void closeEmbeddingHealthSubscription() {
+        embeddingHealthClosed = true;
+        if (embeddingHealthSubscription == null) return;
+        try {
+            embeddingHealthSubscription.close();
+        } catch (Exception closeFailure) {
+            log.debug("释放知识中心嵌入健康监听失败", closeFailure);
+        } finally {
+            embeddingHealthSubscription = null;
+        }
+    }
+
+    private void applyEmbeddingHealth(EmbeddingHealthSnapshot snapshot) {
+        if (snapshot == null) return;
+        EmbeddingHealthViewState state = embeddingHealthViewState(snapshot.status());
+        String detail = snapshot.lastError() == null || snapshot.lastError().isBlank()
+                ? state.badgeText() : state.badgeText() + "\n" + snapshot.lastError();
+
+        if (ragHealthLabel != null) {
+            ragHealthLabel.setText(state.badgeText());
+            ragHealthLabel.setTooltip(new Tooltip(detail));
+        }
+        applyHealthStyle(ragHealthBadge, state.style());
+        if (ragHealthBadge != null) {
+            ragHealthBadge.setAccessibleText("知识库嵌入状态：" + detail);
+        }
+
+        applyHealthStyle(headerEmbeddingDot, state.style());
+        if (headerEmbeddingChip != null) {
+            headerEmbeddingChip.setAccessibleText("嵌入模型，" + detail);
+        }
+        if (headerEmbeddingTooltip != null) {
+            headerEmbeddingTooltip.setText(
+                    "前往「设置 › 嵌入模型」配置向量模型\n状态：" + detail);
+        }
+
+        applyHealthStyle(settingsEmbeddingDot, state.style());
+        if (settingsEmbeddingStatus != null) {
+            settingsEmbeddingStatus.setText(state.connectionText());
+            settingsEmbeddingStatus.setTooltip(new Tooltip(detail));
+            settingsEmbeddingStatus.setAccessibleText("嵌入模型状态：" + detail);
+            applyHealthStyle(settingsEmbeddingStatus, state.style());
+        }
+    }
+
+    private static void applyHealthStyle(javafx.scene.Node node, String style) {
+        if (node == null) return;
+        node.getStyleClass().removeAll(
+                "kc-health-healthy", "kc-health-checking", "kc-health-degraded",
+                "kc-health-unavailable", "kc-health-unconfigured");
+        node.getStyleClass().add("kc-health-" + style);
+    }
+
+    static EmbeddingHealthViewState embeddingHealthViewState(EmbeddingHealthStatus status) {
+        return switch (status) {
+            case HEALTHY -> new EmbeddingHealthViewState("RAG 正常", "已连接", "healthy");
+            case CHECKING -> new EmbeddingHealthViewState("RAG 检查中", "检查中", "checking");
+            case DEGRADED -> new EmbeddingHealthViewState("RAG 已降级", "已降级", "degraded");
+            case UNAVAILABLE -> new EmbeddingHealthViewState("RAG 不可用", "不可用", "unavailable");
+            case UNCONFIGURED -> new EmbeddingHealthViewState("RAG 未配置", "未配置", "unconfigured");
+        };
+    }
+
+    static record EmbeddingHealthViewState(
+            String badgeText, String connectionText, String style) {}
 
     private VBox miniStat(String label, String value, boolean mono) {
         Label l = new Label(label);

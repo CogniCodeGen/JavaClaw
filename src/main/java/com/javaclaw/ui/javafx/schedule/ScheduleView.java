@@ -4,6 +4,7 @@ import com.javaclaw.app.UIHelper;
 import com.javaclaw.schedule.ScheduleManager;
 import com.javaclaw.schedule.ScheduledTask;
 import com.javaclaw.task.TaskNotificationChannel;
+import com.javaclaw.ui.javafx.control.AccessibleActionPane;
 import com.javaclaw.ui.javafx.control.ToggleSwitch;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -73,6 +74,8 @@ public class ScheduleView {
     private Label statRunsVal;
     private VBox historyBox;
     private Label statusHint;
+    /** 首次保存前只存在于视图内，关闭窗口不会留下数据库记录。 */
+    private ScheduledTask draftTask;
 
     /** 实时刷新「下次运行」倒计时与运行状态的轻量定时器 */
     private javafx.animation.Timeline statusTimer;
@@ -177,7 +180,7 @@ public class ScheduleView {
 
         Button closeBtn = new Button("关闭");
         closeBtn.getStyleClass().addAll("jc-btn", "jc-btn-ghost");
-        closeBtn.setOnAction(e -> stage.close());
+        closeBtn.setOnAction(e -> closeFromButton());
 
         Button saveBtn = new Button("保存");
         saveBtn.getStyleClass().addAll("jc-btn", "jc-btn-save");
@@ -198,6 +201,9 @@ public class ScheduleView {
         Scene scene = new Scene(mainLayout, 960, 680);
         applyStylesheets(scene);
         stage.setScene(scene);
+        stage.setOnCloseRequest(event -> {
+            if (!resolveDraftBeforeLeaving()) event.consume();
+        });
         refreshTaskList();
         updateFootButtons();
     }
@@ -270,8 +276,8 @@ public class ScheduleView {
             line1.getChildren().addAll(sp, tag);
         } else if ("fail".equals(lastStateKey(task))) {
             Label warn = new Label("⚠");
-            warn.getStyleClass().add("status-dot-disabled");
-            warn.setStyle("-fx-text-fill:#EF4444;");
+            warn.getStyleClass().add("schedule-failure-icon");
+            warn.setAccessibleText("上次执行失败");
             Region sp = new Region();
             HBox.setHgrow(sp, Priority.ALWAYS);
             line1.getChildren().addAll(sp, warn);
@@ -284,15 +290,21 @@ public class ScheduleView {
         next.getStyleClass().add("schedule-row-sub");
         next.setMaxWidth(220);
 
-        VBox row = new VBox(6, line1, trig, next);
+        AccessibleActionPane row = new AccessibleActionPane(6, line1, trig, next);
         row.getStyleClass().add("schedule-list-row");
+        row.setAccessibleText(task.getName() + "，"
+                + (running ? "正在执行" : task.isEnabled() ? "已启用" : "已暂停")
+                + "，" + task.describeTrigger());
         if (on) row.getStyleClass().add("schedule-list-row-selected");
         row.setOpacity(task.isEnabled() ? 1.0 : 0.65);
-        row.setOnMouseClicked(e -> {
+        Runnable activate = () -> {
+            if (!resolveDraftBeforeLeaving()) return;
             selectedTaskId = task.getId();
             refreshTaskList();
             showDetail(task);
-        });
+        };
+        row.setOnAccessibleAction(activate);
+        row.setOnMouseClicked(e -> activate.run());
         return row;
     }
 
@@ -665,7 +677,7 @@ public class ScheduleView {
             lt.getStyleClass().add("jc-table-cell");
             ld.getStyleClass().add("jc-table-cell-muted");
             ln.getStyleClass().add("fail".equals(stateKey) ? "jc-table-cell" : "jc-table-cell-muted");
-            if ("fail".equals(stateKey)) ln.setStyle("-fx-text-fill:#EF4444;");
+            if ("fail".equals(stateKey)) ln.getStyleClass().add("schedule-failure-text");
             ln.setWrapText(false);
             Label badge = new Label(status);
             badge.getStyleClass().addAll("jc-badge", "fail".equals(stateKey) ? "jc-badge-fail" : "jc-badge-ok");
@@ -732,7 +744,9 @@ public class ScheduleView {
     // ==================== 事件 ====================
 
     private void onCreateTask() {
-        ScheduledTask t = scheduleManager.createTask("新定时任务");
+        if (!resolveDraftBeforeLeaving()) return;
+        ScheduledTask t = scheduleManager.createDraft("新定时任务");
+        draftTask = t;
         selectedTaskId = t.getId();
         refreshTaskList();
         showDetail(t);
@@ -746,25 +760,89 @@ public class ScheduleView {
     /** 头部开关切换：立即启用/停用并持久化（不依赖「保存」）。 */
     private void onToggleEnabled(boolean enabled) {
         if (selectedTaskId == null) return;
-        ScheduledTask t = scheduleManager.getTask(selectedTaskId);
+        ScheduledTask t = selectedEditableTask();
         if (t == null || t.isEnabled() == enabled) return;
         readForm(t);                 // 先吸收当前编辑内容，避免开关丢编辑
         t.setEnabled(enabled);
+        if (t == draftTask) {
+            refreshDetailStatus();
+            statusHint.setText("草稿将在首次保存后" + (enabled ? "启用" : "保持暂停"));
+            return;
+        }
         scheduleManager.updateTask(t);
         refreshTaskList();
         refreshDetailStatus();
         statusHint.setText(enabled ? "已启用" : "已暂停");
     }
 
-    private void onSaveTask() {
-        if (selectedTaskId == null) return;
-        ScheduledTask t = scheduleManager.getTask(selectedTaskId);
-        if (t == null) return;
-        readForm(t);
-        scheduleManager.updateTask(t);
-        refreshTaskList();
-        refreshDetailStatus();
-        statusHint.setText("已保存");
+    private boolean onSaveTask() {
+        if (selectedTaskId == null) return false;
+        ScheduledTask t = selectedEditableTask();
+        if (t == null) return false;
+        try {
+            readForm(t);
+            if (t == draftTask) {
+                scheduleManager.saveNewTask(t);
+                draftTask = null;
+            } else {
+                scheduleManager.updateTask(t);
+            }
+            refreshTaskList();
+            refreshDetailStatus();
+            statusHint.setText("已保存");
+            return true;
+        } catch (RuntimeException failure) {
+            log.warn("保存定时任务失败", failure);
+            statusHint.setText("保存失败：" + safeMessage(failure));
+            UIHelper.createWarningAlert(
+                    "保存定时任务失败：" + safeMessage(failure)
+                            + "\n\n草稿仍保留在当前窗口中。",
+                    stage).showAndWait();
+            return false;
+        }
+    }
+
+    /**
+     * 在草稿可能被导航或关闭丢弃前统一决策。保存失败与取消都会阻止原动作继续。
+     */
+    private boolean resolveDraftBeforeLeaving() {
+        if (draftTask == null) return true;
+        if (draftTask.getId().equals(selectedTaskId)) readForm(draftTask);
+
+        ButtonType save = new ButtonType("保存并继续", ButtonBar.ButtonData.OK_DONE);
+        ButtonType discard = new ButtonType("放弃", ButtonBar.ButtonData.NO);
+        ButtonType cancel = new ButtonType("取消", ButtonBar.ButtonData.CANCEL_CLOSE);
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION,
+                "定时任务「" + draftTask.getName() + "」尚未保存。"
+                        + "\n保存后继续、放弃草稿，或取消当前操作。",
+                save, discard, cancel);
+        alert.setTitle("未保存的定时任务");
+        alert.setHeaderText(null);
+        alert.initOwner(stage);
+        UIHelper.styleAlert(alert);
+
+        ButtonType decision = alert.showAndWait().orElse(cancel);
+        if (decision == save) return onSaveTask();
+        if (decision == discard) {
+            draftTask = null;
+            refreshTaskList();
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * {@link Stage#close()} 是程序化隐藏，不保证触发窗口装饰器的 close-request 事件；
+     * 页脚按钮必须显式经过与窗口关闭按钮相同的草稿决策。
+     */
+    private void closeFromButton() {
+        if (resolveDraftBeforeLeaving()) stage.hide();
+    }
+
+    private static String safeMessage(Throwable failure) {
+        String message = failure.getMessage();
+        return message == null || message.isBlank()
+                ? failure.getClass().getSimpleName() : message;
     }
 
     /** 把当前编辑控件读回到 task。 */
@@ -800,17 +878,29 @@ public class ScheduleView {
 
     private void onRunNow() {
         if (selectedTaskId == null) return;
-        ScheduledTask t = scheduleManager.getTask(selectedTaskId);
+        ScheduledTask t = selectedEditableTask();
         if (t == null) return;
-        if (!t.isBuiltin()) onSaveTask();   // 内置任务只读，不吸收表单
+        if (!t.isBuiltin()) {
+            if (!onSaveTask()) return;   // 草稿首次运行前必须先正式入库
+            t = scheduleManager.getTask(selectedTaskId);
+            if (t == null) return;
+        }
         scheduleManager.runNow(selectedTaskId);
         statusHint.setText("正在执行…");
     }
 
     private void onDeleteTask() {
         if (selectedTaskId == null) return;
-        ScheduledTask t = scheduleManager.getTask(selectedTaskId);
+        ScheduledTask t = selectedEditableTask();
         if (t == null) return;
+        if (t == draftTask) {
+            draftTask = null;
+            selectedTaskId = null;
+            showEmpty();
+            refreshTaskList();
+            statusHint.setText("未保存草稿已丢弃");
+            return;
+        }
         Alert alert = UIHelper.createConfirmAlert("确认删除",
                 "确定要删除定时任务「" + t.getName() + "」吗？", stage);
         alert.showAndWait().ifPresent(r -> {
@@ -832,7 +922,7 @@ public class ScheduleView {
     }
 
     private void updateFootButtons() {
-        ScheduledTask sel = selectedTaskId == null ? null : scheduleManager.getTask(selectedTaskId);
+        ScheduledTask sel = selectedEditableTask();
         boolean editable = sel != null && !sel.isBuiltin();  // 内置任务只读，禁用保存
         // 立即运行：普通任务恒可；内置任务仅当注册了手动动作时可用
         boolean canRun = sel != null && (editable || scheduleManager.hasBuiltinAction(sel.getId()));
@@ -843,12 +933,17 @@ public class ScheduleView {
     public void show() {
         refreshTaskList();
         if (selectedTaskId != null) {
-            ScheduledTask t = scheduleManager.getTask(selectedTaskId);
+            ScheduledTask t = selectedEditableTask();
             if (t != null) showDetail(t); else showEmpty();
         }
         startStatusTimer();
         stage.setOnHidden(e -> stopStatusTimer());
         stage.showAndWait();
+    }
+
+    private ScheduledTask selectedEditableTask() {
+        if (draftTask != null && draftTask.getId().equals(selectedTaskId)) return draftTask;
+        return selectedTaskId == null ? null : scheduleManager.getTask(selectedTaskId);
     }
 
     private void startStatusTimer() {

@@ -4,6 +4,7 @@ import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.ChatService;
 import com.javaclaw.agent.PlanModeService;
 import com.javaclaw.api.conversation.ModeRegistry;
+import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.workflow.service.WorkflowService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,6 +22,7 @@ public final class WorkspaceRuntime implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(WorkspaceRuntime.class);
 
     private final WorkspaceContext context;
+    private final DatabaseAccess databaseAccess;
     private final AgentRuntime agentRuntime;
     private final ChatService chatService;
     private final PlanModeService planModeService;
@@ -29,12 +31,14 @@ public final class WorkspaceRuntime implements AutoCloseable {
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
     WorkspaceRuntime(WorkspaceContext context,
+                     DatabaseAccess databaseAccess,
                      AgentRuntime agentRuntime,
                      ChatService chatService,
                      PlanModeService planModeService,
                      WorkflowService workflowService,
                      ModeRegistry modeRegistry) {
         this.context = Objects.requireNonNull(context, "context");
+        this.databaseAccess = Objects.requireNonNull(databaseAccess, "databaseAccess");
         this.agentRuntime = Objects.requireNonNull(agentRuntime, "agentRuntime");
         this.chatService = Objects.requireNonNull(chatService, "chatService");
         this.planModeService = Objects.requireNonNull(planModeService, "planModeService");
@@ -44,6 +48,10 @@ public final class WorkspaceRuntime implements AutoCloseable {
 
     public WorkspaceContext context() {
         return context;
+    }
+
+    public DatabaseAccess databaseAccess() {
+        return databaseAccess;
     }
 
     public AgentRuntime agentRuntime() {

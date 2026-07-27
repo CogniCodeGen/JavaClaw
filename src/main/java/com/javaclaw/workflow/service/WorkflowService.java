@@ -4,6 +4,7 @@ import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
+import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.api.interaction.ConfirmKind;
 import com.javaclaw.api.interaction.ConfirmRequest;
 import com.javaclaw.workflow.model.GraphDefinition;
@@ -185,6 +186,7 @@ public final class WorkflowService implements AutoCloseable {
             } else if (event instanceof GraphEvent.RunFinished e) {
                 activeByThread.remove(thread, e.runId());
                 if (e.status() == RunStatus.FAILED) sendError(callbacks, new IllegalStateException(e.error()));
+                else if (e.status() == RunStatus.CANCELLED) sendCancelled(callbacks);
                 else sendComplete(callbacks);
             }
         };
@@ -299,6 +301,8 @@ public final class WorkflowService implements AutoCloseable {
             if (pending.recoveryPolicy() == SystemRecoveryPolicy.RESUME_ONLY) {
                 if (finished.status() == RunStatus.FAILED) {
                     sendError(pending.callbacks(), new IllegalStateException(finished.error()));
+                } else if (finished.status() == RunStatus.CANCELLED) {
+                    sendCancelled(pending.callbacks());
                 } else {
                     sendComplete(pending.callbacks());
                 }
@@ -323,20 +327,26 @@ public final class WorkflowService implements AutoCloseable {
     }
 
     private static void sendComplete(ConversationCallbacks callbacks) {
-        try { callbacks.onComplete(); }
+        try { callbacks.onTerminal(ConversationOutcome.completed()); }
         catch (Throwable ignored) { }
     }
 
     private static void sendError(ConversationCallbacks callbacks, Throwable failure) {
-        try { callbacks.onError(failure); }
+        try { callbacks.onTerminal(ConversationOutcome.failed(failure)); }
         catch (Throwable ignored) { }
+    }
+
+    private static void sendCancelled(ConversationCallbacks callbacks) {
+        try {
+            callbacks.onTerminal(new ConversationOutcome.Cancelled(
+                    com.javaclaw.api.conversation.CancellationReason.USER_REQUEST, true));
+        } catch (Throwable ignored) { }
     }
 
     private static ConversationCallbacks mutedRecoveryCallbacks() {
         return new ConversationCallbacks() {
             @Override public void onEvent(ConversationEvent event) { }
-            @Override public void onComplete() { }
-            @Override public void onError(Throwable error) { }
+            @Override public void onTerminal(ConversationOutcome outcome) { }
         };
     }
 
@@ -351,7 +361,7 @@ public final class WorkflowService implements AutoCloseable {
         pending.confirmationThread().interrupt();
         executions.cancel(pending.runId());
         if (pending.terminalSent().compareAndSet(false, true)) {
-            sendComplete(pending.callbacks());
+            sendCancelled(pending.callbacks());
         }
         return true;
     }

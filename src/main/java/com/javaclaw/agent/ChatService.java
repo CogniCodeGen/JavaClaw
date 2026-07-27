@@ -13,6 +13,7 @@ import com.javaclaw.agent.router.RoutingResult;
 import com.javaclaw.agent.router.ToolRouter;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
+import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.api.conversation.ConversationRequest;
 import com.javaclaw.chat.ChatMessage;
 import com.javaclaw.config.AgentConfig;
@@ -65,7 +66,8 @@ public class ChatService {
     /** 共享基础设施容器 */
     private final AgentRuntime runtime;
     private final com.javaclaw.workflow.service.WorkflowService workflowService;
-    private volatile String activeSystemSessionId;
+    private final com.javaclaw.api.conversation.SingleConversationRun conversationRun =
+            new com.javaclaw.api.conversation.SingleConversationRun();
 
     /** 主编排工具集（带工具分组，每轮按路由结果激活子集） */
     private final Toolkit masterToolkit;
@@ -146,7 +148,8 @@ public class ChatService {
 
         // 0. 记忆服务：打开当前工作区的 EclipseStore 记忆库（人格默认骨架自动写入）
         this.memoryService = new com.javaclaw.memory.MemoryService(
-                runtime.getModelFactory(), runtime.getTokenTracker());
+                runtime.getModelFactory(), runtime.getTokenTracker(),
+                runtime.getEmbeddingGateway());
         // 嵌入降级可感知：首次嵌入失败弹一次 Toast，避免端点配错时记忆系统静默失效而用户长期不知情
         this.memoryService.setOnEmbeddingDegraded(reason -> {
             com.javaclaw.api.interaction.UserInteractionPort port = ToolConfirmationManager.getPort();
@@ -308,12 +311,18 @@ public class ChatService {
      * @param request   用户请求（文本 + 附件）
      * @param callbacks 事件与生命周期回调
      */
-    public void streamChat(ConversationRequest request, ConversationCallbacks callbacks) {
+    public com.javaclaw.api.conversation.ConversationHandle streamChat(
+            ConversationRequest request, ConversationCallbacks callbacks) {
+        return conversationRun.start(callbacks,
+                guarded -> startChatPipeline(request, guarded),
+                ignored -> cancelStream(request.sessionId()));
+    }
+
+    private void startChatPipeline(ConversationRequest request, ConversationCallbacks callbacks) {
         if (workflowService == null) {
             executeChatPipeline(request, callbacks);
             return;
         }
-        activeSystemSessionId = request.sessionId();
         workflowService.runSystem(SYSTEM_GRAPH, request.sessionId(),
                 com.javaclaw.workflow.service.SystemInvocationState.from(request), callbacks,
                 this::executeChatGraphStage);
@@ -448,8 +457,9 @@ public class ChatService {
                 callbacks.onEvent(event);
             }
 
-            @Override public void onComplete() { callbacks.onComplete(); }
-            @Override public void onError(Throwable error) { callbacks.onError(error); }
+            @Override public void onTerminal(ConversationOutcome outcome) {
+                callbacks.onTerminal(outcome);
+            }
         };
 
         // 绑定澄清工具回调到本轮 UI 回调；doFinally 中 CAS 解绑，避免跨轮误清。
@@ -606,7 +616,7 @@ public class ChatService {
                             runtime.getTokenTracker().recordUsage(inputCharCount, outputCharCount.get());
                             // 出错轮：注入技能记一次失败归因
                             recordSkillTurnOutcome(false);
-                            callbacks.onError(error);
+                            callbacks.onTerminal(ConversationOutcome.failed(error));
                         },
                         () -> {
                             log.info("流式输出完成（GEPA 执行轨迹: {} 条）",
@@ -620,7 +630,7 @@ public class ChatService {
                             skillCurator.distillFromChatTurn(userInput, collectedReply.toString(),
                                             executionMonitor.getTraces(), executionMonitor.successRate())
                                     .subscribe();
-                            callbacks.onComplete();
+                            callbacks.onTerminal(ConversationOutcome.completed());
                         }
                 );
         selfSub.set(sub);
@@ -771,8 +781,14 @@ public class ChatService {
      * @return true 表示成功取消，false 表示没有活跃的流
      */
     public boolean cancelStream() {
+        return conversationRun.cancelActive(
+                com.javaclaw.api.conversation.CancellationReason.USER_REQUEST);
+    }
+
+    /** 只取消指定会话对应的系统图运行；由本轮句柄捕获调用。 */
+    public boolean cancelStream(String sessionId) {
         boolean graphCancelled = workflowService != null
-                && workflowService.cancelSystem(SYSTEM_GRAPH.id(), activeSystemSessionId);
+                && workflowService.cancelSystem(SYSTEM_GRAPH.id(), sessionId);
         boolean disposed = cancelPipelineStream();
         return graphCancelled || disposed;
     }
@@ -885,7 +901,8 @@ public class ChatService {
     /** 关闭服务：取消活跃流 + 关闭记忆库（释放 EclipseStore 锁与写线程）；其余共享资源由 AgentRuntime 统一关闭 */
     public void shutdown() {
         log.info("正在关闭 ChatService...");
-        cancelStream();
+        conversationRun.cancelActive(
+                com.javaclaw.api.conversation.CancellationReason.SHUTDOWN);
         try {
             memoryService.close();
         } catch (Exception e) {

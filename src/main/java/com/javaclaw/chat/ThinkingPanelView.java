@@ -243,10 +243,30 @@ public class ThinkingPanelView {
      * 流式会话结束：自动折叠思考区/规划区，减少阅读疲劳
      */
     public void endStream() {
-        setStatus("idle", "处理完成");
+        endStreamWithStatus("处理完成", "已完成");
+    }
+
+    /** 取消终态：停止所有计时，并把仍在“思考中”的子智能体明确标为已停止。 */
+    public void endStreamCancelled() {
+        endStreamWithStatus("已取消", "已停止");
+    }
+
+    /** 失败终态：停止所有计时，并把仍在“思考中”的子智能体明确标为失败。 */
+    public void endStreamFailed() {
+        endStreamWithStatus("失败", "失败");
+    }
+
+    private void endStreamWithStatus(String statusText, String agentStatusText) {
+        setStatus("idle", statusText);
         stopElapsedTicker();
         // 定格最终耗时
         refreshElapsedLabel();
+        if (currentAgentStatusLabel != null
+                && currentAgentStatusLabel.getStyleClass().contains("agent-status-thinking")) {
+            currentAgentStatusLabel.setText(agentStatusText);
+            currentAgentStatusLabel.getStyleClass().remove("agent-status-thinking");
+            currentAgentStatusLabel.getStyleClass().add("agent-status-done");
+        }
         if (collapseThinking != null) collapseThinking.run();
         if (collapsePlan != null) collapsePlan.run();
         if (collapseCurrentAgent != null) collapseCurrentAgent.run();

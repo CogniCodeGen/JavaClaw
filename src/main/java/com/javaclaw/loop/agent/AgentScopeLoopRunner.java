@@ -8,6 +8,7 @@ import com.javaclaw.agent.router.RoutingResult;
 import com.javaclaw.agent.router.ToolRouter;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
+import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.loop.LoopConstants;
 import com.javaclaw.loop.LoopIterationRunner;
@@ -175,10 +176,9 @@ public final class AgentScopeLoopRunner implements LoopIterationRunner {
                 }
 
                 @Override
-                public void onComplete() { /* 本轮结束由 runner 的 latch 控制，不透传 */ }
-
-                @Override
-                public void onError(Throwable error) { /* 交由 runner 统一折成失败结果 */ }
+                public void onTerminal(ConversationOutcome outcome) {
+                    /* 本轮结束由 runner 的 latch 控制，不透传 */
+                }
             };
 
             CountDownLatch done = new CountDownLatch(1);

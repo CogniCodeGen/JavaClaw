@@ -18,21 +18,31 @@ import java.util.concurrent.atomic.AtomicReference;
 /** 工作区级图执行生命周期管理器。 */
 public final class GraphExecutionManager implements AutoCloseable {
     public static final String RESUME_NODE_STATE_KEY = "_workflow.resumeNode";
+    private final NodeExecutorRegistry registry;
     private final GraphCheckpointStore store;
     private final GraphEngine engine;
-    private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+    private final ExecutorService executor;
     private final ConcurrentHashMap<String, CancellationToken> active = new ConcurrentHashMap<>();
 
     public GraphExecutionManager(NodeExecutorRegistry registry, GraphCheckpointStore store) {
+        this(registry, store, Executors.newVirtualThreadPerTaskExecutor());
+    }
+
+    public GraphExecutionManager(NodeExecutorRegistry registry, GraphCheckpointStore store,
+                                 ExecutorService executor) {
+        this.registry = Objects.requireNonNull(registry);
         this.store = Objects.requireNonNull(store);
-        this.engine = new GraphEngine(Objects.requireNonNull(registry), store);
+        this.executor = Objects.requireNonNull(executor);
+        this.engine = new GraphEngine(this.registry, store);
         store.markRunningAsRecoveryRequired();
     }
 
     public GraphRun start(GraphDefinition definition, String threadId, GraphState initialState,
                           GraphListener listener, Map<Class<?>, Object> services) {
+        GraphValidator.requireValid(definition, registry);
         GraphRun run = new GraphRun(definition, threadId, initialState);
-        store.createRun(run);
+        run.status(RunStatus.RUNNING);
+        store.createRunningRun(run);
         schedule(run, listener, services);
         return run;
     }
@@ -44,7 +54,8 @@ public final class GraphExecutionManager implements AutoCloseable {
         if (run.status().terminal()) throw new IllegalStateException("终态运行不可恢复: " + run.status());
         if (active.containsKey(runId)) throw new IllegalStateException("运行仍在执行: " + runId);
 
-        if (run.status() == RunStatus.WAITING_INPUT) {
+        RunStatus expectedStatus = run.status();
+        if (expectedStatus == RunStatus.WAITING_INPUT) {
             if (humanResponse == null) throw new IllegalArgumentException("恢复待输入工作流必须提供响应");
             String key = run.interrupt() == null ? "human.response" : run.interrupt().responseKey();
             run.state(run.state().apply(StatePatch.builder()
@@ -53,7 +64,7 @@ public final class GraphExecutionManager implements AutoCloseable {
                     .build()));
             run.nextNodeId(run.currentNodeId());
             run.interrupt(null);
-        } else if (run.status() == RunStatus.RECOVERY_REQUIRED) {
+        } else if (expectedStatus == RunStatus.RECOVERY_REQUIRED) {
             var node = run.definition().nodes().stream()
                     .filter(n -> n.id().equals(run.currentNodeId())).findFirst().orElse(null);
             if (node != null && node.resumeSafety() == ResumeSafety.CONFIRM_RETRY && !unsafeRetryConfirmed) {
@@ -61,8 +72,8 @@ public final class GraphExecutionManager implements AutoCloseable {
             }
             if (run.nextNodeId() == null) run.nextNodeId(run.currentNodeId());
         }
-        run.status(RunStatus.CREATED);
-        store.updateRun(run);
+        run.status(RunStatus.RUNNING);
+        store.activateExistingRun(run, expectedStatus);
         schedule(run, listener, services);
         return run;
     }
@@ -90,25 +101,37 @@ public final class GraphExecutionManager implements AutoCloseable {
         if (active.putIfAbsent(run.id(), token) != null) {
             throw new IllegalStateException("运行已在执行: " + run.id());
         }
-        executor.submit(() -> {
-            AtomicReference<GraphEvent.RunFinished> terminal = new AtomicReference<>();
-            GraphListener lifecycleListener = event -> {
-                if (event instanceof GraphEvent.RunFinished finished) terminal.set(finished);
-                else if (listener != null) listener.onEvent(event);
-            };
-            try {
-                engine.execute(run, token, lifecycleListener, services);
-            } finally {
-                // 终态回调可能立刻为同一 thread 启动下一条排队运行；必须先释放 active，
-                // 否则旧 run 会覆盖新 run 的映射，或让回调误判 thread 仍忙。
-                active.remove(run.id(), token);
-                GraphEvent.RunFinished finished = terminal.get();
-                if (finished != null && listener != null) {
-                    try { listener.onEvent(finished); }
-                    catch (Throwable ignored) { }
+        try {
+            executor.submit(() -> {
+                AtomicReference<GraphEvent.RunFinished> terminal = new AtomicReference<>();
+                GraphListener lifecycleListener = event -> {
+                    if (event instanceof GraphEvent.RunFinished finished) terminal.set(finished);
+                    else if (listener != null) listener.onEvent(event);
+                };
+                try {
+                    engine.execute(run, token, lifecycleListener, services);
+                } finally {
+                    // 终态回调可能立刻为同一 thread 启动下一条排队运行；必须先释放 active，
+                    // 否则旧 run 会覆盖新 run 的映射，或让回调误判 thread 仍忙。
+                    active.remove(run.id(), token);
+                    GraphEvent.RunFinished finished = terminal.get();
+                    if (finished != null && listener != null) {
+                        try { listener.onEvent(finished); }
+                        catch (Throwable ignored) { }
+                    }
                 }
+            });
+        } catch (RuntimeException submitFailure) {
+            active.remove(run.id(), token);
+            run.status(RunStatus.FAILED);
+            run.error("工作流执行线程提交失败: " + submitFailure.getMessage());
+            try {
+                store.updateRun(run);
+            } catch (Throwable persistFailure) {
+                submitFailure.addSuppressed(persistFailure);
             }
-        });
+            throw submitFailure;
+        }
     }
 
     @Override

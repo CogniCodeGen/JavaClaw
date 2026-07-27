@@ -109,7 +109,8 @@ public class ChatHistoryManager {
         try {
             List<ChatMessage> messages = new ArrayList<>();
             String sql = """
-                    SELECT role, content, timestamp, image_paths_json, adopted
+                    SELECT role, content, timestamp, image_paths_json, adopted,
+                           delivery_state, input_tokens, output_tokens, duration_ms
                     FROM chat_messages
                     WHERE workspace_id = ? AND session_id = ?
                     ORDER BY position
@@ -126,6 +127,17 @@ public class ChatHistoryManager {
                                 LocalDateTime.parse(rs.getString("timestamp"), TIMESTAMP_FORMATTER),
                                 readStringList(rs.getString("image_paths_json")));
                         msg.setAdopted(rs.getBoolean("adopted"));
+                        String state = rs.getString("delivery_state");
+                        msg.setDeliveryState(state == null || state.isBlank()
+                                ? null : DeliveryState.valueOf(state));
+                        Long input = nullableLong(rs, "input_tokens");
+                        Long output = nullableLong(rs, "output_tokens");
+                        Long duration = nullableLong(rs, "duration_ms");
+                        msg.setMetrics(input == null && output == null && duration == null
+                                ? null : new TurnMetrics(
+                                        input == null ? 0 : input,
+                                        output == null ? 0 : output,
+                                        duration == null ? 0 : duration));
                         messages.add(msg);
                     }
                 }
@@ -145,8 +157,9 @@ public class ChatHistoryManager {
         try {
             String insert = """
                     INSERT INTO chat_messages(
-                        workspace_id, session_id, position, role, content, timestamp, image_paths_json, adopted
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        workspace_id, session_id, position, role, content, timestamp, image_paths_json, adopted,
+                        delivery_state, input_tokens, output_tokens, duration_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """;
             try (Connection c = AppDatabase.getConnection();
                  PreparedStatement del = c.prepareStatement("DELETE FROM chat_messages WHERE workspace_id = ? AND session_id = ?");
@@ -167,6 +180,18 @@ public class ChatHistoryManager {
                     ps.setString(6, msg.getTimestamp().format(TIMESTAMP_FORMATTER));
                     ps.setString(7, objectMapper.writeValueAsString(msg.getImagePaths()));
                     ps.setBoolean(8, msg.isAdopted());
+                    if (msg.getDeliveryState() == null) ps.setNull(9, java.sql.Types.VARCHAR);
+                    else ps.setString(9, msg.getDeliveryState().name());
+                    TurnMetrics metrics = msg.getMetrics();
+                    if (metrics == null) {
+                        ps.setNull(10, java.sql.Types.BIGINT);
+                        ps.setNull(11, java.sql.Types.BIGINT);
+                        ps.setNull(12, java.sql.Types.BIGINT);
+                    } else {
+                        ps.setLong(10, metrics.inputTokens());
+                        ps.setLong(11, metrics.outputTokens());
+                        ps.setLong(12, metrics.durationMs());
+                    }
                     ps.addBatch();
                 }
                 ps.executeBatch();
@@ -178,6 +203,11 @@ public class ChatHistoryManager {
         } finally {
             fileLock.writeLock().unlock();
         }
+    }
+
+    private static Long nullableLong(ResultSet rs, String column) throws SQLException {
+        long value = rs.getLong(column);
+        return rs.wasNull() ? null : value;
     }
 
     public boolean hasSessionMessages(String sessionId) {

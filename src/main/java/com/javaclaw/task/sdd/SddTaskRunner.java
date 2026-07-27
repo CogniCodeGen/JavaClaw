@@ -1,6 +1,9 @@
 package com.javaclaw.task.sdd;
 
 import com.javaclaw.agent.model.ModelFactory;
+import com.javaclaw.config.AppDatabase;
+import com.javaclaw.config.AppDatabaseAccess;
+import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.skill.SkillManager;
 import com.javaclaw.task.sdd.agent.AgentScopeCriticJudge;
 import com.javaclaw.task.sdd.agent.AgentScopeSddAgents;
@@ -59,17 +62,27 @@ public final class SddTaskRunner {
                          SkillManager skills, SddTokenSink tokenSink, ReviewGate gate,
                          SddProgress progress, String completionStamp,
                          com.javaclaw.workflow.service.WorkflowService workflowService) {
+        this(ctx, modelFactory, capabilityTools, skills, tokenSink, gate, progress, completionStamp,
+                workflowService, new AppDatabaseAccess(), AppDatabase.currentWorkspaceId());
+    }
+
+    public SddTaskRunner(TaskContext ctx, ModelFactory modelFactory, Map<String, Object> capabilityTools,
+                         SkillManager skills, SddTokenSink tokenSink, ReviewGate gate,
+                         SddProgress progress, String completionStamp,
+                         com.javaclaw.workflow.service.WorkflowService workflowService,
+                         DatabaseAccess database, String workspaceId) {
         this.context = ctx;
         this.workflowService = workflowService;
         if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
-        this.store = new SpecStore(ctx.workDir());
+        this.store = new SpecStore(ctx.workDir(), database, workspaceId);
         this.agents = new AgentScopeSddAgents(modelFactory, capabilityTools, skills, tokenSink);
         this.commandRunner = new ProcessCommandRunner();
         this.critic = new AgentScopeCriticJudge(ctx.workDir(), modelFactory, tokenSink);
         ScenarioVerifier verifier = new ScenarioVerifier(ctx.workDir(), commandRunner, critic);
         this.orchestrator = new SddOrchestrator(ctx, store, verifier, agents,
                 gate == null ? new AutoApproveReviewGate() : gate,
-                progress == null ? SddProgress.NOOP : progress)
+                progress == null ? SddProgress.NOOP : progress,
+                database, workspaceId)
                 .completionStamp(completionStamp == null ? "" : completionStamp);
     }
 
@@ -145,8 +158,15 @@ public final class SddTaskRunner {
                             }
                         }
                     }
-                    @Override public void onComplete() { done.countDown(); }
-                    @Override public void onError(Throwable failure) { error.set(failure); done.countDown(); }
+                    @Override
+                    public void onTerminal(com.javaclaw.api.conversation.ConversationOutcome terminal) {
+                        if (terminal instanceof com.javaclaw.api.conversation.ConversationOutcome.Failed failed) {
+                            error.set(failed.error());
+                        } else if (terminal instanceof com.javaclaw.api.conversation.ConversationOutcome.Cancelled) {
+                            outcome.compareAndSet(null, SddOutcome.cancelled());
+                        }
+                        done.countDown();
+                    }
                 };
         workflowService.runSystem(SYSTEM_GRAPH, context.id(), resume ? "resume" : "run", callbacks,
                 (stageId, graphCtx) -> {

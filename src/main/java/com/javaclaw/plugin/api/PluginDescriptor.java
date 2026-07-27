@@ -30,7 +30,7 @@ public record PluginDescriptor(
         List<ConfigField> config) {
 
     /** 当前宿主支持的 plugin-api 主版本号；插件 {@link #apiVersion()} 不匹配则拒载 */
-    public static final String HOST_API_VERSION = "1.0";
+    public static final String HOST_API_VERSION = "2.0";
 
     /** 防御性拷贝 + 空值兜底，保证不可变与非空集合 */
     public PluginDescriptor {

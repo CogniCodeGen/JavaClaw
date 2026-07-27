@@ -3,6 +3,7 @@ package com.javaclaw.workflow;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
+import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.workflow.model.GraphState;
 import com.javaclaw.workflow.model.NodeDefinition;
 import com.javaclaw.workflow.model.NodeType;
@@ -83,8 +84,7 @@ class SystemPipelineAwaiterTest {
     private static ConversationCallbacks silentCallbacks() {
         return new ConversationCallbacks() {
             @Override public void onEvent(ConversationEvent event) { }
-            @Override public void onComplete() { }
-            @Override public void onError(Throwable error) { }
+            @Override public void onTerminal(ConversationOutcome outcome) { }
         };
     }
 

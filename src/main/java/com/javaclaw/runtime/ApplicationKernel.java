@@ -240,14 +240,16 @@ public final class ApplicationKernel implements AutoCloseable {
             SddTaskManager.getInstance().configure(
                     workspaceRuntime.context().dataRoot(),
                     runtime.getModelFactory(), runtime::buildCapabilityTools,
-                    SkillManager.getInstance(), interactionPort, workspaceRuntime.workflowService());
+                    SkillManager.getInstance(), interactionPort, workspaceRuntime.workflowService(),
+                    workspaceRuntime.databaseAccess(), workspaceRuntime.context().workspaceId());
         } else {
             ScheduleManager.getInstance().reload(new ScheduledTaskAgent(runtime));
             PluginManager.getInstance().reload(runtime);
             SddTaskManager.getInstance().reload(
                     workspaceRuntime.context().dataRoot(),
                     runtime.getModelFactory(), runtime::buildCapabilityTools,
-                    workspaceRuntime.workflowService());
+                    workspaceRuntime.workflowService(), workspaceRuntime.databaseAccess(),
+                    workspaceRuntime.context().workspaceId());
         }
     }
 

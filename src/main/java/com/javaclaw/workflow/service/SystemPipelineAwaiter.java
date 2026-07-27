@@ -2,6 +2,7 @@ package com.javaclaw.workflow.service;
 
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
+import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.workflow.model.StatePatch;
 import com.javaclaw.workflow.runtime.NodeExecutionContext;
 import com.javaclaw.workflow.runtime.NodeResult;
@@ -28,8 +29,15 @@ public final class SystemPipelineAwaiter {
                 else if (event instanceof ConversationEvent.AgentReply r) output.append(r.chunk());
                 outer.onEvent(event);
             }
-            @Override public void onComplete() { done.countDown(); }
-            @Override public void onError(Throwable error) { failure.set(error); done.countDown(); }
+            @Override public void onTerminal(ConversationOutcome outcome) {
+                if (outcome instanceof ConversationOutcome.Failed failed) {
+                    failure.set(failed.error());
+                } else if (outcome instanceof ConversationOutcome.Cancelled cancelled) {
+                    failure.set(new java.util.concurrent.CancellationException(
+                            "系统管线已取消: " + cancelled.reason()));
+                }
+                done.countDown();
+            }
         };
         // 先拒绝已经取消的运行，避免无意义地启动底层管线；真正启动后再注册钩子。
         // CancellationToken.onCancel 对已经取消的令牌会立即执行 hook，因此即使取消恰好

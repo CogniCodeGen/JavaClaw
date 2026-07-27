@@ -509,7 +509,9 @@ public final class PluginCenterView {
             Platform.runLater(() -> {
                 if (id != null) { tab = "installed"; if (installedTab != null) installedTab.setSelected(true); selectedId = id; }
                 else UIHelper.createConfirmAlert("安装失败",
-                        "无法从该 jar 安装插件：descriptor 非法或与宿主不兼容。", stage).show();
+                        "无法安装该插件：descriptor 非法，或插件 API 与宿主不兼容。"
+                                + "当前宿主要求 Plugin API 2.x；旧插件请重新编译后再安装。",
+                        stage).show();
                 render();
             });
         }, "plugin-install");

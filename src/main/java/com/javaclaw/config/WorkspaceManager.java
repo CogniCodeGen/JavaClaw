@@ -33,17 +33,13 @@ public class WorkspaceManager {
 
     private static WorkspaceManager instance;
 
-    private final Path projectRoot;
-
     private final List<Workspace> workspaces = new CopyOnWriteArrayList<>();
     private volatile String currentWorkspaceId;
 
     /** 工作区切换回调 */
     private Consumer<Workspace> onWorkspaceSwitched;
 
-    private WorkspaceManager() {
-        this.projectRoot = Path.of(System.getProperty("user.dir"));
-    }
+    private WorkspaceManager() {}
 
     public static synchronized WorkspaceManager getInstance() {
         if (instance == null) {
@@ -142,7 +138,7 @@ public class WorkspaceManager {
     // ==================== 路径查询 ====================
 
     public Path getGlobalDataPath() {
-        return projectRoot.resolve("data");
+        return AppDatabase.dataDirectory();
     }
 
     public Path getCurrentBrowserDir() {

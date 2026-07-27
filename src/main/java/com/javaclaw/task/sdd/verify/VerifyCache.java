@@ -2,6 +2,8 @@ package com.javaclaw.task.sdd.verify;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.config.AppDatabase;
+import com.javaclaw.config.AppDatabaseAccess;
+import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.task.sdd.spec.Scenario;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,6 +16,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Stream;
 
 /**
@@ -40,28 +43,46 @@ public final class VerifyCache {
     private final Path workDir;
     private final String workDirKey;
     private final String slug;
+    private final DatabaseAccess database;
+    private final String workspaceId;
     private String fingerprint = "";
     private Map<String, String> passes = new LinkedHashMap<>();
 
-    private VerifyCache(Path workDir, String workDirKey, String slug) {
+    private VerifyCache(Path workDir, String workDirKey, String slug,
+                        DatabaseAccess database, String workspaceId) {
         this.workDir = workDir;
         this.workDirKey = workDirKey;
         this.slug = slug;
+        this.database = database;
+        this.workspaceId = workspaceId;
     }
 
     /** 加载（或新建）某变更的验收缓存。workDir/slug 无效时返回一个不持久化的空缓存。 */
     public static VerifyCache load(String workDir, String slug) {
+        return load(workDir, slug, new AppDatabaseAccess(), AppDatabase.currentWorkspaceId());
+    }
+
+    /**
+     * 从指定数据库和工作区加载（或新建）某变更的验收缓存。
+     * workDir/slug 无效时返回一个不持久化的空缓存。
+     */
+    public static VerifyCache load(String workDir, String slug,
+                                   DatabaseAccess database, String workspaceId) {
+        Objects.requireNonNull(database, "database");
+        Objects.requireNonNull(workspaceId, "workspaceId");
         Path wd = (workDir == null || workDir.isBlank()) ? null : Path.of(workDir).toAbsolutePath();
-        if (wd == null || slug == null || slug.isBlank()) return new VerifyCache(wd, null, slug);
-        VerifyCache c = new VerifyCache(wd, wd.normalize().toString(), slug);
+        if (wd == null || slug == null || slug.isBlank()) {
+            return new VerifyCache(wd, null, slug, database, workspaceId);
+        }
+        VerifyCache c = new VerifyCache(wd, wd.normalize().toString(), slug, database, workspaceId);
         try {
-            try (Connection conn = AppDatabase.getConnection();
+            try (Connection conn = database.open();
                  PreparedStatement ps = conn.prepareStatement("""
                          SELECT fingerprint, passes_json
                          FROM sdd_verify_cache
                          WHERE workspace_id = ? AND work_dir = ? AND slug = ?
                          """)) {
-                ps.setString(1, AppDatabase.currentWorkspaceId());
+                ps.setString(1, workspaceId);
                 ps.setString(2, c.workDirKey);
                 ps.setString(3, slug);
                 try (ResultSet rs = ps.executeQuery()) {
@@ -133,13 +154,13 @@ public final class VerifyCache {
     /** 持久化到 H2。无效工作目录时静默跳过。 */
     public void save() {
         if (workDirKey == null || slug == null || slug.isBlank()) return;
-        try (Connection c = AppDatabase.getConnection();
+        try (Connection c = database.open();
              PreparedStatement ps = c.prepareStatement("""
                      MERGE INTO sdd_verify_cache(workspace_id, work_dir, slug, fingerprint, passes_json, updated_at)
                      KEY(workspace_id, work_dir, slug)
                      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                      """)) {
-            ps.setString(1, AppDatabase.currentWorkspaceId());
+            ps.setString(1, workspaceId);
             ps.setString(2, workDirKey);
             ps.setString(3, slug);
             ps.setString(4, fingerprint);

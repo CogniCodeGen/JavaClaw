@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
+import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.workflow.editor.WorkflowEditorModel;
 import com.javaclaw.workflow.model.EdgeDefinition;
 import com.javaclaw.workflow.model.EdgeKind;
@@ -20,12 +21,14 @@ import com.javaclaw.workflow.runtime.GraphRun;
 import com.javaclaw.workflow.runtime.ValidationIssue;
 import com.javaclaw.workflow.service.WorkflowService;
 import com.javaclaw.workflow.store.WorkflowDefinitionRecord;
+import com.javaclaw.ui.javafx.control.AccessibleActionPane;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.geometry.Point2D;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
+import javafx.scene.Group;
 import javafx.scene.control.*;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.*;
@@ -53,6 +56,8 @@ public final class WorkflowCenterView {
     private final Stage stage = new Stage();
     private final ListView<Item> list = new ListView<>();
     private final GraphPane graphPane = new GraphPane();
+    private final Group graphGroup = new Group(graphPane);
+    private ScrollPane graphViewport;
     private final TextArea configEditor = new TextArea();
     private final TextField nodeLabel = new TextField();
     private final Spinner<Integer> retryAttempts = new Spinner<>(1, 10, 1);
@@ -353,14 +358,15 @@ public final class WorkflowCenterView {
 
     private StackPane canvasViewport() {
         graphPane.setMinSize(1600, 1000);
-        ScrollPane viewport = new ScrollPane(graphPane);
+        ScrollPane viewport = new ScrollPane(graphGroup);
+        graphViewport = viewport;
         viewport.setPannable(true);
         viewport.setFitToWidth(false);
         viewport.setFitToHeight(false);
         viewport.getStyleClass().add("workflow-viewport");
         viewport.addEventFilter(javafx.scene.input.ScrollEvent.SCROLL, event -> {
             if (!event.isControlDown()) return;
-            zoom = Math.max(0.5, Math.min(2.0, zoom * (event.getDeltaY() > 0 ? 1.1 : 0.9)));
+            zoom = Math.max(0.1, Math.min(2.0, zoom * (event.getDeltaY() > 0 ? 1.1 : 0.9)));
             graphPane.setScaleX(zoom);
             graphPane.setScaleY(zoom);
             updateZoomLabel();
@@ -368,7 +374,7 @@ public final class WorkflowCenterView {
         });
         Button zoomOut = styledButton("−", "jc-btn-ghost", () -> setZoom(zoom / 1.15));
         Button zoomIn = styledButton("＋", "jc-btn-ghost", () -> setZoom(zoom * 1.15));
-        Button fit = styledButton("适配", "jc-btn-ghost", () -> setZoom(0.8));
+        Button fit = styledButton("适配", "jc-btn-ghost", this::fitGraphToViewport);
         zoomOut.getStyleClass().add("workflow-zoom-btn"); zoomIn.getStyleClass().add("workflow-zoom-btn");
         fit.getStyleClass().add("workflow-fit-btn");
         HBox controls = new HBox(2, zoomOut, zoomLabel, zoomIn, fit);
@@ -489,8 +495,17 @@ public final class WorkflowCenterView {
             try {
                 service.testRun(editor.current(), input, new ConversationCallbacks() {
                     @Override public void onEvent(ConversationEvent event) { Platform.runLater(() -> log(event.toString())); }
-                    @Override public void onComplete() { Platform.runLater(() -> { log("运行结束"); refreshRuns(); }); }
-                    @Override public void onError(Throwable error) { Platform.runLater(() -> { log("失败：" + error.getMessage()); refreshRuns(); }); }
+                    @Override public void onTerminal(ConversationOutcome outcome) {
+                        Platform.runLater(() -> {
+                            if (outcome instanceof ConversationOutcome.Completed) log("运行结束");
+                            else if (outcome instanceof ConversationOutcome.Cancelled cancelled) {
+                                log("已取消：" + cancelled.reason());
+                            } else if (outcome instanceof ConversationOutcome.Failed failed) {
+                                log("失败：" + failed.error().getMessage());
+                            }
+                            refreshRuns();
+                        });
+                    }
                 });
             } catch (Exception e) { log("启动失败：" + e.getMessage()); }
         });
@@ -558,9 +573,16 @@ public final class WorkflowCenterView {
     private ConversationCallbacks uiCallbacks() {
         return new ConversationCallbacks() {
             @Override public void onEvent(ConversationEvent event) { Platform.runLater(() -> log(event.toString())); }
-            @Override public void onComplete() { Platform.runLater(() -> { log("运行结束"); refreshRuns(); }); }
-            @Override public void onError(Throwable error) {
-                Platform.runLater(() -> { log("失败：" + error.getMessage()); refreshRuns(); });
+            @Override public void onTerminal(ConversationOutcome outcome) {
+                Platform.runLater(() -> {
+                    if (outcome instanceof ConversationOutcome.Completed) log("运行结束");
+                    else if (outcome instanceof ConversationOutcome.Cancelled cancelled) {
+                        log("已取消：" + cancelled.reason());
+                    } else if (outcome instanceof ConversationOutcome.Failed failed) {
+                        log("失败：" + failed.error().getMessage());
+                    }
+                    refreshRuns();
+                });
             }
         };
     }
@@ -607,8 +629,44 @@ public final class WorkflowCenterView {
     }
 
     private void setZoom(double value) {
-        zoom = Math.max(0.5, Math.min(2.0, value));
+        zoom = Math.max(0.1, Math.min(2.0, value));
         graphPane.setScaleX(zoom); graphPane.setScaleY(zoom); updateZoomLabel();
+    }
+
+    private void fitGraphToViewport() {
+        if (graphViewport == null || editor == null || editor.current().nodes().isEmpty()) return;
+        double minX = Double.MAX_VALUE, minY = Double.MAX_VALUE;
+        double maxX = -Double.MAX_VALUE, maxY = -Double.MAX_VALUE;
+        for (NodeDefinition node : editor.current().nodes()) {
+            minX = Math.min(minX, node.x());
+            minY = Math.min(minY, node.y());
+            maxX = Math.max(maxX, node.x() + 210);
+            maxY = Math.max(maxY, node.y() + 96);
+        }
+        double graphWidth = Math.max(1, maxX - minX);
+        double graphHeight = Math.max(1, maxY - minY);
+        double viewportWidth = Math.max(1, graphViewport.getViewportBounds().getWidth());
+        double viewportHeight = Math.max(1, graphViewport.getViewportBounds().getHeight());
+        double fitted = Math.min((viewportWidth - 64) / graphWidth,
+                (viewportHeight - 64) / graphHeight);
+        setZoom(Math.max(0.1, Math.min(2.0, fitted)));
+
+        double centerX = (minX + maxX) / 2.0 * zoom;
+        double centerY = (minY + maxY) / 2.0 * zoom;
+        Platform.runLater(() -> {
+            double contentWidth = graphGroup.getLayoutBounds().getWidth();
+            double contentHeight = graphGroup.getLayoutBounds().getHeight();
+            graphViewport.setHvalue(normalizedCenter(
+                    centerX, viewportWidth, contentWidth));
+            graphViewport.setVvalue(normalizedCenter(
+                    centerY, viewportHeight, contentHeight));
+        });
+    }
+
+    private static double normalizedCenter(double center, double viewport, double content) {
+        double scrollable = content - viewport;
+        if (scrollable <= 0) return 0.5;
+        return Math.max(0, Math.min(1, (center - viewport / 2.0) / scrollable));
     }
 
     private void updateZoomLabel() { zoomLabel.setText(Math.round(zoom * 100) + "%"); }
@@ -797,20 +855,25 @@ public final class WorkflowCenterView {
                 Region gap = new Region(); HBox.setHgrow(gap, Priority.ALWAYS);
                 HBox head = new HBox(8, glyph, nodeTitle, gap, badge); head.setAlignment(Pos.CENTER_LEFT);
                 Label nodeId = new Label(node.id()); nodeId.getStyleClass().add("workflow-node-id");
-                VBox card = new VBox(8, head, nodeId);
+                AccessibleActionPane card = new AccessibleActionPane(8, head, nodeId);
+                card.setAccessibleText(node.label() + "，" + nodeDisplayName(node.type())
+                        + "，节点 " + node.id());
                 card.getStyleClass().addAll("workflow-node", "workflow-node-" + node.type().name().toLowerCase());
                 if (selectedNode != null && selectedNode.id().equals(node.id())) {
                     card.getStyleClass().add("workflow-node-selected");
                 }
                 card.relocate(node.x(), node.y());
-                card.setOnMouseClicked(e -> {
-                    if (e.getButton() != MouseButton.PRIMARY) return;
+                Runnable activateNode = () -> {
                     if (connectSource != null && !connectSource.equals(node.id()) && !readOnly) {
                         finishConnection(node);
                         return;
                     }
                     showInspector(node);
                     updateSelectedStyle(node.id());
+                };
+                card.setOnAccessibleAction(activateNode);
+                card.setOnMouseClicked(e -> {
+                    if (e.getButton() == MouseButton.PRIMARY) activateNode.run();
                 });
                 card.setOnContextMenuRequested(e -> showNodeContextMenu(node, card, e));
                 final double[] drag = new double[2]; final boolean[] dragging = new boolean[1];

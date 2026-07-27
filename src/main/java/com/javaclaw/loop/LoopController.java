@@ -1,6 +1,7 @@
 package com.javaclaw.loop;
 
 import com.javaclaw.api.conversation.ConversationCallbacks;
+import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.loop.model.CompletionCheck;
 import com.javaclaw.loop.model.Decision;
@@ -126,7 +127,7 @@ public final class LoopController {
                 if (pre != null) {
                     emitStop(callbacks, Math.max(1, iteration - 1), pre, pre.description(),
                             lastSatisfied, lastTotal);
-                    callbacks.onComplete();
+                    callbacks.onTerminal(ConversationOutcome.completed());
                     return;
                 }
 
@@ -142,7 +143,7 @@ public final class LoopController {
                     stageOpen = false;
                     emitStop(callbacks, iteration, StopReason.CANCELLED,
                             StopReason.CANCELLED.description(), lastSatisfied, lastTotal);
-                    callbacks.onComplete();
+                    callbacks.onTerminal(ConversationOutcome.completed());
                     return;
                 }
                 String previousOutput = carry.lastOutput(); // 在并入前留存「上一轮」，供停滞仲裁对比
@@ -165,7 +166,7 @@ public final class LoopController {
                     stageOpen = false;
                     emitStop(callbacks, iteration, StopReason.CANCELLED,
                             StopReason.CANCELLED.description(), lastSatisfied, lastTotal);
-                    callbacks.onComplete();
+                    callbacks.onTerminal(ConversationOutcome.completed());
                     return;
                 }
                 boolean madeProgress = progress.madeProgress(check, result);
@@ -193,14 +194,14 @@ public final class LoopController {
                     case DONE, STOP -> {
                         log.info("循环结束：共 {} 轮，终态={}，用量={} tokens",
                                 iteration, verdict.decision(), guards.tokensUsed());
-                        callbacks.onComplete();
+                        callbacks.onTerminal(ConversationOutcome.completed());
                         return;
                     }
                     case CONTINUE -> {
                         if (!awaitBeforeNext(nextDelay)) {
                             emitStop(callbacks, iteration, StopReason.CANCELLED,
                                     StopReason.CANCELLED.description(), check.satisfied(), check.total());
-                            callbacks.onComplete();
+                            callbacks.onTerminal(ConversationOutcome.completed());
                             return;
                         }
                     }
@@ -216,7 +217,7 @@ public final class LoopController {
             }
             emitStop(callbacks, iteration, StopReason.ERROR,
                     StopReason.ERROR.description() + "：" + e.getMessage(), lastSatisfied, lastTotal);
-            callbacks.onError(e);
+            callbacks.onTerminal(ConversationOutcome.failed(e));
         }
     }
 

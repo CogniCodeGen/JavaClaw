@@ -1,5 +1,8 @@
 package com.javaclaw.task.sdd;
 
+import com.javaclaw.config.AppDatabase;
+import com.javaclaw.config.AppDatabaseAccess;
+import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.task.sdd.spec.Capability;
 import com.javaclaw.task.sdd.spec.OpenSpecChange;
 import com.javaclaw.task.sdd.spec.Proposal;
@@ -16,6 +19,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.BooleanSupplier;
 
 /**
@@ -46,6 +50,8 @@ public final class SddOrchestrator {
     private final SddAgents agents;
     private final ReviewGate gate;
     private final SddProgress progress;
+    private final DatabaseAccess database;
+    private final String workspaceId;
 
     /** 单道评审最多返工轮数（提案 / 计划各自）。 */
     private int maxReviewRounds = 3;
@@ -67,12 +73,21 @@ public final class SddOrchestrator {
 
     public SddOrchestrator(TaskContext ctx, SpecStore store, ScenarioVerifier verifier,
                            SddAgents agents, ReviewGate gate, SddProgress progress) {
+        this(ctx, store, verifier, agents, gate, progress,
+                new AppDatabaseAccess(), AppDatabase.currentWorkspaceId());
+    }
+
+    public SddOrchestrator(TaskContext ctx, SpecStore store, ScenarioVerifier verifier,
+                           SddAgents agents, ReviewGate gate, SddProgress progress,
+                           DatabaseAccess database, String workspaceId) {
         this.ctx = ctx;
         this.store = store;
         this.verifier = verifier;
         this.agents = agents;
         this.gate = gate;
         this.progress = progress == null ? SddProgress.NOOP : progress;
+        this.database = Objects.requireNonNull(database, "database");
+        this.workspaceId = Objects.requireNonNull(workspaceId, "workspaceId");
     }
 
     public SddOrchestrator maxReviewRounds(int n) { this.maxReviewRounds = n; return this; }
@@ -241,7 +256,7 @@ public final class SddOrchestrator {
             progress.phase("验收");
             OpenSpecChange change = store.readChange(slug, ctx.id(), ctx.title());
             List<Scenario> scenarios = change.allScenarios();
-            VerifyCache cache = VerifyCache.load(ctx.workDir(), slug);
+            VerifyCache cache = VerifyCache.load(ctx.workDir(), slug, database, workspaceId);
             cache.syncFingerprint(cache.fingerprint());
             int reused = 0;
             List<VerificationOutcome> outcomes = new ArrayList<>(scenarios.size());

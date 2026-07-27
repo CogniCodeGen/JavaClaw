@@ -13,21 +13,28 @@ import java.util.List;
  * @param userInput   用户输入的原始文本（未经知识库增强）
  * @param attachments 附件文件列表（可为空），由模式按自身能力决定是否使用
  * @param sessionId   当前聊天会话 ID；旧调用方可通过双参数构造器省略
+ * @param options     本轮行为选项
  */
-public record ConversationRequest(String userInput, List<File> attachments, String sessionId) {
+public record ConversationRequest(String userInput, List<File> attachments, String sessionId,
+                                  ConversationOptions options) {
 
     public ConversationRequest {
         if (userInput == null) userInput = "";
         if (attachments == null) attachments = List.of();
         if (sessionId != null && sessionId.isBlank()) sessionId = null;
+        if (options == null) options = ConversationOptions.DEFAULT;
+    }
+
+    public ConversationRequest(String userInput, List<File> attachments, String sessionId) {
+        this(userInput, attachments, sessionId, ConversationOptions.DEFAULT);
     }
 
     public ConversationRequest(String userInput, List<File> attachments) {
-        this(userInput, attachments, null);
+        this(userInput, attachments, null, ConversationOptions.DEFAULT);
     }
 
     /** 仅含文本的请求（常见简单场景） */
     public static ConversationRequest ofText(String userInput) {
-        return new ConversationRequest(userInput, List.of(), null);
+        return new ConversationRequest(userInput, List.of(), null, ConversationOptions.DEFAULT);
     }
 }

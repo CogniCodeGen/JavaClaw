@@ -72,8 +72,6 @@ public final class AgentConfig {
     private static final String KEY_RETRY_MAX_ATTEMPTS = "retry.max.attempts";
     private static final String KEY_RETRY_INITIAL_BACKOFF = "retry.initial.backoff.seconds";
     private static final String KEY_RETRY_MAX_BACKOFF = "retry.max.backoff.seconds";
-    private static final String KEY_PLAN_MODE_MAX_ROUNDS = "plan.mode.max.rounds";
-    private static final String KEY_PLAN_MODE_MAX_EXPERTS = "plan.mode.max.experts";
     private static final String KEY_FIRST_USE_GUIDANCE_DONE = "ui.first.use.guidance.done";
     private static final String KEY_TRAY_MINIMIZE_ON_CLOSE = "ui.tray.minimize.on.close";
     private static final String KEY_UI_THEME = "ui.theme";
@@ -169,8 +167,6 @@ public final class AgentConfig {
     private static final int DEFAULT_RETRY_MAX_ATTEMPTS = 3;
     private static final int DEFAULT_RETRY_INITIAL_BACKOFF = 2;
     private static final int DEFAULT_RETRY_MAX_BACKOFF = 30;
-    private static final int DEFAULT_PLAN_MODE_MAX_ROUNDS = 3;
-    private static final int DEFAULT_PLAN_MODE_MAX_EXPERTS = 4;
     private static final int DEFAULT_CONFIRMATION_TIMEOUT_DEFAULT = 60;
     private static final int DEFAULT_CONFIRMATION_TIMEOUT_MANAGED = 600;
     private static final ToolReviewMode DEFAULT_TOOL_REVIEW_MODE = ToolReviewMode.SMART;
@@ -351,12 +347,23 @@ public final class AgentConfig {
     private void load() {
         Properties loaded = SqlPropertyStore.load(CONFIG_NAMESPACE);
         properties.putAll(loaded);
+        boolean removedObsoletePlanConfig = removeObsoletePlanModeProperties(properties);
         if (properties.isEmpty()) {
             log.info("智能体配置数据库为空，使用默认值: {}", AppDatabase.databaseDisplayPath());
             setDefaults();
         } else {
             log.info("智能体配置已从 H2 加载: {}", AppDatabase.databaseDisplayPath());
         }
+        if (removedObsoletePlanConfig && !SqlPropertyStore.save(CONFIG_NAMESPACE, properties)) {
+            log.warn("已忽略废弃的规划模式配置，但未能从 H2 中清理");
+        }
+    }
+
+    /** Profile 档位已完整取代旧的全局轮数/专家数限制；加载时清除遗留持久化项。 */
+    static boolean removeObsoletePlanModeProperties(Properties target) {
+        boolean removedRounds = target.remove("plan.mode.max.rounds") != null;
+        boolean removedExperts = target.remove("plan.mode.max.experts") != null;
+        return removedRounds || removedExperts;
     }
 
     /**
@@ -390,8 +397,6 @@ public final class AgentConfig {
         properties.setProperty(KEY_RETRY_MAX_ATTEMPTS, String.valueOf(DEFAULT_RETRY_MAX_ATTEMPTS));
         properties.setProperty(KEY_RETRY_INITIAL_BACKOFF, String.valueOf(DEFAULT_RETRY_INITIAL_BACKOFF));
         properties.setProperty(KEY_RETRY_MAX_BACKOFF, String.valueOf(DEFAULT_RETRY_MAX_BACKOFF));
-        properties.setProperty(KEY_PLAN_MODE_MAX_ROUNDS, String.valueOf(DEFAULT_PLAN_MODE_MAX_ROUNDS));
-        properties.setProperty(KEY_PLAN_MODE_MAX_EXPERTS, String.valueOf(DEFAULT_PLAN_MODE_MAX_EXPERTS));
         properties.setProperty(KEY_TOOL_REVIEW_MODE, DEFAULT_TOOL_REVIEW_MODE.id());
         properties.setProperty(KEY_SCHEDULE_THREAD_POOL_SIZE, String.valueOf(DEFAULT_SCHEDULE_THREAD_POOL_SIZE));
         properties.setProperty(KEY_GEPA_GOAL_ENABLED, String.valueOf(DEFAULT_GEPA_GOAL_ENABLED));
@@ -977,30 +982,6 @@ public final class AgentConfig {
         return getInt("memory.habit.review.max.episodes", 60);
     }
 
-    // ==================== 规划模式配置 ====================
-
-    /**
-     * 获取规划模式最大讨论轮数
-     */
-    public int getPlanModeMaxRounds() {
-        return getInt(KEY_PLAN_MODE_MAX_ROUNDS, DEFAULT_PLAN_MODE_MAX_ROUNDS);
-    }
-
-    public void setPlanModeMaxRounds(int value) {
-        properties.setProperty(KEY_PLAN_MODE_MAX_ROUNDS, String.valueOf(value));
-    }
-
-    /**
-     * 获取规划模式最多参与专家数
-     */
-    public int getPlanModeMaxExperts() {
-        return getInt(KEY_PLAN_MODE_MAX_EXPERTS, DEFAULT_PLAN_MODE_MAX_EXPERTS);
-    }
-
-    public void setPlanModeMaxExperts(int value) {
-        properties.setProperty(KEY_PLAN_MODE_MAX_EXPERTS, String.valueOf(value));
-    }
-
     // ==================== 定时任务配置 ====================
 
     /**
@@ -1442,8 +1423,6 @@ public final class AgentConfig {
         properties.setProperty(KEY_RETRY_MAX_ATTEMPTS, String.valueOf(DEFAULT_RETRY_MAX_ATTEMPTS));
         properties.setProperty(KEY_RETRY_INITIAL_BACKOFF, String.valueOf(DEFAULT_RETRY_INITIAL_BACKOFF));
         properties.setProperty(KEY_RETRY_MAX_BACKOFF, String.valueOf(DEFAULT_RETRY_MAX_BACKOFF));
-        properties.setProperty(KEY_PLAN_MODE_MAX_ROUNDS, String.valueOf(DEFAULT_PLAN_MODE_MAX_ROUNDS));
-        properties.setProperty(KEY_PLAN_MODE_MAX_EXPERTS, String.valueOf(DEFAULT_PLAN_MODE_MAX_EXPERTS));
         properties.setProperty(KEY_SCHEDULE_THREAD_POOL_SIZE, String.valueOf(DEFAULT_SCHEDULE_THREAD_POOL_SIZE));
         properties.setProperty(KEY_CONFIRMATION_TIMEOUT_DEFAULT, String.valueOf(DEFAULT_CONFIRMATION_TIMEOUT_DEFAULT));
         properties.setProperty(KEY_CONFIRMATION_TIMEOUT_MANAGED, String.valueOf(DEFAULT_CONFIRMATION_TIMEOUT_MANAGED));

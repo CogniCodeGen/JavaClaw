@@ -70,6 +70,10 @@ public class ChatMessage {
 
     /** 用户是否已采纳此助手回复（仅对 ASSISTANT 消息有意义），持久化到会话文件 */
     private boolean adopted;
+    /** 旧记录可为 null，UI 显示为“—”。 */
+    private DeliveryState deliveryState;
+    /** 旧记录可为 null，UI 显示为“—”。 */
+    private TurnMetrics metrics;
 
     /**
      * 构造一条聊天消息（时间戳自动设为当前时间，无附件）
@@ -104,11 +108,19 @@ public class ChatMessage {
      */
     public ChatMessage(Role role, String content, LocalDateTime timestamp,
                        List<File> attachments, List<String> imagePaths) {
+        this(role, content, timestamp, attachments, imagePaths, DeliveryState.COMPLETE, null);
+    }
+
+    public ChatMessage(Role role, String content, LocalDateTime timestamp,
+                       List<File> attachments, List<String> imagePaths,
+                       DeliveryState deliveryState, TurnMetrics metrics) {
         this.role = role;
         this.content = content;
         this.timestamp = timestamp;
         this.attachments = attachments != null ? new ArrayList<>(attachments) : Collections.emptyList();
         this.imagePaths = imagePaths != null ? new ArrayList<>(imagePaths) : new ArrayList<>();
+        this.deliveryState = deliveryState;
+        this.metrics = metrics;
     }
 
     public Role getRole() {
@@ -150,6 +162,22 @@ public class ChatMessage {
 
     public void setAdopted(boolean adopted) {
         this.adopted = adopted;
+    }
+
+    public DeliveryState getDeliveryState() {
+        return deliveryState;
+    }
+
+    public void setDeliveryState(DeliveryState deliveryState) {
+        this.deliveryState = deliveryState;
+    }
+
+    public TurnMetrics getMetrics() {
+        return metrics;
+    }
+
+    public void setMetrics(TurnMetrics metrics) {
+        this.metrics = metrics;
     }
 
     /**

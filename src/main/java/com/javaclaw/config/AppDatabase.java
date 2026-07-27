@@ -21,12 +21,25 @@ public final class AppDatabase {
 
     private static final Logger log = LoggerFactory.getLogger(AppDatabase.class);
     private static final String DB_BASENAME = "javaclaw";
+    public static final String DATA_DIR_PROPERTY = "javaclaw.data.dir";
     private static volatile boolean autoServerUnavailable;
 
     private AppDatabase() {}
 
     public static Connection getConnection() throws SQLException {
-        Path dbBase = databaseBasePath();
+        return openDatabaseBase(databaseBasePath());
+    }
+
+    /**
+     * 打开指定数据目录下的 JavaClaw 数据库，并执行同一套幂等建表/迁移。
+     * 主要供显式注入的测试数据库使用，不修改任何全局系统属性。
+     */
+    public static Connection open(Path dataDir) throws SQLException {
+        Path normalized = dataDir.toAbsolutePath().normalize();
+        return openDatabaseBase(normalized.resolve(DB_BASENAME));
+    }
+
+    private static Connection openDatabaseBase(Path dbBase) throws SQLException {
         try {
             Files.createDirectories(dbBase.getParent());
         } catch (IOException e) {
@@ -50,6 +63,20 @@ public final class AppDatabase {
         return WorkspaceManager.getInstance().getCurrentWorkspaceId();
     }
 
+    /**
+     * 返回全应用统一的数据根目录。
+     *
+     * <p>生产环境未配置时保持原有 {@code {user.dir}/data}；测试或显式部署配置
+     * {@value #DATA_DIR_PROPERTY} 时，数据库、工作区资产、日志和旧凭据迁移都应从此目录派生。</p>
+     */
+    public static Path dataDirectory() {
+        String configured = System.getProperty(DATA_DIR_PROPERTY);
+        Path dataDir = configured == null || configured.isBlank()
+                ? Path.of(System.getProperty("user.dir"), "data")
+                : Path.of(configured);
+        return dataDir.toAbsolutePath().normalize();
+    }
+
     public static Path databaseFilePath() {
         return databaseBasePath().resolveSibling(DB_BASENAME + ".mv.db");
     }
@@ -59,8 +86,7 @@ public final class AppDatabase {
     }
 
     private static Path databaseBasePath() {
-        return Path.of(System.getProperty("user.dir"), "data", DB_BASENAME)
-                .toAbsolutePath().normalize();
+        return dataDirectory().resolve(DB_BASENAME);
     }
 
     private static Connection openConnection(Path dbBase) throws SQLException {
@@ -273,9 +299,17 @@ public final class AppDatabase {
                         timestamp VARCHAR(64) NOT NULL,
                         image_paths_json CLOB,
                         adopted BOOLEAN NOT NULL,
+                        delivery_state VARCHAR(32),
+                        input_tokens BIGINT,
+                        output_tokens BIGINT,
+                        duration_ms BIGINT,
                         PRIMARY KEY (workspace_id, session_id, position)
                     )
                     """);
+            st.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS delivery_state VARCHAR(32)");
+            st.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS input_tokens BIGINT");
+            st.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS output_tokens BIGINT");
+            st.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS duration_ms BIGINT");
 
             st.execute("""
                     CREATE TABLE IF NOT EXISTS token_usage_daily (

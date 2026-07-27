@@ -264,6 +264,9 @@
                 <version>3.5.2</version>
                 <configuration>
                     <argLine>--add-modules jdk.incubator.vector --enable-native-access=ALL-UNNAMED</argLine>
+                    <systemPropertyVariables>
+                        <javaclaw.data.dir>${project.build.directory}/test-data</javaclaw.data.dir>
+                    </systemPropertyVariables>
                 </configuration>
             </plugin>
 

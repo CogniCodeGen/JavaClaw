@@ -2,7 +2,8 @@ package com.javaclaw.memory.curation;
 
 import com.javaclaw.agent.TokenTracker;
 import com.javaclaw.config.AgentConfig;
-import com.javaclaw.memory.embed.EmbeddingGate;
+import com.javaclaw.memory.embed.EmbeddingGateway;
+import com.javaclaw.memory.embed.EmbeddingPurpose;
 import com.javaclaw.memory.model.EntityNode;
 import com.javaclaw.memory.model.Episode;
 import com.javaclaw.memory.model.Fact;
@@ -41,11 +42,11 @@ public class Distiller {
 
     private final ChatModelBase lightModel;
     private final MemoryStore store;
-    private final EmbeddingGate gate;
+    private final EmbeddingGateway gate;
     private final TokenTracker tokenTracker;
     private final GenerateOptions generateOptions;
 
-    public Distiller(ChatModelBase lightModel, MemoryStore store, EmbeddingGate gate, TokenTracker tokenTracker) {
+    public Distiller(ChatModelBase lightModel, MemoryStore store, EmbeddingGateway gate, TokenTracker tokenTracker) {
         this.lightModel = lightModel;
         this.store = store;
         this.gate = gate;
@@ -100,7 +101,7 @@ public class Distiller {
             if (line.startsWith("- ")) line = line.substring(2).strip();
             if (line.isEmpty() || isNoneAnswer(line)) continue; // 混排输出中的「无」行不落库
 
-            float[] vec = gate.embed(line);
+            float[] vec = gate.embed(line, EmbeddingPurpose.BACKGROUND_INDEX);
             if (vec == null) {
                 // 嵌入不可用 → 降级：纯文本落 pending 暂存区（无向量、不进索引，仍在记忆中心可见）
                 Fact pf = new Fact(null, line, null);

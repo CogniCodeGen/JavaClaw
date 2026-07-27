@@ -51,6 +51,21 @@
     -fx-background-radius: 3;
 }
 .kc-rag-badge-off .kc-badge-dot { -fx-background-color: -jc-text-hint; }
+.kc-rag-badge.kc-health-healthy { -fx-background-color: -jc-success-bg; }
+.kc-rag-badge.kc-health-healthy .label { -fx-text-fill: -jc-success; }
+.kc-rag-badge.kc-health-healthy .kc-badge-dot { -fx-background-color: -jc-success; }
+.kc-rag-badge.kc-health-checking,
+.kc-rag-badge.kc-health-degraded { -fx-background-color: -jc-warning-bg; }
+.kc-rag-badge.kc-health-checking .label,
+.kc-rag-badge.kc-health-degraded .label { -fx-text-fill: -jc-warning; }
+.kc-rag-badge.kc-health-checking .kc-badge-dot,
+.kc-rag-badge.kc-health-degraded .kc-badge-dot { -fx-background-color: -jc-warning; }
+.kc-rag-badge.kc-health-unavailable { -fx-background-color: -jc-danger-bg; }
+.kc-rag-badge.kc-health-unavailable .label { -fx-text-fill: -jc-danger; }
+.kc-rag-badge.kc-health-unavailable .kc-badge-dot { -fx-background-color: -jc-danger; }
+.kc-rag-badge.kc-health-unconfigured { -fx-background-color: -jc-surface-sunken; }
+.kc-rag-badge.kc-health-unconfigured .label { -fx-text-fill: -jc-text-muted; }
+.kc-rag-badge.kc-health-unconfigured .kc-badge-dot { -fx-background-color: -jc-text-hint; }
 
 .kc-emb-chip {
     -fx-padding: 0 11 0 11;
@@ -70,6 +85,16 @@
 }
 .kc-dot-on { -fx-background-color: -jc-primary-500; }
 .kc-dot-off { -fx-background-color: -jc-text-hint; }
+.kc-health-dot {
+    -fx-min-width: 7; -fx-min-height: 7; -fx-pref-width: 7; -fx-pref-height: 7;
+    -fx-max-width: 7; -fx-max-height: 7;
+    -fx-background-radius: 4;
+}
+.kc-health-dot.kc-health-healthy { -fx-background-color: -jc-success; }
+.kc-health-dot.kc-health-checking,
+.kc-health-dot.kc-health-degraded { -fx-background-color: -jc-warning; }
+.kc-health-dot.kc-health-unavailable { -fx-background-color: -jc-danger; }
+.kc-health-dot.kc-health-unconfigured { -fx-background-color: -jc-text-hint; }
 .kc-emb-tag { -fx-text-fill: -jc-text-hint; -fx-font-size: 12px; }
 .kc-emb-name {
     -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
@@ -375,6 +400,11 @@
 }
 .kc-emb-card-title { -fx-font-size: 13.5px; -fx-font-weight: 700; -fx-text-fill: -jc-text-title; }
 .kc-emb-connected { -fx-font-size: 10.5px; -fx-font-weight: 600; -fx-text-fill: -jc-primary-600; }
+.kc-emb-connected.kc-health-healthy { -fx-text-fill: -jc-success; }
+.kc-emb-connected.kc-health-checking,
+.kc-emb-connected.kc-health-degraded { -fx-text-fill: -jc-warning; }
+.kc-emb-connected.kc-health-unavailable { -fx-text-fill: -jc-danger; }
+.kc-emb-connected.kc-health-unconfigured { -fx-text-fill: -jc-text-muted; }
 .kc-emb-card-model {
     -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 12px;

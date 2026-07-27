@@ -17,6 +17,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -58,6 +59,8 @@ public final class PluginManager {
     private PluginWatcher watcher;
     /** UI 注册的变化监听（热感知/重扫后回调，UI 实现内部自行切回 FX 线程） */
     private volatile Runnable changeListener;
+    /** 同一个不兼容 jar 每个应用生命周期只提示一次，避免目录 watcher 重复 Toast。 */
+    private final Set<Path> incompatiblePluginWarnings = new HashSet<>();
     /** init/reload/shutdown 每次推进；旧世代的异步自动启用线程不得再启动插件。 */
     private long lifecycleGeneration;
 
@@ -229,7 +232,9 @@ public final class PluginManager {
         try {
             PluginDescriptor d = PluginDescriptorLoader.load(jar);
             if (!isApiCompatible(d.apiVersion())) {
-                log.warn("从文件安装失败：插件[{}]apiVersion={} 与宿主不兼容", d.id(), d.apiVersion());
+                log.warn("从文件安装失败：插件[{}]apiVersion={} 与宿主 {} 不兼容；"
+                                + "请使用 JavaClaw Plugin API 2.x 重新编译",
+                        d.id(), d.apiVersion(), PluginDescriptor.HOST_API_VERSION);
                 return null;
             }
             Path destDir = pluginsDir.resolve(d.id()).toAbsolutePath().normalize();
@@ -446,8 +451,17 @@ public final class PluginManager {
                 return;   // 已发现/已启用，跳过
             }
             if (!isApiCompatible(d.apiVersion())) {
-                log.warn("插件[{}]apiVersion={} 与宿主 {} 不兼容，跳过",
+                log.warn("插件[{}]apiVersion={} 与宿主 {} 不兼容，已拒绝加载；"
+                                + "请使用 JavaClaw Plugin API 2.x 重新编译",
                         d.id(), d.apiVersion(), PluginDescriptor.HOST_API_VERSION);
+                Path warningKey = jar.toAbsolutePath().normalize();
+                if (incompatiblePluginWarnings.add(warningKey) && interactionPort != null) {
+                    interactionPort.notify(new com.javaclaw.api.interaction.ToastRequest(
+                            "插件需要升级",
+                            "“" + d.name() + "”使用 Plugin API " + d.apiVersion()
+                                    + "，当前宿主为 " + PluginDescriptor.HOST_API_VERSION
+                                    + "。已拒绝加载，请用 Plugin API 2.x 重新编译。"));
+                }
                 return;
             }
             plugins.put(d.id(), new PluginRuntime(d, jar, agentRuntime, appClassLoader,
@@ -511,11 +525,11 @@ public final class PluginManager {
     }
 
     /** api 主版本一致即视为兼容。 */
-    private boolean isApiCompatible(String pluginApiVersion) {
+    static boolean isApiCompatible(String pluginApiVersion) {
         return major(PluginDescriptor.HOST_API_VERSION).equals(major(pluginApiVersion));
     }
 
-    private String major(String version) {
+    private static String major(String version) {
         if (version == null || version.isBlank()) {
             return "";
         }

@@ -4,6 +4,7 @@ import com.javaclaw.agent.expert.CustomAgentConfig;
 import com.javaclaw.agent.expert.CustomAgentConfig.CustomAgentDef;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
+import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.api.conversation.ConversationRequest;
 import com.javaclaw.schedule.ScheduleManager;
 import com.javaclaw.schedule.ScheduledTask;
@@ -46,7 +47,7 @@ public final class ShellCommandService {
                 out = "✗ 命令执行异常：" + e.getMessage();
             }
             callbacks.onEvent(new ConversationEvent.Reply(out));
-            callbacks.onComplete();
+            callbacks.onTerminal(ConversationOutcome.completed());
         }, "shell-cmd");
         t.setDaemon(true);
         t.start();

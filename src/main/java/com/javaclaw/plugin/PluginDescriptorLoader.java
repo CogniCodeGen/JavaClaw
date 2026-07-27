@@ -31,6 +31,8 @@ final class PluginDescriptorLoader {
     private static final Logger log = LoggerFactory.getLogger(PluginDescriptorLoader.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final String DESCRIPTOR_ENTRY = "plugin.json";
+    /** 未声明 API 版本的历史插件均诞生于破坏升级前，必须按 1.x 判断兼容性。 */
+    private static final String LEGACY_API_VERSION = "1.0";
     /** 同时用于目录名、数据库键与线程名前缀，必须是单个安全路径段。 */
     private static final Pattern SAFE_ID = Pattern.compile("[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?");
 
@@ -66,7 +68,7 @@ final class PluginDescriptorLoader {
         String mainClass = requireText(root, "main", jarPath);
         String name = optText(root, "name", id);
         String version = optText(root, "version", "0.0.0");
-        String apiVersion = optText(root, "apiVersion", PluginDescriptor.HOST_API_VERSION);
+        String apiVersion = optText(root, "apiVersion", LEGACY_API_VERSION);
         String description = optText(root, "description", "");
 
         Set<Capability> capabilities = parseCapabilities(root.get("capabilities"), id);

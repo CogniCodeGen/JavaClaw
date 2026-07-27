@@ -9,6 +9,7 @@ import com.javaclaw.ui.javafx.mcp.McpSettingsView;
 import com.javaclaw.ui.javafx.site.SiteCredentialView;
 import javafx.animation.PauseTransition;
 import javafx.animation.TranslateTransition;
+import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -43,6 +44,8 @@ public class SettingsView {
     private final ModelFactory modelFactory;
     /** 可选：注入后 AI 智能补全的 token 消耗将计入会话统计 */
     private final com.javaclaw.agent.TokenTracker tokenTracker;
+    /** 可选：设置、记忆、知识和主界面共享的嵌入健康来源。 */
+    private final com.javaclaw.memory.embed.EmbeddingGateway embeddingGateway;
 
     // 布局容器
     private VBox categoryList;
@@ -219,15 +222,15 @@ public class SettingsView {
     private ToggleSwitch lightThinkingEnabledCheck;
 
     public SettingsView(Stage owner) {
-        this(owner, null, null, null);
+        this(owner, null, null, null, null);
     }
 
     public SettingsView(Stage owner, McpClientManager mcpClientManager) {
-        this(owner, mcpClientManager, null, null);
+        this(owner, mcpClientManager, null, null, null);
     }
 
     public SettingsView(Stage owner, McpClientManager mcpClientManager, ModelFactory modelFactory) {
-        this(owner, mcpClientManager, modelFactory, null);
+        this(owner, mcpClientManager, modelFactory, null, null);
     }
 
     /**
@@ -241,12 +244,20 @@ public class SettingsView {
     public SettingsView(Stage owner, McpClientManager mcpClientManager,
                         ModelFactory modelFactory,
                         com.javaclaw.agent.TokenTracker tokenTracker) {
+        this(owner, mcpClientManager, modelFactory, tokenTracker, null);
+    }
+
+    public SettingsView(Stage owner, McpClientManager mcpClientManager,
+                        ModelFactory modelFactory,
+                        com.javaclaw.agent.TokenTracker tokenTracker,
+                        com.javaclaw.memory.embed.EmbeddingGateway embeddingGateway) {
         this.emailConfig = EmailConfig.getInstance();
         this.agentConfig = AgentConfig.getInstance();
         this.notificationConfig = NotificationConfig.getInstance();
         this.mcpClientManager = mcpClientManager;
         this.modelFactory = modelFactory;
         this.tokenTracker = tokenTracker;
+        this.embeddingGateway = embeddingGateway;
         this.stage = new Stage();
         stage.initModality(Modality.WINDOW_MODAL);
         stage.initOwner(owner);
@@ -363,6 +374,14 @@ public class SettingsView {
                 "托盘 tray 后台 常驻 最小化 关闭 minimize 窗口 退出 background "
                         + "托管任务 风险 评估 自动放行 确认 目录 risk autoapprove 免确认");
         registerPanelActions(generalPanel, PanelActions.saveOnly(this::saveGeneralSettings));
+
+        // 系统维护：历史测试数据只读扫描，清理必须二次人工确认。
+        addCategoryGroup("系统维护");
+
+        Node dataMaintenancePanel = buildDataMaintenancePanel();
+        addCategory("测试数据清理", dataMaintenancePanel, false,
+                "data junit test 测试 数据 临时目录 清理 storage maintenance");
+        registerPanelActions(dataMaintenancePanel, PanelActions.none());
 
         // 通信渠道：邮件与外部通知
         addCategoryGroup("通信渠道");
@@ -1424,56 +1443,61 @@ public class SettingsView {
         String model = ragModelNameField.getText().trim();
         String apiKey = ragApiKeyField.getText().trim();
         String dimText = ragDimensionsField.getText().trim();
+        int expectedDimensions;
+        try {
+            if (url.isEmpty()) throw new IllegalArgumentException("API 地址不能为空");
+            if (model.isEmpty()) throw new IllegalArgumentException("嵌入模型名称不能为空");
+            expectedDimensions = Integer.parseInt(dimText);
+            if (expectedDimensions <= 0) throw new NumberFormatException();
+        } catch (NumberFormatException invalidDimension) {
+            finishTest("嵌入测试失败: 向量维度必须是正整数", "status-error");
+            return;
+        } catch (IllegalArgumentException invalidForm) {
+            finishTest("嵌入测试失败: " + invalidForm.getMessage(), "status-error");
+            return;
+        }
+
+        EmbeddingTestConfig form = new EmbeddingTestConfig(
+                ragEnabledCheck.isSelected(), url, model, apiKey, expectedDimensions);
+        EmbeddingTestConfig saved = new EmbeddingTestConfig(
+                agentConfig.isRagEnabled(),
+                agentConfig.getRagEmbeddingBaseUrl(),
+                agentConfig.getRagEmbeddingModelName(),
+                agentConfig.getRagEmbeddingApiKey(),
+                agentConfig.getRagEmbeddingDimensions());
+        boolean matchesSavedConnection = sameEmbeddingConnection(form, saved);
+        boolean runtimeReady = embeddingGateway != null && embeddingGateway.isModelReady();
+        boolean probeRuntime = shouldProbeRuntime(form, saved, runtimeReady);
+
         Thread testThread = new Thread(() -> {
             String result;
             String cssClass;
             try {
-                if (url.isEmpty()) throw new Exception("API 地址不能为空");
-                if (model.isEmpty()) throw new Exception("嵌入模型名称不能为空");
-                long start = System.currentTimeMillis();
-                java.net.URL apiUrl = java.net.URI.create(
-                        url.endsWith("/") ? url + "embeddings" : url + "/embeddings").toURL();
-                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) apiUrl.openConnection();
-                conn.setConnectTimeout(5000);
-                conn.setReadTimeout(15000);
-                conn.setRequestMethod("POST");
-                conn.setRequestProperty("Content-Type", "application/json");
-                if (!apiKey.isEmpty()) {
-                    conn.setRequestProperty("Authorization", "Bearer " + apiKey);
-                }
-                conn.setDoOutput(true);
-                var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-                String body = mapper.writeValueAsString(java.util.Map.of(
-                        "model", model, "input", "嵌入连通性测试"));
-                try (var os = conn.getOutputStream()) {
-                    os.write(body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                }
-                int code = conn.getResponseCode();
-                if (code < 200 || code >= 300) {
-                    conn.disconnect();
-                    throw new Exception("HTTP " + code);
-                }
-                com.fasterxml.jackson.databind.JsonNode root;
-                try (var is = conn.getInputStream()) {
-                    root = mapper.readTree(is);
-                }
-                conn.disconnect();
-                long elapsed = System.currentTimeMillis() - start;
-                int actualDim = root.path("data").path(0).path("embedding").size();
-                if (actualDim <= 0) throw new Exception("响应中未找到嵌入向量");
-                int configuredDim;
-                try {
-                    configuredDim = Integer.parseInt(dimText);
-                } catch (NumberFormatException nfe) {
-                    configuredDim = -1;
-                }
-                if (configuredDim > 0 && actualDim != configuredDim) {
-                    result = "嵌入可用，但实际维度 " + actualDim + " 与配置 " + configuredDim
-                            + " 不一致，写入向量库会失败，请修正向量维度";
-                    cssClass = "status-error";
+                if (probeRuntime) {
+                    long started = System.nanoTime();
+                    var snapshot = embeddingGateway.probe();
+                    long elapsed = (System.nanoTime() - started) / 1_000_000L;
+                    boolean healthy = snapshot.status()
+                            == com.javaclaw.memory.embed.EmbeddingHealthStatus.HEALTHY;
+                    result = healthy
+                            ? "✓ 嵌入正常 · 维度 " + embeddingGateway.dimensions()
+                                    + " · " + elapsed + "ms"
+                            : "嵌入测试失败: " + (snapshot.lastError() == null
+                                    ? snapshot.status().name() : snapshot.lastError());
+                    cssClass = healthy ? "status-success" : "status-error";
                 } else {
-                    result = "✓ 嵌入正常 · 维度 " + actualDim + " · " + elapsed + "ms";
-                    cssClass = "status-success";
+                    EmbeddingProbeResult probe = probeEmbeddingForm(form);
+                    if (probe.actualDimensions() != form.expectedDimensions()) {
+                        result = "当前表单配置可用，但实际维度 " + probe.actualDimensions()
+                                + " 与配置 " + form.expectedDimensions()
+                                + " 不一致，写入向量库会失败，请修正向量维度";
+                        cssClass = "status-error";
+                    } else {
+                        result = "✓ 当前表单配置可用 · 维度 " + probe.actualDimensions()
+                                + " · " + probe.elapsedMillis() + "ms"
+                                + (matchesSavedConnection ? "" : "（尚未保存）");
+                        cssClass = "status-success";
+                    }
                 }
             } catch (Exception ex) {
                 result = "嵌入测试失败: " + ex.getMessage();
@@ -1485,6 +1509,70 @@ public class SettingsView {
         }, "rag-embedding-test-thread");
         testThread.setDaemon(true);
         testThread.start();
+    }
+
+    /** 连接探测只比较会影响实际嵌入请求的字段；检索参数变更不要求重建探测客户端。 */
+    static boolean sameEmbeddingConnection(EmbeddingTestConfig left,
+                                           EmbeddingTestConfig right) {
+        return left.equals(right);
+    }
+
+    static boolean shouldProbeRuntime(EmbeddingTestConfig form,
+                                      EmbeddingTestConfig saved,
+                                      boolean runtimeReady) {
+        return runtimeReady && sameEmbeddingConnection(form, saved);
+    }
+
+    static record EmbeddingTestConfig(boolean enabled,
+                                      String baseUrl,
+                                      String model,
+                                      String apiKey,
+                                      int expectedDimensions) {
+        EmbeddingTestConfig {
+            baseUrl = baseUrl == null ? "" : baseUrl.strip();
+            model = model == null ? "" : model.strip();
+            apiKey = apiKey == null ? "" : apiKey.strip();
+        }
+    }
+
+    static record EmbeddingProbeResult(int actualDimensions, long elapsedMillis) {}
+
+    static EmbeddingProbeResult probeEmbeddingForm(EmbeddingTestConfig form)
+            throws Exception {
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(java.time.Duration.ofSeconds(3))
+                .build();
+        long started = System.nanoTime();
+        java.net.http.HttpResponse<String> response = client.send(
+                buildEmbeddingProbeRequest(form),
+                java.net.http.HttpResponse.BodyHandlers.ofString());
+        long elapsed = (System.nanoTime() - started) / 1_000_000L;
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalStateException("HTTP " + response.statusCode());
+        }
+        com.fasterxml.jackson.databind.JsonNode root = mapper.readTree(response.body());
+        int actualDimensions = root.path("data").path(0).path("embedding").size();
+        if (actualDimensions <= 0) {
+            throw new IllegalStateException("响应中未找到嵌入向量");
+        }
+        return new EmbeddingProbeResult(actualDimensions, elapsed);
+    }
+
+    static java.net.http.HttpRequest buildEmbeddingProbeRequest(EmbeddingTestConfig form)
+            throws com.fasterxml.jackson.core.JsonProcessingException {
+        java.net.URI endpoint = java.net.URI.create(form.baseUrl().endsWith("/")
+                ? form.baseUrl() + "embeddings" : form.baseUrl() + "/embeddings");
+        String body = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(
+                java.util.Map.of("model", form.model(), "input", "嵌入连通性测试"));
+        java.net.http.HttpRequest.Builder request = java.net.http.HttpRequest.newBuilder(endpoint)
+                .timeout(java.time.Duration.ofSeconds(3))
+                .header("Content-Type", "application/json")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body));
+        if (!form.apiKey().isBlank()) {
+            request.header("Authorization", "Bearer " + form.apiKey());
+        }
+        return request.build();
     }
 
     /**
@@ -1981,6 +2069,125 @@ public class SettingsView {
     private void loadGeneralSettings() {
         trayMinimizeOnCloseCheck.setSelected(agentConfig.isTrayMinimizeOnClose());
         taskRiskAutoApproveCheck.setSelected(agentConfig.isTaskRiskAutoApproveEnabled());
+    }
+
+    // ==================== 测试数据维护面板 ====================
+
+    /**
+     * 带 JavaClaw 数据库标记的历史 junit-* 目录只读扫描与人工确认清理。
+     * 正式数据和 target/test-data 不参与扫描，打开设置页也不会自动删除任何内容。
+     */
+    private Node buildDataMaintenancePanel() {
+        Label sectionTitle = new Label("测试数据清理");
+        sectionTitle.getStyleClass().add("sec-title");
+
+        Label hint = new Label(
+                "扫描系统临时目录和项目根目录中带 JavaClaw 数据库标记的 junit-* 测试目录。"
+                        + "扫描只读；无 JavaClaw 标记的其他项目测试目录不会列入候选。"
+                        + "只有点击清理并再次确认后才会删除。");
+        hint.getStyleClass().add("sec-hint");
+        hint.setWrapText(true);
+
+        ListView<String> candidatesView = new ListView<>();
+        candidatesView.setPrefHeight(280);
+        candidatesView.setPlaceholder(new Label("尚未扫描"));
+        candidatesView.setAccessibleText("历史 JUnit 测试目录扫描结果");
+
+        Label status = new Label("尚未扫描");
+        status.getStyleClass().add("settings-hint");
+
+        Button scan = new Button("扫描历史测试目录");
+        scan.getStyleClass().addAll("jc-btn", "jc-btn-soft");
+        scan.setAccessibleText("扫描历史 JUnit 测试目录");
+
+        Button cleanup = new Button("清理所列目录");
+        cleanup.getStyleClass().addAll("jc-btn", "jc-btn-danger");
+        cleanup.setDisable(true);
+        cleanup.setAccessibleText("清理扫描结果中的历史 JUnit 测试目录");
+
+        java.util.concurrent.atomic.AtomicReference<
+                java.util.List<LegacyTestDataManager.Candidate>> candidates =
+                new java.util.concurrent.atomic.AtomicReference<>(java.util.List.of());
+
+        scan.setOnAction(event -> {
+            scan.setDisable(true);
+            cleanup.setDisable(true);
+            status.setText("正在扫描…");
+            Thread.ofVirtual().name("legacy-test-data-scan").start(() -> {
+                var found = LegacyTestDataManager.scanDefaultLocations();
+                long bytes = found.stream().mapToLong(LegacyTestDataManager.Candidate::bytes).sum();
+                Platform.runLater(() -> {
+                    candidates.set(found);
+                    candidatesView.getItems().setAll(found.stream()
+                            .map(candidate -> candidate.path() + "  ·  "
+                                    + humanReadableBytes(candidate.bytes()))
+                            .toList());
+                    candidatesView.setPlaceholder(new Label(
+                            found.isEmpty() ? "未发现历史测试目录" : ""));
+                    status.setText(found.isEmpty()
+                            ? "未发现带 JavaClaw 标记的可清理目录"
+                            : "发现 " + found.size() + " 个 JavaClaw 测试目录，共 "
+                                    + humanReadableBytes(bytes));
+                    cleanup.setDisable(found.isEmpty());
+                    scan.setDisable(false);
+                });
+            });
+        });
+
+        cleanup.setOnAction(event -> {
+            var confirmedCandidates = candidates.get();
+            if (confirmedCandidates.isEmpty()) return;
+            Alert confirm = UIHelper.createConfirmAlert(
+                    "确认清理历史测试数据",
+                    "将永久删除扫描结果中的 " + confirmedCandidates.size()
+                            + " 个带 JavaClaw 数据库标记的 junit-* 目录。"
+                            + "该操作无法撤销，是否继续？",
+                    stage);
+            if (confirm.showAndWait().filter(button -> button == ButtonType.OK).isEmpty()) return;
+
+            scan.setDisable(true);
+            cleanup.setDisable(true);
+            status.setText("正在清理…");
+            Thread.ofVirtual().name("legacy-test-data-cleanup").start(() -> {
+                try {
+                    int deleted = LegacyTestDataManager.deleteConfirmed(confirmedCandidates);
+                    Platform.runLater(() -> {
+                        candidates.set(java.util.List.of());
+                        candidatesView.getItems().clear();
+                        candidatesView.setPlaceholder(new Label("已清理"));
+                        status.setText("已清理 " + deleted + " 个历史测试目录");
+                        scan.setDisable(false);
+                    });
+                } catch (Exception failure) {
+                    log.warn("清理历史测试目录失败", failure);
+                    Platform.runLater(() -> {
+                        status.setText("清理失败：" + failure.getMessage());
+                        scan.setDisable(false);
+                        cleanup.setDisable(false);
+                    });
+                }
+            });
+        });
+
+        HBox actions = new HBox(10, scan, cleanup, status);
+        actions.setAlignment(Pos.CENTER_LEFT);
+
+        VBox panel = new VBox(14, sectionTitle, hint, new Separator(), candidatesView, actions);
+        panel.setPadding(new Insets(4));
+        ScrollPane scroll = new ScrollPane(panel);
+        scroll.setFitToWidth(true);
+        scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        scroll.getStyleClass().add("settings-scroll-pane");
+        return scroll;
+    }
+
+    private static String humanReadableBytes(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024L * 1024) return String.format("%.1f KB", bytes / 1024.0);
+        if (bytes < 1024L * 1024 * 1024) {
+            return String.format("%.1f MB", bytes / (1024.0 * 1024));
+        }
+        return String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024));
     }
 
     // ==================== 界面风格面板（设计稿 AppearancePanel） ====================

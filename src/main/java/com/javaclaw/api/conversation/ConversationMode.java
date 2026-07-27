@@ -15,23 +15,12 @@ public interface ConversationMode extends Mode {
      * 启动一次对话。
      *
      * <p>事件流应通过 {@code callbacks} 异步推送；本方法应该立即返回（不阻塞调用线程）。
-     * 对话完成或异常时各自触发 {@link ConversationCallbacks#onComplete()} /
-     * {@link ConversationCallbacks#onError(Throwable)}，两者互斥。</p>
+     * 对话结束时触发一次 {@link ConversationCallbacks#onTerminal(ConversationOutcome)}。</p>
      *
      * @param request   用户请求（文本 + 附件）
      * @param callbacks 事件与生命周期回调
      */
-    void start(ConversationRequest request, ConversationCallbacks callbacks);
-
-    /**
-     * 取消当前进行中的对话。
-     *
-     * <p>能取消返回 true；没有活跃对话或不支持取消返回 false。取消后不再触发
-     * onEvent，已经在途的事件可能因为异步仍会到达，UI 应自行处理"流代次"。</p>
-     */
-    default boolean cancel() {
-        return false;
-    }
+    ConversationHandle start(ConversationRequest request, ConversationCallbacks callbacks);
 
     /**
      * 清空模式内部的对话历史。

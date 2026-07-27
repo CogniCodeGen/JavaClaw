@@ -2,7 +2,8 @@ package com.javaclaw.memory.curation;
 
 import com.javaclaw.agent.TokenTracker;
 import com.javaclaw.config.AgentConfig;
-import com.javaclaw.memory.embed.EmbeddingGate;
+import com.javaclaw.memory.embed.EmbeddingGateway;
+import com.javaclaw.memory.embed.EmbeddingPurpose;
 import com.javaclaw.memory.model.Episode;
 import com.javaclaw.memory.model.Fact;
 import com.javaclaw.memory.store.MemoryStore;
@@ -47,14 +48,14 @@ public class HabitReviewer {
 
     private final ChatModelBase lightModel;
     private final MemoryStore store;
-    private final EmbeddingGate gate;
+    private final EmbeddingGateway gate;
     private final TokenTracker tokenTracker;
     private final GenerateOptions generateOptions;
 
     /** 防并发重入：相邻两轮几乎同时结束时只跑一次回顾 */
     private final AtomicBoolean reviewing = new AtomicBoolean(false);
 
-    public HabitReviewer(ChatModelBase lightModel, MemoryStore store, EmbeddingGate gate, TokenTracker tokenTracker) {
+    public HabitReviewer(ChatModelBase lightModel, MemoryStore store, EmbeddingGateway gate, TokenTracker tokenTracker) {
         this.lightModel = lightModel;
         this.store = store;
         this.gate = gate;
@@ -139,7 +140,7 @@ public class HabitReviewer {
             line = line.replaceAll("[（(]依据[:：][^）)]*[）)]\\s*$", "").strip();
             if (line.isEmpty() || Distiller.isNoneAnswer(line)) continue;
 
-            float[] vec = gate.embed(line);
+            float[] vec = gate.embed(line, EmbeddingPurpose.BACKGROUND_INDEX);
             if (vec == null) {
                 Fact pf = new Fact("习惯偏好", line, null);
                 store.addPendingFact(pf, "habit-reviewer");

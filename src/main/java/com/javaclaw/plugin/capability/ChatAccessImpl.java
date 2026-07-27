@@ -4,6 +4,8 @@ import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.ScheduledTaskAgent;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
+import com.javaclaw.api.conversation.ConversationOutcome;
+import com.javaclaw.api.conversation.TerminalCallbackGuard;
 import com.javaclaw.plugin.CapabilityGuard;
 import com.javaclaw.plugin.api.Capability;
 import com.javaclaw.plugin.api.PluginException;
@@ -51,7 +53,7 @@ public final class ChatAccessImpl implements ChatAccess {
             log.debug("插件[{}]发起同步对话，prompt 长度={}", pluginId, prompt == null ? 0 : prompt.length());
             // 插件路径不开授权窗：逐次构造的令牌只承载归属标识，永远走常规确认
             agent().run(com.javaclaw.agent.ToolCallOrigin.scheduled("plugin:" + pluginId),
-                    prompt, new ConversationCallbacks() {
+                    prompt, new TerminalCallbackGuard(new ConversationCallbacks() {
                 @Override
                 public void onEvent(ConversationEvent event) {
                     if (event instanceof ConversationEvent.Reply r) {
@@ -60,15 +62,15 @@ public final class ChatAccessImpl implements ChatAccess {
                 }
 
                 @Override
-                public void onComplete() {
-                    // run() 内部已阻塞至此，无需额外同步
+                public void onTerminal(ConversationOutcome outcome) {
+                    if (outcome instanceof ConversationOutcome.Failed failed) {
+                        error.set(failed.error());
+                    } else if (outcome instanceof ConversationOutcome.Cancelled cancelled) {
+                        error.set(new java.util.concurrent.CancellationException(
+                                "插件对话已取消: " + cancelled.reason()));
+                    }
                 }
-
-                @Override
-                public void onError(Throwable t) {
-                    error.set(t);
-                }
-            });
+            }));
         }
 
         Throwable t = error.get();
@@ -85,7 +87,7 @@ public final class ChatAccessImpl implements ChatAccess {
         synchronized (lock) {
             log.debug("插件[{}]发起流式对话", pluginId);
             agent().run(com.javaclaw.agent.ToolCallOrigin.scheduled("plugin:" + pluginId),
-                    prompt, new ConversationCallbacks() {
+                    prompt, new TerminalCallbackGuard(new ConversationCallbacks() {
                 @Override
                 public void onEvent(ConversationEvent event) {
                     if (event instanceof ConversationEvent.Reply r) {
@@ -94,15 +96,16 @@ public final class ChatAccessImpl implements ChatAccess {
                 }
 
                 @Override
-                public void onComplete() {
-                    safe(listener::onComplete);
+                public void onTerminal(ConversationOutcome outcome) {
+                    if (outcome instanceof ConversationOutcome.Completed) {
+                        safe(listener::onComplete);
+                    } else if (outcome instanceof ConversationOutcome.Failed failed) {
+                        safe(() -> listener.onError(failed.error().getMessage()));
+                    } else if (outcome instanceof ConversationOutcome.Cancelled cancelled) {
+                        safe(() -> listener.onError("已取消: " + cancelled.reason()));
+                    }
                 }
-
-                @Override
-                public void onError(Throwable t) {
-                    safe(() -> listener.onError(t.getMessage()));
-                }
-            });
+            }));
         }
     }
 

@@ -1,5 +1,6 @@
 package com.javaclaw.workflow;
 
+import com.javaclaw.config.FileDatabaseAccess;
 import com.javaclaw.workflow.editor.WorkflowEditorModel;
 import com.javaclaw.workflow.model.GraphDefinition;
 import com.javaclaw.workflow.model.GraphState;
@@ -25,12 +26,10 @@ class H2WorkflowStoreTest {
     @TempDir Path temp;
 
     @Test void 草稿发布与运行快照可从H2往返() throws Exception {
-        String old = System.getProperty("user.dir");
-        System.setProperty("user.dir", temp.toString());
-        try {
+            var database = new FileDatabaseAccess(temp);
             String workspace = "ws-test";
             var registry = PublicNodeCatalog.createRegistry();
-            var definitions = new H2WorkflowDefinitionStore(workspace);
+            var definitions = new H2WorkflowDefinitionStore(workspace, database);
             var draftEditor = new WorkflowEditorModel(WorkflowEditorModel.blank("持久化测试"));
             var draft = draftEditor.current();
             var saved = definitions.saveDraft(draft);
@@ -38,9 +37,9 @@ class H2WorkflowStoreTest {
             var published = definitions.publish(draft.id(), registry);
             assertTrue(published.isPublished());
             assertEquals(draft.id(), definitions.get(draft.id()).published().id());
-            assertNull(new H2WorkflowDefinitionStore("ws-other").get(draft.id()));
+            assertNull(new H2WorkflowDefinitionStore("ws-other", database).get(draft.id()));
 
-            var checkpoints = new H2GraphCheckpointStore(workspace);
+            var checkpoints = new H2GraphCheckpointStore(workspace, database);
             try (var executions = new GraphExecutionManager(registry, checkpoints)) {
                 CountDownLatch done = new CountDownLatch(1);
                 var run = executions.start(published.published(), "thread", new com.javaclaw.workflow.model.GraphState(),
@@ -63,7 +62,7 @@ class H2WorkflowStoreTest {
 
             checkpoints.saveThreadState(draft.id(), "same-thread", new GraphState().apply(
                     StatePatch.builder().set("owner", "a").build()));
-            var otherWorkspace = new H2GraphCheckpointStore("ws-other");
+            var otherWorkspace = new H2GraphCheckpointStore("ws-other", database);
             otherWorkspace.saveThreadState(draft.id(), "same-thread", new GraphState().apply(
                     StatePatch.builder().set("owner", "b").build()));
             assertEquals("a", checkpoints.loadThreadState(draft.id(), "same-thread").get("owner").asText());
@@ -96,8 +95,5 @@ class H2WorkflowStoreTest {
             assertTrue(definitions.validate(copiedSystem.draft(), registry).isEmpty(),
                     "系统图副本应转换为可直接发布的公共节点模板");
             assertTrue(definitions.publish(copiedSystem.id(), registry).isPublished());
-        } finally {
-            System.setProperty("user.dir", old);
-        }
     }
 }

@@ -1,7 +1,8 @@
 package com.javaclaw.memory.retrieval;
 
 import com.javaclaw.config.AgentConfig;
-import com.javaclaw.memory.embed.EmbeddingGate;
+import com.javaclaw.memory.embed.EmbeddingGateway;
+import com.javaclaw.memory.embed.EmbeddingPurpose;
 import com.javaclaw.memory.model.Episode;
 import com.javaclaw.memory.model.Fact;
 import com.javaclaw.memory.model.Persona;
@@ -30,9 +31,9 @@ public class Recaller {
     private static final Logger log = LoggerFactory.getLogger(Recaller.class);
 
     private final MemoryStore store;
-    private final EmbeddingGate gate;
+    private final EmbeddingGateway gate;
 
-    public Recaller(MemoryStore store, EmbeddingGate gate) {
+    public Recaller(MemoryStore store, EmbeddingGateway gate) {
         this.store = store;
         this.gate = gate;
     }
@@ -54,7 +55,7 @@ public class Recaller {
 
         List<MemoryStore.Scored<Fact>> facts = List.of();
         List<MemoryStore.Scored<Episode>> episodes = List.of();
-        float[] q = gate.embed(query);
+        float[] q = gate.embed(query, EmbeddingPurpose.INTERACTIVE_RECALL);
         if (q != null) {
             try {
                 facts = store.searchFacts(q, topK, threshold);

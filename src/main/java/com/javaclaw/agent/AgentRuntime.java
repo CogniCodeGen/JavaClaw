@@ -10,6 +10,7 @@ import com.javaclaw.chat.ChatMessage;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.mcp.McpClientManager;
 import com.javaclaw.mcp.McpConfigManager;
+import com.javaclaw.memory.embed.EmbeddingGateway;
 import io.agentscope.core.message.Base64Source;
 import io.agentscope.core.message.ContentBlock;
 import io.agentscope.core.message.ImageBlock;
@@ -87,6 +88,8 @@ public final class AgentRuntime {
 
     /** 知识专家（含 RAG 能力，多模式共用） */
     private final KnowledgeExpert knowledgeExpert;
+    /** 记忆与知识库共用的唯一工作区级嵌入入口。 */
+    private final EmbeddingGateway embeddingGateway;
 
     /** MCP 客户端管理器（启动时自动连接启用的 MCP Server） */
     private final McpClientManager mcpClientManager;
@@ -129,13 +132,14 @@ public final class AgentRuntime {
         // 3. MemoryManager：统一管理所有智能体的 AutoContextMemory
         //    注意依赖 modelFactory，因此必须在其之后创建
         this.memoryManager = new MemoryManager(modelFactory);
+        this.embeddingGateway = new EmbeddingGateway(modelFactory);
 
         // 4. ExpertManager + KnowledgeExpert：子智能体定义的中心。
         //    runtime 的共享专家只服务交互路径（聊天/规划），来源令牌固定 INTERACTIVE；
         //    定时/循环路径各建独立 ExpertManager 并绑定各自令牌，SDD 逐任务经
         //    buildCapabilityTools(origin) 产带任务归属的工具实例
         this.expertManager = new ExpertManager(modelFactory, browserManager, ToolCallOrigin.INTERACTIVE);
-        this.knowledgeExpert = new KnowledgeExpert(modelFactory);
+        this.knowledgeExpert = new KnowledgeExpert(modelFactory, embeddingGateway);
 
         // 6. MCP 客户端：启动所有启用的 MCP Server
         this.mcpClientManager = new McpClientManager();
@@ -167,6 +171,8 @@ public final class AgentRuntime {
                 config.getRetryMaxAttempts(), config.getRetryInitialBackoffSeconds(),
                 config.getRetryMaxBackoffSeconds());
 
+        // 模型对象创建本身不会访问端点；后台主动探测一次，避免顶部状态永久停在“检查中”。
+        embeddingGateway.startInitialProbe();
         log.info("========== AgentRuntime 基础设施初始化完成 ==========");
     }
 
@@ -177,6 +183,7 @@ public final class AgentRuntime {
     public MemoryManager getMemoryManager() { return memoryManager; }
     public ExpertManager getExpertManager() { return expertManager; }
     public KnowledgeExpert getKnowledgeExpert() { return knowledgeExpert; }
+    public EmbeddingGateway getEmbeddingGateway() { return embeddingGateway; }
     public McpClientManager getMcpClientManager() { return mcpClientManager; }
     public VisionPreprocessor getVisionPreprocessor() { return visionPreprocessor; }
     public PlaywrightBrowserManager getBrowserManager() { return browserManager; }

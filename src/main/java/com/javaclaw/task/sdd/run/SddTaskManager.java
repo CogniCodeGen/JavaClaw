@@ -9,6 +9,8 @@ import com.javaclaw.agent.router.ToolRouter;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.AppDatabase;
+import com.javaclaw.config.AppDatabaseAccess;
+import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.skill.SkillManager;
 import com.javaclaw.task.sdd.SddOutcome;
 import com.javaclaw.task.sdd.SddProgress;
@@ -83,6 +85,8 @@ public final class SddTaskManager {
     private SkillManager skills;
     private UserInteractionPort interactionPort;
     private com.javaclaw.workflow.service.WorkflowService workflowService;
+    private DatabaseAccess database = new AppDatabaseAccess();
+    private String workspaceId = AppDatabase.currentWorkspaceId();
     private volatile SddTaskListener listener = new SddTaskListener() {};
 
     // ==================== 配置 / 持久化 ====================
@@ -113,12 +117,24 @@ public final class SddTaskManager {
                                                Map<String, Object>> capabilityToolsFactory,
                                        SkillManager skills, UserInteractionPort interactionPort,
                                        com.javaclaw.workflow.service.WorkflowService workflowService) {
+        configure(dataDir, modelFactory, capabilityToolsFactory, skills, interactionPort,
+                workflowService, new AppDatabaseAccess(), AppDatabase.currentWorkspaceId());
+    }
+
+    public synchronized void configure(Path dataDir, ModelFactory modelFactory,
+                                       java.util.function.Function<com.javaclaw.agent.ToolCallOrigin,
+                                               Map<String, Object>> capabilityToolsFactory,
+                                       SkillManager skills, UserInteractionPort interactionPort,
+                                       com.javaclaw.workflow.service.WorkflowService workflowService,
+                                       DatabaseAccess database, String workspaceId) {
         this.modelFactory = modelFactory;
         this.capabilityToolsFactory = capabilityToolsFactory == null
                 ? origin -> Map.of() : capabilityToolsFactory;
         this.skills = skills;
         this.interactionPort = interactionPort;
         this.workflowService = workflowService;
+        this.database = java.util.Objects.requireNonNull(database, "database");
+        this.workspaceId = java.util.Objects.requireNonNull(workspaceId, "workspaceId");
         loadAll();
         recoverInterrupted();
     }
@@ -142,6 +158,15 @@ public final class SddTaskManager {
                 workflowService);
     }
 
+    public synchronized void reload(Path dataDir, ModelFactory modelFactory,
+                                    java.util.function.Function<com.javaclaw.agent.ToolCallOrigin,
+                                            Map<String, Object>> capabilityToolsFactory,
+                                    com.javaclaw.workflow.service.WorkflowService workflowService,
+                                    DatabaseAccess database, String workspaceId) {
+        configure(dataDir, modelFactory, capabilityToolsFactory, this.skills, this.interactionPort,
+                workflowService, database, workspaceId);
+    }
+
     public void subscribe(SddTaskListener l) {
         this.listener = l == null ? new SddTaskListener() {} : l;
     }
@@ -149,10 +174,10 @@ public final class SddTaskManager {
     private synchronized void loadAll() {
         tasks.clear();
         try {
-            try (Connection c = AppDatabase.getConnection();
+            try (Connection c = database.open();
                  PreparedStatement ps = c.prepareStatement(
                          "SELECT task_json FROM sdd_tasks WHERE workspace_id = ? ORDER BY updated_at, id")) {
-                ps.setString(1, AppDatabase.currentWorkspaceId());
+                ps.setString(1, workspaceId);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         tasks.add(mapper.readValue(rs.getString("task_json"), SddManagedTask.class));
@@ -166,11 +191,10 @@ public final class SddTaskManager {
 
     private synchronized void saveAll() {
         String insert = "INSERT INTO sdd_tasks(workspace_id, id, task_json, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)";
-        try (Connection c = AppDatabase.getConnection();
+        try (Connection c = database.open();
              PreparedStatement del = c.prepareStatement("DELETE FROM sdd_tasks WHERE workspace_id = ?");
              PreparedStatement ps = c.prepareStatement(insert)) {
             c.setAutoCommit(false);
-            String workspaceId = AppDatabase.currentWorkspaceId();
             del.setString(1, workspaceId);
             del.executeUpdate();
             for (SddManagedTask task : tasks) {
@@ -274,7 +298,7 @@ public final class SddTaskManager {
                                     com.javaclaw.agent.ToolCallOrigin.managedTask(id, task.workDir)),
                             skills,
                             (phase, in, out) -> recordTokens(task, phase, in, out), gate, progress,
-                            completionStamp, workflowService)
+                            completionStamp, workflowService, database, workspaceId)
                             .budgetGuard(() -> isOverBudget(task))
                             .execTimeoutSec(cfg.getSddExecTimeoutSeconds())
                             .structuredTimeoutSec(cfg.getSddStructuredTimeoutSeconds())
@@ -417,7 +441,15 @@ public final class SddTaskManager {
     }
 
     private void deleteSpecDocs(SddManagedTask task) {
-        try (Connection c = AppDatabase.getConnection();
+        deleteSpecDocs(database, workspaceId, task);
+    }
+
+    static void deleteSpecDocs(DatabaseAccess database, String workspaceId, SddManagedTask task) {
+        String normalizedWorkDir = task.workDir == null || task.workDir.isBlank()
+                ? null
+                : Path.of(task.workDir).toAbsolutePath().normalize().toString();
+        if (normalizedWorkDir == null) return;
+        try (Connection c = database.open();
              PreparedStatement spec = c.prepareStatement("""
                      DELETE FROM sdd_spec_docs
                      WHERE workspace_id = ? AND work_dir = ? AND slug = ?
@@ -426,11 +458,6 @@ public final class SddTaskManager {
                      DELETE FROM sdd_verify_cache
                      WHERE workspace_id = ? AND work_dir = ? AND slug = ?
                      """)) {
-            String normalizedWorkDir = task.workDir == null || task.workDir.isBlank()
-                    ? null
-                    : Path.of(task.workDir).toAbsolutePath().normalize().toString();
-            if (normalizedWorkDir == null) return;
-            String workspaceId = AppDatabase.currentWorkspaceId();
             String slug = SpecPaths.makeSlug(task.id, task.title);
             spec.setString(1, workspaceId);
             spec.setString(2, normalizedWorkDir);
@@ -514,7 +541,7 @@ public final class SddTaskManager {
 
     private void refreshProgress(SddManagedTask task) {
         try {
-            SpecStore store = new SpecStore(task.workDir);
+            SpecStore store = new SpecStore(task.workDir, database, workspaceId);
             String slug = SpecPaths.makeSlug(task.id, task.title);
             OpenSpecChange ch = store.readChange(slug, task.id, task.title);
             task.progress = ch.progressPercent();
@@ -582,7 +609,7 @@ public final class SddTaskManager {
         SddManagedTask t = get(id);
         if (t == null) return Optional.empty();
         try {
-            SpecStore store = new SpecStore(t.workDir);
+            SpecStore store = new SpecStore(t.workDir, database, workspaceId);
             return Optional.of(store.readChange(SpecPaths.makeSlug(t.id, t.title), t.id, t.title));
         } catch (Exception e) {
             return Optional.empty();

@@ -37,9 +37,6 @@ public final class GraphEngine {
             Map<String, NodeDefinition> nodes = new HashMap<>();
             graph.nodes().forEach(n -> nodes.put(n.id(), n));
 
-            run.status(RunStatus.RUNNING);
-            run.error(null);
-            store.updateRun(run);
             emit(sink, new GraphEvent.RunStarted(run.id(), run.workflowId(), run.threadId()));
 
             while (true) {

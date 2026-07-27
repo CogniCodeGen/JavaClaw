@@ -1,16 +1,9 @@
 package com.javaclaw.ui.javafx;
 
-import java.awt.Color;
-import java.awt.Font;
-import java.awt.FontMetrics;
-import java.awt.Graphics2D;
-import java.awt.Image;
 import java.awt.MenuItem;
 import java.awt.PopupMenu;
-import java.awt.RenderingHints;
 import java.awt.SystemTray;
 import java.awt.TrayIcon;
-import java.awt.image.BufferedImage;
 
 import javafx.application.Platform;
 import org.slf4j.Logger;
@@ -74,7 +67,7 @@ public class SystemTrayManager {
             menu.addSeparator();
             menu.add(buildItem("退出", onExit));
 
-            trayIcon = new TrayIcon(buildTrayImage(), tooltip, menu);
+            trayIcon = new TrayIcon(TrayIconImageLoader.load(), tooltip, menu);
             trayIcon.setImageAutoSize(true);
             // 双击托盘图标（Windows/Linux 支持）= 显示主窗口
             trayIcon.addActionListener(e -> dispatch(onShowWindow));
@@ -136,23 +129,4 @@ public class SystemTrayManager {
         });
     }
 
-    /** 程序化绘制托盘图标：品牌绿圆角方块 + 白色 "JC" 字样，浅/深色菜单栏均可辨识。 */
-    private static Image buildTrayImage() {
-        int size = 32;
-        BufferedImage img = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g = img.createGraphics();
-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-        g.setColor(new Color(0x2E, 0x9A, 0x6A));
-        g.fillRoundRect(1, 1, size - 2, size - 2, 10, 10);
-        g.setColor(Color.WHITE);
-        g.setFont(new Font("SansSerif", Font.BOLD, 16));
-        FontMetrics fm = g.getFontMetrics();
-        String text = "JC";
-        int tx = (size - fm.stringWidth(text)) / 2;
-        int ty = (size - fm.getHeight()) / 2 + fm.getAscent();
-        g.drawString(text, tx, ty);
-        g.dispose();
-        return img;
-    }
 }

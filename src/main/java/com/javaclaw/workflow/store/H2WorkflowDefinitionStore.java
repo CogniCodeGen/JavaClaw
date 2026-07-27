@@ -1,7 +1,8 @@
 package com.javaclaw.workflow.store;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.javaclaw.config.AppDatabase;
+import com.javaclaw.config.AppDatabaseAccess;
+import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.workflow.model.GraphDefinition;
 import com.javaclaw.workflow.model.GraphKind;
 import com.javaclaw.workflow.model.NodeDefinition;
@@ -26,9 +27,15 @@ import java.util.UUID;
 public final class H2WorkflowDefinitionStore implements WorkflowDefinitionStore {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private final String workspaceId;
+    private final DatabaseAccess database;
 
     public H2WorkflowDefinitionStore(String workspaceId) {
+        this(workspaceId, new AppDatabaseAccess());
+    }
+
+    public H2WorkflowDefinitionStore(String workspaceId, DatabaseAccess database) {
         this.workspaceId = Objects.requireNonNull(workspaceId);
+        this.database = Objects.requireNonNull(database);
     }
 
     @Override
@@ -36,7 +43,7 @@ public final class H2WorkflowDefinitionStore implements WorkflowDefinitionStore 
         List<WorkflowDefinitionRecord> out = new ArrayList<>();
         String sql = "SELECT * FROM workflow_definitions WHERE workspace_id=?"
                 + (includeArchived ? "" : " AND archived=FALSE") + " ORDER BY updated_at DESC";
-        try (Connection c = AppDatabase.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+        try (Connection c = database.open(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, workspaceId);
             try (ResultSet rs = ps.executeQuery()) { while (rs.next()) out.add(read(rs)); }
             return List.copyOf(out);
@@ -47,7 +54,7 @@ public final class H2WorkflowDefinitionStore implements WorkflowDefinitionStore 
 
     @Override
     public WorkflowDefinitionRecord get(String id) {
-        try (Connection c = AppDatabase.getConnection();
+        try (Connection c = database.open();
              PreparedStatement ps = c.prepareStatement(
                      "SELECT * FROM workflow_definitions WHERE workspace_id=? AND id=?")) {
             ps.setString(1, workspaceId); ps.setString(2, id);
@@ -63,7 +70,7 @@ public final class H2WorkflowDefinitionStore implements WorkflowDefinitionStore 
         long now = System.currentTimeMillis();
         WorkflowDefinitionRecord old = get(definition.id());
         int revision = old == null ? 1 : old.draftRevision() + 1;
-        try (Connection c = AppDatabase.getConnection();
+        try (Connection c = database.open();
              PreparedStatement ps = c.prepareStatement("""
                      MERGE INTO workflow_definitions(workspace_id,id,name,description,draft_json,published_json,
                          draft_revision,published_version,archived,created_at,updated_at)
@@ -93,7 +100,7 @@ public final class H2WorkflowDefinitionStore implements WorkflowDefinitionStore 
                 record.draft().name(), record.draft().description(), version, GraphKind.CUSTOM,
                 record.draft().startNodeId(), record.draft().nodes(), record.draft().edges(),
                 record.draft().maxSteps());
-        try (Connection c = AppDatabase.getConnection();
+        try (Connection c = database.open();
              PreparedStatement ps = c.prepareStatement("""
                      UPDATE workflow_definitions SET published_json=?,published_version=?,updated_at=?
                      WHERE workspace_id=? AND id=?
@@ -172,7 +179,7 @@ public final class H2WorkflowDefinitionStore implements WorkflowDefinitionStore 
 
     @Override
     public boolean archive(String id, boolean archived) {
-        try (Connection c = AppDatabase.getConnection();
+        try (Connection c = database.open();
              PreparedStatement ps = c.prepareStatement("""
                      UPDATE workflow_definitions SET archived=?,updated_at=? WHERE workspace_id=? AND id=?
                      """)) {
@@ -184,7 +191,7 @@ public final class H2WorkflowDefinitionStore implements WorkflowDefinitionStore 
 
     @Override
     public boolean delete(String id) {
-        try (Connection c = AppDatabase.getConnection();
+        try (Connection c = database.open();
              PreparedStatement active = c.prepareStatement("""
                      SELECT 1 FROM workflow_runs WHERE workspace_id=? AND workflow_id=?
                      AND status IN ('CREATED','RUNNING','WAITING_INPUT','PAUSED','RECOVERY_REQUIRED') LIMIT 1

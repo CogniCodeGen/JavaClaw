@@ -6,6 +6,8 @@ import com.javaclaw.agent.PlanModeService;
 import com.javaclaw.agent.ShellCommandService;
 import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.browser.PlaywrightBrowserManager;
+import com.javaclaw.config.AppDatabaseAccess;
+import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.loop.LoopService;
 import com.javaclaw.mode.ChatMode;
 import com.javaclaw.mode.LoopMode;
@@ -31,6 +33,7 @@ public final class RuntimeFactory {
     private final Runnable openWorkflowView;
     private final Runnable closeWorkflowView;
     private final Set<String> disabledModes;
+    private final DatabaseAccess databaseAccess;
 
     public RuntimeFactory(PlaywrightBrowserManager browserManager,
                           Runnable openTaskView,
@@ -42,6 +45,7 @@ public final class RuntimeFactory {
         this.openWorkflowView = Objects.requireNonNull(openWorkflowView, "openWorkflowView");
         this.closeWorkflowView = Objects.requireNonNull(closeWorkflowView, "closeWorkflowView");
         this.disabledModes = disabledModes == null ? Set.of() : Set.copyOf(disabledModes);
+        this.databaseAccess = new AppDatabaseAccess();
     }
 
     /**
@@ -58,8 +62,8 @@ public final class RuntimeFactory {
         try {
             runtime = new AgentRuntime(browserManager);
             var nodeRegistry = PublicNodeCatalog.createRegistry(runtime);
-            var checkpoints = new H2GraphCheckpointStore(context.workspaceId());
-            var definitions = new H2WorkflowDefinitionStore(context.workspaceId());
+            var checkpoints = new H2GraphCheckpointStore(context.workspaceId(), databaseAccess);
+            var definitions = new H2WorkflowDefinitionStore(context.workspaceId(), databaseAccess);
             var systemGraphs = new SystemGraphRegistry();
             systemGraphs.register(com.javaclaw.workflow.service.SystemGraphFactory.sdd());
             workflows = new WorkflowService(context.workspaceId(), runtime, nodeRegistry,
@@ -75,7 +79,7 @@ public final class RuntimeFactory {
             modes.register(new ShellMode(new ShellCommandService(chat)));
             modes.register(new TaskMode(openTaskView));
             modes.register(new WorkflowCenterMode(openWorkflowView, closeWorkflowView));
-            return new WorkspaceRuntime(context, runtime, chat, plan, workflows, modes);
+            return new WorkspaceRuntime(context, databaseAccess, runtime, chat, plan, workflows, modes);
         } catch (RuntimeException | Error failure) {
             if (modes != null) safeClose(modes::shutdownAll);
             if (chat != null) safeClose(chat::shutdown);

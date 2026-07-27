@@ -67,7 +67,8 @@ public class ExpertManager {
             String description,
             int maxIters,
             Object tools,
-            String groupName
+            String groupName,
+            PlanRole planRole
     ) {}
 
     /** 所有专家定义（有序） */
@@ -120,7 +121,7 @@ public class ExpertManager {
         for (CustomAgentDef custom : customAgents) {
             ExpertDef def = new ExpertDef(
                     custom.name, custom.sysPrompt, custom.toolName,
-                    custom.description, custom.maxIters, null, custom.toolName);
+                    custom.description, custom.maxIters, null, custom.toolName, PlanRole.DOMAIN);
             SubAgentTool tool = createSubAgentTool(modelFactory.createChatModel(), def);
             subAgentTools.put(def.toolName(), tool);
         }
@@ -147,14 +148,14 @@ public class ExpertManager {
                 AgentPrompts.CODING_AGENT_SYS_PROMPT,
                 "coding_expert",
                 AgentConfig.CODING_AGENT_DESCRIPTION,
-                1, null, "coding"));
+                1, null, "coding", PlanRole.DOMAIN));
 
         defs.add(new ExpertDef(
                 AgentConfig.EVALUATOR_AGENT_NAME,
                 AgentPrompts.EVALUATOR_AGENT_SYS_PROMPT,
                 "task_evaluator",
                 AgentConfig.EVALUATOR_AGENT_DESCRIPTION,
-                1, null, "evaluator"));
+                1, null, "evaluator", PlanRole.CRITIC));
 
         // 带工具的专家：工具实例整个专家共享、跨会话复用（见 ExpertDef.tools 注释——@ref 等
         // 会话内多次委派间延续的状态需要共享实例，每会话新建会清空之）
@@ -164,7 +165,7 @@ public class ExpertManager {
                 "web_expert",
                 AgentConfig.WEB_AGENT_DESCRIPTION,
                 config.getWebAgentMaxIters(),
-                new PlaywrightBrowserTools(browserManager, origin), "web"));
+                new PlaywrightBrowserTools(browserManager, origin), "web", PlanRole.DOMAIN));
 
         defs.add(new ExpertDef(
                 AgentConfig.EMAIL_AGENT_NAME,
@@ -172,7 +173,7 @@ public class ExpertManager {
                 "email_expert",
                 AgentConfig.EMAIL_AGENT_DESCRIPTION,
                 config.getEmailAgentMaxIters(),
-                new EmailTools(origin), "email"));
+                new EmailTools(origin), "email", PlanRole.DOMAIN));
 
         defs.add(new ExpertDef(
                 AgentConfig.SYSTEM_AGENT_NAME,
@@ -180,7 +181,7 @@ public class ExpertManager {
                 "system_expert",
                 AgentConfig.SYSTEM_AGENT_DESCRIPTION,
                 config.getSystemAgentMaxIters(),
-                new SystemTools(origin), "system"));
+                new SystemTools(origin), "system", PlanRole.DOMAIN));
 
         defs.add(new ExpertDef(
                 AgentConfig.DESKTOP_AGENT_NAME,
@@ -188,7 +189,7 @@ public class ExpertManager {
                 "desktop_expert",
                 AgentConfig.DESKTOP_AGENT_DESCRIPTION,
                 config.getSystemAgentMaxIters(),
-                new DesktopTools(origin), "desktop"));
+                new DesktopTools(origin), "desktop", PlanRole.DOMAIN));
 
         defs.add(new ExpertDef(
                 AgentConfig.NOTIFICATION_AGENT_NAME,
@@ -196,7 +197,7 @@ public class ExpertManager {
                 "notification_expert",
                 AgentConfig.NOTIFICATION_AGENT_DESCRIPTION,
                 config.getNotificationAgentMaxIters(),
-                new NotificationTools(origin), "notification"));
+                new NotificationTools(origin), "notification", PlanRole.DOMAIN));
 
         defs.add(new ExpertDef(
                 AgentConfig.COMMAND_AGENT_NAME,
@@ -204,7 +205,7 @@ public class ExpertManager {
                 "command_expert",
                 AgentConfig.COMMAND_AGENT_DESCRIPTION,
                 config.getCommandAgentMaxIters(),
-                new CommandLineTools(origin), "command"));
+                new CommandLineTools(origin), "command", PlanRole.DOMAIN));
 
         return defs;
     }
@@ -253,6 +254,16 @@ public class ExpertManager {
         return List.copyOf(expertDefs);
     }
 
+    public Map<String, PlanRole> getPlanRoles() {
+        Map<String, PlanRole> roles = new LinkedHashMap<>();
+        for (ExpertDef def : expertDefs) roles.put(def.agentName(), def.planRole());
+        roles.put(AgentConfig.KNOWLEDGE_AGENT_NAME, PlanRole.DOMAIN);
+        for (CustomAgentDef custom : CustomAgentConfig.getInstance().getEnabled()) {
+            roles.put(custom.name, PlanRole.DOMAIN);
+        }
+        return Map.copyOf(roles);
+    }
+
     // ==================== 规划模式（PlanModeService 使用） ====================
 
     /**
@@ -266,6 +277,7 @@ public class ExpertManager {
         Map<String, ReActAgent> agents = new LinkedHashMap<>();
 
         for (ExpertDef def : expertDefs) {
+            if (def.planRole() == PlanRole.EXCLUDED) continue;
             ReActAgent agent = createAgent(
                     modelFactory.createMultiAgentChatModel(),
                     def.agentName(),

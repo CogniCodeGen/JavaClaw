@@ -1,6 +1,7 @@
 package com.javaclaw.mode;
 
 import com.javaclaw.api.conversation.Capabilities;
+import com.javaclaw.api.conversation.ConversationHandle;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationMode;
 import com.javaclaw.api.conversation.ConversationRequest;
@@ -33,13 +34,8 @@ public final class LoopMode implements ConversationMode {
     }
 
     @Override
-    public void start(ConversationRequest request, ConversationCallbacks callbacks) {
-        service.start(request, callbacks);
-    }
-
-    @Override
-    public boolean cancel() {
-        return service.cancelActive();
+    public ConversationHandle start(ConversationRequest request, ConversationCallbacks callbacks) {
+        return service.start(request, callbacks);
     }
 
     @Override

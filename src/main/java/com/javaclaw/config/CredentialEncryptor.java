@@ -63,9 +63,13 @@ public final class CredentialEncryptor {
     /** app_state 表内主密钥的 key。 */
     private static final String KEY_STATE_KEY = "credential.master.key";
 
-    /** 旧版外部主密钥文件（{user.dir}/data/credential.key）：仅在首次访问时读一次以迁移进 H2，此后不再写。 */
+    /** 旧版外部主密钥文件（统一数据根/credential.key）：仅在首次访问时读一次以迁移进 H2，此后不再写。 */
     private static final Path LEGACY_KEY_FILE =
-            Path.of(System.getProperty("user.dir"), "data", "credential.key");
+            AppDatabase.dataDirectory().resolve("credential.key");
+
+    static Path legacyKeyFilePath() {
+        return LEGACY_KEY_FILE;
+    }
 
     /** 主密钥缓存（每次加解密都要 PBKDF2，文件只读一次） */
     private static volatile String cachedMasterSecret;

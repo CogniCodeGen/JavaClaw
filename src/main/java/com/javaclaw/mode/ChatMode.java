@@ -2,6 +2,7 @@ package com.javaclaw.mode;
 
 import com.javaclaw.agent.ChatService;
 import com.javaclaw.api.conversation.Capabilities;
+import com.javaclaw.api.conversation.ConversationHandle;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationMode;
 import com.javaclaw.api.conversation.ConversationRequest;
@@ -29,13 +30,8 @@ public final class ChatMode implements ConversationMode {
     @Override public Capabilities capabilities() { return Capabilities.defaults(); }
 
     @Override
-    public void start(ConversationRequest request, ConversationCallbacks callbacks) {
-        service.streamChat(request, callbacks);
-    }
-
-    @Override
-    public boolean cancel() {
-        return service.cancelStream();
+    public ConversationHandle start(ConversationRequest request, ConversationCallbacks callbacks) {
+        return service.streamChat(request, callbacks);
     }
 
     @Override

@@ -5,6 +5,8 @@ import com.javaclaw.agent.handler.StreamEventHandler;
 import com.javaclaw.agent.router.RoutingResult;
 import com.javaclaw.agent.router.ToolRouter;
 import com.javaclaw.api.conversation.ConversationCallbacks;
+import com.javaclaw.api.conversation.CancellationReason;
+import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.prompt.AgentPrompts;
 import com.javaclaw.util.AtomicDisposable;
@@ -106,8 +108,8 @@ public final class ScheduledTaskAgent {
             // 不再启动，记为取消（可审计）而非静默吞掉
             if (closed) {
                 if (signaled.compareAndSet(false, true)) {
-                    callbacks.onError(new java.util.concurrent.CancellationException(
-                            "定时编排器已关闭，本次执行未启动"));
+                    callbacks.onTerminal(new ConversationOutcome.Cancelled(
+                            CancellationReason.RUNTIME_REBUILD, false));
                 }
                 return;
             }
@@ -147,12 +149,12 @@ public final class ScheduledTaskAgent {
                             error -> {
                                 log.error("定时任务编排执行出错", error);
                                 if (signaled.compareAndSet(false, true)) {
-                                    callbacks.onError(error);
+                                    callbacks.onTerminal(ConversationOutcome.failed(error));
                                 }
                             },
                             () -> {
                                 if (signaled.compareAndSet(false, true)) {
-                                    callbacks.onComplete();
+                                    callbacks.onTerminal(ConversationOutcome.completed());
                                 }
                             });
             selfSub.set(sub);
@@ -170,25 +172,26 @@ public final class ScheduledTaskAgent {
                 log.warn("定时任务执行超时（>{}分钟），强制中断本次", RUN_TIMEOUT_MINUTES);
                 subscription.dispose();
                 if (signaled.compareAndSet(false, true)) {
-                    callbacks.onError(new java.util.concurrent.TimeoutException(
-                            "定时任务执行超过 " + RUN_TIMEOUT_MINUTES + " 分钟，已中断"));
+                    callbacks.onTerminal(ConversationOutcome.failed(
+                            new java.util.concurrent.TimeoutException(
+                                    "定时任务执行超过 " + RUN_TIMEOUT_MINUTES + " 分钟，已中断")));
                 }
             } else if (signaled.compareAndSet(false, true)) {
                 // 闩已放行但 onError/onComplete 均未触发 = 外部 dispose 中断：
                 // 记为一次失败执行（含耗时/通知），保证任务历史可审计
-                callbacks.onError(new java.util.concurrent.CancellationException(
-                        "定时执行被中断（服务重建 / 工作区切换 / 应用关闭）"));
+                callbacks.onTerminal(new ConversationOutcome.Cancelled(
+                        CancellationReason.RUNTIME_REBUILD, false));
             }
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
             subscription.dispose();
             if (signaled.compareAndSet(false, true)) {
-                callbacks.onError(ie);
+                callbacks.onTerminal(ConversationOutcome.failed(ie));
             }
         } catch (Exception e) {
             log.error("定时任务编排启动异常", e);
             if (signaled.compareAndSet(false, true)) {
-                callbacks.onError(e);
+                callbacks.onTerminal(ConversationOutcome.failed(e));
             }
         }
     }

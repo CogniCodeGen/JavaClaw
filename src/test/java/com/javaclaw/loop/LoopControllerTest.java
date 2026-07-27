@@ -2,6 +2,7 @@ package com.javaclaw.loop;
 
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
+import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.loop.model.Cadence;
 import com.javaclaw.loop.model.CarryForwardMode;
 import com.javaclaw.loop.model.IterationResult;
@@ -61,13 +62,9 @@ class LoopControllerTest {
         }
 
         @Override
-        public void onComplete() {
-            completed = true;
-        }
-
-        @Override
-        public void onError(Throwable e) {
-            this.error = e;
+        public void onTerminal(ConversationOutcome outcome) {
+            if (outcome instanceof ConversationOutcome.Completed) completed = true;
+            else if (outcome instanceof ConversationOutcome.Failed failed) error = failed.error();
         }
 
         LoopStatus last() {

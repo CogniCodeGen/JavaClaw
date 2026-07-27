@@ -6,6 +6,7 @@ import com.javaclaw.agent.ToolkitAssembler;
 import com.javaclaw.agent.handler.StreamEventHandler;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
+import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.workflow.model.StatePatch;
 import com.javaclaw.workflow.runtime.GraphCancelledException;
@@ -113,8 +114,7 @@ public final class AgentNodeExecutor implements NodeExecutor {
                     callbacks.onEvent(event);
                 }
             }
-            @Override public void onComplete() { }
-            @Override public void onError(Throwable error) { }
+            @Override public void onTerminal(ConversationOutcome outcome) { }
         };
 
         CountDownLatch done = new CountDownLatch(1);
@@ -143,8 +143,7 @@ public final class AgentNodeExecutor implements NodeExecutor {
     private static ConversationCallbacks silentCallbacks() {
         return new ConversationCallbacks() {
             @Override public void onEvent(ConversationEvent event) { }
-            @Override public void onComplete() { }
-            @Override public void onError(Throwable error) { }
+            @Override public void onTerminal(ConversationOutcome outcome) { }
         };
     }
 }

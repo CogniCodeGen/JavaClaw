@@ -7,9 +7,12 @@ import com.javaclaw.agent.PlanModeService;
 import com.javaclaw.agent.PricingTable;
 import com.javaclaw.agent.TokenTracker;
 import com.javaclaw.api.conversation.ActionMode;
+import com.javaclaw.api.conversation.CancellationReason;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
+import com.javaclaw.api.conversation.ConversationHandle;
 import com.javaclaw.api.conversation.ConversationMode;
+import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.api.conversation.ConversationRequest;
 import com.javaclaw.api.conversation.Mode;
 import com.javaclaw.api.conversation.ModeRegistry;
@@ -94,6 +97,8 @@ public class ChatViewController {
     private Label topTitleStatusDot;
     private Label topTitleMetaLabel;
     private Label localModeBadge;
+    private Label embeddingHealthBadge;
+    private AutoCloseable embeddingHealthSubscription;
     /** 共享基础设施容器（模型工厂 / 记忆 / 知识 / token 追踪等） */
     private AgentRuntime runtime;
     /** 普通聊天模式服务入口 */
@@ -178,6 +183,12 @@ public class ChatViewController {
 
     /** 判断"接近底部"的像素阈值 */
     private static final double NEAR_BOTTOM_THRESHOLD_PX = 100.0;
+    /** 仅由真实用户滚动改变；内容布局导致的 vvalue 变化不得关闭跟随。 */
+    private boolean followTail = true;
+    /** 当前由控制器驱动的尾部滚动动画；用户操作会先停止它。 */
+    private Timeline tailScrollAnimation;
+    /** 防止控制器自己的 vvalue 写入被误判为用户离开底部。 */
+    private boolean programmaticTailScroll;
 
     // ==================== 流式输出的活动 UI 引用 ====================
 
@@ -201,9 +212,6 @@ public class ChatViewController {
 
     /** 单一会话模式选中态；模式按钮完全由 ModeRegistry 动态生成。 */
     private String selectedConversationModeId = "chat";
-    /** 当前流实际使用的模式（允许 /研讨 单次覆盖而不改变全局选择）。 */
-    private String streamingModeId = "chat";
-
     /** 规划模式下当前正在流式填充的智能体 Markdown 气泡 */
     private MarkdownBubble activePlanAgentBubble;
 
@@ -226,6 +234,9 @@ public class ChatViewController {
     private ComboBox<ConversationModeChoice> conversationModeSelector;
     private boolean conversationModeUpdating;
     private ComboBox<WorkflowChoice> workflowSelector;
+    private ComboBox<com.javaclaw.api.conversation.PlanProfile> planProfileSelector;
+    private Button workflowEmptyShortcut;
+    private MenuButton loopTemplateMenu;
     /** 丢弃被后续刷新或工作区切换取代的异步工作流列表结果。 */
     private final java.util.concurrent.atomic.AtomicLong workflowSelectorRefreshGeneration =
             new java.util.concurrent.atomic.AtomicLong();
@@ -255,6 +266,8 @@ public class ChatViewController {
 
     /** 流式输出代次计数器（会话切换/删除时递增，使旧流回调失效） */
     private volatile int streamGeneration = 0;
+    /** 当前一轮的完整运行上下文；终态、取消与计量均只操作这一聚合。 */
+    private volatile ActiveTurn activeTurn;
 
     /** 重建进行中再次触发重建时置位：收尾后补一轮，保证「后到的配置」不被静默丢弃。 */
     private final java.util.concurrent.atomic.AtomicBoolean rebuildQueued =
@@ -277,11 +290,40 @@ public class ChatViewController {
     /** 流式会话被切走时挂起的消息区节点（仍被流式回调实时更新），切回时原样恢复 */
     private final List<javafx.scene.Node> suspendedStreamingNodes = new ArrayList<>();
 
-    /** 本次流式会话累计的真实输入 token（来自 ChatUsage，每次 startNewStream 重置） */
-    private long streamUsageInputTokens = 0;
+    /**
+     * 一轮会话运行的单一真相：固定 generation/session/mode，持有回复草稿、
+     * 独立句柄、消息级 Token 与耗时。UI 节点仍由控制器维护，但不再用散落字段判断终态归属。
+     */
+    private static final class ActiveTurn {
+        final int generation;
+        final ChatSession session;
+        final String modeId;
+        final StringBuilder messageDraft = new StringBuilder();
+        String finalPlanDraft;
+        final long startedAtNanos = System.nanoTime();
+        long inputTokens;
+        long outputTokens;
+        DeliveryState deliveryState = DeliveryState.COMPLETE;
+        volatile ConversationHandle handle;
 
-    /** 本次流式会话累计的真实输出 token */
-    private long streamUsageOutputTokens = 0;
+        ActiveTurn(int generation, ChatSession session, String modeId) {
+            this.generation = generation;
+            this.session = session;
+            this.modeId = modeId;
+        }
+
+        TurnMetrics metrics() {
+            long durationMs = Math.max(0,
+                    (System.nanoTime() - startedAtNanos) / 1_000_000L);
+            return new TurnMetrics(inputTokens, outputTokens, durationMs);
+        }
+    }
+
+    /** 当前运行的停止语义：用户停止保留部分回复，破坏性操作立即丢弃并隔离旧回调。 */
+    private enum StopPolicy {
+        PRESERVE_PARTIAL,
+        DISCARD_AND_INVALIDATE
+    }
 
     /**
      * 构造聊天界面。
@@ -358,6 +400,11 @@ public class ChatViewController {
         localModeBadge.setVisible(false);
         localModeBadge.setManaged(false);
 
+        embeddingHealthBadge = new Label("嵌入：检查中");
+        embeddingHealthBadge.getStyleClass().add("local-mode-badge");
+        embeddingHealthBadge.setAccessibleText("嵌入服务健康状态");
+        wireEmbeddingHealth();
+
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
@@ -393,9 +440,34 @@ public class ChatViewController {
             WorkflowChoice choice = workflowSelector.getValue();
             syncWorkflowSelection(choice == null ? null : choice.id());
         });
+        planProfileSelector = new ComboBox<>();
+        planProfileSelector.getItems().setAll(com.javaclaw.api.conversation.PlanProfile.values());
+        planProfileSelector.setValue(com.javaclaw.api.conversation.PlanProfile.AUTO);
+        planProfileSelector.setPrefWidth(112);
+        planProfileSelector.setVisible(false);
+        planProfileSelector.setManaged(false);
+        planProfileSelector.setAccessibleText("研讨深度档位");
+        planProfileSelector.setTooltip(new Tooltip(
+                "AUTO 自动判断；QUICK 轻量；STANDARD 标准；DEEP 深度"));
+        loopTemplateMenu = new MenuButton("循环模板");
+        loopTemplateMenu.getStyleClass().add("composer-select");
+        loopTemplateMenu.setVisible(false);
+        loopTemplateMenu.setManaged(false);
+        loopTemplateMenu.setTooltip(new Tooltip(
+                "语法示例：@loop interval=5m max=20 judge=on\\n目标描述"));
+        addLoopTemplate("快速推进", "@loop max=10 judge=on\n持续推进目标，直到验收条件满足");
+        addLoopTemplate("定时轮询", "@loop interval=5m max=20 judge=on\n检查目标状态，满足后停止");
+        addLoopTemplate("构建守护", "@loop interval=30s max=20 judge=on\n反复修复并运行测试，直到全部通过");
+        workflowEmptyShortcut = new Button("前往工作流中心");
+        workflowEmptyShortcut.getStyleClass().addAll("jc-btn", "jc-btn-soft", "jc-btn-sm");
+        workflowEmptyShortcut.setVisible(false);
+        workflowEmptyShortcut.setManaged(false);
+        workflowEmptyShortcut.setOnAction(e -> openWorkflowCenter());
         refreshWorkflowSelectorAsync();
         modeChips.getChildren().addAll(
-                conversationModeSelector, workflowSelector, taskModeChip, reviewModeMenu);
+                conversationModeSelector, planProfileSelector, loopTemplateMenu,
+                workflowSelector, workflowEmptyShortcut,
+                taskModeChip, reviewModeMenu);
 
         // 知识库多选菜单按钮（带图标 + "N 已选"内置徽章）
         knowledgeMenu = new MenuButton("📖 知识库");
@@ -428,7 +500,8 @@ public class ChatViewController {
         settingsIconBtn.setTooltip(new Tooltip("设置（" + shortcutHint() + " + ,）"));
         settingsIconBtn.setOnAction(e -> openSettings());
 
-        HBox topBar = new HBox(12, sidebarToggleBtn, titleBlock, localModeBadge, spacer,
+        HBox topBar = new HBox(12, sidebarToggleBtn, titleBlock, localModeBadge,
+                embeddingHealthBadge, spacer,
                 knowledgeMenu, themeMenuBtn, taskIconBtn, settingsIconBtn, clearButton);
         topBar.getStyleClass().add("chat-top-bar");
         topBar.setAlignment(Pos.CENTER_LEFT);
@@ -463,6 +536,7 @@ public class ChatViewController {
         scrollPane.addEventFilter(javafx.scene.input.ScrollEvent.SCROLL, event -> {
             double deltaY = event.getDeltaY();
             if (deltaY == 0) return;
+            beginUserScroll();
             double viewportH = scrollPane.getViewportBounds() != null
                     ? scrollPane.getViewportBounds().getHeight() : 0;
             double contentH = messageList.getHeight();
@@ -470,24 +544,33 @@ public class ChatViewController {
             if (scrollable <= 0) return;
             double stepV = deltaY / scrollable;
             double newV = scrollPane.getVvalue() - stepV;
-            scrollPane.setVvalue(Math.max(0, Math.min(1, newV)));
+            newV = Math.max(0, Math.min(1, newV));
+            scrollPane.setVvalue(newV);
             event.consume();
         });
 
-        // 智能自动滚动：用户接近底部时跟随，否则保持当前位置并通过浮动按钮提示
-        messageList.heightProperty().addListener((obs, oldVal, newVal) -> {
-            if (isNearBottom()) {
-                Timeline scrollAnim = new Timeline(
-                        new KeyFrame(Duration.millis(150),
-                                new KeyValue(scrollPane.vvalueProperty(), 1.0))
-                );
-                scrollAnim.play();
+        // 滚动条拖动/轨道点击与键盘翻页不会产生上面的 ScrollEvent，需在值变化前
+        // 停止控制器动画，随后由 vvalue 监听器按实际位置更新跟随状态。
+        scrollPane.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
+            if (isScrollBarTarget(event.getTarget())) beginUserScroll();
+        });
+        scrollPane.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, event -> {
+            switch (event.getCode()) {
+                case UP, DOWN, PAGE_UP, PAGE_DOWN, HOME, END, SPACE -> beginUserScroll();
+                default -> {
+                }
             }
         });
 
-        // 用户主动滚动接近底部时，重置未读计数并隐藏浮动按钮
+        messageList.heightProperty().addListener((obs, oldVal, newVal) -> {
+            if (followTail) scrollToTail(true);
+        });
+
+        // 非程序写入代表滚轮、滚动条或键盘导航；接近底部恢复跟随，离开则暂停。
         scrollPane.vvalueProperty().addListener((obs, oldVal, newVal) -> {
-            if (isNearBottom()) {
+            if (programmaticTailScroll) return;
+            followTail = isNearBottom();
+            if (followTail) {
                 resetUnreadCount();
             }
         });
@@ -497,7 +580,7 @@ public class ChatViewController {
             while (c.next()) {
                 if (messageList.getChildren().isEmpty()) {
                     resetUnreadCount();
-                } else if (c.wasAdded() && !isNearBottom()) {
+                } else if (c.wasAdded() && !followTail) {
                     incrementUnreadCount(c.getAddedSize());
                 }
             }
@@ -698,8 +781,7 @@ public class ChatViewController {
         newMessagesButton.setVisible(false);
         newMessagesButton.setManaged(false);
         newMessagesButton.setOnAction(e -> {
-            scrollPane.setVvalue(1.0);
-            resetUnreadCount();
+            scrollToTail(false);
         });
         StackPane.setAlignment(newMessagesButton, Pos.BOTTOM_CENTER);
         StackPane.setMargin(newMessagesButton, new Insets(0, 0, 16, 0));
@@ -934,9 +1016,8 @@ public class ChatViewController {
             setInputEnabled(false);
             streamingSession = currentSession;
             showThinkingIndicator(true);
-            streamUsageInputTokens = 0;
-        streamUsageOutputTokens = 0;
-        thinkingPanel.startNewStream();
+            activeTurn = new ActiveTurn(streamGeneration, streamingSession, "chat");
+            thinkingPanel.startNewStream();
             createStreamingBubble();
             runDemoPlayback(streamGeneration);
             return;
@@ -991,17 +1072,17 @@ public class ChatViewController {
         setInputEnabled(false);
         streamingSession = currentSession;  // 记录流所属会话（支持切走后后台继续）
         showThinkingIndicator(true);
-        streamUsageInputTokens = 0;
-        streamUsageOutputTokens = 0;
+        final int gen = streamGeneration;
+        final String targetModeId = conversationTargetId(forcePlanMode);
+        ActiveTurn turn = new ActiveTurn(gen, streamingSession, targetModeId);
+        activeTurn = turn;
         thinkingPanel.startNewStream();
 
         // 重活推迟到下一帧 —— saveChatHistory（智能体状态落盘）+ createStreamingBubble
         // 若同步执行会让用户气泡的首帧推迟。
         // 用 Platform.runLater 让上面的 UI 改动先完成布局/重绘，然后下一脉冲再做这些重活。
         // 捕获当前代次，所有回调中检查代次是否匹配，会话切换/删除后旧回调自动失效。
-        final int gen = streamGeneration;
         final String requestText = userText;
-        final boolean usePlanMode = forcePlanMode;
         // 会话切换在后台流式期间保持可用；请求归属必须在排队前固定为发起流的会话，
         // 不能在 runLater 中读取可能已经切换的 currentSession。
         final String requestSessionId = streamingSession == null ? null : streamingSession.getId();
@@ -1012,17 +1093,27 @@ public class ChatViewController {
             createStreamingBubble();
 
             // 按当前选中模式（或 /plan 强制）从注册表取出对应的 ConversationMode。
-            String targetId = conversationTargetId(usePlanMode);
-            streamingModeId = targetId;
+            String targetId = targetModeId;
             Mode mode = modeRegistry.getById(targetId).orElse(null);
             if (!(mode instanceof ConversationMode convMode)) {
                 log.error("模式 [{}] 未注册或不是对话模式", targetId);
                 onStreamError(new IllegalStateException("模式未注册: " + targetId));
                 return;
             }
-            convMode.start(
-                    new ConversationRequest(requestText, attachmentsToSend, requestSessionId),
-                    buildConversationCallbacks(gen));
+            var profile = "plan".equals(targetId) && planProfileSelector != null
+                    ? planProfileSelector.getValue()
+                    : com.javaclaw.api.conversation.PlanProfile.AUTO;
+            try {
+                ConversationHandle handle = convMode.start(
+                        new ConversationRequest(requestText, attachmentsToSend, requestSessionId,
+                                new com.javaclaw.api.conversation.ConversationOptions(profile)),
+                        buildConversationCallbacks(gen));
+                if (!handle.isTerminal() && streamGeneration == gen && activeTurn == turn) {
+                    turn.handle = handle;
+                }
+            } catch (Throwable startFailure) {
+                onStreamError(startFailure);
+            }
         });
     }
 
@@ -1039,7 +1130,10 @@ public class ChatViewController {
         return selectedConversationModeId;
     }
 
-    private boolean isPlanStream() { return "plan".equals(streamingModeId); }
+    private boolean isPlanStream() {
+        ActiveTurn turn = activeTurn;
+        return turn != null && "plan".equals(turn.modeId);
+    }
 
     private void refreshConversationModeSelector(String preferredId) {
         if (conversationModeSelector == null) return;
@@ -1102,7 +1196,32 @@ public class ChatViewController {
         boolean visible = "workflow".equals(selectedConversationModeId);
         workflowSelector.setVisible(visible);
         workflowSelector.setManaged(visible);
+        if (planProfileSelector != null) {
+            boolean planVisible = "plan".equals(selectedConversationModeId);
+            planProfileSelector.setVisible(planVisible);
+            planProfileSelector.setManaged(planVisible);
+        }
+        if (loopTemplateMenu != null) {
+            boolean loopVisible = "loop".equals(selectedConversationModeId);
+            loopTemplateMenu.setVisible(loopVisible);
+            loopTemplateMenu.setManaged(loopVisible);
+        }
+        if (workflowEmptyShortcut != null) {
+            boolean emptyVisible = visible && workflowSelector.getItems().isEmpty();
+            workflowEmptyShortcut.setVisible(emptyVisible);
+            workflowEmptyShortcut.setManaged(emptyVisible);
+        }
         if (visible) refreshWorkflowSelectorAsync();
+    }
+
+    private void addLoopTemplate(String label, String value) {
+        MenuItem item = new MenuItem(label);
+        item.setOnAction(e -> {
+            inputField.replaceText(0, inputField.getLength(), value);
+            inputField.moveTo(inputField.getLength());
+            inputField.requestFocus();
+        });
+        loopTemplateMenu.getItems().add(item);
     }
 
     /**
@@ -1156,6 +1275,8 @@ public class ChatViewController {
         }
         WorkflowChoice selected = workflowSelector.getValue();
         workflowSelector.getItems().setAll(records);
+        workflowSelector.setPromptText(records.isEmpty()
+                ? "暂无已发布工作流" : "选择已发布工作流");
         WorkflowChoice resolved = selected == null ? null : records.stream()
                 .filter(r -> r.id().equals(selected.id())).findFirst().orElse(null);
         if (resolved == null && !records.isEmpty()) resolved = records.getFirst();
@@ -1163,6 +1284,12 @@ public class ChatViewController {
         // setValue 相等时 JavaFX 不保证再次触发 ActionEvent；工作区重建后 ModeRegistry
         // 已换成新实例，因此无论值是否变化都显式同步一次。
         syncWorkflowSelection(resolved == null ? null : resolved.id());
+        if (workflowEmptyShortcut != null) {
+            boolean showShortcut = records.isEmpty()
+                    && "workflow".equals(selectedConversationModeId);
+            workflowEmptyShortcut.setVisible(showShortcut);
+            workflowEmptyShortcut.setManaged(showShortcut);
+        }
     }
 
     /**
@@ -1179,6 +1306,10 @@ public class ChatViewController {
         WorkflowChoice selected = workflowSelector.getValue();
         workflowSelector.getItems().removeIf(choice -> choice.id().equals(workflowId));
         workflowSelector.getItems().addFirst(published);
+        if (workflowEmptyShortcut != null) {
+            workflowEmptyShortcut.setVisible(false);
+            workflowEmptyShortcut.setManaged(false);
+        }
         WorkflowChoice resolved = selected == null || selected.id().equals(workflowId)
                 ? published : selected;
         workflowSelector.setValue(resolved);
@@ -1224,13 +1355,18 @@ public class ChatViewController {
                                 p.status() == null ? "running" : p.status().name(),
                                 p.detail());
                         case ConversationEvent.Custom c -> {
-                            if ("clarify_request".equals(c.kind())
+                            if ("plan_final".equals(c.kind())
+                                    && c.payload() instanceof String finalDraft) {
+                                ActiveTurn turn = activeTurn;
+                                if (turn != null) turn.finalPlanDraft = finalDraft;
+                            } else if ("clarify_request".equals(c.kind())
                                     && c.payload() instanceof com.javaclaw.agent.clarify.ClarifyPayload cp) {
                                 // 先渲染琥珀色卡片，再强制收尾流（不抖动 — 已有显眼卡片）。
                                 // 工具层已 dispose 订阅，这里再做一次 UI 状态重置，
                                 // 确保模型若仍残留事件也被新的 streamGeneration 拦掉。
                                 appendClarifyCard(cp.reason(), cp.question());
-                                stopActiveStream(false);
+                                stopActiveStream(CancellationReason.MODE_SWITCH, false,
+                                        StopPolicy.DISCARD_AND_INVALIDATE);
                             } else if (com.javaclaw.loop.LoopConstants.EVENT_STATUS_KIND.equals(c.kind())
                                     && c.payload() instanceof com.javaclaw.loop.model.LoopStatus ls) {
                                 updateLoopStatus(ls);
@@ -1243,16 +1379,17 @@ public class ChatViewController {
             }
 
             @Override
-            public void onComplete() {
+            public void onTerminal(ConversationOutcome outcome) {
                 Platform.runLater(() -> {
-                    if (streamGeneration == gen) onStreamComplete();
-                });
-            }
-
-            @Override
-            public void onError(Throwable error) {
-                Platform.runLater(() -> {
-                    if (streamGeneration == gen) onStreamError(error);
+                    if (streamGeneration != gen) return;
+                    ActiveTurn turn = activeTurn;
+                    if (turn != null && turn.generation == gen) turn.handle = null;
+                    switch (outcome) {
+                        case ConversationOutcome.Completed ignored -> onStreamComplete();
+                        case ConversationOutcome.Cancelled cancelled ->
+                                onStreamCancelled(cancelled);
+                        case ConversationOutcome.Failed failed -> onStreamError(failed.error());
+                    }
                 });
             }
         };
@@ -1659,6 +1796,8 @@ public class ChatViewController {
         }
 
         activeReplyBubble.appendText(chunk);
+        ActiveTurn turn = activeTurn;
+        if (turn != null) turn.messageDraft.append(chunk);
     }
 
     /**
@@ -2239,6 +2378,8 @@ public class ChatViewController {
         }
         if (!displayChunk.isEmpty()) {
             activePlanAgentBubble.appendText(displayChunk);
+            ActiveTurn turn = activeTurn;
+            if (turn != null) turn.messageDraft.append(displayChunk);
             // 同步追加到右侧面板对应智能体的思考区，展开后可见发言内容
             if (currentPlanAgentName != null) {
                 currentPlanAgentBuffer.append(displayChunk);
@@ -2282,17 +2423,13 @@ public class ChatViewController {
             }
 
             // 将助手回复添加到消息列表并保存（携带流式过程中收集的图片路径）
-            // 规划模式下取 activePlanAgentBubble 的内容，普通模式取 activeReplyBubble
-            String replyText = null;
-            if (isPlanStream() && activePlanAgentBubble != null && activePlanAgentBubble.getLength() > 0) {
-                replyText = activePlanAgentBubble.getText();
-            } else if (activeReplyBubble != null && activeReplyBubble.getLength() > 0) {
-                replyText = activeReplyBubble.getText();
-            }
+            String replyText = currentReplyText();
             // 后台流式：回复必须落到发起流的会话（streamingSession），而非当前展示会话
             ChatSession target = streamingSession != null ? streamingSession : currentSession;
             if (replyText != null && target != null) {
                 ChatMessage assistantMsg = new ChatMessage(ChatMessage.Role.ASSISTANT, replyText);
+                assistantMsg.setDeliveryState(DeliveryState.COMPLETE);
+                assistantMsg.setMetrics(currentTurnMetrics());
                 for (String imgPath : displayedImagePaths) {
                     assistantMsg.addImagePath(imgPath);
                 }
@@ -2323,6 +2460,7 @@ public class ChatViewController {
             typingTextLabel.setText("助手正在思考中...");
             setInputEnabled(true);
             finishBackgroundStreamIfAway();
+            activeTurn = null;
             inputField.requestFocus();
         }
     }
@@ -2336,33 +2474,87 @@ public class ChatViewController {
         if (isPlanStream()) {
             finalizeCurrentPlanAgent();
         }
+        ActiveTurn failedTurn = activeTurn;
+        if (failedTurn != null) failedTurn.deliveryState = DeliveryState.FAILED;
+        thinkingPanel.endStreamFailed();
 
         try {
             String errorMsg = "调用失败: " + runtime.extractErrorMessage(error);
             ChatSession target = streamingSession != null ? streamingSession : currentSession;
-            if (target != null && target != currentSession) {
-                // 后台流式出错：部分回复与错误信息落进所属会话历史，切回可见
-                if (activeReplyBubble != null && activeReplyBubble.getLength() > 0) {
-                    target.getMessages().add(new ChatMessage(
-                            ChatMessage.Role.ASSISTANT, activeReplyBubble.getText()));
+            String partial = currentReplyText();
+            if (partial != null && !partial.isBlank() && target != null) {
+                String failedText = partial + "\n\n> ⚠ 失败：" + runtime.extractErrorMessage(error);
+                if (!isPlanStream() && activeReplyBubble != null) {
+                    activeReplyBubble.replaceText(failedText);
+                } else if (isPlanStream() && activePlanAgentBubble != null) {
+                    activePlanAgentBubble.replaceText(failedText);
                 }
+                ChatMessage failedMessage = new ChatMessage(ChatMessage.Role.ASSISTANT, failedText);
+                failedMessage.setDeliveryState(DeliveryState.FAILED);
+                failedMessage.setMetrics(currentTurnMetrics());
+                target.getMessages().add(failedMessage);
+                saveSessionMessages(target);
+            } else if (target != null && target != currentSession) {
                 target.getMessages().add(new ChatMessage(ChatMessage.Role.SYSTEM, errorMsg));
                 saveSessionMessages(target);
-            } else if (activeReplyBubble != null && activeReplyBubble.getLength() == 0) {
-                activeReplyBubble.replaceText(errorMsg);
             } else {
+                if (activeUnifiedBubble != null) {
+                    activeUnifiedBubble.setVisible(false);
+                    activeUnifiedBubble.setManaged(false);
+                }
                 addStaticBubble(ChatMessage.Role.SYSTEM, errorMsg);
+                if (currentSession != null) saveSessionMessages(currentSession);
             }
         } catch (Exception e) {
             log.error("显示错误信息时发生异常", e);
         } finally {
             clearActiveReferences();
-            thinkingPanel.endStream();
             showThinkingIndicator(false);
             typingTextLabel.setText("助手正在思考中...");
             setInputEnabled(true);
             inputField.requestFocus();
             finishBackgroundStreamIfAway();
+            activeTurn = null;
+        }
+    }
+
+    private void onStreamCancelled(ConversationOutcome.Cancelled cancelled) {
+        log.info("流式输出已取消 — reason={}, userInitiated={}",
+                cancelled.reason(), cancelled.userInitiated());
+        ActiveTurn cancelledTurn = activeTurn;
+        if (cancelledTurn != null) cancelledTurn.deliveryState = DeliveryState.CANCELLED;
+        if (isPlanStream()) finalizeCurrentPlanAgent();
+        dismissGenPlaceholder();
+        try {
+            String replyText = currentReplyText();
+            ChatSession target = streamingSession != null ? streamingSession : currentSession;
+            if (replyText != null && !replyText.isBlank() && target != null) {
+                String stoppedText = replyText + "\n\n> ⏹ 已停止";
+                if (!isPlanStream() && activeReplyBubble != null) {
+                    activeReplyBubble.replaceText(stoppedText);
+                } else if (isPlanStream() && activePlanAgentBubble != null) {
+                    activePlanAgentBubble.replaceText(stoppedText);
+                }
+                ChatMessage cancelledMessage =
+                        new ChatMessage(ChatMessage.Role.ASSISTANT, stoppedText);
+                cancelledMessage.setDeliveryState(DeliveryState.CANCELLED);
+                cancelledMessage.setMetrics(currentTurnMetrics());
+                target.getMessages().add(cancelledMessage);
+                saveSessionMessages(target);
+            } else if (activeUnifiedBubble != null) {
+                activeUnifiedBubble.setVisible(false);
+                activeUnifiedBubble.setManaged(false);
+            }
+            if (activeLoopStatusView != null) activeLoopStatusView.markCancelled();
+        } finally {
+            clearActiveReferences();
+            thinkingPanel.endStreamCancelled();
+            showThinkingIndicator(false);
+            typingTextLabel.setText("助手正在思考中...");
+            setInputEnabled(true);
+            finishBackgroundStreamIfAway();
+            activeTurn = null;
+            inputField.requestFocus();
         }
     }
 
@@ -2627,7 +2819,11 @@ public class ChatViewController {
         } else {
             Label modelBadge = new Label(currentModelDisplayName());
             modelBadge.getStyleClass().add("msg-header-model");
-            header = new HBox(8, name, modelBadge, time);
+            Region spacer = new Region();
+            HBox.setHgrow(spacer, Priority.ALWAYS);
+            Label meta = new Label(formatMessageMeta(message));
+            meta.getStyleClass().add("msg-header-meta");
+            header = new HBox(8, name, modelBadge, time, spacer, meta);
         }
         header.setAlignment(Pos.CENTER_LEFT);
 
@@ -2665,6 +2861,7 @@ public class ChatViewController {
      * 加载所有会话，恢复侧边栏列表和当前会话
      */
     private void loadSessions() {
+        enterMessageViewAtTail();
         List<ChatSession> loaded = chatHistoryManager.loadSessionIndex();
         sessions.clear();
 
@@ -2714,6 +2911,7 @@ public class ChatViewController {
             return;
         }
         log.info("用户请求新建会话");
+        enterMessageViewAtTail();
 
         final boolean streamRunning = streamingActive && streamingSession != null;
 
@@ -2727,7 +2925,8 @@ public class ChatViewController {
             typingTextLabel.setText("其他会话正在后台生成回复…");
         } else if (!streamRunning) {
             if (streamingActive) {
-                stopActiveStream(false);  // 防御：流活跃但未记录所属会话
+                stopActiveStream(CancellationReason.SESSION_SWITCH, false,
+                        StopPolicy.DISCARD_AND_INVALIDATE);  // 防御：流活跃但未记录所属会话
             }
             // 保存智能体状态并清空上下文（完整切换）
             if (currentSession != null) {
@@ -2791,7 +2990,8 @@ public class ChatViewController {
 
         // 防御：流活跃但未记录所属会话（不应发生），按旧语义停掉
         if (streamingActive && streamingSession == null) {
-            stopActiveStream(false);
+            stopActiveStream(CancellationReason.SESSION_SWITCH, false,
+                    StopPolicy.DISCARD_AND_INVALIDATE);
         }
         final boolean streamRunning = streamingActive && streamingSession != null;
 
@@ -2830,6 +3030,7 @@ public class ChatViewController {
 
         // 切换当前会话
         currentSession = target;
+        enterMessageViewAtTail();
 
         // ==== 进入目标会话 ====
         if (streamRunning && target == streamingSession) {
@@ -2837,7 +3038,6 @@ public class ChatViewController {
             messageList.getChildren().setAll(suspendedStreamingNodes);
             suspendedStreamingNodes.clear();
             typingTextLabel.setText("助手正在思考中...");
-            Platform.runLater(() -> scrollPane.setVvalue(1.0));
         } else {
             // 智能体上下文仅在无活跃流时切换；后台流式期间目标会话为只读视图，
             // 流结束后由 finishBackgroundStreamIfAway 把上下文对齐到当前展示会话
@@ -2904,7 +3104,8 @@ public class ChatViewController {
 
         // 删除的是正在后台流式的会话：先停流并清理挂起节点
         if (streamingSession != null && streamingSession.getId().equals(sessionId)) {
-            stopActiveStream(false);
+            stopActiveStream(CancellationReason.SESSION_SWITCH, false,
+                    StopPolicy.DISCARD_AND_INVALIDATE);
         }
 
         // 从列表移除
@@ -2946,7 +3147,8 @@ public class ChatViewController {
 
         // 批量删除包含正在后台流式的会话：先停流并清理挂起节点
         if (streamingSession != null && sessionIds.contains(streamingSession.getId())) {
-            stopActiveStream(false);
+            stopActiveStream(CancellationReason.SESSION_SWITCH, false,
+                    StopPolicy.DISCARD_AND_INVALIDATE);
         }
 
         boolean currentDeleted = currentSession != null && sessionIds.contains(currentSession.getId());
@@ -3068,41 +3270,84 @@ public class ChatViewController {
      * 用户主动按"停止"或 Esc 时调用：附带输入框抖动作为"已取消"的视觉反馈。
      */
     private void stopActiveStream() {
-        stopActiveStream(true);
+        stopActiveStream(CancellationReason.USER_REQUEST, true, StopPolicy.PRESERVE_PARTIAL);
     }
 
     /**
+     * 停止当前运行。
+     *
+     * <p>{@link StopPolicy#PRESERVE_PARTIAL} 等待唯一终态按事件队列顺序保存部分回复；
+     * {@link StopPolicy#DISCARD_AND_INVALIDATE} 用于删除/清空/重建，先让旧代次失效并同步
+     * 摘除 UI 状态，再取消底层运行。这样稍后到达的旧事件与终态不会重新保存已删除的数据。</p>
+     *
+     * @param reason 取消原因
      * @param showCancelFeedback true=显示输入框抖动反馈（用户主动取消）；
-     *                           false=静默停止（如模型主动澄清中断，已经有醒目卡片，不需再抖）
+     *                           false=静默停止
+     * @param policy 是否保留已经产生的部分回复
      */
-    private void stopActiveStream(boolean showCancelFeedback) {
-        if (rebuildInProgress.get()) {
+    private void stopActiveStream(CancellationReason reason, boolean showCancelFeedback,
+                                  StopPolicy policy) {
+        if (rebuildInProgress.get() && policy == StopPolicy.PRESERVE_PARTIAL) {
             log.info("服务重建进行中，忽略停止请求（重建收尾会自行恢复输入）");
             return;
         }
-        streamGeneration++;
-        chatService.cancelStream();
-        planModeService.cancel();
-        if ("workflow".equals(streamingModeId)) {
-            modeRegistry.getById(streamingModeId)
-                    .filter(ConversationMode.class::isInstance)
-                    .map(ConversationMode.class::cast)
-                    .ifPresent(ConversationMode::cancel);
+        ActiveTurn turn = activeTurn;
+        ConversationHandle handle = turn == null ? null : turn.handle;
+        if (policy == StopPolicy.DISCARD_AND_INVALIDATE) {
+            discardAndInvalidateActiveStream(reason, handle, showCancelFeedback);
+            return;
         }
-        // 循环的 CANCELLED 终态事件必然晚于本方法（异步回调），会被上面递增的代次拦掉——
-        // 真取消了循环就同步把状态卡定格为「已停止」，否则卡片永远停在「进行中/⏳ 等下一轮」
-        if (cancelLoopMode() && activeLoopStatusView != null) {
-            activeLoopStatusView.markCancelled();
+        if (handle != null) {
+            if (handle.cancel(reason)) {
+                if (showCancelFeedback) com.javaclaw.app.UiMotion.error(inputField);
+                return;
+            }
+            // 服务终态可能已经产生，只是 JavaFX 终态回调仍排在事件队列中。
+            // 此时失效当前代次会把合法的完成结果与历史保存一起丢掉。
+            if (handle.isTerminal()) {
+                return;
+            }
         }
-        streamingSession = null;
-        disposeSuspendedStreamingNodes();
-        clearActiveReferences();
-        showThinkingIndicator(false);
-        typingTextLabel.setText("助手正在思考中...");
-        thinkingPanel.endStream();
-        setInputEnabled(true);
+        // 防御性复位：启动尚未返回句柄或底层拒绝取消时，仍不能把输入永久锁住。
+        discardAndInvalidateActiveStream(reason, null, showCancelFeedback);
+    }
+
+    private void discardAndInvalidateActiveStream(CancellationReason reason,
+                                                   ConversationHandle handle,
+                                                   boolean showCancelFeedback) {
+        invalidateBeforeCancel(() -> {
+            streamGeneration++;
+            activeTurn = null;
+            streamingSession = null;
+            if (activeUnifiedBubble != null) {
+                collectAndDisposeBubbles(activeUnifiedBubble);
+                activeUnifiedBubble.setVisible(false);
+                activeUnifiedBubble.setManaged(false);
+            }
+            disposeSuspendedStreamingNodes();
+            clearActiveReferences();
+            showThinkingIndicator(false);
+            typingTextLabel.setText("助手正在思考中...");
+            thinkingPanel.endStreamCancelled();
+            setInputEnabled(true);
+        }, handle, reason);
         if (showCancelFeedback) {
             com.javaclaw.app.UiMotion.error(inputField);
+        }
+    }
+
+    /** 包级测试入口：破坏性停止必须先隔离旧代次，再触发会同步发送终态的句柄。 */
+    static void invalidateBeforeCancel(Runnable invalidation,
+                                       ConversationHandle handle,
+                                       CancellationReason reason) {
+        invalidation.run();
+        if (handle != null) {
+            try {
+                handle.cancel(reason);
+            } catch (RuntimeException cancelFailure) {
+                log.warn("取消已失效的对话运行失败（旧回调已隔离）: {}",
+                        cancelFailure.getMessage());
+            }
         }
     }
 
@@ -3113,6 +3358,16 @@ public class ChatViewController {
     private void installGlobalShortcuts() {
         outerRoot.sceneProperty().addListener((obs, oldScene, scene) -> {
             if (scene == null) return;
+            scene.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+                if (event.getCode() != KeyCode.ESCAPE) return;
+                if (inputField.getLength() > 0) {
+                    inputField.clear();
+                    event.consume();
+                } else if (streamingActive) {
+                    stopActiveStream();
+                    event.consume();
+                }
+            });
             javafx.collections.ObservableMap<javafx.scene.input.KeyCombination, Runnable> acc = scene.getAccelerators();
             // Ctrl/Cmd + N → 新建会话
             acc.put(new javafx.scene.input.KeyCodeCombination(KeyCode.N,
@@ -3277,6 +3532,67 @@ public class ChatViewController {
     }
 
     /**
+     * 进入另一会话的消息视图时默认从尾部开始，不继承上一会话的上滑状态。
+     * 同一会话内的 followTail 仍只由用户滚动或“新消息”按钮改变。
+     */
+    private void enterMessageViewAtTail() {
+        followTail = true;
+        resetUnreadCount();
+        Platform.runLater(() -> {
+            if (followTail) scrollToTail(false);
+        });
+    }
+
+    /** 控制器统一滚动到底部，动画期间屏蔽自身 vvalue 写入。 */
+    private void scrollToTail(boolean animated) {
+        stopTailScrollAnimation();
+        followTail = true;
+        programmaticTailScroll = true;
+        if (!animated) {
+            try {
+                scrollPane.setVvalue(1.0);
+            } finally {
+                programmaticTailScroll = false;
+            }
+            resetUnreadCount();
+            return;
+        }
+
+        Timeline animation = new Timeline(
+                new KeyFrame(Duration.millis(150),
+                        new KeyValue(scrollPane.vvalueProperty(), 1.0)));
+        tailScrollAnimation = animation;
+        animation.setOnFinished(event -> {
+            if (tailScrollAnimation == animation) tailScrollAnimation = null;
+            programmaticTailScroll = false;
+            if (isNearBottom()) resetUnreadCount();
+        });
+        animation.play();
+    }
+
+    /** 任意用户滚动手势先夺回控制权，防止未完成动画把视图重新拉到底部。 */
+    private void beginUserScroll() {
+        stopTailScrollAnimation();
+    }
+
+    private void stopTailScrollAnimation() {
+        Timeline animation = tailScrollAnimation;
+        tailScrollAnimation = null;
+        if (animation != null) animation.stop();
+        programmaticTailScroll = false;
+    }
+
+    private static boolean isScrollBarTarget(Object target) {
+        if (!(target instanceof javafx.scene.Node node)) return false;
+        javafx.scene.Node current = node;
+        while (current != null) {
+            if (current.getStyleClass().contains("scroll-bar")) return true;
+            current = current.getParent();
+        }
+        return false;
+    }
+
+    /**
      * 查找当前会话中最近一条用户消息内容（用于 ↑ 键回填编辑）
      */
     private String findLastUserMessage() {
@@ -3321,13 +3637,9 @@ public class ChatViewController {
         dismissGenPlaceholder();
         // 流式结束前，写入最终的"耗时 · Tokens"到消息头部
         if (activeAssistantMetaLabel != null) {
-            long tokens = runtime != null && runtime.getTokenTracker() != null
-                    ? runtime.getTokenTracker().getSessionTokens()
-                    : 0;
-            String tokDisplay = tokens >= 1000
-                    ? String.format("%,d tok", tokens)
-                    : tokens + " tok";
-            activeAssistantMetaLabel.setText(tokDisplay);
+            ActiveTurn turn = activeTurn;
+            activeAssistantMetaLabel.setText(formatTurnMeta(currentTurnMetrics(),
+                    turn == null ? DeliveryState.COMPLETE : turn.deliveryState));
         }
         activeAssistantMetaLabel = null;
         activeReplyBubble = null;
@@ -3340,6 +3652,43 @@ public class ChatViewController {
         currentPlanAgentName = null;
         currentPlanAgentBuffer.setLength(0);
         displayedImagePaths.clear();
+    }
+
+    private String currentReplyText() {
+        ActiveTurn turn = activeTurn;
+        if (isPlanStream() && turn != null
+                && turn.finalPlanDraft != null && !turn.finalPlanDraft.isBlank()) {
+            return turn.finalPlanDraft;
+        }
+        if (isPlanStream() && activePlanAgentBubble != null
+                && activePlanAgentBubble.getLength() > 0) {
+            return activePlanAgentBubble.getText();
+        }
+        return activeReplyBubble != null && activeReplyBubble.getLength() > 0
+                ? activeReplyBubble.getText() : null;
+    }
+
+    private TurnMetrics currentTurnMetrics() {
+        ActiveTurn turn = activeTurn;
+        return turn == null ? new TurnMetrics(0, 0, 0) : turn.metrics();
+    }
+
+    private String formatMessageMeta(ChatMessage message) {
+        if (message.getMetrics() == null) return "—";
+        DeliveryState state = message.getDeliveryState();
+        return formatTurnMeta(message.getMetrics(), state);
+    }
+
+    private String formatTurnMeta(TurnMetrics metrics, DeliveryState state) {
+        String duration = metrics.durationMs() >= 1000
+                ? String.format("%.1fs", metrics.durationMs() / 1000.0)
+                : metrics.durationMs() + "ms";
+        StringBuilder text = new StringBuilder(duration)
+                .append(" · ")
+                .append(String.format("%,d tok", metrics.totalTokens()));
+        if (state == DeliveryState.CANCELLED) text.append(" · 已取消");
+        else if (state == DeliveryState.FAILED) text.append(" · 失败");
+        return text.toString();
     }
 
     private void showThinkingIndicator(boolean show) {
@@ -3411,7 +3760,8 @@ public class ChatViewController {
         SettingsView settingsView = new SettingsView(ownerStage,
                 runtime != null ? runtime.getMcpClientManager() : null,
                 runtime != null ? runtime.getModelFactory() : null,
-                runtime != null ? runtime.getTokenTracker() : null);
+                runtime != null ? runtime.getTokenTracker() : null,
+                runtime != null ? runtime.getEmbeddingGateway() : null);
         settingsView.setOnModelConfigChanged(this::rebuildAgentService);
         settingsView.show(category);
     }
@@ -3424,12 +3774,14 @@ public class ChatViewController {
      * 一次流式会话会触发多次（编排器首轮 + 中间轮 + 子智能体），故采用累加。</p>
      */
     private void updateThinkingPanelMetrics(ConversationEvent.Usage u) {
-        streamUsageInputTokens += Math.max(0, u.inputTokens());
-        streamUsageOutputTokens += Math.max(0, u.outputTokens());
+        ActiveTurn turn = activeTurn;
+        if (turn == null) return;
+        turn.inputTokens += Math.max(0, u.inputTokens());
+        turn.outputTokens += Math.max(0, u.outputTokens());
         String model = AgentConfig.getInstance().getModelName();
         double cost = PricingTable.estimateCostCny(model,
-                streamUsageInputTokens, streamUsageOutputTokens);
-        thinkingPanel.updateMetrics(streamUsageInputTokens, streamUsageOutputTokens,
+                turn.inputTokens, turn.outputTokens);
+        thinkingPanel.updateMetrics(turn.inputTokens, turn.outputTokens,
                 TokenTracker.formatCostCny(cost));
     }
 
@@ -3532,7 +3884,8 @@ public class ChatViewController {
         // 后台线程 shutdown 掐断的流/循环终态回调仍持有效代次，会在重建窗口内
         // setInputEnabled(true) 提前解锁输入、并对已关闭的 chatService 保存/加载会话
         if (streamingActive) {
-            stopActiveStream(false);
+            stopActiveStream(CancellationReason.RUNTIME_REBUILD, false,
+                    StopPolicy.DISCARD_AND_INVALIDATE);
         }
         // CAS 抢占：重建已在进行时忽略本次触发（如设置对话框连续两次保存），
         // 两个重建线程并发跑 shutdown→重建会互相关掉对方刚建好的服务
@@ -3606,6 +3959,34 @@ public class ChatViewController {
         planModeService = workspaceRuntime.planModeService();
         modeRegistry = workspaceRuntime.modeRegistry();
         chatService.setLoopInteractiveHandler(this::showLoopInteractionBubble);
+        wireEmbeddingHealth();
+    }
+
+    private void wireEmbeddingHealth() {
+        if (embeddingHealthSubscription != null) {
+            try { embeddingHealthSubscription.close(); }
+            catch (Exception ignored) { }
+            embeddingHealthSubscription = null;
+        }
+        if (embeddingHealthBadge == null || runtime == null) return;
+        embeddingHealthSubscription = runtime.getEmbeddingGateway().addHealthListener(snapshot ->
+                Platform.runLater(() -> {
+                    if (embeddingHealthBadge == null) return;
+                    String text = switch (snapshot.status()) {
+                        case HEALTHY -> "嵌入：正常";
+                        case CHECKING -> "嵌入：检查中";
+                        case DEGRADED -> "嵌入：降级";
+                        case UNAVAILABLE -> "嵌入：不可用";
+                        case UNCONFIGURED -> "嵌入：未配置";
+                    };
+                    embeddingHealthBadge.setText(text);
+                    embeddingHealthBadge.setTooltip(new Tooltip(snapshot.lastError() == null
+                            ? text : text + "\n" + snapshot.lastError()));
+                    boolean visible = snapshot.status()
+                            != com.javaclaw.memory.embed.EmbeddingHealthStatus.HEALTHY;
+                    embeddingHealthBadge.setVisible(visible);
+                    embeddingHealthBadge.setManaged(visible);
+                }));
     }
 
     /**
@@ -3615,17 +3996,6 @@ public class ChatViewController {
      * chat/plan 一样挂在 {@link #stopActiveStream} 上，否则 UI 复位后循环
      * 仍在后台烧 token 且单活跃闸拒绝新循环，用户无路可停。</p>
      */
-    private boolean cancelLoopMode() {
-        boolean[] cancelled = {false};
-        modeRegistry.getById("loop").ifPresent(m -> {
-            if (m instanceof ConversationMode cm && cm.cancel()) {
-                cancelled[0] = true;
-                log.info("已取消运行中的循环");
-            }
-        });
-        return cancelled[0];
-    }
-
     /**
      * 打开技能中心对话框
      */
@@ -3756,7 +4126,8 @@ public class ChatViewController {
         }
         log.info("用户请求清空当前会话: {}", currentSession.getId());
 
-        stopActiveStream();
+        stopActiveStream(CancellationReason.USER_REQUEST, false,
+                StopPolicy.DISCARD_AND_INVALIDATE);
         clearAllHistory();
         runtime.getTokenTracker().resetSession();
         chatService.deleteSession(currentSession.getId());
@@ -3934,7 +4305,8 @@ public class ChatViewController {
         // 0. 工作区切换会重建全部服务，后台流式无法跨工作区延续：先停流并清理挂起节点
         //（必须在抢占重建旗标之前：stopActiveStream 对重建期间的停止请求会忽略）
         if (streamingActive) {
-            stopActiveStream(false);
+            stopActiveStream(CancellationReason.RUNTIME_REBUILD, false,
+                    StopPolicy.DISCARD_AND_INVALIDATE);
         }
 
         // 0.5 与设置保存触发的服务重建互斥：共用 rebuildInProgress 旗标，两条线程并发跑
@@ -4002,7 +4374,6 @@ public class ChatViewController {
 
                         // 11. 重置会话模式回对话（规划/循环同等对待：切工作区后残留循环
                         // chip 会把用户随手一问路由成最多几十轮的自动循环）
-                        streamingModeId = "chat";
                         refreshConversationModeSelector("chat");
 
                         // 12. 更新侧边栏工作区下拉
@@ -4080,7 +4451,8 @@ public class ChatViewController {
      */
     private void stopAndClearForCurrentSessionDeleted() {
         if (streamingActive && streamingSession == null) {
-            stopActiveStream();
+            stopActiveStream(CancellationReason.SESSION_SWITCH, false,
+                    StopPolicy.DISCARD_AND_INVALIDATE);
         }
         if (!(streamingActive && streamingSession != null)) {
             clearAllHistory();
