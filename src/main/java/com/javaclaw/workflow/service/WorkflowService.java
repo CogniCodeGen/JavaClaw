@@ -130,13 +130,14 @@ public final class WorkflowService implements AutoCloseable {
     }
 
     /** 从工作流中心恢复暂停、人工中断或异常退出的运行。 */
-    public GraphRun resumeRun(String runId, String input, boolean unsafeRetryConfirmed,
-                              ConversationCallbacks callbacks) {
+    public synchronized GraphRun resumeRun(String runId, String input, boolean unsafeRetryConfirmed,
+                                           ConversationCallbacks callbacks) {
         GraphRun saved = checkpoints.loadRun(runId);
         if (saved == null) throw new IllegalArgumentException("运行记录不存在: " + runId);
         if (saved.definition().kind() == GraphKind.SYSTEM) {
             throw new IllegalStateException("系统图必须从对应的聊天、规划、循环或 SDD 模式恢复");
         }
+        requireIdleThread(saved.threadId());
         GraphListener listener = bridge(callbacks, saved.threadId());
         GraphRun run = executions.resume(runId, input, unsafeRetryConfirmed, listener,
                 Map.of(AgentRuntime.class, agentRuntime, ConversationCallbacks.class, callbacks));

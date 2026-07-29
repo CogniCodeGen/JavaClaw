@@ -54,21 +54,26 @@ public class Distiller {
         this.generateOptions = GenerateOptions.builder().build();
     }
 
-    /** 异步蒸馏一次情景；失败静默返回 empty。 */
-    public Mono<Void> distill(Episode ep) {
+    /** 在当前线程蒸馏一次情景；失败静默，供受生命周期追踪的上层工作线程调用。 */
+    public void distillNow(Episode ep) {
         if (ep == null || ep.userInput == null
                 || ep.userInput.trim().length() < AgentConfig.getInstance().getMemoryDistillMinInput()) {
-            return Mono.empty();
+            return;
         }
         if (ep.assistantReply == null || ep.assistantReply.isBlank()) {
-            return Mono.empty();
+            return;
         }
-        return Mono.fromRunnable(() -> distillSync(ep))
+        try {
+            distillSync(ep);
+        } catch (RuntimeException e) {
+            log.warn("记忆蒸馏失败（已静默忽略）: {}", e.getMessage());
+        }
+    }
+
+    /** 异步兼容入口；生命周期敏感调用应优先使用 {@link #distillNow(Episode)}。 */
+    public Mono<Void> distill(Episode ep) {
+        return Mono.fromRunnable(() -> distillNow(ep))
                 .subscribeOn(Schedulers.boundedElastic())
-                .onErrorResume(e -> {
-                    log.warn("记忆蒸馏失败（已静默忽略）: {}", e.getMessage());
-                    return Mono.empty();
-                })
                 .then();
     }
 

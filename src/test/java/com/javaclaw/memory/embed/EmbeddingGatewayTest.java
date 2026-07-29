@@ -120,6 +120,33 @@ class EmbeddingGatewayTest {
     }
 
     @Test
+    void 后台索引被生命周期中断时立即退出且不污染健康状态() throws Exception {
+        CountDownLatch invoked = new CountDownLatch(1);
+        AtomicBoolean interruptedAtReturn = new AtomicBoolean();
+        EmbeddingGateway gateway = new EmbeddingGateway(
+                2, EmbeddingHealthStatus.CHECKING, text -> {
+                    invoked.countDown();
+                    Thread.sleep(30_000);
+                    return new double[]{0.1, 0.2};
+                });
+
+        Thread worker = Thread.ofVirtual().start(() -> {
+            assertNull(gateway.embed("cancel-me", EmbeddingPurpose.BACKGROUND_INDEX));
+            interruptedAtReturn.set(Thread.currentThread().isInterrupted());
+        });
+        assertTrue(invoked.await(1, TimeUnit.SECONDS));
+
+        worker.interrupt();
+        worker.join(2_000);
+
+        assertFalse(worker.isAlive(), "生命周期中断后不应继续第二次后台重试");
+        assertTrue(interruptedAtReturn.get(), "返回调用方前应恢复中断位");
+        assertEquals(EmbeddingHealthStatus.CHECKING, gateway.healthSnapshot().status());
+        assertEquals(0, gateway.healthSnapshot().consecutiveFailures());
+        assertNull(gateway.healthSnapshot().circuitOpenUntil());
+    }
+
+    @Test
     void 向量实际维度与配置不一致时探测失败() {
         EmbeddingGateway gateway = new EmbeddingGateway(
                 2, EmbeddingHealthStatus.CHECKING,

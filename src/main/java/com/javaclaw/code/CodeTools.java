@@ -449,6 +449,16 @@ public class CodeTools {
             int timeout = timeoutSeconds <= 0 ? DEFAULT_BUILD_TIMEOUT_SECONDS
                     : Math.min(timeoutSeconds, MAX_BUILD_TIMEOUT_SECONDS);
 
+            String action = testMode ? "运行项目测试" : "运行项目构建";
+            ToolConfirmationManager.ConfirmOutcome confirmation =
+                    ToolConfirmationManager.requestHighRiskCommandConfirmation(
+                            origin, tool, action + "\n"
+                                    + ToolConfirmationManager.buildCommandDescription(
+                                            cmd, base.toString()));
+            if (!confirmation.isAllow()) {
+                return ToolResponse.error(tool, "用户拒绝了操作");
+            }
+
             ExecResult r = execArgv(argv, base, timeout);
             if (r.timedOut) {
                 return ToolResponse.error(tool, "执行超时（" + timeout + " 秒），已强制终止：" + cmd
@@ -632,10 +642,12 @@ public class CodeTools {
         reader.setDaemon(true);
         reader.start();
 
-        boolean finished = proc.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+        boolean finished = ProcessTerminator.waitForOrTerminateOnInterrupt(
+                proc, timeoutSeconds, TimeUnit.SECONDS);
         if (!finished) {
             ProcessTerminator.destroyTreeForcibly(proc);
-            try { proc.waitFor(2, TimeUnit.SECONDS); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+            ProcessTerminator.waitForOrTerminateOnInterrupt(
+                    proc, 2, TimeUnit.SECONDS);
             reader.interrupt();
             return new ExecResult(-1, "", true);
         }

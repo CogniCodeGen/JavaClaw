@@ -169,6 +169,11 @@ public class EmbeddingGateway {
                 transition(EmbeddingHealthStatus.HEALTHY, null, 0, null);
                 return result;
             } catch (Throwable e) {
+                // 生命周期取消不是端点故障：立即停止后台重试，也不要污染健康度/熔断状态。
+                if (Thread.currentThread().isInterrupted()) {
+                    log.debug("嵌入调用被生命周期取消");
+                    return null;
+                }
                 last = e;
             }
         }

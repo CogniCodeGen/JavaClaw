@@ -389,6 +389,42 @@ class GraphRuntimeTest {
     }
 
     @Test
+    void 同一thread已有活跃运行时拒绝恢复另一运行() throws Exception {
+        NodeExecutorRegistry registry = baseRegistry();
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        registry.register(executor("gate", ctx -> {
+            entered.countDown();
+            release.await();
+            return NodeResult.next();
+        }));
+        MemoryStore store = new MemoryStore();
+        manager = new GraphExecutionManager(registry, store);
+        GraphDefinition graph = graph(List.of(node("start", NodeType.START, "start"),
+                        node("work", NodeType.SYSTEM, "gate"), node("end", NodeType.END, "end")),
+                List.of(edge("a", "start", "work"), edge("b", "work", "end")), 10);
+        long now = System.currentTimeMillis();
+        GraphRun paused = new GraphRun("paused", graph.id(), graph.version(), "shared-thread",
+                graph, new GraphState(), RunStatus.PAUSED, "work", "work",
+                1, 0, null, null, null, now, now);
+        store.createRun(paused);
+
+        CountDownLatch finished = new CountDownLatch(1);
+        GraphRun activeRun = manager.start(graph, "shared-thread", new GraphState(),
+                finishLatch(finished), Map.of());
+        assertTrue(entered.await(2, TimeUnit.SECONDS));
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> manager.resume(paused.id(), null, false, GraphListener.NOOP, Map.of()));
+        assertTrue(failure.getMessage().contains("thread"), failure.getMessage());
+        assertEquals(RunStatus.PAUSED, store.loadRun(paused.id()).status(),
+                "被拒绝的恢复不能改写原运行状态");
+
+        assertTrue(manager.cancel(activeRun.id()));
+        release.countDown();
+        assertTrue(finished.await(3, TimeUnit.SECONDS));
+    }
+
+    @Test
     void 异常恢复在副作用节点前要求再次确认() throws Exception {
         NodeExecutorRegistry registry = baseRegistry();
         AtomicInteger calls = new AtomicInteger();

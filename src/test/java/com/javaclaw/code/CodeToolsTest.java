@@ -1,6 +1,12 @@
 package com.javaclaw.code;
 
 import com.javaclaw.agent.ToolCallOrigin;
+import com.javaclaw.agent.ToolConfirmationManager;
+import com.javaclaw.api.interaction.ConfirmRequest;
+import com.javaclaw.api.interaction.ToastRequest;
+import com.javaclaw.api.interaction.UserInteractionPort;
+import com.javaclaw.config.AgentConfig;
+import com.javaclaw.config.ToolReviewMode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -8,6 +14,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -161,6 +168,43 @@ class CodeToolsTest {
         String out = tools().build("mvn -q test; touch should-not-exist", 1);
         assertTrue(out.contains("失败"), out);
         assertTrue(out.contains("不支持 shell"), out);
+    }
+
+    @Test
+    void code_build_合法命令也必须先经过高风险确认(@TempDir Path dir) {
+        UserInteractionPort oldPort = ToolConfirmationManager.getPort();
+        boolean oldEnabled = ToolConfirmationManager.isEnabled();
+        ToolReviewMode oldMode = AgentConfig.getInstance().getToolReviewMode();
+        AtomicReference<ConfirmRequest> seen = new AtomicReference<>();
+        try {
+            AgentConfig.getInstance().setToolReviewMode(ToolReviewMode.SMART);
+            ToolConfirmationManager.setEnabled(true);
+            ToolConfirmationManager.setPort(new UserInteractionPort() {
+                @Override
+                public boolean confirm(ConfirmRequest request) {
+                    seen.set(request);
+                    return false;
+                }
+
+                @Override
+                public void notify(ToastRequest request) {
+                    // no-op
+                }
+            });
+
+            CodeTools tools = tools();
+            tools.setProjectRootForTest(dir);
+            String out = tools.build("mvn --version", 1);
+
+            assertTrue(out.contains("失败") && out.contains("用户拒绝"), out);
+            assertEquals("code_build", seen.get().toolName());
+            assertTrue(seen.get().description().contains("mvn --version"));
+            assertTrue(seen.get().description().contains(dir.toString()));
+        } finally {
+            AgentConfig.getInstance().setToolReviewMode(oldMode);
+            ToolConfirmationManager.setEnabled(oldEnabled);
+            ToolConfirmationManager.setPort(oldPort);
+        }
     }
 
     @Test

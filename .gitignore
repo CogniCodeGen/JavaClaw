@@ -34,3 +34,4 @@ replay_pid*
 
 # macOS 目录元数据
 .DS_Store
+/.qoder/

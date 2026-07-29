@@ -57,6 +57,10 @@ public final class ToolRiskRegistry {
         put(levels, labels, "code_edit", ToolRiskLevel.CONFIRM, "代码精确编辑");
         put(levels, labels, "code_insert", ToolRiskLevel.CONFIRM, "代码插入");
         put(levels, labels, "code_set_project_root", ToolRiskLevel.NOTIFY, "设置项目根目录");
+        // 构建工具虽不经 shell，但 mvn exec / npm exec / npx / Gradle init script 等仍可间接执行任意代码；
+        // 必须与 cmd_execute 保持同级人工底线，不能仅凭可执行文件名白名单静默放行。
+        put(levels, labels, "code_build", ToolRiskLevel.CONFIRM, "运行项目构建");
+        put(levels, labels, "code_test", ToolRiskLevel.CONFIRM, "运行项目测试");
         // git 写类（提交）需确认；只读 git_status/git_diff/git_log 不登记、直接执行
         put(levels, labels, "git_commit", ToolRiskLevel.CONFIRM, "git 提交");
 

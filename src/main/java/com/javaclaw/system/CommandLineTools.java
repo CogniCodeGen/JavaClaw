@@ -286,8 +286,9 @@ public class CommandLineTools {
         try {
             hit = s.waitForMarker(marker, timeout * 1000L);
         } catch (InterruptedException e) {
+            sessionMgr.close(sessionId.trim());
             Thread.currentThread().interrupt();
-            return ToolResponse.error("cmd_session_exec", "等待会话输出被中断");
+            return ToolResponse.error("cmd_session_exec", "等待会话输出被中断，会话已关闭");
         }
 
         if (hit == null) {
@@ -352,8 +353,9 @@ public class CommandLineTools {
             // 收到第一字节后再静默等 300ms 合并短时多次写入，避免半行返回
             collected = s.waitForAny(wait * 1000L, 300L);
         } catch (InterruptedException e) {
+            sessionMgr.close(sessionId.trim());
             Thread.currentThread().interrupt();
-            return ToolResponse.error("cmd_session_input", "等待输出被中断");
+            return ToolResponse.error("cmd_session_input", "等待输出被中断，会话已关闭");
         }
 
         if (collected.isEmpty()) {
@@ -387,8 +389,9 @@ public class CommandLineTools {
         try {
             collected = s.waitForAny(wait * 1000L, 200L);
         } catch (InterruptedException e) {
+            sessionMgr.close(sessionId.trim());
             Thread.currentThread().interrupt();
-            return ToolResponse.error("cmd_session_read", "读取被中断");
+            return ToolResponse.error("cmd_session_read", "读取被中断，会话已关闭");
         }
 
         String aliveTag = s.isAlive() ? "运行中" : "已退出";
@@ -662,15 +665,13 @@ public class CommandLineTools {
             reader.setDaemon(true);
             reader.start();
 
-            boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+            boolean finished = ProcessTerminator.waitForOrTerminateOnInterrupt(
+                    process, timeoutSeconds, TimeUnit.SECONDS);
             if (!finished) {
                 ProcessTerminator.destroyTreeForcibly(process);
                 // destroyForcibly 异步触发 kill；等待子进程实际退出再返回，避免留下僵尸
-                try {
-                    process.waitFor(2, TimeUnit.SECONDS);
-                } catch (InterruptedException ignored) {
-                    Thread.currentThread().interrupt();
-                }
+                ProcessTerminator.waitForOrTerminateOnInterrupt(
+                        process, 2, TimeUnit.SECONDS);
                 reader.interrupt();
                 return ToolResponse.error("cmd_execute",
                         "命令执行超时（" + timeoutSeconds + " 秒），已强制终止。慢构建可调大 timeout_seconds（上限 "

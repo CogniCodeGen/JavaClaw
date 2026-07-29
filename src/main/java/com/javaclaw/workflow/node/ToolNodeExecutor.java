@@ -9,15 +9,19 @@ import com.javaclaw.agent.ToolkitAssembler;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.workflow.model.StatePatch;
+import com.javaclaw.workflow.runtime.CancellationToken;
+import com.javaclaw.workflow.runtime.GraphCancelledException;
 import com.javaclaw.workflow.runtime.NodeExecutionContext;
 import com.javaclaw.workflow.runtime.NodeExecutor;
 import com.javaclaw.workflow.runtime.NodeResult;
-import com.javaclaw.workflow.runtime.GraphCancelledException;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.message.ToolResultBlock;
 import io.agentscope.core.message.ToolUseBlock;
 import io.agentscope.core.tool.ToolCallParam;
 import io.agentscope.core.tool.Toolkit;
+import reactor.core.Disposable;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -81,28 +85,7 @@ public final class ToolNodeExecutor implements NodeExecutor {
                 : MAPPER.convertValue(rendered, new TypeReference<>() {});
         ToolUseBlock block = new ToolUseBlock(UUID.randomUUID().toString(), toolName, input);
         ToolCallParam param = ToolCallParam.builder().toolUseBlock(block).input(input).build();
-        CountDownLatch done = new CountDownLatch(1);
-        AtomicReference<ToolResultBlock> value = new AtomicReference<>();
-        AtomicReference<Throwable> failure = new AtomicReference<>();
-        var subscription = toolkit.callTool(param).subscribe(value::set, error -> {
-            failure.set(error); done.countDown();
-        }, done::countDown);
-        try (AutoCloseable ignored = context.cancellation().onCancel(subscription::dispose)) {
-            while (!done.await(100, TimeUnit.MILLISECONDS)) context.cancellation().throwIfCancelled();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            subscription.dispose();
-            context.cancellation().throwIfCancelled();
-            throw new IllegalStateException("工具执行被中断", e);
-        } catch (GraphCancelledException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new IllegalStateException("工具取消钩子关闭失败", e);
-        }
-        context.cancellation().throwIfCancelled();
-        if (failure.get() != null) throw new IllegalStateException("工具执行失败: " + toolName, failure.get());
-        ToolResultBlock result = value.get();
-        if (result == null) throw new IllegalStateException("工具未返回结果: " + toolName);
+        ToolResultBlock result = awaitToolCall(toolkit.callTool(param), context.cancellation(), toolName);
         StringBuilder text = new StringBuilder();
         for (var output : result.getOutput()) {
             if (output instanceof TextBlock tb) text.append(tb.getText());
@@ -116,6 +99,40 @@ public final class ToolNodeExecutor implements NodeExecutor {
         }
         String outputKey = config.path("outputKey").asText("tool.output");
         return NodeResult.next(StatePatch.builder().set(outputKey, resultText).build());
+    }
+
+    static ToolResultBlock awaitToolCall(Mono<ToolResultBlock> call,
+                                         CancellationToken cancellation,
+                                         String toolName) {
+        CountDownLatch done = new CountDownLatch(1);
+        AtomicReference<ToolResultBlock> value = new AtomicReference<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Disposable task = Schedulers.boundedElastic().schedule(() -> {
+            try {
+                value.set(call.block());
+            } catch (Throwable error) {
+                failure.set(error);
+            } finally {
+                done.countDown();
+            }
+        });
+        try (AutoCloseable ignored = cancellation.onCancel(task::dispose)) {
+            while (!done.await(100, TimeUnit.MILLISECONDS)) cancellation.throwIfCancelled();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            task.dispose();
+            cancellation.throwIfCancelled();
+            throw new IllegalStateException("工具执行被中断", e);
+        } catch (GraphCancelledException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException("工具取消钩子关闭失败", e);
+        }
+        cancellation.throwIfCancelled();
+        if (failure.get() != null) throw new IllegalStateException("工具执行失败: " + toolName, failure.get());
+        ToolResultBlock result = value.get();
+        if (result == null) throw new IllegalStateException("工具未返回结果: " + toolName);
+        return result;
     }
 
     static boolean isFailureResult(String text) {

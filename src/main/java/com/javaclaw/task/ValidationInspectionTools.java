@@ -334,14 +334,12 @@ public final class ValidationInspectionTools {
             outputPump.setDaemon(true);
             outputPump.start();
 
-            boolean finished = process.waitFor(timeoutSec, TimeUnit.SECONDS);
+            boolean finished = ProcessTerminator.waitForOrTerminateOnInterrupt(
+                    process, timeoutSec, TimeUnit.SECONDS);
             if (!finished) {
                 ProcessTerminator.destroyTreeForcibly(process);
-                try {
-                    process.waitFor(2, TimeUnit.SECONDS);
-                } catch (InterruptedException ignored) {
-                    Thread.currentThread().interrupt();
-                }
+                ProcessTerminator.waitForOrTerminateOnInterrupt(
+                        process, 2, TimeUnit.SECONDS);
                 outputPump.join(2_000);
                 appendTruncationNotice(output, outputTruncated.get());
                 return ToolResponse.timeout(tool, timeoutSec,

@@ -72,7 +72,8 @@ public final class ProcessCommandRunner implements CommandRunner {
             outputPump.setDaemon(true);
             outputPump.start();
 
-            boolean finished = proc.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+            boolean finished = ProcessTerminator.waitForOrTerminateOnInterrupt(
+                    proc, timeoutSeconds, TimeUnit.SECONDS);
             if (!finished) {
                 ProcessTerminator.destroyTreeForcibly(proc);
                 outputPump.join(2_000);

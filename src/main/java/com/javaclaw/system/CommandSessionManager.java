@@ -305,11 +305,14 @@ public final class CommandSessionManager {
             try {
                 stdin.close();
             } catch (IOException ignored) {}
-            process.destroy();
             try {
-                if (!process.waitFor(2, TimeUnit.SECONDS)) {
+                // 持久 shell 的直接子进程可能是仍在运行的构建/脚本；只 destroy shell 会把它遗留。
+                ProcessTerminator.destroyTreeForcibly(process);
+                if (!ProcessTerminator.waitForOrTerminateOnInterrupt(
+                        process, 2, TimeUnit.SECONDS)) {
                     ProcessTerminator.destroyTreeForcibly(process);
-                    process.waitFor(2, TimeUnit.SECONDS);
+                    ProcessTerminator.waitForOrTerminateOnInterrupt(
+                            process, 2, TimeUnit.SECONDS);
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();

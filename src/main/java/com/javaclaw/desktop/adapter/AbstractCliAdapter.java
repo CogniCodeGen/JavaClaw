@@ -65,7 +65,8 @@ abstract class AbstractCliAdapter implements DesktopAutomationPort {
         Thread tOut = pump(proc.getInputStream(), out);
         Thread tErr = pump(proc.getErrorStream(), err);
         try {
-            if (!proc.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
+            if (!ProcessTerminator.waitForOrTerminateOnInterrupt(
+                    proc, timeoutSeconds, TimeUnit.SECONDS)) {
                 ProcessTerminator.destroyTreeForcibly(proc);
                 throw new DesktopException("命令超时(" + timeoutSeconds + "s): " + command[0]);
             }

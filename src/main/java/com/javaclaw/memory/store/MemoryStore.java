@@ -197,8 +197,11 @@ public class MemoryStore implements AutoCloseable {
             throw new IllegalStateException("[" + label + "] 记忆存储已关闭，拒绝写入");
         }
         try {
-            w.submit(task).get();
-        } catch (Exception e) {
+            awaitWrite(w.submit(task));
+        } catch (RuntimeException e) {
+            if (e.getMessage() != null && e.getMessage().startsWith("[" + label + "]")) {
+                throw e;
+            }
             throw new RuntimeException("[" + label + "] 记忆写入失败", e);
         }
     }
@@ -210,9 +213,36 @@ public class MemoryStore implements AutoCloseable {
             throw new IllegalStateException("[" + label + "] 记忆存储已关闭，拒绝写入");
         }
         try {
-            return w.submit(task).get();
-        } catch (Exception e) {
+            return awaitWrite(w.submit(task));
+        } catch (RuntimeException e) {
+            if (e.getMessage() != null && e.getMessage().startsWith("[" + label + "]")) {
+                throw e;
+            }
             throw new RuntimeException("[" + label + "] 记忆写入失败", e);
+        }
+    }
+
+    /**
+     * 等待单写任务时延迟处理中断：调用方仍持有后台任务租约，若直接因 InterruptedException
+     * 返回，关闭流程会误以为对象图已无人访问并提前 shutdown。任务真正结束后再恢复中断位。
+     */
+    private <T> T awaitWrite(java.util.concurrent.Future<T> future) {
+        boolean interrupted = false;
+        try {
+            while (true) {
+                try {
+                    return future.get();
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                } catch (java.util.concurrent.ExecutionException e) {
+                    Throwable cause = e.getCause();
+                    if (cause instanceof RuntimeException runtime) throw runtime;
+                    if (cause instanceof Error error) throw error;
+                    throw new RuntimeException("[" + label + "] 记忆写入失败", cause);
+                }
+            }
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt();
         }
     }
 
@@ -366,6 +396,21 @@ public class MemoryStore implements AutoCloseable {
         });
     }
 
+    /** 在单写任务内把 pending 事实迁入正式向量索引，避免取消发生在 remove/add 之间造成丢失。 */
+    public boolean promotePendingFact(Fact f, float[] embedding, String actor) {
+        return writeCall(() -> {
+            if (!f.pending) return false; // 并发迁回时保持幂等，避免同一对象重复入正式索引
+            root.pendingFacts.removeById(f.entityId);
+            f.embedding = embedding;
+            f.pending = false;
+            f.entityId = root.facts.add(f);
+            root.pendingFacts.store();
+            root.facts.store();
+            logInternal("PROMOTE", "Fact", f.id, actor, trunc(f.text));
+            return true;
+        });
+    }
+
     /** 全部 pending 事实(只读快照)。 */
     public List<Fact> allPendingFacts() {
         List<Fact> out = new ArrayList<>();
@@ -443,6 +488,21 @@ public class MemoryStore implements AutoCloseable {
             root.pendingEpisodes.removeById(e.entityId);
             root.pendingEpisodes.store();
             logInternal("REMOVE", "Episode", e.id, actor, trunc(e.userInput));
+        });
+    }
+
+    /** 在单写任务内把 pending 情景迁入正式向量索引，避免取消发生在 remove/add 之间造成丢失。 */
+    public boolean promotePendingEpisode(Episode e, float[] embedding, String actor) {
+        return writeCall(() -> {
+            if (!e.pending) return false; // 并发迁回时保持幂等，避免同一对象重复入正式索引
+            root.pendingEpisodes.removeById(e.entityId);
+            e.embedding = embedding;
+            e.pending = false;
+            e.entityId = root.episodes.add(e);
+            root.pendingEpisodes.store();
+            root.episodes.store();
+            logInternal("PROMOTE", "Episode", e.id, actor, trunc(e.userInput));
+            return true;
         });
     }
 

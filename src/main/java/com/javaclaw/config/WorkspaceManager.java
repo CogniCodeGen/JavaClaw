@@ -7,8 +7,12 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -118,9 +122,11 @@ public class WorkspaceManager {
             return false;
         }
 
+        if (!deleteWorkspaceData(workspaceId)) {
+            log.warn("工作区数据未完整清理，取消删除: {} ({})", ws.getName(), workspaceId);
+            return false;
+        }
         workspaces.remove(ws);
-        deleteWorkspaceRows(workspaceId);
-        saveIndex();
 
         log.info("已删除工作区: {} ({})", ws.getName(), workspaceId);
         return true;
@@ -285,8 +291,19 @@ public class WorkspaceManager {
         }
     }
 
-    private void deleteWorkspaceRows(String workspaceId) {
+    /**
+     * 删除工作区的全部数据库行与文件资产。
+     *
+     * <p>数据库删除先在未提交事务中执行，文件清理成功后再提交。文件系统无法参与 H2 事务，
+     * 因此失败时可能已有部分文件被删除，但数据库索引与剩余数据仍会回滚保留，调用方也不会把
+     * 工作区误报为删除成功；再次删除即可继续清理。</p>
+     */
+    private boolean deleteWorkspaceData(String workspaceId) {
         String[] tables = {
+                "workflow_checkpoints",
+                "workflow_runs",
+                "workflow_threads",
+                "workflow_definitions",
                 "app_properties",
                 "mcp_servers",
                 "site_sessions",
@@ -309,16 +326,80 @@ public class WorkspaceManager {
         };
         try (Connection c = AppDatabase.getConnection()) {
             c.setAutoCommit(false);
-            for (String table : tables) {
-                try (PreparedStatement ps = c.prepareStatement("DELETE FROM " + table + " WHERE workspace_id = ?")) {
-                    ps.setString(1, workspaceId);
-                    ps.executeUpdate();
+            try {
+                for (String table : tables) {
+                    try (PreparedStatement ps = c.prepareStatement(
+                            "DELETE FROM " + table + " WHERE workspace_id = ?")) {
+                        ps.setString(1, workspaceId);
+                        ps.executeUpdate();
+                    }
                 }
+                try (PreparedStatement ps = c.prepareStatement(
+                        "DELETE FROM workspaces WHERE id = ?")) {
+                    ps.setString(1, workspaceId);
+                    if (ps.executeUpdate() != 1) {
+                        throw new IllegalStateException("工作区索引行不存在: " + workspaceId);
+                    }
+                }
+
+                deleteWorkspaceFiles(workspaceId);
+                c.commit();
+                return true;
+            } catch (Exception e) {
+                try {
+                    c.rollback();
+                } catch (Exception rollbackFailure) {
+                    e.addSuppressed(rollbackFailure);
+                }
+                log.warn("删除工作区数据失败: workspaceId={}, error={}",
+                        workspaceId, e.getMessage(), e);
+                return false;
             }
-            c.commit();
         } catch (Exception e) {
-            log.warn("删除工作区 H2 数据失败: workspaceId={}, error={}", workspaceId, e.getMessage());
+            log.warn("删除工作区数据失败: workspaceId={}, error={}",
+                    workspaceId, e.getMessage(), e);
+            return false;
         }
+    }
+
+    private void deleteWorkspaceFiles(String workspaceId) throws IOException {
+        Path dataRoot = AppDatabase.dataDirectory();
+        List<Path> buckets = List.of(
+                dataRoot.resolve("memory-stores"),
+                dataRoot.resolve("knowledge").resolve("workspaces"),
+                dataRoot.resolve("screenshots"),
+                dataRoot.resolve("workspace-data"),
+                dataRoot.resolve("browser"),
+                dataRoot.resolve("logs")
+        );
+        for (Path bucket : buckets) {
+            Path normalizedBucket = bucket.toAbsolutePath().normalize();
+            Path target = normalizedBucket.resolve(workspaceId).normalize();
+            if (!normalizedBucket.equals(target.getParent())) {
+                throw new IOException("非法工作区文件路径: " + workspaceId);
+            }
+            deleteDirectoryTree(target);
+        }
+    }
+
+    private static void deleteDirectoryTree(Path target) throws IOException {
+        if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) return;
+        Files.walkFileTree(target, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs)
+                    throws IOException {
+                Files.delete(file);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult postVisitDirectory(Path dir, IOException error)
+                    throws IOException {
+                if (error != null) throw error;
+                Files.delete(dir);
+                return FileVisitResult.CONTINUE;
+            }
+        });
     }
 
 }

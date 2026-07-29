@@ -63,23 +63,23 @@ public class HabitReviewer {
         this.generateOptions = GenerateOptions.builder().build();
     }
 
-    /** 轮后检查是否到达回顾条件，满足则异步执行一次习惯回顾；未满足/失败均静默。 */
+    /** 在当前线程检查并按需回顾；失败静默，供受生命周期追踪的上层工作线程调用。 */
+    public void maybeReviewNow() {
+        if (!AgentConfig.getInstance().getMemoryHabitReviewEnabled()) return;
+        if (!reviewing.compareAndSet(false, true)) return;
+        try {
+            reviewSync(false);
+        } catch (RuntimeException e) {
+            log.warn("习惯回顾失败（已静默忽略，水位不推进、下轮重试）: {}", e.getMessage());
+        } finally {
+            reviewing.set(false);
+        }
+    }
+
+    /** 异步兼容入口；生命周期敏感调用应优先使用 {@link #maybeReviewNow()}。 */
     public Mono<Void> maybeReview() {
-        return Mono.fromRunnable(() -> {
-                    if (!AgentConfig.getInstance().getMemoryHabitReviewEnabled()) return;
-                    if (!reviewing.compareAndSet(false, true)) return;
-                    try {
-                        reviewSync(false);
-                    } finally {
-                        reviewing.set(false);
-                    }
-                })
+        return Mono.fromRunnable(this::maybeReviewNow)
                 .subscribeOn(Schedulers.boundedElastic())
-                .onErrorResume(e -> {
-                    reviewing.set(false);
-                    log.warn("习惯回顾失败（已静默忽略，水位不推进、下轮重试）: {}", e.getMessage());
-                    return Mono.empty();
-                })
                 .then();
     }
 
