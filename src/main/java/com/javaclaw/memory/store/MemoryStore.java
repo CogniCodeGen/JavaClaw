@@ -2,12 +2,14 @@ package com.javaclaw.memory.store;
 
 import com.javaclaw.memory.model.AgentCheckpoint;
 import com.javaclaw.memory.model.ChangeLogEntry;
+import com.javaclaw.memory.model.CorrectionRecord;
 import com.javaclaw.memory.model.EntityNode;
 import com.javaclaw.memory.model.Episode;
 import com.javaclaw.memory.model.Fact;
 import com.javaclaw.memory.model.KnowledgeChunk;
 import com.javaclaw.memory.model.MemoryRoot;
 import com.javaclaw.memory.model.Persona;
+import com.javaclaw.memory.correction.CorrectionGuard;
 import org.eclipse.store.gigamap.jvector.VectorIndex;
 import org.eclipse.store.gigamap.jvector.VectorIndexConfiguration;
 import org.eclipse.store.gigamap.jvector.VectorIndices;
@@ -15,6 +17,8 @@ import org.eclipse.store.gigamap.jvector.VectorSearchResult;
 import org.eclipse.store.gigamap.jvector.VectorSimilarityFunction;
 import org.eclipse.store.gigamap.jvector.Vectorizer;
 import org.eclipse.store.gigamap.types.GigaMap;
+import org.eclipse.store.gigamap.types.BitmapIndices;
+import org.eclipse.store.gigamap.types.IndexerString;
 import org.eclipse.store.gigamap.types.ScoredSearchResult;
 import org.eclipse.store.storage.embedded.types.EmbeddedStorage;
 import org.eclipse.store.storage.embedded.types.EmbeddedStorageManager;
@@ -91,6 +95,31 @@ public class MemoryStore implements AutoCloseable {
         @Override public float[] vectorize(KnowledgeChunk e) { return e.embedding; }
     }
 
+    /*
+     * GigaMap.update(entity, ...) first has to resolve the entity back to its internal long id.
+     * EclipseStore 4.1 requires at least one bitmap index for that lookup.  The original memory
+     * maps only had JVector indices, so every in-place update failed at runtime.  Stable business
+     * ids are the natural identity keys here; named static indexers are persistence-safe.
+     */
+    private static final IndexerString<Fact> FACT_ID = new FactIdIndexer();
+    private static final IndexerString<KnowledgeChunk> KNOWLEDGE_ID = new KnowledgeIdIndexer();
+    private static final IndexerString<CorrectionRecord> CORRECTION_ID = new CorrectionIdIndexer();
+
+    static final class FactIdIndexer extends IndexerString.Abstract<Fact> {
+        @Override public String name() { return "memory.fact.id"; }
+        @Override protected String getString(Fact e) { return e.id; }
+    }
+
+    static final class KnowledgeIdIndexer extends IndexerString.Abstract<KnowledgeChunk> {
+        @Override public String name() { return "memory.knowledge.id"; }
+        @Override protected String getString(KnowledgeChunk e) { return e.id; }
+    }
+
+    static final class CorrectionIdIndexer extends IndexerString.Abstract<CorrectionRecord> {
+        @Override public String name() { return "memory.correction.id"; }
+        @Override protected String getString(CorrectionRecord e) { return e.id; }
+    }
+
     // ==================== 生命周期 ====================
 
     /** 启动/恢复存储,确保根对象与三个向量索引就绪。 */
@@ -121,11 +150,17 @@ public class MemoryStore implements AutoCloseable {
             boolean migrated = false;
             if (root.pendingFacts == null) { root.pendingFacts = GigaMap.New(); migrated = true; }
             if (root.pendingEpisodes == null) { root.pendingEpisodes = GigaMap.New(); migrated = true; }
+            if (root.corrections == null) { root.corrections = GigaMap.New(); migrated = true; }
             if (root.stats == null) { root.stats = new com.javaclaw.memory.model.MemoryStats(); migrated = true; }
             if (migrated) {
                 mgr.store(root);
-                log.info("[{}] 已补建 pending 暂存区（schema 补齐）", label);
+                log.info("[{}] 已补建新增记忆字段（schema 补齐）", label);
             }
+
+            ensureIdentityIndex(root.facts, FACT_ID);
+            ensureIdentityIndex(root.pendingFacts, FACT_ID);
+            ensureIdentityIndex(root.knowledge, KNOWLEDGE_ID);
+            ensureIdentityIndex(root.corrections, CORRECTION_ID);
 
             this.factIndex = ensureIndex(root.facts, new FactVectorizer());
             this.episodeIndex = ensureIndex(root.episodes, new EpisodeVectorizer());
@@ -164,6 +199,17 @@ public class MemoryStore implements AutoCloseable {
             idx = vis.add(IDX, cfg, vectorizer);
         }
         return idx;
+    }
+
+    /**
+     * Ensures that entity-based update/remove operations can deterministically locate an entry.
+     * Calling this on every open also migrates stores created before bitmap identity indices existed.
+     */
+    private <E> void ensureIdentityIndex(GigaMap<E> map, IndexerString<? super E> indexer) {
+        BitmapIndices<E> indices = map.index().bitmap();
+        indices.ensure(indexer);
+        indices.setIdentityIndices(indexer);
+        map.store();
     }
 
     @Override
@@ -262,6 +308,12 @@ public class MemoryStore implements AutoCloseable {
     /** 新增事实(嵌入须已写入 {@link Fact#embedding})。 */
     public void addFact(Fact f, String actor) {
         write(() -> {
+            CorrectionRecord blockedBy = unsafeModelFact(f, actor);
+            if (blockedBy != null) {
+                logInternal("BLOCK_REINTRODUCE_ERROR", "Fact", blockedBy.id,
+                        actor, trunc(f.text));
+                return;
+            }
             if (f.id == null) f.id = UUID.randomUUID().toString();
             long now = System.currentTimeMillis();
             if (f.createdAt == 0) f.createdAt = now;
@@ -312,10 +364,26 @@ public class MemoryStore implements AutoCloseable {
         write(() -> {
             root.facts.update(f, x -> {
                 x.superseded = true;
+                x.contested = false;
                 x.updatedAt = System.currentTimeMillis();
             });
             root.facts.store();
             logInternal("SUPERSEDE", "Fact", f.id, actor, trunc(replacedByText));
+        });
+    }
+
+    /**
+     * 将旧事实标记为争议：用户已明确否定，但尚无足够权威证据写入替代事实。
+     * 争议事实保留可审计，但不再参与召回、去重或取代候选。
+     */
+    public void contestFact(Fact f, String actor, String reason) {
+        write(() -> {
+            root.facts.update(f, x -> {
+                x.contested = true;
+                x.updatedAt = System.currentTimeMillis();
+            });
+            root.facts.store();
+            logInternal("CONTEST", "Fact", f.id, actor, trunc(reason));
         });
     }
 
@@ -341,7 +409,7 @@ public class MemoryStore implements AutoCloseable {
             List<Scored<Fact>> raw = search(factIndex, query, fetch, threshold);
             List<Scored<Fact>> out = new ArrayList<>(Math.min(topK, raw.size()));
             for (Scored<Fact> s : raw) {
-                if (s.entity().superseded) continue;
+                if (s.entity().superseded || s.entity().contested) continue;
                 out.add(s);
                 if (out.size() >= topK) break;
             }
@@ -358,11 +426,55 @@ public class MemoryStore implements AutoCloseable {
         return out;
     }
 
+    // ==================== 用户显式纠错 ====================
+
+    /** 同步新增一条纠错记录。 */
+    public void addCorrection(CorrectionRecord correction, String actor) {
+        write(() -> {
+            if (correction.id == null) correction.id = UUID.randomUUID().toString();
+            long now = System.currentTimeMillis();
+            if (correction.createdAt == 0) correction.createdAt = now;
+            correction.updatedAt = now;
+            correction.entityId = root.corrections.add(correction);
+            root.corrections.store();
+            logInternal("CORRECT", "CorrectionRecord", correction.id, actor,
+                    trunc(correction.sourceInput));
+        });
+    }
+
+    /** 原地更新纠错状态/关联，保留审计。 */
+    public void updateCorrection(CorrectionRecord correction,
+                                 java.util.function.Consumer<CorrectionRecord> mutator,
+                                 String actor) {
+        write(() -> {
+            root.corrections.update(correction, x -> {
+                mutator.accept(x);
+                x.updatedAt = System.currentTimeMillis();
+            });
+            root.corrections.store();
+            logInternal("UPDATE", "CorrectionRecord", correction.id, actor,
+                    trunc(correction.sourceInput));
+        });
+    }
+
+    /** 全部纠错记录（只读快照，含已撤销项，调用方按状态过滤）。 */
+    public List<CorrectionRecord> allCorrections() {
+        List<CorrectionRecord> out = new ArrayList<>();
+        root.corrections.iterate(out::add);
+        return out;
+    }
+
     // ==================== 待嵌入事实(降级暂存,无向量索引) ====================
 
     /** 降级新增事实到 pending 暂存区(嵌入不可用时,纯文本落库、不进向量索引)。 */
     public void addPendingFact(Fact f, String actor) {
         write(() -> {
+            CorrectionRecord blockedBy = unsafeModelFact(f, actor);
+            if (blockedBy != null) {
+                logInternal("BLOCK_REINTRODUCE_ERROR", "Fact", blockedBy.id,
+                        actor, trunc(f.text));
+                return;
+            }
             if (f.id == null) f.id = UUID.randomUUID().toString();
             long now = System.currentTimeMillis();
             if (f.createdAt == 0) f.createdAt = now;
@@ -400,6 +512,14 @@ public class MemoryStore implements AutoCloseable {
     public boolean promotePendingFact(Fact f, float[] embedding, String actor) {
         return writeCall(() -> {
             if (!f.pending) return false; // 并发迁回时保持幂等，避免同一对象重复入正式索引
+            CorrectionRecord blockedBy = unsafeModelFact(f, actor);
+            if (blockedBy != null) {
+                root.pendingFacts.removeById(f.entityId);
+                root.pendingFacts.store();
+                logInternal("DROP_PENDING_REINTRODUCE_ERROR", "Fact", blockedBy.id,
+                        actor, trunc(f.text));
+                return false;
+            }
             root.pendingFacts.removeById(f.entityId);
             f.embedding = embedding;
             f.pending = false;
@@ -416,6 +536,23 @@ public class MemoryStore implements AutoCloseable {
         List<Fact> out = new ArrayList<>();
         root.pendingFacts.iterate(out::add);
         return out;
+    }
+
+    /**
+     * 单写事务内的最终不变量：模型派生事实不能把已废弃/未核验主张重新写回。
+     * 上层预检用于省成本和清晰日志；这里负责关闭“蒸馏与用户纠错并发交错”的竞态窗口。
+     */
+    private CorrectionRecord unsafeModelFact(Fact fact, String actor) {
+        boolean modelDerived = "distiller".equals(actor)
+                || "habit-reviewer".equals(actor)
+                || "DISTILLED".equals(fact == null ? null : fact.sourceKind)
+                || "HABIT_REVIEW".equals(fact == null ? null : fact.sourceKind);
+        if (fact == null || fact.text == null || !modelDerived) {
+            return null;
+        }
+        List<CorrectionRecord> rules = new ArrayList<>();
+        root.corrections.iterate(rules::add);
+        return CorrectionGuard.findUnsafeMemoryClaim(fact.text, rules).orElse(null);
     }
 
     // ==================== 情景记忆 ====================

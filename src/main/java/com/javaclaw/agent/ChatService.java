@@ -17,6 +17,8 @@ import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.api.conversation.ConversationRequest;
 import com.javaclaw.chat.ChatMessage;
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.memory.correction.CorrectionGuard;
+import com.javaclaw.memory.correction.CorrectionTurnContext;
 import com.javaclaw.prompt.AgentPrompts;
 import com.javaclaw.skill.SkillManager;
 import com.javaclaw.util.AtomicDisposable;
@@ -129,6 +131,10 @@ public class ChatService {
 
     /** 本轮用户输入（供按 query 检索相关记忆注入；每轮重建编排器时读取） */
     private volatile String currentUserInput = "";
+
+    /** 会话 → 最近一次实际交付给用户的助手回复（显式纠错需要定位上一轮目标）。 */
+    private final java.util.concurrent.ConcurrentMap<String, String> lastAssistantReplies =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * 构造并初始化普通模式服务。
@@ -386,6 +392,11 @@ public class ChatService {
                 ? request.attachments() : preparedAttachments;
         String initialProcessedInput = preparedInput == null ? userInput : preparedInput;
         this.currentUserInput = userInput == null ? "" : userInput;
+        final String correctionSessionKey = correctionSessionKey(request.sessionId());
+        final String previousAssistantReply =
+                lastAssistantReplies.getOrDefault(correctionSessionKey, "");
+        final AtomicReference<CorrectionTurnContext> correctionContextRef =
+                new AtomicReference<>(CorrectionTurnContext.empty());
 
         log.info("收到用户消息（普通模式）: {}", userInput);
 
@@ -422,6 +433,8 @@ public class ChatService {
         // 记忆：收集助手回复文本，结束后异步交给 MemoryService（落情景 + 蒸馏事实）
         // 上限 12000 字符 —— 过长回复对蒸馏来说也只关心结论，无须全文
         final StringBuilder collectedReply = new StringBuilder();
+        // 仅在纠错守卫启用时保存完整草稿；collectedReply 仍维持原有 12k 记忆上限。
+        final StringBuilder guardedReply = new StringBuilder();
         final int REPLY_COLLECT_CAP = 12000;
 
         // 领域层回调包装器：拦截 Usage / Reply / ToolResult 做簿记，然后转发给 UI
@@ -435,7 +448,15 @@ public class ChatService {
                         outputCharCount.addAndGet(r.chunk().length());
                         runtime.getTokenTracker().addStreamingChars(r.chunk().length());
                         if (collectedReply.length() < REPLY_COLLECT_CAP) {
-                            collectedReply.append(r.chunk());
+                            int remaining = REPLY_COLLECT_CAP - collectedReply.length();
+                            collectedReply.append(r.chunk(), 0,
+                                    Math.min(remaining, r.chunk().length()));
+                        }
+                        // 相关纠错轮次先缓冲最终回复，完成时经 CorrectionGuard 审核后一次性交付；
+                        // 流式片段一旦发给 UI，就无法在发现重复旧错误后撤回。
+                        if (correctionContextRef.get().requiresReplyGuard()) {
+                            guardedReply.append(r.chunk());
+                            return;
                         }
                     } else if (event instanceof ConversationEvent.ToolResult tr) {
                         // 只有真实工具调用（非子智能体转发）才喂给监控/评估
@@ -481,6 +502,23 @@ public class ChatService {
         final AtomicReference<Disposable> selfSub = new AtomicReference<>();
         Disposable sub = Mono.fromCallable(() -> {
                     String processedInput = initialProcessedInput;
+
+                    // ── 阶段 0：显式纠错（同步 durable-first，先于本轮记忆召回） ──
+                    CorrectionTurnContext correctionContext =
+                            memoryService.prepareCorrectionTurn(userInput, previousAssistantReply);
+                    correctionContextRef.set(correctionContext);
+                    if (correctionContext.newlyApplied() != null) {
+                        emitProgress(callbacks, "correction", "纠错记忆",
+                                ConversationEvent.Progress.Status.DONE,
+                                correctionContext.newlyApplied().status
+                                        == com.javaclaw.memory.model.CorrectionRecord.Status.ACTIVE
+                                        ? "已更新长期事实" : "已标记争议，等待核验");
+                        callbacks.onEvent(new ConversationEvent.Hint(
+                                "[记忆] 已记录用户显式纠错，本轮优先采用纠错上下文"));
+                    } else {
+                        emitProgress(callbacks, "correction", "纠错记忆",
+                                ConversationEvent.Progress.Status.SKIPPED, "未检测到显式纠错");
+                    }
 
                     // ── 阶段 1：视觉预处理（仅当含图片附件） ──
                     if (!visionPrepared && runtime.hasImageAttachment(attachments)) {
@@ -624,10 +662,35 @@ public class ChatService {
                             runtime.getTokenTracker().recordUsage(inputCharCount, outputCharCount.get());
                             // 注入技能的轮次成败归因（滑窗成功率达标视为成功）
                             recordSkillTurnOutcome(isTurnSuccessful());
+                            CorrectionTurnContext correctionContext = correctionContextRef.get();
+                            String deliveredReply = correctionContext.requiresReplyGuard()
+                                    ? guardedReply.toString() : collectedReply.toString();
+                            if (correctionContext.requiresReplyGuard()) {
+                                var violation = CorrectionGuard.findViolation(
+                                        deliveredReply, correctionContext.corrections());
+                                if (violation.isPresent()) {
+                                    memoryService.recordCorrectionGuardViolation(violation.get());
+                                    deliveredReply = CorrectionGuard.safeFallback(violation.get());
+                                    runtime.getMemoryManager()
+                                            .replaceLastAssistantReply(deliveredReply);
+                                    callbacks.onEvent(new ConversationEvent.Hint(
+                                            "[纠错保护] 已拦截模型草稿中重复出现的旧结论"));
+                                    log.warn("纠错守卫已拦截重复旧结论: {}",
+                                            violation.get().wrongClaim());
+                                }
+                                // 纠错相关轮次此前未把 Reply 增量转发给 UI；审核通过后一次性交付。
+                                if (!deliveredReply.isBlank()) {
+                                    callbacks.onEvent(new ConversationEvent.Reply(deliveredReply));
+                                }
+                            }
+                            String memoryReply = deliveredReply.length() <= REPLY_COLLECT_CAP
+                                    ? deliveredReply
+                                    : deliveredReply.substring(0, REPLY_COLLECT_CAP);
+                            lastAssistantReplies.put(correctionSessionKey, memoryReply);
                             // 记忆：轮后异步落情景 + 向量去重蒸馏事实（替代旧 distill/consolidate 批处理）
-                            memoryService.rememberTurn("chat", userInput, collectedReply.toString(), null);
+                            memoryService.rememberTurn("chat", userInput, memoryReply, null);
                             // 技能蒸馏（程序性记忆）：达门槛时从执行轨迹蒸馏可沉淀的工作流经验
-                            skillCurator.distillFromChatTurn(userInput, collectedReply.toString(),
+                            skillCurator.distillFromChatTurn(userInput, memoryReply,
                                             executionMonitor.getTraces(), executionMonitor.successRate())
                                     .subscribe();
                             callbacks.onTerminal(ConversationOutcome.completed());
@@ -709,7 +772,8 @@ public class ChatService {
     /**
      * 按路由结果和目标上下文重建本轮编排智能体。
      */
-    private void rebuildOrchestratorForTurn(RoutingResult routing, GoalDecomposition goals) {
+    private void rebuildOrchestratorForTurn(
+            RoutingResult routing, GoalDecomposition goals) {
         synchronized (orchestratorLock) {
             // 发送前自愈：修复上一轮取消/中断/超时留下的悬空工具调用，
             // 否则带 tool_calls 却缺结果的历史会被网关以
@@ -766,6 +830,7 @@ public class ChatService {
             String personaContext = memoryService.recall(currentUserInput);
             // 已启用插件贡献的工具清单注入提示词，agent 据此直接 plugin_call_tool 调用
             String pluginPrompt = com.javaclaw.plugin.PluginManager.getInstance().buildToolsPrompt();
+            // Recaller 已把相关纠错置于 loaded_context 首部；这里不重复拼接，避免双份 token。
             String fullSysPrompt = baseSystemPrompt + personaContext + skillCatalog + skillsPrompt
                     + mcpPrompt + pluginPrompt + goalPrompt;
             this.orchestrator = buildOrchestrator(fullSysPrompt);
@@ -813,6 +878,7 @@ public class ChatService {
         executionMonitor.reset();
         var engine = planningEngineAccessor.get();
         if (engine != null) engine.reset();
+        lastAssistantReplies.clear();
         log.info("普通模式历史已清空（含记忆快照、钩子状态、计划任务和 GEPA 状态）");
     }
 
@@ -850,6 +916,16 @@ public class ChatService {
             for (Msg m : msgs) {
                 mem.addMessage(m);
             }
+            for (int i = msgs.size() - 1; i >= 0; i--) {
+                Msg m = msgs.get(i);
+                if (m.getRole() == io.agentscope.core.message.MsgRole.ASSISTANT
+                        && m.getTextContent() != null
+                        && !m.getTextContent().isBlank()) {
+                    lastAssistantReplies.put(
+                            correctionSessionKey(sessionId), m.getTextContent());
+                    break;
+                }
+            }
             // 恢复后自愈悬空工具调用（上次可能停在 tool_call 与结果之间）
             runtime.getMemoryManager().healDanglingToolCalls(mem, "orchestrator");
             log.info("会话已从记忆库检查点恢复: {} ({} 条消息)", sessionId, msgs.size());
@@ -860,6 +936,11 @@ public class ChatService {
 
     public void deleteSession(String sessionId) {
         memoryService.deleteCheckpoint(sessionId);
+        lastAssistantReplies.remove(correctionSessionKey(sessionId));
+    }
+
+    private static String correctionSessionKey(String sessionId) {
+        return sessionId == null || sessionId.isBlank() ? "__default__" : sessionId;
     }
 
     /** 记忆服务（供记忆中心 UI 查看/编辑）。 */

@@ -269,6 +269,35 @@ public class MemoryManager {
     }
 
     /**
+     * 用已通过应用层守卫的文本替换最近一条助手回复。
+     *
+     * <p>模型流结束后，AgentScope 已把原始草稿写入共享工作记忆。若纠错守卫拦截了该草稿，
+     * 仅替换 UI 输出还不够：下一轮会再次看到被拦截内容。这里同步改写工作记忆，使会话历史、
+     * 后续上下文和检查点都只保留实际交付给用户的安全回复。</p>
+     *
+     * @return true 表示找到并替换了最近助手消息
+     */
+    public synchronized boolean replaceLastAssistantReply(String replacement) {
+        if (replacement == null || replacement.isBlank()) return false;
+        List<Msg> messages = new ArrayList<>(orchestratorMemory.getMessages());
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            if (messages.get(i).getRole() != MsgRole.ASSISTANT) continue;
+            messages.set(i, Msg.builder()
+                    .role(MsgRole.ASSISTANT)
+                    .name("orchestrator")
+                    .textContent(replacement)
+                    .build());
+            orchestratorMemory.clear();
+            for (Msg message : messages) {
+                orchestratorMemory.addMessage(message);
+            }
+            log.warn("最近一条助手工作记忆已由纠错守卫替换");
+            return true;
+        }
+        return false;
+    }
+
+    /**
      * 清除指定智能体的记忆快照和智能体本身的记忆
      *
      * @param agent 目标智能体

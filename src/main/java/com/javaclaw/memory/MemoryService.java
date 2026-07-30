@@ -4,6 +4,9 @@ import com.javaclaw.agent.TokenTracker;
 import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.memory.curation.Distiller;
 import com.javaclaw.memory.curation.HabitReviewer;
+import com.javaclaw.memory.correction.CorrectionEngine;
+import com.javaclaw.memory.correction.CorrectionGuard;
+import com.javaclaw.memory.correction.CorrectionTurnContext;
 import com.javaclaw.memory.embed.EmbeddingGateway;
 import com.javaclaw.memory.embed.EmbeddingPurpose;
 import com.javaclaw.memory.model.AgentCheckpoint;
@@ -58,6 +61,7 @@ public class MemoryService implements AutoCloseable {
     private Recaller recaller;
     private Distiller distiller;
     private HabitReviewer habitReviewer;
+    private CorrectionEngine correctionEngine;
 
     public MemoryService(ModelFactory modelFactory, TokenTracker tokenTracker) {
         this(modelFactory, tokenTracker, new EmbeddingGateway(modelFactory));
@@ -92,6 +96,8 @@ public class MemoryService implements AutoCloseable {
             this.recaller = new Recaller(store, gate);
             this.distiller = new Distiller(lightModel, store, gate, tokenTracker);
             this.habitReviewer = new HabitReviewer(lightModel, store, gate, tokenTracker);
+            this.correctionEngine = new CorrectionEngine(
+                    store, text -> gate.embed(text, EmbeddingPurpose.BACKGROUND_INDEX));
             seedDefaultPersona();
             backgroundWork.startAccepting();
             // 把「习惯回顾」注册为定时任务模块的系统内置任务手动动作（支持「立即执行」）；
@@ -105,6 +111,7 @@ public class MemoryService implements AutoCloseable {
             this.recaller = null;
             this.distiller = null;
             this.habitReviewer = null;
+            this.correctionEngine = null;
             try {
                 acquired.close();
             } catch (RuntimeException cleanupFailure) {
@@ -140,6 +147,7 @@ public class MemoryService implements AutoCloseable {
         recaller = null;
         distiller = null;
         habitReviewer = null;
+        correctionEngine = null;
         // 已关闭的一代任务可能仍在响应底层网络取消；新工作区使用独立追踪器，互不串扰。
         backgroundWork = new BackgroundWorkTracker();
 
@@ -184,6 +192,58 @@ public class MemoryService implements AutoCloseable {
             log.warn("记忆召回异常（已降级为空注入）: {}", e.getMessage());
             return "";
         }
+    }
+
+    /**
+     * 在本轮模型调用前同步处理用户显式纠错，并返回需要注入/守卫的上下文。
+     *
+     * <p>该入口不受普通蒸馏的最短输入限制，也不走异步队列，确保“错了”这类短反馈会先于
+     * 下一次召回持久化。失败时保守降级为空上下文，不阻断正常聊天。</p>
+     */
+    public CorrectionTurnContext prepareCorrectionTurn(
+            String userInput, String previousAssistantReply) {
+        CorrectionEngine engine = correctionEngine;
+        if (engine == null) return CorrectionTurnContext.empty();
+        try {
+            return engine.prepareTurn(userInput, previousAssistantReply);
+        } catch (RuntimeException e) {
+            log.warn("显式纠错处理部分失败，尝试从 durable 记录恢复上下文: {}", e.getMessage());
+            MemoryStore current = store;
+            if (current == null) return CorrectionTurnContext.empty();
+            try {
+                List<com.javaclaw.memory.model.CorrectionRecord> recovered =
+                        CorrectionEngine.selectRelevant(current.allCorrections(), userInput, 6);
+                return recovered.isEmpty()
+                        ? CorrectionTurnContext.empty()
+                        : new CorrectionTurnContext(recovered, null);
+            } catch (RuntimeException recoveryFailure) {
+                log.warn("显式纠错上下文恢复失败（降级为普通对话）: {}",
+                        recoveryFailure.getMessage());
+                return CorrectionTurnContext.empty();
+            }
+        }
+    }
+
+    /** 回复守卫拦截一次已知错误时追加审计。 */
+    public void recordCorrectionGuardViolation(CorrectionGuard.Violation violation) {
+        MemoryStore current = store;
+        if (current == null || violation == null) return;
+        try {
+            current.appendChangeLog(
+                    "BLOCK_REPEAT_ERROR",
+                    "CorrectionRecord",
+                    violation.correction().id,
+                    "system",
+                    violation.wrongClaim());
+        } catch (RuntimeException e) {
+            log.warn("记录纠错守卫审计失败（忽略）: {}", e.getMessage());
+        }
+    }
+
+    /** 全部显式纠错（含已撤销项），供诊断/测试/后续 UI 展示。 */
+    public List<com.javaclaw.memory.model.CorrectionRecord> corrections() {
+        MemoryStore current = store;
+        return current == null ? List.of() : current.allCorrections();
     }
 
     // ==================== 记忆写入（轮后） ====================
@@ -363,12 +423,22 @@ public class MemoryService implements AutoCloseable {
                 f.text = newText;
                 f.embedding = vec;
                 f.userEdited = true;
+                f.userAsserted = true;
+                f.sourceKind = "USER_MANUAL";
                 f.superseded = false; // 用户显式编辑 = 断言现行有效，复活被取代的事实
+                f.contested = false;
                 f.pending = false;
                 store.removePendingFact(f, "user");
                 store.addFact(f, "user");
             } else {
-                store.updatePendingFact(f, x -> { x.text = newText; x.userEdited = true; }, "user");
+                store.updatePendingFact(f, x -> {
+                    x.text = newText;
+                    x.userEdited = true;
+                    x.userAsserted = true;
+                    x.sourceKind = "USER_MANUAL";
+                    x.superseded = false;
+                    x.contested = false;
+                }, "user");
             }
             return;
         }
@@ -376,7 +446,10 @@ public class MemoryService implements AutoCloseable {
             x.text = newText;
             if (vec != null) x.embedding = vec;
             x.userEdited = true;
+            x.userAsserted = true;
+            x.sourceKind = "USER_MANUAL";
             x.superseded = false; // 用户显式编辑 = 断言现行有效，复活被取代的事实（userEdited 保护契约优先于软删除）
+            x.contested = false;
         }, "user");
     }
 
@@ -387,6 +460,8 @@ public class MemoryService implements AutoCloseable {
         com.javaclaw.memory.model.Fact f = new com.javaclaw.memory.model.Fact(
                 section == null || section.isBlank() ? "其它" : section.trim(), text.trim(), vec);
         f.userEdited = true; // 手动新增等同用户保护，蒸馏不得静默覆盖
+        f.userAsserted = true;
+        f.sourceKind = "USER_MANUAL";
         if (vec != null) store.addFact(f, "user");
         else store.addPendingFact(f, "user");
     }

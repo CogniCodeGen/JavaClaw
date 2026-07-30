@@ -40,6 +40,9 @@ public class MemoryRoot {
     /** 变更日志(替代备份) */
     public GigaMap<ChangeLogEntry> changeLog = GigaMap.New();
 
+    /** 用户显式纠错记录（无向量索引；按确定性相关性 + 近因高优先级召回）。 */
+    public GigaMap<CorrectionRecord> corrections = GigaMap.New();
+
     /** 工作记忆检查点(会话/智能体 key → 快照) */
     public Map<String, AgentCheckpoint> working = new HashMap<>();
 

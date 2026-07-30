@@ -65,7 +65,8 @@ public final class MemoryGraphBuilder {
 
     private static MemoryGraph doBuild(MemoryStore store, Options opt) {
         // 排除被取代的软删除事实（不作为活跃节点参与构图；语义近邻边亦经 searchFacts 自动过滤）
-        List<Fact> allFacts = store.allFacts().stream().filter(f -> !f.superseded)
+        List<Fact> allFacts = store.allFacts().stream()
+                .filter(f -> !f.superseded && !f.contested)
                 .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
         // 按更新时间倒序，取前 maxNodes 个事实参与构图
         allFacts.sort((a, b) -> Long.compare(b.updatedAt, a.updatedAt));

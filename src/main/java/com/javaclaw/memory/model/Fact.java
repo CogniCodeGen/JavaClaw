@@ -43,6 +43,20 @@ public class Fact {
     /** 用户是否手动改过 —— 保护位：蒸馏不得静默覆盖 */
     public boolean userEdited;
 
+    /**
+     * 是否来自用户在对话中的显式断言/纠错。
+     *
+     * <p>区别于 {@link #userEdited}：它可以被用户后续的另一条显式纠错取代，但不得被普通
+     * 助手蒸馏或习惯归纳静默覆盖。</p>
+     */
+    public boolean userAsserted;
+
+    /** 来源类型（DISTILLED / USER_EXPLICIT_CORRECTION / USER_MANUAL 等），旧数据可为 null。 */
+    public String sourceKind;
+
+    /** 若来自显式纠错，指向对应 CorrectionRecord.id；否则为空。 */
+    public String correctionId;
+
     /** 置顶 —— 钉住重要事实（UI 排序靠前；语义上等同强保护，不被淘汰） */
     public boolean pinned;
 
@@ -52,6 +66,12 @@ public class Fact {
      * 但仍留在库中（记忆中心可见、可恢复），不静默物理删除。缺省 false，向后兼容旧对象图。
      */
     public boolean superseded;
+
+    /**
+     * 被质疑 —— 用户已明确否定，但替代结论尚未通过可靠来源核验。
+     * 与 superseded 一样不参与召回；保留对象用于记忆中心审计与后续人工修复。
+     */
+    public boolean contested;
 
     /**
      * 待嵌入标记 —— 嵌入服务不可用时降级落在 {@code pendingFacts}（无向量、不可召回），

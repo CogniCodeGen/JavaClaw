@@ -808,6 +808,22 @@ public class MemoryCenterView {
                 Label prot = new Label("用户保护");
                 prot.getStyleClass().addAll("jc-badge", "jc-badge-soft");
                 meta.getChildren().add(prot);
+            } else if (f.userAsserted) {
+                Label asserted = new Label("用户纠错");
+                asserted.getStyleClass().addAll("jc-badge", "jc-badge-soft");
+                asserted.setTooltip(new javafx.scene.control.Tooltip("来自用户在对话中的显式纠正"));
+                meta.getChildren().add(asserted);
+            }
+            if (f.superseded) {
+                Label stale = new Label("已取代");
+                stale.getStyleClass().addAll("jc-badge", "jc-badge-amber");
+                stale.setTooltip(new javafx.scene.control.Tooltip("保留用于审计，但不会再被模型召回"));
+                meta.getChildren().add(stale);
+            } else if (f.contested) {
+                Label disputed = new Label("有争议");
+                disputed.getStyleClass().addAll("jc-badge", "jc-badge-amber");
+                disputed.setTooltip(new javafx.scene.control.Tooltip("用户已否定；核验前不会被模型召回"));
+                meta.getChildren().add(disputed);
             }
             if (f.pinned) {
                 Label pin = new Label("置顶");

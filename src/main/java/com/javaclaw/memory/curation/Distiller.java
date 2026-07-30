@@ -4,6 +4,8 @@ import com.javaclaw.agent.TokenTracker;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.memory.embed.EmbeddingGateway;
 import com.javaclaw.memory.embed.EmbeddingPurpose;
+import com.javaclaw.memory.correction.CorrectionGuard;
+import com.javaclaw.memory.model.CorrectionRecord;
 import com.javaclaw.memory.model.EntityNode;
 import com.javaclaw.memory.model.Episode;
 import com.javaclaw.memory.model.Fact;
@@ -57,7 +59,9 @@ public class Distiller {
     /** 在当前线程蒸馏一次情景；失败静默，供受生命周期追踪的上层工作线程调用。 */
     public void distillNow(Episode ep) {
         if (ep == null || ep.userInput == null
-                || ep.userInput.trim().length() < AgentConfig.getInstance().getMemoryDistillMinInput()) {
+                || (ep.userInput.trim().length() < AgentConfig.getInstance().getMemoryDistillMinInput()
+                    && !com.javaclaw.memory.correction.CorrectionDetector
+                            .isExplicitCorrection(ep.userInput))) {
             return;
         }
         if (ep.assistantReply == null || ep.assistantReply.isBlank()) {
@@ -100,11 +104,17 @@ public class Distiller {
         List<EntityNode> turnEntities = extractEntities(conversation);
 
         double dedup = AgentConfig.getInstance().getMemoryDistillDedupThreshold();
+        List<CorrectionRecord> correctionRules = store.allCorrections();
         int added = 0, merged = 0, skipped = 0;
         for (String raw : factsText.lines().toList()) {
             String line = raw.strip();
             if (line.startsWith("- ")) line = line.substring(2).strip();
             if (line.isEmpty() || isNoneAnswer(line)) continue; // 混排输出中的「无」行不落库
+            if (CorrectionGuard.findUnsafeMemoryClaim(line, correctionRules).isPresent()) {
+                log.warn("记忆蒸馏命中已废弃或未核验主张，确定性跳过: {}", trunc(line));
+                skipped++;
+                continue;
+            }
 
             float[] vec = gate.embed(line, EmbeddingPurpose.BACKGROUND_INDEX);
             if (vec == null) {
@@ -112,6 +122,7 @@ public class Distiller {
                 Fact pf = new Fact(null, line, null);
                 pf.source = ep;
                 pf.about = matchEntities(line, turnEntities);
+                pf.sourceKind = "DISTILLED";
                 store.addPendingFact(pf, "distiller");
                 skipped++;
                 continue;
@@ -127,6 +138,7 @@ public class Distiller {
                 Fact f = new Fact(null, line, vec);
                 f.source = ep;
                 f.about = matchEntities(line, turnEntities); // 关联本轮实体（记忆图 about 边）
+                f.sourceKind = "DISTILLED";
                 store.addFact(f, "distiller");
                 added++;
             }
@@ -154,7 +166,9 @@ public class Distiller {
         // 排在其后、真正矛盾的旧事实挤出候选窗口；故先取 maxCand*2+4，过滤后再截断到 maxCand。
         List<MemoryStore.Scored<Fact>> cands = store.searchFacts(vec, maxCand * 2 + 4, threshold).stream()
                 .filter(s -> s.score() < dedup)
-                .filter(s -> !s.entity().userEdited && !s.entity().pinned)
+                .filter(s -> !s.entity().userEdited
+                        && !s.entity().userAsserted
+                        && !s.entity().pinned)
                 .limit(maxCand)
                 .toList();
         if (cands.isEmpty()) return;

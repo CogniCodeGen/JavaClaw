@@ -1,10 +1,13 @@
 package com.javaclaw.memory.retrieval;
 
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.memory.correction.CorrectionEngine;
+import com.javaclaw.memory.correction.CorrectionTurnContext;
 import com.javaclaw.memory.embed.EmbeddingGateway;
 import com.javaclaw.memory.embed.EmbeddingPurpose;
 import com.javaclaw.memory.model.Episode;
 import com.javaclaw.memory.model.Fact;
+import com.javaclaw.memory.model.CorrectionRecord;
 import com.javaclaw.memory.model.Persona;
 import com.javaclaw.memory.store.MemoryStore;
 import org.slf4j.Logger;
@@ -55,6 +58,8 @@ public class Recaller {
 
         List<MemoryStore.Scored<Fact>> facts = List.of();
         List<MemoryStore.Scored<Episode>> episodes = List.of();
+        List<CorrectionRecord> corrections = CorrectionEngine.selectRelevant(
+                store.allCorrections(), query, 6);
         float[] q = gate.embed(query, EmbeddingPurpose.INTERACTIVE_RECALL);
         if (q != null) {
             try {
@@ -65,16 +70,22 @@ public class Recaller {
             }
         }
 
-        if (personaText.isEmpty() && facts.isEmpty() && episodes.isEmpty()) {
+        if (personaText.isEmpty() && corrections.isEmpty()
+                && facts.isEmpty() && episodes.isEmpty()) {
             return "";
         }
 
         StringBuilder sb = new StringBuilder("\n\n<loaded_context>\n");
+        if (!corrections.isEmpty()) {
+            String correctionPrompt =
+                    new CorrectionTurnContext(corrections, null).toPrompt();
+            sb.append(correctionPrompt);
+        }
         if (!personaText.isEmpty()) {
             sb.append("<persona>\n").append(personaText).append("\n</persona>\n");
         }
 
-        int used = personaText.length();
+        int used = sb.length();
         if (!facts.isEmpty()) {
             sb.append("<relevant_memory>\n");
             for (MemoryStore.Scored<Fact> s : facts) {

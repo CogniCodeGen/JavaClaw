@@ -4,6 +4,8 @@ import com.javaclaw.agent.TokenTracker;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.memory.embed.EmbeddingGateway;
 import com.javaclaw.memory.embed.EmbeddingPurpose;
+import com.javaclaw.memory.correction.CorrectionGuard;
+import com.javaclaw.memory.model.CorrectionRecord;
 import com.javaclaw.memory.model.Episode;
 import com.javaclaw.memory.model.Fact;
 import com.javaclaw.memory.store.MemoryStore;
@@ -132,6 +134,7 @@ public class HabitReviewer {
         }
 
         double dedup = cfg.getMemoryDistillDedupThreshold();
+        List<CorrectionRecord> correctionRules = store.allCorrections();
         int added = 0, merged = 0, pending = 0;
         for (String raw : text.lines().toList()) {
             String line = raw.strip();
@@ -139,20 +142,33 @@ public class HabitReviewer {
             // 剥掉句末的依据轮次标注（轮次编号只在本批摘要内有意义，不入库）
             line = line.replaceAll("[（(]依据[:：][^）)]*[）)]\\s*$", "").strip();
             if (line.isEmpty() || Distiller.isNoneAnswer(line)) continue;
+            if (CorrectionGuard.findUnsafeMemoryClaim(line, correctionRules).isPresent()) {
+                log.warn("习惯回顾命中已废弃或未核验主张，确定性跳过: {}", line);
+                continue;
+            }
 
             float[] vec = gate.embed(line, EmbeddingPurpose.BACKGROUND_INDEX);
             if (vec == null) {
                 Fact pf = new Fact("习惯偏好", line, null);
+                pf.sourceKind = "HABIT_REVIEW";
                 store.addPendingFact(pf, "habit-reviewer");
                 pending++;
                 continue;
             }
             List<MemoryStore.Scored<Fact>> hit = store.searchFacts(vec, 1, dedup);
-            if (!hit.isEmpty() && !hit.get(0).entity().userEdited) {
-                store.mergeFact(hit.get(0).entity(), "habit-reviewer", line);
-                merged++;
+            if (!hit.isEmpty()) {
+                Fact existing = hit.get(0).entity();
+                if (!existing.userEdited && !existing.userAsserted) {
+                    store.mergeFact(existing, "habit-reviewer", line);
+                    merged++;
+                } else {
+                    // 归纳结果与用户保护事实近重复时，用户事实保持唯一且不由模型强化/改写。
+                    log.debug("习惯回顾命中用户保护事实，跳过: {}", line);
+                }
             } else {
-                store.addFact(new Fact("习惯偏好", line, vec), "habit-reviewer");
+                Fact fact = new Fact("习惯偏好", line, vec);
+                fact.sourceKind = "HABIT_REVIEW";
+                store.addFact(fact, "habit-reviewer");
                 added++;
             }
         }
