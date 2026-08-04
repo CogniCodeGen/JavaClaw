@@ -5,6 +5,8 @@ import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.agent.vision.VisionPreprocessor;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.chat.ChatMessage;
+import com.javaclaw.util.ProjectAccessPolicy;
+import com.javaclaw.util.SensitiveDataRedactor;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.apache.pdfbox.Loader;
@@ -14,10 +16,8 @@ import org.apache.pdfbox.text.PDFTextStripper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.File;
-import java.nio.file.Files;
 
 /**
  * 媒体工具集 — 把图片查看与 OCR 文字识别能力暴露给模型调用。
@@ -64,7 +64,7 @@ public class MediaTools {
             if (path == null || path.isBlank()) {
                 return ToolResponse.error("view_image", "路径不能为空");
             }
-            File file = new File(path);
+            File file = ProjectAccessPolicy.resolveProjectPath(path).toFile();
             if (!file.isFile()) {
                 return ToolResponse.error("view_image", "文件不存在: " + path);
             }
@@ -95,7 +95,7 @@ public class MediaTools {
             if (path == null || path.isBlank()) {
                 return ToolResponse.error("ocr_recognize", "路径不能为空");
             }
-            File file = new File(path);
+            File file = ProjectAccessPolicy.resolveProjectPath(path).toFile();
             if (!file.isFile()) {
                 return ToolResponse.error("ocr_recognize", "文件不存在: " + path);
             }
@@ -107,6 +107,9 @@ public class MediaTools {
                 String text = vision.ocrImage(file);
                 if (text == null) {
                     return ToolResponse.error("ocr_recognize", "图片 OCR 失败或未识别到文字: " + file.getName());
+                }
+                if (SensitiveDataRedactor.containsLikelyCredential(text)) {
+                    return ToolResponse.error("ocr_recognize", "OCR 结果包含疑似凭据，已阻止返回");
                 }
                 return ToolResponse.success("ocr_recognize",
                         "图片《" + file.getName() + "》识别结果：\n" + truncate(text));
@@ -139,6 +142,9 @@ public class MediaTools {
 
             boolean scanned = embedded.length() < (long) SCANNED_PDF_CHARS_PER_PAGE * Math.max(1, pageCount);
             if (!embedded.isEmpty() && !scanned) {
+                if (SensitiveDataRedactor.containsLikelyCredential(embedded)) {
+                    return ToolResponse.error("ocr_recognize", "PDF 文本包含疑似凭据，已阻止返回");
+                }
                 return ToolResponse.success("ocr_recognize",
                         "PDF《" + file.getName() + "》共 " + pageCount + " 页，内嵌文本：\n" + truncate(embedded));
             }
@@ -149,12 +155,9 @@ public class MediaTools {
             StringBuilder sb = new StringBuilder();
             int recognized = 0;
             for (int i = 0; i < limit; i++) {
-                File pageImg = null;
                 try {
                     BufferedImage image = renderer.renderImageWithDPI(i, PDF_RENDER_DPI);
-                    pageImg = File.createTempFile("javaclaw-ocr-", ".png");
-                    ImageIO.write(image, "png", pageImg);
-                    String pageText = vision.ocrImage(pageImg);
+                    String pageText = recognizeRenderedPage(image);
                     sb.append("【第 ").append(i + 1).append(" 页】\n")
                             .append(pageText == null ? "（识别失败）" : pageText).append("\n\n");
                     if (pageText != null) recognized++;
@@ -162,14 +165,15 @@ public class MediaTools {
                 } catch (Exception e) {
                     log.warn("PDF 第 {} 页渲染/识别失败: {}", i + 1, e.getMessage());
                     sb.append("【第 ").append(i + 1).append(" 页】（处理失败）\n\n");
-                } finally {
-                    deleteQuietly(pageImg);
                 }
             }
 
             if (recognized == 0) {
                 return ToolResponse.error("ocr_recognize",
                         "PDF《" + file.getName() + "》未能识别出任何文字（可能为空白或加密文档）");
+            }
+            if (SensitiveDataRedactor.containsLikelyCredential(sb.toString())) {
+                return ToolResponse.error("ocr_recognize", "PDF OCR 结果包含疑似凭据，已阻止返回");
             }
             String note = pageCount > limit ? "（仅识别前 " + limit + " / " + pageCount + " 页）" : "";
             return ToolResponse.success("ocr_recognize",
@@ -185,12 +189,8 @@ public class MediaTools {
         return text.substring(0, MAX_OCR_CHARS) + "\n...（内容已截断，共 " + text.length() + " 字符）";
     }
 
-    private void deleteQuietly(File f) {
-        if (f == null) return;
-        try {
-            Files.deleteIfExists(f.toPath());
-        } catch (Exception ignore) {
-            // 临时文件清理失败不影响主流程
-        }
+    /** 包级可测：渲染后的扫描页必须直接以内存图像进入视觉模型，禁止落临时文件。 */
+    String recognizeRenderedPage(BufferedImage image) {
+        return vision == null ? null : vision.ocrImage(image);
     }
 }

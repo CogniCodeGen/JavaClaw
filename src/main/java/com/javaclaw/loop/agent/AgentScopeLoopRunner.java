@@ -53,8 +53,8 @@ public final class AgentScopeLoopRunner implements LoopIterationRunner {
     /**
      * 本循环专属的隔离浏览器：循环设计为可与交互聊天<b>并行</b>，若共用 {@code runtime} 的单个
      * 浏览器实例，两条路径的导航/点击会交错落到错误页面、互相冲掉激活 Tab 与会话。故给循环一个
-     * 独立实例（懒启动——循环不用浏览器则永不拉起 Chromium），启动时继承共享登录态、退出时不回写
-     * （{@code persistCookies=false}），由 {@link #shutdown()} 关闭。
+     * 独立实例（懒启动——循环不用浏览器则永不拉起 Chromium），不继承聊天登录态；仅恢复任务
+     * 明确绑定的站点账号，退出时不回写全局状态，由 {@link #shutdown()} 关闭。
      */
     private final com.javaclaw.browser.PlaywrightBrowserManager loopBrowser;
     private final StreamEventHandler eventHandler = new StreamEventHandler();
@@ -102,8 +102,8 @@ public final class AgentScopeLoopRunner implements LoopIterationRunner {
         this.origin = origin == null ? com.javaclaw.agent.ToolCallOrigin.UNKNOWN : origin;
         AgentConfig config = AgentConfig.getInstance();
         // 隔离浏览器：独立于 runtime 的交互浏览器，避免与并行聊天抢同一浏览器/Tab（见字段注释）。
-        // 浏览器状态目录用工作区浏览器目录下的 loop 子目录；会话状态启动时读共享 H2 行（继承登录）、
-        // 退出时不回写（persistCookies=false），防止临时会话覆盖交互浏览器仍在用的登录态。
+        // 浏览器状态目录用工作区浏览器目录下的 loop 子目录；不继承聊天 Context，也不写全局认证态。
+        // 若任务已明确绑定站点账号，浏览器工具只从该账号对应的 site_sessions 恢复。
         this.loopBrowser = new com.javaclaw.browser.PlaywrightBrowserManager(true,
                 com.javaclaw.config.WorkspaceManager.getInstance().getCurrentBrowserDir().resolve("loop"),
                 com.javaclaw.config.DataManager.getInstance().getScreenshotsDir(),
@@ -172,7 +172,9 @@ public final class AgentScopeLoopRunner implements LoopIterationRunner {
                         inTokens.addAndGet(u.inputTokens());
                         outTokens.addAndGet(u.outputTokens());
                     }
-                    outer.onEvent(event);
+                    if (!(event instanceof ConversationEvent.Reply)) {
+                        outer.onEvent(event);
+                    }
                 }
 
                 @Override
@@ -235,6 +237,11 @@ public final class AgentScopeLoopRunner implements LoopIterationRunner {
             com.javaclaw.loop.model.LoopReport report = reportTool.consume();
             if (report == null) {
                 log.warn("执行体未按协议调用 {} 工具，降级到哨兵行解析", LoopConstants.REPORT_TOOL_NAME);
+            }
+            String visibleReply = com.javaclaw.util.ChineseOutputGuard
+                    .enforceUserVisibleReply(reply.toString());
+            if (!visibleReply.isBlank()) {
+                outer.onEvent(new ConversationEvent.Reply(visibleReply));
             }
             return IterationResult.ok(reply.toString(), inTokens.get(), outTokens.get(),
                     List.copyOf(toolCalls), report);

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
+import com.javaclaw.util.SensitiveDataRedactor;
 import io.agentscope.core.agent.Event;
 import io.agentscope.core.agent.EventType;
 import io.agentscope.core.message.Msg;
@@ -100,14 +101,14 @@ public class StreamEventHandler {
             for (ThinkingBlock block : blocks) {
                 String thinking = block.getThinking();
                 if (thinking != null && !thinking.isEmpty()) {
-                    log.debug("思考片段: {}", truncate(thinking, 50));
-                    callbacks.onEvent(new ConversationEvent.Thinking(thinking));
+                    log.debug("收到思考片段: {} 字符", thinking.length());
+                    callbacks.onEvent(new ConversationEvent.Thinking(safeVisibleText(thinking)));
                 }
             }
         } else {
             String text = msg.getTextContent();
             if (text != null && !text.isEmpty()) {
-                callbacks.onEvent(new ConversationEvent.Thinking(text));
+                callbacks.onEvent(new ConversationEvent.Thinking(safeVisibleText(text)));
             }
         }
     }
@@ -115,16 +116,16 @@ public class StreamEventHandler {
     private void handleHint(Msg msg, ConversationCallbacks callbacks) {
         String hintText = msg.getTextContent();
         if (hintText != null && !hintText.isEmpty()) {
-            log.debug("规划提示: {}", truncate(hintText, 100));
-            callbacks.onEvent(new ConversationEvent.Hint(hintText));
+            log.debug("收到规划提示: {} 字符", hintText.length());
+            callbacks.onEvent(new ConversationEvent.Hint(safeVisibleText(hintText)));
         }
     }
 
     private void handleAgentResult(Msg msg, ConversationCallbacks callbacks) {
         String text = msg.getTextContent();
         if (text != null && !text.isEmpty()) {
-            log.debug("回复片段: {}", truncate(text, 50));
-            callbacks.onEvent(new ConversationEvent.Reply(text));
+            log.debug("收到回复片段: {} 字符", text.length());
+            callbacks.onEvent(new ConversationEvent.Reply(safeVisibleText(text)));
         }
     }
 
@@ -153,7 +154,7 @@ public class StreamEventHandler {
                     dispatchForwardedEventJson(toolName, content, callbacks);
                 } else {
                     log.debug("子智能体 [{}] 返回结果: {} 字符", toolName, content.length());
-                    callbacks.onEvent(new ConversationEvent.ToolResult(toolName, content));
+                    callbacks.onEvent(new ConversationEvent.ToolResult(toolName, safeVisibleText(content)));
                 }
             }
         } else {
@@ -163,7 +164,7 @@ public class StreamEventHandler {
                 if (isForwardedEventJson(text)) {
                     dispatchForwardedEventJson("unknown", text, callbacks);
                 } else {
-                    callbacks.onEvent(new ConversationEvent.ToolResult("unknown", text));
+                    callbacks.onEvent(new ConversationEvent.ToolResult("unknown", safeVisibleText(text)));
                 }
             }
         }
@@ -217,21 +218,24 @@ public class StreamEventHandler {
                 String thinking = (thinkingBlock != null)
                         ? thinkingBlock.getThinking() : subMsg.getTextContent();
                 if (thinking != null && !thinking.isEmpty()) {
-                    log.debug("子智能体 [{}] 思考片段: {}", agentName, truncate(thinking, 30));
-                    callbacks.onEvent(new ConversationEvent.SubAgentThinking(agentName, thinking));
+                    log.debug("子智能体 [{}] 思考片段: {} 字符", agentName, thinking.length());
+                    callbacks.onEvent(new ConversationEvent.SubAgentThinking(
+                            agentName, safeVisibleText(thinking)));
                 }
             }
             case AGENT_RESULT -> {
                 String text = subMsg.getTextContent();
                 if (text != null && !text.isEmpty()) {
                     log.debug("子智能体 [{}] 回复: {} 字符", agentName, text.length());
-                    callbacks.onEvent(new ConversationEvent.SubAgentReply(agentName, text));
+                    callbacks.onEvent(new ConversationEvent.SubAgentReply(
+                            agentName, safeVisibleText(text)));
                 }
             }
             default -> {
                 String text = subMsg.getTextContent();
                 if (text != null && !text.isEmpty()) {
-                    callbacks.onEvent(new ConversationEvent.ToolResult(agentName, text));
+                    callbacks.onEvent(new ConversationEvent.ToolResult(
+                            agentName, safeVisibleText(text)));
                 }
                 log.debug("忽略子智能体转发事件类型: {}", subType);
             }
@@ -268,27 +272,30 @@ public class StreamEventHandler {
                         thinking = extractFieldFromContentArray(contentArray, "text", "text");
                     }
                     if (thinking != null && !thinking.isEmpty()) {
-                        callbacks.onEvent(new ConversationEvent.SubAgentThinking(effectiveAgent, thinking));
+                        callbacks.onEvent(new ConversationEvent.SubAgentThinking(
+                                effectiveAgent, safeVisibleText(thinking)));
                     }
                 }
                 case "AGENT_RESULT" -> {
                     String text = extractFieldFromContentArray(contentArray, "text", "text");
                     if (text != null && !text.isEmpty()) {
-                        callbacks.onEvent(new ConversationEvent.SubAgentReply(effectiveAgent, text));
+                        callbacks.onEvent(new ConversationEvent.SubAgentReply(
+                                effectiveAgent, safeVisibleText(text)));
                     }
                 }
                 default -> {
                     String text = extractFieldFromContentArray(contentArray, "text", "text");
                     if (text != null && !text.isEmpty()) {
-                        callbacks.onEvent(new ConversationEvent.ToolResult(effectiveAgent, text));
+                        callbacks.onEvent(new ConversationEvent.ToolResult(
+                                effectiveAgent, safeVisibleText(text)));
                     }
                     log.debug("忽略子智能体转发事件: type={}", eventType);
                 }
             }
         } catch (Exception e) {
             // JSON 解析失败，作为普通文本结果处理
-            log.warn("解析转发事件 JSON 失败，作为普通结果处理: {}", truncate(json, 100), e);
-            callbacks.onEvent(new ConversationEvent.ToolResult(toolName, json));
+            log.warn("解析转发事件 JSON 失败，作为普通结果处理（正文已省略，{} 字符）", json.length());
+            callbacks.onEvent(new ConversationEvent.ToolResult(toolName, safeVisibleText(json)));
         }
     }
 
@@ -324,5 +331,9 @@ public class StreamEventHandler {
     /** 截断文本用于日志输出 */
     private String truncate(String text, int maxLen) {
         return text.length() > maxLen ? text.substring(0, maxLen) + "..." : text;
+    }
+
+    private String safeVisibleText(String text) {
+        return SensitiveDataRedactor.redactText(text);
     }
 }

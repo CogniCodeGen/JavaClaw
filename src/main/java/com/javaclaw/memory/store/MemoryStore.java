@@ -96,10 +96,10 @@ public class MemoryStore implements AutoCloseable {
     }
 
     /*
-     * GigaMap.update(entity, ...) first has to resolve the entity back to its internal long id.
-     * EclipseStore 4.1 requires at least one bitmap index for that lookup.  The original memory
-     * maps only had JVector indices, so every in-place update failed at runtime.  Stable business
-     * ids are the natural identity keys here; named static indexers are persistence-safe.
+     * GigaMap.update(entity, ...) 需要先把实体反解回内部 long id，而 EclipseStore 4.1 要求
+     * 至少存在一个 bitmap 索引才能完成这个查找。原先这些记忆映射只建了 JVector 向量索引，
+     * 因此所有原地更新在运行期都会失败。业务侧稳定的 id 天然适合作为身份键；具名静态
+     * indexer 可安全持久化。
      */
     private static final IndexerString<Fact> FACT_ID = new FactIdIndexer();
     private static final IndexerString<KnowledgeChunk> KNOWLEDGE_ID = new KnowledgeIdIndexer();
@@ -202,8 +202,8 @@ public class MemoryStore implements AutoCloseable {
     }
 
     /**
-     * Ensures that entity-based update/remove operations can deterministically locate an entry.
-     * Calling this on every open also migrates stores created before bitmap identity indices existed.
+     * 确保按实体的 update/remove 能确定性地定位到条目。
+     * 每次 open 都调用，同时完成对“身份索引出现之前建立的旧库”的迁移。
      */
     private <E> void ensureIdentityIndex(GigaMap<E> map, IndexerString<? super E> indexer) {
         BitmapIndices<E> indices = map.index().bitmap();
@@ -454,6 +454,34 @@ public class MemoryStore implements AutoCloseable {
             root.corrections.store();
             logInternal("UPDATE", "CorrectionRecord", correction.id, actor,
                     trunc(correction.sourceInput));
+        });
+    }
+
+    /**
+     * 物理删除一条纠错记录。
+     *
+     * <p>纠错本身也可能记错（定位到错误目标、用户改主意）。没有删除入口的自动状态是不可
+     * 运维的，因此这里提供真正的删除，并留审计。被它废弃过的事实需另行 {@link #restoreFact}。</p>
+     */
+    public void removeCorrection(CorrectionRecord correction, String actor) {
+        write(() -> {
+            root.corrections.removeById(correction.entityId);
+            root.corrections.store();
+            logInternal("REMOVE", "CorrectionRecord", correction.id, actor,
+                    trunc(correction.sourceInput));
+        });
+    }
+
+    /** 恢复被取代/争议化的事实：清状态位并重新参与召回，保留审计轨。 */
+    public void restoreFact(Fact f, String actor) {
+        write(() -> {
+            root.facts.update(f, x -> {
+                x.superseded = false;
+                x.contested = false;
+                x.updatedAt = System.currentTimeMillis();
+            });
+            root.facts.store();
+            logInternal("RESTORE", "Fact", f.id, actor, trunc(f.text));
         });
     }
 

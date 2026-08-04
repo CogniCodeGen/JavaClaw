@@ -20,6 +20,7 @@ import org.slf4j.LoggerFactory;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -121,7 +122,7 @@ public class ToolRouter {
 
             String raw = responseText.toString().trim();
             log.debug("路由模型响应: {}", raw);
-            return parseRoutingResult(raw);
+            return applyDeterministicManagementHints(userMessage, parseRoutingResult(raw));
 
         } catch (Exception e) {
             log.warn("工具路由失败，降级为全量加载: {}", e.getMessage());
@@ -216,6 +217,36 @@ public class ToolRouter {
             log.warn("解析路由结果失败，降级为全量: {}", e.getMessage());
             return RoutingResult.fallbackAll();
         }
+    }
+
+    /**
+     * 对配置管理意图做确定性兜底，避免轻量路由模型再次把“记录站点到凭证”误分到
+     * knowledge/system，导致真正的站点工具在本轮不可见。MCP 名称是强信号，同理保证 mcp 组。
+     */
+    static RoutingResult applyDeterministicManagementHints(String message, RoutingResult result) {
+        if (result == null) result = RoutingResult.noTools();
+        String text = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        List<String> groups = new ArrayList<>(result.toolGroups() == null ? List.of() : result.toolGroups());
+
+        boolean mentionsSite = text.contains("站点") || text.contains("网站") || text.contains("site");
+        boolean managesCredential = text.contains("凭证") || text.contains("凭据")
+                || text.contains("账号") || text.contains("登录") || text.contains("credential")
+                || text.contains("session") || text.contains("会话");
+        boolean managesSiteEntry = text.contains("添加") || text.contains("新增")
+                || text.contains("创建") || text.contains("保存") || text.contains("记录")
+                || text.contains("登记") || text.contains("删除") || text.contains("移除")
+                || text.contains("管理") || text.contains("add ") || text.contains("save ")
+                || text.contains("delete ");
+        if (mentionsSite && (managesCredential || managesSiteEntry) && !groups.contains("web")) {
+            groups.add("web");
+        }
+        if (text.contains("mcp") && !groups.contains("mcp")) {
+            groups.add("mcp");
+        }
+        return new RoutingResult(List.copyOf(groups),
+                result.skillNames() == null ? List.of() : result.skillNames(),
+                result.bundleNames() == null ? List.of() : result.bundleNames(),
+                result.mcpServers() == null ? List.of() : result.mcpServers());
     }
 
     /**

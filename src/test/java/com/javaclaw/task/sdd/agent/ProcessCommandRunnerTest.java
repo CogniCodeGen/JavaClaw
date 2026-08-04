@@ -14,13 +14,13 @@ class ProcessCommandRunnerTest {
 
     @Test
     @DisabledOnOs(OS.WINDOWS)
-    void 无输出长进程仍受超时约束() {
+    void 严格隔离直接拒绝子进程() {
         ProcessCommandRunner runner = new ProcessCommandRunner(1);
 
         var result = assertTimeoutPreemptively(Duration.ofSeconds(4),
                 () -> runner.run("exec sleep 20", null));
 
-        assertEquals(-2, result.exitCode());
-        assertTrue(result.output().contains("超时"), result.output());
+        assertEquals(-1, result.exitCode());
+        assertTrue(result.output().contains("严格项目文件隔离"), result.output());
     }
 }

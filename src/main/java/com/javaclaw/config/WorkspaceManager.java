@@ -306,6 +306,7 @@ public class WorkspaceManager {
                 "workflow_definitions",
                 "app_properties",
                 "mcp_servers",
+                "site_account_bindings",
                 "site_sessions",
                 "site_credentials",
                 "scheduled_tasks",

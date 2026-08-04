@@ -12,6 +12,7 @@ import com.javaclaw.config.NotificationConfig;
 import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.diagnostics.TraceRecorder;
 import com.javaclaw.plugin.PluginManager;
+import com.javaclaw.mcp.McpConfigManager;
 import com.javaclaw.schedule.ScheduleManager;
 import com.javaclaw.site.SiteCredentialManager;
 import com.javaclaw.skill.SkillManager;
@@ -222,6 +223,7 @@ public final class ApplicationKernel implements AutoCloseable {
         EmailConfig.getInstance().reload();
         NotificationConfig.getInstance().reload();
         DataManager.getInstance().reload();
+        McpConfigManager.getInstance().reload();
         SiteCredentialManager.getInstance().reload();
         SkillUsageTracker.getInstance().reload();
         SkillProposalQueue.getInstance().reload();

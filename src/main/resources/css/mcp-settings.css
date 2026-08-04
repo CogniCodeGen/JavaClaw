@@ -4,21 +4,81 @@
    在视图加载 chat.css 之后追加，故可安全复用其令牌与基础类。
    ===================================================================== */
 
-/* ---------- 概览条：面板底色圆角条 ---------- */
-.mcp-overview-bar {
-    -fx-background-color: -jc-surface-panel;
+/* ---------- 独立中心窗口骨架 ---------- */
+.mcp-window-root {
+    -fx-background-color: -jc-surface-page;
+}
+
+.mcp-content-panel {
+    -fx-background-color: -jc-surface-page;
+}
+
+.mcp-sidebar-hint {
+    -fx-font-size: 11px;
+    -fx-text-fill: -jc-text-hint;
+}
+
+.mcp-sidebar-bottom {
+    -fx-border-color: -jc-border transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+    -fx-padding: 12 12 14 12;
+}
+
+.mcp-sidebar-section {
+    -fx-font-size: 11px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-hint;
+    -fx-padding: 2 0 0 0;
+}
+
+.mcp-sidebar-path {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 10px;
+    -fx-text-fill: -jc-text-muted;
+}
+
+.mcp-toolbar {
+    -fx-padding: 2 0 0 0;
+}
+
+.mcp-search-field {
+    -fx-pref-height: 34;
+}
+
+.mcp-result-count {
+    -fx-font-size: 11px;
+    -fx-text-fill: -jc-text-hint;
+    -fx-min-width: 52;
+    -fx-alignment: CENTER_RIGHT;
+}
+
+.mcp-status-label {
+    -fx-min-height: 18;
+}
+
+.mcp-empty-state {
+    -fx-background-color: -jc-surface-card;
     -fx-border-color: -jc-border;
     -fx-border-width: 1;
-    -fx-background-radius: 10;
-    -fx-border-radius: 10;
-    -fx-padding: 10 14 10 14;
+    -fx-background-radius: 12;
+    -fx-border-radius: 12;
+    -fx-padding: 46 28 46 28;
+}
+
+/* ---------- 概览条：信息卡片 ---------- */
+.mcp-overview-bar {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 12;
+    -fx-border-radius: 12;
+    -fx-padding: 11 14 11 14;
 }
 
 /* 概览条文字：mono 灰字 */
 .mcp-overview-text {
-    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 12px;
-    -fx-font-weight: 500;
+    -fx-font-weight: 600;
     -fx-text-fill: -jc-text-muted;
 }
 
@@ -37,7 +97,7 @@
     -fx-border-width: 1;
     -fx-background-radius: 12;
     -fx-border-radius: 12;
-    -fx-padding: 11 13 11 13;
+    -fx-padding: 13 14 12 14;
     -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.05), 6, 0, 0, 1);
 }
 
@@ -80,6 +140,17 @@
     -fx-text-fill: -jc-text-muted;
 }
 
+.mcp-summary-row {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 8;
+    -fx-padding: 7 8 7 10;
+}
+
+.mcp-copy-button {
+    -fx-padding: 3 8 3 8;
+    -fx-font-size: 10px;
+}
+
 /* 卡片环境变量 / Headers 摘要：mono 更浅灰 */
 .mcp-server-kv {
     -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
@@ -91,6 +162,12 @@
 .mcp-error-text {
     -fx-font-size: 11.5px;
     -fx-text-fill: -jc-danger;
+}
+
+.mcp-card-actions {
+    -fx-border-color: -jc-border transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+    -fx-padding: 9 0 0 0;
 }
 
 /* ---------- 可展开工具浏览器 ---------- */
@@ -145,6 +222,23 @@
     -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 11px;
     -fx-text-fill: -jc-text-hint;
+}
+
+/* ---------- MCP 子对话框 ---------- */
+.mcp-env-row {
+    -fx-padding: 2 0 2 0;
+}
+
+.mcp-template-name {
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-title;
+}
+
+.mcp-template-tools {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 10.5px;
+    -fx-text-fill: -jc-primary-600;
 }
 
 /* ---------- 内联添加表单（品牌浅色卡片，预留可用） ---------- */

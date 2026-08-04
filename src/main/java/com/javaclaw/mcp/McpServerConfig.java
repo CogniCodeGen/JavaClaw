@@ -1,6 +1,7 @@
 package com.javaclaw.mcp;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.javaclaw.util.ProjectAccessPolicy;
 
 import java.util.List;
 import java.util.Map;
@@ -145,7 +146,7 @@ public class McpServerConfig {
     public String toString() {
         return "McpServerConfig{name='" + name + "', transport=" + getTransport()
                 + (getTransport().equals("http")
-                    ? ", url='" + url + "'"
+                    ? ", url='" + ProjectAccessPolicy.remoteEndpointSummary(url) + "'"
                     : ", command='" + command + "', args=" + args)
                 + ", enabled=" + enabled + '}';
     }

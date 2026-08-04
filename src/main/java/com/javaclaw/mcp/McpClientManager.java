@@ -1,6 +1,7 @@
 package com.javaclaw.mcp;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.javaclaw.util.ProjectAccessPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,6 +46,13 @@ public class McpClientManager {
      * 启动单个 MCP 服务器
      */
     public boolean startServer(McpServerConfig config) {
+        String denial = transportDenial(config);
+        if (denial != null) {
+            log.warn("严格项目隔离已阻止启动 MCP Server {}: {}",
+                    config == null ? "（空配置）" : config.getName(), denial);
+            if (config != null) stopServer(config.getName());
+            return false;
+        }
         // 如果已有同名客户端在运行，先停止
         McpClient existing = clients.get(config.getName());
         if (existing != null && existing.isRunning()) {
@@ -98,6 +106,11 @@ public class McpClientManager {
      */
     public TestResult testConnection(McpServerConfig config) {
         long t0 = System.currentTimeMillis();
+        String denial = transportDenial(config);
+        if (denial != null) {
+            return new TestResult(false, List.of(), 0L,
+                    denial, null, null);
+        }
         McpClient temp = new McpClient(config);
         try {
             temp.start();
@@ -153,6 +166,11 @@ public class McpClientManager {
         McpClient client = clients.get(serverName);
         if (client == null || !client.isRunning()) {
             throw new RuntimeException("MCP 服务器 '" + serverName + "' 未运行");
+        }
+        String denial = transportDenial(client.getConfig());
+        if (denial != null) {
+            stopServer(serverName);
+            throw new SecurityException(denial);
         }
         return client.callTool(toolName, arguments);
     }
@@ -234,6 +252,20 @@ public class McpClientManager {
             try { r.run(); } catch (Exception e) {
                 log.debug("MCP 状态监听器触发失败", e);
             }
+        }
+    }
+
+    private static String transportDenial(McpServerConfig config) {
+        if (!ProjectAccessPolicy.strictIsolationEnabled()) return null;
+        if (config == null) return "MCP 配置不能为空";
+        if (!"http".equals(config.getTransport())) {
+            return "严格项目文件隔离已启用：本地 stdio MCP 已被系统禁用";
+        }
+        try {
+            ProjectAccessPolicy.requireRemoteMcpEndpoint(config.getUrl());
+            return null;
+        } catch (SecurityException e) {
+            return e.getMessage();
         }
     }
 

@@ -187,11 +187,11 @@ public final class ShellCommandService {
                 String name = parts[0].trim(), type = parts[1].trim().toLowerCase(),
                         val = parts[2].trim(), prompt = parts[3].trim();
                 if (!List.of("interval", "daily", "cron").contains(type)) return "✗ 类型须为 interval/daily/cron";
-                ScheduledTask t = mgr.createTask(name);
+                ScheduledTask t = mgr.createDraft(name);
                 t.setTriggerType(type);
                 switch (type) {
                     case "interval" -> {
-                        try { t.setIntervalMinutes(Math.max(1, Integer.parseInt(val))); }
+                        try { t.setIntervalInMinutes(Math.max(1, Integer.parseInt(val))); }
                         catch (NumberFormatException ex) { return "✗ interval 需分钟数"; }
                     }
                     case "daily" -> t.setDailyTime(val);
@@ -200,15 +200,13 @@ public final class ShellCommandService {
                 }
                 t.setPrompt(prompt);
                 t.setEnabled(true);
-                mgr.updateTask(t);
-                return "✓ 已创建并启用定时任务「" + name + "」（id=" + t.getId() + "）";
+                ScheduledTask saved = mgr.saveNewTask(t);
+                return "✓ 已创建并启用定时任务「" + name + "」（id=" + saved.getId() + "）";
             }
             case "stop", "disable" -> {
                 if (arg.isEmpty()) return "用法：/schedule stop <id>";
-                ScheduledTask t = mgr.getTask(arg);
-                if (t == null) return "✗ 未找到定时任务：" + arg;
-                t.setEnabled(false);
-                mgr.updateTask(t);
+                if (mgr.getTask(arg) == null) return "✗ 未找到定时任务：" + arg;
+                mgr.setEnabled(arg, false, ScheduleManager.DisableMode.CANCEL_ACTIVE);
                 return "✓ 已停用定时任务：" + arg;
             }
             case "delete" -> {
@@ -219,9 +217,17 @@ public final class ShellCommandService {
             }
             case "run" -> {
                 if (arg.isEmpty()) return "用法：/schedule run <id>";
-                if (mgr.getTask(arg) == null) return "✗ 未找到定时任务：" + arg;
-                mgr.runNow(arg);
-                return "✓ 已触发立即执行：" + arg;
+                ScheduledTask t = mgr.getTask(arg);
+                if (t == null) return "✗ 未找到定时任务：" + arg;
+                ScheduleManager.RunNowResult result = mgr.runNow(arg, !t.isEnabled());
+                return switch (result) {
+                    case STARTED -> "✓ 已触发立即执行：" + arg
+                            + (t.isEnabled() ? "" : "（仅本次，仍保持暂停）");
+                    case ALREADY_ACTIVE -> "✗ 任务已在运行或排队：" + arg;
+                    case DISABLED -> "✗ 任务已暂停：" + arg;
+                    case NOT_FOUND -> "✗ 未找到定时任务：" + arg;
+                    case UNSUPPORTED -> "✗ 当前无法执行该任务：" + arg;
+                };
             }
             default -> { return "✗ 未知子命令：schedule " + sub + "\n用法：/schedule list|get <id>|create ...|stop <id>|delete <id>|run <id>"; }
         }

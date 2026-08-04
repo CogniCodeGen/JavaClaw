@@ -30,6 +30,9 @@
         <commonmark.version>0.24.0</commonmark.version>
         <eclipsestore.version>4.1.0</eclipsestore.version>
         <h2.version>2.3.232</h2.version>
+        <!-- mvn javafx:run 的默认数据目录；ui-test profile 会覆盖为 target 隔离目录。 -->
+        <javaclaw.launch.data.dir>${project.basedir}/data</javaclaw.launch.data.dir>
+        <javaclaw.launch.ui.test>false</javaclaw.launch.ui.test>
     </properties>
 
     <!--
@@ -283,6 +286,8 @@
                          命名模块的定向导出，故需显式向 ALL-UNNAMED 开放（清单由 jdeps 对两个孵化 jar 实测得出）。
                          IDE 直跑（JavaFX 全在 classpath）不需要这三条参数。 -->
                     <options>
+                        <option>-Djavaclaw.data.dir=${javaclaw.launch.data.dir}</option>
+                        <option>-Djavaclaw.ui.test=${javaclaw.launch.ui.test}</option>
                         <option>--add-modules</option>
                         <option>jdk.incubator.vector</option>
                         <option>--enable-native-access=ALL-UNNAMED</option>
@@ -297,4 +302,14 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>ui-test</id>
+            <properties>
+                <javaclaw.launch.data.dir>${project.build.directory}/ui-test-data</javaclaw.launch.data.dir>
+                <javaclaw.launch.ui.test>true</javaclaw.launch.ui.test>
+            </properties>
+        </profile>
+    </profiles>
 </project>

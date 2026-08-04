@@ -7,6 +7,8 @@ import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.api.interaction.ConfirmKind;
 import com.javaclaw.api.interaction.ConfirmRequest;
+import com.javaclaw.browser.PlaywrightBrowserManager;
+import com.javaclaw.site.SiteCredentialManager;
 import com.javaclaw.workflow.model.GraphDefinition;
 import com.javaclaw.workflow.model.GraphKind;
 import com.javaclaw.workflow.model.GraphState;
@@ -39,6 +41,8 @@ public final class WorkflowService implements AutoCloseable {
     private final SystemGraphRegistry systemGraphs;
     private final ConcurrentHashMap<String, String> activeByThread = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, PendingRecovery> pendingRecoveryByThread = new ConcurrentHashMap<>();
+    /** 自定义工作流 thread 对应的浏览器会话；避免它继承最近一次聊天的账号状态。 */
+    private final ConcurrentHashMap<String, String> browserScopeByThread = new ConcurrentHashMap<>();
 
     public WorkflowService(String workspaceId, AgentRuntime agentRuntime,
                            NodeExecutorRegistry nodeRegistry, WorkflowDefinitionStore definitions,
@@ -59,6 +63,7 @@ public final class WorkflowService implements AutoCloseable {
             throw new IllegalStateException("工作流未发布或已归档: " + workflowId);
         }
         String thread = threadId(sessionId, workflowId);
+        activateBrowserScope(thread, PlaywrightBrowserManager.conversationScopeId(sessionId));
         requireIdleThread(thread);
         GraphRun waiting = checkpoints.findWaitingRun(workflowId, thread);
         GraphListener listener = bridge(callbacks, thread);
@@ -79,11 +84,29 @@ public final class WorkflowService implements AutoCloseable {
     public GraphRun testRun(GraphDefinition draft, String input, ConversationCallbacks callbacks) {
         GraphValidator.requireValid(draft, nodeRegistry);
         String thread = threadId("test-" + System.nanoTime(), draft.id());
+        String browserScope = "workflow-test:" + thread;
+        activateBrowserScope(thread, browserScope);
         GraphState state = new GraphState().apply(StatePatch.builder().set("input", input).build());
-        GraphRun run = executions.start(draft, thread, state, bridge(callbacks, thread),
-                Map.of(AgentRuntime.class, agentRuntime, ConversationCallbacks.class, callbacks));
-        trackActive(thread, run);
-        return run;
+        GraphListener delegate = bridge(callbacks, thread);
+        GraphListener releasing = event -> {
+            try {
+                delegate.onEvent(event);
+            } finally {
+                if (event instanceof GraphEvent.RunFinished) {
+                    releaseTransientBrowserScope(thread, browserScope);
+                }
+            }
+        };
+        try {
+            GraphRun run = executions.start(draft, thread, state, releasing,
+                    Map.of(AgentRuntime.class, agentRuntime,
+                            ConversationCallbacks.class, callbacks));
+            trackActive(thread, run);
+            return run;
+        } catch (RuntimeException | Error failure) {
+            releaseTransientBrowserScope(thread, browserScope);
+            throw failure;
+        }
     }
 
     public synchronized GraphRun runSystem(GraphDefinition graph, String sessionId, String input,
@@ -137,12 +160,33 @@ public final class WorkflowService implements AutoCloseable {
         if (saved.definition().kind() == GraphKind.SYSTEM) {
             throw new IllegalStateException("系统图必须从对应的聊天、规划、循环或 SDD 模式恢复");
         }
+        String browserScope = activateBrowserScope(
+                saved.threadId(), "workflow:" + saved.threadId());
         requireIdleThread(saved.threadId());
-        GraphListener listener = bridge(callbacks, saved.threadId());
-        GraphRun run = executions.resume(runId, input, unsafeRetryConfirmed, listener,
-                Map.of(AgentRuntime.class, agentRuntime, ConversationCallbacks.class, callbacks));
-        trackActive(saved.threadId(), run);
-        return run;
+        GraphListener delegate = bridge(callbacks, saved.threadId());
+        GraphListener listener = browserScope.startsWith("workflow-test:")
+                ? event -> {
+                    try {
+                        delegate.onEvent(event);
+                    } finally {
+                        if (event instanceof GraphEvent.RunFinished) {
+                            releaseTransientBrowserScope(saved.threadId(), browserScope);
+                        }
+                    }
+                }
+                : delegate;
+        try {
+            GraphRun run = executions.resume(runId, input, unsafeRetryConfirmed, listener,
+                    Map.of(AgentRuntime.class, agentRuntime,
+                            ConversationCallbacks.class, callbacks));
+            trackActive(saved.threadId(), run);
+            return run;
+        } catch (RuntimeException | Error failure) {
+            if (browserScope.startsWith("workflow-test:")) {
+                releaseTransientBrowserScope(saved.threadId(), browserScope);
+            }
+            throw failure;
+        }
     }
 
     public boolean cancelRun(String runId) { return executions.cancel(runId); }
@@ -159,6 +203,12 @@ public final class WorkflowService implements AutoCloseable {
     public boolean cancel(String workflowId, String sessionId) {
         String runId = activeByThread.get(threadId(sessionId, workflowId));
         return runId != null && executions.cancel(runId);
+    }
+
+    /** 聊天会话删除后移除工作流侧的轻量 scope 索引；浏览器状态由 ChatService 统一释放。 */
+    public void forgetConversationBrowserScope(String sessionId) {
+        String scope = PlaywrightBrowserManager.conversationScopeId(sessionId);
+        browserScopeByThread.entrySet().removeIf(entry -> scope.equals(entry.getValue()));
     }
 
     public boolean pauseRun(String runId) { return executions.pause(runId); }
@@ -210,6 +260,21 @@ public final class WorkflowService implements AutoCloseable {
             throw new IllegalStateException("当前会话的工作流仍在运行，请等待结束或先取消");
         }
         activeByThread.remove(thread, activeId);
+    }
+
+    private String activateBrowserScope(String thread, String fallbackScope) {
+        String scope = browserScopeByThread.computeIfAbsent(thread, ignored -> fallbackScope);
+        agentRuntime.getBrowserManager().activateScope(scope);
+        return scope;
+    }
+
+    private void releaseTransientBrowserScope(String thread, String scope) {
+        browserScopeByThread.remove(thread, scope);
+        try {
+            agentRuntime.getBrowserManager().releaseScope(scope);
+        } finally {
+            SiteCredentialManager.getInstance().clearScopeBindings(scope);
+        }
     }
 
     private void confirmAndContinueSystem(GraphRun recoverable, String thread) {
@@ -378,6 +443,7 @@ public final class WorkflowService implements AutoCloseable {
             if (pendingRecoveryByThread.remove(entry.getKey(), pending)) cancelPendingRecovery(pending);
         }
         executions.close();
+        browserScopeByThread.clear();
     }
 
     private record PendingRecovery(

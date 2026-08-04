@@ -2,6 +2,7 @@ package com.javaclaw.task.sdd.agent;
 
 import com.javaclaw.task.sdd.verify.CommandRunner;
 import com.javaclaw.util.ProcessTerminator;
+import com.javaclaw.util.ProjectAccessPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,6 +44,9 @@ public final class ProcessCommandRunner implements CommandRunner {
 
     @Override
     public Result run(String command, String workDir) {
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return new Result(-1, "（" + ProjectAccessPolicy.unconfinedExecutionDeniedReason() + "）");
+        }
         if (command == null || command.isBlank()) {
             return new Result(-1, "（空命令）");
         }

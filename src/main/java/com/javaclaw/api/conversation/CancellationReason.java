@@ -5,6 +5,7 @@ public enum CancellationReason {
     USER_REQUEST,
     MODE_SWITCH,
     SESSION_SWITCH,
+    SCHEDULE_DISABLED,
     RUNTIME_REBUILD,
     SHUTDOWN
 }

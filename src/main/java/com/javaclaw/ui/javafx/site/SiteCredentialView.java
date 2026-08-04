@@ -43,8 +43,8 @@ public class SiteCredentialView {
         sectionTitle.getStyleClass().add("settings-section-title");
 
         Label description = new Label(
-                "登记常用网站的用户名和密码。浏览器智能体导航到这些站点时，"
-                + "会自动恢复已保存的登录会话；首次访问可调用 site_login_now 自动登录并保存会话，免去后续重复登录。");
+                "浏览器智能体遇到登录页时，可打开可见浏览器让你本人完成登录；登录成功后选择保存，"
+                + "下次访问会自动恢复会话。也可在这里选填用户名和密码，用于传统表单自动登录。");
         description.getStyleClass().add("settings-hint");
         description.setWrapText(true);
 
@@ -145,8 +145,10 @@ public class SiteCredentialView {
         Label hostLabel = new Label("主机匹配: " + (c.getHostPattern() == null ? "-" : c.getHostPattern()));
         hostLabel.getStyleClass().add("settings-hint");
 
-        Label userLabel = new Label("用户名: " + (c.getUsername() == null ? "-" : c.getUsername())
-                + "    密码: ********");
+        boolean hasAccount = c.getUsername() != null && !c.getUsername().isBlank();
+        Label userLabel = new Label(hasAccount
+                ? "用户名: " + c.getUsername() + "    密码: ********"
+                : "登录方式: 浏览器会话（未保存账号密码）");
         userLabel.getStyleClass().add("settings-hint");
 
         StringBuilder ts = new StringBuilder();
@@ -178,12 +180,6 @@ public class SiteCredentialView {
         dialog.setTitle(existing == null ? "添加站点" : "编辑站点");
         dialog.setHeaderText(null);
 
-        String cssPath = getClass().getResource("/css/chat.css") != null
-                ? getClass().getResource("/css/chat.css").toExternalForm() : null;
-        if (cssPath != null) {
-            dialog.getDialogPane().getStylesheets().add(cssPath);
-        }
-
         Label titleLabel = new Label(existing == null ? "添加站点" : "编辑站点");
         titleLabel.getStyleClass().add("settings-section-title");
 
@@ -201,15 +197,15 @@ public class SiteCredentialView {
         loginUrlField.getStyleClass().add("settings-field");
 
         TextField usernameField = new TextField();
-        usernameField.setPromptText("用户名 / 邮箱");
+        usernameField.setPromptText("用户名 / 邮箱（可选，用于自动填表）");
         usernameField.getStyleClass().add("settings-field");
 
         PasswordField passwordField = new PasswordField();
-        passwordField.setPromptText("密码（不进入 LLM 上下文）");
+        passwordField.setPromptText("密码（可选，不进入 LLM 上下文）");
         passwordField.getStyleClass().add("settings-field");
 
         TextField passwordPlain = new TextField();
-        passwordPlain.setPromptText("密码（不进入 LLM 上下文）");
+        passwordPlain.setPromptText("密码（可选，不进入 LLM 上下文）");
         passwordPlain.getStyleClass().add("settings-field");
         passwordPlain.setVisible(false);
         passwordPlain.setManaged(false);
@@ -257,9 +253,9 @@ public class SiteCredentialView {
         grid.add(hint("精确匹配域名（github.com）或前缀通配（*.example.com 匹配任意子域）"), 0, row++);
         grid.add(group("登录页 URL（可选）"), 0, row++);
         grid.add(loginUrlField, 0, row++);
-        grid.add(group("用户名"), 0, row++);
+        grid.add(group("用户名（可选）"), 0, row++);
         grid.add(usernameField, 0, row++);
-        grid.add(group("密码"), 0, row++);
+        grid.add(group("密码（可选）"), 0, row++);
         grid.add(passwordRow, 0, row++);
         grid.add(group("备注"), 0, row++);
         grid.add(notesArea, 0, row++);
@@ -269,14 +265,14 @@ public class SiteCredentialView {
 
         dialog.getDialogPane().setContent(content);
         dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-        dialog.getDialogPane().setMinWidth(520);
+        dialog.getDialogPane().setPrefWidth(520);
 
         dialog.setResultConverter(button -> {
             if (button != ButtonType.OK) return null;
             String name = nameField.getText() == null ? "" : nameField.getText().trim();
             String host = hostField.getText() == null ? "" : hostField.getText().trim();
             String user = usernameField.getText() == null ? "" : usernameField.getText().trim();
-            if (name.isEmpty() || host.isEmpty() || user.isEmpty()) return null;
+            if (name.isEmpty() || host.isEmpty()) return null;
 
             SiteCredential cred = (existing != null) ? existing : new SiteCredential();
             cred.setName(name);
@@ -287,6 +283,7 @@ public class SiteCredentialView {
             cred.setNotes(emptyToNull(notesArea.getText()));
             return cred;
         });
+        UIHelper.styleDialog(dialog);
 
         dialog.showAndWait().ifPresent(cred -> {
             manager.put(cred);

@@ -156,10 +156,18 @@ public class JavaClawApp extends Application {
             primaryStage.setMinHeight(500);  // 最小高度
             primaryStage.setScene(scene);
 
+            // 窗口创建完成后才接管第二进程的唤起请求；早到请求由协调器缓存。
+            SingleInstanceCoordinator.current().ifPresent(coordinator ->
+                    coordinator.setShowHandler(() -> Platform.runLater(this::showMainWindow)));
+
             // 6.5 安装系统托盘（后台常驻）：安装成功则关闭窗口最小化到托盘，
             //     应用继续在后台运行（定时任务/托管任务不中断），仅托盘"退出"才真正关闭。
             //     平台不支持或安装失败时回退为"关闭即退出"。
-            setupSystemTray();
+            if (Boolean.getBoolean(OnboardingWizard.UI_TEST_PROPERTY)) {
+                log.info("UI 测试模式：不安装系统托盘");
+            } else {
+                setupSystemTray();
+            }
             boolean trayReady = trayManager != null && trayManager.isInstalled();
             if (trayReady) {
                 // 隐藏所有窗口后 JavaFX 运行时不自动退出，保证后台常驻
@@ -357,6 +365,7 @@ public class JavaClawApp extends Application {
         safeShutdown("技能使用统计", () -> com.javaclaw.skill.SkillUsageTracker.getInstance().shutdown());
         safeShutdown("技能提案队列", () -> com.javaclaw.skill.curation.SkillProposalQueue.getInstance().shutdown());
         if (applicationKernel != null) safeShutdown("应用内核", applicationKernel::close);
+        safeShutdown("单实例协调器", SingleInstanceCoordinator::closeCurrent);
 
         log.info("JavaClaw 应用已关闭");
     }

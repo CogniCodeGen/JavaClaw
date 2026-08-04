@@ -1247,7 +1247,7 @@ public class KnowledgeCenterView {
         box.setPadding(new Insets(12));
         box.setPrefWidth(520);
         dialog.getDialogPane().setContent(box);
-        applyDialogStylesheet(dialog);
+        UIHelper.styleDialog(dialog);
         dialog.setResultConverter(bt -> bt == ButtonType.OK ? new Pair(titleField.getText(), area.getText()) : null);
         dialog.showAndWait().ifPresent(p -> {
             if (p.text == null || p.text.isBlank()) { toast("文本内容为空"); return; }
@@ -1480,12 +1480,6 @@ public class KnowledgeCenterView {
                 || lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".log")
                 || lower.endsWith(".csv") || lower.endsWith(".json") || lower.endsWith(".xml")
                 || lower.endsWith(".html") || lower.endsWith(".htm");
-    }
-
-    private void applyDialogStylesheet(Dialog<?> dialog) {
-        var url = getClass().getResource("/css/chat.css");
-        if (url != null) dialog.getDialogPane().getStylesheets().add(url.toExternalForm());
-        dialog.getDialogPane().getStyleClass().add("root");
     }
 
     public void show() {

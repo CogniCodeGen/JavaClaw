@@ -10,6 +10,8 @@ import com.javaclaw.memory.embed.EmbeddingPurpose;
 import com.javaclaw.memory.model.KnowledgeChunk;
 import com.javaclaw.memory.store.MemoryStore;
 import com.javaclaw.prompt.AgentPrompts;
+import com.javaclaw.util.ProjectAccessPolicy;
+import com.javaclaw.util.SensitiveDataRedactor;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.rag.model.Document;
 import io.agentscope.core.rag.reader.PDFReader;
@@ -160,7 +162,8 @@ public class KnowledgeExpert {
     private ReActAgent buildSimpleAgent(ModelFactory modelFactory) {
         return ReActAgent.builder()
                 .name(AgentConfig.KNOWLEDGE_AGENT_NAME)
-                .sysPrompt(AgentPrompts.KNOWLEDGE_AGENT_SYS_PROMPT)
+                .sysPrompt(AgentPrompts.withMandatoryGlobalRules(
+                        AgentPrompts.KNOWLEDGE_AGENT_SYS_PROMPT))
                 .model(modelFactory.createChatModel())
                 .maxIters(1)
                 .build();
@@ -171,7 +174,8 @@ public class KnowledgeExpert {
         toolkit.registerTool(this);
         return ReActAgent.builder()
                 .name(AgentConfig.KNOWLEDGE_AGENT_NAME)
-                .sysPrompt(AgentPrompts.KNOWLEDGE_AGENT_RAG_SYS_PROMPT)
+                .sysPrompt(AgentPrompts.withMandatoryGlobalRules(
+                        AgentPrompts.KNOWLEDGE_AGENT_RAG_SYS_PROMPT))
                 .model(modelFactory.createChatModel())
                 .toolkit(toolkit)
                 .maxIters(8)
@@ -200,7 +204,7 @@ public class KnowledgeExpert {
             return ToolResponse.error("knowledge_import_file", "RAG 知识库未启用，请在设置中开启");
         }
         try {
-            Path path = Path.of(filePath);
+            Path path = ProjectAccessPolicy.resolveProjectPath(filePath);
             if (!Files.exists(path)) {
                 return ToolResponse.error("knowledge_import_file", "文件不存在: " + filePath);
             }
@@ -208,17 +212,26 @@ public class KnowledgeExpert {
             String lower = name.toLowerCase();
             List<Document> docs;
             if (lower.endsWith(".pdf")) {
-                docs = pdfReader.read(ReaderInput.fromString(filePath)).block();
+                docs = pdfReader.read(ReaderInput.fromString(path.toString())).block();
             } else if (isTextLike(lower)) {
                 // 纯文本与 Markdown：按文本读取并分块。Markdown 保留原文结构（标题/列表/代码块），
                 // 对检索友好，无需先转纯文本。读取失败（如二进制/编码错误）由外层 catch 返回明确原因。
-                docs = textReader.read(ReaderInput.fromString(Files.readString(path))).block();
+                String fileText = Files.readString(path);
+                if (SensitiveDataRedactor.containsLikelyCredential(fileText)) {
+                    return ToolResponse.error("knowledge_import_file",
+                            SensitiveDataRedactor.credentialStorageDeniedReason());
+                }
+                docs = textReader.read(ReaderInput.fromString(fileText)).block();
             } else {
                 return ToolResponse.error("knowledge_import_file",
                         "不支持的文件类型: " + name + "（目前支持 PDF 与 TXT / Markdown 等文本文件）");
             }
             if (docs == null || docs.isEmpty()) {
                 return ToolResponse.error("knowledge_import_file", "文件内容为空或无法解析: " + filePath);
+            }
+            if (documentsContainCredential(docs)) {
+                return ToolResponse.error("knowledge_import_file",
+                        SensitiveDataRedactor.credentialStorageDeniedReason());
             }
             int added = storeChunks(name, scope, docs);
             String scopeLabel = scope == Scope.GLOBAL ? "全局" : "工作区";
@@ -248,6 +261,10 @@ public class KnowledgeExpert {
         try {
             if (text == null || text.isBlank()) {
                 return ToolResponse.error("knowledge_import_text", "文本内容不能为空");
+            }
+            if (SensitiveDataRedactor.containsLikelyCredential(text)) {
+                return ToolResponse.error("knowledge_import_text",
+                        SensitiveDataRedactor.credentialStorageDeniedReason());
             }
             String docName = (title == null || title.isBlank()) ? "手动导入文本" : title;
             List<Document> docs = textReader.read(ReaderInput.fromString(text)).block();
@@ -279,6 +296,9 @@ public class KnowledgeExpert {
 
     /** 把分块嵌入后写入指定 scope 的库，返回成功写入数（嵌入失败的分块跳过）。 */
     private int storeChunks(String docName, Scope scope, List<Document> docs) {
+        if (documentsContainCredential(docs)) {
+            throw new SecurityException(SensitiveDataRedactor.credentialStorageDeniedReason());
+        }
         String now = LocalDateTime.now().format(TIME_FMT);
         MemoryStore store = storeOf(scope);
         int expectedDim = gate.dimensions();
@@ -303,6 +323,18 @@ public class KnowledgeExpert {
             added++;
         }
         return added;
+    }
+
+    private static boolean documentsContainCredential(List<Document> docs) {
+        if (docs == null) return false;
+        for (Document doc : docs) {
+            if (doc != null && doc.getMetadata() != null
+                    && SensitiveDataRedactor.containsLikelyCredential(
+                    doc.getMetadata().getContentText())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

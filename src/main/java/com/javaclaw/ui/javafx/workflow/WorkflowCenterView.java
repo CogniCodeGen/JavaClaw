@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.api.conversation.ConversationOutcome;
+import com.javaclaw.app.UIHelper;
 import com.javaclaw.workflow.editor.WorkflowEditorModel;
 import com.javaclaw.workflow.model.EdgeDefinition;
 import com.javaclaw.workflow.model.EdgeKind;
@@ -491,6 +492,7 @@ public final class WorkflowCenterView {
         if (editor == null) return;
         TextInputDialog dialog = new TextInputDialog("请处理这个输入"); dialog.initOwner(stage);
         dialog.setTitle("测试运行"); dialog.setHeaderText("输入工作流的 input 状态");
+        UIHelper.styleDialog(dialog);
         dialog.showAndWait().ifPresent(input -> {
             try {
                 service.testRun(editor.current(), input, new ConversationCallbacks() {
@@ -802,6 +804,7 @@ public final class WorkflowCenterView {
         form.add(fallback, 1, 4);
         dialog.getDialogPane().setContent(form);
         dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+        UIHelper.styleDialog(dialog);
         if (dialog.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
         ConditionRule rule = null;
         if (!fallback.isSelected()) {

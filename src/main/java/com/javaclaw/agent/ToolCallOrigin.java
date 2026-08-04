@@ -86,4 +86,17 @@ public record ToolCallOrigin(Kind kind, String taskId, String workDir) {
     public boolean isManagedTask() {
         return kind == Kind.MANAGED_TASK && taskId != null;
     }
+
+    /**
+     * 浏览器认证隔离作用域。交互聊天会在收到 {@code ConversationRequest.sessionId} 后覆盖为
+     * {@code conversation:<id>}；无人值守路径使用稳定任务 ID，便于为该任务显式绑定站点账号。
+     */
+    public String browserScopeId() {
+        return switch (kind) {
+            case MANAGED_TASK -> "managed:" + (taskId == null ? "default" : taskId);
+            case SCHEDULED -> "scheduled:" + (taskId == null ? "default" : taskId);
+            case INTERACTIVE -> "interactive:default";
+            case UNKNOWN -> "unknown:default";
+        };
+    }
 }

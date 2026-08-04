@@ -7,6 +7,8 @@ import com.javaclaw.agent.hook.LoopDetectionHook;
 import com.javaclaw.agent.router.RoutingResult;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.mcp.McpTools;
+import com.javaclaw.prompt.AgentPrompts;
+import com.javaclaw.util.ProjectAccessPolicy;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.EventType;
 import io.agentscope.core.agent.StreamOptions;
@@ -72,14 +74,24 @@ public final class ToolkitAssembler {
                 runtime.getMemoryManager(), expertManager.getCapabilityTools())).group("dynamic_task").apply();
         // MCP 工具始终注册：内部对 McpClientManager 是动态引用，热启动新 server 无需重建 toolkit
         tk.registration().tool(new McpTools(runtime.getMcpClientManager())).group("mcp").apply();
+        // MCP 配置管理同属 mcp 组：可在对话中新增/更新/启停服务器，成功响应只在 H2 已提交后返回
+        tk.registration().tool(new com.javaclaw.mcp.McpManageTools(
+                runtime.getMcpClientManager(), origin)).group("mcp").apply();
+        // 站点凭据配置属于浏览器能力；与 web_expert 内的 site_save_session 互补：前者登记
+        // 账号/元数据，后者保存当前已登录 BrowserContext。路由命中 web 即可直接使用。
+        tk.registration().tool(new com.javaclaw.site.SiteCredentialTools(origin)).group("web").apply();
         // 插件工具桥：独立成组，激活时由各路径强制加入（动态工具与路由解耦，避免被路由漏判）
         tk.createToolGroup("plugins", "plugins", true);
-        tk.registration().tool(new com.javaclaw.plugin.PluginTools()).group("plugins").apply();
+        if (!ProjectAccessPolicy.strictIsolationEnabled()) {
+            tk.registration().tool(new com.javaclaw.plugin.PluginTools()).group("plugins").apply();
+        }
         // 技能三件套：skill 组不在 ALL_TOOL_GROUPS 中（属 ALWAYS_ACTIVE_GROUPS，不参与路由），手动建组
         tk.createToolGroup("skill", "skill", true);
         tk.registration().tool(new com.javaclaw.skill.SkillTools()).group("skill").apply();
         tk.registration().tool(new com.javaclaw.skill.SkillManageTools(origin)).group("skill").apply();
-        tk.registration().tool(new com.javaclaw.system.JShellTools(origin)).group("skill").apply();
+        if (!ProjectAccessPolicy.strictIsolationEnabled()) {
+            tk.registration().tool(new com.javaclaw.system.JShellTools(origin)).group("skill").apply();
+        }
         tk.registration().tool(new com.javaclaw.task.sdd.run.SddTaskManageTools(origin)).group("task_manage").apply();
         tk.registration().tool(new com.javaclaw.schedule.ScheduleTools(origin)).group("schedule").apply();
         tk.registration().tool(new ExpertManageTools(expertManager)).group("agents").apply();
@@ -177,7 +189,7 @@ public final class ToolkitAssembler {
         Collections.addAll(hooks, extraHooks);
         return ReActAgent.builder()
                 .name(AgentConfig.AGENT_NAME)
-                .sysPrompt(sysPrompt)
+                .sysPrompt(AgentPrompts.withMandatoryGlobalRules(sysPrompt))
                 .model(runtime.getModelFactory().createHighChatModel())
                 .toolkit(toolkit)
                 .memory(runtime.getModelFactory().defaultAutoContextMemory())

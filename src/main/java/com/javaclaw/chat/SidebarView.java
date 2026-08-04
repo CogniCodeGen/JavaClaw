@@ -3,12 +3,15 @@ package com.javaclaw.chat;
 import com.javaclaw.app.UIHelper;
 import com.javaclaw.config.Workspace;
 import com.javaclaw.config.WorkspaceManager;
+import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.geometry.Side;
 import javafx.scene.control.*;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -108,6 +111,20 @@ public class SidebarView {
     /** 会话数量计数（section header 右侧显示） */
     private Label sessionCountLabel;
 
+    /** 个人信息悬浮菜单：点击侧栏底部个人框向上展开。 */
+    private Button profileMenuButton;
+    private ContextMenu profileMenu;
+    private Label profileMenuBadgeLabel;
+    private boolean profileMenuAutoHiding;
+    private int scheduleBadgeCount;
+    private int skillBadgeCount;
+    private int taskBadgeCount;
+
+    /** 会话为空或搜索无结果时的列表内提示。 */
+    private VBox conversationEmptyState;
+    private Label conversationEmptyTitle;
+    private Label conversationEmptyHint;
+
     public SidebarView() {
         log.info("开始构建侧边栏");
 
@@ -187,46 +204,28 @@ public class SidebarView {
         VBox newChatBox = new VBox(newChatBtn);
         newChatBox.setPadding(new Insets(4, 12, 8, 12));
 
-        // ==================== 底部功能导航（设计稿置于会话列表之下、用户栏之上） ====================
+        // ==================== 个人菜单中的功能入口 ====================
 
-        HBox skillRow = buildNavRow("\u2699", "技能中心", null, null, false, () -> {
-            if (onOpenSkillCenter != null) onOpenSkillCenter.run();
-        });
+        HBox skillRow = buildNavRow("\u2699", "技能中心", null, null);
         this.skillNavRow = skillRow;
-        HBox mcpRow = buildNavRow("\uD83D\uDD0C", "MCP 服务器", "\u2318M", null, false, () -> {
-            if (onOpenMcp != null) onOpenMcp.run();
-        });
-        HBox scheduleRow = buildNavRow("\u23F0", "定时任务", null, null, false, () -> {
-            if (onOpenScheduler != null) onOpenScheduler.run();
-        });
+        HBox mcpRow = buildNavRow("\uD83D\uDD0C", "MCP 服务器", "\u2318M", null);
+        HBox scheduleRow = buildNavRow("\u23F0", "定时任务", null, null);
         this.scheduleNavRow = scheduleRow;
-        HBox knowledgeRow = buildNavRow("\uD83D\uDCDA", "知识库", null, null, false, () -> {
-            if (onOpenKnowledgeBase != null) onOpenKnowledgeBase.run();
-        });
-        HBox taskMgrRow = buildNavRow("\u25A6", "托管任务", null, null, false, () -> {
-            if (onOpenTaskManager != null) onOpenTaskManager.run();
-        });
-        HBox workflowRow = buildNavRow("⎇", "工作流中心", null, null, false, () -> {
-            if (onOpenWorkflowCenter != null) onOpenWorkflowCenter.run();
-        });
+        HBox knowledgeRow = buildNavRow("\uD83D\uDCDA", "知识库", null, null);
+        HBox taskMgrRow = buildNavRow("\u25A6", "托管任务", null, null);
+        HBox workflowRow = buildNavRow("⎇", "工作流中心", null, null);
         this.taskNavRow = taskMgrRow;
-        HBox settingsRow = buildNavRow("\u2699", "设置", "\u2318,", null, false, () -> {
-            if (onOpenSettings != null) onOpenSettings.run();
-        });
+        HBox settingsRow = buildNavRow("\u2699", "设置", "\u2318,", null);
+        HBox pluginRow = buildNavRow("🧩", "插件中心", null, null);
+        HBox memoryRow = buildNavRow("🧠", "记忆中心", null, null);
 
-        HBox pluginRow = buildNavRow("🧩", "插件中心", null, null, false, () -> {
-            if (onOpenPluginCenter != null) onOpenPluginCenter.run();
-        });
-        HBox memoryRow = buildNavRow("🧠", "记忆中心", null, null, false, () -> {
-            if (onOpenMemoryCenter != null) onOpenMemoryCenter.run();
-        });
-        VBox actionButtons = new VBox(2, skillRow, mcpRow, scheduleRow, knowledgeRow, memoryRow,
+        List<HBox> functionRows = List.of(
+                skillRow, mcpRow, scheduleRow, knowledgeRow, memoryRow,
                 workflowRow, taskMgrRow, pluginRow, settingsRow);
-        actionButtons.setPadding(new Insets(8, 8, 8, 8));
 
         // ==================== 任务/会话列表区域 ====================
 
-        Label taskSectionLabel = new Label("会话");
+        Label taskSectionLabel = new Label("最近会话");
         taskSectionLabel.getStyleClass().add("sidebar-section-title");
 
         sessionCountLabel = new Label("");
@@ -277,23 +276,35 @@ public class SidebarView {
         batchDeleteRow.setManaged(false);
 
         // 会话列表容器
-        conversationList = new VBox(6);
-        conversationList.setPadding(new Insets(6, 8, 6, 8));
+        conversationList = new VBox(3);
+        conversationList.setPadding(new Insets(2, 8, 8, 8));
+        conversationList.getStyleClass().add("sidebar-conversation-list");
 
         ScrollPane listScroll = new ScrollPane(conversationList);
         listScroll.getStyleClass().add("sidebar-list-scroll");
         listScroll.setFitToWidth(true);
         listScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         listScroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
-        VBox.setVgrow(listScroll, Priority.ALWAYS);
+
+        Label emptyIcon = new Label("☰");
+        emptyIcon.getStyleClass().add("sidebar-empty-icon");
+        conversationEmptyTitle = new Label("还没有会话");
+        conversationEmptyTitle.getStyleClass().add("sidebar-empty-title");
+        conversationEmptyHint = new Label("点击上方「新建对话」开始");
+        conversationEmptyHint.getStyleClass().add("sidebar-empty-hint");
+        conversationEmptyHint.setWrapText(true);
+        conversationEmptyState = new VBox(6, emptyIcon, conversationEmptyTitle, conversationEmptyHint);
+        conversationEmptyState.setAlignment(Pos.CENTER);
+        conversationEmptyState.setMouseTransparent(true);
+        conversationEmptyState.getStyleClass().add("sidebar-empty-state");
+
+        StackPane listLayer = new StackPane(listScroll, conversationEmptyState);
+        listLayer.getStyleClass().add("sidebar-list-layer");
+        VBox.setVgrow(listLayer, Priority.ALWAYS);
 
         // ==================== 底部用户信息区域 ====================
 
-        Separator bottomSep = new Separator();
-        bottomSep.getStyleClass().add("sidebar-separator");
-
-        // 用户身份栏（设计稿 sb-foot：头像 Y + 「你」 + 「本地工作区 · 离线优先」；
-        // 设置入口移至上方功能导航行，主题切换统一走顶栏「风格」菜单）
+        // 用户身份栏既显示当前身份，也是所有低频功能的悬浮菜单入口。
         Label userNameLabel = new Label("你");
         userNameLabel.getStyleClass().add("sidebar-user-name");
 
@@ -305,35 +316,116 @@ public class SidebarView {
         Label avatarLabel = new Label("Y");
         avatarLabel.getStyleClass().add("sidebar-avatar");
 
-        HBox bottomBar = new HBox(10, avatarLabel, userInfo);
-        bottomBar.setAlignment(Pos.CENTER_LEFT);
-        bottomBar.setPadding(new Insets(12, 14, 12, 14));
+        profileMenuBadgeLabel = new Label();
+        profileMenuBadgeLabel.getStyleClass().add("sidebar-profile-menu-badge");
+        profileMenuBadgeLabel.setVisible(false);
+        profileMenuBadgeLabel.setManaged(false);
+
+        Region profileSpacer = new Region();
+        HBox.setHgrow(profileSpacer, Priority.ALWAYS);
+        Label profileMenuChevron = new Label("⌃");
+        profileMenuChevron.getStyleClass().add("sidebar-profile-menu-chevron");
+        HBox profileContent = new HBox(
+                10, avatarLabel, userInfo, profileSpacer, profileMenuBadgeLabel, profileMenuChevron);
+        profileContent.setAlignment(Pos.CENTER_LEFT);
+        profileContent.setMaxWidth(Double.MAX_VALUE);
+        profileContent.setPrefWidth(168);
+        profileContent.setMouseTransparent(true);
+
+        profileMenuButton = new Button();
+        profileMenuButton.setGraphic(profileContent);
+        profileMenuButton.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+        profileMenuButton.setMaxWidth(Double.MAX_VALUE);
+        profileMenuButton.setAccessibleRole(javafx.scene.AccessibleRole.MENU_BUTTON);
+        profileMenuButton.setAccessibleText("个人菜单");
+        profileMenuButton.getStyleClass().add("sidebar-profile-menu-button");
+        Tooltip profileMenuTooltip = new Tooltip("打开个人菜单");
+        profileMenuButton.setTooltip(profileMenuTooltip);
+
+        profileMenu = UIHelper.createContextMenu();
+        profileMenu.getStyleClass().add("sidebar-profile-popup");
+        profileMenu.setAutoFix(true);
+        profileMenu.setAutoHide(true);
+        profileMenu.setHideOnEscape(true);
+        profileMenu.getItems().addAll(
+                createProfileMenuHeaderItem(),
+                new SeparatorMenuItem(),
+                createProfileMenuItem(skillRow, "技能中心",
+                        () -> runIfPresent(onOpenSkillCenter)),
+                createProfileMenuItem(mcpRow, "MCP 服务器",
+                        () -> runIfPresent(onOpenMcp)),
+                createProfileMenuItem(scheduleRow, "定时任务",
+                        () -> runIfPresent(onOpenScheduler)),
+                createProfileMenuItem(knowledgeRow, "知识库",
+                        () -> runIfPresent(onOpenKnowledgeBase)),
+                createProfileMenuItem(memoryRow, "记忆中心",
+                        () -> runIfPresent(onOpenMemoryCenter)),
+                createProfileMenuItem(workflowRow, "工作流中心",
+                        () -> runIfPresent(onOpenWorkflowCenter)),
+                createProfileMenuItem(taskMgrRow, "托管任务",
+                        () -> runIfPresent(onOpenTaskManager)),
+                createProfileMenuItem(pluginRow, "插件中心",
+                        () -> runIfPresent(onOpenPluginCenter)),
+                new SeparatorMenuItem(),
+                createProfileMenuItem(settingsRow, "设置",
+                        () -> runIfPresent(onOpenSettings))
+        );
+
+        for (HBox functionRow : functionRows) {
+            functionRow.setMinWidth(176);
+            functionRow.prefWidthProperty().bind(profileMenuButton.widthProperty().subtract(16));
+        }
+        profileMenu.setOnShowing(event -> {
+            profileMenuTooltip.setText("收起个人菜单");
+            if (!profileMenuButton.getStyleClass().contains("sidebar-profile-menu-button-open")) {
+                profileMenuButton.getStyleClass().add("sidebar-profile-menu-button-open");
+            }
+        });
+        profileMenu.setOnHidden(event -> {
+            profileMenuTooltip.setText("打开个人菜单");
+            profileMenuButton.getStyleClass().remove("sidebar-profile-menu-button-open");
+        });
+        profileMenu.setOnAutoHide(event -> {
+            // 点击锚点按钮时，ContextMenu 会先自动隐藏，再把同一次点击交给按钮。
+            // 记录这一状态，避免按钮随后又立即把菜单重新打开。
+            profileMenuAutoHiding = true;
+            Platform.runLater(() -> profileMenuAutoHiding = false);
+        });
+        profileMenuButton.setOnAction(event -> {
+            if (profileMenuAutoHiding) {
+                profileMenuAutoHiding = false;
+                return;
+            }
+            if (profileMenu.isShowing()) {
+                profileMenu.hide();
+            } else {
+                profileMenu.show(profileMenuButton, Side.TOP, 0, -4);
+            }
+        });
+
+        VBox bottomBar = new VBox(profileMenuButton);
+        bottomBar.setPadding(new Insets(10, 8, 12, 8));
         bottomBar.getStyleClass().add("sidebar-bottom-bar");
 
-        // ==================== 组装侧边栏（设计稿顺序：品牌 → 工作区 → 搜索 → 新建 → 会话列表 → 功能导航 → 用户栏） ====================
-
-        Separator navSep = new Separator();
-        navSep.getStyleClass().add("sidebar-separator");
+        // ==================== 组装侧边栏（会话优先，功能入口合并进底部个人框） ====================
 
         root = new VBox();
         root.getStyleClass().add("sidebar-root");
         root.getChildren().addAll(
                 brandRow,
                 wsBox,
-                searchBox,
                 newChatBox,
                 sectionHeader,
+                searchBox,
                 batchDeleteRow,
-                listScroll,
-                navSep,
-                actionButtons,
-                bottomSep,
+                listLayer,
                 bottomBar
         );
         root.setPrefWidth(240);
         root.setMinWidth(200);
         root.setMaxWidth(280);
 
+        refreshConversationEmptyState();
         log.info("侧边栏构建完成");
     }
 
@@ -360,7 +452,7 @@ public class SidebarView {
         }
         conversationList.getChildren().add(row);
         updateSessionCount(getSessionCount());
-        recomputeGroupCounts();
+        filterSessions(searchField.getText());
     }
 
     /**
@@ -388,7 +480,7 @@ public class SidebarView {
         // 插入到"今天"标签之后
         conversationList.getChildren().add(1, row);
         updateSessionCount(getSessionCount());
-        recomputeGroupCounts();
+        filterSessions(searchField.getText());
     }
 
     /**
@@ -402,10 +494,10 @@ public class SidebarView {
                 for (javafx.scene.Node child : row.getChildren()) {
                     if (child instanceof Label titleLabel
                             && titleLabel.getStyleClass().contains("sidebar-conv-title")) {
-                        String display = newTitle.length() > 18
-                                ? newTitle.substring(0, 18) + "..." : newTitle;
-                        titleLabel.setText(display);
-                        titleLabel.setTooltip(new javafx.scene.control.Tooltip(newTitle));
+                        String normalized = normalizedTitle(newTitle);
+                        titleLabel.setText(normalized);
+                        titleLabel.setTooltip(new javafx.scene.control.Tooltip(normalized));
+                        filterSessions(searchField.getText());
                         break;
                     }
                 }
@@ -419,8 +511,9 @@ public class SidebarView {
      */
     public void removeSession(String sessionId) {
         conversationList.getChildren().removeIf(node -> sessionId.equals(node.getUserData()));
+        pruneEmptyGroupHeaders();
         updateSessionCount(getSessionCount());
-        recomputeGroupCounts();
+        filterSessions(searchField.getText());
     }
 
     /**
@@ -454,33 +547,36 @@ public class SidebarView {
     }
 
     /**
-     * 创建会话列表项 UI（设计稿：✦ 图标 + 标题 + 右侧 mono 时间）。
+     * 创建会话列表项 UI（状态点 + 自适应省略标题 + 右侧时间）。
      *
      * @param timeText 右侧时间文案（重建列表时透传原值，避免时间被重置）
      */
     private HBox createConversationRow(ChatSession session, String timeText) {
-        Label icon = new Label("✦");
-        icon.getStyleClass().add("sidebar-conv-icon");
+        Region indicator = new Region();
+        indicator.getStyleClass().add("sidebar-conv-indicator");
 
-        String displayTitle = session.getTitle();
-        if (displayTitle.length() > 18) {
-            displayTitle = displayTitle.substring(0, 18) + "...";
-        }
-        Label titleLabel = new Label(displayTitle);
+        String fullTitle = normalizedTitle(session.getTitle());
+        Label titleLabel = new Label(fullTitle);
         titleLabel.getStyleClass().add("sidebar-conv-title");
-        titleLabel.setMaxWidth(160);
-        titleLabel.setTooltip(new javafx.scene.control.Tooltip(session.getTitle()));
+        titleLabel.setMinWidth(0);
+        titleLabel.setMaxWidth(Double.MAX_VALUE);
+        titleLabel.setTextOverrun(OverrunStyle.ELLIPSIS);
+        titleLabel.setEllipsisString("…");
+        titleLabel.setTooltip(new javafx.scene.control.Tooltip(fullTitle));
+        HBox.setHgrow(titleLabel, Priority.ALWAYS);
 
-        Region rowSpacer = new Region();
-        HBox.setHgrow(rowSpacer, Priority.ALWAYS);
         Label timeLabel = new Label(timeText == null ? "" : timeText);
         timeLabel.getStyleClass().add("sidebar-conv-time");
+        timeLabel.setMinWidth(Region.USE_PREF_SIZE);
 
-        HBox row = new HBox(6);
+        HBox row = new HBox(8);
         row.getProperties().put("convTime", timeText == null ? "" : timeText);
         row.setAlignment(Pos.CENTER_LEFT);
         row.getStyleClass().add("sidebar-conv-row");
-        row.setPadding(new Insets(6, 8, 6, 8));
+        row.setMaxWidth(Double.MAX_VALUE);
+        row.setFocusTraversable(true);
+        row.setAccessibleRole(javafx.scene.AccessibleRole.BUTTON);
+        row.setAccessibleText("会话：" + fullTitle);
 
         // 用 userData 存储会话 ID
         row.setUserData(session.getId());
@@ -496,17 +592,22 @@ public class SidebarView {
                 }
                 updateBatchDeleteBtn();
             });
-            row.getChildren().addAll(checkBox, icon, titleLabel, rowSpacer, timeLabel);
+            checkBox.setOnMouseClicked(e -> e.consume());
+            row.getChildren().addAll(checkBox, indicator, titleLabel, timeLabel);
 
             // 批量模式下点击行切换勾选
+            Runnable toggleChecked = () -> checkBox.setSelected(!checkBox.isSelected());
             row.setOnMouseClicked(e -> {
-                checkBox.setSelected(!checkBox.isSelected());
+                if (e.getButton() == javafx.scene.input.MouseButton.PRIMARY) {
+                    toggleChecked.run();
+                }
             });
+            installKeyboardActivation(row, toggleChecked);
         } else {
-            row.getChildren().addAll(icon, titleLabel, rowSpacer, timeLabel);
+            row.getChildren().addAll(indicator, titleLabel, timeLabel);
 
             // 点击切换会话
-            row.setOnMouseClicked(e -> {
+            Runnable activate = () -> {
                 String targetId = (String) row.getUserData();
                 if (!targetId.equals(selectedSessionId)) {
                     clearSelection();
@@ -516,7 +617,13 @@ public class SidebarView {
                         onSwitchSession.accept(targetId);
                     }
                 }
+            };
+            row.setOnMouseClicked(e -> {
+                if (e.getButton() == javafx.scene.input.MouseButton.PRIMARY) {
+                    activate.run();
+                }
             });
+            installKeyboardActivation(row, activate);
 
             // 右键菜单：删除会话
             ContextMenu contextMenu = UIHelper.createContextMenu();
@@ -533,6 +640,20 @@ public class SidebarView {
         }
 
         return row;
+    }
+
+    private static void installKeyboardActivation(HBox row, Runnable action) {
+        row.setOnKeyPressed(event -> {
+            if (event.getCode() == javafx.scene.input.KeyCode.ENTER
+                    || event.getCode() == javafx.scene.input.KeyCode.SPACE) {
+                action.run();
+                event.consume();
+            }
+        });
+    }
+
+    private static String normalizedTitle(String title) {
+        return title == null || title.isBlank() ? "新的对话" : title.strip();
     }
 
     public String getSelectedSessionId() {
@@ -737,6 +858,7 @@ public class SidebarView {
                 batchDeleteRow.setVisible(false);
                 batchDeleteRow.setManaged(false);
                 onBatchDeleteSessions.accept(ids);
+                rebuildConversationList();
             }
         });
     }
@@ -792,7 +914,7 @@ public class SidebarView {
             conversationList.getChildren().add(row);
         }
         lastGroupKey = lastEmittedGroup;
-        recomputeGroupCounts();
+        filterSessions(searchField.getText());
     }
 
     /**
@@ -802,7 +924,11 @@ public class SidebarView {
         conversationList.getChildren().clear();
         selectedSessionId = null;
         lastGroupKey = "";
+        if (!searchField.getText().isEmpty()) {
+            searchField.clear();
+        }
         updateSessionCount(0);
+        refreshConversationEmptyState();
     }
 
     // ==================== 分组标题（设计稿 sb-section：名称 + 右侧「共 N 条」） ====================
@@ -814,7 +940,7 @@ public class SidebarView {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
         Label count = new Label("");
-        count.getStyleClass().add("sidebar-section-count");
+        count.getStyleClass().add("sidebar-group-count");
         HBox header = new HBox(6, name, spacer, count);
         header.setAlignment(Pos.CENTER_LEFT);
         header.getStyleClass().add("sidebar-group-header");
@@ -839,7 +965,7 @@ public class SidebarView {
         return "";
     }
 
-    /** 重算各分组右侧「共 N 条」计数 */
+    /** 重算各分组右侧可见会话数；搜索时计数随筛选结果同步。 */
     private void recomputeGroupCounts() {
         HBox currentHeader = null;
         int count = 0;
@@ -848,7 +974,7 @@ public class SidebarView {
                 applyGroupCount(currentHeader, count);
                 currentHeader = (HBox) node;
                 count = 0;
-            } else if (node instanceof HBox) {
+            } else if (node instanceof HBox && node.isManaged()) {
                 count++;
             }
         }
@@ -859,9 +985,40 @@ public class SidebarView {
         if (header == null) return;
         for (javafx.scene.Node child : header.getChildren()) {
             if (child instanceof Label label
-                    && label.getStyleClass().contains("sidebar-section-count")) {
-                label.setText(count > 0 ? "共 " + count + " 条" : "");
+                    && label.getStyleClass().contains("sidebar-group-count")) {
+                label.setText(count > 0 ? Integer.toString(count) : "");
                 return;
+            }
+        }
+    }
+
+    /** 删除已没有会话行的时间分组，避免删除最后一条后留下空标题。 */
+    private void pruneEmptyGroupHeaders() {
+        for (int i = conversationList.getChildren().size() - 1; i >= 0; i--) {
+            javafx.scene.Node candidate = conversationList.getChildren().get(i);
+            if (!isGroupHeader(candidate)) {
+                continue;
+            }
+            boolean hasConversation = false;
+            for (int j = i + 1; j < conversationList.getChildren().size(); j++) {
+                javafx.scene.Node next = conversationList.getChildren().get(j);
+                if (isGroupHeader(next)) {
+                    break;
+                }
+                if (next instanceof HBox && next.getUserData() != null) {
+                    hasConversation = true;
+                    break;
+                }
+            }
+            if (!hasConversation) {
+                conversationList.getChildren().remove(i);
+            }
+        }
+
+        lastGroupKey = "";
+        for (javafx.scene.Node node : conversationList.getChildren()) {
+            if (isGroupHeader(node)) {
+                lastGroupKey = groupHeaderText(node);
             }
         }
     }
@@ -931,6 +1088,8 @@ public class SidebarView {
         }
         // 更新分组标签可见性
         updateGroupHeaderVisibility();
+        recomputeGroupCounts();
+        refreshConversationEmptyState();
     }
 
     /**
@@ -961,6 +1120,33 @@ public class SidebarView {
         }
     }
 
+    /** 根据总会话数与搜索结果更新列表内空状态。 */
+    private void refreshConversationEmptyState() {
+        if (conversationEmptyState == null) {
+            return;
+        }
+        int total = getSessionCount();
+        long visible = conversationList.getChildren().stream()
+                .filter(node -> node instanceof HBox
+                        && !isGroupHeader(node)
+                        && node.isManaged())
+                .count();
+        boolean searching = searchField != null
+                && searchField.getText() != null
+                && !searchField.getText().isBlank();
+        boolean show = total == 0 || (searching && visible == 0);
+
+        if (total == 0) {
+            conversationEmptyTitle.setText("还没有会话");
+            conversationEmptyHint.setText("点击上方「新建对话」开始");
+        } else if (searching && visible == 0) {
+            conversationEmptyTitle.setText("没有匹配的会话");
+            conversationEmptyHint.setText("换个关键词试试");
+        }
+        conversationEmptyState.setVisible(show);
+        conversationEmptyState.setManaged(show);
+    }
+
     // ==================== 导航行构建辅助 ====================
 
     /**
@@ -970,12 +1156,10 @@ public class SidebarView {
      * @param label    主文案
      * @param shortcut 右侧快捷键提示（如 {@code "⌘N"}），{@code null} 表示不显示
      * @param badge    右侧徽章文字（如 {@code "3"}），{@code null} 表示不显示
-     * @param active   是否初始高亮（品牌色背景）
-     * @param onClick  点击回调
-     * @return 可直接加入侧边栏的 HBox
+     * @return 可嵌入悬浮菜单的 HBox
      */
     private HBox buildNavRow(String iconText, String label, String shortcut,
-                             String badge, boolean active, Runnable onClick) {
+                             String badge) {
         Label icon = new Label(iconText);
         icon.getStyleClass().add("sidebar-nav-icon");
 
@@ -988,9 +1172,6 @@ public class SidebarView {
         HBox row = new HBox(10);
         row.setAlignment(Pos.CENTER_LEFT);
         row.getStyleClass().addAll("sidebar-action-row", "sidebar-nav-row");
-        if (active) {
-            row.getStyleClass().add("sidebar-nav-row-active");
-        }
         row.setPadding(new Insets(6, 10, 6, 12));
         row.getChildren().addAll(icon, text, spacer);
 
@@ -1005,11 +1186,56 @@ public class SidebarView {
             row.getChildren().add(shortcutLabel);
         }
 
+        row.setMouseTransparent(false);
+        row.setPickOnBounds(true);
         row.setCursor(javafx.scene.Cursor.HAND);
-        row.setOnMouseClicked(e -> {
-            if (onClick != null) onClick.run();
-        });
         return row;
+    }
+
+    /** 创建个人菜单顶部的身份摘要，与底部触发框形成一致的信息层级。 */
+    private CustomMenuItem createProfileMenuHeaderItem() {
+        Label popupAvatar = new Label("Y");
+        popupAvatar.getStyleClass().add("sidebar-avatar");
+
+        Label popupName = new Label("你");
+        popupName.getStyleClass().add("sidebar-user-name");
+        Label popupTeam = new Label("本地工作区 · 离线优先");
+        popupTeam.getStyleClass().add("sidebar-user-team");
+
+        VBox identity = new VBox(1, popupName, popupTeam);
+        HBox header = new HBox(10, popupAvatar, identity);
+        header.setAlignment(Pos.CENTER_LEFT);
+        header.setMouseTransparent(true);
+        header.getStyleClass().add("sidebar-profile-popup-header");
+
+        CustomMenuItem item = new CustomMenuItem(header, false);
+        item.setText("当前用户");
+        item.setHideOnClick(false);
+        item.getStyleClass().add("sidebar-profile-header-item");
+        return item;
+    }
+
+    /** 将功能行包装为可键盘导航、点击后自动收起的个人菜单项。 */
+    private CustomMenuItem createProfileMenuItem(HBox row, String accessibleName, Runnable onAction) {
+        CustomMenuItem item = new CustomMenuItem(row, true);
+        item.setText(accessibleName);
+        item.setHideOnClick(true);
+        item.getStyleClass().add("sidebar-profile-menu-item");
+        item.setOnAction(event -> queueProfileMenuAction(onAction));
+        return item;
+    }
+
+    private void queueProfileMenuAction(Runnable action) {
+        if (action != null) {
+            // CustomMenuItem 会在 Action 返回后自动关闭；下一轮再切换主内容或打开弹窗。
+            Platform.runLater(action);
+        }
+    }
+
+    private static void runIfPresent(Runnable action) {
+        if (action != null) {
+            action.run();
+        }
     }
 
     /**
@@ -1018,21 +1244,27 @@ public class SidebarView {
      * @param count 待执行任务数，{@code <= 0} 时移除徽章
      */
     public void updateScheduleBadge(int count) {
+        scheduleBadgeCount = Math.max(0, count);
         updateNavBadge(scheduleNavRow, count);
+        updateProfileMenuBadge();
     }
 
     /**
      * 更新技能中心徽章（待审提案数，设计稿 sb-navrow badge）。
      */
     public void updateSkillBadge(int count) {
+        skillBadgeCount = Math.max(0, count);
         updateNavBadge(skillNavRow, count);
+        updateProfileMenuBadge();
     }
 
     /**
      * 更新托管任务徽章（进行中 + 待人工任务数）。
      */
     public void updateTaskBadge(int count) {
+        taskBadgeCount = Math.max(0, count);
         updateNavBadge(taskNavRow, count);
+        updateProfileMenuBadge();
     }
 
     /** 通用导航行徽章更新：插到快捷键之前、spacer 之后；count <= 0 时移除 */
@@ -1055,12 +1287,30 @@ public class SidebarView {
         navRow.getChildren().add(insertAt, badge);
     }
 
+    /** 个人菜单收起时在个人框上汇总待处理数量。 */
+    private void updateProfileMenuBadge() {
+        if (profileMenuBadgeLabel == null) {
+            return;
+        }
+        int pending = scheduleBadgeCount + skillBadgeCount + taskBadgeCount;
+        boolean show = pending > 0;
+        profileMenuBadgeLabel.setVisible(show);
+        profileMenuBadgeLabel.setManaged(show);
+        if (pending > 0) {
+            profileMenuBadgeLabel.setText(pending > 99 ? "99+" : Integer.toString(pending));
+            profileMenuBadgeLabel.setTooltip(new Tooltip(pending + " 项待处理"));
+        } else {
+            profileMenuBadgeLabel.setText("");
+            profileMenuBadgeLabel.setTooltip(null);
+        }
+    }
+
     /**
      * 更新会话分区"共 N 条"计数。
      */
     public void updateSessionCount(int count) {
         if (sessionCountLabel != null) {
-            sessionCountLabel.setText(count > 0 ? "共 " + count + " 条" : "");
+            sessionCountLabel.setText(count > 0 ? count + " 个" : "");
         }
     }
 

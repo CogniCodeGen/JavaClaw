@@ -1,6 +1,7 @@
 package com.javaclaw.plugin;
 
 import com.javaclaw.agent.model.ToolResponse;
+import com.javaclaw.util.ProjectAccessPolicy;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
@@ -34,6 +35,10 @@ public final class PluginTools {
             @ToolParam(name = "tool_name", description = "工具名") String toolName,
             @ToolParam(name = "arguments_json",
                     description = "工具参数，JSON 对象字符串；无参数时传 \"{}\"") String argumentsJson) {
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return ToolResponse.error("plugin_call_tool",
+                    ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
         String args = (argumentsJson == null || argumentsJson.isBlank()) ? "{}" : argumentsJson;
         try {
             String result = PluginManager.getInstance().invokeTool(pluginId, toolName, args);

@@ -10,7 +10,10 @@ import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.api.conversation.ConversationRequest;
 import com.javaclaw.api.conversation.PlanProfile;
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.prompt.AgentPrompts;
 import com.javaclaw.prompt.PlanModePrompts;
+import com.javaclaw.util.ChineseOutputGuard;
+import com.javaclaw.util.SensitiveDataRedactor;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.AgentBase;
 import io.agentscope.core.agent.StreamOptions;
@@ -112,7 +115,7 @@ public class PlanModeService {
 
         this.coordinator = ReActAgent.builder()
                 .name(AgentConfig.PLAN_COORDINATOR_NAME)
-                .sysPrompt(coordinatorSysPrompt)
+                .sysPrompt(AgentPrompts.withMandatoryGlobalRules(coordinatorSysPrompt))
                 .model(runtime.getModelFactory().createHighMultiAgentChatModel())
                 .maxIters(1)
                 .build();
@@ -136,7 +139,12 @@ public class PlanModeService {
     public com.javaclaw.api.conversation.ConversationHandle planChat(
             ConversationRequest request, ConversationCallbacks callbacks) {
         return conversationRun.start(callbacks,
-                guarded -> startPlanPipeline(request, guarded),
+                guarded -> {
+                    runtime.getBrowserManager().activateScope(
+                            com.javaclaw.browser.PlaywrightBrowserManager
+                                    .conversationScopeId(request.sessionId()));
+                    startPlanPipeline(request, guarded);
+                },
                 ignored -> cancel(request.sessionId()));
     }
 
@@ -194,7 +202,7 @@ public class PlanModeService {
         String userInput = request.userInput();
         List<File> attachments = request.attachments();
 
-        log.info("收到用户消息（规划模式）: {}", userInput);
+        log.info("收到用户消息（规划模式）: {} 字符（正文不记录）", userInput.length());
 
         final int inputCharCount = userInput.length();
         final AtomicInteger outputCharCount = new AtomicInteger(0);
@@ -448,8 +456,10 @@ public class PlanModeService {
                                            BooleanSupplier cancellation,
                                            Runnable criticAction) {
         if (finalDraft == null || finalDraft.isBlank() || cancellation.getAsBoolean()) return;
+        String guardedDraft = ChineseOutputGuard.enforceUserVisibleReply(
+                finalDraft.replace(PLAN_COMPLETE_MARKER, "").strip());
         callbacks.onEvent(new ConversationEvent.Custom(
-                "plan_final", finalDraft.replace(PLAN_COMPLETE_MARKER, "").strip()));
+                "plan_final", guardedDraft));
         if (!shouldRunCritic || cancellation.getAsBoolean()) return;
         try {
             criticAction.run();
@@ -665,7 +675,6 @@ public class PlanModeService {
                                 String text = msg.getTextContent();
                                 if (text != null && !text.isEmpty()) {
                                     fullText.append(text);
-                                    callbacks.onEvent(new ConversationEvent.AgentReply(agentName, text));
                                 }
                             }
                             case REASONING -> {
@@ -674,13 +683,15 @@ public class PlanModeService {
                                     for (ThinkingBlock block : blocks) {
                                         String thinking = block.getThinking();
                                         if (thinking != null && !thinking.isEmpty()) {
-                                            callbacks.onEvent(new ConversationEvent.Thinking(thinking));
+                                            callbacks.onEvent(new ConversationEvent.Thinking(
+                                                    SensitiveDataRedactor.redactText(thinking)));
                                         }
                                     }
                                 } else {
                                     String text = msg.getTextContent();
                                     if (text != null && !text.isEmpty()) {
-                                        callbacks.onEvent(new ConversationEvent.Thinking(text));
+                                        callbacks.onEvent(new ConversationEvent.Thinking(
+                                                SensitiveDataRedactor.redactText(text)));
                                     }
                                 }
                             }
@@ -701,7 +712,8 @@ public class PlanModeService {
                                         String content = sb.toString();
                                         if (!content.isEmpty()) {
                                             String toolName = block.getName() != null ? block.getName() : "tool";
-                                            String chunk = "\n[" + toolName + "] " + content + "\n";
+                                            String chunk = "\n[" + toolName + "] "
+                                                    + SensitiveDataRedactor.redactText(content) + "\n";
                                             callbacks.onEvent(new ConversationEvent.AgentReply(agentName, chunk));
                                         }
                                     }
@@ -720,7 +732,11 @@ public class PlanModeService {
             }
         }
 
-        return fullText.toString();
+        String guardedReply = ChineseOutputGuard.enforceUserVisibleReply(fullText.toString());
+        if (!guardedReply.isBlank()) {
+            callbacks.onEvent(new ConversationEvent.AgentReply(agentName, guardedReply));
+        }
+        return guardedReply;
     }
 
     /**

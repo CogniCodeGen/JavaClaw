@@ -194,6 +194,18 @@ public final class AppDatabase {
                         PRIMARY KEY (workspace_id, credential_id)
                     )
                     """);
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS site_account_bindings (
+                        workspace_id VARCHAR(128) NOT NULL,
+                        scope_id VARCHAR(512) NOT NULL,
+                        site_host VARCHAR(512) NOT NULL,
+                        credential_id VARCHAR(128) NOT NULL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (workspace_id, scope_id, site_host)
+                    )
+                    """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_site_account_bindings_credential "
+                    + "ON site_account_bindings(workspace_id, credential_id)");
 
             st.execute("""
                     CREATE TABLE IF NOT EXISTS scheduled_tasks (
@@ -210,6 +222,7 @@ public final class AppDatabase {
                         once_date_time VARCHAR(64),
                         prompt CLOB,
                         enabled BOOLEAN NOT NULL,
+                        version BIGINT NOT NULL DEFAULT 0,
                         last_run_time VARCHAR(64),
                         last_run_status VARCHAR(64),
                         last_duration VARCHAR(64),
@@ -227,6 +240,19 @@ public final class AppDatabase {
             // 既有库迁移：为早于本列的 scheduled_tasks 补列（IF NOT EXISTS 幂等，新库已由上面 CREATE 带列）
             st.execute("ALTER TABLE scheduled_tasks "
                     + "ADD COLUMN IF NOT EXISTS unattended_authorized BOOLEAN DEFAULT FALSE");
+            st.execute("ALTER TABLE scheduled_tasks "
+                    + "ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 0");
+            // 旧工具创建 interval 任务时只更新 interval_minutes，遗留的 UI 字段仍可能是默认 60。
+            // Quartz 一直以 interval_minutes 为准，迁移时同步展示字段以保持实际运行语义不变。
+            st.execute("""
+                    UPDATE scheduled_tasks
+                    SET interval_value = CASE WHEN interval_minutes > 0 THEN interval_minutes ELSE 60 END,
+                        interval_unit = 'minute'
+                    WHERE trigger_type = 'interval'
+                      AND (interval_value IS NULL OR interval_value <= 0
+                           OR interval_minutes <> interval_value *
+                              CASE interval_unit WHEN 'hour' THEN 60 WHEN 'day' THEN 1440 ELSE 1 END)
+                    """);
 
             st.execute("""
                     CREATE TABLE IF NOT EXISTS custom_agents (
@@ -403,6 +429,9 @@ public final class AppDatabase {
                         PRIMARY KEY (workspace_id, state_key)
                     )
                     """);
+            // 旧版把整个工作区所有网站的 Cookie/localStorage 存在单行中，任一聊天都会继承，
+            // 会造成跨会话串号。认证态现已迁移为 site_sessions（按账号）+ 会话 Context（内存）。
+            st.execute("DELETE FROM browser_state WHERE state_key = 'playwright-storage-state'");
 
             st.execute("""
                     CREATE TABLE IF NOT EXISTS workflow_definitions (

@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.javaclaw.util.ProcessTerminator;
+import com.javaclaw.util.ProjectAccessPolicy;
+import com.javaclaw.util.SensitiveDataRedactor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -122,6 +124,12 @@ public class McpClient {
     }
 
     private void doStart() throws Exception {
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            if (config == null || !"http".equals(config.getTransport())) {
+                throw new SecurityException("严格项目文件隔离已启用：本地 stdio MCP 已被系统禁用");
+            }
+            ProjectAccessPolicy.requireRemoteMcpEndpoint(config.getUrl());
+        }
         if ("http".equals(config.getTransport())) {
             doStartHttp();
         } else {
@@ -133,18 +141,19 @@ public class McpClient {
      * HTTP / streamable-HTTP 传输：以 JSON-RPC over POST 为主，兼容 SSE 响应。
      */
     private void doStartHttp() throws Exception {
-        log.info("正在初始化 MCP 服务器（HTTP）: {} (url: {})",
-                config.getName(), config.getUrl());
+        log.info("正在初始化 MCP 服务器（HTTP）: {} (endpoint: {})",
+                config.getName(), ProjectAccessPolicy.remoteEndpointSummary(config.getUrl()));
 
         if (config.getUrl() == null || config.getUrl().isBlank()) {
             throw new IllegalStateException("HTTP MCP 配置缺少 url");
         }
         // URL 早期校验，给出友好错误而非 NPE
-        URI.create(config.getUrl());
+        ProjectAccessPolicy.requireRemoteMcpEndpoint(config.getUrl());
 
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(REQUEST_TIMEOUT_SECONDS))
-                .followRedirects(HttpClient.Redirect.NORMAL)
+                // 重定向目标无法沿用首次 URL 的安全判定；严格模式下拒绝自动跟随。
+                .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
         running = true;
 
@@ -182,8 +191,8 @@ public class McpClient {
         if (config.getCommand() == null || config.getCommand().isBlank()) {
             throw new IllegalStateException("stdio MCP 配置缺少 command（如需远程 HTTP MCP，请配置 url）");
         }
-        log.info("正在启动 MCP 服务器: {} (command: {} {})",
-                config.getName(), config.getCommand(), config.getArgs());
+        log.info("正在启动 MCP 服务器: {} (command: {}, args: {} 项)",
+                config.getName(), config.getCommand(), config.getArgs().size());
 
         // 构建进程命令
         List<String> command = new ArrayList<>();
@@ -221,8 +230,9 @@ public class McpClient {
                     new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = errReader.readLine()) != null) {
-                    appendStderr(line);
-                    log.debug("[MCP:{}:stderr] {}", config.getName(), line);
+                    String safeLine = SensitiveDataRedactor.redactText(line);
+                    appendStderr(safeLine);
+                    log.debug("[MCP:{}:stderr] 收到 {} 字符", config.getName(), line.length());
                 }
             } catch (IOException e) {
                 if (running) {
@@ -320,10 +330,11 @@ public class McpClient {
 
         // 检查是否有错误标记
         if (result.has("isError") && result.get("isError").asBoolean()) {
-            throw new RuntimeException("MCP 工具调用返回错误: " + sb);
+            throw new RuntimeException("MCP 工具调用返回错误（正文已隐藏）");
         }
-
-        return sb.toString();
+        String output = sb.toString();
+        return SensitiveDataRedactor.containsLikelyCredential(output)
+                ? "MCP 工具结果包含疑似凭据，具体内容已隐藏。" : output;
     }
 
     /**
@@ -354,7 +365,8 @@ public class McpClient {
 
         String json = objectMapper.writeValueAsString(request);
         sendLine(json);
-        log.debug("[MCP:{}] → {}", config.getName(), json);
+        log.debug("[MCP:{}] → method={} id={} body={} 字符",
+                config.getName(), method, id, json.length());
 
         try {
             JsonNode response = future.get(REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS);
@@ -377,7 +389,8 @@ public class McpClient {
             request.set("params", params);
         }
         String json = objectMapper.writeValueAsString(request);
-        log.debug("[MCP:{} http] → {}", config.getName(), json);
+        log.debug("[MCP:{} http] → method={} id={} body={} 字符",
+                config.getName(), method, id, json.length());
 
         HttpRequest httpReq = buildHttpRequest(json, true);
         HttpResponse<String> resp = httpClient.send(httpReq, HttpResponse.BodyHandlers.ofString());
@@ -391,7 +404,7 @@ public class McpClient {
 
         int status = resp.statusCode();
         if (status < 200 || status >= 300) {
-            throw new RuntimeException("HTTP MCP 请求失败 [" + status + "]: " + truncate(resp.body(), 240));
+            throw new RuntimeException("HTTP MCP 请求失败 [" + status + "]（响应正文已隐藏）");
         }
 
         String body = resp.body() == null ? "" : resp.body();
@@ -404,7 +417,8 @@ public class McpClient {
                 ? parseSseForId(body, id)
                 : objectMapper.readTree(body);
 
-        log.debug("[MCP:{} http] ← {}", config.getName(), truncate(response.toString(), 240));
+        log.debug("[MCP:{} http] ← id={} body={} 字符",
+                config.getName(), id, response.toString().length());
         return unwrapResult(response);
     }
 
@@ -427,7 +441,8 @@ public class McpClient {
                     config.getName(), method, resp.statusCode());
         } else {
             sendLine(json);
-            log.debug("[MCP:{}] → (notification) {}", config.getName(), json);
+            log.debug("[MCP:{}] → (notification) {} body={} 字符",
+                    config.getName(), method, json.length());
         }
     }
 
@@ -437,9 +452,8 @@ public class McpClient {
     private JsonNode unwrapResult(JsonNode response) {
         if (response.has("error")) {
             JsonNode error = response.get("error");
-            String errorMsg = error.has("message") ? error.get("message").asText() : "未知错误";
             int errorCode = error.has("code") ? error.get("code").asInt() : -1;
-            throw new RuntimeException("MCP 错误 [" + errorCode + "]: " + errorMsg);
+            throw new RuntimeException("MCP 错误 [" + errorCode + "]（消息正文已隐藏）");
         }
         return response.has("result") ? response.get("result") : objectMapper.createObjectNode();
     }
@@ -448,8 +462,9 @@ public class McpClient {
      * 构造一个 POST 请求，自动注入 Accept、自定义 headers 和 mcp-session-id
      */
     private HttpRequest buildHttpRequest(String body, boolean expectsResponse) {
+        URI endpoint = ProjectAccessPolicy.requireRemoteMcpEndpoint(config.getUrl());
         HttpRequest.Builder b = HttpRequest.newBuilder()
-                .uri(URI.create(config.getUrl()))
+                .uri(endpoint)
                 .timeout(Duration.ofSeconds(REQUEST_TIMEOUT_SECONDS))
                 .header("Content-Type", "application/json")
                 .header("Accept",
@@ -540,7 +555,7 @@ public class McpClient {
                 line = line.trim();
                 if (line.isEmpty()) continue;
 
-                log.debug("[MCP:{}] ← {}", config.getName(), line);
+                log.debug("[MCP:{}] ← {} 字符", config.getName(), line.length());
                 try {
                     JsonNode msg = objectMapper.readTree(line);
 
@@ -557,7 +572,8 @@ public class McpClient {
                         log.debug("[MCP:{}] 收到通知: {}", config.getName(), msg.get("method").asText());
                     }
                 } catch (Exception e) {
-                    log.warn("[MCP:{}] 解析消息失败: {}", config.getName(), line, e);
+                    log.warn("[MCP:{}] 解析消息失败（正文已隐藏，{} 字符）",
+                            config.getName(), line.length());
                 }
             }
         } catch (IOException e) {
@@ -685,6 +701,7 @@ public class McpClient {
     private static String summarizeError(Throwable e) {
         String msg = e.getMessage();
         if (msg == null || msg.isBlank()) msg = e.getClass().getSimpleName();
+        msg = SensitiveDataRedactor.redactText(msg);
         // 控制长度，UI 卡片单行展示更清爽
         return msg.length() > 240 ? msg.substring(0, 240) + "…" : msg;
     }

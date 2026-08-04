@@ -248,9 +248,10 @@ public class ScheduleView {
 
     private VBox createTaskRow(ScheduledTask task) {
         boolean running = scheduleManager.isRunning(task.getId());
+        boolean active = scheduleManager.isActive(task.getId());
         boolean on = task.getId().equals(selectedTaskId);
 
-        Label dot = new Label(task.isEnabled() || running ? "●" : "○");
+        Label dot = new Label(task.isEnabled() || active ? "●" : "○");
         dot.getStyleClass().add(running ? "status-dot-running"
                 : (task.isEnabled() ? "status-dot-enabled" : "status-dot-disabled"));
 
@@ -267,8 +268,8 @@ public class ScheduleView {
             Region sp = new Region();
             HBox.setHgrow(sp, Priority.ALWAYS);
             line1.getChildren().addAll(sp, tag);
-        } else if (running) {
-            Label tag = new Label("运行中");
+        } else if (active) {
+            Label tag = new Label(running ? "运行中" : "排队中");
             tag.getStyleClass().addAll("jc-badge", "jc-badge-running");
             tag.setStyle("-fx-font-size:9.5px; -fx-padding:1 7 1 7;");
             Region sp = new Region();
@@ -293,7 +294,8 @@ public class ScheduleView {
         AccessibleActionPane row = new AccessibleActionPane(6, line1, trig, next);
         row.getStyleClass().add("schedule-list-row");
         row.setAccessibleText(task.getName() + "，"
-                + (running ? "正在执行" : task.isEnabled() ? "已启用" : "已暂停")
+                + (running ? "正在执行" : active ? "正在排队"
+                        : task.isEnabled() ? "已启用" : "已暂停")
                 + "，" + task.describeTrigger());
         if (on) row.getStyleClass().add("schedule-list-row-selected");
         row.setOpacity(task.isEnabled() ? 1.0 : 0.65);
@@ -310,6 +312,7 @@ public class ScheduleView {
 
     private String nextLineText(ScheduledTask task) {
         if (scheduleManager.isRunning(task.getId())) return "执行中…";
+        if (scheduleManager.isActive(task.getId())) return "排队中…";
         if (task.isBuiltin()) return "系统常驻 · " + task.getSourceModule();
         if (!task.isEnabled()) return "已暂停";
         LocalDateTime n = scheduleManager.getNextFireTime(task.getId());
@@ -318,7 +321,9 @@ public class ScheduleView {
     }
 
     private String lastStateKey(ScheduledTask t) {
-        return "失败".equals(t.getLastRunStatus()) ? "fail" : ("成功".equals(t.getLastRunStatus()) ? "ok" : "");
+        return "失败".equals(t.getLastRunStatus()) ? "fail"
+                : ("成功".equals(t.getLastRunStatus()) ? "ok"
+                : ("已取消".equals(t.getLastRunStatus()) ? "cancel" : ""));
     }
 
     // ==================== 详情 ====================
@@ -648,7 +653,8 @@ public class ScheduleView {
             return;
         }
         for (ScheduledTask.ExecRecord r : records) {
-            String stateKey = "失败".equals(r.getStatus()) ? "fail" : "ok";
+            String stateKey = "失败".equals(r.getStatus()) ? "fail"
+                    : ("已取消".equals(r.getStatus()) ? "cancel" : "ok");
             historyBox.getChildren().add(buildHistoryRow(
                     r.getTime(), r.getStatus(), r.getDuration(),
                     r.getNote() == null || r.getNote().isBlank() ? "—" : r.getNote(),
@@ -680,7 +686,11 @@ public class ScheduleView {
             if ("fail".equals(stateKey)) ln.getStyleClass().add("schedule-failure-text");
             ln.setWrapText(false);
             Label badge = new Label(status);
-            badge.getStyleClass().addAll("jc-badge", "fail".equals(stateKey) ? "jc-badge-fail" : "jc-badge-ok");
+            badge.getStyleClass().addAll("jc-badge", switch (stateKey) {
+                case "fail" -> "jc-badge-fail";
+                case "cancel" -> "jc-badge-stopped";
+                default -> "jc-badge-ok";
+            });
             badge.setStyle("-fx-font-size:10px; -fx-padding:1 8 1 8;");
             g.add(lt, 0, 0); g.add(badge, 1, 0); g.add(ld, 2, 0); g.add(ln, 3, 0);
         }
@@ -706,8 +716,11 @@ public class ScheduleView {
         ScheduledTask t = scheduleManager.getTask(selectedTaskId);
         if (t == null || t.isBuiltin()) return;  // 内置任务为只读面板，无动态状态控件
         boolean running = scheduleManager.isRunning(t.getId());
+        boolean active = scheduleManager.isActive(t.getId());
 
-        headerStateLabel.setText(running ? "运行中" : (t.isEnabled() ? "已启用" : "已暂停"));
+        headerStateLabel.setText(running
+                ? (t.isEnabled() ? "运行中" : "正在停止…")
+                : active ? "排队中" : (t.isEnabled() ? "已启用" : "已暂停"));
         if (headerToggle.isSelected() != t.isEnabled()) headerToggle.setSelected(t.isEnabled());
 
         statTriggerVal.setText(t.describeTrigger());
@@ -726,11 +739,14 @@ public class ScheduleView {
         // 上次运行
         boolean hasLast = t.getLastRunTime() != null && !t.getLastRunTime().isEmpty();
         statLastVal.setText(hasLast ? t.getLastRunTime() : "—");
-        statLastBadge.getStyleClass().removeAll("jc-badge-ok", "jc-badge-fail");
+        statLastBadge.getStyleClass().removeAll("jc-badge-ok", "jc-badge-fail", "jc-badge-stopped");
         if (hasLast) {
-            boolean ok = "成功".equals(t.getLastRunStatus());
             statLastBadge.setText(t.getLastRunStatus());
-            statLastBadge.getStyleClass().add(ok ? "jc-badge-ok" : "jc-badge-fail");
+            statLastBadge.getStyleClass().add(switch (lastStateKey(t)) {
+                case "ok" -> "jc-badge-ok";
+                case "cancel" -> "jc-badge-stopped";
+                default -> "jc-badge-fail";
+            });
             statLastBadge.setVisible(true);
             statLastBadge.setManaged(true);
         } else {
@@ -769,10 +785,22 @@ public class ScheduleView {
             statusHint.setText("草稿将在首次保存后" + (enabled ? "启用" : "保持暂停"));
             return;
         }
-        scheduleManager.updateTask(t);
-        refreshTaskList();
-        refreshDetailStatus();
-        statusHint.setText(enabled ? "已启用" : "已暂停");
+        try {
+            boolean wasActive = scheduleManager.isActive(t.getId());
+            if (!enabled && wasActive) statusHint.setText("正在停止…");
+            scheduleManager.updateTask(t);
+            refreshTaskList();
+            refreshDetailStatus();
+            statusHint.setText(enabled ? "已启用"
+                    : (scheduleManager.isActive(t.getId()) ? "正在停止…" : "已暂停"));
+        } catch (RuntimeException failure) {
+            log.warn("更新定时任务状态失败", failure);
+            ScheduledTask current = scheduleManager.getTask(t.getId());
+            if (current != null) showDetail(current);
+            statusHint.setText("状态更新失败：" + safeMessage(failure));
+            UIHelper.createWarningAlert("状态更新失败：" + safeMessage(failure), stage)
+                    .showAndWait();
+        }
     }
 
     private boolean onSaveTask() {
@@ -884,9 +912,27 @@ public class ScheduleView {
             if (!onSaveTask()) return;   // 草稿首次运行前必须先正式入库
             t = scheduleManager.getTask(selectedTaskId);
             if (t == null) return;
+            if (scheduleManager.isActive(selectedTaskId)) {
+                statusHint.setText("任务已在运行或排队");
+                return;
+            }
+            if (!t.isEnabled()) {
+                Alert confirm = UIHelper.createConfirmAlert("运行已暂停的任务",
+                        "定时任务「" + t.getName()
+                                + "」已暂停。本次只执行一次，不会重新启用，是否继续？", stage);
+                if (confirm.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
+            }
         }
-        scheduleManager.runNow(selectedTaskId);
-        statusHint.setText("正在执行…");
+        ScheduleManager.RunNowResult result = scheduleManager.runNow(selectedTaskId, !t.isEnabled());
+        switch (result) {
+            case STARTED -> statusHint.setText("已加入执行队列…");
+            case ALREADY_ACTIVE -> statusHint.setText("任务已在运行或排队");
+            case DISABLED -> statusHint.setText("任务已暂停");
+            case NOT_FOUND -> statusHint.setText("任务不存在");
+            case UNSUPPORTED -> statusHint.setText("当前任务不支持手动执行");
+        }
+        refreshTaskList();
+        refreshDetailStatus();
     }
 
     private void onDeleteTask() {
@@ -905,10 +951,20 @@ public class ScheduleView {
                 "确定要删除定时任务「" + t.getName() + "」吗？", stage);
         alert.showAndWait().ifPresent(r -> {
             if (r == ButtonType.OK) {
-                scheduleManager.deleteTask(selectedTaskId);
-                selectedTaskId = null;
-                showEmpty();
-                refreshTaskList();
+                try {
+                    scheduleManager.deleteTask(selectedTaskId);
+                    selectedTaskId = null;
+                    showEmpty();
+                    refreshTaskList();
+                } catch (RuntimeException failure) {
+                    log.warn("删除定时任务失败", failure);
+                    statusHint.setText("删除失败：" + safeMessage(failure));
+                    UIHelper.createWarningAlert(
+                            "删除定时任务失败：" + safeMessage(failure), stage).showAndWait();
+                    ScheduledTask current = scheduleManager.getTask(selectedTaskId);
+                    if (current != null) showDetail(current);
+                    refreshTaskList();
+                }
             }
         });
     }
@@ -925,7 +981,8 @@ public class ScheduleView {
         ScheduledTask sel = selectedEditableTask();
         boolean editable = sel != null && !sel.isBuiltin();  // 内置任务只读，禁用保存
         // 立即运行：普通任务恒可；内置任务仅当注册了手动动作时可用
-        boolean canRun = sel != null && (editable || scheduleManager.hasBuiltinAction(sel.getId()));
+        boolean canRun = sel != null && !scheduleManager.isActive(sel.getId())
+                && (editable || scheduleManager.hasBuiltinAction(sel.getId()));
         if (runNowBtn != null) { runNowBtn.setDisable(!canRun); }
         if (saveBtn != null) { saveBtn.setDisable(!editable); }
     }

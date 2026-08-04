@@ -1,5 +1,6 @@
 package com.javaclaw.app;
 
+import com.javaclaw.config.AppDatabase;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,7 +33,17 @@ public class Launcher {
         log.info("JavaFX 版本: {}", System.getProperty("javafx.version"));
         log.info("操作系统: {} {}", System.getProperty("os.name"), System.getProperty("os.arch"));
 
-        // 委托给 JavaFX Application 启动
-        JavaClawApp.main(args);
+        // 必须在 JavaFX、H2、Quartz 和托盘初始化前抢占单实例资格。
+        try (SingleInstanceCoordinator coordinator =
+                     SingleInstanceCoordinator.acquire(AppDatabase.dataDirectory())) {
+            if (coordinator == null) {
+                log.info("已唤起正在运行的 JavaClaw 实例，本进程退出");
+                return;
+            }
+            // 委托给 JavaFX Application 启动
+            JavaClawApp.main(args);
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("无法初始化 JavaClaw 单实例协调器", e);
+        }
     }
 }

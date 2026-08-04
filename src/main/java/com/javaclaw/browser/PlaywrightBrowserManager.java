@@ -1,6 +1,7 @@
 package com.javaclaw.browser;
 
 import com.javaclaw.config.AppDatabase;
+import com.javaclaw.util.ProjectAccessPolicy;
 import com.microsoft.playwright.*;
 import com.microsoft.playwright.options.*;
 import org.slf4j.Logger;
@@ -9,9 +10,10 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Playwright 浏览器生命周期管理器
@@ -29,6 +31,7 @@ public class PlaywrightBrowserManager {
 
     private static final Logger log = LoggerFactory.getLogger(PlaywrightBrowserManager.class);
     private static final String STORAGE_STATE_KEY = "playwright-storage-state";
+    private static final String DEFAULT_SCOPE_ID = "interactive:default";
 
     /** 默认视口宽度 */
     private static final int DEFAULT_VIEWPORT_WIDTH = 1280;
@@ -48,6 +51,15 @@ public class PlaywrightBrowserManager {
     private final List<Page> pages = new ArrayList<>();
     private int activePageIndex = 0;
 
+    /**
+     * 交互浏览器一次只激活一个会话 Context；切换会话时把 storageState 暂存在内存，
+     * 关闭旧 Context，再在同一 Browser 进程中创建新 Context。这样既隔离账号，又不为每个
+     * 聊天会话启动一个 Chromium 进程。
+     */
+    private final Map<String, ScopeSnapshot> scopeSnapshots = new LinkedHashMap<>();
+    private String activeScopeId = DEFAULT_SCOPE_ID;
+    private String requestedScopeId = DEFAULT_SCOPE_ID;
+
     /** 浏览器状态目录（Cookie 持久化等） */
     private Path browserDir;
 
@@ -57,12 +69,28 @@ public class PlaywrightBrowserManager {
     /** 是否无头模式 */
     private final boolean headless;
 
+    /** 当前实际启动模式；交互式登录期间会临时切换为可见浏览器。 */
+    private boolean currentHeadless;
+
+    /** 是否正处于交互式登录的可见浏览器阶段。 */
+    private boolean userInteractionActive;
+
+    /** 本次交互式登录开始前的状态，用于用户拒绝保存时限定为当前会话内存状态。 */
+    private String userInteractionBaselineState;
+
     /**
-     * 是否把浏览器会话状态（storageState/Cookie）写回 H2。默认 {@code true}。
+     * 非空表示当前 Context 含有“仅限本次会话”的登录态。该状态只保存在当前会话的内存快照，
+     * 任务重置时可用此基线回滚，绝不写入工作区级全局认证状态。
+     */
+    private String transientPersistenceBaseline;
+
+    /**
+     * 兼容旧构造签名。完整账号隔离后，浏览器认证态不再写入工作区级 browser_state；
+     * 持久化只允许经 site_sessions 按具体账号配置写入。
      *
-     * <p>置 {@code false} 时 {@link #saveCookies()} 变为空操作——用于与主浏览器<b>并行</b>运行的
-     * 隔离浏览器（如循环模式的独立实例）：它仍在启动时加载共享的登录态（继承会话），但退出时
-     * 不回写，避免其临时会话覆盖交互浏览器仍在使用的同一 {@code browser_state} 行（按工作区单行）。</p>
+     * <p>置 {@code false} 时 {@link #saveCookies()} 变为空操作，用于与主浏览器并行运行的
+     * 隔离浏览器（循环、定时、SDD）。这些浏览器只会按明确选中的 site_sessions 账号恢复，
+     * 不继承任何聊天会话。</p>
      */
     private final boolean persistCookies;
 
@@ -83,18 +111,33 @@ public class PlaywrightBrowserManager {
      * 首次调用时启动 Playwright 和 Chromium，后续调用直接返回。
      */
     public synchronized void ensureLaunched() {
-        if (browser != null && browser.isConnected()) {
+        activateRequestedScopeIfNeeded();
+        if (browser != null && browser.isConnected() && context != null) {
             return;
         }
-        launch();
+        if (browser != null && browser.isConnected()) {
+            openContext(snapshotFor(activeScopeId));
+        } else {
+            launch();
+        }
     }
 
     /**
      * 启动 Playwright 和浏览器实例
      */
     private void launch() {
+        launch(headless, snapshotFor(activeScopeId));
+    }
 
-        log.info("正在启动 Playwright 浏览器（headless={}）...", headless);
+    /**
+     * 以指定显示模式和会话状态启动浏览器。
+     *
+     * @param launchHeadless       本次是否无头；不改变构造时配置的默认模式
+     * @param snapshotOverride 可选的当前会话内存快照；为空时创建全新空白 Context
+     */
+    private void launch(boolean launchHeadless, ScopeSnapshot snapshotOverride) {
+
+        log.info("正在启动 Playwright 浏览器（headless={}）...", launchHeadless);
 
         try {
             this.playwright = Playwright.create();
@@ -104,7 +147,7 @@ public class PlaywrightBrowserManager {
             log.info("检测到系统默认浏览器 channel: {}", channel);
 
             BrowserType.LaunchOptions launchOptions = new BrowserType.LaunchOptions()
-                    .setHeadless(headless)
+                    .setHeadless(launchHeadless)
                     .setArgs(List.of(
                             "--disable-blink-features=AutomationControlled",
                             "--no-first-run",
@@ -115,25 +158,8 @@ public class PlaywrightBrowserManager {
             }
             this.browser = playwright.chromium().launch(launchOptions);
 
-            // 创建浏览器上下文（带持久化存储路径）
-            Browser.NewContextOptions contextOptions = new Browser.NewContextOptions()
-                    .setViewportSize(DEFAULT_VIEWPORT_WIDTH, DEFAULT_VIEWPORT_HEIGHT)
-                    .setLocale("zh-CN")
-                    .setTimezoneId("Asia/Shanghai")
-                    .setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36");
-            this.context = browser.newContext(contextOptions);
-
-            // 设置默认超时
-            context.setDefaultNavigationTimeout(DEFAULT_NAVIGATION_TIMEOUT);
-            context.setDefaultTimeout(DEFAULT_ACTION_TIMEOUT);
-
-            // 加载已保存的 Cookie
-            loadCookies();
-
-            // 创建初始 Tab
-            Page initialPage = context.newPage();
-            pages.add(initialPage);
-            activePageIndex = 0;
+            this.currentHeadless = launchHeadless;
+            openContext(snapshotOverride);
 
             log.info("Playwright 浏览器已启动，初始 Tab 已创建");
         } catch (Exception e) {
@@ -146,11 +172,48 @@ public class PlaywrightBrowserManager {
         }
     }
 
+    private BrowserContext createContext(String storageState) {
+        Browser.NewContextOptions options = newContextOptions();
+        if (storageState != null && !storageState.isBlank()) {
+            options.setStorageState(storageState);
+        }
+        try {
+            return browser.newContext(options);
+        } catch (PlaywrightException e) {
+            if (storageState == null || storageState.isBlank()) throw e;
+            log.warn("恢复浏览器 storageState 失败，将使用空白会话启动: {}", e.getMessage());
+            return browser.newContext(newContextOptions());
+        }
+    }
+
+    private void openContext(ScopeSnapshot snapshot) {
+        String storageState = snapshot == null ? null : snapshot.storageState();
+        this.context = createContext(storageState);
+        context.setDefaultNavigationTimeout(DEFAULT_NAVIGATION_TIMEOUT);
+        context.setDefaultTimeout(DEFAULT_ACTION_TIMEOUT);
+        pages.clear();
+        pages.add(context.newPage());
+        activePageIndex = 0;
+        transientPersistenceBaseline = snapshot == null ? null : snapshot.transientBaseline();
+        userInteractionActive = false;
+        userInteractionBaselineState = null;
+        log.info("浏览器 Context 已激活: scope={}", activeScopeId);
+    }
+
+    private Browser.NewContextOptions newContextOptions() {
+        return new Browser.NewContextOptions()
+                .setViewportSize(DEFAULT_VIEWPORT_WIDTH, DEFAULT_VIEWPORT_HEIGHT)
+                .setLocale("zh-CN")
+                .setTimezoneId("Asia/Shanghai")
+                .setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36");
+    }
+
     /**
      * 获取当前活跃页面（自动懒启动浏览器）
      */
     public synchronized Page getActivePage() {
         ensureLaunched();
+        syncContextPages();
         if (pages.isEmpty()) {
             return null;
         }
@@ -158,6 +221,123 @@ public class PlaywrightBrowserManager {
             activePageIndex = pages.size() - 1;
         }
         return pages.get(activePageIndex);
+    }
+
+    /**
+     * 临时把无头浏览器切换为可见窗口，并在完整继承当前会话的前提下打开登录页。
+     * 用户可直接在该 Playwright 窗口中完成 SSO、验证码或双因素认证。
+     */
+    public synchronized Page showPageForUser(String url) {
+        ensureLaunched();
+        String normalizedUrl = normalizeUrl(url);
+        if (!userInteractionActive) {
+            userInteractionBaselineState = context.storageState();
+        }
+
+        if (currentHeadless) {
+            String state = context.storageState();
+            String interactionBaseline = userInteractionBaselineState;
+            closeBrowserResources(false);
+            try {
+                launch(false, new ScopeSnapshot(state, transientPersistenceBaseline));
+                userInteractionBaselineState = interactionBaseline;
+            } catch (RuntimeException visibleLaunchFailure) {
+                try {
+                    launch(headless, new ScopeSnapshot(state, transientPersistenceBaseline));
+                    userInteractionBaselineState = interactionBaseline;
+                } catch (RuntimeException restoreFailure) {
+                    visibleLaunchFailure.addSuppressed(restoreFailure);
+                }
+                throw visibleLaunchFailure;
+            }
+        }
+
+        userInteractionActive = true;
+        Page page = getActivePage();
+        if (page == null) {
+            throw new PlaywrightException("无法创建交互式登录页面");
+        }
+        page.navigate(normalizedUrl, new Page.NavigateOptions()
+                .setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+        page.bringToFront();
+        return page;
+    }
+
+    /**
+     * 结束用户操作阶段。若管理器默认无头，则把用户刚取得的完整会话迁回新的无头 Context，
+     * 并继续停留在登录完成后的页面；这样“不保存站点”只影响下次使用，不影响当前任务。
+     *
+     * @param persistSession 用户是否明确同意把本次登录态用于后续任务
+     */
+    public synchronized Page resumeAfterUserInteraction(boolean persistSession) {
+        if (!userInteractionActive) {
+            return getActivePage();
+        }
+
+        syncContextPages();
+        Page visiblePage = activeOpenPage();
+        String returnUrl = visiblePage == null ? "about:blank" : visiblePage.url();
+        String state = context == null ? null : context.storageState();
+        userInteractionActive = false;
+        if (!persistSession && transientPersistenceBaseline == null) {
+            transientPersistenceBaseline = userInteractionBaselineState;
+        }
+        userInteractionBaselineState = null;
+
+        if (!headless || currentHeadless) {
+            return visiblePage;
+        }
+
+        closeBrowserResources(false);
+        launch(true, new ScopeSnapshot(state, transientPersistenceBaseline));
+        Page page = getActivePage();
+        if (page != null && returnUrl != null && !returnUrl.isBlank()
+                && !"about:blank".equals(returnUrl)) {
+            page.navigate(returnUrl, new Page.NavigateOptions()
+                    .setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+        }
+        return page;
+    }
+
+    /**
+     * 标记当前 Context 新增的登录态只在本次任务内有效。用于无需切换可见浏览器的传统表单登录。
+     */
+    public synchronized void keepSessionTransientUntilTaskReset(String baselineState) {
+        if (transientPersistenceBaseline == null
+                && baselineState != null && !baselineState.isBlank()) {
+            transientPersistenceBaseline = baselineState;
+        }
+    }
+
+    /** 同步用户在可见浏览器里自行打开/关闭的 Tab（包括 SSO 弹窗）。 */
+    private void syncContextPages() {
+        pages.removeIf(page -> page == null || page.isClosed());
+        if (context == null) return;
+        for (Page page : context.pages()) {
+            if (!page.isClosed() && !pages.contains(page)) {
+                pages.add(page);
+                activePageIndex = pages.size() - 1;
+            }
+        }
+        if (!pages.isEmpty() && activePageIndex >= pages.size()) {
+            activePageIndex = pages.size() - 1;
+        }
+    }
+
+    private Page activeOpenPage() {
+        if (pages.isEmpty()) return null;
+        if (activePageIndex < 0 || activePageIndex >= pages.size()) {
+            activePageIndex = pages.size() - 1;
+        }
+        Page active = pages.get(activePageIndex);
+        if (!active.isClosed()) return active;
+        for (int i = pages.size() - 1; i >= 0; i--) {
+            if (!pages.get(i).isClosed()) {
+                activePageIndex = i;
+                return pages.get(i);
+            }
+        }
+        return null;
     }
 
     // ==================== Tab 管理 ====================
@@ -236,6 +416,7 @@ public class PlaywrightBrowserManager {
      * @return Tab 信息列表（索引、标题、URL）
      */
     public synchronized List<String> listTabs() {
+        syncContextPages();
         List<String> tabInfos = new ArrayList<>();
         for (int i = 0; i < pages.size(); i++) {
             Page page = pages.get(i);
@@ -252,6 +433,7 @@ public class PlaywrightBrowserManager {
      * 获取所有 Cookie
      */
     public synchronized List<Cookie> getCookies() {
+        ensureLaunched();
         return context.cookies();
     }
 
@@ -259,6 +441,7 @@ public class PlaywrightBrowserManager {
      * 设置 Cookie
      */
     public synchronized void setCookie(Cookie cookie) {
+        ensureLaunched();
         context.addCookies(List.of(cookie));
     }
 
@@ -272,97 +455,25 @@ public class PlaywrightBrowserManager {
     }
 
     /**
-     * 保存 Cookie 到磁盘
+     * 清除旧版工作区级浏览器认证态。
+     *
+     * <p>保留方法名是为了兼容应用生命周期调用点。登录持久化现在只能通过
+     * {@code SiteCredentialManager.tryWriteSession(...)} 写入具体账号配置；这里不再保存
+     * 当前 Context，避免任一会话成为整个工作区的隐式默认账号。</p>
      */
     public synchronized void saveCookies() {
-        // 隔离浏览器（persistCookies=false）不回写共享会话行，避免覆盖交互浏览器仍在用的登录态
         if (!persistCookies) return;
-        if (context == null || browserDir == null || browser == null || !browser.isConnected()) return;
         try {
-            List<Cookie> cookies = context.cookies();
-            // 使用 Playwright 的 storageState 保存完整状态
-            String state = context.storageState();
             try (Connection c = AppDatabase.getConnection();
-                 PreparedStatement ps = c.prepareStatement("""
-                         MERGE INTO browser_state(workspace_id, state_key, state_json, updated_at)
-                         KEY(workspace_id, state_key)
-                         VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-                         """)) {
+                 PreparedStatement ps = c.prepareStatement(
+                         "DELETE FROM browser_state WHERE workspace_id = ? AND state_key = ?")) {
                 ps.setString(1, AppDatabase.currentWorkspaceId());
                 ps.setString(2, STORAGE_STATE_KEY);
-                ps.setString(3, state);
                 ps.executeUpdate();
             }
-            log.info("已保存 {} 个 Cookie 到 H2", cookies.size());
         } catch (Exception e) {
-            log.error("保存 Cookie 失败", e);
+            log.warn("清除旧版工作区浏览器认证态失败: {}", e.getMessage());
         }
-    }
-
-    /**
-     * 从磁盘加载 Cookie
-     */
-    private void loadCookies() {
-        if (browserDir == null) return;
-
-        try {
-            String state = loadStorageStateJson();
-            if (state == null || state.isBlank()) return;
-            // 解析 storageState JSON 并恢复 Cookie
-            // storageState 格式: {"cookies":[...], "origins":[...]}
-            // 这里使用简单方式：关闭当前 context 并用 storageState 重新创建
-            // 但由于 context 已创建，使用 addCookies 方式恢复
-            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            com.fasterxml.jackson.databind.JsonNode root = mapper.readTree(state);
-            com.fasterxml.jackson.databind.JsonNode cookiesNode = root.get("cookies");
-            if (cookiesNode != null && cookiesNode.isArray()) {
-                List<Cookie> cookies = new ArrayList<>();
-                for (com.fasterxml.jackson.databind.JsonNode node : cookiesNode) {
-                    Cookie cookie = new Cookie(
-                            node.get("name").asText(),
-                            node.get("value").asText()
-                    );
-                    cookie.setDomain(node.get("domain").asText());
-                    cookie.setPath(node.get("path").asText());
-                    if (node.has("expires") && node.get("expires").asDouble() > 0) {
-                        cookie.setExpires(node.get("expires").asDouble());
-                    }
-                    cookie.setHttpOnly(node.has("httpOnly") && node.get("httpOnly").asBoolean());
-                    cookie.setSecure(node.has("secure") && node.get("secure").asBoolean());
-                    if (node.has("sameSite")) {
-                        String ss = node.get("sameSite").asText();
-                        try {
-                            cookie.setSameSite(SameSiteAttribute.valueOf(ss.toUpperCase()));
-                        } catch (IllegalArgumentException ignored) {
-                        }
-                    }
-                    cookies.add(cookie);
-                }
-                if (!cookies.isEmpty()) {
-                    context.addCookies(cookies);
-                    log.info("已恢复 {} 个 Cookie", cookies.size());
-                }
-            }
-        } catch (Exception e) {
-            log.warn("加载 Cookie 失败: {}", e.getMessage());
-        }
-    }
-
-    private String loadStorageStateJson() {
-        try (Connection c = AppDatabase.getConnection();
-             PreparedStatement ps = c.prepareStatement(
-                     "SELECT state_json FROM browser_state WHERE workspace_id = ? AND state_key = ?")) {
-            ps.setString(1, AppDatabase.currentWorkspaceId());
-            ps.setString(2, STORAGE_STATE_KEY);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    return rs.getString("state_json");
-                }
-            }
-        } catch (Exception e) {
-            log.warn("从 H2 读取浏览器状态失败: {}", e.getMessage());
-        }
-        return null;
     }
 
     // ==================== 视口与配置 ====================
@@ -388,6 +499,9 @@ public class PlaywrightBrowserManager {
      * @return Playwright channel 名称，如 "chrome"、"msedge"、"chromium"
      */
     private static String detectDefaultBrowserChannel() {
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return "chrome";
+        }
         try {
             String os = System.getProperty("os.name", "").toLowerCase();
             String bundleId = null;
@@ -463,6 +577,117 @@ public class PlaywrightBrowserManager {
         return url;
     }
 
+    // ==================== 会话作用域 ====================
+
+    /**
+     * 请求把后续浏览器操作切换到指定会话作用域。
+     *
+     * <p>此方法本身不触碰 Playwright，实际切换延迟到下一次浏览器操作所在的工作线程，
+     * 避免 UI 切换聊天时直接操作由后台线程创建的浏览器对象。</p>
+     */
+    public synchronized void activateScope(String scopeId) {
+        requestedScopeId = normalizeScopeId(scopeId);
+    }
+
+    public static String conversationScopeId(String sessionId) {
+        return "conversation:" + (sessionId == null || sessionId.isBlank()
+                ? "default" : sessionId.trim());
+    }
+
+    /** 当前请求使用的作用域 ID。 */
+    public synchronized String getActiveScopeId() {
+        return requestedScopeId;
+    }
+
+    /**
+     * 释放一个会话的内存认证态。聊天会话删除时调用；持久化的站点账号会话不受影响。
+     */
+    public synchronized void releaseScope(String scopeId) {
+        String normalized = normalizeScopeId(scopeId);
+        scopeSnapshots.remove(normalized);
+        boolean activeMatch = normalized.equals(activeScopeId);
+        boolean requestedMatch = normalized.equals(requestedScopeId);
+        if (!activeMatch && !requestedMatch) return;
+
+        if (activeMatch) {
+            closeCurrentContext();
+            activeScopeId = DEFAULT_SCOPE_ID;
+            // 若另一个会话已请求接管浏览器，保留该请求；下一次操作会直接打开它，
+            // 不能因删除当前会话而把新会话的请求一并重置。
+            if (requestedMatch) requestedScopeId = DEFAULT_SCOPE_ID;
+            transientPersistenceBaseline = null;
+            userInteractionBaselineState = null;
+            userInteractionActive = false;
+        } else {
+            // 仅取消一个尚未真正激活的切换请求，当前 Context 不应被误关。
+            requestedScopeId = activeScopeId;
+        }
+        log.info("已释放浏览器会话作用域: {}", normalized);
+    }
+
+    /**
+     * 用空白 Context 替换当前会话 Context。切换同一站点账号前调用，确保旧账号的
+     * Cookie、localStorage、IndexedDB、缓存和 Service Worker 不会与新账号混合。
+     */
+    public synchronized void replaceActiveContextWithBlank() {
+        ensureLaunched();
+        scopeSnapshots.remove(activeScopeId);
+        closeCurrentContext();
+        transientPersistenceBaseline = null;
+        openContext(null);
+    }
+
+    /**
+     * 创建无人值守任务专属浏览器。它不继承交互会话，也不会把临时认证态写回全局状态。
+     */
+    public synchronized PlaywrightBrowserManager createIsolated(String scopeId) {
+        String normalized = normalizeScopeId(scopeId);
+        Path isolatedDir = browserDir == null ? null
+                : browserDir.resolve("isolated").resolve(Integer.toHexString(normalized.hashCode()));
+        PlaywrightBrowserManager isolated = new PlaywrightBrowserManager(
+                true, isolatedDir, screenshotDir, false);
+        isolated.activateScope(normalized);
+        return isolated;
+    }
+
+    private void activateRequestedScopeIfNeeded() {
+        if (requestedScopeId.equals(activeScopeId)) return;
+        if (userInteractionActive) {
+            throw new IllegalStateException("用户正在浏览器中登录，暂不能切换聊天会话");
+        }
+
+        snapshotActiveScope();
+        closeCurrentContext();
+        activeScopeId = requestedScopeId;
+        ScopeSnapshot snapshot = snapshotFor(activeScopeId);
+        transientPersistenceBaseline = snapshot == null ? null : snapshot.transientBaseline();
+        if (browser != null && browser.isConnected()) {
+            openContext(snapshot);
+        }
+        log.info("浏览器已切换会话作用域: {}", activeScopeId);
+    }
+
+    private void snapshotActiveScope() {
+        if (context == null || activeScopeId == null) return;
+        try {
+            scopeSnapshots.put(activeScopeId,
+                    new ScopeSnapshot(context.storageState(), transientPersistenceBaseline));
+        } catch (Exception e) {
+            log.warn("保存浏览器会话内存快照失败 scope={}: {}", activeScopeId, e.getMessage());
+        }
+    }
+
+    private ScopeSnapshot snapshotFor(String scopeId) {
+        return scopeSnapshots.get(normalizeScopeId(scopeId));
+    }
+
+    private static String normalizeScopeId(String scopeId) {
+        return scopeId == null || scopeId.isBlank() ? DEFAULT_SCOPE_ID : scopeId.trim();
+    }
+
+    private record ScopeSnapshot(String storageState, String transientBaseline) {
+    }
+
     // ==================== 生命周期 ====================
 
     /**
@@ -482,12 +707,17 @@ public class PlaywrightBrowserManager {
     /**
      * 切换浏览器所属工作区。
      *
-     * <p>调用方必须在切换全局 workspace id 之前显式调用 {@link #saveCookies()}。这里关闭旧
-     * 浏览器时刻意不再保存，否则旧上下文会被写进已经切换完成的新工作区记录。下一次使用
-     * 浏览器时会按新工作区的 H2 状态懒启动并恢复会话。</p>
+     * <p>切换时关闭浏览器并清空全部会话内存快照。下一次使用从空白 Context 开始，
+     * 只有明确绑定的站点账号可从 site_sessions 恢复。</p>
      */
     public synchronized void rebindWorkspace(Path newBrowserDir, Path newScreenshotDir) {
         closeBrowserResources(false);
+        scopeSnapshots.clear();
+        activeScopeId = DEFAULT_SCOPE_ID;
+        requestedScopeId = DEFAULT_SCOPE_ID;
+        userInteractionActive = false;
+        userInteractionBaselineState = null;
+        transientPersistenceBaseline = null;
         this.browserDir = newBrowserDir;
         this.screenshotDir = newScreenshotDir;
         log.info("浏览器已绑定新工作区路径: browser={}, screenshots={}",
@@ -505,6 +735,14 @@ public class PlaywrightBrowserManager {
         }
 
         log.info("正在重置浏览器状态（任务结束清理）...");
+
+        // 用户拒绝保存的登录态只服务当前任务：任务结束先回到登录前基线，再执行常规清理/持久化。
+        if (transientPersistenceBaseline != null) {
+            String baseline = transientPersistenceBaseline;
+            transientPersistenceBaseline = null;
+            closeBrowserResources(false);
+            launch(headless, new ScopeSnapshot(baseline, null));
+        }
 
         // 关闭多余 Tab，只保留第一个
         while (pages.size() > 1) {
@@ -524,7 +762,7 @@ public class PlaywrightBrowserManager {
             }
         }
 
-        // 保存 Cookie
+        // 只清除旧版全局认证态；站点账号状态由 site_sessions 独立持久化
         saveCookies();
 
         log.info("浏览器状态已重置");
@@ -537,6 +775,9 @@ public class PlaywrightBrowserManager {
         log.info("正在关闭 Playwright 浏览器...");
 
         closeBrowserResources(true);
+        scopeSnapshots.clear();
+        activeScopeId = DEFAULT_SCOPE_ID;
+        requestedScopeId = DEFAULT_SCOPE_ID;
 
         log.info("Playwright 浏览器已关闭");
     }
@@ -547,23 +788,7 @@ public class PlaywrightBrowserManager {
         // 保存 Cookie
         if (saveState) saveCookies();
 
-        // 关闭所有页面
-        for (Page page : pages) {
-            try {
-                page.close();
-            } catch (Exception ignored) {
-            }
-        }
-        pages.clear();
-
-        // 关闭上下文
-        if (context != null) {
-            try {
-                context.close();
-            } catch (Exception ignored) {
-            }
-            context = null;
-        }
+        closeCurrentContext();
 
         // 关闭浏览器
         if (browser != null) {
@@ -583,5 +808,28 @@ public class PlaywrightBrowserManager {
             playwright = null;
         }
 
+    }
+
+    /** 只关闭当前 Context 和页面，保留 Chromium/Playwright 进程供下个会话复用。 */
+    private void closeCurrentContext() {
+        for (Page page : pages) {
+            try {
+                page.close();
+            } catch (Exception ignored) {
+            }
+        }
+        pages.clear();
+
+        // 关闭上下文
+        if (context != null) {
+            try {
+                context.close();
+            } catch (Exception ignored) {
+            }
+            context = null;
+        }
+        activePageIndex = 0;
+        userInteractionActive = false;
+        userInteractionBaselineState = null;
     }
 }

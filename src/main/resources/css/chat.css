@@ -956,6 +956,131 @@
     -fx-alignment: center;
 }
 
+/* 点击底部个人框向上弹出菜单，功能入口不再单独占一行。 */
+.sidebar-profile-menu-button {
+    -fx-background-color: -jc-neutral-100;
+    -fx-border-color: transparent;
+    -fx-background-radius: 11;
+    -fx-border-radius: 11;
+    -fx-padding: 6 7 6 8;
+    -fx-min-height: 50;
+    -fx-cursor: hand;
+}
+
+.sidebar-profile-menu-button:hover {
+    -fx-background-color: -jc-neutral-200;
+}
+
+.sidebar-profile-menu-button-open {
+    -fx-background-color: -jc-primary-50;
+    -fx-border-color: -jc-primary-200;
+    -fx-border-width: 1;
+}
+
+.sidebar-profile-menu-button > .label {
+    -fx-padding: 0;
+}
+
+.sidebar-profile-menu-chevron {
+    -fx-text-fill: -jc-text-hint;
+    -fx-font-size: 13px;
+    -fx-font-weight: 700;
+    -fx-padding: 0 3 0 1;
+}
+
+.sidebar-profile-menu-button-open .sidebar-profile-menu-chevron {
+    -fx-text-fill: -jc-primary-500;
+}
+
+.sidebar-profile-menu-badge {
+    -fx-background-color: -jc-primary-500;
+    -fx-background-radius: 999;
+    -fx-text-fill: white;
+    -fx-font-size: 10px;
+    -fx-font-weight: 700;
+    -fx-padding: 1 6 1 6;
+    -fx-min-width: 20;
+    -fx-alignment: center;
+}
+
+/* 弹层顶部展示当前个人身份，保持和触发框一致。 */
+.context-menu .menu-item.sidebar-profile-header-item {
+    -fx-padding: 8 12 8 12;
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-cursor: default;
+}
+
+.context-menu .menu-item.sidebar-profile-header-item:focused {
+    -fx-background-color: transparent;
+}
+
+.context-menu .menu-item.sidebar-profile-header-item .sidebar-profile-popup-header {
+    -fx-min-width: 176;
+}
+
+.context-menu .menu-item.sidebar-profile-header-item .sidebar-avatar {
+    -fx-text-fill: white;
+    -fx-font-size: 12px;
+}
+
+.context-menu .menu-item.sidebar-profile-header-item .sidebar-user-name {
+    -fx-text-fill: -jc-neutral-800;
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+}
+
+.context-menu .menu-item.sidebar-profile-header-item .sidebar-user-team {
+    -fx-text-fill: -jc-neutral-400;
+    -fx-font-size: 11px;
+}
+
+/* CustomMenuItem 保留原有图标、快捷键和徽章排版。 */
+.context-menu .menu-item.sidebar-profile-menu-item {
+    -fx-padding: 0;
+    -fx-background-insets: 0 4 0 4;
+    -fx-background-radius: 8;
+}
+
+.context-menu .menu-item.sidebar-profile-menu-item .sidebar-nav-row {
+    -fx-background-color: transparent;
+    -fx-min-height: 34;
+}
+
+.context-menu .menu-item.sidebar-profile-menu-item .sidebar-nav-icon {
+    -fx-text-fill: -jc-neutral-500;
+    -fx-font-size: 14px;
+}
+
+.context-menu .menu-item.sidebar-profile-menu-item .sidebar-nav-text {
+    -fx-text-fill: -jc-neutral-700;
+    -fx-font-size: 13px;
+    -fx-font-weight: 500;
+}
+
+.context-menu .menu-item.sidebar-profile-menu-item .sidebar-nav-shortcut {
+    -fx-text-fill: -jc-neutral-400;
+    -fx-font-size: 11px;
+}
+
+.context-menu .menu-item.sidebar-profile-menu-item .sidebar-nav-badge {
+    -fx-text-fill: -jc-neutral-500;
+    -fx-font-size: 11px;
+}
+
+.context-menu .menu-item.sidebar-profile-menu-item:focused {
+    -fx-background-color: -jc-neutral-100;
+}
+
+.context-menu .menu-item.sidebar-profile-menu-item:focused .sidebar-nav-icon {
+    -fx-text-fill: -jc-primary-500;
+}
+
+.context-menu .menu-item.sidebar-profile-menu-item:focused .sidebar-nav-text {
+    -fx-text-fill: -jc-text-title;
+    -fx-font-weight: 600;
+}
+
 /* 键位提示胶囊（如搜索框旁的 ⌘K） */
 .kbd-chip {
     -fx-background-color: -jc-surface-card;
@@ -1082,8 +1207,17 @@
     -fx-text-fill: -jc-text-hint;
     -fx-font-size: 11px;
     -fx-font-weight: 700;
-    -fx-padding: 10 12 4 12;
+    -fx-padding: 11 8 4 8;
     -fx-background-color: transparent;
+}
+
+.sidebar-group-count {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 999;
+    -fx-text-fill: -jc-text-hint;
+    -fx-font-size: 9.5px;
+    -fx-font-weight: 600;
+    -fx-padding: 1 6 1 6;
 }
 
 .sidebar-manage-icon {
@@ -1108,22 +1242,21 @@
 
 /* 会话管理按钮 */
 .sidebar-manage-btn {
-    -fx-background-color: -jc-primary-50;
-    -fx-text-fill: -jc-primary-500;
-    -fx-background-radius: 8;
-    -fx-padding: 4 12 4 12;
-    -fx-font-size: 12px;
+    -fx-background-color: transparent;
+    -fx-text-fill: -jc-text-muted;
+    -fx-background-radius: 7;
+    -fx-padding: 3 8 3 8;
+    -fx-font-size: 11px;
     -fx-font-weight: 600;
     -fx-cursor: hand;
-    -fx-border-color: -jc-primary-200;
-    -fx-border-radius: 8;
-    -fx-border-width: 1;
+    -fx-border-color: transparent;
+    -fx-border-radius: 7;
+    -fx-border-width: 0;
 }
 
 .sidebar-manage-btn:hover {
-    -fx-background-color: -jc-primary-500;
-    -fx-text-fill: white;
-    -fx-border-color: -jc-primary-500;
+    -fx-background-color: -jc-neutral-100;
+    -fx-text-fill: -jc-primary-600;
 }
 
 .sidebar-batch-select-all-btn {
@@ -1169,10 +1302,37 @@
     -fx-background: transparent;
     -fx-background-color: transparent;
     -fx-border-color: transparent;
+    -fx-padding: 0;
 }
 
 .sidebar-list-scroll > .viewport {
     -fx-background-color: transparent;
+}
+
+.sidebar-list-layer {
+    -fx-background-color: transparent;
+}
+
+.sidebar-empty-state {
+    -fx-padding: 24 20 24 20;
+    -fx-max-width: 210;
+}
+
+.sidebar-empty-icon {
+    -fx-text-fill: -jc-neutral-300;
+    -fx-font-size: 20px;
+}
+
+.sidebar-empty-title {
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 12.5px;
+    -fx-font-weight: 600;
+}
+
+.sidebar-empty-hint {
+    -fx-text-fill: -jc-text-hint;
+    -fx-font-size: 11px;
+    -fx-text-alignment: center;
 }
 
 /* 侧边栏滚动条 */
@@ -1186,25 +1346,34 @@
 
 /* 会话列表项 */
 .sidebar-conv-row {
-    -fx-background-radius: 12;
+    -fx-background-color: transparent;
+    -fx-background-radius: 9;
+    -fx-border-color: transparent;
+    -fx-border-width: 1;
+    -fx-border-radius: 9;
     -fx-cursor: hand;
-    -fx-padding: 8 12 8 12;
+    -fx-padding: 7 9 7 9;
+    -fx-min-height: 34;
 }
 
 .sidebar-conv-row:hover {
-    -fx-background-color: -jc-brand-hover;
+    -fx-background-color: -jc-neutral-100;
 }
 
 .sidebar-conv-selected {
-    -fx-background-color: -jc-neutral-100;
-    -fx-border-color: -jc-primary-500;
-    -fx-border-width: 0 0 0 3;
-    -fx-border-radius: 0 12 12 0;
-    -fx-background-radius: 0 12 12 0;
+    -fx-background-color: -jc-primary-50;
+    -fx-border-color: -jc-primary-200;
+    -fx-border-width: 1;
+    -fx-border-radius: 9;
+    -fx-background-radius: 9;
 }
 
 .sidebar-conv-selected:hover {
-    -fx-background-color: -jc-primary-50;
+    -fx-background-color: -jc-primary-100;
+}
+
+.sidebar-conv-row:focused {
+    -fx-border-color: -jc-primary-300;
 }
 
 /* ==================== 侧边栏搜索框 ==================== */
@@ -1225,13 +1394,27 @@
     -fx-background-color: -jc-surface-card;
 }
 
-.sidebar-conv-icon {
-    -fx-font-size: 13px;
+.sidebar-conv-indicator {
+    -fx-background-color: -jc-neutral-300;
+    -fx-background-radius: 999;
+    -fx-min-width: 6;
+    -fx-min-height: 6;
+    -fx-max-width: 6;
+    -fx-max-height: 6;
+}
+
+.sidebar-conv-selected .sidebar-conv-indicator {
+    -fx-background-color: -jc-primary-500;
 }
 
 .sidebar-conv-title {
-    -fx-text-fill: -jc-neutral-700;
-    -fx-font-size: 13px;
+    -fx-text-fill: -jc-text-body;
+    -fx-font-size: 12.5px;
+}
+
+.sidebar-conv-selected .sidebar-conv-title {
+    -fx-text-fill: -jc-text-title;
+    -fx-font-weight: 600;
 }
 
 /* 底部用户信息栏 */
@@ -1704,9 +1887,6 @@
 
 .message-tool-result {
     -fx-background-color: -jc-neutral-50;
-    -fx-border-color: -jc-primary-200;
-    -fx-border-radius: 12;
-    -fx-border-width: 0 0 0 3;
     -fx-background-radius: 12;
 }
 
@@ -2869,6 +3049,13 @@
     -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.12), 20, 0, 0, 6);
 }
 
+/* UIHelper 为全部 DialogPane 追加该类：窗口尺寸由代码按屏幕约束，正文独立滚动。 */
+.dialog-pane.jc-dialog-pane {
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 14;
+}
+
 .dialog-pane > .button-bar {
     -fx-padding: 16 0 0 0;
 }
@@ -2932,6 +3119,8 @@
     -fx-font-size: 14px;
     -fx-line-spacing: 3;
     -fx-padding: 4 0 8 0;
+    -fx-wrap-text: true;
+    -fx-max-width: 560;
 }
 
 /* 弹窗标题 */
@@ -2944,6 +3133,8 @@
     -fx-text-fill: -jc-neutral-800;
     -fx-font-size: 16px;
     -fx-font-weight: 600;
+    -fx-wrap-text: true;
+    -fx-max-width: 560;
 }
 
 /* 弹窗图标区域（已在 UIHelper 中移除默认图标） */
@@ -2966,6 +3157,32 @@
     -fx-border-color: -jc-primary-200;
     -fx-background-color: -jc-surface-card;
     -fx-effect: dropshadow(gaussian, -jc-focus-ring, 6, 0, 0, 0);
+}
+
+/* 弹窗长正文 / 自定义表单滚动区：透明无套娃边框，页脚按钮保持固定。 */
+.dialog-message-scroll,
+.dialog-body-scroll {
+    -fx-background-color: transparent;
+    -fx-background: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 0;
+}
+
+.dialog-message-scroll > .viewport,
+.dialog-body-scroll > .viewport {
+    -fx-background-color: transparent;
+}
+
+.dialog-message-scroll .corner,
+.dialog-body-scroll .corner {
+    -fx-background-color: transparent;
+}
+
+.dialog-message {
+    -fx-text-fill: -jc-neutral-600;
+    -fx-font-size: 14px;
+    -fx-line-spacing: 3;
+    -fx-padding: 4 10 8 0;
 }
 
 /* ==================== 统一右键菜单样式 ==================== */

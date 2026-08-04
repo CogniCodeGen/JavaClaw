@@ -3,9 +3,9 @@ package com.javaclaw.site;
 /**
  * 站点凭据条目
  *
- * <p>登记一个网站的访问凭据：浏览器智能体导航到匹配的 URL 时，
- * 系统会优先尝试恢复已保存的会话（cookies + storageState）；
- * 若无可用会话，再用此处的用户名/密码自动登录并保存会话。</p>
+ * <p>登记一个网站的登录方式：浏览器智能体导航到匹配的 URL 时，
+ * 系统会优先尝试恢复已保存的会话（cookies + storageState）。条目既可以保存用户名/密码
+ * 供自动填表，也可以只保存用户本人完成登录后的浏览器会话。</p>
  *
  * <p>字段约定：</p>
  * <ul>
@@ -34,10 +34,10 @@ public class SiteCredential {
     /** 登录页 URL（可选） */
     private String loginUrl;
 
-    /** 用户名 / 邮箱 */
+    /** 用户名 / 邮箱（可选；仅保存浏览器会话时为空） */
     private String username;
 
-    /** 密码（明文，不进入 LLM 上下文） */
+    /** 密码（可选；明文仅驻留内存，不进入 LLM 上下文） */
     private String password;
 
     /** 备注（可选） */

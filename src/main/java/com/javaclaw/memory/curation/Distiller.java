@@ -11,6 +11,7 @@ import com.javaclaw.memory.model.Episode;
 import com.javaclaw.memory.model.Fact;
 import com.javaclaw.memory.store.MemoryStore;
 import com.javaclaw.prompt.MemoryPrompts;
+import com.javaclaw.util.SensitiveDataRedactor;
 import io.agentscope.core.message.ContentBlock;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
@@ -110,6 +111,11 @@ public class Distiller {
             String line = raw.strip();
             if (line.startsWith("- ")) line = line.substring(2).strip();
             if (line.isEmpty() || isNoneAnswer(line)) continue; // 混排输出中的「无」行不落库
+            if (SensitiveDataRedactor.containsLikelyCredential(line)) {
+                log.warn("记忆蒸馏命中疑似凭据，已确定性跳过");
+                skipped++;
+                continue;
+            }
             if (CorrectionGuard.findUnsafeMemoryClaim(line, correctionRules).isPresent()) {
                 log.warn("记忆蒸馏命中已废弃或未核验主张，确定性跳过: {}", trunc(line));
                 skipped++;
@@ -264,6 +270,7 @@ public class Distiller {
                 String name = parts[0].strip();
                 String type = parts.length > 1 ? parts[1].strip() : "topic";
                 if (name.length() < 2) continue;
+                if (SensitiveDataRedactor.containsLikelyCredential(name)) continue;
                 EntityNode node = store.getOrCreateEntity(name, type, "distiller");
                 if (node != null) out.add(node);
             }

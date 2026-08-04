@@ -4,6 +4,7 @@ import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.util.ProcessTerminator;
+import com.javaclaw.util.ProjectAccessPolicy;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
@@ -91,6 +92,11 @@ public class CommandLineTools {
                     description = "执行超时秒数（默认 60，上限 600）；0 或不传用默认。慢构建/测试请调大") int timeoutSeconds) {
 
         log.info("命令执行工具: {} @ {} (timeout={}s)", command, workDir, timeoutSeconds);
+
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return ToolResponse.error("cmd_execute",
+                    ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
 
         if (command == null || command.isBlank()) {
             return ToolResponse.error("cmd_execute", "命令不能为空");
@@ -212,6 +218,10 @@ public class CommandLineTools {
             @ToolParam(name = "work_dir",
                     description = "会话初始工作目录（绝对路径），留空则使用用户主目录") String workDir) {
 
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return ToolResponse.error("cmd_session_open",
+                    ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
         String effectiveWorkDir = resolveWorkDir(workDir);
         if (effectiveWorkDir == null) {
             return ToolResponse.error("cmd_session_open", "工作目录不存在或无效: " + workDir);
@@ -241,6 +251,10 @@ public class CommandLineTools {
             @ToolParam(name = "timeout_seconds",
                     description = "命令最长等待时间（秒），默认 60；超时会话保留，命令可能仍在运行") Integer timeoutSeconds) {
 
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return ToolResponse.error("cmd_session_exec",
+                    ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
         if (sessionId == null || sessionId.isBlank()) {
             return ToolResponse.error("cmd_session_exec", "session_id 不能为空");
         }
@@ -324,6 +338,10 @@ public class CommandLineTools {
             @ToolParam(name = "wait_seconds",
                     description = "发送后等待输出的最长秒数，默认 5；缺省/0 表示立刻返回当前累积输出") Integer waitSeconds) {
 
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return ToolResponse.error("cmd_session_input",
+                    ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
         if (sessionId == null || sessionId.isBlank()) {
             return ToolResponse.error("cmd_session_input", "session_id 不能为空");
         }
@@ -457,6 +475,9 @@ public class CommandLineTools {
      * </ol>
      */
     private SecurityCheck checkBeforeExec(String trimmedCmd, String effectiveWorkDir) {
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return SecurityCheck.deny(ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
         String blockedOp = findBlockedFileOperation(trimmedCmd);
         if (blockedOp != null) {
             return SecurityCheck.deny(
@@ -600,12 +621,14 @@ public class CommandLineTools {
      * 解析工作目录，返回绝对路径字符串；目录无效则返回 null
      */
     private static String resolveWorkDir(String workDir) {
-        if (workDir == null || workDir.isBlank()) {
-            return System.getProperty("user.home");
+        try {
+            Path path = workDir == null || workDir.isBlank()
+                    ? ProjectAccessPolicy.projectRoot()
+                    : ProjectAccessPolicy.resolveProjectPath(workDir);
+            return Files.isDirectory(path) ? path.toString() : null;
+        } catch (RuntimeException e) {
+            return null;
         }
-        Path path = Path.of(workDir.trim());
-        if (!Files.isDirectory(path)) return null;
-        return path.toAbsolutePath().normalize().toString();
     }
 
     /**

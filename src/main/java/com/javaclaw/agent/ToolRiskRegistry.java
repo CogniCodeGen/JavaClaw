@@ -120,14 +120,28 @@ public final class ToolRiskRegistry {
         put(levels, labels, "web_cookie_clear", ToolRiskLevel.CONFIRM, "浏览器 Cookie 清除");
         put(levels, labels, "web_save_pdf", ToolRiskLevel.CONFIRM, "浏览器页面保存为 PDF");
         put(levels, labels, "web_dialog_handle", ToolRiskLevel.CONFIRM, "浏览器原生对话框处理");
+        put(levels, labels, "site_login_interactive", ToolRiskLevel.CONFIRM, "站点交互式登录");
         put(levels, labels, "site_login_now", ToolRiskLevel.CONFIRM, "站点自动登录");
         put(levels, labels, "site_fill_password", ToolRiskLevel.CONFIRM, "站点密码填充");
         put(levels, labels, "site_save_session", ToolRiskLevel.CONFIRM, "站点会话保存");
         put(levels, labels, "site_clear_session", ToolRiskLevel.CONFIRM, "站点会话清除");
+        put(levels, labels, "site_select_account", ToolRiskLevel.CONFIRM, "切换站点账号");
+        put(levels, labels, "site_credential_save", ToolRiskLevel.CONFIRM, "保存站点凭据");
+        put(levels, labels, "site_credential_set_password_secure", ToolRiskLevel.CONFIRM, "安全设置站点密码");
+        put(levels, labels, "site_credential_delete", ToolRiskLevel.DOUBLE_CONFIRM, "删除站点凭据");
+
+        // ==================== MCP Server 配置管理 ====================
+        // 新增/更新/启用可能启动本地进程或连接外部端点，必须人工确认；删除配置同样确认。
+        put(levels, labels, "mcp_server_add", ToolRiskLevel.CONFIRM, "添加 MCP Server");
+        put(levels, labels, "mcp_server_update", ToolRiskLevel.CONFIRM, "更新 MCP Server");
+        put(levels, labels, "mcp_server_set_header_secure", ToolRiskLevel.CONFIRM, "安全设置 MCP Header");
+        put(levels, labels, "mcp_server_set_enabled", ToolRiskLevel.CONFIRM, "启用 MCP Server");
+        put(levels, labels, "mcp_server_delete", ToolRiskLevel.CONFIRM, "删除 MCP Server");
 
         // ==================== 技能自管理（skill_manage 工具集） ====================
         // suggest 模式本身已有提案审阅闸门，故写入类仅 NOTIFY（auto 模式 Toast 告知）；删除类破坏性更高，上 CONFIRM
         put(levels, labels, "skill_create", ToolRiskLevel.NOTIFY, "创建技能");
+        put(levels, labels, "skill_create_direct", ToolRiskLevel.CONFIRM, "按用户要求直接创建技能");
         put(levels, labels, "skill_patch", ToolRiskLevel.NOTIFY, "修补技能");
         put(levels, labels, "skill_edit", ToolRiskLevel.NOTIFY, "重写技能");
         put(levels, labels, "skill_write_file", ToolRiskLevel.NOTIFY, "写入技能支持文件");

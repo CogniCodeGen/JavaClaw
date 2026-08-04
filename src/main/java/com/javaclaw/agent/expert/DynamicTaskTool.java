@@ -2,6 +2,7 @@ package com.javaclaw.agent.expert;
 
 import com.javaclaw.agent.memory.MemoryManager;
 import com.javaclaw.agent.model.ModelFactory;
+import com.javaclaw.prompt.AgentPrompts;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
@@ -37,9 +38,8 @@ public class DynamicTaskTool {
     public enum Capability {
         WEB("web", "网页浏览：可以导航网页、获取页面快照、点击元素、填写表单、截图等", 8),
         EMAIL("email", "邮件操作：可以发送邮件、查看收件箱、搜索邮件、回复邮件等", 5),
-        SYSTEM("system", "系统操作：可以获取系统信息、截图、操控鼠标键盘、管理文件等", 6),
-        NOTIFICATION("notification", "消息通知：可以通过钉钉、企业微信、飞书、邮件、Webhook 发送通知", 5),
-        COMMAND("command", "命令行执行：可以执行 Shell 命令、编译构建、运行脚本、查看进程等（不含文件操作）", 8);
+        SYSTEM("system", "受限系统操作：只能获取非敏感系统摘要并管理当前项目内的普通文件；桌面、鼠标键盘和命令执行不可用", 6),
+        NOTIFICATION("notification", "消息通知：可以通过钉钉、企业微信、飞书、邮件、Webhook 发送通知", 5);
 
         public final String key;
         public final String description;
@@ -87,7 +87,7 @@ public class DynamicTaskTool {
     public String executeTaskAgent(
             @ToolParam(name = "task", description = "具体任务描述，应清晰明确") String task,
             @ToolParam(name = "capabilities",
-                    description = "所需能力列表，逗号分隔：web/email/system/notification/command/none") String capabilities,
+                    description = "所需能力列表，逗号分隔：web/email/system/notification/none；严格隔离模式不提供命令行或桌面能力") String capabilities,
             @ToolParam(name = "context",
                     description = "与此任务相关的上下文信息，从对话历史中提取") String context) {
 
@@ -200,10 +200,10 @@ public class DynamicTaskTool {
         prompt.append("## 输出规则（必须遵循）\n");
         prompt.append("- 只输出最终结果和结论，不要复述工具调用的过程和中间输出\n");
         prompt.append("- 不要在回复中包含工具名称、状态标记（如 [成功]、[失败]）或 XML 标签\n");
-        prompt.append("- 用中文回复，结构清晰（可使用标题、列表、编号）\n");
+        prompt.append("- 必须使用简体中文回复，结构清晰（可使用标题、列表、编号）\n");
         prompt.append("- 完成任务后直接给出结果，不需要额外的总结性开头\n");
 
-        return prompt.toString();
+        return AgentPrompts.withMandatoryGlobalRules(prompt.toString());
     }
 
     // ==================== 工具集构建 ====================
