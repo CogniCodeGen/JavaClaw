@@ -11,6 +11,7 @@ import com.javaclaw.config.AgentConfig;
 import com.javaclaw.mcp.McpClientManager;
 import com.javaclaw.mcp.McpConfigManager;
 import com.javaclaw.memory.embed.EmbeddingGateway;
+import com.javaclaw.util.ProjectAccessPolicy;
 import io.agentscope.core.message.Base64Source;
 import io.agentscope.core.message.ContentBlock;
 import io.agentscope.core.message.ImageBlock;
@@ -244,6 +245,13 @@ public final class AgentRuntime {
         StringBuilder docTextBuilder = new StringBuilder();
 
         for (File file : attachments) {
+            if (file == null || !ProjectAccessPolicy.isProjectFilePath(file.toPath())) {
+                String name = file == null ? "未知附件" : file.getName();
+                log.warn("严格项目隔离已拒绝读取项目外附件: {}", name);
+                docTextBuilder.append("\n\n[系统安全提示] 附件《")
+                        .append(name).append("》位于项目目录之外，已拒绝读取。\n");
+                continue;
+            }
             if (ChatMessage.isImageFile(file)) {
                 ImageBlock imageBlock = buildImageBlock(file);
                 if (imageBlock != null) {
@@ -284,7 +292,8 @@ public final class AgentRuntime {
     public boolean hasImageAttachment(List<File> attachments) {
         if (attachments == null || attachments.isEmpty()) return false;
         for (File f : attachments) {
-            if (ChatMessage.isImageFile(f)) return true;
+            if (f != null && ProjectAccessPolicy.isProjectFilePath(f.toPath())
+                    && ChatMessage.isImageFile(f)) return true;
         }
         return false;
     }
@@ -292,7 +301,8 @@ public final class AgentRuntime {
     /** 图片文件 → Base64 编码的 ImageBlock（失败返回 null） */
     private ImageBlock buildImageBlock(File imageFile) {
         try {
-            byte[] imageBytes = Files.readAllBytes(imageFile.toPath());
+            byte[] imageBytes = Files.readAllBytes(
+                    ProjectAccessPolicy.requireProjectFilePath(imageFile.toPath()));
             String base64Data = Base64.getEncoder().encodeToString(imageBytes);
             String mediaType = getMediaType(imageFile);
             return ImageBlock.builder()
@@ -310,7 +320,8 @@ public final class AgentRuntime {
     /** 文本文档 → UTF-8 字符串（超长截断） */
     private String readTextDocument(File file) {
         try {
-            String content = Files.readString(file.toPath(), StandardCharsets.UTF_8);
+            String content = Files.readString(
+                    ProjectAccessPolicy.requireProjectFilePath(file.toPath()), StandardCharsets.UTF_8);
             if (content.length() > MAX_TEXT_DOC_CHARS) {
                 content = content.substring(0, MAX_TEXT_DOC_CHARS)
                         + "\n... (文档内容已截断，共 " + content.length() + " 字符)";
@@ -324,7 +335,8 @@ public final class AgentRuntime {
 
     /** PDF → 正文文本（超长截断） */
     private String extractPdfText(File pdfFile) {
-        try (PDDocument document = Loader.loadPDF(pdfFile)) {
+        try (PDDocument document = Loader.loadPDF(
+                ProjectAccessPolicy.requireProjectFilePath(pdfFile.toPath()).toFile())) {
             PDFTextStripper stripper = new PDFTextStripper();
             String text = stripper.getText(document);
             if (text.length() > MAX_PDF_CHARS) {

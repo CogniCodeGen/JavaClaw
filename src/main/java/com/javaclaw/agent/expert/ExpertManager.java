@@ -11,6 +11,7 @@ import com.javaclaw.email.EmailTools;
 import com.javaclaw.notification.NotificationTools;
 import com.javaclaw.system.CommandLineTools;
 import com.javaclaw.system.SystemTools;
+import com.javaclaw.util.ProjectAccessPolicy;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.model.ChatModelBase;
 import io.agentscope.core.tool.Toolkit;
@@ -183,13 +184,15 @@ public class ExpertManager {
                 config.getSystemAgentMaxIters(),
                 new SystemTools(origin), "system", PlanRole.DOMAIN));
 
-        defs.add(new ExpertDef(
-                AgentConfig.DESKTOP_AGENT_NAME,
-                AgentPrompts.DESKTOP_AGENT_SYS_PROMPT,
-                "desktop_expert",
-                AgentConfig.DESKTOP_AGENT_DESCRIPTION,
-                config.getSystemAgentMaxIters(),
-                new DesktopTools(origin), "desktop", PlanRole.DOMAIN));
+        if (!ProjectAccessPolicy.strictIsolationEnabled()) {
+            defs.add(new ExpertDef(
+                    AgentConfig.DESKTOP_AGENT_NAME,
+                    AgentPrompts.DESKTOP_AGENT_SYS_PROMPT,
+                    "desktop_expert",
+                    AgentConfig.DESKTOP_AGENT_DESCRIPTION,
+                    config.getSystemAgentMaxIters(),
+                    new DesktopTools(origin), "desktop", PlanRole.DOMAIN));
+        }
 
         defs.add(new ExpertDef(
                 AgentConfig.NOTIFICATION_AGENT_NAME,
@@ -199,13 +202,15 @@ public class ExpertManager {
                 config.getNotificationAgentMaxIters(),
                 new NotificationTools(origin), "notification", PlanRole.DOMAIN));
 
-        defs.add(new ExpertDef(
-                AgentConfig.COMMAND_AGENT_NAME,
-                AgentPrompts.COMMAND_AGENT_SYS_PROMPT,
-                "command_expert",
-                AgentConfig.COMMAND_AGENT_DESCRIPTION,
-                config.getCommandAgentMaxIters(),
-                new CommandLineTools(origin), "command", PlanRole.DOMAIN));
+        if (!ProjectAccessPolicy.strictIsolationEnabled()) {
+            defs.add(new ExpertDef(
+                    AgentConfig.COMMAND_AGENT_NAME,
+                    AgentPrompts.COMMAND_AGENT_SYS_PROMPT,
+                    "command_expert",
+                    AgentConfig.COMMAND_AGENT_DESCRIPTION,
+                    config.getCommandAgentMaxIters(),
+                    new CommandLineTools(origin), "command", PlanRole.DOMAIN));
+        }
 
         return defs;
     }
@@ -215,18 +220,25 @@ public class ExpertManager {
      *
      * <p>专供 SDD 任务启动时逐任务调用（令牌带该任务的 taskId/workDir），使能力工具的
      * 高风险确认按任务归属走白名单/目录放行——共享实例无法承载逐任务变化的归属。
-     * 本管理器自身的能力映射（{@link #getCapabilityTools}）不走此方法：它直接复用专家
-     * 定义里的同一批工具实例（令牌相同，且 @ref 等跨委派状态必须同源，见构造器注释）。</p>
+     * Web 能力同时获得任务私有浏览器，避免与聊天或其他托管任务共享 Cookie/Context；
+     * runner 终态会通过 {@link AutoCloseable} 关闭它。本管理器自身的能力映射
+     * （{@link #getCapabilityTools}）不走此方法。</p>
      */
     public Map<String, Object> buildCapabilityTools(ToolCallOrigin toolOrigin) {
         ToolCallOrigin effective = toolOrigin == null ? ToolCallOrigin.UNKNOWN : toolOrigin;
         Map<String, Object> tools = new LinkedHashMap<>();
-        tools.put("web", new PlaywrightBrowserTools(browserManager, effective));
+        PlaywrightBrowserManager isolatedBrowser =
+                browserManager.createIsolated(effective.browserScopeId());
+        tools.put("web", new PlaywrightBrowserTools(isolatedBrowser, effective, true));
         tools.put("email", new EmailTools(effective));
         tools.put("system", new SystemTools(effective));
-        tools.put("desktop", new DesktopTools(effective));
+        if (!ProjectAccessPolicy.strictIsolationEnabled()) {
+            tools.put("desktop", new DesktopTools(effective));
+        }
         tools.put("notification", new NotificationTools(effective));
-        tools.put("command", new CommandLineTools(effective));
+        if (!ProjectAccessPolicy.strictIsolationEnabled()) {
+            tools.put("command", new CommandLineTools(effective));
+        }
         log.info("能力工具集已构建: {} (来源={})", tools.keySet(), effective.kind());
         return tools;
     }
@@ -339,7 +351,7 @@ public class ExpertManager {
                                           String sysPrompt, int maxIters, Object tools) {
         ReActAgent.Builder builder = ReActAgent.builder()
                 .name(agentName)
-                .sysPrompt(sysPrompt)
+                .sysPrompt(AgentPrompts.withMandatoryGlobalRules(sysPrompt))
                 .model(model)
                 .maxIters(maxIters);
 

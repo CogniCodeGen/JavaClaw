@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 定时工作管理工具集 —— 让编排器在对话中自主创建与管理定时/周期任务。
@@ -61,14 +62,14 @@ public final class ScheduleTools {
             return ToolResponse.error("schedule_create", "用户取消了创建");
         }
         try {
-            ScheduledTask t = mgr().createTask(nm);
+            ScheduledTask t = mgr().createDraft(nm);
             t.setTriggerType(type);
             switch (type) {
                 case "interval" -> {
                     int minutes;
                     try { minutes = Math.max(1, Integer.parseInt(val)); }
                     catch (NumberFormatException ex) { return ToolResponse.error("schedule_create", "interval 需要分钟数，如 5"); }
-                    t.setIntervalMinutes(minutes);
+                    t.setIntervalInMinutes(minutes);
                 }
                 case "daily" -> {
                     if (!val.matches("\\d{1,2}:\\d{2}")) return ToolResponse.error("schedule_create", "daily 需要 HH:mm，如 09:00");
@@ -82,9 +83,9 @@ public final class ScheduleTools {
             }
             t.setPrompt(pr);
             t.setEnabled(true);
-            mgr().updateTask(t);
+            ScheduledTask saved = mgr().saveNewTask(t);
             return ToolResponse.success("schedule_create",
-                    "已创建并启用定时任务「" + nm + "」（id=" + t.getId() + "，" + type + "：" + val + "）");
+                    "已创建并启用定时任务「" + nm + "」（id=" + saved.getId() + "，" + type + "：" + val + "）");
         } catch (Exception e) {
             log.error("schedule_create 异常", e);
             return ToolResponse.fromException("schedule_create", e);
@@ -126,30 +127,61 @@ public final class ScheduleTools {
 
     @Tool(name = "schedule_disable", description = "停用一个定时任务（停止后续触发，保留记录）。定时任务达成条件后可调用本工具自停。")
     public String scheduleDisable(@ToolParam(name = "id", description = "定时任务 id") String id) {
-        ScheduledTask t = mgr().getTask(id);
-        if (t == null) return ToolResponse.error("schedule_disable", "未找到定时任务: " + id);
-        if (t.isBuiltin()) return ToolResponse.error("schedule_disable", "系统内置任务不可停用: " + id);
-        t.setEnabled(false);
-        mgr().updateTask(t);
-        return ToolResponse.success("schedule_disable", "已停用定时任务: " + id);
+        try {
+            ScheduledTask t = mgr().getTask(id);
+            if (t == null) return ToolResponse.error("schedule_disable", "未找到定时任务: " + id);
+            if (t.isBuiltin()) return ToolResponse.error("schedule_disable", "系统内置任务不可停用: " + id);
+            boolean selfDisable = origin.kind() == ToolCallOrigin.Kind.SCHEDULED
+                    && Objects.equals(origin.taskId(), id);
+            mgr().setEnabled(id, false, selfDisable
+                    ? ScheduleManager.DisableMode.AFTER_CURRENT_RUN
+                    : ScheduleManager.DisableMode.CANCEL_ACTIVE);
+            return ToolResponse.success("schedule_disable", selfDisable
+                    ? "已停用后续调度，当前执行将正常收尾: " + id
+                    : "已停用定时任务: " + id);
+        } catch (Exception e) {
+            log.error("schedule_disable 异常", e);
+            return ToolResponse.fromException("schedule_disable", e);
+        }
     }
 
     @Tool(name = "schedule_delete", description = "删除一个定时任务（不可恢复）。")
     public String scheduleDelete(@ToolParam(name = "id", description = "定时任务 id") String id) {
-        ScheduledTask t = mgr().getTask(id);
-        if (t == null) return ToolResponse.error("schedule_delete", "未找到定时任务: " + id);
-        if (t.isBuiltin()) return ToolResponse.error("schedule_delete", "系统内置任务不可删除: " + id);
-        mgr().deleteTask(id);
-        return ToolResponse.success("schedule_delete", "已删除定时任务: " + id);
+        try {
+            ScheduledTask t = mgr().getTask(id);
+            if (t == null) return ToolResponse.error("schedule_delete", "未找到定时任务: " + id);
+            if (t.isBuiltin()) return ToolResponse.error("schedule_delete", "系统内置任务不可删除: " + id);
+            mgr().deleteTask(id);
+            return ToolResponse.success("schedule_delete", "已删除定时任务: " + id);
+        } catch (Exception e) {
+            log.error("schedule_delete 异常", e);
+            return ToolResponse.fromException("schedule_delete", e);
+        }
     }
 
     @Tool(name = "schedule_run_now", description = "立即手动执行一次某个定时任务（不影响其后续调度）。")
     public String scheduleRunNow(@ToolParam(name = "id", description = "定时任务 id") String id) {
-        ScheduledTask t = mgr().getTask(id);
-        if (t == null) return ToolResponse.error("schedule_run_now", "未找到定时任务: " + id);
-        if (t.isBuiltin()) return ToolResponse.error("schedule_run_now", "系统内置任务由系统自动运行，不可手动触发: " + id);
-        mgr().runNow(id);
-        return ToolResponse.success("schedule_run_now", "已触发立即执行: " + id);
+        try {
+            ScheduledTask t = mgr().getTask(id);
+            if (t == null) return ToolResponse.error("schedule_run_now", "未找到定时任务: " + id);
+            if (t.isBuiltin()) return ToolResponse.error("schedule_run_now", "系统内置任务由系统自动运行，不可手动触发: " + id);
+            if (!t.isEnabled() && !ToolConfirmationManager.requestConfirmation(origin,
+                    "schedule_run_now", "定时任务「" + t.getName()
+                            + "」已暂停。仅立即执行一次，不重新启用？")) {
+                return ToolResponse.error("schedule_run_now", "用户取消了本次执行");
+            }
+            ScheduleManager.RunNowResult result = mgr().runNow(id, !t.isEnabled());
+            return switch (result) {
+                case STARTED -> ToolResponse.success("schedule_run_now", "已触发立即执行: " + id);
+                case ALREADY_ACTIVE -> ToolResponse.error("schedule_run_now", "任务已在运行或排队: " + id);
+                case DISABLED -> ToolResponse.error("schedule_run_now", "任务已暂停: " + id);
+                case NOT_FOUND -> ToolResponse.error("schedule_run_now", "未找到定时任务: " + id);
+                case UNSUPPORTED -> ToolResponse.error("schedule_run_now", "当前无法执行该任务: " + id);
+            };
+        } catch (Exception e) {
+            log.error("schedule_run_now 异常", e);
+            return ToolResponse.fromException("schedule_run_now", e);
+        }
     }
 
     private static String triggerDesc(ScheduledTask t) {

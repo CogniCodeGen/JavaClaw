@@ -47,6 +47,7 @@ import java.util.concurrent.CompletableFuture;
 public class OnboardingWizard {
 
     private static final Logger log = LoggerFactory.getLogger(OnboardingWizard.class);
+    public static final String UI_TEST_PROPERTY = "javaclaw.ui.test";
 
     private final Stage stage;
     private final AgentConfig config;
@@ -81,6 +82,10 @@ public class OnboardingWizard {
      * 若首次使用未完成，则阻塞显示向导，直到用户完成或跳过
      */
     public static void showIfNeeded(Stage owner) {
+        if (Boolean.getBoolean(UI_TEST_PROPERTY)) {
+            log.info("UI 测试模式：跳过首次使用向导（不修改持久化状态）");
+            return;
+        }
         if (AgentConfig.getInstance().isFirstUseGuidanceDone()) return;
         new OnboardingWizard(owner).showAndWait();
     }

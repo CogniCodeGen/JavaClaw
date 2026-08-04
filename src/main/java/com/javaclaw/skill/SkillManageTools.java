@@ -4,6 +4,7 @@ import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.util.SensitiveDataRedactor;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
@@ -93,6 +94,8 @@ public final class SkillManageTools {
         if (name == null || name.isBlank() || content == null || content.isBlank()) {
             return ToolResponse.error("skill_create", "name 与 content 不能为空。");
         }
+        String secretError = rejectCredentialContent("skill_create", content);
+        if (secretError != null) return secretError;
         String skillName = name.strip();
         if (SkillManager.getInstance().getSkillByName(skillName) != null) {
             return ToolResponse.error("skill_create",
@@ -114,14 +117,66 @@ public final class SkillManageTools {
         if (!confirmApply("skill_create", "创建技能「" + skillName + "」")) {
             return ToolResponse.error("skill_create", "用户拒绝创建该技能。");
         }
-        Skill skill = SkillManager.getInstance().createAgentSkill(
-                skillName, safe(description), content, safe(category), splitTags(tags));
+        Skill skill;
+        try {
+            skill = SkillManager.getInstance().createAgentSkill(
+                    skillName, safe(description), content, safe(category), splitTags(tags));
+        } catch (RuntimeException e) {
+            log.error("创建技能未能确认落盘: {}", skillName, e);
+            return ToolResponse.error("skill_create", "技能「" + skillName + "」创建失败，未写入磁盘。");
+        }
         if (skill == null) {
             return ToolResponse.error("skill_create", "技能「" + skillName + "」创建失败（同名技能已存在）。");
         }
         log.info("智能体已创建技能: {} (v{})", skillName, skill.getVersion());
         return ToolResponse.success("skill_create",
                 "已创建技能「" + skillName + "」(v" + skill.getVersion() + ")，后续相关任务将自动可用。");
+    }
+
+    /**
+     * 用户显式管理入口：区别于智能体自学习用的 {@link #createSkill}，本工具始终先请求人工确认，
+     * 确认后直接落盘，不受 suggest 提案模式影响。这样“请把它保存成技能”可以在同一轮得到
+     * 可验证结果，同时不会让智能体借此绕过自进化审阅闸门。
+     */
+    @Tool(name = "skill_create_direct",
+            description = "仅当用户在当前对话中明确要求‘立即创建/保存为技能’时使用：人工确认后直接创建并落盘，"
+                    + "不走待审提案。智能体主动沉淀经验时严禁使用本工具，仍须用 skill_create。"
+                    + "技能只能保存可复用流程/方法，严禁写入密码、令牌、验证码、Cookie 或其他凭据；"
+                    + "站点凭据应使用 site_credential_save 或 site_save_session。")
+    public String createSkillDirect(
+            @ToolParam(name = "name", description = "技能名称（简短、能表达用途）") String name,
+            @ToolParam(name = "description", description = "一句话说明何时使用该技能") String description,
+            @ToolParam(name = "content", description = "技能正文（Markdown），不得包含任何凭据或秘密") String content,
+            @ToolParam(name = "category", description = "分类，可为空", required = false) String category,
+            @ToolParam(name = "tags", description = "标签，逗号分隔，可为空", required = false) String tags) {
+        String skillName = strip(name);
+        if (skillName.isEmpty() || content == null || content.isBlank()) {
+            return ToolResponse.error("skill_create_direct", "name 与 content 不能为空。");
+        }
+        String secretError = rejectCredentialContent("skill_create_direct", content);
+        if (secretError != null) return secretError;
+        if (SkillManager.getInstance().getSkillByName(skillName) != null) {
+            return ToolResponse.error("skill_create_direct",
+                    "技能「" + skillName + "」已存在，请改用 skill_patch 或 skill_edit。");
+        }
+        if (!confirmApply("skill_create_direct", "按用户要求直接创建技能「" + skillName + "」")) {
+            return ToolResponse.error("skill_create_direct", "用户取消了技能创建。");
+        }
+        Skill skill;
+        try {
+            skill = SkillManager.getInstance().createAgentSkill(
+                    skillName, safe(description), content, safe(category), splitTags(tags));
+        } catch (RuntimeException e) {
+            log.error("直接创建技能未能确认落盘: {}", skillName, e);
+            return ToolResponse.error("skill_create_direct",
+                    "技能「" + skillName + "」创建失败，未写入磁盘。");
+        }
+        if (skill == null || SkillManager.getInstance().getSkillByName(skillName) == null) {
+            return ToolResponse.error("skill_create_direct", "技能「" + skillName + "」未能确认落盘。");
+        }
+        log.info("用户确认后已直接创建技能: {} (v{})", skillName, skill.getVersion());
+        return ToolResponse.success("skill_create_direct",
+                "已直接创建并确认落盘技能「" + skillName + "」(v" + skill.getVersion() + ")。");
     }
 
     @Tool(name = "skill_patch",
@@ -136,6 +191,12 @@ public final class SkillManageTools {
         String mode = evolutionMode();
         if ("off".equals(mode)) {
             return refuseOff("skill_patch");
+        }
+        String secretError = rejectCredentialContent("skill_patch", newString);
+        if (secretError != null) return secretError;
+        if (SensitiveDataRedactor.containsLikelyCredential(oldString)) {
+            return ToolResponse.error("skill_patch",
+                    "旧片段疑似包含凭据，不能复制进变更提案；请改用 skill_edit 提交完整的脱敏正文。");
         }
         Skill skill = SkillManager.getInstance().getSkillByName(strip(skillName));
         if (skill == null) {
@@ -177,6 +238,8 @@ public final class SkillManageTools {
         if ("off".equals(mode)) {
             return refuseOff("skill_edit");
         }
+        String secretError = rejectCredentialContent("skill_edit", newContent);
+        if (secretError != null) return secretError;
         Skill skill = SkillManager.getInstance().getSkillByName(strip(skillName));
         if (skill == null) {
             return ToolResponse.error("skill_edit", "未找到名为「" + strip(skillName) + "」的技能。");
@@ -249,6 +312,8 @@ public final class SkillManageTools {
         if ("off".equals(mode)) {
             return refuseOff("skill_write_file");
         }
+        String secretError = rejectCredentialContent("skill_write_file", fileContent);
+        if (secretError != null) return secretError;
         Skill skill = SkillManager.getInstance().getSkillByName(strip(skillName));
         if (skill == null) {
             return ToolResponse.error("skill_write_file", "未找到名为「" + strip(skillName) + "」的技能。");
@@ -334,12 +399,12 @@ public final class SkillManageTools {
     private static String propose(String toolName, SkillChangeRequest request) {
         String proposalId = proposalSink.submit(request);
         if (proposalId == null) {
-            return ToolResponse.success(toolName,
+            return ToolResponse.pending(toolName,
                     "相同变更近期已提案或被用户拒绝（冷却中），本次不再重复提交。");
         }
         log.info("技能变更提案已入队: [{}] {} ({})", request.action, request.skillName, proposalId);
-        return ToolResponse.success(toolName,
-                "技能变更提案已提交待用户审阅（提案 " + proposalId + "）。"
+        return ToolResponse.pending(toolName,
+                "技能变更提案已提交（提案 " + proposalId + "），尚未创建或修改技能；需用户在技能中心审阅通过后才会生效。"
                         + (request.userModifiedWarning ? "目标技能被用户修改过，需用户确认后才会生效。" : "")
                         + "无需等待，继续当前任务即可。");
     }
@@ -363,6 +428,12 @@ public final class SkillManageTools {
 
     private static String safe(String s) {
         return s == null ? "" : s.strip();
+    }
+
+    private static String rejectCredentialContent(String toolName, String content) {
+        return SensitiveDataRedactor.containsLikelyCredential(content)
+                ? ToolResponse.error(toolName, SensitiveDataRedactor.credentialStorageDeniedReason())
+                : null;
     }
 
     private static String strip(String s) {

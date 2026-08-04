@@ -549,6 +549,7 @@ public class SkillCenterView {
         dialog.setTitle("新建脚本");
         dialog.setHeaderText("输入脚本文件名（.jsh 或 .java）");
         dialog.initOwner(stage);
+        UIHelper.styleDialog(dialog);
         dialog.showAndWait().ifPresent(name -> {
             String fileName = name.strip();
             String lower = fileName.toLowerCase();

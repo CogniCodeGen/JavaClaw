@@ -153,7 +153,7 @@ UI 通过 `ModeRegistry.list()` / `listByPlacement()` 决定渲染位置，新�
    │   将 Reactor Event 按类型路由（REASONING / TOOL_RESULT / HINT / AGENT_RESULT），
    │   区分主编排器与子智能体事件来源，转发到 ConversationCallbacks。
    │
-   ▼ CorrectionGuard（仅相关纠错轮次）：缓冲最终回复，命中旧错误则换安全兜底文案
+   ▼ 回复始终流式直达（纠错不拦截措辞）；疑似复发仅写审计日志
    │
    ▼ MemoryService.rememberTurn（异步）：落情景 + 蒸馏事实（详见 §13）
    │
@@ -404,8 +404,8 @@ SMART 下 `ToolConfirmationManager` 通过 `UserInteractionPort` 请求确认，
    ▼ recall(query)：人格（整段钉住）+ 相关纠错（最高优先级）+ 事实 Top-K + 相关情景
    │   按字符预算注入 <loaded_context>
    ▼ …编排执行…
-   ▼ 交付前 CorrectionGuard：确定性拦截重复的旧结论（命中则换安全兜底文案，
-   │   既不发给用户也不写回记忆）
+   ▼ CorrectionGuard 仅作用于副作用：拦住把已否定主张写回长期记忆；
+   │   助手回复里的疑似复发只记审计，不拦截、不改写（拦错正确答案的代价更高）
    ▼ rememberTurn（异步 boundedElastic，失败静默）
        落情景 + Distiller 蒸馏事实（向量去重 upsert、取代检测软删除旧事实
        + 轻量实体抽取）；HabitReviewer 达水位时批量归纳"习惯偏好"
@@ -501,7 +501,8 @@ SMART 下 `ToolConfirmationManager` 通过 `UserInteractionPort` 请求确认，
 | `workflow/service/WorkflowService.java` · `SystemGraphFactory.java` | 工作流门面 · 内置路径的只读系统图 |
 | `workflow/node/WorkflowToolGroupPolicy.java` | 自定义图的工具组白名单（禁远程 MCP） |
 | `memory/MemoryService.java` | 记忆门面：召回 / 纠错 / 蒸馏 / 检查点 / 人格 |
-| `memory/correction/CorrectionEngine.java` · `CorrectionGuard.java` | 同步纠错写入 · 旧结论确定性拦截 |
+| `memory/correction/CorrectionDetector.java` | 纠错判定唯一闸门：只认双主张明确纠错 |
+| `memory/correction/CorrectionEngine.java` · `CorrectionGuard.java` | 同步纠错写入 · 记忆写入侧的旧结论闸门 |
 | `memory/embed/EmbeddingGateway.java` | 嵌入唯一入口：超时/重试/熔断/健康广播 |
 | `memory/store/MemoryStore.java` | 单写线程、三索引、pending 暂存区、审计轨 |
 | `task/sdd/SddOrchestrator.java` | OpenSpec 六阶段确定性编排器 |

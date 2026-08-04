@@ -1,9 +1,11 @@
 package com.javaclaw.ui.javafx.memory;
 
 import com.javaclaw.agent.expert.KnowledgeExpert;
+import com.javaclaw.app.UIHelper;
 import com.javaclaw.memory.MemoryService;
 import com.javaclaw.memory.graph.MemoryGraph;
 import com.javaclaw.memory.model.ChangeLogEntry;
+import com.javaclaw.memory.model.CorrectionRecord;
 import com.javaclaw.memory.model.EntityNode;
 import com.javaclaw.memory.model.Episode;
 import com.javaclaw.memory.model.Fact;
@@ -87,6 +89,7 @@ public class MemoryCenterView {
             {"entities", "实体"},
             {"knowledge", "知识库"},
             {"persona", "人格"},
+            {"corrections", "🛠 纠错"},
             {"log", "变更日志"},
     };
 
@@ -191,8 +194,10 @@ public class MemoryCenterView {
         }
     }
 
-    /** 给弹出对话框的 DialogPane 应用本视图样式（其 Scene 在 show 前为 null，故直接挂到 DialogPane）。 */
-    private void styleDialog(javafx.scene.control.DialogPane pane) {
+    /** 给弹出对话框应用全局响应式约束，并补充记忆中心的专属控件样式。 */
+    private void styleDialog(Dialog<?> dialog) {
+        UIHelper.styleDialog(dialog);
+        javafx.scene.control.DialogPane pane = dialog.getDialogPane();
         addCss(pane.getStylesheets(), "/css/chat.css");
         addCss(pane.getStylesheets(), "/css/controls.css");
         addCss(pane.getStylesheets(), "/css/memory-center.css");
@@ -241,6 +246,7 @@ public class MemoryCenterView {
         panels.put("entities", wrapScroll(buildEntitiesContainer()));
         panels.put("knowledge", wrapScroll(buildKnowledgeContainer()));
         panels.put("persona", wrapScroll(buildPersona()));
+        panels.put("corrections", wrapScroll(buildCorrectionsContainer()));
         panels.put("log", wrapScroll(buildLogContainer()));
         for (Region p : panels.values()) {
             p.setVisible(false);
@@ -482,6 +488,7 @@ public class MemoryCenterView {
             case "entities" -> rebuildEntities();
             case "knowledge" -> rebuildKnowledge();
             case "persona" -> loadPersona();
+            case "corrections" -> rebuildCorrections();
             case "log" -> rebuildLog();
             default -> { }
         }
@@ -845,7 +852,21 @@ public class MemoryCenterView {
             Button del = new Button("🗑");
             del.getStyleClass().addAll("mc-icon-btn", "mc-icon-btn-danger");
             del.setOnAction(e -> deleteFact(f));
-            HBox tools = new HBox(3, pin, edit, del);
+            HBox tools = new HBox(3);
+            // 被取代/争议化的事实需要一条不必改写正文的回头路
+            if ((f.superseded || f.contested) && !f.pending) {
+                Button restore = new Button("↩");
+                restore.getStyleClass().add("mc-icon-btn");
+                restore.setTooltip(new javafx.scene.control.Tooltip(
+                        "恢复：清除已取代/有争议标记，重新参与召回与图谱"));
+                restore.setOnAction(e -> {
+                    svc.restoreFact(f);
+                    rebuildFacts();
+                    updateScaleCard();
+                });
+                tools.getChildren().add(restore);
+            }
+            tools.getChildren().addAll(pin, edit, del);
             tools.setAlignment(Pos.CENTER);
             row.getChildren().add(tools);
         }
@@ -863,6 +884,7 @@ public class MemoryCenterView {
         Alert a = new Alert(Alert.AlertType.CONFIRMATION,
                 "删除事实：" + f.text + " ?", ButtonType.OK, ButtonType.CANCEL);
         a.initOwner(stage);
+        UIHelper.styleAlert(a);
         if (a.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
             svc.deleteFact(f);
             rebuildFacts();
@@ -876,6 +898,7 @@ public class MemoryCenterView {
                 "删除所选 " + selectedFacts.size() + " 条事实？此操作不可撤销。",
                 ButtonType.OK, ButtonType.CANCEL);
         a.initOwner(stage);
+        UIHelper.styleAlert(a);
         if (a.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
         for (Fact f : svc.facts()) {
             if (selectedFacts.contains(f.id)) svc.deleteFact(f);
@@ -917,7 +940,7 @@ public class MemoryCenterView {
         g2.setHgrow(Priority.ALWAYS);
         gp.getColumnConstraints().addAll(new ColumnConstraints(), g2);
         dlg.getDialogPane().setContent(gp);
-        styleDialog(dlg.getDialogPane());
+        styleDialog(dlg);
 
         dlg.setResultConverter(bt -> bt == ok);
         if (Boolean.TRUE.equals(dlg.showAndWait().orElse(false))) {
@@ -1357,6 +1380,7 @@ public class MemoryCenterView {
         Alert a = new Alert(Alert.AlertType.CONFIRMATION,
                 "删除文档「" + doc + "」及其全部分块？", ButtonType.OK, ButtonType.CANCEL);
         a.initOwner(stage);
+        UIHelper.styleAlert(a);
         if (a.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
         knowledgeExpert.knowledge_delete(doc);
         rebuildKnowledge();
@@ -1572,6 +1596,150 @@ public class MemoryCenterView {
         } catch (IOException ex) {
             toast("导出失败：" + ex.getMessage());
         }
+    }
+
+    // ==================== 纠错 ====================
+
+    private VBox correctionsBox;
+
+    private VBox buildCorrectionsContainer() {
+        correctionsBox = new VBox(16);
+        return correctionsBox;
+    }
+
+    /**
+     * 纠错分区：显式纠错是唯一会自动废弃既有事实的写入路径，因此必须有可见的撤销/删除入口，
+     * 否则一次记错的纠错就成了不可运维的静默状态。
+     */
+    private void rebuildCorrections() {
+        if (correctionsBox == null) return;
+        correctionsBox.getChildren().clear();
+        Label h = new Label("用户纠错");
+        h.getStyleClass().add("sec-title");
+        Label sub = new Label("你在对话中明确给出的更正（「不是 X，而是 Y」这类）。"
+                + "它们会作为背景证据注入，并阻止模型把已否定的说法重新写回记忆。"
+                + "记错了可以撤销或删除；被它标记的事实在「事实」分区用 ↩ 恢复。");
+        sub.getStyleClass().add("sec-hint");
+        sub.setWrapText(true);
+        correctionsBox.getChildren().add(new VBox(3, h, sub));
+
+        List<CorrectionRecord> records = new ArrayList<>(svc.corrections());
+        records.removeIf(r -> r == null
+                || !matches(r.wrongClaim, r.correctClaim, r.sourceInput));
+        records.sort((a, b) -> Long.compare(
+                b.createdAt > 0 ? b.createdAt : b.updatedAt,
+                a.createdAt > 0 ? a.createdAt : a.updatedAt));
+        if (records.isEmpty()) {
+            correctionsBox.getChildren().add(emptyHint(query.isEmpty()
+                    ? "暂无纠错记录（只有同时说明「错的是什么」和「对的是什么」才会记录）"
+                    : "没有匹配的纠错记录"));
+            return;
+        }
+        for (CorrectionRecord r : records) {
+            correctionsBox.getChildren().add(buildCorrectionRow(r));
+        }
+    }
+
+    private HBox buildCorrectionRow(CorrectionRecord r) {
+        HBox row = new HBox();
+        row.getStyleClass().add("mc-fact-row");
+
+        VBox body = new VBox(6);
+        HBox.setHgrow(body, Priority.ALWAYS);
+
+        StringBuilder claim = new StringBuilder();
+        if (r.hasWrongClaim()) claim.append("「").append(r.wrongClaim).append("」");
+        if (r.hasWrongClaim() && r.hasCorrectClaim()) claim.append("  →  ");
+        if (r.hasCorrectClaim()) claim.append("「").append(r.correctClaim).append("」");
+        if (claim.isEmpty()) claim.append("（仅否定上一轮回答，未给出替代说法）");
+        Label text = new Label(claim.toString());
+        text.getStyleClass().add("mc-fact-text");
+        text.setWrapText(true);
+
+        FlowPane meta = new FlowPane(9, 4);
+        meta.setAlignment(Pos.CENTER_LEFT);
+        meta.getChildren().add(metaLabel("记录于 "
+                + fmt(r.createdAt > 0 ? r.createdAt : r.updatedAt)));
+        meta.getChildren().add(statusBadge(r));
+        if (r.type != null) meta.getChildren().add(metaLabel("· " + typeText(r.type)));
+        if (r.scope != null) meta.getChildren().add(metaLabel("· " + scopeText(r.scope)));
+        if (r.sourceInput != null && !r.sourceInput.isBlank()) {
+            // 原话最长 240 字且可能含换行，必须压成单行截断，否则行宽超出面板触发横向滚动
+            Label src = metaLabel("· 原话：" + oneLine(r.sourceInput, 60));
+            src.setTooltip(new javafx.scene.control.Tooltip(r.sourceInput));
+            meta.getChildren().add(src);
+        }
+        body.getChildren().addAll(text, meta);
+        row.getChildren().add(body);
+
+        HBox tools = new HBox(3);
+        if (r.isEffective()) {
+            Button revoke = new Button("⊘");
+            revoke.getStyleClass().add("mc-icon-btn");
+            revoke.setTooltip(new javafx.scene.control.Tooltip(
+                    "撤销：不再注入也不再阻止相关记忆写入，记录保留可审计"));
+            revoke.setOnAction(e -> {
+                svc.revokeCorrection(r);
+                rebuildCorrections();
+            });
+            tools.getChildren().add(revoke);
+        }
+        Button del = new Button("🗑");
+        del.getStyleClass().addAll("mc-icon-btn", "mc-icon-btn-danger");
+        del.setTooltip(new javafx.scene.control.Tooltip("彻底删除这条纠错记录"));
+        del.setOnAction(e -> deleteCorrection(r));
+        tools.getChildren().add(del);
+        tools.setAlignment(Pos.CENTER);
+        row.getChildren().add(tools);
+        row.setAlignment(Pos.CENTER_LEFT);
+        return row;
+    }
+
+    private void deleteCorrection(CorrectionRecord r) {
+        Alert a = new Alert(Alert.AlertType.CONFIRMATION,
+                "删除这条纠错记录？被它标记为「已取代 / 有争议」的事实不会自动恢复，"
+                        + "需要在「事实」分区用 ↩ 单独恢复。",
+                ButtonType.OK, ButtonType.CANCEL);
+        a.initOwner(stage);
+        UIHelper.styleAlert(a);
+        if (a.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
+            svc.deleteCorrection(r);
+            rebuildCorrections();
+        }
+    }
+
+    private Label statusBadge(CorrectionRecord r) {
+        String text;
+        String style;
+        if (r.status == CorrectionRecord.Status.ACTIVE) {
+            text = "生效中";
+            style = "jc-badge-ok";
+        } else if (r.status == CorrectionRecord.Status.DISPUTED) {
+            text = "待核验";
+            style = "jc-badge-amber";
+        } else {
+            text = "已撤销";
+            style = "jc-badge-soft";
+        }
+        Label badge = new Label(text);
+        badge.getStyleClass().addAll("jc-badge", style);
+        return badge;
+    }
+
+    private static String typeText(CorrectionRecord.Type type) {
+        return switch (type) {
+            case FACT_REPLACEMENT -> "事实更正";
+            case METHOD_CORRECTION -> "做法更正";
+            case RETRACTION -> "仅否定";
+        };
+    }
+
+    private static String scopeText(CorrectionRecord.Scope scope) {
+        return switch (scope) {
+            case USER -> "个人偏好";
+            case PROJECT -> "项目约定";
+            case GENERAL -> "公共知识";
+        };
     }
 
     // ==================== 变更日志 ====================

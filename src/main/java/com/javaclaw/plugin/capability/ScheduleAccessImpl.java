@@ -34,7 +34,7 @@ public final class ScheduleAccessImpl implements ScheduleAccess {
         CapabilityGuard.require(Capability.SCHEDULE);
         ScheduledTask task = newTask(name, prompt);
         task.setTriggerType("interval");
-        task.setIntervalMinutes(Math.max(1, minutes));
+        task.setIntervalInMinutes(Math.max(1, minutes));
         return commit(task);
     }
 
@@ -81,7 +81,7 @@ public final class ScheduleAccessImpl implements ScheduleAccess {
     }
 
     private ScheduledTask newTask(String name, String prompt) {
-        ScheduledTask task = ScheduleManager.getInstance().createTask(name);
+        ScheduledTask task = ScheduleManager.getInstance().createDraft(name);
         task.setPrompt(prompt);
         task.setEnabled(true);
         task.setDescription("由插件[" + pluginId + "]创建");
@@ -89,9 +89,10 @@ public final class ScheduleAccessImpl implements ScheduleAccess {
     }
 
     private String commit(ScheduledTask task) {
-        ScheduleManager.getInstance().updateTask(task);   // 触发实际调度
-        createdIds.add(task.getId());
-        log.info("插件[{}]创建定时任务：{}（{}，{}）", pluginId, task.getName(), task.getId(), task.getTriggerType());
-        return task.getId();
+        ScheduledTask saved = ScheduleManager.getInstance().saveNewTask(task);
+        createdIds.add(saved.getId());
+        log.info("插件[{}]创建定时任务：{}（{}，{}）", pluginId,
+                saved.getName(), saved.getId(), saved.getTriggerType());
+        return saved.getId();
     }
 }

@@ -6,6 +6,7 @@ import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.skill.Skill;
 import com.javaclaw.skill.SkillManager;
+import com.javaclaw.util.ProjectAccessPolicy;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
@@ -67,6 +68,10 @@ public final class JShellTools {
         if (code == null || code.isBlank()) {
             return ToolResponse.error("jshell_exec", "code 为空，请提供要求值的 Java 代码。");
         }
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return ToolResponse.error("jshell_exec",
+                    ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
         // 执行前确认：任意 Java 片段在独立 JVM 中求值，能力等同任意命令执行；
         // 风险等级（CONFIRM）登记在 ToolRiskRegistry，此处是它的执行闸门。
         // 走高风险命令同款人工底线入口（AUTO 总闸不生效）：任意代码破坏力上不封顶，
@@ -97,6 +102,10 @@ public final class JShellTools {
             @ToolParam(name = "timeout_seconds",
                     description = "可选：执行超时秒数（默认读配置 jshell.exec.timeout.seconds=60，上限 600）",
                     required = false) Integer timeoutSeconds) {
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return ToolResponse.error("jshell_run_script",
+                    ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
         Skill skill = SkillManager.getInstance().getSkillByName(skillName == null ? "" : skillName.strip());
         if (skill == null || !skill.isEnabled()) {
             return ToolResponse.error("jshell_run_script",

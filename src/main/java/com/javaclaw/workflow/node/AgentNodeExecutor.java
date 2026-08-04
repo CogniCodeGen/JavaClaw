@@ -8,6 +8,7 @@ import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.prompt.AgentPrompts;
 import com.javaclaw.workflow.model.StatePatch;
 import com.javaclaw.workflow.runtime.GraphCancelledException;
 import com.javaclaw.workflow.runtime.NodeExecutionContext;
@@ -93,7 +94,7 @@ public final class AgentNodeExecutor implements NodeExecutor {
         };
         ReActAgent agent = ReActAgent.builder()
                 .name(config.path("name").asText(context.node().label()))
-                .sysPrompt(sysPrompt)
+                .sysPrompt(AgentPrompts.withMandatoryGlobalRules(sysPrompt))
                 .model(model)
                 .toolkit(toolkit)
                 .memory(runtime.getModelFactory().defaultAutoContextMemory())
@@ -136,8 +137,10 @@ public final class AgentNodeExecutor implements NodeExecutor {
         }
         context.cancellation().throwIfCancelled();
         if (failure.get() != null) throw new IllegalStateException("Agent 节点失败", failure.get());
+        String guardedReply = com.javaclaw.util.ChineseOutputGuard
+                .enforceUserVisibleReply(reply.toString());
         String outputKey = config.path("outputKey").asText("agent.output");
-        return NodeResult.output(StatePatch.builder().set(outputKey, reply.toString()).build(), reply.toString());
+        return NodeResult.output(StatePatch.builder().set(outputKey, guardedReply).build(), guardedReply);
     }
 
     private static ConversationCallbacks silentCallbacks() {

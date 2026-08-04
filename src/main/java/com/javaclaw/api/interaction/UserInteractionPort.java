@@ -41,6 +41,27 @@ public interface UserInteractionPort {
     }
 
     /**
+     * 从互斥选项中选择一项（阻塞直到用户响应或超时）。
+     *
+     * <p>默认实现表示当前交互端不支持选择；桌面/Web 等交互端应覆盖。返回的是
+     * {@link ChoiceOption#id()}，不是展示文本。</p>
+     *
+     * @return 选中的稳定 ID；取消、超时或不支持时返回 {@code null}
+     */
+    default String choose(ChoiceRequest request) {
+        return null;
+    }
+
+    /**
+     * 使用本地安全输入控件读取秘密。秘密不得经过模型消息、普通文本框、日志或剪贴板。
+     *
+     * @return 用户输入的字符；取消、超时或不支持时返回 {@code null}。调用方使用后必须清零数组
+     */
+    default char[] requestSecret(SecretRequest request) {
+        return null;
+    }
+
+    /**
      * 发送一条纯通知（不等待响应）。
      *
      * <p>实现端应立即返回；典型场景是 {@link ConfirmKind#NOTIFY} 级别的工具放行前

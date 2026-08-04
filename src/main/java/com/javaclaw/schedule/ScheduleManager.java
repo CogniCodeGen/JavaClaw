@@ -1,9 +1,6 @@
 package com.javaclaw.schedule;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.javaclaw.agent.ScheduledTaskAgent;
+import com.javaclaw.api.conversation.CancellationReason;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.api.conversation.ConversationOutcome;
@@ -30,17 +27,16 @@ import org.quartz.spi.TriggerFiredBundle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -52,7 +48,7 @@ import java.util.function.Consumer;
  * {@code scheduled_tasks} 表，并按 {@code workspace_id} 隔离；启动时只从 H2 读取。
  * 底层使用 Quartz 2.5.2（通过 AgentScope
  * scheduler-quartz 扩展引入），由 Quartz 接管 cron 解析与触发器机制；
- * 任务到点后调用 {@link ChatService#streamChat} 执行（定时任务固定走普通模式）。</p>
+ * 任务到点后调用隔离的 {@link ScheduledTaskRunner} 执行。</p>
  *
  * <p>三种触发模式（UI 语义保持不变，内部统一翻译为 Quartz Trigger）：
  * <ul>
@@ -84,7 +80,7 @@ public class ScheduleManager {
 
     private static ScheduleManager instance;
 
-    private final ObjectMapper objectMapper;
+    private final ScheduledTaskStore store;
     private final List<ScheduledTask> tasks;
     /**
      * 系统内置定时任务（只读）——把「代码内部的周期性机制」纳入定时任务模块统一呈现。
@@ -92,27 +88,25 @@ public class ScheduleManager {
      * H2 scheduled_tasks 表，也不可被编辑 / 停用 / 删除 / 手动运行。
      */
     private final List<ScheduledTask> builtinTasks;
-    private final Scheduler quartz;
+    private final ScheduleBackend quartz;
 
     /** 定时任务专用编排器（与交互聊天完全隔离，独立子智能体/toolkit/订阅，可与聊天并行不互相干扰） */
-    private volatile ScheduledTaskAgent scheduledAgent;
+    private volatile ScheduledTaskRunner scheduledRunner;
 
     /** 工作区每次重载递增；旧代队列任务在真正开始及回调落盘前均会被拦截。 */
     private final AtomicLong executionEpoch = new AtomicLong();
 
-    /** 序列化 H2 的整表替换，避免 UI 更新与执行完成回调交错删写。 */
+    /** 序列化本进程内的配置快照替换与执行结果合并。 */
     private final Object persistenceLock = new Object();
 
     /** 当前内存任务实际所属工作区；保存时不再临时读取可变的全局工作区。 */
     private volatile String loadedWorkspaceId;
 
-    /** 定时执行单线程串行器：所有定时 tick 在此排队顺序执行，复用的 toolkit/子智能体不被并发触碰、tick 不丢 */
-    private final java.util.concurrent.ExecutorService scheduledExec =
-            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
-                Thread t = new Thread(r, "scheduled-agent");
-                t.setDaemon(true);
-                return t;
-            });
+    /** 定时执行单线程串行器：不同任务仍串行，同一任务的重复 tick 在入队前合并。 */
+    private final ExecutorService scheduledExec;
+
+    /** 每个任务最多一个排队或运行实例。 */
+    private final Map<String, ScheduledRunControl> activeRunsByTask = new ConcurrentHashMap<>();
 
     /** 正在执行中的任务 id 集合（实时运行状态：进入 executeTask 至本次完成期间为 true） */
     private final Set<String> runningTaskIds = java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -122,12 +116,33 @@ public class ScheduleManager {
     private Consumer<String> onTaskExecutionStart;
 
     private ScheduleManager() {
-        this.objectMapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
+        this.store = new ScheduledTaskStore(AppDatabase::getConnection);
         this.tasks = new CopyOnWriteArrayList<>();
         this.builtinTasks = buildBuiltinTasks();
         this.quartz = buildQuartzScheduler();
+        this.scheduledExec = newScheduledExecutor();
         loadAll();
         wireBuiltinActions();
+    }
+
+    /** 测试构造：允许注入临时 H2、Quartz 与可控 runner，不触碰全局单例数据。 */
+    ScheduleManager(ScheduledTaskStore store, String workspaceId, ScheduleBackend quartz,
+                    ExecutorService scheduledExec, ScheduledTaskRunner runner) {
+        this.store = Objects.requireNonNull(store, "store");
+        this.tasks = new CopyOnWriteArrayList<>();
+        this.builtinTasks = buildBuiltinTasks();
+        this.quartz = Objects.requireNonNull(quartz, "quartz");
+        this.scheduledExec = Objects.requireNonNull(scheduledExec, "scheduledExec");
+        this.scheduledRunner = runner;
+        loadAll(workspaceId);
+    }
+
+    private static ExecutorService newScheduledExecutor() {
+        return Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "scheduled-agent");
+            t.setDaemon(true);
+            return t;
+        });
     }
 
     /**
@@ -151,15 +166,16 @@ public class ScheduleManager {
      * 构造一个独占的 Quartz Scheduler 实例（避免与潜在的全局默认调度器冲突）。
      * RAMJobStore：任务/触发器仅在内存中，重启不残留；持久化由 JavaClaw 自己写入 H2。
      */
-    private Scheduler buildQuartzScheduler() {
+    private ScheduleBackend buildQuartzScheduler() {
         try {
             int threadCount = Math.max(1, AgentConfig.getInstance().getScheduleThreadPoolSize());
             SimpleThreadPool pool = new SimpleThreadPool(threadCount, Thread.NORM_PRIORITY);
             pool.setThreadNamePrefix("javaclaw-schedule-worker");
             pool.setMakeThreadsDaemons(true);
 
-            String name = "javaclaw-scheduler";
-            String id = "javaclaw-instance";
+            String suffix = UUID.randomUUID().toString().substring(0, 8);
+            String name = "javaclaw-scheduler-" + suffix;
+            String id = "javaclaw-instance-" + suffix;
             DirectSchedulerFactory factory = DirectSchedulerFactory.getInstance();
             // 用 createScheduler(name, id, pool, jobStore) 注册到 factory，再 getScheduler 取出
             factory.createScheduler(name, id, pool, new RAMJobStore());
@@ -167,7 +183,7 @@ public class ScheduleManager {
             // 注入 JobFactory：让 Quartz 不要 newInstance，直接拿单例的 ScheduledTaskJob
             s.setJobFactory(SingletonJobFactory.INSTANCE);
             s.start();
-            return s;
+            return new QuartzScheduleBackend(s);
         } catch (SchedulerException e) {
             throw new IllegalStateException("初始化 Quartz Scheduler 失败", e);
         }
@@ -176,9 +192,10 @@ public class ScheduleManager {
     /**
      * 重新加载定时任务（工作区切换时调用）
      */
-    public void reload(ScheduledTaskAgent newScheduledAgent) {
+    public void reload(ScheduledTaskRunner newScheduledAgent) {
         // 先使旧代队列/回调失效，再触碰 Quartz 与内存任务。
         executionEpoch.incrementAndGet();
+        cancelAllRuns(CancellationReason.RUNTIME_REBUILD);
         try {
             quartz.clear(); // 删掉所有 job + trigger，但 scheduler 仍运行
         } catch (SchedulerException e) {
@@ -186,15 +203,15 @@ public class ScheduleManager {
         }
         loadAll();
 
-        ScheduledTaskAgent old = this.scheduledAgent;
-        this.scheduledAgent = newScheduledAgent;
+        ScheduledTaskRunner old = this.scheduledRunner;
+        this.scheduledRunner = newScheduledAgent;
         if (old != null && old != newScheduledAgent) old.shutdown();
         taskLog.info("定时任务已重新加载，共 {} 个任务", tasks.size());
         scheduleAllEnabled();
     }
 
     /**
-     * 运行时替换前停止接收新触发并关闭旧编排器。稍后 {@link #reload(ScheduledTaskAgent)}
+     * 运行时替换前停止接收新触发并关闭旧编排器。稍后 {@link #reload(ScheduledTaskRunner)}
      * 会用新运行时恢复调度；已入队的旧世代任务由 executionEpoch 自动失效。
      */
     public void suspendForRuntimeTransition() {
@@ -204,8 +221,9 @@ public class ScheduleManager {
         } catch (SchedulerException e) {
             log.warn("运行时切换前清空 Quartz 任务失败（继续）", e);
         }
-        ScheduledTaskAgent old = this.scheduledAgent;
-        this.scheduledAgent = null;
+        cancelAllRuns(CancellationReason.RUNTIME_REBUILD);
+        ScheduledTaskRunner old = this.scheduledRunner;
+        this.scheduledRunner = null;
         if (old != null) old.shutdown();
         taskLog.info("定时任务已暂停，等待新运行时接管");
     }
@@ -217,8 +235,8 @@ public class ScheduleManager {
         return instance;
     }
 
-    public void init(ScheduledTaskAgent scheduledAgent) {
-        this.scheduledAgent = scheduledAgent;
+    public void init(ScheduledTaskRunner scheduledAgent) {
+        this.scheduledRunner = scheduledAgent;
         taskLog.info("定时任务调度器启动，共 {} 个任务", tasks.size());
         scheduleAllEnabled();
     }
@@ -226,137 +244,15 @@ public class ScheduleManager {
     // ==================== 持久化 ====================
 
     private void loadAll() {
+        loadAll(AppDatabase.currentWorkspaceId());
+    }
+
+    private void loadAll(String workspaceId) {
         synchronized (persistenceLock) {
+            loadedWorkspaceId = Objects.requireNonNull(workspaceId, "workspaceId");
             tasks.clear();
-            String workspaceId = AppDatabase.currentWorkspaceId();
-            loadedWorkspaceId = workspaceId;
-            String sql = """
-                SELECT id, name, description, trigger_type, interval_minutes, interval_value,
-                       interval_unit, daily_time, cron_expression, once_date_time, prompt,
-                       enabled, last_run_time, last_run_status, last_duration, run_count,
-                       fail_count, notify_enabled, notify_channel, execution_history_json,
-                       exec_records_json, unattended_authorized
-                FROM scheduled_tasks
-                WHERE workspace_id = ?
-                ORDER BY name, id
-                """;
-            try (Connection c = AppDatabase.getConnection();
-                 PreparedStatement ps = c.prepareStatement(sql)) {
-                ps.setString(1, workspaceId);
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        ScheduledTask task = new ScheduledTask();
-                        task.setId(rs.getString("id"));
-                        task.setName(rs.getString("name"));
-                        task.setDescription(rs.getString("description"));
-                        task.setTriggerType(rs.getString("trigger_type"));
-                        task.setIntervalMinutes(rs.getInt("interval_minutes"));
-                        task.setIntervalValue(rs.getInt("interval_value"));
-                        task.setIntervalUnit(rs.getString("interval_unit"));
-                        task.setDailyTime(rs.getString("daily_time"));
-                        task.setCronExpression(rs.getString("cron_expression"));
-                        task.setOnceDateTime(rs.getString("once_date_time"));
-                        task.setPrompt(rs.getString("prompt"));
-                        task.setEnabled(rs.getBoolean("enabled"));
-                        task.setLastRunTime(rs.getString("last_run_time"));
-                        task.setLastRunStatus(rs.getString("last_run_status"));
-                        task.setLastDuration(rs.getString("last_duration"));
-                        task.setRunCount(rs.getInt("run_count"));
-                        task.setFailCount(rs.getInt("fail_count"));
-                        task.setNotifyEnabled(rs.getBoolean("notify_enabled"));
-                        task.setNotifyChannel(rs.getString("notify_channel"));
-                        task.setExecutionHistory(readStringList(rs.getString("execution_history_json")));
-                        task.setExecRecords(readExecRecords(rs.getString("exec_records_json")));
-                        task.setUnattendedToolsAuthorized(rs.getBoolean("unattended_authorized"));
-                        tasks.add(task);
-                    }
-                }
-                log.info("已从 H2 加载 {} 个定时任务", tasks.size());
-            } catch (SQLException e) {
-                log.warn("从 H2 加载定时任务失败", e);
-            }
-        }
-    }
-
-    private boolean saveAll() {
-        synchronized (persistenceLock) {
-            String workspaceId = loadedWorkspaceId;
-            if (workspaceId == null) {
-                log.warn("定时任务尚未绑定工作区，跳过保存");
-                return false;
-            }
-            List<ScheduledTask> snapshot = List.copyOf(tasks);
-            String insert = """
-                INSERT INTO scheduled_tasks(
-                    workspace_id, id, name, description, trigger_type, interval_minutes, interval_value,
-                    interval_unit, daily_time, cron_expression, once_date_time, prompt,
-                    enabled, last_run_time, last_run_status, last_duration, run_count,
-                    fail_count, notify_enabled, notify_channel, execution_history_json,
-                    exec_records_json, unattended_authorized, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """;
-            try (Connection c = AppDatabase.getConnection();
-                 PreparedStatement del = c.prepareStatement("DELETE FROM scheduled_tasks WHERE workspace_id = ?");
-                 PreparedStatement ps = c.prepareStatement(insert)) {
-                c.setAutoCommit(false);
-                del.setString(1, workspaceId);
-                del.executeUpdate();
-                for (ScheduledTask task : snapshot) {
-                    ps.setString(1, workspaceId);
-                    ps.setString(2, task.getId());
-                    ps.setString(3, task.getName());
-                    ps.setString(4, task.getDescription());
-                    ps.setString(5, task.getTriggerType());
-                    ps.setInt(6, task.getIntervalMinutes());
-                    ps.setInt(7, task.getIntervalValue());
-                    ps.setString(8, task.getIntervalUnit());
-                    ps.setString(9, task.getDailyTime());
-                    ps.setString(10, task.getCronExpression());
-                    ps.setString(11, task.getOnceDateTime());
-                    ps.setString(12, task.getPrompt());
-                    ps.setBoolean(13, task.isEnabled());
-                    ps.setString(14, task.getLastRunTime());
-                    ps.setString(15, task.getLastRunStatus());
-                    ps.setString(16, task.getLastDuration());
-                    ps.setInt(17, task.getRunCount());
-                    ps.setInt(18, task.getFailCount());
-                    ps.setBoolean(19, task.isNotifyEnabled());
-                    ps.setString(20, task.getNotifyChannel());
-                    ps.setString(21, objectMapper.writeValueAsString(task.getExecutionHistory()));
-                    ps.setString(22, objectMapper.writeValueAsString(task.getExecRecords()));
-                    ps.setBoolean(23, task.isUnattendedToolsAuthorized());
-                    ps.addBatch();
-                }
-                ps.executeBatch();
-                c.commit();
-                return true;
-            } catch (SQLException | IOException e) {
-                log.error("保存定时任务到 H2 失败", e);
-                return false;
-            }
-        }
-    }
-
-    private List<String> readStringList(String json) {
-        if (json == null || json.isBlank()) return new ArrayList<>();
-        try {
-            List<String> out = objectMapper.readValue(json, new TypeReference<>() {});
-            return out != null ? out : new ArrayList<>();
-        } catch (IOException e) {
-            log.warn("解析定时任务执行历史失败，使用空列表", e);
-            return new ArrayList<>();
-        }
-    }
-
-    private List<ScheduledTask.ExecRecord> readExecRecords(String json) {
-        if (json == null || json.isBlank()) return new ArrayList<>();
-        try {
-            List<ScheduledTask.ExecRecord> out = objectMapper.readValue(json, new TypeReference<>() {});
-            return out != null ? out : new ArrayList<>();
-        } catch (IOException e) {
-            log.warn("解析定时任务结构化执行历史失败，使用空列表", e);
-            return new ArrayList<>();
+            tasks.addAll(store.loadAll(workspaceId));
+            log.info("已从 H2 加载 {} 个定时任务", tasks.size());
         }
     }
 
@@ -421,7 +317,7 @@ public class ScheduleManager {
      * 内置任务不持久化，故记录仅存于本次会话内存。
      */
     public void recordBuiltinRun(String id, boolean success, long durationMs, String note) {
-        ScheduledTask t = getTask(id);
+        ScheduledTask t = findBuiltinInternal(id);
         if (t == null || !t.isBuiltin()) return;
         t.recordExecution(success);
         String dur = durationMs <= 0 ? "—"
@@ -437,7 +333,7 @@ public class ScheduleManager {
     /** 在单写串行器上执行一次内置任务的手动动作，并记录结果。 */
     private void runBuiltinNow(String id) {
         BuiltinRunner runner = builtinActions.get(id);
-        ScheduledTask t = getTask(id);
+        ScheduledTask t = findBuiltinInternal(id);
         if (runner == null || t == null) {
             log.warn("系统内置任务无手动触发动作，忽略: {}", id);
             return;
@@ -468,26 +364,47 @@ public class ScheduleManager {
      * 内置任务只读，UI/工具据 {@link ScheduledTask#isBuiltin()} 区分呈现与禁改。
      */
     public List<ScheduledTask> getAllTasks() {
-        List<ScheduledTask> all = new ArrayList<>(tasks);
-        all.addAll(builtinTasks);
+        List<ScheduledTask> all = tasks.stream().map(ScheduledTask::copy)
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        builtinTasks.stream().map(ScheduledTask::copy).forEach(all::add);
         return all;
     }
 
     public ScheduledTask getTask(String id) {
-        ScheduledTask user = tasks.stream()
-                .filter(t -> t.getId().equals(id))
-                .findFirst()
-                .orElse(null);
-        if (user != null) return user;
-        return builtinTasks.stream()
-                .filter(t -> t.getId().equals(id))
-                .findFirst()
-                .orElse(null);
+        ScheduledTask user = findTaskInternal(id);
+        if (user != null) return user.copy();
+        ScheduledTask builtin = findBuiltinInternal(id);
+        return builtin == null ? null : builtin.copy();
+    }
+
+    private ScheduledTask findTaskInternal(String id) {
+        if (id == null) return null;
+        return tasks.stream().filter(t -> id.equals(t.getId())).findFirst().orElse(null);
+    }
+
+    private ScheduledTask findBuiltinInternal(String id) {
+        if (id == null) return null;
+        return builtinTasks.stream().filter(t -> id.equals(t.getId())).findFirst().orElse(null);
+    }
+
+    private void replaceTaskInternal(ScheduledTask task) {
+        for (int i = 0; i < tasks.size(); i++) {
+            if (tasks.get(i).getId().equals(task.getId())) {
+                tasks.set(i, task);
+                return;
+            }
+        }
+        tasks.add(task);
     }
 
     /** 该任务此刻是否正在执行（真实运行状态，非"启用"配置位） */
     public boolean isRunning(String id) {
         return runningTaskIds.contains(id);
+    }
+
+    /** 该任务正在排队或执行（用于拒绝重复手动触发）。 */
+    public boolean isActive(String id) {
+        return activeRunsByTask.containsKey(id) || runningTaskIds.contains(id);
     }
 
     /**
@@ -509,10 +426,24 @@ public class ScheduleManager {
 
     // ==================== 增删改 ====================
 
+    public enum DisableMode {
+        /** 用户/UI/外部命令停用：同时取消当前排队或运行实例。 */
+        CANCEL_ACTIVE,
+        /** 任务在自身执行中自停：取消未来调度，但允许当前轮正常收尾。 */
+        AFTER_CURRENT_RUN
+    }
+
+    public enum RunNowResult {
+        STARTED, ALREADY_ACTIVE, DISABLED, NOT_FOUND, UNSUPPORTED
+    }
+
+    /**
+     * 兼容旧调用的草稿工厂。任务必须完整配置后再调用
+     * {@link #saveNewTask(ScheduledTask)}，避免先写入半成品再二次更新。
+     */
+    @Deprecated
     public ScheduledTask createTask(String name) {
-        ScheduledTask task = createDraft(name);
-        saveNewTask(task);
-        return task;
+        return createDraft(name);
     }
 
     /** 仅创建内存草稿，不加入管理器、不持久化。 */
@@ -522,43 +453,125 @@ public class ScheduleManager {
     }
 
     /** 首次保存 UI 草稿；保存后才成为正式定时任务。 */
-    public synchronized void saveNewTask(ScheduledTask task) {
-        if (task == null || task.isBuiltin() || getTask(task.getId()) != null) {
+    public synchronized ScheduledTask saveNewTask(ScheduledTask task) {
+        if (task == null || task.isBuiltin() || findTaskInternal(task.getId()) != null
+                || findBuiltinInternal(task.getId()) != null) {
             throw new IllegalArgumentException("无效或重复的定时任务草稿");
         }
-        tasks.add(task);
-        if (!saveAll()) {
-            tasks.remove(task);
-            throw new IllegalStateException("定时任务持久化失败，草稿未保存");
+        ScheduledTask candidate = task.copy();
+        validateDefinition(candidate);
+        ScheduledTask persisted;
+        synchronized (persistenceLock) {
+            persisted = store.insert(requireWorkspace(), candidate);
+            tasks.add(persisted);
         }
-        if (task.isEnabled()) scheduleTask(task);
-        log.info("已创建定时任务: {} ({})", task.getName(), task.getId());
-        taskLog.info("创建定时任务: {} ({})", task.getName(), task.getId());
+        if (persisted.isEnabled() && !scheduleTask(persisted)) {
+            ScheduledTask disabled = persisted.copy();
+            disabled.setEnabled(false);
+            synchronized (persistenceLock) {
+                disabled = store.updateDefinition(requireWorkspace(), disabled);
+                replaceTaskInternal(disabled);
+            }
+            throw new SchedulePersistenceException("任务已保存，但调度注册失败，已自动保持暂停："
+                    + persisted.getName());
+        }
+        log.info("已创建定时任务: {} ({})", persisted.getName(), persisted.getId());
+        taskLog.info("创建定时任务: {} ({})", persisted.getName(), persisted.getId());
+        return persisted.copy();
     }
 
-    public void updateTask(ScheduledTask task) {
-        if (task != null && (task.isBuiltin() || isBuiltin(task.getId()))) {
-            log.warn("系统内置任务不可编辑，已忽略更新: {}", task.getId());
-            return;
+    public ScheduledTask updateTask(ScheduledTask task) {
+        if (task == null) throw new IllegalArgumentException("定时任务不能为空");
+        if (task.isBuiltin() || isBuiltin(task.getId())) {
+            throw new IllegalArgumentException("系统内置任务不可编辑：" + task.getId());
         }
-        saveAll();
-        cancelTask(task.getId());
-        if (task.isEnabled()) {
-            scheduleTask(task);
+        validateDefinition(task);
+        ScheduledTask before;
+        ScheduledTask persisted;
+        synchronized (persistenceLock) {
+            before = findTaskInternal(task.getId());
+            if (before == null) throw new IllegalArgumentException("未找到定时任务：" + task.getId());
+            // 停用必须先在内存中可见，防止持久化窗口期间到点的 Quartz tick
+            // 读到 enabled=true 并启动新一轮。写入失败时会从库内刷新/回滚。
+            if (before.isEnabled() && !task.isEnabled()) replaceTaskInternal(task.copy());
+            try {
+                persisted = store.updateDefinition(requireWorkspace(), task);
+            } catch (RuntimeException failure) {
+                refreshTaskAfterFailedWrite(task.getId(), before, failure);
+                throw failure;
+            }
+            replaceTaskInternal(persisted);
         }
-        log.info("已更新定时任务: {} ({})", task.getName(), task.getId());
+        cancelTask(persisted.getId());
+        if (persisted.isEnabled() && !scheduleTask(persisted)) {
+            persisted = rollbackToDisabled(persisted);
+            throw new SchedulePersistenceException("任务配置已保存，但调度注册失败，已自动保持暂停："
+                    + persisted.getName());
+        }
+        if (before.isEnabled() && !persisted.isEnabled()) {
+            cancelActiveRun(persisted.getId(), CancellationReason.SCHEDULE_DISABLED);
+        }
+        log.info("已更新定时任务: {} ({})", persisted.getName(), persisted.getId());
         taskLog.info("更新定时任务: {} ({}), 启用: {}, 触发: {}",
-                task.getName(), task.getId(), task.isEnabled(), task.getTriggerType());
+                persisted.getName(), persisted.getId(), persisted.isEnabled(), persisted.getTriggerType());
+        return persisted.copy();
+    }
+
+    public ScheduledTask setEnabled(String id, boolean enabled, DisableMode mode) {
+        if (isBuiltin(id)) throw new IllegalArgumentException("系统内置任务不可停用：" + id);
+        ScheduledTask persisted;
+        synchronized (persistenceLock) {
+            ScheduledTask current = findTaskInternal(id);
+            if (current == null) throw new IllegalArgumentException("未找到定时任务：" + id);
+            if (current.isEnabled() == enabled) {
+                persisted = current.copy();
+            } else {
+                ScheduledTask changed = current.copy();
+                changed.setEnabled(enabled);
+                if (!enabled) replaceTaskInternal(changed.copy());
+                try {
+                    persisted = store.updateDefinition(requireWorkspace(), changed);
+                } catch (RuntimeException failure) {
+                    refreshTaskAfterFailedWrite(id, current, failure);
+                    throw failure;
+                }
+                replaceTaskInternal(persisted);
+            }
+        }
+        cancelTask(id);
+        if (enabled && !scheduleTask(persisted)) {
+            persisted = rollbackToDisabled(persisted);
+            throw new SchedulePersistenceException("启用任务失败，已保持暂停：" + persisted.getName());
+        }
+        if (!enabled && mode == DisableMode.CANCEL_ACTIVE) {
+            cancelActiveRun(id, CancellationReason.SCHEDULE_DISABLED);
+        }
+        taskLog.info("设置定时任务状态: {} ({}), 启用: {}, 模式: {}",
+                persisted.getName(), id, enabled, mode);
+        return persisted.copy();
     }
 
     public void deleteTask(String id) {
         if (isBuiltin(id)) {
             log.warn("系统内置任务不可删除，已忽略: {}", id);
-            return;
+            throw new IllegalArgumentException("系统内置任务不可删除：" + id);
+        }
+        synchronized (persistenceLock) {
+            ScheduledTask current = findTaskInternal(id);
+            if (current == null) return;
+            ScheduledTask stagedDisabled = current.copy();
+            stagedDisabled.setEnabled(false);
+            replaceTaskInternal(stagedDisabled);
+            try {
+                store.delete(requireWorkspace(), id, current.getVersion());
+            } catch (RuntimeException failure) {
+                refreshTaskAfterFailedWrite(id, current, failure);
+                throw failure;
+            }
+            tasks.removeIf(t -> t.getId().equals(id));
         }
         cancelTask(id);
-        tasks.removeIf(t -> t.getId().equals(id));
-        saveAll();
+        cancelActiveRun(id, CancellationReason.SCHEDULE_DISABLED);
         log.info("已删除定时任务: {}", id);
         taskLog.info("删除定时任务: {}", id);
     }
@@ -568,9 +581,7 @@ public class ScheduleManager {
         // 过滤掉系统内置任务，仅删除用户任务
         List<String> deletable = ids.stream().filter(id -> !isBuiltin(id)).toList();
         if (deletable.isEmpty()) return;
-        deletable.forEach(this::cancelTask);
-        tasks.removeIf(t -> deletable.contains(t.getId()));
-        saveAll();
+        for (String id : deletable) deleteTask(id);
         log.info("已批量删除 {} 个定时任务", deletable.size());
         taskLog.info("批量删除定时任务: {}", deletable);
     }
@@ -579,25 +590,84 @@ public class ScheduleManager {
      * 手动立即执行一次任务 —— 用 Quartz 的 triggerJob 触发已存在的 job；
      * 若任务未启用尚未注册到 Quartz，则直接提交到专用串行队列。
      */
-    public void runNow(String id) {
+    public RunNowResult runNow(String id, boolean allowDisabled) {
         if (isBuiltin(id)) {
-            runBuiltinNow(id);   // 内置任务走手动动作路径（已注册才执行）
-            return;
+            if (!hasBuiltinAction(id)) return RunNowResult.UNSUPPORTED;
+            if (runningTaskIds.contains(id)) return RunNowResult.ALREADY_ACTIVE;
+            runBuiltinNow(id);
+            return RunNowResult.STARTED;
         }
-        ScheduledTask task = getTask(id);
-        if (task == null) return;
+        ScheduledTask task = findTaskInternal(id);
+        if (task == null) return RunNowResult.NOT_FOUND;
+        if (!task.isEnabled() && !allowDisabled) return RunNowResult.DISABLED;
         taskLog.info("手动触发任务: {} ({})", task.getName(), id);
-        try {
-            JobKey jobKey = JobKey.jobKey(id, JOB_GROUP);
-            if (quartz.checkExists(jobKey)) {
-                quartz.triggerJob(jobKey);
-                return;
+        return enqueueTask(id, !allowDisabled, true);
+    }
+
+    /** 向后兼容的显式手动执行；暂停任务仍需调用方先确认。 */
+    public RunNowResult runNow(String id) {
+        return runNow(id, true);
+    }
+
+    public boolean cancelRun(String id) {
+        return cancelActiveRun(id, CancellationReason.SCHEDULE_DISABLED);
+    }
+
+    private ScheduledTask rollbackToDisabled(ScheduledTask persisted) {
+        if (!persisted.isEnabled()) return persisted;
+        ScheduledTask disabled = persisted.copy();
+        disabled.setEnabled(false);
+        synchronized (persistenceLock) {
+            replaceTaskInternal(disabled.copy());
+            try {
+                ScheduledTask result = store.updateDefinition(requireWorkspace(), disabled);
+                replaceTaskInternal(result);
+                return result;
+            } catch (RuntimeException failure) {
+                refreshTaskAfterFailedWrite(persisted.getId(), persisted, failure);
+                throw failure;
             }
-        } catch (SchedulerException e) {
-            log.warn("Quartz 手动触发失败，回退到直接执行", e);
         }
-        // 未在 Quartz 中：仍进入同一个串行执行队列；手动运行允许执行已停用任务。
-        executeTask(task, false);
+    }
+
+    /**
+     * 写入冲突/失败后尽力以数据库为准刷新管理器快照；数据库也不可读时
+     * 恢复写入前快照，并把刷新错误挂到原异常上供 UI/工具完整呈现。
+     */
+    private void refreshTaskAfterFailedWrite(String id, ScheduledTask fallback,
+                                             RuntimeException originalFailure) {
+        try {
+            ScheduledTask latest = store.find(requireWorkspace(), id);
+            if (latest == null) tasks.removeIf(t -> t.getId().equals(id));
+            else replaceTaskInternal(latest);
+        } catch (RuntimeException refreshFailure) {
+            originalFailure.addSuppressed(refreshFailure);
+            if (fallback != null) replaceTaskInternal(fallback.copy());
+        }
+    }
+
+    private void validateDefinition(ScheduledTask task) {
+        if (task.getId() == null || task.getId().isBlank()) {
+            throw new IllegalArgumentException("任务 ID 不能为空");
+        }
+        if (task.getName() == null || task.getName().isBlank()) {
+            throw new IllegalArgumentException("任务名称不能为空");
+        }
+        if (task.getPrompt() == null || task.getPrompt().isBlank()) {
+            throw new IllegalArgumentException("任务提示词不能为空");
+        }
+        task.normalizeIntervalFields();
+        if (task.isEnabled() && buildTrigger(task) == null) {
+            throw new IllegalArgumentException("任务触发配置无效");
+        }
+    }
+
+    private String requireWorkspace() {
+        String id = loadedWorkspaceId;
+        if (id == null || id.isBlank()) {
+            throw new SchedulePersistenceException("定时任务尚未绑定工作区");
+        }
+        return id;
     }
 
     // ==================== 调度 ====================
@@ -669,9 +739,10 @@ public class ScheduleManager {
             java.util.Date fireAt = java.util.Date.from(
                     when.atZone(java.time.ZoneId.systemDefault()).toInstant());
             if (fireAt.before(new java.util.Date())) {
-                log.warn("一次性任务 {} 的运行时间已过（{}），跳过调度", task.getName(), dt);
-                taskLog.warn("[{}] 一次性时间已过：{}，跳过", task.getName(), dt);
-                return null;
+                // RAMJobStore 重启后不保留 misfire 状态，因此过期的一次性任务
+                // 需由重建触发器主动补触发一次，执行收尾后会自动停用。
+                taskLog.info("[{}] 一次性时间已过：{}，启动后补触发一次", task.getName(), dt);
+                fireAt = new java.util.Date();
             }
             return base.startAt(fireAt)
                     .withSchedule(SimpleScheduleBuilder.simpleSchedule()
@@ -705,7 +776,8 @@ public class ScheduleManager {
             LocalTime t = LocalTime.parse(dailyTime, DateTimeFormatter.ofPattern("HH:mm"));
             // Quartz Cron 6 段：秒 分 时 日 月 周；周用 ? 表示不指定
             String cron = String.format("0 %d %d * * ?", t.getMinute(), t.getHour());
-            return base.withSchedule(CronScheduleBuilder.cronSchedule(cron)).build();
+            return base.withSchedule(CronScheduleBuilder.cronSchedule(cron)
+                    .withMisfireHandlingInstructionDoNothing()).build();
         } catch (Exception e) {
             log.warn("解析每日时间失败: {}，跳过", dailyTime);
             return null;
@@ -723,7 +795,8 @@ public class ScheduleManager {
                     task.getName(), cron);
             return null;
         }
-        return base.withSchedule(CronScheduleBuilder.cronSchedule(cron)).build();
+        return base.withSchedule(CronScheduleBuilder.cronSchedule(cron)
+                .withMisfireHandlingInstructionDoNothing()).build();
     }
 
     private void cancelTask(String id) {
@@ -736,169 +809,235 @@ public class ScheduleManager {
 
     // ==================== 执行 ====================
 
-    /**
-     * 实际执行 —— 由 Quartz Job 或 runNow 调用。
-     *
-     * <p>不在 Quartz 工作线程上阻塞太久：streamChat 本身是异步流式，
-     * onComplete/onError 回调中再做记录与持久化。</p>
-     */
-    void executeTask(ScheduledTask task) {
-        executeTask(task, true);
+    /** Quartz 入口；重复 tick 会在真正入队前被合并。 */
+    void executeTask(String taskId) {
+        enqueueTask(taskId, true, false);
     }
 
-    private void executeTask(ScheduledTask task, boolean requireEnabled) {
-        ScheduledTaskAgent agent = scheduledAgent;
-        if (agent == null) {
-            log.warn("定时任务编排器未初始化，跳过任务: {}", task.getName());
-            taskLog.warn("[{}] 定时任务编排器未初始化，跳过执行", task.getName());
-            return;
+    private RunNowResult enqueueTask(String taskId, boolean requireEnabled, boolean manual) {
+        ScheduledTaskRunner runner = scheduledRunner;
+        ScheduledTask snapshot = findTaskInternal(taskId);
+        if (snapshot == null) return RunNowResult.NOT_FOUND;
+        if (runner == null) {
+            taskLog.warn("[{}] 定时任务执行器未初始化，跳过执行", snapshot.getName());
+            return RunNowResult.UNSUPPORTED;
         }
-        long epoch = executionEpoch.get();
+        if (requireEnabled && !snapshot.isEnabled()) return RunNowResult.DISABLED;
 
-        // 提交到单线程串行器：与交互聊天完全隔离（ScheduledTaskAgent 自带独立编排器/子智能体/订阅，
-        // 可与聊天并行不互相 dispose），多个定时 tick 在此排队顺序执行、不丢拍；run 阻塞直到本次完成。
-        scheduledExec.submit(() -> {
-        if (!isExecutionCurrent(epoch, task) || (requireEnabled && !task.isEnabled())) {
-            taskLog.info("[{}] 跳过已删除、已停用或旧工作区的排队执行", task.getName());
+        long epoch = executionEpoch.get();
+        ScheduledRunControl control = new ScheduledRunControl(taskId);
+        if (activeRunsByTask.putIfAbsent(taskId, control) != null) {
+            taskLog.info("[{}] 已有运行或排队实例，合并本次{}触发",
+                    snapshot.getName(), manual ? "手动" : "定时");
+            return RunNowResult.ALREADY_ACTIVE;
+        }
+
+        FutureTask<Void> future = new FutureTask<>(() -> {
+            runQueuedTask(control, runner, epoch, requireEnabled, manual);
+            return null;
+        }) {
+            @Override
+            protected void done() {
+                activeRunsByTask.remove(taskId, control);
+            }
+        };
+        control.attachFuture(future);
+        try {
+            scheduledExec.execute(future);
+            return RunNowResult.STARTED;
+        } catch (RejectedExecutionException rejected) {
+            activeRunsByTask.remove(taskId, control);
+            taskLog.warn("[{}] 执行队列已关闭，拒绝触发", snapshot.getName());
+            return RunNowResult.UNSUPPORTED;
+        }
+    }
+
+    private void runQueuedTask(ScheduledRunControl control, ScheduledTaskRunner runner, long epoch,
+                               boolean requireEnabled, boolean manual) {
+        control.markStarted();
+        String taskId = control.taskId();
+        ScheduledTask task;
+        synchronized (persistenceLock) {
+            ScheduledTask current = findTaskInternal(taskId);
+            task = current == null ? null : current.copy();
+        }
+        if (control.isCancelled() || task == null || executionEpoch.get() != epoch
+                || (requireEnabled && !task.isEnabled())) {
+            String name = task == null ? taskId : task.getName();
+            taskLog.info("[{}] 跳过已删除、已停用、已取消或旧工作区的排队执行", name);
             return;
         }
+
         String prompt = task.getPrompt();
         if (prompt == null || prompt.isBlank()) {
-            log.warn("任务提示词为空，跳过: {}", task.getName());
             taskLog.warn("[{}] 提示词为空，跳过执行", task.getName());
             return;
         }
-        runningTaskIds.add(task.getId());
-        notifyExecutionStart(task.getId());
+
+        runningTaskIds.add(taskId);
+        notifyExecutionStart(taskId);
+        long startNanos = System.nanoTime();
+        StringBuilder resultBuilder = new StringBuilder();
         try {
-        log.info("开始执行定时任务: {} ({})", task.getName(), task.getId());
-        taskLog.info("========== 任务开始 ==========");
-        taskLog.info("[{}] 任务ID: {}, 触发类型: {}", task.getName(), task.getId(), task.getTriggerType());
-        taskLog.info("[{}] 提示词: {}", task.getName(),
-                prompt.length() > 200 ? prompt.substring(0, 200) + "..." : prompt);
-        emitLog(task.getName(), "开始执行...");
+            log.info("开始执行定时任务: {} ({}) runId={}",
+                    task.getName(), taskId, control.runId());
+            taskLog.info("========== 任务开始 ==========");
+            taskLog.info("[{}] 任务ID: {}, runId: {}, 来源: {}, 触发类型: {}",
+                    task.getName(), taskId, control.runId(), manual ? "手动" : "定时", task.getTriggerType());
+            taskLog.info("[{}] 提示词: {}", task.getName(),
+                    prompt.length() > 200 ? prompt.substring(0, 200) + "..." : prompt);
+            emitLog(task.getName(), "开始执行...");
 
-        final long startNanos = System.nanoTime();
-        final StringBuilder resultBuilder = new StringBuilder();
-
-        // 注入定时任务上下文：让执行体知道"本任务 id"，从而能在条件达成后调 schedule_disable 自停。
-        String contextualPrompt = "【定时任务上下文】你正在执行定时任务「" + task.getName()
-                + "」（id=" + task.getId() + "）。若本次检查已满足目标条件，请先用 notify_send 通知用户，"
-                + "再调用 schedule_disable 工具并传入 id=" + task.getId() + " 停止本定时任务，避免继续轮询。\n\n"
-                + prompt;
-
-        // 显式授权：本任务打开授权开关后，其无人值守执行期内本次 run 令牌的高风险工具确认自动放行。
-        // run 阻塞返回后于下方 finally 清除，串行执行器保证不会与其它定时任务的授权期交叠。
-        // 归属安全：beginAuthorizedScheduledRun 构造本次 run 专属的令牌实例并同时充当授权窗匹配键，
-        // agent.run 用同一实例装配全部工具——确认层按实例身份（==）匹配，上一次执行超时残存的
-        // 僵尸线程携带旧 run 的令牌实例（即便同一任务的下个 tick，taskId 相同也对不上），
-        // 结构上不可能借放行（旧的时长冷却期猜测机制已随之移除）。
-        com.javaclaw.agent.ToolCallOrigin runOrigin =
-                com.javaclaw.agent.ToolConfirmationManager.beginAuthorizedScheduledRun(
-                        task.getId(), task.isUnattendedToolsAuthorized());
-        agent.run(runOrigin, contextualPrompt, new ConversationCallbacks() {
-            @Override
-            public void onEvent(ConversationEvent event) {
-                switch (event) {
-                    case ConversationEvent.Reply r -> resultBuilder.append(r.chunk());
-                    case ConversationEvent.ToolResult tr -> taskLog.info("[{}] 工具调用: {} -> {}",
-                            task.getName(), tr.toolName(),
-                            tr.result().length() > 300 ? tr.result().substring(0, 300) + "..." : tr.result());
-                    case ConversationEvent.Hint h -> taskLog.info("[{}] 规划提示: {}", task.getName(), h.text());
-                    case ConversationEvent.Evaluation ev -> taskLog.info("[{}] GEPA 评估: {}/5.0 — {}",
-                            task.getName(), String.format("%.1f", ev.result().getScore()),
-                            ev.result().getSummary());
-                    case ConversationEvent.LoopDetected ld -> {
-                        taskLog.warn("[{}] 循环检测: {}", task.getName(), ld.warning());
-                        emitLog(task.getName(), "循环检测: " + ld.warning());
+            String contextualPrompt = "【定时任务上下文】你正在执行定时任务「" + task.getName()
+                    + "」（id=" + taskId + "）。若本次检查已满足目标条件，请先用 notify_send 通知用户，"
+                    + "再调用 schedule_disable 工具并传入 id=" + taskId + " 停止本定时任务，避免继续轮询。\n\n"
+                    + prompt;
+            com.javaclaw.agent.ToolCallOrigin runOrigin =
+                    com.javaclaw.agent.ToolConfirmationManager.beginAuthorizedScheduledRun(
+                            taskId, task.isUnattendedToolsAuthorized());
+            java.util.concurrent.atomic.AtomicBoolean terminalRecorded =
+                    new java.util.concurrent.atomic.AtomicBoolean(false);
+            ConversationCallbacks runCallbacks = new ConversationCallbacks() {
+                @Override
+                public void onEvent(ConversationEvent event) {
+                    if (control.isCancelled() || terminalRecorded.get()) return;
+                    switch (event) {
+                        case ConversationEvent.Reply reply -> resultBuilder.append(reply.chunk());
+                        case ConversationEvent.ToolResult tool -> taskLog.info("[{}] 工具调用: {} -> {}",
+                                task.getName(), tool.toolName(),
+                                tool.result().length() > 300
+                                        ? tool.result().substring(0, 300) + "..." : tool.result());
+                        case ConversationEvent.Hint hint ->
+                                taskLog.info("[{}] 规划提示: {}", task.getName(), hint.text());
+                        case ConversationEvent.LoopDetected loop -> {
+                            taskLog.warn("[{}] 循环检测: {}", task.getName(), loop.warning());
+                            emitLog(task.getName(), "循环检测: " + loop.warning());
+                        }
+                        default -> { }
                     }
-                    default -> { /* 思考流 / 子智能体增量 / Usage 等事件在定时任务中忽略 */ }
                 }
-            }
 
-            @Override
-            public void onTerminal(ConversationOutcome outcome) {
-                if (outcome instanceof ConversationOutcome.Failed failed) {
-                    recordScheduledFailure(task, epoch, startNanos, failed.error());
-                    return;
+                @Override
+                public void onTerminal(ConversationOutcome outcome) {
+                    if (!terminalRecorded.compareAndSet(false, true)) return;
+                    ConversationOutcome effective = control.isCancelled()
+                            ? ConversationOutcome.cancelled(control.cancellationReason()) : outcome;
+                    recordScheduledOutcome(task, epoch, startNanos, resultBuilder, effective);
                 }
-                if (outcome instanceof ConversationOutcome.Cancelled cancelled) {
-                    recordScheduledFailure(task, epoch, startNanos,
-                            new java.util.concurrent.CancellationException(
-                                    "定时任务已取消: " + cancelled.reason()));
-                    return;
-                }
-                String summary = resultBuilder.length() > 500
-                        ? resultBuilder.substring(0, 500) + "..." : resultBuilder.toString();
-                String dur;
-                synchronized (persistenceLock) {
-                    if (!isExecutionCurrent(epoch, task)) return;
-                    task.recordExecution(true);
-                    dur = formatDuration(startNanos);
-                    task.setLastDuration(dur);
-                    String note = summary.isBlank() ? "—"
-                            : (summary.length() > 60 ? summary.substring(0, 60) + "…" : summary);
-                    task.addExecRecord(new ScheduledTask.ExecRecord(
-                            LocalDateTime.now().format(ScheduledTask.FORMATTER), "成功", dur, note));
-                    task.addExecutionRecord(LocalDateTime.now().format(ScheduledTask.FORMATTER)
-                            + " [成功] " + note);
-                    saveAll();
-                }
-                taskLog.info("[{}] 执行成功（耗时 {}），回复内容: {}", task.getName(), dur, summary);
-                taskLog.info("========== 任务结束（成功） ==========");
-                emitLog(task.getName(), "执行完成: " + (summary.length() > 200 ? summary.substring(0, 200) + "..." : summary));
-                log.info("定时任务执行完成: {}", task.getName());
-                maybeNotify(task, true, summary);
+            };
+            try {
+                runner.run(control, runOrigin, contextualPrompt, runCallbacks);
+            } catch (Throwable failure) {
+                runCallbacks.onTerminal(ConversationOutcome.failed(failure));
+                if (failure instanceof Error error) throw error;
             }
-
-        });
+            if (!terminalRecorded.get()) {
+                runCallbacks.onTerminal(control.isCancelled()
+                        ? ConversationOutcome.cancelled(control.cancellationReason())
+                        : ConversationOutcome.failed(new IllegalStateException(
+                                "定时任务 runner 返回时未上报终态")));
+            }
         } finally {
-            com.javaclaw.agent.ToolConfirmationManager.endScheduledRun(); // 清除本次定时执行的授权标记
-            runningTaskIds.remove(task.getId());
-            // 一次性任务跑完即自动停用（取消 Quartz job + 持久化），避免残留
+            com.javaclaw.agent.ToolConfirmationManager.endScheduledRun();
+            runningTaskIds.remove(taskId);
+            autoDisableOnceTask(taskId, epoch);
+            notifyExecutionComplete(taskId);
+        }
+    }
+
+    private void recordScheduledOutcome(ScheduledTask runSnapshot, long epoch, long startNanos,
+                                        StringBuilder resultBuilder, ConversationOutcome outcome) {
+        if (!isExecutionCurrent(epoch, runSnapshot.getId())) return;
+        String duration = formatDuration(startNanos);
+        ScheduledTaskStore.ExecutionStatus status;
+        String detail;
+        Throwable failure = null;
+        if (outcome instanceof ConversationOutcome.Failed failed) {
+            status = ScheduledTaskStore.ExecutionStatus.FAILURE;
+            failure = failed.error();
+            detail = failure.getMessage() == null ? failure.toString() : failure.getMessage();
+        } else if (outcome instanceof ConversationOutcome.Cancelled cancelled) {
+            status = ScheduledTaskStore.ExecutionStatus.CANCELLED;
+            detail = "取消原因：" + cancelled.reason();
+        } else {
+            status = ScheduledTaskStore.ExecutionStatus.SUCCESS;
+            detail = resultBuilder.length() > 500
+                    ? resultBuilder.substring(0, 500) + "..." : resultBuilder.toString();
+        }
+
+        ScheduledTask persisted;
+        try {
             synchronized (persistenceLock) {
-                if (isExecutionCurrent(epoch, task)
-                        && "once".equals(task.getTriggerType()) && task.isEnabled()) {
-                    task.setEnabled(false);
-                    cancelTask(task.getId());
-                    saveAll();
-                    taskLog.info("[{}] 一次性任务已完成并自动停用", task.getName());
-                }
+                if (!isExecutionCurrent(epoch, runSnapshot.getId())) return;
+                persisted = store.recordExecution(requireWorkspace(), runSnapshot.getId(),
+                        new ScheduledTaskStore.ExecutionResult(status, duration, detail));
+                if (persisted == null) return;
+                replaceTaskInternal(persisted);
             }
-            // run() 阻塞返回即本次结束；通知 UI 刷新运行状态/下次时间
-            notifyExecutionComplete(task.getId());
+        } catch (SchedulePersistenceException persistenceFailure) {
+            log.error("保存定时任务执行结果失败: {}", runSnapshot.getId(), persistenceFailure);
+            emitLog(runSnapshot.getName(), "执行结果保存失败: " + persistenceFailure.getMessage());
+            return;
         }
-        });
+
+        switch (status) {
+            case SUCCESS -> {
+                taskLog.info("[{}] 执行成功（耗时 {}），回复内容: {}",
+                        runSnapshot.getName(), duration, detail);
+                taskLog.info("========== 任务结束（成功） ==========");
+                emitLog(runSnapshot.getName(), "执行完成: " + shortText(detail, 200));
+                maybeNotify(persisted, true, detail);
+            }
+            case FAILURE -> {
+                taskLog.error("[{}] 执行失败（耗时 {}）: {}",
+                        runSnapshot.getName(), duration, detail, failure);
+                taskLog.info("========== 任务结束（失败） ==========");
+                emitLog(runSnapshot.getName(), "执行失败: " + detail);
+                maybeNotify(persisted, false, detail);
+            }
+            case CANCELLED -> {
+                taskLog.info("[{}] 执行已取消（耗时 {}）: {}",
+                        runSnapshot.getName(), duration, detail);
+                taskLog.info("========== 任务结束（已取消） ==========");
+                emitLog(runSnapshot.getName(), "执行已取消");
+            }
+        }
     }
 
-    private void recordScheduledFailure(ScheduledTask task, long epoch, long startNanos,
-                                        Throwable error) {
-        String msg = error.getMessage() == null ? error.toString() : error.getMessage();
-        synchronized (persistenceLock) {
-            if (!isExecutionCurrent(epoch, task)) return;
-            task.recordExecution(false);
-            String dur = formatDuration(startNanos);
-            task.setLastDuration(dur);
-            task.addExecRecord(new ScheduledTask.ExecRecord(
-                    LocalDateTime.now().format(ScheduledTask.FORMATTER), "失败", "—", msg));
-            task.addExecutionRecord(LocalDateTime.now().format(ScheduledTask.FORMATTER)
-                    + " [失败] " + msg);
-            saveAll();
+    private void autoDisableOnceTask(String taskId, long epoch) {
+        if (!isExecutionCurrent(epoch, taskId)) return;
+        ScheduledTask current = findTaskInternal(taskId);
+        if (current == null || !"once".equals(current.getTriggerType()) || !current.isEnabled()) return;
+        try {
+            setEnabled(taskId, false, DisableMode.AFTER_CURRENT_RUN);
+            taskLog.info("[{}] 一次性任务已完成并自动停用", current.getName());
+        } catch (RuntimeException e) {
+            log.error("一次性任务自动停用失败: {}", taskId, e);
         }
-        taskLog.error("[{}] 执行失败: {}", task.getName(), msg, error);
-        taskLog.info("========== 任务结束（失败） ==========");
-        emitLog(task.getName(), "执行失败: " + msg);
-        log.error("定时任务执行失败: {}", task.getName(), error);
-        maybeNotify(task, false, msg);
     }
 
-    /** 任务仍属于提交时的工作区，且未被删除/替换。 */
-    private boolean isExecutionCurrent(long epoch, ScheduledTask task) {
-        if (executionEpoch.get() != epoch) return false;
-        for (ScheduledTask current : tasks) {
-            if (current == task) return true;
+    private boolean cancelActiveRun(String taskId, CancellationReason reason) {
+        ScheduledRunControl control = activeRunsByTask.get(taskId);
+        if (control == null) return false;
+        boolean accepted = control.cancel(reason);
+        if (accepted) taskLog.info("[{}] 已请求取消 runId={}，原因={}",
+                taskId, control.runId(), reason);
+        return accepted;
+    }
+
+    private void cancelAllRuns(CancellationReason reason) {
+        for (ScheduledRunControl control : List.copyOf(activeRunsByTask.values())) {
+            control.cancel(reason);
         }
-        return false;
+    }
+
+    private boolean isExecutionCurrent(long epoch, String taskId) {
+        return executionEpoch.get() == epoch && findTaskInternal(taskId) != null;
+    }
+
+    private static String shortText(String text, int max) {
+        if (text == null || text.isBlank()) return "—";
+        return text.length() > max ? text.substring(0, max) + "..." : text;
     }
 
     /** 把起始纳秒折算为可读耗时（如 "6.2s" / "850ms"）。 */
@@ -947,6 +1086,8 @@ public class ScheduleManager {
     // ==================== 生命周期 ====================
 
     public void shutdown() {
+        executionEpoch.incrementAndGet();
+        cancelAllRuns(CancellationReason.SHUTDOWN);
         try {
             // 退出时不等待正在执行的 job 完成（waitForJobsToComplete=false）：
             // 定时任务可能触发长耗时的智能体运行，若 true 会阻塞应用退出导致卡死。
@@ -955,7 +1096,9 @@ public class ScheduleManager {
             log.warn("关闭 Quartz Scheduler 出错", e);
         }
         scheduledExec.shutdownNow();
-        if (scheduledAgent != null) scheduledAgent.shutdown();
+        ScheduledTaskRunner runner = scheduledRunner;
+        scheduledRunner = null;
+        if (runner != null) runner.shutdown();
         log.info("定时任务调度器已关闭");
     }
 
@@ -982,12 +1125,7 @@ public class ScheduleManager {
         public void execute(JobExecutionContext context) {
             String taskId = context.getMergedJobDataMap().getString(JOB_DATA_TASK_ID);
             ScheduleManager mgr = ScheduleManager.getInstance();
-            ScheduledTask task = mgr.getTask(taskId);
-            if (task == null) {
-                log.warn("Quartz 触发了不存在的任务: {}", taskId);
-                return;
-            }
-            mgr.executeTask(task);
+            mgr.executeTask(taskId);
         }
     }
 

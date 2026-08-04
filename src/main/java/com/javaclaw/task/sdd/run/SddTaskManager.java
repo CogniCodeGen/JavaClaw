@@ -21,6 +21,7 @@ import com.javaclaw.task.sdd.gate.PortReviewGate;
 import com.javaclaw.task.sdd.spec.OpenSpecChange;
 import com.javaclaw.task.sdd.spec.SpecPaths;
 import com.javaclaw.task.sdd.spec.SpecStore;
+import com.javaclaw.util.ProjectAccessPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -225,10 +226,18 @@ public final class SddTaskManager {
     public synchronized SddManagedTask create(String title, String description, String capabilities,
                                               String workDir, long tokenBudget, String notificationChannel,
                                               String nowStamp) {
+        String safeWorkDir = workDir;
+        if (workDir != null && !workDir.isBlank()) {
+            Path resolved = ProjectAccessPolicy.resolveProjectPath(workDir);
+            if (!Files.isDirectory(resolved)) {
+                throw new IllegalArgumentException("任务工作目录不存在或不是目录: " + resolved);
+            }
+            safeWorkDir = resolved.toString();
+        }
         String id = Integer.toHexString((title + description + nowStamp).hashCode() & 0x7fffffff);
         // 避免碰撞
         while (get(id) != null) id = Integer.toHexString((id + "x").hashCode() & 0x7fffffff);
-        SddManagedTask t = new SddManagedTask(id, title, description, workDir,
+        SddManagedTask t = new SddManagedTask(id, title, description, safeWorkDir,
                 capabilities == null ? "auto" : capabilities, tokenBudget, notificationChannel, nowStamp);
         tasks.add(t);
         saveAll();
@@ -276,7 +285,12 @@ public final class SddTaskManager {
                 return;
             }
             // 工作目录留空：默认在程序运行目录的 task/ 下为本任务建独立子目录（spec 产物落盘地）
-            ensureWorkDir(task);
+            try {
+                ensureWorkDir(task);
+            } catch (RuntimeException e) {
+                setState(task, SddTaskState.NEEDS_HUMAN, e.getMessage());
+                return;
+            }
             epoch = epochSequence.incrementAndGet();
             runEpochs.put(id, epoch);
             // 先置 RUNNING 再进后台：能力路由 + 装配在后台线程做（路由有 15s 阻塞上限，不能卡 UI 线程）
@@ -314,6 +328,7 @@ public final class SddTaskManager {
                             || !java.util.Objects.equals(runEpochs.get(id), epoch)) {
                         // 路由/装配窗口内被暂停或取消，不再起跑
                         log.info("[SDD] 任务 {} 在启动装配期间被 {}，放弃本次启动", id, task.state);
+                        runner.close();
                         return;
                     }
                     running.put(id, runner);
@@ -386,12 +401,20 @@ public final class SddTaskManager {
      * 基于 {@code user.dir} 建子目录的先例一致）。已指定目录则原样保留。
      */
     private void ensureWorkDir(SddManagedTask task) {
-        if (task.workDir != null && !task.workDir.isBlank()) return;
-        Path dir = Path.of(System.getProperty("user.dir"), "task", task.id);
+        Path dir;
+        if (task.workDir != null && !task.workDir.isBlank()) {
+            dir = ProjectAccessPolicy.resolveProjectPath(task.workDir);
+            if (!Files.isDirectory(dir)) {
+                throw new IllegalStateException("严格项目隔离：任务工作目录不存在或位于项目外");
+            }
+            task.workDir = dir.toString();
+            return;
+        }
+        dir = ProjectAccessPolicy.projectRoot().resolve("task").resolve(task.id);
         try {
             Files.createDirectories(dir);
         } catch (Exception e) {
-            log.warn("[SDD] 创建默认工作目录失败（继续，落盘时会重试建目录）: {}", e.getMessage());
+            throw new IllegalStateException("创建项目内默认任务目录失败: " + e.getMessage(), e);
         }
         task.workDir = dir.toAbsolutePath().normalize().toString();
         log.info("[SDD] 任务 {} 未指定工作目录，默认使用 {}", task.id, task.workDir);

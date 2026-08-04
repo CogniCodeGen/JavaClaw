@@ -294,7 +294,7 @@ public class ChatService {
         AgentConfig config = AgentConfig.getInstance();
         return ReActAgent.builder()
                 .name(AgentConfig.AGENT_NAME)
-                .sysPrompt(fullSysPrompt)
+                .sysPrompt(AgentPrompts.withMandatoryGlobalRules(fullSysPrompt))
                 .model(runtime.getModelFactory().createHighChatModel())
                 .toolkit(masterToolkit)
                 .memory(runtime.getMemoryManager().getOrchestratorMemory())
@@ -320,7 +320,12 @@ public class ChatService {
     public com.javaclaw.api.conversation.ConversationHandle streamChat(
             ConversationRequest request, ConversationCallbacks callbacks) {
         return conversationRun.start(callbacks,
-                guarded -> startChatPipeline(request, guarded),
+                guarded -> {
+                    runtime.getBrowserManager().activateScope(
+                            com.javaclaw.browser.PlaywrightBrowserManager
+                                    .conversationScopeId(request.sessionId()));
+                    startChatPipeline(request, guarded);
+                },
                 ignored -> cancelStream(request.sessionId()));
     }
 
@@ -398,7 +403,7 @@ public class ChatService {
         final AtomicReference<CorrectionTurnContext> correctionContextRef =
                 new AtomicReference<>(CorrectionTurnContext.empty());
 
-        log.info("收到用户消息（普通模式）: {}", userInput);
+        log.info("收到用户消息（普通模式）: {} 字符（正文不记录）", userInput.length());
 
         // 循环检测：把警告翻译为 LoopDetected 事件
         loopDetectionHook.reset();
@@ -432,32 +437,39 @@ public class ChatService {
 
         // 记忆：收集助手回复文本，结束后异步交给 MemoryService（落情景 + 蒸馏事实）
         // 上限 12000 字符 —— 过长回复对蒸馏来说也只关心结论，无须全文
-        final StringBuilder collectedReply = new StringBuilder();
-        // 仅在纠错守卫启用时保存完整草稿；collectedReply 仍维持原有 12k 记忆上限。
-        final StringBuilder guardedReply = new StringBuilder();
+        // StringBuffer 而非 StringBuilder：追加发生在流线程，而 doFinally 在取消路径上会由
+        // 取消方线程读取（停止按钮、澄清中断、下一轮抢占），需要同步以免读到撕裂状态。
+        final StringBuffer collectedReply = new StringBuffer();
         final int REPLY_COLLECT_CAP = 12000;
+        // 完整回复收集后再做语言判定；逐 token 判断会把代码、URL 或中文流中的英文专名误伤。
+        final StringBuffer bufferedModelReply = new StringBuffer();
+        final java.util.concurrent.atomic.AtomicBoolean replyPublished =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        final Runnable publishGuardedReply = () -> {
+            if (!replyPublished.compareAndSet(false, true)) return;
+            String guardedReply = com.javaclaw.util.ChineseOutputGuard
+                    .enforceUserVisibleReply(bufferedModelReply.toString());
+            if (guardedReply == null || guardedReply.isBlank()) return;
+            int remaining = REPLY_COLLECT_CAP - collectedReply.length();
+            if (remaining > 0) {
+                collectedReply.append(guardedReply, 0, Math.min(remaining, guardedReply.length()));
+            }
+            callbacks.onEvent(new ConversationEvent.Reply(guardedReply));
+        };
 
         // 领域层回调包装器：拦截 Usage / Reply / ToolResult 做簿记，然后转发给 UI
         final ConversationCallbacks domainCallbacks = new ConversationCallbacks() {
             @Override
             public void onEvent(ConversationEvent event) {
+                boolean forward = true;
                 try {
                     if (event instanceof ConversationEvent.Usage u) {
                         runtime.getTokenTracker().addStreamingUsage(u.inputTokens(), u.outputTokens());
                     } else if (event instanceof ConversationEvent.Reply r) {
                         outputCharCount.addAndGet(r.chunk().length());
                         runtime.getTokenTracker().addStreamingChars(r.chunk().length());
-                        if (collectedReply.length() < REPLY_COLLECT_CAP) {
-                            int remaining = REPLY_COLLECT_CAP - collectedReply.length();
-                            collectedReply.append(r.chunk(), 0,
-                                    Math.min(remaining, r.chunk().length()));
-                        }
-                        // 相关纠错轮次先缓冲最终回复，完成时经 CorrectionGuard 审核后一次性交付；
-                        // 流式片段一旦发给 UI，就无法在发现重复旧错误后撤回。
-                        if (correctionContextRef.get().requiresReplyGuard()) {
-                            guardedReply.append(r.chunk());
-                            return;
-                        }
+                        bufferedModelReply.append(r.chunk());
+                        forward = false;
                     } else if (event instanceof ConversationEvent.ToolResult tr) {
                         // 只有真实工具调用（非子智能体转发）才喂给监控/评估
                         executionMonitor.recordExecution(tr.toolName(), tr.result());
@@ -475,10 +487,11 @@ public class ChatService {
                 } catch (Throwable t) {
                     log.error("领域层簿记失败，继续转发事件给 UI", t);
                 }
-                callbacks.onEvent(event);
+                if (forward) callbacks.onEvent(event);
             }
 
             @Override public void onTerminal(ConversationOutcome outcome) {
+                publishGuardedReply.run();
                 callbacks.onTerminal(outcome);
             }
         };
@@ -639,6 +652,13 @@ public class ChatService {
                 .doFinally(signal -> {
                     activeSubscription.clearIf(selfSub.get());
                     clarifyTools.unbind(clarifyBindHandle);
+                    // 记录本轮实际产出的回复：出错/取消轮同样要更新，否则下一轮显式纠错会把
+                    // 两轮之前的回复当成“上一轮”，审计摘录错位。一个字都没生成时保留原值，
+                    // 否则会把 loadSession 恢复的上一轮回复清成空串。
+                    String finalReply = collectedReply.toString();
+                    if (!finalReply.isBlank()) {
+                        lastAssistantReplies.put(correctionSessionKey, finalReply);
+                    }
                     // 编排阶段最终标记 — 由 doFinally 兜底，cancel/error 不会漏掉
                     emitProgress(callbacks, "orchestrate", "编排执行",
                             signal == reactor.core.publisher.SignalType.ON_ERROR
@@ -651,6 +671,7 @@ public class ChatService {
                         event -> eventHandler.handleEvent(event, domainCallbacks),
                         error -> {
                             log.error("流式调用发生错误", error);
+                            publishGuardedReply.run();
                             runtime.getTokenTracker().recordUsage(inputCharCount, outputCharCount.get());
                             // 出错轮：注入技能记一次失败归因
                             recordSkillTurnOutcome(false);
@@ -659,40 +680,35 @@ public class ChatService {
                         () -> {
                             log.info("流式输出完成（GEPA 执行轨迹: {} 条）",
                                     executionMonitor.getTraceCount());
+                            publishGuardedReply.run();
                             runtime.getTokenTracker().recordUsage(inputCharCount, outputCharCount.get());
                             // 注入技能的轮次成败归因（滑窗成功率达标视为成功）
                             recordSkillTurnOutcome(isTurnSuccessful());
+                            String memoryReply = collectedReply.toString();
+                            // 疑似复发只记审计、不拦截也不改写：拦错一段正确回复的代价远高于
+                            // 它能避免的危害，复发概率由注入的纠错上下文降低。审计让“到底有多
+                            // 常复发”变得可测量，将来要不要加防线可以基于数据决定。
                             CorrectionTurnContext correctionContext = correctionContextRef.get();
-                            String deliveredReply = correctionContext.requiresReplyGuard()
-                                    ? guardedReply.toString() : collectedReply.toString();
-                            if (correctionContext.requiresReplyGuard()) {
-                                var violation = CorrectionGuard.findViolation(
-                                        deliveredReply, correctionContext.corrections());
-                                if (violation.isPresent()) {
-                                    memoryService.recordCorrectionGuardViolation(violation.get());
-                                    deliveredReply = CorrectionGuard.safeFallback(violation.get());
-                                    runtime.getMemoryManager()
-                                            .replaceLastAssistantReply(deliveredReply);
-                                    callbacks.onEvent(new ConversationEvent.Hint(
-                                            "[纠错保护] 已拦截模型草稿中重复出现的旧结论"));
-                                    log.warn("纠错守卫已拦截重复旧结论: {}",
-                                            violation.get().wrongClaim());
-                                }
-                                // 纠错相关轮次此前未把 Reply 增量转发给 UI；审核通过后一次性交付。
-                                if (!deliveredReply.isBlank()) {
-                                    callbacks.onEvent(new ConversationEvent.Reply(deliveredReply));
-                                }
+                            if (correctionContext.hasCorrections()) {
+                                CorrectionGuard.findViolation(
+                                                memoryReply, correctionContext.corrections())
+                                        .ifPresent(violation -> {
+                                            memoryService.recordCorrectionGuardViolation(violation);
+                                            log.warn("回复中疑似重复已纠正的旧结论（仅记审计，未拦截）: {}",
+                                                    violation.wrongClaim());
+                                        });
                             }
-                            String memoryReply = deliveredReply.length() <= REPLY_COLLECT_CAP
-                                    ? deliveredReply
-                                    : deliveredReply.substring(0, REPLY_COLLECT_CAP);
-                            lastAssistantReplies.put(correctionSessionKey, memoryReply);
                             // 记忆：轮后异步落情景 + 向量去重蒸馏事实（替代旧 distill/consolidate 批处理）
                             memoryService.rememberTurn("chat", userInput, memoryReply, null);
                             // 技能蒸馏（程序性记忆）：达门槛时从执行轨迹蒸馏可沉淀的工作流经验
-                            skillCurator.distillFromChatTurn(userInput, memoryReply,
-                                            executionMonitor.getTraces(), executionMonitor.successRate())
-                                    .subscribe();
+                            if (!com.javaclaw.util.SensitiveDataRedactor.containsLikelyCredential(userInput)
+                                    && !com.javaclaw.util.SensitiveDataRedactor.containsLikelyCredential(memoryReply)) {
+                                skillCurator.distillFromChatTurn(userInput, memoryReply,
+                                                executionMonitor.getTraces(), executionMonitor.successRate())
+                                        .subscribe();
+                            } else {
+                                log.warn("本轮包含疑似凭据，已跳过技能蒸馏");
+                            }
                             callbacks.onTerminal(ConversationOutcome.completed());
                         }
                 );
@@ -937,6 +953,13 @@ public class ChatService {
     public void deleteSession(String sessionId) {
         memoryService.deleteCheckpoint(sessionId);
         lastAssistantReplies.remove(correctionSessionKey(sessionId));
+        String browserScope = com.javaclaw.browser.PlaywrightBrowserManager
+                .conversationScopeId(sessionId);
+        runtime.getBrowserManager().releaseScope(browserScope);
+        com.javaclaw.site.SiteCredentialManager.getInstance().clearScopeBindings(browserScope);
+        if (workflowService != null) {
+            workflowService.forgetConversationBrowserScope(sessionId);
+        }
     }
 
     private static String correctionSessionKey(String sessionId) {

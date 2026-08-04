@@ -6,6 +6,8 @@ import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.util.AtomicFileWriter;
 import com.javaclaw.util.PathGuard;
 import com.javaclaw.util.ProcessTerminator;
+import com.javaclaw.util.ProjectAccessPolicy;
+import com.javaclaw.util.SensitiveDataRedactor;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
@@ -58,7 +60,7 @@ public class CodeTools {
     /** 检索/读取跳过的目录名（构建产物、VCS、依赖），避免噪声与失控遍历。 */
     private static final Set<String> SKIP_DIRS = Set.of(
             ".git", ".hg", ".svn", "node_modules", "target", "build", "dist", "out",
-            ".idea", ".gradle", ".mvn", "bin", "__pycache__", ".venv", "venv", ".next", ".cache");
+            ".idea", ".gradle", ".mvn", ".javaclaw", "data", "bin", "__pycache__", ".venv", "venv", ".next", ".cache");
 
     private static final long MAX_SCAN_FILE_BYTES = 2L * 1024 * 1024; // grep 单文件上限 2MB
     private static final long MAX_READ_FILE_BYTES = 8L * 1024 * 1024; // code_read 单文件上限 8MB
@@ -70,14 +72,18 @@ public class CodeTools {
 
     /** 会话级项目根（可空）。设定后相对路径以其解析、code_* 操作被围栏其内。 */
     private volatile Path projectRoot;
+    /** 单测可使用临时目录；生产工具路径始终还要经过全局项目策略。 */
+    private volatile boolean testRootOverride;
 
     public CodeTools(ToolCallOrigin origin) {
         this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
+        this.projectRoot = ProjectAccessPolicy.projectRoot();
     }
 
     /** 仅供单测：直接设定项目根，绕过 code_set_project_root 的确认交互（生产代码勿用）。 */
     void setProjectRootForTest(Path root) {
         this.projectRoot = root;
+        this.testRootOverride = true;
     }
 
     // ==================== 项目根 ====================
@@ -97,6 +103,7 @@ public class CodeTools {
                 return ToolResponse.error("code_set_project_root", "路径不能为空");
             }
             Path root = Path.of(path).toAbsolutePath().normalize();
+            ProjectAccessPolicy.requireProjectFilePath(root);
             if (!Files.exists(root)) {
                 return ToolResponse.error("code_set_project_root", "目录不存在: " + root);
             }
@@ -104,6 +111,7 @@ public class CodeTools {
                 return ToolResponse.error("code_set_project_root", "路径不是目录: " + root);
             }
             this.projectRoot = root;
+            this.testRootOverride = false;
             return ToolResponse.success("code_set_project_root",
                     "项目根已设为: " + root + "\n之后相对路径以此解析，code_* 操作限定在此目录内。");
         } catch (Exception e) {
@@ -132,6 +140,10 @@ public class CodeTools {
                         "文件过大（" + formatSize(size) + "），请用 from_line/to_line 分段读取");
             }
             List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+            if (SensitiveDataRedactor.containsLikelyCredential(String.join("\n", lines))) {
+                return ToolResponse.error("code_read",
+                        "文件可能包含凭据，代码读取工具已拒绝返回内容；请使用专用凭据工具管理");
+            }
             int total = lines.size();
             int from = fromLine <= 0 ? 1 : fromLine;
             int to = toLine <= 0 ? total : Math.min(toLine, total);
@@ -208,6 +220,7 @@ public class CodeTools {
                     if (hits.size() >= cap) break;
                     if (Files.isDirectory(p)) continue;
                     if (isSkipped(base, p)) continue;
+                    if (!testRootOverride && !ProjectAccessPolicy.isProjectFilePath(p)) continue;
                     Path rel = base.relativize(p);
                     if (matcher != null && !matcher.matches(rel)
                             && (altMatcher == null || !altMatcher.matches(p.getFileName()))) continue;
@@ -241,7 +254,9 @@ public class CodeTools {
             for (int i = 0; i < lines.size() && hits.size() < cap; i++) {
                 String line = lines.get(i);
                 if (re.matcher(line).find()) {
-                    String trimmed = line.length() > 300 ? line.substring(0, 300) + "…" : line;
+                    String trimmed = SensitiveDataRedactor.containsLikelyCredential(line)
+                            ? "[疑似凭据内容已隐藏]"
+                            : (line.length() > 300 ? line.substring(0, 300) + "…" : line);
                     hits.add(rel + ":" + (i + 1) + ": " + trimmed.strip());
                 }
             }
@@ -281,6 +296,7 @@ public class CodeTools {
                     if (matches.size() >= 300) { capped[0] = true; break; }
                     if (Files.isDirectory(p)) continue;
                     if (isSkipped(root, p)) continue;
+                    if (!testRootOverride && !ProjectAccessPolicy.isProjectFilePath(p)) continue;
                     if (++scanned[0] > MAX_SCAN_FILES) { capped[0] = true; break; }
                     Path rel = root.relativize(p);
                     if (matcher.matches(rel) || (altMatcher != null && altMatcher.matches(p.getFileName()))) {
@@ -322,6 +338,10 @@ public class CodeTools {
                 return ToolResponse.error("code_edit", "old_string 不能为空（新建文件请用 sys_file_write）");
             }
             if (newString == null) newString = "";
+            if (SensitiveDataRedactor.containsLikelyCredential(newString)) {
+                return ToolResponse.error("code_edit",
+                        SensitiveDataRedactor.credentialStorageDeniedReason());
+            }
             Path file = resolve(path);
             if (!Files.exists(file) || !Files.isRegularFile(file)) {
                 return ToolResponse.error("code_edit", "文件不存在: " + path);
@@ -337,6 +357,10 @@ public class CodeTools {
             }
             String updated = content.substring(0, first) + newString
                     + content.substring(first + oldString.length());
+            if (SensitiveDataRedactor.containsLikelyCredential(updated)) {
+                return ToolResponse.error("code_edit",
+                        "编辑后的文件仍包含疑似凭据，已拒绝落盘；请一次性完成脱敏");
+            }
             AtomicFileWriter.writeString(file, updated);
             int oldLines = countLines(oldString), newLines = countLines(newString);
             return ToolResponse.success("code_edit",
@@ -362,6 +386,10 @@ public class CodeTools {
         }
         try {
             if (text == null) text = "";
+            if (SensitiveDataRedactor.containsLikelyCredential(text)) {
+                return ToolResponse.error("code_insert",
+                        SensitiveDataRedactor.credentialStorageDeniedReason());
+            }
             Path file = resolve(path);
             if (!Files.exists(file) || !Files.isRegularFile(file)) {
                 return ToolResponse.error("code_insert", "文件不存在: " + path);
@@ -373,7 +401,12 @@ public class CodeTools {
             }
             List<String> toInsert = List.of(text.split("\n", -1));
             lines.addAll(line, toInsert);
-            AtomicFileWriter.writeString(file, String.join("\n", lines));
+            String updated = String.join("\n", lines);
+            if (SensitiveDataRedactor.containsLikelyCredential(updated)) {
+                return ToolResponse.error("code_insert",
+                        "插入后的文件仍包含疑似凭据，已拒绝落盘；请先完成脱敏");
+            }
+            AtomicFileWriter.writeString(file, updated);
             return ToolResponse.success("code_insert",
                     "已在 " + file + " 第 " + line + " 行后插入 " + toInsert.size() + " 行");
         } catch (PathReject e) {
@@ -424,6 +457,9 @@ public class CodeTools {
 
     private String runBuildLike(String tool, String command, int timeoutSeconds, boolean testMode) {
         log.debug("工具调用: {}('{}')", tool, command);
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return ToolResponse.error(tool, ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
         try {
             Path base = (projectRoot != null) ? projectRoot : Path.of("").toAbsolutePath().normalize();
             if (!Files.isDirectory(base)) {
@@ -709,6 +745,10 @@ public class CodeTools {
             @ToolParam(name = "message", description = "提交信息") String message,
             @ToolParam(name = "stage_all", description = "是否先暂存全部改动（git add -A）再提交") boolean stageAll) {
         log.debug("工具调用: git_commit(stageAll={})", stageAll);
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return ToolResponse.error("git_commit",
+                    ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
         if (!ToolConfirmationManager.requestConfirmation(origin, "git_commit",
                 "git 提交" + (stageAll ? "（先暂存全部改动）" : "") + ": " + message)) {
             return ToolResponse.error("git_commit", "用户取消了操作");
@@ -750,6 +790,9 @@ public class CodeTools {
     /** 只读 git 命令统一执行：在 gitBase() 内跑，退出码非 0 折成错误响应（提示可能非仓库）。 */
     private String runGit(String tool, List<String> argv) {
         log.debug("工具调用: {}", tool);
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return ToolResponse.error(tool, ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
         try {
             Path base = gitBase();
             if (!Files.isDirectory(base)) return ToolResponse.error(tool, "工作目录无效: " + base);
@@ -784,6 +827,13 @@ public class CodeTools {
                 : path.toAbsolutePath().normalize();
         if (root != null && !PathGuard.isInside(root, resolved)) {
             throw new PathReject("路径越出项目根 " + root + "，拒绝访问: " + p);
+        }
+        if (!testRootOverride) {
+            try {
+                resolved = ProjectAccessPolicy.requireProjectFilePath(resolved);
+            } catch (SecurityException e) {
+                throw new PathReject(e.getMessage());
+            }
         }
         return resolved;
     }

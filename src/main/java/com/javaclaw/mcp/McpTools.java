@@ -99,7 +99,9 @@ public class McpTools {
                 arguments = objectMapper.readTree(argumentsJson);
             }
 
-            log.info("调用 MCP 工具: {}@{} 参数: {}", toolName, serverName, argumentsJson);
+            // arguments_json 可能包含 token/secret 等远端工具凭据；日志只记录长度，不落原文。
+            log.info("调用 MCP 工具: {}@{} 参数长度: {}", toolName, serverName,
+                    argumentsJson == null ? 0 : argumentsJson.length());
             String result = clientManager.callTool(serverName, toolName, arguments);
             log.info("MCP 工具调用成功: {}@{}", toolName, serverName);
 

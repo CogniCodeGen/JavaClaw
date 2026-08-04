@@ -1,5 +1,8 @@
 package com.javaclaw.skill;
 
+import com.javaclaw.util.SensitiveDataRedactor;
+import com.javaclaw.util.PathGuard;
+import com.javaclaw.util.ProjectAccessPolicy;
 import io.agentscope.core.skill.util.MarkdownSkillParser;
 import io.agentscope.core.skill.util.SkillFileSystemHelper;
 import org.slf4j.Logger;
@@ -72,7 +75,13 @@ public class SkillManager {
             new com.fasterxml.jackson.databind.ObjectMapper();
 
     private SkillManager() {
-        this.skillsDir = Path.of(System.getProperty("user.dir"), "skills");
+        this(ProjectAccessPolicy.projectRoot().resolve("skills"));
+    }
+
+    /** 测试可注入项目内目录；生产始终使用项目根下的 skills/。 */
+    SkillManager(Path skillsDir) {
+        this.skillsDir = ProjectAccessPolicy.requireProjectFilePath(
+                skillsDir.toAbsolutePath().normalize());
         this.skills = new ArrayList<>();
         this.bundles = new ArrayList<>();
         initDirectory();
@@ -109,8 +118,9 @@ public class SkillManager {
                 if (dir.getFileName().toString().startsWith(".")) {
                     continue;
                 }
+                if (!PathGuard.isInside(skillsDir, dir)) continue;
                 Path skillFile = dir.resolve(Skill.SKILL_FILE);
-                if (!Files.exists(skillFile)) {
+                if (!Files.exists(skillFile) || !PathGuard.isInside(dir, skillFile)) {
                     continue;
                 }
                 try {
@@ -226,9 +236,15 @@ public class SkillManager {
         if (ownerId == null || skills == null || skills.isEmpty()) {
             return;
         }
-        dynamicSkills.put(ownerId, List.copyOf(skills));
-        log.info("已注册动态技能 owner={}，{} 个：{}", ownerId, skills.size(),
-                skills.stream().map(Skill::getName).toList());
+        List<Skill> safeSkills = skills.stream()
+                .filter(java.util.Objects::nonNull)
+                .filter(s -> !SensitiveDataRedactor.containsLikelyCredential(s.getName()))
+                .filter(s -> !SensitiveDataRedactor.containsLikelyCredential(s.getDescription()))
+                .filter(s -> !SensitiveDataRedactor.containsLikelyCredential(s.getContent()))
+                .toList();
+        if (safeSkills.isEmpty()) return;
+        dynamicSkills.put(ownerId, List.copyOf(safeSkills));
+        log.info("已注册动态技能 owner={}，{} 个", ownerId, safeSkills.size());
     }
 
     /**
@@ -253,6 +269,7 @@ public class SkillManager {
      * @return 可注册的动态 Skill
      */
     public Skill buildDynamicSkill(String ownerId, String name, String description, String content) {
+        requireCredentialFree(content);
         Skill s = new Skill("dyn-" + ownerId + "-" + name, name, description, true);
         s.setContent(content);
         s.setCategory("plugin");
@@ -293,6 +310,8 @@ public class SkillManager {
      * 新建技能目录并生成 SKILL.md
      */
     public Skill createSkill(String name, String description, String content, boolean enabled) {
+        requireCredentialFree(description);
+        requireCredentialFree(content);
         String dirName = sanitizeDirName(name);
         if (dirName.isEmpty() || Files.exists(skillsDir.resolve(dirName))) {
             dirName = dirName + "-" + System.currentTimeMillis();
@@ -302,18 +321,23 @@ public class SkillManager {
         Skill skill = new Skill(dirName, name, description, enabled);
         skill.setContent(content);
         skill.setDirectory(dir);
-        skills.add(skill);
         saveSkill(skill);
+        Skill persisted = readBackSkill(dir, name);
+        skills.add(persisted);
         log.info("已创建技能: {} ({})", name, dirName);
-        return skill;
+        return persisted;
     }
 
     /**
      * 更新技能并持久化 SKILL.md
      */
     public void updateSkill(Skill skill) {
+        requireCredentialFree(skill == null ? null : skill.getDescription());
+        requireCredentialFree(skill == null ? null : skill.getContent());
         saveSkill(skill);
-        log.info("已更新技能: {} ({})", skill.getName(), skill.getId());
+        Skill persisted = readBackSkill(skill.getDirectory(), skill.getName());
+        replaceSkillSnapshot(skill.getId(), persisted);
+        log.info("已更新技能: {} ({})", persisted.getName(), persisted.getId());
     }
 
     /**
@@ -329,12 +353,23 @@ public class SkillManager {
         if (getSkillByName(name) != null) {
             return null;
         }
-        Skill skill = createSkill(name, description, content, true);
+        requireCredentialFree(description);
+        requireCredentialFree(content);
+        String dirName = sanitizeDirName(name);
+        if (dirName.isEmpty() || Files.exists(skillsDir.resolve(dirName))) {
+            dirName = dirName + "-" + System.currentTimeMillis();
+        }
+        Path dir = skillsDir.resolve(dirName);
+        Skill skill = new Skill(dirName, name, description, true);
+        skill.setContent(content);
+        skill.setDirectory(dir);
         skill.setSource(SkillSource.AGENT);
         skill.setCategory(category);
         skill.setTags(tags);
         saveSkill(skill);
-        return skill;
+        Skill persisted = readBackSkill(dir, name);
+        skills.add(persisted);
+        return persisted;
     }
 
     /**
@@ -360,11 +395,19 @@ public class SkillManager {
         if (content.indexOf(oldString, first + 1) >= 0) {
             return "old_string 在技能「" + name + "」正文中出现多次，请提供更长的唯一片段";
         }
-        archiveVersion(skill);
-        skill.setContent(content.replace(oldString, newString != null ? newString : ""));
-        skill.setVersion(bumpVersion(skill.getVersion(), BumpLevel.PATCH));
-        saveSkill(skill);
-        log.info("已修补技能: {} → v{}", name, skill.getVersion());
+        String updated = content.replace(oldString, newString != null ? newString : "");
+        if (SensitiveDataRedactor.containsLikelyCredential(updated)) {
+            return "修补后的技能仍包含疑似凭据，已拒绝落盘；请一次性完成脱敏";
+        }
+        // 清理历史凭据时不再归档旧正文，避免把秘密复制进版本历史。
+        if (!SensitiveDataRedactor.containsLikelyCredential(content)) archiveVersion(skill);
+        Skill candidate = copySkill(skill);
+        candidate.setContent(updated);
+        candidate.setVersion(bumpVersion(skill.getVersion(), BumpLevel.PATCH));
+        saveSkill(candidate);
+        Skill persisted = readBackSkill(candidate.getDirectory(), candidate.getName());
+        replaceSkillSnapshot(skill.getId(), persisted);
+        log.info("已修补技能: {} → v{}", name, persisted.getVersion());
         return null;
     }
 
@@ -383,11 +426,17 @@ public class SkillManager {
         if (newContent == null || newContent.isBlank()) {
             return "new_content 为空，整篇重写必须提供完整正文";
         }
-        archiveVersion(skill);
-        skill.setContent(newContent);
-        skill.setVersion(bumpVersion(skill.getVersion(), BumpLevel.MINOR));
-        saveSkill(skill);
-        log.info("已重写技能: {} → v{}", name, skill.getVersion());
+        if (SensitiveDataRedactor.containsLikelyCredential(newContent)) {
+            return SensitiveDataRedactor.credentialStorageDeniedReason();
+        }
+        if (!SensitiveDataRedactor.containsLikelyCredential(skill.getContent())) archiveVersion(skill);
+        Skill candidate = copySkill(skill);
+        candidate.setContent(newContent);
+        candidate.setVersion(bumpVersion(skill.getVersion(), BumpLevel.MINOR));
+        saveSkill(candidate);
+        Skill persisted = readBackSkill(candidate.getDirectory(), candidate.getName());
+        replaceSkillSnapshot(skill.getId(), persisted);
+        log.info("已重写技能: {} → v{}", name, persisted.getVersion());
         return null;
     }
 
@@ -405,6 +454,9 @@ public class SkillManager {
         Path target = resolveInSkillDir(skill, relPath);
         if (target == null) {
             return "rel_path 非法：必须位于技能目录内，且不得指向 SKILL.md";
+        }
+        if (SensitiveDataRedactor.containsLikelyCredential(content)) {
+            return SensitiveDataRedactor.credentialStorageDeniedReason();
         }
         try {
             Files.createDirectories(target.getParent());
@@ -641,7 +693,13 @@ public class SkillManager {
      * 使用 AgentScope MarkdownSkillParser 生成并写入 SKILL.md
      */
     private void saveSkill(Skill skill) {
+        requireCredentialFree(skill == null ? null : skill.getDescription());
+        requireCredentialFree(skill == null ? null : skill.getContent());
+        if (skill == null || skill.getId() == null || skill.getId().isBlank()) {
+            throw new IllegalArgumentException("技能及其 ID 不能为空");
+        }
         Path dir = skillsDir.resolve(skill.getId());
+        Path tempFile = null;
         try {
             Files.createDirectories(dir);
 
@@ -671,12 +729,79 @@ public class SkillManager {
 
             String content = MarkdownSkillParser.generate(metadata,
                     skill.getContent() != null ? skill.getContent() : "");
+            // 先在内存中验证生成结果，避免用不可解析内容覆盖已有文件。
+            MarkdownSkillParser.parse(content);
 
             Path skillFile = dir.resolve(Skill.SKILL_FILE);
-            Files.writeString(skillFile, content, StandardCharsets.UTF_8);
+            tempFile = Files.createTempFile(dir, ".SKILL-", ".tmp");
+            Files.writeString(tempFile, content, StandardCharsets.UTF_8);
+            try {
+                Files.move(tempFile, skillFile,
+                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                Files.move(tempFile, skillFile, StandardCopyOption.REPLACE_EXISTING);
+            }
+            tempFile = null;
+            String persisted = Files.readString(skillFile, StandardCharsets.UTF_8);
+            if (!content.equals(persisted)) {
+                throw new IOException("SKILL.md 回读内容与写入内容不一致");
+            }
+            parseSkillFile(dir);
 
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
             log.error("保存技能失败: {}", skill.getId(), e);
+            throw new IllegalStateException("技能未能确认落盘: " + skill.getId(), e);
+        } finally {
+            if (tempFile != null) {
+                try {
+                    Files.deleteIfExists(tempFile);
+                } catch (IOException cleanupFailure) {
+                    log.warn("清理技能临时文件失败: {}", tempFile.getFileName());
+                }
+            }
+        }
+    }
+
+    private Skill readBackSkill(Path dir, String expectedName) {
+        try {
+            Skill persisted = parseSkillFile(dir);
+            if (!java.util.Objects.equals(expectedName, persisted.getName())) {
+                throw new IOException("技能名称回读不一致");
+            }
+            return persisted;
+        } catch (IOException | RuntimeException e) {
+            throw new IllegalStateException("技能落盘后回读校验失败", e);
+        }
+    }
+
+    private void replaceSkillSnapshot(String id, Skill persisted) {
+        for (int i = 0; i < skills.size(); i++) {
+            if (java.util.Objects.equals(id, skills.get(i).getId())) {
+                skills.set(i, persisted);
+                return;
+            }
+        }
+        skills.add(persisted);
+    }
+
+    private static Skill copySkill(Skill source) {
+        Skill copy = new Skill(source.getId(), source.getName(), source.getDescription(), source.isEnabled());
+        copy.setContent(source.getContent());
+        copy.setDirectory(source.getDirectory());
+        copy.setVersion(source.getVersion());
+        copy.setTags(new ArrayList<>(source.getTags()));
+        copy.setCategory(source.getCategory());
+        copy.setSource(source.getSource());
+        copy.setUserModified(source.isUserModified());
+        copy.setPlatforms(new ArrayList<>(source.getPlatforms()));
+        copy.setRequiresToolGroups(new ArrayList<>(source.getRequiresToolGroups()));
+        copy.setFallbackForToolGroups(new ArrayList<>(source.getFallbackForToolGroups()));
+        return copy;
+    }
+
+    private static void requireCredentialFree(String content) {
+        if (SensitiveDataRedactor.containsLikelyCredential(content)) {
+            throw new IllegalArgumentException(SensitiveDataRedactor.credentialStorageDeniedReason());
         }
     }
 
@@ -747,8 +872,9 @@ public class SkillManager {
             sb.append("若清单中列出某技能、但下方未提供其详细指令，且该技能与当前任务相关，\n");
             sb.append("请调用 skill_read 工具（参数 skill_name 填技能名称）按需拉取其完整指令后再执行；\n");
             sb.append("技能若列出参考文档，可再用 skill_read 的 path 参数单独拉取某个文档；\n");
-            sb.append("技能若列出脚本，可用 jshell_run_script 工具（skill_name + script 文件名）运行其 Java 脚本。\n");
+            sb.append("严格项目隔离模式下不执行技能脚本；技能仅提供可审查的流程与参考资料。\n");
             for (Skill skill : active) {
+                if (SensitiveDataRedactor.containsLikelyCredential(skill.getName())) continue;
                 sb.append("- 【").append(skill.getName()).append("】");
                 if (!skill.getCategory().isBlank()) {
                     sb.append("[").append(skill.getCategory()).append("] ");
@@ -758,7 +884,8 @@ public class SkillManager {
                 }
                 String desc = skill.getDescription();
                 if (desc != null && !desc.isBlank()) {
-                    sb.append(desc.strip());
+                    sb.append(SensitiveDataRedactor.containsLikelyCredential(desc)
+                            ? "[描述包含疑似凭据，已隐藏]" : desc.strip());
                 }
                 List<String> refs = listReferenceFiles(skill);
                 if (!refs.isEmpty()) {
@@ -767,7 +894,7 @@ public class SkillManager {
                 List<String> scripts = listScriptFiles(skill);
                 if (!scripts.isEmpty()) {
                     sb.append("；脚本：").append(String.join("、", scripts))
-                            .append("（可用 jshell_run_script 运行）");
+                            .append("（严格隔离下不可执行）");
                 }
                 sb.append("\n");
             }
@@ -781,7 +908,9 @@ public class SkillManager {
                 sb.append("技能包是一组配合使用的技能；任务匹配某包描述时，包内技能将成组注入。\n");
                 for (SkillBundle bundle : enabledBundles) {
                     sb.append("- 【").append(bundle.name).append("】")
-                            .append(bundle.description == null ? "" : bundle.description.strip())
+                            .append(bundle.description == null ? ""
+                                    : SensitiveDataRedactor.containsLikelyCredential(bundle.description)
+                                    ? "[描述包含疑似凭据，已隐藏]" : bundle.description.strip())
                             .append("（含：").append(String.join("、", bundle.skills)).append("）\n");
                 }
             }
@@ -826,7 +955,8 @@ public class SkillManager {
         Path refsDir = skill.getDirectory().resolve(Skill.REFERENCES_DIR);
         try (DirectoryStream<Path> files = Files.newDirectoryStream(refsDir)) {
             for (Path file : files) {
-                if (Files.isRegularFile(file) && isTextFile(file)) {
+                if (Files.isRegularFile(file) && isTextFile(file)
+                        && PathGuard.isInside(refsDir, file)) {
                     names.add(file.getFileName().toString());
                 }
             }
@@ -852,6 +982,10 @@ public class SkillManager {
         sb.append("\n\n以下是用户配置的技能指令，请在回答时遵循：\n");
         for (Skill skill : enabled) {
             sb.append("\n【").append(skill.getName()).append("】\n");
+            if (SensitiveDataRedactor.containsLikelyCredential(skill.getContent())) {
+                sb.append("[技能正文包含疑似凭据，系统已阻止载入]\n");
+                continue;
+            }
             sb.append(skill.getContent()).append("\n");
 
             // 附加 references/ 下的文档内容
@@ -873,9 +1007,14 @@ public class SkillManager {
         StringBuilder sb = new StringBuilder();
         try (DirectoryStream<Path> files = Files.newDirectoryStream(refsDir)) {
             for (Path file : files) {
-                if (Files.isRegularFile(file) && isTextFile(file)) {
+                if (Files.isRegularFile(file) && isTextFile(file)
+                        && PathGuard.isInside(refsDir, file)) {
                     sb.append("--- ").append(file.getFileName()).append(" ---\n");
                     String text = Files.readString(file, StandardCharsets.UTF_8);
+                    if (SensitiveDataRedactor.containsLikelyCredential(text)) {
+                        sb.append("[该参考文档包含疑似凭据，系统已阻止载入]\n\n");
+                        continue;
+                    }
                     // 限制单个参考文档最大 10000 字符
                     if (text.length() > 10000) {
                         text = text.substring(0, 10000) + "\n...(内容已截断)";
@@ -911,6 +1050,10 @@ public class SkillManager {
         sb.append("\n\n以下是用户配置的技能指令，请在回答时遵循：\n");
         for (Skill skill : filtered) {
             sb.append("\n【").append(skill.getName()).append("】\n");
+            if (SensitiveDataRedactor.containsLikelyCredential(skill.getContent())) {
+                sb.append("[技能正文包含疑似凭据，系统已阻止载入]\n");
+                continue;
+            }
             sb.append(skill.getContent()).append("\n");
             if (skill.hasReferences()) {
                 String refs = loadReferences(skill);
@@ -942,6 +1085,9 @@ public class SkillManager {
                 .orElse(null);
         if (skill == null) {
             return null;
+        }
+        if (SensitiveDataRedactor.containsLikelyCredential(skill.getContent())) {
+            return "【" + skill.getName() + "】\n[技能正文包含疑似凭据，系统已阻止载入]";
         }
         StringBuilder sb = new StringBuilder();
         sb.append("【").append(skill.getName()).append("】\n");
@@ -984,6 +1130,9 @@ public class SkillManager {
         }
         try {
             String text = Files.readString(target, StandardCharsets.UTF_8);
+            if (SensitiveDataRedactor.containsLikelyCredential(text)) {
+                return "--- " + target.getFileName() + " ---\n[该参考文档包含疑似凭据，系统已阻止载入]";
+            }
             if (text.length() > 10000) {
                 text = text.substring(0, 10000) + "\n...(内容已截断)";
             }

@@ -37,7 +37,7 @@ class SystemGraphDefinitionTest {
     @Test
     void 系统请求可从检查点状态重建() {
         ConversationRequest original = new ConversationRequest("原始问题",
-                List.of(new File("/tmp/original.png")), "session-1");
+                List.of(new File("target/original.png")), "session-1");
         ConversationRequest restored = SystemInvocationState.request(SystemInvocationState.from(original));
         assertEquals(original.userInput(), restored.userInput());
         assertEquals(original.sessionId(), restored.sessionId());

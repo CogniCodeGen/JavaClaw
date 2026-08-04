@@ -2,6 +2,8 @@ package com.javaclaw.agent.vision;
 
 import com.javaclaw.agent.TokenTracker;
 import com.javaclaw.chat.ChatMessage;
+import com.javaclaw.util.ProjectAccessPolicy;
+import com.javaclaw.util.SensitiveDataRedactor;
 import io.agentscope.core.message.Base64Source;
 import io.agentscope.core.message.ContentBlock;
 import io.agentscope.core.message.ImageBlock;
@@ -14,6 +16,9 @@ import io.agentscope.core.model.GenerateOptions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -40,6 +45,7 @@ public class VisionPreprocessor {
             - 主体内容（人物 / 物体 / 场景 / 界面）
             - 明显的文字（OCR，保留原文）
             - 与用户提问相关的视觉细节
+            - 若识别到密码、令牌、验证码、Cookie、私钥或会话值，只写“检测到凭据，内容已隐藏”，不得转录具体值
 
             输出格式，严格遵守：
             【图片1】...
@@ -55,6 +61,7 @@ public class VisionPreprocessor {
             - 保留原文语言、标点、换行与分段，尽量还原排版
             - 表格用 Markdown 表格还原
             - 只输出识别到的文字本身，不要添加任何解释、标题或开场白
+            - 密码、令牌、验证码、Cookie、私钥或会话值必须替换为“<已隐藏>”，不得输出具体值
             - 若图中没有可识别文字，仅输出：（未检测到文字）
             """;
 
@@ -135,6 +142,9 @@ public class VisionPreprocessor {
                 log.warn("视觉预处理返回空内容 — {} 张图片", images.size());
                 return null;
             }
+            if (SensitiveDataRedactor.containsLikelyCredential(desc)) {
+                return "图片中检测到疑似凭据，具体内容已隐藏。";
+            }
             log.info("视觉预处理完成 — {} 张图片，描述 {} 字符", images.size(), desc.length());
             return desc;
         } catch (Exception e) {
@@ -152,13 +162,36 @@ public class VisionPreprocessor {
      * @return 识别出的文字；失败 / 超时 / 无内容时返回 null（调用方据此降级）
      */
     public String ocrImage(File image) {
-        if (image == null || !image.isFile()) {
+        if (image == null || !ProjectAccessPolicy.isProjectFilePath(image.toPath()) || !image.isFile()) {
             return null;
         }
         ImageBlock block = buildImageBlock(image);
         if (block == null) {
             return null;
         }
+        return runOcr(block, image.getName());
+    }
+
+    /**
+     * 对内存图片做 OCR，不创建临时文件，也不会绕过项目文件边界读取磁盘。
+     * PDF 扫描页等已经在项目文件解析过程中得到的图像应使用此入口。
+     */
+    public String ocrImage(BufferedImage image) {
+        if (image == null) return null;
+        try (ByteArrayOutputStream bytes = new ByteArrayOutputStream()) {
+            if (!ImageIO.write(image, "png", bytes)) {
+                return null;
+            }
+            ImageBlock block = buildImageBlock(bytes.toByteArray(), "image/png");
+            return runOcr(block, "内存图像");
+        } catch (IOException e) {
+            log.warn("内存图片编码失败");
+            return null;
+        }
+    }
+
+    private String runOcr(ImageBlock block, String sourceLabel) {
+        if (block == null || model == null) return null;
 
         List<ContentBlock> blocks = new ArrayList<>();
         blocks.add(block);
@@ -190,13 +223,16 @@ public class VisionPreprocessor {
 
             String text = out.toString().trim();
             if (text.isEmpty()) {
-                log.warn("OCR 返回空内容: {}", image.getName());
+                log.warn("OCR 返回空内容: {}", sourceLabel);
                 return null;
             }
-            log.info("OCR 完成 — {}，识别 {} 字符", image.getName(), text.length());
+            if (SensitiveDataRedactor.containsLikelyCredential(text)) {
+                return "（检测到疑似凭据，OCR 内容已隐藏）";
+            }
+            log.info("OCR 完成 — {}，识别 {} 字符", sourceLabel, text.length());
             return text;
         } catch (Exception e) {
-            log.warn("OCR 识别失败: {} — {}", image.getName(), e.getMessage());
+            log.warn("OCR 识别失败: {}", sourceLabel);
             return null;
         }
     }
@@ -205,7 +241,8 @@ public class VisionPreprocessor {
         List<File> images = new ArrayList<>();
         if (attachments != null) {
             for (File f : attachments) {
-                if (ChatMessage.isImageFile(f)) {
+                if (f != null && ProjectAccessPolicy.isProjectFilePath(f.toPath())
+                        && ChatMessage.isImageFile(f)) {
                     images.add(f);
                 }
             }
@@ -215,18 +252,23 @@ public class VisionPreprocessor {
 
     private ImageBlock buildImageBlock(File imageFile) {
         try {
-            byte[] bytes = Files.readAllBytes(imageFile.toPath());
-            String b64 = Base64.getEncoder().encodeToString(bytes);
-            return ImageBlock.builder()
-                    .source(Base64Source.builder()
-                            .mediaType(mediaType(imageFile))
-                            .data(b64)
-                            .build())
-                    .build();
-        } catch (IOException e) {
+            byte[] bytes = Files.readAllBytes(
+                    ProjectAccessPolicy.requireProjectFilePath(imageFile.toPath()));
+            return buildImageBlock(bytes, mediaType(imageFile));
+        } catch (IOException | SecurityException e) {
             log.warn("读取图片失败: {}", imageFile.getName(), e);
             return null;
         }
+    }
+
+    private ImageBlock buildImageBlock(byte[] bytes, String mediaType) {
+        String b64 = Base64.getEncoder().encodeToString(bytes);
+        return ImageBlock.builder()
+                .source(Base64Source.builder()
+                        .mediaType(mediaType)
+                        .data(b64)
+                        .build())
+                .build();
     }
 
     private String mediaType(File file) {

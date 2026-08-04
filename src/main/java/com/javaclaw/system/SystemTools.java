@@ -4,6 +4,8 @@ import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.config.DataManager;
+import com.javaclaw.util.ProjectAccessPolicy;
+import com.javaclaw.util.SensitiveDataRedactor;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
@@ -14,12 +16,10 @@ import java.awt.*;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.awt.image.BufferedImage;
-import java.io.File;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -100,17 +100,7 @@ public class SystemTools {
             sb.append("JVM 内存: 已用 ").append(formatSize(totalMemory - freeMemory))
                     .append(" / 总计 ").append(formatSize(totalMemory))
                     .append(" / 最大 ").append(formatSize(maxMemory)).append("\n");
-            sb.append("用户名: ").append(System.getProperty("user.name")).append("\n");
-            sb.append("用户目录: ").append(System.getProperty("user.home")).append("\n");
-            sb.append("工作目录: ").append(System.getProperty("user.dir")).append("\n");
-
-            // 磁盘信息
-            File[] roots = File.listRoots();
-            for (File root : roots) {
-                sb.append("磁盘 ").append(root.getAbsolutePath()).append(": ")
-                        .append("可用 ").append(formatSize(root.getUsableSpace()))
-                        .append(" / 总计 ").append(formatSize(root.getTotalSpace())).append("\n");
-            }
+            sb.append("允许访问的项目根: ").append(ProjectAccessPolicy.projectRoot()).append("\n");
 
             return ToolResponse.success("sys_get_info", sb.toString().trim());
         } catch (Exception e) {
@@ -134,6 +124,10 @@ public class SystemTools {
     @Tool(name = "sys_screenshot", description = "截取整个屏幕的截图并保存为 PNG 文件。返回保存的文件路径。")
     public String screenshot() {
         log.debug("工具调用: sys_screenshot()");
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return ToolResponse.error("sys_screenshot",
+                    ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
         if (!ToolConfirmationManager.requestConfirmation(origin, "sys_screenshot", "截取整个屏幕")) {
             return ToolResponse.error("sys_screenshot", "用户取消了操作");
         }
@@ -143,7 +137,8 @@ public class SystemTools {
 
             String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
             String fileName = "screenshot_" + timestamp + ".png";
-            Path savePath = DataManager.getInstance().getScreenshotsDir().resolve(fileName);
+            Path savePath = ProjectAccessPolicy.requireProjectPath(
+                    DataManager.getInstance().getScreenshotsDir().resolve(fileName));
             ImageIO.write(capture, "png", savePath.toFile());
 
             log.info("屏幕截图已保存: {}", savePath);
@@ -161,6 +156,10 @@ public class SystemTools {
             @ToolParam(name = "x", description = "目标 X 坐标（像素）") int x,
             @ToolParam(name = "y", description = "目标 Y 坐标（像素）") int y) {
         log.debug("工具调用: sys_mouse_move({}, {})", x, y);
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return ToolResponse.error("sys_mouse_move",
+                    ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
         if (!ToolConfirmationManager.requestConfirmation(origin, "sys_mouse_move",
                 "鼠标移动到 (" + x + ", " + y + ")")) {
             return ToolResponse.error("sys_mouse_move", "用户取消了操作");
@@ -179,6 +178,10 @@ public class SystemTools {
             @ToolParam(name = "button", description = "鼠标按钮: left（左键）、right（右键）、middle（中键）") String button,
             @ToolParam(name = "clicks", description = "点击次数，1 为单击，2 为双击") int clicks) {
         log.debug("工具调用: sys_mouse_click({}, {})", button, clicks);
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return ToolResponse.error("sys_mouse_click",
+                    ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
         if (!ToolConfirmationManager.requestConfirmation(origin, "sys_mouse_click",
                 button + " 键点击 " + clicks + " 次")) {
             return ToolResponse.error("sys_mouse_click", "用户取消了操作");
@@ -209,6 +212,10 @@ public class SystemTools {
             @ToolParam(name = "x", description = "目标 X 坐标（像素）") int x,
             @ToolParam(name = "y", description = "目标 Y 坐标（像素）") int y) {
         log.debug("工具调用: sys_mouse_click_at({}, {})", x, y);
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return ToolResponse.error("sys_mouse_click_at",
+                    ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
         if (!ToolConfirmationManager.requestConfirmation(origin, "sys_mouse_click_at",
                 "在 (" + x + ", " + y + ") 处左键点击")) {
             return ToolResponse.error("sys_mouse_click_at", "用户取消了操作");
@@ -230,6 +237,10 @@ public class SystemTools {
     public String mouseScroll(
             @ToolParam(name = "amount", description = "滚动量，正数向下，负数向上") int amount) {
         log.debug("工具调用: sys_mouse_scroll({})", amount);
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return ToolResponse.error("sys_mouse_scroll",
+                    ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
         if (!ToolConfirmationManager.requestConfirmation(origin, "sys_mouse_scroll",
                 (amount > 0 ? "向下" : "向上") + "滚动 " + Math.abs(amount) + " 格")) {
             return ToolResponse.error("sys_mouse_scroll", "用户取消了操作");
@@ -251,6 +262,10 @@ public class SystemTools {
     public String keyType(
             @ToolParam(name = "text", description = "要输入的文本内容") String text) {
         log.debug("工具调用: sys_key_type('{}')", text);
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return ToolResponse.error("sys_key_type",
+                    ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
         if (!ToolConfirmationManager.requestConfirmation(origin, "sys_key_type",
                 "键盘输入文本: " + text)) {
             return ToolResponse.error("sys_key_type", "用户取消了操作");
@@ -271,6 +286,10 @@ public class SystemTools {
     public String keyPress(
             @ToolParam(name = "key", description = "键名，如 ENTER、TAB、ESCAPE 等") String key) {
         log.debug("工具调用: sys_key_press('{}')", key);
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return ToolResponse.error("sys_key_press",
+                    ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
         if (!ToolConfirmationManager.requestConfirmation(origin, "sys_key_press",
                 "按下按键: " + key)) {
             return ToolResponse.error("sys_key_press", "用户取消了操作");
@@ -294,6 +313,10 @@ public class SystemTools {
     public String keyCombo(
             @ToolParam(name = "combo", description = "组合键描述，如 CTRL+C、ALT+TAB、META+SPACE") String combo) {
         log.debug("工具调用: sys_key_combo('{}')", combo);
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return ToolResponse.error("sys_key_combo",
+                    ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
         if (!ToolConfirmationManager.requestConfirmation(origin, "sys_key_combo",
                 "执行组合键: " + combo)) {
             return ToolResponse.error("sys_key_combo", "用户取消了操作");
@@ -336,9 +359,7 @@ public class SystemTools {
             @ToolParam(name = "path", description = "目录路径") String path) {
         log.debug("工具调用: sys_file_list('{}')", path);
         try {
-            String pathError = validatePath(path, "sys_file_list");
-            if (pathError != null) return pathError;
-            Path dir = Path.of(path).normalize();
+            Path dir = ProjectAccessPolicy.resolveProjectPath(path);
             if (!Files.isDirectory(dir)) {
                 return ToolResponse.error("sys_file_list", "路径不是目录或不存在: " + path);
             }
@@ -348,7 +369,9 @@ public class SystemTools {
             sb.append("目录: ").append(dir.toAbsolutePath()).append("\n\n");
 
             try (Stream<Path> entries = Files.list(dir)) {
-                var list = entries.sorted().collect(Collectors.toList());
+                var list = entries
+                        .filter(ProjectAccessPolicy::isProjectFilePath)
+                        .sorted().collect(Collectors.toList());
                 for (Path entry : list) {
                     BasicFileAttributes attrs = Files.readAttributes(entry,
                             BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
@@ -374,9 +397,7 @@ public class SystemTools {
             @ToolParam(name = "path", description = "文件路径") String path) {
         log.debug("工具调用: sys_file_read('{}')", path);
         try {
-            String pathError = validatePath(path, "sys_file_read");
-            if (pathError != null) return pathError;
-            Path file = Path.of(path).normalize();
+            Path file = ProjectAccessPolicy.resolveProjectPath(path);
             if (!Files.exists(file)) {
                 return ToolResponse.error("sys_file_read", "文件不存在: " + path);
             }
@@ -392,6 +413,10 @@ public class SystemTools {
             }
 
             String content = Files.readString(file);
+            if (SensitiveDataRedactor.containsLikelyCredential(content)) {
+                return ToolResponse.error("sys_file_read",
+                        "文件可能包含凭据，普通文件工具已拒绝读取；请使用专用凭据工具管理");
+            }
             return ToolResponse.success("sys_file_read",
                     "文件: " + file.toAbsolutePath() + "\n大小: " + formatSize(size) + "\n\n" + content);
         } catch (Exception e) {
@@ -405,14 +430,16 @@ public class SystemTools {
             @ToolParam(name = "path", description = "文件路径") String path,
             @ToolParam(name = "content", description = "要写入的文本内容") String content) {
         log.debug("工具调用: sys_file_write('{}')", path);
+        if (SensitiveDataRedactor.containsLikelyCredential(content)) {
+            return ToolResponse.error("sys_file_write",
+                    SensitiveDataRedactor.credentialStorageDeniedReason());
+        }
         if (!ToolConfirmationManager.requestConfirmation(origin, "sys_file_write",
                 "写入文件: " + path)) {
             return ToolResponse.error("sys_file_write", "用户取消了操作");
         }
         try {
-            String pathError = validatePath(path, "sys_file_write");
-            if (pathError != null) return pathError;
-            Path file = Path.of(path).normalize();
+            Path file = ProjectAccessPolicy.resolveProjectPath(path);
             // 确保父目录存在
             if (file.getParent() != null) {
                 Files.createDirectories(file.getParent());
@@ -435,9 +462,7 @@ public class SystemTools {
             return ToolResponse.error("sys_file_delete", "用户取消了操作");
         }
         try {
-            String pathError = validatePath(path, "sys_file_delete");
-            if (pathError != null) return pathError;
-            Path target = Path.of(path).normalize();
+            Path target = ProjectAccessPolicy.resolveProjectPath(path);
             if (!Files.exists(target)) {
                 return ToolResponse.error("sys_file_delete", "路径不存在: " + path);
             }
@@ -461,14 +486,14 @@ public class SystemTools {
             return ToolResponse.error("sys_file_copy", "用户取消了操作");
         }
         try {
-            String srcError = validatePath(source, "sys_file_copy");
-            if (srcError != null) return srcError;
-            String dstError = validatePath(target, "sys_file_copy");
-            if (dstError != null) return dstError;
-            Path src = Path.of(source).normalize();
-            Path dst = Path.of(target).normalize();
+            Path src = ProjectAccessPolicy.resolveProjectPath(source);
+            Path dst = ProjectAccessPolicy.resolveProjectPath(target);
             if (!Files.exists(src)) {
                 return ToolResponse.error("sys_file_copy", "源文件不存在: " + source);
+            }
+            if (fileContainsLikelyCredential(src)) {
+                return ToolResponse.error("sys_file_copy",
+                        "源文件可能包含凭据，已拒绝通过普通文件工具复制");
             }
             if (dst.getParent() != null) {
                 Files.createDirectories(dst.getParent());
@@ -492,14 +517,14 @@ public class SystemTools {
             return ToolResponse.error("sys_file_move", "用户取消了操作");
         }
         try {
-            String srcError = validatePath(source, "sys_file_move");
-            if (srcError != null) return srcError;
-            String dstError = validatePath(target, "sys_file_move");
-            if (dstError != null) return dstError;
-            Path src = Path.of(source).normalize();
-            Path dst = Path.of(target).normalize();
+            Path src = ProjectAccessPolicy.resolveProjectPath(source);
+            Path dst = ProjectAccessPolicy.resolveProjectPath(target);
             if (!Files.exists(src)) {
                 return ToolResponse.error("sys_file_move", "源路径不存在: " + source);
+            }
+            if (fileContainsLikelyCredential(src)) {
+                return ToolResponse.error("sys_file_move",
+                        "源文件可能包含凭据，已拒绝通过普通文件工具移动");
             }
             if (dst.getParent() != null) {
                 Files.createDirectories(dst.getParent());
@@ -522,9 +547,7 @@ public class SystemTools {
             return ToolResponse.error("sys_file_mkdir", "用户取消了操作");
         }
         try {
-            String pathError = validatePath(path, "sys_file_mkdir");
-            if (pathError != null) return pathError;
-            Path dir = Path.of(path).normalize();
+            Path dir = ProjectAccessPolicy.resolveProjectPath(path);
             Files.createDirectories(dir);
             return ToolResponse.success("sys_file_mkdir", "目录已创建: " + dir.toAbsolutePath());
         } catch (Exception e) {
@@ -534,36 +557,6 @@ public class SystemTools {
     }
 
     // ==================== 内部方法 ====================
-
-    /** 禁止访问的敏感路径模式 */
-    private static final Set<String> BLOCKED_PATHS = Set.of(
-            "/etc/shadow", "/etc/passwd", "/etc/sudoers");
-
-    /**
-     * 校验文件路径安全性：禁止路径穿越（..）和访问敏感系统文件
-     */
-    private String validatePath(String path, String toolName) {
-        if (path == null || path.isBlank()) {
-            return ToolResponse.error(toolName, "路径不能为空");
-        }
-        Path normalized = Path.of(path).normalize();
-        String normalizedStr = normalized.toString();
-        // 检测路径穿越：规范化后仍含 .. 说明试图逃逸
-        if (normalizedStr.contains("..")) {
-            return ToolResponse.error(toolName, "路径包含非法字符: " + path);
-        }
-        // 检测敏感系统路径
-        for (String blocked : BLOCKED_PATHS) {
-            if (normalizedStr.equals(blocked)) {
-                return ToolResponse.error(toolName, "禁止访问系统敏感路径: " + path);
-            }
-        }
-        // 检测符号链接（防止通过 symlink 绕过检查）
-        if (Files.exists(normalized) && Files.isSymbolicLink(normalized)) {
-            log.warn("路径是符号链接: {}", path);
-        }
-        return null;
-    }
 
     /**
      * 模拟输入单个字符
@@ -660,6 +653,15 @@ public class SystemTools {
             case "9" -> KeyEvent.VK_9;
             default -> -1;
         };
+    }
+
+    private static boolean fileContainsLikelyCredential(Path file) {
+        try {
+            return Files.isRegularFile(file) && Files.size(file) <= 1024 * 1024
+                    && SensitiveDataRedactor.containsLikelyCredential(Files.readString(file));
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /**

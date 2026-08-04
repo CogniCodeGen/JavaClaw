@@ -6,10 +6,12 @@ import com.javaclaw.agent.router.RoutingResult;
 import com.javaclaw.agent.router.ToolRouter;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.CancellationReason;
+import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.prompt.AgentPrompts;
-import com.javaclaw.util.AtomicDisposable;
+import com.javaclaw.schedule.ScheduledRunControl;
+import com.javaclaw.schedule.ScheduledTaskRunner;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.StreamOptions;
 import io.agentscope.core.memory.autocontext.AutoContextMemory;
@@ -45,7 +47,7 @@ import java.util.concurrent.TimeUnit;
  * <p>线程模型：{@link #run} 阻塞直到本次流式完成（或超时），由 {@code ScheduleManager} 的单线程
  * 执行器串行调用——保证同一时刻只有一个定时执行。</p>
  */
-public final class ScheduledTaskAgent {
+public final class ScheduledTaskAgent implements ScheduledTaskRunner {
 
     private static final Logger log = LoggerFactory.getLogger(ScheduledTaskAgent.class);
 
@@ -57,7 +59,8 @@ public final class ScheduledTaskAgent {
     private final ToolRouter toolRouter;
     private final String baseSystemPrompt;
     private final StreamOptions streamOptions;
-    private final AtomicDisposable subscription = new AtomicDisposable();
+    private final java.util.concurrent.atomic.AtomicReference<ScheduledRunControl> activeRun =
+            new java.util.concurrent.atomic.AtomicReference<>();
 
     /**
      * 终止标志：{@link #shutdown()} 可能落在 run() 的「逐 run 装配（含数秒级阻塞的路由模型
@@ -93,13 +96,23 @@ public final class ScheduledTaskAgent {
      * @param origin 本次执行的来源令牌（由 {@code ToolConfirmationManager.beginAuthorizedScheduledRun}
      *               构造，授权窗与工具装配共享同一实例；插件等无授权窗路径可自行构造）
      */
-    public void run(ToolCallOrigin origin, String prompt, ConversationCallbacks callbacks) {
+    @Override
+    public void run(ScheduledRunControl control, ToolCallOrigin origin, String prompt,
+                    ConversationCallbacks callbacks) {
         // 终结回调「恰好一次」闸：onError / onComplete / 超时 / 外部 dispose / 线程中断 / 装配异常
         // 全部终结路径由 CAS 决出唯一胜者——声明在 try 之外，catch 出口也必须过同一闸
         // （中断可能与流正常完成竞争，绕过闸会让同一 tick 触发「成功+失败」两次终结回调：
         // run_count/fail_count 双双错增、写入矛盾的执行记录、向用户发出相互矛盾的两条通知）
         java.util.concurrent.atomic.AtomicBoolean signaled =
                 new java.util.concurrent.atomic.AtomicBoolean(false);
+        com.javaclaw.browser.PlaywrightBrowserManager runBrowser = null;
+        control.attachWorker(Thread.currentThread());
+        if (!activeRun.compareAndSet(null, control)) {
+            callbacks.onTerminal(ConversationOutcome.failed(
+                    new IllegalStateException("定时任务执行器已有活跃运行")));
+            control.detachWorker();
+            return;
+        }
         try {
             if (origin == null) {
                 origin = ToolCallOrigin.SCHEDULED;
@@ -107,19 +120,34 @@ public final class ScheduledTaskAgent {
             // 终止检查①：shutdown() 已发生（服务重建/切工作区）——绑定旧工作区资源的装配
             // 不再启动，记为取消（可审计）而非静默吞掉
             if (closed) {
+                control.cancel(CancellationReason.RUNTIME_REBUILD);
                 if (signaled.compareAndSet(false, true)) {
                     callbacks.onTerminal(new ConversationOutcome.Cancelled(
                             CancellationReason.RUNTIME_REBUILD, false));
                 }
                 return;
             }
+            if (control.isCancelled()) {
+                if (signaled.compareAndSet(false, true)) {
+                    callbacks.onTerminal(ConversationOutcome.cancelled(control.cancellationReason()));
+                }
+                return;
+            }
             // 独立子智能体集合（不复用 runtime.getExpertManager()，避免与交互编排器并发调用同一子智能体）；
             // 无人值守路径：不含交互专属的 clarify 工具与会弹桌面窗口的媒体工具（view_image）
+            runBrowser = runtime.getBrowserManager().createIsolated(origin.browserScopeId());
+            control.attachBrowser(runBrowser);
             ExpertManager expertManager = new ExpertManager(
-                    runtime.getModelFactory(), runtime.getBrowserManager(), origin);
+                    runtime.getModelFactory(), runBrowser, origin);
             Toolkit toolkit = ToolkitAssembler.buildBaseToolkit(runtime, expertManager, false, origin);
 
             RoutingResult routing = route(prompt);
+            if (control.isCancelled()) {
+                if (signaled.compareAndSet(false, true)) {
+                    callbacks.onTerminal(ConversationOutcome.cancelled(control.cancellationReason()));
+                }
+                return;
+            }
             // 激活组 + 拼提示词的每轮装配走单一来源（与循环路径共用），此处不再各持拷贝
             String routedPrompt = ToolkitAssembler.activateRoutedGroups(toolkit, routing, runtime);
 
@@ -129,6 +157,28 @@ public final class ScheduledTaskAgent {
             Msg userMsg = Msg.builder().role(MsgRole.USER).name("user").textContent(prompt).build();
 
             CountDownLatch done = new CountDownLatch(1);
+            StringBuffer modelReply = new StringBuffer();
+            java.util.concurrent.atomic.AtomicBoolean replyPublished =
+                    new java.util.concurrent.atomic.AtomicBoolean(false);
+            Runnable publishGuardedReply = () -> {
+                if (!replyPublished.compareAndSet(false, true)) return;
+                String visible = com.javaclaw.util.ChineseOutputGuard
+                        .enforceUserVisibleReply(modelReply.toString());
+                if (!visible.isBlank()) callbacks.onEvent(new ConversationEvent.Reply(visible));
+            };
+            ConversationCallbacks languageGuard = new ConversationCallbacks() {
+                @Override public void onEvent(ConversationEvent event) {
+                    if (event instanceof ConversationEvent.Reply reply) {
+                        modelReply.append(reply.chunk());
+                    } else {
+                        callbacks.onEvent(event);
+                    }
+                }
+                @Override public void onTerminal(ConversationOutcome outcome) {
+                    publishGuardedReply.run();
+                    callbacks.onTerminal(outcome);
+                }
+            };
             // clearIf 而非无条件 clear：本轮超时被 dispose 后，阻塞 worker 上的 doFinally 可能迟到——
             // 若无条件 clear 会抹掉「下一次执行」刚 set 的订阅引用，令后续超时 dispose 扑空、
             // 该次编排流失去 12 分钟上限约束（与 ChatService/AgentScopeLoopRunner 的 clearIf 同一模式）
@@ -141,36 +191,52 @@ public final class ScheduledTaskAgent {
                     // 后续 tick（与 AgentScopeLoopRunner 的 doFinally 放闩同一模式）。
                     // 放闩单点在此，处理器内不再各自 countDown
                     .doFinally(signal -> {
-                        subscription.clearIf(selfSub.get());
+                        control.clearSubscription(selfSub.get());
                         done.countDown();
                     })
                     .subscribe(
-                            event -> eventHandler.handleEvent(event, callbacks),
+                            event -> {
+                                // dispose 与已在递送的 onNext 可能有一个很小的竞态窗口；
+                                // 停用后的迟到模型事件不再向上层传递。
+                                if (!control.isCancelled()) eventHandler.handleEvent(event, languageGuard);
+                            },
                             error -> {
                                 log.error("定时任务编排执行出错", error);
                                 if (signaled.compareAndSet(false, true)) {
-                                    callbacks.onTerminal(ConversationOutcome.failed(error));
+                                    publishGuardedReply.run();
+                                    if (control.isCancelled()) {
+                                        callbacks.onTerminal(ConversationOutcome.cancelled(
+                                                control.cancellationReason()));
+                                    } else {
+                                        callbacks.onTerminal(ConversationOutcome.failed(error));
+                                    }
                                 }
                             },
                             () -> {
                                 if (signaled.compareAndSet(false, true)) {
-                                    callbacks.onTerminal(ConversationOutcome.completed());
+                                    publishGuardedReply.run();
+                                    if (control.isCancelled()) {
+                                        callbacks.onTerminal(ConversationOutcome.cancelled(
+                                                control.cancellationReason()));
+                                    } else {
+                                        callbacks.onTerminal(ConversationOutcome.completed());
+                                    }
                                 }
                             });
             selfSub.set(sub);
-            subscription.set(sub);
+            control.attachSubscription(sub);
             // 终止检查②（补杀窗口）：shutdown() 若落在「装配（含数秒级阻塞的路由模型调用）
             // 与 subscribe 之间」，其 dispose 命中的是空引用——这里复查一次终止标志，把刚
             // 建立的订阅立即掐掉（doFinally 放闩，下方 await 立刻返回并按取消记录），否则
             // 该 tick 会带着旧工作区的目录/凭据继续跑满 12 分钟、无人能停
             // （与 AgentScopeLoopRunner 的 closed 双检同一模式）
             if (closed) {
-                subscription.dispose();
+                control.cancel(CancellationReason.RUNTIME_REBUILD);
             }
 
             if (!done.await(RUN_TIMEOUT_MINUTES, TimeUnit.MINUTES)) {
                 log.warn("定时任务执行超时（>{}分钟），强制中断本次", RUN_TIMEOUT_MINUTES);
-                subscription.dispose();
+                control.cancel(CancellationReason.RUNTIME_REBUILD);
                 if (signaled.compareAndSet(false, true)) {
                     callbacks.onTerminal(ConversationOutcome.failed(
                             new java.util.concurrent.TimeoutException(
@@ -179,20 +245,38 @@ public final class ScheduledTaskAgent {
             } else if (signaled.compareAndSet(false, true)) {
                 // 闩已放行但 onError/onComplete 均未触发 = 外部 dispose 中断：
                 // 记为一次失败执行（含耗时/通知），保证任务历史可审计
-                callbacks.onTerminal(new ConversationOutcome.Cancelled(
-                        CancellationReason.RUNTIME_REBUILD, false));
+                CancellationReason reason = control.isCancelled()
+                        ? control.cancellationReason() : CancellationReason.RUNTIME_REBUILD;
+                callbacks.onTerminal(ConversationOutcome.cancelled(reason));
             }
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
-            subscription.dispose();
+            if (!control.isCancelled()) control.cancel(CancellationReason.RUNTIME_REBUILD);
             if (signaled.compareAndSet(false, true)) {
-                callbacks.onTerminal(ConversationOutcome.failed(ie));
+                callbacks.onTerminal(ConversationOutcome.cancelled(control.cancellationReason()));
             }
         } catch (Exception e) {
-            log.error("定时任务编排启动异常", e);
-            if (signaled.compareAndSet(false, true)) {
-                callbacks.onTerminal(ConversationOutcome.failed(e));
+            if (control.isCancelled()) {
+                if (signaled.compareAndSet(false, true)) {
+                    callbacks.onTerminal(ConversationOutcome.cancelled(control.cancellationReason()));
+                }
+            } else {
+                log.error("定时任务编排启动异常", e);
+                if (signaled.compareAndSet(false, true)) {
+                    callbacks.onTerminal(ConversationOutcome.failed(e));
+                }
             }
+        } finally {
+            if (runBrowser != null) {
+                try {
+                    runBrowser.shutdown();
+                } catch (Exception e) {
+                    log.warn("关闭定时任务隔离浏览器失败: {}", e.getMessage());
+                }
+                control.clearBrowser(runBrowser);
+            }
+            activeRun.compareAndSet(control, null);
+            control.detachWorker();
         }
     }
 
@@ -209,6 +293,7 @@ public final class ScheduledTaskAgent {
     /** 释放资源（应用退出 / 工作区切换重建时调用）：先置终止标志再 dispose，兜住订阅尚未建立的窗口。 */
     public void shutdown() {
         closed = true;
-        subscription.dispose();
+        ScheduledRunControl current = activeRun.get();
+        if (current != null) current.cancel(CancellationReason.RUNTIME_REBUILD);
     }
 }

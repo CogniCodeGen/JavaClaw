@@ -18,6 +18,7 @@ import com.javaclaw.loop.model.StopConditions;
 import com.javaclaw.prompt.LoopPrompts;
 import com.javaclaw.task.sdd.agent.ProcessCommandRunner;
 import com.javaclaw.task.sdd.verify.CommandRunner;
+import com.javaclaw.util.ProjectAccessPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.scheduler.Schedulers;
@@ -412,9 +413,14 @@ public final class LoopService {
                 maxIterations, cfg.getLoopTokenBudget(), cfg.getLoopMaxWallClockSeconds());
 
         // 工作目录：@loop workdir= 显式指定优先；未指定退回应用目录（准则核验的路径/命令基准）
-        String workDir = directives.workDir() != null
-                ? directives.workDir()
-                : System.getProperty("user.dir");
+        String workDir;
+        try {
+            workDir = directives.workDir() != null
+                    ? ProjectAccessPolicy.resolveProjectPath(directives.workDir()).toString()
+                    : ProjectAccessPolicy.projectRoot().toString();
+        } catch (SecurityException e) {
+            throw new IllegalArgumentException("@loop workdir 必须位于当前项目目录内", e);
+        }
         // 显式指定的目录必须存在：ProcessCommandRunner 对不存在目录会静默回退进程 cwd，
         // 验证命令将在 JavaClaw 自身目录里跑出假结果（假完成或永不满足），诚实失败优于静默错位
         if (directives.workDir() != null && !new java.io.File(workDir).isDirectory()) {

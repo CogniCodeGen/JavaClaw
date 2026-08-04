@@ -46,6 +46,13 @@ public class McpSettingsView {
 
     private VBox serverListBox;
     private Label statusLabel;
+    private TextField searchField;
+    private Label contentTitle;
+    private Label resultCountLabel;
+    private final Map<String, Button> filterButtons = new LinkedHashMap<>();
+    private String activeFilter = "all";
+    private boolean standaloneMode;
+    private javafx.stage.Stage window;
     /** 操作反馈自动消失计时器：连续操作时重启同一个计时器而非叠加多个 */
     private javafx.animation.PauseTransition statusClearTimer;
     /** 概览条容器：mono 文本 + 可选红色失败提示，整条带面板底色圆角 */
@@ -82,9 +89,19 @@ public class McpSettingsView {
     }
 
     public Node buildPanel() {
-        // 顶部：sec-title 标题 + sec-hint 说明（设计稿单列布局）
-        Label sectionTitle = new Label("MCP 服务器");
+        return buildPanel(false);
+    }
+
+    /**
+     * 构建 MCP 主内容区。独立窗口与设置页复用相同的卡片、筛选和操作逻辑，
+     * 仅在独立窗口中把创建/导入入口移到左侧导航栏。
+     */
+    private Node buildPanel(boolean standalone) {
+        standaloneMode = standalone;
+
+        Label sectionTitle = new Label(standalone ? "全部服务器" : "MCP 服务器");
         sectionTitle.getStyleClass().add("sec-title");
+        contentTitle = sectionTitle;
 
         Label description = new Label("管理 MCP (Model Context Protocol) 服务器，连接外部工具和数据源。");
         description.getStyleClass().add("sec-hint");
@@ -94,9 +111,13 @@ public class McpSettingsView {
         overviewText = new Label();
         overviewText.getStyleClass().add("mcp-overview-text");
         overviewText.setWrapText(true);
+        overviewText.setMinWidth(Region.USE_PREF_SIZE);
         overviewFail = new Label();
         overviewFail.getStyleClass().add("mcp-overview-fail");
         overviewFail.setWrapText(true);
+        overviewFail.setMinWidth(0);
+        overviewFail.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(overviewFail, Priority.ALWAYS);
         overviewBar = new HBox(8, overviewText, overviewFail);
         overviewBar.setAlignment(Pos.CENTER_LEFT);
         overviewBar.getStyleClass().add("mcp-overview-bar");
@@ -104,61 +125,59 @@ public class McpSettingsView {
         // 服务器列表
         serverListBox = new VBox(10);
 
-        // 操作按钮行：jc-btn jc-btn-soft jc-btn-sm，用 FlowPane 让窄屏自动换行
-        Button addButton = new Button("＋ 自定义");
-        addButton.getStyleClass().addAll("jc-btn", "jc-btn-soft", "jc-btn-sm");
-        addButton.setOnAction(e -> showAddServerDialog());
+        // 搜索与刷新在两种承载形态中保持一致。
+        searchField = new TextField();
+        searchField.setPromptText("⌕  搜索名称、命令或 URL…");
+        searchField.getStyleClass().addAll("settings-field", "mcp-search-field");
+        searchField.textProperty().addListener((obs, oldValue, newValue) -> refreshServerList());
+        HBox.setHgrow(searchField, Priority.ALWAYS);
 
-        Button templateButton = new Button("从模板添加");
-        templateButton.getStyleClass().addAll("jc-btn", "jc-btn-soft", "jc-btn-sm");
-        templateButton.setOnAction(e -> showTemplateDialog());
+        resultCountLabel = new Label();
+        resultCountLabel.getStyleClass().add("mcp-result-count");
 
-        Button pasteJsonButton = new Button("粘贴 JSON 导入");
-        pasteJsonButton.getStyleClass().addAll("jc-btn", "jc-btn-soft", "jc-btn-sm");
-        pasteJsonButton.setOnAction(e -> showPasteJsonDialog());
+        Button refreshButton = new Button("↻ 刷新");
+        refreshButton.getStyleClass().addAll("jc-btn", "jc-btn-ghost", "jc-btn-sm");
+        refreshButton.setTooltip(new Tooltip("刷新服务器运行状态和工具数量"));
+        refreshButton.setOnAction(e -> {
+            refreshServerList();
+            setStatus("服务器状态已刷新");
+        });
 
-        FlowPane addBar = new FlowPane(8, 8, addButton, templateButton, pasteJsonButton);
-        addBar.setAlignment(Pos.CENTER_LEFT);
+        HBox toolbar = new HBox(10, searchField, resultCountLabel, refreshButton);
+        toolbar.setAlignment(Pos.CENTER_LEFT);
+        toolbar.getStyleClass().add("mcp-toolbar");
 
         statusLabel = new Label();
-        statusLabel.getStyleClass().add("settings-status");
+        statusLabel.getStyleClass().addAll("settings-status", "mcp-status-label");
+        statusLabel.setWrapText(true);
+        statusLabel.setMaxWidth(Double.MAX_VALUE);
 
-        // 底部 mono hint：配置文件路径
-        Label pathHint = new Label("配置文件: " + configManager.getConfigFilePath());
-        pathHint.getStyleClass().add("mcp-path-hint");
-        pathHint.setWrapText(true);
+        FlowPane addBar = buildCreateActions();
 
         ScrollPane scrollPane = new ScrollPane();
         scrollPane.setFitToWidth(true);
         scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         scrollPane.getStyleClass().add("settings-scroll-pane");
 
-        VBox panel = new VBox(14,
-                sectionTitle,
-                description,
-                overviewBar,
-                addBar,
-                serverListBox,
-                pathHint,
-                statusLabel);
-        panel.setPadding(new Insets(4));
+        VBox panel = new VBox(14);
+        panel.getStyleClass().add("mcp-content-panel");
+        panel.getChildren().addAll(sectionTitle, description, overviewBar, toolbar);
+        if (!standalone) {
+            panel.getChildren().add(addBar);
+        }
+        panel.getChildren().add(serverListBox);
+        if (!standalone) {
+            Label pathHint = new Label("配置位置: " + configManager.getConfigFilePath());
+            pathHint.getStyleClass().add("mcp-path-hint");
+            pathHint.setWrapText(true);
+            panel.getChildren().addAll(pathHint, statusLabel);
+        }
+        panel.setPadding(standalone
+                ? new Insets(22, 26, 22, 26)
+                : new Insets(4));
 
         scrollPane.setContent(panel);
-
-        // 在 chat.css（由宿主 Scene 加载）之后追加 MCP 专属样式。
-        // 面板可能在挂上 Scene 之前就构建完成，故同时监听 sceneProperty，
-        // 待 Scene 就绪再追加，避免错过加载时机。
-        String mcpCss = getClass().getResource("/css/mcp-settings.css") != null
-                ? getClass().getResource("/css/mcp-settings.css").toExternalForm() : null;
-        if (mcpCss != null) {
-            java.util.function.Consumer<javafx.scene.Scene> attach = scene -> {
-                if (scene != null && !scene.getStylesheets().contains(mcpCss)) {
-                    scene.getStylesheets().add(mcpCss);
-                }
-            };
-            attach.accept(scrollPane.getScene());
-            scrollPane.sceneProperty().addListener((obs, oldS, newS) -> attach.accept(newS));
-        }
+        attachMcpStyles(scrollPane);
 
         refreshServerList();
 
@@ -166,62 +185,51 @@ public class McpSettingsView {
     }
 
     /**
-     * 以独立非模态窗口形态展示 MCP 服务器面板。
-     *
-     * <p>内容复用 {@link #buildPanel()}（其自身已包成可滚动的 {@link ScrollPane}），
-     * 底部追加 {@code modal-foot} 页脚（弹性空隙 + 「关闭」按钮）。窗口非模态、
-     * 可调大小，加载 chat.css + mcp-settings.css，并绑定 ESCAPE 关闭快捷键。
-     *
-     * <p>运行状态依赖 {@link #setMcpClientManager} 注入；未注入时面板自动退化为
-     * 基础 CRUD（与内嵌形态一致），窗口仍可正常显示。
-     *
-     * @param owner 父窗口（用于 initOwner，使新窗口归属正确）
+     * 以与技能中心、插件中心一致的独立中心窗口展示 MCP 服务。
      */
     public void showAsWindow(javafx.stage.Stage owner) {
-        javafx.stage.Stage stage = new javafx.stage.Stage();
-        stage.initOwner(owner);
-        stage.setTitle("MCP 服务器");
-        stage.setResizable(true);
+        window = new javafx.stage.Stage();
+        window.initOwner(owner);
+        window.initModality(javafx.stage.Modality.WINDOW_MODAL);
+        window.setTitle("MCP 服务器");
+        window.setResizable(true);
+        window.setMinWidth(780);
+        window.setMinHeight(560);
 
-        // buildPanel 已返回包好的 ScrollPane，直接作为可滚动内容主体
-        Node panelScroll = buildPanel();
+        VBox leftPane = buildWindowSidebar();
+        Node panelScroll = buildPanel(true);
         VBox.setVgrow(panelScroll, Priority.ALWAYS);
 
-        // 底部页脚：弹性空隙 + 「关闭」（ghost 样式）
         Button closeButton = new Button("关闭");
         closeButton.getStyleClass().addAll("jc-btn", "jc-btn-ghost");
-        closeButton.setOnAction(e -> stage.close());
+        closeButton.setOnAction(e -> window.close());
 
         Region footSpacer = new Region();
         HBox.setHgrow(footSpacer, Priority.ALWAYS);
 
-        HBox foot = new HBox(footSpacer, closeButton);
+        HBox foot = new HBox(10, statusLabel, footSpacer, closeButton);
         foot.getStyleClass().add("modal-foot");
-        foot.setAlignment(Pos.CENTER_RIGHT);
+        foot.setAlignment(Pos.CENTER_LEFT);
+        HBox.setHgrow(statusLabel, Priority.ALWAYS);
 
-        VBox root = new VBox(panelScroll, foot);
+        VBox rightPane = new VBox(panelScroll, foot);
+        VBox.setVgrow(panelScroll, Priority.ALWAYS);
+        HBox.setHgrow(rightPane, Priority.ALWAYS);
 
-        javafx.scene.Scene scene = new javafx.scene.Scene(root, 760, 650);
-        // chat.css 先加载（定义 -jc-* 令牌与基础类），mcp-settings.css 追加其后；
-        // 注意 buildPanel 内的 sceneProperty 监听已带 contains 守卫，不会重复加载。
-        String chatCss = getClass().getResource("/css/chat.css") != null
-                ? getClass().getResource("/css/chat.css").toExternalForm() : null;
-        if (chatCss != null && !scene.getStylesheets().contains(chatCss)) {
-            scene.getStylesheets().add(chatCss);
-        }
-        String mcpCss = getClass().getResource("/css/mcp-settings.css") != null
-                ? getClass().getResource("/css/mcp-settings.css").toExternalForm() : null;
-        if (mcpCss != null && !scene.getStylesheets().contains(mcpCss)) {
-            scene.getStylesheets().add(mcpCss);
-        }
+        HBox root = new HBox(leftPane, rightPane);
+        root.getStyleClass().addAll("settings-root", "mcp-window-root");
 
-        // ESCAPE 关闭窗口
+        javafx.scene.Scene scene = new javafx.scene.Scene(root, 960, 680);
+        addStylesheet(scene, "/css/chat.css");
+        addStylesheet(scene, "/css/mcp-settings.css");
+
         scene.getAccelerators().put(
                 new javafx.scene.input.KeyCodeCombination(javafx.scene.input.KeyCode.ESCAPE),
-                stage::close);
+                window::close);
 
-        stage.setScene(scene);
-        stage.show();
+        window.setScene(scene);
+        window.setOnHidden(e -> dispose());
+        window.show();
     }
 
     /**
@@ -233,17 +241,230 @@ public class McpSettingsView {
         List<McpServerConfig> servers = configManager.getAllServers();
 
         refreshOverview(servers);
+        refreshFilterButtons(servers);
+        refreshContentTitle();
 
-        if (servers.isEmpty()) {
-            Label emptyLabel = new Label("暂无 MCP 服务器，点击上方按钮添加");
-            emptyLabel.getStyleClass().add("settings-hint");
-            serverListBox.getChildren().add(emptyLabel);
+        List<McpServerConfig> visibleServers = servers.stream()
+                .filter(this::matchesActiveFilter)
+                .filter(this::matchesSearch)
+                .toList();
+        if (resultCountLabel != null) {
+            resultCountLabel.setText(visibleServers.size() == servers.size()
+                    ? servers.size() + " 个"
+                    : visibleServers.size() + " / " + servers.size() + " 个");
+        }
+
+        if (visibleServers.isEmpty()) {
+            serverListBox.getChildren().add(buildEmptyState(servers.isEmpty()));
             return;
         }
 
-        for (McpServerConfig server : servers) {
+        for (McpServerConfig server : visibleServers) {
             serverListBox.getChildren().add(buildServerCard(server));
         }
+    }
+
+    private FlowPane buildCreateActions() {
+        Button addButton = new Button("＋ 添加服务器");
+        addButton.getStyleClass().addAll("jc-btn", "jc-btn-primary", "jc-btn-sm");
+        addButton.setOnAction(e -> showAddServerDialog());
+
+        Button templateButton = new Button("从模板添加");
+        templateButton.getStyleClass().addAll("jc-btn", "jc-btn-soft", "jc-btn-sm");
+        templateButton.setOnAction(e -> showTemplateDialog());
+
+        Button pasteJsonButton = new Button("导入 JSON");
+        pasteJsonButton.getStyleClass().addAll("jc-btn", "jc-btn-ghost", "jc-btn-sm");
+        pasteJsonButton.setOnAction(e -> showPasteJsonDialog());
+
+        FlowPane actions = new FlowPane(8, 8, addButton, templateButton, pasteJsonButton);
+        actions.setAlignment(Pos.CENTER_LEFT);
+        return actions;
+    }
+
+    private VBox buildWindowSidebar() {
+        Label title = new Label("MCP 服务器");
+        title.getStyleClass().add("modal-left-title");
+
+        Label hint = new Label("外部工具与数据源");
+        hint.getStyleClass().add("mcp-sidebar-hint");
+
+        VBox heading = new VBox(3, title, hint);
+        heading.setPadding(new Insets(18, 16, 12, 16));
+
+        VBox filters = new VBox(2);
+        filters.setPadding(new Insets(0, 10, 10, 10));
+        filters.getChildren().addAll(
+                createFilterButton("all", "全部服务器"),
+                createFilterButton("running", "运行中"),
+                createFilterButton("failed", "需要处理"),
+                createFilterButton("stopped", "已停止"));
+
+        Region spacer = new Region();
+        VBox.setVgrow(spacer, Priority.ALWAYS);
+
+        VBox createActions = buildSidebarCreateActions();
+
+        Label locationTitle = new Label("配置位置");
+        locationTitle.getStyleClass().add("mcp-sidebar-section");
+        Label path = new Label(configManager.getConfigFilePath());
+        path.getStyleClass().add("mcp-sidebar-path");
+        path.setWrapText(true);
+        path.setTooltip(new Tooltip(configManager.getConfigFilePath()));
+
+        Button copyPath = new Button("复制路径");
+        copyPath.getStyleClass().addAll("jc-btn", "jc-btn-ghost", "jc-btn-sm");
+        copyPath.setMaxWidth(Double.MAX_VALUE);
+        copyPath.setOnAction(e -> {
+            copyText(configManager.getConfigFilePath());
+            setStatus("配置位置已复制");
+        });
+
+        VBox bottom = new VBox(10, createActions, locationTitle, path, copyPath);
+        bottom.getStyleClass().add("mcp-sidebar-bottom");
+
+        VBox sidebar = new VBox(heading, filters, spacer, bottom);
+        sidebar.getStyleClass().add("modal-left-pane");
+        sidebar.setPrefWidth(224);
+        sidebar.setMinWidth(204);
+        return sidebar;
+    }
+
+    private VBox buildSidebarCreateActions() {
+        Button add = new Button("＋ 添加服务器");
+        add.getStyleClass().addAll("jc-btn", "jc-btn-primary", "jc-btn-sm");
+        add.setMaxWidth(Double.MAX_VALUE);
+        add.setOnAction(e -> showAddServerDialog());
+
+        Button template = new Button("从模板添加");
+        template.getStyleClass().addAll("jc-btn", "jc-btn-soft", "jc-btn-sm");
+        template.setMaxWidth(Double.MAX_VALUE);
+        template.setOnAction(e -> showTemplateDialog());
+
+        Button importJson = new Button("导入 JSON");
+        importJson.getStyleClass().addAll("jc-btn", "jc-btn-ghost", "jc-btn-sm");
+        importJson.setMaxWidth(Double.MAX_VALUE);
+        importJson.setOnAction(e -> showPasteJsonDialog());
+
+        return new VBox(6, add, template, importJson);
+    }
+
+    private Button createFilterButton(String id, String label) {
+        Button button = new Button(label);
+        button.setUserData(label);
+        button.setMaxWidth(Double.MAX_VALUE);
+        button.getStyleClass().add("modal-nav-btn");
+        button.setOnAction(e -> {
+            activeFilter = id;
+            refreshServerList();
+        });
+        filterButtons.put(id, button);
+        return button;
+    }
+
+    private void refreshFilterButtons(List<McpServerConfig> servers) {
+        if (filterButtons.isEmpty()) return;
+        int running = 0;
+        int failed = 0;
+        int stopped = 0;
+        for (McpServerConfig server : servers) {
+            McpClient.ServerState state = serverState(server);
+            if (state == McpClient.ServerState.RUNNING
+                    || state == McpClient.ServerState.STARTING) {
+                running++;
+            } else if (state == McpClient.ServerState.FAILED) {
+                failed++;
+            } else {
+                stopped++;
+            }
+        }
+        Map<String, Integer> counts = Map.of(
+                "all", servers.size(),
+                "running", running,
+                "failed", failed,
+                "stopped", stopped);
+        filterButtons.forEach((id, button) -> {
+            button.setText(button.getUserData() + "  " + counts.getOrDefault(id, 0));
+            button.getStyleClass().remove("modal-nav-btn-selected");
+            if (id.equals(activeFilter)) {
+                button.getStyleClass().add("modal-nav-btn-selected");
+            }
+        });
+    }
+
+    private void refreshContentTitle() {
+        if (contentTitle == null) return;
+        contentTitle.setText(switch (activeFilter) {
+            case "running" -> "运行中的服务器";
+            case "failed" -> "需要处理";
+            case "stopped" -> "已停止的服务器";
+            default -> standaloneMode ? "全部服务器" : "MCP 服务器";
+        });
+    }
+
+    private boolean matchesActiveFilter(McpServerConfig server) {
+        McpClient.ServerState state = serverState(server);
+        return switch (activeFilter) {
+            case "running" -> state == McpClient.ServerState.RUNNING
+                    || state == McpClient.ServerState.STARTING;
+            case "failed" -> state == McpClient.ServerState.FAILED;
+            case "stopped" -> state == McpClient.ServerState.STOPPED;
+            default -> true;
+        };
+    }
+
+    private boolean matchesSearch(McpServerConfig server) {
+        if (searchField == null || searchField.getText() == null
+                || searchField.getText().isBlank()) {
+            return true;
+        }
+        String query = searchField.getText().trim().toLowerCase(java.util.Locale.ROOT);
+        String target = String.join(" ",
+                safe(server.getName()),
+                safe(server.getCommand()),
+                safe(server.getUrl()),
+                safe(server.getTransport()),
+                String.join(" ", server.getArgs()))
+                .toLowerCase(java.util.Locale.ROOT);
+        return target.contains(query);
+    }
+
+    private McpClient.ServerState serverState(McpServerConfig server) {
+        if (mcpClientManager == null) {
+            return McpClient.ServerState.STOPPED;
+        }
+        return mcpClientManager.getServerStatus(server.getName()).state();
+    }
+
+    private Node buildEmptyState(boolean noServersConfigured) {
+        Label icon = new Label(noServersConfigured ? "⌁" : "⌕");
+        icon.getStyleClass().add("empty-state-icon");
+
+        Label title = new Label(noServersConfigured ? "还没有 MCP 服务器" : "没有匹配的服务器");
+        title.getStyleClass().add("empty-state-text");
+
+        Label hint = new Label(noServersConfigured
+                ? "添加本地 stdio 或远程 HTTP 服务，让智能体使用外部工具和数据。"
+                : "尝试更换筛选条件或清空搜索关键词。");
+        hint.getStyleClass().addAll("sec-hint", "empty-state-hint");
+        hint.setWrapText(true);
+        hint.setMaxWidth(420);
+
+        VBox empty = new VBox(10, icon, title, hint);
+        empty.setAlignment(Pos.CENTER);
+        empty.getStyleClass().add("mcp-empty-state");
+
+        if (noServersConfigured) {
+            FlowPane actions = buildCreateActions();
+            actions.setAlignment(Pos.CENTER);
+            empty.getChildren().add(actions);
+        } else if (searchField != null && !searchField.getText().isBlank()) {
+            Button clear = new Button("清空搜索");
+            clear.getStyleClass().addAll("jc-btn", "jc-btn-soft", "jc-btn-sm");
+            clear.setOnAction(e -> searchField.clear());
+            empty.getChildren().add(clear);
+        }
+        return empty;
     }
 
     /**
@@ -300,43 +521,60 @@ public class McpSettingsView {
                 ? mcpClientManager.getServerStatus(server.getName())
                 : new McpClientManager.ServerStatus(McpClient.ServerState.STOPPED, 0, null, 0L);
 
-        // ====== 首行：徽标 + 名称 + 元信息 + transport 小标签 + 操作组 ======
+        // ====== 首行：状态、名称与传输类型。操作区独立成行，避免窄窗口挤压。 ======
         Label badge = buildStateBadge(server, status);
 
         Label nameLabel = new Label(server.getName());
         nameLabel.getStyleClass().add("mcp-server-name");
+        nameLabel.setTextOverrun(OverrunStyle.ELLIPSIS);
+        nameLabel.setMaxWidth(Double.MAX_VALUE);
 
         Label metaLabel = new Label(buildMetaText(server, status));
         metaLabel.getStyleClass().add("mcp-server-meta");
+        metaLabel.setManaged(!metaLabel.getText().isBlank());
+        metaLabel.setVisible(!metaLabel.getText().isBlank());
 
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
+        VBox identity = new VBox(2, nameLabel, metaLabel);
+        identity.setMinWidth(0);
+        identity.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(identity, Priority.ALWAYS);
 
-        // transport 小标签：mono 描边小胶囊（stdio / http）
         Label transportPill = new Label(
                 "http".equals(server.getTransport()) ? "http" : "stdio");
         transportPill.getStyleClass().add("mcp-transport-pill");
 
-        HBox actionBar = buildActionBar(server, status);
-
-        HBox headerRow = new HBox(8, badge, nameLabel, metaLabel, spacer,
-                transportPill, actionBar);
+        HBox headerRow = new HBox(10, badge, identity, transportPill);
         headerRow.setAlignment(Pos.CENTER_LEFT);
-
         card.getChildren().add(headerRow);
 
-        // ====== 次行：mono 灰字命令 / URL（可换行截断） ======
+        // ====== 命令 / URL 摘要 + 显式复制入口 ======
         Label summaryLabel = new Label();
         summaryLabel.getStyleClass().add("mcp-server-summary");
         summaryLabel.setWrapText(true);
+        summaryLabel.setMinWidth(0);
+        summaryLabel.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(summaryLabel, Priority.ALWAYS);
+        String copyValue;
         if ("http".equals(server.getTransport())) {
-            summaryLabel.setText("HTTP: " + (server.getUrl() == null ? "" : server.getUrl()));
+            copyValue = safe(server.getUrl());
+            summaryLabel.setText("HTTP: " + copyValue);
         } else {
             String cmdText = (server.getCommand() == null ? "" : server.getCommand())
                     + " " + String.join(" ", server.getArgs());
-            summaryLabel.setText("命令: " + cmdText.trim());
+            copyValue = cmdText.trim();
+            summaryLabel.setText("命令: " + copyValue);
         }
-        card.getChildren().add(summaryLabel);
+        Button copyButton = new Button("复制");
+        copyButton.getStyleClass().addAll("jc-btn", "jc-btn-ghost", "jc-btn-sm", "mcp-copy-button");
+        copyButton.setTooltip(new Tooltip("复制" + ("http".equals(server.getTransport()) ? " URL" : "启动命令")));
+        copyButton.setOnAction(e -> {
+            copyText(copyValue);
+            setStatus(("http".equals(server.getTransport()) ? "URL" : "启动命令") + "已复制");
+        });
+        HBox summaryRow = new HBox(8, summaryLabel, copyButton);
+        summaryRow.setAlignment(Pos.CENTER_LEFT);
+        summaryRow.getStyleClass().add("mcp-summary-row");
+        card.getChildren().add(summaryRow);
 
         // ====== 环境变量（stdio）/ HTTP Headers（http） ======
         Map<String, String> kv = "http".equals(server.getTransport())
@@ -361,6 +599,8 @@ public class McpSettingsView {
                     ? status.startupError() : "启动失败"));
             errLabel.getStyleClass().add("mcp-error-text");
             errLabel.setWrapText(true);
+            errLabel.setMinWidth(0);
+            errLabel.setMaxWidth(Double.MAX_VALUE);
             HBox.setHgrow(errLabel, Priority.ALWAYS);
             Button viewLogBtn = new Button("查看日志");
             viewLogBtn.getStyleClass().addAll("jc-btn", "jc-btn-ghost", "jc-btn-sm");
@@ -368,6 +608,10 @@ public class McpSettingsView {
             errRow.getChildren().addAll(errLabel, viewLogBtn);
             card.getChildren().add(errRow);
         }
+
+        FlowPane actionBar = buildActionBar(server, status);
+        actionBar.getStyleClass().add("mcp-card-actions");
+        card.getChildren().add(actionBar);
 
         // ====== 可展开的工具浏览器（任何状态都展示，让用户始终能折叠查看/触发发现） ======
         if (mcpClientManager != null) {
@@ -512,9 +756,9 @@ public class McpSettingsView {
      * 构建操作按钮组：启动 / 重启 / 停止 / 编辑 / 删除
      * 无管理器时退化为「启用复选框 + 编辑 + 删除」
      */
-    private HBox buildActionBar(McpServerConfig server, McpClientManager.ServerStatus status) {
-        HBox bar = new HBox(6);
-        bar.setAlignment(Pos.CENTER_RIGHT);
+    private FlowPane buildActionBar(McpServerConfig server, McpClientManager.ServerStatus status) {
+        FlowPane bar = new FlowPane(6, 6);
+        bar.setAlignment(Pos.CENTER_LEFT);
 
         if (mcpClientManager == null) {
             CheckBox enabledCheck = new CheckBox("启用");
@@ -525,6 +769,7 @@ public class McpSettingsView {
                 configManager.putServer(server);
                 setStatus("服务器 " + server.getName() + " 已"
                         + (server.isEnabled() ? "启用" : "禁用") + "（重启生效）");
+                refreshServerList();
             });
             bar.getChildren().add(enabledCheck);
         } else {
@@ -534,6 +779,7 @@ public class McpSettingsView {
                     Button restartBtn = new Button("重启");
                     restartBtn.getStyleClass().addAll("jc-btn", "jc-btn-ghost", "jc-btn-sm");
                     restartBtn.setOnAction(e -> hotRestart(server));
+                    restartBtn.setDisable(status.state() == McpClient.ServerState.STARTING);
                     Button stopBtn = new Button("停止");
                     stopBtn.getStyleClass().addAll("jc-btn", "jc-btn-ghost", "jc-btn-sm");
                     stopBtn.setOnAction(e -> hotStop(server));
@@ -575,11 +821,14 @@ public class McpSettingsView {
         deleteButton.getStyleClass().addAll("jc-btn", "jc-btn-danger", "jc-btn-sm");
         deleteButton.setOnAction(e -> {
             Alert alert = UIHelper.createConfirmAlert("确认删除",
-                    "确定删除 MCP 服务器「" + server.getName() + "」？", null);
+                    "确定删除 MCP 服务器「" + server.getName() + "」？此操作不会删除服务端数据。",
+                    ownerStage());
             alert.showAndWait().ifPresent(bt -> {
                 if (bt == ButtonType.OK) {
                     if (mcpClientManager != null) {
-                        mcpClientManager.stopServer(server.getName());
+                        Thread.ofVirtual()
+                                .name("mcp-stop-before-delete-" + server.getName())
+                                .start(() -> mcpClientManager.stopServer(server.getName()));
                     }
                     configManager.removeServer(server.getName());
                     refreshServerList();
@@ -619,7 +868,11 @@ public class McpSettingsView {
     // ==================== 热操作 ====================
 
     private void hotStart(McpServerConfig server) {
-        setStatus("正在启动 " + server.getName() + " ...");
+        if (!server.isEnabled()) {
+            server.setEnabled(true);
+            configManager.putServer(server);
+        }
+        setStatusInfo("正在启动 " + server.getName() + " …");
         new Thread(() -> {
             boolean ok = mcpClientManager.startServer(server);
             Platform.runLater(() -> {
@@ -634,7 +887,7 @@ public class McpSettingsView {
     }
 
     private void hotRestart(McpServerConfig server) {
-        setStatus("正在重启 " + server.getName() + " ...");
+        setStatusInfo("正在重启 " + server.getName() + " …");
         new Thread(() -> {
             boolean ok = mcpClientManager.restartServer(server);
             Platform.runLater(() -> {
@@ -649,9 +902,17 @@ public class McpSettingsView {
     }
 
     private void hotStop(McpServerConfig server) {
-        mcpClientManager.stopServer(server.getName());
-        setStatus("服务器 " + server.getName() + " 已停止");
-        if (onConfigChanged != null) onConfigChanged.run();
+        setStatusInfo("正在停止 " + server.getName() + " …");
+        Thread.ofVirtual()
+                .name("mcp-hot-stop-" + server.getName())
+                .start(() -> {
+                    mcpClientManager.stopServer(server.getName());
+                    Platform.runLater(() -> {
+                        setStatus("服务器 " + server.getName() + " 已停止");
+                        refreshServerList();
+                        if (onConfigChanged != null) onConfigChanged.run();
+                    });
+                });
     }
 
     /**
@@ -662,12 +923,6 @@ public class McpSettingsView {
         Dialog<Void> dialog = new Dialog<>();
         dialog.setTitle("MCP 服务器日志：" + serverName);
         dialog.setHeaderText(null);
-
-        String cssPath = getClass().getResource("/css/chat.css") != null
-                ? getClass().getResource("/css/chat.css").toExternalForm() : null;
-        if (cssPath != null) {
-            dialog.getDialogPane().getStylesheets().add(cssPath);
-        }
 
         McpClientManager.ServerStatus status = mcpClientManager.getServerStatus(serverName);
         List<String> tail = mcpClientManager.getStderrTail(serverName);
@@ -699,7 +954,8 @@ public class McpSettingsView {
 
         dialog.getDialogPane().setContent(content);
         dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
-        dialog.getDialogPane().setMinWidth(640);
+        dialog.getDialogPane().setPrefWidth(640);
+        styleMcpDialog(dialog);
         dialog.showAndWait();
     }
 
@@ -715,14 +971,14 @@ public class McpSettingsView {
 
     private void showTemplateDialog() {
         Dialog<McpTemplateLibrary.McpTemplate> dialog = new Dialog<>();
-        dialog.setTitle("从模板添加 MCP Server");
-        dialog.setHeaderText("选择一个常用 MCP Server 模板");
+        dialog.setTitle("从模板添加 MCP 服务器");
+        dialog.setHeaderText(null);
 
-        String cssPath = getClass().getResource("/css/chat.css") != null
-                ? getClass().getResource("/css/chat.css").toExternalForm() : null;
-        if (cssPath != null) {
-            dialog.getDialogPane().getStylesheets().add(cssPath);
-        }
+        Label title = new Label("从模板添加");
+        title.getStyleClass().add("sec-title");
+        Label hint = new Label("选择常用服务模板，下一步可补充路径、密钥和启动参数。");
+        hint.getStyleClass().add("sec-hint");
+        hint.setWrapText(true);
 
         ListView<McpTemplateLibrary.McpTemplate> list = new ListView<>();
         list.getItems().addAll(McpTemplateLibrary.ALL);
@@ -752,11 +1008,21 @@ public class McpSettingsView {
         list.setPrefHeight(360);
         list.setPrefWidth(520);
         list.getSelectionModel().selectFirst();
+        list.setOnMouseClicked(e -> {
+            if (e.getClickCount() == 2
+                    && list.getSelectionModel().getSelectedItem() != null) {
+                dialog.setResult(list.getSelectionModel().getSelectedItem());
+                dialog.close();
+            }
+        });
 
-        dialog.getDialogPane().setContent(list);
+        VBox content = new VBox(10, title, hint, list);
+        content.setPadding(new Insets(4));
+        dialog.getDialogPane().setContent(content);
         dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
         dialog.setResultConverter(btn -> btn == ButtonType.OK
                 ? list.getSelectionModel().getSelectedItem() : null);
+        styleMcpDialog(dialog);
 
         dialog.showAndWait().ifPresent(tpl -> {
             Map<String, String> env = new LinkedHashMap<>();
@@ -771,12 +1037,6 @@ public class McpSettingsView {
         Dialog<List<McpServerConfig>> dialog = new Dialog<>();
         dialog.setTitle("粘贴 JSON 导入 MCP 服务器");
         dialog.setHeaderText(null);
-
-        String cssPath = getClass().getResource("/css/chat.css") != null
-                ? getClass().getResource("/css/chat.css").toExternalForm() : null;
-        if (cssPath != null) {
-            dialog.getDialogPane().getStylesheets().add(cssPath);
-        }
 
         Label title = new Label("粘贴 MCP JSON 配置");
         title.getStyleClass().add("settings-section-title");
@@ -809,12 +1069,14 @@ public class McpSettingsView {
             String text = jsonArea.getText();
             if (text == null || text.isBlank()) {
                 preview.setText("");
+                preview.getStyleClass().setAll("settings-hint");
                 return;
             }
             try {
                 List<McpServerConfig> parsed = McpJsonImporter.parse(text, nameField.getText().trim());
                 if (parsed.isEmpty()) {
                     preview.setText("（解析得到 0 个服务器）");
+                    preview.getStyleClass().setAll("settings-hint");
                     return;
                 }
                 StringBuilder sb = new StringBuilder("将导入 " + parsed.size() + " 个服务器：\n");
@@ -824,8 +1086,10 @@ public class McpSettingsView {
                     sb.append("\n");
                 }
                 preview.setText(sb.toString().trim());
+                preview.getStyleClass().setAll("settings-hint", "status-success");
             } catch (Exception e) {
                 preview.setText("⚠ " + e.getMessage());
+                preview.getStyleClass().setAll("settings-hint", "status-error");
             }
         };
         jsonArea.textProperty().addListener((obs, o, n) -> refreshPreview.run());
@@ -836,7 +1100,7 @@ public class McpSettingsView {
 
         dialog.getDialogPane().setContent(content);
         dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-        dialog.getDialogPane().setMinWidth(560);
+        dialog.getDialogPane().setPrefWidth(560);
 
         dialog.setResultConverter(button -> {
             if (button != ButtonType.OK) return null;
@@ -847,6 +1111,25 @@ public class McpSettingsView {
                 return null;
             }
         });
+        Button importButton = (Button) dialog.getDialogPane().lookupButton(ButtonType.OK);
+        importButton.setText("导入");
+        importButton.getStyleClass().addAll("jc-btn", "jc-btn-primary");
+        importButton.addEventFilter(javafx.event.ActionEvent.ACTION, event -> {
+            try {
+                List<McpServerConfig> parsed = McpJsonImporter.parse(
+                        jsonArea.getText(), nameField.getText().trim());
+                if (parsed.isEmpty()) {
+                    preview.setText("⚠ JSON 中未发现任何 MCP 服务器");
+                    preview.getStyleClass().setAll("settings-hint", "status-error");
+                    event.consume();
+                }
+            } catch (Exception ex) {
+                preview.setText("⚠ " + ex.getMessage());
+                preview.getStyleClass().setAll("settings-hint", "status-error");
+                event.consume();
+            }
+        });
+        styleMcpDialog(dialog);
 
         dialog.showAndWait().ifPresent(servers -> {
             if (servers.isEmpty()) {
@@ -865,7 +1148,7 @@ public class McpSettingsView {
             if (toStart.isEmpty()) {
                 setStatus("已导入 " + servers.size() + " 个服务器");
             } else {
-                setStatus("已导入 " + servers.size() + " 个服务器，正在启动 "
+                setStatusInfo("已导入 " + servers.size() + " 个服务器，正在启动 "
                         + toStart.size() + " 个 …");
                 new Thread(() -> {
                     int ok = 0, fail = 0;
@@ -896,12 +1179,6 @@ public class McpSettingsView {
         Dialog<McpServerConfig> dialog = new Dialog<>();
         dialog.setTitle(existing == null ? "添加 MCP 服务器" : "编辑 MCP 服务器");
         dialog.setHeaderText(null);
-
-        String cssPath = getClass().getResource("/css/chat.css") != null
-                ? getClass().getResource("/css/chat.css").toExternalForm() : null;
-        if (cssPath != null) {
-            dialog.getDialogPane().getStylesheets().add(cssPath);
-        }
 
         Label titleLabel = new Label(existing == null ? "添加 MCP 服务器" : "编辑 MCP 服务器");
         titleLabel.getStyleClass().add("settings-section-title");
@@ -976,6 +1253,12 @@ public class McpSettingsView {
         testResultLabel.getStyleClass().add("settings-hint");
         testResultLabel.setWrapText(true);
         testResultLabel.setMaxWidth(420);
+
+        Label formErrorLabel = new Label();
+        formErrorLabel.getStyleClass().addAll("settings-hint", "status-error");
+        formErrorLabel.setWrapText(true);
+        formErrorLabel.setManaged(false);
+        formErrorLabel.setVisible(false);
 
         // ====== 预填编辑内容 ======
         if (existing != null) {
@@ -1073,7 +1356,7 @@ public class McpSettingsView {
                 ? new ButtonType("🔌 测试连接", ButtonBar.ButtonData.LEFT)
                 : null;
 
-        VBox content = new VBox(12, titleLabel, grid, testResultLabel);
+        VBox content = new VBox(12, titleLabel, grid, formErrorLabel, testResultLabel);
         content.setPadding(new Insets(4));
 
         dialog.getDialogPane().setContent(content);
@@ -1084,26 +1367,38 @@ public class McpSettingsView {
             Button testBtn = (Button) dialog.getDialogPane().lookupButton(testButtonType);
             testBtn.addEventFilter(javafx.event.ActionEvent.ACTION, evt -> {
                 evt.consume();
+                String validation = validateServerForm(existing, httpRadio.isSelected(),
+                        nameField, commandField, urlField, envRowsBox, headerRowsBox);
+                if (validation != null) {
+                    showFormError(formErrorLabel, validation);
+                    return;
+                }
                 McpServerConfig draft = collectFormConfig(httpRadio.isSelected(),
                         nameField, commandField, argsArea, envRowsBox,
                         urlField, headerRowsBox, enabledCheck);
-                if (draft == null) {
-                    testResultLabel.setText("⚠ 名称必填；stdio 需 command，http 需 url");
-                    testResultLabel.getStyleClass().setAll("settings-hint", "status-error");
-                    return;
-                }
+                hideFormError(formErrorLabel);
                 runTestConnection(draft, testResultLabel, testBtn);
             });
         } else {
             dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
         }
-        // 「添加 / 更新」确认按钮按设计稿走浅绿 save 样式
+        // 「添加 / 更新」使用中心窗口统一的主操作样式
         Node okBtn = dialog.getDialogPane().lookupButton(ButtonType.OK);
         if (okBtn instanceof Button ok) {
             ok.setText(existing == null ? "添加" : "更新");
-            ok.getStyleClass().addAll("jc-btn", "jc-btn-save");
+            ok.getStyleClass().addAll("jc-btn", "jc-btn-primary");
+            ok.addEventFilter(javafx.event.ActionEvent.ACTION, event -> {
+                String validation = validateServerForm(existing, httpRadio.isSelected(),
+                        nameField, commandField, urlField, envRowsBox, headerRowsBox);
+                if (validation != null) {
+                    showFormError(formErrorLabel, validation);
+                    event.consume();
+                } else {
+                    hideFormError(formErrorLabel);
+                }
+            });
         }
-        dialog.getDialogPane().setMinWidth(520);
+        dialog.getDialogPane().setPrefWidth(560);
 
         dialog.setResultConverter(button -> {
             if (button == ButtonType.OK) {
@@ -1113,6 +1408,11 @@ public class McpSettingsView {
             }
             return null;
         });
+        nameField.textProperty().addListener((o, a, b) -> hideFormError(formErrorLabel));
+        commandField.textProperty().addListener((o, a, b) -> hideFormError(formErrorLabel));
+        urlField.textProperty().addListener((o, a, b) -> hideFormError(formErrorLabel));
+        transportGroup.selectedToggleProperty().addListener((o, a, b) -> hideFormError(formErrorLabel));
+        styleMcpDialog(dialog);
 
         dialog.showAndWait().ifPresent(config -> {
             configManager.putServer(config);
@@ -1152,23 +1452,28 @@ public class McpSettingsView {
         TextField keyField = new TextField(key);
         keyField.setPromptText("KEY");
         keyField.getStyleClass().add("settings-field");
-        keyField.setPrefWidth(160);
+        keyField.setPrefWidth(145);
+        keyField.setMinWidth(110);
 
         // value 用 StringProperty 桥接两个控件，secret 切换不丢值
         StringProperty valueProp = new SimpleStringProperty(value);
         TextField plainValue = new TextField();
         plainValue.setPromptText("VALUE");
         plainValue.getStyleClass().add("settings-field");
-        plainValue.setPrefWidth(220);
+        plainValue.setPrefWidth(230);
+        plainValue.setMaxWidth(Double.MAX_VALUE);
         plainValue.textProperty().bindBidirectional(valueProp);
 
         PasswordField secretValue = new PasswordField();
         secretValue.setPromptText("VALUE");
         secretValue.getStyleClass().add("settings-field");
-        secretValue.setPrefWidth(220);
+        secretValue.setPrefWidth(230);
+        secretValue.setMaxWidth(Double.MAX_VALUE);
         secretValue.textProperty().bindBidirectional(valueProp);
 
         StackPane valueSlot = new StackPane();
+        valueSlot.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(valueSlot, Priority.ALWAYS);
         plainValue.setVisible(!isSecret);
         plainValue.setManaged(!isSecret);
         secretValue.setVisible(isSecret);
@@ -1194,6 +1499,77 @@ public class McpSettingsView {
 
         row.getChildren().addAll(keyField, valueSlot, secretToggle, removeBtn);
         return row;
+    }
+
+    private String validateServerForm(McpServerConfig existing,
+                                      boolean http,
+                                      TextField nameField,
+                                      TextField commandField,
+                                      TextField urlField,
+                                      VBox envRowsBox,
+                                      VBox headerRowsBox) {
+        String name = safe(nameField.getText()).trim();
+        if (name.isEmpty()) {
+            return "请填写服务器名称。";
+        }
+        if (existing == null && configManager.getServer(name) != null) {
+            return "服务器名称「" + name + "」已存在，请换一个名称，或返回列表编辑原配置。";
+        }
+
+        if (http) {
+            String url = safe(urlField.getText()).trim();
+            if (url.isEmpty()) {
+                return "请填写 MCP 端点 URL。";
+            }
+            try {
+                java.net.URI uri = new java.net.URI(url);
+                String scheme = uri.getScheme();
+                if (scheme == null
+                        || (!"http".equalsIgnoreCase(scheme)
+                        && !"https".equalsIgnoreCase(scheme))
+                        || uri.getHost() == null) {
+                    return "MCP 端点需为有效的 http:// 或 https:// URL。";
+                }
+            } catch (java.net.URISyntaxException ex) {
+                return "MCP 端点 URL 格式不正确：" + ex.getMessage();
+            }
+            String duplicate = findDuplicateKey(headerRowsBox);
+            return duplicate == null ? null : "Header 名称「" + duplicate + "」重复。";
+        }
+
+        if (safe(commandField.getText()).trim().isEmpty()) {
+            return "请填写 stdio 服务的启动命令。";
+        }
+        String duplicate = findDuplicateKey(envRowsBox);
+        return duplicate == null ? null : "环境变量名称「" + duplicate + "」重复。";
+    }
+
+    private String findDuplicateKey(VBox rowsBox) {
+        java.util.Set<String> keys = new java.util.HashSet<>();
+        for (Node node : rowsBox.getChildren()) {
+            if (!(node instanceof HBox row)
+                    || row.getChildren().isEmpty()
+                    || !(row.getChildren().getFirst() instanceof TextField field)) {
+                continue;
+            }
+            String key = safe(field.getText()).trim();
+            if (!key.isEmpty() && !keys.add(key)) {
+                return key;
+            }
+        }
+        return null;
+    }
+
+    private void showFormError(Label label, String message) {
+        label.setText("⚠ " + message);
+        label.setManaged(true);
+        label.setVisible(true);
+    }
+
+    private void hideFormError(Label label) {
+        label.setText("");
+        label.setManaged(false);
+        label.setVisible(false);
     }
 
     /**
@@ -1316,11 +1692,90 @@ public class McpSettingsView {
         return value.substring(0, 4) + "****" + value.substring(value.length() - 4);
     }
 
+    private String safe(String value) {
+        return value == null ? "" : value;
+    }
+
+    private void copyText(String value) {
+        javafx.scene.input.ClipboardContent content = new javafx.scene.input.ClipboardContent();
+        content.putString(safe(value));
+        javafx.scene.input.Clipboard.getSystemClipboard().setContent(content);
+    }
+
+    private javafx.stage.Stage ownerStage() {
+        if (window != null) {
+            return window;
+        }
+        if (serverListBox != null
+                && serverListBox.getScene() != null
+                && serverListBox.getScene().getWindow() instanceof javafx.stage.Stage stage) {
+            return stage;
+        }
+        return null;
+    }
+
+    private void styleMcpDialog(Dialog<?> dialog) {
+        javafx.stage.Stage owner = ownerStage();
+        if (owner != null && dialog.getOwner() == null) {
+            dialog.initOwner(owner);
+        }
+        UIHelper.styleDialog(dialog);
+        var css = getClass().getResource("/css/mcp-settings.css");
+        if (css != null) {
+            String external = css.toExternalForm();
+            if (!dialog.getDialogPane().getStylesheets().contains(external)) {
+                dialog.getDialogPane().getStylesheets().add(external);
+            }
+        }
+    }
+
+    private void attachMcpStyles(Node node) {
+        var css = getClass().getResource("/css/mcp-settings.css");
+        if (css == null) return;
+        String external = css.toExternalForm();
+        java.util.function.Consumer<javafx.scene.Scene> attach = scene -> {
+            if (scene != null && !scene.getStylesheets().contains(external)) {
+                scene.getStylesheets().add(external);
+            }
+        };
+        attach.accept(node.getScene());
+        node.sceneProperty().addListener((obs, oldScene, newScene) -> attach.accept(newScene));
+    }
+
+    private void addStylesheet(javafx.scene.Scene scene, String path) {
+        var css = getClass().getResource(path);
+        if (css == null) return;
+        String external = css.toExternalForm();
+        if (!scene.getStylesheets().contains(external)) {
+            scene.getStylesheets().add(external);
+        }
+    }
+
+    private void dispose() {
+        if (statusClearTimer != null) {
+            statusClearTimer.stop();
+        }
+        if (mcpClientManager != null && managerStateListener != null) {
+            mcpClientManager.removeStateListener(managerStateListener);
+            managerStateListener = null;
+        }
+        window = null;
+    }
+
     private void setStatus(String message) {
         if (statusLabel != null) {
             statusLabel.setText(message);
             statusLabel.getStyleClass().removeAll("status-success", "status-error", "status-info");
             statusLabel.getStyleClass().add("status-success");
+            scheduleStatusClear();
+        }
+    }
+
+    private void setStatusInfo(String message) {
+        if (statusLabel != null) {
+            statusLabel.setText(message);
+            statusLabel.getStyleClass().removeAll("status-success", "status-error", "status-info");
+            statusLabel.getStyleClass().add("status-info");
             scheduleStatusClear();
         }
     }
@@ -1335,14 +1790,14 @@ public class McpSettingsView {
     }
 
     /**
-     * 安排操作反馈 1.6 秒后自动清空。连续操作时重启同一个计时器（先 stop 再
+     * 安排操作反馈 3 秒后自动清空。连续操作时重启同一个计时器（先 stop 再
      * playFromStart），避免叠加多个计时器导致提前/重复清空。
      */
     private void scheduleStatusClear() {
         if (statusLabel == null) return;
         if (statusClearTimer == null) {
             statusClearTimer = new javafx.animation.PauseTransition(
-                    javafx.util.Duration.seconds(1.6));
+                    javafx.util.Duration.seconds(3));
             statusClearTimer.setOnFinished(e -> {
                 if (statusLabel != null) statusLabel.setText("");
             });

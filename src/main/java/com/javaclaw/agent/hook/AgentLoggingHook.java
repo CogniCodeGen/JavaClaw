@@ -20,6 +20,7 @@ import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
 
 import com.javaclaw.diagnostics.TraceRecorder;
+import com.javaclaw.util.SensitiveDataRedactor;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -96,8 +97,8 @@ public class AgentLoggingHook implements Hook {
     private void handlePostCall(PostCallEvent event) {
         String agentName = event.getAgent() != null ? event.getAgent().getName() : "unknown";
         Msg resultMsg = event.getFinalMessage();
-        String resultSummary = summarizeMsg(resultMsg);
-        log.debug("[Hook:PostCall] 智能体 [{}] 处理完成 — 结果: {}", agentName, resultSummary);
+        log.debug("[Hook:PostCall] 智能体 [{}] 处理完成 — 文本长度: {}",
+                agentName, textLength(resultMsg));
     }
 
     /**
@@ -110,8 +111,8 @@ public class AgentLoggingHook implements Hook {
         log.debug("[Hook:PreReasoning] 智能体 [{}] 即将进行 LLM 推理 — 输入消息数: {}", agentName, msgCount);
         if (log.isDebugEnabled() && inputMessages != null && !inputMessages.isEmpty()) {
             Msg lastMsg = inputMessages.get(inputMessages.size() - 1);
-            log.debug("[Hook:PreReasoning] 最后一条消息角色: {}, 内容: {}",
-                    lastMsg.getRole(), truncate(summarizeMsg(lastMsg)));
+            log.debug("[Hook:PreReasoning] 最后一条消息角色: {}, 文本长度: {}",
+                    lastMsg.getRole(), textLength(lastMsg));
         }
     }
 
@@ -121,10 +122,11 @@ public class AgentLoggingHook implements Hook {
     private void handlePostReasoning(PostReasoningEvent event) {
         String agentName = event.getAgent() != null ? event.getAgent().getName() : "unknown";
         Msg reasoningResult = event.getReasoningMessage();
-        String summary = summarizeMsg(reasoningResult);
-        log.debug("[Hook:PostReasoning] 智能体 [{}] LLM 推理完成 — 结果: {}", agentName, summary);
+        int contentLength = textLength(reasoningResult);
+        log.debug("[Hook:PostReasoning] 智能体 [{}] LLM 推理完成 — 文本长度: {}",
+                agentName, contentLength);
         Map<String, Object> fields = new LinkedHashMap<>();
-        fields.put("summary", truncate(summary));
+        fields.put("contentLength", contentLength);
         TraceRecorder.getInstance().record(agentName, "model_call", fields);
     }
 
@@ -145,7 +147,8 @@ public class AgentLoggingHook implements Hook {
         String agentName = event.getAgent() != null ? event.getAgent().getName() : "unknown";
         String toolName = event.getToolUse() != null ? event.getToolUse().getName() : "unknown";
         String toolInput = event.getToolUse() != null && event.getToolUse().getInput() != null
-                ? truncate(event.getToolUse().getInput().toString()) : "";
+                ? truncate(SensitiveDataRedactor.redactToolInput(
+                        toolName, event.getToolUse().getInput())) : "";
         log.info("[Hook:PreActing] 智能体 [{}] 即将执行工具 [{}] — 参数: {}",
                 agentName, toolName, toolInput);
         Map<String, Object> fields = new LinkedHashMap<>();
@@ -161,11 +164,11 @@ public class AgentLoggingHook implements Hook {
         String agentName = event.getAgent() != null ? event.getAgent().getName() : "unknown";
         String toolName = event.getToolUse() != null ? event.getToolUse().getName() : "unknown";
         String resultText = extractResultText(event.getToolResult());
-        log.info("[Hook:PostActing] 智能体 [{}] 工具 [{}] 执行完成 — 结果: {}",
-                agentName, toolName, truncate(resultText));
+        log.info("[Hook:PostActing] 智能体 [{}] 工具 [{}] 执行完成 — 结果长度: {}",
+                agentName, toolName, resultText.length());
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("tool", toolName);
-        fields.put("result", truncate(resultText));
+        fields.put("resultLength", resultText.length());
         TraceRecorder.getInstance().record(agentName, "tool_result", fields);
     }
 
@@ -185,16 +188,12 @@ public class AgentLoggingHook implements Hook {
     private void handleError(ErrorEvent event) {
         String agentName = event.getAgent() != null ? event.getAgent().getName() : "unknown";
         Throwable error = event.getError();
-        String errorMsg = error != null ? error.getMessage() : "未知错误";
         String errorType = error != null ? error.getClass().getSimpleName() : "Unknown";
-        log.error("[Hook:Error] 智能体 [{}] 发生错误 — 类型: {}, 消息: {}",
-                agentName, errorType, errorMsg);
-        if (error != null && log.isDebugEnabled()) {
-            log.debug("[Hook:Error] 智能体 [{}] 错误堆栈:", agentName, error);
-        }
+        log.error("[Hook:Error] 智能体 [{}] 发生错误 — 类型: {}（消息正文已隐藏）",
+                agentName, errorType);
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("errorType", errorType);
-        fields.put("message", errorMsg);
+        fields.put("message", "执行失败（详细信息已隐藏）");
         TraceRecorder.getInstance().record(agentName, "error", fields);
     }
 
@@ -233,6 +232,17 @@ public class AgentLoggingHook implements Hook {
             }
         }
         return sb.isEmpty() ? "<无文本内容>" : sb.toString();
+    }
+
+    private int textLength(Msg msg) {
+        if (msg == null || msg.getContent() == null) return 0;
+        int length = 0;
+        for (ContentBlock block : msg.getContent()) {
+            if (block instanceof TextBlock text && text.getText() != null) {
+                length += text.getText().length();
+            }
+        }
+        return length;
     }
 
     /**

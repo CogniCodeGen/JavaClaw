@@ -10,6 +10,7 @@ import com.javaclaw.plugin.api.Capability;
 import com.javaclaw.plugin.api.PluginDescriptor;
 import com.javaclaw.plugin.api.PluginTool;
 import com.javaclaw.util.PathGuard;
+import com.javaclaw.util.ProjectAccessPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,7 +44,8 @@ public final class PluginManager {
     private static PluginManager instance;
 
     /** 插件根目录（全局，{user.dir}/plugins） */
-    private final Path pluginsDir = Path.of(System.getProperty("user.dir"), "plugins");
+    private final Path pluginsDir = ProjectAccessPolicy.requireProjectFilePath(
+            ProjectAccessPolicy.projectRoot().resolve("plugins"));
 
     /** id → 容器，按发现顺序保序 */
     private final Map<String, PluginRuntime> plugins = new LinkedHashMap<>();
@@ -164,6 +166,16 @@ public final class PluginManager {
             log.warn("启用失败：未找到插件 {}", id);
             return;
         }
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            try {
+                rt.stop();
+            } catch (Exception ignored) {
+                // 本来就不应运行；继续把持久启用态收敛为 false。
+            }
+            store.setEnabled(id, false);
+            log.warn("严格项目隔离已拒绝启用插件[{}]：进程内第三方代码无法证明文件边界", id);
+            return;
+        }
         PluginDescriptor d = rt.descriptor();
         Set<Capability> declared = d.capabilities();
         Set<Capability> granted = store.granted(id);
@@ -224,6 +236,14 @@ public final class PluginManager {
      * @return 安装成功的插件 id；失败返回 null（descriptor 非法 / 不兼容 / IO 错误，已记日志）
      */
     public synchronized String installFromFile(Path jar) {
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            try {
+                jar = ProjectAccessPolicy.requireProjectFilePath(jar);
+            } catch (RuntimeException e) {
+                log.warn("严格项目隔离已拒绝从项目外安装插件");
+                return null;
+            }
+        }
         if (jar == null || !Files.isRegularFile(jar)
                 || !jar.getFileName().toString().toLowerCase().endsWith(".jar")) {
             log.warn("从文件安装失败：非法 jar 路径 {}", jar);
@@ -336,6 +356,7 @@ public final class PluginManager {
      * 汇总所有已启用插件贡献的工具，生成注入编排器系统提示词的描述块（无则返回空串）。
      */
     public synchronized String buildToolsPrompt() {
+        if (ProjectAccessPolicy.strictIsolationEnabled()) return "";
         List<PluginRuntime> withTools = plugins.values().stream()
                 .filter(rt -> rt.state() == PluginState.ACTIVE && !rt.providedTools().isEmpty())
                 .toList();
@@ -372,6 +393,9 @@ public final class PluginManager {
      * @throws Exception 插件未启用、工具不存在或 handler 抛出
      */
     public String invokeTool(String pluginId, String toolName, String argumentsJson) throws Exception {
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            throw new SecurityException(ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
         PluginRuntime rt;
         synchronized (this) {
             rt = plugins.get(pluginId);
@@ -392,8 +416,8 @@ public final class PluginManager {
         }
         UserInteractionPort port = this.interactionPort;
         if (port == null || !port.isAvailable()) {
-            log.warn("无交互端口，插件[{}]能力授权自动放行：{}", d.id(), capabilities);
-            return true;
+            log.warn("无交互端口，插件[{}]能力授权已安全拒绝：{}", d.id(), capabilities);
+            return false;
         }
         String caps = capabilities.stream().map(Capability::displayName).collect(Collectors.joining("、"));
         String desc = "插件「" + d.name() + "」(" + d.id() + ") 申请以下能力：\n"
@@ -488,6 +512,13 @@ public final class PluginManager {
 
     /** 后台线程自动恢复上次已启用、且授权充分的插件（不阻塞启动、不弹窗）。 */
     private void autoEnablePersistedAsync() {
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            for (PluginRuntime rt : plugins.values()) {
+                if (store.isEnabled(rt.id())) store.setEnabled(rt.id(), false);
+            }
+            log.info("严格项目隔离已启用，跳过所有插件自动恢复");
+            return;
+        }
         long generation = lifecycleGeneration;
         List<PluginRuntime> toEnable = plugins.values().stream()
                 .filter(rt -> store.isEnabled(rt.id()))

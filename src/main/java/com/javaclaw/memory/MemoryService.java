@@ -16,6 +16,7 @@ import com.javaclaw.memory.model.Persona;
 import com.javaclaw.memory.retrieval.Recaller;
 import com.javaclaw.memory.store.MemoryStore;
 import com.javaclaw.prompt.MemoryPrompts;
+import com.javaclaw.util.SensitiveDataRedactor;
 import io.agentscope.core.model.ChatModelBase;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -240,10 +241,36 @@ public class MemoryService implements AutoCloseable {
         }
     }
 
-    /** 全部显式纠错（含已撤销项），供诊断/测试/后续 UI 展示。 */
+    /** 全部显式纠错（含已撤销项），供诊断/测试/记忆中心展示。 */
     public List<com.javaclaw.memory.model.CorrectionRecord> corrections() {
         MemoryStore current = store;
         return current == null ? List.of() : current.allCorrections();
+    }
+
+    /**
+     * 撤销一条纠错：不再参与注入与记忆写入闸门，但保留记录本身可审计。
+     * 适用于“这条纠错本身记错了/用户改主意了”，但仍想留痕的情况。
+     */
+    public void revokeCorrection(com.javaclaw.memory.model.CorrectionRecord record) {
+        MemoryStore current = store;
+        if (current == null || record == null) return;
+        current.updateCorrection(record,
+                x -> x.status = com.javaclaw.memory.model.CorrectionRecord.Status.REVOKED,
+                "user");
+    }
+
+    /** 彻底删除一条纠错记录。被它废弃过的事实需另行 {@link #restoreFact} 恢复。 */
+    public void deleteCorrection(com.javaclaw.memory.model.CorrectionRecord record) {
+        MemoryStore current = store;
+        if (current == null || record == null) return;
+        current.removeCorrection(record, "user");
+    }
+
+    /** 恢复被取代/争议化的事实，使其重新参与召回与图谱。 */
+    public void restoreFact(com.javaclaw.memory.model.Fact f) {
+        MemoryStore current = store;
+        if (current == null || f == null || f.pending) return;
+        current.restoreFact(f, "user");
     }
 
     // ==================== 记忆写入（轮后） ====================
@@ -253,6 +280,12 @@ public class MemoryService implements AutoCloseable {
      * 这样关闭时可以安全取消耗时模型调用，而不会丢掉已经完成回复的一轮对话。
      */
     public void rememberTurn(String sessionId, String userInput, String reply, String toolTraceJson) {
+        if (SensitiveDataRedactor.containsLikelyCredential(userInput)
+                || SensitiveDataRedactor.containsLikelyCredential(reply)
+                || SensitiveDataRedactor.containsLikelyCredential(toolTraceJson)) {
+            log.warn("本轮包含疑似凭据，已跳过长期记忆与情景索引写入");
+            return;
+        }
         Episode ep = new Episode(sessionId, userInput, reply);
         ep.toolTraceJson = toolTraceJson;
         MemoryStore turnStore;

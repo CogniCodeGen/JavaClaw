@@ -3,15 +3,21 @@ package com.javaclaw.ui.javafx;
 import com.javaclaw.api.interaction.ConfirmDecision;
 import com.javaclaw.api.interaction.ConfirmKind;
 import com.javaclaw.api.interaction.ConfirmRequest;
+import com.javaclaw.api.interaction.ChoiceOption;
+import com.javaclaw.api.interaction.ChoiceRequest;
+import com.javaclaw.api.interaction.SecretRequest;
 import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
+import com.javaclaw.app.UIHelper;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.ChoiceDialog;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
+import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.GridPane;
@@ -66,6 +72,82 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
             case CONFIRM -> showConfirmDialog(request);
             case DOUBLE_CONFIRM -> showDoubleConfirmDialog(request);
         };
+    }
+
+    @Override
+    public String choose(ChoiceRequest request) {
+        if (request == null || request.options().isEmpty()) return null;
+        CompletableFuture<String> future = new CompletableFuture<>();
+        Platform.runLater(() -> {
+            try {
+                ChoiceOption initial = request.options().getFirst();
+                ChoiceDialog<ChoiceOption> dialog =
+                        new ChoiceDialog<>(initial, request.options());
+                dialog.setTitle(request.title().isBlank() ? "请选择" : request.title());
+                dialog.setHeaderText(request.message());
+                dialog.setContentText("账号：");
+                UIHelper.styleDialog(dialog);
+                dialog.showAndWait().ifPresentOrElse(
+                        option -> future.complete(option.id()),
+                        () -> future.complete(null));
+            } catch (Exception e) {
+                log.error("选择对话框异常", e);
+                future.complete(null);
+            }
+        });
+
+        int effective = request.timeoutSeconds() > 0
+                ? request.timeoutSeconds() : FALLBACK_TIMEOUT_SEC;
+        try {
+            return future.get(effective, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            log.warn("等待用户选择超时或异常 [{}]（{}s）", request.title(), effective);
+            return null;
+        }
+    }
+
+    @Override
+    public char[] requestSecret(SecretRequest request) {
+        if (request == null) return null;
+        CompletableFuture<char[]> future = new CompletableFuture<>();
+        Platform.runLater(() -> {
+            PasswordField input = new PasswordField();
+            try {
+                Dialog<char[]> dialog = new Dialog<>();
+                dialog.setTitle(request.title().isBlank() ? "安全输入" : request.title());
+                dialog.setHeaderText(request.message());
+                input.setPromptText("请输入（内容不会发送给模型）");
+                input.setMaxWidth(Double.MAX_VALUE);
+                input.textProperty().addListener((obs, oldValue, newValue) -> {
+                    if (newValue != null && newValue.length() > request.maxLength()) {
+                        input.setText(newValue.substring(0, request.maxLength()));
+                    }
+                });
+                dialog.getDialogPane().setContent(input);
+                dialog.getDialogPane().getButtonTypes().setAll(BTN_DENY, BTN_ALLOW);
+                dialog.setResultConverter(button -> {
+                    if (button != BTN_ALLOW) return null;
+                    char[] value = input.getText().toCharArray();
+                    input.clear();
+                    return value;
+                });
+                UIHelper.styleDialog(dialog);
+                dialog.showAndWait().ifPresentOrElse(
+                        future::complete,
+                        () -> future.complete(null));
+            } catch (Exception e) {
+                input.clear();
+                log.error("安全输入对话框异常", e);
+                future.complete(null);
+            }
+        });
+
+        try {
+            return future.get(request.timeoutSeconds(), TimeUnit.SECONDS);
+        } catch (Exception e) {
+            log.warn("等待安全输入超时或异常 [{}]（{}s）", request.title(), request.timeoutSeconds());
+            return null;
+        }
     }
 
     @Override
@@ -136,6 +218,7 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
                     alert.getButtonTypes().setAll(BTN_DENY, BTN_ALLOW);
                 }
                 attachDetails(alert, req);
+                UIHelper.styleAlert(alert);
                 alert.showAndWait().ifPresentOrElse(
                         btn -> future.complete(toDecision(btn)),
                         () -> future.complete(ConfirmDecision.DENY));
@@ -198,6 +281,7 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
                 });
 
                 dialog.setResultConverter(this::toDecision);
+                UIHelper.styleDialog(dialog);
                 dialog.showAndWait().ifPresentOrElse(
                         future::complete,
                         () -> future.complete(ConfirmDecision.DENY));

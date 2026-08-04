@@ -2,6 +2,8 @@ package com.javaclaw.task;
 
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.util.ProcessTerminator;
+import com.javaclaw.util.PathGuard;
+import com.javaclaw.util.ProjectAccessPolicy;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
@@ -76,7 +78,13 @@ public final class ValidationInspectionTools {
         if (workDirPath == null || workDirPath.isBlank()) {
             this.workDir = null;
         } else {
-            this.workDir = Path.of(workDirPath).toAbsolutePath().normalize();
+            Path candidate;
+            try {
+                candidate = ProjectAccessPolicy.resolveProjectPath(workDirPath);
+            } catch (RuntimeException e) {
+                candidate = null;
+            }
+            this.workDir = candidate;
         }
     }
 
@@ -228,7 +236,8 @@ public final class ValidationInspectionTools {
             Path candidate = Path.of(subdir);
             Path resolved = (candidate.isAbsolute() ? candidate : workDir.resolve(subdir))
                     .toAbsolutePath().normalize();
-            if (!resolved.startsWith(workDir)) return null;
+            ProjectAccessPolicy.requireProjectFilePath(resolved);
+            if (!PathGuard.isInside(workDir, resolved)) return null;
             if (!Files.isDirectory(resolved)) return null;
             return resolved;
         } catch (Exception e) {
@@ -243,7 +252,8 @@ public final class ValidationInspectionTools {
         if (workDir == null || path == null || path.isBlank()) return null;
         try {
             Path resolved = Path.of(path).toAbsolutePath().normalize();
-            return resolved.startsWith(workDir) ? resolved : null;
+            ProjectAccessPolicy.requireProjectFilePath(resolved);
+            return PathGuard.isInside(workDir, resolved) ? resolved : null;
         } catch (Exception e) {
             return null;
         }
@@ -263,6 +273,9 @@ public final class ValidationInspectionTools {
      */
     private String execWithinWorkDir(String tool, String command, String subdir,
                                       Set<String> whitelist, int timeoutSec) {
+        if (ProjectAccessPolicy.strictIsolationEnabled()) {
+            return ToolResponse.error(tool, ProjectAccessPolicy.unconfinedExecutionDeniedReason());
+        }
         if (workDir == null) {
             return ToolResponse.error(tool, "任务工作目录未设置，禁止执行命令");
         }

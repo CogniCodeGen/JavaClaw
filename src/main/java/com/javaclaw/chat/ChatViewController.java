@@ -25,6 +25,7 @@ import com.javaclaw.runtime.WorkspaceRuntime;
 import com.javaclaw.ui.javafx.schedule.ScheduleView;
 import com.javaclaw.ui.javafx.skill.SkillCenterView;
 import com.javaclaw.ui.javafx.task.SddTaskView;
+import com.javaclaw.util.ProjectAccessPolicy;
 import javafx.animation.Animation;
 import javafx.animation.KeyFrame;
 import javafx.animation.KeyValue;
@@ -891,6 +892,7 @@ public class ChatViewController {
     private void onAddAttachment() {
         FileChooser fileChooser = new FileChooser();
         fileChooser.setTitle("选择附件");
+        fileChooser.setInitialDirectory(ProjectAccessPolicy.projectRoot().toFile());
 
         // 添加文件过滤器
         fileChooser.getExtensionFilters().addAll(
@@ -910,11 +912,25 @@ public class ChatViewController {
         javafx.stage.Stage stage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
         List<File> selectedFiles = fileChooser.showOpenMultipleDialog(stage);
         if (selectedFiles != null && !selectedFiles.isEmpty()) {
+            int rejected = 0;
             for (File file : selectedFiles) {
-                if (!pendingAttachments.contains(file)) {
-                    pendingAttachments.add(file);
-                    log.info("已添加附件: {}", file.getName());
+                if (!ProjectAccessPolicy.isProjectFilePath(file.toPath())) {
+                    rejected++;
+                    continue;
                 }
+                File safe = ProjectAccessPolicy.requireProjectFilePath(file.toPath()).toFile();
+                if (!pendingAttachments.contains(safe)) {
+                    pendingAttachments.add(safe);
+                    log.info("已添加项目内附件: {}", safe.getName());
+                }
+            }
+            if (rejected > 0) {
+                Alert alert = new Alert(Alert.AlertType.WARNING,
+                        "严格项目隔离已拒绝 " + rejected + " 个项目外或受管配置目录中的附件。",
+                        ButtonType.OK);
+                alert.initOwner(stage);
+                alert.setHeaderText("只能选择当前项目内文件");
+                alert.showAndWait();
             }
             updateAttachmentPreview();
         }
@@ -1981,7 +1997,8 @@ public class ChatViewController {
             if (displayedImagePaths.contains(path)) continue;
 
             File file = new File(path);
-            if (!file.exists() || !file.isFile()) continue;
+            if (!ProjectAccessPolicy.isProjectFilePath(file.toPath())
+                    || !file.exists() || !file.isFile()) continue;
 
             try {
                 Image image = new Image(file.toURI().toString(), 400, 0, true, true);
@@ -2761,7 +2778,8 @@ public class ChatViewController {
         List<ImageView> historyImages = new java.util.ArrayList<>();
         for (String path : message.getImagePaths()) {
             File file = new File(path);
-            if (!file.exists() || !file.isFile()) continue;
+            if (!ProjectAccessPolicy.isProjectFilePath(file.toPath())
+                    || !file.exists() || !file.isFile()) continue;
             try {
                 Image image = new Image(file.toURI().toString(), 400, 0, true, true);
                 ImageView imageView = new ImageView(image);
@@ -3486,6 +3504,7 @@ public class ChatViewController {
         content.setStyle("-fx-font-family: " + com.javaclaw.ui.javafx.theme.FontManager.MONO_FONT_STACK + "; -fx-font-size: 12.5px;");
         dialog.getDialogPane().setContent(content);
         dialog.initOwner(outerRoot.getScene().getWindow());
+        UIHelper.styleAlert(dialog);
         dialog.showAndWait();
     }
 

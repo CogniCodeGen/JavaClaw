@@ -61,6 +61,9 @@ public class ScheduledTask {
     /** 是否启用 */
     private boolean enabled;
 
+    /** 配置版本：配置更新使用乐观锁；执行结果更新不递增此版本。 */
+    private long version;
+
     /** 上次执行时间 */
     private String lastRunTime;
 
@@ -158,6 +161,7 @@ public class ScheduledTask {
         this.onceDateTime = "";
         this.prompt = "";
         this.enabled = false;
+        this.version = 0L;
         this.lastRunTime = "";
         this.lastRunStatus = "";
         this.lastDuration = "—";
@@ -175,6 +179,55 @@ public class ScheduledTask {
         this.lastRunStatus = success ? "成功" : "失败";
         this.runCount++;
         if (!success) this.failCount++;
+    }
+
+    /** 记录一次由用户停用等原因造成的取消；取消计入运行总数，但不计为失败。 */
+    public void recordCancellation() {
+        this.lastRunTime = LocalDateTime.now().format(FORMATTER);
+        this.lastRunStatus = "已取消";
+        this.runCount++;
+    }
+
+    /**
+     * 返回完全脱离原对象的快照。任务管理器只向调用方暴露快照，避免调用方绕过
+     * 持久化与调度协调直接修改内部任务。
+     */
+    public ScheduledTask copy() {
+        ScheduledTask out = new ScheduledTask();
+        out.id = id;
+        out.name = name;
+        out.description = description;
+        out.triggerType = triggerType;
+        out.intervalMinutes = intervalMinutes;
+        out.intervalValue = intervalValue;
+        out.intervalUnit = intervalUnit;
+        out.dailyTime = dailyTime;
+        out.cronExpression = cronExpression;
+        out.onceDateTime = onceDateTime;
+        out.prompt = prompt;
+        out.enabled = enabled;
+        out.version = version;
+        out.lastRunTime = lastRunTime;
+        out.lastRunStatus = lastRunStatus;
+        out.lastDuration = lastDuration;
+        out.runCount = runCount;
+        out.failCount = failCount;
+        out.notifyEnabled = notifyEnabled;
+        out.notifyChannel = notifyChannel;
+        out.unattendedToolsAuthorized = unattendedToolsAuthorized;
+        out.executionHistory = executionHistory == null
+                ? new ArrayList<>() : new ArrayList<>(executionHistory);
+        out.execRecords = new ArrayList<>();
+        if (execRecords != null) {
+            for (ExecRecord record : execRecords) {
+                out.execRecords.add(new ExecRecord(
+                        record.time, record.status, record.duration, record.note));
+            }
+        }
+        out.builtin = builtin;
+        out.triggerSummary = triggerSummary;
+        out.sourceModule = sourceModule;
+        return out;
     }
 
     /**
@@ -211,6 +264,31 @@ public class ScheduledTask {
             default -> 1;
         };
         this.intervalMinutes = v * factor;
+    }
+
+    /** 以分钟为规范来源同步 UI 展示字段，修复旧任务的双字段不一致。 */
+    public void normalizeIntervalFields() {
+        if (!"interval".equals(triggerType)) return;
+        int minutes = Math.max(1, intervalMinutes);
+        int value = Math.max(1, intervalValue);
+        int factor = switch (intervalUnit == null ? "minute" : intervalUnit) {
+            case "hour" -> 60;
+            case "day" -> 1440;
+            default -> 1;
+        };
+        if (value * factor != minutes) {
+            intervalMinutes = minutes;
+            intervalValue = minutes;
+            intervalUnit = "minute";
+        }
+    }
+
+    /** 用一个入口同时写入 Quartz 规范分钟数与 UI 展示字段。 */
+    public void setIntervalInMinutes(int minutes) {
+        int normalized = Math.max(1, minutes);
+        this.intervalMinutes = normalized;
+        this.intervalValue = normalized;
+        this.intervalUnit = "minute";
     }
 
     /** 人类可读的触发描述（如 "每天 08:30" / "每 30 分钟" / "一次性 06-10 08:30"）。 */
@@ -269,6 +347,9 @@ public class ScheduledTask {
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
+
+    public long getVersion() { return version; }
+    public void setVersion(long version) { this.version = version; }
 
     public String getLastRunTime() { return lastRunTime; }
     public void setLastRunTime(String lastRunTime) { this.lastRunTime = lastRunTime; }

@@ -3,6 +3,7 @@ package com.javaclaw.memory.correction;
 import com.javaclaw.memory.model.CorrectionRecord;
 import com.javaclaw.memory.model.Fact;
 import com.javaclaw.memory.store.MemoryStore;
+import com.javaclaw.util.SensitiveDataRedactor;
 import com.javaclaw.util.TextSimilarity;
 
 import java.util.ArrayList;
@@ -38,6 +39,12 @@ public final class CorrectionEngine {
     }
 
     public CorrectionTurnContext prepareTurn(String userInput, String previousAssistantReply) {
+        // 纠错路径早于普通 rememberTurn 闸门执行，必须在任何 durable 写入之前独立拦截秘密。
+        // 否则“密码不是旧值，而是新值”会被当作事实替换写入纠错记录与长期事实。
+        if (SensitiveDataRedactor.containsLikelyCredential(userInput)
+                || SensitiveDataRedactor.containsLikelyCredential(previousAssistantReply)) {
+            return CorrectionTurnContext.empty();
+        }
         Optional<CorrectionDetector.Candidate> detected = CorrectionDetector.detect(userInput);
         CorrectionRecord applied = detected
                 .map(candidate -> apply(candidate, previousAssistantReply))
@@ -73,7 +80,7 @@ public final class CorrectionEngine {
         store.addCorrection(record, "user");
         revokeOlderCorrections(record);
 
-        List<Fact> targets = findTargetFacts(record, previousAssistantReply);
+        List<Fact> targets = findTargetFacts(record);
         String firstTargetFactId = null;
         for (Fact target : targets) {
             // userEdited / userAsserted / pinned 只防模型蒸馏静默覆盖；这里的来源仍是用户本人，
@@ -90,18 +97,9 @@ public final class CorrectionEngine {
         }
         if (firstTargetFactId != null) {
             String targetId = firstTargetFactId;
-            String inferredWrong = record.hasWrongClaim() ? null : targets.stream()
-                    .filter(f -> targetId.equals(f.id))
-                    .map(f -> f.text)
-                    .findFirst()
-                    .orElse(null);
-            store.updateCorrection(record, x -> {
-                x.targetFactId = targetId;
-                if ((x.wrongClaim == null || x.wrongClaim.isBlank())
-                        && inferredWrong != null && !inferredWrong.isBlank()) {
-                    x.wrongClaim = inferredWrong;
-                }
-            }, "user-correction");
+            // 只记录命中的目标事实，绝不把目标正文回填成 wrongClaim：那等于让系统替用户
+            // 断言“这句话是错的”，一旦目标匹配错了，就会把真实事实永久钉成已否定内容。
+            store.updateCorrection(record, x -> x.targetFactId = targetId, "user-correction");
         }
 
         if (record.status == CorrectionRecord.Status.ACTIVE
@@ -131,10 +129,17 @@ public final class CorrectionEngine {
         else store.addFact(fact, "user-correction");
     }
 
-    private List<Fact> findTargetFacts(CorrectionRecord record, String previousAssistantReply) {
+    /**
+     * 定位本次纠错要废弃的旧事实。
+     *
+     * <p>只按用户实际说出的旧主张匹配（词命中优先，命中不到时退到向量近邻）。刻意<b>不</b>
+     * 依据“事实正文出现在上一轮回复里”来推断目标：那会让一次无关的报错抱怨连带废掉上一轮
+     * 复述过的真实事实。定位不到就不动任何事实。</p>
+     */
+    private List<Fact> findTargetFacts(CorrectionRecord record) {
         String wrong = CorrectionGuard.normalize(record.wrongClaim);
         String correct = CorrectionGuard.normalize(record.correctClaim);
-        String previous = CorrectionGuard.normalize(previousAssistantReply);
+        if (wrong.isEmpty()) return List.of();
         LinkedHashMap<String, Fact> matched = new LinkedHashMap<>();
 
         for (Fact fact : store.allFacts()) {
@@ -145,14 +150,12 @@ public final class CorrectionEngine {
             boolean explicitMatch = !overlapIsCurrentClaim && wrong.length() >= 2
                     && (CorrectionGuard.containsClaim(fact.text, record.wrongClaim)
                     || (factText.length() >= 4 && wrong.contains(factText)));
-            boolean previousMatch = wrong.isEmpty() && factText.length() >= 4
-                    && !previous.isEmpty() && previous.contains(factText);
-            if (explicitMatch || previousMatch) {
+            if (explicitMatch) {
                 matched.put(fact.id, fact);
             }
         }
 
-        if (!matched.isEmpty() || wrong.isEmpty()) {
+        if (!matched.isEmpty()) {
             return List.copyOf(matched.values());
         }
 

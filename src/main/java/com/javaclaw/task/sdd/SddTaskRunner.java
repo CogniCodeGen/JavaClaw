@@ -29,7 +29,7 @@ import java.util.function.BooleanSupplier;
  *
  * @author JavaClaw
  */
-public final class SddTaskRunner {
+public final class SddTaskRunner implements AutoCloseable {
     private static final com.javaclaw.workflow.model.GraphDefinition SYSTEM_GRAPH =
             com.javaclaw.workflow.service.SystemGraphFactory.sdd();
 
@@ -41,6 +41,7 @@ public final class SddTaskRunner {
     /** 验证层子件引用：用于把核验超时与实现/结构化阶段超时对齐（避免默认 120s 误杀慢构建/慢 critic）。 */
     private final ProcessCommandRunner commandRunner;
     private final AgentScopeCriticJudge critic;
+    private final Map<String, Object> capabilityTools;
 
     /**
      * @param ctx             任务上下文
@@ -72,10 +73,11 @@ public final class SddTaskRunner {
                          com.javaclaw.workflow.service.WorkflowService workflowService,
                          DatabaseAccess database, String workspaceId) {
         this.context = ctx;
+        this.capabilityTools = capabilityTools == null ? Map.of() : Map.copyOf(capabilityTools);
         this.workflowService = workflowService;
         if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
         this.store = new SpecStore(ctx.workDir(), database, workspaceId);
-        this.agents = new AgentScopeSddAgents(modelFactory, capabilityTools, skills, tokenSink);
+        this.agents = new AgentScopeSddAgents(modelFactory, this.capabilityTools, skills, tokenSink);
         this.commandRunner = new ProcessCommandRunner();
         this.critic = new AgentScopeCriticJudge(ctx.workDir(), modelFactory, tokenSink);
         ScenarioVerifier verifier = new ScenarioVerifier(ctx.workDir(), commandRunner, critic);
@@ -119,17 +121,39 @@ public final class SddTaskRunner {
     }
 
     public SddOutcome run() {
-        return workflowService == null ? orchestrator.run() : runViaGraph(false);
+        try {
+            return workflowService == null ? orchestrator.run() : runViaGraph(false);
+        } finally {
+            close();
+        }
     }
 
     /** 从既有 change 续跑（恢复中断任务）。 */
     public SddOutcome resume() {
-        return workflowService == null ? orchestrator.resume() : runViaGraph(true);
+        try {
+            return workflowService == null ? orchestrator.resume() : runViaGraph(true);
+        } finally {
+            close();
+        }
     }
 
     public void cancel() {
         if (workflowService != null) workflowService.cancelSystem(SYSTEM_GRAPH.id(), context.id());
         orchestrator.cancel();
+    }
+
+    /** 关闭本任务私有能力资源（当前主要是隔离浏览器）；可重复调用。 */
+    @Override
+    public void close() {
+        for (Object tool : new java.util.LinkedHashSet<>(capabilityTools.values())) {
+            if (tool instanceof AutoCloseable closeable) {
+                try {
+                    closeable.close();
+                } catch (Exception ignored) {
+                    // 任务终态不能被资源清理失败覆盖
+                }
+            }
+        }
     }
 
     private SddOutcome runViaGraph(boolean resume) {

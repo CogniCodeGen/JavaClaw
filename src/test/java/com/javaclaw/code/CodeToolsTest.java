@@ -36,12 +36,18 @@ class CodeToolsTest {
         return new CodeTools(ToolCallOrigin.UNKNOWN);
     }
 
+    private CodeTools tools(Path projectRoot) {
+        CodeTools tools = tools();
+        tools.setProjectRootForTest(projectRoot);
+        return tools;
+    }
+
     @Test
     void code_read_行区间只返回指定行且带行号(@TempDir Path dir) throws IOException {
         Path f = dir.resolve("a.txt");
         Files.writeString(f, "line one\nline two\nline three\nline four\nline five\n");
 
-        String out = tools().read(f.toString(), 2, 4);
+        String out = tools(dir).read(f.toString(), 2, 4);
         assertTrue(out.contains("line two"), out);
         assertTrue(out.contains("line three"), out);
         assertTrue(out.contains("line four"), out);
@@ -54,13 +60,13 @@ class CodeToolsTest {
     void code_read_不传区间整读(@TempDir Path dir) throws IOException {
         Path f = dir.resolve("a.txt");
         Files.writeString(f, "alpha\nbeta\n");
-        String out = tools().read(f.toString(), 0, 0);
+        String out = tools(dir).read(f.toString(), 0, 0);
         assertTrue(out.contains("alpha") && out.contains("beta"), out);
     }
 
     @Test
     void code_read_不存在文件报错(@TempDir Path dir) {
-        String out = tools().read(dir.resolve("missing.txt").toString(), 0, 0);
+        String out = tools(dir).read(dir.resolve("missing.txt").toString(), 0, 0);
         assertTrue(out.contains("失败") && out.contains("不存在"), out);
     }
 
@@ -70,7 +76,7 @@ class CodeToolsTest {
         Files.createDirectories(dir.resolve("target"));
         Files.writeString(dir.resolve("target/Gen.java"), "class Gen { void foo() {} }\n"); // 应被跳过
 
-        String out = tools().grep("foo", dir.toString(), null, false, 100);
+        String out = tools(dir).grep("foo", dir.toString(), null, false, 100);
         assertTrue(out.contains("Main.java"), out);
         assertFalse(out.contains("Gen.java"), "target/ 下的文件应被跳过: " + out);
     }
@@ -80,7 +86,7 @@ class CodeToolsTest {
         Files.writeString(dir.resolve("a.java"), "needle here\n");
         Files.writeString(dir.resolve("b.txt"), "needle here\n");
 
-        String out = tools().grep("needle", dir.toString(), "**/*.java", false, 100);
+        String out = tools(dir).grep("needle", dir.toString(), "**/*.java", false, 100);
         assertTrue(out.contains("a.java"), out);
         assertFalse(out.contains("b.txt"), "glob 限定 .java，应排除 .txt: " + out);
     }
@@ -91,7 +97,7 @@ class CodeToolsTest {
         Files.createDirectories(dir.resolve("nested"));
         Files.writeString(dir.resolve("nested/b.java"), "needle here\n");
 
-        String out = tools().grep("needle", dir.toString(), "*.java", false, 100);
+        String out = tools(dir).grep("needle", dir.toString(), "*.java", false, 100);
         assertTrue(out.contains("a.java"), out);
         assertFalse(out.contains("nested"), "*.java 只应匹配检索根层文件: " + out);
     }
@@ -99,8 +105,8 @@ class CodeToolsTest {
     @Test
     void code_grep_忽略大小写(@TempDir Path dir) throws IOException {
         Files.writeString(dir.resolve("a.txt"), "HELLO World\n");
-        assertTrue(tools().grep("hello", dir.toString(), null, true, 100).contains("a.txt"));
-        assertFalse(tools().grep("hello", dir.toString(), null, false, 100).contains("a.txt"));
+        assertTrue(tools(dir).grep("hello", dir.toString(), null, true, 100).contains("a.txt"));
+        assertFalse(tools(dir).grep("hello", dir.toString(), null, false, 100).contains("a.txt"));
     }
 
     @Test
@@ -111,7 +117,7 @@ class CodeToolsTest {
         Files.createDirectories(dir.resolve("node_modules"));
         Files.writeString(dir.resolve("node_modules/Dep.java"), "x\n"); // 应被跳过
 
-        String out = tools().glob("**/*.java", dir.toString());
+        String out = tools(dir).glob("**/*.java", dir.toString());
         assertTrue(out.contains("Foo.java"), out);
         assertTrue(out.contains("Bar.java"), out);
         assertFalse(out.contains("Dep.java"), "node_modules 下应被跳过: " + out);
@@ -160,18 +166,18 @@ class CodeToolsTest {
         // 白名单安全线：通用命令（rm）被拒，绝不下探到执行
         String out = tools().build("rm -rf /", 0);
         assertTrue(out.contains("失败"), out);
-        assertTrue(out.contains("只允许构建/测试工具") || out.contains("拒绝"), out);
+        assertTrue(out.contains("严格项目文件隔离") && out.contains("禁用"), out);
     }
 
     @Test
     void code_build_拒绝白名单命令后的shell注入() {
         String out = tools().build("mvn -q test; touch should-not-exist", 1);
         assertTrue(out.contains("失败"), out);
-        assertTrue(out.contains("不支持 shell"), out);
+        assertTrue(out.contains("严格项目文件隔离") && out.contains("禁用"), out);
     }
 
     @Test
-    void code_build_合法命令也必须先经过高风险确认(@TempDir Path dir) {
+    void code_build_严格隔离下在确认前即被禁用(@TempDir Path dir) {
         UserInteractionPort oldPort = ToolConfirmationManager.getPort();
         boolean oldEnabled = ToolConfirmationManager.isEnabled();
         ToolReviewMode oldMode = AgentConfig.getInstance().getToolReviewMode();
@@ -196,10 +202,8 @@ class CodeToolsTest {
             tools.setProjectRootForTest(dir);
             String out = tools.build("mvn --version", 1);
 
-            assertTrue(out.contains("失败") && out.contains("用户拒绝"), out);
-            assertEquals("code_build", seen.get().toolName());
-            assertTrue(seen.get().description().contains("mvn --version"));
-            assertTrue(seen.get().description().contains(dir.toString()));
+            assertTrue(out.contains("失败") && out.contains("严格项目文件隔离"), out);
+            assertNull(seen.get(), "严格隔离应在弹出执行确认前直接拒绝");
         } finally {
             AgentConfig.getInstance().setToolReviewMode(oldMode);
             ToolConfirmationManager.setEnabled(oldEnabled);
@@ -225,8 +229,7 @@ class CodeToolsTest {
         CodeTools t = new CodeTools(ToolCallOrigin.UNKNOWN);
         t.setProjectRootForTest(dir);
         String out = t.gitStatus();
-        assertTrue(out.contains("成功"), out);
-        assertTrue(out.contains("hello.txt"), "git status 应显示未跟踪文件: " + out);
+        assertTrue(out.contains("失败") && out.contains("严格项目文件隔离"), out);
     }
 
     @Test
@@ -236,8 +239,7 @@ class CodeToolsTest {
         CodeTools t = new CodeTools(ToolCallOrigin.UNKNOWN);
         t.setProjectRootForTest(dir);
         String out = t.gitLog(20, null);
-        // 空仓库 git log 退出码非 0，应被折成错误响应而非抛异常
-        assertTrue(out.contains("失败"), out);
+        assertTrue(out.contains("失败") && out.contains("严格项目文件隔离"), out);
     }
 
     private static boolean gitAvailable() {

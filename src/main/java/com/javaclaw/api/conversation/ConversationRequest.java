@@ -1,6 +1,9 @@
 package com.javaclaw.api.conversation;
 
+import com.javaclaw.util.ProjectAccessPolicy;
+
 import java.io.File;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -20,7 +23,23 @@ public record ConversationRequest(String userInput, List<File> attachments, Stri
 
     public ConversationRequest {
         if (userInput == null) userInput = "";
-        if (attachments == null) attachments = List.of();
+        if (attachments == null) {
+            attachments = List.of();
+        } else {
+            List<File> safeAttachments = new ArrayList<>(attachments.size());
+            for (File attachment : attachments) {
+                if (attachment == null) {
+                    throw new IllegalArgumentException("附件不能为空");
+                }
+                try {
+                    safeAttachments.add(ProjectAccessPolicy.requireProjectFilePath(
+                            attachment.toPath()).toFile());
+                } catch (SecurityException e) {
+                    throw new IllegalArgumentException("严格项目隔离已拒绝项目外附件", e);
+                }
+            }
+            attachments = List.copyOf(safeAttachments);
+        }
         if (sessionId != null && sessionId.isBlank()) sessionId = null;
         if (options == null) options = ConversationOptions.DEFAULT;
     }

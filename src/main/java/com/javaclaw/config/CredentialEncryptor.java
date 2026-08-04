@@ -11,8 +11,6 @@ import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.security.spec.KeySpec;
 import java.sql.Connection;
@@ -28,8 +26,7 @@ import java.util.Base64;
  *
  * <p><b>密钥来源</b>：全局 H2 库 {@code app_state} 表内的随机主密钥（首次使用时生成，
  * key={@code credential.master.key}）→ 逐值随机盐 PBKDF2 → AES-256。<b>密钥随库一起备份/迁移</b>，
- * 不再依赖外部文件（旧版曾用 {@code data/credential.key} 外部文件，丢文件即丢全部凭据；首次访问
- * 若检测到该旧文件会一次性迁移进 H2 后不再依赖它）。更早的实现以「用户名 + 主机名」派生口令——
+ * 不读取或写入任何外部密钥文件。更早的实现以「用户名 + 主机名」派生口令——
  * macOS 无 {@code /etc/hostname}，走 {@code InetAddress.getLocalHost().getHostName()} 的主机名随
  * 网络环境漂移（换 Wi-Fi/DHCP/DNS 反解即变），密钥随之改变导致既有密文集体 Tag mismatch。</p>
  *
@@ -62,14 +59,6 @@ public final class CredentialEncryptor {
 
     /** app_state 表内主密钥的 key。 */
     private static final String KEY_STATE_KEY = "credential.master.key";
-
-    /** 旧版外部主密钥文件（统一数据根/credential.key）：仅在首次访问时读一次以迁移进 H2，此后不再写。 */
-    private static final Path LEGACY_KEY_FILE =
-            AppDatabase.dataDirectory().resolve("credential.key");
-
-    static Path legacyKeyFilePath() {
-        return LEGACY_KEY_FILE;
-    }
 
     /** 主密钥缓存（每次加解密都要 PBKDF2，文件只读一次） */
     private static volatile String cachedMasterSecret;
@@ -206,8 +195,7 @@ public final class CredentialEncryptor {
     /**
      * 主密钥口令：从 H2 库读取（或首次生成）随机主密钥，密钥随库一起备份/迁移。
      *
-     * <p>取值优先级：① H2 {@code app_state} 已有 → 用；② 库内无但存在旧版外部密钥文件 →
-     * 一次性迁移进 H2（保住用文件密钥加密的存量凭据），此后不再依赖文件；③ 全新 → 生成随机密钥
+     * <p>取值优先级：① H2 {@code app_state} 已有 → 用；② 全新 → 生成随机密钥
      * 并<b>创建互斥</b>写入 H2（{@code INSERT} 而非 {@code MERGE}——PK 冲突即另一并发进程已写入，
      * 读回胜者密钥收敛到同一把钥匙，杜绝 AUTO_SERVER 多进程首启各用不同密钥、败者重启解不开的丢凭据）。</p>
      *
@@ -231,15 +219,7 @@ public final class CredentialEncryptor {
                     cachedMasterSecret = fromDb;
                     return fromDb;
                 }
-                // ② 库内无、但存在旧版外部密钥文件 → 迁移进 H2（保住用文件密钥加密的存量凭据）
-                String fromFile = readLegacyKeyFile();
-                if (fromFile != null) {
-                    String adopted = insertKeyOrAdopt(fromFile);
-                    log.info("已把旧版外部主密钥文件迁移进 H2（后续不再依赖该文件，可安全删除）: {}", LEGACY_KEY_FILE);
-                    cachedMasterSecret = adopted;
-                    return adopted;
-                }
-                // ③ 全新：生成并创建互斥写入 H2
+                // ② 全新：生成并创建互斥写入 H2
                 byte[] secretBytes = new byte[32];
                 SECURE_RANDOM.nextBytes(secretBytes);
                 String candidate = Base64.getEncoder().encodeToString(secretBytes);
@@ -302,20 +282,7 @@ public final class CredentialEncryptor {
         }
     }
 
-    /** 读取旧版外部主密钥文件（仅用于一次性迁移进 H2）；不存在/空白/异常返回 null。 */
-    private static String readLegacyKeyFile() {
-        try {
-            if (Files.exists(LEGACY_KEY_FILE)) {
-                String s = Files.readString(LEGACY_KEY_FILE, StandardCharsets.UTF_8).trim();
-                return s.isBlank() ? null : s;
-            }
-        } catch (Exception e) {
-            log.warn("读取旧版主密钥文件失败（忽略，按无文件处理）: {}", e.getMessage());
-        }
-        return null;
-    }
-
-    /** 旧版设备派生口令（用户名 + 主机名）：仅用于解密回退与主密钥文件不可用时的降级。 */
+    /** 旧版设备派生口令（用户名 + 主机名）：仅用于旧密文解密回退，不访问文件。 */
     private static String legacyPassphrase() {
         return System.getProperty("user.name", "javaclaw")
                 + "@" + getHostName()
@@ -337,10 +304,6 @@ public final class CredentialEncryptor {
      */
     private static String getHostName() {
         try {
-            Path hostnamePath = Path.of("/etc/hostname");
-            if (Files.exists(hostnamePath)) {
-                return Files.readString(hostnamePath).trim();
-            }
             return java.net.InetAddress.getLocalHost().getHostName();
         } catch (Exception e) {
             return "localhost";

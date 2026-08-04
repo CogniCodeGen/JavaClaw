@@ -11,6 +11,7 @@ import com.javaclaw.plugin.api.Capability;
 import com.javaclaw.plugin.api.PluginException;
 import com.javaclaw.plugin.api.capability.ChatAccess;
 import com.javaclaw.plugin.api.capability.ChatChunkListener;
+import com.javaclaw.schedule.ScheduledRunControl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -52,7 +53,8 @@ public final class ChatAccessImpl implements ChatAccess {
         synchronized (lock) {
             log.debug("插件[{}]发起同步对话，prompt 长度={}", pluginId, prompt == null ? 0 : prompt.length());
             // 插件路径不开授权窗：逐次构造的令牌只承载归属标识，永远走常规确认
-            agent().run(com.javaclaw.agent.ToolCallOrigin.scheduled("plugin:" + pluginId),
+            agent().run(new ScheduledRunControl("plugin:" + pluginId),
+                    com.javaclaw.agent.ToolCallOrigin.scheduled("plugin:" + pluginId),
                     prompt, new TerminalCallbackGuard(new ConversationCallbacks() {
                 @Override
                 public void onEvent(ConversationEvent event) {
@@ -86,7 +88,8 @@ public final class ChatAccessImpl implements ChatAccess {
         CapabilityGuard.require(Capability.CHAT);
         synchronized (lock) {
             log.debug("插件[{}]发起流式对话", pluginId);
-            agent().run(com.javaclaw.agent.ToolCallOrigin.scheduled("plugin:" + pluginId),
+            agent().run(new ScheduledRunControl("plugin:" + pluginId),
+                    com.javaclaw.agent.ToolCallOrigin.scheduled("plugin:" + pluginId),
                     prompt, new TerminalCallbackGuard(new ConversationCallbacks() {
                 @Override
                 public void onEvent(ConversationEvent event) {

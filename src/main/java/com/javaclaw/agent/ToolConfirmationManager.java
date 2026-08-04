@@ -3,6 +3,8 @@ package com.javaclaw.agent;
 import com.javaclaw.api.interaction.ConfirmDecision;
 import com.javaclaw.api.interaction.ConfirmKind;
 import com.javaclaw.api.interaction.ConfirmRequest;
+import com.javaclaw.api.interaction.ChoiceOption;
+import com.javaclaw.api.interaction.ChoiceRequest;
 import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.agent.risk.ReadOnlyCommands;
@@ -225,6 +227,61 @@ public class ToolConfirmationManager {
      */
     public static boolean requestStandaloneConfirmation(String toolName, String description) {
         return confirmInternal(ToolCallOrigin.UNKNOWN, toolName, description, true).isAllow();
+    }
+
+    /**
+     * 请求一次不可被审核模式、任务白名单或“关闭工具确认”开关跳过的显式用户答复。
+     *
+     * <p>这不是风险审核入口，而是业务流程本身必须等待用户完成的交互，例如“请在已打开的
+     * 浏览器中登录，完成后点击同意”或“是否保存刚取得的登录会话”。因此即使用户选择了
+     * AUTO 审核，也不能把该答复推断为同意。</p>
+     *
+     * @param actionName    展示给用户的动作名称
+     * @param description   操作说明
+     * @param timeoutSeconds 等待秒数；小于等于 0 时由 UI 使用其兜底值
+     * @return true=用户明确同意，false=拒绝、超时或 UI 不可用
+     */
+    public static boolean requestExplicitUserConfirmation(
+            String actionName, String description, int timeoutSeconds) {
+        UserInteractionPort p = port;
+        if (p == null || !p.isAvailable()) {
+            log.warn("UserInteractionPort 未就绪，无法等待用户答复: {}", actionName);
+            return false;
+        }
+        try {
+            ConfirmDecision decision = p.confirmEx(new ConfirmRequest(
+                    actionName,
+                    "需要用户操作",
+                    description,
+                    ConfirmKind.CONFIRM,
+                    timeoutSeconds,
+                    "",
+                    false));
+            return decision.isAllow();
+        } catch (Exception e) {
+            log.warn("等待用户显式答复失败 [{}]: {}", actionName, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * 请求一次不可被审核模式或任务授权跳过的显式单选。
+     *
+     * @return 选项稳定 ID；取消、超时或 UI 不支持时返回 {@code null}
+     */
+    public static String requestExplicitUserChoice(
+            String title, String description, List<ChoiceOption> options, int timeoutSeconds) {
+        UserInteractionPort p = port;
+        if (p == null || !p.isAvailable()) {
+            log.warn("UserInteractionPort 未就绪，无法等待用户选择: {}", title);
+            return null;
+        }
+        try {
+            return p.choose(new ChoiceRequest(title, description, options, timeoutSeconds));
+        } catch (Exception e) {
+            log.warn("等待用户显式选择失败 [{}]: {}", title, e.getMessage());
+            return null;
+        }
     }
 
     /**

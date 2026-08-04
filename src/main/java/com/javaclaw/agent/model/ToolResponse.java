@@ -23,6 +23,7 @@ public final class ToolResponse {
     private static final String STATUS_SUCCESS = "成功";
     private static final String STATUS_ERROR = "失败";
     private static final String STATUS_TIMEOUT = "超时";
+    private static final String STATUS_PENDING = "待审";
 
     private ToolResponse() {
         // 工具类不可实例化
@@ -48,6 +49,16 @@ public final class ToolResponse {
      */
     public static String error(String toolName, String message) {
         return format(toolName, STATUS_ERROR, message);
+    }
+
+    /**
+     * 构建“请求已受理但业务变更尚未生效”的响应。
+     *
+     * <p>典型场景是技能变更提案：入队成功不等于技能已经落盘。独立状态可防止模型把
+     * {@code [成功] 提案已提交} 误读成“目标对象已创建”。</p>
+     */
+    public static String pending(String toolName, String message) {
+        return format(toolName, STATUS_PENDING, message);
     }
 
     /**
@@ -94,6 +105,11 @@ public final class ToolResponse {
      */
     public static boolean isSuccess(String response) {
         return response != null && response.contains("[" + STATUS_SUCCESS + "]");
+    }
+
+    /** 是否为已受理、待用户审阅/确认后生效的结果。 */
+    public static boolean isPending(String response) {
+        return response != null && response.contains("[" + STATUS_PENDING + "]");
     }
 
     /**

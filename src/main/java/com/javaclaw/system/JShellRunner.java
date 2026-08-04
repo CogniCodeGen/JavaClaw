@@ -61,6 +61,10 @@ public final class JShellRunner {
      * 超时经工作线程控制，到点 {@code stop()} 中止并返回已产生的部分输出。
      */
     public static ExecResult run(String code, List<String> preamble, int timeoutSec) {
+        if (com.javaclaw.util.ProjectAccessPolicy.strictIsolationEnabled()) {
+            return new ExecResult(false, false, "", "",
+                    List.of(com.javaclaw.util.ProjectAccessPolicy.unconfinedExecutionDeniedReason()));
+        }
         ByteArrayOutputStream outBuf = new ByteArrayOutputStream();
         PrintStream capture = new PrintStream(outBuf, true, StandardCharsets.UTF_8);
 
