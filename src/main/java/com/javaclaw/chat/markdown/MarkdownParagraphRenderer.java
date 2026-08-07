@@ -9,7 +9,6 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
-import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
@@ -254,12 +253,9 @@ public final class MarkdownParagraphRenderer {
             }
             case ThematicBreak ignored -> ctx.addRegion(MarkdownParagraphRenderer::hrRegion);
             case TableBlock table -> {
-                List<List<String>> head = new ArrayList<>();
-                List<List<String>> body = new ArrayList<>();
-                collectTable(table, head, body);
-                List<List<String>> immutableHead = immutableRows(head);
-                List<List<String>> immutableBody = immutableRows(body);
-                ctx.addRegion(() -> tableRegion(immutableHead, immutableBody));
+                TableData data = collectTableData(table);
+                RenderStyleSnapshot style = ctx.style;
+                ctx.addRegion(() -> MarkdownTableView.create(data, style));
             }
             case HtmlBlock html -> {
                 String previousBase = ctx.baseClass;
@@ -418,37 +414,6 @@ public final class MarkdownParagraphRenderer {
         return wrapper;
     }
 
-    private static Region tableRegion(List<List<String>> head, List<List<String>> body) {
-        requireFxThread();
-        GridPane grid = new GridPane();
-        grid.getStyleClass().add("md-table");
-        grid.setHgap(1);
-        grid.setVgap(1);
-        int row = 0;
-        for (List<String> cells : head) addTableRow(grid, cells, row++, true, false);
-        boolean stripe = false;
-        for (List<String> cells : body) {
-            addTableRow(grid, cells, row++, false, stripe);
-            stripe = !stripe;
-        }
-        VBox wrapper = new VBox(grid);
-        wrapper.setPadding(new javafx.geometry.Insets(4, 0, 6, 0));
-        return wrapper;
-    }
-
-    private static void addTableRow(
-            GridPane grid, List<String> cells, int row, boolean header, boolean stripe) {
-        for (int column = 0; column < cells.size(); column++) {
-            Label cell = new Label(cells.get(column));
-            cell.setWrapText(true);
-            cell.getStyleClass().add(header ? "md-table-header"
-                    : (stripe ? "md-table-cell-stripe" : "md-table-cell"));
-            cell.setMaxWidth(Double.MAX_VALUE);
-            GridPane.setHgrow(cell, Priority.ALWAYS);
-            grid.add(cell, column, row);
-        }
-    }
-
     private static Region hrRegion() {
         requireFxThread();
         Region line = new Region();
@@ -500,24 +465,60 @@ public final class MarkdownParagraphRenderer {
         return wrapper;
     }
 
-    private static void collectTable(
-            TableBlock table, List<List<String>> head, List<List<String>> body) {
+    /** 将 CommonMark 表格 AST 收敛为不持有 Node 的不可变后台数据。 */
+    static TableData collectTableData(TableBlock table) {
+        List<List<TableCellData>> rawRows = new ArrayList<>();
+        List<TableCellAlignment> columnAlignments = new ArrayList<>();
+        int columnCount = 0;
+
         for (Node section = table.getFirstChild(); section != null; section = section.getNext()) {
             boolean isHead = section instanceof TableHead;
             if (!isHead && !(section instanceof TableBody)) continue;
             for (Node row = section.getFirstChild(); row != null; row = row.getNext()) {
                 if (!(row instanceof TableRow)) continue;
-                List<String> cells = new ArrayList<>();
+                List<TableCellData> cells = new ArrayList<>();
+                int column = 0;
                 for (Node cell = row.getFirstChild(); cell != null; cell = cell.getNext()) {
-                    if (cell instanceof TableCell) cells.add(plainText(cell));
+                    if (!(cell instanceof TableCell tableCell)) continue;
+                    while (columnAlignments.size() <= column) {
+                        columnAlignments.add(TableCellAlignment.LEFT);
+                    }
+                    if (tableCell.getAlignment() != null) {
+                        columnAlignments.set(column, switch (tableCell.getAlignment()) {
+                            case LEFT -> TableCellAlignment.LEFT;
+                            case CENTER -> TableCellAlignment.CENTER;
+                            case RIGHT -> TableCellAlignment.RIGHT;
+                        });
+                    }
+                    cells.add(new TableCellData(
+                            plainText(tableCell),
+                            isHead || tableCell.isHeader(),
+                            columnAlignments.get(column)));
+                    column++;
                 }
-                (isHead ? head : body).add(cells);
+                columnCount = Math.max(columnCount, cells.size());
+                rawRows.add(cells);
             }
         }
-    }
 
-    private static List<List<String>> immutableRows(List<List<String>> rows) {
-        return rows.stream().map(List::copyOf).toList();
+        while (columnAlignments.size() < columnCount) {
+            columnAlignments.add(TableCellAlignment.LEFT);
+        }
+        List<List<TableCellData>> normalizedRows = new ArrayList<>(rawRows.size());
+        for (List<TableCellData> rawRow : rawRows) {
+            boolean header = rawRow.stream().anyMatch(TableCellData::header);
+            List<TableCellData> normalized = new ArrayList<>(columnCount);
+            for (int column = 0; column < columnCount; column++) {
+                String text = column < rawRow.size() ? rawRow.get(column).text() : "";
+                boolean cellHeader = column < rawRow.size()
+                        ? rawRow.get(column).header()
+                        : header;
+                normalized.add(new TableCellData(
+                        text, cellHeader, columnAlignments.get(column)));
+            }
+            normalizedRows.add(normalized);
+        }
+        return new TableData(normalizedRows, columnCount);
     }
 
     private static String plainText(Node node) {

@@ -6142,29 +6142,64 @@
     -fx-background-color: #3B382F;
 }
 
-/* GFM 表格（GridPane 缝隙露出容器底色作为网格线） */
+/* GFM 表格：可选择单元格，GridPane 的 1px 缝隙作为统一网格线。 */
+.md-table-wrapper {
+    -fx-padding: 4 0 6 0;
+}
 .md-table {
-    -fx-background-color: -jc-neutral-200;
+    -fx-background-color: -jc-border;
     -fx-padding: 1;
 }
 .md-table-header {
     -fx-background-color: -jc-neutral-100;
-    -fx-text-fill: -jc-neutral-800;
-    -fx-font-weight: 600;
-    -fx-font-size: 12.5px;
-    -fx-padding: 5 10;
+    -fx-padding: 8 10;
 }
 .md-table-cell {
     -fx-background-color: -jc-surface-card;
-    -fx-text-fill: -jc-neutral-800;
-    -fx-font-size: 12.5px;
-    -fx-padding: 5 10;
+    -fx-padding: 8 10;
 }
-.md-table-cell-stripe {
+.md-table-header:table-selected,
+.md-table-cell:table-selected {
+    -fx-background-color: -jc-primary-100;
+}
+.md-table-cell-text {
+    -fx-background-color: transparent;
+    -fx-border-width: 0;
+    -fx-padding: 0;
+}
+.md-table-cell-text .paragraph-box,
+.md-table-cell-text .paragraph-text,
+.md-table-cell-text .content {
+    -fx-background-color: transparent;
+}
+.md-table-cell-text .text {
+    -fx-fill: -jc-neutral-800;
+}
+.md-table-header .md-table-cell-text .text {
+    -fx-font-weight: 600;
+}
+.md-table-cell-text .selection,
+.md-table-fallback .selection {
+    -fx-fill: -jc-primary-100;
+}
+.md-table-cell-text .scroll-bar {
+    -fx-pref-width: 0;
+    -fx-pref-height: 0;
+    -fx-opacity: 0;
+}
+.md-table-fallback {
     -fx-background-color: -jc-neutral-50;
-    -fx-text-fill: -jc-neutral-800;
-    -fx-font-size: 12.5px;
-    -fx-padding: 5 10;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-padding: 8 10;
+}
+.md-table-fallback .paragraph-box,
+.md-table-fallback .paragraph-text,
+.md-table-fallback .content {
+    -fx-background-color: transparent;
+}
+.md-table-fallback .text {
+    -fx-fill: -jc-neutral-800;
 }
 
 /* 分隔线 */
