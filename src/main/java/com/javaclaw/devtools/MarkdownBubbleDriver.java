@@ -5,19 +5,35 @@ import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.application.Application;
 import javafx.application.Platform;
+import javafx.event.Event;
 import javafx.embed.swing.SwingFXUtils;
+import javafx.geometry.Bounds;
+import javafx.geometry.Point2D;
+import javafx.scene.Node;
+import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.SnapshotParameters;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.image.WritableImage;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
+import javafx.scene.input.MouseButton;
+import javafx.scene.input.MouseEvent;
+import javafx.scene.input.PickResult;
+import javafx.scene.layout.GridPane;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 import javafx.util.Duration;
+import org.fxmisc.richtext.InlineCssTextArea;
 
 import javax.imageio.ImageIO;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -48,10 +64,12 @@ public final class MarkdownBubbleDriver {
             }
             ```
 
-            | 维度 | 结论 | 备注 |
-            |------|------|------|
-            | 流式 | 普通文本 | 零解析 |
-            | 终态 | RichTextArea | 后台构建 |
+            | 维度 | 结论 | 数值 |
+            |:-----|:----:|-----:|
+            | 流式 | 普通文本 | 0 次解析 |
+            | 终态 | RichTextArea | 1 次解析 |
+            | 长文本换行 | 单元格背景应填满所在行，不能再出现深色粗横条 | 150ms |
+            | 空单元格 |  | 42 |
 
             > 引用块：验证缩进与弱化配色的渲染效果。
 
@@ -185,6 +203,40 @@ public final class MarkdownBubbleDriver {
                 if (bubble.getView().getChildrenUnmodifiable().size() != 2) {
                     throw new IllegalStateException("交叉淡入结束后旧内容节点未清理");
                 }
+                root.applyCss();
+                root.layout();
+                List<InlineCssTextArea> tableCells = findTableCells(bubble.getView());
+                if (tableCells.size() != 15) {
+                    throw new IllegalStateException(
+                            "未创建预期数量的可选择表格单元格: " + tableCells.size());
+                }
+                InlineCssTextArea firstCell = tableCells.getFirst();
+                firstCell.selectRange(0, 2);
+                if (!"维度".equals(firstCell.getSelectedText())) {
+                    throw new IllegalStateException(
+                            "表格单元格选择失败: " + firstCell.getSelectedText());
+                }
+                boolean hasCopyTable = firstCell.getContextMenu().getItems().stream()
+                        .anyMatch(item -> "复制整张表格".equals(item.getText()));
+                if (!hasCopyTable) {
+                    throw new IllegalStateException("表格右键菜单缺少整表复制");
+                }
+                GridPane tableGrid = findTableGrid(bubble.getView());
+                if (tableGrid == null) {
+                    throw new IllegalStateException("未找到交互式 Markdown 表格");
+                }
+                StackPane rangeStart = cellSurface(tableGrid, 1, 0);
+                StackPane rangeEnd = cellSurface(tableGrid, 2, 1);
+                firePrimaryMouse(rangeStart, MouseEvent.MOUSE_PRESSED, true);
+                firePrimaryMouse(rangeEnd, MouseEvent.MOUSE_DRAGGED, true);
+                firePrimaryMouse(rangeEnd, MouseEvent.MOUSE_RELEASED, false);
+                fireShortcutCopy(tableGrid);
+                String copiedRange = Clipboard.getSystemClipboard().getString();
+                String expectedRange = "流式\t普通文本\n终态\tRichTextArea";
+                if (!expectedRange.equals(copiedRange)) {
+                    throw new IllegalStateException(
+                            "表格跨行复制结果错误: " + copiedRange);
+                }
                 writeSnapshotOrThrow("driver-final-markdown.png");
                 System.out.println("终态阶段: " + state()
                         + " · 气泡高度 " + bubble.getView().getHeight() + "px");
@@ -199,6 +251,82 @@ public final class MarkdownBubbleDriver {
         private String state() {
             return String.valueOf(
                     bubble.getView().getProperties().get("markdownRenderState"));
+        }
+
+        private static List<InlineCssTextArea> findTableCells(Node root) {
+            List<InlineCssTextArea> cells = new ArrayList<>();
+            collectTableCells(root, cells);
+            return cells;
+        }
+
+        private static void collectTableCells(Node node, List<InlineCssTextArea> cells) {
+            if (node instanceof InlineCssTextArea area
+                    && area.getStyleClass().contains("md-table-cell-text")) {
+                cells.add(area);
+            }
+            if (node instanceof Parent parent) {
+                for (Node child : parent.getChildrenUnmodifiable()) {
+                    collectTableCells(child, cells);
+                }
+            }
+        }
+
+        private static GridPane findTableGrid(Node node) {
+            if (node instanceof GridPane grid
+                    && grid.getStyleClass().contains("md-table")) {
+                return grid;
+            }
+            if (node instanceof Parent parent) {
+                for (Node child : parent.getChildrenUnmodifiable()) {
+                    GridPane found = findTableGrid(child);
+                    if (found != null) return found;
+                }
+            }
+            return null;
+        }
+
+        private static StackPane cellSurface(GridPane grid, int row, int column) {
+            return grid.getChildren().stream()
+                    .filter(StackPane.class::isInstance)
+                    .map(StackPane.class::cast)
+                    .filter(surface -> gridIndex(GridPane.getRowIndex(surface)) == row
+                            && gridIndex(GridPane.getColumnIndex(surface)) == column)
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException(
+                            "未找到表格单元格: row=" + row + ", column=" + column));
+        }
+
+        private static int gridIndex(Integer index) {
+            return index == null ? 0 : index;
+        }
+
+        private static void firePrimaryMouse(
+                StackPane cell, javafx.event.EventType<MouseEvent> type,
+                boolean primaryDown) {
+            Bounds bounds = cell.getBoundsInLocal();
+            Point2D localPoint = new Point2D(
+                    (bounds.getMinX() + bounds.getMaxX()) / 2,
+                    (bounds.getMinY() + bounds.getMaxY()) / 2);
+            Point2D scenePoint = cell.localToScene(localPoint);
+            Point2D screenPoint = cell.localToScreen(localPoint);
+            MouseEvent event = new MouseEvent(
+                    cell, cell, type,
+                    scenePoint.getX(), scenePoint.getY(),
+                    screenPoint.getX(), screenPoint.getY(),
+                    MouseButton.PRIMARY, 1,
+                    false, false, false, false,
+                    primaryDown, false, false,
+                    false, false, type != MouseEvent.MOUSE_DRAGGED,
+                    new PickResult(cell, localPoint.getX(), localPoint.getY()));
+            Event.fireEvent(cell, event);
+        }
+
+        private static void fireShortcutCopy(GridPane grid) {
+            boolean mac = System.getProperty("os.name", "")
+                    .toLowerCase().contains("mac");
+            Event.fireEvent(grid, new KeyEvent(
+                    KeyEvent.KEY_PRESSED, "c", "c", KeyCode.C,
+                    false, !mac, false, mac));
         }
 
         private void writeSnapshot(String name) {
