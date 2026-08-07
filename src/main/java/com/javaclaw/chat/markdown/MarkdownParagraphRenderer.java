@@ -1,20 +1,21 @@
 package com.javaclaw.chat.markdown;
 
 import com.javaclaw.ui.javafx.theme.FontManager;
+import javafx.application.Platform;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
-import javafx.scene.input.Clipboard;
-import javafx.scene.input.ClipboardContent;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.scene.text.TextFlow;
-import jfx.incubator.scene.control.richtext.model.RichParagraph;
+import jfx.incubator.scene.control.richtext.model.SimpleViewOnlyStyledModel;
 import jfx.incubator.scene.control.richtext.model.StyleAttributeMap;
 import org.commonmark.Extension;
 import org.commonmark.ext.autolink.AutolinkExtension;
@@ -25,11 +26,9 @@ import org.commonmark.ext.gfm.tables.TableBody;
 import org.commonmark.ext.gfm.tables.TableCell;
 import org.commonmark.ext.gfm.tables.TableHead;
 import org.commonmark.ext.gfm.tables.TableRow;
-import org.commonmark.node.Block;
 import org.commonmark.node.BlockQuote;
 import org.commonmark.node.BulletList;
 import org.commonmark.node.Code;
-import org.commonmark.node.Document;
 import org.commonmark.node.Emphasis;
 import org.commonmark.node.FencedCodeBlock;
 import org.commonmark.node.HardLineBreak;
@@ -44,26 +43,21 @@ import org.commonmark.node.Node;
 import org.commonmark.node.OrderedList;
 import org.commonmark.node.Paragraph;
 import org.commonmark.node.SoftLineBreak;
-import org.commonmark.node.SourceSpan;
 import org.commonmark.node.StrongEmphasis;
 import org.commonmark.node.ThematicBreak;
-import org.commonmark.parser.IncludeSourceSpans;
 import org.commonmark.parser.Parser;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.function.Supplier;
 
 /**
- * Markdown → {@link RichParagraph} 渲染器（2B 方案核心）。
+ * 将一条已经完成的 Markdown 消息渲染为 JavaFX 只读富文本模型。
  *
- * <p>把 CommonMark AST 的顶层块渲染为孵化 RichTextArea 的段落列表：
- * 文字类块（段落/标题/列表/引用）渲染为可选中复制的文本段落（颜色全走 chat.css
- * 的 {@code .md-*} 样式类 → -jc-* 令牌，随主题换肤零成本）；结构类块
- * （围栏代码/表格/分隔线/图片）经 {@code RichParagraph.of(Supplier&lt;Region&gt;)}
- * 整段嵌入原生节点。</p>
- *
- * <p>按「顶层块」为单位输出并提供源文本指纹 {@link #sourceKey}，供 MarkdownBubble
- * 做流式增量渲染：已定稿块直接复用缓存段落，每个节流 tick 只重建尾部变化块。</p>
+ * <p>解析、样式计算和模型构建均不创建 JavaFX Node，因此可以在后台线程执行。
+ * 代码块、表格、图片等结构只在模型中保存 {@link Supplier}；RichTextArea 在 FX
+ * 线程请求 supplier 时才会真正创建 Region。</p>
  */
 public final class MarkdownParagraphRenderer {
 
@@ -74,171 +68,208 @@ public final class MarkdownParagraphRenderer {
             StrikethroughExtension.create(),
             AutolinkExtension.create());
 
-    /** 带源位置信息的解析器（增量渲染的块指纹依赖 SourceSpan） */
+    /** Parser 构建后是不可变且线程安全的，可供两个后台 worker 共享。 */
     private static final Parser PARSER = Parser.builder()
             .extensions(EXTENSIONS)
-            .includeSourceSpans(IncludeSourceSpans.BLOCKS)
             .build();
 
-    /** 链接命中区间：段落下标（块内相对）+ 字符区间 + 目标 URL */
+    /**
+     * FX 线程取得的渲染配置快照。后台 renderer 不得再读取 FontManager 或 JavaFX 属性。
+     */
+    public record RenderStyleSnapshot(
+            double fontSize,
+            double lineHeight,
+            String uiFontStack,
+            String monoFontStack) {
+
+        public RenderStyleSnapshot {
+            if (fontSize <= 0 || lineHeight <= 0) {
+                throw new IllegalArgumentException("字体大小和行高必须为正数");
+            }
+            Objects.requireNonNull(uiFontStack, "uiFontStack");
+            Objects.requireNonNull(monoFontStack, "monoFontStack");
+        }
+
+        /** 只允许调用方在 FX 线程进入后台任务之前获取一次。 */
+        public static RenderStyleSnapshot capture() {
+            if (!Platform.isFxApplicationThread()) {
+                throw new IllegalStateException("渲染样式必须在 JavaFX Application Thread 快照");
+            }
+            return new RenderStyleSnapshot(
+                    FontManager.chatFontPx(),
+                    FontManager.chatLineHeight(),
+                    FontManager.uiStack(),
+                    FontManager.monoStack());
+        }
+
+        String monoFamily() {
+            String first = monoFontStack.split(",")[0].trim();
+            return first.replace("\"", "").replace("'", "");
+        }
+    }
+
+    /** 链接命中区间：段落下标、字符区间和目标 URL。 */
     public record LinkRange(int paragraphIndex, int startOffset, int endOffset, String url) {}
 
-    /** 单个顶层块的渲染产物 */
-    public record BlockRender(List<RichParagraph> paragraphs, List<LinkRange> links) {}
+    /** 后台阶段的完整产物；模型尚未连接到任何 JavaFX Node。 */
+    public record RenderedMarkdown(
+            SimpleViewOnlyStyledModel model,
+            List<LinkRange> links) {
 
-    // ==================== 解析与指纹 ====================
-
-    /** 解析出顶层块列表 */
-    public static List<Block> parseTopLevelBlocks(String markdown) {
-        List<Block> blocks = new ArrayList<>();
-        Node doc = PARSER.parse(markdown == null ? "" : markdown);
-        for (Node n = doc.getFirstChild(); n != null; n = n.getNext()) {
-            if (n instanceof LinkReferenceDefinition) continue; // 定义不产出内容
-            if (n instanceof Block b) blocks.add(b);
+        public RenderedMarkdown {
+            Objects.requireNonNull(model, "model");
+            links = List.copyOf(links);
         }
-        return blocks;
     }
 
-    /**
-     * 块的源文本指纹：源码区间原文。相同指纹 = 块未变化，可复用缓存渲染结果。
-     * 无 SourceSpan 时返回 null（调用方视为不可缓存，每次重渲染）。
-     */
-    public static String sourceKey(Block block, String markdown) {
-        List<SourceSpan> spans = block.getSourceSpans();
-        if (spans == null || spans.isEmpty()) return null;
-        SourceSpan first = spans.get(0);
-        SourceSpan last = spans.get(spans.size() - 1);
-        int start = first.getInputIndex();
-        int end = last.getInputIndex() + last.getLength();
-        if (start < 0 || end > markdown.length() || start > end) return null;
-        return markdown.substring(start, end);
+    /** 一次性解析并构建整条消息。 */
+    public static RenderedMarkdown render(String markdown, RenderStyleSnapshot style) {
+        Objects.requireNonNull(style, "style");
+        Node document = PARSER.parse(markdown == null ? "" : markdown);
+        Ctx ctx = new Ctx(style);
+        for (Node node = document.getFirstChild(); node != null; node = node.getNext()) {
+            if (node instanceof LinkReferenceDefinition) continue;
+            renderBlockInto(node, ctx, 0);
+        }
+        ctx.finish();
+        return new RenderedMarkdown(ctx.model, ctx.links);
     }
 
-    // ==================== 块渲染 ====================
-
-    /** 渲染单个顶层块 */
-    public static BlockRender renderBlock(Block block) {
-        Ctx ctx = new Ctx();
-        renderBlockInto(block, ctx, 0);
-        ctx.flushIfPending();
-        return new BlockRender(ctx.paras, ctx.links);
-    }
-
-    /** 渲染期上下文：段落累积 + 当前段构建状态 */
+    /** 渲染期上下文，仅持有纯数据、样式对象和延迟 Region supplier。 */
     private static final class Ctx {
-        final List<RichParagraph> paras = new ArrayList<>();
+        final RenderStyleSnapshot style;
+        final SimpleViewOnlyStyledModel model = new SimpleViewOnlyStyledModel();
         final List<LinkRange> links = new ArrayList<>();
-        RichParagraph.Builder pb;
-        int len;                    // 当前段已写入字符数（含前缀）
-        boolean quote;              // 引用块内（文字走 md-quote-text）
-        double fontSize = FontManager.chatFontPx();
+        boolean paragraphOpen;
+        int paragraphIndex = -1;
+        int len;
+        boolean quote;
+        double fontSize;
         String baseClass = "md-body";
 
-        void ensureParagraph() {
-            if (pb == null) {
-                pb = RichParagraph.builder();
-                len = 0;
-            }
+        Ctx(RenderStyleSnapshot style) {
+            this.style = style;
+            this.fontSize = style.fontSize();
         }
 
-        /** 收束当前段落（带段落级属性：行距/缩进/段距） */
+        void ensureParagraph() {
+            if (paragraphOpen) return;
+            if (model.size() == 0) {
+                model.addSegment("");
+            } else {
+                model.nl();
+            }
+            paragraphOpen = true;
+            paragraphIndex = model.size() - 1;
+            len = 0;
+        }
+
         void flush(double indent, double spaceAbove, double spaceBelow) {
             ensureParagraph();
-            StyleAttributeMap.Builder pa = StyleAttributeMap.builder()
-                    .setLineSpacing(Math.max(0, (FontManager.chatLineHeight() - 1) * fontSize * 0.6))
+            StyleAttributeMap.Builder attributes = StyleAttributeMap.builder()
+                    .setLineSpacing(Math.max(0, (style.lineHeight() - 1) * fontSize * 0.6))
                     .setSpaceAbove(spaceAbove)
                     .setSpaceBelow(spaceBelow);
-            if (indent > 0) pa.setSpaceLeft(indent);
-            pb.setParagraphAttributes(pa.build());
-            paras.add(pb.build());
-            pb = null;
+            if (indent > 0) attributes.setSpaceLeft(indent);
+            model.setParagraphAttributes(attributes.build());
+            paragraphOpen = false;
             len = 0;
         }
 
         void flushIfPending() {
-            if (pb != null) flush(0, 0, 0);
+            if (paragraphOpen) flush(0, 0, 0);
         }
 
-        /** 嵌入整段 Region（表格/代码块/分隔线/图片） */
-        void addRegion(java.util.function.Supplier<Region> factory) {
+        void addRegion(Supplier<Region> factory) {
             flushIfPending();
-            paras.add(RichParagraph.of(factory));
+            model.addParagraph(factory);
+        }
+
+        void finish() {
+            flushIfPending();
+            if (model.size() == 0) model.addSegment("");
         }
     }
 
-    /** 内联样式状态（沿 AST 下行累积） */
+    /** 内联样式状态（沿 AST 下行累积）。 */
     private record InlineStyle(boolean bold, boolean italic, boolean strike, boolean code, String linkUrl) {
         static final InlineStyle BASE = new InlineStyle(false, false, false, false, null);
-        InlineStyle withBold()   { return new InlineStyle(true, italic, strike, code, linkUrl); }
+        InlineStyle withBold() { return new InlineStyle(true, italic, strike, code, linkUrl); }
         InlineStyle withItalic() { return new InlineStyle(bold, true, strike, code, linkUrl); }
         InlineStyle withStrike() { return new InlineStyle(bold, italic, true, code, linkUrl); }
-        InlineStyle withCode()   { return new InlineStyle(bold, italic, strike, true, linkUrl); }
+        InlineStyle withCode() { return new InlineStyle(bold, italic, strike, true, linkUrl); }
         InlineStyle withLink(String url) { return new InlineStyle(bold, italic, strike, code, url); }
     }
 
     private static void renderBlockInto(Node block, Ctx ctx, double indent) {
         switch (block) {
-            case Heading h -> {
-                double fs = ctx.fontSize;
-                int lv = Math.min(h.getLevel(), 4);
-                ctx.fontSize = switch (lv) {
-                    case 1 -> fs + 4; case 2 -> fs + 1.5; default -> fs - 1;
+            case Heading heading -> {
+                double previousSize = ctx.fontSize;
+                int level = Math.min(heading.getLevel(), 4);
+                ctx.fontSize = switch (level) {
+                    case 1 -> previousSize + 4;
+                    case 2 -> previousSize + 1.5;
+                    default -> previousSize - 1;
                 };
-                ctx.baseClass = "md-h" + lv;
-                renderInlines(h, ctx, InlineStyle.BASE.withBold());
+                ctx.baseClass = "md-h" + level;
+                renderInlines(heading, ctx, InlineStyle.BASE.withBold());
                 ctx.flush(indent, 10, 4);
-                ctx.fontSize = fs;
+                ctx.fontSize = previousSize;
                 ctx.baseClass = ctx.quote ? "md-quote-text" : "md-body";
             }
-            case Paragraph p -> {
-                // 纯图片段落 → 图片 Region
-                if (p.getFirstChild() instanceof org.commonmark.node.Image img && img.getNext() == null) {
-                    String url = img.getDestination();
+            case Paragraph paragraph -> {
+                if (paragraph.getFirstChild() instanceof org.commonmark.node.Image image
+                        && image.getNext() == null) {
+                    String url = image.getDestination();
                     ctx.addRegion(() -> imageRegion(url));
                     return;
                 }
-                renderInlines(p, ctx, InlineStyle.BASE);
+                renderInlines(paragraph, ctx, InlineStyle.BASE);
                 ctx.flush(indent, 0, 6);
             }
             case BulletList list -> renderList(list, ctx, indent, -1);
             case OrderedList list -> renderList(list, ctx, indent,
                     list.getMarkerStartNumber() == null ? 1 : list.getMarkerStartNumber());
-            case FencedCodeBlock f -> {
-                String code = trimTrailingNewline(f.getLiteral());
-                String lang = f.getInfo() == null ? "" : f.getInfo().trim();
-                ctx.addRegion(() -> codeCard(code, lang));
+            case FencedCodeBlock fenced -> {
+                String code = trimTrailingNewline(fenced.getLiteral());
+                String language = fenced.getInfo() == null ? "" : fenced.getInfo().trim();
+                RenderStyleSnapshot style = ctx.style;
+                ctx.addRegion(() -> codeCard(code, language, style));
             }
-            case IndentedCodeBlock icb -> {
-                String code = trimTrailingNewline(icb.getLiteral());
-                ctx.addRegion(() -> codeCard(code, ""));
+            case IndentedCodeBlock indented -> {
+                String code = trimTrailingNewline(indented.getLiteral());
+                RenderStyleSnapshot style = ctx.style;
+                ctx.addRegion(() -> codeCard(code, "", style));
             }
-            case BlockQuote q -> {
-                boolean prevQuote = ctx.quote;
-                String prevBase = ctx.baseClass;
+            case BlockQuote quote -> {
+                boolean previousQuote = ctx.quote;
+                String previousBase = ctx.baseClass;
                 ctx.quote = true;
                 ctx.baseClass = "md-quote-text";
-                for (Node child = q.getFirstChild(); child != null; child = child.getNext()) {
+                for (Node child = quote.getFirstChild(); child != null; child = child.getNext()) {
                     renderBlockInto(child, ctx, indent + 14);
                 }
-                ctx.quote = prevQuote;
-                ctx.baseClass = prevBase;
+                ctx.quote = previousQuote;
+                ctx.baseClass = previousBase;
             }
-            case ThematicBreak tb -> ctx.addRegion(MarkdownParagraphRenderer::hrRegion);
+            case ThematicBreak ignored -> ctx.addRegion(MarkdownParagraphRenderer::hrRegion);
             case TableBlock table -> {
-                List<List<String>> head = new ArrayList<>(), body = new ArrayList<>();
+                List<List<String>> head = new ArrayList<>();
+                List<List<String>> body = new ArrayList<>();
                 collectTable(table, head, body);
-                ctx.addRegion(() -> tableRegion(head, body));
+                List<List<String>> immutableHead = immutableRows(head);
+                List<List<String>> immutableBody = immutableRows(body);
+                ctx.addRegion(() -> tableRegion(immutableHead, immutableBody));
             }
-            case HtmlBlock hb -> {
-                String prevBase = ctx.baseClass;
+            case HtmlBlock html -> {
+                String previousBase = ctx.baseClass;
                 ctx.baseClass = "md-muted";
                 ctx.ensureParagraph();
-                emitText(ctx, trimTrailingNewline(hb.getLiteral()), InlineStyle.BASE);
+                emitText(ctx, trimTrailingNewline(html.getLiteral()), InlineStyle.BASE);
                 ctx.flush(indent, 0, 6);
-                ctx.baseClass = prevBase;
+                ctx.baseClass = previousBase;
             }
             default -> {
-                // 未覆盖的块类型按纯文本兜底
                 renderInlines(block, ctx, InlineStyle.BASE);
                 ctx.flush(indent, 0, 6);
             }
@@ -246,148 +277,138 @@ public final class MarkdownParagraphRenderer {
     }
 
     private static void renderList(Node list, Ctx ctx, double indent, int startNumber) {
-        int n = startNumber;
+        int number = startNumber;
         for (Node item = list.getFirstChild(); item != null; item = item.getNext()) {
-            if (!(item instanceof ListItem li)) continue;
-            String marker = startNumber < 0 ? "•  " : (n++) + ". ";
+            if (!(item instanceof ListItem listItem)) continue;
+            String marker = startNumber < 0 ? "•  " : (number++) + ". ";
             boolean firstBlock = true;
-            for (Node child = li.getFirstChild(); child != null; child = child.getNext()) {
-                if (firstBlock && child instanceof Paragraph p) {
+            for (Node child = listItem.getFirstChild(); child != null; child = child.getNext()) {
+                if (firstBlock && child instanceof Paragraph paragraph) {
                     ctx.ensureParagraph();
-                    // 列表标记与正文同段，保证选中复制时结构完整
-                    ctx.pb.addWithInlineAndStyleNames(marker,
+                    ctx.model.addWithInlineAndStyleNames(marker,
                             "-fx-font-size: " + fmt(ctx.fontSize) + ";", "md-list-marker");
                     ctx.len += marker.length();
-                    renderInlines(p, ctx, InlineStyle.BASE);
+                    renderInlines(paragraph, ctx, InlineStyle.BASE);
                     ctx.flush(indent + 8, 0, 2);
-                    firstBlock = false;
                 } else {
                     renderBlockInto(child, ctx, indent + 22);
-                    firstBlock = false;
                 }
+                firstBlock = false;
             }
         }
     }
 
-    // ==================== 内联渲染 ====================
-
-    private static void renderInlines(Node parent, Ctx ctx, InlineStyle st) {
+    private static void renderInlines(Node parent, Ctx ctx, InlineStyle style) {
         ctx.ensureParagraph();
-        for (Node n = parent.getFirstChild(); n != null; n = n.getNext()) {
-            switch (n) {
-                case org.commonmark.node.Text t -> emitTextWithPercentBoundaryFix(ctx, t, st);
-                case StrongEmphasis se -> renderInlines(se, ctx, st.withBold());
-                case Emphasis em -> renderInlines(em, ctx, st.withItalic());
-                case Strikethrough sk -> renderInlines(sk, ctx, st.withStrike());
-                case Code c -> emitText(ctx, c.getLiteral(), st.withCode());
+        for (Node node = parent.getFirstChild(); node != null; node = node.getNext()) {
+            switch (node) {
+                case org.commonmark.node.Text text -> emitTextWithPercentBoundaryFix(ctx, text, style);
+                case StrongEmphasis strong -> renderInlines(strong, ctx, style.withBold());
+                case Emphasis emphasis -> renderInlines(emphasis, ctx, style.withItalic());
+                case Strikethrough strike -> renderInlines(strike, ctx, style.withStrike());
+                case Code code -> emitText(ctx, code.getLiteral(), style.withCode());
                 case Link link -> {
-                    InlineStyle ls = st.withLink(link.getDestination());
+                    InlineStyle linkStyle = style.withLink(link.getDestination());
                     if (link.getFirstChild() == null) {
-                        emitText(ctx, link.getDestination(), ls);
+                        emitText(ctx, link.getDestination(), linkStyle);
                     } else {
-                        renderInlines(link, ctx, ls);
+                        renderInlines(link, ctx, linkStyle);
                     }
                 }
-                case org.commonmark.node.Image img -> {
-                    // 行内图片降级为链接文本（块级图片已在 Paragraph 分支特判为 Region）
-                    String alt = plainText(img);
-                    emitText(ctx, (alt.isEmpty() ? "图片" : alt),
-                            st.withLink(img.getDestination()));
+                case org.commonmark.node.Image image -> {
+                    String alt = plainText(image);
+                    emitText(ctx, alt.isEmpty() ? "图片" : alt,
+                            style.withLink(image.getDestination()));
                 }
-                case SoftLineBreak sb -> emitText(ctx, " ", st);
-                case HardLineBreak hb -> {
+                case SoftLineBreak ignored -> emitText(ctx, " ", style);
+                case HardLineBreak ignored -> {
                     ctx.flush(0, 0, 0);
                     ctx.ensureParagraph();
                 }
-                case HtmlInline hi -> emitText(ctx, hi.getLiteral(), st);
-                default -> renderInlines(n, ctx, st);
+                case HtmlInline html -> emitText(ctx, html.getLiteral(), style);
+                default -> renderInlines(node, ctx, style);
             }
         }
     }
 
-    /**
-     * JavaFX 25 RichTextArea 对相邻不同样式段的首个标点偶发测量贴边，
-     * {@code **1.26**%} 会被 CommonMark 拆成 StrongEmphasis("1.26") + Text("%")，
-     * 百分号在部分字体/缩放下会显示不全。百分号语义上属于前面的数字，视觉上并入粗体段。
-     */
-    private static void emitTextWithPercentBoundaryFix(Ctx ctx, org.commonmark.node.Text node, InlineStyle st) {
+    private static void emitTextWithPercentBoundaryFix(
+            Ctx ctx, org.commonmark.node.Text node, InlineStyle style) {
         String literal = node.getLiteral();
         if (literal == null || literal.isEmpty()) return;
         if (startsWithPercent(literal) && node.getPrevious() instanceof StrongEmphasis) {
-            emitText(ctx, literal.substring(0, 1), st.withBold());
+            emitText(ctx, literal.substring(0, 1), style.withBold());
             literal = literal.substring(1);
         }
-        emitText(ctx, literal, st);
+        emitText(ctx, literal, style);
     }
 
     private static boolean startsWithPercent(String text) {
         return text.startsWith("%") || text.startsWith("％");
     }
 
-    /** 输出一个文本段：样式类管颜色（随主题），内联样式管字号/字重/斜体/删除线/下划线 */
-    private static void emitText(Ctx ctx, String text, InlineStyle st) {
+    private static void emitText(Ctx ctx, String text, InlineStyle style) {
         if (text == null || text.isEmpty()) return;
         ctx.ensureParagraph();
-        // 折叠连排全角/不换行空格（与旧 WebView 版 collapseWideSpaces 同因：模型排版常用其对齐）
-        if (!st.code()) text = WIDE_SPACE_RUN.matcher(text).replaceAll(" ");
+        if (!style.code()) text = WIDE_SPACE_RUN.matcher(text).replaceAll(" ");
 
         List<String> classes = new ArrayList<>(2);
         StringBuilder css = new StringBuilder();
-        double fs = ctx.fontSize;
-        if (st.code()) {
+        double fontSize = ctx.fontSize;
+        if (style.code()) {
             classes.add("md-inline-code");
-            css.append("-fx-font-family: '").append(monoFamily()).append("';");
-            fs = fs - 1;
-        } else if (st.linkUrl() != null) {
+            css.append("-fx-font-family: '").append(ctx.style.monoFamily()).append("';");
+            fontSize--;
+        } else if (style.linkUrl() != null) {
             classes.add("md-link");
             css.append("-fx-underline: true;");
         } else {
             classes.add(ctx.baseClass);
         }
-        if (!st.code()) {
-            css.append("-fx-font-family: ").append(FontManager.uiStack()).append(";");
+        if (!style.code()) {
+            css.append("-fx-font-family: ").append(ctx.style.uiFontStack()).append(';');
         }
-        css.append("-fx-font-size: ").append(fmt(fs)).append(";");
-        if (st.bold()) css.append("-fx-font-weight: bold;");
-        if (st.italic()) css.append("-fx-font-style: italic;");
-        if (st.strike()) css.append("-fx-strikethrough: true;");
+        css.append("-fx-font-size: ").append(fmt(fontSize)).append(';');
+        if (style.bold()) css.append("-fx-font-weight: bold;");
+        if (style.italic()) css.append("-fx-font-style: italic;");
+        if (style.strike()) css.append("-fx-strikethrough: true;");
 
-        if (st.linkUrl() != null) {
-            ctx.links.add(new LinkRange(ctx.paras.size(), ctx.len, ctx.len + text.length(), st.linkUrl()));
+        if (style.linkUrl() != null) {
+            ctx.links.add(new LinkRange(
+                    ctx.paragraphIndex, ctx.len, ctx.len + text.length(), style.linkUrl()));
         }
-        ctx.pb.addWithInlineAndStyleNames(text, css.toString(), classes.toArray(String[]::new));
+        ctx.model.addWithInlineAndStyleNames(
+                text, css.toString(), classes.toArray(String[]::new));
         ctx.len += text.length();
     }
 
-    // ==================== Region 工厂（供 RichParagraph.of 反复调用，须每次新建） ====================
-
-    /** 代码块卡片：字面深色（chat.css 深色控制台块惯例，勿令牌化）+ 语言标签 + 复制按钮 */
-    private static Region codeCard(String code, String lang) {
+    /** Region 工厂：这些方法只能由 RichTextArea 在 FX 线程调用。 */
+    private static Region codeCard(String code, String language, RenderStyleSnapshot style) {
+        requireFxThread();
         javafx.scene.text.Text text = new javafx.scene.text.Text(code);
         text.getStyleClass().add("md-code-text");
-        text.setStyle("-fx-font-family: '" + monoFamily() + "'; -fx-font-size: "
-                + fmt(FontManager.chatFontPx() - 2) + ";");
+        text.setStyle("-fx-font-family: '" + style.monoFamily() + "'; -fx-font-size: "
+                + fmt(style.fontSize() - 2) + ";");
         TextFlow flow = new TextFlow(text);
         flow.setMaxWidth(Double.MAX_VALUE);
 
-        Label langLabel = new Label(lang.isEmpty() ? "code" : lang);
-        langLabel.getStyleClass().add("md-code-lang");
+        Label languageLabel = new Label(language.isEmpty() ? "code" : language);
+        languageLabel.getStyleClass().add("md-code-lang");
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
         Button copy = new Button("复制");
         copy.getStyleClass().add("md-code-copy");
         copy.setFocusTraversable(false);
-        copy.setOnAction(e -> {
-            ClipboardContent cc = new ClipboardContent();
-            cc.putString(code);
-            Clipboard.getSystemClipboard().setContent(cc);
+        copy.setOnAction(event -> {
+            ClipboardContent clipboard = new ClipboardContent();
+            clipboard.putString(code);
+            Clipboard.getSystemClipboard().setContent(clipboard);
             copy.setText("已复制");
             javafx.animation.PauseTransition reset =
                     new javafx.animation.PauseTransition(javafx.util.Duration.seconds(1.5));
-            reset.setOnFinished(ev -> copy.setText("复制"));
+            reset.setOnFinished(ignored -> copy.setText("复制"));
             reset.play();
         });
-        HBox header = new HBox(6, langLabel, spacer, copy);
+        HBox header = new HBox(6, languageLabel, spacer, copy);
         header.setAlignment(Pos.CENTER_LEFT);
 
         VBox card = new VBox(6, header, flow);
@@ -397,16 +418,14 @@ public final class MarkdownParagraphRenderer {
         return wrapper;
     }
 
-    /** GFM 表格：GridPane + Label 单元格（md-table-* 样式类，随主题换肤） */
     private static Region tableRegion(List<List<String>> head, List<List<String>> body) {
+        requireFxThread();
         GridPane grid = new GridPane();
         grid.getStyleClass().add("md-table");
         grid.setHgap(1);
         grid.setVgap(1);
         int row = 0;
-        for (List<String> cells : head) {
-            addTableRow(grid, cells, row++, true, false);
-        }
+        for (List<String> cells : head) addTableRow(grid, cells, row++, true, false);
         boolean stripe = false;
         for (List<String> cells : body) {
             addTableRow(grid, cells, row++, false, stripe);
@@ -417,20 +436,21 @@ public final class MarkdownParagraphRenderer {
         return wrapper;
     }
 
-    private static void addTableRow(GridPane grid, List<String> cells, int row, boolean header, boolean stripe) {
-        for (int c = 0; c < cells.size(); c++) {
-            Label cell = new Label(cells.get(c));
+    private static void addTableRow(
+            GridPane grid, List<String> cells, int row, boolean header, boolean stripe) {
+        for (int column = 0; column < cells.size(); column++) {
+            Label cell = new Label(cells.get(column));
             cell.setWrapText(true);
             cell.getStyleClass().add(header ? "md-table-header"
                     : (stripe ? "md-table-cell-stripe" : "md-table-cell"));
             cell.setMaxWidth(Double.MAX_VALUE);
             GridPane.setHgrow(cell, Priority.ALWAYS);
-            grid.add(cell, c, row);
+            grid.add(cell, column, row);
         }
     }
 
-    /** 分隔线 */
     private static Region hrRegion() {
+        requireFxThread();
         Region line = new Region();
         line.getStyleClass().add("md-hr");
         line.setPrefHeight(1);
@@ -440,98 +460,101 @@ public final class MarkdownParagraphRenderer {
         return wrapper;
     }
 
-    /** 图片：异步加载 + 宽度上限自适应 + 双击放大（本地文件走 ImageViewerDialog） */
     private static Region imageRegion(String url) {
-        ImageView iv = new ImageView();
-        iv.setPreserveRatio(true);
-        iv.getStyleClass().add("md-image");
+        requireFxThread();
+        ImageView imageView = new ImageView();
+        imageView.setPreserveRatio(true);
+        imageView.getStyleClass().add("md-image");
         try {
-            Image img = new Image(url, true); // backgroundLoading：不阻塞 FX 线程
-            iv.setImage(img);
+            Image image = new Image(url, true);
+            imageView.setImage(image);
             Runnable fit = () -> {
-                double w = img.getWidth();
-                if (w > 0) iv.setFitWidth(Math.min(w, 460));
+                double width = image.getWidth();
+                if (width > 0) imageView.setFitWidth(Math.min(width, 460));
             };
-            if (img.getProgress() >= 1.0) {
+            if (image.getProgress() >= 1.0) {
                 fit.run();
             } else {
-                img.progressProperty().addListener((obs, o, p) -> {
-                    if (p.doubleValue() >= 1.0) fit.run();
+                image.progressProperty().addListener((observable, oldValue, progress) -> {
+                    if (progress.doubleValue() >= 1.0) fit.run();
                 });
             }
-            iv.setOnMouseClicked(e -> {
-                if (e.getClickCount() == 2 && url.startsWith("file:")) {
+            imageView.setOnMouseClicked(event -> {
+                if (event.getClickCount() == 2 && url.startsWith("file:")) {
                     try {
-                        java.io.File f = new java.io.File(java.net.URI.create(url));
-                        if (f.exists() && iv.getScene() != null) {
-                            com.javaclaw.chat.ImageViewerDialog.show(iv.getScene().getWindow(), f);
+                        java.io.File file = new java.io.File(java.net.URI.create(url));
+                        if (file.exists() && imageView.getScene() != null) {
+                            com.javaclaw.chat.ImageViewerDialog.show(
+                                    imageView.getScene().getWindow(), file);
                         }
-                    } catch (Exception ignore) {}
+                    } catch (Exception ignored) {
+                        // 非法本地 URI 不影响其余 Markdown。
+                    }
                 }
             });
-        } catch (Exception ignore) {
-            // URL 非法时保持空 ImageView，不中断整块渲染
+        } catch (Exception ignored) {
+            // URL 非法时保持空 ImageView，不中断整条消息。
         }
-        VBox wrapper = new VBox(iv);
+        VBox wrapper = new VBox(imageView);
         wrapper.setPadding(new javafx.geometry.Insets(4, 0, 6, 0));
         return wrapper;
     }
 
-    // ==================== 工具 ====================
-
-    private static void collectTable(TableBlock table, List<List<String>> head, List<List<String>> body) {
-        for (Node sec = table.getFirstChild(); sec != null; sec = sec.getNext()) {
-            boolean isHead = sec instanceof TableHead;
-            if (!isHead && !(sec instanceof TableBody)) continue;
-            for (Node r = sec.getFirstChild(); r != null; r = r.getNext()) {
-                if (!(r instanceof TableRow)) continue;
+    private static void collectTable(
+            TableBlock table, List<List<String>> head, List<List<String>> body) {
+        for (Node section = table.getFirstChild(); section != null; section = section.getNext()) {
+            boolean isHead = section instanceof TableHead;
+            if (!isHead && !(section instanceof TableBody)) continue;
+            for (Node row = section.getFirstChild(); row != null; row = row.getNext()) {
+                if (!(row instanceof TableRow)) continue;
                 List<String> cells = new ArrayList<>();
-                for (Node c = r.getFirstChild(); c != null; c = c.getNext()) {
-                    if (c instanceof TableCell) cells.add(plainText(c));
+                for (Node cell = row.getFirstChild(); cell != null; cell = cell.getNext()) {
+                    if (cell instanceof TableCell) cells.add(plainText(cell));
                 }
                 (isHead ? head : body).add(cells);
             }
         }
     }
 
-    /** 提取节点子树的纯文本（表格单元格/图片 alt 用） */
-    private static String plainText(Node node) {
-        StringBuilder sb = new StringBuilder();
-        collectPlainText(node, sb);
-        return sb.toString();
+    private static List<List<String>> immutableRows(List<List<String>> rows) {
+        return rows.stream().map(List::copyOf).toList();
     }
 
-    private static void collectPlainText(Node node, StringBuilder sb) {
-        for (Node n = node.getFirstChild(); n != null; n = n.getNext()) {
-            switch (n) {
-                case org.commonmark.node.Text t -> sb.append(t.getLiteral());
-                case Code c -> sb.append(c.getLiteral());
-                case SoftLineBreak s -> sb.append(' ');
-                case HardLineBreak h -> sb.append(' ');
-                default -> collectPlainText(n, sb);
+    private static String plainText(Node node) {
+        StringBuilder text = new StringBuilder();
+        collectPlainText(node, text);
+        return text.toString();
+    }
+
+    private static void collectPlainText(Node node, StringBuilder text) {
+        for (Node child = node.getFirstChild(); child != null; child = child.getNext()) {
+            switch (child) {
+                case org.commonmark.node.Text literal -> text.append(literal.getLiteral());
+                case Code code -> text.append(code.getLiteral());
+                case SoftLineBreak ignored -> text.append(' ');
+                case HardLineBreak ignored -> text.append(' ');
+                default -> collectPlainText(child, text);
             }
         }
     }
 
-    private static String trimTrailingNewline(String s) {
-        if (s == null) return "";
-        int end = s.length();
-        while (end > 0 && (s.charAt(end - 1) == '\n' || s.charAt(end - 1) == '\r')) end--;
-        return s.substring(0, end);
+    private static String trimTrailingNewline(String text) {
+        if (text == null) return "";
+        int end = text.length();
+        while (end > 0 && (text.charAt(end - 1) == '\n' || text.charAt(end - 1) == '\r')) end--;
+        return text.substring(0, end);
     }
 
-    /** 连续 2 个及以上的全角空格 / 不换行空格 / 窄不换行空格 */
     private static final java.util.regex.Pattern WIDE_SPACE_RUN =
             java.util.regex.Pattern.compile("[\\u3000\\u00A0\\u202F]{2,}");
 
-    /** 等宽字体首选族（FontManager 的栈取第一项） */
-    private static String monoFamily() {
-        String stack = FontManager.monoStack();
-        String first = stack.split(",")[0].trim();
-        return first.replace("\"", "").replace("'", "");
+    private static String fmt(double value) {
+        return value == Math.floor(value) ? String.valueOf((int) value) : String.valueOf(value);
     }
 
-    private static String fmt(double v) {
-        return (v == Math.floor(v)) ? String.valueOf((int) v) : String.valueOf(v);
+    private static void requireFxThread() {
+        if (!Platform.isFxApplicationThread()) {
+            throw new IllegalStateException("Markdown Region 必须在 JavaFX Application Thread 创建");
+        }
     }
 }

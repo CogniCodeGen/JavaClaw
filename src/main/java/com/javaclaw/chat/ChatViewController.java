@@ -1873,6 +1873,10 @@ public class ChatViewController {
      * </pre>
      */
     private void createSubAgentResultBlock(String toolName, String displayName) {
+        // 上一个结果块即使仍留在场景图中，也已不会再收到 chunk；在引用被覆盖前提交终态渲染。
+        if (activeToolResultBubble != null) {
+            activeToolResultBubble.finish();
+        }
         activeToolName = toolName;
 
         // 子智能体名称标签
@@ -1972,7 +1976,7 @@ public class ChatViewController {
                 displayText.length() > 80 ? displayText.substring(0, 77) + "..." : displayText);
 
         if (activeToolResultBubble.getLength() == 0) {
-            activeToolResultBubble.replaceText(displayText);
+            activeToolResultBubble.appendText(displayText);
             log.debug("已添加子智能体回复 [{}]，内容长度: {} 字符", activeToolName, rawLength);
         } else {
             activeToolResultBubble.appendText(displayText);
@@ -2285,6 +2289,11 @@ public class ChatViewController {
             finalizeCurrentPlanAgent();
         }
 
+        // 防御同一发言者重复 start：旧块已结束，不能在覆盖引用后永远停留在原始文本态。
+        if (activePlanAgentBubble != null) {
+            activePlanAgentBubble.finish();
+        }
+
         // 首次收到发言时，显示容器
         if (!activeToolResultsBox.isVisible()) {
             activeToolResultsBox.setVisible(true);
@@ -2365,6 +2374,9 @@ public class ChatViewController {
      */
     private void finalizeCurrentPlanAgent() {
         if (currentPlanAgentName == null) return;
+        if (activePlanAgentBubble != null) {
+            activePlanAgentBubble.finish();
+        }
         String buffered = currentPlanAgentBuffer.toString().trim();
         String summary;
         if (buffered.isEmpty()) {
@@ -2431,7 +2443,7 @@ public class ChatViewController {
                     activeUnifiedBubble.setManaged(false);
                 }
             } else if (activeReplyBubble != null && activeReplyBubble.getLength() == 0) {
-                activeReplyBubble.replaceText("[模型未返回有效回复]");
+                activeReplyBubble.finishWith("[模型未返回有效回复]");
             }
 
             // 检测主回复中的图片路径并内联显示
@@ -2502,9 +2514,9 @@ public class ChatViewController {
             if (partial != null && !partial.isBlank() && target != null) {
                 String failedText = partial + "\n\n> ⚠ 失败：" + runtime.extractErrorMessage(error);
                 if (!isPlanStream() && activeReplyBubble != null) {
-                    activeReplyBubble.replaceText(failedText);
+                    activeReplyBubble.finishWith(failedText);
                 } else if (isPlanStream() && activePlanAgentBubble != null) {
-                    activePlanAgentBubble.replaceText(failedText);
+                    activePlanAgentBubble.finishWith(failedText);
                 }
                 ChatMessage failedMessage = new ChatMessage(ChatMessage.Role.ASSISTANT, failedText);
                 failedMessage.setDeliveryState(DeliveryState.FAILED);
@@ -2548,9 +2560,9 @@ public class ChatViewController {
             if (replyText != null && !replyText.isBlank() && target != null) {
                 String stoppedText = replyText + "\n\n> ⏹ 已停止";
                 if (!isPlanStream() && activeReplyBubble != null) {
-                    activeReplyBubble.replaceText(stoppedText);
+                    activeReplyBubble.finishWith(stoppedText);
                 } else if (isPlanStream() && activePlanAgentBubble != null) {
-                    activePlanAgentBubble.replaceText(stoppedText);
+                    activePlanAgentBubble.finishWith(stoppedText);
                 }
                 ChatMessage cancelledMessage =
                         new ChatMessage(ChatMessage.Role.ASSISTANT, stoppedText);
@@ -2638,7 +2650,7 @@ public class ChatViewController {
             // 在回复区域追加警告信息
             if (activeReplyBubble != null) {
                 if (activeReplyBubble.getLength() == 0) {
-                    activeReplyBubble.replaceText("[循环中断] " + warning);
+                    activeReplyBubble.finishWith("[循环中断] " + warning);
                 } else {
                     activeReplyBubble.appendText("\n\n[循环中断] " + warning);
                 }
@@ -3654,6 +3666,10 @@ public class ChatViewController {
     private void clearActiveReferences() {
         // 兜底移除「生成中」占位（正常完成/出错/循环中断等各路径终态）
         dismissGenPlaceholder();
+        // 终态只负责提交后台排版，不等待解析或动画完成即可继续保存消息和恢复输入。
+        if (activeReplyBubble != null) activeReplyBubble.finish();
+        if (activeToolResultBubble != null) activeToolResultBubble.finish();
+        if (activePlanAgentBubble != null) activePlanAgentBubble.finish();
         // 流式结束前，写入最终的"耗时 · Tokens"到消息头部
         if (activeAssistantMetaLabel != null) {
             ActiveTurn turn = activeTurn;
