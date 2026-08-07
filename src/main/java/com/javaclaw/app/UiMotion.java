@@ -20,6 +20,7 @@ import javafx.util.Duration;
  *   <li>{@link #error(Node)} — 红色否定感（水平抖动）</li>
  *   <li>{@link #pulse(Node)} — 吸引注意（缓慢呼吸）</li>
  *   <li>{@link #fadeIn(Node)} — 从下方 8px 滑入 + 淡入</li>
+ *   <li>{@link #crossFade(Node, Node, Runnable)} — 两个同位节点平滑交接</li>
  * </ul>
  *
  * <p>所有方法都是幂等的，重复调用不会导致动画叠加错误。
@@ -94,5 +95,46 @@ public final class UiMotion {
                         new KeyValue(node.translateYProperty(), 0, EASE_OUT))
         );
         anim.play();
+    }
+
+    /**
+     * 在两个已经同位布局的节点间做纯透明度交叉淡入。
+     *
+     * <p>不修改位移、缩放或尺寸，适合内容视图切换而不会逐帧触发布局。
+     * 返回动画实例，便于持有方在节点释放或结果过期时停止它。</p>
+     *
+     * @param outgoing 退出节点，可为 {@code null}
+     * @param incoming 进入节点，不可为 {@code null}
+     * @param onFinished 动画正常结束后的清理回调，可为 {@code null}
+     * @return 已启动的交叉淡入动画
+     */
+    public static Animation crossFade(Node outgoing, Node incoming, Runnable onFinished) {
+        if (incoming == null) {
+            throw new IllegalArgumentException("incoming 不能为空");
+        }
+
+        incoming.setOpacity(0);
+        FadeTransition fadeIn = new FadeTransition(DURATION_FAST, incoming);
+        fadeIn.setFromValue(0);
+        fadeIn.setToValue(1);
+        fadeIn.setInterpolator(EASE_OUT);
+
+        ParallelTransition transition;
+        if (outgoing == null) {
+            transition = new ParallelTransition(fadeIn);
+        } else {
+            outgoing.setOpacity(1);
+            FadeTransition fadeOut = new FadeTransition(DURATION_FAST, outgoing);
+            fadeOut.setFromValue(1);
+            fadeOut.setToValue(0);
+            fadeOut.setInterpolator(EASE_OUT);
+            transition = new ParallelTransition(fadeOut, fadeIn);
+        }
+        transition.setOnFinished(event -> {
+            incoming.setOpacity(1);
+            if (onFinished != null) onFinished.run();
+        });
+        transition.play();
+        return transition;
     }
 }

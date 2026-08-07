@@ -6069,9 +6069,28 @@
     -fx-font-size: 12.5px;
 }
 
-/* ==================== Markdown 气泡（孵化 RichTextArea 纯节点渲染） ==================== */
+/* ==================== Markdown 气泡（普通文本流式 + 异步终态 RichTextArea） ==================== */
 /* 文字颜色由 .md-* 样式类挂 -jc-* 令牌，随主题换肤；字号/字重/斜体等由渲染器内联注入
    （随「设置 › 字体」密度重渲染）。代码卡按深色控制台块惯例保持字面深色，勿令牌化。 */
+
+.md-bubble-host {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+.md-plain-view {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+.md-rendering-hint {
+    -fx-background-color: -jc-surface-card;
+    -fx-background-radius: 8;
+    -fx-border-color: -jc-neutral-200;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+    -fx-padding: 3 8 3 8;
+    -fx-text-fill: -jc-neutral-500;
+    -fx-font-size: 10.5px;
+}
 
 .md-bubble {
     -fx-background-color: transparent;

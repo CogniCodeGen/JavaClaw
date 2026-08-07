@@ -27,7 +27,9 @@
         <angus.mail.version>2.0.3</angus.mail.version>
         <pdfbox.version>3.0.4</pdfbox.version>
         <richtextfx.version>0.11.7</richtextfx.version>
-        <commonmark.version>0.24.0</commonmark.version>
+        <commonmark.version>0.30.0</commonmark.version>
+        <!-- 0.30.0 的 autolink 扩展尚未同步到项目 Maven 镜像；0.29.0 与 0.30 core API 兼容。 -->
+        <commonmark.autolink.version>0.29.0</commonmark.autolink.version>
         <eclipsestore.version>4.1.0</eclipsestore.version>
         <h2.version>2.3.232</h2.version>
         <!-- mvn javafx:run 的默认数据目录；ui-test profile 会覆盖为 target 隔离目录。 -->
@@ -181,7 +183,14 @@
         <dependency>
             <groupId>org.commonmark</groupId>
             <artifactId>commonmark-ext-autolink</artifactId>
-            <version>${commonmark.version}</version>
+            <version>${commonmark.autolink.version}</version>
+            <exclusions>
+                <!-- 核心统一使用上面的 0.30.0，避免扩展传递回 0.29.0。 -->
+                <exclusion>
+                    <groupId>org.commonmark</groupId>
+                    <artifactId>commonmark</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!--
