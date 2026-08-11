@@ -102,6 +102,10 @@ class SettingsCoreFxmlStructureTest {
         values.put("/fxml/settings/email-settings.fxml", EmailSettingsController.class);
         values.put("/fxml/settings/notification-settings.fxml",
                 NotificationSettingsController.class);
+        values.put("/fxml/settings/gepa-settings.fxml", GepaSettingsController.class);
+        values.put("/fxml/settings/skill-evolution-settings.fxml",
+                SkillEvolutionSettingsController.class);
+        values.put("/fxml/settings/general-settings.fxml", GeneralSettingsController.class);
         return Map.copyOf(values);
     }
 }

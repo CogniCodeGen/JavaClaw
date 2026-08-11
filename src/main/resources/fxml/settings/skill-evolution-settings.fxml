@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import com.javaclaw.ui.javafx.control.ToggleSwitch?>
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.control.Separator?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.control.ToggleButton?>
+<?import javafx.scene.control.ToggleGroup?>
+<?import javafx.scene.layout.GridPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.VBox?>
+
+<ScrollPane fx:id="root" fitToWidth="true" hbarPolicy="NEVER"
+            styleClass="scroll-pane, settings-scroll-pane"
+            xmlns="http://javafx.com/javafx/25"
+            xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.javaclaw.ui.javafx.settings.SkillEvolutionSettingsController">
+    <fx:define><ToggleGroup fx:id="modeGroup"/></fx:define>
+    <content>
+        <VBox spacing="12.0" maxWidth="760.0">
+            <padding><Insets top="4.0" right="4.0" bottom="4.0" left="4.0"/></padding>
+            <children>
+                <Label text="技能进化（自学习）" styleClass="settings-section-title"/>
+                <Label text="借鉴 hermes-agent：智能体在复杂任务成功、踩坑找到出路、被纠正做法后，可把经验沉淀为技能（程序性记忆），并在使用中持续修补改进"
+                       wrapText="true" styleClass="settings-hint"/>
+                <Separator/>
+                <Label text="进化模式" styleClass="settings-group-title"/>
+                <HBox alignment="CENTER_LEFT" spacing="2.0" styleClass="seg-container">
+                    <children>
+                        <ToggleButton fx:id="offModeButton" text="关闭" userData="off"
+                                      toggleGroup="$modeGroup" onAction="#modeChanged"
+                                      styleClass="toggle-button, seg-btn"/>
+                        <ToggleButton fx:id="suggestModeButton" text="提案（推荐）"
+                                      userData="suggest" selected="true"
+                                      toggleGroup="$modeGroup" onAction="#modeChanged"
+                                      styleClass="toggle-button, seg-btn"/>
+                        <ToggleButton fx:id="autoModeButton" text="自动落盘" userData="auto"
+                                      toggleGroup="$modeGroup" onAction="#modeChanged"
+                                      styleClass="toggle-button, seg-btn"/>
+                    </children>
+                </HBox>
+                <Label fx:id="modeHintLabel" wrapText="true" styleClass="settings-hint"/>
+                <Separator/>
+                <Label text="自动蒸馏门槛" styleClass="settings-group-title"/>
+                <GridPane hgap="10.0" vgap="8.0">
+                    <children>
+                        <Label text="最小工具调用：" minWidth="100.0" styleClass="settings-label"
+                               GridPane.columnIndex="0" GridPane.rowIndex="0"/>
+                        <TextField fx:id="minimumToolCallsField" prefWidth="80.0"
+                                   promptText="最小工具调用数（1 ~ 50）"
+                                   accessibleText="技能进化最小工具调用数"
+                                   styleClass="text-input, text-field, settings-field"
+                                   GridPane.columnIndex="1" GridPane.rowIndex="0"/>
+                        <Label text="成功率门槛：" minWidth="100.0" styleClass="settings-label"
+                               GridPane.columnIndex="0" GridPane.rowIndex="1"/>
+                        <TextField fx:id="successThresholdField" prefWidth="80.0"
+                                   promptText="成功率门槛（0.0 ~ 1.0）"
+                                   accessibleText="技能进化成功率门槛"
+                                   styleClass="text-input, text-field, settings-field"
+                                   GridPane.columnIndex="1" GridPane.rowIndex="1"/>
+                    </children>
+                </GridPane>
+                <Label text="对话轮工具调用达到下限且成功率达标时，轮后自动蒸馏经验；踩坑后恢复成功的轮次不受下限约束"
+                       wrapText="true" styleClass="settings-hint"/>
+                <Separator/>
+                <Label text="辅助能力" styleClass="settings-group-title"/>
+                <HBox alignment="CENTER_LEFT" spacing="12.0" styleClass="row-toggle"
+                      onMouseClicked="#nudgeRowClicked">
+                    <children>
+                        <VBox spacing="1.0" HBox.hgrow="ALWAYS">
+                            <children>
+                                <Label text="经验沉淀提示（nudge）" styleClass="rt-main"/>
+                                <Label text="在系统提示词中提示智能体主动沉淀经验"
+                                       wrapText="true" styleClass="rt-sub"/>
+                            </children>
+                        </VBox>
+                        <ToggleSwitch fx:id="nudgeEnabledCheck"
+                                      accessibleText="启用经验沉淀提示"/>
+                    </children>
+                </HBox>
+                <HBox alignment="CENTER_LEFT" spacing="12.0" styleClass="row-toggle"
+                      onMouseClicked="#bundlesRowClicked">
+                    <children>
+                        <VBox spacing="1.0" HBox.hgrow="ALWAYS">
+                            <children>
+                                <Label text="技能包（bundles）" styleClass="rt-main"/>
+                                <Label text="一组技能成组加载，包优先、缺失跳过"
+                                       wrapText="true" styleClass="rt-sub"/>
+                            </children>
+                        </VBox>
+                        <ToggleSwitch fx:id="bundlesEnabledCheck" accessibleText="启用技能包"/>
+                    </children>
+                </HBox>
+                <Separator/>
+                <Label text="修改保存后下一轮对话生效" styleClass="settings-hint"/>
+            </children>
+        </VBox>
+    </content>
+</ScrollPane>

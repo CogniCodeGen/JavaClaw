@@ -6,6 +6,7 @@ import com.javaclaw.app.UIHelper;
 import com.javaclaw.ui.javafx.control.ToggleSwitch;
 import com.javaclaw.ui.javafx.site.SiteCredentialPanel;
 import com.javaclaw.ui.javafx.site.SiteCredentialPanelFactory;
+import com.javaclaw.ui.javafx.settings.BehaviorSettingsSectionFactory;
 import com.javaclaw.ui.javafx.settings.EmbeddingSettingsController;
 import com.javaclaw.ui.javafx.settings.CommunicationSettingsSectionFactory;
 import com.javaclaw.ui.javafx.settings.EmailSettingsController;
@@ -15,6 +16,9 @@ import com.javaclaw.ui.javafx.settings.SettingsFieldSupport;
 import com.javaclaw.ui.javafx.settings.SettingsSectionView;
 import com.javaclaw.ui.javafx.settings.TieredModelSettingsController;
 import com.javaclaw.ui.javafx.settings.NotificationSettingsController;
+import com.javaclaw.ui.javafx.settings.GeneralSettingsController;
+import com.javaclaw.ui.javafx.settings.GepaSettingsController;
+import com.javaclaw.ui.javafx.settings.SkillEvolutionSettingsController;
 import javafx.animation.PauseTransition;
 import javafx.animation.TranslateTransition;
 import javafx.application.Platform;
@@ -42,7 +46,6 @@ public class SettingsView {
     private static final Logger log = LoggerFactory.getLogger(SettingsView.class);
 
     private final Stage stage;
-    private final AgentConfig agentConfig;
     private Runnable onModelConfigChanged;
     private final AgentSettingsPanelFactory agentSettingsPanels;
     private AgentSettingsPanel agentSettingsPanel;
@@ -57,6 +60,10 @@ public class SettingsView {
     private final CommunicationSettingsSectionFactory communicationSettingsSections;
     private SettingsSectionView<EmailSettingsController> emailSettingsSection;
     private SettingsSectionView<NotificationSettingsController> notificationSettingsSection;
+    private final BehaviorSettingsSectionFactory behaviorSettingsSections;
+    private SettingsSectionView<GepaSettingsController> gepaSettingsSection;
+    private SettingsSectionView<SkillEvolutionSettingsController> skillEvolutionSettingsSection;
+    private SettingsSectionView<GeneralSettingsController> generalSettingsSection;
 
     // 布局容器
     private VBox categoryList;
@@ -169,31 +176,13 @@ public class SettingsView {
         }
     }
 
-    // 通用配置表单控件
-    private ToggleSwitch trayMinimizeOnCloseCheck;
-    private ToggleSwitch taskRiskAutoApproveCheck;
-
-    // GEPA 配置表单控件
-    private ToggleSwitch gepaGoalEnabledCheck;
-    private TextField gepaEvalIntervalField;
-    private TextField gepaEvalThresholdField;
-    private ToggleSwitch gepaPlanAdaptiveCheck;
-    private TextField gepaFeedbackMaxRoundsField;
-
-    // 技能进化配置表单控件
-    private ComboBox<String> skillEvolutionModeCombo;
-    private TextField skillEvolutionMinToolsField;
-    private TextField skillEvolutionSuccessThresholdField;
-    private ToggleSwitch skillNudgeCheck;
-    private ToggleSwitch skillBundlesCheck;
-
     public SettingsView(Stage owner,
                         AgentSettingsPanelFactory agentSettingsPanels,
                         SiteCredentialPanelFactory siteCredentialPanels,
                         com.javaclaw.ui.javafx.mcp.McpCenterViewFactory mcpCenters,
                         ModelSettingsSectionFactory modelSettingsSections,
-                        CommunicationSettingsSectionFactory communicationSettingsSections) {
-        this.agentConfig = AgentConfig.getInstance();
+                        CommunicationSettingsSectionFactory communicationSettingsSections,
+                        BehaviorSettingsSectionFactory behaviorSettingsSections) {
         this.agentSettingsPanels = java.util.Objects.requireNonNull(
                 agentSettingsPanels, "agentSettingsPanels");
         this.siteCredentialPanels = java.util.Objects.requireNonNull(
@@ -203,6 +192,8 @@ public class SettingsView {
                 modelSettingsSections, "modelSettingsSections");
         this.communicationSettingsSections = java.util.Objects.requireNonNull(
                 communicationSettingsSections, "communicationSettingsSections");
+        this.behaviorSettingsSections = java.util.Objects.requireNonNull(
+                behaviorSettingsSections, "behaviorSettingsSections");
         this.stage = new Stage();
         stage.initModality(Modality.WINDOW_MODAL);
         stage.initOwner(owner);
@@ -288,17 +279,27 @@ public class SettingsView {
         // 智能能力：影响智能体推理过程的高阶能力
         addCategoryGroup("智能能力");
 
-        Node gepaPanel = buildGepaPanel();
+        gepaSettingsSection = behaviorSettingsSections.createGepa(ignored -> { });
+        Node gepaPanel = gepaSettingsSection.root();
+        gepaSettingsSection.controller().configure(
+                result -> behaviorSettingsApplied(gepaPanel, result));
         addCategory("GEPA 能力", gepaPanel, false,
                 "gepa 自适应 规划 trajectory 目标");
-        registerPanelActions(gepaPanel, PanelActions.saveOnly(
-                this::saveGepaSettings, this::modelConfigSavedTip));
+        registerPanelActions(gepaPanel, PanelActions.asyncSaveOnly(
+                (success, failure) -> gepaSettingsSection.controller().save(
+                        ignored -> success.run(), failure), this::appliedModelConfigTip));
 
-        Node skillEvolutionPanel = buildSkillEvolutionPanel();
+        skillEvolutionSettingsSection = behaviorSettingsSections.createSkillEvolution(
+                ignored -> { });
+        Node skillEvolutionPanel = skillEvolutionSettingsSection.root();
+        skillEvolutionSettingsSection.controller().configure(
+                result -> behaviorSettingsApplied(skillEvolutionPanel, result));
         addCategory("技能进化", skillEvolutionPanel, false,
                 "skill 技能 自学习 进化 沉淀 提案 hermes");
-        registerPanelActions(skillEvolutionPanel, PanelActions.saveOnly(
-                this::saveSkillEvolutionSettings));
+        registerPanelActions(skillEvolutionPanel, PanelActions.asyncSaveOnly(
+                (success, failure) -> skillEvolutionSettingsSection.controller().save(
+                        ignored -> success.run(), failure),
+                () -> "✓ 已保存，下一轮对话生效"));
 
         // 外部集成：连接外部系统与资源
         addCategoryGroup("外部集成");
@@ -335,11 +336,16 @@ public class SettingsView {
         // 通用：界面与后台行为
         addCategoryGroup("通用");
 
-        Node generalPanel = buildGeneralPanel();
+        generalSettingsSection = behaviorSettingsSections.createGeneral(ignored -> { });
+        Node generalPanel = generalSettingsSection.root();
+        generalSettingsSection.controller().configure(
+                result -> behaviorSettingsApplied(generalPanel, result));
         addCategory("通用设置", generalPanel, false,
                 "托盘 tray 后台 常驻 最小化 关闭 minimize 窗口 退出 background "
                         + "托管任务 风险 评估 自动放行 确认 目录 risk autoapprove 免确认");
-        registerPanelActions(generalPanel, PanelActions.saveOnly(this::saveGeneralSettings));
+        registerPanelActions(generalPanel, PanelActions.asyncSaveOnly(
+                (success, failure) -> generalSettingsSection.controller().save(
+                        ignored -> success.run(), failure), () -> "✓ 已保存"));
 
         // 系统维护：历史测试数据只读扫描，清理必须二次人工确认。
         addCategoryGroup("系统维护");
@@ -560,15 +566,24 @@ public class SettingsView {
                 notificationSettingsSection.close();
                 notificationSettingsSection = null;
             }
+            if (gepaSettingsSection != null) {
+                gepaSettingsSection.close();
+                gepaSettingsSection = null;
+            }
+            if (skillEvolutionSettingsSection != null) {
+                skillEvolutionSettingsSection.close();
+                skillEvolutionSettingsSection = null;
+            }
+            if (generalSettingsSection != null) {
+                generalSettingsSection.close();
+                generalSettingsSection = null;
+            }
         });
 
         stage.setScene(scene);
 
         // 加载当前配置到表单（formLoading 守卫内，程序性填充不计 dirty）
         loadSettings();
-
-        // 数值字段实时范围校验（设计稿 NumField：输入即校验，红框 + 范围提示；在加载后挂避免初始填充误报）
-        attachLiveValidations();
 
         // 为所有支持全局保存的面板挂 dirty 监听（设计稿 markDirty：任何输入即标记未保存）
         for (var entry : panelActions.entrySet()) {
@@ -1015,18 +1030,6 @@ public class SettingsView {
         }
     }
 
-    /**
-     * 模型相关面板（模型配置/分级模型/GEPA/知识库）的保存后副作用：
-     * 触发智能体服务重建回调，并按是否注入回调返回对应状态文案。
-     */
-    private String modelConfigSavedTip() {
-        if (onModelConfigChanged != null) {
-            onModelConfigChanged.run();
-            return "✓ 已保存并生效，下一轮对话重建智能体服务";
-        }
-        return "✓ 已保存（重启后生效）";
-    }
-
     private void coreSettingsApplied(Node panel,
             com.javaclaw.application.settings.ModelSettingsApplicationService.SaveResult result) {
         settingsApplied(panel, result == null ? "" : result.message());
@@ -1038,6 +1041,14 @@ public class SettingsView {
     private void communicationSettingsApplied(Node panel,
             com.javaclaw.application.settings.CommunicationSettingsApplicationService.SaveResult result) {
         settingsApplied(panel, result == null ? "" : result.message());
+    }
+
+    private void behaviorSettingsApplied(Node panel,
+            com.javaclaw.application.settings.BehaviorSettingsApplicationService.SaveResult result) {
+        settingsApplied(panel, result == null ? "" : result.message());
+        if (result != null && result.runtimeRefreshRequired() && onModelConfigChanged != null) {
+            onModelConfigChanged.run();
+        }
     }
 
     private void settingsApplied(Node panel, String message) {
@@ -1065,457 +1076,6 @@ public class SettingsView {
         String message = current.getMessage();
         return message == null || message.isBlank()
                 ? current.getClass().getSimpleName() : message;
-    }
-
-    /**
-     * 安全设置整数值（含范围校验），返回是否校验通过
-     */
-    /**
-     * 安全设置整数值（含范围校验），超出范围时使用默认值并标记错误
-     */
-    private boolean setIntSafe(TextField field, java.util.function.IntConsumer setter, int defaultValue, int min, int max) {
-        clearFieldError(field);
-        try {
-            int value = Integer.parseInt(field.getText().trim());
-            if (value < min || value > max) {
-                markFieldError(field, "请输入 " + min + " ~ " + max + " 之间的整数");
-                setter.accept(defaultValue);
-                return false;
-            }
-            setter.accept(value);
-            return true;
-        } catch (NumberFormatException e) {
-            markFieldError(field, "请输入有效的整数");
-            setter.accept(defaultValue);
-            return false;
-        }
-    }
-
-    /**
-     * 安全设置 double 值（含范围校验），超出范围时使用默认值并标记错误
-     */
-    private double parseDoubleSafe(TextField field, double defaultValue, double min, double max) {
-        clearFieldError(field);
-        try {
-            double value = Double.parseDouble(field.getText().trim());
-            if (value < min || value > max) {
-                markFieldError(field, "请输入 " + min + " ~ " + max + " 之间的数值");
-                return defaultValue;
-            }
-            return value;
-        } catch (NumberFormatException e) {
-            markFieldError(field, "请输入有效的数值");
-            return defaultValue;
-        }
-    }
-
-    // ==================== 数值字段实时范围校验（设计稿 NumField） ====================
-
-    /**
-     * 给全部数值输入框挂实时范围校验：输入时即标记 field-error + 范围提示 Tooltip，
-     * 合法后立即清除。范围与各保存方法中 setIntSafe / parseDoubleSafe 的兜底校验一致；
-     * 仅做即时视觉反馈，不替代保存时的兜底逻辑。
-     */
-    private void attachLiveValidations() {
-        // GEPA 能力
-        attachLiveIntRange(gepaEvalIntervalField, 1, 20);
-        attachLiveDoubleRange(gepaEvalThresholdField, 1.0, 5.0);
-        attachLiveIntRange(gepaFeedbackMaxRoundsField, 0, 10);
-        // 技能进化
-        attachLiveIntRange(skillEvolutionMinToolsField, 1, 50);
-        attachLiveDoubleRange(skillEvolutionSuccessThresholdField, 0.0, 1.0);
-    }
-
-    /** 整数字段实时校验；max 为 Integer.MAX_VALUE 时提示语退化为「≥ min 的整数」。 */
-    private void attachLiveIntRange(TextField field, int min, int max) {
-        String message = max == Integer.MAX_VALUE
-                ? "请输入 ≥ " + min + " 的整数"
-                : "请输入 " + min + " ~ " + max + " 之间的整数";
-        attachLiveRange(field, min, max, false, message);
-    }
-
-    /** 小数字段实时校验。 */
-    private void attachLiveDoubleRange(TextField field, double min, double max) {
-        attachLiveRange(field, min, max, true, "请输入 " + min + " ~ " + max + " 之间的数值");
-    }
-
-    /**
-     * 实时校验的统一实现：监听文本与禁用状态变化；字段禁用时豁免并清除错误
-     * （设计稿 NumField 的 {@code bad = !disabled && …} 语义）。
-     */
-    private void attachLiveRange(TextField field, double min, double max, boolean isFloat, String message) {
-        if (field == null) return;
-        Runnable validate = () -> {
-            if (field.isDisabled()) {
-                clearFieldError(field);
-                return;
-            }
-            String text = field.getText() == null ? "" : field.getText().trim();
-            boolean ok;
-            try {
-                double v = isFloat ? Double.parseDouble(text) : Integer.parseInt(text);
-                ok = v >= min && v <= max;
-            } catch (NumberFormatException e) {
-                ok = false;
-            }
-            if (ok) {
-                clearFieldError(field);
-            } else {
-                markFieldError(field, message);
-            }
-        };
-        field.textProperty().addListener((obs, oldV, newV) -> validate.run());
-        field.disabledProperty().addListener((obs, oldV, newV) -> validate.run());
-    }
-
-    // ==================== 字段错误标记辅助方法 ====================
-
-    /**
-     * 标记输入框为错误状态，并设置提示信息
-     */
-    private boolean markFieldError(TextField field, String message) {
-        if (!field.getStyleClass().contains("field-error")) {
-            field.getStyleClass().add("field-error");
-        }
-        field.setTooltip(new Tooltip(message));
-        return false;
-    }
-
-    /**
-     * 清除输入框的错误状态
-     */
-    private void clearFieldError(TextField field) {
-        field.getStyleClass().remove("field-error");
-        field.setTooltip(null);
-    }
-
-    // ==================== GEPA 能力面板 ====================
-
-    private Node buildGepaPanel() {
-        Label sectionTitle = new Label("GEPA 自改进能力");
-        sectionTitle.getStyleClass().add("settings-section-title");
-
-        Label overviewHint = new Label(
-                "GEPA（Goal-Evaluate-Plan-Act）让智能体在执行过程中自动分解目标、评估进度、调整计划，实现闭环自我改进");
-        overviewHint.getStyleClass().add("settings-hint");
-        overviewHint.setWrapText(true);
-
-        // ===== 目标分解 =====
-        Label goalTitle = new Label("目标分解");
-        goalTitle.getStyleClass().add("settings-group-title");
-
-        gepaGoalEnabledCheck = new ToggleSwitch();
-        HBox goalRow = toggleRow(gepaGoalEnabledCheck, "目标分解",
-                "把复杂请求拆为可核验的子目标，并将成功标准注入编排器提示词");
-
-        // ===== 过程评估 =====
-        Label evalTitle = new Label("过程评估");
-        evalTitle.getStyleClass().add("settings-group-title");
-
-        gepaEvalIntervalField = createTextField("评估间隔（工具调用次数）");
-        gepaEvalIntervalField.setPrefWidth(80);
-        gepaEvalThresholdField = createTextField("通过阈值（1.0 ~ 5.0）");
-        gepaEvalThresholdField.setPrefWidth(80);
-
-        GridPane evalGrid = new GridPane();
-        evalGrid.setHgap(10);
-        evalGrid.setVgap(8);
-        evalGrid.add(createLabel("评估间隔："), 0, 0);
-        evalGrid.add(gepaEvalIntervalField, 1, 0);
-        evalGrid.add(createLabel("通过阈值："), 0, 1);
-        evalGrid.add(gepaEvalThresholdField, 1, 1);
-
-        Label evalHint = new Label("每隔 N 次工具调用触发一次评估；评分低于阈值时触发计划调整");
-        evalHint.getStyleClass().add("settings-hint");
-        evalHint.setWrapText(true);
-
-        // ===== 自适应规划 =====
-        Label planTitle = new Label("自适应规划");
-        planTitle.getStyleClass().add("settings-group-title");
-
-        gepaPlanAdaptiveCheck = new ToggleSwitch();
-        HBox adaptiveRow = toggleRow(gepaPlanAdaptiveCheck, "自适应规划",
-                "根据过程评估动态调整后续步骤，而非一次性定死计划");
-
-        gepaFeedbackMaxRoundsField = createTextField("最大调整轮次（0 ~ 10）");
-        gepaFeedbackMaxRoundsField.setPrefWidth(80);
-
-        HBox feedbackRow = new HBox(10, createLabel("最大轮次："), gepaFeedbackMaxRoundsField);
-        feedbackRow.setAlignment(Pos.CENTER_LEFT);
-
-        Label planHint = new Label("评估不通过时，智能体将基于当前轨迹重写剩余步骤；超过最大调整轮次后不再调整");
-        planHint.getStyleClass().add("settings-hint");
-        planHint.setWrapText(true);
-
-        gepaPlanAdaptiveCheck.selectedProperty().addListener((obs, o, n) -> {
-            gepaFeedbackMaxRoundsField.setDisable(!n);
-        });
-
-        // 提示（保存上移全局页脚）
-        Label restartHint = new Label("修改保存后立即生效，当前对话的智能体服务将重建");
-        restartHint.getStyleClass().add("settings-hint");
-
-        ScrollPane scrollPane = new ScrollPane();
-        scrollPane.setFitToWidth(true);
-        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        scrollPane.getStyleClass().add("settings-scroll-pane");
-
-        VBox panel = new VBox(12,
-                sectionTitle, overviewHint,
-                new Separator(),
-                goalTitle, goalRow,
-                new Separator(),
-                evalTitle, evalGrid, evalHint,
-                new Separator(),
-                planTitle, adaptiveRow, feedbackRow, planHint,
-                new Separator(),
-                restartHint);
-        panel.setPadding(new Insets(4));
-
-        scrollPane.setContent(panel);
-        return scrollPane;
-    }
-
-    private void loadGepaSettings() {
-        gepaGoalEnabledCheck.setSelected(agentConfig.isGepaGoalEnabled());
-        gepaEvalIntervalField.setText(String.valueOf(agentConfig.getGepaEvalInterval()));
-        gepaEvalThresholdField.setText(String.valueOf(agentConfig.getGepaEvalThreshold()));
-        gepaPlanAdaptiveCheck.setSelected(agentConfig.isGepaPlanAdaptive());
-        gepaFeedbackMaxRoundsField.setText(String.valueOf(agentConfig.getGepaFeedbackMaxRounds()));
-        gepaFeedbackMaxRoundsField.setDisable(!agentConfig.isGepaPlanAdaptive());
-    }
-
-    private void saveGepaSettings() {
-        agentConfig.setGepaGoalEnabled(gepaGoalEnabledCheck.isSelected());
-        setIntSafe(gepaEvalIntervalField, agentConfig::setGepaEvalInterval, 3, 1, 20);
-        agentConfig.setGepaEvalThreshold(parseDoubleSafe(gepaEvalThresholdField, 3.5, 1.0, 5.0));
-        agentConfig.setGepaPlanAdaptive(gepaPlanAdaptiveCheck.isSelected());
-        setIntSafe(gepaFeedbackMaxRoundsField, agentConfig::setGepaFeedbackMaxRounds, 2, 0, 10);
-        agentConfig.save();
-        log.info("GEPA 设置已保存");
-    }
-
-    // ==================== 技能进化面板 ====================
-
-    private Node buildSkillEvolutionPanel() {
-        Label sectionTitle = new Label("技能进化（自学习）");
-        sectionTitle.getStyleClass().add("settings-section-title");
-
-        Label overviewHint = new Label(
-                "借鉴 hermes-agent：智能体在复杂任务成功、踩坑找到出路、被纠正做法后，"
-                        + "可把经验沉淀为技能（程序性记忆），并在使用中持续修补改进");
-        overviewHint.getStyleClass().add("settings-hint");
-        overviewHint.setWrapText(true);
-
-        // ===== 进化模式（设计稿 Seg 分段控件 + 随选中模式联动的说明文案） =====
-        Label modeTitle = new Label("进化模式");
-        modeTitle.getStyleClass().add("settings-group-title");
-
-        // 状态载体（load/save 仍读写它），展示换为分段控件
-        skillEvolutionModeCombo = new ComboBox<>();
-        skillEvolutionModeCombo.getItems().addAll("off", "suggest", "auto");
-
-        Label modeHint = new Label();
-        modeHint.getStyleClass().add("settings-hint");
-        modeHint.setWrapText(true);
-
-        ToggleGroup modeSegGroup = new ToggleGroup();
-        HBox modeSeg = new HBox(2);
-        modeSeg.getStyleClass().add("seg-container");
-        modeSeg.setAlignment(Pos.CENTER_LEFT);
-        String[][] modeOptions = {{"off", "关闭"}, {"suggest", "提案（推荐）"}, {"auto", "自动落盘"}};
-        for (String[] opt : modeOptions) {
-            ToggleButton tb = new ToggleButton(opt[1]);
-            tb.getStyleClass().add("seg-btn");
-            tb.setToggleGroup(modeSegGroup);
-            tb.setUserData(opt[0]);
-            tb.setOnAction(e -> {
-                if (!tb.isSelected()) {
-                    tb.setSelected(true);  // 不允许取消选中
-                    return;
-                }
-                skillEvolutionModeCombo.setValue(opt[0]);
-            });
-            modeSeg.getChildren().add(tb);
-        }
-        // 模式 → 分段选中态 + 动态说明文案
-        skillEvolutionModeCombo.valueProperty().addListener((obs, o, n) -> {
-            for (Node node : modeSeg.getChildren()) {
-                ToggleButton tb = (ToggleButton) node;
-                tb.setSelected(tb.getUserData().equals(n));
-            }
-            modeHint.setText(switch (n == null ? "suggest" : n) {
-                case "off" -> "skill_manage 工具拒绝写入，SkillCurator 不蒸馏。";
-                case "auto" -> "直接落盘并 Toast；但你手动改过的技能仍强制降级为提案，绝不静默覆盖。";
-                default -> "变更先入「技能中心 → 待审提案」队列，人工采纳后才落盘。user-modified 技能受保护。";
-            });
-        });
-
-        HBox modeRow = new HBox(10, modeSeg);
-        modeRow.setAlignment(Pos.CENTER_LEFT);
-
-        // ===== 蒸馏触发门槛 =====
-        Label thresholdTitle = new Label("自动蒸馏门槛");
-        thresholdTitle.getStyleClass().add("settings-group-title");
-
-        skillEvolutionMinToolsField = createTextField("最小工具调用数（1 ~ 50）");
-        skillEvolutionMinToolsField.setPrefWidth(80);
-        skillEvolutionSuccessThresholdField = createTextField("成功率门槛（0.0 ~ 1.0）");
-        skillEvolutionSuccessThresholdField.setPrefWidth(80);
-
-        GridPane thresholdGrid = new GridPane();
-        thresholdGrid.setHgap(10);
-        thresholdGrid.setVgap(8);
-        thresholdGrid.add(createLabel("最小工具调用："), 0, 0);
-        thresholdGrid.add(skillEvolutionMinToolsField, 1, 0);
-        thresholdGrid.add(createLabel("成功率门槛："), 0, 1);
-        thresholdGrid.add(skillEvolutionSuccessThresholdField, 1, 1);
-
-        Label thresholdHint = new Label(
-                "对话轮工具调用达到下限且成功率达标时，轮后自动蒸馏经验；踩坑后恢复成功的轮次不受下限约束");
-        thresholdHint.getStyleClass().add("settings-hint");
-        thresholdHint.setWrapText(true);
-
-        // ===== 开关项 =====
-        Label switchTitle = new Label("辅助能力");
-        switchTitle.getStyleClass().add("settings-group-title");
-
-        skillNudgeCheck = new ToggleSwitch();
-        HBox nudgeRow = toggleRow(skillNudgeCheck, "经验沉淀提示（nudge）",
-                "在系统提示词中提示智能体主动沉淀经验");
-
-        skillBundlesCheck = new ToggleSwitch();
-        HBox bundlesRow = toggleRow(skillBundlesCheck, "技能包（bundles）",
-                "一组技能成组加载，包优先、缺失跳过");
-
-        // 提示（保存上移全局页脚）
-        Label restartHint = new Label("修改保存后下一轮对话生效");
-        restartHint.getStyleClass().add("settings-hint");
-
-        ScrollPane scrollPane = new ScrollPane();
-        scrollPane.setFitToWidth(true);
-        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        scrollPane.getStyleClass().add("settings-scroll-pane");
-
-        VBox panel = new VBox(12,
-                sectionTitle, overviewHint,
-                new Separator(),
-                modeTitle, modeRow, modeHint,
-                new Separator(),
-                thresholdTitle, thresholdGrid, thresholdHint,
-                new Separator(),
-                switchTitle, nudgeRow, bundlesRow,
-                new Separator(),
-                restartHint);
-        panel.setPadding(new Insets(4));
-
-        scrollPane.setContent(panel);
-        return scrollPane;
-    }
-
-    private void loadSkillEvolutionSettings() {
-        skillEvolutionModeCombo.setValue(agentConfig.getSkillEvolutionMode());
-        skillEvolutionMinToolsField.setText(String.valueOf(agentConfig.getSkillEvolutionMinTools()));
-        skillEvolutionSuccessThresholdField.setText(String.valueOf(agentConfig.getSkillEvolutionSuccessThreshold()));
-        skillNudgeCheck.setSelected(agentConfig.isSkillNudgeEnabled());
-        skillBundlesCheck.setSelected(agentConfig.isSkillBundlesEnabled());
-    }
-
-    private void saveSkillEvolutionSettings() {
-        String mode = skillEvolutionModeCombo.getValue();
-        agentConfig.setSkillEvolutionMode(mode == null ? "suggest" : mode);
-        setIntSafe(skillEvolutionMinToolsField, agentConfig::setSkillEvolutionMinTools, 5, 1, 50);
-        agentConfig.setSkillEvolutionSuccessThreshold(
-                parseDoubleSafe(skillEvolutionSuccessThresholdField, 0.6, 0.0, 1.0));
-        agentConfig.setSkillNudgeEnabled(skillNudgeCheck.isSelected());
-        agentConfig.setSkillBundlesEnabled(skillBundlesCheck.isSelected());
-        agentConfig.save();
-        log.info("技能进化设置已保存");
-    }
-
-    // ==================== 通用配置面板 ====================
-
-    private Node buildGeneralPanel() {
-        Label sectionTitle = new Label("通用设置");
-        sectionTitle.getStyleClass().add("settings-section-title");
-
-        Label overviewHint = new Label("界面与后台运行行为");
-        overviewHint.getStyleClass().add("settings-hint");
-        overviewHint.setWrapText(true);
-
-        // 外观快捷入口（与「界面风格」面板/顶栏菜单三处联动，设计稿 GeneralPanel）
-        Label appearanceTitle = new Label("外观");
-        appearanceTitle.getStyleClass().add("settings-group-title");
-
-        ComboBox<com.javaclaw.ui.javafx.theme.ThemeManager.Theme> themeCombo = new ComboBox<>();
-        themeCombo.getItems().addAll(com.javaclaw.ui.javafx.theme.ThemeManager.THEMES);
-        themeCombo.getStyleClass().add("settings-combo");
-        themeCombo.setPrefWidth(260);
-        javafx.util.StringConverter<com.javaclaw.ui.javafx.theme.ThemeManager.Theme> themeConverter =
-                new javafx.util.StringConverter<>() {
-                    @Override public String toString(com.javaclaw.ui.javafx.theme.ThemeManager.Theme t) {
-                        return t == null ? "" : t.name() + " — " + t.subtitle();
-                    }
-                    @Override public com.javaclaw.ui.javafx.theme.ThemeManager.Theme fromString(String s) {
-                        return null;
-                    }
-                };
-        themeCombo.setConverter(themeConverter);
-        // 选择立即全局生效，无需保存 → 不计入 dirty
-        themeCombo.getProperties().put("jc-dirty-exempt", Boolean.TRUE);
-        themeCombo.setValue(com.javaclaw.ui.javafx.theme.ThemeManager.getCurrentTheme());
-        themeCombo.setOnAction(e -> {
-            var selected = themeCombo.getValue();
-            if (selected != null) {
-                com.javaclaw.ui.javafx.theme.ThemeManager.setTheme(selected.id());
-            }
-        });
-        com.javaclaw.ui.javafx.theme.ThemeManager.themeProperty().addListener((obs, o, n) ->
-                themeCombo.setValue(com.javaclaw.ui.javafx.theme.ThemeManager.getCurrentTheme()));
-
-        Label themeHint = new Label("也可在顶部栏「风格」菜单或「界面风格」分区切换，选择立即生效。");
-        themeHint.getStyleClass().add("settings-hint");
-        themeHint.setWrapText(true);
-
-        HBox themeRow = new HBox(10, createLabel("界面风格："), themeCombo);
-        themeRow.setAlignment(Pos.CENTER_LEFT);
-
-        Label trayTitle = new Label("后台常驻");
-        trayTitle.getStyleClass().add("settings-group-title");
-
-        trayMinimizeOnCloseCheck = new ToggleSwitch();
-        HBox trayRow = toggleRow(trayMinimizeOnCloseCheck, "关闭窗口时最小化到系统托盘",
-                "保持后台任务与定时任务运行，仅从托盘菜单「退出」才真正关闭；关闭则点窗口关闭按钮即退出");
-
-        Label taskRiskTitle = new Label("托管任务 · 风险评估");
-        taskRiskTitle.getStyleClass().add("settings-group-title");
-
-        taskRiskAutoApproveCheck = new ToggleSwitch();
-        HBox taskRiskRow = toggleRow(taskRiskAutoApproveCheck, "目录内高风险操作自动放行",
-                "托管任务中由风险评估智能体判定影响范围，只触及任务工作目录内则免人工确认；"
-                        + "可能越界或无法确定时仍照常弹确认。仅作用于托管任务");
-
-        VBox panel = new VBox(12,
-                sectionTitle, overviewHint,
-                new Separator(),
-                appearanceTitle, themeRow, themeHint,
-                new Separator(),
-                trayTitle, trayRow,
-                new Separator(),
-                taskRiskTitle, taskRiskRow);
-        panel.setPadding(new Insets(4));
-
-        ScrollPane scrollPane = new ScrollPane();
-        scrollPane.setFitToWidth(true);
-        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        scrollPane.getStyleClass().add("settings-scroll-pane");
-        scrollPane.setContent(panel);
-        return scrollPane;
-    }
-
-    private void loadGeneralSettings() {
-        trayMinimizeOnCloseCheck.setSelected(agentConfig.isTrayMinimizeOnClose());
-        taskRiskAutoApproveCheck.setSelected(agentConfig.isTaskRiskAutoApproveEnabled());
     }
 
     // ==================== 测试数据维护面板 ====================
@@ -1866,13 +1426,6 @@ public class SettingsView {
         return scrollPane;
     }
 
-    private void saveGeneralSettings() {
-        agentConfig.setTrayMinimizeOnClose(trayMinimizeOnCloseCheck.isSelected());
-        agentConfig.setTaskRiskAutoApproveEnabled(taskRiskAutoApproveCheck.isSelected());
-        agentConfig.save();
-        log.info("通用设置已保存");
-    }
-
     /**
      * 将当前配置加载到表单控件
      */
@@ -1884,9 +1437,11 @@ public class SettingsView {
         if (notificationSettingsSection != null) {
             notificationSettingsSection.controller().reload();
         }
-        loadGepaSettings();
-        loadSkillEvolutionSettings();
-        loadGeneralSettings();
+        if (gepaSettingsSection != null) gepaSettingsSection.controller().reload();
+        if (skillEvolutionSettingsSection != null) {
+            skillEvolutionSettingsSection.controller().reload();
+        }
+        if (generalSettingsSection != null) generalSettingsSection.controller().reload();
     }
 
     /**
@@ -1937,48 +1492,6 @@ public class SettingsView {
     // ==================== UI 辅助方法 ====================
 
     /**
-     * 行式开关（设计稿 RowToggle）：左侧主文案 + 副说明，右侧滑块开关。
-     *
-     * @param toggle 状态载体（外部持有引用以便 load/save 读写）
-     * @param main   主文案
-     * @param sub    副说明；null 或空则不显示
-     */
-    private HBox toggleRow(ToggleSwitch toggle, String main, String sub) {
-        Label mainLabel = new Label(main);
-        mainLabel.getStyleClass().add("rt-main");
-        VBox text = new VBox(1, mainLabel);
-        if (sub != null && !sub.isEmpty()) {
-            Label subLabel = new Label(sub);
-            subLabel.getStyleClass().add("rt-sub");
-            subLabel.setWrapText(true);
-            text.getChildren().add(subLabel);
-        }
-        HBox.setHgrow(text, Priority.ALWAYS);
-        HBox row = new HBox(12, text, toggle);
-        row.getStyleClass().add("row-toggle");
-        row.setAlignment(Pos.CENTER_LEFT);
-
-        // 整行可点（设计稿 RowToggle clickable）：点击行任意空白处即切换开关；
-        // 点击落在开关本体上时由开关自身处理，避免二次切换。开关禁用时整行降为 disabled。
-        row.setOnMouseClicked(e -> {
-            if (toggle.isDisabled()) return;
-            Node t = e.getPickResult().getIntersectedNode();
-            while (t != null) {
-                if (t == toggle) return;  // 命中开关本体，交给开关处理
-                t = t.getParent();
-            }
-            toggle.setSelected(!toggle.isSelected());
-        });
-        Runnable applyRowState = () -> {
-            row.getStyleClass().removeAll("clickable", "disabled");
-            row.getStyleClass().add(toggle.isDisabled() ? "disabled" : "clickable");
-        };
-        applyRowState.run();
-        toggle.disabledProperty().addListener((o, a, b) -> applyRowState.run());
-        return row;
-    }
-
-    /**
      * 密钥输入框包装（设计稿 SecretField）：在 PasswordField 右侧吸附「显示/隐藏」与「复制」小按钮。
      * 明文态用与之双向绑定的 TextField 呈现，状态仍由传入的 PasswordField 承载（load/save 不变）。
      */
@@ -1991,20 +1504,6 @@ public class SettingsView {
         } finally {
             formLoading = false;
         }
-    }
-
-    private TextField createTextField(String promptText) {
-        TextField field = new TextField();
-        field.setPromptText(promptText);
-        field.getStyleClass().add("settings-field");
-        return field;
-    }
-
-    private Label createLabel(String text) {
-        Label label = new Label(text);
-        label.getStyleClass().add("settings-label");
-        label.setMinWidth(70);
-        return label;
     }
 
 }

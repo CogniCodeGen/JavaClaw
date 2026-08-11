@@ -19,6 +19,9 @@ import com.javaclaw.application.mcp.McpManagementUseCase;
 import com.javaclaw.application.mcp.McpRuntimePort;
 import com.javaclaw.application.mcp.McpTemplatePort;
 import com.javaclaw.application.settings.ModelSettingsApplicationService;
+import com.javaclaw.application.settings.BehaviorSettingsApplicationService;
+import com.javaclaw.application.settings.BehaviorSettingsPort;
+import com.javaclaw.application.settings.BehaviorSettingsUseCase;
 import com.javaclaw.application.settings.EmbeddingRuntimeProbePort;
 import com.javaclaw.application.settings.CommunicationSettingsApplicationService;
 import com.javaclaw.application.settings.CommunicationSettingsPort;
@@ -38,6 +41,7 @@ import com.javaclaw.infrastructure.mcp.McpConfigManagerAdapter;
 import com.javaclaw.infrastructure.mcp.McpJsonImporterAdapter;
 import com.javaclaw.infrastructure.mcp.McpTemplateLibraryAdapter;
 import com.javaclaw.infrastructure.settings.AgentConfigModelSettingsAdapter;
+import com.javaclaw.infrastructure.settings.AgentConfigBehaviorSettingsAdapter;
 import com.javaclaw.infrastructure.settings.EmbeddingGatewayRuntimeProbeAdapter;
 import com.javaclaw.infrastructure.settings.HttpModelSettingsProbeAdapter;
 import com.javaclaw.infrastructure.settings.JakartaMailConnectionProbeAdapter;
@@ -70,6 +74,7 @@ import com.javaclaw.ui.javafx.mcp.McpTemplateCellFactory;
 import com.javaclaw.ui.javafx.mcp.McpTemplateDialogFactory;
 import com.javaclaw.ui.javafx.mcp.McpToolRowFactory;
 import com.javaclaw.ui.javafx.settings.ModelSettingsSectionFactory;
+import com.javaclaw.ui.javafx.settings.BehaviorSettingsSectionFactory;
 import com.javaclaw.ui.javafx.settings.CommunicationSettingsSectionFactory;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.http.HttpGateway;
@@ -329,6 +334,23 @@ public class WorkspaceSpringConfiguration {
     CommunicationSettingsSectionFactory communicationSettingsSectionFactory(
             @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
         return new CommunicationSettingsSectionFactory(loader);
+    }
+
+    @Bean
+    BehaviorSettingsPort behaviorSettingsPort(com.javaclaw.config.AgentConfig config) {
+        return new AgentConfigBehaviorSettingsAdapter(config);
+    }
+
+    @Bean
+    BehaviorSettingsApplicationService behaviorSettingsApplicationService(
+            BehaviorSettingsPort settings) {
+        return new BehaviorSettingsUseCase(settings);
+    }
+
+    @Bean
+    BehaviorSettingsSectionFactory behaviorSettingsSectionFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new BehaviorSettingsSectionFactory(loader);
     }
 
     @Bean
