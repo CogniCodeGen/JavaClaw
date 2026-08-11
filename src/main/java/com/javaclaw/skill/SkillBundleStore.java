@@ -67,7 +67,10 @@ final class SkillBundleStore {
     void save(List<SkillBundle> replacements) {
         bundles.clear();
         if (replacements != null) {
-            bundles.addAll(replacements);
+            replacements.stream()
+                    .filter(Objects::nonNull)
+                    .filter(bundle -> bundle.name != null && !bundle.name.isBlank())
+                    .forEach(bundles::add);
         }
         try {
             mapper.writerWithDefaultPrettyPrinter().writeValue(file.toFile(), bundles);

@@ -129,7 +129,7 @@ public class SkillManager {
      * @param skills  技能列表（content 在内存持有，directory 为 null）
      */
     public void registerDynamicSkills(String ownerId, List<Skill> skills) {
-        if (ownerId == null || skills == null || skills.isEmpty()) {
+        if (ownerId == null || ownerId.isBlank() || skills == null || skills.isEmpty()) {
             return;
         }
         List<Skill> safeSkills = skills.stream()
@@ -149,6 +149,9 @@ public class SkillManager {
      * @param ownerId 来源标识
      */
     public void unregisterDynamicSkills(String ownerId) {
+        if (ownerId == null || ownerId.isBlank()) {
+            return;
+        }
         List<Skill> removed = dynamicSkills.remove(ownerId);
         if (removed != null && !removed.isEmpty()) {
             log.info("已移除动态技能 owner={}，{} 个", ownerId, removed.size());
@@ -165,7 +168,7 @@ public class SkillManager {
      * @return 可注册的动态 Skill
      */
     public Skill buildDynamicSkill(String ownerId, String name, String description, String content) {
-        requireCredentialFree(content);
+        validateSkillDefinition(name, description, content);
         Skill s = new Skill("dyn-" + ownerId + "-" + name, name, description, true);
         s.setContent(content);
         s.setCategory("plugin");
@@ -206,8 +209,7 @@ public class SkillManager {
      * 新建技能目录并生成 SKILL.md
      */
     public Skill createSkill(String name, String description, String content, boolean enabled) {
-        requireCredentialFree(description);
-        requireCredentialFree(content);
+        validateSkillDefinition(name, description, content);
         String dirName = SkillFileRepository.sanitizeDirectoryName(name);
         if (dirName.isEmpty() || Files.exists(skillsDir.resolve(dirName))) {
             dirName = dirName + "-" + System.currentTimeMillis();
@@ -227,8 +229,10 @@ public class SkillManager {
      * 更新技能并持久化 SKILL.md
      */
     public void updateSkill(Skill skill) {
-        requireCredentialFree(skill == null ? null : skill.getDescription());
-        requireCredentialFree(skill == null ? null : skill.getContent());
+        if (skill == null) {
+            throw new IllegalArgumentException("技能不能为空");
+        }
+        validateSkillDefinition(skill.getName(), skill.getDescription(), skill.getContent());
         Skill persisted = files.saveAndReadBack(skill, skill.getName());
         replaceSkillSnapshot(skill.getId(), persisted);
         log.info("已更新技能: {} ({})", persisted.getName(), persisted.getId());
@@ -244,11 +248,10 @@ public class SkillManager {
      */
     public Skill createAgentSkill(String name, String description, String content,
                                   String category, List<String> tags) {
+        validateSkillDefinition(name, description, content);
         if (getSkillByName(name) != null) {
             return null;
         }
-        requireCredentialFree(description);
-        requireCredentialFree(content);
         String dirName = SkillFileRepository.sanitizeDirectoryName(name);
         if (dirName.isEmpty() || Files.exists(skillsDir.resolve(dirName))) {
             dirName = dirName + "-" + System.currentTimeMillis();
@@ -475,6 +478,16 @@ public class SkillManager {
         SkillFileRepository.requireCredentialFree(content);
     }
 
+    private static void validateSkillDefinition(
+            String name, String description, String content) {
+        if (name == null || name.isBlank()) {
+            throw new IllegalArgumentException("技能名称不能为空");
+        }
+        requireCredentialFree(name);
+        requireCredentialFree(description);
+        requireCredentialFree(content);
+    }
+
     // ==================== 系统提示词集成 ====================
 
     /**
@@ -503,7 +516,9 @@ public class SkillManager {
      * @return 技能目录提示词，无激活技能时返回空字符串
      */
     public String buildSkillCatalogPrompt(Set<String> availableGroups) {
-        List<Skill> active = getActiveSkills(availableGroups);
+        List<Skill> active = getActiveSkills(availableGroups).stream()
+                .filter(skill -> !hasSensitiveName(skill))
+                .toList();
         StringBuilder sb = new StringBuilder();
         if (!active.isEmpty()) {
             sb.append("\n\n## 可用技能目录\n");
@@ -513,7 +528,6 @@ public class SkillManager {
             sb.append("技能若列出参考文档，可再用 skill_read 的 path 参数单独拉取某个文档；\n");
             sb.append("严格项目隔离模式下不执行技能脚本；技能仅提供可审查的流程与参考资料。\n");
             for (Skill skill : active) {
-                if (SensitiveDataRedactor.containsLikelyCredential(skill.getName())) continue;
                 sb.append("- 【").append(skill.getName()).append("】");
                 if (!skill.getCategory().isBlank()) {
                     sb.append("[").append(skill.getCategory()).append("] ");
@@ -541,7 +555,9 @@ public class SkillManager {
 
         // 技能包目录：让模型知道可成组加载
         if (settings.isSkillBundlesEnabled()) {
-            List<SkillBundle> enabledBundles = getEnabledBundles();
+            List<SkillBundle> enabledBundles = getEnabledBundles().stream()
+                    .filter(bundle -> !SensitiveDataRedactor.containsLikelyCredential(bundle.name))
+                    .toList();
             if (!enabledBundles.isEmpty()) {
                 sb.append("\n## 可用技能包\n");
                 sb.append("技能包是一组配合使用的技能；任务匹配某包描述时，包内技能将成组注入。\n");
@@ -550,7 +566,10 @@ public class SkillManager {
                             .append(bundle.description == null ? ""
                                     : SensitiveDataRedactor.containsLikelyCredential(bundle.description)
                                     ? "[描述包含疑似凭据，已隐藏]" : bundle.description.strip())
-                            .append("（含：").append(String.join("、", bundle.skills)).append("）\n");
+                            .append("（含：").append(bundle.skills.stream()
+                                    .map(SkillManager::redactCatalogValue)
+                                    .collect(java.util.stream.Collectors.joining("、")))
+                            .append("）\n");
                 }
             }
         }
@@ -613,7 +632,9 @@ public class SkillManager {
      * @return 拼接后的技能提示词，无启用技能时返回空字符串
      */
     public String buildEnabledSkillsPrompt() {
-        List<Skill> enabled = getEnabledSkills();
+        List<Skill> enabled = getEnabledSkills().stream()
+                .filter(skill -> !hasSensitiveName(skill))
+                .toList();
         if (enabled.isEmpty()) {
             return "";
         }
@@ -681,6 +702,7 @@ public class SkillManager {
         }
         List<Skill> filtered = getEnabledSkills().stream()
                 .filter(s -> skillNames.contains(s.getName()))
+                .filter(skill -> !hasSensitiveName(skill))
                 .toList();
         if (filtered.isEmpty()) {
             return "";
@@ -723,6 +745,9 @@ public class SkillManager {
                 .findFirst()
                 .orElse(null);
         if (skill == null) {
+            return null;
+        }
+        if (hasSensitiveName(skill)) {
             return null;
         }
         if (SensitiveDataRedactor.containsLikelyCredential(skill.getContent())) {
@@ -824,7 +849,8 @@ public class SkillManager {
      */
     public String buildBundlePrompt(String bundleName) {
         SkillBundle bundle = getBundle(bundleName);
-        if (bundle == null || bundle.skills.isEmpty()) {
+        if (bundle == null || bundle.skills.isEmpty()
+                || SensitiveDataRedactor.containsLikelyCredential(bundle.name)) {
             return "";
         }
         StringBuilder sb = new StringBuilder();
@@ -846,9 +872,22 @@ public class SkillManager {
         result.append("以下 ").append(loaded).append(" 项技能作为一组配合使用：\n");
         result.append(sb);
         if (bundle.extraInstructions != null && !bundle.extraInstructions.isBlank()) {
-            result.append("\n[本包附加指令]\n").append(bundle.extraInstructions.strip()).append("\n");
+            result.append("\n[本包附加指令]\n")
+                    .append(SensitiveDataRedactor.containsLikelyCredential(bundle.extraInstructions)
+                            ? "[附加指令包含疑似凭据，已隐藏]"
+                            : bundle.extraInstructions.strip())
+                    .append("\n");
         }
         return result.toString();
+    }
+
+    private static boolean hasSensitiveName(Skill skill) {
+        return SensitiveDataRedactor.containsLikelyCredential(skill.getName());
+    }
+
+    private static String redactCatalogValue(String value) {
+        if (value == null) return "";
+        return SensitiveDataRedactor.containsLikelyCredential(value) ? "[已隐藏]" : value;
     }
 
 }
