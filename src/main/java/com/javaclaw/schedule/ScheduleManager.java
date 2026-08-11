@@ -228,32 +228,36 @@ public class ScheduleManager {
     }
 
     /** 在单写串行器上执行一次内置任务的手动动作，并记录结果。 */
-    private void runBuiltinNow(String id) {
+    private RunNowResult runBuiltinNow(String id) {
         BuiltinRunner runner = builtins.action(id);
         ScheduledTask t = builtins.find(id);
         if (runner == null || t == null) {
             log.warn("系统内置任务无手动触发动作，忽略: {}", id);
-            return;
+            return RunNowResult.UNSUPPORTED;
         }
         try {
             taskDispatcher.submit("schedule-builtin-" + id, () -> {
-            runningTaskIds.add(id);
-            events.started(id);
-            long start = System.nanoTime();
-            try {
-                String note = runner.run();
-                recordBuiltinRun(id, true, (System.nanoTime() - start) / 1_000_000L, note);
-                taskLog.info("[内置:{}] 手动执行成功：{}", t.getName(), note);
-            } catch (Exception e) {
-                String msg = e.getMessage() == null ? e.toString() : e.getMessage();
-                recordBuiltinRun(id, false, (System.nanoTime() - start) / 1_000_000L, msg);
-                taskLog.warn("[内置:{}] 手动执行失败：{}", t.getName(), msg);
-            } finally {
-                runningTaskIds.remove(id);
-            }
-            }, () -> { });
+                runningTaskIds.add(id);
+                events.started(id);
+                long start = System.nanoTime();
+                try {
+                    String note = runner.run();
+                    recordBuiltinRun(id, true, (System.nanoTime() - start) / 1_000_000L, note);
+                    taskLog.info("[内置:{}] 手动执行成功：{}", t.getName(), note);
+                } catch (Exception failure) {
+                    String message = failure.getMessage() == null
+                            ? failure.toString() : failure.getMessage();
+                    recordBuiltinRun(id, false,
+                            (System.nanoTime() - start) / 1_000_000L, message);
+                    taskLog.warn("[内置:{}] 手动执行失败：{}", t.getName(), message);
+                } finally {
+                    runningTaskIds.remove(id);
+                }
+            }, () -> {});
+            return RunNowResult.STARTED;
         } catch (RejectedExecutionException rejected) {
             log.warn("系统内置任务执行队列已关闭，拒绝触发: {}", id);
+            return RunNowResult.UNSUPPORTED;
         }
     }
 
@@ -339,7 +343,8 @@ public class ScheduleManager {
 
     /** 首次保存 UI 草稿；保存后才成为正式定时任务。 */
     public synchronized ScheduledTask saveNewTask(ScheduledTask task) {
-        if (task == null || task.isBuiltin() || findTaskInternal(task.getId()) != null
+        if (task == null || task.isBuiltin() || isBuiltin(task.getId())
+                || findTaskInternal(task.getId()) != null
                 || builtins.find(task.getId()) != null) {
             throw new IllegalArgumentException("无效或重复的定时任务草稿");
         }
@@ -484,8 +489,7 @@ public class ScheduleManager {
         if (isBuiltin(id)) {
             if (!hasBuiltinAction(id)) return RunNowResult.UNSUPPORTED;
             if (runningTaskIds.contains(id)) return RunNowResult.ALREADY_ACTIVE;
-            runBuiltinNow(id);
-            return RunNowResult.STARTED;
+            return runBuiltinNow(id);
         }
         ScheduledTask task = findTaskInternal(id);
         if (task == null) return RunNowResult.NOT_FOUND;

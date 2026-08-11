@@ -36,6 +36,9 @@ final class BuiltinScheduleRegistry {
     AutoCloseable register(String id, ScheduleManager.BuiltinRunner runner) {
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(runner, "runner");
+        if (find(id) == null) {
+            throw new IllegalArgumentException("未知的系统内置任务：" + id);
+        }
         actions.put(id, runner);
         return () -> actions.remove(id, runner);
     }
