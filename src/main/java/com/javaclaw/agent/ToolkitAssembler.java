@@ -76,7 +76,8 @@ public final class ToolkitAssembler {
         tk.registration().tool(new McpTools(runtime.getMcpClientManager())).group("mcp").apply();
         // MCP 配置管理同属 mcp 组：可在对话中新增/更新/启停服务器，成功响应只在 H2 已提交后返回
         tk.registration().tool(new com.javaclaw.mcp.McpManageTools(
-                runtime.getMcpClientManager(), origin)).group("mcp").apply();
+                runtime.getMcpConfigManager(), runtime.getMcpClientManager(), origin))
+                .group("mcp").apply();
         // 站点凭据配置属于浏览器能力；与 web_expert 内的 site_save_session 互补：前者登记
         // 账号/元数据，后者保存当前已登录 BrowserContext。路由命中 web 即可直接使用。
         tk.registration().tool(new com.javaclaw.site.SiteCredentialTools(

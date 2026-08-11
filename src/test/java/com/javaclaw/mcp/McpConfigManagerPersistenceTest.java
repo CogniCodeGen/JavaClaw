@@ -52,6 +52,9 @@ class McpConfigManagerPersistenceTest {
         assertEquals("arg-secret", loaded.getArgs().get(1));
         assertEquals("env-secret", loaded.getEnv().get("INTERNAL"));
         assertEquals("Bearer header-secret", loaded.getHeaders().get("Authorization"));
+        loaded.setName("mutated-outside-repository");
+        assertEquals("remote", manager.getServer("remote").getName(),
+                "调用方不能通过可变配置对象污染仓储快照");
 
         try (var c = database.open();
              PreparedStatement ps = c.prepareStatement("""

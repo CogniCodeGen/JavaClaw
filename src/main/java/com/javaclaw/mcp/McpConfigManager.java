@@ -4,8 +4,6 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import com.javaclaw.config.AppDatabase;
-import com.javaclaw.config.AppDatabaseAccess;
 import com.javaclaw.config.CredentialEncryptor;
 import com.javaclaw.config.DatabaseAccess;
 import org.slf4j.Logger;
@@ -29,12 +27,9 @@ import java.util.function.UnaryOperator;
  *
  * @author JavaClaw
  */
-public class McpConfigManager {
+public final class McpConfigManager {
 
     private static final Logger log = LoggerFactory.getLogger(McpConfigManager.class);
-
-    /** 单例 */
-    private static McpConfigManager INSTANCE;
 
     private final ObjectMapper objectMapper;
     private final DatabaseAccess databaseAccess;
@@ -47,8 +42,15 @@ public class McpConfigManager {
     /** 内存配置快照所属工作区；写操作只使用该快照，禁止运行中重读可变全局值。 */
     private String loadedWorkspaceId;
 
-    private McpConfigManager() {
-        this(new AppDatabaseAccess(), AppDatabase::currentWorkspaceId,
+    /**
+     * 创建绑定到单一工作区的配置仓储。
+     *
+     * <p>实例由工作区 Spring Context 管理，不读取运行期可变的全局工作区状态；Context
+     * 关闭后实例应一并丢弃。所有返回值都是当前工作区快照，写操作在数据库提交成功后才
+     * 更新内存。该类型线程安全，但数据库操作仍应通过托管 I/O 执行器调用。</p>
+     */
+    public McpConfigManager(DatabaseAccess databaseAccess, String workspaceId) {
+        this(databaseAccess, () -> Objects.requireNonNull(workspaceId, "workspaceId"),
                 CredentialEncryptor::encrypt, CredentialEncryptor::decrypt);
     }
 
@@ -65,13 +67,6 @@ public class McpConfigManager {
         // 对历史 JSON 中的派生字段（如 "transport"）保持兼容：宽容未知字段，避免整份配置加载失败
         this.objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         load();
-    }
-
-    public static synchronized McpConfigManager getInstance() {
-        if (INSTANCE == null) {
-            INSTANCE = new McpConfigManager();
-        }
-        return INSTANCE;
     }
 
     /**
@@ -170,39 +165,43 @@ public class McpConfigManager {
     /**
      * 获取所有服务器配置
      */
-    public List<McpServerConfig> getAllServers() {
-        return new ArrayList<>(servers.values());
+    public synchronized List<McpServerConfig> getAllServers() {
+        return servers.values().stream().map(McpConfigManager::copyOf).toList();
     }
 
     /**
      * 获取所有启用的服务器配置
      */
-    public List<McpServerConfig> getEnabledServers() {
+    public synchronized List<McpServerConfig> getEnabledServers() {
         return servers.values().stream()
                 .filter(McpServerConfig::isEnabled)
+                .map(McpConfigManager::copyOf)
                 .toList();
     }
 
     /**
      * 根据名称获取服务器配置
      */
-    public McpServerConfig getServer(String name) {
-        return servers.get(name);
+    public synchronized McpServerConfig getServer(String name) {
+        McpServerConfig config = servers.get(name);
+        return config == null ? null : copyOf(config);
     }
 
     /**
      * 添加或更新服务器配置
      */
     public synchronized void putServer(McpServerConfig config) {
-        McpServerConfig previous = servers.put(config.getName(), config);
+        Objects.requireNonNull(config, "config");
+        McpServerConfig stored = copyOf(config);
+        McpServerConfig previous = servers.put(stored.getName(), stored);
         try {
             save();
         } catch (RuntimeException e) {
-            if (previous == null) servers.remove(config.getName());
-            else servers.put(config.getName(), previous);
+            if (previous == null) servers.remove(stored.getName());
+            else servers.put(stored.getName(), previous);
             throw e;
         }
-        log.info("MCP 服务器配置已更新: {}", config.getName());
+        log.info("MCP 服务器配置已更新: {}", stored.getName());
     }
 
     /**
@@ -215,6 +214,20 @@ public class McpConfigManager {
      */
     public synchronized McpServerConfig putServerChecked(McpServerConfig config) {
         Objects.requireNonNull(config, "config");
+        putServersChecked(List.of(config));
+        return config;
+    }
+
+    /**
+     * 在一个数据库事务中写入多条配置，提交成功后再整体更新内存快照。
+     */
+    public synchronized List<McpServerConfig> putServersChecked(
+            Collection<McpServerConfig> configurations) {
+        Objects.requireNonNull(configurations, "configurations");
+        List<McpServerConfig> values = configurations.stream()
+                .map(value -> copyOf(Objects.requireNonNull(value, "configuration")))
+                .toList();
+        if (values.isEmpty()) return values;
         String workspaceId = requireLoadedWorkspace();
         String upsert = """
                 MERGE INTO mcp_servers(
@@ -226,19 +239,22 @@ public class McpConfigManager {
         try (Connection c = databaseAccess.open();
              PreparedStatement ps = c.prepareStatement(upsert)) {
             c.setAutoCommit(false);
-            ps.setString(1, workspaceId);
-            ps.setString(2, config.getName());
-            ps.setString(3, config.getCommand());
-            ps.setString(4, encryptor.apply(objectMapper.writeValueAsString(config.getArgs())));
-            ps.setString(5, encryptor.apply(objectMapper.writeValueAsString(config.getEnv())));
-            ps.setString(6, encryptor.apply(config.getUrl()));
-            ps.setString(7, encryptor.apply(objectMapper.writeValueAsString(config.getHeaders())));
-            ps.setBoolean(8, config.isEnabled());
-            ps.executeUpdate();
+            for (McpServerConfig config : values) {
+                ps.setString(1, workspaceId);
+                ps.setString(2, config.getName());
+                ps.setString(3, config.getCommand());
+                ps.setString(4, encryptor.apply(objectMapper.writeValueAsString(config.getArgs())));
+                ps.setString(5, encryptor.apply(objectMapper.writeValueAsString(config.getEnv())));
+                ps.setString(6, encryptor.apply(config.getUrl()));
+                ps.setString(7, encryptor.apply(objectMapper.writeValueAsString(config.getHeaders())));
+                ps.setBoolean(8, config.isEnabled());
+                ps.addBatch();
+            }
+            ps.executeBatch();
             c.commit();
-            servers.put(config.getName(), config);
-            log.info("MCP 服务器配置已确认写入 H2: {}", config.getName());
-            return config;
+            values.forEach(config -> servers.put(config.getName(), copyOf(config)));
+            log.info("已确认向 H2 写入 {} 条 MCP 服务器配置", values.size());
+            return values;
         } catch (SQLException | IOException | RuntimeException e) {
             throw new IllegalStateException("MCP 配置写入 H2 失败: " + e.getMessage(), e);
         }
@@ -286,15 +302,27 @@ public class McpConfigManager {
     /**
      * 是否有启用的 MCP 服务器
      */
-    public boolean hasEnabledServers() {
+    public synchronized boolean hasEnabledServers() {
         return servers.values().stream().anyMatch(McpServerConfig::isEnabled);
     }
 
     /**
      * 获取配置文件路径（用于界面显示）
      */
-    public String getConfigFilePath() {
+    public synchronized String getConfigFilePath() {
         return databaseAccess.description();
+    }
+
+    private static McpServerConfig copyOf(McpServerConfig source) {
+        McpServerConfig copy = new McpServerConfig();
+        copy.setName(source.getName());
+        copy.setCommand(source.getCommand());
+        copy.setArgs(List.copyOf(source.getArgs()));
+        copy.setEnv(Map.copyOf(source.getEnv()));
+        copy.setUrl(source.getUrl());
+        copy.setHeaders(Map.copyOf(source.getHeaders()));
+        copy.setEnabled(source.isEnabled());
+        return copy;
     }
 
     private List<String> readStringList(String json) {

@@ -3,6 +3,9 @@ package com.javaclaw.mcp;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.javaclaw.platform.execution.TaskHandle;
+import com.javaclaw.platform.execution.TaskScope;
+import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.util.ProcessTerminator;
 import com.javaclaw.util.ProjectAccessPolicy;
 import com.javaclaw.util.SensitiveDataRedactor;
@@ -60,13 +63,15 @@ public class McpClient {
     }
 
     private final McpServerConfig config;
+    private final TaskScope tasks;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final AtomicInteger requestIdCounter = new AtomicInteger(1);
     private final Map<Integer, CompletableFuture<JsonNode>> pendingRequests = new ConcurrentHashMap<>();
 
     private Process process;
     private BufferedWriter writer;
-    private Thread readerThread;
+    private TaskHandle<Void> stdoutReader;
+    private TaskHandle<Void> stderrReader;
     private volatile boolean running = false;
 
     /** 服务器信息 */
@@ -99,8 +104,9 @@ public class McpClient {
     /** initialize 响应中由服务器分配的会话 ID（部分实现要求后续请求带回） */
     private volatile String mcpSessionId;
 
-    public McpClient(McpServerConfig config) {
-        this.config = config;
+    public McpClient(McpServerConfig config, TaskScope tasks) {
+        this.config = Objects.requireNonNull(config, "config");
+        this.tasks = Objects.requireNonNull(tasks, "tasks");
     }
 
     /**
@@ -224,29 +230,16 @@ public class McpClient {
         }
         running = true;
 
-        // 启动 stderr 日志线程
-        Thread stderrThread = new Thread(() -> {
-            try (BufferedReader errReader = new BufferedReader(
-                    new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = errReader.readLine()) != null) {
-                    String safeLine = SensitiveDataRedactor.redactText(line);
-                    appendStderr(safeLine);
-                    log.debug("[MCP:{}:stderr] 收到 {} 字符", config.getName(), line.length());
-                }
-            } catch (IOException e) {
-                if (running) {
-                    log.debug("MCP stderr 读取结束: {}", config.getName());
-                }
-            }
-        }, "mcp-stderr-" + config.getName());
-        stderrThread.setDaemon(true);
-        stderrThread.start();
-
-        // 启动 stdout 读取线程
-        readerThread = new Thread(this::readLoop, "mcp-reader-" + config.getName());
-        readerThread.setDaemon(true);
-        readerThread.start();
+        // 两条阻塞流均登记到工作区任务域；服务器或 Context 关闭时统一取消。
+        Process activeProcess = process;
+        stderrReader = tasks.submit(TaskSpec.io("mcp-stderr-" + config.getName()), context -> {
+            readStderr(activeProcess);
+            return null;
+        });
+        stdoutReader = tasks.submit(TaskSpec.io("mcp-stdout-" + config.getName()), context -> {
+            readLoop(activeProcess);
+            return null;
+        });
 
         // 发送 initialize 请求（含 clientInfo）
         ObjectNode initParams = objectMapper.createObjectNode();
@@ -547,9 +540,24 @@ public class McpClient {
     /**
      * 从 stdout 持续读取 JSON-RPC 消息的循环
      */
-    private void readLoop() {
+    private void readStderr(Process activeProcess) {
         try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                new InputStreamReader(activeProcess.getErrorStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while (running && (line = reader.readLine()) != null) {
+                appendStderr(SensitiveDataRedactor.redactText(line));
+                log.debug("[MCP:{}:stderr] 收到 {} 字符", config.getName(), line.length());
+            }
+        } catch (IOException failure) {
+            if (running) {
+                log.debug("MCP stderr 读取结束: {}", config.getName());
+            }
+        }
+    }
+
+    private void readLoop(Process activeProcess) {
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(activeProcess.getInputStream(), StandardCharsets.UTF_8))) {
             String line;
             while (running && (line = reader.readLine()) != null) {
                 line = line.trim();
@@ -626,9 +634,10 @@ public class McpClient {
             }
         }
 
-        if (readerThread != null) {
-            readerThread.interrupt();
-        }
+        cancelReader(stdoutReader);
+        cancelReader(stderrReader);
+        stdoutReader = null;
+        stderrReader = null;
 
         startedAtMs = 0L;
         // 失败状态保留以便 UI 展示错误；正常停止才回到 STOPPED
@@ -637,6 +646,10 @@ public class McpClient {
         }
 
         log.info("MCP 服务器已停止: {}", config.getName());
+    }
+
+    private static void cancelReader(TaskHandle<Void> reader) {
+        if (reader != null) reader.cancel();
     }
 
     /**

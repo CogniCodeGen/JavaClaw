@@ -12,6 +12,10 @@ import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.spring.ApplicationContexts;
+import com.javaclaw.mcp.McpClientManager;
+import com.javaclaw.mcp.McpConfigManager;
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.skill.SkillManager;
 import com.javaclaw.site.SiteCredentialManager;
 import com.javaclaw.task.sdd.run.SddManagedTask;
@@ -60,7 +64,13 @@ public final class SddHeadlessDriver {
         SiteCredentialManager siteCredentials = new SiteCredentialManager(
                 rootContext.getBean(DatabaseAccess.class),
                 WorkspaceManager.getInstance().getCurrentWorkspaceId());
-        AgentRuntime runtime = new AgentRuntime(browser, customAgents, siteCredentials);
+        McpConfigManager mcpConfigurations = new McpConfigManager(
+                rootContext.getBean(DatabaseAccess.class),
+                WorkspaceManager.getInstance().getCurrentWorkspaceId());
+        TaskScope taskScope = rootContext.getBean(ManagedTaskExecutor.class)
+                .openScope("sdd-headless", 256);
+        AgentRuntime runtime = new AgentRuntime(browser, customAgents, siteCredentials,
+                mcpConfigurations, new McpClientManager(mcpConfigurations, taskScope), taskScope);
 
         // 2. 配置 SDD 管理器（注入自动放行端口 → PortReviewGate 评审直接批准）
         SddTaskManager mgr = SddTaskManager.getInstance();
@@ -122,6 +132,7 @@ public final class SddHeadlessDriver {
         System.out.println("=============================================");
 
         try { runtime.shutdown(); } catch (Exception ignore) {}
+        taskScope.close();
         rootContext.close();
 
         // 退出码反映真实结果：COMPLETED → 0；超时 / FAILED / NEEDS_HUMAN / CANCELLED → 非零，

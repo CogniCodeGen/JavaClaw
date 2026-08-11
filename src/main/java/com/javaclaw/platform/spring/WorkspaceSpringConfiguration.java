@@ -12,12 +12,22 @@ import com.javaclaw.application.agent.AgentPromptOptimizationPort;
 import com.javaclaw.application.site.SiteCredentialApplicationService;
 import com.javaclaw.application.site.SiteCredentialPort;
 import com.javaclaw.application.site.SiteCredentialUseCase;
+import com.javaclaw.application.mcp.McpConfigurationPort;
+import com.javaclaw.application.mcp.McpImportPort;
+import com.javaclaw.application.mcp.McpManagementApplicationService;
+import com.javaclaw.application.mcp.McpManagementUseCase;
+import com.javaclaw.application.mcp.McpRuntimePort;
+import com.javaclaw.application.mcp.McpTemplatePort;
 import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.loop.LoopService;
 import com.javaclaw.infrastructure.agent.AgentPromptOptimizerAdapter;
 import com.javaclaw.infrastructure.agent.CustomAgentDefinitionAdapter;
 import com.javaclaw.infrastructure.site.SiteCredentialManagerAdapter;
+import com.javaclaw.infrastructure.mcp.McpClientManagerAdapter;
+import com.javaclaw.infrastructure.mcp.McpConfigManagerAdapter;
+import com.javaclaw.infrastructure.mcp.McpJsonImporterAdapter;
+import com.javaclaw.infrastructure.mcp.McpTemplateLibraryAdapter;
 import com.javaclaw.mode.ChatMode;
 import com.javaclaw.mode.LoopMode;
 import com.javaclaw.mode.PlanMode;
@@ -25,6 +35,8 @@ import com.javaclaw.mode.ShellMode;
 import com.javaclaw.mode.TaskMode;
 import com.javaclaw.mode.WorkflowCenterMode;
 import com.javaclaw.mode.WorkflowMode;
+import com.javaclaw.mcp.McpClientManager;
+import com.javaclaw.mcp.McpConfigManager;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.runtime.WorkspaceContext;
@@ -34,6 +46,15 @@ import com.javaclaw.ui.javafx.agent.AgentSettingsPanelFactory;
 import com.javaclaw.ui.javafx.site.SiteCredentialCardFactory;
 import com.javaclaw.ui.javafx.site.SiteCredentialEditorFactory;
 import com.javaclaw.ui.javafx.site.SiteCredentialPanelFactory;
+import com.javaclaw.ui.javafx.mcp.McpCenterViewFactory;
+import com.javaclaw.ui.javafx.mcp.McpImportDialogFactory;
+import com.javaclaw.ui.javafx.mcp.McpKeyValueRowFactory;
+import com.javaclaw.ui.javafx.mcp.McpLogDialogFactory;
+import com.javaclaw.ui.javafx.mcp.McpServerCardFactory;
+import com.javaclaw.ui.javafx.mcp.McpServerEditorFactory;
+import com.javaclaw.ui.javafx.mcp.McpTemplateCellFactory;
+import com.javaclaw.ui.javafx.mcp.McpTemplateDialogFactory;
+import com.javaclaw.ui.javafx.mcp.McpToolRowFactory;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.workflow.node.PublicNodeCatalog;
 import com.javaclaw.workflow.runtime.NodeExecutorRegistry;
@@ -64,8 +85,12 @@ public class WorkspaceSpringConfiguration {
     AgentRuntime agentRuntime(
             WorkspaceRuntimeOptions options,
             CustomAgentConfig customAgents,
-            SiteCredentialManager siteCredentials) {
-        return new AgentRuntime(options.browserManager(), customAgents, siteCredentials);
+            SiteCredentialManager siteCredentials,
+            McpConfigManager mcpConfigurations,
+            McpClientManager mcpClients,
+            TaskScope workspaceTaskScope) {
+        return new AgentRuntime(options.browserManager(), customAgents, siteCredentials,
+                mcpConfigurations, mcpClients, workspaceTaskScope);
     }
 
     @Bean
@@ -123,6 +148,103 @@ public class WorkspaceSpringConfiguration {
             DatabaseAccess databaseAccess,
             WorkspaceContext workspace) {
         return new SiteCredentialManager(databaseAccess, workspace.workspaceId());
+    }
+
+    @Bean
+    McpConfigManager mcpConfigManager(
+            DatabaseAccess databaseAccess,
+            WorkspaceContext workspace) {
+        return new McpConfigManager(databaseAccess, workspace.workspaceId());
+    }
+
+    @Bean
+    McpClientManager mcpClientManager(
+            McpConfigManager configurations,
+            TaskScope workspaceTaskScope) {
+        return new McpClientManager(configurations, workspaceTaskScope);
+    }
+
+    @Bean
+    McpConfigurationPort mcpConfigurationPort(McpConfigManager manager) {
+        return new McpConfigManagerAdapter(manager);
+    }
+
+    @Bean
+    McpRuntimePort mcpRuntimePort(McpClientManager manager) {
+        return new McpClientManagerAdapter(manager);
+    }
+
+    @Bean
+    McpImportPort mcpImportPort() {
+        return new McpJsonImporterAdapter();
+    }
+
+    @Bean
+    McpTemplatePort mcpTemplatePort() {
+        return new McpTemplateLibraryAdapter();
+    }
+
+    @Bean
+    McpManagementApplicationService mcpManagementApplicationService(
+            McpConfigurationPort configurations,
+            McpRuntimePort runtime,
+            McpImportPort importer,
+            McpTemplatePort templates) {
+        return new McpManagementUseCase(configurations, runtime, importer, templates);
+    }
+
+    @Bean
+    McpToolRowFactory mcpToolRowFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new McpToolRowFactory(loader);
+    }
+
+    @Bean
+    McpServerCardFactory mcpServerCardFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new McpServerCardFactory(loader);
+    }
+
+    @Bean
+    McpKeyValueRowFactory mcpKeyValueRowFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new McpKeyValueRowFactory(loader);
+    }
+
+    @Bean
+    McpServerEditorFactory mcpServerEditorFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new McpServerEditorFactory(loader);
+    }
+
+    @Bean
+    McpTemplateCellFactory mcpTemplateCellFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new McpTemplateCellFactory(loader);
+    }
+
+    @Bean
+    McpTemplateDialogFactory mcpTemplateDialogFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new McpTemplateDialogFactory(loader);
+    }
+
+    @Bean
+    McpImportDialogFactory mcpImportDialogFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new McpImportDialogFactory(loader);
+    }
+
+    @Bean
+    McpLogDialogFactory mcpLogDialogFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new McpLogDialogFactory(loader);
+    }
+
+    @Bean
+    McpCenterViewFactory mcpCenterViewFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new McpCenterViewFactory(loader);
     }
 
     @Bean

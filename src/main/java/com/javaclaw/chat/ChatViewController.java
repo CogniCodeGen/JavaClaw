@@ -2346,10 +2346,10 @@ public class ChatViewController implements AutoCloseable {
         log.info("打开设置对话框{}", category != null ? "（直达：" + category + "）" : "");
         javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
         SettingsView settingsView = new SettingsView(ownerStage,
-                runtime != null ? runtime.getMcpClientManager() : null,
                 runtime != null ? runtime.getEmbeddingGateway() : null,
                 applicationKernel.current().agentSettingsPanels(),
-                applicationKernel.current().siteCredentialPanels());
+                applicationKernel.current().siteCredentialPanels(),
+                applicationKernel.current().mcpCenters());
         settingsView.setOnModelConfigChanged(this::rebuildAgentService);
         settingsView.show(category);
     }
@@ -2614,9 +2614,9 @@ public class ChatViewController implements AutoCloseable {
     private void openMcpServers() {
         log.info("打开 MCP 服务器窗口");
         javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
-        com.javaclaw.ui.javafx.mcp.McpSettingsView mcpView = new com.javaclaw.ui.javafx.mcp.McpSettingsView();
-        mcpView.setMcpClientManager(runtime.getMcpClientManager());
-        mcpView.showAsWindow(ownerStage);
+        applicationKernel.current().mcpCenters()
+                .createWindow(ownerStage, this::rebuildAgentService)
+                .show();
     }
 
     /**

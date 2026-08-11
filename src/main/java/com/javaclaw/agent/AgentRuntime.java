@@ -11,6 +11,9 @@ import com.javaclaw.config.AgentConfig;
 import com.javaclaw.mcp.McpClientManager;
 import com.javaclaw.mcp.McpConfigManager;
 import com.javaclaw.memory.embed.EmbeddingGateway;
+import com.javaclaw.platform.execution.TaskHandle;
+import com.javaclaw.platform.execution.TaskScope;
+import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.site.SiteCredentialManager;
 import com.javaclaw.util.ProjectAccessPolicy;
 import io.agentscope.core.message.Base64Source;
@@ -97,6 +100,12 @@ public final class AgentRuntime {
     /** MCP 客户端管理器（启动时自动连接启用的 MCP Server） */
     private final McpClientManager mcpClientManager;
 
+    /** 当前工作区 MCP 配置仓储；配置管理工具与运行时共享同一实例。 */
+    private final McpConfigManager mcpConfigManager;
+
+    /** MCP 初始连接由工作区任务域承载，Context 关闭时可协作取消。 */
+    private final TaskHandle<Void> mcpStartup;
+
     /** 视觉预处理器（把图片附件一次性转文本描述） */
     private final VisionPreprocessor visionPreprocessor;
 
@@ -121,7 +130,10 @@ public final class AgentRuntime {
     public AgentRuntime(
             PlaywrightBrowserManager browserManager,
             com.javaclaw.agent.expert.CustomAgentConfig customAgentConfig,
-            SiteCredentialManager siteCredentialManager) {
+            SiteCredentialManager siteCredentialManager,
+            McpConfigManager mcpConfigManager,
+            McpClientManager mcpClientManager,
+            TaskScope workspaceTasks) {
         AgentConfig config = AgentConfig.getInstance();
         log.info("========== 初始化 AgentRuntime 基础设施 ==========");
         log.info("API 地址: {}", config.getBaseUrl());
@@ -132,6 +144,11 @@ public final class AgentRuntime {
                 customAgentConfig, "customAgentConfig");
         this.siteCredentialManager = java.util.Objects.requireNonNull(
                 siteCredentialManager, "siteCredentialManager");
+        this.mcpConfigManager = java.util.Objects.requireNonNull(
+                mcpConfigManager, "mcpConfigManager");
+        this.mcpClientManager = java.util.Objects.requireNonNull(
+                mcpClientManager, "mcpClientManager");
+        java.util.Objects.requireNonNull(workspaceTasks, "workspaceTasks");
 
         // 1. ModelFactory：共享 HttpTransport，所有模型实例共用
         this.modelFactory = new ModelFactory();
@@ -156,16 +173,23 @@ public final class AgentRuntime {
                 ToolCallOrigin.INTERACTIVE, customAgentConfig);
         this.knowledgeExpert = new KnowledgeExpert(modelFactory, embeddingGateway);
 
-        // 6. MCP 客户端：启动所有启用的 MCP Server
-        this.mcpClientManager = new McpClientManager();
-        if (McpConfigManager.getInstance().hasEnabledServers()) {
-            try {
+        // 6. MCP 客户端：连接可能涉及进程和网络 I/O，不阻塞 Spring/JavaFX 启动线程。
+        if (mcpConfigManager.hasEnabledServers()) {
+            this.mcpStartup = workspaceTasks.submit(TaskSpec.io("mcp-start-enabled"), context -> {
+                context.cancellation().throwIfCancellationRequested();
                 mcpClientManager.startAll();
                 log.info("MCP 客户端已启动");
-            } catch (Exception e) {
-                log.warn("MCP 启动失败（不影响其他功能）: {}", e.getMessage());
-            }
+                return null;
+            });
+            mcpStartup.completion().exceptionally(failure -> {
+                if (!mcpStartup.state().isTerminal()
+                        || mcpStartup.state() == com.javaclaw.platform.execution.TaskState.FAILED) {
+                    log.warn("MCP 启动失败（不影响其他功能）: {}", failure.getMessage());
+                }
+                return null;
+            });
         } else {
+            this.mcpStartup = null;
             log.info("没有启用的 MCP 服务器，跳过 MCP 初始化");
         }
 
@@ -203,6 +227,7 @@ public final class AgentRuntime {
     public KnowledgeExpert getKnowledgeExpert() { return knowledgeExpert; }
     public EmbeddingGateway getEmbeddingGateway() { return embeddingGateway; }
     public McpClientManager getMcpClientManager() { return mcpClientManager; }
+    public McpConfigManager getMcpConfigManager() { return mcpConfigManager; }
     public VisionPreprocessor getVisionPreprocessor() { return visionPreprocessor; }
     public PlaywrightBrowserManager getBrowserManager() { return browserManager; }
     public SiteCredentialManager getSiteCredentialManager() { return siteCredentialManager; }
@@ -483,6 +508,9 @@ public final class AgentRuntime {
      */
     public void shutdown() {
         log.info("正在关闭 AgentRuntime...");
+        if (mcpStartup != null) {
+            mcpStartup.cancel();
+        }
         mcpClientManager.stopAll();
         try {
             knowledgeExpert.close();

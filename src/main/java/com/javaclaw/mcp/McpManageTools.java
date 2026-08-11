@@ -42,8 +42,11 @@ public final class McpManageTools {
     private final ServerStore store;
     private final ServerRuntime runtime;
 
-    public McpManageTools(McpClientManager clientManager, ToolCallOrigin origin) {
-        this(origin, liveStore(), liveRuntime(Objects.requireNonNull(clientManager, "clientManager")));
+    public McpManageTools(McpConfigManager configManager,
+                          McpClientManager clientManager,
+                          ToolCallOrigin origin) {
+        this(origin, liveStore(Objects.requireNonNull(configManager, "configManager")),
+                liveRuntime(Objects.requireNonNull(clientManager, "clientManager")));
     }
 
     McpManageTools(ToolCallOrigin origin, ServerStore store, ServerRuntime runtime) {
@@ -341,8 +344,7 @@ public final class McpManageTools {
         return copy;
     }
 
-    private static ServerStore liveStore() {
-        McpConfigManager manager = McpConfigManager.getInstance();
+    private static ServerStore liveStore(McpConfigManager manager) {
         return new ServerStore() {
             @Override public List<McpServerConfig> all() { return manager.getAllServers(); }
             @Override public McpServerConfig get(String name) { return manager.getServer(name); }

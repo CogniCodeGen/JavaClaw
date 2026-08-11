@@ -19,7 +19,6 @@ import com.javaclaw.platform.spring.ApplicationContexts;
 import com.javaclaw.platform.spring.WorkspaceSpringContextFactory;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeCenterView;
 import com.javaclaw.ui.javafx.memory.MemoryCenterView;
-import com.javaclaw.ui.javafx.mcp.McpSettingsView;
 import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
 import com.javaclaw.ui.javafx.schedule.ScheduleView;
 import com.javaclaw.ui.javafx.skill.SkillCenterView;
@@ -124,10 +123,10 @@ public final class UiScreenshotExporter {
 
             shots.add(new Shot("01-main-chat.png", "JavaClaw 智能助手", null));
             shots.add(new Shot("02-settings.png", "设置", () -> showInternalStage(
-                    new SettingsView(primaryStage, runtime.getMcpClientManager(),
-                            runtime.getEmbeddingGateway(),
+                    new SettingsView(primaryStage, runtime.getEmbeddingGateway(),
                             workspaceRuntime.agentSettingsPanels(),
-                            workspaceRuntime.siteCredentialPanels()))));
+                            workspaceRuntime.siteCredentialPanels(),
+                            workspaceRuntime.mcpCenters()))));
             shots.add(new Shot("03-knowledge-center.png", "知识库中心", () ->
                     new KnowledgeCenterView(primaryStage, runtime.getKnowledgeExpert(), port,
                             () -> {}, () -> {},
@@ -141,9 +140,7 @@ public final class UiScreenshotExporter {
             shots.add(new Shot("06-task-center.png", "托管任务", () ->
                     new SddTaskView(primaryStage).show()));
             shots.add(new Shot("07-mcp-servers.png", "MCP 服务器", () -> {
-                McpSettingsView view = new McpSettingsView();
-                view.setMcpClientManager(runtime.getMcpClientManager());
-                view.showAsWindow(primaryStage);
+                workspaceRuntime.mcpCenters().createWindow(primaryStage, () -> { }).show();
             }));
             shots.add(new Shot("08-schedule-center.png", "定时任务", () ->
                     showInternalStage(new ScheduleView(primaryStage))));

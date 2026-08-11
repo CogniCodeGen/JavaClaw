@@ -3,9 +3,7 @@ package com.javaclaw.config;
 import com.javaclaw.ui.javafx.agent.AgentSettingsPanel;
 import com.javaclaw.ui.javafx.agent.AgentSettingsPanelFactory;
 import com.javaclaw.app.UIHelper;
-import com.javaclaw.mcp.McpClientManager;
 import com.javaclaw.ui.javafx.control.ToggleSwitch;
-import com.javaclaw.ui.javafx.mcp.McpSettingsView;
 import com.javaclaw.ui.javafx.site.SiteCredentialPanel;
 import com.javaclaw.ui.javafx.site.SiteCredentialPanelFactory;
 import javafx.animation.PauseTransition;
@@ -39,14 +37,14 @@ public class SettingsView {
     private final AgentConfig agentConfig;
     private final NotificationConfig notificationConfig;
     private Runnable onModelConfigChanged;
-    /** 可选：注入后 MCP 设置面板可显示运行状态、热启停、测试连接 */
-    private McpClientManager mcpClientManager;
     /** 可选：设置、记忆、知识和主界面共享的嵌入健康来源。 */
     private final com.javaclaw.memory.embed.EmbeddingGateway embeddingGateway;
     private final AgentSettingsPanelFactory agentSettingsPanels;
     private AgentSettingsPanel agentSettingsPanel;
     private final SiteCredentialPanelFactory siteCredentialPanels;
     private SiteCredentialPanel siteCredentialPanel;
+    private final com.javaclaw.ui.javafx.mcp.McpCenterViewFactory mcpCenters;
+    private com.javaclaw.ui.javafx.mcp.McpCenterView mcpCenter;
 
     // 布局容器
     private VBox categoryList;
@@ -222,19 +220,20 @@ public class SettingsView {
     private PasswordField lightApiKeyField;
     private ToggleSwitch lightThinkingEnabledCheck;
 
-    public SettingsView(Stage owner, McpClientManager mcpClientManager,
+    public SettingsView(Stage owner,
                         com.javaclaw.memory.embed.EmbeddingGateway embeddingGateway,
                         AgentSettingsPanelFactory agentSettingsPanels,
-                        SiteCredentialPanelFactory siteCredentialPanels) {
+                        SiteCredentialPanelFactory siteCredentialPanels,
+                        com.javaclaw.ui.javafx.mcp.McpCenterViewFactory mcpCenters) {
         this.emailConfig = EmailConfig.getInstance();
         this.agentConfig = AgentConfig.getInstance();
         this.notificationConfig = NotificationConfig.getInstance();
-        this.mcpClientManager = mcpClientManager;
         this.embeddingGateway = embeddingGateway;
         this.agentSettingsPanels = java.util.Objects.requireNonNull(
                 agentSettingsPanels, "agentSettingsPanels");
         this.siteCredentialPanels = java.util.Objects.requireNonNull(
                 siteCredentialPanels, "siteCredentialPanels");
+        this.mcpCenters = java.util.Objects.requireNonNull(mcpCenters, "mcpCenters");
         this.stage = new Stage();
         stage.initModality(Modality.WINDOW_MODAL);
         stage.initOwner(owner);
@@ -310,10 +309,8 @@ public class SettingsView {
         addCategoryGroup("外部集成");
 
         // MCP 服务器：组件型面板，自管理
-        McpSettingsView mcpSettingsView = new McpSettingsView();
-        mcpSettingsView.setOnConfigChanged(onModelConfigChanged);
-        mcpSettingsView.setMcpClientManager(mcpClientManager);
-        Node mcpPanel = mcpSettingsView.buildPanel();
+        mcpCenter = mcpCenters.createPanel(this::notifyModelConfigChanged);
+        Node mcpPanel = mcpCenter.root();
         addCategory("MCP 服务器", mcpPanel, false,
                 "mcp model context protocol server 服务器 claude desktop");
         registerPanelActions(mcpPanel, PanelActions.none());
@@ -523,6 +520,10 @@ public class SettingsView {
             if (siteCredentialPanel != null) {
                 siteCredentialPanel.close();
                 siteCredentialPanel = null;
+            }
+            if (mcpCenter != null) {
+                mcpCenter.close();
+                mcpCenter = null;
             }
         });
 
