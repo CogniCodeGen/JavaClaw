@@ -20,6 +20,11 @@ public final class AccessibleActionPane extends VBox {
 
     private Runnable accessibleAction = () -> {};
 
+    /** FXML 构造入口；间距由 FXML 属性设置。 */
+    public AccessibleActionPane() {
+        this(0);
+    }
+
     public AccessibleActionPane(double spacing, Node... children) {
         super(spacing, children);
         setAccessibleRole(AccessibleRole.BUTTON);

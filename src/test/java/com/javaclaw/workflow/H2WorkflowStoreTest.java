@@ -1,6 +1,7 @@
 package com.javaclaw.workflow;
 
 import com.javaclaw.config.FileDatabaseAccess;
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.workflow.editor.WorkflowEditorModel;
 import com.javaclaw.workflow.model.GraphDefinition;
 import com.javaclaw.workflow.model.GraphState;
@@ -40,7 +41,8 @@ class H2WorkflowStoreTest {
             assertNull(new H2WorkflowDefinitionStore("ws-other", database).get(draft.id()));
 
             var checkpoints = new H2GraphCheckpointStore(workspace, database);
-            try (var executions = new GraphExecutionManager(registry, checkpoints)) {
+            try (var tasks = new ManagedTaskExecutor();
+                 var executions = new GraphExecutionManager(registry, checkpoints, tasks)) {
                 CountDownLatch done = new CountDownLatch(1);
                 var run = executions.start(published.published(), "thread", new com.javaclaw.workflow.model.GraphState(),
                         event -> { if (event instanceof GraphEvent.RunFinished) done.countDown(); }, Map.of());
@@ -82,7 +84,8 @@ class H2WorkflowStoreTest {
             var createdBeforeCrash = new com.javaclaw.workflow.runtime.GraphRun(
                     published.published(), "created-before-crash", new GraphState());
             checkpoints.createRun(createdBeforeCrash);
-            try (var startup = new GraphExecutionManager(registry, checkpoints)) {
+            try (var tasks = new ManagedTaskExecutor();
+                 var startup = new GraphExecutionManager(registry, checkpoints, tasks)) {
                 assertEquals(RunStatus.RECOVERY_REQUIRED,
                         checkpoints.loadRun(createdBeforeCrash.id()).status());
             }

@@ -11,6 +11,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -158,6 +159,35 @@ class ManagedTaskExecutorTest {
         assertThrows(java.util.concurrent.RejectedExecutionException.class,
                 () -> first.submit(TaskSpec.io("late"), context -> null));
         second.close();
+    }
+
+    @Test
+    void scopeStillAwaitsPhysicalTerminationAfterHandleWasAlreadyCancelled() throws Exception {
+        executor = new ManagedTaskExecutor(testLimits());
+        TaskScope scope = executor.openScope("termination", 1);
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch cleanupFinished = new CountDownLatch(1);
+        AtomicBoolean interrupted = new AtomicBoolean();
+        TaskHandle<Void> handle = scope.submit(TaskSpec.io("cancel-before-close"), context -> {
+            started.countDown();
+            try {
+                new CountDownLatch(1).await();
+            } catch (InterruptedException expected) {
+                interrupted.set(true);
+            } finally {
+                Thread.sleep(80);
+                cleanupFinished.countDown();
+            }
+            return null;
+        });
+        assertTrue(started.await(1, TimeUnit.SECONDS));
+
+        handle.cancel();
+        scope.close();
+
+        assertTrue(interrupted.get());
+        assertEquals(0, cleanupFinished.getCount(),
+                "作用域关闭必须等待已取消任务的 finally 清理完成");
     }
 
     private ExecutionLimits testLimits() {

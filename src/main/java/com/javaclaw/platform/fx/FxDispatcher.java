@@ -29,6 +29,11 @@ public final class FxDispatcher {
         this.enqueue = Objects.requireNonNull(enqueue, "enqueue");
     }
 
+    /** 当前调用是否已经位于 JavaFX Application Thread。 */
+    public boolean isFxThread() {
+        return isFxThread.getAsBoolean();
+    }
+
     public void dispatch(Runnable action) {
         Objects.requireNonNull(action, "action");
         if (isFxThread.getAsBoolean()) {

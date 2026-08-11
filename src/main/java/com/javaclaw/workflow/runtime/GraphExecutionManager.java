@@ -1,5 +1,8 @@
 package com.javaclaw.workflow.runtime;
 
+import com.javaclaw.platform.execution.TaskHandle;
+import com.javaclaw.platform.execution.TaskSpec;
+import com.javaclaw.platform.execution.TaskSubmitter;
 import com.javaclaw.workflow.model.GraphDefinition;
 import com.javaclaw.workflow.model.GraphState;
 import com.javaclaw.workflow.model.ResumeSafety;
@@ -7,12 +10,16 @@ import com.javaclaw.workflow.model.RunStatus;
 import com.javaclaw.workflow.model.StatePatch;
 import com.javaclaw.workflow.store.GraphCheckpointStore;
 
+import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** 工作区级图执行生命周期管理器。 */
@@ -21,20 +28,18 @@ public final class GraphExecutionManager implements AutoCloseable {
     private final NodeExecutorRegistry registry;
     private final GraphCheckpointStore store;
     private final GraphEngine engine;
-    private final ExecutorService executor;
+    private final TaskSubmitter tasks;
     private final ConcurrentHashMap<String, CancellationToken> active = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, TaskHandle<Void>> handles = new ConcurrentHashMap<>();
     /** 同一 thread 同时只允许一个运行，避免共享 thread state 被并发覆盖。 */
     private final ConcurrentHashMap<String, String> activeThreads = new ConcurrentHashMap<>();
-
-    public GraphExecutionManager(NodeExecutorRegistry registry, GraphCheckpointStore store) {
-        this(registry, store, Executors.newVirtualThreadPerTaskExecutor());
-    }
+    private final AtomicBoolean accepting = new AtomicBoolean(true);
 
     public GraphExecutionManager(NodeExecutorRegistry registry, GraphCheckpointStore store,
-                                 ExecutorService executor) {
+                                 TaskSubmitter tasks) {
         this.registry = Objects.requireNonNull(registry);
         this.store = Objects.requireNonNull(store);
-        this.executor = Objects.requireNonNull(executor);
+        this.tasks = Objects.requireNonNull(tasks);
         this.engine = new GraphEngine(this.registry, store);
         store.markRunningAsRecoveryRequired();
     }
@@ -119,6 +124,9 @@ public final class GraphExecutionManager implements AutoCloseable {
     public boolean isActive(String runId) { return active.containsKey(runId); }
 
     private CancellationToken reserve(GraphRun run) {
+        if (!accepting.get()) {
+            throw new RejectedExecutionException("工作流执行器已关闭");
+        }
         CancellationToken token = new CancellationToken();
         if (active.putIfAbsent(run.id(), token) != null) {
             throw new IllegalStateException("运行已在执行: " + run.id());
@@ -135,7 +143,8 @@ public final class GraphExecutionManager implements AutoCloseable {
 
     private void schedule(GraphRun run, CancellationToken token,
                           GraphListener listener, Map<Class<?>, Object> services) {
-        executor.submit(() -> {
+        TaskHandle<Void> handle = tasks.submit(TaskSpec.io("workflow-run-" + run.id()), context -> {
+            context.cancellation().throwIfCancellationRequested();
             AtomicReference<GraphEvent.RunFinished> terminal = new AtomicReference<>();
             GraphListener lifecycleListener = event -> {
                 if (event instanceof GraphEvent.RunFinished finished) terminal.set(finished);
@@ -153,7 +162,14 @@ public final class GraphExecutionManager implements AutoCloseable {
                     catch (Throwable ignored) { }
                 }
             }
+            return null;
         });
+        handles.put(run.id(), handle);
+        handle.completion().whenComplete((ignored, failure) -> handles.remove(run.id(), handle));
+        if (!accepting.get()) {
+            token.cancel();
+            handle.cancel();
+        }
     }
 
     private void release(GraphRun run, CancellationToken token) {
@@ -163,7 +179,7 @@ public final class GraphExecutionManager implements AutoCloseable {
 
     private void markSchedulingFailure(GraphRun run, Throwable failure) {
         run.status(RunStatus.FAILED);
-        run.error("工作流执行线程提交失败: " + failure.getMessage());
+        run.error("工作流任务提交失败: " + failure.getMessage());
         try {
             store.updateRun(run);
         } catch (Throwable persistFailure) {
@@ -173,16 +189,34 @@ public final class GraphExecutionManager implements AutoCloseable {
 
     @Override
     public void close() {
+        if (!accepting.compareAndSet(true, false)) return;
         for (CancellationToken token : active.values()) token.cancel();
-        executor.shutdown();
-        try {
-            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) executor.shutdownNow();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            executor.shutdownNow();
-        } finally {
-            active.clear();
-            activeThreads.clear();
+        List<TaskHandle<Void>> snapshot = List.copyOf(handles.values());
+        awaitGracefulCompletion(snapshot, Duration.ofSeconds(5));
+        for (TaskHandle<Void> handle : snapshot) {
+            if (!handle.state().isTerminal()) handle.cancel();
+        }
+        active.clear();
+        activeThreads.clear();
+        handles.clear();
+    }
+
+    private static void awaitGracefulCompletion(
+            List<? extends TaskHandle<?>> taskHandles, Duration timeout) {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        for (TaskHandle<?> handle : taskHandles) {
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) return;
+            try {
+                handle.completion().get(remaining, TimeUnit.NANOSECONDS);
+            } catch (ExecutionException ignored) {
+                // 失败也是终态；继续等待其他运行完成自身清理。
+            } catch (TimeoutException ignored) {
+                return;
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            }
         }
     }
 }

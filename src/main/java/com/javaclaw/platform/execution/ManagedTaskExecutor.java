@@ -80,10 +80,9 @@ public final class ManagedTaskExecutor implements TaskSubmitter, AutoCloseable {
         Map<String, String> mdc = MDC.getCopyOfContextMap();
         Handle<T> handle = new Handle<>(UUID.randomUUID().toString(), spec);
         handles.put(handle.id(), handle);
-        handle.completion().whenComplete((ignored, failure) -> {
-            handles.remove(handle.id(), handle);
-            handle.cancelTimeout();
-        });
+        handle.completion().whenComplete((ignored, failure) -> handle.cancelTimeout());
+        handle.termination().whenComplete((ignored, failure) ->
+                handles.remove(handle.id(), handle));
 
         Duration timeout = spec.timeout();
         if (!timeout.isZero()) {
@@ -249,6 +248,17 @@ public final class ManagedTaskExecutor implements TaskSubmitter, AutoCloseable {
         } catch (ExecutionException | TimeoutException ignored) {
             // 关闭协议有明确时间上限；任务已收到取消和中断，不无限阻塞调用线程。
         }
+    }
+
+    /**
+     * 在承载线程真正退出后执行回调。完成 future 在取消时会先进入终态，不能用它判断
+     * 资源已经释放；该内部钩子供 {@link TaskScope} 保持准确的生命周期登记。
+     */
+    void whenTerminated(TaskHandle<?> taskHandle, Runnable callback) {
+        if (!(taskHandle instanceof Handle<?> handle)) {
+            throw new IllegalArgumentException("任务句柄不属于当前托管执行器");
+        }
+        handle.termination().whenComplete((ignored, failure) -> callback.run());
     }
 
     private ExecutorService executorFor(Workload workload) {

@@ -14,7 +14,7 @@ import com.javaclaw.platform.fxml.ViewHandle;
 import com.javaclaw.platform.spring.ApplicationContexts;
 import com.javaclaw.platform.spring.WorkspaceSpringContextFactory;
 import com.javaclaw.ui.javafx.task.SddTaskView;
-import com.javaclaw.ui.javafx.workflow.WorkflowCenterView;
+import com.javaclaw.ui.javafx.workflow.WorkflowView;
 import com.javaclaw.ui.javafx.JfxUserInteractionPort;
 import com.javaclaw.ui.javafx.SystemTrayManager;
 import com.javaclaw.ui.javafx.onboarding.OnboardingViewFactory;
@@ -63,7 +63,7 @@ public class JavaClawApp extends Application {
     private AnnotationConfigApplicationContext springContext;
     private FxDispatcher fxDispatcher;
     /** 工作流中心为工作区级单实例，避免多窗口草稿互相覆盖。 */
-    private volatile WorkflowCenterView workflowCenterView;
+    private volatile WorkflowView workflowCenterView;
 
     /** 主窗口引用（托盘恢复/隐藏时使用） */
     private Stage primaryStage;
@@ -246,7 +246,7 @@ public class JavaClawApp extends Application {
             log.warn("工作区运行时切换中，暂不打开工作流中心");
             return;
         }
-        WorkflowCenterView currentView = workflowCenterView;
+        WorkflowView currentView = workflowCenterView;
         if (currentView != null && currentView.isShowing()) {
             currentView.show();
             return;
@@ -258,10 +258,8 @@ public class JavaClawApp extends Application {
             log.warn("当前没有可用运行时，暂不打开工作流中心");
             return;
         }
-        WorkflowCenterView created = new WorkflowCenterView(
-                primaryStage,
-                currentRuntime.workflowService(),
-                published -> {
+        WorkflowView created = currentRuntime.workflowViews().create(
+                primaryStage, published -> {
                     if (chatView != null) {
                         chatView.onWorkflowPublished(published.id(), published.name());
                     }
@@ -271,7 +269,7 @@ public class JavaClawApp extends Application {
     }
 
     private void closeWorkflowCenter() {
-        WorkflowCenterView currentView = workflowCenterView;
+        WorkflowView currentView = workflowCenterView;
         if (currentView == null) return;
         currentView.close();
         workflowCenterView = null;

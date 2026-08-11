@@ -1,6 +1,10 @@
 package com.javaclaw.workflow;
 
 import com.javaclaw.config.FileDatabaseAccess;
+import com.javaclaw.platform.execution.ManagedTask;
+import com.javaclaw.platform.execution.TaskHandle;
+import com.javaclaw.platform.execution.TaskSpec;
+import com.javaclaw.platform.execution.TaskSubmitter;
 import com.javaclaw.workflow.editor.WorkflowEditorModel;
 import com.javaclaw.workflow.model.GraphState;
 import com.javaclaw.workflow.model.RunStatus;
@@ -16,9 +20,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 import java.util.Map;
-import java.util.concurrent.AbstractExecutorService;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -62,7 +64,7 @@ class WorkflowRunLifecycleTest {
         var runs = store.listRuns(graph.id(), 10);
         assertEquals(1, runs.size());
         assertEquals(RunStatus.FAILED, runs.getFirst().status());
-        assertTrue(runs.getFirst().error().contains("线程提交失败"));
+        assertTrue(runs.getFirst().error().contains("任务提交失败"));
     }
 
     private static com.javaclaw.workflow.model.GraphDefinition validGraph() {
@@ -77,17 +79,9 @@ class WorkflowRunLifecycleTest {
                 null, null, null, now, now);
     }
 
-    private static final class RejectingExecutor extends AbstractExecutorService {
-        private boolean shutdown;
-        @Override public void shutdown() { shutdown = true; }
-        @Override public java.util.List<Runnable> shutdownNow() {
-            shutdown = true;
-            return java.util.List.of();
-        }
-        @Override public boolean isShutdown() { return shutdown; }
-        @Override public boolean isTerminated() { return shutdown; }
-        @Override public boolean awaitTermination(long timeout, TimeUnit unit) { return shutdown; }
-        @Override public void execute(Runnable command) {
+    private static final class RejectingExecutor implements TaskSubmitter {
+        @Override
+        public <T> TaskHandle<T> submit(TaskSpec spec, ManagedTask<T> task) {
             throw new RejectedExecutionException("test rejection");
         }
     }

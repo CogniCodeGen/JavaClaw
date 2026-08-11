@@ -22,6 +22,9 @@ import com.javaclaw.application.mcp.McpTemplatePort;
 import com.javaclaw.application.memory.MemoryApplicationService;
 import com.javaclaw.application.memory.MemoryPort;
 import com.javaclaw.application.memory.MemoryUseCase;
+import com.javaclaw.application.workflow.WorkflowApplicationService;
+import com.javaclaw.application.workflow.WorkflowPort;
+import com.javaclaw.application.workflow.WorkflowUseCase;
 import com.javaclaw.application.settings.ModelSettingsApplicationService;
 import com.javaclaw.application.settings.BehaviorSettingsApplicationService;
 import com.javaclaw.application.settings.BehaviorSettingsPort;
@@ -38,6 +41,7 @@ import com.javaclaw.application.schedule.ScheduleApplicationService;
 import com.javaclaw.application.schedule.SchedulePort;
 import com.javaclaw.application.schedule.ScheduleUseCase;
 import com.javaclaw.api.conversation.ModeRegistry;
+import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.loop.LoopService;
 import com.javaclaw.infrastructure.agent.AgentPromptOptimizerAdapter;
@@ -48,6 +52,7 @@ import com.javaclaw.infrastructure.mcp.McpConfigManagerAdapter;
 import com.javaclaw.infrastructure.mcp.McpJsonImporterAdapter;
 import com.javaclaw.infrastructure.mcp.McpTemplateLibraryAdapter;
 import com.javaclaw.infrastructure.memory.MemoryServiceAdapter;
+import com.javaclaw.infrastructure.workflow.WorkflowServiceAdapter;
 import com.javaclaw.infrastructure.settings.AgentConfigModelSettingsAdapter;
 import com.javaclaw.infrastructure.settings.AgentConfigBehaviorSettingsAdapter;
 import com.javaclaw.infrastructure.settings.EmbeddingGatewayRuntimeProbeAdapter;
@@ -100,6 +105,12 @@ import com.javaclaw.ui.javafx.schedule.ScheduleViewFactory;
 import com.javaclaw.ui.javafx.memory.MemoryComponentFactory;
 import com.javaclaw.ui.javafx.memory.MemoryFactDialogFactory;
 import com.javaclaw.ui.javafx.memory.MemoryViewFactory;
+import com.javaclaw.ui.javafx.workflow.WorkflowConditionDialogFactory;
+import com.javaclaw.ui.javafx.workflow.WorkflowDefinitionCellFactory;
+import com.javaclaw.ui.javafx.workflow.WorkflowInputDialogFactory;
+import com.javaclaw.ui.javafx.workflow.WorkflowNodeCardFactory;
+import com.javaclaw.ui.javafx.workflow.WorkflowRunCellFactory;
+import com.javaclaw.ui.javafx.workflow.WorkflowViewFactory;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.http.HttpGateway;
 import com.javaclaw.platform.json.JsonCodec;
@@ -523,9 +534,56 @@ public class WorkspaceSpringConfiguration {
             NodeExecutorRegistry nodes,
             WorkflowDefinitionStore definitions,
             GraphCheckpointStore checkpoints,
-            SystemGraphRegistry systemGraphs) {
+            SystemGraphRegistry systemGraphs,
+            UserInteractionPort interaction,
+            @Qualifier("workspaceTaskScope") TaskScope tasks) {
         return new WorkflowService(workspace.workspaceId(), runtime, nodes,
-                definitions, checkpoints, systemGraphs);
+                definitions, checkpoints, systemGraphs, interaction, tasks);
+    }
+
+    @Bean
+    WorkflowPort workflowPort(WorkflowService service) {
+        return new WorkflowServiceAdapter(service);
+    }
+
+    @Bean
+    WorkflowApplicationService workflowApplicationService(WorkflowPort workflows) {
+        return new WorkflowUseCase(workflows);
+    }
+
+    @Bean
+    WorkflowDefinitionCellFactory workflowDefinitionCellFactory() {
+        return new WorkflowDefinitionCellFactory();
+    }
+
+    @Bean
+    WorkflowRunCellFactory workflowRunCellFactory() {
+        return new WorkflowRunCellFactory();
+    }
+
+    @Bean
+    WorkflowNodeCardFactory workflowNodeCardFactory() {
+        return new WorkflowNodeCardFactory();
+    }
+
+    @Bean
+    WorkflowConditionDialogFactory workflowConditionDialogFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new WorkflowConditionDialogFactory(loader);
+    }
+
+    @Bean
+    WorkflowInputDialogFactory workflowInputDialogFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader,
+            com.javaclaw.platform.fx.FxDispatcher fx) {
+        return new WorkflowInputDialogFactory(loader, fx);
+    }
+
+    @Bean
+    WorkflowViewFactory workflowViewFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader,
+            com.javaclaw.platform.fx.FxDispatcher fx) {
+        return new WorkflowViewFactory(loader, fx);
     }
 
     @Bean(destroyMethod = "shutdown")

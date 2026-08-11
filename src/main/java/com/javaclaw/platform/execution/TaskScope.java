@@ -49,7 +49,7 @@ public final class TaskScope implements TaskSubmitter, AutoCloseable {
             }
         });
         handles.add(handle);
-        handle.completion().whenComplete((ignored, failure) -> handles.remove(handle));
+        executor.whenTerminated(handle, () -> handles.remove(handle));
         if (!accepting.get()) {
             handle.cancel();
         }

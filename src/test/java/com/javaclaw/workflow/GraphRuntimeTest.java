@@ -1,6 +1,7 @@
 package com.javaclaw.workflow;
 
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.workflow.editor.WorkflowEditorModel;
 import com.javaclaw.workflow.model.*;
 import com.javaclaw.workflow.node.BasicNodeExecutors;
@@ -23,14 +24,18 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class GraphRuntimeTest {
     private GraphExecutionManager manager;
+    private final ManagedTaskExecutor tasks = new ManagedTaskExecutor();
 
-    @AfterEach void close() { if (manager != null) manager.close(); }
+    @AfterEach void close() {
+        if (manager != null) manager.close();
+        tasks.close();
+    }
 
     @Test
     void 空白工作流可直接运行并回显输入() throws Exception {
         NodeExecutorRegistry registry = baseRegistry();
         MemoryStore store = new MemoryStore();
-        manager = new GraphExecutionManager(registry, store);
+        manager = new GraphExecutionManager(registry, store, tasks);
         GraphDefinition graph = WorkflowEditorModel.blank("空白模板");
         CountDownLatch done = new CountDownLatch(1);
 
@@ -52,7 +57,7 @@ class GraphRuntimeTest {
         NodeExecutorRegistry registry = baseRegistry();
         registry.register(executor("mark", ctx -> NodeResult.next(StatePatch.builder()
                 .set(ctx.node().config().path("key").asText(), true).build())));
-        MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store);
+        MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store, tasks);
 
         NodeDefinition start = node("start", NodeType.START, "start");
         NodeDefinition condition = node("route", NodeType.CONDITION, "condition");
@@ -83,7 +88,7 @@ class GraphRuntimeTest {
             if (calls.incrementAndGet() < 3) throw new IllegalStateException("暂时失败");
             return NodeResult.next();
         }));
-        MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store);
+        MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store, tasks);
         NodeDefinition start = node("start", NodeType.START, "start");
         NodeDefinition work = new NodeDefinition("work", NodeType.SYSTEM, "flaky", "重试节点",
                 JsonNodeFactory.instance.objectNode(), 0, 0, new RetryPolicy(3, 1, 1), ResumeSafety.SAFE);
@@ -101,7 +106,7 @@ class GraphRuntimeTest {
     @Test
     void 人工节点持久化中断并以响应恢复() throws Exception {
         NodeExecutorRegistry registry = baseRegistry();
-        MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store);
+        MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store, tasks);
         NodeDefinition start = node("start", NodeType.START, "start");
         var cfg = JsonNodeFactory.instance.objectNode().put("prompt", "批准吗？").put("responseKey", "approval");
         NodeDefinition human = new NodeDefinition("human", NodeType.HUMAN_INPUT, "human_input", "人工输入",
@@ -139,7 +144,7 @@ class GraphRuntimeTest {
             entered.countDown();
             while (true) { ctx.cancellation().throwIfCancelled(); Thread.sleep(10); }
         }));
-        MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store);
+        MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store, tasks);
         NodeDefinition start = node("start", NodeType.START, "start");
         NodeDefinition block = node("block", NodeType.SYSTEM, "blocking");
         NodeDefinition end = node("end", NodeType.END, "end");
@@ -154,6 +159,35 @@ class GraphRuntimeTest {
     }
 
     @Test
+    void 关闭执行管理器会协作取消在途运行并拒绝新任务() throws Exception {
+        NodeExecutorRegistry registry = baseRegistry();
+        CountDownLatch entered = new CountDownLatch(1);
+        registry.register(executor("managed-blocking", context -> {
+            entered.countDown();
+            while (true) {
+                context.cancellation().throwIfCancelled();
+                Thread.sleep(10);
+            }
+        }));
+        MemoryStore store = new MemoryStore();
+        manager = new GraphExecutionManager(registry, store, tasks);
+        GraphDefinition graph = graph(
+                List.of(node("start", NodeType.START, "start"),
+                        node("work", NodeType.SYSTEM, "managed-blocking"),
+                        node("end", NodeType.END, "end")),
+                List.of(edge("a", "start", "work"), edge("b", "work", "end")), 10);
+        GraphRun run = manager.start(graph, "thread", new GraphState(),
+                GraphListener.NOOP, Map.of());
+        assertTrue(entered.await(2, TimeUnit.SECONDS));
+
+        manager.close();
+
+        assertEquals(RunStatus.CANCELLED, store.loadRun(run.id()).status());
+        assertThrows(java.util.concurrent.RejectedExecutionException.class,
+                () -> manager.start(graph, "late", new GraphState(), GraphListener.NOOP, Map.of()));
+    }
+
+    @Test
     void 不合作节点返回前收到取消时不提交补丁() throws Exception {
         NodeExecutorRegistry registry = baseRegistry();
         CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
@@ -162,7 +196,7 @@ class GraphRuntimeTest {
             release.await();
             return NodeResult.next(StatePatch.builder().set("late.result", "不应提交").build());
         }));
-        MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store);
+        MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store, tasks);
         GraphDefinition graph = graph(List.of(node("start", NodeType.START, "start"),
                         node("work", NodeType.SYSTEM, "ignores-cancel"),
                         node("end", NodeType.END, "end")),
@@ -188,7 +222,7 @@ class GraphRuntimeTest {
             release.await();
             throw new IllegalStateException("取消后的异常");
         }));
-        MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store);
+        MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store, tasks);
         GraphDefinition graph = graph(List.of(node("start", NodeType.START, "start"),
                         node("work", NodeType.SYSTEM, "late-failure"),
                         node("normal", NodeType.END, "end"),
@@ -214,7 +248,7 @@ class GraphRuntimeTest {
     void 终态回调前已释放运行占用() throws Exception {
         NodeExecutorRegistry registry = baseRegistry();
         MemoryStore store = new MemoryStore();
-        manager = new GraphExecutionManager(registry, store);
+        manager = new GraphExecutionManager(registry, store, tasks);
         GraphDefinition graph = graph(
                 List.of(node("start", NodeType.START, "start"), node("end", NodeType.END, "end")),
                 List.of(edge("finish", "start", "end")), 10);
@@ -252,7 +286,7 @@ class GraphRuntimeTest {
     void 错误边捕获失败并把错误写入状态() throws Exception {
         NodeExecutorRegistry registry = baseRegistry();
         registry.register(executor("broken", ctx -> { throw new IllegalStateException("boom"); }));
-        MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store);
+        MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store, tasks);
         GraphDefinition graph = graph(List.of(node("start", NodeType.START, "start"),
                         node("work", NodeType.SYSTEM, "broken"), node("normal", NodeType.END, "end"),
                         node("recover", NodeType.END, "end")),
@@ -328,7 +362,7 @@ class GraphRuntimeTest {
     void 启动前校验失败会同步拒绝且不创建运行() {
         NodeExecutorRegistry registry = baseRegistry();
         MemoryStore store = new MemoryStore();
-        manager = new GraphExecutionManager(registry, store);
+        manager = new GraphExecutionManager(registry, store, tasks);
         GraphDefinition invalid = graph(
                 List.of(node("start", NodeType.START, "start"),
                         node("end", NodeType.END, "missing-executor")),
@@ -345,7 +379,7 @@ class GraphRuntimeTest {
     @Test
     void 循环达到最大步数后失败() throws Exception {
         NodeExecutorRegistry registry = baseRegistry();
-        MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store);
+        MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store, tasks);
         GraphDefinition graph = graph(List.of(node("start", NodeType.START, "start"),
                         node("a", NodeType.CONDITION, "condition"), node("b", NodeType.CONDITION, "condition"),
                         node("end", NodeType.END, "end")),
@@ -366,7 +400,7 @@ class GraphRuntimeTest {
         NodeExecutorRegistry registry = baseRegistry();
         CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
         registry.register(executor("gate", ctx -> { entered.countDown(); release.await(); return NodeResult.next(); }));
-        MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store);
+        MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store, tasks);
         GraphDefinition graph = graph(List.of(node("start", NodeType.START, "start"),
                         node("work", NodeType.SYSTEM, "gate"), node("end", NodeType.END, "end")),
                 List.of(edge("a", "start", "work"), edge("b", "work", "end")), 10);
@@ -398,7 +432,7 @@ class GraphRuntimeTest {
             return NodeResult.next();
         }));
         MemoryStore store = new MemoryStore();
-        manager = new GraphExecutionManager(registry, store);
+        manager = new GraphExecutionManager(registry, store, tasks);
         GraphDefinition graph = graph(List.of(node("start", NodeType.START, "start"),
                         node("work", NodeType.SYSTEM, "gate"), node("end", NodeType.END, "end")),
                 List.of(edge("a", "start", "work"), edge("b", "work", "end")), 10);
@@ -429,7 +463,7 @@ class GraphRuntimeTest {
         NodeExecutorRegistry registry = baseRegistry();
         AtomicInteger calls = new AtomicInteger();
         registry.register(executor("side-effect", ctx -> { calls.incrementAndGet(); return NodeResult.next(); }));
-        MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store);
+        MemoryStore store = new MemoryStore(); manager = new GraphExecutionManager(registry, store, tasks);
         NodeDefinition work = new NodeDefinition("work", NodeType.SYSTEM, "side-effect", "副作用",
                 JsonNodeFactory.instance.objectNode(), 0, 0, RetryPolicy.NONE, ResumeSafety.CONFIRM_RETRY);
         GraphDefinition graph = graph(List.of(node("start", NodeType.START, "start"), work,

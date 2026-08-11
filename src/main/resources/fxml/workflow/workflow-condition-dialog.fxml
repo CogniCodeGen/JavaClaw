@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.CheckBox?>
+<?import javafx.scene.control.ComboBox?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.Spinner?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.layout.ColumnConstraints?>
+<?import javafx.scene.layout.GridPane?>
+
+<GridPane hgap="8.0" vgap="8.0" accessibleText="条件分支配置"
+          xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1"
+          fx:controller="com.javaclaw.ui.javafx.workflow.WorkflowConditionDialogController">
+    <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
+    <columnConstraints>
+        <ColumnConstraints minWidth="72.0"/>
+        <ColumnConstraints minWidth="280.0" hgrow="ALWAYS" fillWidth="true"/>
+    </columnConstraints>
+    <children>
+        <Label text="状态路径" GridPane.columnIndex="0" GridPane.rowIndex="0"/>
+        <TextField fx:id="pathField" promptText="状态路径，例如 result.ok"
+                   GridPane.columnIndex="1" GridPane.rowIndex="0"/>
+        <Label text="运算符" GridPane.columnIndex="0" GridPane.rowIndex="1"/>
+        <ComboBox fx:id="operatorBox" maxWidth="Infinity"
+                  GridPane.columnIndex="1" GridPane.rowIndex="1"/>
+        <Label text="比较值" GridPane.columnIndex="0" GridPane.rowIndex="2"/>
+        <TextField fx:id="valueField" promptText="JSON 值，例如 true 或 &quot;done&quot;"
+                   GridPane.columnIndex="1" GridPane.rowIndex="2"/>
+        <Label text="优先级" GridPane.columnIndex="0" GridPane.rowIndex="3"/>
+        <Spinner fx:id="prioritySpinner" editable="true"
+                 GridPane.columnIndex="1" GridPane.rowIndex="3"/>
+        <CheckBox fx:id="fallbackCheck" text="默认出口"
+                  GridPane.columnIndex="1" GridPane.rowIndex="4"/>
+    </children>
+</GridPane>

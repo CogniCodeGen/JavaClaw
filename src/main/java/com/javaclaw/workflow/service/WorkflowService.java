@@ -1,13 +1,16 @@
 package com.javaclaw.workflow.service;
 
 import com.javaclaw.agent.AgentRuntime;
-import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.api.interaction.ConfirmKind;
 import com.javaclaw.api.interaction.ConfirmRequest;
+import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.browser.PlaywrightBrowserManager;
+import com.javaclaw.platform.execution.TaskHandle;
+import com.javaclaw.platform.execution.TaskSpec;
+import com.javaclaw.platform.execution.TaskSubmitter;
 import com.javaclaw.workflow.model.GraphDefinition;
 import com.javaclaw.workflow.model.GraphKind;
 import com.javaclaw.workflow.model.GraphState;
@@ -28,11 +31,14 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /** 自定义工作流门面：定义、发布、会话 thread、运行及聊天事件桥。 */
 public final class WorkflowService implements AutoCloseable {
     private final String workspaceId;
     private final AgentRuntime agentRuntime;
+    private final UserInteractionPort interaction;
+    private final TaskSubmitter tasks;
     private final NodeExecutorRegistry nodeRegistry;
     private final WorkflowDefinitionStore definitions;
     private final GraphCheckpointStore checkpoints;
@@ -45,13 +51,16 @@ public final class WorkflowService implements AutoCloseable {
 
     public WorkflowService(String workspaceId, AgentRuntime agentRuntime,
                            NodeExecutorRegistry nodeRegistry, WorkflowDefinitionStore definitions,
-                           GraphCheckpointStore checkpoints, SystemGraphRegistry systemGraphs) {
+                           GraphCheckpointStore checkpoints, SystemGraphRegistry systemGraphs,
+                           UserInteractionPort interaction, TaskSubmitter tasks) {
         this.workspaceId = Objects.requireNonNull(workspaceId);
         this.agentRuntime = Objects.requireNonNull(agentRuntime);
+        this.interaction = Objects.requireNonNull(interaction);
+        this.tasks = Objects.requireNonNull(tasks);
         this.nodeRegistry = Objects.requireNonNull(nodeRegistry);
         this.definitions = Objects.requireNonNull(definitions);
         this.checkpoints = Objects.requireNonNull(checkpoints);
-        this.executions = new GraphExecutionManager(nodeRegistry, checkpoints);
+        this.executions = new GraphExecutionManager(nodeRegistry, checkpoints, tasks);
         this.systemGraphs = Objects.requireNonNull(systemGraphs);
     }
 
@@ -136,14 +145,22 @@ public final class WorkflowService implements AutoCloseable {
         GraphRun recoverable = checkpoints.findRecoverableRun(graph.id(), thread);
         GraphRun run;
         if (recoverable != null) {
-            Thread confirmationThread = Thread.ofVirtual()
-                    .name("workflow-recovery-confirm-" + recoverable.id())
-                    .unstarted(() -> confirmAndContinueSystem(recoverable, thread));
-            PendingRecovery pending = new PendingRecovery(recoverable.id(), confirmationThread, graph,
+            PendingRecovery pending = new PendingRecovery(recoverable.id(), graph,
                     invocation == null ? new GraphState() : invocation, callbacks, pipeline,
                     recoveryPolicy == null ? SystemRecoveryPolicy.RESUME_THEN_START : recoveryPolicy);
             pendingRecoveryByThread.put(thread, pending);
-            confirmationThread.start();
+            try {
+                TaskHandle<Void> handle = tasks.submit(
+                        TaskSpec.io("workflow-recovery-confirm-" + recoverable.id()), context -> {
+                            context.cancellation().throwIfCancellationRequested();
+                            confirmAndContinueSystem(recoverable, thread);
+                            return null;
+                        });
+                pending.bindConfirmationTask(handle);
+            } catch (RuntimeException | Error failure) {
+                pendingRecoveryByThread.remove(thread, pending);
+                throw failure;
+            }
             return recoverable;
         } else {
             run = startSystemInvocation(graph, thread, invocation, callbacks, pipeline);
@@ -280,14 +297,13 @@ public final class WorkflowService implements AutoCloseable {
         PendingRecovery pending = pendingRecoveryByThread.get(thread);
         if (pending == null || !recoverable.id().equals(pending.runId())) return;
         try {
-            var port = ToolConfirmationManager.getPort();
-            if (port == null || !port.isAvailable()) {
+            if (!interaction.isAvailable()) {
                 removePending(thread, recoverable.id());
                 sendError(pending.callbacks(), new IllegalStateException(
                         "检测到待恢复的系统工作流，但当前无法请求恢复确认；本条消息尚未执行"));
                 return;
             }
-            boolean confirmed = port.confirm(new ConfirmRequest(
+            boolean confirmed = interaction.confirm(new ConfirmRequest(
                     "workflow_recovery", "恢复上次运行",
                     "上次运行在节点「" + recoverable.currentNodeId()
                             + "」异常中断。"
@@ -423,7 +439,7 @@ public final class WorkflowService implements AutoCloseable {
 
     private boolean cancelPendingRecovery(PendingRecovery pending) {
         pending.cancelled().set(true);
-        pending.confirmationThread().interrupt();
+        pending.cancelConfirmationTask();
         executions.cancel(pending.runId());
         if (pending.terminalSent().compareAndSet(false, true)) {
             sendCancelled(pending.callbacks());
@@ -447,20 +463,32 @@ public final class WorkflowService implements AutoCloseable {
 
     private record PendingRecovery(
             String runId,
-            Thread confirmationThread,
             GraphDefinition graph,
             GraphState invocation,
             ConversationCallbacks callbacks,
             SystemPipeline pipeline,
             SystemRecoveryPolicy recoveryPolicy,
+            AtomicReference<TaskHandle<Void>> confirmationTask,
             AtomicBoolean cancelled,
             AtomicBoolean terminalSent) {
         private PendingRecovery(
-                String runId, Thread confirmationThread, GraphDefinition graph, GraphState invocation,
+                String runId, GraphDefinition graph, GraphState invocation,
                 ConversationCallbacks callbacks, SystemPipeline pipeline,
                 SystemRecoveryPolicy recoveryPolicy) {
-            this(runId, confirmationThread, graph, invocation, callbacks, pipeline, recoveryPolicy,
-                    new AtomicBoolean(), new AtomicBoolean());
+            this(runId, graph, invocation, callbacks, pipeline, recoveryPolicy,
+                    new AtomicReference<>(), new AtomicBoolean(), new AtomicBoolean());
+        }
+
+        private void bindConfirmationTask(TaskHandle<Void> handle) {
+            if (!confirmationTask.compareAndSet(null, handle)) {
+                throw new IllegalStateException("恢复确认任务已绑定");
+            }
+            if (cancelled.get()) handle.cancel();
+        }
+
+        private void cancelConfirmationTask() {
+            TaskHandle<Void> handle = confirmationTask.get();
+            if (handle != null) handle.cancel();
         }
     }
 }
