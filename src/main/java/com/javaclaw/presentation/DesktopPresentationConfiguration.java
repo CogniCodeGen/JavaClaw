@@ -1,5 +1,6 @@
 package com.javaclaw.presentation;
 
+import com.javaclaw.chat.AssistantMessageFactory;
 import com.javaclaw.chat.MarkdownBubbleFactory;
 import com.javaclaw.chat.MarkdownRenderEngine;
 import com.javaclaw.chat.markdown.MarkdownParagraphRenderer;
@@ -41,5 +42,10 @@ public class DesktopPresentationConfiguration {
     @Bean
     MarkdownBubbleFactory markdownBubbleFactory(SpringFxmlLoader loader) {
         return new MarkdownBubbleFactory(loader);
+    }
+
+    @Bean
+    AssistantMessageFactory assistantMessageFactory(SpringFxmlLoader loader) {
+        return new AssistantMessageFactory(loader);
     }
 }

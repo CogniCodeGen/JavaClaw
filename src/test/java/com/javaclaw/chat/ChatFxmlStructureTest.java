@@ -90,6 +90,17 @@ class ChatFxmlStructureTest {
     }
 
     @Test
+    void assistantMessageDeclaresEveryInjectedNodeAndEventEntrypoint() throws Exception {
+        Document document = document("/fxml/chat/assistant-message.fxml");
+        assertEquals(AssistantMessageController.class.getName(),
+                document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
+        assertInjectedFields(document, AssistantMessageController.class);
+        assertEquals(Set.of("adoptRequested", "regenerateRequested", "quoteRequested",
+                "showMoreMenu", "copyRequested", "saveRequested", "deleteRequested"),
+                eventHandlers(document));
+    }
+
+    @Test
     void attachmentPreviewDeclaresEveryInjectedNodeAndEventEntrypoint() throws Exception {
         Document document = document("/fxml/chat/attachment-preview-item.fxml");
         assertEquals(AttachmentPreviewItemController.class.getName(),

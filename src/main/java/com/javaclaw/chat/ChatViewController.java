@@ -31,7 +31,6 @@ import com.javaclaw.ui.javafx.task.SddTaskView;
 import com.javaclaw.util.ProjectAccessPolicy;
 import javafx.animation.Animation;
 import javafx.animation.KeyFrame;
-import javafx.animation.KeyValue;
 import javafx.animation.Timeline;
 import javafx.beans.value.ChangeListener;
 import javafx.fxml.FXML;
@@ -126,6 +125,7 @@ public class ChatViewController implements AutoCloseable {
     private final java.util.concurrent.Executor persistExecutor;
     private final FxDispatcher fx;
     private final MarkdownBubbleFactory markdownBubbles;
+    private final AssistantMessageFactory assistantMessages;
 
     /** 兼容旧退出链；页面生命周期统一由 {@link #close()} 收口。 */
     public void shutdownPersistence() {
@@ -161,9 +161,7 @@ public class ChatViewController implements AutoCloseable {
 
     private void stopUiResources() {
         stopTimeline(statusBarClock);
-        stopTimeline(activeGenPlaceholderAnim);
         statusBarClock = null;
-        activeGenPlaceholderAnim = null;
         if (themeListener != null) {
             com.javaclaw.ui.javafx.theme.ThemeManager.themeProperty()
                     .removeListener(themeListener);
@@ -201,14 +199,8 @@ public class ChatViewController implements AutoCloseable {
 
     // ==================== 流式输出的活动 UI 引用 ====================
 
-    /** 当前正在流式填充的回复 Markdown 气泡 */
-    private MarkdownBubble activeReplyBubble;
-
-    /** 当前助手消息头部的"耗时 / Tokens"右侧 meta 标签（设计稿 4.2s · 1,208 tok） */
-    private Label activeAssistantMetaLabel;
-
-    /** 当前工具调用结果区域的容器 */
-    private VBox activeToolResultsBox;
+    /** 当前流式助手消息；聚合其 FXML、嵌套 Markdown、动画和操作状态。 */
+    private AssistantMessageView activeAssistantMessage;
 
     /** 当前正在追加结果的工具名称（用于合并同一智能体的多次结果） */
     private String activeToolName;
@@ -228,15 +220,6 @@ public class ChatViewController implements AutoCloseable {
     /** 规划模式下当前发言智能体的回复累积文本（用于摘要截断） */
     private final StringBuilder currentPlanAgentBuffer = new StringBuilder();
 
-    /** 当前流式气泡的「采纳」按钮引用（流结束后启用） */
-    private Button activeAdoptBtn;
-
-    /**
-     * 当前流式气泡关联的已持久化助手消息 holder。
-     * 每次新开流式气泡时重新分配 holder 实例，旧按钮闭包仍持有各自 holder 不互相干扰。
-     */
-    private java.util.concurrent.atomic.AtomicReference<ChatMessage> activeAdoptTargetRef;
-
     /** 知识库多选菜单按钮 */
     @FXML private MenuButton knowledgeMenu;
     @FXML private Tooltip knowledgeTooltip;
@@ -251,14 +234,6 @@ public class ChatViewController implements AutoCloseable {
 
     /** 当前流式输出中已显示的图片路径（防止重复显示） */
     private final Set<String> displayedImagePaths = new HashSet<>();
-
-    /** 当前主回复气泡的外层容器（用于添加内联图片） */
-    private VBox activeUnifiedBubble;
-
-    /** 首个回复 chunk 到达前的「生成中」占位（三点动画），避免空白气泡 */
-    private HBox activeGenPlaceholder;
-    /** 占位三点动画（首 chunk 或终态时停止） */
-    private Timeline activeGenPlaceholderAnim;
 
     /** 流式输出代次计数器（会话切换/删除时递增，使旧流回调失效） */
     private volatile int streamGeneration = 0;
@@ -329,12 +304,15 @@ public class ChatViewController implements AutoCloseable {
             ApplicationKernel applicationKernel,
             FxDispatcher fx,
             ManagedTaskExecutor taskExecutor,
-            MarkdownBubbleFactory markdownBubbles) {
+            MarkdownBubbleFactory markdownBubbles,
+            AssistantMessageFactory assistantMessages) {
         this.applicationKernel = java.util.Objects.requireNonNull(
                 applicationKernel, "applicationKernel");
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
         this.markdownBubbles = java.util.Objects.requireNonNull(
                 markdownBubbles, "markdownBubbles");
+        this.assistantMessages = java.util.Objects.requireNonNull(
+                assistantMessages, "assistantMessages");
         java.util.Objects.requireNonNull(taskExecutor, "taskExecutor");
         persistenceTasks = taskExecutor.openScope("chat-persistence", 1);
         backgroundTasks = taskExecutor.openScope("chat-ui-background", 2);
@@ -848,180 +826,62 @@ public class ChatViewController implements AutoCloseable {
 
     // ==================== 流式输出气泡 ====================
 
-    /**
-     * 创建流式输出的占位气泡（扩展支持规划和工具调用区域）
-     *
-     * <pre>
-     * messageRow (HBox, 靠左对齐)
-     *   └─ bubbleContainer (VBox)
-     *       ├─ agentNameLabel ← 当前回复的智能体名称
-     *       ├─ planBox (VBox, 初始隐藏) ← 规划展示区域
-     *       ├─ toolResultsBox (VBox, 初始隐藏) ← 工具调用结果区域
-     *       ├─ unifiedBubble (VBox) ← 回复
-     *       └─ timeLabel (Label)
-     * </pre>
-     */
+    /** 创建并装配一条由独立 FXML 管理的流式助手消息。 */
     private void createStreamingBubble() {
-        // 新一轮发送：重置循环状态面板引用，使循环模式本次运行获得独立的状态卡
         activeLoopStatusView = null;
-
-        // ---- 助手头像（白底翡翠火花） ----
-        Label avatar = new Label("✦");
-        avatar.getStyleClass().add("msg-avatar-assistant");
-
-        // ---- 头部：姓名 · 模型徽章 · 时间 · (右侧) 耗时/tokens ----
-        Label agentNameLabel = new Label(AgentConfig.AGENT_NAME);
-        agentNameLabel.getStyleClass().add("msg-header-name");
-
-        Label modelBadge = new Label(currentModelDisplayName());
-        modelBadge.getStyleClass().add("msg-header-model");
-
         ChatMessage timeHolder = new ChatMessage(ChatMessage.Role.ASSISTANT, "");
-        Label timeLabel = new Label(timeHolder.getFormattedTime());
-        timeLabel.getStyleClass().add("msg-header-time");
-
-        Label metaLabel = new Label("—");
-        metaLabel.getStyleClass().add("msg-header-meta");
-        activeAssistantMetaLabel = metaLabel;
-
-        Region headerSpacer = new Region();
-        HBox.setHgrow(headerSpacer, Priority.ALWAYS);
-
-        HBox headerRow = new HBox(8, agentNameLabel, modelBadge, timeLabel, headerSpacer, metaLabel);
-        headerRow.setAlignment(Pos.CENTER_LEFT);
-
-        // ---- 工具调用结果区域（初始隐藏，位于主气泡上方） ----
-        activeToolResultsBox = new VBox(4);
-        activeToolResultsBox.getStyleClass().add("tool-results-box");
-        activeToolResultsBox.setPadding(new Insets(0, 0, 6, 0));
-        activeToolResultsBox.setVisible(false);
-        activeToolResultsBox.setManaged(false);
-
-        // ---- 回复气泡（Markdown） ----
-        activeReplyBubble = markdownBubbles.create(520);
-        // 首个回复 chunk 到达前隐藏空气泡，改由占位动画占位
-        activeReplyBubble.getView().setVisible(false);
-        activeReplyBubble.getView().setManaged(false);
-
-        // 「生成中」占位：三点呼吸动画 + 文案
-        activeGenPlaceholder = buildGenPlaceholder();
-
-        activeUnifiedBubble = new VBox(4, activeGenPlaceholder, activeReplyBubble.getView());
-        activeUnifiedBubble.getStyleClass().addAll("message-bubble", "message-assistant");
-        activeUnifiedBubble.setPadding(new Insets(10, 14, 10, 14));
-
-        // ---- 操作行（采纳 / 重新生成 / 引用回复） ----
-        Button adoptBtn = new Button("✓ 采纳");
-        adoptBtn.getStyleClass().add("msg-action-btn");
-        adoptBtn.setTooltip(new Tooltip("标记此回复已采纳并复制正文到剪贴板"));
-        adoptBtn.setDisable(true); // 流式结束并保存消息后再激活
-        final java.util.concurrent.atomic.AtomicReference<ChatMessage> adoptHolder =
-                new java.util.concurrent.atomic.AtomicReference<>();
-        activeAdoptBtn = adoptBtn;
-        activeAdoptTargetRef = adoptHolder;
-        adoptBtn.setOnAction(e -> {
-            ChatMessage target = adoptHolder.get();
-            if (target == null) return;
-            target.setAdopted(true);
-            String txt = target.getContent();
-            if (txt != null && !txt.isEmpty()) {
-                javafx.scene.input.Clipboard.getSystemClipboard().setContent(
-                        java.util.Map.of(javafx.scene.input.DataFormat.PLAIN_TEXT, txt));
-            }
-            adoptBtn.setText("✓ 已采纳");
-            adoptBtn.setDisable(true);
-            com.javaclaw.app.UiMotion.success(adoptBtn);
-            saveChatHistory();
-            log.info("用户采纳消息（{} 字符）", txt == null ? 0 : txt.length());
-        });
-        Button regenBtn = new Button("↻ 重新生成");
-        regenBtn.getStyleClass().add("msg-action-btn");
-        regenBtn.setOnAction(e -> {
+        AssistantMessageView message = assistantMessages.create(
+                AgentConfig.AGENT_NAME,
+                currentModelDisplayName(),
+                timeHolder.getFormattedTime());
+        activeAssistantMessage = message;
+        message.setRegenerateAction(() -> {
             String last = findLastUserMessage();
             if (last != null) {
                 composerController.replaceInput(last);
                 onSendMessage();
             }
         });
-        Button quoteBtn = new Button("↩ 引用回复");
-        quoteBtn.getStyleClass().add("msg-action-btn");
-        quoteBtn.setOnAction(e -> {
-            String current = activeReplyBubble != null ? activeReplyBubble.getText() : "";
-            if (current != null && !current.isEmpty()) {
-                String quoted = "> " + current.replace("\n", "\n> ") + "\n\n";
-                composerController.insertInputAtStart(quoted);
-                composerController.focusInput();
-            }
+        message.setQuoteAction(current -> {
+            String quoted = "> " + current.replace("\n", "\n> ") + "\n\n";
+            composerController.insertInputAtStart(quoted);
+            composerController.focusInput();
         });
-        Button moreBtn = new Button("···");
-        moreBtn.getStyleClass().add("msg-action-btn");
-        moreBtn.setTooltip(new Tooltip("更多操作"));
-        ContextMenu moreMenu = new ContextMenu();
-        MenuItem copyAllItem = new MenuItem("复制全文");
-        copyAllItem.setOnAction(e -> {
-            String txt = activeReplyBubble != null ? activeReplyBubble.getText() : "";
-            if (txt != null && !txt.isEmpty()) {
-                javafx.scene.input.Clipboard.getSystemClipboard().setContent(
-                        java.util.Map.of(javafx.scene.input.DataFormat.PLAIN_TEXT, txt));
-                com.javaclaw.app.UiMotion.success(moreBtn);
-            }
+        message.setSaveAction(this::saveAssistantReply);
+        message.setDeleteAction(() -> deleteAssistantMessage(message));
+        sessionViewController.addMessage(message.root());
+        log.debug("已通过 FXML 创建流式助手消息");
+    }
+
+    private void saveAssistantReply(String text) {
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("保存回复到文件");
+        chooser.setInitialFileName("reply.md");
+        chooser.getExtensionFilters().addAll(
+                new FileChooser.ExtensionFilter("Markdown", "*.md"),
+                new FileChooser.ExtensionFilter("文本文件", "*.txt"),
+                new FileChooser.ExtensionFilter("所有文件", "*.*"));
+        File file = chooser.showSaveDialog(outerRoot.getScene().getWindow());
+        if (file == null) return;
+        backgroundTasks.submit(TaskSpec.io("export-assistant-reply"), context -> {
+            java.nio.file.Files.writeString(file.toPath(), text);
+            return null;
+        }).completion().whenComplete((ignored, failure) -> {
+            if (failure != null) log.error("保存回复到文件失败", failure);
         });
-        MenuItem saveItem = new MenuItem("保存为文件...");
-        saveItem.setOnAction(e -> {
-            String txt = activeReplyBubble != null ? activeReplyBubble.getText() : "";
-            if (txt == null || txt.isEmpty()) return;
-            FileChooser chooser = new FileChooser();
-            chooser.setTitle("保存回复到文件");
-            chooser.setInitialFileName("reply.md");
-            chooser.getExtensionFilters().addAll(
-                    new FileChooser.ExtensionFilter("Markdown", "*.md"),
-                    new FileChooser.ExtensionFilter("文本文件", "*.txt"),
-                    new FileChooser.ExtensionFilter("所有文件", "*.*"));
-            Stage owner = (Stage) moreBtn.getScene().getWindow();
-            java.io.File file = chooser.showSaveDialog(owner);
-            if (file != null) {
-                try {
-                    java.nio.file.Files.writeString(file.toPath(), txt);
-                    com.javaclaw.app.UiMotion.success(moreBtn);
-                } catch (java.io.IOException ex) {
-                    log.error("保存回复到文件失败", ex);
-                    com.javaclaw.app.UiMotion.error(moreBtn);
-                }
+    }
+
+    private void deleteAssistantMessage(AssistantMessageView message) {
+        if (!sessionViewController.removeContaining(message.root())) return;
+        if (!currentSession.getMessages().isEmpty()) {
+            int lastIndex = currentSession.getMessages().size() - 1;
+            if (currentSession.getMessages().get(lastIndex).getRole()
+                    == ChatMessage.Role.ASSISTANT) {
+                currentSession.getMessages().remove(lastIndex);
+                saveChatHistory();
             }
-        });
-        MenuItem deleteItem = new MenuItem("删除此消息");
-        deleteItem.setOnAction(e -> {
-            if (activeUnifiedBubble == null) return;
-            if (sessionViewController.removeContaining(activeUnifiedBubble)) {
-                if (!currentSession.getMessages().isEmpty()) {
-                    int lastIdx = currentSession.getMessages().size() - 1;
-                    if (currentSession.getMessages().get(lastIdx).getRole() == ChatMessage.Role.ASSISTANT) {
-                        currentSession.getMessages().remove(lastIdx);
-                        saveChatHistory();
-                    }
-                }
-            }
-        });
-        moreMenu.getItems().addAll(copyAllItem, saveItem, new SeparatorMenuItem(), deleteItem);
-        moreBtn.setOnAction(e -> moreMenu.show(moreBtn,
-                javafx.geometry.Side.BOTTOM, 0, 0));
-
-        HBox actionRow = new HBox(2, adoptBtn, regenBtn, quoteBtn, moreBtn);
-        actionRow.setAlignment(Pos.CENTER_LEFT);
-        actionRow.getStyleClass().add("msg-action-row");
-
-        // ---- 组装（规划和思考已移至右侧面板） ----
-        VBox bubbleContainer = new VBox(4,
-                headerRow, activeToolResultsBox,
-                activeUnifiedBubble, actionRow);
-        HBox.setHgrow(bubbleContainer, Priority.ALWAYS);
-
-        HBox messageRow = new HBox(10, avatar, bubbleContainer);
-        messageRow.setPadding(new Insets(6, 12, 6, 12));
-        messageRow.setAlignment(Pos.TOP_LEFT);
-
-        sessionViewController.addMessage(messageRow);
-        log.debug("已创建流式输出占位气泡（设计稿头像 + 头部 + 操作行）");
+        }
+        if (message != activeAssistantMessage) message.close();
     }
 
     /**
@@ -1050,72 +910,29 @@ public class ChatViewController implements AutoCloseable {
     }
 
     /**
-     * 构建「生成中」占位：三点呼吸动画 + 文案。
-     * 在首个回复 chunk 到达前显示，避免气泡空白。
-     */
-    private HBox buildGenPlaceholder() {
-        Label d1 = new Label("●");
-        Label d2 = new Label("●");
-        Label d3 = new Label("●");
-        d1.getStyleClass().add("gen-placeholder-dot");
-        d2.getStyleClass().add("gen-placeholder-dot");
-        d3.getStyleClass().add("gen-placeholder-dot");
-        Label text = new Label("正在生成回复…");
-        text.getStyleClass().add("gen-placeholder-text");
-
-        HBox box = new HBox(5, d1, d2, d3, text);
-        box.setAlignment(Pos.CENTER_LEFT);
-
-        activeGenPlaceholderAnim = new Timeline(
-                new KeyFrame(Duration.ZERO,
-                        new KeyValue(d1.opacityProperty(), 0.3),
-                        new KeyValue(d2.opacityProperty(), 0.3),
-                        new KeyValue(d3.opacityProperty(), 0.3)),
-                new KeyFrame(Duration.millis(200), new KeyValue(d1.opacityProperty(), 1.0)),
-                new KeyFrame(Duration.millis(400),
-                        new KeyValue(d1.opacityProperty(), 0.3),
-                        new KeyValue(d2.opacityProperty(), 1.0)),
-                new KeyFrame(Duration.millis(600),
-                        new KeyValue(d2.opacityProperty(), 0.3),
-                        new KeyValue(d3.opacityProperty(), 1.0)),
-                new KeyFrame(Duration.millis(800), new KeyValue(d3.opacityProperty(), 0.3)));
-        activeGenPlaceholderAnim.setCycleCount(Timeline.INDEFINITE);
-        activeGenPlaceholderAnim.play();
-        return box;
-    }
-
-    /**
      * 移除「生成中」占位，恢复气泡显示。幂等：可在首 chunk 与各终态重复调用。
      */
     private void dismissGenPlaceholder() {
-        if (activeGenPlaceholderAnim != null) {
-            activeGenPlaceholderAnim.stop();
-            activeGenPlaceholderAnim = null;
-        }
-        if (activeReplyBubble != null) {
-            activeReplyBubble.getView().setVisible(true);
-            activeReplyBubble.getView().setManaged(true);
-        }
-        if (activeGenPlaceholder != null && activeUnifiedBubble != null) {
-            activeUnifiedBubble.getChildren().remove(activeGenPlaceholder);
-        }
-        activeGenPlaceholder = null;
+        AssistantMessageView message = activeAssistantMessage;
+        if (message != null) message.revealReply();
     }
 
     /**
      * 追加回复内容的文本片段
      */
     private void appendReplyChunk(String chunk) {
-        if (activeReplyBubble == null) return;
+        AssistantMessageView message = activeAssistantMessage;
+        if (message == null) return;
+        MarkdownBubble reply = message.reply();
 
-        if (activeReplyBubble.getLength() == 0) {
+        if (reply.getLength() == 0) {
             dismissGenPlaceholder();
             composerController.setThinkingText("助手正在回复...");
             thinkingPanel.setReplying();
             log.debug("开始接收回复内容");
         }
 
-        activeReplyBubble.appendText(chunk);
+        reply.appendText(chunk);
         ActiveTurn turn = activeTurn;
         if (turn != null) turn.messageDraft.append(chunk);
     }
@@ -1142,12 +959,9 @@ public class ChatViewController implements AutoCloseable {
      * 同一个智能体的连续调用合并到同一展示块；动态任务智能体每次 RESULT 都强制新块。</p>
      */
     private void appendSubAgentChunk(String toolName, String content, SubAgentChunkKind kind) {
-        if (activeToolResultsBox == null) return;
-
-        if (!activeToolResultsBox.isVisible()) {
-            activeToolResultsBox.setVisible(true);
-            activeToolResultsBox.setManaged(true);
-        }
+        AssistantMessageView message = activeAssistantMessage;
+        if (message == null) return;
+        message.showTools();
 
         String displayName = mapToolDisplayName(toolName);
 
@@ -1239,7 +1053,7 @@ public class ChatViewController implements AutoCloseable {
         VBox resultBlock = new VBox(2, header, activeSubResultBubble);
         resultBlock.setPadding(new Insets(2, 0, 2, 0));
 
-        activeToolResultsBox.getChildren().add(resultBlock);
+        activeAssistantMessage.toolsHost().getChildren().add(resultBlock);
         log.debug("已创建子智能体结果块 [{}]（初始隐藏，等待内容）", toolName);
     }
 
@@ -1296,7 +1110,7 @@ public class ChatViewController implements AutoCloseable {
      * {@link #displayedImagePaths} 中，供保存消息时写入 ChatMessage。</p>
      *
      * @param text      待检测的文本内容
-     * @param container 图片要添加到的容器（通常为 activeSubResultBubble 或 activeUnifiedBubble）
+     * @param container 图片要添加到的子智能体结果区或当前助手回复内容区
      */
     private void tryDisplayInlineImages(String text, VBox container) {
         if (container == null || text == null) return;
@@ -1586,7 +1400,8 @@ public class ChatViewController implements AutoCloseable {
      * @param agentName 智能体名称
      */
     private void appendPlanAgentStart(String agentName) {
-        if (activeToolResultsBox == null) return;
+        AssistantMessageView message = activeAssistantMessage;
+        if (message == null) return;
 
         // 切换到新智能体前，先把上一位标记为"已完成"，并用累积文本生成摘要
         if (currentPlanAgentName != null && !currentPlanAgentName.equals(agentName)) {
@@ -1598,11 +1413,7 @@ public class ChatViewController implements AutoCloseable {
             activePlanAgentBubble.finish();
         }
 
-        // 首次收到发言时，显示容器
-        if (!activeToolResultsBox.isVisible()) {
-            activeToolResultsBox.setVisible(true);
-            activeToolResultsBox.setManaged(true);
-        }
+        message.showTools();
 
         // 更新状态提示
         composerController.setThinkingText(agentName + " 正在发言...");
@@ -1666,7 +1477,7 @@ public class ChatViewController implements AutoCloseable {
         VBox turnBlock = new VBox(2, header, bubble);
         turnBlock.setPadding(new Insets(2, 0, 2, 0));
 
-        activeToolResultsBox.getChildren().add(turnBlock);
+        message.toolsHost().getChildren().add(turnBlock);
 
         log.debug("规划模式 [{}] 开始发言", agentName);
     }
@@ -1727,8 +1538,10 @@ public class ChatViewController implements AutoCloseable {
      * 流式输出完成时的处理
      */
     private void onStreamComplete() {
+        AssistantMessageView message = activeAssistantMessage;
+        MarkdownBubble reply = message == null ? null : message.reply();
         log.info("流式输出已完成 — 回复: {} 字符",
-                activeReplyBubble != null ? activeReplyBubble.getLength() : 0);
+                reply != null ? reply.getLength() : 0);
 
         // 规划模式：流结束时为最后一位发言智能体生成摘要并标记完成
         if (isPlanStream()) {
@@ -1740,19 +1553,17 @@ public class ChatViewController implements AutoCloseable {
 
         try {
             if (isPlanStream()) {
-                // 规划模式：回复内容在 activePlanAgentBubble 中，隐藏空的 activeReplyBubble
-                if (activeReplyBubble != null && activeReplyBubble.getLength() == 0
-                        && activeUnifiedBubble != null) {
-                    activeUnifiedBubble.setVisible(false);
-                    activeUnifiedBubble.setManaged(false);
+                // 规划模式的内容位于各智能体结果块，隐藏未使用的主回复卡片。
+                if (reply != null && reply.getLength() == 0 && message != null) {
+                    message.hideReplyCard();
                 }
-            } else if (activeReplyBubble != null && activeReplyBubble.getLength() == 0) {
-                activeReplyBubble.finishWith("[模型未返回有效回复]");
+            } else if (reply != null && reply.getLength() == 0) {
+                reply.finishWith("[模型未返回有效回复]");
             }
 
             // 检测主回复中的图片路径并内联显示
-            if (activeReplyBubble != null && activeUnifiedBubble != null) {
-                tryDisplayInlineImages(activeReplyBubble.getText(), activeUnifiedBubble);
+            if (reply != null && message != null) {
+                tryDisplayInlineImages(reply.getText(), message.replyContentHost());
             }
 
             // 将助手回复添加到消息列表并保存（携带流式过程中收集的图片路径）
@@ -1767,12 +1578,8 @@ public class ChatViewController implements AutoCloseable {
                     assistantMsg.addImagePath(imgPath);
                 }
                 target.getMessages().add(assistantMsg);
-                // 绑定当前流式气泡的「采纳」按钮到这条持久化消息
-                if (activeAdoptTargetRef != null) {
-                    activeAdoptTargetRef.set(assistantMsg);
-                }
-                if (activeAdoptBtn != null) {
-                    activeAdoptBtn.setDisable(false);
+                if (message != null) {
+                    message.enableAdoption(() -> adoptAssistantMessage(assistantMsg));
                 }
                 // 首条用户消息发送后自动更新会话标题
                 target.autoTitle();
@@ -1798,6 +1605,17 @@ public class ChatViewController implements AutoCloseable {
         }
     }
 
+    private void adoptAssistantMessage(ChatMessage message) {
+        message.setAdopted(true);
+        String text = message.getContent();
+        if (text != null && !text.isEmpty()) {
+            javafx.scene.input.Clipboard.getSystemClipboard().setContent(
+                    java.util.Map.of(javafx.scene.input.DataFormat.PLAIN_TEXT, text));
+        }
+        saveChatHistory();
+        log.info("用户采纳消息（{} 字符）", text == null ? 0 : text.length());
+    }
+
     /**
      * 流式输出错误时的处理
      */
@@ -1817,8 +1635,9 @@ public class ChatViewController implements AutoCloseable {
             String partial = currentReplyText();
             if (partial != null && !partial.isBlank() && target != null) {
                 String failedText = partial + "\n\n> ⚠ 失败：" + runtime.extractErrorMessage(error);
-                if (!isPlanStream() && activeReplyBubble != null) {
-                    activeReplyBubble.finishWith(failedText);
+                MarkdownBubble reply = activeReply();
+                if (!isPlanStream() && reply != null) {
+                    reply.finishWith(failedText);
                 } else if (isPlanStream() && activePlanAgentBubble != null) {
                     activePlanAgentBubble.finishWith(failedText);
                 }
@@ -1831,10 +1650,7 @@ public class ChatViewController implements AutoCloseable {
                 target.getMessages().add(new ChatMessage(ChatMessage.Role.SYSTEM, errorMsg));
                 saveSessionMessages(target);
             } else {
-                if (activeUnifiedBubble != null) {
-                    activeUnifiedBubble.setVisible(false);
-                    activeUnifiedBubble.setManaged(false);
-                }
+                if (activeAssistantMessage != null) activeAssistantMessage.hideReplyCard();
                 addStaticBubble(ChatMessage.Role.SYSTEM, errorMsg);
                 if (currentSession != null) saveSessionMessages(currentSession);
             }
@@ -1863,8 +1679,9 @@ public class ChatViewController implements AutoCloseable {
             ChatSession target = streamingSession != null ? streamingSession : currentSession;
             if (replyText != null && !replyText.isBlank() && target != null) {
                 String stoppedText = replyText + "\n\n> ⏹ 已停止";
-                if (!isPlanStream() && activeReplyBubble != null) {
-                    activeReplyBubble.finishWith(stoppedText);
+                MarkdownBubble reply = activeReply();
+                if (!isPlanStream() && reply != null) {
+                    reply.finishWith(stoppedText);
                 } else if (isPlanStream() && activePlanAgentBubble != null) {
                     activePlanAgentBubble.finishWith(stoppedText);
                 }
@@ -1874,9 +1691,8 @@ public class ChatViewController implements AutoCloseable {
                 cancelledMessage.setMetrics(currentTurnMetrics());
                 target.getMessages().add(cancelledMessage);
                 saveSessionMessages(target);
-            } else if (activeUnifiedBubble != null) {
-                activeUnifiedBubble.setVisible(false);
-                activeUnifiedBubble.setManaged(false);
+            } else if (activeAssistantMessage != null) {
+                activeAssistantMessage.hideReplyCard();
             }
             if (activeLoopStatusView != null) activeLoopStatusView.markCancelled();
         } finally {
@@ -1951,12 +1767,12 @@ public class ChatViewController implements AutoCloseable {
         log.warn("循环检测触发: {}", warning);
 
         try {
-            // 在回复区域追加警告信息
-            if (activeReplyBubble != null) {
-                if (activeReplyBubble.getLength() == 0) {
-                    activeReplyBubble.finishWith("[循环中断] " + warning);
+            MarkdownBubble reply = activeReply();
+            if (reply != null) {
+                if (reply.getLength() == 0) {
+                    reply.finishWith("[循环中断] " + warning);
                 } else {
-                    activeReplyBubble.appendText("\n\n[循环中断] " + warning);
+                    reply.appendText("\n\n[循环中断] " + warning);
                 }
             } else {
                 addStaticBubble(ChatMessage.Role.SYSTEM, warning);
@@ -2349,7 +2165,7 @@ public class ChatViewController implements AutoCloseable {
             }
             clearAllHistory();
             disposeMessageList();
-            activeReplyBubble = null;
+            activeAssistantMessage = null;
             activeToolResultBubble = null;
             activeSubResultBubble = null;
             activeToolName = null;
@@ -2649,13 +2465,14 @@ public class ChatViewController implements AutoCloseable {
             streamGeneration++;
             activeTurn = null;
             streamingSession = null;
-            if (activeUnifiedBubble != null) {
-                collectAndDisposeBubbles(activeUnifiedBubble);
-                activeUnifiedBubble.setVisible(false);
-                activeUnifiedBubble.setManaged(false);
-            }
-            disposeSuspendedStreamingNodes();
+            AssistantMessageView abandoned = activeAssistantMessage;
             clearActiveReferences();
+            disposeSuspendedStreamingNodes();
+            if (abandoned != null) {
+                abandoned.root().setVisible(false);
+                abandoned.root().setManaged(false);
+                abandoned.close();
+            }
             showThinkingIndicator(false);
             composerController.setThinkingText("助手正在思考中...");
             thinkingPanel.endStreamCancelled();
@@ -2852,6 +2669,12 @@ public class ChatViewController implements AutoCloseable {
 
     private void collectAndDisposeBubbles(javafx.scene.Node node) {
         if (node.hasProperties()
+                && node.getProperties().get("assistantMessageView")
+                instanceof AssistantMessageView message) {
+            message.close();
+            return;
+        }
+        if (node.hasProperties()
                 && node.getProperties().get("markdownBubble") instanceof MarkdownBubble bubble) {
             bubble.dispose();
             return;
@@ -2864,29 +2687,34 @@ public class ChatViewController implements AutoCloseable {
     }
 
     private void clearActiveReferences() {
+        AssistantMessageView message = activeAssistantMessage;
+        MarkdownBubble reply = message == null ? null : message.reply();
         // 兜底移除「生成中」占位（正常完成/出错/循环中断等各路径终态）
         dismissGenPlaceholder();
         // 终态只负责提交后台排版，不等待解析或动画完成即可继续保存消息和恢复输入。
-        if (activeReplyBubble != null) activeReplyBubble.finish();
+        if (reply != null) reply.finish();
         if (activeToolResultBubble != null) activeToolResultBubble.finish();
         if (activePlanAgentBubble != null) activePlanAgentBubble.finish();
         // 流式结束前，写入最终的"耗时 · Tokens"到消息头部
-        if (activeAssistantMetaLabel != null) {
+        if (message != null) {
             ActiveTurn turn = activeTurn;
-            activeAssistantMetaLabel.setText(formatTurnMeta(currentTurnMetrics(),
+            message.setMetadata(formatTurnMeta(currentTurnMetrics(),
                     turn == null ? DeliveryState.COMPLETE : turn.deliveryState));
         }
-        activeAssistantMetaLabel = null;
-        activeReplyBubble = null;
-        activeToolResultsBox = null;
+        activeAssistantMessage = null;
         activeToolName = null;
         activeToolResultBubble = null;
         activeSubResultBubble = null;
-        activeUnifiedBubble = null;
         activePlanAgentBubble = null;
         currentPlanAgentName = null;
         currentPlanAgentBuffer.setLength(0);
         displayedImagePaths.clear();
+        if (message != null && message.root().getParent() == null) message.close();
+    }
+
+    private MarkdownBubble activeReply() {
+        AssistantMessageView message = activeAssistantMessage;
+        return message == null ? null : message.reply();
     }
 
     private String currentReplyText() {
@@ -2899,8 +2727,8 @@ public class ChatViewController implements AutoCloseable {
                 && activePlanAgentBubble.getLength() > 0) {
             return activePlanAgentBubble.getText();
         }
-        return activeReplyBubble != null && activeReplyBubble.getLength() > 0
-                ? activeReplyBubble.getText() : null;
+        MarkdownBubble reply = activeReply();
+        return reply != null && reply.getLength() > 0 ? reply.getText() : null;
     }
 
     private TurnMetrics currentTurnMetrics() {
