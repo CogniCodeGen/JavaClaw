@@ -18,7 +18,6 @@ import com.javaclaw.platform.spring.ApplicationContexts;
 import com.javaclaw.platform.spring.WorkspaceSpringContextFactory;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeCenterView;
 import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
-import com.javaclaw.ui.javafx.skill.SkillCenterView;
 import com.javaclaw.ui.javafx.task.SddTaskView;
 import com.javaclaw.ui.javafx.control.WindowToastFactory;
 import javafx.animation.PauseTransition;
@@ -128,7 +127,7 @@ public final class UiScreenshotExporter {
             shots.add(new Shot("04-memory-center.png", "记忆中心", () ->
                     workspaceRuntime.memoryViews().create(primaryStage).show()));
             shots.add(new Shot("05-skill-center.png", "技能中心", () ->
-                    showInternalStage(new SkillCenterView(primaryStage))));
+                    workspaceRuntime.skillViews().create(primaryStage).show()));
             shots.add(new Shot("06-task-center.png", "托管任务", () ->
                     new SddTaskView(primaryStage).show()));
             shots.add(new Shot("07-mcp-servers.png", "MCP 服务器", () -> {

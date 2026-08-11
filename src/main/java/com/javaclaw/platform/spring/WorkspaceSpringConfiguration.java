@@ -40,6 +40,9 @@ import com.javaclaw.application.settings.ModelSettingsUseCase;
 import com.javaclaw.application.schedule.ScheduleApplicationService;
 import com.javaclaw.application.schedule.SchedulePort;
 import com.javaclaw.application.schedule.ScheduleUseCase;
+import com.javaclaw.application.skill.SkillManagementApplicationService;
+import com.javaclaw.application.skill.SkillManagementPort;
+import com.javaclaw.application.skill.SkillManagementUseCase;
 import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.config.DatabaseAccess;
@@ -60,6 +63,7 @@ import com.javaclaw.infrastructure.settings.HttpModelSettingsProbeAdapter;
 import com.javaclaw.infrastructure.settings.JakartaMailConnectionProbeAdapter;
 import com.javaclaw.infrastructure.settings.LegacyCommunicationSettingsAdapter;
 import com.javaclaw.infrastructure.schedule.ScheduleManagerAdapter;
+import com.javaclaw.infrastructure.skill.LegacySkillManagementAdapter;
 import com.javaclaw.mode.ChatMode;
 import com.javaclaw.mode.LoopMode;
 import com.javaclaw.mode.PlanMode;
@@ -74,6 +78,10 @@ import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.schedule.ScheduleManager;
 import com.javaclaw.schedule.ScheduleBuiltinActions;
 import com.javaclaw.schedule.ScheduledTaskStore;
+import com.javaclaw.skill.SkillInstaller;
+import com.javaclaw.skill.SkillManager;
+import com.javaclaw.skill.SkillUsageTracker;
+import com.javaclaw.skill.curation.SkillProposalQueue;
 import com.javaclaw.system.CommandSessionManager;
 import com.javaclaw.runtime.WorkspaceContext;
 import com.javaclaw.site.SiteCredentialManager;
@@ -111,6 +119,11 @@ import com.javaclaw.ui.javafx.workflow.WorkflowInputDialogFactory;
 import com.javaclaw.ui.javafx.workflow.WorkflowNodeCardFactory;
 import com.javaclaw.ui.javafx.workflow.WorkflowRunCellFactory;
 import com.javaclaw.ui.javafx.workflow.WorkflowViewFactory;
+import com.javaclaw.ui.javafx.skill.SkillBundleCellFactory;
+import com.javaclaw.ui.javafx.skill.SkillCenterViewFactory;
+import com.javaclaw.ui.javafx.skill.SkillListCellFactory;
+import com.javaclaw.ui.javafx.skill.SkillProposalCardFactory;
+import com.javaclaw.ui.javafx.skill.SkillScriptNameDialogFactory;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.http.HttpGateway;
 import com.javaclaw.platform.json.JsonCodec;
@@ -584,6 +597,71 @@ public class WorkspaceSpringConfiguration {
             @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader,
             com.javaclaw.platform.fx.FxDispatcher fx) {
         return new WorkflowViewFactory(loader, fx);
+    }
+
+    @Bean(destroyMethod = "")
+    SkillManager skillManager() {
+        return SkillManager.getInstance();
+    }
+
+    @Bean(destroyMethod = "")
+    SkillUsageTracker skillUsageTracker() {
+        return SkillUsageTracker.getInstance();
+    }
+
+    @Bean(destroyMethod = "")
+    SkillProposalQueue skillProposalQueue() {
+        return SkillProposalQueue.getInstance();
+    }
+
+    @Bean
+    SkillInstaller skillInstaller(SkillManager skills) {
+        return new SkillInstaller(skills);
+    }
+
+    @Bean
+    SkillManagementPort skillManagementPort(
+            SkillManager skills,
+            SkillUsageTracker usage,
+            SkillProposalQueue proposals,
+            SkillInstaller installer,
+            com.javaclaw.config.AgentConfig settings) {
+        return new LegacySkillManagementAdapter(skills, usage, proposals, installer, settings);
+    }
+
+    @Bean
+    SkillManagementApplicationService skillManagementApplicationService(
+            SkillManagementPort skills) {
+        return new SkillManagementUseCase(skills);
+    }
+
+    @Bean
+    SkillListCellFactory skillListCellFactory() {
+        return new SkillListCellFactory();
+    }
+
+    @Bean
+    SkillBundleCellFactory skillBundleCellFactory() {
+        return new SkillBundleCellFactory();
+    }
+
+    @Bean
+    SkillProposalCardFactory skillProposalCardFactory() {
+        return new SkillProposalCardFactory();
+    }
+
+    @Bean
+    SkillScriptNameDialogFactory skillScriptNameDialogFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader,
+            com.javaclaw.platform.fx.FxDispatcher fx) {
+        return new SkillScriptNameDialogFactory(loader, fx);
+    }
+
+    @Bean
+    SkillCenterViewFactory skillCenterViewFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader,
+            com.javaclaw.platform.fx.FxDispatcher fx) {
+        return new SkillCenterViewFactory(loader, fx);
     }
 
     @Bean(destroyMethod = "shutdown")

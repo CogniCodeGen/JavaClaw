@@ -4,6 +4,7 @@ import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.ChatService;
 import com.javaclaw.agent.PlanModeService;
 import com.javaclaw.application.schedule.ScheduleApplicationService;
+import com.javaclaw.application.skill.SkillManagementApplicationService;
 import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.platform.spring.WorkspaceContextHandle;
@@ -14,6 +15,7 @@ import com.javaclaw.ui.javafx.settings.SettingsViewFactory;
 import com.javaclaw.ui.javafx.schedule.ScheduleViewFactory;
 import com.javaclaw.ui.javafx.memory.MemoryViewFactory;
 import com.javaclaw.ui.javafx.workflow.WorkflowViewFactory;
+import com.javaclaw.ui.javafx.skill.SkillCenterViewFactory;
 
 import java.util.Objects;
 
@@ -38,8 +40,10 @@ public final class WorkspaceRuntime implements AutoCloseable {
     private final ScheduleViewFactory scheduleViews;
     private final MemoryViewFactory memoryViews;
     private final WorkflowViewFactory workflowViews;
+    private final SkillCenterViewFactory skillViews;
     private final ScheduleManager scheduleManager;
     private final ScheduleApplicationService schedules;
+    private final SkillManagementApplicationService skills;
 
     WorkspaceRuntime(WorkspaceContextHandle springContext) {
         this.springContext = Objects.requireNonNull(springContext, "springContext");
@@ -55,8 +59,10 @@ public final class WorkspaceRuntime implements AutoCloseable {
         scheduleViews = springContext.bean(ScheduleViewFactory.class);
         memoryViews = springContext.bean(MemoryViewFactory.class);
         workflowViews = springContext.bean(WorkflowViewFactory.class);
+        skillViews = springContext.bean(SkillCenterViewFactory.class);
         scheduleManager = springContext.bean(ScheduleManager.class);
         schedules = springContext.bean(ScheduleApplicationService.class);
+        skills = springContext.bean(SkillManagementApplicationService.class);
     }
 
     public WorkspaceContext context() {
@@ -107,12 +113,20 @@ public final class WorkspaceRuntime implements AutoCloseable {
         return workflowViews;
     }
 
+    public SkillCenterViewFactory skillViews() {
+        return skillViews;
+    }
+
     public ScheduleManager scheduleManager() {
         return scheduleManager;
     }
 
     public ScheduleApplicationService schedules() {
         return schedules;
+    }
+
+    public SkillManagementApplicationService skills() {
+        return skills;
     }
 
     public boolean isClosed() {

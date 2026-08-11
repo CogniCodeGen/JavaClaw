@@ -52,8 +52,11 @@ public final class SkillProposalQueue implements SkillManageTools.ProposalSink {
     private final DebouncedPersister persister =
             new DebouncedPersister("skill-proposals", Duration.ofSeconds(3), this::save);
 
-    /** 待审提案变化监听器（UI 角标刷新），在 JavaFX 线程外回调，监听方自行 Platform.runLater */
-    private volatile Runnable onPendingChanged;
+    /** 待审提案变化监听器；回调线程不固定，订阅方负责切换到自己的展示线程。 */
+    private final List<Runnable> pendingChangedListeners = new CopyOnWriteArrayList<>();
+
+    /** 旧调用点的单监听器兼容位，迁移完成后删除。 */
+    private volatile Runnable legacyPendingChangedListener;
 
     private SkillProposalQueue() {
         load();
@@ -64,7 +67,21 @@ public final class SkillProposalQueue implements SkillManageTools.ProposalSink {
     }
 
     public void setOnPendingChanged(Runnable listener) {
-        this.onPendingChanged = listener;
+        this.legacyPendingChangedListener = listener;
+    }
+
+    /**
+     * 订阅待审提案变化。
+     *
+     * <p>句柄关闭幂等，且不会影响其他窗口或工作区订阅。监听器可能从任意线程执行。</p>
+     */
+    public AutoCloseable addPendingChangedListener(Runnable listener) {
+        Runnable checked = java.util.Objects.requireNonNull(listener, "listener");
+        pendingChangedListeners.add(checked);
+        java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
+        return () -> {
+            if (closed.compareAndSet(false, true)) pendingChangedListeners.remove(checked);
+        };
     }
 
     // ==================== 入队（ProposalSink 实现） ====================
@@ -182,12 +199,19 @@ public final class SkillProposalQueue implements SkillManageTools.ProposalSink {
     }
 
     private void notifyPendingChanged() {
-        Runnable listener = onPendingChanged;
-        if (listener != null) {
+        Runnable legacy = legacyPendingChangedListener;
+        if (legacy != null) {
+            try {
+                legacy.run();
+            } catch (Exception e) {
+                log.debug("待审提案变化回调异常（忽略）: {}", e.getMessage());
+            }
+        }
+        for (Runnable listener : pendingChangedListeners) {
             try {
                 listener.run();
             } catch (Exception e) {
-                log.debug("待审提案变化回调异常（忽略）: {}", e.getMessage());
+                log.debug("待审提案订阅回调异常（忽略）: {}", e.getMessage());
             }
         }
     }

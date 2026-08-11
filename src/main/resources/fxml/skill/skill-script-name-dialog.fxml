@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox spacing="8.0" accessibleText="新建技能脚本"
+      xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.javaclaw.ui.javafx.skill.SkillScriptNameDialogController">
+    <padding><Insets top="10.0" right="10.0" bottom="10.0" left="10.0"/></padding>
+    <children>
+        <Label text="脚本文件名" styleClass="grp-title"/>
+        <TextField fx:id="nameField" promptText="script.jsh" styleClass="skill-field"/>
+        <Label text="仅支持 .jsh / .java，不能包含路径分隔符" styleClass="sec-hint"/>
+    </children>
+</VBox>

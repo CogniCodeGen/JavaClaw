@@ -34,12 +34,16 @@ public final class SkillInstaller {
     public record InstallResult(boolean ok, String message, Path installedDir,
                                 List<String> detectedScripts) {}
 
-    private SkillInstaller() {}
+    private final SkillManager skills;
+
+    public SkillInstaller(SkillManager skills) {
+        this.skills = java.util.Objects.requireNonNull(skills, "skills");
+    }
 
     /**
      * 从本地目录安装技能
      */
-    public static InstallResult installFromDirectory(Path sourceDir, String desiredName) {
+    public InstallResult installFromDirectory(Path sourceDir, String desiredName) {
         if (sourceDir == null || !Files.isDirectory(sourceDir)) {
             return new InstallResult(false, "源目录不存在或不是目录", null, List.of());
         }
@@ -53,7 +57,7 @@ public final class SkillInstaller {
             return new InstallResult(false, "技能名只允许字母、数字、下划线、连字符", null, List.of());
         }
 
-        Path target = SkillManager.getInstance().getSkillsDir().resolve(name);
+        Path target = skills.getSkillsDir().resolve(name);
         if (Files.exists(target)) {
             return new InstallResult(false, "目标技能目录已存在，请先删除或改名", null, List.of());
         }
@@ -61,10 +65,11 @@ public final class SkillInstaller {
         try {
             List<String> scripts = listScripts(sourceDir);
             copyRecursively(sourceDir, target);
-            SkillManager.getInstance().reload();
+            skills.reload();
             log.info("技能安装完成: {} → {}", sourceDir, target);
             return new InstallResult(true, "安装成功", target, scripts);
         } catch (IOException e) {
+            deleteRecursively(target);
             log.error("安装技能失败", e);
             return new InstallResult(false, "安装失败: " + e.getMessage(), null, List.of());
         }
@@ -73,11 +78,11 @@ public final class SkillInstaller {
     /**
      * 从 zip 包安装技能（zip 顶层包含 SKILL.md 或一个包裹目录）
      */
-    public static InstallResult installFromZip(Path zipFile, String desiredName) {
+    public InstallResult installFromZip(Path zipFile, String desiredName) {
         if (zipFile == null || !Files.isRegularFile(zipFile)) {
             return new InstallResult(false, "zip 文件不存在", null, List.of());
         }
-        Path tmp;
+        Path tmp = null;
         try {
             tmp = Files.createTempDirectory("javaclaw-skill-");
             unzip(zipFile, tmp);
@@ -89,6 +94,46 @@ public final class SkillInstaller {
             return installFromDirectory(skillRoot, desiredName);
         } catch (IOException e) {
             return new InstallResult(false, "解压失败: " + e.getMessage(), null, List.of());
+        } finally {
+            if (tmp != null) deleteRecursively(tmp);
+        }
+    }
+
+    /** 校验目录导入源并返回脚本清单，不修改技能目录。 */
+    public InspectionResult inspectDirectory(Path sourceDir) {
+        if (sourceDir == null || !Files.isDirectory(sourceDir)) {
+            return new InspectionResult(false, "源目录不存在或不是目录", List.of());
+        }
+        if (!Files.isRegularFile(sourceDir.resolve(Skill.SKILL_FILE))) {
+            return new InspectionResult(false, "源目录缺少 SKILL.md", List.of());
+        }
+        return new InspectionResult(true, "", listScripts(sourceDir));
+    }
+
+    /** 校验 zip 导入源并返回其中的脚本清单，不修改技能目录。 */
+    public InspectionResult inspectZip(Path zipFile) {
+        if (zipFile == null || !Files.isRegularFile(zipFile)) {
+            return new InspectionResult(false, "zip 文件不存在", List.of());
+        }
+        Path tmp = null;
+        try {
+            tmp = Files.createTempDirectory("javaclaw-skill-inspect-");
+            unzip(zipFile, tmp);
+            Path skillRoot = findSkillRoot(tmp);
+            return skillRoot == null
+                    ? new InspectionResult(false, "zip 中未找到 SKILL.md", List.of())
+                    : new InspectionResult(true, "", listScripts(skillRoot));
+        } catch (IOException failure) {
+            return new InspectionResult(false, "检查 zip 失败: " + failure.getMessage(), List.of());
+        } finally {
+            if (tmp != null) deleteRecursively(tmp);
+        }
+    }
+
+    public record InspectionResult(boolean ok, String message, List<String> scripts) {
+        public InspectionResult {
+            message = message == null ? "" : message;
+            scripts = List.copyOf(scripts == null ? List.of() : scripts);
         }
     }
 
@@ -100,21 +145,23 @@ public final class SkillInstaller {
         try (Stream<Path> walk = Files.walk(scripts)) {
             walk.filter(Files::isRegularFile)
                     .forEach(p -> out.add(scripts.relativize(p).toString()));
-        } catch (IOException ignored) {}
+        } catch (IOException failure) {
+            log.debug("扫描技能脚本失败: {}", scripts, failure);
+        }
         return out;
     }
 
     private static void copyRecursively(Path from, Path to) throws IOException {
         try (Stream<Path> walk = Files.walk(from)) {
-            walk.sorted(Comparator.naturalOrder()).forEach(p -> {
-                Path dest = to.resolve(from.relativize(p).toString());
-                try {
-                    if (Files.isDirectory(p)) Files.createDirectories(dest);
-                    else Files.copy(p, dest, StandardCopyOption.REPLACE_EXISTING);
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
+            Iterable<Path> paths = walk.sorted(Comparator.naturalOrder())::iterator;
+            for (Path path : paths) {
+                Path destination = to.resolve(from.relativize(path).toString());
+                if (Files.isDirectory(path)) {
+                    Files.createDirectories(destination);
+                } else {
+                    Files.copy(path, destination, StandardCopyOption.REPLACE_EXISTING);
                 }
-            });
+            }
         }
     }
 
@@ -143,6 +190,20 @@ public final class SkillInstaller {
                     Files.copy(zis, resolved, StandardCopyOption.REPLACE_EXISTING);
                 }
             }
+        }
+    }
+
+    private static void deleteRecursively(Path root) {
+        try (Stream<Path> walk = Files.walk(root)) {
+            walk.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException failure) {
+                    log.debug("清理技能导入临时文件失败: {}", path, failure);
+                }
+            });
+        } catch (IOException failure) {
+            log.debug("清理技能导入临时目录失败: {}", root, failure);
         }
     }
 }

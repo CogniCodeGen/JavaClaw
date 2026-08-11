@@ -33,7 +33,6 @@ import com.javaclaw.ui.javafx.image.ImageViewerFactory;
 import com.javaclaw.ui.javafx.control.WindowToastFactory;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuController;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuSnapshot;
-import com.javaclaw.ui.javafx.skill.SkillCenterView;
 import com.javaclaw.ui.javafx.task.SddTaskView;
 import com.javaclaw.ui.javafx.theme.ThemeMenuController;
 import com.javaclaw.util.ProjectAccessPolicy;
@@ -2430,7 +2429,7 @@ public class ChatViewController implements AutoCloseable {
      */
     private void refreshSidebarBadges() {
         try {
-            int proposals = com.javaclaw.skill.curation.SkillProposalQueue.getInstance().pendingCount();
+            int proposals = applicationKernel.current().skills().pendingProposalCount();
             sidebarController.updateSkillBadge(proposals);
             int activeTasks = (int) com.javaclaw.task.sdd.run.SddTaskManager.getInstance().list().stream()
                     .filter(t -> t.state == com.javaclaw.task.sdd.run.SddTaskState.RUNNING
@@ -2577,8 +2576,7 @@ public class ChatViewController implements AutoCloseable {
     private void openSkillCenter() {
         log.info("打开技能中心");
         javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
-        SkillCenterView skillCenterView = new SkillCenterView(ownerStage);
-        skillCenterView.show();
+        applicationKernel.current().skillViews().create(ownerStage).showAndWait();
     }
 
     private void openMemoryCenter() {

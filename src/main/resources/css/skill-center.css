@@ -11,6 +11,21 @@
     -fx-background-color: transparent;
 }
 
+/* 虚拟化技能列表保持旧版透明导航外观，不绘制默认 ListView Cell 底色。 */
+.skill-list {
+    -fx-background-color: transparent;
+    -fx-padding: 2 8 2 8;
+}
+
+.skill-list .list-cell {
+    -fx-background-color: transparent;
+    -fx-padding: 1 0 1 0;
+}
+
+.skill-list .list-cell:empty {
+    -fx-padding: 0;
+}
+
 /* 左面板底部路径提示（等宽字体，可换行） */
 .skill-path-hint {
     -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
@@ -93,6 +108,15 @@
     -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 11px;
     -fx-text-fill: -jc-text-hint;
+}
+
+.skill-bundle-list,
+.skill-bundle-list .list-cell {
+    -fx-background-color: transparent;
+}
+
+.skill-bundle-list .list-cell {
+    -fx-padding: 1 0 1 0;
 }
 
 /* 目录结构 mono 预览块（沉陷底） */
