@@ -14,6 +14,7 @@ import com.javaclaw.platform.desktop.ProjectAttachmentPicker;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fx.FxDispatcher;
+import com.javaclaw.ui.javafx.loop.LoopStatusViewFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -71,5 +72,10 @@ public class DesktopPresentationConfiguration {
     @Bean
     ClarificationCardFactory clarificationCardFactory(SpringFxmlLoader loader) {
         return new ClarificationCardFactory(loader);
+    }
+
+    @Bean
+    LoopStatusViewFactory loopStatusViewFactory(SpringFxmlLoader loader) {
+        return new LoopStatusViewFactory(loader);
     }
 }

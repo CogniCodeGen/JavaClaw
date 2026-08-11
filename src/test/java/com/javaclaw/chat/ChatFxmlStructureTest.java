@@ -1,5 +1,6 @@
 package com.javaclaw.chat;
 
+import com.javaclaw.ui.javafx.loop.LoopStatusController;
 import javafx.fxml.FXML;
 import org.junit.jupiter.api.Test;
 import org.w3c.dom.Document;
@@ -133,6 +134,15 @@ class ChatFxmlStructureTest {
         assertEquals(ClarificationCardController.class.getName(),
                 document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
         assertInjectedFields(document, ClarificationCardController.class);
+        assertTrue(eventHandlers(document).isEmpty());
+    }
+
+    @Test
+    void loopStatusDeclaresEveryInjectedNode() throws Exception {
+        Document document = document("/fxml/chat/loop-status.fxml");
+        assertEquals(LoopStatusController.class.getName(),
+                document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
+        assertInjectedFields(document, LoopStatusController.class);
         assertTrue(eventHandlers(document).isEmpty());
     }
 

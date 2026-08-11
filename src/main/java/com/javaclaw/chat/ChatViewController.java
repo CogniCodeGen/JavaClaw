@@ -25,6 +25,8 @@ import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
+import com.javaclaw.ui.javafx.loop.LoopStatusView;
+import com.javaclaw.ui.javafx.loop.LoopStatusViewFactory;
 import com.javaclaw.ui.javafx.schedule.ScheduleView;
 import com.javaclaw.ui.javafx.skill.SkillCenterView;
 import com.javaclaw.ui.javafx.task.SddTaskView;
@@ -35,7 +37,6 @@ import javafx.animation.Timeline;
 import javafx.beans.value.ChangeListener;
 import javafx.fxml.FXML;
 import javafx.geometry.Insets;
-// Orientation 已不再使用（浏览器独立窗口化）
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
@@ -51,7 +52,6 @@ import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import javafx.util.Duration;
-import org.fxmisc.richtext.InlineCssTextArea;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -128,6 +128,7 @@ public class ChatViewController implements AutoCloseable {
     private final ChatMessageRowFactory messageRows;
     private final LoopDecisionFactory loopDecisions;
     private final ClarificationCardFactory clarificationCards;
+    private final LoopStatusViewFactory loopStatusViews;
 
     /** 兼容旧退出链；页面生命周期统一由 {@link #close()} 收口。 */
     public void shutdownPersistence() {
@@ -307,7 +308,8 @@ public class ChatViewController implements AutoCloseable {
             ExpandableMarkdownBlockFactory expandableBlocks,
             ChatMessageRowFactory messageRows,
             LoopDecisionFactory loopDecisions,
-            ClarificationCardFactory clarificationCards) {
+            ClarificationCardFactory clarificationCards,
+            LoopStatusViewFactory loopStatusViews) {
         this.applicationKernel = java.util.Objects.requireNonNull(
                 applicationKernel, "applicationKernel");
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
@@ -319,6 +321,7 @@ public class ChatViewController implements AutoCloseable {
         this.loopDecisions = java.util.Objects.requireNonNull(loopDecisions, "loopDecisions");
         this.clarificationCards = java.util.Objects.requireNonNull(
                 clarificationCards, "clarificationCards");
+        this.loopStatusViews = java.util.Objects.requireNonNull(loopStatusViews, "loopStatusViews");
         java.util.Objects.requireNonNull(taskExecutor, "taskExecutor");
         persistenceTasks = taskExecutor.openScope("chat-persistence", 1);
         backgroundTasks = taskExecutor.openScope("chat-ui-background", 2);
@@ -668,19 +671,6 @@ public class ChatViewController implements AutoCloseable {
     }
 
     // ==================== RichTextFX 气泡工厂 ====================
-
-    /**
-     * 创建只读气泡文本区域
-     *
-     * @param textCss 行内文字样式；传 {@code null} 时不设行内样式，
-     *                由 chat.css 的 .bubble-text-area 令牌规则接管（随主题换肤）。
-     *                仅跨主题固定底色的卡片（琥珀系统消息/澄清卡等）才应传定值颜色。
-     */
-    private InlineCssTextArea createBubbleTextArea(String content, double prefWidth, String textCss) {
-        InlineCssTextArea area = new InlineCssTextArea();
-        BubbleTextAreaSupport.configure(area, content, prefWidth, textCss);
-        return area;
-    }
 
     /**
      * 添加带附件的用户消息（设计稿风格：头像 · 姓名+时间头部 · 内容，左对齐）
@@ -1585,20 +1575,15 @@ public class ChatViewController implements AutoCloseable {
     }
 
     /** 当前循环运行的状态面板；每次新发送重置，一次循环内跨轮复用并原地刷新。 */
-    private com.javaclaw.ui.javafx.loop.LoopStatusView activeLoopStatusView;
+    private LoopStatusView activeLoopStatusView;
 
     /**
      * 处理循环状态事件（{@code loop_status}）：首个事件建面板行，后续原地刷新。
      */
     private void updateLoopStatus(com.javaclaw.loop.model.LoopStatus status) {
         if (activeLoopStatusView == null) {
-            activeLoopStatusView = new com.javaclaw.ui.javafx.loop.LoopStatusView();
-            Label avatar = new Label("🔁");
-            avatar.getStyleClass().add("msg-avatar-assistant");
-            HBox.setHgrow(activeLoopStatusView, Priority.ALWAYS);
-            HBox row = new HBox(10, avatar, activeLoopStatusView);
-            row.setAlignment(Pos.TOP_LEFT);
-            row.setPadding(new Insets(6, 12, 6, 12));
+            activeLoopStatusView = loopStatusViews.create(status);
+            HBox row = activeLoopStatusView.root();
             // 首个 loop_status 在第 1 轮结束才到（可能数分钟），期间用户可能已切走会话——
             // 流所属会话的场景图此时挂起在 suspendedStreamingNodes，新建的状态卡必须
             // 归入挂起集（切回时随场景图一并恢复），否则会被塞进当前展示的无关会话
@@ -1607,6 +1592,7 @@ public class ChatViewController implements AutoCloseable {
             } else {
                 sessionViewController.addMessage(row);
             }
+            return;
         }
         activeLoopStatusView.update(status);
     }
@@ -2323,6 +2309,12 @@ public class ChatViewController implements AutoCloseable {
     }
 
     private void collectAndDisposeBubbles(javafx.scene.Node node) {
+        if (node.hasProperties()
+                && node.getProperties().get("loopStatusView")
+                instanceof LoopStatusView loopStatus) {
+            loopStatus.close();
+            return;
+        }
         if (node.hasProperties()
                 && node.getProperties().get("loopDecisionView")
                 instanceof LoopDecisionView loopDecision) {
