@@ -2,6 +2,8 @@ package com.javaclaw.presentation;
 
 import com.javaclaw.chat.AssistantMessageFactory;
 import com.javaclaw.chat.ChatMessageRowFactory;
+import com.javaclaw.chat.ClarificationCardFactory;
+import com.javaclaw.chat.LoopDecisionFactory;
 import com.javaclaw.chat.ExpandableMarkdownBlockFactory;
 import com.javaclaw.chat.MarkdownBubbleFactory;
 import com.javaclaw.chat.MarkdownRenderEngine;
@@ -59,5 +61,15 @@ public class DesktopPresentationConfiguration {
     @Bean
     ChatMessageRowFactory chatMessageRowFactory(SpringFxmlLoader loader) {
         return new ChatMessageRowFactory(loader);
+    }
+
+    @Bean
+    LoopDecisionFactory loopDecisionFactory(SpringFxmlLoader loader) {
+        return new LoopDecisionFactory(loader);
+    }
+
+    @Bean
+    ClarificationCardFactory clarificationCardFactory(SpringFxmlLoader loader) {
+        return new ClarificationCardFactory(loader);
     }
 }

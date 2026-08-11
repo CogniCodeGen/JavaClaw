@@ -119,6 +119,24 @@ class ChatFxmlStructureTest {
     }
 
     @Test
+    void loopDecisionDeclaresEveryInjectedNodeAndAction() throws Exception {
+        Document document = document("/fxml/chat/loop-decision.fxml");
+        assertEquals(LoopDecisionController.class.getName(),
+                document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
+        assertInjectedFields(document, LoopDecisionController.class);
+        assertEquals(Set.of("continueRequested", "stopRequested"), eventHandlers(document));
+    }
+
+    @Test
+    void clarificationCardDeclaresEveryInjectedNode() throws Exception {
+        Document document = document("/fxml/chat/clarification-card.fxml");
+        assertEquals(ClarificationCardController.class.getName(),
+                document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
+        assertInjectedFields(document, ClarificationCardController.class);
+        assertTrue(eventHandlers(document).isEmpty());
+    }
+
+    @Test
     void attachmentPreviewDeclaresEveryInjectedNodeAndEventEntrypoint() throws Exception {
         Document document = document("/fxml/chat/attachment-preview-item.fxml");
         assertEquals(AttachmentPreviewItemController.class.getName(),

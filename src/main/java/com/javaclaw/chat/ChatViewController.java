@@ -126,6 +126,8 @@ public class ChatViewController implements AutoCloseable {
     private final AssistantMessageFactory assistantMessages;
     private final ExpandableMarkdownBlockFactory expandableBlocks;
     private final ChatMessageRowFactory messageRows;
+    private final LoopDecisionFactory loopDecisions;
+    private final ClarificationCardFactory clarificationCards;
 
     /** 兼容旧退出链；页面生命周期统一由 {@link #close()} 收口。 */
     public void shutdownPersistence() {
@@ -303,7 +305,9 @@ public class ChatViewController implements AutoCloseable {
             ManagedTaskExecutor taskExecutor,
             AssistantMessageFactory assistantMessages,
             ExpandableMarkdownBlockFactory expandableBlocks,
-            ChatMessageRowFactory messageRows) {
+            ChatMessageRowFactory messageRows,
+            LoopDecisionFactory loopDecisions,
+            ClarificationCardFactory clarificationCards) {
         this.applicationKernel = java.util.Objects.requireNonNull(
                 applicationKernel, "applicationKernel");
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
@@ -312,6 +316,9 @@ public class ChatViewController implements AutoCloseable {
         this.expandableBlocks = java.util.Objects.requireNonNull(
                 expandableBlocks, "expandableBlocks");
         this.messageRows = java.util.Objects.requireNonNull(messageRows, "messageRows");
+        this.loopDecisions = java.util.Objects.requireNonNull(loopDecisions, "loopDecisions");
+        this.clarificationCards = java.util.Objects.requireNonNull(
+                clarificationCards, "clarificationCards");
         java.util.Objects.requireNonNull(taskExecutor, "taskExecutor");
         persistenceTasks = taskExecutor.openScope("chat-persistence", 1);
         backgroundTasks = taskExecutor.openScope("chat-ui-background", 2);
@@ -419,45 +426,9 @@ public class ChatViewController implements AutoCloseable {
     private void showLoopInteractionBubble(String toolName, int repeats,
                                            java.util.function.Consumer<Boolean> decision) {
         fx.dispatch(() -> {
-            HBox bubble = new HBox(12);
-            bubble.setAlignment(Pos.CENTER_LEFT);
-            bubble.getStyleClass().add("message-system");
-            bubble.setPadding(new Insets(12));
-
-            Label text = new Label(String.format(
-                    "检测到工具 [%s] 连续 %d 次相似调用，已暂停。是否继续执行？",
-                    toolName, repeats));
-            text.setWrapText(true);
-            HBox.setHgrow(text, Priority.ALWAYS);
-
-            Button continueBtn = new Button("继续");
-            continueBtn.getStyleClass().add("mode-segment-btn");
-            Button stopBtn = new Button("终止");
-            stopBtn.getStyleClass().add("mode-segment-btn");
-
-            continueBtn.setOnAction(e -> resolveLoopDecision(true, decision, bubble, continueBtn, stopBtn));
-            stopBtn.setOnAction(e -> resolveLoopDecision(false, decision, bubble, continueBtn, stopBtn));
-
-            bubble.getChildren().addAll(text, continueBtn, stopBtn);
-
-            HBox row = new HBox(bubble);
-            row.setAlignment(Pos.CENTER);
-            sessionViewController.addMessage(row);
+            LoopDecisionView view = loopDecisions.create(toolName, repeats, decision);
+            sessionViewController.addMessage(view.root());
         });
-    }
-
-    /** 分派用户决定，禁用按钮避免重复点击，然后从消息列表移除气泡 */
-    private void resolveLoopDecision(boolean continueRunning,
-                                     java.util.function.Consumer<Boolean> decision,
-                                     HBox bubble, Button... buttons) {
-        for (Button b : buttons) b.setDisable(true);
-        try {
-            decision.accept(continueRunning);
-        } catch (Exception ex) {
-            log.warn("循环检测决定回调异常", ex);
-        }
-        // 将气泡降级为纯文本记录用户选择
-        bubble.getChildren().setAll(new Label(continueRunning ? "已选择继续执行" : "已选择终止"));
     }
 
     /**
@@ -1584,48 +1555,16 @@ public class ChatViewController implements AutoCloseable {
      * 用户的下一条输入会自然成为下一轮对话。</p>
      */
     private void appendClarifyCard(String reason, String question) {
-        // 1. 构建可视化卡片：头像 + 头部（姓名 + 模型徽章 + 时间）+ 琥珀色卡片正文
-        Label avatar = new Label("✦");
-        avatar.getStyleClass().add("msg-avatar-assistant");
+        ChatMessage timestamp = new ChatMessage(ChatMessage.Role.ASSISTANT, "");
+        ClarificationCardView card = clarificationCards.create(
+                AgentConfig.AGENT_NAME,
+                currentModelDisplayName(),
+                timestamp.getFormattedTime(),
+                reason,
+                question);
+        sessionViewController.addMessage(card.root());
 
-        Label name = new Label(AgentConfig.AGENT_NAME);
-        name.getStyleClass().add("msg-header-name");
-        Label modelBadge = new Label(currentModelDisplayName());
-        modelBadge.getStyleClass().add("msg-header-model");
-        Label time = new Label(new ChatMessage(ChatMessage.Role.ASSISTANT, "").getFormattedTime());
-        time.getStyleClass().add("msg-header-time");
-        HBox header = new HBox(8, name, modelBadge, time);
-        header.setAlignment(Pos.CENTER_LEFT);
-
-        Label cardTitle = new Label("🤔 需要您的澄清");
-        cardTitle.getStyleClass().add("clarify-card-title");
-
-        VBox card = new VBox(8, cardTitle);
-        card.getStyleClass().add("clarify-card");
-        card.setPadding(new Insets(12, 14, 12, 14));
-
-        if (reason != null && !reason.isBlank()) {
-            Label reasonHeader = new Label("原因");
-            reasonHeader.getStyleClass().add("clarify-card-label");
-            javafx.scene.Node reasonBody = createBubbleTextArea(reason, 520, "-fx-fill: #4A3E20;");
-            card.getChildren().addAll(reasonHeader, reasonBody);
-        }
-        if (question != null && !question.isBlank()) {
-            Label qHeader = new Label("问题");
-            qHeader.getStyleClass().add("clarify-card-label");
-            javafx.scene.Node qBody = createBubbleTextArea(question, 520, "-fx-fill: #27251F;");
-            card.getChildren().addAll(qHeader, qBody);
-        }
-
-        VBox right = new VBox(6, header, card);
-        HBox.setHgrow(right, Priority.ALWAYS);
-
-        HBox row = new HBox(10, avatar, right);
-        row.setAlignment(Pos.TOP_LEFT);
-        row.setPadding(new Insets(6, 12, 6, 12));
-        sessionViewController.addMessage(row);
-
-        // 2. 持久化到当前会话：用 markdown blockquote 表达澄清结构，重载时也能渲染
+        // 用 Markdown 引用保存语义结构，历史会话无需依赖专用卡片也能完整呈现。
         StringBuilder md = new StringBuilder();
         md.append("> 🤔 **需要您的澄清**\n>\n");
         if (reason != null && !reason.isBlank()) {
@@ -1637,15 +1576,10 @@ public class ChatViewController implements AutoCloseable {
         if (currentSession != null) {
             currentSession.getMessages().add(
                     new ChatMessage(ChatMessage.Role.ASSISTANT, md.toString()));
-            try {
-                chatHistoryManager.saveSessionMessages(
-                        currentSession.getId(), currentSession.getMessages());
-            } catch (Exception e) {
-                log.warn("保存澄清卡片到会话历史失败: {}", e.getMessage());
-            }
+            saveSessionMessages(currentSession);
         }
 
-        // 3. 让输入框获得焦点，提示用户输入修正信息
+        // 焦点回到输入框，让用户可以直接回答澄清问题。
         composerController.focusInput();
         log.info("已渲染澄清卡片: reason='{}' question='{}'", reason, question);
     }
@@ -2377,11 +2311,10 @@ public class ChatViewController implements AutoCloseable {
     }
 
     /**
-     * 清空消息列表并释放内嵌的 MarkdownBubble 资源。
+     * 清空消息列表并释放每个 FXML 视图及其嵌套 Markdown 资源。
      *
-     * <p>{@link MarkdownBubble#getView()} 产生的视图节点上挂有 {@code markdownBubble}
-     * 属性；深度遍历当前转录区所有后代，对命中节点调用 dispose，
-     * 解除气泡与 FontManager 等全局对象之间的 listener 引用链。</p>
+     * <p>动态消息根节点携带自身的生命周期句柄。命中外层句柄后立即停止向下遍历，
+     * 由该句柄按所有权关系关闭嵌套视图，避免重复销毁和全局监听器泄漏。</p>
      */
     private void disposeMessageList() {
         for (javafx.scene.Node node : sessionViewController.detachMessages()) {
@@ -2390,6 +2323,18 @@ public class ChatViewController implements AutoCloseable {
     }
 
     private void collectAndDisposeBubbles(javafx.scene.Node node) {
+        if (node.hasProperties()
+                && node.getProperties().get("loopDecisionView")
+                instanceof LoopDecisionView loopDecision) {
+            loopDecision.close();
+            return;
+        }
+        if (node.hasProperties()
+                && node.getProperties().get("clarificationCardView")
+                instanceof ClarificationCardView clarificationCard) {
+            clarificationCard.close();
+            return;
+        }
         if (node.hasProperties()
                 && node.getProperties().get("chatMessageRowView")
                 instanceof ChatMessageRowView messageRow) {

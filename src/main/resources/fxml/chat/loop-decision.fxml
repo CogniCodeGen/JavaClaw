@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.layout.HBox?>
+
+<HBox fx:id="root" alignment="CENTER"
+      xmlns="http://javafx.com/javafx/25"
+      xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.javaclaw.chat.LoopDecisionController">
+    <children>
+        <HBox alignment="CENTER_LEFT" spacing="12.0" styleClass="message-system">
+            <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
+            <children>
+                <Label fx:id="promptLabel" wrapText="true" HBox.hgrow="ALWAYS"/>
+                <Button fx:id="continueButton" text="继续" onAction="#continueRequested"
+                        styleClass="mode-segment-btn"/>
+                <Button fx:id="stopButton" text="终止" onAction="#stopRequested"
+                        styleClass="mode-segment-btn"/>
+                <Label fx:id="resolutionLabel" visible="false" managed="false"/>
+            </children>
+        </HBox>
+    </children>
+</HBox>
