@@ -12,7 +12,7 @@
  * 设计稿规格（kit.css .toggle）：
  *   轨道 38×22 圆角胶囊；滑块 18×18 白色圆形带轻阴影；
  *   off 轨道 -jc-border-strong / on 轨道 -jc-primary-500；约 150ms 平移过渡。
- * 控件结构：ToggleSwitch(Region) 内含 .jc-switch（轨道）+ .jc-switch-thumb（滑块）。
+ * 控件结构：ToggleSwitch(Region) 加载 FXML 内的 .jc-switch（轨道）和 .jc-switch-thumb（滑块）。
  */
 
 /* 轨道（off 态）—— 较 -jc-border-strong 压深一档，避免浅色卡片上"隐形" */

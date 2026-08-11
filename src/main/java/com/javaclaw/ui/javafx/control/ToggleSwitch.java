@@ -1,11 +1,14 @@
 package com.javaclaw.ui.javafx.control;
 
+import com.javaclaw.platform.fxml.EmbeddedFxmlLoader;
 import javafx.animation.Interpolator;
 import javafx.animation.TranslateTransition;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
-import javafx.geometry.Pos;
+import javafx.fxml.FXML;
+import javafx.scene.AccessibleRole;
 import javafx.scene.input.KeyCode;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.util.Duration;
@@ -40,10 +43,8 @@ public class ToggleSwitch extends Region {
     /** 选中状态属性，供外部绑定 */
     private final BooleanProperty selected = new SimpleBooleanProperty(this, "selected", false);
 
-    /** 轨道容器（承载滑块） */
-    private final StackPane track = new StackPane();
-    /** 圆形滑块 */
-    private final Region thumb = new Region();
+    @FXML private StackPane track;
+    @FXML private Region thumb;
 
     private final TranslateTransition slide;
 
@@ -53,47 +54,35 @@ public class ToggleSwitch extends Region {
 
     public ToggleSwitch(boolean initiallySelected) {
         getStyleClass().add("jc-switch-root");
-
-        // 轨道
-        track.getStyleClass().add("jc-switch");
-        track.setAlignment(Pos.CENTER_LEFT);
-        track.setPadding(new javafx.geometry.Insets(0, PADDING, 0, PADDING));
-
-        // 滑块
-        thumb.getStyleClass().add("jc-switch-thumb");
-
-        track.getChildren().add(thumb);
+        setAccessibleRole(AccessibleRole.CHECK_BOX);
+        setFocusTraversable(true);
+        StackPane content = EmbeddedFxmlLoader.load(
+                ToggleSwitch.class.getResource("/fxml/control/toggle-switch.fxml"),
+                this, StackPane.class);
         getChildren().add(track);
+        if (content != track) {
+            throw new IllegalStateException("ToggleSwitch FXML 根节点注入不一致");
+        }
 
-        // 滑块平移动画（仅作用于 thumb 的 translateX）
         slide = new TranslateTransition(ANIM, thumb);
         slide.setInterpolator(Interpolator.EASE_BOTH);
 
-        // 点击轨道切换
-        track.setOnMouseClicked(e -> {
-            if (!isDisabled()) {
-                setSelected(!isSelected());
-            }
-        });
-
-        // 键盘可达：聚焦后空格/回车切换
-        setFocusTraversable(true);
         setOnKeyPressed(e -> {
             if ((e.getCode() == KeyCode.SPACE || e.getCode() == KeyCode.ENTER) && !isDisabled()) {
                 setSelected(!isSelected());
                 e.consume();
             }
         });
-        // 焦点环挂在轨道上（视觉一致）
         focusedProperty().addListener((obs, o, n) -> track.pseudoClassStateChanged(
                 javafx.css.PseudoClass.getPseudoClass("focused"), n));
-
-        // 状态变化 -> 更新轨道样式 + 触发滑块平移
+        selected.set(initiallySelected);
         selected.addListener((obs, o, n) -> updateVisual(true));
-
-        // 初始状态（不播动画，直接就位）
-        setSelected(initiallySelected);
         updateVisual(false);
+    }
+
+    @FXML
+    private void toggleRequested(MouseEvent ignored) {
+        if (!isDisabled()) setSelected(!isSelected());
     }
 
     /**
