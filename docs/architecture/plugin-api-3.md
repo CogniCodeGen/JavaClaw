@@ -50,3 +50,12 @@ TaskHandle<Void> heartbeat = ctx.exec().scheduleAtFixedRate(
 ```
 
 仓库中的 `sample-plugins/hello` 与 `sample-plugins/feishu` 是 3.0 参考实现。
+
+## 能力、调用与卸载边界
+
+描述符中的能力声明先由宿主授权，再由 `ToolInvocationPipeline` 绑定调用来源、完成风险确认、
+审计、执行和 `ToolResult` 映射。插件不能绕过该管线直接复用交互式工具实例。
+
+停用或卸载按以下顺序执行：拒绝新的插件任务，关闭该插件的 `TaskScope`，取消并等待在途句柄，
+调用插件 `stop()`，最后释放类加载器。某个关闭步骤失败不会跳过后续资源释放；失败会被记录并
+附加到最终卸载结果。

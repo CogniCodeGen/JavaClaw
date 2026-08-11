@@ -8,6 +8,7 @@
 
 ![Java](https://img.shields.io/badge/Java-25-orange)
 ![JavaFX](https://img.shields.io/badge/JavaFX-25-blue)
+![Spring](https://img.shields.io/badge/Spring_Framework-7.0.8-6DB33F)
 ![AgentScope](https://img.shields.io/badge/AgentScope-1.0.12-green)
 ![EclipseStore](https://img.shields.io/badge/EclipseStore-4.1-purple)
 ![Playwright](https://img.shields.io/badge/Playwright-1.52.0-2EAD33)
@@ -121,6 +122,7 @@ JavaClaw 不只是聊天壳，而是一个「桌面智能体工作台」。从�
 | 运行环境 | JDK | 25 |
 | 桌面 UI | JavaFX | 25 |
 | | RichTextFX | 0.11.7 |
+| 对象装配 / JDBC / 事务 | Spring Framework | 7.0.8 |
 | 智能体框架 | AgentScope Java | 1.0.12 |
 | 记忆 / 向量存储 | EclipseStore + JVector | 4.1.0 |
 | 结构化持久化 | H2（单文件全局库） | 2.3.232 |
@@ -129,7 +131,7 @@ JavaClaw 不只是聊天壳，而是一个「桌面智能体工作台」。从�
 | 浏览器自动化 | Playwright Java | 1.52.0 |
 | 邮件 | Jakarta Mail | 2.0.3 |
 | 文档处理 | Apache PDFBox | 3.0.4 |
-| | CommonMark | 0.24.0 |
+| | CommonMark | 0.30.0 |
 | 日志 | Logback | 1.4.14 |
 | 构建工具 | Maven | 3.9+ |
 
@@ -153,7 +155,7 @@ mvn clean compile
 # 运行
 mvn javafx:run
 
-# 隔离数据的 JavaFX 功能测试（target/ui-test-data，跳过向导且不安装托盘）
+# 隔离数据的 JavaFX 功能测试（target/ui-test-data-v3，跳过向导且不安装托盘）
 mvn -Pui-test javafx:run
 
 # 打包
@@ -165,14 +167,20 @@ mvn clean package
 > ⚠️ IDE 运行还需补 VM 参数 **`--add-modules jdk.incubator.vector --enable-native-access=ALL-UNNAMED`**（JVector 向量索引依赖；`mvn javafx:run` 已在插件配置中内置，无需手动添加）。
 
 ### 首次配置
-首次启动会进入引导向导：选择模型提供商模板 → 填写 `baseUrl` / `model` / API Key → 完成。配置持久化在全局 H2 数据库 `data/javaclaw.mv.db`（按工作区隔离，API Key 加密存储），之后可在「设置」中随时修改。
+首次启动会进入引导向导：选择模型提供商模板 → 填写 `baseUrl` / `model` / API Key → 完成。3.0 默认使用带格式标记的 `data-v3/`，配置持久化在全局 H2 数据库 `data-v3/javaclaw.mv.db`（按工作区隔离，API Key 加密存储），之后可在「设置」中随时修改。旧版 `data/` 不会被迁移或修改。
 
 ## 📚 文档
+- 3.0 架构与决策记录：[`docs/architecture/README.md`](docs/architecture/README.md)
+- FXML MVC 约定：[`docs/architecture/fxml-mvc.md`](docs/architecture/fxml-mvc.md)
+- 执行与取消模型：[`docs/architecture/execution-model.md`](docs/architecture/execution-model.md)
+- Plugin API 3.0：[`docs/architecture/plugin-api-3.md`](docs/architecture/plugin-api-3.md)
+- 数据格式与升级边界：[`docs/architecture/data-format-v3.md`](docs/architecture/data-format-v3.md)
+- 质量门禁：[`docs/architecture/quality-gates.md`](docs/architecture/quality-gates.md)
 - 设计文档：[`docs/agent-design.md`](docs/agent-design.md)
 - 功能文档：[`docs/功能文档.md`](docs/功能文档.md)
 
 ## 🤝 贡献
-欢迎提交 Issue 与 Pull Request。提交代码前请确保 `mvn clean compile` 通过。
+欢迎提交 Issue 与 Pull Request。提交代码前请确保 `mvn clean -Pui-test verify` 通过；该命令会运行 JavaFX/FXML、ArchUnit、源码卫生与 JaCoCo 三层覆盖率门禁。
 
 > 项目约定**中文优先**：代码注释、提示词、UI 文本、日志、commit message 均使用中文。
 
