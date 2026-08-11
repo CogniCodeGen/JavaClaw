@@ -45,8 +45,26 @@ class ChatFxmlStructureTest {
                 .collect(Collectors.toSet());
         assertTrue(controllerHandlers.containsAll(handlers),
                 "Controller 缺少 @FXML 事件方法: " + handlers);
-        assertEquals(Set.of("toggleSidebar", "openTaskManager", "openSettingsRequested",
-                "onClearHistory"), handlers);
+        assertTrue(handlers.isEmpty());
+    }
+
+    @Test
+    void chatHeaderDeclaresEveryInjectedNodeAndEventEntrypoint() throws Exception {
+        Document document = document("/fxml/chat/chat-header.fxml");
+        assertEquals(ChatHeaderController.class.getName(),
+                document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
+        assertInjectedFields(document, ChatHeaderController.class);
+        assertEquals(Set.of("toggleSidebarRequested", "openTasksRequested",
+                "openSettingsRequested", "clearHistoryRequested"), eventHandlers(document));
+    }
+
+    @Test
+    void shortcutHelpDeclaresEveryInjectedNode() throws Exception {
+        Document document = document("/fxml/chat/chat-shortcut-help.fxml");
+        assertEquals(ChatShortcutHelpController.class.getName(),
+                document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
+        assertInjectedFields(document, ChatShortcutHelpController.class);
+        assertTrue(eventHandlers(document).isEmpty());
     }
 
     @Test

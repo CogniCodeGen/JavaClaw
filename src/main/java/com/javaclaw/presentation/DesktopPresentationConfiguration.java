@@ -2,6 +2,8 @@ package com.javaclaw.presentation;
 
 import com.javaclaw.chat.AssistantMessageFactory;
 import com.javaclaw.chat.ChatMessageRowFactory;
+import com.javaclaw.chat.ChatInlineImageRenderer;
+import com.javaclaw.chat.ChatShortcutHelpFactory;
 import com.javaclaw.chat.ClarificationCardFactory;
 import com.javaclaw.chat.LoopDecisionFactory;
 import com.javaclaw.chat.ExpandableMarkdownBlockFactory;
@@ -42,6 +44,16 @@ public class DesktopPresentationConfiguration {
             SpringFxmlLoader loader,
             FxDispatcher fx) {
         return new ImageViewerFactory(loader, fx);
+    }
+
+    @Bean
+    ChatInlineImageRenderer chatInlineImageRenderer(ImageViewerFactory imageViewer) {
+        return new ChatInlineImageRenderer(imageViewer);
+    }
+
+    @Bean
+    ChatShortcutHelpFactory chatShortcutHelpFactory(SpringFxmlLoader loader) {
+        return new ChatShortcutHelpFactory(loader);
     }
 
     @Bean

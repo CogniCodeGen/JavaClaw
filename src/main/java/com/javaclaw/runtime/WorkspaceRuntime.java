@@ -8,6 +8,7 @@ import com.javaclaw.application.skill.SkillManagementApplicationService;
 import com.javaclaw.application.task.SddTaskApplicationService;
 import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.config.DatabaseAccess;
+import com.javaclaw.config.AgentConfig;
 import com.javaclaw.platform.spring.WorkspaceContextHandle;
 import com.javaclaw.schedule.ScheduleManager;
 import com.javaclaw.workflow.service.WorkflowService;
@@ -33,6 +34,7 @@ public final class WorkspaceRuntime implements AutoCloseable {
     private final WorkspaceContextHandle springContext;
     private final WorkspaceContext context;
     private final DatabaseAccess databaseAccess;
+    private final AgentConfig agentConfig;
     private final AgentRuntime agentRuntime;
     private final ChatService chatService;
     private final PlanModeService planModeService;
@@ -55,6 +57,7 @@ public final class WorkspaceRuntime implements AutoCloseable {
         this.springContext = Objects.requireNonNull(springContext, "springContext");
         context = springContext.workspace();
         databaseAccess = springContext.bean(DatabaseAccess.class);
+        agentConfig = springContext.bean(AgentConfig.class);
         agentRuntime = springContext.bean(AgentRuntime.class);
         chatService = springContext.bean(ChatService.class);
         planModeService = springContext.bean(PlanModeService.class);
@@ -80,6 +83,10 @@ public final class WorkspaceRuntime implements AutoCloseable {
 
     public DatabaseAccess databaseAccess() {
         return databaseAccess;
+    }
+
+    public AgentConfig agentConfig() {
+        return agentConfig;
     }
 
     public AgentRuntime agentRuntime() {

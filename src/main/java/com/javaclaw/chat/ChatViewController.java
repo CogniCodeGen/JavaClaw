@@ -6,7 +6,6 @@ import com.javaclaw.agent.ChatService;
 import com.javaclaw.agent.PlanModeService;
 import com.javaclaw.agent.PricingTable;
 import com.javaclaw.agent.TokenTracker;
-import com.javaclaw.api.conversation.ActionMode;
 import com.javaclaw.api.conversation.CancellationReason;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
@@ -18,7 +17,6 @@ import com.javaclaw.api.conversation.Mode;
 import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.config.AgentConfig;
-import com.javaclaw.ui.javafx.settings.SettingsView;
 import com.javaclaw.runtime.ApplicationKernel;
 import com.javaclaw.runtime.WorkspaceRuntime;
 import com.javaclaw.platform.fx.FxDispatcher;
@@ -29,23 +27,12 @@ import com.javaclaw.ui.javafx.loop.LoopStatusView;
 import com.javaclaw.ui.javafx.loop.LoopStatusViewFactory;
 import com.javaclaw.ui.javafx.diagnostics.DiagnosticsViewFactory;
 import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
-import com.javaclaw.ui.javafx.image.ImageViewerFactory;
-import com.javaclaw.ui.javafx.control.WindowToastFactory;
-import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuController;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuSnapshot;
-import com.javaclaw.ui.javafx.theme.ThemeMenuController;
-import com.javaclaw.util.ProjectAccessPolicy;
-import javafx.animation.Animation;
-import javafx.animation.KeyFrame;
-import javafx.animation.Timeline;
 import javafx.fxml.FXML;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
-import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
-import javafx.scene.input.KeyCode;
-import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -83,21 +70,12 @@ public class ChatViewController implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(ChatViewController.class);
 
-    /** 支持内联显示的图片扩展名 */
-    private static final Set<String> IMAGE_EXTENSIONS = Set.of(
-            "png", "jpg", "jpeg", "gif", "bmp", "webp");
-
     @FXML private BorderPane outerRoot;
     @FXML private ChatSessionController sessionViewController;
     @FXML private WorkspaceSwitchOverlayController workspaceSwitchOverlayController;
     @FXML private ChatComposerController composerController;
     @FXML private ChatModeController modeBarController;
-    @FXML private Label topTitleLabel;
-    @FXML private Label topTitleStatusDot;
-    @FXML private Label topTitleMetaLabel;
-    @FXML private Label localModeBadge;
-    @FXML private Label embeddingHealthBadge;
-    private AutoCloseable embeddingHealthSubscription;
+    @FXML private ChatHeaderController headerController;
     /** 共享基础设施容器（模型工厂 / 记忆 / 知识 / token 追踪等） */
     private AgentRuntime runtime;
     /** 普通聊天模式服务入口 */
@@ -131,10 +109,11 @@ public class ChatViewController implements AutoCloseable {
     private final LoopDecisionFactory loopDecisions;
     private final ClarificationCardFactory clarificationCards;
     private final LoopStatusViewFactory loopStatusViews;
-    private final DiagnosticsViewFactory diagnosticsViews;
-    private final PluginCenterViewFactory pluginCenterViews;
-    private final ImageViewerFactory imageViewer;
-    private final WindowToastFactory windowToasts;
+    private final ChatInlineImageRenderer inlineImages;
+    private final ChatShortcutHelpFactory shortcutHelp;
+    private final ChatNavigationController navigation;
+    private ChatShellController shell;
+    private ChatStatusController status;
 
     /** 兼容旧退出链；页面生命周期统一由 {@link #close()} 收口。 */
     public void shutdownPersistence() {
@@ -150,15 +129,6 @@ public class ChatViewController implements AutoCloseable {
         if (!closed.compareAndSet(false, true)) {
             return;
         }
-        AutoCloseable healthSubscription = embeddingHealthSubscription;
-        embeddingHealthSubscription = null;
-        if (healthSubscription != null) {
-            try {
-                healthSubscription.close();
-            } catch (Exception failure) {
-                log.debug("关闭嵌入健康订阅失败", failure);
-            }
-        }
         backgroundTasks.close();
         persistenceTasks.close();
         try {
@@ -169,13 +139,13 @@ public class ChatViewController implements AutoCloseable {
     }
 
     private void stopUiResources() {
-        stopTimeline(statusBarClock);
-        statusBarClock = null;
-    }
-
-    private static void stopTimeline(Timeline timeline) {
-        if (timeline != null) {
-            timeline.stop();
+        if (shell != null) {
+            shell.close();
+            shell = null;
+        }
+        if (status != null) {
+            status.close();
+            status = null;
         }
     }
 
@@ -191,15 +161,6 @@ public class ChatViewController implements AutoCloseable {
 
     /** 是否处于流式生成中（用于 Esc 取消逻辑） */
     private boolean streamingActive = false;
-
-    /** 顶栏汉堡菜单按钮（仅当侧栏隐藏时显示） */
-    @FXML private Button sidebarToggleBtn;
-
-    /** 触发响应式自动收缩的窗口宽度阈值 */
-    private static final double RESPONSIVE_BREAKPOINT_PX = 960.0;
-
-    /** 当前侧栏自动隐藏状态（避免响应式监听重复触发） */
-    private boolean sidebarAutoHidden = false;
 
     // ==================== 流式输出的活动 UI 引用 ====================
 
@@ -221,10 +182,6 @@ public class ChatViewController implements AutoCloseable {
     /** 规划模式下当前发言智能体的回复累积文本（用于摘要截断） */
     private final StringBuilder currentPlanAgentBuffer = new StringBuilder();
 
-    @FXML private KnowledgeMenuController knowledgeMenuController;
-    @FXML private ThemeMenuController themeMenuController;
-    @FXML private Button settingsButton;
-    private Timeline statusBarClock;
     private final java.util.concurrent.atomic.AtomicBoolean closed =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
@@ -308,8 +265,8 @@ public class ChatViewController implements AutoCloseable {
             LoopStatusViewFactory loopStatusViews,
             DiagnosticsViewFactory diagnosticsViews,
             PluginCenterViewFactory pluginCenterViews,
-            ImageViewerFactory imageViewer,
-            WindowToastFactory windowToasts) {
+            ChatInlineImageRenderer inlineImages,
+            ChatShortcutHelpFactory shortcutHelp) {
         this.applicationKernel = java.util.Objects.requireNonNull(
                 applicationKernel, "applicationKernel");
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
@@ -322,12 +279,8 @@ public class ChatViewController implements AutoCloseable {
         this.clarificationCards = java.util.Objects.requireNonNull(
                 clarificationCards, "clarificationCards");
         this.loopStatusViews = java.util.Objects.requireNonNull(loopStatusViews, "loopStatusViews");
-        this.diagnosticsViews = java.util.Objects.requireNonNull(
-                diagnosticsViews, "diagnosticsViews");
-        this.pluginCenterViews = java.util.Objects.requireNonNull(
-                pluginCenterViews, "pluginCenterViews");
-        this.imageViewer = java.util.Objects.requireNonNull(imageViewer, "imageViewer");
-        this.windowToasts = java.util.Objects.requireNonNull(windowToasts, "windowToasts");
+        this.inlineImages = java.util.Objects.requireNonNull(inlineImages, "inlineImages");
+        this.shortcutHelp = java.util.Objects.requireNonNull(shortcutHelp, "shortcutHelp");
         java.util.Objects.requireNonNull(taskExecutor, "taskExecutor");
         persistenceTasks = taskExecutor.openScope("chat-persistence", 1);
         backgroundTasks = taskExecutor.openScope("chat-ui-background", 2);
@@ -344,23 +297,31 @@ public class ChatViewController implements AutoCloseable {
         modeRegistry = initialRuntime.modeRegistry();
         browserManager = applicationKernel.browserManager();
         chatHistoryManager = new ChatHistoryManager();
+        navigation = new ChatNavigationController(
+                applicationKernel,
+                java.util.Objects.requireNonNull(diagnosticsViews, "diagnosticsViews"),
+                java.util.Objects.requireNonNull(pluginCenterViews, "pluginCenterViews"),
+                this::ownerStage,
+                () -> modeRegistry,
+                this::rejectIfRebuilding,
+                rebuildInProgress::get,
+                this::rebuildAgentService,
+                () -> headerController.refreshKnowledgeMenu());
     }
 
     @FXML
     private void initialize() {
         log.info("开始构建聊天界面 FXML");
         configureSidebar();
+        configureShell();
         configureTopBar();
         configureModeBar();
         configureComposer();
         configureThinkingPanel();
 
         loadSessions();
-        installGlobalShortcuts();
-        installResponsiveLayout();
         showFirstUseGuidanceIfNeeded();
         chatService.setLoopInteractiveHandler(this::showLoopInteractionBubble);
-        refreshLocalModeBadge();
         log.info("聊天界面 FXML 构建完成");
     }
 
@@ -369,30 +330,36 @@ public class ChatViewController implements AutoCloseable {
         sidebarController.setOnSwitchSession(this::onSwitchSession);
         sidebarController.setOnDeleteSession(this::onDeleteSession);
         sidebarController.setOnBatchDeleteSessions(this::onBatchDeleteSessions);
-        sidebarController.setOnOpenSettings(this::openSettings);
-        sidebarController.setOnOpenSkillCenter(this::openSkillCenter);
-        sidebarController.setOnOpenMemoryCenter(this::openMemoryCenter);
-        sidebarController.setOnOpenScheduler(this::openScheduler);
-        sidebarController.setOnOpenKnowledgeBase(this::openKnowledgeBase);
-        sidebarController.setOnOpenTaskManager(this::openTaskManager);
-        sidebarController.setOnOpenWorkflowCenter(this::openWorkflowCenter);
-        sidebarController.setOnOpenMcp(this::openMcpServers);
-        sidebarController.setOnOpenPluginCenter(this::openPluginCenter);
+        sidebarController.setOnOpenSettings(() -> navigation.openSettings(null));
+        sidebarController.setOnOpenSkillCenter(navigation::openSkills);
+        sidebarController.setOnOpenMemoryCenter(navigation::openMemory);
+        sidebarController.setOnOpenScheduler(navigation::openSchedules);
+        sidebarController.setOnOpenKnowledgeBase(navigation::openKnowledge);
+        sidebarController.setOnOpenTaskManager(navigation::openTasks);
+        sidebarController.setOnOpenWorkflowCenter(navigation::openWorkflows);
+        sidebarController.setOnOpenMcp(navigation::openMcp);
+        sidebarController.setOnOpenPluginCenter(navigation::openPlugins);
         sidebarController.setOnSwitchWorkspace(this::onSwitchWorkspace);
     }
 
     private void configureTopBar() {
-        sidebarToggleBtn.setTooltip(new Tooltip(
-                "显示侧栏 (" + shortcutHint() + " + \\)"));
-        settingsButton.setTooltip(new Tooltip(
-                "设置（" + shortcutHint() + " + ,）"));
-        wireEmbeddingHealth();
-
-        knowledgeMenuController.configure(
+        headerController.configure(
+                shell::toggleSidebar,
+                navigation::openTasks,
+                this::openSettingsRequested,
+                this::onClearHistory,
                 this::knowledgeMenuSnapshot,
                 this::applyKnowledgeSelection,
-                this::openKnowledgeBase);
-        wireTokenTracker();
+                navigation::openKnowledge);
+        headerController.setShortcutHints(shell.shortcutHint());
+        status = new ChatStatusController(
+                applicationKernel,
+                fx,
+                headerController,
+                modeBarController,
+                sidebarController,
+                () -> currentSession);
+        status.start(applicationKernel.current());
     }
 
     private void configureModeBar() {
@@ -400,12 +367,9 @@ public class ChatViewController implements AutoCloseable {
             composerController.replaceInput(template);
             composerController.focusInput();
         });
-        modeBarController.setOnOpenWorkflowCenter(this::openWorkflowCenter);
-        modeBarController.setOnOpenTaskManager(this::openTaskManager);
-        modeBarController.setOnResetTokens(() -> {
-            runtime.getTokenTracker().resetSession();
-            refreshStatusBar();
-        });
+        modeBarController.setOnOpenWorkflowCenter(navigation::openWorkflows);
+        modeBarController.setOnOpenTaskManager(navigation::openTasks);
+        modeBarController.setOnResetTokens(status::resetSession);
     }
 
     private void configureComposer() {
@@ -413,14 +377,26 @@ public class ChatViewController implements AutoCloseable {
         composerController.setOnStop(this::stopActiveStream);
         composerController.setRecallPrevious(this::findLastUserMessage);
 
-        statusBarClock = new Timeline(
-                new KeyFrame(Duration.seconds(10), event -> refreshStatusBar()));
-        statusBarClock.setCycleCount(Animation.INDEFINITE);
-        statusBarClock.play();
     }
 
     private void configureThinkingPanel() {
         thinkingPanel = thinkingPanelController;
+    }
+
+    private void configureShell() {
+        shell = new ChatShellController(
+                outerRoot,
+                sidebarController.getRoot(),
+                headerController,
+                composerController,
+                shortcutHelp,
+                () -> streamingActive,
+                this::stopActiveStream,
+                this::onNewSession,
+                this::openSettings,
+                this::onClearHistory,
+                navigation::openMcp);
+        shell.install();
     }
 
     /**
@@ -444,7 +420,11 @@ public class ChatViewController implements AutoCloseable {
         return outerRoot;
     }
 
-    @FXML
+    private Stage ownerStage() {
+        return outerRoot == null || outerRoot.getScene() == null
+                ? null : (Stage) outerRoot.getScene().getWindow();
+    }
+
     private void openSettingsRequested() {
         openSettings();
     }
@@ -464,7 +444,7 @@ public class ChatViewController implements AutoCloseable {
         if (userText.startsWith("/任务")) {
             String taskDesc = userText.substring(3).trim();
             composerController.clearInput();
-            openTaskCreation(taskDesc);
+            navigation.createTask(taskDesc);
             return;
         }
 
@@ -485,8 +465,7 @@ public class ChatViewController implements AutoCloseable {
         // /诊断 斜杠命令：打开诊断面板
         if (userText.equals("/诊断") || userText.equals("/diagnostics")) {
             composerController.clearInput();
-            Stage owner = (Stage) outerRoot.getScene().getWindow();
-            diagnosticsViews.open(owner);
+            navigation.openDiagnostics();
             return;
         }
 
@@ -688,7 +667,7 @@ public class ChatViewController implements AutoCloseable {
                 currentModelDisplayName(),
                 "—",
                 List.of(),
-                this::enableImageZoom);
+                inlineImages::enableZoom);
         sessionViewController.addMessage(row.root());
         log.debug("已添加用户消息（含 {} 个附件）", attachments.size());
     }
@@ -758,7 +737,7 @@ public class ChatViewController implements AutoCloseable {
      */
     private String currentModelDisplayName() {
         try {
-            String m = AgentConfig.getInstance().getModelName();
+            String m = status.modelName();
             if (m == null || m.isBlank()) return "模型";
             // 截取常见前缀后更紧凑的名字
             String[] parts = m.split("[-/]");
@@ -846,7 +825,7 @@ public class ChatViewController implements AutoCloseable {
         } else {
             appendSubReply(displayName, content, content.length());
             if (activeToolResultBlock != null) {
-                tryDisplayInlineImages(content, activeToolResultBlock.contentHost());
+                inlineImages.displayInline(content, activeToolResultBlock.contentHost(), displayedImagePaths);
             }
         }
     }
@@ -903,111 +882,6 @@ public class ChatViewController implements AutoCloseable {
             block.bubble().appendText(displayText);
             log.debug("已合并子智能体回复 [{}]，追加内容长度: {} 字符", activeToolName, rawLength);
         }
-    }
-
-    /**
-     * 检测文本中的图片文件路径，并在指定容器中内联显示图片
-     *
-     * <p>通过扫描文本中以 "/" 开头的绝对路径片段，验证文件存在后在气泡中添加
-     * ImageView 预览。已显示的路径不会重复添加。同时将发现的图片路径收集到
-     * {@link #displayedImagePaths} 中，供保存消息时写入 ChatMessage。</p>
-     *
-     * @param text      待检测的文本内容
-     * @param container 图片要添加到的子智能体结果区或当前助手回复内容区
-     */
-    private void tryDisplayInlineImages(String text, VBox container) {
-        if (container == null || text == null) return;
-
-        for (String path : extractImagePaths(text)) {
-            if (displayedImagePaths.contains(path)) continue;
-
-            File file = new File(path);
-            if (!ProjectAccessPolicy.isProjectFilePath(file.toPath())
-                    || !file.exists() || !file.isFile()) continue;
-
-            try {
-                Image image = new Image(file.toURI().toString(), 400, 0, true, true);
-                ImageView imageView = new ImageView(image);
-                imageView.setFitWidth(400);
-                imageView.setPreserveRatio(true);
-                imageView.setSmooth(true);
-                imageView.getStyleClass().add("screenshot-image");
-                enableImageZoom(imageView, file);
-
-                container.getChildren().add(imageView);
-                displayedImagePaths.add(path);
-                log.info("已内联显示图片: {}", path);
-            } catch (Exception e) {
-                log.warn("内联显示图片失败: {}", path, e);
-            }
-        }
-    }
-
-    /**
-     * 为对话中的图片视图启用双击放大查看。
-     *
-     * <p>双击后弹出 FXML 图片查看器，支持滚轮缩放与拖拽平移；
-     * 鼠标悬停显示手型并提示可点击。</p>
-     *
-     * @param imageView 图片视图
-     * @param file      对应的图片文件（弹窗加载原图）
-     */
-    private void enableImageZoom(ImageView imageView, File file) {
-        if (imageView == null || file == null) return;
-        imageView.setCursor(javafx.scene.Cursor.HAND);
-        javafx.scene.control.Tooltip.install(imageView,
-                new javafx.scene.control.Tooltip("双击查看大图（可缩放/拖拽）"));
-        imageView.setOnMouseClicked(e -> {
-            if (e.getButton() == javafx.scene.input.MouseButton.PRIMARY && e.getClickCount() == 2) {
-                javafx.stage.Window owner = imageView.getScene() != null
-                        ? imageView.getScene().getWindow() : null;
-                imageViewer.open(owner, file.toPath());
-                e.consume();
-            }
-        });
-    }
-
-    /**
-     * 从文本中提取绝对图片文件路径
-     *
-     * <p>扫描以 "/" 开头、仅包含合法路径字符、以图片扩展名结尾的路径片段。
-     * 使用白名单定义合法路径字符，避免中文标点等非路径字符被误纳入。</p>
-     */
-    private List<String> extractImagePaths(String text) {
-        List<String> paths = new ArrayList<>();
-        int len = text.length();
-        int i = 0;
-        while (i < len) {
-            if (text.charAt(i) == '/') {
-                int start = i;
-                i++;
-                while (i < len && isPathChar(text.charAt(i))) {
-                    i++;
-                }
-                String candidate = text.substring(start, i);
-                if (isImagePath(candidate)) {
-                    paths.add(candidate);
-                }
-            } else {
-                i++;
-            }
-        }
-        return paths;
-    }
-
-    /**
-     * 判断字符是否为合法的文件路径字符
-     */
-    private boolean isPathChar(char c) {
-        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
-                || c == '/' || c == '.' || c == '_' || c == '-' || c == '~' || c == '+';
-    }
-
-    private boolean isImagePath(String path) {
-        int dot = path.lastIndexOf('.');
-        if (dot < 0 || dot == path.length() - 1) return false;
-        String ext = path.substring(dot + 1).toLowerCase();
-        return IMAGE_EXTENSIONS.contains(ext);
     }
 
     /**
@@ -1201,7 +1075,7 @@ public class ChatViewController implements AutoCloseable {
 
             // 检测主回复中的图片路径并内联显示
             if (reply != null && message != null) {
-                tryDisplayInlineImages(reply.getText(), message.replyContentHost());
+                inlineImages.displayInline(reply.getText(), message.replyContentHost(), displayedImagePaths);
             }
 
             // 将助手回复添加到消息列表并保存（携带流式过程中收集的图片路径）
@@ -1503,24 +1377,7 @@ public class ChatViewController implements AutoCloseable {
      * 从历史记录添加静态消息气泡（不重复添加到当前会话消息列表）
      */
     private void addStaticBubbleFromHistory(ChatMessage message) {
-        List<ImageView> historyImages = new java.util.ArrayList<>();
-        for (String path : message.getImagePaths()) {
-            File file = new File(path);
-            if (!ProjectAccessPolicy.isProjectFilePath(file.toPath())
-                    || !file.exists() || !file.isFile()) continue;
-            try {
-                Image image = new Image(file.toURI().toString(), 400, 0, true, true);
-                ImageView imageView = new ImageView(image);
-                imageView.setFitWidth(400);
-                imageView.setPreserveRatio(true);
-                imageView.setSmooth(true);
-                imageView.getStyleClass().add("screenshot-image");
-                enableImageZoom(imageView, file);
-                historyImages.add(imageView);
-            } catch (Exception e) {
-                log.warn("历史图片加载失败: {}", path, e);
-            }
-        }
+        List<ImageView> historyImages = inlineImages.loadPersisted(message.getImagePaths());
         sessionViewController.addMessage(createStaticMessageRow(message, historyImages).root());
     }
 
@@ -1539,7 +1396,7 @@ public class ChatViewController implements AutoCloseable {
                 currentModelDisplayName(),
                 formatMessageMeta(message),
                 extraImages,
-                this::enableImageZoom);
+                inlineImages::enableZoom);
     }
 
     // ==================== 多会话管理 ====================
@@ -1887,27 +1744,7 @@ public class ChatViewController implements AutoCloseable {
      * 更新顶部标题为当前会话名称 + 副 meta（消息数 · 创建时间 · ctx）
      */
     private void updateTopTitle() {
-        if (currentSession != null) {
-            topTitleLabel.setText(currentSession.getTitle());
-            if (topTitleMetaLabel != null) {
-                int msgCount = currentSession.getMessages().size();
-                String createdAt = currentSession.getCreatedAt() != null
-                        ? currentSession.getCreatedAt()
-                                .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
-                        : "—";
-                long ctxTokens = runtime != null && runtime.getTokenTracker() != null
-                        ? runtime.getTokenTracker().getSessionTokens()
-                        : 0;
-                String ctxDisplay = ctxTokens >= 1000
-                        ? String.format("%.1fk", ctxTokens / 1000.0)
-                        : Long.toString(ctxTokens);
-                // 设计稿：副 meta 含当前模型名（· N 条消息 · 模型名）
-                String modelName = com.javaclaw.config.AgentConfig.getInstance().getModelName();
-                topTitleMetaLabel.setText(msgCount + " 条消息 · 创建于 " + createdAt
-                        + " · ctx " + ctxDisplay + " / 200k"
-                        + (modelName == null || modelName.isBlank() ? "" : " · " + modelName));
-            }
-        }
+        status.refreshTitle();
     }
 
     /**
@@ -1927,7 +1764,7 @@ public class ChatViewController implements AutoCloseable {
                 currentModelDisplayName(),
                 "—",
                 List.of(),
-                this::enableImageZoom);
+                inlineImages::enableZoom);
         sessionViewController.addMessage(row.root());
     }
 
@@ -2030,147 +1867,6 @@ public class ChatViewController implements AutoCloseable {
                         cancelFailure.getMessage());
             }
         }
-    }
-
-    /**
-     * 注册全局快捷键 — 等待 Scene 就绪后挂载到 Scene 的 accelerators 表
-     * <p>使用 {@code SHORTCUT_DOWN}：macOS 上对应 Cmd，其他平台对应 Ctrl。
-     */
-    private void installGlobalShortcuts() {
-        outerRoot.sceneProperty().addListener((obs, oldScene, scene) -> {
-            if (scene == null) return;
-            scene.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
-                if (event.getCode() != KeyCode.ESCAPE) return;
-                if (composerController.inputLength() > 0) {
-                    composerController.clearInput();
-                    event.consume();
-                } else if (streamingActive) {
-                    stopActiveStream();
-                    event.consume();
-                }
-            });
-            javafx.collections.ObservableMap<javafx.scene.input.KeyCombination, Runnable> acc = scene.getAccelerators();
-            // Ctrl/Cmd + N → 新建会话
-            acc.put(new javafx.scene.input.KeyCodeCombination(KeyCode.N,
-                    javafx.scene.input.KeyCombination.SHORTCUT_DOWN), this::onNewSession);
-            // Ctrl/Cmd + , → 打开设置
-            acc.put(new javafx.scene.input.KeyCodeCombination(KeyCode.COMMA,
-                    javafx.scene.input.KeyCombination.SHORTCUT_DOWN), this::openSettings);
-            // Ctrl/Cmd + L → 清空对话
-            acc.put(new javafx.scene.input.KeyCodeCombination(KeyCode.L,
-                    javafx.scene.input.KeyCombination.SHORTCUT_DOWN), this::onClearHistory);
-            // Ctrl/Cmd + \ → 切换侧栏可见性
-            acc.put(new javafx.scene.input.KeyCodeCombination(KeyCode.BACK_SLASH,
-                    javafx.scene.input.KeyCombination.SHORTCUT_DOWN), this::toggleSidebar);
-            // Ctrl/Cmd + K → 聚焦输入框（命令面板的轻量替代）
-            acc.put(new javafx.scene.input.KeyCodeCombination(KeyCode.K,
-                    javafx.scene.input.KeyCombination.SHORTCUT_DOWN),
-                    composerController::focusInput);
-            // Ctrl/Cmd + M → 打开 MCP 服务器窗口
-            acc.put(new javafx.scene.input.KeyCodeCombination(KeyCode.M,
-                    javafx.scene.input.KeyCombination.SHORTCUT_DOWN), this::openMcpServers);
-            // Ctrl/Cmd + / → 弹出快捷键帮助面板
-            acc.put(new javafx.scene.input.KeyCodeCombination(KeyCode.SLASH,
-                    javafx.scene.input.KeyCombination.SHORTCUT_DOWN), this::showShortcutsHelp);
-            // Ctrl/Cmd + ? → 同上（Shift+/）
-            acc.put(new javafx.scene.input.KeyCodeCombination(KeyCode.SLASH,
-                    javafx.scene.input.KeyCombination.SHORTCUT_DOWN,
-                    javafx.scene.input.KeyCombination.SHIFT_DOWN), this::showShortcutsHelp);
-        });
-    }
-
-    /**
-     * 切换侧栏可见性（Ctrl/Cmd + \ 或 汉堡按钮）
-     */
-    @FXML
-    private void toggleSidebar() {
-        javafx.scene.Node sidebar = sidebarController.getRoot();
-        boolean visible = sidebar.isVisible();
-        sidebar.setVisible(!visible);
-        sidebar.setManaged(!visible);
-        // 同步汉堡按钮可见性：侧栏隐藏时显示
-        if (sidebarToggleBtn != null) {
-            sidebarToggleBtn.setVisible(visible);
-            sidebarToggleBtn.setManaged(visible);
-        }
-    }
-
-    /**
-     * 平台相关的快捷键修饰符提示文字（macOS 显示 ⌘，其他平台显示 Ctrl）
-     */
-    private String shortcutHint() {
-        return System.getProperty("os.name", "").toLowerCase().contains("mac") ? "⌘" : "Ctrl";
-    }
-
-    /**
-     * 响应式：根据窗口宽度自动收缩/展开侧栏
-     * <p>窗口 &lt; {@link #RESPONSIVE_BREAKPOINT_PX} 时自动隐藏；变宽后自动恢复
-     * （仅当之前是自动隐藏的，不覆盖用户手动操作）。
-     */
-    private void installResponsiveLayout() {
-        outerRoot.sceneProperty().addListener((obs, oldScene, scene) -> {
-            if (scene == null) return;
-            scene.widthProperty().addListener((wObs, oldW, newW) -> applyResponsiveSidebar(newW.doubleValue()));
-            // 初始触发一次
-            fx.dispatch(() -> applyResponsiveSidebar(scene.getWidth()));
-        });
-    }
-
-    private void applyResponsiveSidebar(double width) {
-        javafx.scene.Node sidebar = sidebarController.getRoot();
-        if (width < RESPONSIVE_BREAKPOINT_PX && sidebar.isVisible()) {
-            // 自动隐藏
-            sidebar.setVisible(false);
-            sidebar.setManaged(false);
-            if (sidebarToggleBtn != null) {
-                sidebarToggleBtn.setVisible(true);
-                sidebarToggleBtn.setManaged(true);
-            }
-            sidebarAutoHidden = true;
-        } else if (width >= RESPONSIVE_BREAKPOINT_PX && sidebarAutoHidden && !sidebar.isVisible()) {
-            // 自动恢复（仅当之前是自动隐藏触发）
-            sidebar.setVisible(true);
-            sidebar.setManaged(true);
-            if (sidebarToggleBtn != null) {
-                sidebarToggleBtn.setVisible(false);
-                sidebarToggleBtn.setManaged(false);
-            }
-            sidebarAutoHidden = false;
-        }
-    }
-
-    /**
-     * 弹出快捷键帮助面板（Ctrl/Cmd + / 或 ?）
-     */
-    private void showShortcutsHelp() {
-        Alert dialog = new Alert(Alert.AlertType.INFORMATION);
-        dialog.setTitle("键盘快捷键");
-        dialog.setHeaderText("JavaClaw 快捷键");
-        String shortcutKey = shortcutHint();
-        StringBuilder sb = new StringBuilder();
-        sb.append("【输入框】\n");
-        sb.append("  Enter             发送消息\n");
-        sb.append("  Shift + Enter     换行\n");
-        sb.append("  ").append(shortcutKey).append(" + Enter     换行\n");
-        sb.append("  ↑ (输入为空)       回填上一条消息\n");
-        sb.append("  Esc               清空输入 / 取消生成\n\n");
-        sb.append("【全局】\n");
-        sb.append("  ").append(shortcutKey).append(" + N         新建会话\n");
-        sb.append("  ").append(shortcutKey).append(" + L         清空当前对话\n");
-        sb.append("  ").append(shortcutKey).append(" + K         聚焦输入框\n");
-        sb.append("  ").append(shortcutKey).append(" + ,         打开设置\n");
-        sb.append("  ").append(shortcutKey).append(" + \\         切换侧栏\n");
-        sb.append("  ").append(shortcutKey).append(" + / 或 ?    显示本帮助\n");
-        TextArea content = new TextArea(sb.toString());
-        content.setEditable(false);
-        content.setWrapText(false);
-        content.setPrefRowCount(15);
-        content.setPrefColumnCount(40);
-        content.setStyle("-fx-font-family: " + com.javaclaw.ui.javafx.theme.FontManager.MONO_FONT_STACK + "; -fx-font-size: 12.5px;");
-        dialog.getDialogPane().setContent(content);
-        dialog.initOwner(outerRoot.getScene().getWindow());
-        UIHelper.styleAlert(dialog);
-        dialog.showAndWait();
     }
 
     /**
@@ -2317,34 +2013,21 @@ public class ChatViewController implements AutoCloseable {
     private void setInputEnabled(boolean enabled) {
         streamingActive = !enabled;
         composerController.setStreaming(streamingActive);
-        updateTopTitleStatusDot();
-    }
-
-    /**
-     * 将顶部标题前的状态点按当前生成状态刷新（生成中=绿色脉动，空闲=灰色）。
-     */
-    private void updateTopTitleStatusDot() {
-        if (topTitleStatusDot == null) return;
-        topTitleStatusDot.getStyleClass().removeAll("status-idle", "status-executing");
-        topTitleStatusDot.getStyleClass().add(streamingActive ? "status-executing" : "status-idle");
+        status.setStreaming(streamingActive);
     }
 
     /**
      * 打开设置对话框（供顶栏按钮与系统托盘菜单复用）
      */
     public void openSettings() {
-        openSettings(null);
+        navigation.openSettings(null);
     }
 
     /**
      * 打开设置对话框并可直达指定分类（如「嵌入模型」）；category 为 null 时打开默认分类。
      */
     public void openSettings(String category) {
-        log.info("打开设置对话框{}", category != null ? "（直达：" + category + "）" : "");
-        javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
-        SettingsView settingsView = applicationKernel.current().settingsViews().create(ownerStage);
-        settingsView.setOnModelConfigChanged(this::rebuildAgentService);
-        settingsView.show(category);
+        navigation.openSettings(category);
     }
 
     /**
@@ -2359,85 +2042,11 @@ public class ChatViewController implements AutoCloseable {
         if (turn == null) return;
         turn.inputTokens += Math.max(0, u.inputTokens());
         turn.outputTokens += Math.max(0, u.outputTokens());
-        String model = AgentConfig.getInstance().getModelName();
+        String model = status.modelName();
         double cost = PricingTable.estimateCostCny(model,
                 turn.inputTokens, turn.outputTokens);
         thinkingPanel.updateMetrics(turn.inputTokens, turn.outputTokens,
                 TokenTracker.formatCostCny(cost));
-    }
-
-    /** 绑定 TokenTracker 回调到模式栏摘要（服务重建后需重新调用）。 */
-    private void wireTokenTracker() {
-        runtime.getTokenTracker().setOnTokensChanged(() -> {
-            fx.dispatch(this::refreshStatusBar);
-        });
-        // 初始化显示
-        refreshStatusBar();
-        refreshLocalModeBadge();
-    }
-
-    /**
-     * 根据当前 Provider 刷新"本地模式"徽标可见性
-     */
-    private void refreshLocalModeBadge() {
-        if (localModeBadge == null) return;
-        boolean isLocal = "Ollama".equalsIgnoreCase(AgentConfig.getInstance().getProviderType());
-        localModeBadge.setVisible(isLocal);
-        localModeBadge.setManaged(isLocal);
-    }
-
-    /**
-     * 刷新底部 Token 徽标摘要 + Tooltip 详情
-     *
-     * <p>主显示「今日 + 会话」两个维度：今日累计来自 H2 token_usage_daily 表，
-     * 应用重启后立即可见；会话仅在本次进程内累加。避免重启后状态栏一直显示 0 的体感问题。</p>
-     */
-    private void refreshStatusBar() {
-        try {
-            TokenTracker tracker = runtime.getTokenTracker();
-            long sessionTokens = tracker.getSessionTokens();
-            long todayTokens = tracker.getTodayTokens();
-            long monthlyTokens = tracker.getMonthlyTokens();
-            String monthlyCost = TokenTracker.formatCostCny(tracker.getMonthlyCostCny());
-            TokenTracker.DailyUsage today = tracker.getTodayUsage();
-            TokenTracker.DailyUsage month = tracker.getMonthlyUsage();
-            String summary = "今日 " + TokenTracker.formatTokens(todayTokens)
-                    + " · 会话 " + TokenTracker.formatTokens(sessionTokens)
-                    + " · " + monthlyCost;
-            String details = "今日累计：" + TokenTracker.formatTokens(todayTokens) + " tokens"
-                    + "（输入 " + TokenTracker.formatTokens(today.input)
-                    + " / 输出 " + TokenTracker.formatTokens(today.output) + "）\n"
-                    + "本月累计：" + TokenTracker.formatTokens(monthlyTokens) + " tokens"
-                    + "（输入 " + TokenTracker.formatTokens(month.input)
-                    + " / 输出 " + TokenTracker.formatTokens(month.output) + "）\n"
-                    + "本月成本：" + monthlyCost + "（估算，仅供参考）\n"
-                    + "本次会话：" + TokenTracker.formatTokens(sessionTokens) + " tokens · 耗时 "
-                    + TokenTracker.formatDuration(tracker.getSessionDurationSeconds()) + "\n"
-                    + "点击可重置本次会话计数";
-            modeBarController.updateTokenSummary(summary, details);
-        } catch (Exception e) {
-            log.debug("刷新 Token 徽标失败", e);
-        }
-        refreshSidebarBadges();
-    }
-
-    /**
-     * 刷新侧边栏导航徽章（设计稿 sb-navrow badge）：
-     * 技能中心 = 待审提案数；托管任务 = 进行中 + 待人工任务数。
-     * 随状态栏 10 秒节拍刷新，开销极小（均为内存读取）。
-     */
-    private void refreshSidebarBadges() {
-        try {
-            int proposals = applicationKernel.current().skills().pendingProposalCount();
-            sidebarController.updateSkillBadge(proposals);
-            int activeTasks = (int) applicationKernel.current().sddTasks().snapshot().tasks().stream()
-                    .filter(task -> task.state() == com.javaclaw.task.sdd.run.SddTaskState.RUNNING
-                            || task.state() == com.javaclaw.task.sdd.run.SddTaskState.NEEDS_HUMAN)
-                    .count();
-            sidebarController.updateTaskBadge(activeTasks);
-        } catch (Exception e) {
-            log.debug("刷新侧边栏徽章失败", e);
-        }
     }
 
     /**
@@ -2496,9 +2105,9 @@ public class ChatViewController implements AutoCloseable {
                         // 知识库配置可能变化：直接按新 runtime 重建菜单（清空选中态后重建，
                         // 而非只清空——关知识库中心的 onHidden 重建在异步重建期间被跳过，
                         // 此处是它的唯一补偿点）
-                        knowledgeMenuController.reset();
-                        knowledgeMenuController.refresh();
-                        wireTokenTracker();
+                        headerController.resetKnowledgeMenu();
+                        headerController.refreshKnowledgeMenu();
+                        status.bind(applicationKernel.current());
                         modeBarController.refreshModes(modeBarController.selectedModeId());
                         modeBarController.refreshWorkflows();
                     } finally {
@@ -2532,156 +2141,11 @@ public class ChatViewController implements AutoCloseable {
         planModeService = workspaceRuntime.planModeService();
         modeRegistry = workspaceRuntime.modeRegistry();
         chatService.setLoopInteractiveHandler(this::showLoopInteractionBubble);
-        wireEmbeddingHealth();
-    }
-
-    private void wireEmbeddingHealth() {
-        if (embeddingHealthSubscription != null) {
-            try { embeddingHealthSubscription.close(); }
-            catch (Exception ignored) { }
-            embeddingHealthSubscription = null;
-        }
-        if (embeddingHealthBadge == null || runtime == null) return;
-        embeddingHealthSubscription = runtime.getEmbeddingGateway().addHealthListener(snapshot ->
-                fx.dispatch(() -> {
-                    if (embeddingHealthBadge == null) return;
-                    String text = switch (snapshot.status()) {
-                        case HEALTHY -> "嵌入：正常";
-                        case CHECKING -> "嵌入：检查中";
-                        case DEGRADED -> "嵌入：降级";
-                        case UNAVAILABLE -> "嵌入：不可用";
-                        case UNCONFIGURED -> "嵌入：未配置";
-                    };
-                    embeddingHealthBadge.setText(text);
-                    embeddingHealthBadge.setTooltip(new Tooltip(snapshot.lastError() == null
-                            ? text : text + "\n" + snapshot.lastError()));
-                    boolean visible = snapshot.status()
-                            != com.javaclaw.memory.embed.EmbeddingHealthStatus.HEALTHY;
-                    embeddingHealthBadge.setVisible(visible);
-                    embeddingHealthBadge.setManaged(visible);
-                }));
-    }
-
-    /**
-     * 取消运行中的循环（无活跃循环时为空操作）。
-     *
-     * <p>循环在 {@code boundedElastic} 后台跑、可跨会话存续，停止入口必须与
-     * chat/plan 一样挂在 {@link #stopActiveStream} 上，否则 UI 复位后循环
-     * 仍在后台烧 token 且单活跃闸拒绝新循环，用户无路可停。</p>
-     */
-    /**
-     * 打开技能中心对话框
-     */
-    private void openSkillCenter() {
-        log.info("打开技能中心");
-        javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
-        applicationKernel.current().skillViews().create(ownerStage).showAndWait();
-    }
-
-    private void openMemoryCenter() {
-        // 重建窗口内旧 MemoryService/EclipseStore 正被后台线程关闭：此刻构建视图会读到已关库
-        // （加载抛异常或空数据），在陈旧视图里做的事实编辑/人格保存也会写进旧服务而丢失
-        if (rejectIfRebuilding("打开记忆中心")) {
-            return;
-        }
-        log.info("打开记忆中心");
-        javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
-        applicationKernel.current().memoryViews().create(ownerStage).show();
-    }
-
-    /**
-     * 打开插件中心对话框
-     */
-    private void openPluginCenter() {
-        log.info("打开插件中心");
-        javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
-        pluginCenterViews.create(ownerStage).showAndWait();
-    }
-
-    /**
-     * 打开 MCP 服务器独立窗口（侧边栏「MCP 服务器」入口 / ⌘M）
-     */
-    private void openMcpServers() {
-        log.info("打开 MCP 服务器窗口");
-        javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
-        applicationKernel.current().mcpCenters()
-                .createWindow(ownerStage, this::rebuildAgentService)
-                .show();
-    }
-
-    /**
-     * 打开定时任务管理对话框
-     */
-    private void openScheduler() {
-        log.info("打开定时任务管理");
-        javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
-        applicationKernel.current().scheduleViews().create(ownerStage).show();
-    }
-
-    /**
-     * 打开任务管理对话框。
-     *
-     * <p>通过 {@link ModeRegistry} 查找 id 为 "task" 的 {@link ActionMode} 并调用其 {@code open}，
-     * 保证任务模式的实际触发路径跟其他模式一致、可被配置禁用或替换。</p>
-     */
-    @FXML
-    private void openTaskManager() {
-        log.info("打开任务管理");
-        modeRegistry.getById("task")
-                .filter(ActionMode.class::isInstance)
-                .map(ActionMode.class::cast)
-                .ifPresentOrElse(
-                        ActionMode::open,
-                        () -> log.warn("未注册任务模式（id=task）"));
-    }
-
-    @FXML
-    private void openWorkflowCenter() {
-        log.info("打开工作流中心");
-        modeRegistry.getById("workflow-center")
-                .filter(ActionMode.class::isInstance)
-                .map(ActionMode.class::cast)
-                .ifPresentOrElse(ActionMode::open,
-                        () -> log.warn("未注册工作流中心模式（id=workflow-center）"));
-    }
-
-    /**
-     * 打开任务创建对话框（由 /任务 命令触发）
-     */
-    private void openTaskCreation(String description) {
-        log.info("打开任务创建对话框（SDD）");
-        javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
-        applicationKernel.current().sddTaskViews().create(ownerStage).showCreate(description);
-    }
-
-    /**
-     * 打开知识库中心（全窗口视图，按设计稿重建）
-     */
-    private void openKnowledgeBase() {
-        // 同 openMemoryCenter：重建窗口内 runtime.getKnowledgeExpert() 的 EclipseStore 正被关闭
-        if (rejectIfRebuilding("打开知识库")) {
-            return;
-        }
-        log.info("打开知识库中心");
-        javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
-        var view = applicationKernel.current().knowledgeViews().create(
-                ownerStage, this::rebuildAgentService,
-                () -> openSettings("嵌入模型"));
-        // 关闭后重建顶栏知识库菜单（文档增删 / 启用状态可能已变化）
-        // 重建进行中跳过：此刻旧 runtime 正被后台线程关闭（EclipseStore 知识库已 close），
-        // 读它会抛异常且刚建好的菜单也会被重建收尾清掉，收尾刷新是唯一补偿点。
-        view.setOnHidden(() -> {
-            if (!rebuildInProgress.get()) {
-                knowledgeMenuController.refresh();
-            }
-        });
-        view.show();
     }
 
     /**
      * 清空当前会话的对话历史
      */
-    @FXML
     private void onClearHistory() {
         if (currentSession == null) return;
         // 全局快捷键 Ctrl/Cmd+L 不受输入禁用影响：重建窗口内会对已关闭服务清空/删检查点
@@ -2794,10 +2258,10 @@ public class ChatViewController implements AutoCloseable {
                         loadSessions();
 
                         // 10. 重置知识库菜单（清除旧工作区的文档列表和选中状态）
-                        knowledgeMenuController.reset();
+                        headerController.resetKnowledgeMenu();
 
                         // 10.5. 重新绑定 TokenTracker 回调（新工作区的追踪器）
-                        wireTokenTracker();
+                        status.bind(applicationKernel.current());
 
                         // 11. 重置会话模式回对话（规划/循环同等对待：切工作区后残留循环
                         // chip 会把用户随手一问路由成最多几十轮的自动循环）
@@ -2808,7 +2272,7 @@ public class ChatViewController implements AutoCloseable {
                         sidebarController.refreshWorkspaceCombo();
 
                         // 12.5. 重新加载新工作区记忆的界面风格
-                        themeMenuController.reloadFromWorkspace();
+                        headerController.reloadTheme();
 
                         // 12.6. 重新加载新工作区记忆的字体（族 / 等宽 / 密度）
                         com.javaclaw.ui.javafx.theme.FontManager.reload();
@@ -2927,7 +2391,7 @@ public class ChatViewController implements AutoCloseable {
      * 首次使用时显示功能引导
      */
     private void showFirstUseGuidanceIfNeeded() {
-        AgentConfig config = AgentConfig.getInstance();
+        AgentConfig config = applicationKernel.current().agentConfig();
         if (config.isFirstUseGuidanceDone()) return;
 
         fx.dispatch(() -> {

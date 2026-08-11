@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.TextArea?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox xmlns="http://javafx.com/javafx"
+      xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.javaclaw.chat.ChatShortcutHelpController"
+      accessibleText="JavaClaw 键盘快捷键列表">
+    <children>
+        <TextArea fx:id="shortcutsText"
+                  editable="false"
+                  wrapText="false"
+                  prefRowCount="15"
+                  prefColumnCount="40"
+                  style="-fx-font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; -fx-font-size: 12.5px;"
+                  accessibleText="键盘快捷键"/>
+    </children>
+</VBox>
