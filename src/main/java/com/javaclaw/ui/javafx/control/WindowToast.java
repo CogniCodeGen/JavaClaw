@@ -1,96 +1,88 @@
 package com.javaclaw.ui.javafx.control;
 
 import com.javaclaw.api.interaction.UserInteractionPort;
+import com.javaclaw.platform.fxml.ViewHandle;
 import com.javaclaw.ui.javafx.JfxUserInteractionPort;
-import javafx.animation.FadeTransition;
-import javafx.animation.PauseTransition;
-import javafx.animation.SequentialTransition;
-import javafx.application.Platform;
-import javafx.geometry.Pos;
-import javafx.scene.control.Label;
+import javafx.event.EventHandler;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
 import javafx.stage.WindowEvent;
-import javafx.util.Duration;
 
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
-/**
- * 通用「窗内 Toast」浮层控件：底部居中、鼠标穿透、淡入 → 停留 → 淡出。
- *
- * <p>用法：把 {@link #node()} 叠到窗口 Scene 根的 {@link StackPane} 顶层，调 {@link #show(String)}
- * 弹出一条非阻塞提示。样式见 {@code /css/controls.css}（{@code .jc-toast} / {@code .jc-toast-layer}），
- * 颜色走 {@code -jc-*} 令牌随主题换肤。</p>
- *
- * <p>若窗口希望复用应用统一的 {@link UserInteractionPort#notify} 通道（而非直接调 {@link #show}），
- * 可再调 {@link #bindToPort}，让本浮层在窗口显示期间临时接管端口的 Toast 渲染器、隐藏时自动还原；
- * 这对置顶的模态窗口尤为有用——主窗横幅会被模态窗遮挡，改由窗内浮层呈现。</p>
- *
- * @author JavaClaw
- */
-public final class WindowToast {
+/** 一次 FXML Toast 装载结果；关闭时停止动画并解除交互端口接管。 */
+public final class WindowToast implements AutoCloseable {
 
-    private final Label label = new Label();
-    private final StackPane layer = new StackPane(label);
-    private SequentialTransition anim;
-    /** bindToPort 接管前的渲染器，隐藏时还原。 */
-    private Consumer<String> prevHandler;
+    private final ViewHandle<StackPane> handle;
+    private final WindowToastController controller;
+    private final Consumer<String> renderer = this::show;
+    private final AtomicBoolean closed = new AtomicBoolean();
+    private Stage boundStage;
+    private JfxUserInteractionPort boundPort;
+    private Consumer<String> previousRenderer;
+    private EventHandler<WindowEvent> shownHandler;
+    private EventHandler<WindowEvent> hiddenHandler;
 
-    public WindowToast() {
-        label.getStyleClass().add("jc-toast");
-        label.setWrapText(true);
-        label.setMaxWidth(560);
-        label.setVisible(false);
-        layer.getStyleClass().add("jc-toast-layer");
-        layer.setMouseTransparent(true);
-        StackPane.setAlignment(label, Pos.BOTTOM_CENTER);
+    WindowToast(ViewHandle<StackPane> handle) {
+        this.handle = Objects.requireNonNull(handle, "handle");
+        controller = handle.controller(WindowToastController.class);
     }
 
-    /** 叠加到 Scene 根 {@link StackPane} 顶层的浮层节点。 */
-    public Region node() {
-        return layer;
-    }
+    public Region node() { return handle.root(); }
 
-    /** 渲染一条 Toast（自动切回 FX 线程）。 */
     public void show(String text) {
-        if (text == null || text.isBlank()) return;
-        if (Platform.isFxApplicationThread()) {
-            animate(text);
-        } else {
-            Platform.runLater(() -> animate(text));
-        }
+        if (!closed.get()) controller.show(text);
     }
 
-    private void animate(String text) {
-        if (anim != null) anim.stop();
-        label.setText(text);
-        label.setOpacity(0);
-        label.setVisible(true);
-        FadeTransition in = new FadeTransition(Duration.millis(140), label);
-        in.setFromValue(0);
-        in.setToValue(1);
-        PauseTransition hold = new PauseTransition(Duration.seconds(2.4));
-        FadeTransition out = new FadeTransition(Duration.millis(280), label);
-        out.setFromValue(1);
-        out.setToValue(0);
-        out.setOnFinished(e -> label.setVisible(false));
-        anim = new SequentialTransition(in, hold, out);
-        anim.play();
-    }
-
-    /**
-     * 让本浮层在 {@code stage} 显示期间临时接管端口的 Toast 渲染器，隐藏时还原。
-     *
-     * <p>仅对 {@link JfxUserInteractionPort} 生效；采用附加式事件监听，不覆盖窗口既有的
-     * {@code setOnShown} / {@code setOnHidden}。</p>
-     */
+    /** 窗口显示期间接管统一 Toast 渲染器，隐藏或关闭时精确恢复前一个渲染器。 */
     public void bindToPort(Stage stage, UserInteractionPort interaction) {
+        if (closed.get()) throw new IllegalStateException("WindowToast 已关闭");
+        unbindPort();
         if (stage == null || !(interaction instanceof JfxUserInteractionPort jfx)) return;
-        stage.addEventHandler(WindowEvent.WINDOW_SHOWN, e -> {
-            prevHandler = jfx.getToastHandler();
-            jfx.setToastHandler(this::show);
-        });
-        stage.addEventHandler(WindowEvent.WINDOW_HIDDEN, e -> jfx.setToastHandler(prevHandler));
+        boundStage = stage;
+        boundPort = jfx;
+        shownHandler = event -> {
+            previousRenderer = jfx.getToastHandler();
+            jfx.setToastHandler(renderer);
+        };
+        hiddenHandler = event -> restoreRenderer();
+        stage.addEventHandler(WindowEvent.WINDOW_SHOWN, shownHandler);
+        stage.addEventHandler(WindowEvent.WINDOW_HIDDEN, hiddenHandler);
+        if (stage.isShowing()) shownHandler.handle(new WindowEvent(stage, WindowEvent.WINDOW_SHOWN));
     }
+
+    private void restoreRenderer() {
+        if (boundPort != null && boundPort.getToastHandler() == renderer) {
+            boundPort.setToastHandler(previousRenderer);
+        }
+        previousRenderer = null;
+    }
+
+    private void unbindPort() {
+        restoreRenderer();
+        if (boundStage != null) {
+            if (shownHandler != null) {
+                boundStage.removeEventHandler(WindowEvent.WINDOW_SHOWN, shownHandler);
+            }
+            if (hiddenHandler != null) {
+                boundStage.removeEventHandler(WindowEvent.WINDOW_HIDDEN, hiddenHandler);
+            }
+        }
+        boundStage = null;
+        boundPort = null;
+        shownHandler = null;
+        hiddenHandler = null;
+    }
+
+    @Override
+    public void close() {
+        if (!closed.compareAndSet(false, true)) return;
+        unbindPort();
+        handle.close();
+    }
+
+    WindowToastController controller() { return controller; }
 }

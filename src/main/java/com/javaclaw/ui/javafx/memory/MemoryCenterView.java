@@ -101,7 +101,7 @@ public class MemoryCenterView {
     private final StackPane contentArea = new StackPane();
     private final Map<String, Region> panels = new HashMap<>();
     /** 通用窗内 Toast 浮层（非阻塞提示，替代旧的阻塞 Alert）。 */
-    private final com.javaclaw.ui.javafx.control.WindowToast windowToast = new com.javaclaw.ui.javafx.control.WindowToast();
+    private final com.javaclaw.ui.javafx.control.WindowToast windowToast;
     private final Map<String, Button> navButtons = new HashMap<>();
     private String currentSection = "overview";
 
@@ -145,9 +145,15 @@ public class MemoryCenterView {
     private Label scaleMain;
     private Label scaleSub;
 
-    public MemoryCenterView(Stage owner, MemoryService svc, KnowledgeExpert knowledgeExpert) {
+    public MemoryCenterView(
+            Stage owner,
+            MemoryService svc,
+            KnowledgeExpert knowledgeExpert,
+            com.javaclaw.ui.javafx.control.WindowToastFactory windowToasts) {
         this.svc = svc;
         this.knowledgeExpert = knowledgeExpert;
+        this.windowToast = java.util.Objects.requireNonNull(
+                windowToasts, "windowToasts").create();
         this.stage = new Stage();
         stage.initOwner(owner);
         stage.initModality(Modality.NONE);
@@ -159,7 +165,10 @@ public class MemoryCenterView {
         Scene scene = new Scene(sceneRoot, 1000, 680);
         loadStylesheets(scene, owner);
         stage.setScene(scene);
-        stage.setOnHidden(e -> graphView.dispose());
+        stage.setOnHidden(e -> {
+            graphView.dispose();
+            windowToast.close();
+        });
 
         selectSection("overview");
         probeEmbeddingAsync();

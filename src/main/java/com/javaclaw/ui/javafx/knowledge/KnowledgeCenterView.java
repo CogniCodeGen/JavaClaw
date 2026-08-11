@@ -13,6 +13,7 @@ import com.javaclaw.memory.embed.EmbeddingHealthSnapshot;
 import com.javaclaw.memory.embed.EmbeddingHealthStatus;
 import com.javaclaw.ui.javafx.control.ToggleSwitch;
 import com.javaclaw.ui.javafx.control.WindowToast;
+import com.javaclaw.ui.javafx.control.WindowToastFactory;
 import javafx.application.Platform;
 import javafx.event.Event;
 import javafx.geometry.Insets;
@@ -62,7 +63,7 @@ public class KnowledgeCenterView {
     private Runnable onHidden;
 
     /** 通用窗内 Toast 浮层；打开期间接管端口 toastHandler（见构造函数 bindToPort）。 */
-    private final WindowToast windowToast = new WindowToast();
+    private final WindowToast windowToast;
 
     // ---- 视图状态 ----
     private String view = "docs";          // docs / search / settings
@@ -86,11 +87,14 @@ public class KnowledgeCenterView {
     private boolean embeddingHealthClosed;
 
     public KnowledgeCenterView(Stage owner, KnowledgeExpert expert, UserInteractionPort interaction,
-                               Runnable onConfigChanged, Runnable onOpenModelSettings) {
+                               Runnable onConfigChanged, Runnable onOpenModelSettings,
+                               WindowToastFactory windowToasts) {
         this.expert = expert;
         this.interaction = interaction;
         this.onConfigChanged = onConfigChanged;
         this.onOpenModelSettings = onOpenModelSettings;
+        this.windowToast = java.util.Objects.requireNonNull(
+                windowToasts, "windowToasts").create();
         this.stage = new Stage();
         stage.initModality(Modality.WINDOW_MODAL);
         stage.initOwner(owner);
@@ -103,6 +107,7 @@ public class KnowledgeCenterView {
         // 打开期间让窗内浮层接管端口的 Toast 渲染器（模态子窗置顶，主窗横幅会被遮挡），隐藏时自动还原
         windowToast.bindToPort(stage, interaction);
         stage.setOnHidden(e -> {
+            windowToast.close();
             closeEmbeddingHealthSubscription();
             if (chunkParamsDirty && onConfigChanged != null) {
                 log.info("分块参数已变更，关闭知识库中心后重建知识服务");

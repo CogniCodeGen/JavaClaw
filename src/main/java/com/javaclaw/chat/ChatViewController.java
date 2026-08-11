@@ -30,6 +30,7 @@ import com.javaclaw.ui.javafx.loop.LoopStatusViewFactory;
 import com.javaclaw.ui.javafx.diagnostics.DiagnosticsViewFactory;
 import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
 import com.javaclaw.ui.javafx.image.ImageViewerFactory;
+import com.javaclaw.ui.javafx.control.WindowToastFactory;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuController;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuSnapshot;
 import com.javaclaw.ui.javafx.schedule.ScheduleView;
@@ -136,6 +137,7 @@ public class ChatViewController implements AutoCloseable {
     private final DiagnosticsViewFactory diagnosticsViews;
     private final PluginCenterViewFactory pluginCenterViews;
     private final ImageViewerFactory imageViewer;
+    private final WindowToastFactory windowToasts;
 
     /** 兼容旧退出链；页面生命周期统一由 {@link #close()} 收口。 */
     public void shutdownPersistence() {
@@ -309,7 +311,8 @@ public class ChatViewController implements AutoCloseable {
             LoopStatusViewFactory loopStatusViews,
             DiagnosticsViewFactory diagnosticsViews,
             PluginCenterViewFactory pluginCenterViews,
-            ImageViewerFactory imageViewer) {
+            ImageViewerFactory imageViewer,
+            WindowToastFactory windowToasts) {
         this.applicationKernel = java.util.Objects.requireNonNull(
                 applicationKernel, "applicationKernel");
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
@@ -327,6 +330,7 @@ public class ChatViewController implements AutoCloseable {
         this.pluginCenterViews = java.util.Objects.requireNonNull(
                 pluginCenterViews, "pluginCenterViews");
         this.imageViewer = java.util.Objects.requireNonNull(imageViewer, "imageViewer");
+        this.windowToasts = java.util.Objects.requireNonNull(windowToasts, "windowToasts");
         java.util.Objects.requireNonNull(taskExecutor, "taskExecutor");
         persistenceTasks = taskExecutor.openScope("chat-persistence", 1);
         backgroundTasks = taskExecutor.openScope("chat-ui-background", 2);
@@ -2590,7 +2594,8 @@ public class ChatViewController implements AutoCloseable {
         log.info("打开记忆中心");
         javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
         new com.javaclaw.ui.javafx.memory.MemoryCenterView(
-                ownerStage, chatService.getMemoryService(), runtime.getKnowledgeExpert()).show();
+                ownerStage, chatService.getMemoryService(), runtime.getKnowledgeExpert(),
+                windowToasts).show();
     }
 
     /**
@@ -2673,7 +2678,8 @@ public class ChatViewController implements AutoCloseable {
                 ownerStage, runtime.getKnowledgeExpert(),
                 com.javaclaw.agent.ToolConfirmationManager.getPort(),
                 this::rebuildAgentService,
-                () -> openSettings("嵌入模型"));
+                () -> openSettings("嵌入模型"),
+                windowToasts);
         // 关闭后重建顶栏知识库菜单（文档增删 / 启用状态可能已变化）
         // 重建进行中跳过：此刻旧 runtime 正被后台线程关闭（EclipseStore 知识库已 close），
         // 读它会抛异常且刚建好的菜单也会被重建收尾清掉，收尾刷新是唯一补偿点。

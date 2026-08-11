@@ -24,6 +24,7 @@ import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
 import com.javaclaw.ui.javafx.schedule.ScheduleView;
 import com.javaclaw.ui.javafx.skill.SkillCenterView;
 import com.javaclaw.ui.javafx.task.SddTaskView;
+import com.javaclaw.ui.javafx.control.WindowToastFactory;
 import javafx.animation.PauseTransition;
 import javafx.application.Application;
 import javafx.application.Platform;
@@ -128,10 +129,12 @@ public final class UiScreenshotExporter {
                             workspaceRuntime.agentSettingsPanels()))));
             shots.add(new Shot("03-knowledge-center.png", "知识库中心", () ->
                     new KnowledgeCenterView(primaryStage, runtime.getKnowledgeExpert(), port,
-                            () -> {}, () -> {}).show()));
+                            () -> {}, () -> {},
+                            springContext.getBean(WindowToastFactory.class)).show()));
             shots.add(new Shot("04-memory-center.png", "记忆中心", () ->
                     new MemoryCenterView(primaryStage, chatService.getMemoryService(),
-                            runtime.getKnowledgeExpert()).show()));
+                            runtime.getKnowledgeExpert(),
+                            springContext.getBean(WindowToastFactory.class)).show()));
             shots.add(new Shot("05-skill-center.png", "技能中心", () ->
                     showInternalStage(new SkillCenterView(primaryStage))));
             shots.add(new Shot("06-task-center.png", "托管任务", () ->
