@@ -5,6 +5,8 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Properties;
 
+import static com.javaclaw.config.AgentConfigSchema.*;
+
 /**
  * 智能体配置管理器（持久化到全局 H2 数据库）
  *
@@ -14,317 +16,90 @@ import java.util.Properties;
  *
  * <p>系统提示词等不常修改的内容保留为类常量，
  * API 连接、模型参数、超时等运行时可调配置项存储在 H2 中。</p>
- *
- * @author JavaClaw
  */
 public final class AgentConfig {
 
     private static final Logger log = LoggerFactory.getLogger(AgentConfig.class);
 
-    private static final String CONFIG_NAMESPACE = "agent";
-
     private final Properties properties;
-    private final SqlPropertyStore store;
+    private final AgentConfigPersistence persistence;
     private final CredentialCipher credentials;
-    private final String databaseDescription;
-
-    // ==================== 配置项 key ====================
-
-    // 高性能模型（HIGH tier）— 沿用 api.* 前缀（向后兼容），用于编排器、规划、质疑、PlanEvolver 等
-    private static final String KEY_PROVIDER_TYPE = "api.provider.type";
-    private static final String KEY_BASE_URL = "api.base.url";
-    private static final String KEY_MODEL_NAME = "api.model.name";
-    private static final String KEY_API_KEY = "api.key";
-    private static final String KEY_THINKING_BUDGET = "model.thinking.budget";
-
-    // 普通模型（NORMAL tier）— 用于子专家、单步执行体、知识专家等常规任务
-    private static final String KEY_NORMAL_PROVIDER_TYPE = "api.normal.provider.type";
-    private static final String KEY_NORMAL_BASE_URL = "api.normal.base.url";
-    private static final String KEY_NORMAL_MODEL_NAME = "api.normal.model.name";
-    private static final String KEY_NORMAL_API_KEY = "api.normal.key";
-    private static final String KEY_NORMAL_THINKING_ENABLED = "api.normal.thinking.enabled";
-
-    // 轻量模型（LIGHT tier）— 用于意图识别、工具路由、记忆蒸馏、视觉预处理、过程评估等
-    private static final String KEY_LIGHT_PROVIDER_TYPE = "api.light.provider.type";
-    private static final String KEY_LIGHT_BASE_URL = "api.light.base.url";
-    private static final String KEY_LIGHT_MODEL_NAME = "api.light.model.name";
-    private static final String KEY_LIGHT_API_KEY = "api.light.key";
-    private static final String KEY_LIGHT_THINKING_ENABLED = "api.light.thinking.enabled";
-    private static final String KEY_CONNECT_TIMEOUT = "timeout.connect.seconds";
-    private static final String KEY_READ_TIMEOUT = "timeout.read.seconds";
-    private static final String KEY_WRITE_TIMEOUT = "timeout.write.seconds";
-    private static final String KEY_MODEL_REQUEST_TIMEOUT = "timeout.model.request.seconds";
-    private static final String KEY_ORCHESTRATOR_MAX_ITERS = "orchestrator.max.iters";
-    private static final String KEY_WEB_AGENT_MAX_ITERS = "web.agent.max.iters";
-    private static final String KEY_EMAIL_AGENT_MAX_ITERS = "email.agent.max.iters";
-    private static final String KEY_SYSTEM_AGENT_MAX_ITERS = "system.agent.max.iters";
-    private static final String KEY_NOTIFICATION_AGENT_MAX_ITERS = "notification.agent.max.iters";
-    private static final String KEY_HTTP_VERSION = "http.version";
-    private static final String KEY_THINKING_ENABLED = "model.thinking.enabled";
-    private static final String KEY_MAX_REPEATED_TOOL_CALLS = "loop.max.repeated.calls";
-    private static final String KEY_LOOP_SIMILARITY_THRESHOLD = "loop.similarity.threshold";
-    private static final String KEY_EVALUATOR_PASS_THRESHOLD = "evaluator.pass.threshold";
-    private static final String KEY_EVALUATOR_MAX_RETRIES = "evaluator.max.retries";
-    private static final String KEY_MEMORY_MAX_TOKEN = "memory.max.token";
-    private static final String KEY_MEMORY_MSG_THRESHOLD = "memory.msg.threshold";
-    private static final String KEY_MEMORY_LAST_KEEP = "memory.last.keep";
-    private static final String KEY_MEMORY_TOKEN_RATIO = "memory.token.ratio";
-    private static final String KEY_RETRY_MAX_ATTEMPTS = "retry.max.attempts";
-    private static final String KEY_RETRY_INITIAL_BACKOFF = "retry.initial.backoff.seconds";
-    private static final String KEY_RETRY_MAX_BACKOFF = "retry.max.backoff.seconds";
-    private static final String KEY_FIRST_USE_GUIDANCE_DONE = "ui.first.use.guidance.done";
-    private static final String KEY_TRAY_MINIMIZE_ON_CLOSE = "ui.tray.minimize.on.close";
-    private static final String KEY_UI_THEME = "ui.theme";
-    private static final String KEY_UI_FONT_FAMILY = "ui.font.family";
-    private static final String KEY_UI_FONT_MONO = "ui.font.mono";
-    private static final String KEY_UI_FONT_DENSITY = "ui.font.density";
-    private static final String KEY_CONFIRMATION_TIMEOUT_DEFAULT = "confirmation.timeout.default.seconds";
-    private static final String KEY_CONFIRMATION_TIMEOUT_MANAGED = "confirmation.timeout.managed.seconds";
-    private static final String KEY_TOOL_REVIEW_MODE = "tool.review.mode";
-    private static final String KEY_TASK_EVENTS_RETENTION_DAYS = "task.events.retention.days";
-    private static final String KEY_SCHEDULE_THREAD_POOL_SIZE = "schedule.thread.pool.size";
-    private static final String KEY_TASK_VERIFICATION_ENABLED = "task.verification.enabled";
-    private static final String KEY_TOOL_ROUTING_ENABLED = "tool.routing.enabled";
-
-    // 任务管理配置
-    private static final String KEY_TASK_AGENT_MAX_ITERS = "task.agent.max.iters";
-    private static final String KEY_TASK_MAX_CONCURRENT = "task.max.concurrent";
-    private static final String KEY_COMMAND_AGENT_MAX_ITERS = "command.agent.max.iters";
-
-    // 任务各阶段 .block() 超时（秒）；思考模式下 30s 常常不够，默认放宽
-    private static final String KEY_TASK_SUBTASK_EXECUTOR_TIMEOUT = "task.subtask.executor.timeout.seconds";
-
-    // SDD 托管任务配置：实现项执行/结构化阶段（提案、规格、计划、补做）的整体阻塞超时与执行体迭代上限。
-    // 注意超时覆盖的是单次 executeTask 全程（最多 exec.max.iters 轮 ReAct）——慢模型生成大文件单轮即可达数分钟，宁宽勿紧
-    private static final String KEY_SDD_EXEC_TIMEOUT = "task.sdd.exec.timeout.seconds";
-    private static final String KEY_SDD_STRUCTURED_TIMEOUT = "task.sdd.structured.timeout.seconds";
-    private static final String KEY_SDD_EXEC_MAX_ITERS = "task.sdd.exec.max.iters";
-    // 托管任务高风险工具"目录内自动放行"：由风险评估智能体判定工具影响范围是否限于任务目录，是则免人工确认
-    private static final String KEY_TASK_RISK_AUTOAPPROVE = "task.risk.autoapprove.enabled";
-
-    // GEPA 配置
-    private static final String KEY_GEPA_GOAL_ENABLED = "gepa.goal.auto.decompose";
-    private static final String KEY_GEPA_EVAL_INTERVAL = "gepa.eval.interval.tasks";
-    private static final String KEY_GEPA_EVAL_THRESHOLD = "gepa.eval.threshold";
-    private static final String KEY_GEPA_PLAN_ADAPTIVE = "gepa.plan.adaptive.enabled";
-    private static final String KEY_GEPA_FEEDBACK_MAX_ROUNDS = "gepa.feedback.loop.max.rounds";
-    private static final String KEY_SUBTASK_TOOL_ERROR_MAX = "task.subtask.tool.error.max";
-
-    // JShell 执行配置
-    private static final String KEY_JSHELL_EXEC_TIMEOUT = "jshell.exec.timeout.seconds";
-
-    // 技能进化配置（自学习闭环：skill_manage 工具 + SkillCurator 蒸馏）
-    private static final String KEY_SKILL_EVOLUTION_MODE = "skill.evolution.mode";
-    private static final String KEY_SKILL_EVOLUTION_MIN_TOOLS = "skill.evolution.min.tools";
-    private static final String KEY_SKILL_EVOLUTION_SUCCESS_THRESHOLD = "skill.evolution.success.threshold";
-    private static final String KEY_SKILL_CURATION_COOLDOWN_DAYS = "skill.curation.cooldown.days";
-    private static final String KEY_SKILL_CURATION_DEDUP_HOURS = "skill.curation.dedup.hours";
-    private static final String KEY_SKILL_USAGE_LOWSUCCESS_THRESHOLD = "skill.usage.lowsuccess.threshold";
-    private static final String KEY_SKILL_USAGE_LOWSUCCESS_MINSAMPLES = "skill.usage.lowsuccess.minsamples";
-    private static final String KEY_SKILL_NUDGE_ENABLED = "skill.nudge.enabled";
-    private static final String KEY_SKILL_BUNDLES_ENABLED = "skill.bundles.enabled";
-
-    // RAG 知识库配置
-    private static final String KEY_RAG_ENABLED = "rag.enabled";
-    private static final String KEY_RAG_EMBEDDING_PROVIDER = "rag.embedding.provider";
-    private static final String KEY_RAG_EMBEDDING_BASE_URL = "rag.embedding.base.url";
-    private static final String KEY_RAG_EMBEDDING_API_KEY = "rag.embedding.api.key";
-    private static final String KEY_RAG_EMBEDDING_MODEL_NAME = "rag.embedding.model.name";
-    private static final String KEY_RAG_EMBEDDING_DIMENSIONS = "rag.embedding.dimensions";
-    private static final String KEY_RAG_CHUNK_SIZE = "rag.chunk.size";
-    private static final String KEY_RAG_CHUNK_OVERLAP = "rag.chunk.overlap";
-    private static final String KEY_RAG_RETRIEVE_LIMIT = "rag.retrieve.limit";
-    private static final String KEY_RAG_SCORE_THRESHOLD = "rag.score.threshold";
-
-    // ==================== 默认值常量 ====================
-
-    private static final String DEFAULT_PROVIDER_TYPE = "OpenAI";
-    private static final String DEFAULT_BASE_URL = "http://127.0.0.1:1234";
-    private static final String DEFAULT_MODEL_NAME = "qwen/qwen3.5-9b";
-    private static final String DEFAULT_API_KEY = "not-needed";
-    private static final int DEFAULT_THINKING_BUDGET = 4096;
-    private static final int DEFAULT_CONNECT_TIMEOUT = 30;
-    private static final int DEFAULT_READ_TIMEOUT = 120;
-    private static final int DEFAULT_WRITE_TIMEOUT = 30;
-    // 单次模型请求总超时（秒）。覆盖 AgentScope MODEL_DEFAULTS 的 5 分钟默认，
-    // 避免 SINGLE 通道一次性生成大段代码时被 PT5M 中断。默认 20 分钟。
-    private static final int DEFAULT_MODEL_REQUEST_TIMEOUT = 1200;
-    private static final int DEFAULT_ORCHESTRATOR_MAX_ITERS = 10;
-    private static final int DEFAULT_WEB_AGENT_MAX_ITERS = 8;
-    private static final int DEFAULT_EMAIL_AGENT_MAX_ITERS = 5;
-    private static final int DEFAULT_SYSTEM_AGENT_MAX_ITERS = 8;
-    private static final int DEFAULT_NOTIFICATION_AGENT_MAX_ITERS = 5;
-    private static final boolean DEFAULT_THINKING_ENABLED = true;
-    private static final int DEFAULT_MAX_REPEATED_TOOL_CALLS = 8;
-    private static final String DEFAULT_HTTP_VERSION = "HTTP_1_1";
-    private static final double DEFAULT_LOOP_SIMILARITY_THRESHOLD = 0.8;
-    private static final double DEFAULT_EVALUATOR_PASS_THRESHOLD = 3.5;
-    private static final int DEFAULT_EVALUATOR_MAX_RETRIES = 2;
-    private static final long DEFAULT_MEMORY_MAX_TOKEN = 128 * 1024;
-    private static final int DEFAULT_MEMORY_MSG_THRESHOLD = 100;
-    private static final int DEFAULT_MEMORY_LAST_KEEP = 50;
-    private static final double DEFAULT_MEMORY_TOKEN_RATIO = 0.75;
-    private static final int DEFAULT_RETRY_MAX_ATTEMPTS = 3;
-    private static final int DEFAULT_RETRY_INITIAL_BACKOFF = 2;
-    private static final int DEFAULT_RETRY_MAX_BACKOFF = 30;
-    private static final int DEFAULT_CONFIRMATION_TIMEOUT_DEFAULT = 60;
-    private static final int DEFAULT_CONFIRMATION_TIMEOUT_MANAGED = 600;
-    private static final ToolReviewMode DEFAULT_TOOL_REVIEW_MODE = ToolReviewMode.SMART;
-    private static final int DEFAULT_TASK_EVENTS_RETENTION_DAYS = 30;
-    private static final int DEFAULT_SCHEDULE_THREAD_POOL_SIZE = 4;
-    private static final int DEFAULT_TASK_AGENT_MAX_ITERS = 15;
-    private static final int DEFAULT_TASK_MAX_CONCURRENT = 3;
-    private static final int DEFAULT_COMMAND_AGENT_MAX_ITERS = 8;
-    // 各阶段默认超时；较旧的 30s 经常因为 thinking 模式而超时，改为更宽松的默认
-    private static final int DEFAULT_TASK_SUBTASK_EXECUTOR_TIMEOUT = 600;
-    // SDD 默认值：单个实现项 15 分钟（慢模型单轮生成大文件可达 3 分钟+，旧 300s 实测不够）、
-    // 结构化阶段 5 分钟（旧 120s 对思考模式偏紧）、执行体 12 轮迭代
-    private static final int DEFAULT_SDD_EXEC_TIMEOUT = 900;
-    private static final int DEFAULT_SDD_STRUCTURED_TIMEOUT = 300;
-    private static final int DEFAULT_SDD_EXEC_MAX_ITERS = 12;
-    // 默认开启：托管任务中影响范围限于任务目录的高风险操作由风险评估智能体自动放行
-    private static final boolean DEFAULT_TASK_RISK_AUTOAPPROVE = true;
-
-    // GEPA 默认值
-    private static final boolean DEFAULT_GEPA_GOAL_ENABLED = true;
-    private static final int DEFAULT_GEPA_EVAL_INTERVAL = 3;
-    private static final double DEFAULT_GEPA_EVAL_THRESHOLD = 3.5;
-    private static final boolean DEFAULT_GEPA_PLAN_ADAPTIVE = true;
-    private static final int DEFAULT_GEPA_FEEDBACK_MAX_ROUNDS = 2;
-    // 子任务连续工具错误的重试上限（达到即终止该子任务）。代码任务"改→编译→再改"
-    // 循环常见，默认放宽到 5 次。
-    private static final int DEFAULT_SUBTASK_TOOL_ERROR_MAX = 5;
-
-    // RAG 默认值
-    private static final boolean DEFAULT_RAG_ENABLED = false;
-    private static final String DEFAULT_RAG_EMBEDDING_PROVIDER = "OpenAI";
-    private static final String DEFAULT_RAG_EMBEDDING_BASE_URL = "";
-    private static final String DEFAULT_RAG_EMBEDDING_API_KEY = "";
-    private static final String DEFAULT_RAG_EMBEDDING_MODEL_NAME = "text-embedding-3-small";
-    private static final int DEFAULT_RAG_EMBEDDING_DIMENSIONS = 1024;
-    private static final int DEFAULT_RAG_CHUNK_SIZE = 512;
-    private static final int DEFAULT_RAG_CHUNK_OVERLAP = 50;
-    private static final int DEFAULT_RAG_RETRIEVE_LIMIT = 5;
-    private static final double DEFAULT_RAG_SCORE_THRESHOLD = 0.3;
+    private final AgentMemorySettings memory;
+    private final AgentRagSettings rag;
 
     // ==================== 系统提示词（类常量，不存配置文件） ====================
 
-    /** 智能体名称 */
     public static final String AGENT_NAME = "JavaClaw助手";
 
-    /** 编程专家智能体名称 */
     public static final String CODING_AGENT_NAME = "编程专家";
 
-    /** 编程专家智能体描述 */
     public static final String CODING_AGENT_DESCRIPTION =
             "编程专家，擅长代码编写、代码审查、Bug 分析、架构设计、算法讲解等编程相关任务";
 
-    /** 编程专家系统提示词已迁移至 {@link com.javaclaw.prompt.AgentPrompts#CODING_AGENT_SYS_PROMPT} */
-
-    /** 知识专家智能体名称 */
     public static final String KNOWLEDGE_AGENT_NAME = "知识专家";
 
-    /** 知识专家智能体描述 */
     public static final String KNOWLEDGE_AGENT_DESCRIPTION =
             "知识问答与知识库管理。处理编程以外的知识问答（概念分析、方案对比、学习建议），" +
             "以及知识库操作（导入TXT/PDF文档、语义检索、删除文档）。不处理代码编写。";
 
-    /** 知识专家系统提示词（含 RAG 变体）已迁移至 {@link com.javaclaw.prompt.AgentPrompts} */
-
-    /** Web 浏览专家智能体名称 */
     public static final String WEB_AGENT_NAME = "Web浏览专家";
 
-    /** Web 浏览专家智能体描述 */
     public static final String WEB_AGENT_DESCRIPTION =
             "网页浏览与操作。使用 Playwright 浏览器访问网页、搜索信息、填写表单、" +
             "点击按钮、截图、管理多Tab和Cookie。不处理本地文件或系统操作。";
 
-    /** Web 浏览专家系统提示词已迁移至 {@link com.javaclaw.prompt.AgentPrompts#WEB_AGENT_SYS_PROMPT} */
-
-    /** 邮件专家智能体名称 */
     public static final String EMAIL_AGENT_NAME = "邮件专家";
 
-    /** 邮件专家智能体描述 */
     public static final String EMAIL_AGENT_DESCRIPTION =
             "邮件收发与管理。发送邮件、查看收件箱、搜索邮件、回复邮件。不处理即时通知（由通知专家负责）。";
 
-    /** 邮件专家系统提示词已迁移至 {@link com.javaclaw.prompt.AgentPrompts#EMAIL_AGENT_SYS_PROMPT} */
-
-    /** 系统操作专家智能体名称 */
     public static final String SYSTEM_AGENT_NAME = "系统操作专家";
 
-    /** 系统操作专家智能体描述 */
     public static final String SYSTEM_AGENT_DESCRIPTION =
             "桌面系统操作。获取系统信息、屏幕截图、鼠标键盘操控、本地文件管理（读写/复制/移动/删除）。" +
             "不处理网页操作（由Web专家负责）。";
 
-    /** 系统操作专家系统提示词已迁移至 {@link com.javaclaw.prompt.AgentPrompts#SYSTEM_AGENT_SYS_PROMPT} */
-
-    /** 桌面自动化专家智能体名称 */
     public static final String DESKTOP_AGENT_NAME = "桌面自动化专家";
 
-    /** 桌面自动化专家智能体描述 */
     public static final String DESKTOP_AGENT_DESCRIPTION =
             "操作其他桌面软件（IDE、编辑器等任意 GUI 程序）。启动程序、枚举/激活窗口、截取界面交视觉模型理解、" +
             "用键鼠点击与输入控制目标程序。跨平台（macOS/Windows/Linux 自动适配，缺原生能力时降级为整屏截图+视觉定位）。" +
             "不处理网页（由 Web 专家负责）、不做本地文件读写（由系统操作专家负责）。";
 
-    /** 桌面自动化专家系统提示词已迁移至 {@link com.javaclaw.prompt.AgentPrompts#DESKTOP_AGENT_SYS_PROMPT} */
-
-    /** 命令行专家智能体名称 */
     public static final String COMMAND_AGENT_NAME = "命令行专家";
 
-    /** 命令行专家智能体描述 */
     public static final String COMMAND_AGENT_DESCRIPTION =
             "Shell 命令执行。运行编译构建（mvn/gradle/npm）、版本控制（git）、脚本（python/node）、" +
             "进程查看（ps）、网络诊断（ping/curl）等命令。" +
             "不处理文件操作（由系统操作专家负责），高风险命令支持白名单自动记忆。";
 
-    /** 命令行专家系统提示词已迁移至 {@link com.javaclaw.prompt.AgentPrompts#COMMAND_AGENT_SYS_PROMPT} */
-
-    /** 任务评估专家智能体名称 */
     public static final String EVALUATOR_AGENT_NAME = "任务评估专家";
 
-    /** 任务评估专家智能体描述 */
     public static final String EVALUATOR_AGENT_DESCRIPTION =
             "任务执行质量评估。对已完成的多步骤任务进行评分和改进建议。" +
             "仅在复杂规划的所有子任务执行完毕后调用。";
 
-    /** 任务评估专家系统提示词已迁移至 {@link com.javaclaw.prompt.AgentPrompts#EVALUATOR_AGENT_SYS_PROMPT} */
-
-    /** 通知专家智能体名称 */
     public static final String NOTIFICATION_AGENT_NAME = "通知专家";
 
-    /** 通知专家智能体描述 */
     public static final String NOTIFICATION_AGENT_DESCRIPTION =
             "多渠道即时通知。通过钉钉/企业微信/飞书/邮件/Webhook发送消息通知。" +
             "不处理邮件收发（由邮件专家负责），仅负责推送通知。";
 
-    /** 通知专家系统提示词已迁移至 {@link com.javaclaw.prompt.AgentPrompts#NOTIFICATION_AGENT_SYS_PROMPT} */
-
-    /** 主编排智能体系统提示词已迁移至 {@link com.javaclaw.prompt.AgentPrompts#ORCHESTRATOR_SYS_PROMPT} */
-
-    /** 规划最大子任务数 */
     public static final int PLAN_MAX_SUBTASKS = 8;
 
     // ==================== 规划模式（MsgHub 多智能体协同） ====================
 
-    /** 规划协调者智能体名称 */
     public static final String PLAN_COORDINATOR_NAME = "规划协调者";
-
-    /** 规划协调者系统提示词已迁移至 {@link com.javaclaw.prompt.AgentPrompts#PLAN_COORDINATOR_SYS_PROMPT} */
-
-    /** 规划模式专家补充提示词已迁移至 {@link com.javaclaw.prompt.AgentPrompts#PLAN_MODE_EXPERT_SUFFIX} */
 
     // ==================== 构造与生命周期 ====================
 
     public AgentConfig(
             SqlPropertyStore store, DatabaseAccess database, CredentialCipher credentials) {
-        this.store = java.util.Objects.requireNonNull(store, "store");
+        this.persistence = new AgentConfigPersistence(store, database);
         this.credentials = java.util.Objects.requireNonNull(credentials, "credentials");
-        this.databaseDescription = java.util.Objects.requireNonNull(
-                database, "database").description();
         this.properties = new Properties();
+        this.memory = new AgentMemorySettings(properties);
+        this.rag = new AgentRagSettings(properties, credentials);
         load();
     }
 
@@ -332,9 +107,8 @@ public final class AgentConfig {
      * 重新加载配置（工作区切换时调用）
      */
     public void reload() {
-        properties.clear();
         load();
-        log.info("智能体配置已重新加载: {}", databaseDescription);
+        log.info("智能体配置已重新加载: {}", persistence.description());
     }
 
     // ==================== H2 读写 ====================
@@ -343,84 +117,19 @@ public final class AgentConfig {
      * 从 H2 加载配置。
      */
     private void load() {
-        Properties loaded = store.load(CONFIG_NAMESPACE);
-        properties.putAll(loaded);
-        boolean removedObsoletePlanConfig = removeObsoletePlanModeProperties(properties);
-        if (properties.isEmpty()) {
-            log.info("智能体配置数据库为空，使用默认值: {}", databaseDescription);
-            setDefaults();
-        } else {
-            log.info("智能体配置已从 H2 加载: {}", databaseDescription);
-        }
-        if (removedObsoletePlanConfig && !store.save(CONFIG_NAMESPACE, properties)) {
-            log.warn("已忽略废弃的规划模式配置，但未能从 H2 中清理");
-        }
+        persistence.loadInto(properties);
     }
 
     /** Profile 档位已完整取代旧的全局轮数/专家数限制；加载时清除遗留持久化项。 */
     static boolean removeObsoletePlanModeProperties(Properties target) {
-        boolean removedRounds = target.remove("plan.mode.max.rounds") != null;
-        boolean removedExperts = target.remove("plan.mode.max.experts") != null;
-        return removedRounds || removedExperts;
-    }
-
-    /**
-     * 设置默认值
-     */
-    private void setDefaults() {
-        properties.setProperty(KEY_PROVIDER_TYPE, DEFAULT_PROVIDER_TYPE);
-        properties.setProperty(KEY_BASE_URL, DEFAULT_BASE_URL);
-        properties.setProperty(KEY_MODEL_NAME, DEFAULT_MODEL_NAME);
-        properties.setProperty(KEY_API_KEY, DEFAULT_API_KEY);
-        properties.setProperty(KEY_THINKING_BUDGET, String.valueOf(DEFAULT_THINKING_BUDGET));
-        properties.setProperty(KEY_CONNECT_TIMEOUT, String.valueOf(DEFAULT_CONNECT_TIMEOUT));
-        properties.setProperty(KEY_READ_TIMEOUT, String.valueOf(DEFAULT_READ_TIMEOUT));
-        properties.setProperty(KEY_WRITE_TIMEOUT, String.valueOf(DEFAULT_WRITE_TIMEOUT));
-        properties.setProperty(KEY_ORCHESTRATOR_MAX_ITERS, String.valueOf(DEFAULT_ORCHESTRATOR_MAX_ITERS));
-        properties.setProperty(KEY_WEB_AGENT_MAX_ITERS, String.valueOf(DEFAULT_WEB_AGENT_MAX_ITERS));
-        properties.setProperty(KEY_EMAIL_AGENT_MAX_ITERS, String.valueOf(DEFAULT_EMAIL_AGENT_MAX_ITERS));
-        properties.setProperty(KEY_SYSTEM_AGENT_MAX_ITERS, String.valueOf(DEFAULT_SYSTEM_AGENT_MAX_ITERS));
-        properties.setProperty(KEY_NOTIFICATION_AGENT_MAX_ITERS, String.valueOf(DEFAULT_NOTIFICATION_AGENT_MAX_ITERS));
-        properties.setProperty(KEY_COMMAND_AGENT_MAX_ITERS, String.valueOf(DEFAULT_COMMAND_AGENT_MAX_ITERS));
-        properties.setProperty(KEY_THINKING_ENABLED, String.valueOf(DEFAULT_THINKING_ENABLED));
-        properties.setProperty(KEY_HTTP_VERSION, DEFAULT_HTTP_VERSION);
-        properties.setProperty(KEY_MAX_REPEATED_TOOL_CALLS, String.valueOf(DEFAULT_MAX_REPEATED_TOOL_CALLS));
-        properties.setProperty(KEY_LOOP_SIMILARITY_THRESHOLD, String.valueOf(DEFAULT_LOOP_SIMILARITY_THRESHOLD));
-        properties.setProperty(KEY_EVALUATOR_PASS_THRESHOLD, String.valueOf(DEFAULT_EVALUATOR_PASS_THRESHOLD));
-        properties.setProperty(KEY_EVALUATOR_MAX_RETRIES, String.valueOf(DEFAULT_EVALUATOR_MAX_RETRIES));
-        properties.setProperty(KEY_MEMORY_MAX_TOKEN, String.valueOf(DEFAULT_MEMORY_MAX_TOKEN));
-        properties.setProperty(KEY_MEMORY_MSG_THRESHOLD, String.valueOf(DEFAULT_MEMORY_MSG_THRESHOLD));
-        properties.setProperty(KEY_MEMORY_LAST_KEEP, String.valueOf(DEFAULT_MEMORY_LAST_KEEP));
-        properties.setProperty(KEY_MEMORY_TOKEN_RATIO, String.valueOf(DEFAULT_MEMORY_TOKEN_RATIO));
-        properties.setProperty(KEY_RETRY_MAX_ATTEMPTS, String.valueOf(DEFAULT_RETRY_MAX_ATTEMPTS));
-        properties.setProperty(KEY_RETRY_INITIAL_BACKOFF, String.valueOf(DEFAULT_RETRY_INITIAL_BACKOFF));
-        properties.setProperty(KEY_RETRY_MAX_BACKOFF, String.valueOf(DEFAULT_RETRY_MAX_BACKOFF));
-        properties.setProperty(KEY_TOOL_REVIEW_MODE, DEFAULT_TOOL_REVIEW_MODE.id());
-        properties.setProperty(KEY_SCHEDULE_THREAD_POOL_SIZE, String.valueOf(DEFAULT_SCHEDULE_THREAD_POOL_SIZE));
-        properties.setProperty(KEY_GEPA_GOAL_ENABLED, String.valueOf(DEFAULT_GEPA_GOAL_ENABLED));
-        properties.setProperty(KEY_GEPA_EVAL_INTERVAL, String.valueOf(DEFAULT_GEPA_EVAL_INTERVAL));
-        properties.setProperty(KEY_GEPA_EVAL_THRESHOLD, String.valueOf(DEFAULT_GEPA_EVAL_THRESHOLD));
-        properties.setProperty(KEY_GEPA_PLAN_ADAPTIVE, String.valueOf(DEFAULT_GEPA_PLAN_ADAPTIVE));
-        properties.setProperty(KEY_GEPA_FEEDBACK_MAX_ROUNDS, String.valueOf(DEFAULT_GEPA_FEEDBACK_MAX_ROUNDS));
-        properties.setProperty(KEY_RAG_ENABLED, String.valueOf(DEFAULT_RAG_ENABLED));
-        properties.setProperty(KEY_RAG_EMBEDDING_PROVIDER, DEFAULT_RAG_EMBEDDING_PROVIDER);
-        properties.setProperty(KEY_RAG_EMBEDDING_BASE_URL, DEFAULT_RAG_EMBEDDING_BASE_URL);
-        properties.setProperty(KEY_RAG_EMBEDDING_API_KEY, DEFAULT_RAG_EMBEDDING_API_KEY);
-        properties.setProperty(KEY_RAG_EMBEDDING_MODEL_NAME, DEFAULT_RAG_EMBEDDING_MODEL_NAME);
-        properties.setProperty(KEY_RAG_EMBEDDING_DIMENSIONS, String.valueOf(DEFAULT_RAG_EMBEDDING_DIMENSIONS));
-        properties.setProperty(KEY_RAG_CHUNK_SIZE, String.valueOf(DEFAULT_RAG_CHUNK_SIZE));
-        properties.setProperty(KEY_RAG_CHUNK_OVERLAP, String.valueOf(DEFAULT_RAG_CHUNK_OVERLAP));
-        properties.setProperty(KEY_RAG_RETRIEVE_LIMIT, String.valueOf(DEFAULT_RAG_RETRIEVE_LIMIT));
-        properties.setProperty(KEY_RAG_SCORE_THRESHOLD, String.valueOf(DEFAULT_RAG_SCORE_THRESHOLD));
+        return AgentConfigPersistence.removeObsoletePlanModeProperties(target);
     }
 
     /**
      * 保存配置到 H2
      */
     public synchronized void save() {
-        if (store.save(CONFIG_NAMESPACE, properties)) {
-            log.info("智能体配置已保存到 H2: {}", databaseDescription);
-        }
+        persistence.save(properties);
     }
 
     /** 后台保存工具审核模式；按单键 upsert，避免覆盖同一时刻由设置页保存的其他配置。 */
@@ -429,18 +138,11 @@ public final class AgentConfig {
             save();
             return;
         }
-        String workspaceId;
         String value;
         synchronized (this) {
-            workspaceId = store.currentWorkspaceId();
             value = properties.getProperty(KEY_TOOL_REVIEW_MODE, DEFAULT_TOOL_REVIEW_MODE.id());
         }
-        executor.execute(() -> {
-            if (store.saveProperty(
-                    CONFIG_NAMESPACE, KEY_TOOL_REVIEW_MODE, value, workspaceId)) {
-                log.info("工具审核模式已异步保存到 H2: workspace={}, mode={}", workspaceId, value);
-            }
-        });
+        persistence.savePropertyAsync(executor, KEY_TOOL_REVIEW_MODE, value);
     }
 
     // ==================== API 连接配置 ====================
@@ -841,144 +543,33 @@ public final class AgentConfig {
 
     // ==================== 上下文记忆配置 ====================
 
-    /**
-     * 获取上下文窗口最大 token 数
-     */
-    public long getMemoryMaxToken() {
-        try {
-            return Long.parseLong(properties.getProperty(KEY_MEMORY_MAX_TOKEN,
-                    String.valueOf(DEFAULT_MEMORY_MAX_TOKEN)));
-        } catch (NumberFormatException e) {
-            return DEFAULT_MEMORY_MAX_TOKEN;
-        }
-    }
-
-    public void setMemoryMaxToken(long value) {
-        properties.setProperty(KEY_MEMORY_MAX_TOKEN, String.valueOf(value));
-    }
-
-    /**
-     * 获取触发压缩的消息数阈值
-     */
-    public int getMemoryMsgThreshold() {
-        return getInt(KEY_MEMORY_MSG_THRESHOLD, DEFAULT_MEMORY_MSG_THRESHOLD);
-    }
-
-    public void setMemoryMsgThreshold(int value) {
-        properties.setProperty(KEY_MEMORY_MSG_THRESHOLD, String.valueOf(value));
-    }
-
-    /**
-     * 获取保留最近不压缩的消息数
-     */
-    public int getMemoryLastKeep() {
-        return getInt(KEY_MEMORY_LAST_KEEP, DEFAULT_MEMORY_LAST_KEEP);
-    }
-
-    public void setMemoryLastKeep(int value) {
-        properties.setProperty(KEY_MEMORY_LAST_KEEP, String.valueOf(value));
-    }
-
-    /**
-     * 获取触发压缩的 token 占用比例（0.0~1.0）
-     */
-    public double getMemoryTokenRatio() {
-        try {
-            return Double.parseDouble(properties.getProperty(KEY_MEMORY_TOKEN_RATIO,
-                    String.valueOf(DEFAULT_MEMORY_TOKEN_RATIO)));
-        } catch (NumberFormatException e) {
-            return DEFAULT_MEMORY_TOKEN_RATIO;
-        }
-    }
-
-    public void setMemoryTokenRatio(double value) {
-        properties.setProperty(KEY_MEMORY_TOKEN_RATIO, String.valueOf(value));
-    }
+    public long getMemoryMaxToken() { return memory.maxToken(); }
+    public void setMemoryMaxToken(long value) { memory.maxToken(value); }
+    public int getMemoryMsgThreshold() { return memory.messageThreshold(); }
+    public void setMemoryMsgThreshold(int value) { memory.messageThreshold(value); }
+    public int getMemoryLastKeep() { return memory.lastMessagesToKeep(); }
+    public void setMemoryLastKeep(int value) { memory.lastMessagesToKeep(value); }
+    public double getMemoryTokenRatio() { return memory.tokenRatio(); }
+    public void setMemoryTokenRatio(double value) { memory.tokenRatio(value); }
 
     // ==================== 记忆检索 / 蒸馏（EclipseStore 记忆基座） ====================
 
-    /** 每轮注入的事实 Top-K（默认 8） */
-    public int getMemoryRecallTopK() {
-        return getInt("memory.recall.topk", 8);
-    }
-
-    /** 每轮注入的相关情景条数（默认 3） */
-    public int getMemoryRecallEpisodes() {
-        return getInt("memory.recall.episodes", 3);
-    }
-
-    /** 检索相似度下限（默认 0.3，低于此值不注入） */
-    public double getMemoryRecallThreshold() {
-        return getDouble("memory.recall.threshold", 0.3);
-    }
-
-    /** 注入字符预算上限（默认 8000） */
-    public int getMemoryRecallMaxChars() {
-        return getInt("memory.recall.maxchars", 8000);
-    }
-
-    /** 蒸馏去重相似度阈值：候选与既有事实相似度≥此值则合并而非新增（默认 0.9） */
-    public double getMemoryDistillDedupThreshold() {
-        return getDouble("memory.distill.dedup.threshold", 0.9);
-    }
-
-    /** 蒸馏所需最短用户输入字符数（默认 10） */
-    public int getMemoryDistillMinInput() {
-        return getInt("memory.distill.min.input", 10);
-    }
-
-    /** 取代检测总闸：新事实入库前判定并软删除被其取代的旧事实（默认开），杜绝新旧矛盾并存召回到过时记忆 */
-    public boolean getMemorySupersedeEnabled() {
-        return Boolean.parseBoolean(properties.getProperty("memory.supersede.enabled", "true"));
-    }
-
-    /**
-     * 取代检测候选相似度下限：仅 [此值, dedup) 中区间的「相关但不重复」旧事实参与取代判定
-     * （默认 0.55，须 &lt; dedup 0.9；≥dedup 的近重复由蒸馏合并处理，不在取代范围）
-     */
-    public double getMemorySupersedeThreshold() {
-        return getDouble("memory.supersede.threshold", 0.55);
-    }
-
-    /** 取代检测单条新事实的最大候选数（默认 5，限制轻量模型判定的规模与成本） */
-    public int getMemorySupersedeMaxCandidates() {
-        return getInt("memory.supersede.max.candidates", 5);
-    }
-
-    /** 是否在蒸馏轮后抽取实体并关联到事实（构成记忆图谱的 entity 节点与 about 边，默认开） */
-    public boolean getMemoryGraphEntitiesEnabled() {
-        return Boolean.parseBoolean(properties.getProperty("memory.graph.entities.enabled", "true"));
-    }
-
-    /** 记忆图谱语义近邻边的最小相似度阈值（0~1，默认 0.78） */
-    public double getMemoryGraphSemanticThreshold() {
-        return getDouble("memory.graph.semantic.threshold", 0.78);
-    }
-
-    /** 记忆图谱单次可视化纳入的事实节点上限（默认 300） */
-    public int getMemoryGraphMaxNodes() {
-        return getInt("memory.graph.max.nodes", 300);
-    }
-
-    /** 习惯回顾蒸馏总闸（默认开）：定期批量看近期情景，归纳跨轮重复模式为偏好事实 */
-    public boolean getMemoryHabitReviewEnabled() {
-        return Boolean.parseBoolean(properties.getProperty("memory.habit.review.enabled", "true"));
-    }
-
-    /** 触发一次习惯回顾所需的新情景条数下限（默认 20，自上次回顾起算） */
-    public int getMemoryHabitReviewMinEpisodes() {
-        return getInt("memory.habit.review.min.episodes", 20);
-    }
-
-    /** 两次习惯回顾的最小间隔小时数（默认 24） */
-    public int getMemoryHabitReviewIntervalHours() {
-        return getInt("memory.habit.review.interval.hours", 24);
-    }
-
-    /** 单次习惯回顾纳入的情景条数上限（默认 60，超出取最近的） */
-    public int getMemoryHabitReviewMaxEpisodes() {
-        return getInt("memory.habit.review.max.episodes", 60);
-    }
+    public int getMemoryRecallTopK() { return memory.recallTopK(); }
+    public int getMemoryRecallEpisodes() { return memory.recallEpisodes(); }
+    public double getMemoryRecallThreshold() { return memory.recallThreshold(); }
+    public int getMemoryRecallMaxChars() { return memory.recallCharacterBudget(); }
+    public double getMemoryDistillDedupThreshold() { return memory.distillationDeduplicationThreshold(); }
+    public int getMemoryDistillMinInput() { return memory.distillationMinimumInput(); }
+    public boolean getMemorySupersedeEnabled() { return memory.supersedeEnabled(); }
+    public double getMemorySupersedeThreshold() { return memory.supersedeThreshold(); }
+    public int getMemorySupersedeMaxCandidates() { return memory.supersedeMaximumCandidates(); }
+    public boolean getMemoryGraphEntitiesEnabled() { return memory.graphEntitiesEnabled(); }
+    public double getMemoryGraphSemanticThreshold() { return memory.graphSemanticThreshold(); }
+    public int getMemoryGraphMaxNodes() { return memory.graphMaximumNodes(); }
+    public boolean getMemoryHabitReviewEnabled() { return memory.habitReviewEnabled(); }
+    public int getMemoryHabitReviewMinEpisodes() { return memory.habitReviewMinimumEpisodes(); }
+    public int getMemoryHabitReviewIntervalHours() { return memory.habitReviewIntervalHours(); }
+    public int getMemoryHabitReviewMaxEpisodes() { return memory.habitReviewMaximumEpisodes(); }
 
     // ==================== 定时任务配置 ====================
 
@@ -1067,100 +658,26 @@ public final class AgentConfig {
 
     // ==================== RAG 知识库配置 ====================
 
-    /**
-     * 是否启用 RAG 知识库
-     */
-    public boolean isRagEnabled() {
-        return Boolean.parseBoolean(
-                properties.getProperty(KEY_RAG_ENABLED, String.valueOf(DEFAULT_RAG_ENABLED)));
-    }
-
-    public void setRagEnabled(boolean value) {
-        properties.setProperty(KEY_RAG_ENABLED, String.valueOf(value));
-    }
-
-    /**
-     * 获取嵌入模型提供商类型
-     *
-     * @return "OpenAI"、"DashScope" 或 "Ollama"
-     */
-    public String getRagEmbeddingProvider() {
-        return properties.getProperty(KEY_RAG_EMBEDDING_PROVIDER, DEFAULT_RAG_EMBEDDING_PROVIDER);
-    }
-
-    public void setRagEmbeddingProvider(String value) {
-        properties.setProperty(KEY_RAG_EMBEDDING_PROVIDER, value);
-    }
-
-    public String getRagEmbeddingBaseUrl() {
-        return properties.getProperty(KEY_RAG_EMBEDDING_BASE_URL, DEFAULT_RAG_EMBEDDING_BASE_URL);
-    }
-
-    public void setRagEmbeddingBaseUrl(String value) {
-        properties.setProperty(KEY_RAG_EMBEDDING_BASE_URL, value);
-    }
-
-    public String getRagEmbeddingApiKey() {
-        String raw = properties.getProperty(KEY_RAG_EMBEDDING_API_KEY, DEFAULT_RAG_EMBEDDING_API_KEY);
-        return credentials.decrypt(raw);
-    }
-
-    public void setRagEmbeddingApiKey(String value) {
-        properties.setProperty(KEY_RAG_EMBEDDING_API_KEY, credentials.encrypt(value));
-    }
-
-    public String getRagEmbeddingModelName() {
-        return properties.getProperty(KEY_RAG_EMBEDDING_MODEL_NAME, DEFAULT_RAG_EMBEDDING_MODEL_NAME);
-    }
-
-    public void setRagEmbeddingModelName(String value) {
-        properties.setProperty(KEY_RAG_EMBEDDING_MODEL_NAME, value);
-    }
-
-    public int getRagEmbeddingDimensions() {
-        return getInt(KEY_RAG_EMBEDDING_DIMENSIONS, DEFAULT_RAG_EMBEDDING_DIMENSIONS);
-    }
-
-    public void setRagEmbeddingDimensions(int value) {
-        properties.setProperty(KEY_RAG_EMBEDDING_DIMENSIONS, String.valueOf(value));
-    }
-
-    public int getRagChunkSize() {
-        return getInt(KEY_RAG_CHUNK_SIZE, DEFAULT_RAG_CHUNK_SIZE);
-    }
-
-    public void setRagChunkSize(int value) {
-        properties.setProperty(KEY_RAG_CHUNK_SIZE, String.valueOf(value));
-    }
-
-    public int getRagChunkOverlap() {
-        return getInt(KEY_RAG_CHUNK_OVERLAP, DEFAULT_RAG_CHUNK_OVERLAP);
-    }
-
-    public void setRagChunkOverlap(int value) {
-        properties.setProperty(KEY_RAG_CHUNK_OVERLAP, String.valueOf(value));
-    }
-
-    public int getRagRetrieveLimit() {
-        return getInt(KEY_RAG_RETRIEVE_LIMIT, DEFAULT_RAG_RETRIEVE_LIMIT);
-    }
-
-    public void setRagRetrieveLimit(int value) {
-        properties.setProperty(KEY_RAG_RETRIEVE_LIMIT, String.valueOf(value));
-    }
-
-    public double getRagScoreThreshold() {
-        try {
-            return Double.parseDouble(properties.getProperty(KEY_RAG_SCORE_THRESHOLD,
-                    String.valueOf(DEFAULT_RAG_SCORE_THRESHOLD)));
-        } catch (NumberFormatException e) {
-            return DEFAULT_RAG_SCORE_THRESHOLD;
-        }
-    }
-
-    public void setRagScoreThreshold(double value) {
-        properties.setProperty(KEY_RAG_SCORE_THRESHOLD, String.valueOf(value));
-    }
+    public boolean isRagEnabled() { return rag.enabled(); }
+    public void setRagEnabled(boolean value) { rag.enabled(value); }
+    public String getRagEmbeddingProvider() { return rag.embeddingProvider(); }
+    public void setRagEmbeddingProvider(String value) { rag.embeddingProvider(value); }
+    public String getRagEmbeddingBaseUrl() { return rag.embeddingBaseUrl(); }
+    public void setRagEmbeddingBaseUrl(String value) { rag.embeddingBaseUrl(value); }
+    public String getRagEmbeddingApiKey() { return rag.embeddingApiKey(); }
+    public void setRagEmbeddingApiKey(String value) { rag.embeddingApiKey(value); }
+    public String getRagEmbeddingModelName() { return rag.embeddingModelName(); }
+    public void setRagEmbeddingModelName(String value) { rag.embeddingModelName(value); }
+    public int getRagEmbeddingDimensions() { return rag.embeddingDimensions(); }
+    public void setRagEmbeddingDimensions(int value) { rag.embeddingDimensions(value); }
+    public int getRagChunkSize() { return rag.chunkSize(); }
+    public void setRagChunkSize(int value) { rag.chunkSize(value); }
+    public int getRagChunkOverlap() { return rag.chunkOverlap(); }
+    public void setRagChunkOverlap(int value) { rag.chunkOverlap(value); }
+    public int getRagRetrieveLimit() { return rag.retrieveLimit(); }
+    public void setRagRetrieveLimit(int value) { rag.retrieveLimit(value); }
+    public double getRagScoreThreshold() { return rag.scoreThreshold(); }
+    public void setRagScoreThreshold(double value) { rag.scoreThreshold(value); }
 
     public boolean isFirstUseGuidanceDone() {
         return Boolean.parseBoolean(properties.getProperty(KEY_FIRST_USE_GUIDANCE_DONE, "false"));
@@ -1394,37 +911,7 @@ public final class AgentConfig {
      * 重置所有配置为默认值
      */
     public void resetToDefaults() {
-        properties.setProperty(KEY_PROVIDER_TYPE, DEFAULT_PROVIDER_TYPE);
-        properties.setProperty(KEY_BASE_URL, DEFAULT_BASE_URL);
-        properties.setProperty(KEY_MODEL_NAME, DEFAULT_MODEL_NAME);
-        properties.setProperty(KEY_API_KEY, DEFAULT_API_KEY);
-        properties.setProperty(KEY_THINKING_BUDGET, String.valueOf(DEFAULT_THINKING_BUDGET));
-        properties.setProperty(KEY_CONNECT_TIMEOUT, String.valueOf(DEFAULT_CONNECT_TIMEOUT));
-        properties.setProperty(KEY_READ_TIMEOUT, String.valueOf(DEFAULT_READ_TIMEOUT));
-        properties.setProperty(KEY_WRITE_TIMEOUT, String.valueOf(DEFAULT_WRITE_TIMEOUT));
-        properties.setProperty(KEY_ORCHESTRATOR_MAX_ITERS, String.valueOf(DEFAULT_ORCHESTRATOR_MAX_ITERS));
-        properties.setProperty(KEY_WEB_AGENT_MAX_ITERS, String.valueOf(DEFAULT_WEB_AGENT_MAX_ITERS));
-        properties.setProperty(KEY_EMAIL_AGENT_MAX_ITERS, String.valueOf(DEFAULT_EMAIL_AGENT_MAX_ITERS));
-        properties.setProperty(KEY_SYSTEM_AGENT_MAX_ITERS, String.valueOf(DEFAULT_SYSTEM_AGENT_MAX_ITERS));
-        properties.setProperty(KEY_NOTIFICATION_AGENT_MAX_ITERS, String.valueOf(DEFAULT_NOTIFICATION_AGENT_MAX_ITERS));
-        properties.setProperty(KEY_COMMAND_AGENT_MAX_ITERS, String.valueOf(DEFAULT_COMMAND_AGENT_MAX_ITERS));
-        properties.setProperty(KEY_HTTP_VERSION, DEFAULT_HTTP_VERSION);
-        properties.setProperty(KEY_THINKING_ENABLED, String.valueOf(DEFAULT_THINKING_ENABLED));
-        properties.setProperty(KEY_MAX_REPEATED_TOOL_CALLS, String.valueOf(DEFAULT_MAX_REPEATED_TOOL_CALLS));
-        properties.setProperty(KEY_LOOP_SIMILARITY_THRESHOLD, String.valueOf(DEFAULT_LOOP_SIMILARITY_THRESHOLD));
-        properties.setProperty(KEY_EVALUATOR_PASS_THRESHOLD, String.valueOf(DEFAULT_EVALUATOR_PASS_THRESHOLD));
-        properties.setProperty(KEY_EVALUATOR_MAX_RETRIES, String.valueOf(DEFAULT_EVALUATOR_MAX_RETRIES));
-        properties.setProperty(KEY_MEMORY_MAX_TOKEN, String.valueOf(DEFAULT_MEMORY_MAX_TOKEN));
-        properties.setProperty(KEY_MEMORY_MSG_THRESHOLD, String.valueOf(DEFAULT_MEMORY_MSG_THRESHOLD));
-        properties.setProperty(KEY_MEMORY_LAST_KEEP, String.valueOf(DEFAULT_MEMORY_LAST_KEEP));
-        properties.setProperty(KEY_MEMORY_TOKEN_RATIO, String.valueOf(DEFAULT_MEMORY_TOKEN_RATIO));
-        properties.setProperty(KEY_RETRY_MAX_ATTEMPTS, String.valueOf(DEFAULT_RETRY_MAX_ATTEMPTS));
-        properties.setProperty(KEY_RETRY_INITIAL_BACKOFF, String.valueOf(DEFAULT_RETRY_INITIAL_BACKOFF));
-        properties.setProperty(KEY_RETRY_MAX_BACKOFF, String.valueOf(DEFAULT_RETRY_MAX_BACKOFF));
-        properties.setProperty(KEY_SCHEDULE_THREAD_POOL_SIZE, String.valueOf(DEFAULT_SCHEDULE_THREAD_POOL_SIZE));
-        properties.setProperty(KEY_CONFIRMATION_TIMEOUT_DEFAULT, String.valueOf(DEFAULT_CONFIRMATION_TIMEOUT_DEFAULT));
-        properties.setProperty(KEY_CONFIRMATION_TIMEOUT_MANAGED, String.valueOf(DEFAULT_CONFIRMATION_TIMEOUT_MANAGED));
-        properties.setProperty(KEY_TOOL_REVIEW_MODE, DEFAULT_TOOL_REVIEW_MODE.id());
+        AgentConfigSchema.resetUserSettings(properties);
         save();
         log.info("配置已重置为默认值");
     }
@@ -1433,7 +920,7 @@ public final class AgentConfig {
      * 获取配置文件路径（用于界面显示）
      */
     public String getConfigFilePath() {
-        return databaseDescription;
+        return persistence.description();
     }
 
     /**
@@ -1446,25 +933,6 @@ public final class AgentConfig {
     }
 
     // ==================== 循环模式（Loop）配置 ====================
-    // 说明：默认值在此本地声明，不引用 loop 包常量，避免 config ↔ loop 包互相依赖成环。
-
-    private static final String KEY_LOOP_MAX_ITERATIONS = "loop.max.iterations";
-    private static final String KEY_LOOP_TOKEN_BUDGET = "loop.token.budget";
-    private static final String KEY_LOOP_MAX_WALLCLOCK_SECONDS = "loop.max.wallclock.seconds";
-    private static final String KEY_LOOP_INTERVAL_DELAY_SECONDS = "loop.interval.delay.seconds";
-    private static final String KEY_LOOP_ITERATION_TIMEOUT_SECONDS = "loop.iteration.timeout.seconds";
-    private static final String KEY_LOOP_VERIFY_TIMEOUT_SECONDS = "loop.verify.timeout.seconds";
-    private static final String KEY_LOOP_JUDGE_ENABLED = "loop.judge.enabled";
-
-    private static final int DEFAULT_LOOP_MAX_ITERATIONS = 25;
-    private static final long DEFAULT_LOOP_TOKEN_BUDGET = 0L; // 0 表示不限
-    private static final long DEFAULT_LOOP_MAX_WALLCLOCK_SECONDS = 3600L;
-    private static final long DEFAULT_LOOP_INTERVAL_DELAY_SECONDS = 300L;
-    private static final long DEFAULT_LOOP_ITERATION_TIMEOUT_SECONDS = 720L;
-    // 与 SDD 的 task.sdd.exec.timeout.seconds 同源考量：循环旗舰场景「盯着 mvn test 直到
-    // 通过」恰是分钟级慢命令，ProcessCommandRunner 默认 120s 会逐轮误杀、done 永不可达
-    private static final long DEFAULT_LOOP_VERIFY_TIMEOUT_SECONDS = 900L;
-    private static final boolean DEFAULT_LOOP_JUDGE_ENABLED = false;
 
     /** 循环最大迭代轮数上限。 */
     public int getLoopMaxIterations() {
@@ -1503,26 +971,14 @@ public final class AgentConfig {
     }
 
     private int getInt(String key, int defaultValue) {
-        try {
-            return Integer.parseInt(properties.getProperty(key, String.valueOf(defaultValue)));
-        } catch (NumberFormatException e) {
-            return defaultValue;
-        }
+        return AgentConfigSchema.integer(properties, key, defaultValue);
     }
 
     private long getLong(String key, long defaultValue) {
-        try {
-            return Long.parseLong(properties.getProperty(key, String.valueOf(defaultValue)));
-        } catch (NumberFormatException e) {
-            return defaultValue;
-        }
+        return AgentConfigSchema.longValue(properties, key, defaultValue);
     }
 
     private double getDouble(String key, double defaultValue) {
-        try {
-            return Double.parseDouble(properties.getProperty(key, String.valueOf(defaultValue)));
-        } catch (NumberFormatException e) {
-            return defaultValue;
-        }
+        return AgentConfigSchema.decimal(properties, key, defaultValue);
     }
 }
