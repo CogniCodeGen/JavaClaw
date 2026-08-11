@@ -12,6 +12,7 @@ import com.javaclaw.platform.process.ProcessRunner;
 import com.javaclaw.platform.storage.AtomicContentStore;
 import com.javaclaw.platform.dialog.DialogService;
 import com.javaclaw.application.tool.ToolInvocationPipeline;
+import com.javaclaw.application.chat.ToolReviewSettingsPort;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -47,6 +48,7 @@ class RootApplicationContextTest {
             assertNotNull(context.getBean(AtomicContentStore.class));
             assertNotNull(context.getBean(DialogService.class));
             assertNotNull(context.getBean(ToolInvocationPipeline.class));
+            assertNotNull(context.getBean(ToolReviewSettingsPort.class));
             assertNotNull(context.getBean(WorkspaceSpringContextFactory.class));
 
             SchemaInitializer initializer = context.getBean(SchemaInitializer.class);

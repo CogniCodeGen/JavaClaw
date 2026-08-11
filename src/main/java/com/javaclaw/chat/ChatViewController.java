@@ -19,7 +19,6 @@ import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.SettingsView;
-import com.javaclaw.config.ToolReviewMode;
 import com.javaclaw.runtime.ApplicationKernel;
 import com.javaclaw.runtime.WorkspaceRuntime;
 import com.javaclaw.platform.fx.FxDispatcher;
@@ -96,6 +95,7 @@ public class ChatViewController implements AutoCloseable {
     @FXML private VBox messageList;
     @FXML private ScrollPane scrollPane;
     @FXML private ChatComposerController composerController;
+    @FXML private ChatModeController modeBarController;
     @FXML private Label topTitleLabel;
     @FXML private Label topTitleStatusDot;
     @FXML private Label topTitleMetaLabel;
@@ -243,8 +243,6 @@ public class ChatViewController implements AutoCloseable {
     /** 当前子智能体结果块的外层容器（包含回复） */
     private VBox activeSubResultBubble;
 
-    /** 单一会话模式选中态；模式按钮完全由 ModeRegistry 动态生成。 */
-    private String selectedConversationModeId = "chat";
     /** 规划模式下当前正在流式填充的智能体 Markdown 气泡 */
     private MarkdownBubble activePlanAgentBubble;
 
@@ -263,32 +261,13 @@ public class ChatViewController implements AutoCloseable {
      */
     private java.util.concurrent.atomic.AtomicReference<ChatMessage> activeAdoptTargetRef;
 
-    /** 会话模式下拉选择器（对话 / 研讨 / 循环 / 工作流 / 命令）。 */
-    @FXML private ComboBox<ConversationModeChoice> conversationModeSelector;
-    private boolean conversationModeUpdating;
-    @FXML private ComboBox<WorkflowChoice> workflowSelector;
-    @FXML private ComboBox<com.javaclaw.api.conversation.PlanProfile> planProfileSelector;
-    @FXML private Button workflowEmptyShortcut;
-    @FXML private MenuButton loopTemplateMenu;
-    /** 丢弃被后续刷新或工作区切换取代的异步工作流列表结果。 */
-    private final java.util.concurrent.atomic.AtomicLong workflowSelectorRefreshGeneration =
-            new java.util.concurrent.atomic.AtomicLong();
-
     /** 知识库多选菜单按钮 */
     @FXML private MenuButton knowledgeMenu;
     @FXML private Tooltip knowledgeTooltip;
 
-    /** 工具执行审核策略下拉框 */
-    @FXML private MenuButton reviewModeMenu;
     @FXML private MenuButton themeMenuButton;
     @FXML private Region themeSwatch;
     @FXML private Button settingsButton;
-    @FXML private HBox modeChips;
-
-    /** Token 用量摘要徽标（单一合并标签） */
-    @FXML private Label tokenLabel;
-    /** Token 徽标 Tooltip（内容在 refreshStatusBar 中刷新） */
-    @FXML private Tooltip tokenSummaryTooltip;
     private Timeline statusBarClock;
     private ChangeListener<String> themeListener;
     private final java.util.concurrent.atomic.AtomicBoolean closed =
@@ -403,7 +382,7 @@ public class ChatViewController implements AutoCloseable {
         log.info("开始构建聊天界面 FXML");
         configureSidebar();
         configureTopBar();
-        configureModeControls();
+        configureModeBar();
         configureMessageArea();
         configureComposer();
         configureThinkingPanel();
@@ -448,49 +427,20 @@ public class ChatViewController implements AutoCloseable {
         });
         knowledgeMenu.setOnHidden(event -> knowledgeMenu.setTooltip(knowledgeTooltip));
         configureThemeMenu();
-
-        tokenSummaryTooltip.setShowDelay(Duration.millis(250));
-        tokenLabel.setOnMouseClicked(event -> {
-            runtime.getTokenTracker().resetSession();
-            refreshStatusBar();
-        });
         wireTokenTracker();
     }
 
-    private void configureModeControls() {
-        ensureSingleClickCombo(conversationModeSelector);
-        conversationModeSelector.valueProperty().addListener(
-                (observable, previous, choice) -> {
-                    if (!conversationModeUpdating && choice != null) {
-                        applyConversationModeChoice(choice);
-                    }
-                });
-        refreshConversationModeSelector(selectedConversationModeId);
-
-        ensureSingleClickCombo(workflowSelector);
-        workflowSelector.setOnShowing(event -> refreshWorkflowSelectorAsync());
-        workflowSelector.setOnAction(event -> {
-            WorkflowChoice choice = workflowSelector.getValue();
-            syncWorkflowSelection(choice == null ? null : choice.id());
+    private void configureModeBar() {
+        modeBarController.setOnLoopTemplateSelected(template -> {
+            composerController.replaceInput(template);
+            composerController.focusInput();
         });
-
-        planProfileSelector.getItems().setAll(
-                com.javaclaw.api.conversation.PlanProfile.values());
-        planProfileSelector.setValue(com.javaclaw.api.conversation.PlanProfile.AUTO);
-        planProfileSelector.setTooltip(new Tooltip(
-                "AUTO 自动判断；QUICK 轻量；STANDARD 标准；DEEP 深度"));
-
-        loopTemplateMenu.setTooltip(new Tooltip(
-                "语法示例：@loop interval=5m max=20 judge=on\n目标描述"));
-        addLoopTemplate("快速推进",
-                "@loop max=10 judge=on\n持续推进目标，直到验收条件满足");
-        addLoopTemplate("定时轮询",
-                "@loop interval=5m max=20 judge=on\n检查目标状态，满足后停止");
-        addLoopTemplate("构建守护",
-                "@loop interval=30s max=20 judge=on\n反复修复并运行测试，直到全部通过");
-
-        configureReviewModeMenu();
-        refreshWorkflowSelectorAsync();
+        modeBarController.setOnOpenWorkflowCenter(this::openWorkflowCenter);
+        modeBarController.setOnOpenTaskManager(this::openTaskManager);
+        modeBarController.setOnResetTokens(() -> {
+            runtime.getTokenTracker().resetSession();
+            refreshStatusBar();
+        });
     }
 
     private void configureMessageArea() {
@@ -735,8 +685,8 @@ public class ChatViewController implements AutoCloseable {
                 onStreamError(new IllegalStateException("模式未注册: " + targetId));
                 return;
             }
-            var profile = "plan".equals(targetId) && planProfileSelector != null
-                    ? planProfileSelector.getValue()
+            var profile = "plan".equals(targetId)
+                    ? modeBarController.planProfile()
                     : com.javaclaw.api.conversation.PlanProfile.AUTO;
             try {
                 ConversationHandle handle = convMode.start(
@@ -762,7 +712,7 @@ public class ChatViewController implements AutoCloseable {
      */
     private String conversationTargetId(boolean forcePlan) {
         if (forcePlan) return "plan";
-        return selectedConversationModeId;
+        return modeBarController.selectedModeId();
     }
 
     private boolean isPlanStream() {
@@ -770,195 +720,11 @@ public class ChatViewController implements AutoCloseable {
         return turn != null && "plan".equals(turn.modeId);
     }
 
-    private void refreshConversationModeSelector(String preferredId) {
-        if (conversationModeSelector == null) return;
-        List<ConversationModeChoice> choices = modeRegistry
-                .listByPlacement(com.javaclaw.api.conversation.Placement.TOP_SEGMENT).stream()
-                .filter(ConversationMode.class::isInstance)
-                .map(mode -> new ConversationModeChoice(
-                        mode.id(), conversationModeLabel(mode), mode.tooltip()))
-                .toList();
-        ConversationModeChoice resolved = choices.stream()
-                .filter(choice -> choice.id().equals(preferredId))
-                .findFirst()
-                .orElseGet(() -> choices.stream()
-                        .filter(choice -> "chat".equals(choice.id()))
-                        .findFirst()
-                        .orElse(choices.isEmpty() ? null : choices.getFirst()));
-        conversationModeUpdating = true;
-        try {
-            conversationModeSelector.getItems().setAll(choices);
-            conversationModeSelector.setValue(resolved);
-        } finally {
-            conversationModeUpdating = false;
-        }
-        if (resolved != null) applyConversationModeChoice(resolved);
-    }
-
-    private static String conversationModeLabel(Mode mode) {
-        return switch (mode.id()) {
-            case "chat" -> "对话";
-            case "plan" -> "研讨";
-            case "loop" -> "循环";
-            case "workflow" -> "工作流";
-            default -> mode.displayName();
-        };
-    }
-
-    private void applyConversationModeChoice(ConversationModeChoice choice) {
-        selectedConversationModeId = choice.id();
-        conversationModeSelector.setTooltip(
-                choice.tooltip() == null || choice.tooltip().isBlank()
-                        ? null : new Tooltip(choice.tooltip()));
-        updateWorkflowSelectorVisibility();
-        log.info("切换到会话模式: {}", choice.id());
-    }
-
-    private void selectConversationMode(String id) {
-        if (conversationModeSelector == null) {
-            selectedConversationModeId = id;
-            return;
-        }
-        conversationModeSelector.getItems().stream()
-                .filter(choice -> choice.id().equals(id))
-                .findFirst()
-                .ifPresentOrElse(conversationModeSelector::setValue,
-                        () -> log.warn("无法切换到未注册的会话模式: {}", id));
-    }
-
-    private void updateWorkflowSelectorVisibility() {
-        if (workflowSelector == null) return;
-        boolean visible = "workflow".equals(selectedConversationModeId);
-        workflowSelector.setVisible(visible);
-        workflowSelector.setManaged(visible);
-        if (planProfileSelector != null) {
-            boolean planVisible = "plan".equals(selectedConversationModeId);
-            planProfileSelector.setVisible(planVisible);
-            planProfileSelector.setManaged(planVisible);
-        }
-        if (loopTemplateMenu != null) {
-            boolean loopVisible = "loop".equals(selectedConversationModeId);
-            loopTemplateMenu.setVisible(loopVisible);
-            loopTemplateMenu.setManaged(loopVisible);
-        }
-        if (workflowEmptyShortcut != null) {
-            boolean emptyVisible = visible && workflowSelector.getItems().isEmpty();
-            workflowEmptyShortcut.setVisible(emptyVisible);
-            workflowEmptyShortcut.setManaged(emptyVisible);
-        }
-        if (visible) refreshWorkflowSelectorAsync();
-    }
-
-    private void addLoopTemplate(String label, String value) {
-        MenuItem item = new MenuItem(label);
-        item.setOnAction(e -> {
-            composerController.replaceInput(value);
-            composerController.focusInput();
-        });
-        loopTemplateMenu.getItems().add(item);
-    }
-
-    /**
-     * 异步刷新已发布工作流，避免 H2 查询和图 JSON 反序列化阻塞 JavaFX 选择事件。
-     */
-    private void refreshWorkflowSelectorAsync() {
-        if (workflowSelector == null) return;
-        // ApplicationKernel.current() 在切换窗口内会抛异常而不是返回 null；模式下拉框并未随
-        // 输入框一起禁用，因此用户仍可能在此期间点击“工作流”。内核完成切换后，UI 收尾会
-        // 再调用本方法同步新 ModeRegistry，故这里只需跳过内核真正处于无 current 的窗口。
-        if (applicationKernel.isTransitioning()) return;
-        final WorkspaceRuntime currentRuntime;
-        try {
-            currentRuntime = applicationKernel.current();
-        } catch (IllegalStateException unavailable) {
-            workflowSelector.getItems().clear();
-            workflowSelector.setValue(null);
-            syncWorkflowSelection(null);
-            return;
-        }
-        // 运行时重建后先把当前选择同步给新的 WorkflowMode；列表校正随后异步完成。
-        WorkflowChoice selected = workflowSelector.getValue();
-        long generation = workflowSelectorRefreshGeneration.incrementAndGet();
-        backgroundTasks.submit(TaskSpec.io("workflow-selector-refresh"), context -> {
-            final List<WorkflowChoice> records;
-            try {
-                records = currentRuntime.workflowService().definitions().list(false).stream()
-                        .filter(com.javaclaw.workflow.store.WorkflowDefinitionRecord::isPublished)
-                        .map(r -> new WorkflowChoice(r.id(), r.name()))
-                        .toList();
-            } catch (RuntimeException e) {
-                log.warn("异步刷新已发布工作流失败: {}", e.getMessage());
-                return null;
-            }
-            if (!context.cancellation().isCancellationRequested()) {
-                fx.dispatch(() -> applyWorkflowSelectorRefresh(
-                        currentRuntime, generation, records));
-            }
-            return null;
-        });
-    }
-
-    private void applyWorkflowSelectorRefresh(
-            WorkspaceRuntime expectedRuntime, long generation, List<WorkflowChoice> records) {
-        if (workflowSelector == null
-                || generation != workflowSelectorRefreshGeneration.get()
-                || applicationKernel.isTransitioning()) {
-            return;
-        }
-        try {
-            if (applicationKernel.current() != expectedRuntime) return;
-        } catch (IllegalStateException unavailable) {
-            return;
-        }
-        WorkflowChoice selected = workflowSelector.getValue();
-        workflowSelector.getItems().setAll(records);
-        workflowSelector.setPromptText(records.isEmpty()
-                ? "暂无已发布工作流" : "选择已发布工作流");
-        WorkflowChoice resolved = selected == null ? null : records.stream()
-                .filter(r -> r.id().equals(selected.id())).findFirst().orElse(null);
-        if (resolved == null && !records.isEmpty()) resolved = records.getFirst();
-        workflowSelector.setValue(resolved);
-        // setValue 相等时 JavaFX 不保证再次触发 ActionEvent；工作区重建后 ModeRegistry
-        // 已换成新实例，因此无论值是否变化都显式同步一次。
-        syncWorkflowSelection(resolved == null ? null : resolved.id());
-        if (workflowEmptyShortcut != null) {
-            boolean showShortcut = records.isEmpty()
-                    && "workflow".equals(selectedConversationModeId);
-            workflowEmptyShortcut.setVisible(showShortcut);
-            workflowEmptyShortcut.setManaged(showShortcut);
-        }
-    }
-
     /**
      * 工作流中心发布成功后的即时 UI 更新。取消在途旧查询，避免旧快照覆盖刚发布的定义。
      */
     public void onWorkflowPublished(String workflowId, String workflowName) {
-        fx.dispatch(() -> applyPublishedWorkflow(workflowId, workflowName));
-    }
-
-    private void applyPublishedWorkflow(String workflowId, String workflowName) {
-        if (closed.get()) return;
-        if (workflowSelector == null || workflowId == null || workflowId.isBlank()) return;
-        workflowSelectorRefreshGeneration.incrementAndGet();
-        WorkflowChoice published = new WorkflowChoice(workflowId, workflowName);
-        WorkflowChoice selected = workflowSelector.getValue();
-        workflowSelector.getItems().removeIf(choice -> choice.id().equals(workflowId));
-        workflowSelector.getItems().addFirst(published);
-        if (workflowEmptyShortcut != null) {
-            workflowEmptyShortcut.setVisible(false);
-            workflowEmptyShortcut.setManaged(false);
-        }
-        WorkflowChoice resolved = selected == null || selected.id().equals(workflowId)
-                ? published : selected;
-        workflowSelector.setValue(resolved);
-        syncWorkflowSelection(resolved.id());
-    }
-
-    private void syncWorkflowSelection(String workflowId) {
-        modeRegistry.getById("workflow")
-                .filter(com.javaclaw.mode.WorkflowMode.class::isInstance)
-                .map(com.javaclaw.mode.WorkflowMode.class::cast)
-                .ifPresent(mode -> mode.selectWorkflow(workflowId));
+        fx.dispatch(() -> modeBarController.workflowPublished(workflowId, workflowName));
     }
 
     /**
@@ -1743,8 +1509,8 @@ public class ChatViewController implements AutoCloseable {
      * 切换规划模式开关
      */
     private void togglePlanMode() {
-        boolean enable = !"plan".equals(selectedConversationModeId);
-        selectConversationMode(enable ? "plan" : "chat");
+        boolean enable = !"plan".equals(modeBarController.selectedModeId());
+        modeBarController.selectMode(enable ? "plan" : "chat");
         log.info("规划模式已{}", enable ? "开启" : "关闭");
     }
 
@@ -3407,9 +3173,7 @@ public class ChatViewController implements AutoCloseable {
                 TokenTracker.formatCostCny(cost));
     }
 
-    /**
-     * 绑定 TokenTracker 回调到 tokenLabel（服务重建后需重新调用）
-     */
+    /** 绑定 TokenTracker 回调到模式栏摘要（服务重建后需重新调用）。 */
     private void wireTokenTracker() {
         runtime.getTokenTracker().setOnTokensChanged(() -> {
             fx.dispatch(this::refreshStatusBar);
@@ -3436,33 +3200,28 @@ public class ChatViewController implements AutoCloseable {
      * 应用重启后立即可见；会话仅在本次进程内累加。避免重启后状态栏一直显示 0 的体感问题。</p>
      */
     private void refreshStatusBar() {
-        if (tokenLabel == null) return;
         try {
             TokenTracker tracker = runtime.getTokenTracker();
             long sessionTokens = tracker.getSessionTokens();
             long todayTokens = tracker.getTodayTokens();
             long monthlyTokens = tracker.getMonthlyTokens();
             String monthlyCost = TokenTracker.formatCostCny(tracker.getMonthlyCostCny());
-            tokenLabel.setText(
-                    "今日 " + TokenTracker.formatTokens(todayTokens)
-                            + " · 会话 " + TokenTracker.formatTokens(sessionTokens)
-                            + " · " + monthlyCost);
-            if (tokenSummaryTooltip != null) {
-                TokenTracker.DailyUsage today = tracker.getTodayUsage();
-                TokenTracker.DailyUsage month = tracker.getMonthlyUsage();
-                tokenSummaryTooltip.setText(
-                        "今日累计：" + TokenTracker.formatTokens(todayTokens) + " tokens"
-                                + "（输入 " + TokenTracker.formatTokens(today.input)
-                                + " / 输出 " + TokenTracker.formatTokens(today.output) + "）\n" +
-                        "本月累计：" + TokenTracker.formatTokens(monthlyTokens) + " tokens"
-                                + "（输入 " + TokenTracker.formatTokens(month.input)
-                                + " / 输出 " + TokenTracker.formatTokens(month.output) + "）\n" +
-                        "本月成本：" + monthlyCost + "（估算，仅供参考）\n" +
-                        "本次会话：" + TokenTracker.formatTokens(sessionTokens) + " tokens · 耗时 "
-                                + TokenTracker.formatDuration(tracker.getSessionDurationSeconds()) + "\n" +
-                        "点击可重置本次会话计数"
-                );
-            }
+            TokenTracker.DailyUsage today = tracker.getTodayUsage();
+            TokenTracker.DailyUsage month = tracker.getMonthlyUsage();
+            String summary = "今日 " + TokenTracker.formatTokens(todayTokens)
+                    + " · 会话 " + TokenTracker.formatTokens(sessionTokens)
+                    + " · " + monthlyCost;
+            String details = "今日累计：" + TokenTracker.formatTokens(todayTokens) + " tokens"
+                    + "（输入 " + TokenTracker.formatTokens(today.input)
+                    + " / 输出 " + TokenTracker.formatTokens(today.output) + "）\n"
+                    + "本月累计：" + TokenTracker.formatTokens(monthlyTokens) + " tokens"
+                    + "（输入 " + TokenTracker.formatTokens(month.input)
+                    + " / 输出 " + TokenTracker.formatTokens(month.output) + "）\n"
+                    + "本月成本：" + monthlyCost + "（估算，仅供参考）\n"
+                    + "本次会话：" + TokenTracker.formatTokens(sessionTokens) + " tokens · 耗时 "
+                    + TokenTracker.formatDuration(tracker.getSessionDurationSeconds()) + "\n"
+                    + "点击可重置本次会话计数";
+            modeBarController.updateTokenSummary(summary, details);
         } catch (Exception e) {
             log.debug("刷新 Token 徽标失败", e);
         }
@@ -3547,8 +3306,8 @@ public class ChatViewController implements AutoCloseable {
                         clearKnowledgeSelection();
                         rebuildKnowledgeMenu();
                         wireTokenTracker();
-                        refreshConversationModeSelector(selectedConversationModeId);
-                        refreshWorkflowSelectorAsync();
+                        modeBarController.refreshModes(modeBarController.selectedModeId());
+                        modeBarController.refreshWorkflows();
                     } finally {
                         rebuildInProgress.set(false);
                         setInputEnabled(runtimeReady.get());
@@ -3774,65 +3533,6 @@ public class ChatViewController implements AutoCloseable {
     // ==================== 顶栏 / 输入区控件 ====================
 
     /**
-     * 构建工具审核策略下拉框。
-     *
-     * <p>该配置按工作区持久化：手动审核会让所有受管工具弹窗确认；智能审核沿用风险等级和
-     * 托管任务范围评估；全自动则全部默认同意。</p>
-     */
-    private void configureReviewModeMenu() {
-        MenuButton menu = reviewModeMenu;
-        menu.getItems().clear();
-        for (ToolReviewMode mode : ToolReviewMode.values()) {
-            MenuItem item = new MenuItem(mode.displayName());
-            item.setOnAction(e -> applyReviewMode(menu, mode, true));
-            menu.getItems().add(item);
-        }
-        applyReviewMode(menu, AgentConfig.getInstance().getToolReviewMode(), false);
-    }
-
-    private void applyReviewMode(MenuButton menu, ToolReviewMode mode, boolean persist) {
-        ToolReviewMode resolved = mode == null ? ToolReviewMode.SMART : mode;
-        menu.setText(resolved.displayName());
-        menu.setTooltip(new Tooltip(reviewModeTooltip(resolved)));
-        if (!persist) return;
-
-        AgentConfig cfg = AgentConfig.getInstance();
-        cfg.setToolReviewMode(resolved);
-        // H2 持久化不能阻塞 JavaFX 选择反馈；退出时该队列会被排空。
-        cfg.saveToolReviewModeAsync(persistExecutor);
-        log.info("工具审核模式切换为：{} ({})", resolved.displayName(), resolved.id());
-    }
-
-    /**
-     * JavaFX 的 ComboBox 在窗口底边及刚获焦时偶尔只消费第一次点击而不展开 Popup。
-     * 对关闭状态的主键按下直接展开并消费该次事件，避免默认皮肤随后把 Popup 再切回关闭。
-     * 已展开时仍交给默认皮肤处理，因此再次点击可以正常收起。
-     */
-    private static void ensureSingleClickCombo(ComboBox<?> combo) {
-        combo.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
-            if (event.getButton() != javafx.scene.input.MouseButton.PRIMARY
-                    || combo.isDisabled()
-                    || combo.isShowing()) {
-                return;
-            }
-            combo.requestFocus();
-            combo.show();
-            event.consume();
-        });
-    }
-
-    private void refreshReviewModeMenu() {
-        if (reviewModeMenu == null) return;
-        ToolReviewMode mode = AgentConfig.getInstance().getToolReviewMode();
-        applyReviewMode(reviewModeMenu, mode, false);
-    }
-
-    private String reviewModeTooltip(ToolReviewMode mode) {
-        ToolReviewMode m = mode == null ? ToolReviewMode.SMART : mode;
-        return "工具审核：" + m.displayName() + "\n" + m.description();
-    }
-
-    /**
      * 构建顶栏「风格」切换菜单（设计稿 ThemeMenu 的 JavaFX 实现）：
      * 按钮 = 当前主题色块 + 「风格」；下拉项 = 三联色块预览 + 名称/副标题 + 当前 ✓。
      * 选择后经 {@link com.javaclaw.ui.javafx.theme.ThemeManager#setTheme} 全局生效并持久化。
@@ -3982,11 +3682,11 @@ public class ChatViewController implements AutoCloseable {
 
                         // 10.5. 重新绑定 TokenTracker 回调（新工作区的追踪器）
                         wireTokenTracker();
-                        refreshWorkflowSelectorAsync();
 
                         // 11. 重置会话模式回对话（规划/循环同等对待：切工作区后残留循环
                         // chip 会把用户随手一问路由成最多几十轮的自动循环）
-                        refreshConversationModeSelector("chat");
+                        modeBarController.refreshModes("chat");
+                        modeBarController.refreshWorkflows();
 
                         // 12. 更新侧边栏工作区下拉
                         sidebarController.refreshWorkspaceCombo();
@@ -3998,7 +3698,7 @@ public class ChatViewController implements AutoCloseable {
                         com.javaclaw.ui.javafx.theme.FontManager.reload();
 
                         // 12.7. 刷新新工作区的工具审核模式
-                        refreshReviewModeMenu();
+                        modeBarController.refreshReviewMode();
 
                         log.info("工作区切换完成: {} ({})",
                                 wsMgr.getCurrentWorkspace().getName(), targetWorkspaceId);
@@ -4139,11 +3839,4 @@ public class ChatViewController implements AutoCloseable {
         });
     }
 
-    private record ConversationModeChoice(String id, String label, String tooltip) {
-        @Override public String toString() { return label; }
-    }
-
-    private record WorkflowChoice(String id, String name) {
-        @Override public String toString() { return name; }
-    }
 }

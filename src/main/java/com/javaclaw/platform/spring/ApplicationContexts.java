@@ -1,5 +1,8 @@
 package com.javaclaw.platform.spring;
 
+import com.javaclaw.application.chat.ChatModeApplicationService;
+import com.javaclaw.application.chat.ChatModeUseCase;
+import com.javaclaw.application.chat.ToolReviewSettingsPort;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.config.DataManager;
 import com.javaclaw.config.WorkspaceManager;
@@ -72,5 +75,8 @@ public final class ApplicationContexts {
             throw new IllegalStateException("ApplicationKernel 已登记");
         }
         context.registerBean(ApplicationKernel.class, () -> kernel);
+        context.registerBean(ChatModeApplicationService.class,
+                () -> new ChatModeUseCase(
+                        kernel, context.getBean(ToolReviewSettingsPort.class)));
     }
 }

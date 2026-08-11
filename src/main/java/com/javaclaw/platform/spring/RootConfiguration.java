@@ -3,6 +3,7 @@ package com.javaclaw.platform.spring;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.application.event.DomainEventPublisher;
+import com.javaclaw.application.chat.ToolReviewSettingsPort;
 import com.javaclaw.application.tool.ToolAuthorization;
 import com.javaclaw.application.tool.ToolAuthorizer;
 import com.javaclaw.application.tool.ToolAuditSink;
@@ -23,6 +24,7 @@ import com.javaclaw.platform.storage.AtomicContentStore;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.ui.javafx.JfxUserInteractionPort;
 import com.javaclaw.infrastructure.tool.LoggingToolAuditSink;
+import com.javaclaw.infrastructure.config.AgentConfigToolReviewSettings;
 import com.javaclaw.agent.ToolConfirmationManager;
 import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 import org.springframework.context.ApplicationContext;
@@ -74,6 +76,11 @@ public class RootConfiguration {
     @Bean(destroyMethod = "close")
     ManagedTaskExecutor managedTaskExecutor() {
         return new ManagedTaskExecutor();
+    }
+
+    @Bean(destroyMethod = "close")
+    ToolReviewSettingsPort toolReviewSettings(ManagedTaskExecutor executor) {
+        return new AgentConfigToolReviewSettings(executor);
     }
 
     @Bean

@@ -39,7 +39,7 @@ class ChatFxmlStructureTest {
         assertTrue(controllerHandlers.containsAll(handlers),
                 "Controller 缺少 @FXML 事件方法: " + handlers);
         assertEquals(Set.of("toggleSidebar", "openTaskManager", "openSettingsRequested",
-                "onClearHistory", "onNewMessagesRequested", "openWorkflowCenter"), handlers);
+                "onClearHistory", "onNewMessagesRequested"), handlers);
     }
 
     @Test
@@ -67,6 +67,16 @@ class ChatFxmlStructureTest {
                 document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
         assertInjectedFields(document, ChatComposerController.class);
         assertEquals(Set.of("addAttachmentRequested", "sendOrStopRequested"),
+                eventHandlers(document));
+    }
+
+    @Test
+    void modeBarDeclaresEveryInjectedNodeAndEventEntrypoint() throws Exception {
+        Document document = document("/fxml/chat/chat-mode-bar.fxml");
+        assertEquals(ChatModeController.class.getName(),
+                document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
+        assertInjectedFields(document, ChatModeController.class);
+        assertEquals(Set.of("openWorkflowCenterRequested", "openTaskManagerRequested"),
                 eventHandlers(document));
     }
 
