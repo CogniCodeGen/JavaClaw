@@ -27,6 +27,7 @@ import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.ui.javafx.loop.LoopStatusView;
 import com.javaclaw.ui.javafx.loop.LoopStatusViewFactory;
+import com.javaclaw.ui.javafx.diagnostics.DiagnosticsViewFactory;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuController;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuSnapshot;
 import com.javaclaw.ui.javafx.schedule.ScheduleView;
@@ -130,6 +131,7 @@ public class ChatViewController implements AutoCloseable {
     private final LoopDecisionFactory loopDecisions;
     private final ClarificationCardFactory clarificationCards;
     private final LoopStatusViewFactory loopStatusViews;
+    private final DiagnosticsViewFactory diagnosticsViews;
 
     /** 兼容旧退出链；页面生命周期统一由 {@link #close()} 收口。 */
     public void shutdownPersistence() {
@@ -300,7 +302,8 @@ public class ChatViewController implements AutoCloseable {
             ChatMessageRowFactory messageRows,
             LoopDecisionFactory loopDecisions,
             ClarificationCardFactory clarificationCards,
-            LoopStatusViewFactory loopStatusViews) {
+            LoopStatusViewFactory loopStatusViews,
+            DiagnosticsViewFactory diagnosticsViews) {
         this.applicationKernel = java.util.Objects.requireNonNull(
                 applicationKernel, "applicationKernel");
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
@@ -313,6 +316,8 @@ public class ChatViewController implements AutoCloseable {
         this.clarificationCards = java.util.Objects.requireNonNull(
                 clarificationCards, "clarificationCards");
         this.loopStatusViews = java.util.Objects.requireNonNull(loopStatusViews, "loopStatusViews");
+        this.diagnosticsViews = java.util.Objects.requireNonNull(
+                diagnosticsViews, "diagnosticsViews");
         java.util.Objects.requireNonNull(taskExecutor, "taskExecutor");
         persistenceTasks = taskExecutor.openScope("chat-persistence", 1);
         backgroundTasks = taskExecutor.openScope("chat-ui-background", 2);
@@ -471,7 +476,7 @@ public class ChatViewController implements AutoCloseable {
         if (userText.equals("/诊断") || userText.equals("/diagnostics")) {
             composerController.clearInput();
             Stage owner = (Stage) outerRoot.getScene().getWindow();
-            com.javaclaw.diagnostics.DiagnosticsView.open(owner);
+            diagnosticsViews.open(owner);
             return;
         }
 

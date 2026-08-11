@@ -13,6 +13,9 @@ import com.javaclaw.platform.storage.AtomicContentStore;
 import com.javaclaw.platform.dialog.DialogService;
 import com.javaclaw.application.tool.ToolInvocationPipeline;
 import com.javaclaw.application.chat.ToolReviewSettingsPort;
+import com.javaclaw.application.diagnostics.DiagnosticsApplicationService;
+import com.javaclaw.application.diagnostics.DiagnosticsArchivePort;
+import com.javaclaw.ui.javafx.diagnostics.DiagnosticsViewFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -49,6 +52,9 @@ class RootApplicationContextTest {
             assertNotNull(context.getBean(DialogService.class));
             assertNotNull(context.getBean(ToolInvocationPipeline.class));
             assertNotNull(context.getBean(ToolReviewSettingsPort.class));
+            assertNotNull(context.getBean(DiagnosticsArchivePort.class));
+            assertNotNull(context.getBean(DiagnosticsApplicationService.class));
+            assertNotNull(context.getBean(DiagnosticsViewFactory.class));
             assertNotNull(context.getBean(WorkspaceSpringContextFactory.class));
 
             SchemaInitializer initializer = context.getBean(SchemaInitializer.class);

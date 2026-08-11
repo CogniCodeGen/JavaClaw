@@ -16,6 +16,9 @@ import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.ui.javafx.loop.LoopStatusViewFactory;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuEntryFactory;
+import com.javaclaw.ui.javafx.diagnostics.DiagnosticsExportTargetPicker;
+import com.javaclaw.ui.javafx.diagnostics.DiagnosticsViewFactory;
+import com.javaclaw.ui.javafx.diagnostics.JavaFxDiagnosticsExportTargetPicker;
 import com.javaclaw.ui.javafx.theme.ThemeManagerThemeSelectionService;
 import com.javaclaw.ui.javafx.theme.ThemeMenuEntryFactory;
 import com.javaclaw.ui.javafx.theme.ThemeSelectionService;
@@ -46,6 +49,16 @@ public class DesktopPresentationConfiguration {
     @Bean
     ProjectAttachmentPicker projectAttachmentPicker() {
         return new ProjectAttachmentPicker();
+    }
+
+    @Bean
+    DiagnosticsExportTargetPicker diagnosticsExportTargetPicker() {
+        return new JavaFxDiagnosticsExportTargetPicker();
+    }
+
+    @Bean
+    DiagnosticsViewFactory diagnosticsViewFactory(SpringFxmlLoader loader) {
+        return new DiagnosticsViewFactory(loader);
     }
 
     @Bean

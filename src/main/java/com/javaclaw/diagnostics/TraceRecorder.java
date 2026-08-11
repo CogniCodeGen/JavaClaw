@@ -18,7 +18,7 @@ import java.util.Map;
  * 结构化诊断日志写入器（JSONL）
  *
  * <p>写入路径：{@code {workspace}/logs/agent-trace.jsonl}。每行一个 JSON 对象，
- * 供 {@link DiagnosticsView} 检索与 {@link TraceExporter} 打包。</p>
+ * 供诊断应用用例检索，并由 {@link TraceExporter} 打包。</p>
  *
  * <p>进程级单例，线程安全。首次使用时延迟创建文件。</p>
  */

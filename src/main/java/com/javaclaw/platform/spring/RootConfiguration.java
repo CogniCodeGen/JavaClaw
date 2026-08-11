@@ -2,6 +2,9 @@ package com.javaclaw.platform.spring;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.javaclaw.application.diagnostics.DiagnosticsApplicationService;
+import com.javaclaw.application.diagnostics.DiagnosticsArchivePort;
+import com.javaclaw.application.diagnostics.DiagnosticsUseCase;
 import com.javaclaw.application.event.DomainEventPublisher;
 import com.javaclaw.application.chat.ToolReviewSettingsPort;
 import com.javaclaw.application.tool.ToolAuthorization;
@@ -25,6 +28,7 @@ import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.ui.javafx.JfxUserInteractionPort;
 import com.javaclaw.infrastructure.tool.LoggingToolAuditSink;
 import com.javaclaw.infrastructure.config.AgentConfigToolReviewSettings;
+import com.javaclaw.infrastructure.diagnostics.TraceExporterDiagnosticsArchive;
 import com.javaclaw.agent.ToolConfirmationManager;
 import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 import org.springframework.context.ApplicationContext;
@@ -37,6 +41,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.sql.DataSource;
 import java.net.http.HttpClient;
+import java.time.Clock;
 import java.time.Duration;
 
 /** 进程级基础设施的显式 Spring 装配。 */
@@ -86,6 +91,17 @@ public class RootConfiguration {
     @Bean
     ProcessRunner processRunner(ManagedTaskExecutor executor) {
         return new ProcessRunner(executor);
+    }
+
+    @Bean
+    DiagnosticsArchivePort diagnosticsArchivePort() {
+        return new TraceExporterDiagnosticsArchive();
+    }
+
+    @Bean
+    DiagnosticsApplicationService diagnosticsApplicationService(
+            DiagnosticsArchivePort archive) {
+        return new DiagnosticsUseCase(archive, Clock.systemUTC());
     }
 
     @Bean

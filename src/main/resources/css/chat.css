@@ -153,6 +153,11 @@
     -fx-background-color: -jc-surface-page;
 }
 
+.diagnostics-result-list {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 11px;
+}
+
 /* ==================== 现代化滚动条 ==================== */
 
 .scroll-bar {
