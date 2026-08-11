@@ -1,5 +1,6 @@
 package com.javaclaw.config;
 
+import com.javaclaw.platform.data.DataRoot;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,7 +22,7 @@ public final class AppDatabase {
 
     private static final Logger log = LoggerFactory.getLogger(AppDatabase.class);
     private static final String DB_BASENAME = "javaclaw";
-    public static final String DATA_DIR_PROPERTY = "javaclaw.data.dir";
+    public static final String DATA_DIR_PROPERTY = DataRoot.DATA_DIR_PROPERTY;
     private static volatile boolean autoServerUnavailable;
 
     private AppDatabase() {}
@@ -66,15 +67,11 @@ public final class AppDatabase {
     /**
      * 返回全应用统一的数据根目录。
      *
-     * <p>生产环境未配置时保持原有 {@code {user.dir}/data}；测试或显式部署配置
+     * <p>生产环境未配置时使用 {@code {user.dir}/data-v3}；测试或显式部署配置
      * {@value #DATA_DIR_PROPERTY} 时，数据库、工作区资产、日志和旧凭据迁移都应从此目录派生。</p>
      */
     public static Path dataDirectory() {
-        String configured = System.getProperty(DATA_DIR_PROPERTY);
-        Path dataDir = configured == null || configured.isBlank()
-                ? Path.of(System.getProperty("user.dir"), "data")
-                : Path.of(configured);
-        return dataDir.toAbsolutePath().normalize();
+        return DataRoot.resolve().path();
     }
 
     public static Path databaseFilePath() {

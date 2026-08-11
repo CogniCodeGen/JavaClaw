@@ -7,7 +7,7 @@
 
     <groupId>com.javaclaw</groupId>
     <artifactId>javaclaw</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>3.0.0-SNAPSHOT</version>
     <packaging>jar</packaging>
 
     <name>JavaClaw</name>
@@ -32,8 +32,13 @@
         <commonmark.autolink.version>0.29.0</commonmark.autolink.version>
         <eclipsestore.version>4.1.0</eclipsestore.version>
         <h2.version>2.3.232</h2.version>
+        <spring.version>7.0.8</spring.version>
+        <archunit.version>1.4.2</archunit.version>
+        <jacoco.version>0.8.14</jacoco.version>
+        <!-- JaCoCo prepare-agent 会在测试前覆盖该属性；空值保证直接运行 Surefire 也合法。 -->
+        <jacocoArgLine></jacocoArgLine>
         <!-- mvn javafx:run 的默认数据目录；ui-test profile 会覆盖为 target 隔离目录。 -->
-        <javaclaw.launch.data.dir>${project.basedir}/data</javaclaw.launch.data.dir>
+        <javaclaw.launch.data.dir>${project.basedir}/data-v3</javaclaw.launch.data.dir>
         <javaclaw.launch.ui.test>false</javaclaw.launch.ui.test>
     </properties>
 
@@ -238,11 +243,34 @@
             <version>${h2.version}</version>
         </dependency>
 
+        <!-- Spring 只负责显式对象装配、事务与 JDBC；桌面应用不引入 Boot 或 WebMVC。 -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-context</artifactId>
+            <version>${spring.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-jdbc</artifactId>
+            <version>${spring.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-tx</artifactId>
+            <version>${spring.version}</version>
+        </dependency>
+
         <!-- JUnit 5（单元测试；运行 mvn test） -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
             <version>5.11.4</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <version>${archunit.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -275,11 +303,36 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.2</version>
                 <configuration>
-                    <argLine>--add-modules jdk.incubator.vector --enable-native-access=ALL-UNNAMED</argLine>
+                    <argLine>${jacocoArgLine} --add-modules jdk.incubator.vector --enable-native-access=ALL-UNNAMED</argLine>
                     <systemPropertyVariables>
-                        <javaclaw.data.dir>${project.build.directory}/test-data</javaclaw.data.dir>
+                        <javaclaw.data.dir>${project.build.directory}/test-data-v3</javaclaw.data.dir>
                     </systemPropertyVariables>
                 </configuration>
+            </plugin>
+
+            <!-- 第一阶段生成覆盖率报告；最终切换时由分包规则启用强制门禁。 -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                        <configuration>
+                            <propertyName>jacocoArgLine</propertyName>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
 
             <plugin>
@@ -316,7 +369,7 @@
         <profile>
             <id>ui-test</id>
             <properties>
-                <javaclaw.launch.data.dir>${project.build.directory}/ui-test-data</javaclaw.launch.data.dir>
+                <javaclaw.launch.data.dir>${project.build.directory}/ui-test-data-v3</javaclaw.launch.data.dir>
                 <javaclaw.launch.ui.test>true</javaclaw.launch.ui.test>
             </properties>
         </profile>
