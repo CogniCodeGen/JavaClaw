@@ -12,7 +12,7 @@ package com.javaclaw.site;
  *   <li>{@link #hostPattern} — 主机匹配规则。支持精确匹配（{@code github.com}）
  *       和前缀通配（{@code *.github.com}，匹配任意子域）。</li>
  *   <li>{@link #loginUrl} — 登录页 URL（可选）。当用户主动调用「立即登录」操作时优先打开它。</li>
- *   <li>{@link #password} — 与 API Key 一致，落盘时经 CredentialEncryptor 加密为 ENC(...) 格式，
+ *   <li>{@link #password} — 与 API Key 一致，落盘时经根 Context 的凭据服务加密为 ENC(...) 格式，
  *       内存中持有明文。绝不进入 LLM 上下文：浏览器工具内部通过 {@code SiteCredentialManager} 直接读取。</li>
  *   <li>{@link #hasSession} — 是否已经为该条目持久化过 storageState；
  *       仅用于 UI 显示徽章，真实状态以 H2 {@code site_sessions} 表为准。</li>

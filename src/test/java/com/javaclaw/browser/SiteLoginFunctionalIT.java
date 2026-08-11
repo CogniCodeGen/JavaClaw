@@ -106,7 +106,8 @@ class SiteLoginFunctionalIT {
         previousConfirmationEnabled = ToolConfirmationManager.isEnabled();
         ToolConfirmationManager.setEnabled(false);
         siteCredentials = new SiteCredentialManager(
-                new AppDatabaseAccess(), AppDatabase.currentWorkspaceId());
+                new AppDatabaseAccess(), AppDatabase.currentWorkspaceId(),
+                root.getBean(com.javaclaw.config.CredentialCipher.class));
         removeTestSites();
         clearWorkspaceBrowserState();
     }

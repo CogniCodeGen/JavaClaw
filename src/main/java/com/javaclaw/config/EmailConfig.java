@@ -22,6 +22,7 @@ public final class EmailConfig {
 
     private final Properties properties;
     private final SqlPropertyStore store;
+    private final CredentialCipher credentials;
     private final String databaseDescription;
 
     // ==================== 配置项 key ====================
@@ -35,8 +36,10 @@ public final class EmailConfig {
     private static final String KEY_USE_STARTTLS = "use.starttls";
     private static final String KEY_USE_SSL = "use.ssl";
 
-    public EmailConfig(SqlPropertyStore store, DatabaseAccess database) {
+    public EmailConfig(
+            SqlPropertyStore store, DatabaseAccess database, CredentialCipher credentials) {
         this.store = java.util.Objects.requireNonNull(store, "store");
+        this.credentials = java.util.Objects.requireNonNull(credentials, "credentials");
         this.databaseDescription = java.util.Objects.requireNonNull(
                 database, "database").description();
         this.properties = new Properties();
@@ -149,11 +152,11 @@ public final class EmailConfig {
 
     public String getPassword() {
         String raw = properties.getProperty(KEY_PASSWORD, "");
-        return CredentialEncryptor.decrypt(raw);
+        return credentials.decrypt(raw);
     }
 
     public void setPassword(String value) {
-        properties.setProperty(KEY_PASSWORD, CredentialEncryptor.encrypt(value));
+        properties.setProperty(KEY_PASSWORD, credentials.encrypt(value));
     }
 
     public String getFromAddress() {

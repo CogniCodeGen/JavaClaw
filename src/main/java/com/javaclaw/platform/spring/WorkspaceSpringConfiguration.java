@@ -302,15 +302,18 @@ public class WorkspaceSpringConfiguration {
     @Bean
     SiteCredentialManager siteCredentialManager(
             DatabaseAccess databaseAccess,
+            com.javaclaw.config.CredentialCipher credentials,
             WorkspaceContext workspace) {
-        return new SiteCredentialManager(databaseAccess, workspace.workspaceId());
+        return new SiteCredentialManager(
+                databaseAccess, workspace.workspaceId(), credentials);
     }
 
     @Bean
     McpConfigManager mcpConfigManager(
             DatabaseAccess databaseAccess,
+            com.javaclaw.config.CredentialCipher credentials,
             WorkspaceContext workspace) {
-        return new McpConfigManager(databaseAccess, workspace.workspaceId());
+        return new McpConfigManager(databaseAccess, workspace.workspaceId(), credentials);
     }
 
     @Bean

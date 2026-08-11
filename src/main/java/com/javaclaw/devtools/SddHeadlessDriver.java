@@ -75,10 +75,12 @@ public final class SddHeadlessDriver {
                 rootContext.getBean(JdbcTemplate.class));
         SiteCredentialManager siteCredentials = new SiteCredentialManager(
                 rootContext.getBean(DatabaseAccess.class),
-                workspaces.getCurrentWorkspaceId());
+                workspaces.getCurrentWorkspaceId(),
+                rootContext.getBean(com.javaclaw.config.CredentialCipher.class));
         McpConfigManager mcpConfigurations = new McpConfigManager(
                 rootContext.getBean(DatabaseAccess.class),
-                workspaces.getCurrentWorkspaceId());
+                workspaces.getCurrentWorkspaceId(),
+                rootContext.getBean(com.javaclaw.config.CredentialCipher.class));
         TaskScope taskScope = rootContext.getBean(ManagedTaskExecutor.class)
                 .openScope("sdd-headless", 256);
         ManagedTaskExecutor taskExecutor = rootContext.getBean(ManagedTaskExecutor.class);

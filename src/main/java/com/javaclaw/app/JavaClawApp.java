@@ -107,10 +107,6 @@ public class JavaClawApp extends Application {
         log.info("========== JavaClaw 应用启动 ==========");
 
         try {
-            // 0.05 预热凭据主密钥：H2 已就绪，趁健康期解析并缓存持久主密钥，
-            //      避免此后某次瞬时不可用时加密回退漂移口令、埋下主机名变化后解不开的隐患
-            com.javaclaw.config.CredentialEncryptor.warmUpMasterKey();
-
             // 0.1 注册打包字体（须在创建任何 Scene 之前；下方首启向导即会构建 Scene）
             springContext.getBean(
                     com.javaclaw.ui.javafx.theme.FontManager.class).loadBundledFonts();

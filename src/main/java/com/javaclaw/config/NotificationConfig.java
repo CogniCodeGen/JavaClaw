@@ -21,6 +21,7 @@ public final class NotificationConfig {
     private static final String CONFIG_NAMESPACE = "notification";
     private final Properties properties;
     private final SqlPropertyStore store;
+    private final CredentialCipher credentials;
     private final String databaseDescription;
 
     // ==================== 配置项 key ====================
@@ -52,8 +53,10 @@ public final class NotificationConfig {
 
     // ==================== 构造与生命周期 ====================
 
-    public NotificationConfig(SqlPropertyStore store, DatabaseAccess database) {
+    public NotificationConfig(
+            SqlPropertyStore store, DatabaseAccess database, CredentialCipher credentials) {
         this.store = java.util.Objects.requireNonNull(store, "store");
+        this.credentials = java.util.Objects.requireNonNull(credentials, "credentials");
         this.databaseDescription = java.util.Objects.requireNonNull(
                 database, "database").description();
         this.properties = new Properties();
@@ -126,11 +129,11 @@ public final class NotificationConfig {
 
     public String getDingtalkSecret() {
         String raw = properties.getProperty(KEY_DINGTALK_SECRET, "");
-        return CredentialEncryptor.decrypt(raw);
+        return credentials.decrypt(raw);
     }
 
     public void setDingtalkSecret(String value) {
-        properties.setProperty(KEY_DINGTALK_SECRET, CredentialEncryptor.encrypt(value));
+        properties.setProperty(KEY_DINGTALK_SECRET, credentials.encrypt(value));
     }
 
     // ==================== 企业微信配置 ====================
@@ -171,11 +174,11 @@ public final class NotificationConfig {
 
     public String getFeishuSecret() {
         String raw = properties.getProperty(KEY_FEISHU_SECRET, "");
-        return CredentialEncryptor.decrypt(raw);
+        return credentials.decrypt(raw);
     }
 
     public void setFeishuSecret(String value) {
-        properties.setProperty(KEY_FEISHU_SECRET, CredentialEncryptor.encrypt(value));
+        properties.setProperty(KEY_FEISHU_SECRET, credentials.encrypt(value));
     }
 
     // ==================== 邮件通知配置 ====================

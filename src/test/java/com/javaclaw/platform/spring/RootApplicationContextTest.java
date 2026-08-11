@@ -1,6 +1,7 @@
 package com.javaclaw.platform.spring;
 
 import com.javaclaw.config.DatabaseAccess;
+import com.javaclaw.config.CredentialCipher;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.data.SchemaInitializer;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
@@ -56,6 +57,7 @@ class RootApplicationContextTest {
             assertTrue(context.getBean(SchemaInitializer.class).isInitialized());
             assertNotNull(context.getBean(JdbcTemplate.class));
             assertNotNull(context.getBean(DatabaseAccess.class));
+            assertNotNull(context.getBean(CredentialCipher.class));
             assertNotNull(context.getBean(ManagedTaskExecutor.class));
             assertNotNull(context.getBean(FxDispatcher.class));
             assertNotNull(context.getBean(SpringFxmlLoader.class));
@@ -119,6 +121,8 @@ class RootApplicationContextTest {
                      new DataRoot(tempDirectory.resolve("plugins-second")))) {
             assertNotSame(first.getBean(PluginManager.class), second.getBean(PluginManager.class),
                     "插件宿主必须由各自根 Context 管理，不能退回静态单例");
+            assertNotSame(first.getBean(CredentialCipher.class), second.getBean(CredentialCipher.class),
+                    "凭据密钥缓存必须属于根 Context，不能跨数据目录共享静态状态");
         }
     }
 }

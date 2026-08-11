@@ -27,6 +27,8 @@ import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.config.SqlPropertyStore;
 import com.javaclaw.config.EmailConfig;
 import com.javaclaw.config.NotificationConfig;
+import com.javaclaw.config.CredentialCipher;
+import com.javaclaw.config.CredentialEncryptor;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.data.DataSourceDatabaseAccess;
 import com.javaclaw.platform.data.H2DataSource;
@@ -107,6 +109,11 @@ public class RootConfiguration {
         return new DataSourceTransactionManager(dataSource);
     }
 
+    @Bean(initMethod = "warmUp")
+    CredentialCipher credentialCipher(JdbcTemplate jdbc) {
+        return new CredentialEncryptor(jdbc);
+    }
+
     @Bean(initMethod = "init")
     WorkspaceManager workspaceManager(
             DataRoot dataRoot,
@@ -136,18 +143,21 @@ public class RootConfiguration {
     }
 
     @Bean
-    AgentConfig agentConfig(SqlPropertyStore properties, DatabaseAccess database) {
-        return new AgentConfig(properties, database);
+    AgentConfig agentConfig(
+            SqlPropertyStore properties, DatabaseAccess database, CredentialCipher credentials) {
+        return new AgentConfig(properties, database, credentials);
     }
 
     @Bean
-    EmailConfig emailConfig(SqlPropertyStore properties, DatabaseAccess database) {
-        return new EmailConfig(properties, database);
+    EmailConfig emailConfig(
+            SqlPropertyStore properties, DatabaseAccess database, CredentialCipher credentials) {
+        return new EmailConfig(properties, database, credentials);
     }
 
     @Bean
-    NotificationConfig notificationConfig(SqlPropertyStore properties, DatabaseAccess database) {
-        return new NotificationConfig(properties, database);
+    NotificationConfig notificationConfig(
+            SqlPropertyStore properties, DatabaseAccess database, CredentialCipher credentials) {
+        return new NotificationConfig(properties, database, credentials);
     }
 
     @Bean
@@ -251,8 +261,9 @@ public class RootConfiguration {
             ManagedTaskExecutor executor,
             ToolInvocationPipeline tools,
             PluginStorageFactory storage,
-            UserInteractionPort interaction) {
-        return new PluginManager(store, executor, tools, storage, interaction);
+            UserInteractionPort interaction,
+            CredentialCipher credentials) {
+        return new PluginManager(store, executor, tools, storage, interaction, credentials);
     }
 
     @Bean(destroyMethod = "close")

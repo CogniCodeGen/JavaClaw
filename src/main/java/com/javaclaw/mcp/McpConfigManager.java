@@ -4,7 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import com.javaclaw.config.CredentialEncryptor;
+import com.javaclaw.config.CredentialCipher;
 import com.javaclaw.config.DatabaseAccess;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,6 +17,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.*;
 import java.util.function.Supplier;
+import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 
 /**
@@ -36,6 +37,7 @@ public final class McpConfigManager {
     private final Supplier<String> workspaceIdSupplier;
     private final UnaryOperator<String> encryptor;
     private final UnaryOperator<String> decryptor;
+    private final Predicate<String> encryptedValue;
 
     /** 服务器配置列表（名称 → 配置） */
     private final Map<String, McpServerConfig> servers = new LinkedHashMap<>();
@@ -49,19 +51,30 @@ public final class McpConfigManager {
      * 关闭后实例应一并丢弃。所有返回值都是当前工作区快照，写操作在数据库提交成功后才
      * 更新内存。该类型线程安全，但数据库操作仍应通过托管 I/O 执行器调用。</p>
      */
-    public McpConfigManager(DatabaseAccess databaseAccess, String workspaceId) {
+    public McpConfigManager(
+            DatabaseAccess databaseAccess, String workspaceId, CredentialCipher credentials) {
         this(databaseAccess, () -> Objects.requireNonNull(workspaceId, "workspaceId"),
-                CredentialEncryptor::encrypt, CredentialEncryptor::decrypt);
+                credentials::encrypt, credentials::decrypt, credentials::isEncrypted);
     }
 
     McpConfigManager(DatabaseAccess databaseAccess,
                      Supplier<String> workspaceIdSupplier,
                      UnaryOperator<String> encryptor,
                      UnaryOperator<String> decryptor) {
+        this(databaseAccess, workspaceIdSupplier, encryptor, decryptor,
+                McpConfigManager::hasEncryptedEnvelope);
+    }
+
+    private McpConfigManager(DatabaseAccess databaseAccess,
+                             Supplier<String> workspaceIdSupplier,
+                             UnaryOperator<String> encryptor,
+                             UnaryOperator<String> decryptor,
+                             Predicate<String> encryptedValue) {
         this.databaseAccess = Objects.requireNonNull(databaseAccess, "databaseAccess");
         this.workspaceIdSupplier = Objects.requireNonNull(workspaceIdSupplier, "workspaceIdSupplier");
         this.encryptor = Objects.requireNonNull(encryptor, "encryptor");
         this.decryptor = Objects.requireNonNull(decryptor, "decryptor");
+        this.encryptedValue = Objects.requireNonNull(encryptedValue, "encryptedValue");
         this.objectMapper = new ObjectMapper();
         this.objectMapper.enable(SerializationFeature.INDENT_OUTPUT);
         // 对历史 JSON 中的派生字段（如 "transport"）保持兼容：宽容未知字段，避免整份配置加载失败
@@ -346,16 +359,20 @@ public final class McpConfigManager {
     }
 
     private boolean needsEncryption(String stored) {
-        return stored != null && !stored.isBlank() && !CredentialEncryptor.isEncrypted(stored);
+        return stored != null && !stored.isBlank() && !encryptedValue.test(stored);
     }
 
     private String decryptRequired(String stored) {
         if (stored == null || stored.isBlank()) return stored;
         String plain = decryptor.apply(stored);
-        if (CredentialEncryptor.isEncrypted(stored) && CredentialEncryptor.isEncrypted(plain)) {
+        if (encryptedValue.test(stored) && encryptedValue.test(plain)) {
             throw new IllegalStateException("MCP 加密配置无法解密，已拒绝加载");
         }
         return plain;
+    }
+
+    private static boolean hasEncryptedEnvelope(String value) {
+        return value != null && value.startsWith("ENC(") && value.endsWith(")");
     }
 
     private void rewriteEncryptedSnapshot(Connection c, String workspaceId,

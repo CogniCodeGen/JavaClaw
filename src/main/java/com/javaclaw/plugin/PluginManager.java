@@ -4,7 +4,7 @@ import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.api.interaction.ConfirmKind;
 import com.javaclaw.api.interaction.ConfirmRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
-import com.javaclaw.config.CredentialEncryptor;
+import com.javaclaw.config.CredentialCipher;
 import com.javaclaw.plugin.api.Capability;
 import com.javaclaw.plugin.api.PluginDescriptor;
 import com.javaclaw.plugin.api.PluginTool;
@@ -61,6 +61,7 @@ public final class PluginManager implements PluginToolGateway {
     private final ToolInvocationPipeline toolPipeline;
     private final PluginStorageFactory storageFactory;
     private final UserInteractionPort interactionPort;
+    private final CredentialCipher credentials;
     private final ClassLoader appClassLoader;
 
     private volatile AgentRuntime agentRuntime;
@@ -81,10 +82,11 @@ public final class PluginManager implements PluginToolGateway {
             ManagedTaskExecutor taskExecutor,
             ToolInvocationPipeline toolPipeline,
             PluginStorageFactory storageFactory,
-            UserInteractionPort interactionPort) {
+            UserInteractionPort interactionPort,
+            CredentialCipher credentials) {
         this(ProjectAccessPolicy.requireProjectFilePath(
                         ProjectAccessPolicy.projectRoot().resolve("plugins")),
-                store, taskExecutor, toolPipeline, storageFactory, interactionPort);
+                store, taskExecutor, toolPipeline, storageFactory, interactionPort, credentials);
     }
 
     PluginManager(
@@ -93,7 +95,8 @@ public final class PluginManager implements PluginToolGateway {
             ManagedTaskExecutor taskExecutor,
             ToolInvocationPipeline toolPipeline,
             PluginStorageFactory storageFactory,
-            UserInteractionPort interactionPort) {
+            UserInteractionPort interactionPort,
+            CredentialCipher credentials) {
         this.pluginsDir = Objects.requireNonNull(pluginsDir, "pluginsDir")
                 .toAbsolutePath().normalize();
         this.store = Objects.requireNonNull(store, "store");
@@ -101,6 +104,7 @@ public final class PluginManager implements PluginToolGateway {
         this.toolPipeline = Objects.requireNonNull(toolPipeline, "toolPipeline");
         this.storageFactory = Objects.requireNonNull(storageFactory, "storageFactory");
         this.interactionPort = Objects.requireNonNull(interactionPort, "interactionPort");
+        this.credentials = Objects.requireNonNull(credentials, "credentials");
         this.appClassLoader = PluginManager.class.getClassLoader();
     }
 
@@ -376,7 +380,7 @@ public final class PluginManager implements PluginToolGateway {
         Map<String, String> result = new LinkedHashMap<>();
         for (PluginDescriptor.ConfigField f : rt.descriptor().config()) {
             String v = raw.getOrDefault(f.key(), "");
-            result.put(f.key(), f.secret() ? CredentialEncryptor.decrypt(v) : v);
+            result.put(f.key(), f.secret() ? credentials.decrypt(v) : v);
         }
         return result;
     }
@@ -395,7 +399,7 @@ public final class PluginManager implements PluginToolGateway {
         Map<String, String> toStore = new LinkedHashMap<>();
         for (PluginDescriptor.ConfigField f : rt.descriptor().config()) {
             String v = rawValues.getOrDefault(f.key(), "");
-            toStore.put(f.key(), f.secret() ? CredentialEncryptor.encrypt(v) : v);
+            toStore.put(f.key(), f.secret() ? credentials.encrypt(v) : v);
         }
         store.setConfig(id, toStore);
         log.info("插件[{}]配置已保存（{} 项）", id, toStore.size());

@@ -25,6 +25,7 @@ public final class AgentConfig {
 
     private final Properties properties;
     private final SqlPropertyStore store;
+    private final CredentialCipher credentials;
     private final String databaseDescription;
 
     // ==================== 配置项 key ====================
@@ -317,8 +318,10 @@ public final class AgentConfig {
 
     // ==================== 构造与生命周期 ====================
 
-    public AgentConfig(SqlPropertyStore store, DatabaseAccess database) {
+    public AgentConfig(
+            SqlPropertyStore store, DatabaseAccess database, CredentialCipher credentials) {
         this.store = java.util.Objects.requireNonNull(store, "store");
+        this.credentials = java.util.Objects.requireNonNull(credentials, "credentials");
         this.databaseDescription = java.util.Objects.requireNonNull(
                 database, "database").description();
         this.properties = new Properties();
@@ -473,11 +476,11 @@ public final class AgentConfig {
 
     public String getApiKey() {
         String raw = properties.getProperty(KEY_API_KEY, DEFAULT_API_KEY);
-        return CredentialEncryptor.decrypt(raw);
+        return credentials.decrypt(raw);
     }
 
     public void setApiKey(String value) {
-        properties.setProperty(KEY_API_KEY, CredentialEncryptor.encrypt(value));
+        properties.setProperty(KEY_API_KEY, credentials.encrypt(value));
     }
 
     // ==================== 分级模型配置（NORMAL / LIGHT） ====================
@@ -526,14 +529,14 @@ public final class AgentConfig {
     public String getNormalApiKey() {
         String raw = properties.getProperty(KEY_NORMAL_API_KEY, "").trim();
         if (raw.isEmpty()) return getApiKey();
-        return CredentialEncryptor.decrypt(raw);
+        return credentials.decrypt(raw);
     }
 
     public void setNormalApiKey(String value) {
         if (value == null || value.isEmpty()) {
             properties.setProperty(KEY_NORMAL_API_KEY, "");
         } else {
-            properties.setProperty(KEY_NORMAL_API_KEY, CredentialEncryptor.encrypt(value));
+            properties.setProperty(KEY_NORMAL_API_KEY, credentials.encrypt(value));
         }
     }
 
@@ -589,14 +592,14 @@ public final class AgentConfig {
     public String getLightApiKey() {
         String raw = properties.getProperty(KEY_LIGHT_API_KEY, "").trim();
         if (raw.isEmpty()) return getApiKey();
-        return CredentialEncryptor.decrypt(raw);
+        return credentials.decrypt(raw);
     }
 
     public void setLightApiKey(String value) {
         if (value == null || value.isEmpty()) {
             properties.setProperty(KEY_LIGHT_API_KEY, "");
         } else {
-            properties.setProperty(KEY_LIGHT_API_KEY, CredentialEncryptor.encrypt(value));
+            properties.setProperty(KEY_LIGHT_API_KEY, credentials.encrypt(value));
         }
     }
 
@@ -1099,11 +1102,11 @@ public final class AgentConfig {
 
     public String getRagEmbeddingApiKey() {
         String raw = properties.getProperty(KEY_RAG_EMBEDDING_API_KEY, DEFAULT_RAG_EMBEDDING_API_KEY);
-        return CredentialEncryptor.decrypt(raw);
+        return credentials.decrypt(raw);
     }
 
     public void setRagEmbeddingApiKey(String value) {
-        properties.setProperty(KEY_RAG_EMBEDDING_API_KEY, CredentialEncryptor.encrypt(value));
+        properties.setProperty(KEY_RAG_EMBEDDING_API_KEY, credentials.encrypt(value));
     }
 
     public String getRagEmbeddingModelName() {

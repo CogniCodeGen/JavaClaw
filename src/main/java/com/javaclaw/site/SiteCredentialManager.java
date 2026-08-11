@@ -1,6 +1,6 @@
 package com.javaclaw.site;
 
-import com.javaclaw.config.CredentialEncryptor;
+import com.javaclaw.config.CredentialCipher;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.util.SensitiveDataRedactor;
 import org.slf4j.Logger;
@@ -14,6 +14,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.*;
 import java.util.function.Supplier;
+import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 
 /**
@@ -22,7 +23,7 @@ import java.util.function.UnaryOperator;
  * <p>持久化到全局 H2 数据库的 {@code site_credentials} 与
  * {@code site_sessions} 表，并按 {@code workspace_id} 隔离；启动时只从 H2 读取。</p>
  *
- * <p>密码字段落盘时经 {@link CredentialEncryptor} 加密（ENC(...) 格式，与 API Key 一致），
+ * <p>密码字段落盘时经 {@link CredentialCipher} 加密（ENC(...) 格式，与 API Key 一致），
  * 读取时解密。
  * 内存中的 {@link SiteCredential} 始终持有明文（供 Playwright 自动登录使用）。
  * 数据存储在 H2 中，请勿提交本地数据库文件。</p>
@@ -40,23 +41,35 @@ public final class SiteCredentialManager {
     private final Supplier<String> workspaceIdSupplier;
     private final UnaryOperator<String> encryptor;
     private final UnaryOperator<String> decryptor;
+    private final Predicate<String> encryptedValue;
     private final Map<String, SiteCredential> credentials = new LinkedHashMap<>();
     /** 内存凭据快照所属工作区，一次操作中不再重读可变的全局当前值。 */
     private String loadedWorkspaceId;
 
-    public SiteCredentialManager(DatabaseAccess databaseAccess, String workspaceId) {
+    public SiteCredentialManager(
+            DatabaseAccess databaseAccess, String workspaceId, CredentialCipher credentials) {
         this(databaseAccess, fixedWorkspace(workspaceId),
-                CredentialEncryptor::encrypt, CredentialEncryptor::decrypt);
+                credentials::encrypt, credentials::decrypt, credentials::isEncrypted);
     }
 
     SiteCredentialManager(DatabaseAccess databaseAccess,
                           Supplier<String> workspaceIdSupplier,
                           UnaryOperator<String> encryptor,
                           UnaryOperator<String> decryptor) {
+        this(databaseAccess, workspaceIdSupplier, encryptor, decryptor,
+                SiteCredentialManager::hasEncryptedEnvelope);
+    }
+
+    private SiteCredentialManager(DatabaseAccess databaseAccess,
+                                  Supplier<String> workspaceIdSupplier,
+                                  UnaryOperator<String> encryptor,
+                                  UnaryOperator<String> decryptor,
+                                  Predicate<String> encryptedValue) {
         this.databaseAccess = Objects.requireNonNull(databaseAccess, "databaseAccess");
         this.workspaceIdSupplier = Objects.requireNonNull(workspaceIdSupplier, "workspaceIdSupplier");
         this.encryptor = Objects.requireNonNull(encryptor, "encryptor");
         this.decryptor = Objects.requireNonNull(decryptor, "decryptor");
+        this.encryptedValue = Objects.requireNonNull(encryptedValue, "encryptedValue");
         load();
     }
 
@@ -724,7 +737,7 @@ public final class SiteCredentialManager {
                 while (rs.next()) {
                     String stored = rs.getString("password_enc");
                     if (stored != null && !stored.isBlank()
-                            && !CredentialEncryptor.isEncrypted(stored)) {
+                            && !encryptedValue.test(stored)) {
                         passwordUpdates.put(rs.getString("id"), encryptRequired(stored));
                     }
                 }
@@ -739,7 +752,7 @@ public final class SiteCredentialManager {
                 while (rs.next()) {
                     String stored = rs.getString("storage_state_json");
                     if (stored != null && !stored.isBlank()
-                            && !CredentialEncryptor.isEncrypted(stored)) {
+                            && !encryptedValue.test(stored)) {
                         sessionUpdates.put(rs.getString("credential_id"), encryptRequired(stored));
                     }
                 }
@@ -802,26 +815,30 @@ public final class SiteCredentialManager {
 
     private String encryptRequired(String plainText) {
         if (plainText == null || plainText.isBlank()) return plainText;
-        if (CredentialEncryptor.isEncrypted(plainText)) {
+        if (encryptedValue.test(plainText)) {
             throw new IllegalStateException("拒绝把未验证密文作为站点明文凭据保存");
         }
         String encrypted = encryptor.apply(plainText);
         if (encrypted == null || encrypted.equals(plainText)
-                || !CredentialEncryptor.isEncrypted(encrypted)) {
+                || !encryptedValue.test(encrypted)) {
             throw new IllegalStateException("站点敏感字段加密失败，已拒绝写入");
         }
         return encrypted;
     }
 
     private String decryptRequired(String stored) {
-        if (stored == null || stored.isBlank() || !CredentialEncryptor.isEncrypted(stored)) {
+        if (stored == null || stored.isBlank() || !encryptedValue.test(stored)) {
             return stored;
         }
         String decrypted = decryptor.apply(stored);
-        if (decrypted == null || CredentialEncryptor.isEncrypted(decrypted)) {
+        if (decrypted == null || encryptedValue.test(decrypted)) {
             throw new IllegalStateException("站点敏感字段无法解密，已拒绝使用");
         }
         return decrypted;
+    }
+
+    private static boolean hasEncryptedEnvelope(String value) {
+        return value != null && value.startsWith("ENC(") && value.endsWith(")");
     }
 
     private static void validateNonSecretFields(SiteCredential credential) {
