@@ -10,6 +10,8 @@ import com.javaclaw.onboarding.OnboardingWizard;
 import com.javaclaw.runtime.ApplicationKernel;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.fx.FxDispatcher;
+import com.javaclaw.platform.fxml.SpringFxmlLoader;
+import com.javaclaw.platform.fxml.ViewHandle;
 import com.javaclaw.platform.spring.ApplicationContexts;
 import com.javaclaw.platform.spring.WorkspaceSpringContextFactory;
 import com.javaclaw.ui.javafx.task.SddTaskView;
@@ -21,6 +23,7 @@ import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.scene.Scene;
 import javafx.scene.image.Image;
+import javafx.scene.layout.BorderPane;
 import javafx.stage.Stage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,6 +54,8 @@ public class JavaClawApp extends Application {
 
     /** 聊天界面控制器（持有三模式服务引用） */
     private ChatViewController chatView;
+    /** 主 FXML 及全部嵌套 Controller 的统一销毁句柄。 */
+    private ViewHandle<BorderPane> chatViewHandle;
 
     /** 应用组合根：统一拥有浏览器、工作区运行时及依赖它们的全局管理器。 */
     private ApplicationKernel applicationKernel;
@@ -139,14 +144,19 @@ public class JavaClawApp extends Application {
                     springContext.getBean(com.javaclaw.platform.execution.ManagedTaskExecutor.class),
                     springContext.getBean(com.javaclaw.application.tool.ToolInvocationPipeline.class));
             applicationKernel.initialize();
+            ApplicationContexts.registerApplicationKernel(springContext, applicationKernel);
 
             // 4. 构建聊天界面
             log.info("正在构建聊天界面...");
-            chatView = new ChatViewController(applicationKernel,
-                    springContext.getBean(com.javaclaw.platform.fxml.SpringFxmlLoader.class));
+            SpringFxmlLoader fxml = springContext.getBean(SpringFxmlLoader.class);
+            var chatResource = java.util.Objects.requireNonNull(
+                    getClass().getResource("/fxml/chat/chat-view.fxml"),
+                    "缺少主聊天 FXML: /fxml/chat/chat-view.fxml");
+            chatViewHandle = fxml.load(chatResource);
+            chatView = chatViewHandle.controller(ChatViewController.class);
 
             // 5. 创建场景并加载 CSS 样式
-            Scene scene = new Scene(chatView.getOuterRoot(), 1200, 700);
+            Scene scene = new Scene(chatViewHandle.root(), 1200, 700);
 
             // 加载样式表（从 classpath 中读取）
             String cssPath = getClass().getResource("/css/chat.css") != null
@@ -211,6 +221,14 @@ public class JavaClawApp extends Application {
 
         } catch (Exception e) {
             log.error("应用启动失败", e);
+            if (chatViewHandle != null) {
+                try {
+                    chatViewHandle.close();
+                } catch (Throwable closeFailure) {
+                    e.addSuppressed(closeFailure);
+                }
+                chatViewHandle = null;
+            }
             if (applicationKernel != null) {
                 try {
                     applicationKernel.close();
@@ -384,7 +402,7 @@ public class JavaClawApp extends Application {
         log.info("JavaClaw 应用正在关闭...");
 
         // 先排空各防抖/异步持久化队列，再关各子系统，避免退出丢最后一段数据
-        if (chatView != null) safeShutdown("聊天持久化线程", chatView::shutdownPersistence);
+        if (chatViewHandle != null) safeShutdown("主界面", chatViewHandle::close);
         safeShutdown("技能使用统计", () -> com.javaclaw.skill.SkillUsageTracker.getInstance().shutdown());
         safeShutdown("技能提案队列", () -> com.javaclaw.skill.curation.SkillProposalQueue.getInstance().shutdown());
         if (applicationKernel != null) safeShutdown("应用内核", applicationKernel::close);

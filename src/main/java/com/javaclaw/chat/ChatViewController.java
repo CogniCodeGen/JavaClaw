@@ -22,8 +22,10 @@ import com.javaclaw.config.SettingsView;
 import com.javaclaw.config.ToolReviewMode;
 import com.javaclaw.runtime.ApplicationKernel;
 import com.javaclaw.runtime.WorkspaceRuntime;
-import com.javaclaw.platform.fxml.SpringFxmlLoader;
-import com.javaclaw.platform.fxml.ViewHandle;
+import com.javaclaw.platform.fx.FxDispatcher;
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.execution.TaskScope;
+import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.ui.javafx.schedule.ScheduleView;
 import com.javaclaw.ui.javafx.skill.SkillCenterView;
 import com.javaclaw.ui.javafx.task.SddTaskView;
@@ -32,8 +34,9 @@ import javafx.animation.Animation;
 import javafx.animation.KeyFrame;
 import javafx.animation.KeyValue;
 import javafx.animation.Timeline;
-import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
+import javafx.beans.value.ChangeListener;
+import javafx.fxml.FXML;
 import javafx.geometry.Insets;
 // Orientation 已不再使用（浏览器独立窗口化）
 import javafx.geometry.Pos;
@@ -55,6 +58,7 @@ import javafx.util.Duration;
 import org.fxmisc.richtext.InlineCssTextArea;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -77,7 +81,7 @@ import java.util.Set;
  *
  * @author JavaClaw
  */
-public class ChatViewController {
+public class ChatViewController implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(ChatViewController.class);
 
@@ -85,22 +89,25 @@ public class ChatViewController {
     private static final Set<String> IMAGE_EXTENSIONS = Set.of(
             "png", "jpg", "jpeg", "gif", "bmp", "webp");
 
-    private final BorderPane outerRoot;
-    private final BorderPane chatPane;
+    @FXML private BorderPane outerRoot;
+    @FXML private BorderPane chatPane;
     /** chatPane 的 center StackPane（含 scrollPane + 空状态占位 + 浮动新消息按钮）；工作区切换时用作恢复目标，避免回退到只挂 scrollPane 而丢失叠加层 */
-    private final StackPane chatCenter;
-    private final VBox messageList;
-    private final ScrollPane scrollPane;
-    private final InlineCssTextArea inputField;
-    private final Button sendButton;
-    private final HBox typingIndicator;
+    @FXML private StackPane chatCenter;
+    @FXML private VBox messageList;
+    @FXML private ScrollPane scrollPane;
+    @FXML private InlineCssTextArea inputField;
+    @FXML private Button sendButton;
+    @FXML private HBox typingIndicator;
     private Timeline typingAnimation;
-    private final Label typingTextLabel;
-    private final Label topTitleLabel;
-    private Label topTitleStatusDot;
-    private Label topTitleMetaLabel;
-    private Label localModeBadge;
-    private Label embeddingHealthBadge;
+    @FXML private Label typingTextLabel;
+    @FXML private Label typingDotOne;
+    @FXML private Label typingDotTwo;
+    @FXML private Label typingDotThree;
+    @FXML private Label topTitleLabel;
+    @FXML private Label topTitleStatusDot;
+    @FXML private Label topTitleMetaLabel;
+    @FXML private Label localModeBadge;
+    @FXML private Label embeddingHealthBadge;
     private AutoCloseable embeddingHealthSubscription;
     /** 共享基础设施容器（模型工厂 / 记忆 / 知识 / token 追踪等） */
     private AgentRuntime runtime;
@@ -114,9 +121,9 @@ public class ChatViewController {
     private final ApplicationKernel applicationKernel;
     private final PlaywrightBrowserManager browserManager;
     private ChatHistoryManager chatHistoryManager;
-    private final SidebarController sidebarView;
-    private final ViewHandle<VBox> sidebarHandle;
-    private final ThinkingPanelView thinkingPanel;
+    @FXML private SidebarController sidebarController;
+    @FXML private StackPane thinkingPanelHost;
+    private ThinkingPanelView thinkingPanel;
 
     /**
      * 聊天历史 JSON 持久化的串行执行器（单线程 + 守护线程）。
@@ -124,27 +131,63 @@ public class ChatViewController {
      * 阻塞用户消息气泡的首帧渲染（用户感受到「回车后卡顿一秒才显示」）。
      * 单线程足以保证写入顺序、避免文件覆盖竞争。
      */
-    private final java.util.concurrent.ExecutorService persistExecutor =
-            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
-                Thread t = new Thread(r, "chat-persist");
-                t.setDaemon(true);
-                return t;
-            });
+    private final TaskScope persistenceTasks;
+    private final TaskScope backgroundTasks;
+    private final java.util.concurrent.Executor persistExecutor;
+    private final FxDispatcher fx;
+
+    /** 兼容旧退出链；页面生命周期统一由 {@link #close()} 收口。 */
+    public void shutdownPersistence() {
+        close();
+    }
 
     /**
-     * 应用退出时排空聊天持久化队列：等待在途的会话落盘任务完成（最多 2 秒），
-     * 避免退出瞬间丢最后一段聊天历史。由 JavaClawApp.shutdownResources 调用。
+     * 停止页面动画和订阅，并取消仍属于本页面的后台任务。关闭是幂等的；迟到的任务结果
+     * 会因作用域取消或 {@code closed} 标记而被丢弃，不再触碰已经卸载的 FXML 节点。
      */
-    public void shutdownPersistence() {
-        persistExecutor.shutdown();
-        try {
-            if (!persistExecutor.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS)) {
-                log.warn("聊天持久化队列 2 秒内未排空，放弃等待");
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+    @Override
+    public void close() {
+        if (!closed.compareAndSet(false, true)) {
+            return;
         }
-        sidebarHandle.close();
+        AutoCloseable healthSubscription = embeddingHealthSubscription;
+        embeddingHealthSubscription = null;
+        if (healthSubscription != null) {
+            try {
+                healthSubscription.close();
+            } catch (Exception failure) {
+                log.debug("关闭嵌入健康订阅失败", failure);
+            }
+        }
+        backgroundTasks.close();
+        persistenceTasks.close();
+        try {
+            fx.dispatch(this::stopUiResources);
+        } catch (IllegalStateException toolkitStopped) {
+            log.debug("JavaFX 已停止，跳过聊天页面动画清理", toolkitStopped);
+        }
+    }
+
+    private void stopUiResources() {
+        stopTimeline(statusBarClock);
+        stopTimeline(typingAnimation);
+        stopTimeline(tailScrollAnimation);
+        stopTimeline(activeGenPlaceholderAnim);
+        statusBarClock = null;
+        typingAnimation = null;
+        tailScrollAnimation = null;
+        activeGenPlaceholderAnim = null;
+        if (themeListener != null) {
+            com.javaclaw.ui.javafx.theme.ThemeManager.themeProperty()
+                    .removeListener(themeListener);
+            themeListener = null;
+        }
+    }
+
+    private static void stopTimeline(Timeline timeline) {
+        if (timeline != null) {
+            timeline.stop();
+        }
     }
 
     // ==================== 多会话管理 ====================
@@ -163,13 +206,13 @@ public class ChatViewController {
     private final List<File> pendingAttachments = new ArrayList<>();
 
     /** 附件预览容器 */
-    private final FlowPane attachmentPreviewPane;
+    @FXML private FlowPane attachmentPreviewPane;
 
     /** 聊天空状态提示 */
-    private final VBox chatEmptyState;
+    @FXML private VBox chatEmptyState;
 
     /** "↓ N 条新消息" 浮动按钮（用户上滑离开底部时显示） */
-    private Button newMessagesButton;
+    @FXML private Button newMessagesButton;
 
     /** 当前未读新消息计数 */
     private int unreadNewCount = 0;
@@ -178,7 +221,7 @@ public class ChatViewController {
     private boolean streamingActive = false;
 
     /** 顶栏汉堡菜单按钮（仅当侧栏隐藏时显示） */
-    private Button sidebarToggleBtn;
+    @FXML private Button sidebarToggleBtn;
 
     /** 触发响应式自动收缩的窗口宽度阈值 */
     private static final double RESPONSIVE_BREAKPOINT_PX = 960.0;
@@ -212,7 +255,7 @@ public class ChatViewController {
     /** 当前正在追加结果的工具 Markdown 气泡（回复区域） */
     private MarkdownBubble activeToolResultBubble;
 
-    /** 当前子智能体结果块的���层容器（包含回复） */
+    /** 当前子智能体结果块的外层容器（包含回复） */
     private VBox activeSubResultBubble;
 
     /** 单一会话模式选中态；模式按钮完全由 ModeRegistry 动态生成。 */
@@ -236,27 +279,36 @@ public class ChatViewController {
     private java.util.concurrent.atomic.AtomicReference<ChatMessage> activeAdoptTargetRef;
 
     /** 会话模式下拉选择器（对话 / 研讨 / 循环 / 工作流 / 命令）。 */
-    private ComboBox<ConversationModeChoice> conversationModeSelector;
+    @FXML private ComboBox<ConversationModeChoice> conversationModeSelector;
     private boolean conversationModeUpdating;
-    private ComboBox<WorkflowChoice> workflowSelector;
-    private ComboBox<com.javaclaw.api.conversation.PlanProfile> planProfileSelector;
-    private Button workflowEmptyShortcut;
-    private MenuButton loopTemplateMenu;
+    @FXML private ComboBox<WorkflowChoice> workflowSelector;
+    @FXML private ComboBox<com.javaclaw.api.conversation.PlanProfile> planProfileSelector;
+    @FXML private Button workflowEmptyShortcut;
+    @FXML private MenuButton loopTemplateMenu;
     /** 丢弃被后续刷新或工作区切换取代的异步工作流列表结果。 */
     private final java.util.concurrent.atomic.AtomicLong workflowSelectorRefreshGeneration =
             new java.util.concurrent.atomic.AtomicLong();
 
     /** 知识库多选菜单按钮 */
-    private MenuButton knowledgeMenu;
+    @FXML private MenuButton knowledgeMenu;
+    @FXML private Tooltip knowledgeTooltip;
 
     /** 工具执行审核策略下拉框 */
-    private MenuButton reviewModeMenu;
+    @FXML private MenuButton reviewModeMenu;
+    @FXML private MenuButton themeMenuButton;
+    @FXML private Region themeSwatch;
+    @FXML private Button settingsButton;
+    @FXML private Label inputPlaceholder;
+    @FXML private HBox modeChips;
 
     /** Token 用量摘要徽标（单一合并标签） */
-    private Label tokenLabel;
+    @FXML private Label tokenLabel;
     /** Token 徽标 Tooltip（内容在 refreshStatusBar 中刷新） */
-    private Tooltip tokenSummaryTooltip;
+    @FXML private Tooltip tokenSummaryTooltip;
     private Timeline statusBarClock;
+    private ChangeListener<String> themeListener;
+    private final java.util.concurrent.atomic.AtomicBoolean closed =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
 
     /** 当前流式输出中已显示的图片路径（防止重复显示） */
     private final Set<String> displayedImagePaths = new HashSet<>();
@@ -331,514 +383,248 @@ public class ChatViewController {
     }
 
     /**
-     * 构造聊天界面。
-     *
-     * <p>按模式注入三个独立服务：{@link AgentRuntime} 持有共享基础设施，
-     * {@link ChatService} 承担普通模式，{@link PlanModeService} 承担规划模式。
-     * 托管任务模式由 TaskManager 单例通过 runtime 自行拉取依赖，UI 侧通过 {@link ModeRegistry}
-     * 中注册的 {@link com.javaclaw.api.conversation.ActionMode} 打开任务视图。</p>
-     *
-     * <p>{@link ModeRegistry} 是"可插拔模式"的核心：onSendMessage 会根据当前选中模式
-     * 从注册表中取出 {@link ConversationMode} 并调用 {@code start}；未来扩展新模式
-     * 只需实现 {@link Mode} 接口并注册到 registry，UI 层无需调整。</p>
-     *
-     * @param applicationKernel 应用组合根（已完成首个工作区运行时初始化）
+     * Spring constructs the controller before FXMLLoader injects the static view graph.
      */
+    @Autowired
     public ChatViewController(
-            ApplicationKernel applicationKernel, SpringFxmlLoader fxmlLoader) {
-        this.applicationKernel = java.util.Objects.requireNonNull(applicationKernel, "applicationKernel");
+            ApplicationKernel applicationKernel,
+            FxDispatcher fx,
+            ManagedTaskExecutor taskExecutor) {
+        this.applicationKernel = java.util.Objects.requireNonNull(
+                applicationKernel, "applicationKernel");
+        this.fx = java.util.Objects.requireNonNull(fx, "fx");
+        java.util.Objects.requireNonNull(taskExecutor, "taskExecutor");
+        persistenceTasks = taskExecutor.openScope("chat-persistence", 1);
+        backgroundTasks = taskExecutor.openScope("chat-ui-background", 2);
+        persistExecutor = command -> persistenceTasks.submit(
+                TaskSpec.io("chat-persistence"), context -> {
+                    command.run();
+                    return null;
+                });
+
         WorkspaceRuntime initialRuntime = applicationKernel.current();
-        this.runtime = initialRuntime.agentRuntime();
-        this.chatService = initialRuntime.chatService();
-        this.planModeService = initialRuntime.planModeService();
-        this.modeRegistry = initialRuntime.modeRegistry();
-        this.browserManager = applicationKernel.browserManager();
-        this.chatHistoryManager = new ChatHistoryManager();
-        log.info("开始构建聊天界面");
+        runtime = initialRuntime.agentRuntime();
+        chatService = initialRuntime.chatService();
+        planModeService = initialRuntime.planModeService();
+        modeRegistry = initialRuntime.modeRegistry();
+        browserManager = applicationKernel.browserManager();
+        chatHistoryManager = new ChatHistoryManager();
+    }
 
-        // ==================== 左侧侧边栏 ====================
-        try {
-            java.net.URL sidebarResource = getClass().getResource("/fxml/chat/sidebar-view.fxml");
-            if (sidebarResource == null) {
-                throw new IllegalStateException("缺少 /fxml/chat/sidebar-view.fxml");
-            }
-            sidebarHandle = fxmlLoader.load(sidebarResource);
-            sidebarView = sidebarHandle.controller(SidebarController.class);
-        } catch (java.io.IOException failure) {
-            throw new IllegalStateException("加载侧边栏 FXML 失败", failure);
-        }
-        sidebarView.setOnNewChat(this::onNewSession);
-        sidebarView.setOnSwitchSession(this::onSwitchSession);
-        sidebarView.setOnDeleteSession(this::onDeleteSession);
-        sidebarView.setOnBatchDeleteSessions(this::onBatchDeleteSessions);
-        sidebarView.setOnOpenSettings(this::openSettings);
-        sidebarView.setOnOpenSkillCenter(this::openSkillCenter);
-        sidebarView.setOnOpenMemoryCenter(this::openMemoryCenter);
-        sidebarView.setOnOpenScheduler(this::openScheduler);
-        sidebarView.setOnOpenKnowledgeBase(this::openKnowledgeBase);
-        sidebarView.setOnOpenTaskManager(this::openTaskManager);
-        sidebarView.setOnOpenWorkflowCenter(this::openWorkflowCenter);
-        sidebarView.setOnOpenMcp(this::openMcpServers);
-        sidebarView.setOnOpenPluginCenter(this::openPluginCenter);
-        sidebarView.setOnSwitchWorkspace(this::onSwitchWorkspace);
+    @FXML
+    private void initialize() {
+        log.info("开始构建聊天界面 FXML");
+        configureSidebar();
+        configureTopBar();
+        configureModeControls();
+        configureMessageArea();
+        configureComposer();
+        configureThinkingPanel();
 
-        // ==================== 顶部标题栏（设计稿：状态点 + 标题 + 副 meta） ====================
-        topTitleLabel = new Label("JavaClaw 工作区");
-        topTitleLabel.getStyleClass().add("chat-top-title");
+        loadSessions();
+        installGlobalShortcuts();
+        installResponsiveLayout();
+        showFirstUseGuidanceIfNeeded();
+        chatService.setLoopInteractiveHandler(this::showLoopInteractionBubble);
+        refreshLocalModeBadge();
+        log.info("聊天界面 FXML 构建完成");
+    }
 
-        // 标题前的状态点（绿色=执行中，灰色=空闲）
-        topTitleStatusDot = new Label("●");
-        topTitleStatusDot.getStyleClass().addAll("chat-top-status-dot", "status-idle");
+    private void configureSidebar() {
+        sidebarController.setOnNewChat(this::onNewSession);
+        sidebarController.setOnSwitchSession(this::onSwitchSession);
+        sidebarController.setOnDeleteSession(this::onDeleteSession);
+        sidebarController.setOnBatchDeleteSessions(this::onBatchDeleteSessions);
+        sidebarController.setOnOpenSettings(this::openSettings);
+        sidebarController.setOnOpenSkillCenter(this::openSkillCenter);
+        sidebarController.setOnOpenMemoryCenter(this::openMemoryCenter);
+        sidebarController.setOnOpenScheduler(this::openScheduler);
+        sidebarController.setOnOpenKnowledgeBase(this::openKnowledgeBase);
+        sidebarController.setOnOpenTaskManager(this::openTaskManager);
+        sidebarController.setOnOpenWorkflowCenter(this::openWorkflowCenter);
+        sidebarController.setOnOpenMcp(this::openMcpServers);
+        sidebarController.setOnOpenPluginCenter(this::openPluginCenter);
+        sidebarController.setOnSwitchWorkspace(this::onSwitchWorkspace);
+    }
 
-        HBox titleLine = new HBox(8, topTitleStatusDot, topTitleLabel);
-        titleLine.setAlignment(Pos.CENTER_LEFT);
-
-        // 副标题：N 条消息 · 创建于 HH:MM · ctx N / 200k
-        topTitleMetaLabel = new Label("—");
-        topTitleMetaLabel.getStyleClass().add("chat-top-meta");
-
-        VBox titleBlock = new VBox(2, titleLine, topTitleMetaLabel);
-        titleBlock.setAlignment(Pos.CENTER_LEFT);
-
-        // 汉堡菜单按钮（仅在侧栏隐藏时显示，作为重新打开侧栏的入口）
-        sidebarToggleBtn = new Button("☰");
-        sidebarToggleBtn.getStyleClass().add("sidebar-toggle-btn");
-        sidebarToggleBtn.setTooltip(new Tooltip("显示侧栏 (" + shortcutHint() + " + \\)"));
-        sidebarToggleBtn.setOnAction(e -> toggleSidebar());
-        sidebarToggleBtn.setVisible(false);
-        sidebarToggleBtn.setManaged(false);
-
-        // 本地模式徽标 — Provider=Ollama 时显示
-        localModeBadge = new Label("本地模式");
-        localModeBadge.getStyleClass().add("local-mode-badge");
-        localModeBadge.setTooltip(new Tooltip("当前使用本地 Ollama 模型，对话数据不出本机"));
-        localModeBadge.setVisible(false);
-        localModeBadge.setManaged(false);
-
-        embeddingHealthBadge = new Label("嵌入：检查中");
-        embeddingHealthBadge.getStyleClass().add("local-mode-badge");
-        embeddingHealthBadge.setAccessibleText("嵌入服务健康状态");
+    private void configureTopBar() {
+        sidebarToggleBtn.setTooltip(new Tooltip(
+                "显示侧栏 (" + shortcutHint() + " + \\)"));
+        settingsButton.setTooltip(new Tooltip(
+                "设置（" + shortcutHint() + " + ,）"));
         wireEmbeddingHealth();
 
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-
-        // 会话模式统一收进单选下拉框，选项仍完全由 ModeRegistry 动态生成。
-        HBox modeChips = new HBox(6);
-        conversationModeSelector = new ComboBox<>();
-        conversationModeSelector.getStyleClass().addAll(
-                "composer-select", "conversation-mode-combo");
-        conversationModeSelector.setMinWidth(104);
-        conversationModeSelector.setPrefWidth(116);
-        conversationModeSelector.setMaxWidth(140);
-        ensureSingleClickCombo(conversationModeSelector);
-        conversationModeSelector.valueProperty().addListener((obs, oldChoice, newChoice) -> {
-            if (conversationModeUpdating || newChoice == null) return;
-            applyConversationModeChoice(newChoice);
-        });
-        refreshConversationModeSelector(selectedConversationModeId);
-
-        // 托管任务 chip：非会话模式，点击直接打开任务视图（不改变对话/规划选中态）
-        Button taskModeChip = new Button("托管任务");
-        taskModeChip.getStyleClass().add("jc-mode-chip");
-        taskModeChip.setOnAction(e -> openTaskManager());
-
-        reviewModeMenu = buildReviewModeMenu();
-        workflowSelector = new ComboBox<>();
-        workflowSelector.setPromptText("选择已发布工作流");
-        workflowSelector.setPrefWidth(180);
-        workflowSelector.setVisible(false); workflowSelector.setManaged(false);
-        ensureSingleClickCombo(workflowSelector);
-        // 工作流中心可能在当前模式保持为“工作流”时发布或归档定义；每次展开都异步读取最新列表。
-        workflowSelector.setOnShowing(e -> refreshWorkflowSelectorAsync());
-        workflowSelector.setOnAction(e -> {
-            WorkflowChoice choice = workflowSelector.getValue();
-            syncWorkflowSelection(choice == null ? null : choice.id());
-        });
-        planProfileSelector = new ComboBox<>();
-        planProfileSelector.getItems().setAll(com.javaclaw.api.conversation.PlanProfile.values());
-        planProfileSelector.setValue(com.javaclaw.api.conversation.PlanProfile.AUTO);
-        planProfileSelector.setPrefWidth(112);
-        planProfileSelector.setVisible(false);
-        planProfileSelector.setManaged(false);
-        planProfileSelector.setAccessibleText("研讨深度档位");
-        planProfileSelector.setTooltip(new Tooltip(
-                "AUTO 自动判断；QUICK 轻量；STANDARD 标准；DEEP 深度"));
-        loopTemplateMenu = new MenuButton("循环模板");
-        loopTemplateMenu.getStyleClass().add("composer-select");
-        loopTemplateMenu.setVisible(false);
-        loopTemplateMenu.setManaged(false);
-        loopTemplateMenu.setTooltip(new Tooltip(
-                "语法示例：@loop interval=5m max=20 judge=on\\n目标描述"));
-        addLoopTemplate("快速推进", "@loop max=10 judge=on\n持续推进目标，直到验收条件满足");
-        addLoopTemplate("定时轮询", "@loop interval=5m max=20 judge=on\n检查目标状态，满足后停止");
-        addLoopTemplate("构建守护", "@loop interval=30s max=20 judge=on\n反复修复并运行测试，直到全部通过");
-        workflowEmptyShortcut = new Button("前往工作流中心");
-        workflowEmptyShortcut.getStyleClass().addAll("jc-btn", "jc-btn-soft", "jc-btn-sm");
-        workflowEmptyShortcut.setVisible(false);
-        workflowEmptyShortcut.setManaged(false);
-        workflowEmptyShortcut.setOnAction(e -> openWorkflowCenter());
-        refreshWorkflowSelectorAsync();
-        modeChips.getChildren().addAll(
-                conversationModeSelector, planProfileSelector, loopTemplateMenu,
-                workflowSelector, workflowEmptyShortcut,
-                taskModeChip, reviewModeMenu);
-
-        // 知识库多选菜单按钮（带图标 + "N 已选"内置徽章）
-        knowledgeMenu = new MenuButton("📖 知识库");
-        knowledgeMenu.getStyleClass().add("knowledge-menu");
-        Tooltip knowledgeTip = new Tooltip("选择知识库中的文档作为对话参考");
-        knowledgeMenu.setTooltip(knowledgeTip);
-        // 菜单展开时隐藏 Tooltip，避免遮挡
-        knowledgeMenu.setOnShowing(e -> {
-            knowledgeTip.hide();
+        knowledgeMenu.setOnShowing(event -> {
+            knowledgeTooltip.hide();
             knowledgeMenu.setTooltip(null);
             rebuildKnowledgeMenu();
         });
-        knowledgeMenu.setOnHidden(e -> knowledgeMenu.setTooltip(knowledgeTip));
+        knowledgeMenu.setOnHidden(event -> knowledgeMenu.setTooltip(knowledgeTooltip));
+        configureThemeMenu();
 
-        Button clearButton = new Button("🗑 清空");
-        clearButton.getStyleClass().add("clear-button");
-        clearButton.setOnAction(e -> onClearHistory());
-
-        // 界面风格切换菜单（设计稿：当前主题色块 + 「风格」 + 下拉五主题预览）
-        MenuButton themeMenuBtn = buildThemeMenu();
-
-        // 顶栏方形图标按钮（设计稿 top-icon：▦ 托管任务 / ⚙ 设置）
-        Button taskIconBtn = new Button("▦");
-        taskIconBtn.getStyleClass().add("top-icon-btn");
-        taskIconBtn.setTooltip(new Tooltip("托管任务"));
-        taskIconBtn.setOnAction(e -> openTaskManager());
-
-        Button settingsIconBtn = new Button("⚙");
-        settingsIconBtn.getStyleClass().add("top-icon-btn");
-        settingsIconBtn.setTooltip(new Tooltip("设置（" + shortcutHint() + " + ,）"));
-        settingsIconBtn.setOnAction(e -> openSettings());
-
-        HBox topBar = new HBox(12, sidebarToggleBtn, titleBlock, localModeBadge,
-                embeddingHealthBadge, spacer,
-                knowledgeMenu, themeMenuBtn, taskIconBtn, settingsIconBtn, clearButton);
-        topBar.getStyleClass().add("chat-top-bar");
-        topBar.setAlignment(Pos.CENTER_LEFT);
-        topBar.setPadding(new Insets(10, 20, 10, 20));
-        HBox.setHgrow(titleBlock, Priority.NEVER);
-
-        // Token 用量摘要徽标（合并今日 + 会话 tokens + 本月成本，Tooltip 展开详情）
-        tokenLabel = new Label("今日 0 · 会话 0 · ¥0.00");
-        tokenLabel.getStyleClass().add("token-counter-label");
-        tokenSummaryTooltip = new Tooltip();
         tokenSummaryTooltip.setShowDelay(Duration.millis(250));
-        tokenLabel.setTooltip(tokenSummaryTooltip);
-        tokenLabel.setOnMouseClicked(e -> {
+        tokenLabel.setOnMouseClicked(event -> {
             runtime.getTokenTracker().resetSession();
             refreshStatusBar();
         });
         wireTokenTracker();
+    }
 
-        // ==================== 中部消息区域 ====================
-        messageList = new VBox(10);
-        messageList.getStyleClass().add("message-list");
-        messageList.setPadding(new Insets(16, 12, 16, 12));
+    private void configureModeControls() {
+        ensureSingleClickCombo(conversationModeSelector);
+        conversationModeSelector.valueProperty().addListener(
+                (observable, previous, choice) -> {
+                    if (!conversationModeUpdating && choice != null) {
+                        applyConversationModeChoice(choice);
+                    }
+                });
+        refreshConversationModeSelector(selectedConversationModeId);
 
-        scrollPane = new ScrollPane(messageList);
-        scrollPane.getStyleClass().add("message-scroll");
-        scrollPane.setFitToWidth(true);
-        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        ensureSingleClickCombo(workflowSelector);
+        workflowSelector.setOnShowing(event -> refreshWorkflowSelectorAsync());
+        workflowSelector.setOnAction(event -> {
+            WorkflowChoice choice = workflowSelector.getValue();
+            syncWorkflowSelection(choice == null ? null : choice.id());
+        });
 
-        // 气泡内嵌的可滚动控件（RichTextArea / InlineCssTextArea）会吞掉滚轮事件，导致鼠标悬停在气泡上时列表无法滚动。
-        // 在 ScrollPane 的 capture 阶段抢先处理所有向下路由的 ScrollEvent，确保列表始终响应滚轮。
-        // 所有气泡都做过高度自适应（useContentHeight / USE_PREF_SIZE / autoFitHeight），无需内部滚动，抢占是安全的。
+        planProfileSelector.getItems().setAll(
+                com.javaclaw.api.conversation.PlanProfile.values());
+        planProfileSelector.setValue(com.javaclaw.api.conversation.PlanProfile.AUTO);
+        planProfileSelector.setTooltip(new Tooltip(
+                "AUTO 自动判断；QUICK 轻量；STANDARD 标准；DEEP 深度"));
+
+        loopTemplateMenu.setTooltip(new Tooltip(
+                "语法示例：@loop interval=5m max=20 judge=on\n目标描述"));
+        addLoopTemplate("快速推进",
+                "@loop max=10 judge=on\n持续推进目标，直到验收条件满足");
+        addLoopTemplate("定时轮询",
+                "@loop interval=5m max=20 judge=on\n检查目标状态，满足后停止");
+        addLoopTemplate("构建守护",
+                "@loop interval=30s max=20 judge=on\n反复修复并运行测试，直到全部通过");
+
+        configureReviewModeMenu();
+        refreshWorkflowSelectorAsync();
+    }
+
+    private void configureMessageArea() {
         scrollPane.addEventFilter(javafx.scene.input.ScrollEvent.SCROLL, event -> {
             double deltaY = event.getDeltaY();
             if (deltaY == 0) return;
             beginUserScroll();
-            double viewportH = scrollPane.getViewportBounds() != null
-                    ? scrollPane.getViewportBounds().getHeight() : 0;
-            double contentH = messageList.getHeight();
-            double scrollable = contentH - viewportH;
+            double viewportHeight = scrollPane.getViewportBounds() == null
+                    ? 0 : scrollPane.getViewportBounds().getHeight();
+            double scrollable = messageList.getHeight() - viewportHeight;
             if (scrollable <= 0) return;
-            double stepV = deltaY / scrollable;
-            double newV = scrollPane.getVvalue() - stepV;
-            newV = Math.max(0, Math.min(1, newV));
-            scrollPane.setVvalue(newV);
+            double next = scrollPane.getVvalue() - deltaY / scrollable;
+            scrollPane.setVvalue(Math.max(0, Math.min(1, next)));
             event.consume();
         });
-
-        // 滚动条拖动/轨道点击与键盘翻页不会产生上面的 ScrollEvent，需在值变化前
-        // 停止控制器动画，随后由 vvalue 监听器按实际位置更新跟随状态。
         scrollPane.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
             if (isScrollBarTarget(event.getTarget())) beginUserScroll();
         });
-        scrollPane.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, event -> {
+        scrollPane.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
             switch (event.getCode()) {
                 case UP, DOWN, PAGE_UP, PAGE_DOWN, HOME, END, SPACE -> beginUserScroll();
-                default -> {
-                }
+                default -> { }
             }
         });
 
-        messageList.heightProperty().addListener((obs, oldVal, newVal) -> {
-            if (followTail) scrollToTail(true);
-        });
-
-        // 非程序写入代表滚轮、滚动条或键盘导航；接近底部恢复跟随，离开则暂停。
-        scrollPane.vvalueProperty().addListener((obs, oldVal, newVal) -> {
+        messageList.heightProperty().addListener(
+                (observable, previous, height) -> {
+                    if (followTail) scrollToTail(true);
+                });
+        scrollPane.vvalueProperty().addListener((observable, previous, value) -> {
             if (programmaticTailScroll) return;
             followTail = isNearBottom();
-            if (followTail) {
-                resetUnreadCount();
-            }
+            if (followTail) resetUnreadCount();
         });
-
-        // 监听新消息加入：若用户已上滑离开底部，累计未读数；列表清空时重置
-        messageList.getChildren().addListener((javafx.collections.ListChangeListener<javafx.scene.Node>) c -> {
-            while (c.next()) {
-                if (messageList.getChildren().isEmpty()) {
-                    resetUnreadCount();
-                } else if (c.wasAdded() && !followTail) {
-                    incrementUnreadCount(c.getAddedSize());
-                }
-            }
-        });
-
-        // 打字指示器（三点动画 + 文字）
-        Label dot1 = new Label("●");
-        Label dot2 = new Label("●");
-        Label dot3 = new Label("●");
-        dot1.getStyleClass().add("typing-dot");
-        dot2.getStyleClass().add("typing-dot");
-        dot3.getStyleClass().add("typing-dot");
-        typingTextLabel = new Label("助手正在思考中...");
-        typingTextLabel.getStyleClass().add("thinking-label");
-        typingIndicator = new HBox(4, dot1, dot2, dot3, typingTextLabel);
-        typingIndicator.setAlignment(Pos.CENTER_LEFT);
-        typingIndicator.setPadding(new Insets(6, 24, 0, 24));
-        typingIndicator.setVisible(false);
-        typingIndicator.setManaged(false);
-
-        typingAnimation = new Timeline(
-                new KeyFrame(Duration.ZERO,
-                        new KeyValue(dot1.opacityProperty(), 0.3),
-                        new KeyValue(dot2.opacityProperty(), 0.3),
-                        new KeyValue(dot3.opacityProperty(), 0.3)),
-                new KeyFrame(Duration.millis(200),
-                        new KeyValue(dot1.opacityProperty(), 1.0)),
-                new KeyFrame(Duration.millis(400),
-                        new KeyValue(dot1.opacityProperty(), 0.3),
-                        new KeyValue(dot2.opacityProperty(), 1.0)),
-                new KeyFrame(Duration.millis(600),
-                        new KeyValue(dot2.opacityProperty(), 0.3),
-                        new KeyValue(dot3.opacityProperty(), 1.0)),
-                new KeyFrame(Duration.millis(800),
-                        new KeyValue(dot3.opacityProperty(), 0.3))
-        );
-        typingAnimation.setCycleCount(Animation.INDEFINITE);
-
-        // ==================== 附件预览区域（初始隐藏） ====================
-        attachmentPreviewPane = new FlowPane(10, 10);
-        attachmentPreviewPane.getStyleClass().add("attachment-preview-pane");
-        attachmentPreviewPane.setPadding(new Insets(8, 20, 8, 20));
-        attachmentPreviewPane.setVisible(false);
-        attachmentPreviewPane.setManaged(false);
-
-        // ==================== 底部输入区域（RichTextFX 多行输入） ====================
-        inputField = new InlineCssTextArea();
-        inputField.setWrapText(true);
-        inputField.getStyleClass().add("input-field");
-        // 单行舒适高度 = 14px 字体行高(~20) + 上下 padding(12+12) + 边框(1.5*2) ≈ 47，预留至 56
-        inputField.setPrefHeight(56);
-        inputField.setMinHeight(56);
-        // 最多 ~10 行；超过自动出现垂直滚动条
-        inputField.setMaxHeight(240);
-
-        // 键盘契约：
-        //   Enter            → 发送
-        //   Shift+Enter      → 换行
-        //   Ctrl/Cmd+Enter   → 换行（macOS 习惯）
-        //   Esc              → 取消正在进行的流式生成 / 清空输入框
-        //   ↑（输入框空时）   → 回填上一条用户消息以编辑重发
-        inputField.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
-            if (e.getCode() == KeyCode.ENTER) {
-                if (e.isShiftDown() || e.isShortcutDown()) {
-                    inputField.insertText(inputField.getCaretPosition(), "\n");
-                } else {
-                    onSendMessage();
-                }
-                e.consume();
-            } else if (e.getCode() == KeyCode.ESCAPE) {
-                // Esc：优先清空输入框；输入为空且正在生成时取消流式生成
-                if (inputField.getLength() > 0) {
-                    inputField.clear();
-                    e.consume();
-                } else if (streamingActive) {
-                    stopActiveStream();
-                    e.consume();
-                }
-            } else if (e.getCode() == KeyCode.UP && inputField.getLength() == 0) {
-                String last = findLastUserMessage();
-                if (last != null) {
-                    inputField.replaceText(0, 0, last);
-                    inputField.moveTo(inputField.getLength());
-                    e.consume();
-                }
-            }
-        });
-
-        // 动态调整输入框高度：content + 上下 padding(24) + 边框(3) + 安全垫片
-        inputField.totalHeightEstimateProperty().addListener((obs, oldVal, newVal) -> {
-            if (newVal != null) {
-                double h = Math.max(56, Math.min(240, newVal.doubleValue() + 28));
-                inputField.setPrefHeight(h);
-            }
-        });
-
-        // 占位提示文字
-        Label placeholder = new Label("给 JavaClaw 发消息…  按 Enter 发送，Shift+Enter 换行，Esc 取消生成");
-        placeholder.getStyleClass().add("input-placeholder");
-        placeholder.setMouseTransparent(true);
-        placeholder.visibleProperty().bind(
-                Bindings.createBooleanBinding(
-                        () -> inputField.getLength() == 0,
-                        inputField.lengthProperty()
-                )
-        );
-        StackPane inputWrapper = new StackPane(inputField, placeholder);
-        // 占位提示与正文同为顶部左对齐，二者位置重合，避免输入时文字相对占位符“跳动”的不协调感
-        StackPane.setAlignment(placeholder, Pos.TOP_LEFT);
-        placeholder.setPadding(new Insets(14, 0, 0, 21));
-        HBox.setHgrow(inputWrapper, Priority.ALWAYS);
-
-        // 附件按钮
-        Button attachButton = new Button("+");
-        attachButton.getStyleClass().add("attach-button");
-        attachButton.setTooltip(new Tooltip("添加图片或文档附件"));
-        attachButton.setOnAction(e -> onAddAttachment());
-
-        sendButton = new Button("发送");
-        sendButton.getStyleClass().add("send-button");
-        // 同一个按钮在空闲态执行发送、在流式态执行中断；具体动作由 streamingActive 决定
-        sendButton.setOnAction(e -> onSendOrStop());
-        UIHelper.addPressEffect(sendButton);
-
-        HBox inputBar = new HBox(12, attachButton, inputWrapper, sendButton);
-        inputBar.getStyleClass().add("input-bar");
-        // 多行输入框会随内容向上增高，按钮锚定底部，保持与输入框最后一行对齐
-        inputBar.setAlignment(Pos.BOTTOM_CENTER);
-        inputBar.setFillHeight(false);
-        inputBar.setPadding(new Insets(12, 20, 4, 20));
-
-        // 底部状态栏：只保留一个紧凑的摘要徽标（Tooltip 展开今日/本月/耗时）
-        Region tokenSpacer = new Region();
-        HBox.setHgrow(tokenSpacer, Priority.ALWAYS);
-        HBox tokenRow = new HBox(6, tokenSpacer, tokenLabel);
-        tokenRow.setAlignment(Pos.CENTER_RIGHT);
-        tokenRow.setPadding(new Insets(0, 24, 4, 24));
-
-        // 每 10 秒刷新一次耗时显示
-        statusBarClock = new Timeline(new KeyFrame(Duration.seconds(10), e -> refreshStatusBar()));
-        statusBarClock.setCycleCount(Animation.INDEFINITE);
-        statusBarClock.play();
-
-        // 底部键盘提示条（设计稿：本次对话 · N tok · ¥0.00 | ↵ 发送 ⇧↵ 换行 Esc 取消）
-        Label hintConvo = new Label("本次对话");
-        hintConvo.getStyleClass().add("composer-hint-label");
-        Label hintSep1 = new Label("·");
-        hintSep1.getStyleClass().add("composer-hint-sep");
-        Label hintEnter = new Label("↵");
-        hintEnter.getStyleClass().add("kbd-chip");
-        Label hintEnterText = new Label("发送");
-        hintEnterText.getStyleClass().add("composer-hint-label");
-        Label hintShiftEnter = new Label("⇧↵");
-        hintShiftEnter.getStyleClass().add("kbd-chip");
-        Label hintShiftEnterText = new Label("换行");
-        hintShiftEnterText.getStyleClass().add("composer-hint-label");
-        Label hintEsc = new Label("Esc");
-        hintEsc.getStyleClass().add("kbd-chip");
-        Label hintEscText = new Label("取消");
-        hintEscText.getStyleClass().add("composer-hint-label");
-        Region hintSpacer = new Region();
-        HBox.setHgrow(hintSpacer, Priority.ALWAYS);
-        // 模式 chips 置于提示行左侧（设计稿 composer-hints：对话/研讨/托管任务 + 右侧键位提示）
-        modeChips.setAlignment(Pos.CENTER_LEFT);
-        HBox shortcutHintRow = new HBox(8,
-                modeChips,
-                hintConvo, hintSep1, tokenLabel,
-                hintSpacer,
-                hintEnter, hintEnterText,
-                hintShiftEnter, hintShiftEnterText,
-                hintEsc, hintEscText);
-        shortcutHintRow.setAlignment(Pos.CENTER_LEFT);
-        shortcutHintRow.setPadding(new Insets(4, 24, 6, 24));
-        shortcutHintRow.getStyleClass().add("composer-hint-row");
-
-        VBox bottomArea = new VBox(4, typingIndicator, attachmentPreviewPane, inputBar, shortcutHintRow);
-        bottomArea.setPadding(new Insets(0, 0, 2, 0));
-
-        // ==================== 聊天空状态 ====================
-        Label emptyIcon = new Label("\uD83D\uDCAC");
-        emptyIcon.getStyleClass().add("empty-state-icon");
-        Label emptyTitle = new Label("开始新对话");
-        emptyTitle.getStyleClass().add("empty-state-text");
-        Label emptyHint = new Label("输入消息开始与智能体对话\n支持发送图片、文档等附件");
-        emptyHint.getStyleClass().addAll("settings-hint", "empty-state-hint");
-        emptyHint.setWrapText(true);
-        emptyHint.setMaxWidth(300);
-        chatEmptyState = new VBox(12, emptyIcon, emptyTitle, emptyHint);
-        chatEmptyState.setAlignment(Pos.CENTER);
-        chatEmptyState.setMouseTransparent(true);
+        messageList.getChildren().addListener(
+                (javafx.collections.ListChangeListener<javafx.scene.Node>) this::onMessagesChanged);
         chatEmptyState.visibleProperty().bind(
                 Bindings.isEmpty(messageList.getChildren()));
         chatEmptyState.managedProperty().bind(chatEmptyState.visibleProperty());
+    }
 
-        // 新消息浮动按钮（用户上滑离开底部时显示）
-        newMessagesButton = new Button("↓ 0 条新消息");
-        newMessagesButton.getStyleClass().add("new-messages-pill");
-        newMessagesButton.setVisible(false);
-        newMessagesButton.setManaged(false);
-        newMessagesButton.setOnAction(e -> {
-            scrollToTail(false);
+    private void onMessagesChanged(
+            javafx.collections.ListChangeListener.Change<? extends javafx.scene.Node> change) {
+        while (change.next()) {
+            if (messageList.getChildren().isEmpty()) {
+                resetUnreadCount();
+            } else if (change.wasAdded() && !followTail) {
+                incrementUnreadCount(change.getAddedSize());
+            }
+        }
+    }
+
+    private void configureComposer() {
+        configureTypingAnimation();
+        inputField.addEventFilter(KeyEvent.KEY_PRESSED, this::onInputKeyPressed);
+        inputField.totalHeightEstimateProperty().addListener((observable, previous, height) -> {
+            if (height != null) {
+                inputField.setPrefHeight(Math.max(
+                        56, Math.min(240, height.doubleValue() + 28)));
+            }
         });
-        StackPane.setAlignment(newMessagesButton, Pos.BOTTOM_CENTER);
-        StackPane.setMargin(newMessagesButton, new Insets(0, 0, 16, 0));
+        inputPlaceholder.visibleProperty().bind(
+                Bindings.createBooleanBinding(
+                        () -> inputField.getLength() == 0,
+                        inputField.lengthProperty()));
+        UIHelper.addPressEffect(sendButton);
 
-        this.chatCenter = new StackPane(scrollPane, chatEmptyState, newMessagesButton);
+        statusBarClock = new Timeline(
+                new KeyFrame(Duration.seconds(10), event -> refreshStatusBar()));
+        statusBarClock.setCycleCount(Animation.INDEFINITE);
+        statusBarClock.play();
+    }
 
-        // ==================== 右侧思考进度面板 ====================
+    private void configureTypingAnimation() {
+        typingAnimation = new Timeline(
+                new KeyFrame(Duration.ZERO,
+                        new KeyValue(typingDotOne.opacityProperty(), 0.3),
+                        new KeyValue(typingDotTwo.opacityProperty(), 0.3),
+                        new KeyValue(typingDotThree.opacityProperty(), 0.3)),
+                new KeyFrame(Duration.millis(200),
+                        new KeyValue(typingDotOne.opacityProperty(), 1.0)),
+                new KeyFrame(Duration.millis(400),
+                        new KeyValue(typingDotOne.opacityProperty(), 0.3),
+                        new KeyValue(typingDotTwo.opacityProperty(), 1.0)),
+                new KeyFrame(Duration.millis(600),
+                        new KeyValue(typingDotTwo.opacityProperty(), 0.3),
+                        new KeyValue(typingDotThree.opacityProperty(), 1.0)),
+                new KeyFrame(Duration.millis(800),
+                        new KeyValue(typingDotThree.opacityProperty(), 0.3)));
+        typingAnimation.setCycleCount(Animation.INDEFINITE);
+    }
+
+    private void onInputKeyPressed(KeyEvent event) {
+        if (event.getCode() == KeyCode.ENTER) {
+            if (event.isShiftDown() || event.isShortcutDown()) {
+                inputField.insertText(inputField.getCaretPosition(), "\n");
+            } else {
+                onSendMessage();
+            }
+            event.consume();
+        } else if (event.getCode() == KeyCode.ESCAPE) {
+            if (inputField.getLength() > 0) {
+                inputField.clear();
+                event.consume();
+            } else if (streamingActive) {
+                stopActiveStream();
+                event.consume();
+            }
+        } else if (event.getCode() == KeyCode.UP && inputField.getLength() == 0) {
+            String previous = findLastUserMessage();
+            if (previous != null) {
+                inputField.replaceText(0, 0, previous);
+                inputField.moveTo(inputField.getLength());
+                event.consume();
+            }
+        }
+    }
+
+    private void configureThinkingPanel() {
         thinkingPanel = new ThinkingPanelView();
-
-        // ==================== 组装聊天面板 ====================
-        chatPane = new BorderPane();
-        chatPane.getStyleClass().add("chat-root");
-        chatPane.setTop(topBar);
-        chatPane.setCenter(chatCenter);
-        chatPane.setBottom(bottomArea);
-        chatPane.setRight(thinkingPanel.getRoot());
-
-        // 最外层布局：左侧侧边栏 + 右侧聊天区域
-        this.outerRoot = new BorderPane();
-        outerRoot.getStyleClass().add("chat-root");
-        outerRoot.setLeft(sidebarView.getRoot());
-        outerRoot.setCenter(chatPane);
-
-        // 加载会话列表
-        loadSessions();
-
-        // 注册全局快捷键（Scene 就绪后挂载）
-        installGlobalShortcuts();
-
-        // 响应式布局监听
-        installResponsiveLayout();
-
-        // 首次使用引导
-        showFirstUseGuidanceIfNeeded();
-
-        // 注册交互式循环检测处理器（允许用户决定继续或终止）
-        chatService.setLoopInteractiveHandler(this::showLoopInteractionBubble);
-
-        // 初始化本地模式徽标
-        refreshLocalModeBadge();
-
-        log.info("聊天界面构建完成（含浏览器面板 + 多会话管理）");
+        thinkingPanelHost.getChildren().setAll(thinkingPanel.getRoot());
     }
 
     /**
@@ -849,7 +635,7 @@ public class ChatViewController {
      */
     private void showLoopInteractionBubble(String toolName, int repeats,
                                            java.util.function.Consumer<Boolean> decision) {
-        Platform.runLater(() -> {
+        fx.dispatch(() -> {
             HBox bubble = new HBox(12);
             bubble.setAlignment(Pos.CENTER_LEFT);
             bubble.getStyleClass().add("message-system");
@@ -898,11 +684,22 @@ public class ChatViewController {
         return outerRoot;
     }
 
+    @FXML
+    private void onNewMessagesRequested() {
+        scrollToTail(false);
+    }
+
+    @FXML
+    private void openSettingsRequested() {
+        openSettings();
+    }
+
     // ==================== 附件处理 ====================
 
     /**
      * 打开文件选择器添加附件
      */
+    @FXML
     private void onAddAttachment() {
         FileChooser fileChooser = new FileChooser();
         fileChooser.setTitle("选择附件");
@@ -1110,13 +907,13 @@ public class ChatViewController {
 
         // 重活推迟到下一帧 —— saveChatHistory（智能体状态落盘）+ createStreamingBubble
         // 若同步执行会让用户气泡的首帧推迟。
-        // 用 Platform.runLater 让上面的 UI 改动先完成布局/重绘，然后下一脉冲再做这些重活。
+        // FxDispatcher 让上面的 UI 改动先完成布局/重绘，然后下一脉冲再做这些重活。
         // 捕获当前代次，所有回调中检查代次是否匹配，会话切换/删除后旧回调自动失效。
         final String requestText = userText;
         // 会话切换在后台流式期间保持可用；请求归属必须在排队前固定为发起流的会话，
         // 不能在 runLater 中读取可能已经切换的 currentSession。
         final String requestSessionId = streamingSession == null ? null : streamingSession.getId();
-        Platform.runLater(() -> {
+        fx.dispatch(() -> {
             if (streamGeneration != gen) return; // 间隙内会话被切换/取消
 
             saveChatHistory();
@@ -1274,9 +1071,8 @@ public class ChatViewController {
         }
         // 运行时重建后先把当前选择同步给新的 WorkflowMode；列表校正随后异步完成。
         WorkflowChoice selected = workflowSelector.getValue();
-        syncWorkflowSelection(selected == null ? null : selected.id());
         long generation = workflowSelectorRefreshGeneration.incrementAndGet();
-        Thread.ofVirtual().name("workflow-selector-refresh-" + generation).start(() -> {
+        backgroundTasks.submit(TaskSpec.io("workflow-selector-refresh"), context -> {
             final List<WorkflowChoice> records;
             try {
                 records = currentRuntime.workflowService().definitions().list(false).stream()
@@ -1285,9 +1081,13 @@ public class ChatViewController {
                         .toList();
             } catch (RuntimeException e) {
                 log.warn("异步刷新已发布工作流失败: {}", e.getMessage());
-                return;
+                return null;
             }
-            Platform.runLater(() -> applyWorkflowSelectorRefresh(currentRuntime, generation, records));
+            if (!context.cancellation().isCancellationRequested()) {
+                fx.dispatch(() -> applyWorkflowSelectorRefresh(
+                        currentRuntime, generation, records));
+            }
+            return null;
         });
     }
 
@@ -1326,10 +1126,11 @@ public class ChatViewController {
      * 工作流中心发布成功后的即时 UI 更新。取消在途旧查询，避免旧快照覆盖刚发布的定义。
      */
     public void onWorkflowPublished(String workflowId, String workflowName) {
-        if (!Platform.isFxApplicationThread()) {
-            Platform.runLater(() -> onWorkflowPublished(workflowId, workflowName));
-            return;
-        }
+        fx.dispatch(() -> applyPublishedWorkflow(workflowId, workflowName));
+    }
+
+    private void applyPublishedWorkflow(String workflowId, String workflowName) {
+        if (closed.get()) return;
         if (workflowSelector == null || workflowId == null || workflowId.isBlank()) return;
         workflowSelectorRefreshGeneration.incrementAndGet();
         WorkflowChoice published = new WorkflowChoice(workflowId, workflowName);
@@ -1363,7 +1164,7 @@ public class ChatViewController {
         return new ConversationCallbacks() {
             @Override
             public void onEvent(ConversationEvent event) {
-                Platform.runLater(() -> {
+                fx.dispatch(() -> {
                     if (streamGeneration != gen) return;
                     switch (event) {
                         case ConversationEvent.Thinking t -> appendThinkingChunk(t.chunk());
@@ -1410,7 +1211,7 @@ public class ChatViewController {
 
             @Override
             public void onTerminal(ConversationOutcome outcome) {
-                Platform.runLater(() -> {
+                fx.dispatch(() -> {
                     if (streamGeneration != gen) return;
                     ActiveTurn turn = activeTurn;
                     if (turn != null && turn.generation == gen) turn.handle = null;
@@ -2489,7 +2290,7 @@ public class ChatViewController {
                 if (target == currentSession) {
                     updateTopTitle();
                 }
-                sidebarView.updateSessionTitle(target.getId(), target.getTitle());
+                sidebarController.updateSessionTitle(target.getId(), target.getTitle());
                 saveSessionMessages(target);
                 chatService.saveSession(target.getId());
             }
@@ -2920,7 +2721,7 @@ public class ChatViewController {
             sessions.add(defaultSession);
             chatHistoryManager.saveSessionIndex(sessions);
             currentSession = defaultSession;
-            sidebarView.addSession(defaultSession, true);
+            sidebarController.addSession(defaultSession, true);
             addWelcomeBubble();
         } else {
             sessions.addAll(validSessions);
@@ -2930,7 +2731,7 @@ public class ChatViewController {
             }
             // 在侧边栏中添加所有会话，默认选中第一个
             for (int i = 0; i < sessions.size(); i++) {
-                sidebarView.addSession(sessions.get(i), i == 0);
+                sidebarController.addSession(sessions.get(i), i == 0);
             }
             // 加载第一个会话的消息
             currentSession = sessions.getFirst();
@@ -2982,7 +2783,7 @@ public class ChatViewController {
         // 如果当前会话为空（未发送任何消息），移除它，避免堆积空会话
         if (currentSession != null && currentSession.getMessages().isEmpty()) {
             sessions.remove(currentSession);
-            sidebarView.removeSession(currentSession.getId());
+            sidebarController.removeSession(currentSession.getId());
         }
 
         // 创建新会话
@@ -2991,7 +2792,7 @@ public class ChatViewController {
         currentSession = newSession;
 
         // 更新侧边栏
-        sidebarView.insertSessionAtTop(newSession, true);
+        sidebarController.insertSessionAtTop(newSession, true);
 
         // 清空聊天区域并显示欢迎消息（后台流式期间不重置进度面板，保持可观察）
         disposeMessageList();
@@ -3154,7 +2955,7 @@ public class ChatViewController {
 
         // 从列表移除
         sessions.removeIf(s -> s.getId().equals(sessionId));
-        sidebarView.removeSession(sessionId);
+        sidebarController.removeSession(sessionId);
         chatHistoryManager.deleteSession(sessionId);
         chatService.deleteSession(sessionId);
 
@@ -3171,7 +2972,7 @@ public class ChatViewController {
                 // 切换到第一个会话
                 currentSession = null;
                 String firstId = sessions.getFirst().getId();
-                sidebarView.selectSession(firstId);
+                sidebarController.selectSession(firstId);
                 onSwitchSession(firstId);
             }
         }
@@ -3199,7 +3000,7 @@ public class ChatViewController {
 
         for (String id : sessionIds) {
             sessions.removeIf(s -> s.getId().equals(id));
-            sidebarView.removeSession(id);
+            sidebarController.removeSession(id);
             chatHistoryManager.deleteSession(id);
             chatService.deleteSession(id);
         }
@@ -3212,7 +3013,7 @@ public class ChatViewController {
             } else {
                 currentSession = null;
                 String firstId = sessions.getFirst().getId();
-                sidebarView.selectSession(firstId);
+                sidebarController.selectSession(firstId);
                 onSwitchSession(firstId);
             }
         }
@@ -3444,8 +3245,9 @@ public class ChatViewController {
     /**
      * 切换侧栏可见性（Ctrl/Cmd + \ 或 汉堡按钮）
      */
+    @FXML
     private void toggleSidebar() {
-        javafx.scene.Node sidebar = sidebarView.getRoot();
+        javafx.scene.Node sidebar = sidebarController.getRoot();
         boolean visible = sidebar.isVisible();
         sidebar.setVisible(!visible);
         sidebar.setManaged(!visible);
@@ -3473,12 +3275,12 @@ public class ChatViewController {
             if (scene == null) return;
             scene.widthProperty().addListener((wObs, oldW, newW) -> applyResponsiveSidebar(newW.doubleValue()));
             // 初始触发一次
-            Platform.runLater(() -> applyResponsiveSidebar(scene.getWidth()));
+            fx.dispatch(() -> applyResponsiveSidebar(scene.getWidth()));
         });
     }
 
     private void applyResponsiveSidebar(double width) {
-        javafx.scene.Node sidebar = sidebarView.getRoot();
+        javafx.scene.Node sidebar = sidebarController.getRoot();
         if (width < RESPONSIVE_BREAKPOINT_PX && sidebar.isVisible()) {
             // 自动隐藏
             sidebar.setVisible(false);
@@ -3583,7 +3385,7 @@ public class ChatViewController {
     private void enterMessageViewAtTail() {
         followTail = true;
         resetUnreadCount();
-        Platform.runLater(() -> {
+        fx.dispatch(() -> {
             if (followTail) scrollToTail(false);
         });
     }
@@ -3776,6 +3578,7 @@ public class ChatViewController {
     /**
      * 发送/停止按钮的统一处理：根据 streamingActive 决定行为
      */
+    @FXML
     private void onSendOrStop() {
         if (streamingActive) {
             stopActiveStream();
@@ -3839,7 +3642,7 @@ public class ChatViewController {
      */
     private void wireTokenTracker() {
         runtime.getTokenTracker().setOnTokensChanged(() -> {
-            Platform.runLater(this::refreshStatusBar);
+            fx.dispatch(this::refreshStatusBar);
         });
         // 初始化显示
         refreshStatusBar();
@@ -3904,12 +3707,12 @@ public class ChatViewController {
     private void refreshSidebarBadges() {
         try {
             int proposals = com.javaclaw.skill.curation.SkillProposalQueue.getInstance().pendingCount();
-            sidebarView.updateSkillBadge(proposals);
+            sidebarController.updateSkillBadge(proposals);
             int activeTasks = (int) com.javaclaw.task.sdd.run.SddTaskManager.getInstance().list().stream()
                     .filter(t -> t.state == com.javaclaw.task.sdd.run.SddTaskState.RUNNING
                             || t.state == com.javaclaw.task.sdd.run.SddTaskState.NEEDS_HUMAN)
                     .count();
-            sidebarView.updateTaskBadge(activeTasks);
+            sidebarController.updateTaskBadge(activeTasks);
         } catch (Exception e) {
             log.debug("刷新侧边栏徽章失败", e);
         }
@@ -3949,7 +3752,7 @@ public class ChatViewController {
         setInputEnabled(false);
         java.util.concurrent.atomic.AtomicBoolean runtimeReady =
                 new java.util.concurrent.atomic.AtomicBoolean(false);
-        Thread rebuildThread = new Thread(() -> {
+        backgroundTasks.submit(TaskSpec.io("agent-service-rebuild"), context -> {
             try {
                 adoptRuntime(applicationKernel.rebuildCurrent());
                 runtimeReady.set(true);
@@ -3966,7 +3769,7 @@ public class ChatViewController {
             } finally {
                 // UI 收尾放 finally：Error（如 OOM / 类初始化失败）逃逸上方 catch 时旗标也必须
                 // 复位，否则 rejectIfRebuilding 永久拦截会话操作、输入框永久禁用，应用只能重启
-                Platform.runLater(() -> {
+                fx.dispatch(() -> {
                     try {
                         // 知识库配置可能变化：直接按新 runtime 重建菜单（清空选中态后重建，
                         // 而非只清空——关知识库中心的 onHidden 重建在异步重建期间被跳过，
@@ -3993,9 +3796,8 @@ public class ChatViewController {
                     }
                 });
             }
-        }, "agent-service-rebuild");
-        rebuildThread.setDaemon(true);
-        rebuildThread.start();
+            return null;
+        });
     }
 
     /**
@@ -4019,7 +3821,7 @@ public class ChatViewController {
         }
         if (embeddingHealthBadge == null || runtime == null) return;
         embeddingHealthSubscription = runtime.getEmbeddingGateway().addHealthListener(snapshot ->
-                Platform.runLater(() -> {
+                fx.dispatch(() -> {
                     if (embeddingHealthBadge == null) return;
                     String text = switch (snapshot.status()) {
                         case HEALTHY -> "嵌入：正常";
@@ -4105,6 +3907,7 @@ public class ChatViewController {
      * <p>通过 {@link ModeRegistry} 查找 id 为 "task" 的 {@link ActionMode} 并调用其 {@code open}，
      * 保证任务模式的实际触发路径跟其他模式一致、可被配置禁用或替换。</p>
      */
+    @FXML
     private void openTaskManager() {
         log.info("打开任务管理");
         modeRegistry.getById("task")
@@ -4115,6 +3918,7 @@ public class ChatViewController {
                         () -> log.warn("未注册任务模式（id=task）"));
     }
 
+    @FXML
     private void openWorkflowCenter() {
         log.info("打开工作流中心");
         modeRegistry.getById("workflow-center")
@@ -4162,6 +3966,7 @@ public class ChatViewController {
     /**
      * 清空当前会话的对话历史
      */
+    @FXML
     private void onClearHistory() {
         if (currentSession == null) return;
         // 全局快捷键 Ctrl/Cmd+L 不受输入禁用影响：重建窗口内会对已关闭服务清空/删检查点
@@ -4193,7 +3998,7 @@ public class ChatViewController {
         // 更新 UI
         addWelcomeBubble();
         updateTopTitle();
-        sidebarView.updateSessionTitle(currentSession.getId(), currentSession.getTitle());
+        sidebarController.updateSessionTitle(currentSession.getId(), currentSession.getTitle());
         saveCurrentSession();
     }
 
@@ -4205,19 +4010,15 @@ public class ChatViewController {
      * <p>该配置按工作区持久化：手动审核会让所有受管工具弹窗确认；智能审核沿用风险等级和
      * 托管任务范围评估；全自动则全部默认同意。</p>
      */
-    private MenuButton buildReviewModeMenu() {
-        MenuButton menu = new MenuButton();
-        menu.getStyleClass().addAll("composer-select", "review-mode-combo");
-        menu.setMinWidth(106);
-        menu.setPrefWidth(112);
-        menu.setMaxWidth(126);
+    private void configureReviewModeMenu() {
+        MenuButton menu = reviewModeMenu;
+        menu.getItems().clear();
         for (ToolReviewMode mode : ToolReviewMode.values()) {
             MenuItem item = new MenuItem(mode.displayName());
             item.setOnAction(e -> applyReviewMode(menu, mode, true));
             menu.getItems().add(item);
         }
         applyReviewMode(menu, AgentConfig.getInstance().getToolReviewMode(), false);
-        return menu;
     }
 
     private void applyReviewMode(MenuButton menu, ToolReviewMode mode, boolean persist) {
@@ -4267,22 +4068,17 @@ public class ChatViewController {
      * 按钮 = 当前主题色块 + 「风格」；下拉项 = 三联色块预览 + 名称/副标题 + 当前 ✓。
      * 选择后经 {@link com.javaclaw.ui.javafx.theme.ThemeManager#setTheme} 全局生效并持久化。
      */
-    private MenuButton buildThemeMenu() {
-        MenuButton btn = new MenuButton("风格");
-        btn.getStyleClass().add("theme-menu-btn");
-        btn.setTooltip(new Tooltip("切换界面风格（立即生效并记忆到本工作区）"));
+    private void configureThemeMenu() {
+        MenuButton btn = themeMenuButton;
 
         // 按钮左侧的当前主题色块
-        Region swatch = new Region();
-        swatch.setMinSize(13, 13);
-        swatch.setMaxSize(13, 13);
-        btn.setGraphic(swatch);
-        Runnable refreshSwatch = () -> swatch.setStyle("-fx-background-color: "
+        Runnable refreshSwatch = () -> themeSwatch.setStyle("-fx-background-color: "
                 + com.javaclaw.ui.javafx.theme.ThemeManager.getCurrentTheme().brand()
                 + "; -fx-background-radius: 4;");
         refreshSwatch.run();
+        themeListener = (observable, previous, current) -> refreshSwatch.run();
         com.javaclaw.ui.javafx.theme.ThemeManager.themeProperty()
-                .addListener((obs, o, n) -> refreshSwatch.run());
+                .addListener(themeListener);
 
         // 每次展开时重建菜单项（保证 ✓ 标记与当前主题同步）
         btn.setOnShowing(e -> {
@@ -4324,8 +4120,7 @@ public class ChatViewController {
             }
         });
         // 初始占位项，保证箭头可点开（展开时会被重建）
-        btn.getItems().add(new MenuItem("…"));
-        return btn;
+        btn.getItems().setAll(new MenuItem("…"));
     }
 
     // ==================== 工作区切换 ====================
@@ -4364,7 +4159,7 @@ public class ChatViewController {
             log.warn("服务重建/工作区切换已在进行中，忽略本次切换: {}", targetWorkspaceId);
             // 下拉框选中项在回调触发前已变成目标工作区：必须回滚显示，否则 UI 声称在 B
             // 而实际仍在 A，后续聊天/记忆/知识库全落错工作区且用户无从察觉
-            sidebarView.refreshWorkspaceCombo();
+            sidebarController.refreshWorkspaceCombo();
             var busyPort = com.javaclaw.agent.ToolConfirmationManager.getPort();
             if (busyPort != null) {
                 busyPort.notify(new com.javaclaw.api.interaction.ToastRequest(
@@ -4391,13 +4186,13 @@ public class ChatViewController {
         chatPane.setCenter(loadingOverlay);
 
         // 在后台线程执行非 UI 操作（步骤 2-7）
-        Thread switchThread = new Thread(() -> {
+        backgroundTasks.submit(TaskSpec.io("workspace-switch"), context -> {
             try {
                 // 生命周期、配置重载、浏览器重绑定和失败回滚统一由应用内核完成。
                 adoptRuntime(applicationKernel.switchWorkspace(targetWorkspaceId));
 
                 // UI 更新回到 JavaFX 线程（步骤 8-12）
-                Platform.runLater(() -> {
+                fx.dispatch(() -> {
                     try {
                         // 8. 清空所有 UI 状态
                         disposeMessageList();
@@ -4407,7 +4202,7 @@ public class ChatViewController {
                         thinkingPanel.reset();
 
                         // 9. 清空并重新加载会话列表
-                        sidebarView.clearSessions();
+                        sidebarController.clearSessions();
                         sessions.clear();
                         currentSession = null;
                         chatHistoryManager = new ChatHistoryManager();
@@ -4426,7 +4221,7 @@ public class ChatViewController {
                         refreshConversationModeSelector("chat");
 
                         // 12. 更新侧边栏工作区下拉
-                        sidebarView.refreshWorkspaceCombo();
+                        sidebarController.refreshWorkspaceCombo();
 
                         // 12.5. 重新加载新工作区记忆的界面风格
                         com.javaclaw.ui.javafx.theme.ThemeManager.reload();
@@ -4453,8 +4248,8 @@ public class ChatViewController {
                 } catch (IllegalStateException unavailable) {
                     log.error("工作区切换后无可用运行时", unavailable);
                 }
-                Platform.runLater(() -> {
-                    sidebarView.refreshWorkspaceCombo();
+                fx.dispatch(() -> {
+                    sidebarController.refreshWorkspaceCombo();
                     chatPane.setCenter(chatCenter);
                     var port = com.javaclaw.agent.ToolConfirmationManager.getPort();
                     if (port != null) {
@@ -4466,7 +4261,7 @@ public class ChatViewController {
                 // 旗标复位收敛到 finally 单一出口：Error 逃逸上方 catch 时也必须复位，否则
                 // 会话操作被永久拦截、停流被永久忽略。此 runLater 在成功路径的 UI 重载
                 // runLater 之后入队（FIFO），不会提前放行用户操作；重复置 false 无害
-                Platform.runLater(() -> {
+                fx.dispatch(() -> {
                     rebuildInProgress.set(false);
                     // 切换期间保存过设置：补一轮重建拾取（按新工作区的配置重建，无害且必要）
                     if (rebuildQueued.getAndSet(false)) {
@@ -4474,9 +4269,8 @@ public class ChatViewController {
                     }
                 });
             }
-        }, "workspace-switch-thread");
-        switchThread.setDaemon(true);
-        switchThread.start();
+            return null;
+        });
     }
 
     /**
@@ -4554,7 +4348,7 @@ public class ChatViewController {
         AgentConfig config = AgentConfig.getInstance();
         if (config.isFirstUseGuidanceDone()) return;
 
-        Platform.runLater(() -> {
+        fx.dispatch(() -> {
             Alert guide = new Alert(Alert.AlertType.INFORMATION,
                     "💬 / 📋  对话 / 研讨模式\n" +
                     "顶部切换对话或研讨模式，研讨模式启用多智能体协作讨论\n\n" +

@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.ComboBox?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.MenuButton?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.control.Tooltip?>
+<?import javafx.scene.layout.BorderPane?>
+<?import javafx.scene.layout.FlowPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+<?import org.fxmisc.richtext.InlineCssTextArea?>
+
+<BorderPane fx:id="outerRoot" styleClass="chat-root"
+            xmlns="http://javafx.com/javafx/25"
+            xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.javaclaw.chat.ChatViewController">
+    <left>
+        <fx:include fx:id="sidebar" source="sidebar-view.fxml"/>
+    </left>
+    <center>
+        <BorderPane fx:id="chatPane" styleClass="chat-root">
+            <top>
+                <HBox fx:id="topBar" alignment="CENTER_LEFT" spacing="12.0"
+                      styleClass="chat-top-bar">
+                    <padding><Insets top="10.0" right="20.0" bottom="10.0" left="20.0"/></padding>
+                    <children>
+                        <Button fx:id="sidebarToggleBtn" text="☰" visible="false" managed="false"
+                                onAction="#toggleSidebar" styleClass="sidebar-toggle-btn"/>
+                        <VBox alignment="CENTER_LEFT" spacing="2.0">
+                            <children>
+                                <HBox alignment="CENTER_LEFT" spacing="8.0">
+                                    <children>
+                                        <Label fx:id="topTitleStatusDot" text="●"
+                                               styleClass="chat-top-status-dot, status-idle"/>
+                                        <Label fx:id="topTitleLabel" text="JavaClaw 工作区"
+                                               styleClass="chat-top-title"/>
+                                    </children>
+                                </HBox>
+                                <Label fx:id="topTitleMetaLabel" text="—" styleClass="chat-top-meta"/>
+                            </children>
+                        </VBox>
+                        <Label fx:id="localModeBadge" text="本地模式" visible="false" managed="false"
+                               styleClass="local-mode-badge">
+                            <tooltip><Tooltip text="当前使用本地 Ollama 模型，对话数据不出本机"/></tooltip>
+                        </Label>
+                        <Label fx:id="embeddingHealthBadge" text="嵌入：检查中"
+                               accessibleText="嵌入服务健康状态" styleClass="local-mode-badge"/>
+                        <Region HBox.hgrow="ALWAYS"/>
+                        <MenuButton fx:id="knowledgeMenu" text="📖 知识库" styleClass="knowledge-menu">
+                            <tooltip><Tooltip fx:id="knowledgeTooltip" text="选择知识库中的文档作为对话参考"/></tooltip>
+                        </MenuButton>
+                        <MenuButton fx:id="themeMenuButton" text="风格" styleClass="theme-menu-btn">
+                            <tooltip><Tooltip text="切换界面风格（立即生效并记忆到本工作区）"/></tooltip>
+                            <graphic>
+                                <Region fx:id="themeSwatch" minWidth="13.0" minHeight="13.0"
+                                        maxWidth="13.0" maxHeight="13.0"/>
+                            </graphic>
+                        </MenuButton>
+                        <Button text="▦" onAction="#openTaskManager" styleClass="top-icon-btn">
+                            <tooltip><Tooltip text="托管任务"/></tooltip>
+                        </Button>
+                        <Button fx:id="settingsButton" text="⚙" onAction="#openSettingsRequested"
+                                styleClass="top-icon-btn"/>
+                        <Button text="🗑 清空" onAction="#onClearHistory" styleClass="clear-button"/>
+                    </children>
+                </HBox>
+            </top>
+            <center>
+                <StackPane fx:id="chatCenter">
+                    <children>
+                        <ScrollPane fx:id="scrollPane" fitToWidth="true" hbarPolicy="NEVER"
+                                    styleClass="message-scroll">
+                            <content>
+                                <VBox fx:id="messageList" spacing="10.0" styleClass="message-list">
+                                    <padding><Insets top="16.0" right="12.0" bottom="16.0" left="12.0"/></padding>
+                                </VBox>
+                            </content>
+                        </ScrollPane>
+                        <VBox fx:id="chatEmptyState" alignment="CENTER" spacing="12.0"
+                              mouseTransparent="true">
+                            <children>
+                                <Label text="💬" styleClass="empty-state-icon"/>
+                                <Label text="开始新对话" styleClass="empty-state-text"/>
+                                <Label text="输入消息开始与智能体对话&#10;支持发送图片、文档等附件"
+                                       maxWidth="300.0" wrapText="true"
+                                       styleClass="settings-hint, empty-state-hint"/>
+                            </children>
+                        </VBox>
+                        <Button fx:id="newMessagesButton" text="↓ 0 条新消息"
+                                visible="false" managed="false"
+                                StackPane.alignment="BOTTOM_CENTER"
+                                onAction="#onNewMessagesRequested"
+                                styleClass="new-messages-pill">
+                            <StackPane.margin><Insets bottom="16.0"/></StackPane.margin>
+                        </Button>
+                    </children>
+                </StackPane>
+            </center>
+            <bottom>
+                <VBox fx:id="bottomArea" spacing="4.0">
+                    <padding><Insets bottom="2.0"/></padding>
+                    <children>
+                        <HBox fx:id="typingIndicator" alignment="CENTER_LEFT" spacing="4.0"
+                              visible="false" managed="false">
+                            <padding><Insets top="6.0" right="24.0" left="24.0"/></padding>
+                            <children>
+                                <Label fx:id="typingDotOne" text="●" styleClass="typing-dot"/>
+                                <Label fx:id="typingDotTwo" text="●" styleClass="typing-dot"/>
+                                <Label fx:id="typingDotThree" text="●" styleClass="typing-dot"/>
+                                <Label fx:id="typingTextLabel" text="助手正在思考中..."
+                                       styleClass="thinking-label"/>
+                            </children>
+                        </HBox>
+                        <FlowPane fx:id="attachmentPreviewPane" hgap="10.0" vgap="10.0"
+                                  visible="false" managed="false"
+                                  styleClass="attachment-preview-pane">
+                            <padding><Insets top="8.0" right="20.0" bottom="8.0" left="20.0"/></padding>
+                        </FlowPane>
+                        <HBox alignment="BOTTOM_CENTER" spacing="12.0" fillHeight="false"
+                              styleClass="input-bar">
+                            <padding><Insets top="12.0" right="20.0" bottom="4.0" left="20.0"/></padding>
+                            <children>
+                                <Button text="+" onAction="#onAddAttachment" styleClass="attach-button">
+                                    <tooltip><Tooltip text="添加图片或文档附件"/></tooltip>
+                                </Button>
+                                <StackPane HBox.hgrow="ALWAYS">
+                                    <children>
+                                        <InlineCssTextArea fx:id="inputField" wrapText="true"
+                                                           prefHeight="56.0" minHeight="56.0"
+                                                           maxHeight="240.0" styleClass="input-field"/>
+                                        <Label fx:id="inputPlaceholder"
+                                               text="给 JavaClaw 发消息…  按 Enter 发送，Shift+Enter 换行，Esc 取消生成"
+                                               mouseTransparent="true" StackPane.alignment="TOP_LEFT"
+                                               styleClass="input-placeholder">
+                                            <padding><Insets top="14.0" left="21.0"/></padding>
+                                        </Label>
+                                    </children>
+                                </StackPane>
+                                <Button fx:id="sendButton" text="发送" onAction="#onSendOrStop"
+                                        styleClass="send-button"/>
+                            </children>
+                        </HBox>
+                        <HBox alignment="CENTER_LEFT" spacing="8.0" styleClass="composer-hint-row">
+                            <padding><Insets top="4.0" right="24.0" bottom="6.0" left="24.0"/></padding>
+                            <children>
+                                <HBox fx:id="modeChips" alignment="CENTER_LEFT" spacing="6.0">
+                                    <children>
+                                        <ComboBox fx:id="conversationModeSelector" minWidth="104.0"
+                                                  prefWidth="116.0" maxWidth="140.0"
+                                                  styleClass="composer-select, conversation-mode-combo"/>
+                                        <ComboBox fx:id="planProfileSelector" prefWidth="112.0"
+                                                  visible="false" managed="false"
+                                                  accessibleText="研讨深度档位"/>
+                                        <MenuButton fx:id="loopTemplateMenu" text="循环模板"
+                                                    visible="false" managed="false"
+                                                    styleClass="composer-select"/>
+                                        <ComboBox fx:id="workflowSelector" promptText="选择已发布工作流"
+                                                  prefWidth="180.0" visible="false" managed="false"/>
+                                        <Button fx:id="workflowEmptyShortcut" text="前往工作流中心"
+                                                visible="false" managed="false"
+                                                onAction="#openWorkflowCenter"
+                                                styleClass="jc-btn, jc-btn-soft, jc-btn-sm"/>
+                                        <Button text="托管任务" onAction="#openTaskManager"
+                                                styleClass="jc-mode-chip"/>
+                                        <MenuButton fx:id="reviewModeMenu" minWidth="106.0"
+                                                    prefWidth="112.0" maxWidth="126.0"
+                                                    styleClass="composer-select, review-mode-combo"/>
+                                    </children>
+                                </HBox>
+                                <Label text="本次对话" styleClass="composer-hint-label"/>
+                                <Label text="·" styleClass="composer-hint-sep"/>
+                                <Label fx:id="tokenLabel" text="今日 0 · 会话 0 · ¥0.00"
+                                       styleClass="token-counter-label">
+                                    <tooltip><Tooltip fx:id="tokenSummaryTooltip"/></tooltip>
+                                </Label>
+                                <Region HBox.hgrow="ALWAYS"/>
+                                <Label text="↵" styleClass="kbd-chip"/>
+                                <Label text="发送" styleClass="composer-hint-label"/>
+                                <Label text="⇧↵" styleClass="kbd-chip"/>
+                                <Label text="换行" styleClass="composer-hint-label"/>
+                                <Label text="Esc" styleClass="kbd-chip"/>
+                                <Label text="取消" styleClass="composer-hint-label"/>
+                            </children>
+                        </HBox>
+                    </children>
+                </VBox>
+            </bottom>
+            <right>
+                <StackPane fx:id="thinkingPanelHost"/>
+            </right>
+        </BorderPane>
+    </center>
+</BorderPane>

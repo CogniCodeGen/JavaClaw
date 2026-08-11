@@ -13,6 +13,8 @@ import com.javaclaw.config.SettingsView;
 import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.runtime.ApplicationKernel;
 import com.javaclaw.platform.data.DataRoot;
+import com.javaclaw.platform.fxml.SpringFxmlLoader;
+import com.javaclaw.platform.fxml.ViewHandle;
 import com.javaclaw.platform.spring.ApplicationContexts;
 import com.javaclaw.platform.spring.WorkspaceSpringContextFactory;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeCenterView;
@@ -29,6 +31,7 @@ import javafx.embed.swing.SwingFXUtils;
 import javafx.scene.Scene;
 import javafx.scene.SnapshotParameters;
 import javafx.scene.image.WritableImage;
+import javafx.scene.layout.BorderPane;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 import javafx.util.Duration;
@@ -62,6 +65,7 @@ public final class UiScreenshotExporter {
         private ChatService chatService;
         private ApplicationKernel applicationKernel;
         private AnnotationConfigApplicationContext springContext;
+        private ViewHandle<BorderPane> chatViewHandle;
 
         @Override
         public void start(Stage primaryStage) {
@@ -74,7 +78,7 @@ public final class UiScreenshotExporter {
             }
         }
 
-        private void bootstrap(Stage primaryStage) {
+        private void bootstrap(Stage primaryStage) throws Exception {
             springContext = ApplicationContexts.createRoot(DataRoot.resolve());
             WorkspaceManager.getInstance().init();
             ApplicationContexts.registerDesktopInfrastructure(springContext);
@@ -98,10 +102,16 @@ public final class UiScreenshotExporter {
             var workspaceRuntime = applicationKernel.initialize();
             runtime = workspaceRuntime.agentRuntime();
             chatService = workspaceRuntime.chatService();
+            ApplicationContexts.registerApplicationKernel(springContext, applicationKernel);
 
-            ChatViewController chatView = new ChatViewController(applicationKernel,
-                    springContext.getBean(com.javaclaw.platform.fxml.SpringFxmlLoader.class));
-            Scene scene = new Scene(chatView.getOuterRoot(), 1200, 700);
+            SpringFxmlLoader fxml = springContext.getBean(SpringFxmlLoader.class);
+            var resource = java.util.Objects.requireNonNull(
+                    UiScreenshotExporter.class.getResource("/fxml/chat/chat-view.fxml"),
+                    "缺少主聊天 FXML");
+            chatViewHandle = fxml.load(resource);
+            ChatViewController chatView =
+                    chatViewHandle.controller(ChatViewController.class);
+            Scene scene = new Scene(chatViewHandle.root(), 1200, 700);
             addStyles(scene);
             com.javaclaw.ui.javafx.theme.ThemeManager.init();
             com.javaclaw.ui.javafx.theme.FontManager.init();
@@ -205,6 +215,10 @@ public final class UiScreenshotExporter {
         }
 
         private void cleanupAndExit(int code) {
+            try {
+                if (chatViewHandle != null) chatViewHandle.close();
+            } catch (Throwable ignore) {
+            }
             try {
                 if (applicationKernel != null) applicationKernel.close();
             } catch (Throwable ignore) {

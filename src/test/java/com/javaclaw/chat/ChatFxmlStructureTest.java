@@ -1,0 +1,81 @@
+package com.javaclaw.chat;
+
+import javafx.fxml.FXML;
+import org.junit.jupiter.api.Test;
+import org.w3c.dom.Document;
+import org.w3c.dom.NamedNodeMap;
+
+import javax.xml.parsers.DocumentBuilderFactory;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.net.URL;
+import java.util.HashSet;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class ChatFxmlStructureTest {
+
+    private static final String FXML_NAMESPACE = "http://javafx.com/fxml/1";
+
+    @Test
+    void mainChatDeclaresEveryInjectedNodeAndEventEntrypoint() throws Exception {
+        URL resource = getClass().getResource("/fxml/chat/chat-view.fxml");
+        assertNotNull(resource);
+
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setNamespaceAware(true);
+        Document document = factory.newDocumentBuilder().parse(resource.openStream());
+        assertEquals(ChatViewController.class.getName(),
+                document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
+
+        Set<String> ids = IntStream.range(0, document.getElementsByTagName("*").getLength())
+                .mapToObj(document.getElementsByTagName("*")::item)
+                .map(node -> node.getAttributes().getNamedItemNS(FXML_NAMESPACE, "id"))
+                .filter(Objects::nonNull)
+                .map(org.w3c.dom.Node::getNodeValue)
+                .collect(Collectors.toSet());
+
+        for (Field field : ChatViewController.class.getDeclaredFields()) {
+            if (!field.isAnnotationPresent(FXML.class)) continue;
+            String fieldName = field.getName();
+            boolean declared = ids.contains(fieldName)
+                    || fieldName.endsWith("Controller")
+                    && ids.contains(fieldName.substring(
+                            0, fieldName.length() - "Controller".length()));
+            assertTrue(declared, "FXML 缺少 @FXML 字段: " + fieldName);
+        }
+
+        Set<String> handlers = eventHandlers(document);
+        Set<String> controllerHandlers = Set.of(ChatViewController.class.getDeclaredMethods())
+                .stream()
+                .filter(method -> method.isAnnotationPresent(FXML.class))
+                .map(Method::getName)
+                .collect(Collectors.toSet());
+        assertTrue(controllerHandlers.containsAll(handlers),
+                "Controller 缺少 @FXML 事件方法: " + handlers);
+        assertEquals(Set.of("toggleSidebar", "openTaskManager", "openSettingsRequested",
+                "onClearHistory", "onNewMessagesRequested", "onAddAttachment",
+                "onSendOrStop", "openWorkflowCenter"), handlers);
+    }
+
+    private static Set<String> eventHandlers(Document document) {
+        Set<String> handlers = new HashSet<>();
+        var elements = document.getElementsByTagName("*");
+        for (int index = 0; index < elements.getLength(); index++) {
+            NamedNodeMap attributes = elements.item(index).getAttributes();
+            for (int attributeIndex = 0; attributeIndex < attributes.getLength(); attributeIndex++) {
+                String value = attributes.item(attributeIndex).getNodeValue();
+                if (value.startsWith("#")) {
+                    handlers.add(value.substring(1));
+                }
+            }
+        }
+        return handlers;
+    }
+}

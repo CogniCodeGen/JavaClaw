@@ -4,6 +4,7 @@ import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.config.DataManager;
 import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.platform.data.DataRoot;
+import com.javaclaw.runtime.ApplicationKernel;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import java.io.IOException;
@@ -52,5 +53,22 @@ public final class ApplicationContexts {
                         WorkspaceManager.getInstance().getCurrentBrowserDir(),
                         DataManager.getInstance().getScreenshotsDir()),
                 definition -> definition.setDestroyMethodName("shutdown"));
+    }
+
+    /**
+     * 将依赖主窗口回调、因而只能在 JavaFX {@code start} 阶段创建的组合根登记到 Spring。
+     * 登记完成后 FXML Controller 可以使用构造注入取得同一实例；实例随根 Context 关闭。
+     */
+    public static void registerApplicationKernel(
+            AnnotationConfigApplicationContext context, ApplicationKernel kernel) {
+        Objects.requireNonNull(context, "context");
+        Objects.requireNonNull(kernel, "kernel");
+        if (!context.isActive()) {
+            throw new IllegalStateException("Spring 根 Context 尚未启动");
+        }
+        if (context.getBeanFactory().getBeanNamesForType(ApplicationKernel.class).length > 0) {
+            throw new IllegalStateException("ApplicationKernel 已登记");
+        }
+        context.registerBean(ApplicationKernel.class, () -> kernel);
     }
 }
