@@ -3,9 +3,11 @@ package com.javaclaw.code;
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
+import com.javaclaw.platform.process.ProcessRequest;
+import com.javaclaw.platform.process.ProcessResult;
+import com.javaclaw.platform.process.ProcessRunner;
 import com.javaclaw.util.AtomicFileWriter;
 import com.javaclaw.util.PathGuard;
-import com.javaclaw.util.ProcessTerminator;
 import com.javaclaw.util.ProjectAccessPolicy;
 import com.javaclaw.util.SensitiveDataRedactor;
 import io.agentscope.core.tool.Tool;
@@ -13,20 +15,17 @@ import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.BufferedReader;
-import java.io.File;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
+import java.time.Duration;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import java.util.stream.Stream;
@@ -69,14 +68,16 @@ public class CodeTools {
 
     /** 调用来源令牌（装配期绑定），高风险确认随调用传给 ToolConfirmationManager。 */
     private final ToolCallOrigin origin;
+    private final ProcessRunner processes;
 
     /** 会话级项目根（可空）。设定后相对路径以其解析、code_* 操作被围栏其内。 */
     private volatile Path projectRoot;
     /** 单测可使用临时目录；生产工具路径始终还要经过全局项目策略。 */
     private volatile boolean testRootOverride;
 
-    public CodeTools(ToolCallOrigin origin) {
+    public CodeTools(ToolCallOrigin origin, ProcessRunner processes) {
         this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
+        this.processes = java.util.Objects.requireNonNull(processes, "processes");
         this.projectRoot = ProjectAccessPolicy.projectRoot();
     }
 
@@ -644,61 +645,37 @@ public class CodeTools {
      * 直接按 argv 执行（<b>不经 shell</b>），参数原样传给进程——git 提交信息等含特殊字符的
      * 参数不会被 shell 解释/注入。头尾截断收集输出。
      */
-    private static ExecResult execArgv(List<String> argv, Path dir, int timeoutSeconds)
+    private ExecResult execArgv(List<String> argv, Path dir, int timeoutSeconds)
             throws IOException, InterruptedException {
-        ProcessBuilder pb = new ProcessBuilder(argv);
-        pb.directory(dir.toFile());
-        return runProcess(pb, timeoutSeconds);
+        ProcessRequest request = new ProcessRequest(
+                "code-" + Path.of(argv.getFirst()).getFileName(), argv, dir, Map.of(),
+                Duration.ofSeconds(timeoutSeconds), 4 * 1024 * 1024, StandardCharsets.UTF_8);
+        ProcessResult result = processes.run(request);
+        StringBuilder captured = new StringBuilder(result.stdout());
+        if (!result.stderr().isBlank()) {
+            if (!captured.isEmpty() && captured.charAt(captured.length() - 1) != '\n') {
+                captured.append('\n');
+            }
+            captured.append("[stderr]\n").append(result.stderr());
+        }
+        if (result.outputTruncated()) {
+            captured.append("\n...(输出超过 4 MiB，后续省略)\n");
+        }
+        return new ExecResult(
+                result.exitCode(), retainHeadAndTail(captured.toString()), result.timedOut());
     }
 
-    /** 执行已配好命令与工作目录的进程：合并 stderr、stdin 接空设备、头尾环形缓冲收集输出、超时强杀。 */
-    private static ExecResult runProcess(ProcessBuilder pb, int timeoutSeconds)
-            throws IOException, InterruptedException {
-        String os = System.getProperty("os.name", "").toLowerCase();
-        pb.redirectErrorStream(true);
-        pb.redirectInput(ProcessBuilder.Redirect.from(new File(os.contains("win") ? "NUL" : "/dev/null")));
-        Process proc = pb.start();
-
-        List<String> head = new ArrayList<>();
-        ArrayDeque<String> tail = new ArrayDeque<>();
-        Object lock = new Object();
-        Thread reader = new Thread(() -> {
-            try (BufferedReader r = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
-                String line; int n = 0;
-                while ((line = r.readLine()) != null) {
-                    synchronized (lock) {
-                        if (n < 120) head.add(line);
-                        else { tail.addLast(line); if (tail.size() > 400) tail.removeFirst(); }
-                    }
-                    n++;
-                }
-            } catch (IOException ignored) {
-            }
-        }, "code-build-reader");
-        reader.setDaemon(true);
-        reader.start();
-
-        boolean finished = ProcessTerminator.waitForOrTerminateOnInterrupt(
-                proc, timeoutSeconds, TimeUnit.SECONDS);
-        if (!finished) {
-            ProcessTerminator.destroyTreeForcibly(proc);
-            ProcessTerminator.waitForOrTerminateOnInterrupt(
-                    proc, 2, TimeUnit.SECONDS);
-            reader.interrupt();
-            return new ExecResult(-1, "", true);
+    private static String retainHeadAndTail(String output) {
+        List<String> lines = output.lines().toList();
+        if (lines.size() <= 520) {
+            return output;
         }
-        reader.join(2000);
-        String output;
-        synchronized (lock) {
-            StringBuilder sb = new StringBuilder();
-            for (String l : head) sb.append(l).append('\n');
-            if (!tail.isEmpty()) {
-                sb.append("...(中段省略)\n");
-                for (String l : tail) sb.append(l).append('\n');
-            }
-            output = sb.toString();
-        }
-        return new ExecResult(proc.exitValue(), output, false);
+        StringBuilder retained = new StringBuilder();
+        lines.subList(0, 120).forEach(line -> retained.append(line).append('\n'));
+        retained.append("...(中段省略)\n");
+        lines.subList(lines.size() - 400, lines.size())
+                .forEach(line -> retained.append(line).append('\n'));
+        return retained.toString();
     }
 
     // ==================== 版本控制（git） ====================

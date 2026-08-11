@@ -42,6 +42,10 @@ import com.javaclaw.platform.http.HttpGateway;
 import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.platform.process.ProcessRunner;
 import com.javaclaw.platform.storage.AtomicContentStore;
+import com.javaclaw.desktop.DesktopAutomation;
+import com.javaclaw.desktop.DesktopAutomationPort;
+import com.javaclaw.desktop.DesktopToolFactory;
+import com.javaclaw.desktop.RobotInput;
 import com.javaclaw.system.JShellRunner;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.ui.javafx.JfxUserInteractionPort;
@@ -73,6 +77,8 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -194,6 +200,28 @@ public class RootConfiguration {
     @Bean
     ProcessRunner processRunner(ManagedTaskExecutor executor) {
         return new ProcessRunner(executor);
+    }
+
+    @Bean
+    DesktopAutomation desktopAutomation(ProcessRunner processes) {
+        return new DesktopAutomation(processes);
+    }
+
+    @Bean
+    DesktopAutomationPort desktopAutomationPort(DesktopAutomation automation) {
+        return automation.create();
+    }
+
+    @Bean
+    @Lazy
+    RobotInput robotInput() {
+        return new RobotInput();
+    }
+
+    @Bean
+    DesktopToolFactory desktopToolFactory(
+            DesktopAutomationPort port, ObjectProvider<RobotInput> input) {
+        return new DesktopToolFactory(port, input::getObject);
     }
 
     @Bean

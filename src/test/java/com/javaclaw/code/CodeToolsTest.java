@@ -8,7 +8,10 @@ import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.ToolReviewMode;
 import com.javaclaw.platform.data.DataRoot;
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.process.ProcessRunner;
 import com.javaclaw.platform.spring.ApplicationContexts;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -34,8 +37,16 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  */
 class CodeToolsTest {
 
+    private final ManagedTaskExecutor executor = new ManagedTaskExecutor();
+    private final ProcessRunner processes = new ProcessRunner(executor);
+
+    @AfterEach
+    void closeExecutor() {
+        executor.close();
+    }
+
     private CodeTools tools() {
-        return new CodeTools(ToolCallOrigin.UNKNOWN);
+        return new CodeTools(ToolCallOrigin.UNKNOWN, processes);
     }
 
     private CodeTools tools(Path projectRoot) {
@@ -230,7 +241,7 @@ class CodeToolsTest {
         runGitInit(dir);
         Files.writeString(dir.resolve("hello.txt"), "hi\n");
 
-        CodeTools t = new CodeTools(ToolCallOrigin.UNKNOWN);
+        CodeTools t = new CodeTools(ToolCallOrigin.UNKNOWN, processes);
         t.setProjectRootForTest(dir);
         String out = t.gitStatus();
         assertTrue(out.contains("失败") && out.contains("严格项目文件隔离"), out);
@@ -240,7 +251,7 @@ class CodeToolsTest {
     void git_log_空仓库无提交时返回失败而非崩溃(@TempDir Path dir) throws Exception {
         assumeTrue(gitAvailable(), "环境无 git，跳过");
         runGitInit(dir);
-        CodeTools t = new CodeTools(ToolCallOrigin.UNKNOWN);
+        CodeTools t = new CodeTools(ToolCallOrigin.UNKNOWN, processes);
         t.setProjectRootForTest(dir);
         String out = t.gitLog(20, null);
         assertTrue(out.contains("失败") && out.contains("严格项目文件隔离"), out);

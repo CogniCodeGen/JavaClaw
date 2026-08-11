@@ -117,6 +117,8 @@ public final class SddHeadlessDriver {
                 null, skillRuntime,
                 () -> java.util.Objects.requireNonNull(sddTasks.get(), "SDD 任务用例尚未装配"),
                 rootContext.getBean(com.javaclaw.system.JShellRunner.class),
+                rootContext.getBean(com.javaclaw.platform.process.ProcessRunner.class),
+                rootContext.getBean(com.javaclaw.desktop.DesktopToolFactory.class),
                 rootContext.getBean(com.javaclaw.diagnostics.TraceRecorder.class), settings,
                 rootContext.getBean(com.javaclaw.config.EmailConfig.class),
                 rootContext.getBean(com.javaclaw.config.NotificationConfig.class),

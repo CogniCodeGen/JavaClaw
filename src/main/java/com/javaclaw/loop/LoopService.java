@@ -209,7 +209,8 @@ public final class LoopService {
                 CommandRunner commandRunner = new ProcessCommandRunner(
                         processes, runtime.getConfig().getLoopVerifyTimeoutSeconds());
                 var judge = plan.spec().useJudge()
-                        ? new AgentScopeCompletionJudge(plan.spec().workDir(), runtime.getModelFactory())
+                        ? new AgentScopeCompletionJudge(
+                                plan.spec().workDir(), runtime.getModelFactory(), processes)
                         : CompletionJudge.CONSERVATIVE_DENY;
 
                 LoopController controller = LoopController.create(

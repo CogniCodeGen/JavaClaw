@@ -33,7 +33,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@code desktop_launch 打开目标程序 → desktop_capture 截图 → 视觉模型看懂界面定位坐标 →
  * desktop_click / desktop_type 操作}。窗口枚举 / 激活在支持的平台上让定位更准，缺失则降级整屏截图。</p>
  *
- * @see DesktopAutomation 适配器工厂
+ * @see DesktopToolFactory 生命周期工厂
  */
 public class DesktopTools {
 
@@ -55,18 +55,12 @@ public class DesktopTools {
     private final ToolCallOrigin origin;
     private final Path screenshotsDir;
 
-    /**
-     * 全局共享的键鼠/截屏基座：AWT Robot 是原生资源（触碰图形工具链，macOS 走辅助功能层），
-     * 且桌面本是物理单例——来源令牌化只要求薄工具包装层逐 run 重建，底层基座无令牌语义，
-     * 逐 tick 新建（定时任务一分钟一次）纯属原生资源搅拌。
-     */
-    private static final RobotInput SHARED_INPUT = new RobotInput();
-
-    public DesktopTools(ToolCallOrigin origin, Path screenshotsDir) {
+    DesktopTools(ToolCallOrigin origin, Path screenshotsDir,
+                 DesktopAutomationPort port, RobotInput input) {
         this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
         this.screenshotsDir = screenshotsDir.toAbsolutePath().normalize();
-        this.port = DesktopAutomation.get();
-        this.input = SHARED_INPUT;
+        this.port = java.util.Objects.requireNonNull(port, "port");
+        this.input = java.util.Objects.requireNonNull(input, "input");
         log.debug("桌面自动化工具初始化完成: 适配器={}, 键鼠基座可用={}", port.platform(), input.isAvailable());
     }
 

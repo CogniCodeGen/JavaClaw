@@ -1,7 +1,9 @@
 package com.javaclaw.task;
 
 import com.javaclaw.agent.model.ToolResponse;
-import com.javaclaw.util.ProcessTerminator;
+import com.javaclaw.platform.process.ProcessRequest;
+import com.javaclaw.platform.process.ProcessResult;
+import com.javaclaw.platform.process.ProcessRunner;
 import com.javaclaw.util.PathGuard;
 import com.javaclaw.util.ProjectAccessPolicy;
 import io.agentscope.core.tool.Tool;
@@ -9,14 +11,12 @@ import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.time.Duration;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -73,8 +73,10 @@ public final class ValidationInspectionTools {
 
     /** 任务工作目录（归一化后的绝对路径）；为 null 表示未设定 → 拒绝一切访问 */
     private final Path workDir;
+    private final ProcessRunner processes;
 
-    public ValidationInspectionTools(String workDirPath) {
+    public ValidationInspectionTools(String workDirPath, ProcessRunner processes) {
+        this.processes = java.util.Objects.requireNonNull(processes, "processes");
         if (workDirPath == null || workDirPath.isBlank()) {
             this.workDir = null;
         } else {
@@ -313,61 +315,25 @@ public final class ValidationInspectionTools {
         }
 
         // 4) 实际执行
-        Process process = null;
         try {
-            ProcessBuilder pb;
-            String os = System.getProperty("os.name", "").toLowerCase();
-            if (os.contains("win")) {
-                pb = new ProcessBuilder("cmd.exe", "/c", trimmed);
-            } else {
-                pb = new ProcessBuilder("/bin/sh", "-c", trimmed);
-            }
-            pb.directory(cwd.toFile());
-            pb.redirectErrorStream(true);
-
             log.info("{} 执行：{} @ {}", tool, trimmed, cwd);
-            process = pb.start();
-
-            StringBuffer output = new StringBuffer();
-            java.util.concurrent.atomic.AtomicBoolean outputTruncated = new java.util.concurrent.atomic.AtomicBoolean();
-            Process started = process;
-            Thread outputPump = new Thread(() -> {
-                try (BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(started.getInputStream()))) {
-                    String line;
-                    int lineCount = 0;
-                    while ((line = reader.readLine()) != null) {
-                        if (lineCount++ < MAX_OUTPUT_LINES) output.append(line).append("\n");
-                        else outputTruncated.set(true);
-                    }
-                } catch (java.io.IOException ignored) {
-                    // 超时终止进程时输出流关闭属正常情况。
-                }
-            }, "inspect-command-output");
-            outputPump.setDaemon(true);
-            outputPump.start();
-
-            boolean finished = ProcessTerminator.waitForOrTerminateOnInterrupt(
-                    process, timeoutSec, TimeUnit.SECONDS);
-            if (!finished) {
-                ProcessTerminator.destroyTreeForcibly(process);
-                ProcessTerminator.waitForOrTerminateOnInterrupt(
-                        process, 2, TimeUnit.SECONDS);
-                outputPump.join(2_000);
-                appendTruncationNotice(output, outputTruncated.get());
+            ProcessRequest request = ProcessRequest.shell(
+                    "validation-" + tool, trimmed, Duration.ofSeconds(timeoutSec))
+                    .withWorkingDirectory(cwd)
+                    .withOutputLimit(ProcessRequest.DEFAULT_OUTPUT_LIMIT);
+            ProcessResult result = processes.run(request);
+            String output = boundedOutput(result);
+            if (result.timedOut()) {
                 return ToolResponse.timeout(tool, timeoutSec,
                         "已强制终止。\n命令: " + trimmed
-                                + "\n已捕获输出:\n" + truncated(output));
+                                + "\n已捕获输出:\n" + output);
             }
-            outputPump.join(2_000);
-            appendTruncationNotice(output, outputTruncated.get());
-
-            int exitCode = process.exitValue();
+            int exitCode = result.exitCode();
             String body = "命令: " + trimmed
                     + "\n工作目录: " + cwd
                     + (cwd.equals(workDir) ? "" : "（任务根: " + workDir + "）")
                     + "\n退出码: " + exitCode
-                    + "\n输出:\n" + truncated(output);
+                    + "\n输出:\n" + output;
             if (exitCode == 0) {
                 return ToolResponse.success(tool, body);
             }
@@ -375,7 +341,6 @@ public final class ValidationInspectionTools {
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            ProcessTerminator.destroyTreeForcibly(process);
             return ToolResponse.error(tool, "命令执行被中断");
         } catch (Exception e) {
             log.warn("{} 执行异常：{}", tool, e.getMessage());
@@ -383,10 +348,17 @@ public final class ValidationInspectionTools {
         }
     }
 
-    private static void appendTruncationNotice(StringBuffer output, boolean wasTruncated) {
-        if (wasTruncated) {
-            output.append("\n...（输出已截断，超过 ").append(MAX_OUTPUT_LINES).append(" 行）");
+    private static String boundedOutput(ProcessResult result) {
+        String combined = result.stdout()
+                + (result.stdout().isBlank() || result.stderr().isBlank() ? "" : "\n")
+                + result.stderr();
+        List<String> lines = combined.lines().limit(MAX_OUTPUT_LINES + 1L).toList();
+        boolean truncated = result.outputTruncated() || lines.size() > MAX_OUTPUT_LINES;
+        String output = lines.stream().limit(MAX_OUTPUT_LINES).collect(Collectors.joining("\n"));
+        if (truncated) {
+            output += "\n...（输出已截断，超过 " + MAX_OUTPUT_LINES + " 行或字节上限）";
         }
+        return truncated(output);
     }
 
     /**

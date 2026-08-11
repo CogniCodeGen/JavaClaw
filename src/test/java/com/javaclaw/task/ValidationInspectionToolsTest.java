@@ -1,6 +1,7 @@
 package com.javaclaw.task;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
@@ -11,10 +12,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ValidationInspectionToolsTest {
 
+    private final com.javaclaw.platform.execution.ManagedTaskExecutor executor =
+            new com.javaclaw.platform.execution.ManagedTaskExecutor();
+
+    @AfterEach
+    void closeExecutor() {
+        executor.close();
+    }
+
     @Test
     void 严格隔离直接禁用构建命令(@TempDir Path dir) {
         Path marker = dir.resolve("should-not-exist");
-        ValidationInspectionTools tools = new ValidationInspectionTools(dir.toString());
+        ValidationInspectionTools tools = new ValidationInspectionTools(
+                dir.toString(), new com.javaclaw.platform.process.ProcessRunner(executor));
 
         String result = tools.inspectCompile(
                 "mvn --version\ntouch " + marker.getFileName(), null);

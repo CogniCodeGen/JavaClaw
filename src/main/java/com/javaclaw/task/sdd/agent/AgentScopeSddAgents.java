@@ -11,6 +11,7 @@ import com.javaclaw.skill.SkillRuntimeServices;
 import com.javaclaw.skill.SkillUsageTracker;
 import com.javaclaw.task.TaskTokenHook;
 import com.javaclaw.task.ValidationInspectionTools;
+import com.javaclaw.platform.process.ProcessRunner;
 import com.javaclaw.task.sdd.SddAgents;
 import com.javaclaw.task.sdd.SddTokenSink;
 import com.javaclaw.task.sdd.SddWorkNotes;
@@ -63,6 +64,7 @@ public final class AgentScopeSddAgents implements SddAgents {
     private final SkillUsageTracker skillUsage;
     private final SddTokenSink tokenSink;
     private final AgentConfig settings;
+    private final ProcessRunner processes;
 
     private long structuredTimeoutSec = 120;
     private long execTimeoutSec = 300;
@@ -70,7 +72,8 @@ public final class AgentScopeSddAgents implements SddAgents {
 
     public AgentScopeSddAgents(ModelFactory modelFactory, AgentConfig settings,
                                java.util.Map<String, Object> capabilityTools,
-                               SkillRuntimeServices skillRuntime, SddTokenSink tokenSink) {
+                               SkillRuntimeServices skillRuntime, SddTokenSink tokenSink,
+                               ProcessRunner processes) {
         this.modelFactory = modelFactory;
         this.settings = Objects.requireNonNull(settings, "settings");
         this.capabilityTools = capabilityTools == null ? java.util.Map.of() : capabilityTools;
@@ -78,6 +81,7 @@ public final class AgentScopeSddAgents implements SddAgents {
         this.skills = runtime.manager();
         this.skillUsage = runtime.usage();
         this.tokenSink = tokenSink == null ? SddTokenSink.NOOP : tokenSink;
+        this.processes = Objects.requireNonNull(processes, "processes");
     }
 
     /** 把阶段标签绑进 token 钩子需要的 (in,out) 回调。 */
@@ -332,7 +336,7 @@ public final class AgentScopeSddAgents implements SddAgents {
         }
         // 只读自检工具：执行体据此核实自己的产出
         if (ctx.workDir() != null && !ctx.workDir().isBlank()) {
-            toolkit.registerTool(new ValidationInspectionTools(ctx.workDir()));
+            toolkit.registerTool(new ValidationInspectionTools(ctx.workDir(), processes));
         }
         // 技能按需拉取工具：配合 withSkillsCompact 的目录式注入，让执行体只在需要时拉技能全文
         toolkit.registerTool(new com.javaclaw.skill.SkillTools(skills, skillUsage));

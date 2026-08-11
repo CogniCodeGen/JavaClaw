@@ -11,6 +11,7 @@ import com.javaclaw.loop.CompletionJudge;
 import com.javaclaw.loop.LoopConstants;
 import com.javaclaw.prompt.LoopPrompts;
 import com.javaclaw.task.ValidationInspectionTools;
+import com.javaclaw.platform.process.ProcessRunner;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.memory.autocontext.AutoContextMemory;
 import io.agentscope.core.message.Msg;
@@ -32,6 +33,7 @@ public final class AgentScopeCompletionJudge implements CompletionJudge {
     private final String workDir;
     private final ModelFactory modelFactory;
     private final long timeoutSeconds;
+    private final ProcessRunner processes;
 
     /**
      * 自上次 {@link #drainUsedTokens()} 以来累计的模型用量：验收/仲裁调用由控制器逐轮取走
@@ -41,10 +43,12 @@ public final class AgentScopeCompletionJudge implements CompletionJudge {
     private final java.util.concurrent.atomic.AtomicLong usedTokens =
             new java.util.concurrent.atomic.AtomicLong();
 
-    public AgentScopeCompletionJudge(String workDir, ModelFactory modelFactory) {
+    public AgentScopeCompletionJudge(String workDir, ModelFactory modelFactory,
+                                     ProcessRunner processes) {
         this.workDir = workDir;
         this.modelFactory = modelFactory;
         this.timeoutSeconds = LoopConstants.JUDGE_TIMEOUT_SECONDS;
+        this.processes = java.util.Objects.requireNonNull(processes, "processes");
     }
 
     @Override
@@ -101,7 +105,7 @@ public final class AgentScopeCompletionJudge implements CompletionJudge {
         try {
             Toolkit toolkit = new Toolkit();
             if (workDir != null && !workDir.isBlank()) {
-                toolkit.registerTool(new ValidationInspectionTools(workDir));
+                toolkit.registerTool(new ValidationInspectionTools(workDir, processes));
             }
             ReActAgent judge = ReActAgent.builder()
                     .name("循环-验收")

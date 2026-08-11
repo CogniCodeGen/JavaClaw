@@ -17,6 +17,7 @@ import com.javaclaw.memory.embed.EmbeddingGateway;
 import com.javaclaw.platform.execution.TaskHandle;
 import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
+import com.javaclaw.platform.process.ProcessRunner;
 import com.javaclaw.application.plugin.PluginToolGateway;
 import com.javaclaw.runtime.WorkspaceContext;
 import com.javaclaw.diagnostics.TraceRecorder;
@@ -143,6 +144,8 @@ public final class AgentRuntime {
     /** 工作区后台任务的生命周期边界，不由本对象关闭。 */
     private final TaskScope workspaceTasks;
     private final JShellRunner jshellRunner;
+    private final ProcessRunner processRunner;
+    private final com.javaclaw.desktop.DesktopToolFactory desktopTools;
     private final TraceRecorder traceRecorder;
 
 
@@ -172,6 +175,8 @@ public final class AgentRuntime {
             SkillRuntimeServices skillRuntime,
             java.util.function.Supplier<SddTaskApplicationService> sddTasks,
             JShellRunner jshellRunner,
+            ProcessRunner processRunner,
+            com.javaclaw.desktop.DesktopToolFactory desktopTools,
             TraceRecorder traceRecorder,
             AgentConfig config,
             com.javaclaw.config.EmailConfig emailConfig,
@@ -207,6 +212,8 @@ public final class AgentRuntime {
         this.skillRuntime = java.util.Objects.requireNonNull(skillRuntime, "skillRuntime");
         this.sddTasks = java.util.Objects.requireNonNull(sddTasks, "sddTasks");
         this.jshellRunner = java.util.Objects.requireNonNull(jshellRunner, "jshellRunner");
+        this.processRunner = java.util.Objects.requireNonNull(processRunner, "processRunner");
+        this.desktopTools = java.util.Objects.requireNonNull(desktopTools, "desktopTools");
         this.traceRecorder = java.util.Objects.requireNonNull(traceRecorder, "traceRecorder");
 
         // 1. 模型、计量、记忆与嵌入均由工作区 Spring Context 管理。
@@ -228,7 +235,7 @@ public final class AgentRuntime {
         this.expertManager = new ExpertManager(
                 modelFactory, browserManager, siteCredentialManager,
                 ToolCallOrigin.INTERACTIVE, customAgentConfig, workspace, config,
-                emailConfig, notificationConfig, commandTools);
+                emailConfig, notificationConfig, commandTools, desktopTools);
         this.knowledgeExpert = new KnowledgeExpert(
                 modelFactory,
                 embeddingGateway,
@@ -301,6 +308,8 @@ public final class AgentRuntime {
     }
     public TaskScope getWorkspaceTasks() { return workspaceTasks; }
     public JShellRunner getJshellRunner() { return jshellRunner; }
+    public ProcessRunner getProcessRunner() { return processRunner; }
+    public com.javaclaw.desktop.DesktopToolFactory getDesktopTools() { return desktopTools; }
     public TraceRecorder getTraceRecorder() { return traceRecorder; }
     public TokenTracker getTokenTracker() { return tokenTracker; }
     public MemoryManager getMemoryManager() { return memoryManager; }

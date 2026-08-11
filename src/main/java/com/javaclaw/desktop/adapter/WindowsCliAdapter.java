@@ -4,6 +4,7 @@ import com.javaclaw.desktop.Capabilities;
 import com.javaclaw.desktop.DesktopException;
 import com.javaclaw.desktop.UiElement;
 import com.javaclaw.desktop.WindowRef;
+import com.javaclaw.platform.process.ProcessRunner;
 
 import java.awt.GraphicsEnvironment;
 import java.awt.Rectangle;
@@ -20,6 +21,10 @@ import java.util.Set;
  * 属后续增强；v1 仅取标题，{@link WindowRef#bounds()} 留空，上层据此降级为整屏截图 + 视觉定位。</p>
  */
 public final class WindowsCliAdapter extends AbstractCliAdapter {
+
+    public WindowsCliAdapter(ProcessRunner processes) {
+        super(processes);
+    }
 
     /** 枚举有可见标题的进程窗口，输出 {@code 进程名 \t 标题}（[char]9 即制表符）。 */
     private static final String PS_LIST_WINDOWS =

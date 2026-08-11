@@ -3,6 +3,7 @@ package com.javaclaw.desktop.adapter;
 import com.javaclaw.desktop.Capabilities;
 import com.javaclaw.desktop.DesktopException;
 import com.javaclaw.desktop.WindowRef;
+import com.javaclaw.platform.process.ProcessRunner;
 
 import java.awt.Rectangle;
 import java.util.ArrayList;
@@ -18,6 +19,10 @@ import java.util.List;
  * probe 会读取 {@code XDG_SESSION_TYPE} 给出提示，引导用户改用 X11 会话或配置 ydotool。</p>
  */
 public final class LinuxCliAdapter extends AbstractCliAdapter {
+
+    public LinuxCliAdapter(ProcessRunner processes) {
+        super(processes);
+    }
 
     @Override
     public String platform() {

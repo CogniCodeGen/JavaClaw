@@ -2,17 +2,16 @@ package com.javaclaw.desktop.adapter;
 
 import com.javaclaw.desktop.DesktopAutomationPort;
 import com.javaclaw.desktop.DesktopException;
-import com.javaclaw.util.ProcessTerminator;
+import com.javaclaw.platform.process.ProcessRequest;
+import com.javaclaw.platform.process.ProcessResult;
+import com.javaclaw.platform.process.ProcessRunner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.Arrays;
 import java.util.Locale;
-import java.util.concurrent.TimeUnit;
 
 /**
  * CLI 适配器基类 —— 把"调用命令行工具、超时控制、流读取"这套样板收敛到一处。
@@ -20,12 +19,15 @@ import java.util.concurrent.TimeUnit;
  * <p>各 OS 适配器（macOS / Windows / Linux）只需关心"组什么命令、怎么解析输出"，
  * 进程执行、并发读流（避免缓冲区写满死锁）、超时强杀、退出码校验等共性逻辑都在这里。</p>
  *
- * <p>关键实现点：stdout / stderr 由独立守护线程并发抽空，再 {@code waitFor} 限时——
- * 这是 {@link ProcessBuilder} 的正确用法，避免大输出把管道写满导致子进程阻塞、父进程空等。</p>
+ * <p>进程、输出管道、超时、中断和进程树清理由 {@link ProcessRunner} 统一治理；适配器本身
+ * 无线程与进程生命周期，因而可以安全地由 Spring 作为进程级对象共享。</p>
  */
 abstract class AbstractCliAdapter implements DesktopAutomationPort {
 
+    private static final int OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024;
+
     protected final Logger log = LoggerFactory.getLogger(getClass());
+    private final ProcessRunner processes;
 
     /** 默认命令超时（秒）：CLI 桥（osascript / powershell / wmctrl）均为轻量查询，几秒足够。 */
     protected static final long DEFAULT_TIMEOUT_SECONDS = 15;
@@ -41,6 +43,10 @@ abstract class AbstractCliAdapter implements DesktopAutomationPort {
         }
     }
 
+    protected AbstractCliAdapter(ProcessRunner processes) {
+        this.processes = java.util.Objects.requireNonNull(processes, "processes");
+    }
+
     /**
      * 执行命令并返回结果（带默认超时）。
      *
@@ -54,48 +60,25 @@ abstract class AbstractCliAdapter implements DesktopAutomationPort {
     /** 执行命令并返回结果（指定超时秒数）。 */
     protected CliResult exec(long timeoutSeconds, String... command) {
         log.debug("CLI 执行: {}", String.join(" ", command));
-        Process proc;
         try {
-            proc = new ProcessBuilder(command).start();
-        } catch (IOException e) {
-            throw new DesktopException("无法启动命令: " + command[0] + " — " + e.getMessage(), e);
-        }
-        StringBuilder out = new StringBuilder();
-        StringBuilder err = new StringBuilder();
-        Thread tOut = pump(proc.getInputStream(), out);
-        Thread tErr = pump(proc.getErrorStream(), err);
-        try {
-            if (!ProcessTerminator.waitForOrTerminateOnInterrupt(
-                    proc, timeoutSeconds, TimeUnit.SECONDS)) {
-                ProcessTerminator.destroyTreeForcibly(proc);
+            ProcessRequest request = ProcessRequest.argv(
+                    "desktop-" + command[0], Arrays.asList(command),
+                    Duration.ofSeconds(timeoutSeconds)).withOutputLimit(OUTPUT_LIMIT_BYTES);
+            ProcessResult result = processes.run(request);
+            if (result.timedOut()) {
                 throw new DesktopException("命令超时(" + timeoutSeconds + "s): " + command[0]);
             }
-            tOut.join(1000);
-            tErr.join(1000);
+            String stderr = result.stderr();
+            if (result.outputTruncated()) {
+                stderr += "\n...（命令输出超过 " + OUTPUT_LIMIT_BYTES + " 字节，已截断）";
+            }
+            return new CliResult(result.exitCode(), result.stdout(), stderr);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            ProcessTerminator.destroyTreeForcibly(proc);
             throw new DesktopException("命令执行被中断: " + command[0], e);
+        } catch (IOException e) {
+            throw new DesktopException("无法执行命令: " + command[0] + " — " + e.getMessage(), e);
         }
-        return new CliResult(proc.exitValue(), out.toString(), err.toString());
-    }
-
-    /** 起一个守护线程把输入流逐行抽到缓冲区，避免管道写满导致死锁。 */
-    private Thread pump(InputStream in, StringBuilder sink) {
-        Thread t = new Thread(() -> {
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(in, StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    sink.append(line).append('\n');
-                }
-            } catch (IOException ignored) {
-                // 进程结束后流关闭属正常，忽略
-            }
-        });
-        t.setDaemon(true);
-        t.start();
-        return t;
     }
 
     /** 探测某命令行工具是否存在（Windows 用 where，类 Unix 用 which）。 */

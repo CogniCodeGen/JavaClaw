@@ -113,7 +113,7 @@ public final class AgentScopeLoopRunner implements LoopIterationRunner {
                 runtime.getSiteCredentialManager(), this.origin,
                 runtime.getCustomAgentConfig(), runtime.getWorkspace(), runtime.getConfig(),
                 runtime.getEmailConfig(), runtime.getNotificationConfig(),
-                runtime.getCommandTools());
+                runtime.getCommandTools(), runtime.getDesktopTools());
         this.toolRouter = config.isToolRoutingEnabled()
                 ? new ToolRouter(runtime.getModelFactory().createLightChatModel(),
                         runtime.getTokenTracker(), runtime.getSkillRuntime().manager(), config)

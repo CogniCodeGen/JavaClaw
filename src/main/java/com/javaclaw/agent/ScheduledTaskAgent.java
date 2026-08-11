@@ -143,7 +143,7 @@ public final class ScheduledTaskAgent implements ScheduledTaskRunner {
                     runtime.getSiteCredentialManager(), origin,
                     runtime.getCustomAgentConfig(), runtime.getWorkspace(), runtime.getConfig(),
                     runtime.getEmailConfig(), runtime.getNotificationConfig(),
-                    runtime.getCommandTools());
+                    runtime.getCommandTools(), runtime.getDesktopTools());
             Toolkit toolkit = ToolkitAssembler.buildBaseToolkit(runtime, expertManager, false, origin);
 
             RoutingResult routing = route(prompt);

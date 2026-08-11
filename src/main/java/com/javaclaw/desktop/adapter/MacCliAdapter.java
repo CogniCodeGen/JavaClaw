@@ -4,6 +4,7 @@ import com.javaclaw.desktop.Capabilities;
 import com.javaclaw.desktop.DesktopException;
 import com.javaclaw.desktop.UiElement;
 import com.javaclaw.desktop.WindowRef;
+import com.javaclaw.platform.process.ProcessRunner;
 
 import java.awt.Rectangle;
 import java.util.ArrayList;
@@ -21,6 +22,10 @@ import java.util.Set;
  * 授权运行 JVM 的进程；未授权时相关命令报错，{@link #probe()} 会探测到并在提示里引导授权。</p>
  */
 public final class MacCliAdapter extends AbstractCliAdapter {
+
+    public MacCliAdapter(ProcessRunner processes) {
+        super(processes);
+    }
 
     /**
      * 枚举可见窗口的 AppleScript：遍历非后台进程的每个窗口，逐行输出

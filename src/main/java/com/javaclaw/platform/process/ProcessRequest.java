@@ -34,8 +34,9 @@ public record ProcessRequest(
             throw new IllegalArgumentException("进程名称不能为空");
         }
         if (command == null || command.isEmpty()
-                || command.stream().anyMatch(value -> value == null || value.isEmpty())) {
-            throw new IllegalArgumentException("进程 argv 不能为空且不能包含空参数");
+                || command.getFirst() == null || command.getFirst().isBlank()
+                || command.stream().anyMatch(java.util.Objects::isNull)) {
+            throw new IllegalArgumentException("进程 argv 必须包含有效的可执行文件且不能包含 null");
         }
         command = List.copyOf(command);
         workingDirectory = workingDirectory == null

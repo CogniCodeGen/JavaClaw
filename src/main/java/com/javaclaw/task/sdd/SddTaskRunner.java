@@ -67,9 +67,9 @@ public final class SddTaskRunner implements AutoCloseable {
         if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
         this.store = new SpecStore(ctx.workDir(), jdbc, workspaceId);
         this.agents = new AgentScopeSddAgents(
-                modelFactory, settings, this.capabilityTools, skills, tokenSink);
+                modelFactory, settings, this.capabilityTools, skills, tokenSink, processes);
         this.commandRunner = new ProcessCommandRunner(processes);
-        this.critic = new AgentScopeCriticJudge(ctx.workDir(), modelFactory, tokenSink);
+        this.critic = new AgentScopeCriticJudge(ctx.workDir(), modelFactory, tokenSink, processes);
         ScenarioVerifier verifier = new ScenarioVerifier(ctx.workDir(), commandRunner, critic);
         this.orchestrator = new SddOrchestrator(ctx, store, verifier, agents,
                 gate == null ? new AutoApproveReviewGate() : gate,

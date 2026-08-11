@@ -6,6 +6,7 @@ import com.javaclaw.agent.model.StructuredCalls;
 import com.javaclaw.prompt.SddPrompts;
 import com.javaclaw.task.TaskTokenHook;
 import com.javaclaw.task.ValidationInspectionTools;
+import com.javaclaw.platform.process.ProcessRunner;
 import com.javaclaw.task.sdd.SddTokenSink;
 import com.javaclaw.task.sdd.spec.Scenario;
 import com.javaclaw.task.sdd.verify.CriticJudge;
@@ -36,12 +37,15 @@ public final class AgentScopeCriticJudge implements CriticJudge {
     private final String workDir;
     private final ModelFactory modelFactory;
     private final SddTokenSink tokenSink;
+    private final ProcessRunner processes;
     private long timeoutSec = 120;
 
-    public AgentScopeCriticJudge(String workDir, ModelFactory modelFactory, SddTokenSink tokenSink) {
+    public AgentScopeCriticJudge(String workDir, ModelFactory modelFactory, SddTokenSink tokenSink,
+                                 ProcessRunner processes) {
         this.workDir = workDir;
         this.modelFactory = modelFactory;
         this.tokenSink = tokenSink == null ? SddTokenSink.NOOP : tokenSink;
+        this.processes = java.util.Objects.requireNonNull(processes, "processes");
     }
 
     private AutoContextMemory buildMemory() {
@@ -55,7 +59,7 @@ public final class AgentScopeCriticJudge implements CriticJudge {
         try {
             Toolkit toolkit = new Toolkit();
             if (workDir != null && !workDir.isBlank()) {
-                toolkit.registerTool(new ValidationInspectionTools(workDir));
+                toolkit.registerTool(new ValidationInspectionTools(workDir, processes));
             }
             ReActAgent critic = ReActAgent.builder()
                     .name("验收-critic")

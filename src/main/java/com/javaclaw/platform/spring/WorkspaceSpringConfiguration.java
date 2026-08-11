@@ -229,6 +229,8 @@ public class WorkspaceSpringConfiguration {
             SkillRuntimeServices skills,
             ObjectProvider<SddTaskApplicationService> sddTasks,
             com.javaclaw.system.JShellRunner jshellRunner,
+            com.javaclaw.platform.process.ProcessRunner processRunner,
+            com.javaclaw.desktop.DesktopToolFactory desktopTools,
             com.javaclaw.diagnostics.TraceRecorder traceRecorder,
             com.javaclaw.config.AgentConfig settings,
             com.javaclaw.config.EmailConfig emailSettings,
@@ -240,7 +242,7 @@ public class WorkspaceSpringConfiguration {
         return new AgentRuntime(options.browserManager(), models, tokens, memories, embeddings,
                 customAgents, siteCredentials,
                 mcpConfigurations, mcpClients, workspaceTaskScope, schedules, skills,
-                sddTasks::getObject, jshellRunner, traceRecorder, settings,
+                sddTasks::getObject, jshellRunner, processRunner, desktopTools, traceRecorder, settings,
                 emailSettings, notificationSettings, commandTools, pluginTools, workspace,
                 knowledgePreferences);
     }
