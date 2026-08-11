@@ -99,7 +99,8 @@ public final class UiScreenshotExporter {
             runtime = workspaceRuntime.agentRuntime();
             chatService = workspaceRuntime.chatService();
 
-            ChatViewController chatView = new ChatViewController(applicationKernel);
+            ChatViewController chatView = new ChatViewController(applicationKernel,
+                    springContext.getBean(com.javaclaw.platform.fxml.SpringFxmlLoader.class));
             Scene scene = new Scene(chatView.getOuterRoot(), 1200, 700);
             addStyles(scene);
             com.javaclaw.ui.javafx.theme.ThemeManager.init();

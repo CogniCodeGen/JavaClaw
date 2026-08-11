@@ -1302,10 +1302,21 @@
     -fx-background: transparent;
     -fx-background-color: transparent;
     -fx-border-color: transparent;
-    -fx-padding: 0;
+    -fx-padding: 2 8 8 8;
 }
 
 .sidebar-list-scroll > .viewport {
+    -fx-background-color: transparent;
+}
+
+.sidebar-list-scroll .list-cell {
+    -fx-background-color: transparent;
+    -fx-padding: 0 0 3 0;
+}
+
+.sidebar-list-scroll .virtual-flow,
+.sidebar-list-scroll .clipped-container,
+.sidebar-list-scroll .sheet {
     -fx-background-color: transparent;
 }
 

@@ -1,0 +1,216 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.ContextMenu?>
+<?import javafx.scene.control.CustomMenuItem?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.SeparatorMenuItem?>
+<?import javafx.scene.control.Tooltip?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox fx:id="root" styleClass="sidebar-bottom-bar"
+      xmlns="http://javafx.com/javafx/25"
+      xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.javaclaw.chat.SidebarProfileController">
+    <fx:define>
+        <ContextMenu fx:id="profileMenu" autoFix="true" autoHide="true" hideOnEscape="true"
+                     styleClass="sidebar-profile-popup"
+                     onShowing="#onProfileMenuShowing" onHidden="#onProfileMenuHidden"
+                     onAutoHide="#onProfileMenuAutoHide">
+            <items>
+                <CustomMenuItem text="当前用户" hideOnClick="false"
+                                styleClass="sidebar-profile-header-item">
+                    <content>
+                        <HBox alignment="CENTER_LEFT" spacing="10.0" mouseTransparent="true"
+                              styleClass="sidebar-profile-popup-header">
+                            <children>
+                                <Label text="Y" styleClass="sidebar-avatar"/>
+                                <VBox spacing="1.0">
+                                    <children>
+                                        <Label text="你" styleClass="sidebar-user-name"/>
+                                        <Label text="本地工作区 · 离线优先" styleClass="sidebar-user-team"/>
+                                    </children>
+                                </VBox>
+                            </children>
+                        </HBox>
+                    </content>
+                </CustomMenuItem>
+                <SeparatorMenuItem/>
+                <CustomMenuItem text="技能中心" onAction="#onOpenSkillCenterRequested"
+                                styleClass="sidebar-profile-menu-item">
+                    <content>
+                        <HBox fx:id="skillNavRow" alignment="CENTER_LEFT" spacing="10.0" minWidth="176.0"
+                              pickOnBounds="true"
+                              styleClass="sidebar-action-row, sidebar-nav-row">
+                            <padding><Insets top="6.0" right="10.0" bottom="6.0" left="12.0"/></padding>
+                            <children>
+                                <Label text="⚙" styleClass="sidebar-nav-icon"/>
+                                <Label text="技能中心" styleClass="sidebar-nav-text"/>
+                                <Region HBox.hgrow="ALWAYS"/>
+                                <Label fx:id="skillNavBadge" visible="false" managed="false"
+                                       styleClass="sidebar-nav-badge"/>
+                            </children>
+                        </HBox>
+                    </content>
+                </CustomMenuItem>
+                <CustomMenuItem text="MCP 服务器" onAction="#onOpenMcpRequested"
+                                styleClass="sidebar-profile-menu-item">
+                    <content>
+                        <HBox fx:id="mcpNavRow" alignment="CENTER_LEFT" spacing="10.0" minWidth="176.0"
+                              pickOnBounds="true"
+                              styleClass="sidebar-action-row, sidebar-nav-row">
+                            <padding><Insets top="6.0" right="10.0" bottom="6.0" left="12.0"/></padding>
+                            <children>
+                                <Label text="🔌" styleClass="sidebar-nav-icon"/>
+                                <Label text="MCP 服务器" styleClass="sidebar-nav-text"/>
+                                <Region HBox.hgrow="ALWAYS"/>
+                                <Label text="⌘M" styleClass="sidebar-nav-shortcut"/>
+                            </children>
+                        </HBox>
+                    </content>
+                </CustomMenuItem>
+                <CustomMenuItem text="定时任务" onAction="#onOpenSchedulerRequested"
+                                styleClass="sidebar-profile-menu-item">
+                    <content>
+                        <HBox fx:id="scheduleNavRow" alignment="CENTER_LEFT" spacing="10.0" minWidth="176.0"
+                              pickOnBounds="true"
+                              styleClass="sidebar-action-row, sidebar-nav-row">
+                            <padding><Insets top="6.0" right="10.0" bottom="6.0" left="12.0"/></padding>
+                            <children>
+                                <Label text="⏰" styleClass="sidebar-nav-icon"/>
+                                <Label text="定时任务" styleClass="sidebar-nav-text"/>
+                                <Region HBox.hgrow="ALWAYS"/>
+                                <Label fx:id="scheduleNavBadge" visible="false" managed="false"
+                                       styleClass="sidebar-nav-badge"/>
+                            </children>
+                        </HBox>
+                    </content>
+                </CustomMenuItem>
+                <CustomMenuItem text="知识库" onAction="#onOpenKnowledgeBaseRequested"
+                                styleClass="sidebar-profile-menu-item">
+                    <content>
+                        <HBox fx:id="knowledgeNavRow" alignment="CENTER_LEFT" spacing="10.0" minWidth="176.0"
+                              pickOnBounds="true"
+                              styleClass="sidebar-action-row, sidebar-nav-row">
+                            <padding><Insets top="6.0" right="10.0" bottom="6.0" left="12.0"/></padding>
+                            <children>
+                                <Label text="📚" styleClass="sidebar-nav-icon"/>
+                                <Label text="知识库" styleClass="sidebar-nav-text"/>
+                                <Region HBox.hgrow="ALWAYS"/>
+                            </children>
+                        </HBox>
+                    </content>
+                </CustomMenuItem>
+                <CustomMenuItem text="记忆中心" onAction="#onOpenMemoryCenterRequested"
+                                styleClass="sidebar-profile-menu-item">
+                    <content>
+                        <HBox fx:id="memoryNavRow" alignment="CENTER_LEFT" spacing="10.0" minWidth="176.0"
+                              pickOnBounds="true"
+                              styleClass="sidebar-action-row, sidebar-nav-row">
+                            <padding><Insets top="6.0" right="10.0" bottom="6.0" left="12.0"/></padding>
+                            <children>
+                                <Label text="🧠" styleClass="sidebar-nav-icon"/>
+                                <Label text="记忆中心" styleClass="sidebar-nav-text"/>
+                                <Region HBox.hgrow="ALWAYS"/>
+                            </children>
+                        </HBox>
+                    </content>
+                </CustomMenuItem>
+                <CustomMenuItem text="工作流中心" onAction="#onOpenWorkflowCenterRequested"
+                                styleClass="sidebar-profile-menu-item">
+                    <content>
+                        <HBox fx:id="workflowNavRow" alignment="CENTER_LEFT" spacing="10.0" minWidth="176.0"
+                              pickOnBounds="true"
+                              styleClass="sidebar-action-row, sidebar-nav-row">
+                            <padding><Insets top="6.0" right="10.0" bottom="6.0" left="12.0"/></padding>
+                            <children>
+                                <Label text="⎇" styleClass="sidebar-nav-icon"/>
+                                <Label text="工作流中心" styleClass="sidebar-nav-text"/>
+                                <Region HBox.hgrow="ALWAYS"/>
+                            </children>
+                        </HBox>
+                    </content>
+                </CustomMenuItem>
+                <CustomMenuItem text="托管任务" onAction="#onOpenTaskManagerRequested"
+                                styleClass="sidebar-profile-menu-item">
+                    <content>
+                        <HBox fx:id="taskNavRow" alignment="CENTER_LEFT" spacing="10.0" minWidth="176.0"
+                              pickOnBounds="true"
+                              styleClass="sidebar-action-row, sidebar-nav-row">
+                            <padding><Insets top="6.0" right="10.0" bottom="6.0" left="12.0"/></padding>
+                            <children>
+                                <Label text="▦" styleClass="sidebar-nav-icon"/>
+                                <Label text="托管任务" styleClass="sidebar-nav-text"/>
+                                <Region HBox.hgrow="ALWAYS"/>
+                                <Label fx:id="taskNavBadge" visible="false" managed="false"
+                                       styleClass="sidebar-nav-badge"/>
+                            </children>
+                        </HBox>
+                    </content>
+                </CustomMenuItem>
+                <CustomMenuItem text="插件中心" onAction="#onOpenPluginCenterRequested"
+                                styleClass="sidebar-profile-menu-item">
+                    <content>
+                        <HBox fx:id="pluginNavRow" alignment="CENTER_LEFT" spacing="10.0" minWidth="176.0"
+                              pickOnBounds="true"
+                              styleClass="sidebar-action-row, sidebar-nav-row">
+                            <padding><Insets top="6.0" right="10.0" bottom="6.0" left="12.0"/></padding>
+                            <children>
+                                <Label text="🧩" styleClass="sidebar-nav-icon"/>
+                                <Label text="插件中心" styleClass="sidebar-nav-text"/>
+                                <Region HBox.hgrow="ALWAYS"/>
+                            </children>
+                        </HBox>
+                    </content>
+                </CustomMenuItem>
+                <SeparatorMenuItem/>
+                <CustomMenuItem text="设置" onAction="#onOpenSettingsRequested"
+                                styleClass="sidebar-profile-menu-item">
+                    <content>
+                        <HBox fx:id="settingsNavRow" alignment="CENTER_LEFT" spacing="10.0" minWidth="176.0"
+                              pickOnBounds="true"
+                              styleClass="sidebar-action-row, sidebar-nav-row">
+                            <padding><Insets top="6.0" right="10.0" bottom="6.0" left="12.0"/></padding>
+                            <children>
+                                <Label text="⚙" styleClass="sidebar-nav-icon"/>
+                                <Label text="设置" styleClass="sidebar-nav-text"/>
+                                <Region HBox.hgrow="ALWAYS"/>
+                                <Label text="⌘," styleClass="sidebar-nav-shortcut"/>
+                            </children>
+                        </HBox>
+                    </content>
+                </CustomMenuItem>
+            </items>
+        </ContextMenu>
+    </fx:define>
+            <padding><Insets top="10.0" right="8.0" bottom="12.0" left="8.0"/></padding>
+            <children>
+                <Button fx:id="profileMenuButton" maxWidth="1.7976931348623157E308"
+                        contentDisplay="GRAPHIC_ONLY" accessibleText="个人菜单"
+                        onAction="#toggleProfileMenu"
+                        styleClass="sidebar-profile-menu-button">
+                    <tooltip><Tooltip text="打开个人菜单"/></tooltip>
+                    <graphic>
+                        <HBox alignment="CENTER_LEFT" spacing="10.0" maxWidth="1.7976931348623157E308"
+                              prefWidth="168.0" mouseTransparent="true">
+                            <children>
+                                <Label text="Y" styleClass="sidebar-avatar"/>
+                                <VBox spacing="1.0">
+                                    <children>
+                                        <Label text="你" styleClass="sidebar-user-name"/>
+                                        <Label text="本地工作区 · 离线优先" styleClass="sidebar-user-team"/>
+                                    </children>
+                                </VBox>
+                                <Region HBox.hgrow="ALWAYS"/>
+                                <Label fx:id="profileMenuBadgeLabel" visible="false" managed="false"
+                                       styleClass="sidebar-profile-menu-badge"/>
+                                <Label text="⌃" styleClass="sidebar-profile-menu-chevron"/>
+                            </children>
+                        </HBox>
+                    </graphic>
+                </Button>
+            </children>
+        </VBox>

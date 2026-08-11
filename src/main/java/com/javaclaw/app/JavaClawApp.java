@@ -142,7 +142,8 @@ public class JavaClawApp extends Application {
 
             // 4. 构建聊天界面
             log.info("正在构建聊天界面...");
-            chatView = new ChatViewController(applicationKernel);
+            chatView = new ChatViewController(applicationKernel,
+                    springContext.getBean(com.javaclaw.platform.fxml.SpringFxmlLoader.class));
 
             // 5. 创建场景并加载 CSS 样式
             Scene scene = new Scene(chatView.getOuterRoot(), 1200, 700);

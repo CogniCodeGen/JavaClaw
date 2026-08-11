@@ -22,6 +22,8 @@ import com.javaclaw.config.SettingsView;
 import com.javaclaw.config.ToolReviewMode;
 import com.javaclaw.runtime.ApplicationKernel;
 import com.javaclaw.runtime.WorkspaceRuntime;
+import com.javaclaw.platform.fxml.SpringFxmlLoader;
+import com.javaclaw.platform.fxml.ViewHandle;
 import com.javaclaw.ui.javafx.schedule.ScheduleView;
 import com.javaclaw.ui.javafx.skill.SkillCenterView;
 import com.javaclaw.ui.javafx.task.SddTaskView;
@@ -112,7 +114,8 @@ public class ChatViewController {
     private final ApplicationKernel applicationKernel;
     private final PlaywrightBrowserManager browserManager;
     private ChatHistoryManager chatHistoryManager;
-    private final SidebarView sidebarView;
+    private final SidebarController sidebarView;
+    private final ViewHandle<VBox> sidebarHandle;
     private final ThinkingPanelView thinkingPanel;
 
     /**
@@ -141,6 +144,7 @@ public class ChatViewController {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+        sidebarHandle.close();
     }
 
     // ==================== 多会话管理 ====================
@@ -340,7 +344,8 @@ public class ChatViewController {
      *
      * @param applicationKernel 应用组合根（已完成首个工作区运行时初始化）
      */
-    public ChatViewController(ApplicationKernel applicationKernel) {
+    public ChatViewController(
+            ApplicationKernel applicationKernel, SpringFxmlLoader fxmlLoader) {
         this.applicationKernel = java.util.Objects.requireNonNull(applicationKernel, "applicationKernel");
         WorkspaceRuntime initialRuntime = applicationKernel.current();
         this.runtime = initialRuntime.agentRuntime();
@@ -352,7 +357,16 @@ public class ChatViewController {
         log.info("开始构建聊天界面");
 
         // ==================== 左侧侧边栏 ====================
-        sidebarView = new SidebarView();
+        try {
+            java.net.URL sidebarResource = getClass().getResource("/fxml/chat/sidebar-view.fxml");
+            if (sidebarResource == null) {
+                throw new IllegalStateException("缺少 /fxml/chat/sidebar-view.fxml");
+            }
+            sidebarHandle = fxmlLoader.load(sidebarResource);
+            sidebarView = sidebarHandle.controller(SidebarController.class);
+        } catch (java.io.IOException failure) {
+            throw new IllegalStateException("加载侧边栏 FXML 失败", failure);
+        }
         sidebarView.setOnNewChat(this::onNewSession);
         sidebarView.setOnSwitchSession(this::onSwitchSession);
         sidebarView.setOnDeleteSession(this::onDeleteSession);
