@@ -61,6 +61,33 @@ class ChatFxmlStructureTest {
         assertTrue(eventHandlers(document).isEmpty());
     }
 
+    @Test
+    void markdownRegionsKeepFixedStructureInFxml() throws Exception {
+        assertControllerlessFxml("/fxml/chat/markdown/code-card.fxml",
+                Set.of("codeLanguage", "copyCode", "codeFlow"));
+        assertControllerlessFxml("/fxml/chat/markdown/horizontal-rule.fxml", Set.of());
+        assertControllerlessFxml("/fxml/chat/markdown/image.fxml", Set.of("markdownImage"));
+        assertControllerlessFxml("/fxml/chat/markdown/table.fxml",
+                Set.of("tableRoot", "interactiveGrid", "fallbackArea"));
+        assertControllerlessFxml("/fxml/chat/markdown/table-cell.fxml",
+                Set.of("cellSurface", "cellText"));
+    }
+
+    private static void assertControllerlessFxml(String path, Set<String> requiredIds)
+            throws Exception {
+        Document document = document(path);
+        assertEquals("", document.getDocumentElement()
+                .getAttributeNS(FXML_NAMESPACE, "controller"), path);
+        Set<String> ids = IntStream.range(0, document.getElementsByTagName("*").getLength())
+                .mapToObj(document.getElementsByTagName("*")::item)
+                .map(node -> node.getAttributes().getNamedItemNS(FXML_NAMESPACE, "id"))
+                .filter(Objects::nonNull)
+                .map(org.w3c.dom.Node::getNodeValue)
+                .collect(Collectors.toSet());
+        assertTrue(ids.containsAll(requiredIds), path + " 缺少 fx:id: " + requiredIds);
+        assertTrue(eventHandlers(document).isEmpty(), path + " 不应绕过统一事件装配");
+    }
+
     private static Document document(String path) throws Exception {
         URL resource = ChatFxmlStructureTest.class.getResource(path);
         assertNotNull(resource, path);

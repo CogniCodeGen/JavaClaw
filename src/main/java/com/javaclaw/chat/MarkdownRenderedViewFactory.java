@@ -4,6 +4,8 @@ import com.javaclaw.chat.markdown.MarkdownParagraphRenderer.LinkRange;
 import com.javaclaw.chat.markdown.MarkdownParagraphRenderer.RenderedMarkdown;
 import com.javaclaw.platform.desktop.ExternalLinkOpener;
 import javafx.scene.Cursor;
+import javafx.scene.Node;
+import javafx.scene.Parent;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
@@ -13,9 +15,13 @@ import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import jfx.incubator.scene.control.richtext.RichTextArea;
 import jfx.incubator.scene.control.richtext.TextPos;
+import org.fxmisc.richtext.InlineCssTextArea;
 
 import java.util.List;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Supplier;
 
 /** 把不可变 Markdown 渲染结果转换为可选择的 JavaFX 只读视图。 */
@@ -68,6 +74,29 @@ final class MarkdownRenderedViewFactory {
         });
         menu.getItems().addAll(copy, select, new SeparatorMenuItem(), copyRaw);
         return menu;
+    }
+
+    /** 释放 RichTextFX 子控件并断开持有延迟 Region supplier 的模型。仅在 FX 线程调用。 */
+    static void dispose(Node content) {
+        if (!(content instanceof RichTextArea view)) return;
+        Set<InlineCssTextArea> textAreas =
+                Collections.newSetFromMap(new IdentityHashMap<>());
+        collectTextAreas(view, textAreas);
+        for (InlineCssTextArea area : textAreas) area.dispose();
+        if (view.getContextMenu() != null) view.getContextMenu().hide();
+        jfx.incubator.scene.control.richtext.model.SimpleViewOnlyStyledModel empty =
+                new jfx.incubator.scene.control.richtext.model.SimpleViewOnlyStyledModel();
+        empty.addSegment("");
+        view.setModel(empty);
+    }
+
+    private static void collectTextAreas(Node node, Set<InlineCssTextArea> target) {
+        if (node instanceof InlineCssTextArea area) target.add(area);
+        if (node instanceof Parent parent) {
+            for (Node child : parent.getChildrenUnmodifiable()) {
+                collectTextAreas(child, target);
+            }
+        }
     }
 
     private static LinkRange linkAt(

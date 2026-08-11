@@ -1,10 +1,12 @@
 package com.javaclaw.chat.markdown;
 
 import com.javaclaw.chat.markdown.MarkdownParagraphRenderer.RenderStyleSnapshot;
+import com.javaclaw.platform.fxml.SpringFxmlLoader;
+import com.javaclaw.platform.fxml.ViewHandle;
+import com.javaclaw.platform.fx.FxDispatcher;
 import javafx.application.Platform;
 import javafx.css.PseudoClass;
 import javafx.geometry.Point2D;
-import javafx.geometry.Pos;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
@@ -22,38 +24,60 @@ import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import org.fxmisc.richtext.InlineCssTextArea;
 
+import java.io.IOException;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-/** 在 FX 线程把不可变表格数据转换为可选择的原生 JavaFX 视图。 */
+/** 在 FX 线程把不可变表格数据填充到 FXML 表格与单元格模板中。 */
 final class MarkdownTableView {
 
     static final int INTERACTIVE_CELL_LIMIT = 200;
     private static final PseudoClass TABLE_SELECTED =
             PseudoClass.getPseudoClass("table-selected");
+    private static final String TABLE_FXML = "/fxml/chat/markdown/table.fxml";
+    private static final String CELL_FXML = "/fxml/chat/markdown/table-cell.fxml";
 
-    private MarkdownTableView() {}
-
-    static Region create(TableData data, RenderStyleSnapshot style) {
-        requireFxThread();
-        Objects.requireNonNull(data, "data");
-        Objects.requireNonNull(style, "style");
-        return data.cellCount() <= INTERACTIVE_CELL_LIMIT
-                ? interactiveTable(data, style)
-                : plainTableFallback(data, style);
+    private MarkdownTableView() {
     }
 
-    private static Region interactiveTable(TableData data, RenderStyleSnapshot style) {
-        GridPane grid = new GridPane();
-        grid.getStyleClass().add("md-table");
-        grid.setHgap(1);
-        grid.setVgap(1);
-        grid.setMaxWidth(Double.MAX_VALUE);
-        grid.setFocusTraversable(true);
+    static Region create(
+            SpringFxmlLoader loader,
+            FxDispatcher fx,
+            TableData data,
+            RenderStyleSnapshot style) {
+        requireFxThread();
+        Objects.requireNonNull(loader, "loader");
+        Objects.requireNonNull(fx, "fx");
+        Objects.requireNonNull(data, "data");
+        Objects.requireNonNull(style, "style");
 
+        VBox root = load(loader, TABLE_FXML, VBox.class);
+        GridPane grid = MarkdownRegionViewFactory.requireNode(
+                root, "interactiveGrid", GridPane.class);
+        InlineCssTextArea fallback = MarkdownRegionViewFactory.requireNode(
+                root, "fallbackArea", InlineCssTextArea.class);
+        if (data.cellCount() <= INTERACTIVE_CELL_LIMIT) {
+            root.getChildren().remove(fallback);
+            root.getStyleClass().add("md-table-interactive");
+            configureInteractiveTable(loader, fx, grid, data, style);
+        } else {
+            root.getChildren().remove(grid);
+            root.getStyleClass().add("md-table-plain-fallback");
+            configureTextArea(fallback, data.toTsv(), style, false, fx);
+            fallback.setContextMenu(tableContextMenu(fallback, data.toTsv()));
+        }
+        return root;
+    }
+
+    private static void configureInteractiveTable(
+            SpringFxmlLoader loader,
+            FxDispatcher fx,
+            GridPane grid,
+            TableData data,
+            RenderStyleSnapshot style) {
         TableSelectionController selection = new TableSelectionController(grid, data);
-
         for (int column = 0; column < data.columnCount(); column++) {
             ColumnConstraints constraints = new ColumnConstraints();
             constraints.setMinWidth(56);
@@ -66,61 +90,47 @@ final class MarkdownTableView {
         for (int row = 0; row < data.rows().size(); row++) {
             for (int column = 0; column < data.columnCount(); column++) {
                 TableCellData cell = data.rows().get(row).get(column);
-                InlineCssTextArea textArea = selectableTextArea(
-                        cell, style, tableTsv, selection);
-                StackPane surface = new StackPane(textArea);
-                surface.setAlignment(Pos.TOP_LEFT);
-                surface.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
-                surface.getStyleClass().add(cell.header()
-                        ? "md-table-header"
-                        : "md-table-cell");
-                GridPane.setHgrow(surface, Priority.ALWAYS);
-                GridPane.setVgrow(surface, Priority.ALWAYS);
-                GridPane.setFillWidth(surface, true);
-                GridPane.setFillHeight(surface, true);
-                grid.add(surface, column, row);
-                selection.register(new CellView(row, column, textArea, surface));
+                CellView view = loadCell(loader, fx, row, column, cell, style, tableTsv, selection);
+                GridPane.setHgrow(view.surface(), Priority.ALWAYS);
+                GridPane.setVgrow(view.surface(), Priority.ALWAYS);
+                GridPane.setFillWidth(view.surface(), true);
+                GridPane.setFillHeight(view.surface(), true);
+                grid.add(view.surface(), column, row);
+                selection.register(view);
             }
         }
         selection.install();
-
-        VBox wrapper = tableWrapper(grid);
-        wrapper.getStyleClass().add("md-table-interactive");
-        return wrapper;
     }
 
-    private static InlineCssTextArea selectableTextArea(
-            TableCellData cell, RenderStyleSnapshot style, String tableTsv,
+    private static CellView loadCell(
+            SpringFxmlLoader loader,
+            FxDispatcher fx,
+            int row,
+            int column,
+            TableCellData cell,
+            RenderStyleSnapshot style,
+            String tableTsv,
             TableSelectionController selection) {
-        InlineCssTextArea area = baseTextArea(cell.text(), style, true);
-        area.getStyleClass().add("md-table-cell-text");
+        StackPane surface = load(loader, CELL_FXML, StackPane.class);
+        InlineCssTextArea area = MarkdownRegionViewFactory.requireNode(
+                surface, "cellText", InlineCssTextArea.class);
+        surface.getStyleClass().add(cell.header() ? "md-table-header" : "md-table-cell");
+        configureTextArea(area, cell.text(), style, true, fx);
         String paragraphStyle = "-fx-text-alignment: " + cell.alignment().cssValue()
                 + "; -fx-line-spacing: " + format(lineSpacing(style)) + "px;";
         area.setParagraphInsertionStyle(paragraphStyle);
         area.setParagraphStyle(0, paragraphStyle);
         area.setContextMenu(cellContextMenu(area, cell.text(), tableTsv, selection));
-        return area;
+        return new CellView(row, column, area, surface);
     }
 
-    private static Region plainTableFallback(TableData data, RenderStyleSnapshot style) {
-        String tableTsv = data.toTsv();
-        InlineCssTextArea area = baseTextArea(tableTsv, style, false);
-        area.getStyleClass().add("md-table-fallback");
-        area.setContextMenu(tableContextMenu(area, tableTsv));
-        VBox wrapper = tableWrapper(area);
-        wrapper.getStyleClass().add("md-table-plain-fallback");
-        return wrapper;
-    }
-
-    private static InlineCssTextArea baseTextArea(
-            String text, RenderStyleSnapshot style, boolean wrapText) {
-        InlineCssTextArea area = new InlineCssTextArea();
-        area.setEditable(false);
+    private static void configureTextArea(
+            InlineCssTextArea area,
+            String text,
+            RenderStyleSnapshot style,
+            boolean wrapText,
+            FxDispatcher fx) {
         area.setWrapText(wrapText);
-        area.setAutoHeight(false);
-        area.setFocusTraversable(false);
-        area.setMinWidth(0);
-        area.setMaxWidth(Double.MAX_VALUE);
         double initialHeight = Math.max(22, style.fontSize() * style.lineHeight() + 4);
         setContentHeight(area, initialHeight);
 
@@ -138,22 +148,24 @@ final class MarkdownTableView {
             area.setParagraphStyle(paragraph, paragraphStyle);
         }
         if (wrapText) {
-            bindHeightToVisualLines(area, style, initialHeight);
+            bindHeightToVisualLines(area, style, initialHeight, fx);
         } else {
             setContentHeight(area, Math.max(
                     initialHeight,
                     area.getParagraphs().size() * style.fontSize() * style.lineHeight() + 4));
         }
-        return area;
     }
 
     private static void bindHeightToVisualLines(
-            InlineCssTextArea area, RenderStyleSnapshot style, double initialHeight) {
+            InlineCssTextArea area,
+            RenderStyleSnapshot style,
+            double initialHeight,
+            FxDispatcher fx) {
         boolean[] updateScheduled = {false};
         Runnable requestUpdate = () -> {
             if (updateScheduled[0]) return;
             updateScheduled[0] = true;
-            Platform.runLater(() -> {
+            fx.dispatchLater(() -> {
                 updateScheduled[0] = false;
                 if (area.getWidth() <= 0) return;
                 int visualLines = 0;
@@ -181,16 +193,10 @@ final class MarkdownTableView {
         area.setMaxHeight(height);
     }
 
-    private static VBox tableWrapper(Region content) {
-        VBox wrapper = new VBox(content);
-        wrapper.setFillWidth(true);
-        wrapper.setMaxWidth(Double.MAX_VALUE);
-        wrapper.getStyleClass().add("md-table-wrapper");
-        return wrapper;
-    }
-
     private static ContextMenu cellContextMenu(
-            InlineCssTextArea area, String cellText, String tableTsv,
+            InlineCssTextArea area,
+            String cellText,
+            String tableTsv,
             TableSelectionController selection) {
         ContextMenu menu = new ContextMenu();
         MenuItem copySelection = new MenuItem("复制所选内容");
@@ -235,6 +241,25 @@ final class MarkdownTableView {
         return value == Math.floor(value) ? String.valueOf((int) value) : String.valueOf(value);
     }
 
+    private static <N extends Region> N load(
+            SpringFxmlLoader loader,
+            String resourcePath,
+            Class<N> type) {
+        URL resource = Objects.requireNonNull(
+                MarkdownTableView.class.getResource(resourcePath),
+                "Markdown FXML 不存在: " + resourcePath);
+        try (ViewHandle<N> handle = loader.load(resource)) {
+            N root = handle.root();
+            if (!type.isInstance(root)) {
+                throw new IllegalStateException(
+                        "Markdown FXML 根节点类型错误: " + resourcePath);
+            }
+            return root;
+        } catch (IOException failure) {
+            throw new IllegalStateException("加载 Markdown FXML 失败: " + resourcePath, failure);
+        }
+    }
+
     private static void requireFxThread() {
         if (!Platform.isFxApplicationThread()) {
             throw new IllegalStateException("Markdown 表格必须在 JavaFX Application Thread 创建");
@@ -242,7 +267,8 @@ final class MarkdownTableView {
     }
 
     private record CellView(
-            int row, int column, InlineCssTextArea textArea, StackPane surface) {}
+            int row, int column, InlineCssTextArea textArea, StackPane surface) {
+    }
 
     /** 在多个 RichTextFX 单元格之上提供表格级矩形选区。 */
     private static final class TableSelectionController {
@@ -322,9 +348,7 @@ final class MarkdownTableView {
         }
 
         private void clearTextSelections() {
-            for (CellView cell : cells) {
-                cell.textArea().selectRange(0, 0);
-            }
+            for (CellView cell : cells) cell.textArea().selectRange(0, 0);
         }
 
         private void clearSelection() {

@@ -1,6 +1,8 @@
 package com.javaclaw.chat.markdown;
 
 import com.javaclaw.chat.markdown.MarkdownParagraphRenderer.RenderStyleSnapshot;
+import com.javaclaw.platform.fxml.SpringFxmlLoader;
+import com.javaclaw.platform.fx.FxDispatcher;
 import javafx.application.Platform;
 import javafx.css.PseudoClass;
 import javafx.event.Event;
@@ -23,6 +25,7 @@ import org.fxmisc.richtext.InlineCssTextArea;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -44,6 +47,9 @@ class MarkdownTableViewTest {
     private static final long TIMEOUT_SECONDS = 5;
     private static final RenderStyleSnapshot STYLE = new RenderStyleSnapshot(
             14.5, 1.65, "\"System\", sans-serif", "\"SF Mono\", monospace");
+    private static final SpringFxmlLoader FXML =
+            new SpringFxmlLoader(new DefaultListableBeanFactory());
+    private static final FxDispatcher FX = new FxDispatcher();
 
     @BeforeAll
     static void startToolkit() throws Exception {
@@ -66,7 +72,7 @@ class MarkdownTableViewTest {
                 cell("左对齐", true, TableCellAlignment.LEFT),
                 cell("居中文本", true, TableCellAlignment.CENTER),
                 cell("右对齐", true, TableCellAlignment.RIGHT))), 3);
-        Region table = callFx(() -> MarkdownTableView.create(data, STYLE));
+        Region table = callFx(() -> MarkdownTableView.create(FXML, FX, data, STYLE));
 
         List<InlineCssTextArea> areas = callFx(() -> findTextAreas(table));
         assertEquals(3, areas.size());
@@ -89,9 +95,9 @@ class MarkdownTableViewTest {
     @Test
     void usesSingleSelectableFallbackAboveInteractiveCellLimit() throws Exception {
         Region interactive = callFx(() -> MarkdownTableView.create(
-                tableWithCells(MarkdownTableView.INTERACTIVE_CELL_LIMIT), STYLE));
+                FXML, FX, tableWithCells(MarkdownTableView.INTERACTIVE_CELL_LIMIT), STYLE));
         Region fallback = callFx(() -> MarkdownTableView.create(
-                tableWithCells(MarkdownTableView.INTERACTIVE_CELL_LIMIT + 1), STYLE));
+                FXML, FX, tableWithCells(MarkdownTableView.INTERACTIVE_CELL_LIMIT + 1), STYLE));
 
         assertTrue(callFx(() -> hasStyleClass(interactive, "md-table-interactive")));
         assertEquals(MarkdownTableView.INTERACTIVE_CELL_LIMIT,
@@ -117,7 +123,7 @@ class MarkdownTableViewTest {
                 cell("短文本", false, TableCellAlignment.LEFT))), 2);
 
         LayoutFixture fixture = callFx(() -> {
-            Region table = MarkdownTableView.create(data, STYLE);
+            Region table = MarkdownTableView.create(FXML, FX, data, STYLE);
             StackPane root = new StackPane(table);
             Scene scene = new Scene(root, 520, 320);
             scene.getStylesheets().add(
@@ -170,7 +176,7 @@ class MarkdownTableViewTest {
                         cell("B2", false, TableCellAlignment.LEFT))), 3);
 
         LayoutFixture fixture = callFx(() -> {
-            Region table = MarkdownTableView.create(data, STYLE);
+            Region table = MarkdownTableView.create(FXML, FX, data, STYLE);
             StackPane root = new StackPane(table);
             Scene scene = new Scene(root, 620, 320);
             scene.getStylesheets().add(
@@ -215,7 +221,7 @@ class MarkdownTableViewTest {
     void refusesToCreateJavaFxControlsOffFxThread() {
         TableData data = tableWithCells(1);
         assertThrows(IllegalStateException.class,
-                () -> MarkdownTableView.create(data, STYLE));
+                () -> MarkdownTableView.create(FXML, FX, data, STYLE));
     }
 
     private static TableData tableWithCells(int count) {

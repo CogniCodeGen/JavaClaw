@@ -3,9 +3,11 @@ package com.javaclaw.presentation;
 import com.javaclaw.chat.MarkdownBubbleFactory;
 import com.javaclaw.chat.MarkdownRenderEngine;
 import com.javaclaw.chat.markdown.MarkdownParagraphRenderer;
+import com.javaclaw.chat.markdown.MarkdownRegionViewFactory;
 import com.javaclaw.platform.desktop.ExternalLinkOpener;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
+import com.javaclaw.platform.fx.FxDispatcher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -14,8 +16,15 @@ import org.springframework.context.annotation.Configuration;
 public class DesktopPresentationConfiguration {
 
     @Bean
-    MarkdownRenderEngine markdownRenderEngine() {
-        return MarkdownParagraphRenderer::render;
+    MarkdownRegionViewFactory markdownRegionViewFactory(
+            SpringFxmlLoader loader,
+            FxDispatcher fx) {
+        return new MarkdownRegionViewFactory(loader, fx);
+    }
+
+    @Bean
+    MarkdownRenderEngine markdownRenderEngine(MarkdownRegionViewFactory regions) {
+        return (markdown, style) -> MarkdownParagraphRenderer.render(markdown, style, regions);
     }
 
     @Bean

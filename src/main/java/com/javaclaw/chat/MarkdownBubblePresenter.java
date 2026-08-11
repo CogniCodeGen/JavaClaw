@@ -150,6 +150,7 @@ final class MarkdownBubblePresenter {
         FontManager.revisionProperty().removeListener(fontRevisionListener);
         ThemeManager.revisionProperty().removeListener(themeRevisionListener);
         clearDiagnostics();
+        disposeRenderedContent(currentContent);
         root.getChildren().clear();
         plainView.replaceText("");
         viewModel.clear();
@@ -292,6 +293,7 @@ final class MarkdownBubblePresenter {
             long generation, Node expectedOutgoing, Node expectedIncoming) {
         if (!matchesTransition(generation, expectedOutgoing, expectedIncoming)) return;
         root.getChildren().remove(expectedOutgoing);
+        disposeRenderedContent(expectedOutgoing);
         expectedOutgoing.setOpacity(1);
         expectedIncoming.setOpacity(1);
         currentContent = expectedIncoming;
@@ -381,6 +383,7 @@ final class MarkdownBubblePresenter {
         discardVisualTransition();
         if (currentContent != null && currentContent != plainView) {
             root.getChildren().remove(currentContent);
+            disposeRenderedContent(currentContent);
         }
         if (!root.getChildren().contains(plainView)) {
             int overlayIndex = root.getChildren().indexOf(renderingOverlay);
@@ -395,6 +398,7 @@ final class MarkdownBubblePresenter {
         if (contentTransition != null) contentTransition.stop();
         if (transitionOutgoing != null) {
             root.getChildren().remove(transitionOutgoing);
+            disposeRenderedContent(transitionOutgoing);
             transitionOutgoing.setOpacity(1);
         }
         transitionIncoming.setOpacity(1);
@@ -407,7 +411,10 @@ final class MarkdownBubblePresenter {
 
     private void discardVisualTransition() {
         if (contentTransition != null) contentTransition.stop();
-        if (transitionIncoming != null) root.getChildren().remove(transitionIncoming);
+        if (transitionIncoming != null) {
+            root.getChildren().remove(transitionIncoming);
+            disposeRenderedContent(transitionIncoming);
+        }
         if (transitionOutgoing != null) {
             transitionOutgoing.setOpacity(1);
             currentContent = transitionOutgoing;
@@ -438,6 +445,12 @@ final class MarkdownBubblePresenter {
 
     private boolean isCurrent(long generation) {
         return !disposed && generation == renderGeneration;
+    }
+
+    private void disposeRenderedContent(Node content) {
+        if (content != null && content != plainView) {
+            MarkdownRenderedViewFactory.dispose(content);
+        }
     }
 
     private void setState(MarkdownBubble.State next) {

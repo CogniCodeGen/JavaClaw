@@ -2,18 +2,7 @@ package com.javaclaw.chat.markdown;
 
 import com.javaclaw.ui.javafx.theme.FontManager;
 import javafx.application.Platform;
-import javafx.geometry.Pos;
-import javafx.scene.control.Button;
-import javafx.scene.control.Label;
-import javafx.scene.image.Image;
-import javafx.scene.image.ImageView;
-import javafx.scene.input.Clipboard;
-import javafx.scene.input.ClipboardContent;
-import javafx.scene.layout.HBox;
-import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
-import javafx.scene.layout.VBox;
-import javafx.scene.text.TextFlow;
 import jfx.incubator.scene.control.richtext.model.SimpleViewOnlyStyledModel;
 import jfx.incubator.scene.control.richtext.model.StyleAttributeMap;
 import org.commonmark.Extension;
@@ -123,9 +112,19 @@ public final class MarkdownParagraphRenderer {
 
     /** 一次性解析并构建整条消息。 */
     public static RenderedMarkdown render(String markdown, RenderStyleSnapshot style) {
+        return render(markdown, style, null);
+    }
+
+    /**
+     * 生产渲染入口。后台阶段只构建延迟 supplier，FXML 视图直到 FX 线程消费时才加载。
+     */
+    public static RenderedMarkdown render(
+            String markdown,
+            RenderStyleSnapshot style,
+            MarkdownRegionViewFactory regionViews) {
         Objects.requireNonNull(style, "style");
         Node document = PARSER.parse(markdown == null ? "" : markdown);
-        Ctx ctx = new Ctx(style);
+        Ctx ctx = new Ctx(style, regionViews);
         for (Node node = document.getFirstChild(); node != null; node = node.getNext()) {
             if (node instanceof LinkReferenceDefinition) continue;
             renderBlockInto(node, ctx, 0);
@@ -137,6 +136,7 @@ public final class MarkdownParagraphRenderer {
     /** 渲染期上下文，仅持有纯数据、样式对象和延迟 Region supplier。 */
     private static final class Ctx {
         final RenderStyleSnapshot style;
+        final MarkdownRegionViewFactory regionViews;
         final SimpleViewOnlyStyledModel model = new SimpleViewOnlyStyledModel();
         final List<LinkRange> links = new ArrayList<>();
         boolean paragraphOpen;
@@ -146,8 +146,9 @@ public final class MarkdownParagraphRenderer {
         double fontSize;
         String baseClass = "md-body";
 
-        Ctx(RenderStyleSnapshot style) {
+        Ctx(RenderStyleSnapshot style, MarkdownRegionViewFactory regionViews) {
             this.style = style;
+            this.regionViews = regionViews;
             this.fontSize = style.fontSize();
         }
 
@@ -220,7 +221,7 @@ public final class MarkdownParagraphRenderer {
                 if (paragraph.getFirstChild() instanceof org.commonmark.node.Image image
                         && image.getNext() == null) {
                     String url = image.getDestination();
-                    ctx.addRegion(() -> imageRegion(url));
+                    ctx.addRegion(() -> requireRegionViews(ctx).createImage(url));
                     return;
                 }
                 renderInlines(paragraph, ctx, InlineStyle.BASE);
@@ -233,12 +234,14 @@ public final class MarkdownParagraphRenderer {
                 String code = trimTrailingNewline(fenced.getLiteral());
                 String language = fenced.getInfo() == null ? "" : fenced.getInfo().trim();
                 RenderStyleSnapshot style = ctx.style;
-                ctx.addRegion(() -> codeCard(code, language, style));
+                ctx.addRegion(() -> requireRegionViews(ctx)
+                        .createCodeCard(code, language, style));
             }
             case IndentedCodeBlock indented -> {
                 String code = trimTrailingNewline(indented.getLiteral());
                 RenderStyleSnapshot style = ctx.style;
-                ctx.addRegion(() -> codeCard(code, "", style));
+                ctx.addRegion(() -> requireRegionViews(ctx)
+                        .createCodeCard(code, "", style));
             }
             case BlockQuote quote -> {
                 boolean previousQuote = ctx.quote;
@@ -251,11 +254,12 @@ public final class MarkdownParagraphRenderer {
                 ctx.quote = previousQuote;
                 ctx.baseClass = previousBase;
             }
-            case ThematicBreak ignored -> ctx.addRegion(MarkdownParagraphRenderer::hrRegion);
+            case ThematicBreak ignored -> ctx.addRegion(
+                    () -> requireRegionViews(ctx).createHorizontalRule());
             case TableBlock table -> {
                 TableData data = collectTableData(table);
                 RenderStyleSnapshot style = ctx.style;
-                ctx.addRegion(() -> MarkdownTableView.create(data, style));
+                ctx.addRegion(() -> requireRegionViews(ctx).createTable(data, style));
             }
             case HtmlBlock html -> {
                 String previousBase = ctx.baseClass;
@@ -377,92 +381,12 @@ public final class MarkdownParagraphRenderer {
         ctx.len += text.length();
     }
 
-    /** Region 工厂：这些方法只能由 RichTextArea 在 FX 线程调用。 */
-    private static Region codeCard(String code, String language, RenderStyleSnapshot style) {
-        requireFxThread();
-        javafx.scene.text.Text text = new javafx.scene.text.Text(code);
-        text.getStyleClass().add("md-code-text");
-        text.setStyle("-fx-font-family: '" + style.monoFamily() + "'; -fx-font-size: "
-                + fmt(style.fontSize() - 2) + ";");
-        TextFlow flow = new TextFlow(text);
-        flow.setMaxWidth(Double.MAX_VALUE);
-
-        Label languageLabel = new Label(language.isEmpty() ? "code" : language);
-        languageLabel.getStyleClass().add("md-code-lang");
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-        Button copy = new Button("复制");
-        copy.getStyleClass().add("md-code-copy");
-        copy.setFocusTraversable(false);
-        copy.setOnAction(event -> {
-            ClipboardContent clipboard = new ClipboardContent();
-            clipboard.putString(code);
-            Clipboard.getSystemClipboard().setContent(clipboard);
-            copy.setText("已复制");
-            javafx.animation.PauseTransition reset =
-                    new javafx.animation.PauseTransition(javafx.util.Duration.seconds(1.5));
-            reset.setOnFinished(ignored -> copy.setText("复制"));
-            reset.play();
-        });
-        HBox header = new HBox(6, languageLabel, spacer, copy);
-        header.setAlignment(Pos.CENTER_LEFT);
-
-        VBox card = new VBox(6, header, flow);
-        card.getStyleClass().add("md-code-card");
-        VBox wrapper = new VBox(card);
-        wrapper.setPadding(new javafx.geometry.Insets(4, 0, 6, 0));
-        return wrapper;
-    }
-
-    private static Region hrRegion() {
-        requireFxThread();
-        Region line = new Region();
-        line.getStyleClass().add("md-hr");
-        line.setPrefHeight(1);
-        line.setMaxWidth(Double.MAX_VALUE);
-        VBox wrapper = new VBox(line);
-        wrapper.setPadding(new javafx.geometry.Insets(8, 0, 8, 0));
-        return wrapper;
-    }
-
-    private static Region imageRegion(String url) {
-        requireFxThread();
-        ImageView imageView = new ImageView();
-        imageView.setPreserveRatio(true);
-        imageView.getStyleClass().add("md-image");
-        try {
-            Image image = new Image(url, true);
-            imageView.setImage(image);
-            Runnable fit = () -> {
-                double width = image.getWidth();
-                if (width > 0) imageView.setFitWidth(Math.min(width, 460));
-            };
-            if (image.getProgress() >= 1.0) {
-                fit.run();
-            } else {
-                image.progressProperty().addListener((observable, oldValue, progress) -> {
-                    if (progress.doubleValue() >= 1.0) fit.run();
-                });
-            }
-            imageView.setOnMouseClicked(event -> {
-                if (event.getClickCount() == 2 && url.startsWith("file:")) {
-                    try {
-                        java.io.File file = new java.io.File(java.net.URI.create(url));
-                        if (file.exists() && imageView.getScene() != null) {
-                            com.javaclaw.chat.ImageViewerDialog.show(
-                                    imageView.getScene().getWindow(), file);
-                        }
-                    } catch (Exception ignored) {
-                        // 非法本地 URI 不影响其余 Markdown。
-                    }
-                }
-            });
-        } catch (Exception ignored) {
-            // URL 非法时保持空 ImageView，不中断整条消息。
+    private static MarkdownRegionViewFactory requireRegionViews(Ctx ctx) {
+        if (ctx.regionViews == null) {
+            throw new IllegalStateException(
+                    "当前 Markdown 结果只用于后台解析测试，未配置 FXML Region 工厂");
         }
-        VBox wrapper = new VBox(imageView);
-        wrapper.setPadding(new javafx.geometry.Insets(4, 0, 6, 0));
-        return wrapper;
+        return ctx.regionViews;
     }
 
     /** 将 CommonMark 表格 AST 收敛为不持有 Node 的不可变后台数据。 */
@@ -553,9 +477,4 @@ public final class MarkdownParagraphRenderer {
         return value == Math.floor(value) ? String.valueOf((int) value) : String.valueOf(value);
     }
 
-    private static void requireFxThread() {
-        if (!Platform.isFxApplicationThread()) {
-            throw new IllegalStateException("Markdown Region 必须在 JavaFX Application Thread 创建");
-        }
-    }
 }
