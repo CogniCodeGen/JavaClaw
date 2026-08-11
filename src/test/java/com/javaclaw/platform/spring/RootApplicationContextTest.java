@@ -28,6 +28,7 @@ import com.javaclaw.ui.javafx.onboarding.ProviderCardFactory;
 import com.javaclaw.ui.javafx.image.ImageViewerFactory;
 import com.javaclaw.ui.javafx.interaction.InteractionDialogFactory;
 import com.javaclaw.ui.javafx.control.WindowToastFactory;
+import com.javaclaw.ui.javafx.theme.FontSelectionService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -79,6 +80,7 @@ class RootApplicationContextTest {
             assertNotNull(context.getBean(ImageViewerFactory.class));
             assertNotNull(context.getBean(InteractionDialogFactory.class));
             assertNotNull(context.getBean(WindowToastFactory.class));
+            assertNotNull(context.getBean(FontSelectionService.class));
             assertNotNull(context.getBean(WorkspaceSpringContextFactory.class));
 
             SchemaInitializer initializer = context.getBean(SchemaInitializer.class);

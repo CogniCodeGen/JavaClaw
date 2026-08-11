@@ -14,6 +14,7 @@ import com.javaclaw.ui.javafx.settings.ModelSettingsSectionFactory;
 import com.javaclaw.ui.javafx.settings.CommunicationSettingsSectionFactory;
 import com.javaclaw.ui.javafx.settings.BehaviorSettingsSectionFactory;
 import com.javaclaw.ui.javafx.settings.MaintenanceSettingsSectionFactory;
+import com.javaclaw.ui.javafx.settings.AppearanceSettingsSectionFactory;
 
 import java.util.Objects;
 
@@ -40,6 +41,7 @@ public final class WorkspaceRuntime implements AutoCloseable {
     private final CommunicationSettingsSectionFactory communicationSettingsSections;
     private final BehaviorSettingsSectionFactory behaviorSettingsSections;
     private final MaintenanceSettingsSectionFactory maintenanceSettingsSections;
+    private final AppearanceSettingsSectionFactory appearanceSettingsSections;
 
     WorkspaceRuntime(WorkspaceContextHandle springContext) {
         this.springContext = Objects.requireNonNull(springContext, "springContext");
@@ -58,6 +60,7 @@ public final class WorkspaceRuntime implements AutoCloseable {
                 CommunicationSettingsSectionFactory.class);
         behaviorSettingsSections = springContext.bean(BehaviorSettingsSectionFactory.class);
         maintenanceSettingsSections = springContext.bean(MaintenanceSettingsSectionFactory.class);
+        appearanceSettingsSections = springContext.bean(AppearanceSettingsSectionFactory.class);
     }
 
     public WorkspaceContext context() {
@@ -114,6 +117,10 @@ public final class WorkspaceRuntime implements AutoCloseable {
 
     public MaintenanceSettingsSectionFactory maintenanceSettingsSections() {
         return maintenanceSettingsSections;
+    }
+
+    public AppearanceSettingsSectionFactory appearanceSettingsSections() {
+        return appearanceSettingsSections;
     }
 
     public boolean isClosed() {

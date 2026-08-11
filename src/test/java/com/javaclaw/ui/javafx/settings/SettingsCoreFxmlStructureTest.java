@@ -108,6 +108,9 @@ class SettingsCoreFxmlStructureTest {
         values.put("/fxml/settings/general-settings.fxml", GeneralSettingsController.class);
         values.put("/fxml/settings/test-data-maintenance.fxml",
                 TestDataMaintenanceController.class);
+        values.put("/fxml/settings/appearance-settings.fxml",
+                AppearanceSettingsController.class);
+        values.put("/fxml/settings/font-settings.fxml", FontSettingsController.class);
         return Map.copyOf(values);
     }
 }

@@ -21,6 +21,9 @@ import com.javaclaw.ui.javafx.settings.GepaSettingsController;
 import com.javaclaw.ui.javafx.settings.SkillEvolutionSettingsController;
 import com.javaclaw.ui.javafx.settings.MaintenanceSettingsSectionFactory;
 import com.javaclaw.ui.javafx.settings.TestDataMaintenanceController;
+import com.javaclaw.ui.javafx.settings.AppearanceSettingsController;
+import com.javaclaw.ui.javafx.settings.AppearanceSettingsSectionFactory;
+import com.javaclaw.ui.javafx.settings.FontSettingsController;
 import javafx.animation.PauseTransition;
 import javafx.animation.TranslateTransition;
 import javafx.geometry.Insets;
@@ -63,6 +66,9 @@ public class SettingsView {
     private SettingsSectionView<GeneralSettingsController> generalSettingsSection;
     private final MaintenanceSettingsSectionFactory maintenanceSettingsSections;
     private SettingsSectionView<TestDataMaintenanceController> testDataMaintenanceSection;
+    private final AppearanceSettingsSectionFactory appearanceSettingsSections;
+    private SettingsSectionView<AppearanceSettingsController> appearanceSettingsSection;
+    private SettingsSectionView<FontSettingsController> fontSettingsSection;
 
     // 布局容器
     private VBox categoryList;
@@ -182,7 +188,8 @@ public class SettingsView {
                         ModelSettingsSectionFactory modelSettingsSections,
                         CommunicationSettingsSectionFactory communicationSettingsSections,
                         BehaviorSettingsSectionFactory behaviorSettingsSections,
-                        MaintenanceSettingsSectionFactory maintenanceSettingsSections) {
+                        MaintenanceSettingsSectionFactory maintenanceSettingsSections,
+                        AppearanceSettingsSectionFactory appearanceSettingsSections) {
         this.agentSettingsPanels = java.util.Objects.requireNonNull(
                 agentSettingsPanels, "agentSettingsPanels");
         this.siteCredentialPanels = java.util.Objects.requireNonNull(
@@ -196,6 +203,8 @@ public class SettingsView {
                 behaviorSettingsSections, "behaviorSettingsSections");
         this.maintenanceSettingsSections = java.util.Objects.requireNonNull(
                 maintenanceSettingsSections, "maintenanceSettingsSections");
+        this.appearanceSettingsSections = java.util.Objects.requireNonNull(
+                appearanceSettingsSections, "appearanceSettingsSections");
         this.stage = new Stage();
         stage.initModality(Modality.WINDOW_MODAL);
         stage.initOwner(owner);
@@ -324,13 +333,15 @@ public class SettingsView {
         addCategoryGroup("外观");
 
         // 界面风格：组件型面板，点击立即生效，自管理
-        Node appearancePanel = buildAppearancePanel();
+        appearanceSettingsSection = appearanceSettingsSections.createAppearance();
+        Node appearancePanel = appearanceSettingsSection.root();
         addCategory("界面风格", appearancePanel, false,
                 "主题 theme 风格 外观 配色 深色 暗色 dark emerald midnight carbon sapphire ocean plum graphite terracotta honey 翡翠 午夜 碳黑 蓝宝石 海洋 梅紫 石墨 陶土 蜂蜜");
         registerPanelActions(appearancePanel, PanelActions.none());
 
         // 字体：组件型面板，选择即时全局生效并按工作区记忆
-        Node fontPanel = buildFontPanel();
+        fontSettingsSection = appearanceSettingsSections.createFonts();
+        Node fontPanel = fontSettingsSection.root();
         addCategory("字体", fontPanel, false,
                 "字体 font typeface sans mono 等宽 字号 密度 缩放 inter noto cascadia jetbrains 排版 对话");
         registerPanelActions(fontPanel, PanelActions.none());
@@ -584,6 +595,14 @@ public class SettingsView {
             if (testDataMaintenanceSection != null) {
                 testDataMaintenanceSection.close();
                 testDataMaintenanceSection = null;
+            }
+            if (appearanceSettingsSection != null) {
+                appearanceSettingsSection.close();
+                appearanceSettingsSection = null;
+            }
+            if (fontSettingsSection != null) {
+                fontSettingsSection.close();
+                fontSettingsSection = null;
             }
         });
 
@@ -1085,235 +1104,6 @@ public class SettingsView {
                 ? current.getClass().getSimpleName() : message;
     }
 
-    // ==================== 界面风格面板（设计稿 AppearancePanel） ====================
-
-    /**
-     * 界面风格选择面板：双列主题卡片（顶部三联色带 + 名称/副标题 + 当前 ✓），
-     * 点击立即经 ThemeManager 全局生效并记忆到本工作区，无需保存按钮。
-     */
-    private Node buildAppearancePanel() {
-        Label sectionTitle = new Label("界面风格");
-        sectionTitle.getStyleClass().add("sec-title");
-
-        Label overviewHint = new Label(
-                "实时切换整个界面的配色风格，立即生效并记忆到本工作区。「翡翠」为随应用发布的默认风格。");
-        overviewHint.getStyleClass().add("sec-hint");
-        overviewHint.setWrapText(true);
-
-        Label groupTitle = new Label("风格");
-        groupTitle.getStyleClass().add("grp-title");
-
-        // 双列卡片网格
-        GridPane grid = new GridPane();
-        grid.setHgap(12);
-        grid.setVgap(12);
-        ColumnConstraints half = new ColumnConstraints();
-        half.setPercentWidth(50);
-        grid.getColumnConstraints().addAll(half, half);
-
-        // 主题变更时统一刷新所有卡片的选中态
-        java.util.Map<String, Runnable> refreshers = new java.util.LinkedHashMap<>();
-        int index = 0;
-        for (var theme : com.javaclaw.ui.javafx.theme.ThemeManager.THEMES) {
-            // 顶部三联色带（品牌 / 页面 / 卡片）
-            HBox strip = new HBox();
-            strip.setMinHeight(52);
-            strip.setPrefHeight(52);
-            for (String color : new String[]{theme.brand(), theme.bg(), theme.surface()}) {
-                Region cell = new Region();
-                cell.setStyle("-fx-background-color: " + color + ";");
-                HBox.setHgrow(cell, Priority.ALWAYS);
-                strip.getChildren().add(cell);
-            }
-
-            Label name = new Label(theme.name());
-            name.getStyleClass().add("theme-card-name");
-            Label sub = new Label(theme.subtitle());
-            sub.getStyleClass().add("theme-card-sub");
-            VBox text = new VBox(1, name, sub);
-            HBox.setHgrow(text, Priority.ALWAYS);
-
-            Label check = new Label("✓");
-            check.getStyleClass().add("theme-card-check");
-
-            HBox meta = new HBox(8, text, check);
-            meta.setAlignment(Pos.CENTER_LEFT);
-            meta.setPadding(new Insets(9, 12, 9, 12));
-
-            VBox card = new VBox(strip, meta);
-            card.getStyleClass().add("theme-card");
-            card.setOnMouseClicked(e ->
-                    com.javaclaw.ui.javafx.theme.ThemeManager.setTheme(theme.id()));
-
-            Runnable refresh = () -> {
-                boolean selected = theme.id()
-                        .equals(com.javaclaw.ui.javafx.theme.ThemeManager.getTheme());
-                card.getStyleClass().remove("theme-card-selected");
-                if (selected) {
-                    card.getStyleClass().add("theme-card-selected");
-                }
-                check.setVisible(selected);
-            };
-            refresh.run();
-            refreshers.put(theme.id(), refresh);
-
-            grid.add(card, index % 2, index / 2);
-            index++;
-        }
-        com.javaclaw.ui.javafx.theme.ThemeManager.themeProperty()
-                .addListener((obs, o, n) -> refreshers.values().forEach(Runnable::run));
-
-        Label noteTitle = new Label("说明");
-        noteTitle.getStyleClass().add("grp-title");
-        Label note = new Label(
-                "风格通过语义令牌切换：仅 -jc-* 颜色令牌重新指向，所有组件无需改动。"
-                        + "也可在聊天顶部栏「风格」菜单随时切换。");
-        note.getStyleClass().add("sec-hint");
-        note.setWrapText(true);
-
-        VBox panel = new VBox(8,
-                sectionTitle, overviewHint,
-                groupTitle, grid,
-                new Separator(),
-                noteTitle, note);
-        panel.setPadding(new Insets(4));
-
-        ScrollPane scrollPane = new ScrollPane();
-        scrollPane.setFitToWidth(true);
-        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        scrollPane.getStyleClass().add("settings-scroll-pane");
-        scrollPane.setContent(panel);
-        return scrollPane;
-    }
-
-    /**
-     * 「设置 › 字体」面板（组件型，选择即时全局生效，无保存按钮）。
-     * 与「界面风格」共用样式类：界面字体双列卡片 + 等宽分段 + 密度分段 + 实时说明。
-     * 字体选择经 {@link com.javaclaw.ui.javafx.theme.FontManager} 立即应用到全部窗口并按工作区记忆。
-     */
-    private Node buildFontPanel() {
-        Label sectionTitle = new Label("字体");
-        sectionTitle.getStyleClass().add("sec-title");
-
-        Label hint = new Label(
-                "选择界面与对话使用的字体，立即生效并记忆到本工作区 —— 应用于所有窗口、弹窗与对话气泡。"
-                        + "系统原生为默认，仅展示本机或应用包中实际可用的字体。");
-        hint.getStyleClass().add("sec-hint");
-        hint.setWrapText(true);
-
-        // ===== 界面字体（双列卡片，预览以该字体渲染样张）=====
-        Label uiTitle = new Label("界面字体");
-        uiTitle.getStyleClass().add("grp-title");
-
-        GridPane grid = new GridPane();
-        grid.setHgap(12);
-        grid.setVgap(12);
-        ColumnConstraints half = new ColumnConstraints();
-        half.setPercentWidth(50);
-        grid.getColumnConstraints().addAll(half, half);
-
-        java.util.List<Runnable> refreshers = new java.util.ArrayList<>();
-        int idx = 0;
-        for (com.javaclaw.ui.javafx.theme.FontManager.FontOption opt
-                : com.javaclaw.ui.javafx.theme.FontManager.availableFontOptions()) {
-            Label name = new Label(opt.name());
-            name.getStyleClass().add("theme-card-name");
-            Label sub = new Label(opt.subtitle());
-            sub.getStyleClass().add("theme-card-sub");
-            VBox text = new VBox(1, name, sub);
-            HBox.setHgrow(text, Priority.ALWAYS);
-
-            Label check = new Label("✓");
-            check.getStyleClass().add("theme-card-check");
-
-            HBox head = new HBox(8, text, check);
-            head.setAlignment(Pos.CENTER_LEFT);
-
-            // 样张：以该字体族渲染（直观对比字形）
-            Label sample = new Label("现代极简 Studio 字体 Ag");
-            sample.setStyle("-fx-font-family: " + opt.stack() + "; -fx-font-size: 18px; -fx-text-fill: -jc-text-title;");
-
-            VBox card = new VBox(8, head, sample);
-            card.getStyleClass().add("theme-card");
-            card.setPadding(new Insets(13, 15, 14, 15));
-            card.setOnMouseClicked(e -> com.javaclaw.ui.javafx.theme.FontManager.setFontFamily(opt.id()));
-
-            Runnable refresh = () -> {
-                boolean on = opt.id().equals(com.javaclaw.ui.javafx.theme.FontManager.getFontFamily());
-                card.getStyleClass().remove("theme-card-selected");
-                if (on) card.getStyleClass().add("theme-card-selected");
-                check.setVisible(on);
-            };
-            refresh.run();
-            refreshers.add(refresh);
-
-            grid.add(card, idx % 2, idx / 2);
-            idx++;
-        }
-
-        // ===== 等宽字体（分段控件）=====
-        Label monoTitle = new Label("等宽字体");
-        monoTitle.getStyleClass().add("grp-title");
-        HBox monoSeg = new HBox(2);
-        monoSeg.getStyleClass().add("seg-container");
-        monoSeg.setAlignment(Pos.CENTER_LEFT);
-        ToggleGroup monoGroup = new ToggleGroup();
-        for (com.javaclaw.ui.javafx.theme.FontManager.MonoOption m
-                : com.javaclaw.ui.javafx.theme.FontManager.availableMonoOptions()) {
-            ToggleButton tb = new ToggleButton(m.name());
-            tb.getStyleClass().add("seg-btn");
-            tb.setToggleGroup(monoGroup);
-            tb.setSelected(m.id().equals(com.javaclaw.ui.javafx.theme.FontManager.getMonoFamily()));
-            tb.setOnAction(e -> { if (tb.isSelected()) com.javaclaw.ui.javafx.theme.FontManager.setMonoFamily(m.id()); else tb.setSelected(true); });
-            Runnable r = () -> tb.setSelected(m.id().equals(com.javaclaw.ui.javafx.theme.FontManager.getMonoFamily()));
-            refreshers.add(r);
-            monoSeg.getChildren().add(tb);
-        }
-
-        // ===== 字号 / 密度（分段控件）=====
-        Label densTitle = new Label("字号 / 密度");
-        densTitle.getStyleClass().add("grp-title");
-        HBox densSeg = new HBox(2);
-        densSeg.getStyleClass().add("seg-container");
-        densSeg.setAlignment(Pos.CENTER_LEFT);
-        ToggleGroup densGroup = new ToggleGroup();
-        for (com.javaclaw.ui.javafx.theme.FontManager.Density d : com.javaclaw.ui.javafx.theme.FontManager.DENSITIES) {
-            ToggleButton tb = new ToggleButton(d.name());
-            tb.getStyleClass().add("seg-btn");
-            tb.setToggleGroup(densGroup);
-            tb.setSelected(d.id().equals(com.javaclaw.ui.javafx.theme.FontManager.getDensity()));
-            tb.setOnAction(e -> { if (tb.isSelected()) com.javaclaw.ui.javafx.theme.FontManager.setDensity(d.id()); else tb.setSelected(true); });
-            Runnable r = () -> tb.setSelected(d.id().equals(com.javaclaw.ui.javafx.theme.FontManager.getDensity()));
-            refreshers.add(r);
-            densSeg.getChildren().add(tb);
-        }
-
-        Label note = new Label(
-                "选择后立即应用到全部已打开窗口，并写入本工作区配置（ui.font.*）。"
-                        + "等宽字体影响代码块、token 计数与时间戳；密度影响对话正文字号与行高。");
-        note.getStyleClass().add("sec-hint");
-        note.setWrapText(true);
-
-        // 外部变更（如别处切换工作区 reload）时统一刷新本面板选中态
-        com.javaclaw.ui.javafx.theme.FontManager.revisionProperty().addListener((obs, o, n) -> refreshers.forEach(Runnable::run));
-
-        VBox panel = new VBox(8,
-                sectionTitle, hint,
-                uiTitle, grid,
-                monoTitle, monoSeg,
-                densTitle, densSeg,
-                new Separator(),
-                note);
-        panel.setPadding(new Insets(4));
-
-        ScrollPane scrollPane = new ScrollPane();
-        scrollPane.setFitToWidth(true);
-        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        scrollPane.getStyleClass().add("settings-scroll-pane");
-        scrollPane.setContent(panel);
-        return scrollPane;
-    }
-
     /**
      * 将当前配置加载到表单控件
      */
@@ -1330,6 +1120,8 @@ public class SettingsView {
             skillEvolutionSettingsSection.controller().reload();
         }
         if (generalSettingsSection != null) generalSettingsSection.controller().reload();
+        if (appearanceSettingsSection != null) appearanceSettingsSection.controller().reload();
+        if (fontSettingsSection != null) fontSettingsSection.controller().reload();
     }
 
     /**

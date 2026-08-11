@@ -24,6 +24,8 @@ import com.javaclaw.ui.javafx.diagnostics.JavaFxDiagnosticsExportTargetPicker;
 import com.javaclaw.ui.javafx.theme.ThemeManagerThemeSelectionService;
 import com.javaclaw.ui.javafx.theme.ThemeMenuEntryFactory;
 import com.javaclaw.ui.javafx.theme.ThemeSelectionService;
+import com.javaclaw.ui.javafx.theme.FontManagerFontSelectionService;
+import com.javaclaw.ui.javafx.theme.FontSelectionService;
 import com.javaclaw.ui.javafx.plugin.JavaFxPluginJarPicker;
 import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
 import com.javaclaw.ui.javafx.plugin.PluginComponentFactory;
@@ -133,6 +135,11 @@ public class DesktopPresentationConfiguration {
     @Bean
     ThemeSelectionService themeSelectionService() {
         return new ThemeManagerThemeSelectionService();
+    }
+
+    @Bean
+    FontSelectionService fontSelectionService() {
+        return new FontManagerFontSelectionService();
     }
 
     @Bean

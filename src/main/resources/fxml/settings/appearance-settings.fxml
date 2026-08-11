@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import com.javaclaw.ui.javafx.settings.ThemeCard?>
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.control.Separator?>
+<?import javafx.scene.layout.ColumnConstraints?>
+<?import javafx.scene.layout.GridPane?>
+<?import javafx.scene.layout.VBox?>
+
+<ScrollPane fx:id="root" fitToWidth="true" hbarPolicy="NEVER"
+            styleClass="scroll-pane, settings-scroll-pane"
+            xmlns="http://javafx.com/javafx/25"
+            xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.javaclaw.ui.javafx.settings.AppearanceSettingsController">
+    <content>
+        <VBox spacing="8.0" maxWidth="760.0">
+            <padding><Insets top="4.0" right="4.0" bottom="4.0" left="4.0"/></padding>
+            <children>
+                <Label text="界面风格" styleClass="sec-title"/>
+                <Label text="实时切换整个界面的配色风格，立即生效并记忆到本工作区。「翡翠」为随应用发布的默认风格。"
+                       wrapText="true" styleClass="sec-hint"/>
+                <Label text="风格" styleClass="grp-title"/>
+                <GridPane hgap="12.0" vgap="12.0">
+                    <columnConstraints>
+                        <ColumnConstraints percentWidth="50.0"/>
+                        <ColumnConstraints percentWidth="50.0"/>
+                    </columnConstraints>
+                    <children>
+                        <ThemeCard fx:id="emeraldCard"
+                                   GridPane.columnIndex="0" GridPane.rowIndex="0"/>
+                        <ThemeCard fx:id="midnightCard"
+                                   GridPane.columnIndex="1" GridPane.rowIndex="0"/>
+                        <ThemeCard fx:id="carbonCard"
+                                   GridPane.columnIndex="0" GridPane.rowIndex="1"/>
+                        <ThemeCard fx:id="sapphireCard"
+                                   GridPane.columnIndex="1" GridPane.rowIndex="1"/>
+                        <ThemeCard fx:id="oceanCard"
+                                   GridPane.columnIndex="0" GridPane.rowIndex="2"/>
+                        <ThemeCard fx:id="plumCard"
+                                   GridPane.columnIndex="1" GridPane.rowIndex="2"/>
+                        <ThemeCard fx:id="terracottaCard"
+                                   GridPane.columnIndex="0" GridPane.rowIndex="3"/>
+                        <ThemeCard fx:id="honeyCard"
+                                   GridPane.columnIndex="1" GridPane.rowIndex="3"/>
+                        <ThemeCard fx:id="graphiteCard"
+                                   GridPane.columnIndex="0" GridPane.rowIndex="4"/>
+                    </children>
+                </GridPane>
+                <Separator/>
+                <Label text="说明" styleClass="grp-title"/>
+                <Label text="风格通过语义令牌切换：仅 -jc-* 颜色令牌重新指向，所有组件无需改动。也可在聊天顶部栏「风格」菜单随时切换。"
+                       wrapText="true" styleClass="sec-hint"/>
+            </children>
+        </VBox>
+    </content>
+</ScrollPane>
