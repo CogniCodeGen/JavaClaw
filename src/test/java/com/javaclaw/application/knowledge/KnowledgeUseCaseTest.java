@@ -12,12 +12,15 @@ import com.javaclaw.application.knowledge.KnowledgeApplicationService.Settings;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -96,6 +99,76 @@ class KnowledgeUseCaseTest {
                 () -> useCase.importText("title", " ", Scope.WORKSPACE));
     }
 
+    @Test
+    void coversWorkspaceDefaultsScopesAndFailureResults(@TempDir Path directory) throws Exception {
+        KnowledgeUseCase defaultWorkspace = new KnowledgeUseCase(knowledge, settings, null);
+        assertEquals("默认工作区", defaultWorkspace.snapshot().workspaceName());
+        assertEquals("默认工作区",
+                new KnowledgeUseCase(knowledge, settings, "  ").snapshot().workspaceName());
+
+        settings.current = new Settings(
+                "OpenAI", "https://example.test", "embed", 1024, 0, 400, 50);
+        useCase.search("query");
+        assertEquals(1, knowledge.searchLimit);
+
+        Path valid = Files.writeString(directory.resolve("valid.md"), "content");
+        List<Path> candidates = new ArrayList<>();
+        candidates.add(valid);
+        candidates.add(null);
+        candidates.add(valid);
+        var files = useCase.importFiles(candidates, null);
+        assertEquals(1, files.succeeded());
+        assertEquals(Scope.WORKSPACE, knowledge.importScope);
+
+        knowledge.importTextSucceeds = false;
+        var text = useCase.importText(" title ", "body", Scope.GLOBAL);
+        assertEquals(0, text.succeeded());
+        assertEquals(List.of("文本导入失败"), text.failures());
+        assertEquals("title", knowledge.importTitle);
+
+        useCase.setAllEnabled(false, Scope.WORKSPACE);
+        assertEquals(Scope.WORKSPACE, knowledge.bulkScope);
+        useCase.setAllEnabled(true, Scope.ALL);
+        assertEquals(null, knowledge.bulkScope);
+        assertEquals(0, useCase.clear().documents().size());
+
+        try (AutoCloseable observation = useCase.observeHealth(health -> { })) {
+            assertTrue(knowledge.observing);
+        }
+        assertFalse(knowledge.observing);
+        assertThrows(NullPointerException.class, () -> useCase.observeHealth(null));
+        assertThrows(ValidationException.class, () -> useCase.importFiles(null, Scope.ALL));
+        assertThrows(ValidationException.class, () -> useCase.search(null));
+        assertThrows(NullPointerException.class,
+                () -> new KnowledgeUseCase(null, settings, "workspace"));
+        assertThrows(NullPointerException.class,
+                () -> new KnowledgeUseCase(knowledge, null, "workspace"));
+    }
+
+    @Test
+    void rejectsOversizedFilesDeleteRacesAndEveryChunkBoundary(@TempDir Path directory)
+            throws Exception {
+        Path large = directory.resolve("large.bin");
+        try (var channel = Files.newByteChannel(large,
+                StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
+            channel.position(KnowledgeUseCase.MAX_IMPORT_FILE_SIZE);
+            channel.write(ByteBuffer.wrap(new byte[] {1}));
+        }
+        var imported = useCase.importFiles(List.of(large), Scope.WORKSPACE);
+        assertEquals(1, imported.failed());
+        assertTrue(imported.failures().getFirst().contains("文件过大"));
+
+        knowledge.documents.add(document("race.md", Scope.WORKSPACE));
+        knowledge.deleteCount = 0;
+        assertThrows(NotFoundException.class, () -> useCase.deleteDocument("race.md"));
+        assertThrows(ValidationException.class, () -> useCase.setDocumentEnabled(null, true));
+
+        assertEquals(1024, useCase.saveChunkSettings(1024, 256).chunkSize());
+        assertThrows(ValidationException.class, () -> useCase.saveChunkSettings(1025, 0));
+        assertThrows(ValidationException.class, () -> useCase.saveChunkSettings(256, -1));
+        assertThrows(ValidationException.class, () -> useCase.saveChunkSettings(512, 257));
+    }
+
     private static Document document(String name, Scope scope) {
         return new Document(name, scope, true, 1, "2026-08-12", "summary", List.of("preview"));
     }
@@ -112,11 +185,17 @@ class KnowledgeUseCaseTest {
         private Scope bulkScope;
         private String deletedDocument;
         private int rebuilt;
+        private int deleteCount = 1;
+        private boolean importTextSucceeds = true;
+        private boolean observing;
 
         @Override public boolean enabled() { return true; }
         @Override public String initializationError() { return ""; }
         @Override public Health health() { return new Health(HealthStatus.HEALTHY, ""); }
-        @Override public AutoCloseable observeHealth(HealthListener listener) { return () -> { }; }
+        @Override public AutoCloseable observeHealth(HealthListener listener) {
+            observing = true;
+            return () -> observing = false;
+        }
         @Override public List<Document> documents() { return List.copyOf(documents); }
         @Override public List<SearchHit> search(String query, int limit) {
             searchLimit = limit;
@@ -130,13 +209,16 @@ class KnowledgeUseCaseTest {
             importTitle = title;
             importText = text;
             importScope = scope;
-            return true;
+            return importTextSucceeds;
         }
         @Override public void setDocumentEnabled(String name, boolean enabled) {
             toggledDocument = name;
         }
         @Override public void setAllEnabled(boolean enabled, Scope scope) { bulkScope = scope; }
-        @Override public int deleteDocument(String name) { deletedDocument = name; return 1; }
+        @Override public int deleteDocument(String name) {
+            deletedDocument = name;
+            return deleteCount;
+        }
         @Override public int clear() { return 0; }
         @Override public int rebuildIndex() { return rebuilt; }
     }

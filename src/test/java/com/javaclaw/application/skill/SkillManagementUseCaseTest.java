@@ -19,6 +19,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class SkillManagementUseCaseTest {
@@ -66,10 +67,59 @@ class SkillManagementUseCaseTest {
         assertEquals("提案已拒绝", useCase.rejectProposal("proposal-1").message());
     }
 
+    @Test
+    void delegatesScriptImportDirectoryAndSubscriptionCapabilities() throws Exception {
+        assertEquals(1, useCase.pendingProposalCount());
+        assertEquals("skill-1", useCase.detail(" skill-1 ").id());
+        assertEquals("main.JAVA", useCase.readScript("skill-1", "main.JAVA").fileName());
+        assertEquals("已创建 helper.jsh",
+                useCase.createScript("skill-1", "helper.jsh").message());
+        useCase.saveScript("skill-1", "helper.jsh", null);
+        assertEquals("", port.savedScriptContent);
+        assertEquals("已删除 helper.jsh",
+                useCase.deleteScript("skill-1", "helper.jsh").message());
+        assertNotNull(useCase.checkScript("1 + 1"));
+        assertNotNull(useCase.runScript("skill-1", "1 + 1", null));
+        assertEquals(1, useCase.proposals().size());
+        try (AutoCloseable subscription = useCase.subscribeToProposalChanges(() -> { })) {
+            assertNotNull(subscription);
+        }
+        assertEquals(List.of(), useCase.bundles());
+        assertEquals(List.of(), useCase.deleteBundle(" bundle "));
+
+        Path source = Path.of(".");
+        assertNotNull(useCase.inspectImport(source, ImportKind.DIRECTORY));
+        assertNotNull(useCase.importSkill(source, ImportKind.DIRECTORY));
+        assertEquals(port.directory, useCase.skillsDirectory());
+        assertEquals(port.directory.resolve("skill-1"), useCase.skillDirectory("skill-1"));
+    }
+
+    @Test
+    void normalizesNullCollectionsAndRejectsMissingDependencies() {
+        useCase.update(new UpdateSkillCommand(
+                "skill-1", "Skill", null, null, null, null, false));
+        assertEquals(List.of(), port.update.tags());
+        assertEquals("", port.update.content());
+        useCase.saveBundle(new BundleCommand(null, "bundle", null, null, null, false));
+        assertEquals(List.of(), port.bundle.skills());
+        assertEquals("", port.bundle.extraInstructions());
+
+        assertThrows(ValidationException.class,
+                () -> useCase.createScript("skill-1", "folder\\bad.java"));
+        assertThrows(ValidationException.class, () -> useCase.inspectImport(null, ImportKind.ZIP));
+        assertThrows(NullPointerException.class, () -> useCase.inspectImport(Path.of("."), null));
+        assertThrows(NullPointerException.class, () -> useCase.importSkill(Path.of("."), null));
+        assertThrows(NullPointerException.class, () -> useCase.subscribeToProposalChanges(null));
+        assertThrows(NullPointerException.class, () -> useCase.update(null));
+        assertThrows(NullPointerException.class, () -> useCase.saveBundle(null));
+        assertThrows(NullPointerException.class, () -> new SkillManagementUseCase(null));
+    }
+
     private static final class FakePort implements SkillManagementPort {
         private final Path directory = Path.of("skills").toAbsolutePath();
         private UpdateSkillCommand update;
         private BundleCommand bundle;
+        private String savedScriptContent;
 
         @Override public Snapshot snapshot() {
             return new Snapshot(List.of(new SkillSummary(
@@ -91,7 +141,9 @@ class SkillManagementUseCaseTest {
         @Override public ScriptDocument createScript(String skillId, String fileName) {
             return new ScriptDocument(fileName, "");
         }
-        @Override public void saveScript(String skillId, String fileName, String content) { }
+        @Override public void saveScript(String skillId, String fileName, String content) {
+            savedScriptContent = content;
+        }
         @Override public SkillDetail deleteScript(String skillId, String fileName) { return detailValue(); }
         @Override public ScriptReport checkScript(String code) {
             return new ScriptReport(true, false, 0, "ok", "", List.of());

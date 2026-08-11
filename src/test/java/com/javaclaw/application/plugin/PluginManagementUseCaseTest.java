@@ -1,6 +1,7 @@
 package com.javaclaw.application.plugin;
 
 import com.javaclaw.application.error.ConflictException;
+import com.javaclaw.application.error.NotFoundException;
 import com.javaclaw.application.error.RejectedException;
 import com.javaclaw.application.plugin.PluginManagementApplicationService.Catalog;
 import com.javaclaw.application.plugin.PluginManagementApplicationService.ConfigField;
@@ -81,10 +82,61 @@ class PluginManagementUseCaseTest {
         assertTrue(port.subscriptionClosed);
     }
 
+    @Test
+    void noOpAndRejectedTransitionsHaveExplicitSemantics() {
+        FakePort port = new FakePort();
+        PluginManagementUseCase useCase = new PluginManagementUseCase(port);
+
+        assertFalse(useCase.setEnabled("demo", false).require("demo").active());
+        port.ignoreTransitions = true;
+        assertThrows(RejectedException.class, () -> useCase.setEnabled("demo", true));
+        port.transitionError = "缺少权限";
+        assertTrue(assertThrows(RejectedException.class,
+                () -> useCase.setEnabled("demo", true)).getMessage().contains("缺少权限"));
+
+        port.ignoreTransitions = false;
+        assertTrue(useCase.setEnabled("demo", true).require("demo").active());
+        assertTrue(useCase.setEnabled("demo", true).require("demo").active());
+        port.ignoreTransitions = true;
+        assertThrows(ConflictException.class, () -> useCase.setEnabled("demo", false));
+    }
+
+    @Test
+    void successfulUninstallNullConfigAndDirectoriesRemainDefensive() {
+        FakePort port = new FakePort();
+        PluginManagementUseCase useCase = new PluginManagementUseCase(port);
+
+        useCase.saveConfig("demo", null);
+        assertEquals(Map.of(), port.savedConfig);
+        assertEquals(Path.of("plugins").toAbsolutePath().normalize(), useCase.pluginsDirectory());
+        assertTrue(useCase.uninstall("demo").plugins().isEmpty());
+        assertThrows(NotFoundException.class, () -> useCase.details("missing"));
+
+        port.plugins.add(pluginWithoutConfig("plain"));
+        assertThrows(ConflictException.class, () -> useCase.saveConfig("plain", Map.of()));
+        assertThrows(NullPointerException.class, () -> useCase.install(null));
+        assertThrows(NullPointerException.class, () -> useCase.onCatalogChanged(null));
+        assertThrows(NullPointerException.class, () -> new PluginManagementUseCase(null));
+    }
+
+    @Test
+    void blankInstalledIdsAreRejectedLikeMissingDescriptors() {
+        FakePort port = new FakePort();
+        port.installResult = " ";
+        PluginManagementUseCase useCase = new PluginManagementUseCase(port);
+
+        assertThrows(RejectedException.class, () -> useCase.install(Path.of("blank.jar")));
+    }
+
     private static Plugin plugin(String id, State state) {
         return new Plugin(id, id, "1.0.0", "description", List.of(),
                 List.of(new ConfigField("token", "Token", true)),
                 List.of(), List.of(), state, "");
+    }
+
+    private static Plugin pluginWithoutConfig(String id) {
+        return new Plugin(id, id, "1.0.0", "description", List.of(),
+                List.of(), List.of(), List.of(), State.STOPPED, "");
     }
 
     private static final class FakePort implements PluginManagementPort {
@@ -95,6 +147,8 @@ class PluginManagementUseCaseTest {
         private Map<String, String> savedConfig;
         private Runnable listener;
         private boolean subscriptionClosed;
+        private boolean ignoreTransitions;
+        private String transitionError = "";
 
         @Override public List<Plugin> list() { return List.copyOf(plugins); }
         @Override public void refresh() { refreshes++; }
@@ -104,12 +158,15 @@ class PluginManagementUseCaseTest {
             Plugin old = plugins.removeFirst();
             plugins.add(new Plugin(old.id(), old.name(), old.version(), old.description(),
                     old.permissions(), old.config(), old.skills(), old.tools(),
-                    enabled ? State.ACTIVE : State.STOPPED, old.error()));
+                    ignoreTransitions ? old.state() : enabled ? State.ACTIVE : State.STOPPED,
+                    transitionError));
         }
 
         @Override
         public String install(Path jar) {
-            if (installResult != null) plugins.add(plugin(installResult, State.STOPPED));
+            if (installResult != null && !installResult.isBlank()) {
+                plugins.add(plugin(installResult, State.STOPPED));
+            }
             return installResult;
         }
 

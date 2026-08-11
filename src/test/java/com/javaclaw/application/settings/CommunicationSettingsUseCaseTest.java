@@ -71,6 +71,72 @@ class CommunicationSettingsUseCaseTest {
         assertEquals(1, settings.notificationSaves);
     }
 
+    @Test
+    void validatesEveryNotificationChannelAndAllowsAllDisabled() {
+        FakeSettingsPort settings = new FakeSettingsPort(snapshot());
+        CommunicationSettingsUseCase useCase = new CommunicationSettingsUseCase(
+                settings, value -> new EmailConnectionProbePort.Result("", ""));
+
+        useCase.saveNotifications(snapshot().notifications());
+        assertEquals(1, settings.notificationSaves);
+        NotificationSettings allEnabled = new NotificationSettings(
+                true, "http://notify.example/dingtalk", "secret",
+                true, "https://notify.example/wechat",
+                true, "https://notify.example/feishu", "secret",
+                true, "owner@example.com",
+                true, "https://notify.example/custom", "{} ");
+        useCase.saveNotifications(allEnabled);
+        assertEquals(2, settings.notificationSaves);
+
+        assertThrows(ValidationException.class, () -> useCase.saveNotifications(
+                new NotificationSettings(false, "", "", true, "file:///wechat",
+                        false, "", "", false, "", false, "", "")));
+        assertThrows(ValidationException.class, () -> useCase.saveNotifications(
+                new NotificationSettings(false, "", "", false, "",
+                        true, "http:///feishu", "", false, "", false, "", "")));
+        assertThrows(ValidationException.class, () -> useCase.saveNotifications(
+                new NotificationSettings(false, "", "", false, "", false, "", "",
+                        true, " ", false, "", "")));
+        assertThrows(ValidationException.class, () -> useCase.saveNotifications(
+                new NotificationSettings(false, "", "", false, "", false, "", "",
+                        false, "", true, "https://notify.example/custom", " ")));
+        assertThrows(NullPointerException.class, () -> useCase.saveNotifications(null));
+    }
+
+    @Test
+    void coversEmailBoundariesSuccessfulProbeAndIndependentImapFailure() throws Exception {
+        FakeSettingsPort settings = new FakeSettingsPort(snapshot());
+        CommunicationSettingsUseCase success = new CommunicationSettingsUseCase(
+                settings, value -> new EmailConnectionProbePort.Result("", ""));
+        EmailSettings explicitFrom = new EmailSettings("smtp.example.com", 1,
+                "imap.example.com", 65535, "owner", "secret", "sender@example.com",
+                Encryption.NONE);
+        assertEquals("sender@example.com", success.saveEmail(explicitFrom)
+                .snapshot().email().fromAddress());
+        assertEquals("✓ SMTP 已连接 · IMAP 已连接",
+                success.saveAndProbeEmail(explicitFrom).message());
+
+        CommunicationSettingsUseCase imapFailure = new CommunicationSettingsUseCase(
+                settings, value -> new EmailConnectionProbePort.Result("", "连接超时"));
+        assertEquals("SMTP 正常 · IMAP 失败: 连接超时",
+                imapFailure.saveAndProbeEmail(explicitFrom).message());
+
+        assertThrows(ValidationException.class, () -> success.saveEmail(new EmailSettings(
+                "smtp.example.com", 0, "imap.example.com", 993,
+                "owner", "secret", "", Encryption.NONE)));
+        assertThrows(ValidationException.class, () -> success.saveEmail(new EmailSettings(
+                "smtp.example.com", 25, null, 993,
+                "owner", "secret", "", Encryption.NONE)));
+        assertThrows(ValidationException.class, () -> success.saveEmail(new EmailSettings(
+                "smtp.example.com", 25, "imap.example.com", 65536,
+                "owner", "secret", "", Encryption.NONE)));
+        assertThrows(NullPointerException.class, () -> success.saveEmail(null));
+        assertThrows(NullPointerException.class,
+                () -> new CommunicationSettingsUseCase(null, value -> null));
+        assertThrows(NullPointerException.class,
+                () -> new CommunicationSettingsUseCase(settings, null));
+    }
+
     private static Snapshot snapshot() {
         return new Snapshot(
                 new EmailSettings("smtp.qq.com", 465, "imap.qq.com", 993,
