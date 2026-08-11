@@ -8,6 +8,7 @@ import com.javaclaw.application.memory.MemoryApplicationService;
 import com.javaclaw.memory.graph.MemoryGraph;
 import com.javaclaw.platform.dialog.DialogService;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fx.FxDispatcher;
 import javafx.application.Platform;
@@ -99,6 +100,10 @@ class MemoryFxmlLoadTest {
         context.registerBean(DialogService.class,
                 () -> new DialogService(context.getBean(UserInteractionPort.class)));
         context.registerBean(ManagedTaskExecutor.class, () -> new ManagedTaskExecutor(),
+                definition -> definition.setDestroyMethodName("close"));
+        context.registerBean("workspaceTaskScope", TaskScope.class,
+                () -> context.getBean(ManagedTaskExecutor.class)
+                        .openScope("memory-fxml-test", 16),
                 definition -> definition.setDestroyMethodName("close"));
         context.registerBean(FxDispatcher.class, FxDispatcher::new);
         context.registerBean(SpringFxmlLoader.class,

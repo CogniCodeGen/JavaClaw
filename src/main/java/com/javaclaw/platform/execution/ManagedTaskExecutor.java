@@ -36,7 +36,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>实例线程安全。关闭后拒绝新任务，取消所有在途任务，并最多等待五秒释放执行器。
  * 任务必须同时检查取消信号和响应中断；平台不会使用危险的线程强停。</p>
  */
-public final class ManagedTaskExecutor implements AutoCloseable {
+public final class ManagedTaskExecutor implements TaskSubmitter, AutoCloseable {
 
     private static final Duration CLOSE_TIMEOUT = Duration.ofSeconds(5);
 
@@ -72,6 +72,7 @@ public final class ManagedTaskExecutor implements AutoCloseable {
         processGate = new Semaphore(limits.processConcurrency(), true);
     }
 
+    @Override
     public <T> TaskHandle<T> submit(TaskSpec spec, ManagedTask<T> task) {
         if (!accepting.get()) {
             throw new RejectedExecutionException("托管执行器已关闭");

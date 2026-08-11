@@ -3,7 +3,7 @@ package com.javaclaw.ui.javafx.memory;
 import com.javaclaw.application.memory.MemoryApplicationService;
 import com.javaclaw.application.memory.MemoryApplicationService.OperationResult;
 import com.javaclaw.application.memory.MemoryApplicationService.Snapshot;
-import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.platform.fx.UiAsyncAction;
@@ -17,6 +17,7 @@ import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Window;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -74,7 +75,7 @@ public final class MemoryViewController implements MemorySectionHost, AutoClosea
 
     public MemoryViewController(
             MemoryApplicationService useCases,
-            ManagedTaskExecutor tasks,
+            @Qualifier("workspaceTaskScope") TaskScope tasks,
             FxDispatcher fx) {
         this.useCases = Objects.requireNonNull(useCases, "useCases");
         loadAction = new UiAsyncAction<>(tasks, fx);

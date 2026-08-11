@@ -2,6 +2,8 @@ package com.javaclaw.memory.embed;
 
 import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.platform.execution.TaskScope;
+import com.javaclaw.platform.execution.TaskSpec;
 import io.agentscope.core.embedding.EmbeddingModel;
 import io.agentscope.core.message.TextBlock;
 import org.slf4j.Logger;
@@ -12,8 +14,6 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.FutureTask;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -30,12 +30,13 @@ public class EmbeddingGateway {
 
     @FunctionalInterface
     interface EmbeddingInvoker {
-        double[] embed(String text) throws Exception;
+        double[] embed(String text, Duration timeout) throws Exception;
     }
 
     private final EmbeddingInvoker invoker;
     private final int dimensions;
     private final Clock clock;
+    private final TaskScope tasks;
     private final AtomicInteger failures = new AtomicInteger();
     /** 配置/模型创建或显式探测失败后，必须由一次成功调用才能恢复。 */
     private final AtomicBoolean hardUnavailable = new AtomicBoolean();
@@ -45,8 +46,9 @@ public class EmbeddingGateway {
             new CopyOnWriteArrayList<>();
     private volatile EmbeddingHealthSnapshot health;
 
-    public EmbeddingGateway(ModelFactory modelFactory) {
+    public EmbeddingGateway(ModelFactory modelFactory, TaskScope tasks) {
         Objects.requireNonNull(modelFactory, "modelFactory");
+        this.tasks = Objects.requireNonNull(tasks, "tasks");
         this.clock = Clock.systemUTC();
         this.dimensions = AgentConfig.getInstance().getRagEmbeddingDimensions();
         EmbeddingModel created = null;
@@ -67,22 +69,28 @@ public class EmbeddingGateway {
         }
         EmbeddingModel readyModel = created;
         this.invoker = readyModel == null ? null
-                : text -> readyModel.embed(TextBlock.builder().text(text).build()).block();
+                : (text, timeout) -> readyModel.embed(
+                        TextBlock.builder().text(text).build()).block(timeout);
         this.health = new EmbeddingHealthSnapshot(
                 initial, error, error == null ? 0 : 1, null, Instant.now(clock));
         this.hardUnavailable.set(error != null);
     }
 
     /** 测试注入入口：不创建真实模型，仍完整经过超时、重试和熔断逻辑。 */
-    EmbeddingGateway(int dimensions, EmbeddingHealthStatus initial, EmbeddingInvoker invoker) {
-        this(dimensions, initial, invoker, Clock.systemUTC());
+    EmbeddingGateway(
+            int dimensions,
+            EmbeddingHealthStatus initial,
+            EmbeddingInvoker invoker,
+            TaskScope tasks) {
+        this(dimensions, initial, invoker, Clock.systemUTC(), tasks);
     }
 
     EmbeddingGateway(int dimensions, EmbeddingHealthStatus initial,
-                     EmbeddingInvoker invoker, Clock clock) {
+                     EmbeddingInvoker invoker, Clock clock, TaskScope tasks) {
         this.dimensions = dimensions;
         this.invoker = invoker;
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.tasks = Objects.requireNonNull(tasks, "tasks");
         this.health = new EmbeddingHealthSnapshot(
                 initial, null, 0, null, Instant.now(clock));
     }
@@ -118,13 +126,17 @@ public class EmbeddingGateway {
                 || !initialProbeStarted.compareAndSet(false, true)) {
             return;
         }
-        Thread.ofVirtual()
-                .name("embedding-initial-health-probe")
-                .start(() -> {
-                    if (health.status() == EmbeddingHealthStatus.CHECKING) {
-                        probe();
-                    }
-                });
+        try {
+            tasks.submit(TaskSpec.io("embedding-initial-health-probe")
+                    .withTimeout(Duration.ofSeconds(5)), context -> {
+                context.cancellation().throwIfCancellationRequested();
+                if (health.status() == EmbeddingHealthStatus.CHECKING) probe();
+                return null;
+            });
+        } catch (RuntimeException failure) {
+            initialProbeStarted.set(false);
+            log.warn("嵌入初始健康探测调度失败: {}", failure.getMessage());
+        }
     }
 
     /** 兼容现有通知端口：仅在健康状态实际转入降级/不可用时触发。 */
@@ -215,24 +227,19 @@ public class EmbeddingGateway {
     }
 
     private float[] invoke(String text, Duration timeout) {
-        FutureTask<double[]> task = new FutureTask<>(() -> invoker.embed(text));
-        Thread worker = Thread.ofVirtual().name("embedding-call").start(task);
         double[] values;
         try {
-            values = task.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            values = invoker.embed(text, timeout);
         } catch (TimeoutException timeoutFailure) {
-            task.cancel(true);
-            worker.interrupt();
             throw new IllegalStateException("嵌入调用超时（" + timeout.toSeconds() + " 秒）",
                     timeoutFailure);
         } catch (InterruptedException interrupted) {
-            task.cancel(true);
             Thread.currentThread().interrupt();
             throw new IllegalStateException("嵌入调用被中断", interrupted);
-        } catch (java.util.concurrent.ExecutionException execution) {
-            Throwable cause = execution.getCause();
-            if (cause instanceof RuntimeException runtime) throw runtime;
-            throw new IllegalStateException("嵌入调用失败", cause);
+        } catch (RuntimeException runtime) {
+            throw runtime;
+        } catch (Exception failure) {
+            throw new IllegalStateException("嵌入调用失败", failure);
         }
         if (values == null || values.length == 0) {
             throw new IllegalStateException("嵌入服务返回空结果");

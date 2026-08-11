@@ -29,17 +29,15 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * 记忆存储基座 —— 一个目录对应一个 EclipseStore 对象图(一个工作区库或全局库)。
  *
  * <p>统一承载语义/情景/知识/实体/变更日志/工作记忆检查点/人格,各 GigaMap 挂 JVector 向量索引。</p>
  *
- * <p><b>并发模型</b>:所有写(add/update/remove/store)经单写线程串行化,避免对象图并发改写;
- * 读(向量检索)在调用线程直接执行(GigaMap 读安全)。</p>
+ * <p><b>并发模型</b>：所有写操作经公平锁串行化，由调用方选择的托管虚拟线程执行；
+ * 读取在调用线程执行（GigaMap 读安全）。关闭会等待当前写操作退出，再释放对象存储。</p>
  *
  * <p><b>变更日志</b>:每次结构性变更追加 {@link ChangeLogEntry},作为备份的替代审计轨。</p>
  *
@@ -67,8 +65,8 @@ public class MemoryStore implements AutoCloseable {
     private VectorIndex<Episode> episodeIndex;
     private VectorIndex<KnowledgeChunk> knowledgeIndex;
 
-    /** 单写线程:所有变更经此串行提交 */
-    private ExecutorService writer;
+    /** EclipseStore 对象图只允许一个写操作或关闭操作进入。 */
+    private final ReentrantLock writeLock = new ReentrantLock(true);
 
     public MemoryStore(Path dir, int dimension, String label) {
         this.dir = dir;
@@ -122,68 +120,73 @@ public class MemoryStore implements AutoCloseable {
 
     // ==================== 生命周期 ====================
 
-    /** 启动/恢复存储,确保根对象与三个向量索引就绪。 */
-    public synchronized void open() {
-        if (mgr != null) return;
-        ExecutorService newWriter = Executors.newSingleThreadExecutor(r -> {
-            Thread t = new Thread(r, "memory-writer-" + label);
-            t.setDaemon(true);
-            return t;
-        });
-        EmbeddedStorageManager started = null;
+    /** 启动或恢复存储，确保根对象与三个向量索引就绪。 */
+    public void open() {
+        writeLock.lock();
         try {
-            started = EmbeddedStorage.start(dir);
-            this.mgr = started;
-            MemoryRoot r = mgr.root();
-            if (r == null) {
-                r = new MemoryRoot();
-                mgr.setRoot(r);
-                mgr.storeRoot();
-                log.info("[{}] 新建记忆存储: {}", label, dir);
-            } else {
-                log.info("[{}] 已恢复记忆存储: {} (facts={}, episodes={}, knowledge={})",
-                        label, dir, r.facts.size(), r.episodes.size(), r.knowledge.size());
-            }
-            this.root = r;
-
-            // schema 补齐：pending 暂存区为反序列化后新增字段，缺失时补建并落盘（无向量索引）。
-            boolean migrated = false;
-            if (root.pendingFacts == null) { root.pendingFacts = GigaMap.New(); migrated = true; }
-            if (root.pendingEpisodes == null) { root.pendingEpisodes = GigaMap.New(); migrated = true; }
-            if (root.corrections == null) { root.corrections = GigaMap.New(); migrated = true; }
-            if (root.stats == null) { root.stats = new com.javaclaw.memory.model.MemoryStats(); migrated = true; }
-            if (migrated) {
-                mgr.store(root);
-                log.info("[{}] 已补建新增记忆字段（schema 补齐）", label);
-            }
-
-            ensureIdentityIndex(root.facts, FACT_ID);
-            ensureIdentityIndex(root.pendingFacts, FACT_ID);
-            ensureIdentityIndex(root.knowledge, KNOWLEDGE_ID);
-            ensureIdentityIndex(root.corrections, CORRECTION_ID);
-
-            this.factIndex = ensureIndex(root.facts, new FactVectorizer());
-            this.episodeIndex = ensureIndex(root.episodes, new EpisodeVectorizer());
-            this.knowledgeIndex = ensureIndex(root.knowledge, new KnowledgeVectorizer());
-            this.writer = newWriter;
-            log.info("[{}] 向量索引就绪 (dim={}, COSINE)", label, dimension);
-        } catch (RuntimeException | Error failure) {
-            newWriter.shutdownNow();
-            if (started != null) {
-                try {
-                    started.shutdown();
-                } catch (RuntimeException cleanupFailure) {
-                    failure.addSuppressed(cleanupFailure);
+            if (mgr != null) return;
+            EmbeddedStorageManager started = null;
+            try {
+                started = EmbeddedStorage.start(dir);
+                mgr = started;
+                MemoryRoot restored = mgr.root();
+                if (restored == null) {
+                    restored = new MemoryRoot();
+                    mgr.setRoot(restored);
+                    mgr.storeRoot();
+                    log.info("[{}] 新建记忆存储: {}", label, dir);
+                } else {
+                    log.info("[{}] 已恢复记忆存储: {} (facts={}, episodes={}, knowledge={})",
+                            label, dir, restored.facts.size(), restored.episodes.size(),
+                            restored.knowledge.size());
                 }
+                root = restored;
+                completeSchema();
+                ensureIdentityIndex(root.facts, FACT_ID);
+                ensureIdentityIndex(root.pendingFacts, FACT_ID);
+                ensureIdentityIndex(root.knowledge, KNOWLEDGE_ID);
+                ensureIdentityIndex(root.corrections, CORRECTION_ID);
+                factIndex = ensureIndex(root.facts, new FactVectorizer());
+                episodeIndex = ensureIndex(root.episodes, new EpisodeVectorizer());
+                knowledgeIndex = ensureIndex(root.knowledge, new KnowledgeVectorizer());
+                log.info("[{}] 向量索引就绪 (dim={}, COSINE)", label, dimension);
+            } catch (RuntimeException | Error failure) {
+                cleanupFailedOpen(started, failure);
+                throw failure;
             }
-            this.writer = null;
-            this.mgr = null;
-            this.root = null;
-            this.factIndex = null;
-            this.episodeIndex = null;
-            this.knowledgeIndex = null;
-            throw failure;
+        } finally {
+            writeLock.unlock();
         }
+    }
+
+    private void completeSchema() {
+        boolean changed = false;
+        if (root.pendingFacts == null) { root.pendingFacts = GigaMap.New(); changed = true; }
+        if (root.pendingEpisodes == null) { root.pendingEpisodes = GigaMap.New(); changed = true; }
+        if (root.corrections == null) { root.corrections = GigaMap.New(); changed = true; }
+        if (root.stats == null) {
+            root.stats = new com.javaclaw.memory.model.MemoryStats();
+            changed = true;
+        }
+        if (changed) {
+            mgr.store(root);
+            log.info("[{}] 已补建新增记忆字段（schema 补齐）", label);
+        }
+    }
+
+    private void cleanupFailedOpen(EmbeddedStorageManager started, Throwable failure) {
+        if (started != null) {
+            try {
+                started.shutdown();
+            } catch (RuntimeException cleanupFailure) {
+                failure.addSuppressed(cleanupFailure);
+            }
+        }
+        mgr = null;
+        root = null;
+        factIndex = null;
+        episodeIndex = null;
+        knowledgeIndex = null;
     }
 
     /** 获取或创建某 GigaMap 的向量索引(首次 register+add,重开 get)。 */
@@ -213,86 +216,66 @@ public class MemoryStore implements AutoCloseable {
     }
 
     @Override
-    public synchronized void close() {
-        if (writer != null) {
-            // 先排空在途写任务再关存储：shutdown() 只拒收新任务不等待执行中任务，
-            // 不等待就 mgr.shutdown() 会让在途记忆写入丢失
-            writer.shutdown();
-            try {
-                if (!writer.awaitTermination(5, TimeUnit.SECONDS)) {
-                    log.warn("[{}] 写线程 5 秒内未排空，可能丢失在途写入", label);
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+    public void close() {
+        writeLock.lock();
+        try {
+            if (mgr != null) {
+                mgr.shutdown();
+                mgr = null;
             }
-            writer = null;
-        }
-        if (mgr != null) {
-            mgr.shutdown();
-            mgr = null;
+            root = null;
+            factIndex = null;
+            episodeIndex = null;
+            knowledgeIndex = null;
+        } finally {
+            writeLock.unlock();
         }
         log.info("[{}] 记忆存储已关闭", label);
     }
 
     // ==================== 写协调 ====================
 
-    /** 在单写线程上执行变更并阻塞等待完成;异常包装上抛。 */
+    /** 在当前托管线程串行执行变更；异常补充存储标签后上抛。 */
     private void write(Runnable task) {
-        ExecutorService w = this.writer;
-        if (w == null) {
-            throw new IllegalStateException("[" + label + "] 记忆存储已关闭，拒绝写入");
-        }
+        writeLock.lock();
         try {
-            awaitWrite(w.submit(task));
+            requireOpen();
+            task.run();
         } catch (RuntimeException e) {
             if (e.getMessage() != null && e.getMessage().startsWith("[" + label + "]")) {
                 throw e;
             }
             throw new RuntimeException("[" + label + "] 记忆写入失败", e);
-        }
-    }
-
-    /** 在单写线程上执行有返回值的变更并阻塞等待结果(用于 get-or-create 等需原子读改写的场景)。 */
-    private <T> T writeCall(java.util.concurrent.Callable<T> task) {
-        ExecutorService w = this.writer;
-        if (w == null) {
-            throw new IllegalStateException("[" + label + "] 记忆存储已关闭，拒绝写入");
-        }
-        try {
-            return awaitWrite(w.submit(task));
-        } catch (RuntimeException e) {
-            if (e.getMessage() != null && e.getMessage().startsWith("[" + label + "]")) {
-                throw e;
-            }
-            throw new RuntimeException("[" + label + "] 记忆写入失败", e);
-        }
-    }
-
-    /**
-     * 等待单写任务时延迟处理中断：调用方仍持有后台任务租约，若直接因 InterruptedException
-     * 返回，关闭流程会误以为对象图已无人访问并提前 shutdown。任务真正结束后再恢复中断位。
-     */
-    private <T> T awaitWrite(java.util.concurrent.Future<T> future) {
-        boolean interrupted = false;
-        try {
-            while (true) {
-                try {
-                    return future.get();
-                } catch (InterruptedException e) {
-                    interrupted = true;
-                } catch (java.util.concurrent.ExecutionException e) {
-                    Throwable cause = e.getCause();
-                    if (cause instanceof RuntimeException runtime) throw runtime;
-                    if (cause instanceof Error error) throw error;
-                    throw new RuntimeException("[" + label + "] 记忆写入失败", cause);
-                }
-            }
         } finally {
-            if (interrupted) Thread.currentThread().interrupt();
+            writeLock.unlock();
         }
     }
 
-    /** 已在写线程内部调用,不再 submit。 */
+    /** 串行执行有返回值的原子读改写。 */
+    private <T> T writeCall(java.util.concurrent.Callable<T> task) {
+        writeLock.lock();
+        try {
+            requireOpen();
+            return task.call();
+        } catch (RuntimeException e) {
+            if (e.getMessage() != null && e.getMessage().startsWith("[" + label + "]")) {
+                throw e;
+            }
+            throw new RuntimeException("[" + label + "] 记忆写入失败", e);
+        } catch (Exception e) {
+            throw new RuntimeException("[" + label + "] 记忆写入失败", e);
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    private void requireOpen() {
+        if (mgr == null || root == null) {
+            throw new IllegalStateException("[" + label + "] 记忆存储已关闭，拒绝写入");
+        }
+    }
+
+    /** 已持有写锁，直接追加审计。 */
     private void logInternal(String op, String type, String id, String actor, String detail) {
         root.changeLog.add(new ChangeLogEntry(System.currentTimeMillis(), op, type, id, actor, detail));
         root.changeLog.store();
@@ -681,7 +664,7 @@ public class MemoryStore implements AutoCloseable {
     // ==================== 记忆图实体节点 ====================
 
     /**
-     * 按规范化名称 get-or-create 实体节点(整个读改写在单写线程内原子完成,遵循单写纪律)。
+     * 按规范化名称 get-or-create 实体节点（整个读改写在写锁内原子完成）。
      * 命中既有同名实体则直接返回(不覆盖类型);否则新建并入库。embedding 暂留空(实体级语义检索为 P5)。
      *
      * @return 既有或新建的实体节点

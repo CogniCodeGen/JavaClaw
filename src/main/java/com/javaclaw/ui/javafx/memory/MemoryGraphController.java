@@ -3,7 +3,7 @@ package com.javaclaw.ui.javafx.memory;
 import com.javaclaw.application.memory.MemoryApplicationService;
 import com.javaclaw.application.memory.MemoryApplicationService.Snapshot;
 import com.javaclaw.memory.graph.MemoryGraph;
-import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.platform.fx.UiAsyncAction;
@@ -15,6 +15,7 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 import java.util.Objects;
 
@@ -53,7 +54,7 @@ public final class MemoryGraphController implements MemorySectionController, Aut
     public MemoryGraphController(
             MemoryApplicationService useCases,
             MemoryComponentFactory components,
-            ManagedTaskExecutor tasks,
+            @Qualifier("workspaceTaskScope") TaskScope tasks,
             FxDispatcher fx) {
         this.useCases = Objects.requireNonNull(useCases, "useCases");
         this.components = Objects.requireNonNull(components, "components");

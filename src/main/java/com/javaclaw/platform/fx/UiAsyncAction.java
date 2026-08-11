@@ -1,9 +1,9 @@
 package com.javaclaw.platform.fx;
 
 import com.javaclaw.platform.execution.ManagedTask;
-import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskHandle;
 import com.javaclaw.platform.execution.TaskSpec;
+import com.javaclaw.platform.execution.TaskSubmitter;
 import javafx.beans.property.ReadOnlyBooleanProperty;
 import javafx.beans.property.ReadOnlyBooleanWrapper;
 import javafx.beans.property.ReadOnlyObjectProperty;
@@ -25,7 +25,7 @@ import java.util.function.Consumer;
  */
 public final class UiAsyncAction<T> implements AutoCloseable {
 
-    private final ManagedTaskExecutor executor;
+    private final TaskSubmitter tasks;
     private final FxDispatcher fx;
     private final ReadOnlyBooleanWrapper busy = new ReadOnlyBooleanWrapper(false);
     private final ReadOnlyObjectWrapper<Throwable> failure = new ReadOnlyObjectWrapper<>();
@@ -33,8 +33,8 @@ public final class UiAsyncAction<T> implements AutoCloseable {
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private volatile TaskHandle<T> current;
 
-    public UiAsyncAction(ManagedTaskExecutor executor, FxDispatcher fx) {
-        this.executor = java.util.Objects.requireNonNull(executor, "executor");
+    public UiAsyncAction(TaskSubmitter tasks, FxDispatcher fx) {
+        this.tasks = java.util.Objects.requireNonNull(tasks, "tasks");
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
     }
 
@@ -70,7 +70,7 @@ public final class UiAsyncAction<T> implements AutoCloseable {
 
         TaskHandle<T> submitted;
         try {
-            submitted = executor.submit(spec, task);
+            submitted = tasks.submit(spec, task);
             current = submitted;
         } catch (Throwable submissionFailure) {
             dispatchFailure(run, submissionFailure, onFailure);

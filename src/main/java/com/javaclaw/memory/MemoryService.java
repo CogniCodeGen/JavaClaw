@@ -15,6 +15,10 @@ import com.javaclaw.memory.model.Episode;
 import com.javaclaw.memory.model.Persona;
 import com.javaclaw.memory.retrieval.Recaller;
 import com.javaclaw.memory.store.MemoryStore;
+import com.javaclaw.platform.execution.TaskContext;
+import com.javaclaw.platform.execution.TaskHandle;
+import com.javaclaw.platform.execution.TaskScope;
+import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.prompt.MemoryPrompts;
 import com.javaclaw.util.SensitiveDataRedactor;
 import io.agentscope.core.model.ChatModelBase;
@@ -22,11 +26,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -55,24 +55,22 @@ public class MemoryService implements AutoCloseable {
     private final EmbeddingGateway gate;
     private final ChatModelBase lightModel;
     private final TokenTracker tokenTracker;
-    private BackgroundWorkTracker backgroundWork = new BackgroundWorkTracker();
+    private final TaskScope tasks;
+    private MemoryTaskTracker backgroundWork = new MemoryTaskTracker();
 
-    private SharedStores.Lease storeLease;
+    private MemoryStoreRegistry.Lease storeLease;
     private MemoryStore store;
     private Recaller recaller;
     private Distiller distiller;
     private HabitReviewer habitReviewer;
     private CorrectionEngine correctionEngine;
 
-    public MemoryService(ModelFactory modelFactory, TokenTracker tokenTracker) {
-        this(modelFactory, tokenTracker, new EmbeddingGateway(modelFactory));
-    }
-
     public MemoryService(ModelFactory modelFactory, TokenTracker tokenTracker,
-                         EmbeddingGateway gateway) {
+                         EmbeddingGateway gateway, TaskScope tasks) {
         this.gate = java.util.Objects.requireNonNull(gateway, "gateway");
         this.lightModel = modelFactory.createLightChatModel();
         this.tokenTracker = tokenTracker;
+        this.tasks = java.util.Objects.requireNonNull(tasks, "tasks");
     }
 
     /**
@@ -90,7 +88,8 @@ public class MemoryService implements AutoCloseable {
         if (store != null) {
             return;
         }
-        SharedStores.Lease acquired = SharedStores.acquire(memoryDir, gate.dimensions());
+        MemoryStoreRegistry.Lease acquired = MemoryStoreRegistry.acquire(
+                memoryDir, gate.dimensions());
         try {
             this.storeLease = acquired;
             this.store = acquired.store();
@@ -126,7 +125,7 @@ public class MemoryService implements AutoCloseable {
 
     @Override
     public synchronized void close() {
-        BackgroundWorkTracker closingWork = backgroundWork;
+        MemoryTaskTracker closingWork = backgroundWork;
         closingWork.stopAccepting();
 
         boolean drained = closingWork.awaitDrained(
@@ -138,7 +137,7 @@ public class MemoryService implements AutoCloseable {
                     BACKGROUND_CANCEL_WAIT_MILLIS, TimeUnit.MILLISECONDS);
         }
 
-        SharedStores.Lease closingStoreLease = storeLease;
+        MemoryStoreRegistry.Lease closingStoreLease = storeLease;
         storeLease = null;
         store = null;
         recaller = null;
@@ -146,7 +145,7 @@ public class MemoryService implements AutoCloseable {
         habitReviewer = null;
         correctionEngine = null;
         // 已关闭的一代任务可能仍在响应底层网络取消；新工作区使用独立追踪器，互不串扰。
-        backgroundWork = new BackgroundWorkTracker();
+        backgroundWork = new MemoryTaskTracker();
 
         if (closingStoreLease == null) {
             return;
@@ -156,11 +155,10 @@ public class MemoryService implements AutoCloseable {
             return;
         }
 
-        // 极端情况下底层模型调用不响应中断，旧任务继续持有这一代存储租约；同路径的新
-        // MemoryService 会复用已打开的 MemoryStore，避免撞 EclipseStore 目录锁。
+        // 极端情况下底层模型调用不响应中断，旧任务继续持有这一代存储租约；最后一个
+        // 托管任务退出时在原虚拟线程释放租约，无需额外创建清理线程。
         log.warn("记忆后台任务取消后仍未结束，存储租约将在任务退出后延迟释放");
-        Thread.ofVirtual().name("memory-deferred-close").start(() -> {
-            closingWork.awaitDrained();
+        closingWork.whenDrained(() -> {
             try {
                 closingStoreLease.close();
             } catch (RuntimeException e) {
@@ -287,7 +285,7 @@ public class MemoryService implements AutoCloseable {
         MemoryStore turnStore;
         Distiller turnDistiller;
         HabitReviewer reviewer;
-        BackgroundWorkTracker.WorkLease lease;
+        MemoryTaskTracker.WorkLease lease;
         synchronized (this) {
             turnStore = this.store;
             turnDistiller = this.distiller;
@@ -302,43 +300,19 @@ public class MemoryService implements AutoCloseable {
         try {
             // durable-first：这一小段本地写入完成后才把租约交给可取消工作线程。
             turnStore.addPendingEpisode(ep, "system");
-            Thread worker = Thread.ofVirtual()
-                    .name("memory-turn-" + (sessionId == null ? "unknown" : sessionId))
-                    .unstarted(() -> {
-                        try {
-                            if (lease.isCancellationRequested()) return;
-                            float[] embedding = gate.embed(
-                                    cap(userInput) + " " + cap(reply),
-                                    EmbeddingPurpose.BACKGROUND_INDEX);
-                            if (lease.isCancellationRequested()) return;
-
-                            if (embedding != null) {
-                                turnStore.promotePendingEpisode(ep, embedding, "system");
-                                // 嵌入可用 → 顺带把此前降级暂存的条目重嵌入迁回正式索引（有界）
-                                if (!lease.isCancellationRequested()
-                                        && pendingCount(turnStore) > 0) {
-                                    int moved = promotePending(
-                                            turnStore, 25, lease::isCancellationRequested);
-                                    if (moved > 0) {
-                                        log.info("嵌入恢复，已迁回 {} 条暂存记忆", moved);
-                                    }
-                                }
-                            } else {
-                                log.debug("情景嵌入不可用，情景保留在 pending 暂存区");
-                            }
-
-                            if (lease.isCancellationRequested()) return;
-                            turnDistiller.distillNow(ep);
-                            if (lease.isCancellationRequested()) return;
-                            reviewer.maybeReviewNow();
-                        } catch (RuntimeException e) {
-                            log.warn("rememberTurn 失败（静默）: {}", e.getMessage());
-                        } finally {
-                            lease.close();
-                        }
-                    });
-            lease.onCancel(worker::interrupt);
-            worker.start();
+            TaskHandle<Void> handle = tasks.submit(
+                    TaskSpec.io("memory-turn-" + taskName(sessionId)), context -> {
+                try {
+                    rememberTurn(context, lease, turnStore, turnDistiller, reviewer,
+                            ep, userInput, reply);
+                } catch (RuntimeException e) {
+                    log.warn("rememberTurn 失败（静默）: {}", e.getMessage());
+                } finally {
+                    lease.close();
+                }
+                return null;
+            });
+            lease.onCancel(handle::cancel);
         } catch (RuntimeException e) {
             lease.close();
             log.warn("rememberTurn 调度失败（静默）: {}", e.getMessage());
@@ -346,6 +320,48 @@ public class MemoryService implements AutoCloseable {
             lease.close();
             throw e;
         }
+    }
+
+    private void rememberTurn(
+            TaskContext context,
+            MemoryTaskTracker.WorkLease lease,
+            MemoryStore turnStore,
+            Distiller turnDistiller,
+            HabitReviewer reviewer,
+            Episode episode,
+            String userInput,
+            String reply) {
+        if (cancelled(context, lease)) return;
+        float[] embedding = gate.embed(
+                cap(userInput) + " " + cap(reply), EmbeddingPurpose.BACKGROUND_INDEX);
+        if (cancelled(context, lease)) return;
+
+        if (embedding != null) {
+            turnStore.promotePendingEpisode(episode, embedding, "system");
+            if (!cancelled(context, lease) && pendingCount(turnStore) > 0) {
+                int moved = promotePending(turnStore, 25, () -> cancelled(context, lease));
+                if (moved > 0) log.info("嵌入恢复，已迁回 {} 条暂存记忆", moved);
+            }
+        } else {
+            log.debug("情景嵌入不可用，情景保留在 pending 暂存区");
+        }
+
+        if (cancelled(context, lease)) return;
+        turnDistiller.distillNow(episode);
+        if (!cancelled(context, lease)) reviewer.maybeReviewNow();
+    }
+
+    private static boolean cancelled(
+            TaskContext context, MemoryTaskTracker.WorkLease lease) {
+        return lease.isCancellationRequested()
+                || context.cancellation().isCancellationRequested()
+                || Thread.currentThread().isInterrupted();
+    }
+
+    private static String taskName(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return "unknown";
+        String normalized = sessionId.replaceAll("[^a-zA-Z0-9._-]", "-");
+        return normalized.length() > 48 ? normalized.substring(0, 48) : normalized;
     }
 
     // ==================== 人格 / 检查点 / 审计 透传 ====================
@@ -640,7 +656,7 @@ public class MemoryService implements AutoCloseable {
     /** 手动执行一次习惯回顾；由工作区内置任务接线器调用。 */
     public String reviewHabitsNow() {
         HabitReviewer reviewer;
-        BackgroundWorkTracker.WorkLease lease;
+        MemoryTaskTracker.WorkLease lease;
         synchronized (this) {
             reviewer = this.habitReviewer;
             if (reviewer == null) return "记忆服务未就绪，习惯回顾不可用";
@@ -659,215 +675,4 @@ public class MemoryService implements AutoCloseable {
         return s.length() > EMBED_TEXT_CAP ? s.substring(0, EMBED_TEXT_CAP) : s;
     }
 
-    /**
-     * 同一目录的 MemoryStore 进程内共享租约。
-     *
-     * <p>运行时重建时，旧记忆任务可能仍在响应模型取消。旧租约在任务真正退出前不能强关，
-     * 但新运行时又必须立即打开同一路径；共享同一个单写线程 Store 可同时满足两者。最后一个
-     * 租约释放时才关闭 EclipseStore 并释放目录锁。</p>
-     */
-    static final class SharedStores {
-        private static final Map<Path, Entry> ENTRIES = new HashMap<>();
-
-        static Lease acquire(Path memoryDir, int dimensions) {
-            Path key = java.util.Objects.requireNonNull(memoryDir, "memoryDir")
-                    .toAbsolutePath().normalize();
-            synchronized (ENTRIES) {
-                Entry entry = ENTRIES.get(key);
-                if (entry == null) {
-                    MemoryStore created = new MemoryStore(key, dimensions, "workspace");
-                    created.open();
-                    entry = new Entry(key, dimensions, created);
-                    ENTRIES.put(key, entry);
-                } else if (entry.dimensions != dimensions) {
-                    throw new IllegalStateException(
-                            "同一记忆库不能同时使用不同向量维度: path=" + key
-                                    + ", opened=" + entry.dimensions
-                                    + ", requested=" + dimensions);
-                }
-                entry.references++;
-                return new Lease(entry);
-            }
-        }
-
-        private static final class Entry {
-            private final Path path;
-            private final int dimensions;
-            private final MemoryStore store;
-            private int references;
-
-            private Entry(Path path, int dimensions, MemoryStore store) {
-                this.path = java.util.Objects.requireNonNull(path);
-                this.dimensions = dimensions;
-                this.store = java.util.Objects.requireNonNull(store);
-            }
-        }
-
-        static final class Lease implements AutoCloseable {
-            private final Entry entry;
-            private boolean closed;
-
-            private Lease(Entry entry) {
-                this.entry = entry;
-            }
-
-            MemoryStore store() {
-                synchronized (ENTRIES) {
-                    if (closed) throw new IllegalStateException("记忆存储租约已释放");
-                    return entry.store;
-                }
-            }
-
-            @Override
-            public void close() {
-                synchronized (ENTRIES) {
-                    if (closed) return;
-                    closed = true;
-                    entry.references--;
-                    if (entry.references < 0) {
-                        throw new IllegalStateException("记忆存储租约计数失衡: " + entry.path);
-                    }
-                    if (entry.references == 0) {
-                        if (!ENTRIES.remove(entry.path, entry)) {
-                            throw new IllegalStateException(
-                                    "记忆存储注册表状态失衡: " + entry.path);
-                        }
-                        entry.store.close();
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * 记忆库后台任务租约。关闭流程先停止发放租约并等待存量归零，确保没有任务仍持有即将关闭的
-     * MemoryStore。包级可见仅供生命周期回归测试。
-     */
-    static final class BackgroundWorkTracker {
-        private boolean accepting;
-        private final Set<WorkLease> active = new HashSet<>();
-
-        synchronized void startAccepting() {
-            if (!active.isEmpty()) {
-                throw new IllegalStateException("仍有记忆后台任务未结束");
-            }
-            accepting = true;
-        }
-
-        synchronized WorkLease tryAcquire() {
-            if (!accepting) return null;
-            WorkLease lease = new WorkLease(this);
-            active.add(lease);
-            return lease;
-        }
-
-        synchronized void stopAccepting() {
-            accepting = false;
-        }
-
-        synchronized void awaitDrained() {
-            boolean interrupted = false;
-            while (!active.isEmpty()) {
-                try {
-                    wait();
-                } catch (InterruptedException e) {
-                    interrupted = true;
-                }
-            }
-            if (interrupted) Thread.currentThread().interrupt();
-        }
-
-        synchronized boolean awaitDrained(long timeout, TimeUnit unit) {
-            long remaining = unit.toNanos(timeout);
-            long deadline = System.nanoTime() + remaining;
-            while (!active.isEmpty()) {
-                if (remaining <= 0) return false;
-                try {
-                    TimeUnit.NANOSECONDS.timedWait(this, remaining);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return false;
-                }
-                remaining = deadline - System.nanoTime();
-            }
-            return true;
-        }
-
-        void cancelAll() {
-            List<WorkLease> snapshot;
-            synchronized (this) {
-                snapshot = List.copyOf(active);
-            }
-            for (WorkLease lease : snapshot) {
-                lease.cancel();
-            }
-        }
-
-        private synchronized void release(WorkLease lease) {
-            if (!active.remove(lease)) {
-                throw new IllegalStateException("记忆后台任务租约计数失衡");
-            }
-            if (active.isEmpty()) notifyAll();
-        }
-
-        static final class WorkLease implements AutoCloseable {
-            private final BackgroundWorkTracker owner;
-            private boolean closed;
-            private Runnable cancelAction;
-            private boolean cancellationRequested;
-            private boolean cancelActionInvoked;
-
-            private WorkLease(BackgroundWorkTracker owner) {
-                this.owner = owner;
-            }
-
-            void onCancel(Runnable action) {
-                java.util.Objects.requireNonNull(action, "action");
-                synchronized (this) {
-                    if (closed) return;
-                    if (cancelAction != null) {
-                        throw new IllegalStateException("取消动作只能绑定一次");
-                    }
-                    cancelAction = action;
-                    if (cancellationRequested && !cancelActionInvoked) {
-                        cancelActionInvoked = true;
-                        runCancellation(action);
-                    }
-                }
-            }
-
-            boolean isCancellationRequested() {
-                synchronized (this) {
-                    return cancellationRequested;
-                }
-            }
-
-            void cancel() {
-                synchronized (this) {
-                    if (closed || cancellationRequested) return;
-                    cancellationRequested = true;
-                    if (cancelAction != null && !cancelActionInvoked) {
-                        cancelActionInvoked = true;
-                        runCancellation(cancelAction);
-                    }
-                }
-            }
-
-            private static void runCancellation(Runnable action) {
-                try {
-                    action.run();
-                } catch (RuntimeException e) {
-                    log.warn("取消记忆后台任务失败: {}", e.getMessage());
-                }
-            }
-
-            @Override
-            public synchronized void close() {
-                if (closed) return;
-                closed = true;
-                cancelAction = null;
-                owner.release(this);
-            }
-        }
-    }
 }

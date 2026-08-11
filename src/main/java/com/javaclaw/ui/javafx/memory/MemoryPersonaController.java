@@ -4,7 +4,7 @@ import com.javaclaw.application.memory.MemoryApplicationService;
 import com.javaclaw.application.memory.MemoryApplicationService.OperationResult;
 import com.javaclaw.application.memory.MemoryApplicationService.PersonaDraft;
 import com.javaclaw.application.memory.MemoryApplicationService.Snapshot;
-import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.platform.fx.UiAsyncAction;
@@ -15,6 +15,7 @@ import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -53,7 +54,7 @@ public final class MemoryPersonaController
     public MemoryPersonaController(
             MemoryApplicationService useCases,
             MemoryComponentFactory components,
-            ManagedTaskExecutor tasks,
+            @Qualifier("workspaceTaskScope") TaskScope tasks,
             FxDispatcher fx) {
         this.useCases = Objects.requireNonNull(useCases, "useCases");
         this.components = Objects.requireNonNull(components, "components");

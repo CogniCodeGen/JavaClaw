@@ -85,10 +85,6 @@ public class KnowledgeExpert {
 
     // ==================== 构造 ====================
 
-    public KnowledgeExpert(ModelFactory modelFactory) {
-        this(modelFactory, new EmbeddingGateway(modelFactory));
-    }
-
     public KnowledgeExpert(ModelFactory modelFactory, EmbeddingGateway embeddingGateway) {
         AgentConfig config = AgentConfig.getInstance();
         boolean enabled = config.isRagEnabled();

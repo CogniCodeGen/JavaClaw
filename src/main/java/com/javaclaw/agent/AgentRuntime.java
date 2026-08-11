@@ -168,7 +168,7 @@ public final class AgentRuntime {
         // 3. MemoryManager：统一管理所有智能体的 AutoContextMemory
         //    注意依赖 modelFactory，因此必须在其之后创建
         this.memoryManager = new MemoryManager(modelFactory);
-        this.embeddingGateway = new EmbeddingGateway(modelFactory);
+        this.embeddingGateway = new EmbeddingGateway(modelFactory, workspaceTasks);
 
         // 4. ExpertManager + KnowledgeExpert：子智能体定义的中心。
         //    runtime 的共享专家只服务交互路径（聊天/规划），来源令牌固定 INTERACTIVE；

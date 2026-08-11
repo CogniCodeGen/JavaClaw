@@ -8,7 +8,7 @@ import com.javaclaw.application.memory.MemoryApplicationService.FactItem;
 import com.javaclaw.application.memory.MemoryApplicationService.OperationResult;
 import com.javaclaw.application.memory.MemoryApplicationService.Snapshot;
 import com.javaclaw.platform.dialog.DialogService;
-import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.platform.fx.UiAsyncAction;
@@ -17,6 +17,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -57,7 +58,7 @@ public final class MemoryFactsController
             DialogService dialogs,
             MemoryFactDialogFactory factDialog,
             MemoryComponentFactory components,
-            ManagedTaskExecutor tasks,
+            @Qualifier("workspaceTaskScope") TaskScope tasks,
             FxDispatcher fx) {
         this.useCases = Objects.requireNonNull(useCases, "useCases");
         this.dialogs = Objects.requireNonNull(dialogs, "dialogs");

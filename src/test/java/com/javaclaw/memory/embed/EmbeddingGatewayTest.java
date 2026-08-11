@@ -1,5 +1,8 @@
 package com.javaclaw.memory.embed;
 
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.execution.TaskScope;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
@@ -8,6 +11,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -15,12 +19,20 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class EmbeddingGatewayTest {
 
+    private final ManagedTaskExecutor executor = new ManagedTaskExecutor();
+    private final TaskScope tasks = executor.openScope("embedding-test", 8);
+
+    @AfterEach
+    void closeTasks() {
+        tasks.close();
+        executor.close();
+    }
+
     @Test
     void 启动探测成功后自动结束检查状态且只执行一次() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         CountDownLatch settled = new CountDownLatch(1);
-        EmbeddingGateway gateway = new EmbeddingGateway(
-                2, EmbeddingHealthStatus.CHECKING, text -> {
+        EmbeddingGateway gateway = gateway((text, timeout) -> {
                     calls.incrementAndGet();
                     return new double[]{0.1, 0.2};
                 });
@@ -39,9 +51,8 @@ class EmbeddingGatewayTest {
     @Test
     void 启动探测失败后自动结束检查状态() throws Exception {
         CountDownLatch settled = new CountDownLatch(1);
-        EmbeddingGateway gateway = new EmbeddingGateway(
-                2, EmbeddingHealthStatus.CHECKING,
-                text -> { throw new IllegalStateException("offline"); });
+        EmbeddingGateway gateway = gateway(
+                (text, timeout) -> { throw new IllegalStateException("offline"); });
         gateway.addHealthListener(snapshot -> {
             if (snapshot.status() != EmbeddingHealthStatus.CHECKING) settled.countDown();
         });
@@ -56,11 +67,10 @@ class EmbeddingGatewayTest {
     @Test
     void 交互调用一秒超时且熔断内十轮立即降级() {
         AtomicInteger calls = new AtomicInteger();
-        EmbeddingGateway gateway = new EmbeddingGateway(
-                2, EmbeddingHealthStatus.CHECKING, text -> {
+        EmbeddingGateway gateway = gateway((text, timeout) -> {
                     calls.incrementAndGet();
-                    Thread.sleep(5_000);
-                    return new double[]{1, 2};
+                    Thread.sleep(timeout.toMillis());
+                    throw new TimeoutException("simulated timeout");
                 });
 
         long firstStarted = System.nanoTime();
@@ -86,8 +96,7 @@ class EmbeddingGatewayTest {
     void 主动探测绕过熔断并恢复健康() {
         AtomicBoolean fail = new AtomicBoolean(true);
         AtomicInteger calls = new AtomicInteger();
-        EmbeddingGateway gateway = new EmbeddingGateway(
-                2, EmbeddingHealthStatus.CHECKING, text -> {
+        EmbeddingGateway gateway = gateway((text, timeout) -> {
                     calls.incrementAndGet();
                     if (fail.get()) throw new IllegalStateException("offline");
                     return new double[]{0.25, 0.5};
@@ -108,8 +117,7 @@ class EmbeddingGatewayTest {
     @Test
     void 后台索引失败最多重试一次() {
         AtomicInteger calls = new AtomicInteger();
-        EmbeddingGateway gateway = new EmbeddingGateway(
-                2, EmbeddingHealthStatus.CHECKING, text -> {
+        EmbeddingGateway gateway = gateway((text, timeout) -> {
                     calls.incrementAndGet();
                     throw new IllegalStateException("offline");
                 });
@@ -123,8 +131,7 @@ class EmbeddingGatewayTest {
     void 后台索引被生命周期中断时立即退出且不污染健康状态() throws Exception {
         CountDownLatch invoked = new CountDownLatch(1);
         AtomicBoolean interruptedAtReturn = new AtomicBoolean();
-        EmbeddingGateway gateway = new EmbeddingGateway(
-                2, EmbeddingHealthStatus.CHECKING, text -> {
+        EmbeddingGateway gateway = gateway((text, timeout) -> {
                     invoked.countDown();
                     Thread.sleep(30_000);
                     return new double[]{0.1, 0.2};
@@ -148,9 +155,8 @@ class EmbeddingGatewayTest {
 
     @Test
     void 向量实际维度与配置不一致时探测失败() {
-        EmbeddingGateway gateway = new EmbeddingGateway(
-                2, EmbeddingHealthStatus.CHECKING,
-                text -> new double[]{0.1, 0.2, 0.3});
+        EmbeddingGateway gateway = gateway(
+                (text, timeout) -> new double[]{0.1, 0.2, 0.3});
 
         EmbeddingHealthSnapshot snapshot = gateway.probe();
 
@@ -161,9 +167,8 @@ class EmbeddingGatewayTest {
     @Test
     void 显式探测失败后普通失败不会降回可用性较高的状态() {
         MutableClock clock = new MutableClock();
-        EmbeddingGateway gateway = new EmbeddingGateway(
-                2, EmbeddingHealthStatus.CHECKING,
-                text -> { throw new IllegalStateException("offline"); }, clock);
+        EmbeddingGateway gateway = gateway(
+                (text, timeout) -> { throw new IllegalStateException("offline"); }, clock);
 
         assertEquals(EmbeddingHealthStatus.UNAVAILABLE, gateway.probe().status());
         clock.advance(Duration.ofSeconds(31));
@@ -175,8 +180,7 @@ class EmbeddingGatewayTest {
     void 前两次运行失败降级第三次转为不可用且成功后清零() {
         AtomicBoolean fail = new AtomicBoolean(true);
         MutableClock clock = new MutableClock();
-        EmbeddingGateway gateway = new EmbeddingGateway(
-                2, EmbeddingHealthStatus.CHECKING, text -> {
+        EmbeddingGateway gateway = gateway((text, timeout) -> {
                     if (fail.get()) throw new IllegalStateException("offline");
                     return new double[]{0.1, 0.2};
                 }, clock);
@@ -203,9 +207,8 @@ class EmbeddingGatewayTest {
     @Test
     void 关闭健康监听后不再接收状态变化() throws Exception {
         AtomicInteger notifications = new AtomicInteger();
-        EmbeddingGateway gateway = new EmbeddingGateway(
-                2, EmbeddingHealthStatus.CHECKING,
-                text -> new double[]{0.1, 0.2});
+        EmbeddingGateway gateway = gateway(
+                (text, timeout) -> new double[]{0.1, 0.2});
         AutoCloseable subscription = gateway.addHealthListener(
                 ignored -> notifications.incrementAndGet());
         assertEquals(1, notifications.get(), "订阅时应立即收到当前快照");
@@ -214,6 +217,17 @@ class EmbeddingGatewayTest {
         gateway.probe();
 
         assertEquals(1, notifications.get());
+    }
+
+    private EmbeddingGateway gateway(EmbeddingGateway.EmbeddingInvoker invoker) {
+        return new EmbeddingGateway(
+                2, EmbeddingHealthStatus.CHECKING, invoker, tasks);
+    }
+
+    private EmbeddingGateway gateway(
+            EmbeddingGateway.EmbeddingInvoker invoker, Clock clock) {
+        return new EmbeddingGateway(
+                2, EmbeddingHealthStatus.CHECKING, invoker, clock, tasks);
     }
 
     private static final class MutableClock extends Clock {

@@ -22,10 +22,9 @@ class MemoryServiceLifecycleTest {
 
     @Test
     void 关闭会拒绝新后台写入并等待已有写入排空() throws Exception {
-        MemoryService.BackgroundWorkTracker tracker =
-                new MemoryService.BackgroundWorkTracker();
+        MemoryTaskTracker tracker = new MemoryTaskTracker();
         tracker.startAccepting();
-        MemoryService.BackgroundWorkTracker.WorkLease active = tracker.tryAcquire();
+        MemoryTaskTracker.WorkLease active = tracker.tryAcquire();
         assertNotNull(active);
 
         tracker.stopAccepting();
@@ -49,17 +48,16 @@ class MemoryServiceLifecycleTest {
         waiter.join();
 
         tracker.startAccepting();
-        MemoryService.BackgroundWorkTracker.WorkLease reopened = tracker.tryAcquire();
+        MemoryTaskTracker.WorkLease reopened = tracker.tryAcquire();
         assertNotNull(reopened, "切换工作区重开后应重新接受写入");
         reopened.close();
     }
 
     @Test
     void 有界等待超时后可取消存量任务并完成排空() {
-        MemoryService.BackgroundWorkTracker tracker =
-                new MemoryService.BackgroundWorkTracker();
+        MemoryTaskTracker tracker = new MemoryTaskTracker();
         tracker.startAccepting();
-        MemoryService.BackgroundWorkTracker.WorkLease active = tracker.tryAcquire();
+        MemoryTaskTracker.WorkLease active = tracker.tryAcquire();
         assertNotNull(active);
         AtomicBoolean cancelled = new AtomicBoolean();
         active.onCancel(() -> {
@@ -79,10 +77,9 @@ class MemoryServiceLifecycleTest {
 
     @Test
     void 取消早于工作线程绑定时仍会补发取消动作() {
-        MemoryService.BackgroundWorkTracker tracker =
-                new MemoryService.BackgroundWorkTracker();
+        MemoryTaskTracker tracker = new MemoryTaskTracker();
         tracker.startAccepting();
-        MemoryService.BackgroundWorkTracker.WorkLease active = tracker.tryAcquire();
+        MemoryTaskTracker.WorkLease active = tracker.tryAcquire();
         assertNotNull(active);
 
         tracker.stopAccepting();
@@ -100,13 +97,36 @@ class MemoryServiceLifecycleTest {
     }
 
     @Test
+    void 延迟释放动作由最后一个任务退出线程执行且只执行一次() throws Exception {
+        MemoryTaskTracker tracker = new MemoryTaskTracker();
+        tracker.startAccepting();
+        MemoryTaskTracker.WorkLease first = tracker.tryAcquire();
+        MemoryTaskTracker.WorkLease last = tracker.tryAcquire();
+        AtomicBoolean released = new AtomicBoolean();
+
+        tracker.stopAccepting();
+        tracker.whenDrained(() -> {
+            assertTrue(Thread.currentThread().isVirtual());
+            released.set(true);
+        });
+        first.close();
+        assertFalse(released.get());
+
+        Thread.ofVirtual().start(last::close).join();
+
+        assertTrue(released.get());
+        assertThrows(IllegalStateException.class,
+                () -> tracker.whenDrained(() -> { }),
+                "同一代记忆任务只能登记一个延迟释放动作");
+    }
+
+    @Test
     void 延迟租约未释放时同路径重建会复用已打开的存储(@TempDir Path dir) {
-        MemoryService.SharedStores.Lease oldRuntime =
-                MemoryService.SharedStores.acquire(dir, 4);
-        MemoryService.SharedStores.Lease replacement = null;
+        MemoryStoreRegistry.Lease oldRuntime = MemoryStoreRegistry.acquire(dir, 4);
+        MemoryStoreRegistry.Lease replacement = null;
         MemoryStore shared = oldRuntime.store();
         try {
-            replacement = MemoryService.SharedStores.acquire(dir.resolve("."), 4);
+            replacement = MemoryStoreRegistry.acquire(dir.resolve("."), 4);
             assertSame(shared, replacement.store(),
                     "旧后台任务尚未退出时，新运行时不能再次打开同一个 EclipseStore 目录");
 
@@ -125,8 +145,7 @@ class MemoryServiceLifecycleTest {
                         new Episode("closed", "question", "answer"), "test"),
                 "最后一个租约释放后才应真正关闭存储");
 
-        MemoryService.SharedStores.Lease reopened =
-                MemoryService.SharedStores.acquire(dir, 4);
+        MemoryStoreRegistry.Lease reopened = MemoryStoreRegistry.acquire(dir, 4);
         try {
             assertNotSame(shared, reopened.store(),
                     "最终关库后再次打开应创建新 MemoryStore 实例");

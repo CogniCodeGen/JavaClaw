@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>工作区和插件各持有独立作用域。关闭后拒绝提交、取消全部登记任务；关闭可重复调用。
  * 底层执行器归根 Context 所有，关闭作用域不会影响其他工作区或插件。</p>
  */
-public final class TaskScope implements AutoCloseable {
+public final class TaskScope implements TaskSubmitter, AutoCloseable {
 
     private final String name;
     private final ManagedTaskExecutor executor;
@@ -34,6 +34,7 @@ public final class TaskScope implements AutoCloseable {
         this.quota = new Semaphore(maxConcurrentTasks, true);
     }
 
+    @Override
     public <T> TaskHandle<T> submit(TaskSpec spec, ManagedTask<T> task) {
         if (!accepting.get()) {
             throw new RejectedExecutionException("任务作用域已关闭: " + name);
