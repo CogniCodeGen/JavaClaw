@@ -1,8 +1,8 @@
 package com.javaclaw.chat;
 
 import com.javaclaw.app.UIHelper;
-import com.javaclaw.config.Workspace;
-import com.javaclaw.config.WorkspaceManager;
+import com.javaclaw.application.workspace.WorkspaceApplicationService;
+import com.javaclaw.application.workspace.WorkspaceApplicationService.WorkspaceSummary;
 import com.javaclaw.platform.fx.FxDispatcher;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
@@ -32,9 +32,9 @@ public class SidebarController implements AutoCloseable {
     @FXML private SidebarSessionListController sessionListController;
     @FXML private SidebarProfileController profileController;
     @FXML
-    private ComboBox<Workspace> workspaceCombo;
+    private ComboBox<WorkspaceSummary> workspaceCombo;
     private final FxDispatcher fx;
-    private final WorkspaceManager workspaces;
+    private final WorkspaceApplicationService workspaces;
     private final UIHelper ui;
 
     private boolean closed;
@@ -51,7 +51,8 @@ public class SidebarController implements AutoCloseable {
 
     /** Spring/FXML 构造路径；FXMLLoader 随后注入所有静态控件。 */
     @Autowired
-    public SidebarController(FxDispatcher fx, WorkspaceManager workspaces, UIHelper ui) {
+    public SidebarController(
+            FxDispatcher fx, WorkspaceApplicationService workspaces, UIHelper ui) {
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
         this.workspaces = java.util.Objects.requireNonNull(workspaces, "workspaces");
         this.ui = java.util.Objects.requireNonNull(ui, "ui");
@@ -66,9 +67,9 @@ public class SidebarController implements AutoCloseable {
     }
 
     private void initializeWorkspaceSelector() {
-        workspaceCombo.getItems().setAll(workspaces.getWorkspaces());
-        workspaces.getWorkspaces().stream()
-                .filter(workspace -> workspace.getId().equals(workspaces.getCurrentWorkspaceId()))
+        workspaceCombo.getItems().setAll(workspaces.list());
+        workspaces.list().stream()
+                .filter(workspace -> workspace.id().equals(workspaces.currentWorkspaceId()))
                 .findFirst()
                 .ifPresent(workspaceCombo.getSelectionModel()::select);
     }
@@ -76,9 +77,9 @@ public class SidebarController implements AutoCloseable {
     @FXML
     private void onWorkspaceSelected() {
         if (refreshingWorkspaceCombo) return;
-        Workspace selected = workspaceCombo.getSelectionModel().getSelectedItem();
-        if (selected == null || selected.getId().equals(workspaces.getCurrentWorkspaceId())) return;
-        String targetId = selected.getId();
+        WorkspaceSummary selected = workspaceCombo.getSelectionModel().getSelectedItem();
+        if (selected == null || selected.id().equals(workspaces.currentWorkspaceId())) return;
+        String targetId = selected.id();
         fx.dispatch(() -> {
             if (onSwitchWorkspace != null) onSwitchWorkspace.accept(targetId);
         });
@@ -207,11 +208,11 @@ public class SidebarController implements AutoCloseable {
         Optional<String> result = dialog.showAndWait();
         result.ifPresent(name -> {
             if (!name.isBlank()) {
-                Workspace ws = workspaces.createWorkspace(name.trim());
+                WorkspaceSummary ws = workspaces.create(name);
                 workspaceCombo.getItems().add(ws);
                 workspaceCombo.getSelectionModel().select(ws);
                 if (onSwitchWorkspace != null) {
-                    onSwitchWorkspace.accept(ws.getId());
+                    onSwitchWorkspace.accept(ws.id());
                 }
             }
         });
@@ -222,26 +223,25 @@ public class SidebarController implements AutoCloseable {
      */
     @FXML
     private void onDeleteWorkspace() {
-        WorkspaceManager wsMgr = workspaces;
-        Workspace selected = workspaceCombo.getSelectionModel().getSelectedItem();
+        WorkspaceSummary selected = workspaceCombo.getSelectionModel().getSelectedItem();
         if (selected == null) return;
 
-        if (wsMgr.getWorkspaces().size() <= 1) {
+        if (workspaces.list().size() <= 1) {
             ui.createWarningAlert("不能删除最后一个工作区", null).showAndWait();
             return;
         }
 
         Alert confirm = ui.createConfirmAlert("删除工作区",
-                "确定要删除工作区「" + selected.getName() + "」吗？\n此操作将永久删除该工作区的所有数据。", null);
+                "确定要删除工作区「" + selected.name() + "」吗？\n此操作将永久删除该工作区的所有数据。", null);
         confirm.showAndWait().ifPresent(btn -> {
             if (btn == ButtonType.OK) {
-                boolean isCurrent = selected.getId().equals(wsMgr.getCurrentWorkspaceId());
+                boolean isCurrent = selected.id().equals(workspaces.currentWorkspaceId());
                 if (isCurrent) {
                     ui.createWarningAlert("当前工作区仍被聊天、定时任务和插件服务使用，"
                             + "请先切换到其他工作区，待切换完成后再删除。", null).showAndWait();
                     return;
                 }
-                if (!wsMgr.deleteWorkspace(selected.getId())) return;
+                if (!workspaces.delete(selected.id())) return;
                 workspaceCombo.getItems().remove(selected);
             }
         });
@@ -253,11 +253,10 @@ public class SidebarController implements AutoCloseable {
     public void refreshWorkspaceCombo() {
         refreshingWorkspaceCombo = true;
         try {
-            WorkspaceManager wsMgr = workspaces;
             workspaceCombo.getItems().clear();
-            workspaceCombo.getItems().addAll(wsMgr.getWorkspaces());
-            for (Workspace ws : wsMgr.getWorkspaces()) {
-                if (ws.getId().equals(wsMgr.getCurrentWorkspaceId())) {
+            workspaceCombo.getItems().addAll(workspaces.list());
+            for (WorkspaceSummary ws : workspaces.list()) {
+                if (ws.id().equals(workspaces.currentWorkspaceId())) {
                     workspaceCombo.getSelectionModel().select(ws);
                     break;
                 }

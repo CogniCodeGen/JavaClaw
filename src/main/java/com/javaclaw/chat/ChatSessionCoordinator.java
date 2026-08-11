@@ -3,6 +3,12 @@ package com.javaclaw.chat;
 import com.javaclaw.agent.ChatService;
 import com.javaclaw.agent.PlanModeService;
 import com.javaclaw.api.conversation.CancellationReason;
+import com.javaclaw.application.chat.ChatHistoryApplicationService;
+import com.javaclaw.application.chat.ChatHistoryApplicationService.DeliveryStatus;
+import com.javaclaw.application.chat.ChatHistoryApplicationService.MessageRole;
+import com.javaclaw.application.chat.ChatHistoryApplicationService.MessageSnapshot;
+import com.javaclaw.application.chat.ChatHistoryApplicationService.SessionSnapshot;
+import com.javaclaw.application.chat.ChatHistoryApplicationService.TurnUsage;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.ui.javafx.loop.LoopStatusView;
 import javafx.scene.Node;
@@ -31,7 +37,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
     private static final Logger log = LoggerFactory.getLogger(ChatSessionCoordinator.class);
 
     private final Executor persistence;
-    private final ChatHistoryManager history;
+    private final ChatHistoryApplicationService history;
     private final ChatSessionController transcript;
     private final ChatComposerController composer;
     private final ThinkingPanelController thinking;
@@ -54,7 +60,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
 
     ChatSessionCoordinator(
             Executor persistence,
-            ChatHistoryManager history,
+            ChatHistoryApplicationService history,
             ChatSessionController transcript,
             ChatComposerController composer,
             ThinkingPanelController thinking,
@@ -97,27 +103,31 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
 
     void load() {
         transcript.enterAtTail();
-        List<ChatSession> loaded = history.loadSessionIndex();
+        List<ChatSession> loaded = history.sessions().stream()
+                .map(ChatSessionCoordinator::sessionFrom)
+                .toList();
         sessions.clear();
         List<ChatSession> valid = loaded.stream()
-                .filter(session -> history.hasSessionMessages(session.getId()))
+                .filter(session -> history.hasMessages(session.getId()))
                 .toList();
         if (valid.isEmpty()) {
             currentSession = new ChatSession("新的对话");
             sessions.add(currentSession);
-            history.saveSessionIndex(sessions);
+            history.saveSessions(sessionSnapshots(sessions));
             sidebar.addSession(currentSession, true);
             addWelcomeMessage();
         } else {
             sessions.addAll(valid);
             if (valid.size() != loaded.size()) {
-                history.saveSessionIndex(sessions);
+                history.saveSessions(sessionSnapshots(sessions));
             }
             for (int index = 0; index < sessions.size(); index++) {
                 sidebar.addSession(sessions.get(index), index == 0);
             }
             currentSession = sessions.getFirst();
-            List<ChatMessage> messages = history.loadSessionMessages(currentSession.getId());
+            List<ChatMessage> messages = history.messages(currentSession.getId()).stream()
+                    .map(ChatSessionCoordinator::messageFrom)
+                    .toList();
             currentSession.getMessages().addAll(messages);
             messages.forEach(this::renderPersistedMessage);
             chatService.get().loadSession(currentSession.getId());
@@ -150,7 +160,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         if (!(turns.isStreaming() && turns.streamingSession() != null)) thinking.reset();
         addWelcomeMessage();
         status.refreshTitle();
-        history.saveSessionIndex(sessions);
+        history.saveSessions(sessionSnapshots(sessions));
     }
 
     void switchSession(String targetId) {
@@ -184,12 +194,12 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         }
         sessions.removeIf(session -> session.getId().equals(sessionId));
         sidebar.removeSession(sessionId);
-        history.deleteSession(sessionId);
+        history.delete(sessionId);
         chatService.get().deleteSession(sessionId);
         if (currentSession != null && currentSession.getId().equals(sessionId)) {
             selectAfterCurrentDeletion();
         }
-        history.saveSessionIndex(sessions);
+        history.saveSessions(sessionSnapshots(sessions));
     }
 
     void deleteSessions(List<String> sessionIds) {
@@ -204,11 +214,11 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         for (String id : sessionIds) {
             sessions.removeIf(session -> session.getId().equals(id));
             sidebar.removeSession(id);
-            history.deleteSession(id);
+            history.delete(id);
             chatService.get().deleteSession(id);
         }
         if (currentDeleted) selectAfterCurrentDeletion();
-        history.saveSessionIndex(sessions);
+        history.saveSessions(sessionSnapshots(sessions));
     }
 
     void clearCurrentHistory() {
@@ -404,7 +414,9 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         }
         if (!running) chatService.get().loadSession(target.getId());
         if (target.getMessages().isEmpty()) {
-            target.getMessages().addAll(history.loadSessionMessages(target.getId()));
+            target.getMessages().addAll(history.messages(target.getId()).stream()
+                    .map(ChatSessionCoordinator::messageFrom)
+                    .toList());
         }
         if (target.getMessages().isEmpty()) {
             addWelcomeMessage();
@@ -449,13 +461,60 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
     private void saveSessionMessages(ChatSession session) {
         if (session == null || session.getMessages().isEmpty()) return;
         String id = session.getId();
-        List<ChatMessage> messages = List.copyOf(session.getMessages());
-        List<ChatSession> index = List.copyOf(sessions);
-        ChatHistoryManager targetHistory = history;
+        List<MessageSnapshot> messages = session.getMessages().stream()
+                .map(ChatSessionCoordinator::messageSnapshot)
+                .toList();
+        List<SessionSnapshot> index = sessionSnapshots(sessions);
+        ChatHistoryApplicationService targetHistory = history;
         persistence.execute(() -> {
-            targetHistory.saveSessionMessages(id, messages);
-            targetHistory.saveSessionIndex(index);
+            targetHistory.saveMessages(id, messages);
+            targetHistory.saveSessions(index);
         });
+    }
+
+    private static List<SessionSnapshot> sessionSnapshots(List<ChatSession> sessions) {
+        return sessions.stream()
+                .map(session -> new SessionSnapshot(
+                        session.getId(), session.getTitle(), session.getCreatedAt()))
+                .toList();
+    }
+
+    private static ChatSession sessionFrom(SessionSnapshot session) {
+        return new ChatSession(session.id(), session.title(), session.createdAt(), List.of());
+    }
+
+    private static MessageSnapshot messageSnapshot(ChatMessage message) {
+        TurnMetrics metrics = message.getMetrics();
+        TurnUsage usage = metrics == null ? null : new TurnUsage(
+                metrics.inputTokens(), metrics.outputTokens(), metrics.durationMs());
+        DeliveryStatus delivery = message.getDeliveryState() == null
+                ? null : DeliveryStatus.valueOf(message.getDeliveryState().name());
+        return new MessageSnapshot(
+                MessageRole.valueOf(message.getRole().name()),
+                message.getContent(),
+                message.getTimestamp(),
+                message.getImagePaths(),
+                message.isAdopted(),
+                delivery,
+                usage);
+    }
+
+    private static ChatMessage messageFrom(MessageSnapshot snapshot) {
+        DeliveryState delivery = snapshot.deliveryStatus() == null
+                ? null : DeliveryState.valueOf(snapshot.deliveryStatus().name());
+        TurnUsage usage = snapshot.usage();
+        TurnMetrics metrics = usage == null ? null : new TurnMetrics(
+                usage.inputTokens(), usage.outputTokens(), usage.durationMs());
+        ChatMessage message = new ChatMessage(
+                ChatMessage.Role.valueOf(snapshot.role().name()),
+                snapshot.content(),
+                snapshot.timestamp(),
+                List.of(),
+                snapshot.imagePaths(),
+                delivery,
+                metrics);
+        message.setAdopted(snapshot.adopted());
+        return message;
     }
 
     private void addWelcomeMessage() {

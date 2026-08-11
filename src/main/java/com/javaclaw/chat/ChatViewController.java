@@ -3,6 +3,7 @@ package com.javaclaw.chat;
 import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.ChatService;
 import com.javaclaw.agent.PlanModeService;
+import com.javaclaw.application.chat.ChatHistoryApplicationService;
 import com.javaclaw.runtime.ApplicationKernel;
 import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
@@ -52,7 +53,7 @@ public class ChatViewController implements AutoCloseable {
     private final LoopStatusViewFactory loopStatusViews;
     private final ChatInlineImageRenderer inlineImages;
     private final ChatShortcutHelpFactory shortcutHelp;
-    private final ChatHistoryManager history;
+    private final ChatHistoryApplicationService history;
     private final ChatRuntimeCoordinator runtimeCoordinator;
     private final ChatNavigationController navigation;
     private ChatShellController shell;
@@ -119,7 +120,7 @@ public class ChatViewController implements AutoCloseable {
             ChatInlineImageRenderer inlineImages,
             ChatShortcutHelpFactory shortcutHelp,
             FontSelectionService fonts,
-            ChatHistoryManager history) {
+            ChatHistoryApplicationService history) {
         this.applicationKernel = java.util.Objects.requireNonNull(
                 applicationKernel, "applicationKernel");
         this.fx = java.util.Objects.requireNonNull(fx, "fx");

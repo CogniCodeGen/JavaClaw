@@ -1,6 +1,10 @@
 package com.javaclaw.chat;
 
-import com.javaclaw.config.WorkspaceManager;
+import com.javaclaw.application.chat.ChatHistoryApplicationService;
+import com.javaclaw.application.chat.ChatHistoryApplicationService.DeliveryStatus;
+import com.javaclaw.application.chat.ChatHistoryApplicationService.MessageRole;
+import com.javaclaw.application.chat.ChatHistoryApplicationService.MessageSnapshot;
+import com.javaclaw.application.chat.ChatHistoryApplicationService.TurnUsage;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.spring.ApplicationContexts;
 import org.junit.jupiter.api.AfterAll;
@@ -9,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -45,23 +50,24 @@ class ChatHistoryMetricsTest {
     @Test
     void 消息终态与本轮计量可持久化且旧记录允许为空() {
         String sessionId = "metrics-" + UUID.randomUUID();
-        ChatMessage completed = new ChatMessage(ChatMessage.Role.ASSISTANT, "done");
-        completed.setDeliveryState(DeliveryState.COMPLETE);
-        completed.setMetrics(new TurnMetrics(12, 7, 345));
-        ChatMessage legacy = new ChatMessage(ChatMessage.Role.ASSISTANT, "legacy");
-        legacy.setDeliveryState(null);
-        legacy.setMetrics(null);
+        MessageSnapshot completed = new MessageSnapshot(
+                MessageRole.ASSISTANT, "done", LocalDateTime.now(), List.of(), false,
+                DeliveryStatus.COMPLETE, new TurnUsage(12, 7, 345));
+        MessageSnapshot legacy = new MessageSnapshot(
+                MessageRole.ASSISTANT, "legacy", LocalDateTime.now(), List.of(), false,
+                null, null);
 
-        ChatHistoryManager history = root.getBean(ChatHistoryManager.class);
-        history.saveSessionMessages(sessionId, List.of(completed, legacy));
-        List<ChatMessage> loaded = history.loadSessionMessages(sessionId);
+        ChatHistoryApplicationService history =
+                root.getBean(ChatHistoryApplicationService.class);
+        history.saveMessages(sessionId, List.of(completed, legacy));
+        List<MessageSnapshot> loaded = history.messages(sessionId);
 
         assertEquals(2, loaded.size());
-        assertEquals(DeliveryState.COMPLETE, loaded.getFirst().getDeliveryState());
-        assertEquals(new TurnMetrics(12, 7, 345), loaded.getFirst().getMetrics());
-        assertNull(loaded.get(1).getDeliveryState());
-        assertNull(loaded.get(1).getMetrics());
-        history.deleteSession(sessionId);
+        assertEquals(DeliveryStatus.COMPLETE, loaded.getFirst().deliveryStatus());
+        assertEquals(new TurnUsage(12, 7, 345), loaded.getFirst().usage());
+        assertNull(loaded.get(1).deliveryStatus());
+        assertNull(loaded.get(1).usage());
+        history.delete(sessionId);
     }
 
     @Test

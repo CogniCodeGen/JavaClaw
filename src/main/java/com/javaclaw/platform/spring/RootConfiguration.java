@@ -7,6 +7,9 @@ import com.javaclaw.application.diagnostics.DiagnosticsArchivePort;
 import com.javaclaw.application.diagnostics.DiagnosticsUseCase;
 import com.javaclaw.application.event.DomainEventPublisher;
 import com.javaclaw.application.chat.ToolReviewSettingsPort;
+import com.javaclaw.application.chat.ChatHistoryApplicationService;
+import com.javaclaw.application.chat.ChatHistoryPort;
+import com.javaclaw.application.chat.ChatHistoryUseCase;
 import com.javaclaw.application.onboarding.ConnectionProbePort;
 import com.javaclaw.application.onboarding.OnboardingApplicationService;
 import com.javaclaw.application.onboarding.OnboardingSettingsPort;
@@ -18,6 +21,9 @@ import com.javaclaw.application.tool.ToolAuthorization;
 import com.javaclaw.application.tool.ToolAuthorizer;
 import com.javaclaw.application.tool.ToolAuditSink;
 import com.javaclaw.application.tool.ToolInvocationPipeline;
+import com.javaclaw.application.workspace.WorkspaceApplicationService;
+import com.javaclaw.application.workspace.WorkspaceManagementPort;
+import com.javaclaw.application.workspace.WorkspaceUseCase;
 import com.javaclaw.application.settings.TestDataMaintenanceApplicationService;
 import com.javaclaw.application.settings.TestDataMaintenancePort;
 import com.javaclaw.application.settings.TestDataMaintenanceUseCase;
@@ -52,7 +58,9 @@ import com.javaclaw.ui.javafx.JfxUserInteractionPort;
 import com.javaclaw.ui.javafx.image.ImageViewerFactory;
 import com.javaclaw.ui.javafx.interaction.InteractionDialogFactory;
 import com.javaclaw.infrastructure.tool.LoggingToolAuditSink;
+import com.javaclaw.infrastructure.workspace.WorkspaceManagerAdapter;
 import com.javaclaw.infrastructure.config.AgentConfigToolReviewSettings;
+import com.javaclaw.infrastructure.chat.JdbcChatHistoryStore;
 import com.javaclaw.infrastructure.diagnostics.TraceExporterDiagnosticsArchive;
 import com.javaclaw.diagnostics.TraceExporter;
 import com.javaclaw.diagnostics.TraceRecorder;
@@ -71,7 +79,6 @@ import com.javaclaw.ui.javafx.onboarding.ProviderCardFactory;
 import com.javaclaw.system.CommandSessionManager;
 import com.javaclaw.system.CommandWhitelistManager;
 import com.javaclaw.system.CommandToolFactory;
-import com.javaclaw.chat.ChatHistoryManager;
 import com.javaclaw.app.UIHelper;
 import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 import org.springframework.context.ApplicationContext;
@@ -130,6 +137,16 @@ public class RootConfiguration {
     }
 
     @Bean
+    WorkspaceManagementPort workspaceManagementPort(WorkspaceManager manager) {
+        return new WorkspaceManagerAdapter(manager);
+    }
+
+    @Bean
+    WorkspaceApplicationService workspaceApplicationService(WorkspaceManagementPort workspaces) {
+        return new WorkspaceUseCase(workspaces);
+    }
+
+    @Bean
     DataManager dataManager(WorkspaceManager workspaces) {
         return new DataManager(workspaces);
     }
@@ -168,13 +185,18 @@ public class RootConfiguration {
     }
 
     @Bean
-    ChatHistoryManager chatHistoryManager(
+    ChatHistoryPort chatHistoryPort(
             JdbcTemplate jdbc,
             PlatformTransactionManager transactionManager,
             ObjectMapper json,
             WorkspaceManager workspaces) {
-        return new ChatHistoryManager(
+        return new JdbcChatHistoryStore(
                 jdbc, transactionManager, json, workspaces::getCurrentWorkspaceId);
+    }
+
+    @Bean
+    ChatHistoryApplicationService chatHistoryApplicationService(ChatHistoryPort history) {
+        return new ChatHistoryUseCase(history);
     }
 
     @Bean
