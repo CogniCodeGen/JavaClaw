@@ -86,11 +86,13 @@ public final class ChatComposerController implements AutoCloseable {
         typingIndicator.managedProperty().bind(viewModel.thinkingProperty());
         typingTextLabel.textProperty().bind(viewModel.thinkingTextProperty());
         viewModel.streamingProperty().addListener(
-                (observable, previous, streaming) -> renderStreaming(streaming));
+                (observable, previous, streaming) -> renderInteractionState());
+        viewModel.blockedProperty().addListener(
+                (observable, previous, blocked) -> renderInteractionState());
         viewModel.attachments().addListener(
                 (javafx.collections.ListChangeListener<File>) change -> refreshAttachmentViews());
         UIHelper.addPressEffect(sendButton);
-        renderStreaming(false);
+        renderInteractionState();
     }
 
     void setOnSend(Runnable action) {
@@ -163,6 +165,10 @@ public final class ChatComposerController implements AutoCloseable {
         viewModel.streamingProperty().set(streaming);
     }
 
+    void setBlocked(boolean blocked) {
+        viewModel.blockedProperty().set(blocked);
+    }
+
     void showInputError() {
         com.javaclaw.app.UiMotion.error(inputField);
     }
@@ -222,9 +228,11 @@ public final class ChatComposerController implements AutoCloseable {
         typingAnimation.setCycleCount(Animation.INDEFINITE);
     }
 
-    private void renderStreaming(boolean streaming) {
-        inputField.setDisable(streaming);
-        sendButton.setDisable(false);
+    private void renderInteractionState() {
+        boolean streaming = viewModel.streamingProperty().get();
+        boolean blocked = viewModel.blockedProperty().get();
+        inputField.setDisable(streaming || blocked);
+        sendButton.setDisable(blocked);
         sendButton.setText(streaming ? "停止" : "发送");
         sendButton.getStyleClass().removeAll("send-button", "stop-button");
         sendButton.getStyleClass().add(streaming ? "stop-button" : "send-button");

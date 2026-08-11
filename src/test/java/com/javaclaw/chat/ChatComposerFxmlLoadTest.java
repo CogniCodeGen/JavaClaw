@@ -78,6 +78,12 @@ class ChatComposerFxmlLoadTest {
         assertTrue(stopped.get());
         assertEquals("停止", callFx(sendButton::getText));
         assertTrue(callFx(() -> sendButton.getStyleClass().contains("stop-button")));
+        runFx(() -> {
+            controller.setStreaming(false);
+            controller.setBlocked(true);
+        });
+        assertTrue(callFx(sendButton::isDisabled));
+        assertEquals("发送", callFx(sendButton::getText));
         Label thinking = find(handle.root(), "typingTextLabel", Label.class);
         assertEquals("正在测试...", callFx(thinking::getText));
         assertTrue(callFx(thinking::isVisible));

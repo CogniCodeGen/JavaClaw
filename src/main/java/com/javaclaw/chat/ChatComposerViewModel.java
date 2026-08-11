@@ -15,6 +15,7 @@ import java.util.List;
 final class ChatComposerViewModel {
 
     private final BooleanProperty streaming = new SimpleBooleanProperty(false);
+    private final BooleanProperty blocked = new SimpleBooleanProperty(false);
     private final BooleanProperty thinking = new SimpleBooleanProperty(false);
     private final StringProperty thinkingText =
             new SimpleStringProperty("助手正在思考中...");
@@ -22,6 +23,10 @@ final class ChatComposerViewModel {
 
     BooleanProperty streamingProperty() {
         return streaming;
+    }
+
+    BooleanProperty blockedProperty() {
+        return blocked;
     }
 
     BooleanProperty thinkingProperty() {

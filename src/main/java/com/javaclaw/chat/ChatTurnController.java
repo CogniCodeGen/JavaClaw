@@ -119,6 +119,7 @@ final class ChatTurnController {
     }
 
     void sendFromComposer() {
+        if (rebuilding.getAsBoolean()) return;
         String userText = composer.trimmedInput();
         if (userText.isEmpty() && !composer.hasAttachments()) {
             return;
@@ -165,6 +166,10 @@ final class ChatTurnController {
         streamingActive = !enabled;
         composer.setStreaming(streamingActive);
         status.setStreaming(streamingActive);
+    }
+
+    void setTransitionBlocked(boolean blocked) {
+        composer.setBlocked(blocked);
     }
 
     void stop() {
