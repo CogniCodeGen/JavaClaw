@@ -4,8 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.util.SensitiveDataRedactor;
 import com.javaclaw.util.PathGuard;
-import io.agentscope.core.skill.util.MarkdownSkillParser;
-import io.agentscope.core.skill.util.SkillFileSystemHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -14,55 +12,25 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Set;
 
 /**
- * 技能管理器
+ * 工作区技能协调器：维护内存索引、动态技能和模型提示词视图。
  *
- * <p>负责技能的增删改查和持久化。每个技能以独立目录存储在 {@code skills/} 下，
- * 核心文件为 {@code SKILL.md}，使用 YAML Front Matter 存储元数据 + Markdown 正文存储提示词。</p>
- *
- * <p>标准目录结构：
- * <pre>
- * skills/
- * └── my-skill/
- *     ├── SKILL.md              ← [核心] 元数据 + 提示词
- *     ├── scripts/              ← [可选] 可执行脚本
- *     ├── references/           ← [可选] 参考文档
- *     └── assets/               ← [可选] 静态资源
- * </pre>
- *
- * <p>{@code SKILL.md} 格式：
- * <pre>
- * ---
- * name: 技能名称
- * description: 技能描述
- * enabled: true
- * ---
- *
- * 提示词正文...
- * </pre>
- *
- * @author JavaClaw
+ * <p>磁盘格式、路径约束和版本历史由 {@link SkillFileRepository} 负责；技能包 JSON
+ * 由 {@link SkillBundleStore} 负责。实例随工作区 Spring Context 创建和销毁。</p>
  */
 public class SkillManager {
 
     private static final Logger log = LoggerFactory.getLogger(SkillManager.class);
 
-    /** 技能包配置文件名（位于 skills/ 根目录） */
-    private static final String BUNDLES_FILE = "bundles.json";
-
     private final Path skillsDir;
+    private final SkillFileRepository files;
+    private final SkillBundleStore bundleStore;
     private final List<Skill> skills;
-    private final List<SkillBundle> bundles;
 
     /**
      * 动态注册技能（owner → 技能列表）—— 由插件等运行时来源经 {@link #registerDynamicSkills} 注册，
@@ -70,7 +38,6 @@ public class SkillManager {
      * {@link #unregisterDynamicSkills} 同步移除，不影响磁盘技能。
      */
     private final java.util.Map<String, List<Skill>> dynamicSkills = new java.util.concurrent.ConcurrentHashMap<>();
-    private final ObjectMapper mapper;
     private final AgentConfig settings;
 
     /**
@@ -80,27 +47,12 @@ public class SkillManager {
      * 实例不共享全局状态；切换工作区时由 Spring 整体替换。</p>
      */
     public SkillManager(Path skillsDir, ObjectMapper mapper, AgentConfig settings) {
-        this.skillsDir = java.util.Objects.requireNonNull(skillsDir, "skillsDir")
-                .toAbsolutePath().normalize();
-        this.mapper = java.util.Objects.requireNonNull(mapper, "mapper");
+        this.files = new SkillFileRepository(skillsDir);
+        this.skillsDir = files.root();
+        this.bundleStore = new SkillBundleStore(this.skillsDir, mapper);
         this.settings = java.util.Objects.requireNonNull(settings, "settings");
         this.skills = new ArrayList<>();
-        this.bundles = new ArrayList<>();
-        initDirectory();
         loadAll();
-        loadBundles();
-    }
-
-    /**
-     * 初始化 skills 根目录
-     */
-    private void initDirectory() {
-        try {
-            Files.createDirectories(skillsDir);
-            log.info("技能目录已初始化: {}", skillsDir.toAbsolutePath());
-        } catch (IOException e) {
-            log.error("创建技能目录失败", e);
-        }
     }
 
     // ==================== 加载 ====================
@@ -110,61 +62,7 @@ public class SkillManager {
      */
     private void loadAll() {
         skills.clear();
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(skillsDir, Files::isDirectory)) {
-            for (Path dir : stream) {
-                // 跳过隐藏目录（如 .history 等内部维护目录）
-                if (dir.getFileName().toString().startsWith(".")) {
-                    continue;
-                }
-                if (!PathGuard.isInside(skillsDir, dir)) continue;
-                Path skillFile = dir.resolve(Skill.SKILL_FILE);
-                if (!Files.exists(skillFile) || !PathGuard.isInside(dir, skillFile)) {
-                    continue;
-                }
-                try {
-                    Skill skill = parseSkillFile(dir);
-                    skills.add(skill);
-                } catch (IOException e) {
-                    log.warn("加载技能失败: {}", dir.getFileName(), e);
-                }
-            }
-            log.info("已加载 {} 个技能", skills.size());
-        } catch (IOException e) {
-            log.error("读取技能目录失败", e);
-        }
-    }
-
-    /**
-     * 使用 AgentScope MarkdownSkillParser 解析 SKILL.md（YAML Front Matter + Markdown 正文）
-     */
-    private Skill parseSkillFile(Path dir) throws IOException {
-        Path skillFile = dir.resolve(Skill.SKILL_FILE);
-        String raw = Files.readString(skillFile, StandardCharsets.UTF_8);
-
-        Skill skill = new Skill();
-        skill.setId(dir.getFileName().toString());
-        skill.setDirectory(dir);
-
-        MarkdownSkillParser.ParsedMarkdown parsed = MarkdownSkillParser.parse(raw);
-        // 1.0.12 起 frontmatter 值类型升为 Object（支持非字符串 YAML 值），统一转字符串使用
-        Map<String, Object> metadata = parsed.getMetadata();
-
-        skill.setName(stringValue(metadata, "name", skill.getId()));
-        skill.setDescription(stringValue(metadata, "description", ""));
-        skill.setEnabled(Boolean.parseBoolean(stringValue(metadata, "enabled", "true")));
-        skill.setContent(parsed.getContent());
-
-        // 扩展元数据（全部向后兼容：旧 SKILL.md 缺字段时回落默认值）
-        skill.setVersion(stringValue(metadata, "version", "1.0.0"));
-        skill.setCategory(stringValue(metadata, "category", ""));
-        skill.setTags(listValue(metadata, "tags"));
-        skill.setSource(SkillSource.fromKey(stringValue(metadata, "source", "user")));
-        skill.setUserModified(Boolean.parseBoolean(stringValue(metadata, "user-modified", "false")));
-        skill.setPlatforms(listValue(metadata, "platforms"));
-        skill.setRequiresToolGroups(listValue(metadata, "requires_toolsets"));
-        skill.setFallbackForToolGroups(listValue(metadata, "fallback_for_toolsets"));
-
-        return skill;
+        skills.addAll(files.loadAll());
     }
 
     // ==================== 查询 ====================
@@ -310,7 +208,7 @@ public class SkillManager {
     public Skill createSkill(String name, String description, String content, boolean enabled) {
         requireCredentialFree(description);
         requireCredentialFree(content);
-        String dirName = sanitizeDirName(name);
+        String dirName = SkillFileRepository.sanitizeDirectoryName(name);
         if (dirName.isEmpty() || Files.exists(skillsDir.resolve(dirName))) {
             dirName = dirName + "-" + System.currentTimeMillis();
         }
@@ -319,8 +217,7 @@ public class SkillManager {
         Skill skill = new Skill(dirName, name, description, enabled);
         skill.setContent(content);
         skill.setDirectory(dir);
-        saveSkill(skill);
-        Skill persisted = readBackSkill(dir, name);
+        Skill persisted = files.saveAndReadBack(skill, name);
         skills.add(persisted);
         log.info("已创建技能: {} ({})", name, dirName);
         return persisted;
@@ -332,8 +229,7 @@ public class SkillManager {
     public void updateSkill(Skill skill) {
         requireCredentialFree(skill == null ? null : skill.getDescription());
         requireCredentialFree(skill == null ? null : skill.getContent());
-        saveSkill(skill);
-        Skill persisted = readBackSkill(skill.getDirectory(), skill.getName());
+        Skill persisted = files.saveAndReadBack(skill, skill.getName());
         replaceSkillSnapshot(skill.getId(), persisted);
         log.info("已更新技能: {} ({})", persisted.getName(), persisted.getId());
     }
@@ -353,7 +249,7 @@ public class SkillManager {
         }
         requireCredentialFree(description);
         requireCredentialFree(content);
-        String dirName = sanitizeDirName(name);
+        String dirName = SkillFileRepository.sanitizeDirectoryName(name);
         if (dirName.isEmpty() || Files.exists(skillsDir.resolve(dirName))) {
             dirName = dirName + "-" + System.currentTimeMillis();
         }
@@ -364,8 +260,7 @@ public class SkillManager {
         skill.setSource(SkillSource.AGENT);
         skill.setCategory(category);
         skill.setTags(tags);
-        saveSkill(skill);
-        Skill persisted = readBackSkill(dir, name);
+        Skill persisted = files.saveAndReadBack(skill, name);
         skills.add(persisted);
         return persisted;
     }
@@ -402,8 +297,7 @@ public class SkillManager {
         Skill candidate = copySkill(skill);
         candidate.setContent(updated);
         candidate.setVersion(bumpVersion(skill.getVersion(), BumpLevel.PATCH));
-        saveSkill(candidate);
-        Skill persisted = readBackSkill(candidate.getDirectory(), candidate.getName());
+        Skill persisted = files.saveAndReadBack(candidate, candidate.getName());
         replaceSkillSnapshot(skill.getId(), persisted);
         log.info("已修补技能: {} → v{}", name, persisted.getVersion());
         return null;
@@ -431,8 +325,7 @@ public class SkillManager {
         Skill candidate = copySkill(skill);
         candidate.setContent(newContent);
         candidate.setVersion(bumpVersion(skill.getVersion(), BumpLevel.MINOR));
-        saveSkill(candidate);
-        Skill persisted = readBackSkill(candidate.getDirectory(), candidate.getName());
+        Skill persisted = files.saveAndReadBack(candidate, candidate.getName());
         replaceSkillSnapshot(skill.getId(), persisted);
         log.info("已重写技能: {} → v{}", name, persisted.getVersion());
         return null;
@@ -449,22 +342,7 @@ public class SkillManager {
         if (skill == null) {
             return "未找到名为「" + name + "」的技能";
         }
-        Path target = resolveInSkillDir(skill, relPath);
-        if (target == null) {
-            return "rel_path 非法：必须位于技能目录内，且不得指向 SKILL.md";
-        }
-        if (SensitiveDataRedactor.containsLikelyCredential(content)) {
-            return SensitiveDataRedactor.credentialStorageDeniedReason();
-        }
-        try {
-            Files.createDirectories(target.getParent());
-            Files.writeString(target, content != null ? content : "", StandardCharsets.UTF_8);
-            log.info("已写入技能支持文件: {}/{}", skill.getId(), relPath);
-            return null;
-        } catch (IOException e) {
-            log.warn("写入技能支持文件失败: {}/{}", skill.getId(), relPath, e);
-            return "写入失败：" + e.getMessage();
-        }
+        return files.writeSupportFile(skill, relPath, content);
     }
 
     /**
@@ -477,39 +355,7 @@ public class SkillManager {
         if (skill == null) {
             return "未找到名为「" + name + "」的技能";
         }
-        Path target = resolveInSkillDir(skill, relPath);
-        if (target == null || !Files.isRegularFile(target)) {
-            return "文件不存在或路径非法：" + relPath;
-        }
-        try {
-            Files.delete(target);
-            log.info("已删除技能支持文件: {}/{}", skill.getId(), relPath);
-            return null;
-        } catch (IOException e) {
-            return "删除失败：" + e.getMessage();
-        }
-    }
-
-    /**
-     * 把 rel_path 解析到技能目录内，并做穿越防护；指向 SKILL.md 或越界时返回 null
-     */
-    private static Path resolveInSkillDir(Skill skill, String relPath) {
-        if (skill.getDirectory() == null || relPath == null || relPath.isBlank()) {
-            return null;
-        }
-        Path base = skill.getDirectory().toAbsolutePath().normalize();
-        Path target = base.resolve(relPath.strip()).normalize();
-        if (!target.startsWith(base) || target.equals(base)) {
-            return null;
-        }
-        if (target.getFileName().toString().equals(Skill.SKILL_FILE) && base.equals(target.getParent())) {
-            return null;
-        }
-        // 符号链接防护：真实位置必须仍在技能目录内（目标可尚不存在，按最近已存在祖先解析）
-        if (!com.javaclaw.util.PathGuard.isInside(base, target)) {
-            return null;
-        }
-        return target;
+        return files.removeSupportFile(skill, relPath);
     }
 
     /**
@@ -517,13 +363,7 @@ public class SkillManager {
      */
     public void deleteSkill(String id) {
         skills.removeIf(s -> s.getId().equals(id));
-        Path dir = skillsDir.resolve(id);
-        try {
-            SkillFileSystemHelper.deleteDirectory(dir);
-            log.info("已删除技能: {}", id);
-        } catch (IOException e) {
-            log.error("删除技能目录失败: {}", id, e);
-        }
+        files.delete(id);
     }
 
     // ==================== 版本管理 ====================
@@ -568,84 +408,21 @@ public class SkillManager {
      * 全文快照而非 diff：实现简单、回滚直接，技能正文 KB 级磁盘代价可忽略。</p>
      */
     public void archiveVersion(Skill skill) {
-        if (skill == null || skill.getDirectory() == null) {
-            return;
-        }
-        Path skillFile = skill.getDirectory().resolve(Skill.SKILL_FILE);
-        if (!Files.exists(skillFile)) {
-            return;
-        }
-        try {
-            Path historyDir = skill.getDirectory().resolve(Skill.HISTORY_DIR);
-            Files.createDirectories(historyDir);
-            Path snapshot = historyDir.resolve("v" + skill.getVersion() + ".md");
-            Files.copy(skillFile, snapshot, StandardCopyOption.REPLACE_EXISTING);
-            log.info("已归档技能版本快照: {} v{}", skill.getId(), skill.getVersion());
-        } catch (IOException e) {
-            log.warn("归档技能版本失败: {} v{}", skill.getId(), skill.getVersion(), e);
-        }
+        files.archive(skill);
     }
 
     /**
      * 列出技能的历史版本号（按版本号降序，最新在前）
      */
     public List<String> listHistory(String id) {
-        Skill skill = getSkill(id);
-        if (skill == null || skill.getDirectory() == null) {
-            return List.of();
-        }
-        Path historyDir = skill.getDirectory().resolve(Skill.HISTORY_DIR);
-        if (!Files.isDirectory(historyDir)) {
-            return List.of();
-        }
-        List<String> versions = new ArrayList<>();
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(historyDir, "v*.md")) {
-            for (Path file : stream) {
-                String fileName = file.getFileName().toString();
-                versions.add(fileName.substring(1, fileName.length() - 3));
-            }
-        } catch (IOException e) {
-            log.warn("读取技能历史版本失败: {}", id, e);
-        }
-        versions.sort(Comparator.comparing(SkillManager::versionSortKey).reversed());
-        return versions;
-    }
-
-    /** 版本号排序键：各段补零对齐，保证 1.10.0 > 1.9.0 */
-    private static String versionSortKey(String version) {
-        StringBuilder sb = new StringBuilder();
-        for (String part : version.split("\\.")) {
-            sb.append(String.format("%06d", parseIntSafe(part))).append('.');
-        }
-        return sb.toString();
-    }
-
-    private static int parseIntSafe(String s) {
-        try {
-            return Integer.parseInt(s.strip());
-        } catch (NumberFormatException e) {
-            return 0;
-        }
+        return files.listHistory(getSkill(id));
     }
 
     /**
      * 读取指定历史版本的 SKILL.md 全文（含 frontmatter），不存在时返回 null
      */
     public String readHistory(String id, String version) {
-        Skill skill = getSkill(id);
-        if (skill == null || skill.getDirectory() == null) {
-            return null;
-        }
-        Path snapshot = skill.getDirectory().resolve(Skill.HISTORY_DIR).resolve("v" + version + ".md");
-        if (!Files.exists(snapshot)) {
-            return null;
-        }
-        try {
-            return Files.readString(snapshot, StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            log.warn("读取技能历史版本失败: {} v{}", id, version, e);
-            return null;
-        }
+        return files.readHistory(getSkill(id), version);
     }
 
     /**
@@ -658,119 +435,16 @@ public class SkillManager {
      */
     public boolean rollback(String id, String version) {
         Skill skill = getSkill(id);
-        String snapshot = readHistory(id, version);
-        if (skill == null || snapshot == null) {
+        Skill restored = files.rollback(skill, version);
+        if (restored == null) {
             return false;
         }
-        try {
-            // 1. 归档当前版本
-            archiveVersion(skill);
-            // 2. 用历史快照覆盖 SKILL.md
-            Path skillFile = skill.getDirectory().resolve(Skill.SKILL_FILE);
-            Files.writeString(skillFile, snapshot, StandardCharsets.UTF_8);
-            // 3. 重新解析并 bump 版本（回滚自身也是一次变更）
-            Skill restored = parseSkillFile(skill.getDirectory());
-            restored.setVersion(bumpVersion(version, BumpLevel.PATCH));
-            saveSkill(restored);
-            // 4. 刷新内存模型
-            int idx = skills.indexOf(skill);
-            if (idx >= 0) {
-                skills.set(idx, restored);
-            }
-            log.info("已回滚技能 {} 到 v{}，新版本 v{}", id, version, restored.getVersion());
-            return true;
-        } catch (IOException e) {
-            log.error("回滚技能失败: {} v{}", id, version, e);
-            return false;
-        }
+        replaceSkillSnapshot(id, restored);
+        log.info("已回滚技能 {} 到 v{}，新版本 v{}", id, version, restored.getVersion());
+        return true;
     }
 
     // ==================== 持久化 ====================
-
-    /**
-     * 使用 AgentScope MarkdownSkillParser 生成并写入 SKILL.md
-     */
-    private void saveSkill(Skill skill) {
-        requireCredentialFree(skill == null ? null : skill.getDescription());
-        requireCredentialFree(skill == null ? null : skill.getContent());
-        if (skill == null || skill.getId() == null || skill.getId().isBlank()) {
-            throw new IllegalArgumentException("技能及其 ID 不能为空");
-        }
-        Path dir = skillsDir.resolve(skill.getId());
-        Path tempFile = null;
-        try {
-            Files.createDirectories(dir);
-
-            Map<String, Object> metadata = new LinkedHashMap<>();
-            metadata.put("name", skill.getName());
-            metadata.put("description", skill.getDescription() != null ? skill.getDescription() : "");
-            metadata.put("enabled", String.valueOf(skill.isEnabled()));
-            metadata.put("version", skill.getVersion());
-            metadata.put("source", skill.getSource().getKey());
-            metadata.put("user-modified", String.valueOf(skill.isUserModified()));
-            // 可选字段仅在非空时写入，保持 SKILL.md 精简
-            if (!skill.getCategory().isBlank()) {
-                metadata.put("category", skill.getCategory());
-            }
-            if (!skill.getTags().isEmpty()) {
-                metadata.put("tags", skill.getTags());
-            }
-            if (!skill.getPlatforms().isEmpty()) {
-                metadata.put("platforms", skill.getPlatforms());
-            }
-            if (!skill.getRequiresToolGroups().isEmpty()) {
-                metadata.put("requires_toolsets", skill.getRequiresToolGroups());
-            }
-            if (!skill.getFallbackForToolGroups().isEmpty()) {
-                metadata.put("fallback_for_toolsets", skill.getFallbackForToolGroups());
-            }
-
-            String content = MarkdownSkillParser.generate(metadata,
-                    skill.getContent() != null ? skill.getContent() : "");
-            // 先在内存中验证生成结果，避免用不可解析内容覆盖已有文件。
-            MarkdownSkillParser.parse(content);
-
-            Path skillFile = dir.resolve(Skill.SKILL_FILE);
-            tempFile = Files.createTempFile(dir, ".SKILL-", ".tmp");
-            Files.writeString(tempFile, content, StandardCharsets.UTF_8);
-            try {
-                Files.move(tempFile, skillFile,
-                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
-                Files.move(tempFile, skillFile, StandardCopyOption.REPLACE_EXISTING);
-            }
-            tempFile = null;
-            String persisted = Files.readString(skillFile, StandardCharsets.UTF_8);
-            if (!content.equals(persisted)) {
-                throw new IOException("SKILL.md 回读内容与写入内容不一致");
-            }
-            parseSkillFile(dir);
-
-        } catch (IOException | RuntimeException e) {
-            log.error("保存技能失败: {}", skill.getId(), e);
-            throw new IllegalStateException("技能未能确认落盘: " + skill.getId(), e);
-        } finally {
-            if (tempFile != null) {
-                try {
-                    Files.deleteIfExists(tempFile);
-                } catch (IOException cleanupFailure) {
-                    log.warn("清理技能临时文件失败: {}", tempFile.getFileName());
-                }
-            }
-        }
-    }
-
-    private Skill readBackSkill(Path dir, String expectedName) {
-        try {
-            Skill persisted = parseSkillFile(dir);
-            if (!java.util.Objects.equals(expectedName, persisted.getName())) {
-                throw new IOException("技能名称回读不一致");
-            }
-            return persisted;
-        } catch (IOException | RuntimeException e) {
-            throw new IllegalStateException("技能落盘后回读校验失败", e);
-        }
-    }
 
     private void replaceSkillSnapshot(String id, Skill persisted) {
         for (int i = 0; i < skills.size(); i++) {
@@ -798,40 +472,7 @@ public class SkillManager {
     }
 
     private static void requireCredentialFree(String content) {
-        if (SensitiveDataRedactor.containsLikelyCredential(content)) {
-            throw new IllegalArgumentException(SensitiveDataRedactor.credentialStorageDeniedReason());
-        }
-    }
-
-    /** 从 frontmatter Map<String,Object> 中安全取字符串值 */
-    private static String stringValue(Map<String, Object> metadata, String key, String defaultValue) {
-        Object v = metadata.get(key);
-        return v == null ? defaultValue : v.toString();
-    }
-
-    /**
-     * 从 frontmatter 中安全取字符串列表：兼容 YAML 数组与逗号分隔字符串两种写法
-     */
-    private static List<String> listValue(Map<String, Object> metadata, String key) {
-        Object v = metadata.get(key);
-        List<String> result = new ArrayList<>();
-        if (v == null) {
-            return result;
-        }
-        if (v instanceof Collection<?> coll) {
-            for (Object item : coll) {
-                if (item != null && !item.toString().isBlank()) {
-                    result.add(item.toString().strip());
-                }
-            }
-        } else {
-            for (String part : v.toString().split(",")) {
-                if (!part.isBlank()) {
-                    result.add(part.strip());
-                }
-            }
-        }
-        return result;
+        SkillFileRepository.requireCredentialFree(content);
     }
 
     // ==================== 系统提示词集成 ====================
@@ -953,7 +594,7 @@ public class SkillManager {
         Path refsDir = skill.getDirectory().resolve(Skill.REFERENCES_DIR);
         try (DirectoryStream<Path> files = Files.newDirectoryStream(refsDir)) {
             for (Path file : files) {
-                if (Files.isRegularFile(file) && isTextFile(file)
+                if (Files.isRegularFile(file) && SkillFileRepository.isTextFile(file)
                         && PathGuard.isInside(refsDir, file)) {
                     names.add(file.getFileName().toString());
                 }
@@ -1005,7 +646,7 @@ public class SkillManager {
         StringBuilder sb = new StringBuilder();
         try (DirectoryStream<Path> files = Files.newDirectoryStream(refsDir)) {
             for (Path file : files) {
-                if (Files.isRegularFile(file) && isTextFile(file)
+                if (Files.isRegularFile(file) && SkillFileRepository.isTextFile(file)
                         && PathGuard.isInside(refsDir, file)) {
                     sb.append("--- ").append(file.getFileName()).append(" ---\n");
                     String text = Files.readString(file, StandardCharsets.UTF_8);
@@ -1122,7 +763,8 @@ public class SkillManager {
         Path refsDir = skill.getDirectory().resolve(Skill.REFERENCES_DIR).toAbsolutePath().normalize();
         Path target = refsDir.resolve(cleaned).normalize();
         // 穿越防护：必须落在 references/ 内（含符号链接真实位置校验）
-        if (!target.startsWith(refsDir) || !Files.isRegularFile(target) || !isTextFile(target)
+        if (!target.startsWith(refsDir) || !Files.isRegularFile(target)
+                || !SkillFileRepository.isTextFile(target)
                 || !com.javaclaw.util.PathGuard.isInside(refsDir, target)) {
             return null;
         }
@@ -1149,68 +791,29 @@ public class SkillManager {
 
     public void reload() {
         loadAll();
-        loadBundles();
+        bundleStore.reload();
     }
 
     // ==================== 技能包（bundles） ====================
 
-    /**
-     * 加载 {@code skills/bundles.json} 技能包配置；文件不存在时为空列表
-     */
-    private void loadBundles() {
-        bundles.clear();
-        Path file = skillsDir.resolve(BUNDLES_FILE);
-        if (!Files.exists(file)) {
-            return;
-        }
-        try {
-            SkillBundle[] loaded = mapper.readValue(file.toFile(), SkillBundle[].class);
-            for (SkillBundle b : loaded) {
-                if (b != null && b.name != null && !b.name.isBlank()) {
-                    bundles.add(b);
-                }
-            }
-            log.info("已加载 {} 个技能包", bundles.size());
-        } catch (IOException e) {
-            log.warn("加载技能包配置失败: {}", file, e);
-        }
-    }
-
     /** 全部技能包（含禁用，UI 管理用） */
     public List<SkillBundle> getBundles() {
-        return new ArrayList<>(bundles);
+        return bundleStore.all();
     }
 
     /** 已启用的技能包 */
     public List<SkillBundle> getEnabledBundles() {
-        return bundles.stream().filter(b -> b.enabled).toList();
+        return bundleStore.enabled();
     }
 
     /** 按名称查找已启用的技能包 */
     public SkillBundle getBundle(String name) {
-        if (name == null || name.isBlank()) {
-            return null;
-        }
-        String target = name.strip();
-        return bundles.stream()
-                .filter(b -> b.enabled && target.equals(b.name))
-                .findFirst()
-                .orElse(null);
+        return bundleStore.enabled(name);
     }
 
     /** 覆盖保存技能包配置（UI 管理用） */
     public void saveBundles(List<SkillBundle> newBundles) {
-        bundles.clear();
-        if (newBundles != null) {
-            bundles.addAll(newBundles);
-        }
-        try {
-            mapper.writerWithDefaultPrettyPrinter()
-                    .writeValue(skillsDir.resolve(BUNDLES_FILE).toFile(), bundles);
-            log.info("已保存 {} 个技能包", bundles.size());
-        } catch (IOException e) {
-            log.error("保存技能包配置失败", e);
-        }
+        bundleStore.save(newBundles);
     }
 
     /**
@@ -1246,29 +849,6 @@ public class SkillManager {
             result.append("\n[本包附加指令]\n").append(bundle.extraInstructions.strip()).append("\n");
         }
         return result.toString();
-    }
-
-    /**
-     * 将名称转换为合法的目录名
-     */
-    private String sanitizeDirName(String name) {
-        if (name == null || name.isBlank()) {
-            return "";
-        }
-        return name.trim()
-                .replaceAll("\\s+", "-")
-                .replaceAll("[^\\p{L}\\p{N}\\-_]", "")
-                .toLowerCase();
-    }
-
-    /**
-     * 判断文件是否为文本文件（按扩展名）
-     */
-    private boolean isTextFile(Path file) {
-        String name = file.getFileName().toString().toLowerCase();
-        return name.endsWith(".md") || name.endsWith(".txt") || name.endsWith(".yaml")
-                || name.endsWith(".yml") || name.endsWith(".json") || name.endsWith(".xml")
-                || name.endsWith(".html") || name.endsWith(".csv");
     }
 
 }
