@@ -110,6 +110,15 @@ class ChatFxmlStructureTest {
     }
 
     @Test
+    void staticMessageRowDeclaresEveryInjectedNode() throws Exception {
+        Document document = document("/fxml/chat/chat-message-row.fxml");
+        assertEquals(ChatMessageRowController.class.getName(),
+                document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
+        assertInjectedFields(document, ChatMessageRowController.class);
+        assertTrue(eventHandlers(document).isEmpty());
+    }
+
+    @Test
     void attachmentPreviewDeclaresEveryInjectedNodeAndEventEntrypoint() throws Exception {
         Document document = document("/fxml/chat/attachment-preview-item.fxml");
         assertEquals(AttachmentPreviewItemController.class.getName(),

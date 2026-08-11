@@ -43,7 +43,6 @@ import javafx.scene.image.ImageView;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.BorderPane;
-import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
@@ -124,9 +123,9 @@ public class ChatViewController implements AutoCloseable {
     private final TaskScope backgroundTasks;
     private final java.util.concurrent.Executor persistExecutor;
     private final FxDispatcher fx;
-    private final MarkdownBubbleFactory markdownBubbles;
     private final AssistantMessageFactory assistantMessages;
     private final ExpandableMarkdownBlockFactory expandableBlocks;
+    private final ChatMessageRowFactory messageRows;
 
     /** 兼容旧退出链；页面生命周期统一由 {@link #close()} 收口。 */
     public void shutdownPersistence() {
@@ -302,18 +301,17 @@ public class ChatViewController implements AutoCloseable {
             ApplicationKernel applicationKernel,
             FxDispatcher fx,
             ManagedTaskExecutor taskExecutor,
-            MarkdownBubbleFactory markdownBubbles,
             AssistantMessageFactory assistantMessages,
-            ExpandableMarkdownBlockFactory expandableBlocks) {
+            ExpandableMarkdownBlockFactory expandableBlocks,
+            ChatMessageRowFactory messageRows) {
         this.applicationKernel = java.util.Objects.requireNonNull(
                 applicationKernel, "applicationKernel");
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
-        this.markdownBubbles = java.util.Objects.requireNonNull(
-                markdownBubbles, "markdownBubbles");
         this.assistantMessages = java.util.Objects.requireNonNull(
                 assistantMessages, "assistantMessages");
         this.expandableBlocks = java.util.Objects.requireNonNull(
                 expandableBlocks, "expandableBlocks");
+        this.messageRows = java.util.Objects.requireNonNull(messageRows, "messageRows");
         java.util.Objects.requireNonNull(taskExecutor, "taskExecutor");
         persistenceTasks = taskExecutor.openScope("chat-persistence", 1);
         backgroundTasks = taskExecutor.openScope("chat-ui-background", 2);
@@ -709,53 +707,8 @@ public class ChatViewController implements AutoCloseable {
      */
     private InlineCssTextArea createBubbleTextArea(String content, double prefWidth, String textCss) {
         InlineCssTextArea area = new InlineCssTextArea();
-        area.setEditable(false);
-        area.setWrapText(true);
-        area.setPrefWidth(prefWidth);
-        area.getStyleClass().add("bubble-text-area");
-
-        // 行内样式优先级高于样式表：只有显式传入时才设置，否则交给令牌级联
-        if (textCss != null && !textCss.isBlank()) {
-            area.setTextInsertionStyle(textCss);
-        }
-
-        if (content != null && !content.isEmpty()) {
-            area.replaceText(content);
-            if (textCss != null && !textCss.isBlank()) {
-                area.setStyle(0, content.length(), textCss);
-            }
-        }
-
-        // 高度自适应内容
-        autoFitHeight(area);
-
+        BubbleTextAreaSupport.configure(area, content, prefWidth, textCss);
         return area;
-    }
-
-    /**
-     * 监听文本区域内容变化，自动调整高度以适应内容
-     */
-    private void autoFitHeight(InlineCssTextArea area) {
-        Runnable updateHeight = () -> {
-            int lines = area.getParagraphs().size();
-            double lineH = 20;
-            double h = Math.max(28, lines * lineH + 8);
-            area.setPrefHeight(h);
-            area.setMinHeight(h);
-            area.setMaxHeight(h);
-        };
-        area.totalHeightEstimateProperty().addListener((obs, oldVal, newVal) -> {
-            if (newVal != null && newVal.doubleValue() > 0) {
-                double h = newVal.doubleValue() + 4;
-                area.setPrefHeight(h);
-                area.setMinHeight(h);
-                area.setMaxHeight(h);
-            } else {
-                updateHeight.run();
-            }
-        });
-        // 初始化高度
-        updateHeight.run();
     }
 
     /**
@@ -764,64 +717,15 @@ public class ChatViewController implements AutoCloseable {
     private void addUserBubbleWithAttachments(String text, List<File> attachments) {
         ChatMessage message = new ChatMessage(ChatMessage.Role.USER, text, attachments);
         currentSession.getMessages().add(message);
-
-        // 用户头像（翡翠渐变圆形 "Y"）
-        Label avatar = new Label("Y");
-        avatar.getStyleClass().add("msg-avatar-user");
-
-        // 头部：姓名 + 时间
-        Label nameLabel = new Label("You");
-        nameLabel.getStyleClass().add("msg-header-name");
-        Label timeLabel = new Label(message.getFormattedTime());
-        timeLabel.getStyleClass().add("msg-header-time");
-        HBox headerRow = new HBox(8, nameLabel, timeLabel);
-        headerRow.setAlignment(Pos.CENTER_LEFT);
-
-        // 内容容器
-        VBox bubbleContent = new VBox(6);
-
-        // 附件展示区域
-        if (!attachments.isEmpty()) {
-            FlowPane attachFlow = new FlowPane(8, 8);
-            attachFlow.setMaxWidth(520);
-
-            for (File file : attachments) {
-                if (ChatMessage.isImageFile(file)) {
-                    // 图片缩略图（设计稿：140×180 圆角 tile）
-                    ImageView imgView = new ImageView(new Image(file.toURI().toString(), 140, 180, true, true));
-                    imgView.setFitWidth(140);
-                    imgView.setFitHeight(180);
-                    imgView.setPreserveRatio(true);
-                    imgView.getStyleClass().add("attachment-thumbnail");
-                    enableImageZoom(imgView, file);
-                    attachFlow.getChildren().add(imgView);
-                } else {
-                    String ext = ChatMessage.getFileExtension(file).toUpperCase();
-                    Label fileLabel = new Label((ext.isEmpty() ? "FILE" : ext) + " " + file.getName());
-                    fileLabel.getStyleClass().add("attachment-file-label");
-                    attachFlow.getChildren().add(fileLabel);
-                }
-            }
-            bubbleContent.getChildren().add(attachFlow);
-        }
-
-        // 文本内容（设计稿：无气泡底色，纯文本 paragraph；颜色随主题令牌）
-        if (!text.isEmpty()) {
-            InlineCssTextArea textArea = createBubbleTextArea(text, 520, null);
-            bubbleContent.getChildren().add(textArea);
-        }
-
-        // 内容整体不再套"大紫色块"，去掉深色气泡 class，改用 plain
-        bubbleContent.getStyleClass().add("msg-plain-body");
-
-        VBox rightColumn = new VBox(6, headerRow, bubbleContent);
-        HBox.setHgrow(rightColumn, Priority.ALWAYS);
-
-        HBox messageRow = new HBox(10, avatar, rightColumn);
-        messageRow.setPadding(new Insets(6, 12, 6, 12));
-        messageRow.setAlignment(Pos.TOP_LEFT);
-
-        sessionViewController.addMessage(messageRow);
+        ChatMessageRowView row = messageRows.create(
+                ChatMessageRowFactory.Variant.USER,
+                message,
+                AgentConfig.AGENT_NAME,
+                currentModelDisplayName(),
+                "—",
+                List.of(),
+                this::enableImageZoom);
+        sessionViewController.addMessage(row.root());
         log.debug("已添加用户消息（含 {} 个附件）", attachments.size());
     }
 
@@ -1779,8 +1683,7 @@ public class ChatViewController implements AutoCloseable {
     private void addStaticBubble(ChatMessage.Role role, String content) {
         ChatMessage message = new ChatMessage(role, content);
         currentSession.getMessages().add(message);
-        HBox row = buildStaticMessageRow(role, message, java.util.Collections.emptyList());
-        sessionViewController.addMessage(row);
+        sessionViewController.addMessage(createStaticMessageRow(message, List.of()).root());
         log.debug("已添加 {} 静态消息", role.getDisplayName());
     }
 
@@ -1806,84 +1709,25 @@ public class ChatViewController implements AutoCloseable {
                 log.warn("历史图片加载失败: {}", path, e);
             }
         }
-        HBox row = buildStaticMessageRow(message.getRole(), message, historyImages);
-        sessionViewController.addMessage(row);
+        sessionViewController.addMessage(createStaticMessageRow(message, historyImages).root());
     }
 
-    /**
-     * 构建一条静态消息行（设计稿风格：头像 + 头部姓名/时间 + 纯文本正文 + 可选图片）。
-     * 所有角色复用此工厂，USER/ASSISTANT 采用新布局，SYSTEM 保留原来的居中提示气泡。
-     */
-    private HBox buildStaticMessageRow(ChatMessage.Role role, ChatMessage message,
-                                       List<ImageView> extraImages) {
-        if (role == ChatMessage.Role.SYSTEM) {
-            // 系统消息继续使用居中提示气泡
-            javafx.scene.Node contentNode = createBubbleTextArea(message.getContent(), 450,
-                    "-fx-fill: #27251F; -fx-font-style: italic;");
-            VBox bubble = new VBox(contentNode);
-            bubble.getStyleClass().addAll("message-bubble", "message-system");
-            bubble.setPadding(new Insets(8, 12, 8, 12));
-            Label tl = new Label(message.getFormattedTime());
-            tl.getStyleClass().add("time-label");
-            VBox box = new VBox(2, bubble, tl);
-            HBox row = new HBox(box);
-            row.setAlignment(Pos.CENTER);
-            row.setPadding(new Insets(2, 5, 2, 5));
-            return row;
-        }
-
-        boolean isUser = role == ChatMessage.Role.USER;
-
-        // 头像
-        Label avatar = new Label(isUser ? "Y" : "✦");
-        avatar.getStyleClass().add(isUser ? "msg-avatar-user" : "msg-avatar-assistant");
-
-        // 头部：姓名 + 可选模型徽章 + 时间
-        Label name = new Label(isUser ? "You" : AgentConfig.AGENT_NAME);
-        name.getStyleClass().add("msg-header-name");
-        Label time = new Label(message.getFormattedTime());
-        time.getStyleClass().add("msg-header-time");
-
-        HBox header;
-        if (isUser) {
-            header = new HBox(8, name, time);
-        } else {
-            Label modelBadge = new Label(currentModelDisplayName());
-            modelBadge.getStyleClass().add("msg-header-model");
-            Region spacer = new Region();
-            HBox.setHgrow(spacer, Priority.ALWAYS);
-            Label meta = new Label(formatMessageMeta(message));
-            meta.getStyleClass().add("msg-header-meta");
-            header = new HBox(8, name, modelBadge, time, spacer, meta);
-        }
-        header.setAlignment(Pos.CENTER_LEFT);
-
-        // 正文（用户消息用 InlineCssTextArea；助手历史消息走 MarkdownBubble，
-        // 与流式路径一致地渲染保存的 markdown，避免历史回放时只显示原文）
-        VBox body = new VBox(6);
-        body.getStyleClass().add("msg-plain-body");
-
-        javafx.scene.Node text;
-        if (role == ChatMessage.Role.ASSISTANT) {
-            MarkdownBubble bubble = markdownBubbles.create(520);
-            bubble.replaceText(message.getContent() == null ? "" : message.getContent());
-            text = bubble.getView();
-        } else {
-            // 颜色随主题令牌（行内样式会压过样式表，故传 null）
-            text = createBubbleTextArea(message.getContent(), 520, null);
-        }
-        body.getChildren().add(text);
-        if (extraImages != null) {
-            for (ImageView iv : extraImages) body.getChildren().add(iv);
-        }
-
-        VBox right = new VBox(6, header, body);
-        HBox.setHgrow(right, Priority.ALWAYS);
-
-        HBox row = new HBox(10, avatar, right);
-        row.setAlignment(Pos.TOP_LEFT);
-        row.setPadding(new Insets(6, 12, 6, 12));
-        return row;
+    /** 创建历史或系统消息，并由 FXML Controller 持有嵌套 Markdown 生命周期。 */
+    private ChatMessageRowView createStaticMessageRow(
+            ChatMessage message, List<? extends javafx.scene.Node> extraImages) {
+        ChatMessageRowFactory.Variant variant = switch (message.getRole()) {
+            case USER -> ChatMessageRowFactory.Variant.USER;
+            case ASSISTANT -> ChatMessageRowFactory.Variant.ASSISTANT;
+            case SYSTEM -> ChatMessageRowFactory.Variant.SYSTEM;
+        };
+        return messageRows.create(
+                variant,
+                message,
+                AgentConfig.AGENT_NAME,
+                currentModelDisplayName(),
+                formatMessageMeta(message),
+                extraImages,
+                this::enableImageZoom);
     }
 
     // ==================== 多会话管理 ====================
@@ -2263,18 +2107,16 @@ public class ChatViewController implements AutoCloseable {
                 + "Web 智能体会自动管理 Playwright 浏览器。\n"
                 + "点击输入框左侧「+」按钮可以添加图片或文档附件。\n"
                 + "请问有什么可以帮助你的？";
-
-        InlineCssTextArea textArea = createBubbleTextArea(welcomeText, 450, null);
-
-        VBox bubble = new VBox(textArea);
-        bubble.getStyleClass().addAll("message-bubble", "message-assistant");
-        bubble.setPadding(new Insets(8, 12, 8, 12));
-
-        HBox messageRow = new HBox(new VBox(2, bubble));
-        messageRow.setPadding(new Insets(2, 5, 2, 5));
-        messageRow.setAlignment(Pos.CENTER_LEFT);
-
-        sessionViewController.addMessage(messageRow);
+        ChatMessage welcome = new ChatMessage(ChatMessage.Role.ASSISTANT, welcomeText);
+        ChatMessageRowView row = messageRows.create(
+                ChatMessageRowFactory.Variant.WELCOME,
+                welcome,
+                AgentConfig.AGENT_NAME,
+                currentModelDisplayName(),
+                "—",
+                List.of(),
+                this::enableImageZoom);
+        sessionViewController.addMessage(row.root());
     }
 
     /**
@@ -2548,6 +2390,12 @@ public class ChatViewController implements AutoCloseable {
     }
 
     private void collectAndDisposeBubbles(javafx.scene.Node node) {
+        if (node.hasProperties()
+                && node.getProperties().get("chatMessageRowView")
+                instanceof ChatMessageRowView messageRow) {
+            messageRow.close();
+            return;
+        }
         if (node.hasProperties()
                 && node.getProperties().get("assistantMessageView")
                 instanceof AssistantMessageView message) {
