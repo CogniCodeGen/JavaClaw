@@ -1,7 +1,6 @@
 package com.javaclaw.platform.fxml;
 
 import javafx.fxml.FXMLLoader;
-import javafx.scene.Node;
 import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 
 import java.io.IOException;
@@ -25,7 +24,7 @@ public final class SpringFxmlLoader {
         this.beanFactory = Objects.requireNonNull(beanFactory, "beanFactory");
     }
 
-    public <N extends Node> ViewHandle<N> load(URL resource) throws IOException {
+    public <T> ViewHandle<T> load(URL resource) throws IOException {
         Objects.requireNonNull(resource, "resource");
         List<Object> controllers = new ArrayList<>();
         FXMLLoader loader = new FXMLLoader(resource);
@@ -35,7 +34,7 @@ public final class SpringFxmlLoader {
             return controller;
         });
         try {
-            N root = loader.load();
+            T root = loader.load();
             return new ViewHandle<>(root, loader.getController(), controllers, beanFactory);
         } catch (IOException | RuntimeException | Error failure) {
             ViewHandle.destroyControllers(controllers, beanFactory, failure);

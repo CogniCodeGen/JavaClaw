@@ -1,6 +1,5 @@
 package com.javaclaw.platform.fxml;
 
-import javafx.scene.Node;
 import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 
 import java.util.ArrayList;
@@ -17,15 +16,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>关闭会按创建顺序的反序先调用 {@link AutoCloseable#close()}，再交给 Spring 执行
  * 销毁回调。关闭幂等；所有 Controller 都会尝试释放，首个失败在最后抛出并附带其余失败。</p>
  */
-public final class ViewHandle<N extends Node> implements AutoCloseable {
+public final class ViewHandle<T> implements AutoCloseable {
 
-    private final N root;
+    private final T root;
     private final Object primaryController;
     private final List<Object> controllers;
     private final AutowireCapableBeanFactory beanFactory;
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
-    ViewHandle(N root, Object primaryController, List<Object> controllers,
+    ViewHandle(T root, Object primaryController, List<Object> controllers,
                AutowireCapableBeanFactory beanFactory) {
         this.root = Objects.requireNonNull(root, "root");
         this.primaryController = primaryController;
@@ -33,7 +32,7 @@ public final class ViewHandle<N extends Node> implements AutoCloseable {
         this.beanFactory = Objects.requireNonNull(beanFactory, "beanFactory");
     }
 
-    public N root() {
+    public T root() {
         return root;
     }
 

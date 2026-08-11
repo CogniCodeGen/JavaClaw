@@ -1,6 +1,8 @@
 package com.javaclaw.chat;
 
 import com.javaclaw.ui.javafx.loop.LoopStatusController;
+import com.javaclaw.ui.javafx.theme.ThemeMenuController;
+import com.javaclaw.ui.javafx.theme.ThemeMenuEntryController;
 import javafx.fxml.FXML;
 import org.junit.jupiter.api.Test;
 import org.w3c.dom.Document;
@@ -144,6 +146,24 @@ class ChatFxmlStructureTest {
                 document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
         assertInjectedFields(document, LoopStatusController.class);
         assertTrue(eventHandlers(document).isEmpty());
+    }
+
+    @Test
+    void themeMenuDeclaresEveryInjectedNodeAndAction() throws Exception {
+        Document document = document("/fxml/chat/theme-menu.fxml");
+        assertEquals(ThemeMenuController.class.getName(),
+                document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
+        assertInjectedFields(document, ThemeMenuController.class);
+        assertEquals(Set.of("showing"), eventHandlers(document));
+    }
+
+    @Test
+    void themeMenuEntryDeclaresEveryInjectedNodeAndAction() throws Exception {
+        Document document = document("/fxml/chat/theme-menu-entry.fxml");
+        assertEquals(ThemeMenuEntryController.class.getName(),
+                document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
+        assertInjectedFields(document, ThemeMenuEntryController.class);
+        assertEquals(Set.of("selected"), eventHandlers(document));
     }
 
     @Test

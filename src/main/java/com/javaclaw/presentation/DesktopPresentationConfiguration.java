@@ -15,6 +15,9 @@ import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.ui.javafx.loop.LoopStatusViewFactory;
+import com.javaclaw.ui.javafx.theme.ThemeManagerThemeSelectionService;
+import com.javaclaw.ui.javafx.theme.ThemeMenuEntryFactory;
+import com.javaclaw.ui.javafx.theme.ThemeSelectionService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -77,5 +80,15 @@ public class DesktopPresentationConfiguration {
     @Bean
     LoopStatusViewFactory loopStatusViewFactory(SpringFxmlLoader loader) {
         return new LoopStatusViewFactory(loader);
+    }
+
+    @Bean
+    ThemeSelectionService themeSelectionService() {
+        return new ThemeManagerThemeSelectionService();
+    }
+
+    @Bean
+    ThemeMenuEntryFactory themeMenuEntryFactory(SpringFxmlLoader loader) {
+        return new ThemeMenuEntryFactory(loader);
     }
 }

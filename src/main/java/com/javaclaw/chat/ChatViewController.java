@@ -30,11 +30,11 @@ import com.javaclaw.ui.javafx.loop.LoopStatusViewFactory;
 import com.javaclaw.ui.javafx.schedule.ScheduleView;
 import com.javaclaw.ui.javafx.skill.SkillCenterView;
 import com.javaclaw.ui.javafx.task.SddTaskView;
+import com.javaclaw.ui.javafx.theme.ThemeMenuController;
 import com.javaclaw.util.ProjectAccessPolicy;
 import javafx.animation.Animation;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
-import javafx.beans.value.ChangeListener;
 import javafx.fxml.FXML;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -46,7 +46,6 @@ import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
-import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
@@ -165,11 +164,6 @@ public class ChatViewController implements AutoCloseable {
     private void stopUiResources() {
         stopTimeline(statusBarClock);
         statusBarClock = null;
-        if (themeListener != null) {
-            com.javaclaw.ui.javafx.theme.ThemeManager.themeProperty()
-                    .removeListener(themeListener);
-            themeListener = null;
-        }
     }
 
     private static void stopTimeline(Timeline timeline) {
@@ -224,11 +218,9 @@ public class ChatViewController implements AutoCloseable {
     @FXML private MenuButton knowledgeMenu;
     @FXML private Tooltip knowledgeTooltip;
 
-    @FXML private MenuButton themeMenuButton;
-    @FXML private Region themeSwatch;
+    @FXML private ThemeMenuController themeMenuController;
     @FXML private Button settingsButton;
     private Timeline statusBarClock;
-    private ChangeListener<String> themeListener;
     private final java.util.concurrent.atomic.AtomicBoolean closed =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
@@ -388,7 +380,6 @@ public class ChatViewController implements AutoCloseable {
             rebuildKnowledgeMenu();
         });
         knowledgeMenu.setOnHidden(event -> knowledgeMenu.setTooltip(knowledgeTooltip));
-        configureThemeMenu();
         wireTokenTracker();
     }
 
@@ -2837,66 +2828,6 @@ public class ChatViewController implements AutoCloseable {
 
     // ==================== 顶栏 / 输入区控件 ====================
 
-    /**
-     * 构建顶栏「风格」切换菜单（设计稿 ThemeMenu 的 JavaFX 实现）：
-     * 按钮 = 当前主题色块 + 「风格」；下拉项 = 三联色块预览 + 名称/副标题 + 当前 ✓。
-     * 选择后经 {@link com.javaclaw.ui.javafx.theme.ThemeManager#setTheme} 全局生效并持久化。
-     */
-    private void configureThemeMenu() {
-        MenuButton btn = themeMenuButton;
-
-        // 按钮左侧的当前主题色块
-        Runnable refreshSwatch = () -> themeSwatch.setStyle("-fx-background-color: "
-                + com.javaclaw.ui.javafx.theme.ThemeManager.getCurrentTheme().brand()
-                + "; -fx-background-radius: 4;");
-        refreshSwatch.run();
-        themeListener = (observable, previous, current) -> refreshSwatch.run();
-        com.javaclaw.ui.javafx.theme.ThemeManager.themeProperty()
-                .addListener(themeListener);
-
-        // 每次展开时重建菜单项（保证 ✓ 标记与当前主题同步）
-        btn.setOnShowing(e -> {
-            btn.getItems().clear();
-            String current = com.javaclaw.ui.javafx.theme.ThemeManager.getTheme();
-            for (var theme : com.javaclaw.ui.javafx.theme.ThemeManager.THEMES) {
-                // 三联色块预览（品牌色 / 页面底色 / 卡片色）
-                HBox tri = new HBox();
-                for (String color : new String[]{theme.brand(), theme.bg(), theme.surface()}) {
-                    Region cell = new Region();
-                    cell.setMinSize(16, 24);
-                    cell.setMaxSize(16, 24);
-                    cell.setStyle("-fx-background-color: " + color + ";");
-                    tri.getChildren().add(cell);
-                }
-                tri.setStyle("-fx-border-color: -jc-border; -fx-border-radius: 6; "
-                        + "-fx-background-radius: 6; -fx-border-width: 1;");
-
-                Label name = new Label(theme.name());
-                name.setStyle("-fx-font-size: 12.5px; -fx-font-weight: 600; -fx-text-fill: -jc-text-title;");
-                Label sub = new Label(theme.subtitle());
-                sub.setStyle("-fx-font-size: 10.5px; -fx-text-fill: -jc-text-hint;");
-                VBox text = new VBox(1, name, sub);
-
-                Region grow = new Region();
-                HBox.setHgrow(grow, Priority.ALWAYS);
-                Label check = new Label(theme.id().equals(current) ? "✓" : " ");
-                check.setStyle("-fx-text-fill: -jc-primary-500; -fx-font-size: 13px;");
-
-                HBox row = new HBox(10, tri, text, grow, check);
-                row.setAlignment(Pos.CENTER_LEFT);
-                row.setMinWidth(210);
-
-                MenuItem item = new MenuItem();
-                item.setGraphic(row);
-                item.setOnAction(ev ->
-                        com.javaclaw.ui.javafx.theme.ThemeManager.setTheme(theme.id()));
-                btn.getItems().add(item);
-            }
-        });
-        // 初始占位项，保证箭头可点开（展开时会被重建）
-        btn.getItems().setAll(new MenuItem("…"));
-    }
-
     // ==================== 工作区切换 ====================
 
     /**
@@ -2997,7 +2928,7 @@ public class ChatViewController implements AutoCloseable {
                         sidebarController.refreshWorkspaceCombo();
 
                         // 12.5. 重新加载新工作区记忆的界面风格
-                        com.javaclaw.ui.javafx.theme.ThemeManager.reload();
+                        themeMenuController.reloadFromWorkspace();
 
                         // 12.6. 重新加载新工作区记忆的字体（族 / 等宽 / 密度）
                         com.javaclaw.ui.javafx.theme.FontManager.reload();
