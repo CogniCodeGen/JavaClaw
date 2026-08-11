@@ -1,35 +1,31 @@
 package com.javaclaw.agent.expert;
 
-import com.javaclaw.config.AppDatabase;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
-import java.util.*;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 自定义智能体配置管理器
+ * 工作区范围的自定义智能体存储。
  *
- * <p>管理用户自定义智能体定义的增删改查，持久化到全局 H2 数据库的
- * {@code custom_agents} 表，并按 {@code workspace_id} 隔离；启动时只从 H2 读取。</p>
- *
- * <p>自定义智能体为纯推理型（无内置工具），可配置名称、描述、系统提示词和最大迭代次数。</p>
- *
- * @author JavaClaw
+ * <p>实例由工作区 Spring Context 管理，不能跨工作区或在 Context 关闭后复用。写操作先提交
+ * H2 再更新缓存，并在实例内串行化，查询返回防御性副本，因此可被多个虚拟线程安全调用。
+ * 本类不拥有 DataSource，销毁时无需单独释放资源。</p>
  */
-public class CustomAgentConfig {
+public final class CustomAgentConfig {
 
     private static final Logger log = LoggerFactory.getLogger(CustomAgentConfig.class);
 
-    private static CustomAgentConfig INSTANCE;
-
     /** 所有自定义智能体（id → 定义） */
     private final Map<String, CustomAgentDef> agents = new ConcurrentHashMap<>();
+    private final String workspaceId;
+    private final JdbcTemplate jdbc;
 
     /**
      * 自定义智能体定义
@@ -63,64 +59,75 @@ public class CustomAgentConfig {
         }
     }
 
-    private CustomAgentConfig() {
-        load();
-    }
-
-    public static synchronized CustomAgentConfig getInstance() {
-        if (INSTANCE == null) {
-            INSTANCE = new CustomAgentConfig();
+    public CustomAgentConfig(String workspaceId, JdbcTemplate jdbc) {
+        if (workspaceId == null || workspaceId.isBlank()) {
+            throw new IllegalArgumentException("workspaceId 不能为空");
         }
-        return INSTANCE;
-    }
-
-    /**
-     * 重新加载（工作区切换时调用）
-     */
-    public void reload() {
-        agents.clear();
+        this.workspaceId = workspaceId;
+        this.jdbc = Objects.requireNonNull(jdbc, "jdbc");
         load();
     }
-
-    // ==================== CRUD ====================
 
     public List<CustomAgentDef> getAll() {
-        return new ArrayList<>(agents.values());
+        return agents.values().stream()
+                .map(CustomAgentConfig::copy)
+                .sorted(Comparator.<CustomAgentDef, String>comparing(
+                        def -> def.name == null ? "" : def.name,
+                        String.CASE_INSENSITIVE_ORDER).thenComparing(def -> def.id))
+                .toList();
     }
 
     public List<CustomAgentDef> getEnabled() {
-        return agents.values().stream()
+        return getAll().stream()
                 .filter(a -> a.enabled)
                 .toList();
     }
 
     public CustomAgentDef get(String id) {
-        return agents.get(id);
+        return copy(agents.get(id));
     }
 
-    public CustomAgentDef create(String name) {
+    public synchronized CustomAgentDef create(String name) {
         CustomAgentDef def = new CustomAgentDef(name);
-        agents.put(def.id, def);
-        save();
+        jdbc.update("""
+                        INSERT INTO custom_agents(
+                            workspace_id, id, name, tool_name, description, sys_prompt,
+                            max_iters, enabled, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                        """,
+                workspaceId, def.id, def.name, def.toolName, def.description,
+                def.sysPrompt, def.maxIters, def.enabled);
+        agents.put(def.id, copy(def));
         log.info("创建自定义智能体: {} ({})", name, def.id);
-        return def;
+        return copy(def);
     }
 
-    public void update(CustomAgentDef def) {
-        agents.put(def.id, def);
-        save();
+    public synchronized void update(CustomAgentDef def) {
+        Objects.requireNonNull(def, "def");
+        int updated = jdbc.update("""
+                        UPDATE custom_agents
+                        SET name = ?, tool_name = ?, description = ?, sys_prompt = ?,
+                            max_iters = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE workspace_id = ? AND id = ?
+                        """,
+                def.name, def.toolName, def.description, def.sysPrompt,
+                def.maxIters, def.enabled, workspaceId, def.id);
+        if (updated == 0) {
+            throw new IllegalArgumentException("未找到自定义智能体: " + def.id);
+        }
+        agents.put(def.id, copy(def));
         log.info("更新自定义智能体: {} ({})", def.name, def.id);
     }
 
-    public void delete(String id) {
+    public synchronized void delete(String id) {
+        int deleted = jdbc.update(
+                "DELETE FROM custom_agents WHERE workspace_id = ? AND id = ?",
+                workspaceId, id);
         CustomAgentDef removed = agents.remove(id);
-        if (removed != null) {
-            save();
+        if (deleted > 0 && removed != null) {
             log.info("删除自定义智能体: {} ({})", removed.name, id);
         }
     }
-
-    // ==================== 持久化 ====================
 
     private void load() {
         String sql = """
@@ -129,58 +136,31 @@ public class CustomAgentConfig {
                 WHERE workspace_id = ?
                 ORDER BY name, id
                 """;
-        try (Connection c = AppDatabase.getConnection();
-             PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setString(1, AppDatabase.currentWorkspaceId());
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    CustomAgentDef def = new CustomAgentDef();
-                    def.id = rs.getString("id");
-                    def.name = rs.getString("name");
-                    def.toolName = rs.getString("tool_name");
-                    def.description = rs.getString("description");
-                    def.sysPrompt = rs.getString("sys_prompt");
-                    def.maxIters = rs.getInt("max_iters");
-                    def.enabled = rs.getBoolean("enabled");
-                    if (def.id != null) agents.put(def.id, def);
-                }
-            }
-            log.info("已从 H2 加载 {} 个自定义智能体", agents.size());
-        } catch (SQLException e) {
-            log.error("从 H2 加载自定义智能体配置失败", e);
-        }
+        jdbc.query(sql, (rs, rowNumber) -> {
+            CustomAgentDef def = new CustomAgentDef();
+            def.id = rs.getString("id");
+            def.name = rs.getString("name");
+            def.toolName = rs.getString("tool_name");
+            def.description = rs.getString("description");
+            def.sysPrompt = rs.getString("sys_prompt");
+            def.maxIters = rs.getInt("max_iters");
+            def.enabled = rs.getBoolean("enabled");
+            return def;
+        }, workspaceId).forEach(def -> agents.put(def.id, def));
+        log.info("已从 H2 加载 {} 个自定义智能体", agents.size());
     }
 
-    private void save() {
-        String insert = """
-                INSERT INTO custom_agents(
-                    workspace_id, id, name, tool_name, description, sys_prompt, max_iters, enabled, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """;
-        try (Connection c = AppDatabase.getConnection();
-             PreparedStatement del = c.prepareStatement("DELETE FROM custom_agents WHERE workspace_id = ?");
-             PreparedStatement ps = c.prepareStatement(insert)) {
-            c.setAutoCommit(false);
-            String workspaceId = AppDatabase.currentWorkspaceId();
-            del.setString(1, workspaceId);
-            del.executeUpdate();
-            for (CustomAgentDef def : agents.values()) {
-                ps.setString(1, workspaceId);
-                ps.setString(2, def.id);
-                ps.setString(3, def.name);
-                ps.setString(4, def.toolName);
-                ps.setString(5, def.description);
-                ps.setString(6, def.sysPrompt);
-                ps.setInt(7, def.maxIters);
-                ps.setBoolean(8, def.enabled);
-                ps.addBatch();
-            }
-            ps.executeBatch();
-            c.commit();
-            log.info("自定义智能体配置已保存到 H2，共 {} 个", agents.size());
-        } catch (SQLException e) {
-            log.error("保存自定义智能体配置到 H2 失败", e);
-        }
+    private static CustomAgentDef copy(CustomAgentDef source) {
+        if (source == null) return null;
+        CustomAgentDef copy = new CustomAgentDef();
+        copy.id = source.id;
+        copy.name = source.name;
+        copy.toolName = source.toolName;
+        copy.description = source.description;
+        copy.sysPrompt = source.sysPrompt;
+        copy.maxIters = source.maxIters;
+        copy.enabled = source.enabled;
+        return copy;
     }
 
 }

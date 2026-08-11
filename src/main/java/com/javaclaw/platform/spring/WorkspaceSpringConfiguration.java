@@ -4,9 +4,16 @@ import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.ChatService;
 import com.javaclaw.agent.PlanModeService;
 import com.javaclaw.agent.ShellCommandService;
+import com.javaclaw.agent.expert.CustomAgentConfig;
+import com.javaclaw.application.agent.AgentDefinitionPort;
+import com.javaclaw.application.agent.AgentManagementApplicationService;
+import com.javaclaw.application.agent.AgentManagementUseCase;
+import com.javaclaw.application.agent.AgentPromptOptimizationPort;
 import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.loop.LoopService;
+import com.javaclaw.infrastructure.agent.AgentPromptOptimizerAdapter;
+import com.javaclaw.infrastructure.agent.CustomAgentDefinitionAdapter;
 import com.javaclaw.mode.ChatMode;
 import com.javaclaw.mode.LoopMode;
 import com.javaclaw.mode.PlanMode;
@@ -17,6 +24,9 @@ import com.javaclaw.mode.WorkflowMode;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.runtime.WorkspaceContext;
+import com.javaclaw.ui.javafx.agent.AgentRowFactory;
+import com.javaclaw.ui.javafx.agent.AgentSettingsPanelFactory;
+import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.workflow.node.PublicNodeCatalog;
 import com.javaclaw.workflow.runtime.NodeExecutorRegistry;
 import com.javaclaw.workflow.service.SystemGraphFactory;
@@ -26,8 +36,12 @@ import com.javaclaw.workflow.store.GraphCheckpointStore;
 import com.javaclaw.workflow.store.H2GraphCheckpointStore;
 import com.javaclaw.workflow.store.H2WorkflowDefinitionStore;
 import com.javaclaw.workflow.store.WorkflowDefinitionStore;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 /** 工作区对象的显式子 Context 装配，不做组件扫描。 */
 @Configuration(proxyBeanMethods = false)
@@ -39,8 +53,60 @@ public class WorkspaceSpringConfiguration {
     }
 
     @Bean(destroyMethod = "shutdown")
-    AgentRuntime agentRuntime(WorkspaceRuntimeOptions options) {
-        return new AgentRuntime(options.browserManager());
+    AgentRuntime agentRuntime(
+            WorkspaceRuntimeOptions options,
+            CustomAgentConfig customAgents) {
+        return new AgentRuntime(options.browserManager(), customAgents);
+    }
+
+    @Bean
+    CustomAgentConfig customAgentConfig(
+            WorkspaceContext workspace,
+            JdbcTemplate jdbc) {
+        return new CustomAgentConfig(workspace.workspaceId(), jdbc);
+    }
+
+    @Bean
+    com.javaclaw.config.AgentConfig agentConfig() {
+        return com.javaclaw.config.AgentConfig.getInstance();
+    }
+
+    @Bean
+    AgentDefinitionPort agentDefinitionPort(
+            CustomAgentConfig customAgents,
+            com.javaclaw.config.AgentConfig settings) {
+        return new CustomAgentDefinitionAdapter(customAgents, settings);
+    }
+
+    @Bean
+    AgentPromptOptimizationPort agentPromptOptimizationPort(AgentRuntime runtime) {
+        return new AgentPromptOptimizerAdapter(runtime);
+    }
+
+    @Bean
+    AgentManagementApplicationService agentManagementApplicationService(
+            AgentDefinitionPort definitions,
+            AgentPromptOptimizationPort optimizer) {
+        return new AgentManagementUseCase(definitions, optimizer);
+    }
+
+    /** 子 Context 自有加载器，确保工作区 Controller 使用工作区 Bean 并随 Context 失效。 */
+    @Bean
+    @Primary
+    SpringFxmlLoader workspaceFxmlLoader(AutowireCapableBeanFactory beanFactory) {
+        return new SpringFxmlLoader(beanFactory);
+    }
+
+    @Bean
+    AgentRowFactory agentRowFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader workspaceFxmlLoader) {
+        return new AgentRowFactory(workspaceFxmlLoader);
+    }
+
+    @Bean
+    AgentSettingsPanelFactory agentSettingsPanelFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader workspaceFxmlLoader) {
+        return new AgentSettingsPanelFactory(workspaceFxmlLoader);
     }
 
     @Bean
@@ -96,8 +162,10 @@ public class WorkspaceSpringConfiguration {
     }
 
     @Bean
-    ShellCommandService shellCommandService(ChatService chatService) {
-        return new ShellCommandService(chatService);
+    ShellCommandService shellCommandService(
+            AgentManagementApplicationService agents,
+            TaskScope taskScope) {
+        return new ShellCommandService(agents, taskScope);
     }
 
     @Bean

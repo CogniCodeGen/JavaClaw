@@ -7,6 +7,7 @@ import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.platform.spring.WorkspaceContextHandle;
 import com.javaclaw.workflow.service.WorkflowService;
+import com.javaclaw.ui.javafx.agent.AgentSettingsPanelFactory;
 
 import java.util.Objects;
 
@@ -26,6 +27,7 @@ public final class WorkspaceRuntime implements AutoCloseable {
     private final PlanModeService planModeService;
     private final WorkflowService workflowService;
     private final ModeRegistry modeRegistry;
+    private final AgentSettingsPanelFactory agentSettingsPanels;
 
     WorkspaceRuntime(WorkspaceContextHandle springContext) {
         this.springContext = Objects.requireNonNull(springContext, "springContext");
@@ -36,6 +38,7 @@ public final class WorkspaceRuntime implements AutoCloseable {
         planModeService = springContext.bean(PlanModeService.class);
         workflowService = springContext.bean(WorkflowService.class);
         modeRegistry = springContext.bean(ModeRegistry.class);
+        agentSettingsPanels = springContext.bean(AgentSettingsPanelFactory.class);
     }
 
     public WorkspaceContext context() {
@@ -64,6 +67,10 @@ public final class WorkspaceRuntime implements AutoCloseable {
 
     public ModeRegistry modeRegistry() {
         return modeRegistry;
+    }
+
+    public AgentSettingsPanelFactory agentSettingsPanels() {
+        return agentSettingsPanels;
     }
 
     public boolean isClosed() {

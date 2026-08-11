@@ -32,7 +32,7 @@ public final class ExpertManageTools {
         for (ExpertManager.ExpertDef d : expertManager.getExpertDefs()) {
             sb.append("· ").append(d.agentName()).append("（").append(d.toolName()).append("）\n");
         }
-        List<CustomAgentDef> customs = CustomAgentConfig.getInstance().getAll();
+        List<CustomAgentDef> customs = expertManager.getCustomAgents();
         sb.append("自定义智能体：");
         if (customs.isEmpty()) {
             sb.append("无（如需可复用能力，建议用 skill_create 沉淀为技能）");

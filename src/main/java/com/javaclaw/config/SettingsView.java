@@ -1,7 +1,7 @@
 package com.javaclaw.config;
 
-import com.javaclaw.ui.javafx.agent.AgentSettingsView;
-import com.javaclaw.agent.model.ModelFactory;
+import com.javaclaw.ui.javafx.agent.AgentSettingsPanel;
+import com.javaclaw.ui.javafx.agent.AgentSettingsPanelFactory;
 import com.javaclaw.app.UIHelper;
 import com.javaclaw.mcp.McpClientManager;
 import com.javaclaw.ui.javafx.control.ToggleSwitch;
@@ -40,12 +40,10 @@ public class SettingsView {
     private Runnable onModelConfigChanged;
     /** 可选：注入后 MCP 设置面板可显示运行状态、热启停、测试连接 */
     private McpClientManager mcpClientManager;
-    /** 可选：注入后智能体设置面板可启用 AI 智能补全提示词按钮 */
-    private final ModelFactory modelFactory;
-    /** 可选：注入后 AI 智能补全的 token 消耗将计入会话统计 */
-    private final com.javaclaw.agent.TokenTracker tokenTracker;
     /** 可选：设置、记忆、知识和主界面共享的嵌入健康来源。 */
     private final com.javaclaw.memory.embed.EmbeddingGateway embeddingGateway;
+    private final AgentSettingsPanelFactory agentSettingsPanels;
+    private AgentSettingsPanel agentSettingsPanel;
 
     // 布局容器
     private VBox categoryList;
@@ -221,43 +219,16 @@ public class SettingsView {
     private PasswordField lightApiKeyField;
     private ToggleSwitch lightThinkingEnabledCheck;
 
-    public SettingsView(Stage owner) {
-        this(owner, null, null, null, null);
-    }
-
-    public SettingsView(Stage owner, McpClientManager mcpClientManager) {
-        this(owner, mcpClientManager, null, null, null);
-    }
-
-    public SettingsView(Stage owner, McpClientManager mcpClientManager, ModelFactory modelFactory) {
-        this(owner, mcpClientManager, modelFactory, null, null);
-    }
-
-    /**
-     * @param mcpClientManager 注入后 MCP 面板可展示运行状态、热启停、测试连接；
-     *                         为 null 时 MCP 面板退化为基础 CRUD
-     * @param modelFactory     注入后智能体面板可启用 AI 智能补全提示词按钮；
-     *                         为 null 时按钮自动隐藏
-     * @param tokenTracker     注入后 AI 智能补全的真实 token 用量将累计到会话统计；
-     *                         为 null 时该消耗不入账
-     */
     public SettingsView(Stage owner, McpClientManager mcpClientManager,
-                        ModelFactory modelFactory,
-                        com.javaclaw.agent.TokenTracker tokenTracker) {
-        this(owner, mcpClientManager, modelFactory, tokenTracker, null);
-    }
-
-    public SettingsView(Stage owner, McpClientManager mcpClientManager,
-                        ModelFactory modelFactory,
-                        com.javaclaw.agent.TokenTracker tokenTracker,
-                        com.javaclaw.memory.embed.EmbeddingGateway embeddingGateway) {
+                        com.javaclaw.memory.embed.EmbeddingGateway embeddingGateway,
+                        AgentSettingsPanelFactory agentSettingsPanels) {
         this.emailConfig = EmailConfig.getInstance();
         this.agentConfig = AgentConfig.getInstance();
         this.notificationConfig = NotificationConfig.getInstance();
         this.mcpClientManager = mcpClientManager;
-        this.modelFactory = modelFactory;
-        this.tokenTracker = tokenTracker;
         this.embeddingGateway = embeddingGateway;
+        this.agentSettingsPanels = java.util.Objects.requireNonNull(
+                agentSettingsPanels, "agentSettingsPanels");
         this.stage = new Stage();
         stage.initModality(Modality.WINDOW_MODAL);
         stage.initOwner(owner);
@@ -308,11 +279,8 @@ public class SettingsView {
                 this::saveRagSettings, this::modelConfigSavedTip, this::runRagEmbeddingTest, "测试嵌入"));
 
         // 智能体：组件型面板，自管理（全局保存/测试禁用）
-        AgentSettingsView agentSettingsView = new AgentSettingsView();
-        agentSettingsView.setOnConfigChanged(onModelConfigChanged);
-        agentSettingsView.setModelFactory(modelFactory);
-        agentSettingsView.setTokenTracker(tokenTracker);
-        Node agentPanel = agentSettingsView.buildPanel();
+        agentSettingsPanel = agentSettingsPanels.create(this::notifyModelConfigChanged);
+        Node agentPanel = agentSettingsPanel.root();
         addCategory("智能体", agentPanel, false,
                 "agent expert orchestrator iters 迭代 子智能体 编排");
         registerPanelActions(agentPanel, PanelActions.none());
@@ -540,6 +508,12 @@ public class SettingsView {
         // 窗口关闭按钮（标题栏 ✕）同样经守卫
         stage.setOnCloseRequest(e -> {
             if (!confirmDiscardIfDirty()) e.consume();
+        });
+        stage.addEventHandler(javafx.stage.WindowEvent.WINDOW_HIDDEN, event -> {
+            if (agentSettingsPanel != null) {
+                agentSettingsPanel.close();
+                agentSettingsPanel = null;
+            }
         });
 
         stage.setScene(scene);
@@ -3107,6 +3081,10 @@ public class SettingsView {
      */
     public void setOnModelConfigChanged(Runnable callback) {
         this.onModelConfigChanged = callback;
+    }
+
+    private void notifyModelConfigChanged() {
+        if (onModelConfigChanged != null) onModelConfigChanged.run();
     }
 
     /**

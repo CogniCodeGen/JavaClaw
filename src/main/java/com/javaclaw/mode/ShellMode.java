@@ -34,12 +34,12 @@ public final class ShellMode implements ConversationMode {
     @Override
     public ConversationHandle start(ConversationRequest request, ConversationCallbacks callbacks) {
         var guarded = new TerminalCallbackGuard(callbacks);
-        var handle = new DefaultConversationHandle(guarded, ignored -> false);
         try {
-            service.handle(request, guarded);
+            var task = service.handle(request, guarded);
+            return new DefaultConversationHandle(guarded, ignored -> task.cancel());
         } catch (Throwable failure) {
             guarded.onTerminal(ConversationOutcome.failed(failure));
+            return new DefaultConversationHandle(guarded, ignored -> false);
         }
-        return handle;
     }
 }

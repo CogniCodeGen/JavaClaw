@@ -2,12 +2,15 @@ package com.javaclaw.devtools;
 
 import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.ToolConfirmationManager;
+import com.javaclaw.agent.expert.CustomAgentConfig;
 import com.javaclaw.api.interaction.ConfirmRequest;
 import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.config.DataManager;
 import com.javaclaw.config.WorkspaceManager;
+import com.javaclaw.platform.data.DataRoot;
+import com.javaclaw.platform.spring.ApplicationContexts;
 import com.javaclaw.skill.SkillManager;
 import com.javaclaw.task.sdd.run.SddManagedTask;
 import com.javaclaw.task.sdd.run.SddTaskListener;
@@ -16,6 +19,7 @@ import com.javaclaw.task.sdd.run.SddTaskState;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * SDD 托管任务无头驱动 —— 仅用于本地端到端验证/抓 bug，不参与正式构建逻辑。
@@ -42,12 +46,16 @@ public final class SddHeadlessDriver {
         };
 
         // 1. 基础设施（顺序对齐 JavaClawApp.start()）
+        var rootContext = ApplicationContexts.createRoot(DataRoot.resolve());
         WorkspaceManager.getInstance().init();
         ToolConfirmationManager.setPort(port);
         PlaywrightBrowserManager browser = new PlaywrightBrowserManager(true,
                 WorkspaceManager.getInstance().getCurrentBrowserDir(),
                 DataManager.getInstance().getScreenshotsDir());
-        AgentRuntime runtime = new AgentRuntime(browser);
+        CustomAgentConfig customAgents = new CustomAgentConfig(
+                WorkspaceManager.getInstance().getCurrentWorkspaceId(),
+                rootContext.getBean(JdbcTemplate.class));
+        AgentRuntime runtime = new AgentRuntime(browser, customAgents);
 
         // 2. 配置 SDD 管理器（注入自动放行端口 → PortReviewGate 评审直接批准）
         SddTaskManager mgr = SddTaskManager.getInstance();
@@ -109,6 +117,7 @@ public final class SddHeadlessDriver {
         System.out.println("=============================================");
 
         try { runtime.shutdown(); } catch (Exception ignore) {}
+        rootContext.close();
 
         // 退出码反映真实结果：COMPLETED → 0；超时 / FAILED / NEEDS_HUMAN / CANCELLED → 非零，
         // 便于外层脚本/CI 用 $? 判定本次 e2e 验证是否通过

@@ -86,6 +86,7 @@ public class ExpertManager {
 
     /** 本管理器所属编排路径的调用来源令牌（构造期绑定，注入到全部带工具专家） */
     private final ToolCallOrigin origin;
+    private final CustomAgentConfig customAgentConfig;
 
     /**
      * 构造专家管理器并创建所有普通模式子智能体
@@ -96,9 +97,11 @@ public class ExpertManager {
      *                        循环=managedTask(loopId, workDir)），注入到全部带工具专家
      */
     public ExpertManager(ModelFactory modelFactory, PlaywrightBrowserManager browserManager,
-                         ToolCallOrigin origin) {
+                         ToolCallOrigin origin, CustomAgentConfig customAgentConfig) {
         this.browserManager = browserManager;
         this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
+        this.customAgentConfig = java.util.Objects.requireNonNull(
+                customAgentConfig, "customAgentConfig");
         this.expertDefs = buildExpertDefs(browserManager, this.origin);
 
         // 能力 → 工具实例映射（供 DynamicTaskTool 使用）：直接复用专家定义里的同一批实例
@@ -118,7 +121,7 @@ public class ExpertManager {
         }
 
         // 加载并创建自定义专家（自定义专家使用 toolName 作为分组名）
-        List<CustomAgentDef> customAgents = CustomAgentConfig.getInstance().getEnabled();
+        List<CustomAgentDef> customAgents = customAgentConfig.getEnabled();
         for (CustomAgentDef custom : customAgents) {
             ExpertDef def = new ExpertDef(
                     custom.name, custom.sysPrompt, custom.toolName,
@@ -270,7 +273,7 @@ public class ExpertManager {
         Map<String, PlanRole> roles = new LinkedHashMap<>();
         for (ExpertDef def : expertDefs) roles.put(def.agentName(), def.planRole());
         roles.put(AgentConfig.KNOWLEDGE_AGENT_NAME, PlanRole.DOMAIN);
-        for (CustomAgentDef custom : CustomAgentConfig.getInstance().getEnabled()) {
+        for (CustomAgentDef custom : customAgentConfig.getEnabled()) {
             roles.put(custom.name, PlanRole.DOMAIN);
         }
         return Map.copyOf(roles);
@@ -307,7 +310,7 @@ public class ExpertManager {
                 1, null));
 
         // 加载自定义专家到规划模式
-        for (CustomAgentDef custom : CustomAgentConfig.getInstance().getEnabled()) {
+        for (CustomAgentDef custom : customAgentConfig.getEnabled()) {
             agents.put(custom.name, createAgent(
                     modelFactory.createMultiAgentChatModel(),
                     custom.name,
@@ -317,6 +320,11 @@ public class ExpertManager {
 
         log.info("规划模式专家已创建: {} 个", agents.size());
         return agents;
+    }
+
+    /** 当前工作区自定义智能体的不可共享快照。 */
+    public List<CustomAgentDef> getCustomAgents() {
+        return customAgentConfig.getAll();
     }
 
     // ==================== 内部创建方法 ====================

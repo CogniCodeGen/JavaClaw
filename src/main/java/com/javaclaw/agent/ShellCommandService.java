@@ -1,11 +1,15 @@
 package com.javaclaw.agent;
 
-import com.javaclaw.agent.expert.CustomAgentConfig;
-import com.javaclaw.agent.expert.CustomAgentConfig.CustomAgentDef;
+import com.javaclaw.application.agent.AgentManagementApplicationService;
+import com.javaclaw.application.agent.AgentManagementApplicationService.Agent;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.api.conversation.ConversationRequest;
+import com.javaclaw.api.conversation.CancellationReason;
+import com.javaclaw.platform.execution.TaskHandle;
+import com.javaclaw.platform.execution.TaskScope;
+import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.schedule.ScheduleManager;
 import com.javaclaw.schedule.ScheduledTask;
 import com.javaclaw.task.sdd.run.SddManagedTask;
@@ -16,6 +20,9 @@ import org.slf4j.LoggerFactory;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletionException;
 
 /**
  * Shell 命令服务 —— 在"命令"交互模式下，用确定性命令（不走 LLM）创建与管理长任务、定时任务、智能体。
@@ -29,28 +36,42 @@ public final class ShellCommandService {
     private static final Logger log = LoggerFactory.getLogger(ShellCommandService.class);
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-    private final ChatService chatService;
+    private final AgentManagementApplicationService agents;
+    private final TaskScope tasks;
 
-    public ShellCommandService(ChatService chatService) {
-        this.chatService = chatService;
+    public ShellCommandService(
+            AgentManagementApplicationService agents,
+            TaskScope tasks) {
+        this.agents = Objects.requireNonNull(agents, "agents");
+        this.tasks = Objects.requireNonNull(tasks, "tasks");
     }
 
     /** 入口：解析并执行一条命令，异步回显结果。立即返回（在后台线程执行）。 */
-    public void handle(ConversationRequest request, ConversationCallbacks callbacks) {
+    public TaskHandle<String> handle(
+            ConversationRequest request,
+            ConversationCallbacks callbacks) {
         String input = request == null ? "" : request.userInput();
-        Thread t = new Thread(() -> {
-            String out;
-            try {
-                out = dispatch(input == null ? "" : input.trim());
-            } catch (Exception e) {
-                log.warn("命令执行异常", e);
-                out = "✗ 命令执行异常：" + e.getMessage();
+        TaskHandle<String> handle = tasks.submit(
+                TaskSpec.io("shell-command"),
+                context -> dispatch(input == null ? "" : input.trim()));
+        handle.completion().whenComplete((output, failure) -> {
+            if (failure == null) {
+                callbacks.onEvent(new ConversationEvent.Reply(output));
+                callbacks.onTerminal(ConversationOutcome.completed());
+                return;
             }
-            callbacks.onEvent(new ConversationEvent.Reply(out));
-            callbacks.onTerminal(ConversationOutcome.completed());
-        }, "shell-cmd");
-        t.setDaemon(true);
-        t.start();
+            Throwable cause = unwrap(failure);
+            if (cause instanceof CancellationException) {
+                callbacks.onTerminal(ConversationOutcome.cancelled(
+                        CancellationReason.RUNTIME_REBUILD));
+                return;
+            }
+            log.warn("命令执行异常", cause);
+            callbacks.onEvent(new ConversationEvent.Reply(
+                    "✗ 命令执行异常：" + cause.getMessage()));
+            callbacks.onTerminal(ConversationOutcome.failed(cause));
+        });
+        return handle;
     }
 
     private String dispatch(String line) {
@@ -127,18 +148,17 @@ public final class ShellCommandService {
     private String agent(String rest) {
         String[] p = rest.split("\\s+", 2);
         String sub = p[0].toLowerCase();
-        CustomAgentConfig cfg = CustomAgentConfig.getInstance();
         switch (sub) {
             case "", "list" -> {
                 StringBuilder sb = new StringBuilder("内置专家：\n");
-                for (String d : builtinNames()) {
-                    sb.append("· ").append(d).append("\n");
-                }
-                List<CustomAgentDef> customs = cfg.getAll();
+                List<Agent> catalog = agents.catalog().agents();
+                catalog.stream().filter(Agent::builtIn)
+                        .forEach(agent -> sb.append("· ").append(agent.name()).append("\n"));
+                List<Agent> customs = catalog.stream().filter(agent -> !agent.builtIn()).toList();
                 sb.append("自定义智能体：").append(customs.isEmpty() ? "无" : "");
-                for (CustomAgentDef c : customs) {
-                    sb.append("\n· [").append(c.id).append("] ").append(c.name)
-                            .append(c.enabled ? "" : "（停用）");
+                for (Agent custom : customs) {
+                    sb.append("\n· [").append(custom.id()).append("] ").append(custom.name())
+                            .append(custom.enabled() ? "" : "（停用）");
                 }
                 return sb.toString().trim();
             }
@@ -150,8 +170,12 @@ public final class ShellCommandService {
         }
     }
 
-    private List<String> builtinNames() {
-        return chatService.builtinAgentNames();
+    private static Throwable unwrap(Throwable failure) {
+        Throwable current = failure;
+        while (current instanceof CompletionException && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
     }
 
     // ==================== /schedule ====================

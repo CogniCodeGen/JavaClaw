@@ -86,6 +86,7 @@ public final class AgentRuntime {
 
     /** 专家库（子智能体定义 + 工具注册入口） */
     private final ExpertManager expertManager;
+    private final com.javaclaw.agent.expert.CustomAgentConfig customAgentConfig;
 
     /** 知识专家（含 RAG 能力，多模式共用） */
     private final KnowledgeExpert knowledgeExpert;
@@ -113,13 +114,17 @@ public final class AgentRuntime {
      *
      * @param browserManager 浏览器管理器（由 App 层创建并注入）
      */
-    public AgentRuntime(PlaywrightBrowserManager browserManager) {
+    public AgentRuntime(
+            PlaywrightBrowserManager browserManager,
+            com.javaclaw.agent.expert.CustomAgentConfig customAgentConfig) {
         AgentConfig config = AgentConfig.getInstance();
         log.info("========== 初始化 AgentRuntime 基础设施 ==========");
         log.info("API 地址: {}", config.getBaseUrl());
         log.info("模型名称: {}", config.getModelName());
 
         this.browserManager = browserManager;
+        this.customAgentConfig = java.util.Objects.requireNonNull(
+                customAgentConfig, "customAgentConfig");
 
         // 1. ModelFactory：共享 HttpTransport，所有模型实例共用
         this.modelFactory = new ModelFactory();
@@ -139,7 +144,8 @@ public final class AgentRuntime {
         //    runtime 的共享专家只服务交互路径（聊天/规划），来源令牌固定 INTERACTIVE；
         //    定时/循环路径各建独立 ExpertManager 并绑定各自令牌，SDD 逐任务经
         //    buildCapabilityTools(origin) 产带任务归属的工具实例
-        this.expertManager = new ExpertManager(modelFactory, browserManager, ToolCallOrigin.INTERACTIVE);
+        this.expertManager = new ExpertManager(
+                modelFactory, browserManager, ToolCallOrigin.INTERACTIVE, customAgentConfig);
         this.knowledgeExpert = new KnowledgeExpert(modelFactory, embeddingGateway);
 
         // 6. MCP 客户端：启动所有启用的 MCP Server
@@ -183,6 +189,9 @@ public final class AgentRuntime {
     public TokenTracker getTokenTracker() { return tokenTracker; }
     public MemoryManager getMemoryManager() { return memoryManager; }
     public ExpertManager getExpertManager() { return expertManager; }
+    public com.javaclaw.agent.expert.CustomAgentConfig getCustomAgentConfig() {
+        return customAgentConfig;
+    }
     public KnowledgeExpert getKnowledgeExpert() { return knowledgeExpert; }
     public EmbeddingGateway getEmbeddingGateway() { return embeddingGateway; }
     public McpClientManager getMcpClientManager() { return mcpClientManager; }

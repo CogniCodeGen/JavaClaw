@@ -2339,9 +2339,8 @@ public class ChatViewController implements AutoCloseable {
         javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
         SettingsView settingsView = new SettingsView(ownerStage,
                 runtime != null ? runtime.getMcpClientManager() : null,
-                runtime != null ? runtime.getModelFactory() : null,
-                runtime != null ? runtime.getTokenTracker() : null,
-                runtime != null ? runtime.getEmbeddingGateway() : null);
+                runtime != null ? runtime.getEmbeddingGateway() : null,
+                applicationKernel.current().agentSettingsPanels());
         settingsView.setOnModelConfigChanged(this::rebuildAgentService);
         settingsView.show(category);
     }
