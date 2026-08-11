@@ -18,7 +18,7 @@ import com.javaclaw.api.conversation.Mode;
 import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.config.AgentConfig;
-import com.javaclaw.config.SettingsView;
+import com.javaclaw.ui.javafx.settings.SettingsView;
 import com.javaclaw.runtime.ApplicationKernel;
 import com.javaclaw.runtime.WorkspaceRuntime;
 import com.javaclaw.platform.fx.FxDispatcher;
@@ -2345,15 +2345,7 @@ public class ChatViewController implements AutoCloseable {
     public void openSettings(String category) {
         log.info("打开设置对话框{}", category != null ? "（直达：" + category + "）" : "");
         javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
-        SettingsView settingsView = new SettingsView(ownerStage,
-                applicationKernel.current().agentSettingsPanels(),
-                applicationKernel.current().siteCredentialPanels(),
-                applicationKernel.current().mcpCenters(),
-                applicationKernel.current().modelSettingsSections(),
-                applicationKernel.current().communicationSettingsSections(),
-                applicationKernel.current().behaviorSettingsSections(),
-                applicationKernel.current().maintenanceSettingsSections(),
-                applicationKernel.current().appearanceSettingsSections());
+        SettingsView settingsView = applicationKernel.current().settingsViews().create(ownerStage);
         settingsView.setOnModelConfigChanged(this::rebuildAgentService);
         settingsView.show(category);
     }

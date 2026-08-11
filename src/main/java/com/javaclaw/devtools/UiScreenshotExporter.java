@@ -9,7 +9,6 @@ import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.chat.ChatViewController;
 import com.javaclaw.config.DataManager;
-import com.javaclaw.config.SettingsView;
 import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.runtime.ApplicationKernel;
 import com.javaclaw.platform.data.DataRoot;
@@ -123,15 +122,7 @@ public final class UiScreenshotExporter {
 
             shots.add(new Shot("01-main-chat.png", "JavaClaw 智能助手", null));
             shots.add(new Shot("02-settings.png", "设置", () -> showInternalStage(
-                    new SettingsView(primaryStage,
-                            workspaceRuntime.agentSettingsPanels(),
-                            workspaceRuntime.siteCredentialPanels(),
-                            workspaceRuntime.mcpCenters(),
-                            workspaceRuntime.modelSettingsSections(),
-                            workspaceRuntime.communicationSettingsSections(),
-                            workspaceRuntime.behaviorSettingsSections(),
-                            workspaceRuntime.maintenanceSettingsSections(),
-                            workspaceRuntime.appearanceSettingsSections()))));
+                    workspaceRuntime.settingsViews().create(primaryStage))));
             shots.add(new Shot("03-knowledge-center.png", "知识库中心", () ->
                     new KnowledgeCenterView(primaryStage, runtime.getKnowledgeExpert(), port,
                             () -> {}, () -> {},

@@ -7,14 +7,8 @@ import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.platform.spring.WorkspaceContextHandle;
 import com.javaclaw.workflow.service.WorkflowService;
-import com.javaclaw.ui.javafx.agent.AgentSettingsPanelFactory;
-import com.javaclaw.ui.javafx.site.SiteCredentialPanelFactory;
 import com.javaclaw.ui.javafx.mcp.McpCenterViewFactory;
-import com.javaclaw.ui.javafx.settings.ModelSettingsSectionFactory;
-import com.javaclaw.ui.javafx.settings.CommunicationSettingsSectionFactory;
-import com.javaclaw.ui.javafx.settings.BehaviorSettingsSectionFactory;
-import com.javaclaw.ui.javafx.settings.MaintenanceSettingsSectionFactory;
-import com.javaclaw.ui.javafx.settings.AppearanceSettingsSectionFactory;
+import com.javaclaw.ui.javafx.settings.SettingsViewFactory;
 
 import java.util.Objects;
 
@@ -34,14 +28,8 @@ public final class WorkspaceRuntime implements AutoCloseable {
     private final PlanModeService planModeService;
     private final WorkflowService workflowService;
     private final ModeRegistry modeRegistry;
-    private final AgentSettingsPanelFactory agentSettingsPanels;
-    private final SiteCredentialPanelFactory siteCredentialPanels;
     private final McpCenterViewFactory mcpCenters;
-    private final ModelSettingsSectionFactory modelSettingsSections;
-    private final CommunicationSettingsSectionFactory communicationSettingsSections;
-    private final BehaviorSettingsSectionFactory behaviorSettingsSections;
-    private final MaintenanceSettingsSectionFactory maintenanceSettingsSections;
-    private final AppearanceSettingsSectionFactory appearanceSettingsSections;
+    private final SettingsViewFactory settingsViews;
 
     WorkspaceRuntime(WorkspaceContextHandle springContext) {
         this.springContext = Objects.requireNonNull(springContext, "springContext");
@@ -52,15 +40,8 @@ public final class WorkspaceRuntime implements AutoCloseable {
         planModeService = springContext.bean(PlanModeService.class);
         workflowService = springContext.bean(WorkflowService.class);
         modeRegistry = springContext.bean(ModeRegistry.class);
-        agentSettingsPanels = springContext.bean(AgentSettingsPanelFactory.class);
-        siteCredentialPanels = springContext.bean(SiteCredentialPanelFactory.class);
         mcpCenters = springContext.bean(McpCenterViewFactory.class);
-        modelSettingsSections = springContext.bean(ModelSettingsSectionFactory.class);
-        communicationSettingsSections = springContext.bean(
-                CommunicationSettingsSectionFactory.class);
-        behaviorSettingsSections = springContext.bean(BehaviorSettingsSectionFactory.class);
-        maintenanceSettingsSections = springContext.bean(MaintenanceSettingsSectionFactory.class);
-        appearanceSettingsSections = springContext.bean(AppearanceSettingsSectionFactory.class);
+        settingsViews = springContext.bean(SettingsViewFactory.class);
     }
 
     public WorkspaceContext context() {
@@ -91,36 +72,12 @@ public final class WorkspaceRuntime implements AutoCloseable {
         return modeRegistry;
     }
 
-    public AgentSettingsPanelFactory agentSettingsPanels() {
-        return agentSettingsPanels;
-    }
-
-    public SiteCredentialPanelFactory siteCredentialPanels() {
-        return siteCredentialPanels;
-    }
-
     public McpCenterViewFactory mcpCenters() {
         return mcpCenters;
     }
 
-    public ModelSettingsSectionFactory modelSettingsSections() {
-        return modelSettingsSections;
-    }
-
-    public CommunicationSettingsSectionFactory communicationSettingsSections() {
-        return communicationSettingsSections;
-    }
-
-    public BehaviorSettingsSectionFactory behaviorSettingsSections() {
-        return behaviorSettingsSections;
-    }
-
-    public MaintenanceSettingsSectionFactory maintenanceSettingsSections() {
-        return maintenanceSettingsSections;
-    }
-
-    public AppearanceSettingsSectionFactory appearanceSettingsSections() {
-        return appearanceSettingsSections;
+    public SettingsViewFactory settingsViews() {
+        return settingsViews;
     }
 
     public boolean isClosed() {

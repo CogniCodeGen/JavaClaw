@@ -111,6 +111,10 @@ class SettingsCoreFxmlStructureTest {
         values.put("/fxml/settings/appearance-settings.fxml",
                 AppearanceSettingsController.class);
         values.put("/fxml/settings/font-settings.fxml", FontSettingsController.class);
+        values.put("/fxml/settings/settings-navigation.fxml",
+                SettingsNavigationController.class);
+        values.put("/fxml/settings/settings-footer.fxml", SettingsFooterController.class);
+        values.put("/fxml/settings/settings-view.fxml", SettingsViewController.class);
         return Map.copyOf(values);
     }
 }
