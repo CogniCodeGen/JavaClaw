@@ -3,7 +3,6 @@ package com.javaclaw.schedule;
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationOutcome;
-import com.javaclaw.config.AppDatabase;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -282,7 +281,7 @@ class ScheduleManagerTest {
     }
 
     private ScheduledTaskStore store() {
-        return new ScheduledTaskStore(() -> AppDatabase.open(dataDir));
+        return ScheduleTestStoreFactory.create(dataDir);
     }
 
     private static java.util.concurrent.ExecutorService daemonExecutor() {
@@ -382,7 +381,7 @@ class ScheduleManagerTest {
         public void shutdown() { }
     }
 
-    private static final class FakeScheduleBackend implements ScheduleBackend {
+    static final class FakeScheduleBackend implements ScheduleBackend {
         private final Map<TriggerKey, Trigger> triggers = new ConcurrentHashMap<>();
         private volatile boolean failSchedule;
 

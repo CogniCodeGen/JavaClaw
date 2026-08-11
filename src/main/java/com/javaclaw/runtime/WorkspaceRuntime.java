@@ -3,9 +3,11 @@ package com.javaclaw.runtime;
 import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.ChatService;
 import com.javaclaw.agent.PlanModeService;
+import com.javaclaw.application.schedule.ScheduleApplicationService;
 import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.platform.spring.WorkspaceContextHandle;
+import com.javaclaw.schedule.ScheduleManager;
 import com.javaclaw.workflow.service.WorkflowService;
 import com.javaclaw.ui.javafx.mcp.McpCenterViewFactory;
 import com.javaclaw.ui.javafx.settings.SettingsViewFactory;
@@ -32,6 +34,8 @@ public final class WorkspaceRuntime implements AutoCloseable {
     private final McpCenterViewFactory mcpCenters;
     private final SettingsViewFactory settingsViews;
     private final ScheduleViewFactory scheduleViews;
+    private final ScheduleManager scheduleManager;
+    private final ScheduleApplicationService schedules;
 
     WorkspaceRuntime(WorkspaceContextHandle springContext) {
         this.springContext = Objects.requireNonNull(springContext, "springContext");
@@ -45,6 +49,8 @@ public final class WorkspaceRuntime implements AutoCloseable {
         mcpCenters = springContext.bean(McpCenterViewFactory.class);
         settingsViews = springContext.bean(SettingsViewFactory.class);
         scheduleViews = springContext.bean(ScheduleViewFactory.class);
+        scheduleManager = springContext.bean(ScheduleManager.class);
+        schedules = springContext.bean(ScheduleApplicationService.class);
     }
 
     public WorkspaceContext context() {
@@ -85,6 +91,14 @@ public final class WorkspaceRuntime implements AutoCloseable {
 
     public ScheduleViewFactory scheduleViews() {
         return scheduleViews;
+    }
+
+    public ScheduleManager scheduleManager() {
+        return scheduleManager;
+    }
+
+    public ScheduleApplicationService schedules() {
+        return schedules;
     }
 
     public boolean isClosed() {

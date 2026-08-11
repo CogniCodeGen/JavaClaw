@@ -17,6 +17,7 @@ import com.javaclaw.plugin.capability.MemoryAccessImpl;
 import com.javaclaw.plugin.capability.ScheduleAccessImpl;
 import com.javaclaw.plugin.capability.StorageAccessImpl;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.application.schedule.ScheduleApplicationService;
 import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.skill.SkillManager;
 import org.slf4j.Logger;
@@ -61,6 +62,7 @@ final class PluginRuntime {
     private final AgentRuntime agentRuntime;
     private final ClassLoader appClassLoader;
     private final ManagedTaskExecutor taskExecutor;
+    private final ScheduleApplicationService schedules;
     /** 工作区数据根（用于 STORAGE 能力的插件数据目录） */
     private final Path dataRoot;
 
@@ -82,13 +84,15 @@ final class PluginRuntime {
     private final List<com.javaclaw.plugin.api.PluginSkill> providedSkills = new ArrayList<>();
 
     PluginRuntime(PluginDescriptor descriptor, Path jarPath, AgentRuntime agentRuntime,
-                  ClassLoader appClassLoader, Path dataRoot, ManagedTaskExecutor taskExecutor) {
+                  ClassLoader appClassLoader, Path dataRoot, ManagedTaskExecutor taskExecutor,
+                  ScheduleApplicationService schedules) {
         this.descriptor = descriptor;
         this.jarPath = jarPath;
         this.agentRuntime = agentRuntime;
         this.appClassLoader = appClassLoader;
         this.dataRoot = dataRoot;
         this.taskExecutor = java.util.Objects.requireNonNull(taskExecutor, "taskExecutor");
+        this.schedules = schedules;
     }
 
     // ==================== 生命周期 ====================
@@ -151,7 +155,8 @@ final class PluginRuntime {
             }
             ScheduleAccess schedule = null;
             if (granted.contains(Capability.SCHEDULE)) {
-                scheduleImpl = new ScheduleAccessImpl(descriptor.id());
+                scheduleImpl = new ScheduleAccessImpl(descriptor.id(),
+                        java.util.Objects.requireNonNull(schedules, "schedules"));
                 schedule = scheduleImpl;
             }
             MemoryAccess memory = granted.contains(Capability.MEMORY)

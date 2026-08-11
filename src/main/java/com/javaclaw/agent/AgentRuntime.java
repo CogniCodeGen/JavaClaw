@@ -6,6 +6,7 @@ import com.javaclaw.agent.memory.MemoryManager;
 import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.agent.vision.VisionPreprocessor;
 import com.javaclaw.browser.PlaywrightBrowserManager;
+import com.javaclaw.application.schedule.ScheduleApplicationService;
 import com.javaclaw.chat.ChatMessage;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.mcp.McpClientManager;
@@ -115,6 +116,9 @@ public final class AgentRuntime {
     /** 当前工作区的站点凭据与浏览器会话存储。 */
     private final SiteCredentialManager siteCredentialManager;
 
+    /** 当前工作区定时任务用例；devtools 可不装配该可选能力。 */
+    private final ScheduleApplicationService scheduleApplicationService;
+
 
     /** 模型执行重试配置（超时 / 最大重试次数 / 指数退避），三模式共用 */
     private final ExecutionConfig modelExecConfig;
@@ -133,7 +137,8 @@ public final class AgentRuntime {
             SiteCredentialManager siteCredentialManager,
             McpConfigManager mcpConfigManager,
             McpClientManager mcpClientManager,
-            TaskScope workspaceTasks) {
+            TaskScope workspaceTasks,
+            ScheduleApplicationService scheduleApplicationService) {
         AgentConfig config = AgentConfig.getInstance();
         log.info("========== 初始化 AgentRuntime 基础设施 ==========");
         log.info("API 地址: {}", config.getBaseUrl());
@@ -148,6 +153,7 @@ public final class AgentRuntime {
                 mcpConfigManager, "mcpConfigManager");
         this.mcpClientManager = java.util.Objects.requireNonNull(
                 mcpClientManager, "mcpClientManager");
+        this.scheduleApplicationService = scheduleApplicationService;
         java.util.Objects.requireNonNull(workspaceTasks, "workspaceTasks");
 
         // 1. ModelFactory：共享 HttpTransport，所有模型实例共用
@@ -218,6 +224,9 @@ public final class AgentRuntime {
     // ==================== 基础组件 Getter ====================
 
     public ModelFactory getModelFactory() { return modelFactory; }
+    public ScheduleApplicationService getScheduleApplicationService() {
+        return scheduleApplicationService;
+    }
     public TokenTracker getTokenTracker() { return tokenTracker; }
     public MemoryManager getMemoryManager() { return memoryManager; }
     public ExpertManager getExpertManager() { return expertManager; }

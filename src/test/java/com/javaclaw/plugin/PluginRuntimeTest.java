@@ -44,7 +44,7 @@ class PluginRuntimeTest {
         try (ManagedTaskExecutor executor = new ManagedTaskExecutor()) {
             PluginRuntime runtime = new PluginRuntime(
                     descriptor, jar, null, getClass().getClassLoader(),
-                    tempDir.resolve("data"), executor);
+                    tempDir.resolve("data"), executor, null);
 
             Exception first = assertThrows(Exception.class,
                     () -> runtime.start(Set.of(), Map.of()));

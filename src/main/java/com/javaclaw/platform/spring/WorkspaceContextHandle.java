@@ -41,10 +41,7 @@ public final class WorkspaceContextHandle implements AutoCloseable {
         if (!closed.compareAndSet(false, true)) {
             return;
         }
-        TaskScope tasks = context.getBeanProvider(TaskScope.class).getIfAvailable();
-        if (tasks != null) {
-            tasks.close();
-        }
+        context.getBeansOfType(TaskScope.class).values().forEach(TaskScope::close);
         context.close();
     }
 }

@@ -5,6 +5,7 @@ import com.javaclaw.application.error.NotFoundException;
 import com.javaclaw.application.error.ValidationException;
 import com.javaclaw.application.schedule.ScheduleApplicationService.Event;
 import com.javaclaw.application.schedule.ScheduleApplicationService.EventKind;
+import com.javaclaw.application.schedule.ScheduleApplicationService.DisablePolicy;
 import com.javaclaw.application.schedule.ScheduleApplicationService.History;
 import com.javaclaw.application.schedule.ScheduleApplicationService.RunResult;
 import com.javaclaw.application.schedule.ScheduleApplicationService.RuntimeState;
@@ -51,10 +52,12 @@ public final class ScheduleManagerAdapter implements SchedulePort {
     }
 
     @Override
-    public Task setEnabled(SaveCommand command, boolean enabled) {
+    public Task setEnabled(SaveCommand command, boolean enabled, DisablePolicy disablePolicy) {
         try {
-            // updateTask 同时保存页面编辑并协调调度；停用时会取消当前运行。
-            return toTask(manager.updateTask(toScheduledTask(command)));
+            ScheduleManager.DisableMode mode = disablePolicy == DisablePolicy.AFTER_CURRENT_RUN
+                    ? ScheduleManager.DisableMode.AFTER_CURRENT_RUN
+                    : ScheduleManager.DisableMode.CANCEL_ACTIVE;
+            return toTask(manager.updateTask(toScheduledTask(command), mode));
         } catch (ScheduleConflictException conflict) {
             throw new ConflictException("定时任务已被其他操作修改，请刷新后重试");
         } catch (IllegalArgumentException invalid) {

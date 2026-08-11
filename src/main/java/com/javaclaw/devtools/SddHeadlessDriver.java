@@ -70,7 +70,7 @@ public final class SddHeadlessDriver {
         TaskScope taskScope = rootContext.getBean(ManagedTaskExecutor.class)
                 .openScope("sdd-headless", 256);
         AgentRuntime runtime = new AgentRuntime(browser, customAgents, siteCredentials,
-                mcpConfigurations, new McpClientManager(mcpConfigurations, taskScope), taskScope);
+                mcpConfigurations, new McpClientManager(mcpConfigurations, taskScope), taskScope, null);
 
         // 2. 配置 SDD 管理器（注入自动放行端口 → PortReviewGate 评审直接批准）
         SddTaskManager mgr = SddTaskManager.getInstance();

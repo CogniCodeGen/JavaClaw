@@ -38,7 +38,8 @@ public final class ScheduleUseCase implements ScheduleApplicationService {
     }
 
     @Override
-    public OperationResult setEnabled(SaveCommand command, boolean enabled) {
+    public OperationResult setEnabled(
+            SaveCommand command, boolean enabled, DisablePolicy disablePolicy) {
         SaveCommand checked = validate(new SaveCommand(command.id(), command.name(),
                 command.description(), command.triggerType(), command.intervalValue(),
                 command.intervalUnit(), command.dailyTime(), command.cronExpression(),
@@ -48,7 +49,8 @@ public final class ScheduleUseCase implements ScheduleApplicationService {
         if (checked.draft()) {
             throw new ValidationException("草稿必须先保存，之后才能切换运行状态");
         }
-        Task changed = schedules.setEnabled(checked, enabled);
+        Task changed = schedules.setEnabled(checked, enabled,
+                Objects.requireNonNull(disablePolicy, "disablePolicy"));
         return result(null, enabled ? "已启用" : "已暂停", changed.id());
     }
 

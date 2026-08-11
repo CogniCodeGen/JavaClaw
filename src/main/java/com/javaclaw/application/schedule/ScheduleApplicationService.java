@@ -18,7 +18,11 @@ public interface ScheduleApplicationService {
 
     OperationResult save(SaveCommand command);
 
-    OperationResult setEnabled(SaveCommand command, boolean enabled);
+    default OperationResult setEnabled(SaveCommand command, boolean enabled) {
+        return setEnabled(command, enabled, DisablePolicy.CANCEL_ACTIVE);
+    }
+
+    OperationResult setEnabled(SaveCommand command, boolean enabled, DisablePolicy disablePolicy);
 
     OperationResult delete(String taskId);
 
@@ -35,6 +39,9 @@ public interface ScheduleApplicationService {
     enum RuntimeState { PAUSED, ENABLED, QUEUED, RUNNING, BUILTIN }
 
     enum RunResult { STARTED, ALREADY_ACTIVE, DISABLED, NOT_FOUND, UNSUPPORTED }
+
+    /** 停用时对当前排队/运行实例的处理策略。 */
+    enum DisablePolicy { CANCEL_ACTIVE, AFTER_CURRENT_RUN }
 
     enum EventKind { LOG, STARTED, COMPLETED }
 

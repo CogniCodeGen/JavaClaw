@@ -101,10 +101,6 @@ public class MemoryService implements AutoCloseable {
                     store, text -> gate.embed(text, EmbeddingPurpose.BACKGROUND_INDEX));
             seedDefaultPersona();
             backgroundWork.startAccepting();
-            // 把「习惯回顾」注册为定时任务模块的系统内置任务手动动作（支持「立即执行」）；
-            // lambda 运行时读取 this.habitReviewer，切工作区重载后自动指向新实例。
-            com.javaclaw.schedule.ScheduleManager.getInstance().registerBuiltinAction(
-                    "sys:habit-review", this::reviewHabitsNow);
             log.info("记忆服务已打开: {}", memoryDir);
         } catch (RuntimeException | Error failure) {
             this.storeLease = null;
@@ -641,7 +637,8 @@ public class MemoryService implements AutoCloseable {
         return store;
     }
 
-    private String reviewHabitsNow() {
+    /** 手动执行一次习惯回顾；由工作区内置任务接线器调用。 */
+    public String reviewHabitsNow() {
         HabitReviewer reviewer;
         BackgroundWorkTracker.WorkLease lease;
         synchronized (this) {

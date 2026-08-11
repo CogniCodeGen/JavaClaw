@@ -165,7 +165,8 @@ class ScheduleFxmlLoadTest {
         @Override public OperationResult save(SaveCommand command) {
             return new OperationResult(snapshot(), null, "已保存");
         }
-        @Override public OperationResult setEnabled(SaveCommand command, boolean enabled) {
+        @Override public OperationResult setEnabled(
+                SaveCommand command, boolean enabled, DisablePolicy disablePolicy) {
             return new OperationResult(snapshot(), null, enabled ? "已启用" : "已暂停");
         }
         @Override public OperationResult delete(String taskId) {

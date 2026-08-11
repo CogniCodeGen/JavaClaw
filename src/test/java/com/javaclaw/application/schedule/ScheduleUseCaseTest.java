@@ -2,6 +2,7 @@ package com.javaclaw.application.schedule;
 
 import com.javaclaw.application.error.ValidationException;
 import com.javaclaw.application.schedule.ScheduleApplicationService.EventListener;
+import com.javaclaw.application.schedule.ScheduleApplicationService.DisablePolicy;
 import com.javaclaw.application.schedule.ScheduleApplicationService.RunResult;
 import com.javaclaw.application.schedule.ScheduleApplicationService.RuntimeState;
 import com.javaclaw.application.schedule.ScheduleApplicationService.SaveCommand;
@@ -76,7 +77,8 @@ class ScheduleUseCaseTest {
             return task;
         }
 
-        @Override public Task setEnabled(SaveCommand command, boolean enabled) {
+        @Override public Task setEnabled(
+                SaveCommand command, boolean enabled, DisablePolicy disablePolicy) {
             return save(command);
         }
 

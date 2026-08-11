@@ -51,6 +51,7 @@ import com.javaclaw.config.AgentConfig;
 import com.javaclaw.plugin.PluginManager;
 import com.javaclaw.ui.javafx.onboarding.OnboardingViewFactory;
 import com.javaclaw.ui.javafx.onboarding.ProviderCardFactory;
+import com.javaclaw.system.CommandSessionManager;
 import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationEventPublisher;
@@ -144,6 +145,11 @@ public class RootConfiguration {
     @Bean
     PluginManager pluginManager() {
         return PluginManager.getInstance();
+    }
+
+    @Bean
+    CommandSessionManager commandSessionManager() {
+        return CommandSessionManager.getInstance();
     }
 
     @Bean

@@ -6,7 +6,6 @@ import reactor.core.Disposable;
 
 import java.util.Objects;
 import java.util.UUID;
-import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -21,7 +20,8 @@ public final class ScheduledRunControl {
     private final AtomicReference<CancellationReason> reason = new AtomicReference<>();
     private final AtomicReference<Disposable> subscription = new AtomicReference<>();
     private final AtomicReference<PlaywrightBrowserManager> browser = new AtomicReference<>();
-    private final AtomicReference<Future<?>> future = new AtomicReference<>();
+    private final AtomicReference<ScheduleTaskDispatcher.Cancellation> queuedCancellation =
+            new AtomicReference<>();
     private final AtomicReference<Thread> worker = new AtomicReference<>();
 
     public ScheduledRunControl(String taskId) {
@@ -46,20 +46,20 @@ public final class ScheduledRunControl {
         if (currentSubscription != null) currentSubscription.dispose();
         PlaywrightBrowserManager currentBrowser = browser.get();
         if (currentBrowser != null) safeClose(currentBrowser);
-        Future<?> currentFuture = future.get();
-        // 排队任务可直接从执行器取消；运行中 FutureTask.cancel()
+        ScheduleTaskDispatcher.Cancellation currentCancellation = queuedCancellation.get();
+        // 排队任务可直接从执行器取消；运行中取消托管句柄
         // 会立即触发 done()，导致活跃去重位提前释放，旧执行未退出时
         // 新触发就能穿透。运行中只 dispose/关浏览器/中断 worker，
-        // 由 callable 真正退出后的 done() 释放去重位。
-        if (currentFuture != null && !hasStarted()) currentFuture.cancel(true);
+        // 由正文真正退出后的终止回调释放去重位。
+        if (currentCancellation != null && !hasStarted()) currentCancellation.cancel();
         Thread currentWorker = worker.get();
         if (currentWorker != null && currentWorker != Thread.currentThread()) currentWorker.interrupt();
         return accepted;
     }
 
-    public void attachFuture(Future<?> value) {
-        future.set(value);
-        if (isCancelled() && value != null) value.cancel(true);
+    public void attachQueuedCancellation(ScheduleTaskDispatcher.Cancellation value) {
+        queuedCancellation.set(value);
+        if (isCancelled() && value != null && !hasStarted()) value.cancel();
     }
 
     public void attachWorker(Thread value) {

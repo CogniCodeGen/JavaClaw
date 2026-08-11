@@ -95,7 +95,10 @@ public final class ToolkitAssembler {
             tk.registration().tool(new com.javaclaw.system.JShellTools(origin)).group("skill").apply();
         }
         tk.registration().tool(new com.javaclaw.task.sdd.run.SddTaskManageTools(origin)).group("task_manage").apply();
-        tk.registration().tool(new com.javaclaw.schedule.ScheduleTools(origin)).group("schedule").apply();
+        if (runtime.getScheduleApplicationService() != null) {
+            tk.registration().tool(new com.javaclaw.schedule.ScheduleTools(
+                    origin, runtime.getScheduleApplicationService())).group("schedule").apply();
+        }
         tk.registration().tool(new ExpertManageTools(expertManager)).group("agents").apply();
         // 媒体工具：图片查看（view_image）+ 图片/PDF OCR（ocr_recognize），按路由激活；
         // 仅交互路径注册（见参数 withMediaTools 说明）

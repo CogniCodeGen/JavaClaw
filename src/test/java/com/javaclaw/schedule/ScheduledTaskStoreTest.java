@@ -1,6 +1,5 @@
 package com.javaclaw.schedule;
 
-import com.javaclaw.config.AppDatabase;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -75,7 +74,7 @@ class ScheduledTaskStoreTest {
     }
 
     private ScheduledTaskStore store() {
-        return new ScheduledTaskStore(() -> AppDatabase.open(dataDir));
+        return ScheduleTestStoreFactory.create(dataDir);
     }
 
     private static ScheduledTask task(String id, boolean enabled) {

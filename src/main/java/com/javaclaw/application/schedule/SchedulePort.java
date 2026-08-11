@@ -1,6 +1,7 @@
 package com.javaclaw.application.schedule;
 
 import com.javaclaw.application.schedule.ScheduleApplicationService.EventListener;
+import com.javaclaw.application.schedule.ScheduleApplicationService.DisablePolicy;
 import com.javaclaw.application.schedule.ScheduleApplicationService.RunResult;
 import com.javaclaw.application.schedule.ScheduleApplicationService.SaveCommand;
 import com.javaclaw.application.schedule.ScheduleApplicationService.Task;
@@ -16,7 +17,7 @@ public interface SchedulePort {
 
     Task save(SaveCommand command);
 
-    Task setEnabled(SaveCommand command, boolean enabled);
+    Task setEnabled(SaveCommand command, boolean enabled, DisablePolicy disablePolicy);
 
     void delete(String taskId);
 

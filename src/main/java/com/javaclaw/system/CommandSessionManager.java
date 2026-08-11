@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
@@ -62,8 +63,9 @@ public final class CommandSessionManager {
     private final Map<String, ShellSession> sessions = new ConcurrentHashMap<>();
     private final ScheduledExecutorService janitor;
 
-    /** 自动回收回调（回收数量）：供定时任务模块把自动清理计入执行记录；可空。 */
-    private volatile java.util.function.IntConsumer onCleanup;
+    /** 自动回收观察者；订阅句柄由所属工作区负责关闭。 */
+    private final CopyOnWriteArrayList<java.util.function.IntConsumer> cleanupListeners =
+            new CopyOnWriteArrayList<>();
 
     private CommandSessionManager() {
         janitor = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -75,9 +77,11 @@ public final class CommandSessionManager {
         Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown, "cmd-session-shutdown"));
     }
 
-    /** 设置自动回收回调（定时任务模块注册，用于记录自动清理结果）。 */
-    public void setOnCleanup(java.util.function.IntConsumer onCleanup) {
-        this.onCleanup = onCleanup;
+    /** 订阅自动回收结果。监听器必须快速返回；关闭句柄后不再接收通知。 */
+    public AutoCloseable subscribeCleanup(java.util.function.IntConsumer listener) {
+        java.util.Objects.requireNonNull(listener, "listener");
+        cleanupListeners.add(listener);
+        return () -> cleanupListeners.remove(listener);
     }
 
     /** 手动立即清理一次空闲/失效会话，返回回收数量（供定时任务模块「立即执行」调用）。 */
@@ -88,9 +92,12 @@ public final class CommandSessionManager {
     /** 定时器 tick：清理后回调通知回收数量。 */
     private void janitorTick() {
         int n = cleanupIdle();
-        java.util.function.IntConsumer cb = onCleanup;
-        if (cb != null) {
-            try { cb.accept(n); } catch (Exception ignored) {}
+        for (java.util.function.IntConsumer listener : cleanupListeners) {
+            try {
+                listener.accept(n);
+            } catch (RuntimeException failure) {
+                log.warn("命令会话清理监听器失败（已隔离）", failure);
+            }
         }
     }
 

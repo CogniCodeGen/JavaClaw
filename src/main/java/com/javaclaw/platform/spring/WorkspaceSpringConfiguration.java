@@ -61,6 +61,10 @@ import com.javaclaw.mcp.McpClientManager;
 import com.javaclaw.mcp.McpConfigManager;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskScope;
+import com.javaclaw.schedule.ScheduleManager;
+import com.javaclaw.schedule.ScheduleBuiltinActions;
+import com.javaclaw.schedule.ScheduledTaskStore;
+import com.javaclaw.system.CommandSessionManager;
 import com.javaclaw.runtime.WorkspaceContext;
 import com.javaclaw.site.SiteCredentialManager;
 import com.javaclaw.ui.javafx.agent.AgentRowFactory;
@@ -106,6 +110,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
 
 /** 工作区对象的显式子 Context 装配，不做组件扫描。 */
 @Configuration(proxyBeanMethods = false)
@@ -116,6 +121,11 @@ public class WorkspaceSpringConfiguration {
         return executor.openScope("workspace-" + workspace.workspaceId(), 256);
     }
 
+    @Bean(destroyMethod = "close")
+    TaskScope scheduleTaskScope(ManagedTaskExecutor executor, WorkspaceContext workspace) {
+        return executor.openScope("schedule-" + workspace.workspaceId(), 1);
+    }
+
     @Bean(destroyMethod = "shutdown")
     AgentRuntime agentRuntime(
             WorkspaceRuntimeOptions options,
@@ -123,9 +133,10 @@ public class WorkspaceSpringConfiguration {
             SiteCredentialManager siteCredentials,
             McpConfigManager mcpConfigurations,
             McpClientManager mcpClients,
-            TaskScope workspaceTaskScope) {
+            @Qualifier("workspaceTaskScope") TaskScope workspaceTaskScope,
+            ScheduleApplicationService schedules) {
         return new AgentRuntime(options.browserManager(), customAgents, siteCredentials,
-                mcpConfigurations, mcpClients, workspaceTaskScope);
+                mcpConfigurations, mcpClients, workspaceTaskScope, schedules);
     }
 
     @Bean
@@ -205,7 +216,7 @@ public class WorkspaceSpringConfiguration {
     @Bean
     McpClientManager mcpClientManager(
             McpConfigManager configurations,
-            TaskScope workspaceTaskScope) {
+            @Qualifier("workspaceTaskScope") TaskScope workspaceTaskScope) {
         return new McpClientManager(configurations, workspaceTaskScope);
     }
 
@@ -403,8 +414,24 @@ public class WorkspaceSpringConfiguration {
     }
 
     @Bean
-    SchedulePort schedulePort() {
-        return new ScheduleManagerAdapter(com.javaclaw.schedule.ScheduleManager.getInstance());
+    ScheduledTaskStore scheduledTaskStore(
+            JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager,
+            JsonCodec json) {
+        return new ScheduledTaskStore(jdbc, transactionManager, json);
+    }
+
+    @Bean(destroyMethod = "shutdown")
+    ScheduleManager scheduleManager(
+            ScheduledTaskStore store,
+            WorkspaceContext workspace,
+            @Qualifier("scheduleTaskScope") TaskScope scheduleTasks) {
+        return new ScheduleManager(store, workspace.workspaceId(), scheduleTasks);
+    }
+
+    @Bean
+    SchedulePort schedulePort(ScheduleManager manager) {
+        return new ScheduleManagerAdapter(manager);
     }
 
     @Bean
@@ -494,8 +521,19 @@ public class WorkspaceSpringConfiguration {
 
     @Bean(destroyMethod = "shutdown")
     ChatService chatService(
-            AgentRuntime runtime, WorkflowService workflows, TaskScope taskScope) {
+            AgentRuntime runtime,
+            WorkflowService workflows,
+            @Qualifier("workspaceTaskScope") TaskScope taskScope) {
         return new ChatService(runtime, workflows, taskScope);
+    }
+
+    @Bean(destroyMethod = "close")
+    ScheduleBuiltinActions scheduleBuiltinActions(
+            ScheduleManager schedules,
+            CommandSessionManager commandSessions,
+            ChatService chats) {
+        return new ScheduleBuiltinActions(
+                schedules, commandSessions, chats.getMemoryService());
     }
 
     @Bean(destroyMethod = "shutdown")
@@ -511,8 +549,9 @@ public class WorkspaceSpringConfiguration {
     @Bean
     ShellCommandService shellCommandService(
             AgentManagementApplicationService agents,
-            TaskScope taskScope) {
-        return new ShellCommandService(agents, taskScope);
+            ScheduleApplicationService schedules,
+            @Qualifier("workspaceTaskScope") TaskScope taskScope) {
+        return new ShellCommandService(agents, schedules, taskScope);
     }
 
     @Bean

@@ -14,6 +14,7 @@ import com.javaclaw.platform.execution.TaskHandle;
 import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.application.tool.ToolInvocation;
 import com.javaclaw.application.tool.ToolInvocationPipeline;
+import com.javaclaw.application.schedule.ScheduleApplicationService;
 import com.javaclaw.util.PathGuard;
 import com.javaclaw.util.ProjectAccessPolicy;
 import org.slf4j.Logger;
@@ -62,6 +63,7 @@ public final class PluginManager {
     private volatile UserInteractionPort interactionPort;
     private ManagedTaskExecutor taskExecutor;
     private ToolInvocationPipeline toolPipeline;
+    private ScheduleApplicationService schedules;
     private TaskHandle<Void> autoEnableTask;
     private ClassLoader appClassLoader;
 
@@ -94,13 +96,15 @@ public final class PluginManager {
      */
     public synchronized void init(AgentRuntime runtime, UserInteractionPort interactionPort,
                                   ManagedTaskExecutor taskExecutor,
-                                  ToolInvocationPipeline toolPipeline) {
+                                  ToolInvocationPipeline toolPipeline,
+                                  ScheduleApplicationService schedules) {
         lifecycleGeneration++;
         cancelAutoEnable();
         this.agentRuntime = runtime;
         this.interactionPort = interactionPort;
         this.taskExecutor = java.util.Objects.requireNonNull(taskExecutor, "taskExecutor");
         this.toolPipeline = java.util.Objects.requireNonNull(toolPipeline, "toolPipeline");
+        this.schedules = java.util.Objects.requireNonNull(schedules, "schedules");
         this.appClassLoader = PluginManager.class.getClassLoader();
         ensureDir();
         store.bind(DataManager.getInstance().getDataRoot());
@@ -115,12 +119,14 @@ public final class PluginManager {
      *
      * @param newRuntime 新工作区的智能体基础设施容器
      */
-    public synchronized void reload(AgentRuntime newRuntime) {
+    public synchronized void reload(
+            AgentRuntime newRuntime, ScheduleApplicationService newSchedules) {
         log.info("插件系统随工作区切换重载...");
         lifecycleGeneration++;
         cancelAutoEnable();
         unloadAll();
         this.agentRuntime = newRuntime;
+        this.schedules = java.util.Objects.requireNonNull(newSchedules, "newSchedules");
         store.bind(DataManager.getInstance().getDataRoot());
         discover();
         log.info("插件系统重载完成，发现 {} 个插件", plugins.size());
@@ -136,6 +142,7 @@ public final class PluginManager {
         cancelAutoEnable();
         unloadAll();
         agentRuntime = null;
+        schedules = null;
         log.info("插件系统已暂停，等待新运行时接管");
     }
 
@@ -515,7 +522,7 @@ public final class PluginManager {
                 return;
             }
             plugins.put(d.id(), new PluginRuntime(d, jar, agentRuntime, appClassLoader,
-                    DataManager.getInstance().getDataRoot(), taskExecutor));
+                    DataManager.getInstance().getDataRoot(), taskExecutor, schedules));
             log.info("发现插件：{}（{}），目录 {}", d.name(), d.id(), pluginDir.getFileName());
         } catch (Exception e) {
             log.warn("解析插件失败，跳过 {}：{}", pluginDir.getFileName(), e.toString());

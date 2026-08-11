@@ -2,6 +2,10 @@ package com.javaclaw.agent;
 
 import com.javaclaw.application.agent.AgentManagementApplicationService;
 import com.javaclaw.application.agent.AgentManagementApplicationService.Agent;
+import com.javaclaw.application.schedule.ScheduleApplicationService;
+import com.javaclaw.application.schedule.ScheduleApplicationService.SaveCommand;
+import com.javaclaw.application.schedule.ScheduleApplicationService.Task;
+import com.javaclaw.application.schedule.ScheduleCommands;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.api.conversation.ConversationOutcome;
@@ -10,8 +14,6 @@ import com.javaclaw.api.conversation.CancellationReason;
 import com.javaclaw.platform.execution.TaskHandle;
 import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
-import com.javaclaw.schedule.ScheduleManager;
-import com.javaclaw.schedule.ScheduledTask;
 import com.javaclaw.task.sdd.run.SddManagedTask;
 import com.javaclaw.task.sdd.run.SddTaskManager;
 import org.slf4j.Logger;
@@ -37,12 +39,15 @@ public final class ShellCommandService {
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final AgentManagementApplicationService agents;
+    private final ScheduleApplicationService schedules;
     private final TaskScope tasks;
 
     public ShellCommandService(
             AgentManagementApplicationService agents,
+            ScheduleApplicationService schedules,
             TaskScope tasks) {
         this.agents = Objects.requireNonNull(agents, "agents");
+        this.schedules = Objects.requireNonNull(schedules, "schedules");
         this.tasks = Objects.requireNonNull(tasks, "tasks");
     }
 
@@ -184,25 +189,24 @@ public final class ShellCommandService {
         String[] p = rest.split("\\s+", 2);
         String sub = p[0].toLowerCase();
         String arg = p.length > 1 ? p[1].trim() : "";
-        ScheduleManager mgr = ScheduleManager.getInstance();
         switch (sub) {
             case "", "list" -> {
-                List<ScheduledTask> all = mgr.getAllTasks();
+                List<Task> all = schedules.snapshot().tasks();
                 if (all.isEmpty()) return "（无定时任务）";
                 StringBuilder sb = new StringBuilder("定时任务：\n");
-                for (ScheduledTask t : all) {
-                    sb.append("· [").append(t.getId()).append("] ").append(t.getName())
-                            .append(" — ").append(t.getTriggerType())
-                            .append(t.isEnabled() ? "，启用" : "，停用").append("\n");
+                for (Task t : all) {
+                    sb.append("· [").append(t.id()).append("] ").append(t.name())
+                            .append(" — ").append(t.triggerType())
+                            .append(t.enabled() ? "，启用" : "，停用").append("\n");
                 }
                 return sb.toString().trim();
             }
             case "get" -> {
                 if (arg.isEmpty()) return "用法：/schedule get <id>";
-                ScheduledTask t = mgr.getTask(arg);
+                Task t = scheduleTask(arg);
                 if (t == null) return "✗ 未找到定时任务：" + arg;
-                return "「" + t.getName() + "」" + t.getTriggerType()
-                        + (t.isEnabled() ? "，启用" : "，停用") + "\nprompt：" + t.getPrompt();
+                return "「" + t.name() + "」" + t.triggerType()
+                        + (t.enabled() ? "，启用" : "，停用") + "\nprompt：" + t.prompt();
             }
             case "create" -> {
                 // 用法：/schedule create 名称 | 类型 | 值 | 提示词
@@ -211,42 +215,47 @@ public final class ShellCommandService {
                 String name = parts[0].trim(), type = parts[1].trim().toLowerCase(),
                         val = parts[2].trim(), prompt = parts[3].trim();
                 if (!List.of("interval", "daily", "cron").contains(type)) return "✗ 类型须为 interval/daily/cron";
-                ScheduledTask t = mgr.createDraft(name);
-                t.setTriggerType(type);
+                Task draft = schedules.createDraft(name);
+                int intervalValue = 1;
+                String dailyTime = "";
+                String cronExpression = "";
                 switch (type) {
                     case "interval" -> {
-                        try { t.setIntervalInMinutes(Math.max(1, Integer.parseInt(val))); }
+                        try { intervalValue = Math.max(1, Integer.parseInt(val)); }
                         catch (NumberFormatException ex) { return "✗ interval 需分钟数"; }
                     }
-                    case "daily" -> t.setDailyTime(val);
-                    case "cron" -> t.setCronExpression(val);
+                    case "daily" -> dailyTime = val;
+                    case "cron" -> cronExpression = val;
                     default -> { }
                 }
-                t.setPrompt(prompt);
-                t.setEnabled(true);
-                ScheduledTask saved = mgr.saveNewTask(t);
-                return "✓ 已创建并启用定时任务「" + name + "」（id=" + saved.getId() + "）";
+                var saved = schedules.save(new SaveCommand(draft.id(), name, "", type,
+                        intervalValue, "minute", dailyTime, cronExpression, "", prompt,
+                        true, draft.version(), false, "none", false, true))
+                        .snapshot().require(draft.id());
+                return "✓ 已创建并启用定时任务「" + name + "」（id=" + saved.id() + "）";
             }
             case "stop", "disable" -> {
                 if (arg.isEmpty()) return "用法：/schedule stop <id>";
-                if (mgr.getTask(arg) == null) return "✗ 未找到定时任务：" + arg;
-                mgr.setEnabled(arg, false, ScheduleManager.DisableMode.CANCEL_ACTIVE);
+                Task task = scheduleTask(arg);
+                if (task == null) return "✗ 未找到定时任务：" + arg;
+                schedules.setEnabled(ScheduleCommands.copyOf(task), false);
                 return "✓ 已停用定时任务：" + arg;
             }
             case "delete" -> {
                 if (arg.isEmpty()) return "用法：/schedule delete <id>";
-                if (mgr.getTask(arg) == null) return "✗ 未找到定时任务：" + arg;
-                mgr.deleteTask(arg);
+                if (scheduleTask(arg) == null) return "✗ 未找到定时任务：" + arg;
+                schedules.delete(arg);
                 return "✓ 已删除定时任务：" + arg;
             }
             case "run" -> {
                 if (arg.isEmpty()) return "用法：/schedule run <id>";
-                ScheduledTask t = mgr.getTask(arg);
+                Task t = scheduleTask(arg);
                 if (t == null) return "✗ 未找到定时任务：" + arg;
-                ScheduleManager.RunNowResult result = mgr.runNow(arg, !t.isEnabled());
+                ScheduleApplicationService.RunResult result =
+                        schedules.runNow(arg, !t.enabled()).runResult();
                 return switch (result) {
                     case STARTED -> "✓ 已触发立即执行：" + arg
-                            + (t.isEnabled() ? "" : "（仅本次，仍保持暂停）");
+                            + (t.enabled() ? "" : "（仅本次，仍保持暂停）");
                     case ALREADY_ACTIVE -> "✗ 任务已在运行或排队：" + arg;
                     case DISABLED -> "✗ 任务已暂停：" + arg;
                     case NOT_FOUND -> "✗ 未找到定时任务：" + arg;
@@ -255,6 +264,11 @@ public final class ShellCommandService {
             }
             default -> { return "✗ 未知子命令：schedule " + sub + "\n用法：/schedule list|get <id>|create ...|stop <id>|delete <id>|run <id>"; }
         }
+    }
+
+    private Task scheduleTask(String id) {
+        return schedules.snapshot().tasks().stream()
+                .filter(task -> Objects.equals(task.id(), id)).findFirst().orElse(null);
     }
 
     private String helpText() {
