@@ -15,15 +15,12 @@ import com.javaclaw.api.conversation.Mode;
 import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.api.conversation.PlanProfile;
 import com.javaclaw.platform.execution.TaskScope;
-import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.platform.fx.FxDispatcher;
 import javafx.scene.Node;
-import javafx.stage.FileChooser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
-import java.nio.file.Files;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.BooleanSupplier;
@@ -85,11 +82,14 @@ final class ChatTurnController {
     private final Supplier<ModeRegistry> modes;
     private final BooleanSupplier rebuilding;
     private final Host host;
+    private final ChatTurnOutcomeHandler outcomes;
+    private final ChatTurnEventRouter events;
+    private final ChatReplyExporter replyExporter;
 
     private int generation;
     private boolean streamingActive;
     private ChatSession streamingSession;
-    private ActiveTurn activeTurn;
+    private ChatActiveTurn activeTurn;
 
     ChatTurnController(
             FxDispatcher fx,
@@ -116,6 +116,19 @@ final class ChatTurnController {
         this.modes = Objects.requireNonNull(modes, "modes");
         this.rebuilding = Objects.requireNonNull(rebuilding, "rebuilding");
         this.host = Objects.requireNonNull(host, "host");
+        this.outcomes = new ChatTurnOutcomeHandler(runtime, thinking, renderer, host);
+        this.replyExporter = new ChatReplyExporter(backgroundTasks, host::ownerWindow);
+        this.events = new ChatTurnEventRouter(
+                renderer,
+                thinking,
+                host,
+                outcomes::loopDetected,
+                this::updateMetrics,
+                clarification -> {
+                    host.appendClarification(clarification.reason(), clarification.question());
+                    stop(CancellationReason.MODE_SWITCH, false, StopPolicy.DISCARD_AND_INVALIDATE);
+                },
+                () -> streamingSession != null && streamingSession != host.currentSession());
     }
 
     void sendFromComposer() {
@@ -135,8 +148,10 @@ final class ChatTurnController {
             return;
         }
 
-        ParsedRequest parsed = parseRequest(userText);
+        ChatTurnRequest parsed = ChatTurnRequest.parse(userText);
         if (parsed == null) {
+            host.addStaticMessage(ChatMessage.Role.SYSTEM,
+                    "用法：/研讨 <问题> — 触发研讨模式多智能体讨论");
             return;
         }
         List<File> attachments = composer.attachmentSnapshot();
@@ -181,7 +196,7 @@ final class ChatTurnController {
             log.info("服务重建进行中，忽略停止请求（重建收尾会自行恢复输入）");
             return;
         }
-        ActiveTurn turn = activeTurn;
+        ChatActiveTurn turn = activeTurn;
         ConversationHandle handle = turn == null ? null : turn.handle;
         if (policy == StopPolicy.DISCARD_AND_INVALIDATE) {
             discard(reason, handle, showFeedback);
@@ -208,7 +223,7 @@ final class ChatTurnController {
         streamingSession = session;
         composer.setThinkingVisible(true);
         int turnGeneration = generation;
-        ActiveTurn turn = new ActiveTurn(turnGeneration, targetModeId);
+        ChatActiveTurn turn = new ChatActiveTurn(turnGeneration, targetModeId);
         activeTurn = turn;
         thinking.startNewStream();
 
@@ -217,15 +232,17 @@ final class ChatTurnController {
     }
 
     private void startMode(
-            ActiveTurn turn, String text, List<File> attachments, String sessionId) {
+            ChatActiveTurn turn, String text, List<File> attachments, String sessionId) {
         if (generation != turn.generation || activeTurn != turn) {
             return;
         }
         host.saveChatHistory();
-        renderer.createMessage(this::regenerate, this::saveReply, host::deleteAssistantMessage);
+        renderer.createMessage(
+                this::regenerate, replyExporter::save, host::deleteAssistantMessage);
         Mode mode = modes.get().getById(turn.modeId).orElse(null);
         if (!(mode instanceof ConversationMode conversationMode)) {
-            onError(new IllegalStateException("模式未注册: " + turn.modeId));
+            consumeTerminal(turn.generation, ConversationOutcome.failed(
+                    new IllegalStateException("模式未注册: " + turn.modeId)));
             return;
         }
         PlanProfile profile = "plan".equals(turn.modeId)
@@ -239,7 +256,7 @@ final class ChatTurnController {
                 turn.handle = handle;
             }
         } catch (Throwable failure) {
-            onError(failure);
+            consumeTerminal(turn.generation, ConversationOutcome.failed(failure));
         }
     }
 
@@ -258,163 +275,35 @@ final class ChatTurnController {
     }
 
     private void consumeEvent(int turnGeneration, ConversationEvent event) {
-        if (generation != turnGeneration) {
-            return;
-        }
-        switch (event) {
-            case ConversationEvent.Thinking value -> renderer.appendThinking(value.chunk());
-            case ConversationEvent.Reply value -> renderer.appendReply(value.chunk());
-            case ConversationEvent.ToolResult value -> renderer.appendSubAgent(
-                    value.toolName(), value.result(), ChatStreamRenderer.ChunkKind.RESULT);
-            case ConversationEvent.SubAgentThinking value -> renderer.appendSubAgent(
-                    value.agentName(), value.chunk(), ChatStreamRenderer.ChunkKind.THINKING);
-            case ConversationEvent.SubAgentReply value -> renderer.appendSubAgent(
-                    value.agentName(), value.chunk(), ChatStreamRenderer.ChunkKind.REPLY);
-            case ConversationEvent.Hint value -> renderer.appendPlanHint(value.text());
-            case ConversationEvent.AgentStart value -> renderer.startPlanAgent(value.agentName());
-            case ConversationEvent.AgentReply value -> renderer.appendPlanAgentReply(value.chunk());
-            case ConversationEvent.Evaluation value ->
-                    renderer.appendPlanHint(value.result().formatForDisplay());
-            case ConversationEvent.LoopDetected value -> onLoopDetected(value.warning());
-            case ConversationEvent.Usage value -> updateMetrics(value);
-            case ConversationEvent.Progress value -> thinking.recordPipelineProgress(
-                    value.stageId(), value.stageLabel(),
-                    value.status() == null ? "running" : value.status().name(), value.detail());
-            case ConversationEvent.Custom value -> consumeCustom(value);
-        }
-    }
-
-    private void consumeCustom(ConversationEvent.Custom event) {
-        if ("plan_final".equals(event.kind()) && event.payload() instanceof String draft) {
-            renderer.setFinalPlanDraft(draft);
-        } else if ("clarify_request".equals(event.kind())
-                && event.payload() instanceof com.javaclaw.agent.clarify.ClarifyPayload value) {
-            host.appendClarification(value.reason(), value.question());
-            stop(CancellationReason.MODE_SWITCH, false, StopPolicy.DISCARD_AND_INVALIDATE);
-        } else if (com.javaclaw.loop.LoopConstants.EVENT_STATUS_KIND.equals(event.kind())
-                && event.payload() instanceof com.javaclaw.loop.model.LoopStatus value) {
-            renderer.updateLoopStatus(
-                    value,
-                    streamingSession != null && streamingSession != host.currentSession(),
-                    host::suspendStreamNode);
-        } else {
-            log.debug("收到自定义事件 [{}] {}", event.kind(), event.payload());
-        }
+        if (generation == turnGeneration) events.route(event);
     }
 
     private void consumeTerminal(int turnGeneration, ConversationOutcome outcome) {
-        if (generation != turnGeneration) {
-            return;
-        }
-        ActiveTurn turn = activeTurn;
+        if (generation != turnGeneration) return;
+        ChatActiveTurn turn = activeTurn;
         if (turn != null && turn.generation == turnGeneration) {
             turn.handle = null;
         }
+        boolean plan = isPlanStream();
+        ChatSession target = targetSession();
+        TurnMetrics metrics = metrics();
         switch (outcome) {
-            case ConversationOutcome.Completed ignored -> onComplete();
-            case ConversationOutcome.Cancelled value -> onCancelled(value);
-            case ConversationOutcome.Failed value -> onError(value.error());
-        }
-    }
-
-    private void onComplete() {
-        ActiveTurn turn = activeTurn;
-        AssistantMessageView rendered = renderer.message();
-        MarkdownBubble reply = renderer.activeReply();
-        if (isPlanStream()) {
-            renderer.finishPlanAgent();
-        }
-        renderer.revealReply();
-        try {
-            if (isPlanStream() && reply != null && reply.getLength() == 0) {
-                renderer.hideReplyCard();
-            } else if (!isPlanStream() && reply != null && reply.getLength() == 0) {
-                reply.finishWith("[模型未返回有效回复]");
+            case ConversationOutcome.Completed ignored -> outcomes.complete(
+                    plan, target, metrics, () -> finishUi(turn, CompletionKind.SUCCEEDED));
+            case ConversationOutcome.Cancelled value -> {
+                if (turn != null) turn.deliveryState = DeliveryState.CANCELLED;
+                outcomes.cancel(value, plan, target, metrics,
+                        () -> finishUi(turn, CompletionKind.CANCELLED));
             }
-            renderer.renderInlineReplyImages();
-            String text = renderer.currentText(isPlanStream());
-            ChatSession target = targetSession();
-            if (text != null && target != null) {
-                ChatMessage message = message(text, DeliveryState.COMPLETE, metrics());
-                renderer.displayedImagePaths().forEach(message::addImagePath);
-                if (rendered != null) {
-                    rendered.enableAdoption(() -> host.adoptAssistantMessage(message));
-                }
-                host.storeAssistantMessage(target, message);
+            case ConversationOutcome.Failed value -> {
+                if (turn != null) turn.deliveryState = DeliveryState.FAILED;
+                outcomes.fail(value.error(), plan, target, metrics,
+                        () -> finishUi(turn, CompletionKind.FAILED));
             }
-        } catch (RuntimeException failure) {
-            log.error("保存回复时发生错误", failure);
-        } finally {
-            finishUi(turn, CompletionKind.SUCCEEDED);
         }
     }
 
-    private void onError(Throwable error) {
-        log.error("流式输出发生错误", error);
-        ActiveTurn turn = activeTurn;
-        if (turn != null) turn.deliveryState = DeliveryState.FAILED;
-        if (isPlanStream()) renderer.finishPlanAgent();
-        thinking.endStreamFailed();
-        try {
-            String detail = runtime.get().extractErrorMessage(error);
-            String errorMessage = "调用失败: " + detail;
-            ChatSession target = targetSession();
-            String partial = renderer.currentText(isPlanStream());
-            if (partial != null && !partial.isBlank() && target != null) {
-                String failedText = partial + "\n\n> ⚠ 失败：" + detail;
-                finishRenderedText(failedText);
-                host.storeAssistantMessage(
-                        target, message(failedText, DeliveryState.FAILED, metrics()));
-            } else if (target != null && target != host.currentSession()) {
-                host.storeSystemMessage(target, errorMessage);
-            } else {
-                renderer.hideReplyCard();
-                host.addStaticMessage(ChatMessage.Role.SYSTEM, errorMessage);
-            }
-        } catch (RuntimeException displayFailure) {
-            log.error("显示错误信息时发生异常", displayFailure);
-        } finally {
-            finishUi(turn, CompletionKind.FAILED);
-        }
-    }
-
-    private void onCancelled(ConversationOutcome.Cancelled cancelled) {
-        log.info("流式输出已取消 — reason={}, userInitiated={}",
-                cancelled.reason(), cancelled.userInitiated());
-        ActiveTurn turn = activeTurn;
-        if (turn != null) turn.deliveryState = DeliveryState.CANCELLED;
-        if (isPlanStream()) renderer.finishPlanAgent();
-        renderer.revealReply();
-        try {
-            String partial = renderer.currentText(isPlanStream());
-            ChatSession target = targetSession();
-            if (partial != null && !partial.isBlank() && target != null) {
-                String stoppedText = partial + "\n\n> ⏹ 已停止";
-                finishRenderedText(stoppedText);
-                host.storeAssistantMessage(
-                        target, message(stoppedText, DeliveryState.CANCELLED, metrics()));
-            } else {
-                renderer.hideReplyCard();
-            }
-            renderer.markLoopCancelled();
-        } finally {
-            finishUi(turn, CompletionKind.CANCELLED);
-        }
-    }
-
-    private void onLoopDetected(String warning) {
-        log.warn("循环检测触发: {}", warning);
-        MarkdownBubble reply = renderer.activeReply();
-        if (reply == null) {
-            host.addStaticMessage(ChatMessage.Role.SYSTEM, warning);
-        } else if (reply.getLength() == 0) {
-            reply.finishWith("[循环中断] " + warning);
-        } else {
-            reply.appendText("\n\n[循环中断] " + warning);
-        }
-    }
-
-    private void finishUi(ActiveTurn turn, CompletionKind kind) {
+    private void finishUi(ChatActiveTurn turn, CompletionKind kind) {
         DeliveryState state = turn == null ? DeliveryState.COMPLETE : turn.deliveryState;
         renderer.clear(turn == null ? TurnMetrics.ZERO : turn.metrics(), state);
         switch (kind) {
@@ -436,7 +325,7 @@ final class ChatTurnController {
             CancellationReason reason, ConversationHandle handle, boolean showFeedback) {
         invalidateBeforeCancel(() -> {
             generation++;
-            ActiveTurn turn = activeTurn;
+            ChatActiveTurn turn = activeTurn;
             activeTurn = null;
             streamingSession = null;
             AssistantMessageView abandoned = renderer.abandon(
@@ -476,26 +365,8 @@ final class ChatTurnController {
         }
     }
 
-    private void saveReply(String text) {
-        FileChooser chooser = new FileChooser();
-        chooser.setTitle("保存回复到文件");
-        chooser.setInitialFileName("reply.md");
-        chooser.getExtensionFilters().addAll(
-                new FileChooser.ExtensionFilter("Markdown", "*.md"),
-                new FileChooser.ExtensionFilter("文本文件", "*.txt"),
-                new FileChooser.ExtensionFilter("所有文件", "*.*"));
-        File file = chooser.showSaveDialog(host.ownerWindow());
-        if (file == null) return;
-        backgroundTasks.submit(TaskSpec.io("export-assistant-reply"), context -> {
-            Files.writeString(file.toPath(), text);
-            return null;
-        }).completion().whenComplete((ignored, failure) -> {
-            if (failure != null) log.error("保存回复到文件失败", failure);
-        });
-    }
-
     private void updateMetrics(ConversationEvent.Usage usage) {
-        ActiveTurn turn = activeTurn;
+        ChatActiveTurn turn = activeTurn;
         if (turn == null) return;
         turn.inputTokens += Math.max(0, usage.inputTokens());
         turn.outputTokens += Math.max(0, usage.outputTokens());
@@ -503,31 +374,6 @@ final class ChatTurnController {
                 status.modelName(), turn.inputTokens, turn.outputTokens);
         thinking.updateMetrics(turn.inputTokens, turn.outputTokens,
                 TokenTracker.formatCostCny(cost));
-    }
-
-    private void finishRenderedText(String text) {
-        MarkdownBubble reply = renderer.activeReply();
-        if (!isPlanStream() && reply != null) {
-            reply.finishWith(text);
-        } else if (isPlanStream() && renderer.planAgentBlock() != null) {
-            renderer.planAgentBlock().bubble().finishWith(text);
-        }
-    }
-
-    private ParsedRequest parseRequest(String userText) {
-        if (!(userText.startsWith("/plan ")
-                || userText.startsWith("/规划 ")
-                || userText.startsWith("/研讨 "))) {
-            return new ParsedRequest(userText, false);
-        }
-        int prefixLength = userText.startsWith("/plan ") ? 6 : 4;
-        String text = userText.substring(prefixLength).trim();
-        if (text.isEmpty()) {
-            host.addStaticMessage(ChatMessage.Role.SYSTEM,
-                    "用法：/研讨 <问题> — 触发研讨模式多智能体讨论");
-            return null;
-        }
-        return new ParsedRequest(text, true);
     }
 
     private String conversationTargetId(boolean forcePlan) {
@@ -548,35 +394,5 @@ final class ChatTurnController {
         return activeTurn == null ? TurnMetrics.ZERO : activeTurn.metrics();
     }
 
-    private static ChatMessage message(
-            String text, DeliveryState state, TurnMetrics metrics) {
-        ChatMessage message = new ChatMessage(ChatMessage.Role.ASSISTANT, text);
-        message.setDeliveryState(state);
-        message.setMetrics(metrics);
-        return message;
-    }
-
-    private record ParsedRequest(String text, boolean forcePlan) { }
-
     private enum CompletionKind { SUCCEEDED, FAILED, CANCELLED }
-
-    private static final class ActiveTurn {
-        private final int generation;
-        private final String modeId;
-        private final long startedAtNanos = System.nanoTime();
-        private long inputTokens;
-        private long outputTokens;
-        private DeliveryState deliveryState = DeliveryState.COMPLETE;
-        private volatile ConversationHandle handle;
-
-        private ActiveTurn(int generation, String modeId) {
-            this.generation = generation;
-            this.modeId = modeId;
-        }
-
-        private TurnMetrics metrics() {
-            long duration = Math.max(0, (System.nanoTime() - startedAtNanos) / 1_000_000L);
-            return new TurnMetrics(inputTokens, outputTokens, duration);
-        }
-    }
 }

@@ -194,7 +194,7 @@ public class ChatViewController implements AutoCloseable {
         headerController.configure(
                 shell::toggleSidebar,
                 navigation::openTasks,
-                this::openSettingsRequested,
+                this::openSettings,
                 () -> sessionCoordinator.clearCurrentHistory(),
                 runtimeCoordinator::knowledgeMenuSnapshot,
                 runtimeCoordinator::applyKnowledgeSelection,
@@ -328,10 +328,6 @@ public class ChatViewController implements AutoCloseable {
         return turns != null && turns.isStreaming();
     }
 
-    private void openSettingsRequested() {
-        openSettings();
-    }
-
     /**
      * 工作流中心发布成功后的即时 UI 更新。取消在途旧查询，避免旧快照覆盖刚发布的定义。
      */
@@ -343,18 +339,7 @@ public class ChatViewController implements AutoCloseable {
      * 取当前模型的精简显示名（用于消息气泡头部徽章）。
      */
     private String currentModelDisplayName() {
-        try {
-            String m = status.modelName();
-            if (m == null || m.isBlank()) return "模型";
-            // 截取常见前缀后更紧凑的名字
-            String[] parts = m.split("[-/]");
-            if (parts.length >= 2) {
-                return parts[parts.length - 2] + " " + parts[parts.length - 1];
-            }
-            return m;
-        } catch (Throwable t) {
-            return "模型";
-        }
+        return ChatModelLabel.resolve(status::modelName);
     }
 
 

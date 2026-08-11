@@ -7,7 +7,6 @@ import com.javaclaw.loop.model.CompletionCheck;
 import com.javaclaw.loop.model.Decision;
 import com.javaclaw.loop.model.IterationResult;
 import com.javaclaw.loop.model.LoopSpec;
-import com.javaclaw.loop.model.LoopStatus;
 import com.javaclaw.loop.model.LoopVerdict;
 import com.javaclaw.loop.model.StopReason;
 import com.javaclaw.task.sdd.verify.CommandRunner;
@@ -49,6 +48,7 @@ public final class LoopController {
     private final CarryContext carry;
     /** 验收/仲裁端口（未启用时为保守空实现，仲裁一律维持停滞原判）。 */
     private final CompletionJudge judge;
+    private final LoopEventEmitter events = new LoopEventEmitter();
 
     /** 取消闩：定时节奏轮间等待时挂在此上，cancel() 会 countDown 立即唤醒。 */
     private final CountDownLatch cancelLatch = new CountDownLatch(1);
@@ -125,24 +125,26 @@ public final class LoopController {
                 // 首轮即被拦（如启动瞬间取消）时钳制为 1：UI 轮次口径从 1 起算，「第 0 轮」无法解释
                 StopReason pre = guards.preflight(iteration);
                 if (pre != null) {
-                    emitStop(callbacks, Math.max(1, iteration - 1), pre, pre.description(),
-                            lastSatisfied, lastTotal);
+                    events.stopped(callbacks, Math.max(1, iteration - 1), pre, pre.description(),
+                            lastSatisfied, lastTotal, guards.tokensUsed());
                     callbacks.onTerminal(ConversationOutcome.completed());
                     return;
                 }
 
                 // 2) 跑一轮
-                emitIterationStart(callbacks, iteration);
+                events.iterationStarted(callbacks, iteration);
                 stageOpen = true;
                 IterationResult result = runner.runOnce(carry.assemble(iteration), callbacks);
                 guards.addRoundUsage(result.inputTokens() + result.outputTokens()); // 只累计循环自己的用量（含失败/被取消轮）
                 // 取消可能恰落在本轮执行中：漏斗里的命令核验（分钟级真实副作用）与验收员
                 // 模型调用在取消后一步都不该再走，立即以 CANCELLED 终态收束
                 if (guards.isCancelled()) {
-                    closeStage(callbacks, iteration, ConversationEvent.Progress.Status.DONE, "已取消");
+                    events.closeStage(
+                            callbacks, iteration, ConversationEvent.Progress.Status.DONE, "已取消");
                     stageOpen = false;
-                    emitStop(callbacks, iteration, StopReason.CANCELLED,
-                            StopReason.CANCELLED.description(), lastSatisfied, lastTotal);
+                    events.stopped(callbacks, iteration, StopReason.CANCELLED,
+                            StopReason.CANCELLED.description(), lastSatisfied, lastTotal,
+                            guards.tokensUsed());
                     callbacks.onTerminal(ConversationOutcome.completed());
                     return;
                 }
@@ -162,10 +164,12 @@ public final class LoopController {
                 // 一返回就复检，先于停滞仲裁（另一次模型调用）与决策漏斗短路收束，
                 // 否则取消要拖到下一轮 awaitBeforeNext 才被观测，白烧一次仲裁模型调用
                 if (guards.isCancelled()) {
-                    closeStage(callbacks, iteration, ConversationEvent.Progress.Status.DONE, "已取消");
+                    events.closeStage(
+                            callbacks, iteration, ConversationEvent.Progress.Status.DONE, "已取消");
                     stageOpen = false;
-                    emitStop(callbacks, iteration, StopReason.CANCELLED,
-                            StopReason.CANCELLED.description(), lastSatisfied, lastTotal);
+                    events.stopped(callbacks, iteration, StopReason.CANCELLED,
+                            StopReason.CANCELLED.description(), lastSatisfied, lastTotal,
+                            guards.tokensUsed());
                     callbacks.onTerminal(ConversationOutcome.completed());
                     return;
                 }
@@ -180,14 +184,14 @@ public final class LoopController {
                 guards.addRoundUsage(judge.drainUsedTokens());
                 LoopVerdict verdict = decide(result, check, madeProgress, waitRound);
                 long nextDelay = resolveNextDelay(result);
-                emitIterationEnd(callbacks, iteration, result, verdict);
+                events.iterationFinished(callbacks, iteration, result, verdict);
                 stageOpen = false;
                 // 每轮裁决必须落日志：终态（完成/停止）不经 emitStop，缺这行会导致排障时
                 // 无法从日志判断循环如何结束（曾因此靠旁证定位问题）
                 log.info("循环第 {} 轮裁决：{}（准则 {}/{}，进展={}，等待轮={}，下轮延迟={}s）— {}",
                         iteration, verdict.decision(), check.satisfied(), check.total(),
                         madeProgress, waitRound, nextDelay, verdict.message());
-                emitStatus(callbacks, iteration, verdict, check, guards.tokensUsed(),
+                events.status(callbacks, iteration, verdict, check, guards.tokensUsed(),
                         verdict.decision() == Decision.CONTINUE ? nextDelay : 0L);
 
                 switch (verdict.decision()) {
@@ -199,8 +203,9 @@ public final class LoopController {
                     }
                     case CONTINUE -> {
                         if (!awaitBeforeNext(nextDelay)) {
-                            emitStop(callbacks, iteration, StopReason.CANCELLED,
-                                    StopReason.CANCELLED.description(), check.satisfied(), check.total());
+                            events.stopped(callbacks, iteration, StopReason.CANCELLED,
+                                    StopReason.CANCELLED.description(), check.satisfied(), check.total(),
+                                    guards.tokensUsed());
                             callbacks.onTerminal(ConversationOutcome.completed());
                             return;
                         }
@@ -213,10 +218,12 @@ public final class LoopController {
             // 与循环已终止（单活跃闸已释放）的事实矛盾。已开启未收尾的轮次阶段
             // （如 checker.check 内命令核验抛异常）同样要补 ERROR 收尾，不留转圈残影
             if (stageOpen) {
-                closeStage(callbacks, iteration, ConversationEvent.Progress.Status.ERROR, e.getMessage());
+                events.closeStage(
+                        callbacks, iteration, ConversationEvent.Progress.Status.ERROR, e.getMessage());
             }
-            emitStop(callbacks, iteration, StopReason.ERROR,
-                    StopReason.ERROR.description() + "：" + e.getMessage(), lastSatisfied, lastTotal);
+            events.stopped(callbacks, iteration, StopReason.ERROR,
+                    StopReason.ERROR.description() + "：" + e.getMessage(), lastSatisfied, lastTotal,
+                    guards.tokensUsed());
             callbacks.onTerminal(ConversationOutcome.failed(e));
         }
     }
@@ -346,54 +353,4 @@ public final class LoopController {
         }
     }
 
-    // ==================== 事件发射（喂给 UI 的进度/状态流） ====================
-
-    private void emitIterationStart(ConversationCallbacks cb, int iteration) {
-        // 轮分隔线：直发外层回调（不经 runner 截获，不会混进 finalReply），
-        // 让多轮回复在同一气泡内以 markdown 分隔可读呈现
-        if (iteration > 1) {
-            cb.onEvent(new ConversationEvent.Reply(
-                    "\n\n---\n\n**🔁 第 " + iteration + " 轮**\n\n"));
-        }
-        cb.onEvent(new ConversationEvent.Progress(
-                LoopConstants.EVENT_STAGE_PREFIX + iteration,
-                LoopConstants.EVENT_STAGE_LABEL_PREFIX + iteration + LoopConstants.EVENT_STAGE_LABEL_SUFFIX,
-                ConversationEvent.Progress.Status.RUNNING,
-                null));
-    }
-
-    /** 轮次收尾：把该轮的进度阶段标记为完成/失败（否则 UI 上永远停在「进行中」）。 */
-    private void emitIterationEnd(ConversationCallbacks cb, int iteration,
-                                  IterationResult result, LoopVerdict verdict) {
-        closeStage(cb, iteration,
-                result.threw() ? ConversationEvent.Progress.Status.ERROR
-                               : ConversationEvent.Progress.Status.DONE,
-                verdict.message());
-    }
-
-    /** 发出指定轮次进度阶段的收尾事件（正常轮末 / 取消 / 异常三个出口共用）。 */
-    private void closeStage(ConversationCallbacks cb, int iteration,
-                            ConversationEvent.Progress.Status status, String message) {
-        cb.onEvent(new ConversationEvent.Progress(
-                LoopConstants.EVENT_STAGE_PREFIX + iteration,
-                LoopConstants.EVENT_STAGE_LABEL_PREFIX + iteration + LoopConstants.EVENT_STAGE_LABEL_SUFFIX,
-                status, message));
-    }
-
-    private void emitStatus(ConversationCallbacks cb, int iteration, LoopVerdict verdict,
-                            CompletionCheck check, long tokensUsed, long nextDelaySeconds) {
-        cb.onEvent(new ConversationEvent.Custom(
-                LoopConstants.EVENT_STATUS_KIND,
-                new LoopStatus(iteration, verdict.decision(), verdict.message(),
-                        check.satisfied(), check.total(), tokensUsed, nextDelaySeconds)));
-    }
-
-    private void emitStop(ConversationCallbacks cb, int iteration, StopReason reason,
-                          String message, int satisfied, int total) {
-        cb.onEvent(new ConversationEvent.Custom(
-                LoopConstants.EVENT_STATUS_KIND,
-                new LoopStatus(iteration, Decision.STOP, message, satisfied, total,
-                        guards.tokensUsed(), 0L)));
-        log.info("循环停止：轮次={} 原因={} 说明={}", iteration, reason, message);
-    }
 }
