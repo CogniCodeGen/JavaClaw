@@ -11,6 +11,7 @@ import com.javaclaw.config.AgentConfig;
 import com.javaclaw.mcp.McpClientManager;
 import com.javaclaw.mcp.McpConfigManager;
 import com.javaclaw.memory.embed.EmbeddingGateway;
+import com.javaclaw.site.SiteCredentialManager;
 import com.javaclaw.util.ProjectAccessPolicy;
 import io.agentscope.core.message.Base64Source;
 import io.agentscope.core.message.ContentBlock;
@@ -102,6 +103,9 @@ public final class AgentRuntime {
     /** 浏览器管理器（由 App 层创建并注入，供 WebExpert 使用） */
     private final PlaywrightBrowserManager browserManager;
 
+    /** 当前工作区的站点凭据与浏览器会话存储。 */
+    private final SiteCredentialManager siteCredentialManager;
+
 
     /** 模型执行重试配置（超时 / 最大重试次数 / 指数退避），三模式共用 */
     private final ExecutionConfig modelExecConfig;
@@ -116,7 +120,8 @@ public final class AgentRuntime {
      */
     public AgentRuntime(
             PlaywrightBrowserManager browserManager,
-            com.javaclaw.agent.expert.CustomAgentConfig customAgentConfig) {
+            com.javaclaw.agent.expert.CustomAgentConfig customAgentConfig,
+            SiteCredentialManager siteCredentialManager) {
         AgentConfig config = AgentConfig.getInstance();
         log.info("========== 初始化 AgentRuntime 基础设施 ==========");
         log.info("API 地址: {}", config.getBaseUrl());
@@ -125,6 +130,8 @@ public final class AgentRuntime {
         this.browserManager = browserManager;
         this.customAgentConfig = java.util.Objects.requireNonNull(
                 customAgentConfig, "customAgentConfig");
+        this.siteCredentialManager = java.util.Objects.requireNonNull(
+                siteCredentialManager, "siteCredentialManager");
 
         // 1. ModelFactory：共享 HttpTransport，所有模型实例共用
         this.modelFactory = new ModelFactory();
@@ -145,7 +152,8 @@ public final class AgentRuntime {
         //    定时/循环路径各建独立 ExpertManager 并绑定各自令牌，SDD 逐任务经
         //    buildCapabilityTools(origin) 产带任务归属的工具实例
         this.expertManager = new ExpertManager(
-                modelFactory, browserManager, ToolCallOrigin.INTERACTIVE, customAgentConfig);
+                modelFactory, browserManager, siteCredentialManager,
+                ToolCallOrigin.INTERACTIVE, customAgentConfig);
         this.knowledgeExpert = new KnowledgeExpert(modelFactory, embeddingGateway);
 
         // 6. MCP 客户端：启动所有启用的 MCP Server
@@ -197,6 +205,7 @@ public final class AgentRuntime {
     public McpClientManager getMcpClientManager() { return mcpClientManager; }
     public VisionPreprocessor getVisionPreprocessor() { return visionPreprocessor; }
     public PlaywrightBrowserManager getBrowserManager() { return browserManager; }
+    public SiteCredentialManager getSiteCredentialManager() { return siteCredentialManager; }
     public ExecutionConfig getModelExecConfig() { return modelExecConfig; }
 
     /**

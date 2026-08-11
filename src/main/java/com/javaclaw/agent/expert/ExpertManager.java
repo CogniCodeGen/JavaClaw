@@ -6,6 +6,7 @@ import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.browser.PlaywrightBrowserTools;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.prompt.AgentPrompts;
+import com.javaclaw.site.SiteCredentialManager;
 import com.javaclaw.desktop.DesktopTools;
 import com.javaclaw.email.EmailTools;
 import com.javaclaw.notification.NotificationTools;
@@ -83,6 +84,7 @@ public class ExpertManager {
 
     /** 浏览器管理器（能力工具工厂需要，跨次构建复用同一浏览器实例） */
     private final PlaywrightBrowserManager browserManager;
+    private final SiteCredentialManager siteCredentialManager;
 
     /** 本管理器所属编排路径的调用来源令牌（构造期绑定，注入到全部带工具专家） */
     private final ToolCallOrigin origin;
@@ -93,16 +95,20 @@ public class ExpertManager {
      *
      * @param modelFactory    模型工厂
      * @param browserManager  浏览器管理器
+     * @param siteCredentialManager 当前工作区站点凭据存储
      * @param origin          本编排路径的调用来源令牌（聊天=INTERACTIVE、定时=SCHEDULED、
      *                        循环=managedTask(loopId, workDir)），注入到全部带工具专家
      */
     public ExpertManager(ModelFactory modelFactory, PlaywrightBrowserManager browserManager,
+                         SiteCredentialManager siteCredentialManager,
                          ToolCallOrigin origin, CustomAgentConfig customAgentConfig) {
-        this.browserManager = browserManager;
+        this.browserManager = java.util.Objects.requireNonNull(browserManager, "browserManager");
+        this.siteCredentialManager = java.util.Objects.requireNonNull(
+                siteCredentialManager, "siteCredentialManager");
         this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
         this.customAgentConfig = java.util.Objects.requireNonNull(
                 customAgentConfig, "customAgentConfig");
-        this.expertDefs = buildExpertDefs(browserManager, this.origin);
+        this.expertDefs = buildExpertDefs(browserManager, siteCredentialManager, this.origin);
 
         // 能力 → 工具实例映射（供 DynamicTaskTool 使用）：直接复用专家定义里的同一批实例
         // （令牌相同），而非再 new 一套——否则不仅白付双份构造（含 AWT Robot），还会把
@@ -140,8 +146,10 @@ public class ExpertManager {
      *
      * <p>扩展新专家只需在此处添加一行 ExpertDef。</p>
      */
-    private static List<ExpertDef> buildExpertDefs(PlaywrightBrowserManager browserManager,
-                                                    ToolCallOrigin origin) {
+    private static List<ExpertDef> buildExpertDefs(
+            PlaywrightBrowserManager browserManager,
+            SiteCredentialManager siteCredentialManager,
+            ToolCallOrigin origin) {
         AgentConfig config = AgentConfig.getInstance();
 
         List<ExpertDef> defs = new ArrayList<>();
@@ -169,7 +177,8 @@ public class ExpertManager {
                 "web_expert",
                 AgentConfig.WEB_AGENT_DESCRIPTION,
                 config.getWebAgentMaxIters(),
-                new PlaywrightBrowserTools(browserManager, origin), "web", PlanRole.DOMAIN));
+                new PlaywrightBrowserTools(browserManager, siteCredentialManager, origin),
+                "web", PlanRole.DOMAIN));
 
         defs.add(new ExpertDef(
                 AgentConfig.EMAIL_AGENT_NAME,
@@ -232,7 +241,8 @@ public class ExpertManager {
         Map<String, Object> tools = new LinkedHashMap<>();
         PlaywrightBrowserManager isolatedBrowser =
                 browserManager.createIsolated(effective.browserScopeId());
-        tools.put("web", new PlaywrightBrowserTools(isolatedBrowser, effective, true));
+        tools.put("web", new PlaywrightBrowserTools(
+                isolatedBrowser, siteCredentialManager, effective, true));
         tools.put("email", new EmailTools(effective));
         tools.put("system", new SystemTools(effective));
         if (!ProjectAccessPolicy.strictIsolationEnabled()) {

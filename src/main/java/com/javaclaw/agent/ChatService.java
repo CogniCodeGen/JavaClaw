@@ -1018,7 +1018,7 @@ public class ChatService {
         String browserScope = com.javaclaw.browser.PlaywrightBrowserManager
                 .conversationScopeId(sessionId);
         runtime.getBrowserManager().releaseScope(browserScope);
-        com.javaclaw.site.SiteCredentialManager.getInstance().clearScopeBindings(browserScope);
+        runtime.getSiteCredentialManager().clearScopeBindings(browserScope);
         if (workflowService != null) {
             workflowService.forgetConversationBrowserScope(sessionId);
         }

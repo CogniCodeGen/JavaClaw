@@ -138,7 +138,8 @@ public final class ScheduledTaskAgent implements ScheduledTaskRunner {
             runBrowser = runtime.getBrowserManager().createIsolated(origin.browserScopeId());
             control.attachBrowser(runBrowser);
             ExpertManager expertManager = new ExpertManager(
-                    runtime.getModelFactory(), runBrowser, origin,
+                    runtime.getModelFactory(), runBrowser,
+                    runtime.getSiteCredentialManager(), origin,
                     runtime.getCustomAgentConfig());
             Toolkit toolkit = ToolkitAssembler.buildBaseToolkit(runtime, expertManager, false, origin);
 

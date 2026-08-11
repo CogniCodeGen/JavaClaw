@@ -1,7 +1,5 @@
 package com.javaclaw.site;
 
-import com.javaclaw.config.AppDatabase;
-import com.javaclaw.config.AppDatabaseAccess;
 import com.javaclaw.config.CredentialEncryptor;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.util.SensitiveDataRedactor;
@@ -19,7 +17,7 @@ import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
 /**
- * 站点凭据与会话管理（单例 / 工作区维度）
+ * 站点凭据与会话管理（工作区维度）。
  *
  * <p>持久化到全局 H2 数据库的 {@code site_credentials} 与
  * {@code site_sessions} 表，并按 {@code workspace_id} 隔离；启动时只从 H2 读取。</p>
@@ -29,15 +27,14 @@ import java.util.function.UnaryOperator;
  * 内存中的 {@link SiteCredential} 始终持有明文（供 Playwright 自动登录使用）。
  * 数据存储在 H2 中，请勿提交本地数据库文件。</p>
  *
- * @author JavaClaw
+ * <p>每个工作区子 Context 持有一个实例；实例在构造时加载不可变的工作区快照。
+ * 所有公开操作均可跨线程调用，并在内部串行化；密码与会话内容不得进入日志或模型上下文。</p>
  */
-public class SiteCredentialManager {
+public final class SiteCredentialManager {
 
     private static final Logger log = LoggerFactory.getLogger(SiteCredentialManager.class);
     private static final String NEW_ACCOUNT_BINDING = "__new_account__";
     private static final int MAX_SESSION_STATE_CHARS = 16 * 1024 * 1024;
-
-    private static SiteCredentialManager INSTANCE;
 
     private final DatabaseAccess databaseAccess;
     private final Supplier<String> workspaceIdSupplier;
@@ -47,8 +44,8 @@ public class SiteCredentialManager {
     /** 内存凭据快照所属工作区，一次操作中不再重读可变的全局当前值。 */
     private String loadedWorkspaceId;
 
-    private SiteCredentialManager() {
-        this(new AppDatabaseAccess(), AppDatabase::currentWorkspaceId,
+    public SiteCredentialManager(DatabaseAccess databaseAccess, String workspaceId) {
+        this(databaseAccess, fixedWorkspace(workspaceId),
                 CredentialEncryptor::encrypt, CredentialEncryptor::decrypt);
     }
 
@@ -63,20 +60,13 @@ public class SiteCredentialManager {
         load();
     }
 
-    public static synchronized SiteCredentialManager getInstance() {
-        if (INSTANCE == null) {
-            INSTANCE = new SiteCredentialManager();
-        }
-        return INSTANCE;
-    }
-
     public String getConfigFilePath() {
         return databaseAccess.description();
     }
 
     // ==================== 加载/保存 ====================
 
-    public synchronized void load() {
+    private synchronized void load() {
         String workspaceId = workspaceIdSupplier.get();
         credentials.clear();
         loadedWorkspaceId = null;
@@ -147,11 +137,6 @@ public class SiteCredentialManager {
             log.error("保存站点凭据到 H2 失败", e);
             throw new IllegalStateException("站点凭据未能确认写入数据库", e);
         }
-    }
-
-    /** 工作区切换时调用 */
-    public void reload() {
-        load();
     }
 
     // ==================== CRUD ====================
@@ -796,6 +781,14 @@ public class SiteCredentialManager {
         } finally {
             c.setAutoCommit(originalAutoCommit);
         }
+    }
+
+    private static Supplier<String> fixedWorkspace(String workspaceId) {
+        String fixed = Objects.requireNonNull(workspaceId, "workspaceId").trim();
+        if (fixed.isEmpty()) {
+            throw new IllegalArgumentException("workspaceId 不能为空");
+        }
+        return () -> fixed;
     }
 
     private String requireLoadedWorkspace() {

@@ -57,19 +57,28 @@ public class PlaywrightBrowserTools implements AutoCloseable {
     private static final DateTimeFormatter TIMESTAMP_FMT = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
 
     private final PlaywrightBrowserManager browserManager;
+    private final SiteCredentialManager siteCredentials;
     private final SnapshotManager snapshotManager;
 
     /** 调用来源令牌（装配期绑定），高风险确认随调用传给 ToolConfirmationManager。 */
     private final ToolCallOrigin origin;
     private final boolean ownsBrowserManager;
 
-    public PlaywrightBrowserTools(PlaywrightBrowserManager browserManager, ToolCallOrigin origin) {
-        this(browserManager, origin, false);
+    public PlaywrightBrowserTools(
+            PlaywrightBrowserManager browserManager,
+            SiteCredentialManager siteCredentials,
+            ToolCallOrigin origin) {
+        this(browserManager, siteCredentials, origin, false);
     }
 
-    public PlaywrightBrowserTools(PlaywrightBrowserManager browserManager, ToolCallOrigin origin,
-                                  boolean ownsBrowserManager) {
-        this.browserManager = browserManager;
+    public PlaywrightBrowserTools(
+            PlaywrightBrowserManager browserManager,
+            SiteCredentialManager siteCredentials,
+            ToolCallOrigin origin,
+            boolean ownsBrowserManager) {
+        this.browserManager = java.util.Objects.requireNonNull(browserManager, "browserManager");
+        this.siteCredentials = java.util.Objects.requireNonNull(
+                siteCredentials, "siteCredentials");
         this.snapshotManager = new SnapshotManager();
         this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
         this.ownsBrowserManager = ownsBrowserManager;
@@ -115,7 +124,7 @@ public class PlaywrightBrowserTools implements AutoCloseable {
             // 站点匹配：导航前若有已存储会话 → 注入到 BrowserContext，避免再次登录
             boolean sessionRestored = false;
             if (site != null) {
-                String storage = SiteCredentialManager.getInstance().readSession(site.getId());
+                String storage = siteCredentials.readSession(site.getId());
                 if (storage != null && !storage.isBlank()) {
                     sessionRestored = restoreSessionToContext(page, storage, normalizedUrl);
                 }
@@ -147,7 +156,7 @@ public class PlaywrightBrowserTools implements AutoCloseable {
 
             String sessionRestoreNote = "";
             if (sessionRestored && site != null) {
-                SiteCredentialManager.getInstance().touchUsage(site.getId());
+                siteCredentials.touchUsage(site.getId());
                 sessionRestoreNote = "\n[站点] 已恢复 " + site.getName() + " 的已保存会话";
             }
 
@@ -191,7 +200,7 @@ public class PlaywrightBrowserTools implements AutoCloseable {
                 return ToolResponse.error("site_select_account", "用户取消了账号切换");
             }
 
-            SiteCredentialManager manager = SiteCredentialManager.getInstance();
+            SiteCredentialManager manager = siteCredentials;
             String scopeId = browserManager.getActiveScopeId();
             String requested = account == null ? "" : account.trim();
             if (requested.equalsIgnoreCase("new")
@@ -280,7 +289,7 @@ public class PlaywrightBrowserTools implements AutoCloseable {
             String currentUrl = page.url();
             SiteCredential site = selectedSiteForCurrentScope(currentUrl);
             if (site == null) {
-                List<SiteCredential> matches = SiteCredentialManager.getInstance().findAllByUrl(currentUrl);
+                List<SiteCredential> matches = siteCredentials.findAllByUrl(currentUrl);
                 if (matches.size() > 1) {
                     return ToolResponse.error("site_login_now",
                             "当前站点有多个账号，请先调用 site_select_account。可用账号: "
@@ -344,7 +353,7 @@ public class PlaywrightBrowserTools implements AutoCloseable {
             if (saved) {
                 String storageState = SiteLoginSupport.filterStorageStateForUrl(
                         page.context().storageState(), currentUrl);
-                if (!SiteCredentialManager.getInstance()
+                if (!siteCredentials
                         .tryWriteSession(site.getId(), storageState)) {
                     browserManager.keepSessionTransientUntilTaskReset(stateBeforeLogin);
                     return ToolResponse.error("site_login_now",
@@ -421,7 +430,7 @@ public class PlaywrightBrowserTools implements AutoCloseable {
                 return ToolResponse.error("site_save_session", "用户取消了操作");
             }
 
-            SiteCredentialManager manager = SiteCredentialManager.getInstance();
+            SiteCredentialManager manager = siteCredentials;
             String scopeId = browserManager.getActiveScopeId();
             SiteCredential site = selectedSiteForCurrentScope(page.url());
             if (site == null) {
@@ -461,7 +470,7 @@ public class PlaywrightBrowserTools implements AutoCloseable {
                 return ToolResponse.error("site_clear_session",
                         "当前 URL 未选择明确的站点账号；请先调用 site_select_account");
             }
-            SiteCredentialManager.getInstance().clearSession(site.getId());
+            siteCredentials.clearSession(site.getId());
             return ToolResponse.success("site_clear_session",
                     "已清除 " + site.getName() + " 的会话");
         } catch (Exception e) {
@@ -526,7 +535,7 @@ public class PlaywrightBrowserTools implements AutoCloseable {
                 return ToolResponse.error(responseToolName,
                         "未检测到页面或登录会话发生变化，请完成登录后重新调用 site_login_interactive");
             }
-            SiteCredentialManager manager = SiteCredentialManager.getInstance();
+            SiteCredentialManager manager = siteCredentials;
             String scopeId = browserManager.getActiveScopeId();
             SiteCredential site = selectedSiteForCurrentScope(targetUrl);
             if (site == null) {
@@ -591,7 +600,7 @@ public class PlaywrightBrowserTools implements AutoCloseable {
     }
 
     private SiteResolution resolveSiteForNavigation(String url) {
-        SiteCredentialManager manager = SiteCredentialManager.getInstance();
+        SiteCredentialManager manager = siteCredentials;
         String scopeId = browserManager.getActiveScopeId();
         if (manager.isNewAccountBound(scopeId, url)) {
             return SiteResolution.selected(null);
@@ -656,7 +665,7 @@ public class PlaywrightBrowserTools implements AutoCloseable {
     }
 
     private SiteCredential selectedSiteForCurrentScope(String url) {
-        SiteCredentialManager manager = SiteCredentialManager.getInstance();
+        SiteCredentialManager manager = siteCredentials;
         String scopeId = browserManager.getActiveScopeId();
         if (manager.isNewAccountBound(scopeId, url)) return null;
         SiteCredential bound = manager.findBoundByUrl(scopeId, url);
@@ -670,7 +679,7 @@ public class PlaywrightBrowserTools implements AutoCloseable {
 
     private SiteCredential newUniqueSessionSite(String targetUrl, String loginUrl) {
         SiteCredential site = SiteLoginSupport.newSessionSite(targetUrl, loginUrl);
-        int existing = SiteCredentialManager.getInstance().findAllByUrl(targetUrl).size();
+        int existing = siteCredentials.findAllByUrl(targetUrl).size();
         if (existing > 0) {
             site.setName(site.getName() + "（账号 " + (existing + 1) + "）");
         }

@@ -8,10 +8,12 @@ import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.config.DataManager;
+import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.spring.ApplicationContexts;
 import com.javaclaw.skill.SkillManager;
+import com.javaclaw.site.SiteCredentialManager;
 import com.javaclaw.task.sdd.run.SddManagedTask;
 import com.javaclaw.task.sdd.run.SddTaskListener;
 import com.javaclaw.task.sdd.run.SddTaskManager;
@@ -55,7 +57,10 @@ public final class SddHeadlessDriver {
         CustomAgentConfig customAgents = new CustomAgentConfig(
                 WorkspaceManager.getInstance().getCurrentWorkspaceId(),
                 rootContext.getBean(JdbcTemplate.class));
-        AgentRuntime runtime = new AgentRuntime(browser, customAgents);
+        SiteCredentialManager siteCredentials = new SiteCredentialManager(
+                rootContext.getBean(DatabaseAccess.class),
+                WorkspaceManager.getInstance().getCurrentWorkspaceId());
+        AgentRuntime runtime = new AgentRuntime(browser, customAgents, siteCredentials);
 
         // 2. 配置 SDD 管理器（注入自动放行端口 → PortReviewGate 评审直接批准）
         SddTaskManager mgr = SddTaskManager.getInstance();

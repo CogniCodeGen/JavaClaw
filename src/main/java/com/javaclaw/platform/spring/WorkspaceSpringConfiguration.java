@@ -28,6 +28,7 @@ import com.javaclaw.mode.WorkflowMode;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.runtime.WorkspaceContext;
+import com.javaclaw.site.SiteCredentialManager;
 import com.javaclaw.ui.javafx.agent.AgentRowFactory;
 import com.javaclaw.ui.javafx.agent.AgentSettingsPanelFactory;
 import com.javaclaw.ui.javafx.site.SiteCredentialCardFactory;
@@ -62,8 +63,9 @@ public class WorkspaceSpringConfiguration {
     @Bean(destroyMethod = "shutdown")
     AgentRuntime agentRuntime(
             WorkspaceRuntimeOptions options,
-            CustomAgentConfig customAgents) {
-        return new AgentRuntime(options.browserManager(), customAgents);
+            CustomAgentConfig customAgents,
+            SiteCredentialManager siteCredentials) {
+        return new AgentRuntime(options.browserManager(), customAgents, siteCredentials);
     }
 
     @Bean
@@ -117,13 +119,14 @@ public class WorkspaceSpringConfiguration {
     }
 
     @Bean
-    com.javaclaw.site.SiteCredentialManager siteCredentialManager() {
-        // 迁移期仍由现有工作区切换链负责 reload；Presentation 只接触下方应用服务。
-        return com.javaclaw.site.SiteCredentialManager.getInstance();
+    SiteCredentialManager siteCredentialManager(
+            DatabaseAccess databaseAccess,
+            WorkspaceContext workspace) {
+        return new SiteCredentialManager(databaseAccess, workspace.workspaceId());
     }
 
     @Bean
-    SiteCredentialPort siteCredentialPort(com.javaclaw.site.SiteCredentialManager manager) {
+    SiteCredentialPort siteCredentialPort(SiteCredentialManager manager) {
         return new SiteCredentialManagerAdapter(manager);
     }
 

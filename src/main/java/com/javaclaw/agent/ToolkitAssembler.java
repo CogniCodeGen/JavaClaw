@@ -79,7 +79,8 @@ public final class ToolkitAssembler {
                 runtime.getMcpClientManager(), origin)).group("mcp").apply();
         // 站点凭据配置属于浏览器能力；与 web_expert 内的 site_save_session 互补：前者登记
         // 账号/元数据，后者保存当前已登录 BrowserContext。路由命中 web 即可直接使用。
-        tk.registration().tool(new com.javaclaw.site.SiteCredentialTools(origin)).group("web").apply();
+        tk.registration().tool(new com.javaclaw.site.SiteCredentialTools(
+                origin, runtime.getSiteCredentialManager())).group("web").apply();
         // 插件工具桥：独立成组，激活时由各路径强制加入（动态工具与路由解耦，避免被路由漏判）
         tk.createToolGroup("plugins", "plugins", true);
         if (!ProjectAccessPolicy.strictIsolationEnabled()) {

@@ -17,7 +17,6 @@ import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.application.tool.ToolInvocationPipeline;
 import com.javaclaw.mcp.McpConfigManager;
 import com.javaclaw.schedule.ScheduleManager;
-import com.javaclaw.site.SiteCredentialManager;
 import com.javaclaw.skill.SkillManager;
 import com.javaclaw.skill.SkillUsageTracker;
 import com.javaclaw.skill.curation.SkillProposalQueue;
@@ -216,7 +215,6 @@ public final class ApplicationKernel implements AutoCloseable {
         NotificationConfig.getInstance().reload();
         DataManager.getInstance().reload();
         McpConfigManager.getInstance().reload();
-        SiteCredentialManager.getInstance().reload();
         SkillUsageTracker.getInstance().reload();
         SkillProposalQueue.getInstance().reload();
         TraceRecorder.getInstance().reload();

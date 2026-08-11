@@ -109,7 +109,8 @@ public final class AgentScopeLoopRunner implements LoopIterationRunner {
                 com.javaclaw.config.DataManager.getInstance().getScreenshotsDir(),
                 false);
         this.expertManager = new ExpertManager(
-                runtime.getModelFactory(), loopBrowser, this.origin,
+                runtime.getModelFactory(), loopBrowser,
+                runtime.getSiteCredentialManager(), this.origin,
                 runtime.getCustomAgentConfig());
         this.toolRouter = config.isToolRoutingEnabled()
                 ? new ToolRouter(runtime.getModelFactory().createLightChatModel(), runtime.getTokenTracker())

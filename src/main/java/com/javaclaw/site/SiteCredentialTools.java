@@ -39,22 +39,26 @@ public final class SiteCredentialTools {
     private final ToolCallOrigin origin;
     private final Store store;
 
-    public SiteCredentialTools(ToolCallOrigin origin) {
-        this(origin, new Store() {
-            private final SiteCredentialManager manager = SiteCredentialManager.getInstance();
-
-            @Override public List<SiteCredential> all() { return manager.all(); }
-            @Override public SiteCredential get(String id) { return manager.get(id); }
-            @Override public SiteCredential save(SiteCredential credential) {
-                return manager.putChecked(credential);
-            }
-            @Override public boolean delete(String id) { return manager.removeChecked(id); }
-        });
+    public SiteCredentialTools(ToolCallOrigin origin, SiteCredentialManager manager) {
+        this(origin, new ManagerStore(manager));
     }
 
     SiteCredentialTools(ToolCallOrigin origin, Store store) {
         this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
         this.store = Objects.requireNonNull(store, "store");
+    }
+
+    private record ManagerStore(SiteCredentialManager manager) implements Store {
+        private ManagerStore {
+            Objects.requireNonNull(manager, "manager");
+        }
+
+        @Override public List<SiteCredential> all() { return manager.all(); }
+        @Override public SiteCredential get(String id) { return manager.get(id); }
+        @Override public SiteCredential save(SiteCredential credential) {
+            return manager.putChecked(credential);
+        }
+        @Override public boolean delete(String id) { return manager.removeChecked(id); }
     }
 
     @Tool(name = "site_credential_list",

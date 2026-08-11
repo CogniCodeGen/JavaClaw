@@ -8,6 +8,7 @@ import com.javaclaw.api.interaction.ChoiceRequest;
 import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.config.AppDatabase;
+import com.javaclaw.config.AppDatabaseAccess;
 import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.site.SiteCredential;
 import com.javaclaw.site.SiteCredentialManager;
@@ -62,6 +63,7 @@ class SiteLoginFunctionalIT {
 
     private UserInteractionPort previousPort;
     private boolean previousConfirmationEnabled;
+    private SiteCredentialManager siteCredentials;
 
     @BeforeAll
     static void startTestSite() throws IOException {
@@ -85,6 +87,8 @@ class SiteLoginFunctionalIT {
         previousPort = ToolConfirmationManager.getPort();
         previousConfirmationEnabled = ToolConfirmationManager.isEnabled();
         ToolConfirmationManager.setEnabled(false);
+        siteCredentials = new SiteCredentialManager(
+                new AppDatabaseAccess(), AppDatabase.currentWorkspaceId());
         removeTestSites();
         clearWorkspaceBrowserState();
     }
@@ -108,7 +112,7 @@ class SiteLoginFunctionalIT {
             AutomatedLoginPort firstLogin = new AutomatedLoginPort(firstBrowser, true, true);
             ToolConfirmationManager.setPort(firstLogin);
 
-            String firstResult = new PlaywrightBrowserTools(
+            String firstResult = browserTools(
                     firstBrowser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
 
             assertTrue(ToolResponse.isSuccess(firstResult), firstResult);
@@ -116,11 +120,11 @@ class SiteLoginFunctionalIT {
             assertEquals(1, firstLogin.loginPrompts.get());
             assertEquals(1, firstLogin.savePrompts.get());
 
-            SiteCredential savedSite = SiteCredentialManager.getInstance()
+            SiteCredential savedSite = siteCredentials
                     .findByUrl(baseUrl + "/private");
             assertNotNull(savedSite);
             assertTrue(savedSite.isHasSession());
-            String savedState = SiteCredentialManager.getInstance()
+            String savedState = siteCredentials
                     .readSession(savedSite.getId());
             assertNotNull(savedState);
             assertTrue(savedState.contains(STORAGE_KEY),
@@ -135,7 +139,7 @@ class SiteLoginFunctionalIT {
                     secondBrowser, false, false);
             ToolConfirmationManager.setPort(shouldNotPrompt);
 
-            String secondResult = new PlaywrightBrowserTools(
+            String secondResult = browserTools(
                     secondBrowser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
 
             assertTrue(ToolResponse.isSuccess(secondResult), secondResult);
@@ -157,14 +161,14 @@ class SiteLoginFunctionalIT {
             AutomatedLoginPort declineSave = new AutomatedLoginPort(firstBrowser, true, false);
             ToolConfirmationManager.setPort(declineSave);
 
-            String firstResult = new PlaywrightBrowserTools(
+            String firstResult = browserTools(
                     firstBrowser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
 
             assertTrue(ToolResponse.isSuccess(firstResult), firstResult);
             assertTrue(firstResult.contains("未保存站点"), firstResult);
             assertEquals(1, declineSave.loginPrompts.get());
             assertEquals(1, declineSave.savePrompts.get());
-            assertNull(SiteCredentialManager.getInstance().findByUrl(baseUrl + "/private"));
+            assertNull(siteCredentials.findByUrl(baseUrl + "/private"));
         } finally {
             firstBrowser.shutdown();
         }
@@ -177,7 +181,7 @@ class SiteLoginFunctionalIT {
             AutomatedLoginPort loginAgain = new AutomatedLoginPort(secondBrowser, true, false);
             ToolConfirmationManager.setPort(loginAgain);
 
-            String secondResult = new PlaywrightBrowserTools(
+            String secondResult = browserTools(
                     secondBrowser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
 
             assertTrue(ToolResponse.isSuccess(secondResult), secondResult);
@@ -196,7 +200,7 @@ class SiteLoginFunctionalIT {
             AutomatedLoginPort failedLogin = new AutomatedLoginPort(browser, false, true);
             ToolConfirmationManager.setPort(failedLogin);
 
-            String result = new PlaywrightBrowserTools(
+            String result = browserTools(
                     browser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
 
             assertFalse(ToolResponse.isSuccess(result), result);
@@ -204,7 +208,7 @@ class SiteLoginFunctionalIT {
             assertEquals(1, failedLogin.loginPrompts.get());
             assertEquals(0, failedLogin.savePrompts.get(),
                     "登录校验失败时不应询问是否保存");
-            assertNull(SiteCredentialManager.getInstance().findByUrl(baseUrl + "/private"));
+            assertNull(siteCredentials.findByUrl(baseUrl + "/private"));
         } finally {
             browser.shutdown();
         }
@@ -231,7 +235,7 @@ class SiteLoginFunctionalIT {
             AutomatedLoginPort shouldNotPrompt = new AutomatedLoginPort(browser, true, true);
             ToolConfirmationManager.setPort(shouldNotPrompt);
 
-            String result = new PlaywrightBrowserTools(
+            String result = browserTools(
                     browser, ToolCallOrigin.INTERACTIVE)
                     .navigate(baseUrl + "/password-settings");
 
@@ -253,7 +257,7 @@ class SiteLoginFunctionalIT {
         credential.setLoginUrl(baseUrl + "/login");
         credential.setUsername("demo");
         credential.setPassword("secret");
-        SiteCredentialManager.getInstance().put(credential);
+        siteCredentials.put(credential);
 
         PlaywrightBrowserManager browser = newBrowser("stored-credentials");
         try {
@@ -263,7 +267,7 @@ class SiteLoginFunctionalIT {
                     baseUrl + "/login",
                     new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
 
-            String result = new PlaywrightBrowserTools(
+            String result = browserTools(
                     browser, ToolCallOrigin.INTERACTIVE).siteLoginNow("", "", "");
 
             assertTrue(ToolResponse.isSuccess(result), result);
@@ -272,7 +276,7 @@ class SiteLoginFunctionalIT {
                     "账号密码自动登录不应走手动登录提示");
             assertEquals(1, saveSession.savePrompts.get());
             assertTrue(credential.isHasSession());
-            assertTrue(SiteCredentialManager.getInstance()
+            assertTrue(siteCredentials
                     .readSession(credential.getId()).contains(STORAGE_KEY));
         } finally {
             browser.shutdown();
@@ -288,7 +292,7 @@ class SiteLoginFunctionalIT {
         credential.setLoginUrl(baseUrl + "/login");
         credential.setUsername("");
         credential.setPassword("");
-        SiteCredentialManager manager = SiteCredentialManager.getInstance();
+        SiteCredentialManager manager = siteCredentials;
         manager.put(credential);
         assertTrue(manager.tryWriteSession(
                 credential.getId(), "{\"cookies\":[],\"origins\":[]}"));
@@ -298,7 +302,7 @@ class SiteLoginFunctionalIT {
             AutomatedLoginPort refreshSession = new AutomatedLoginPort(browser, true, true);
             ToolConfirmationManager.setPort(refreshSession);
 
-            String result = new PlaywrightBrowserTools(
+            String result = browserTools(
                     browser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
 
             assertTrue(ToolResponse.isSuccess(result), result);
@@ -319,14 +323,14 @@ class SiteLoginFunctionalIT {
             LoginThenCancelPort cancel = new LoginThenCancelPort(browser);
             ToolConfirmationManager.setPort(cancel);
 
-            String result = new PlaywrightBrowserTools(
+            String result = browserTools(
                     browser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/private");
 
             assertFalse(ToolResponse.isSuccess(result), result);
             assertTrue(result.contains("用户取消"), result);
             assertEquals(1, cancel.loginPrompts.get());
             assertEquals(0, cancel.savePrompts.get());
-            assertNull(SiteCredentialManager.getInstance().findByUrl(baseUrl + "/private"));
+            assertNull(siteCredentials.findByUrl(baseUrl + "/private"));
         } finally {
             browser.shutdown();
         }
@@ -383,15 +387,15 @@ class SiteLoginFunctionalIT {
             assertEquals("ACCOUNT_B", restoredB.locator("#result").textContent());
         } finally {
             browser.shutdown();
-            SiteCredentialManager.getInstance().clearScopeBindings(scopeA);
-            SiteCredentialManager.getInstance().clearScopeBindings(scopeB);
+            siteCredentials.clearScopeBindings(scopeA);
+            siteCredentials.clearScopeBindings(scopeB);
         }
     }
 
     @Test
     @Timeout(90)
     void multipleSavedAccountsAreSelectedAndBoundPerConversation() {
-        SiteCredentialManager manager = SiteCredentialManager.getInstance();
+        SiteCredentialManager manager = siteCredentials;
         SiteCredential accountA = savedIdentity("测试账号 A", "user-a", "ACCOUNT_A");
         SiteCredential accountB = savedIdentity("测试账号 B", "user-b", "ACCOUNT_B");
         String scopeA = PlaywrightBrowserManager.conversationScopeId("profile-a");
@@ -400,7 +404,7 @@ class SiteLoginFunctionalIT {
         try {
             browser.activateScope(scopeA);
             ToolConfirmationManager.setPort(new AccountChoicePort(accountA.getId()));
-            String resultA = new PlaywrightBrowserTools(
+            String resultA = browserTools(
                     browser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/identity");
             assertTrue(ToolResponse.isSuccess(resultA), resultA);
             assertEquals("ACCOUNT_A",
@@ -410,7 +414,7 @@ class SiteLoginFunctionalIT {
 
             browser.activateScope(scopeB);
             ToolConfirmationManager.setPort(new AccountChoicePort(accountB.getId()));
-            String resultB = new PlaywrightBrowserTools(
+            String resultB = browserTools(
                     browser, ToolCallOrigin.INTERACTIVE).navigate(baseUrl + "/identity");
             assertTrue(ToolResponse.isSuccess(resultB), resultB);
             assertEquals("ACCOUNT_B",
@@ -437,7 +441,7 @@ class SiteLoginFunctionalIT {
             AutomatedLoginPort shouldNotPrompt = new AutomatedLoginPort(browser, true, true);
             ToolConfirmationManager.setPort(shouldNotPrompt);
 
-            String result = new PlaywrightBrowserTools(browser, origin)
+            String result = browserTools(browser, origin)
                     .navigate(baseUrl + "/private");
 
             assertTrue(ToolResponse.isSuccess(result), result);
@@ -461,6 +465,12 @@ class SiteLoginFunctionalIT {
                 persistCookies);
     }
 
+    private PlaywrightBrowserTools browserTools(
+            PlaywrightBrowserManager browser,
+            ToolCallOrigin origin) {
+        return new PlaywrightBrowserTools(browser, siteCredentials, origin);
+    }
+
     private SiteCredential savedIdentity(String name, String username, String accountValue) {
         SiteCredential credential = new SiteCredential();
         credential.setName(name);
@@ -468,7 +478,7 @@ class SiteLoginFunctionalIT {
         credential.setLoginUrl(baseUrl + "/identity");
         credential.setUsername(username);
         credential.setPassword("");
-        SiteCredentialManager manager = SiteCredentialManager.getInstance();
+        SiteCredentialManager manager = siteCredentials;
         manager.put(credential);
         assertTrue(manager.tryWriteSession(credential.getId(), """
                 {
@@ -488,8 +498,8 @@ class SiteLoginFunctionalIT {
         return credential;
     }
 
-    private static void removeTestSites() {
-        SiteCredentialManager manager = SiteCredentialManager.getInstance();
+    private void removeTestSites() {
+        SiteCredentialManager manager = siteCredentials;
         manager.clearScopeBindings("interactive:default");
         var ids = manager.all().stream()
                 .filter(site -> TEST_HOST.equalsIgnoreCase(site.getHostPattern()))

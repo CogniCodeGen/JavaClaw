@@ -8,7 +8,6 @@ import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.api.interaction.ConfirmKind;
 import com.javaclaw.api.interaction.ConfirmRequest;
 import com.javaclaw.browser.PlaywrightBrowserManager;
-import com.javaclaw.site.SiteCredentialManager;
 import com.javaclaw.workflow.model.GraphDefinition;
 import com.javaclaw.workflow.model.GraphKind;
 import com.javaclaw.workflow.model.GraphState;
@@ -273,7 +272,7 @@ public final class WorkflowService implements AutoCloseable {
         try {
             agentRuntime.getBrowserManager().releaseScope(scope);
         } finally {
-            SiteCredentialManager.getInstance().clearScopeBindings(scope);
+            agentRuntime.getSiteCredentialManager().clearScopeBindings(scope);
         }
     }
 
