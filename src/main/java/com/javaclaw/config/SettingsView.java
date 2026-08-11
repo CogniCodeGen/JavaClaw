@@ -6,6 +6,12 @@ import com.javaclaw.app.UIHelper;
 import com.javaclaw.ui.javafx.control.ToggleSwitch;
 import com.javaclaw.ui.javafx.site.SiteCredentialPanel;
 import com.javaclaw.ui.javafx.site.SiteCredentialPanelFactory;
+import com.javaclaw.ui.javafx.settings.EmbeddingSettingsController;
+import com.javaclaw.ui.javafx.settings.ModelSettingsController;
+import com.javaclaw.ui.javafx.settings.ModelSettingsSectionFactory;
+import com.javaclaw.ui.javafx.settings.SettingsFieldSupport;
+import com.javaclaw.ui.javafx.settings.SettingsSectionView;
+import com.javaclaw.ui.javafx.settings.TieredModelSettingsController;
 import javafx.animation.PauseTransition;
 import javafx.animation.TranslateTransition;
 import javafx.application.Platform;
@@ -37,14 +43,16 @@ public class SettingsView {
     private final AgentConfig agentConfig;
     private final NotificationConfig notificationConfig;
     private Runnable onModelConfigChanged;
-    /** 可选：设置、记忆、知识和主界面共享的嵌入健康来源。 */
-    private final com.javaclaw.memory.embed.EmbeddingGateway embeddingGateway;
     private final AgentSettingsPanelFactory agentSettingsPanels;
     private AgentSettingsPanel agentSettingsPanel;
     private final SiteCredentialPanelFactory siteCredentialPanels;
     private SiteCredentialPanel siteCredentialPanel;
     private final com.javaclaw.ui.javafx.mcp.McpCenterViewFactory mcpCenters;
     private com.javaclaw.ui.javafx.mcp.McpCenterView mcpCenter;
+    private final ModelSettingsSectionFactory modelSettingsSections;
+    private SettingsSectionView<ModelSettingsController> modelSettingsSection;
+    private SettingsSectionView<TieredModelSettingsController> tieredModelSettingsSection;
+    private SettingsSectionView<EmbeddingSettingsController> embeddingSettingsSection;
 
     // 布局容器
     private VBox categoryList;
@@ -86,25 +94,53 @@ public class SettingsView {
      * @param test      当前面板的测试连接逻辑；为 null 表示该面板无连接测试，按钮禁用
      * @param testLabel 测试按钮在该面板下的文案（设计稿 TEST_CFG：测试连接/测试收发/测试嵌入）
      */
-    private record PanelActions(Runnable save,
+    @FunctionalInterface
+    private interface PanelSaveAction {
+        void run(Runnable success, java.util.function.Consumer<Throwable> failure);
+    }
+
+    private record PanelActions(PanelSaveAction save,
                                 java.util.function.Supplier<String> savedTip,
                                 Runnable test,
                                 String testLabel) {
         static PanelActions saveOnly(Runnable save) {
-            return new PanelActions(save, null, null, null);
+            return saveOnly(save, null);
         }
         static PanelActions saveOnly(Runnable save, java.util.function.Supplier<String> savedTip) {
-            return new PanelActions(save, savedTip, null, null);
+            return new PanelActions(synchronous(save), savedTip, null, null);
         }
         static PanelActions saveAndTest(Runnable save,
                                         java.util.function.Supplier<String> savedTip,
                                         Runnable test,
                                         String testLabel) {
+            return new PanelActions(synchronous(save), savedTip, test, testLabel);
+        }
+        static PanelActions asyncSaveAndTest(
+                PanelSaveAction save,
+                java.util.function.Supplier<String> savedTip,
+                Runnable test,
+                String testLabel) {
             return new PanelActions(save, savedTip, test, testLabel);
+        }
+        static PanelActions asyncSaveOnly(
+                PanelSaveAction save,
+                java.util.function.Supplier<String> savedTip) {
+            return new PanelActions(save, savedTip, null, null);
         }
         /** 组件型面板：内部交互自管理，全局保存/测试均禁用 */
         static PanelActions none() {
             return new PanelActions(null, null, null, null);
+        }
+
+        private static PanelSaveAction synchronous(Runnable save) {
+            return (success, failure) -> {
+                try {
+                    save.run();
+                    success.run();
+                } catch (Throwable thrown) {
+                    failure.accept(thrown);
+                }
+            };
         }
     }
 
@@ -140,26 +176,6 @@ public class SettingsView {
     /** 加密方式（设计稿 SelectField）：SSL / STARTTLS / 无，映射 EmailConfig 的两个布尔 */
     private ComboBox<String> encryptionCombo;
 
-    // 模型配置表单控件
-    private ComboBox<String> providerCombo;
-    private TextField baseUrlField;
-    private TextField modelNameField;
-    private PasswordField apiKeyField;
-    private TextField thinkingBudgetField;
-    private RadioButton http11Radio;
-    private RadioButton http2Radio;
-    private TextField connectTimeoutField;
-    private TextField readTimeoutField;
-    private TextField writeTimeoutField;
-    private TextField orchestratorMaxItersField;
-    private TextField webAgentMaxItersField;
-    private TextField emailAgentMaxItersField;
-    private ToggleSwitch thinkingEnabledCheck;
-    private TextField maxRepeatedCallsField;
-    private TextField loopThresholdField;
-    private TextField evaluatorThresholdField;
-    private TextField evaluatorMaxRetriesField;
-
     // 通知配置表单控件
     private ToggleSwitch dingtalkEnabledCheck;
     private TextField dingtalkWebhookField;
@@ -174,17 +190,6 @@ public class SettingsView {
     private ToggleSwitch customEnabledCheck;
     private TextField customWebhookField;
     private TextField customBodyTemplateField;
-
-    // 嵌入模型（知识库 RAG 向量模型）配置表单控件
-    // 注：分块大小/重叠已迁移到「知识库中心 › 索引设置」，此处不再承载。
-    private ToggleSwitch ragEnabledCheck;
-    private ComboBox<String> ragProviderCombo;
-    private TextField ragBaseUrlField;
-    private PasswordField ragApiKeyField;
-    private TextField ragModelNameField;
-    private TextField ragDimensionsField;
-    private TextField ragRetrieveLimitField;
-    private TextField ragScoreThresholdField;
 
     // 通用配置表单控件
     private ToggleSwitch trayMinimizeOnCloseCheck;
@@ -204,36 +209,21 @@ public class SettingsView {
     private ToggleSwitch skillNudgeCheck;
     private ToggleSwitch skillBundlesCheck;
 
-    // 分级模型 — 普通（NORMAL）档表单控件
-    private ToggleSwitch normalTierEnabledCheck;
-    private ComboBox<String> normalProviderCombo;
-    private TextField normalBaseUrlField;
-    private TextField normalModelNameField;
-    private PasswordField normalApiKeyField;
-    private ToggleSwitch normalThinkingEnabledCheck;
-
-    // 分级模型 — 轻量（LIGHT）档表单控件
-    private ToggleSwitch lightTierEnabledCheck;
-    private ComboBox<String> lightProviderCombo;
-    private TextField lightBaseUrlField;
-    private TextField lightModelNameField;
-    private PasswordField lightApiKeyField;
-    private ToggleSwitch lightThinkingEnabledCheck;
-
     public SettingsView(Stage owner,
-                        com.javaclaw.memory.embed.EmbeddingGateway embeddingGateway,
                         AgentSettingsPanelFactory agentSettingsPanels,
                         SiteCredentialPanelFactory siteCredentialPanels,
-                        com.javaclaw.ui.javafx.mcp.McpCenterViewFactory mcpCenters) {
+                        com.javaclaw.ui.javafx.mcp.McpCenterViewFactory mcpCenters,
+                        ModelSettingsSectionFactory modelSettingsSections) {
         this.emailConfig = EmailConfig.getInstance();
         this.agentConfig = AgentConfig.getInstance();
         this.notificationConfig = NotificationConfig.getInstance();
-        this.embeddingGateway = embeddingGateway;
         this.agentSettingsPanels = java.util.Objects.requireNonNull(
                 agentSettingsPanels, "agentSettingsPanels");
         this.siteCredentialPanels = java.util.Objects.requireNonNull(
                 siteCredentialPanels, "siteCredentialPanels");
         this.mcpCenters = java.util.Objects.requireNonNull(mcpCenters, "mcpCenters");
+        this.modelSettingsSections = java.util.Objects.requireNonNull(
+                modelSettingsSections, "modelSettingsSections");
         this.stage = new Stage();
         stage.initModality(Modality.WINDOW_MODAL);
         stage.initOwner(owner);
@@ -261,27 +251,53 @@ public class SettingsView {
         // 核心配置：模型与智能体定义
         addCategoryGroup("核心配置");
 
-        // 模型配置：保存（saveModelSettings + 重建回调）+ 测试连接（API 连通性）
-        Node modelPanel = buildModelPanel();
+        // 模型配置：FXML Controller 负责保存和 API 连通性测试。
+        modelSettingsSection = modelSettingsSections.createModel(ignored -> { });
+        Node modelPanel = modelSettingsSection.root();
+        modelSettingsSection.controller().configure(
+                result -> coreSettingsApplied(modelPanel, result));
         addCategory("模型配置", modelPanel, true,
                 "api key base url provider openai anthropic ollama dashscope gemini 模型 思考 thinking 高级 http 超时 timeout 迭代 循环");
-        registerPanelActions(modelPanel, PanelActions.saveAndTest(
-                this::saveModelSettings, this::modelConfigSavedTip, this::runModelApiTest, "测试连接"));
+        registerPanelActions(modelPanel, PanelActions.asyncSaveAndTest(
+                (success, failure) -> modelSettingsSection.controller().save(
+                        ignored -> success.run(), failure),
+                this::appliedModelConfigTip,
+                () -> modelSettingsSection.controller().probe(
+                        result -> finishTest(modelPanel, result.message(),
+                                result.succeeded() ? "status-success" : "status-error"),
+                        failure -> finishTest(modelPanel, "连接失败: " + failureMessage(failure),
+                                "status-error")),
+                "测试连接"));
 
         // 分级模型：仅保存（含重建回调）
-        Node tieredModelPanel = buildTieredModelPanel();
+        tieredModelSettingsSection = modelSettingsSections.createTiers(ignored -> { });
+        Node tieredModelPanel = tieredModelSettingsSection.root();
+        tieredModelSettingsSection.controller().configure(
+                result -> coreSettingsApplied(tieredModelPanel, result));
         addCategory("分级模型", tieredModelPanel, false,
                 "tier 分级 轻量 light 普通 normal 高性能 high 路由 routing 意图 intent 规划");
-        registerPanelActions(tieredModelPanel, PanelActions.saveOnly(
-                this::saveTieredModelSettings, this::modelConfigSavedTip));
+        registerPanelActions(tieredModelPanel, PanelActions.asyncSaveOnly(
+                (success, failure) -> tieredModelSettingsSection.controller().save(
+                        ignored -> success.run(), failure), this::appliedModelConfigTip));
 
         // 嵌入模型（知识库向量模型）：保存（含重建回调）+ 测试嵌入。
         // 文档导入/检索/分块管理已迁移到「知识库中心」，此处仅统一配置向量嵌入模型。
-        Node embeddingPanel = buildEmbeddingPanel();
+        embeddingSettingsSection = modelSettingsSections.createEmbedding(ignored -> { });
+        Node embeddingPanel = embeddingSettingsSection.root();
+        embeddingSettingsSection.controller().configure(
+                result -> coreSettingsApplied(embeddingPanel, result));
         addCategory("嵌入模型", embeddingPanel, false,
                 "rag embedding 嵌入 向量 vector 检索 文档 knowledge 知识库 维度 dimension");
-        registerPanelActions(embeddingPanel, PanelActions.saveAndTest(
-                this::saveRagSettings, this::modelConfigSavedTip, this::runRagEmbeddingTest, "测试嵌入"));
+        registerPanelActions(embeddingPanel, PanelActions.asyncSaveAndTest(
+                (success, failure) -> embeddingSettingsSection.controller().save(
+                        ignored -> success.run(), failure),
+                this::appliedModelConfigTip,
+                () -> embeddingSettingsSection.controller().probe(
+                        result -> finishTest(embeddingPanel, result.message(),
+                                result.succeeded() ? "status-success" : "status-error"),
+                        failure -> finishTest(embeddingPanel,
+                                "嵌入测试失败: " + failureMessage(failure), "status-error")),
+                "测试嵌入"));
 
         // 智能体：组件型面板，自管理（全局保存/测试禁用）
         agentSettingsPanel = agentSettingsPanels.create(this::notifyModelConfigChanged);
@@ -382,7 +398,11 @@ public class SettingsView {
             footTestButton.setText("测试中…");
             footTestButton.setDisable(true);
             setFooterStatus("", null);
-            actions.test().run();
+            try {
+                actions.test().run();
+            } catch (Throwable failure) {
+                finishTest(currentPanel, "测试失败: " + failureMessage(failure), "status-error");
+            }
         });
 
         // 状态文字（成功绿 / 失败红 / 进行中灰 / 未保存琥珀）
@@ -524,6 +544,18 @@ public class SettingsView {
             if (mcpCenter != null) {
                 mcpCenter.close();
                 mcpCenter = null;
+            }
+            if (modelSettingsSection != null) {
+                modelSettingsSection.close();
+                modelSettingsSection = null;
+            }
+            if (tieredModelSettingsSection != null) {
+                tieredModelSettingsSection.close();
+                tieredModelSettingsSection = null;
+            }
+            if (embeddingSettingsSection != null) {
+                embeddingSettingsSection.close();
+                embeddingSettingsSection = null;
             }
         });
 
@@ -746,12 +778,34 @@ public class SettingsView {
     private void saveCurrentPanel() {
         PanelActions actions = panelActions.getOrDefault(currentPanel, PanelActions.none());
         if (actions.save() == null || !dirtyPanels.contains(currentPanel)) return;
-        actions.save().run();
-        dirtyPanels.remove(currentPanel);
+        Node savingPanel = currentPanel;
         footSaveButton.setDisable(true);
-        showSavedTip(actions.savedTip() != null
-                ? actions.savedTip().get() : "✓ 已保存，下一轮对话生效");
-        refreshNavDirtyMarks();
+        setFooterStatus("正在保存…", "status-info");
+        try {
+            actions.save().run(() -> {
+                dirtyPanels.remove(savingPanel);
+                if (currentPanel == savingPanel) {
+                    showSavedTip(actions.savedTip() != null
+                            ? actions.savedTip().get() : "✓ 已保存，下一轮对话生效");
+                }
+                refreshFooterStateOnly();
+                refreshNavDirtyMarks();
+            }, failure -> {
+                if (currentPanel == savingPanel) {
+                    setFooterStatus("保存失败: " + failureMessage(failure), "status-error");
+                    footSaveButton.setDisable(false);
+                }
+            });
+        } catch (Throwable failure) {
+            setFooterStatus("保存失败: " + failureMessage(failure), "status-error");
+            footSaveButton.setDisable(false);
+        }
+    }
+
+    private void refreshFooterStateOnly() {
+        PanelActions currentActions = panelActions.getOrDefault(currentPanel, PanelActions.none());
+        footSaveButton.setDisable(currentActions.save() == null
+                || !dirtyPanels.contains(currentPanel));
     }
 
     /** 关闭守卫：有未保存更改时弹确认，确认放弃才真正关闭。 */
@@ -842,7 +896,7 @@ public class SettingsView {
 
     /** 标记面板有未保存更改：页脚琥珀提示 + 启用保存按钮（表单装载期间忽略） */
     private void markPanelDirty(Node panel) {
-        if (formLoading) return;
+        if (formLoading || SettingsFieldSupport.isLoading(panel)) return;
         dirtyPanels.add(panel);
         if (panel == currentPanel && footSaveButton != null) {
             PanelActions actions = panelActions.getOrDefault(panel, PanelActions.none());
@@ -893,7 +947,15 @@ public class SettingsView {
 
     /** 测试结束回调：恢复测试按钮文案/可用性并写入结果（异步测试线程经 Platform.runLater 调用） */
     private void finishTest(String resultText, String cssClass) {
+        finishTest(currentPanel, resultText, cssClass);
+    }
+
+    private void finishTest(Node testedPanel, String resultText, String cssClass) {
         testRunning = false;
+        if (testedPanel != currentPanel) {
+            refreshFooter();
+            return;
+        }
         PanelActions actions = panelActions.getOrDefault(currentPanel, PanelActions.none());
         footTestButton.setText(actions.test() != null && actions.testLabel() != null
                 ? actions.testLabel() : "测试连接");
@@ -962,602 +1024,35 @@ public class SettingsView {
         return "✓ 已保存（重启后生效）";
     }
 
-    // ==================== 模型配置面板 ====================
-
-    private Node buildModelPanel() {
-        Label sectionTitle = new Label("模型配置");
-        sectionTitle.getStyleClass().add("settings-section-title");
-
-        // ==================== 基本配置 / 高级配置 子标签切换 ====================
-        ToggleGroup subTabGroup = new ToggleGroup();
-        ToggleButton basicTab = new ToggleButton("基本配置");
-        basicTab.setToggleGroup(subTabGroup);
-        basicTab.getStyleClass().addAll("settings-sub-tab", "settings-sub-tab-left");
-        basicTab.setSelected(true);
-
-        ToggleButton advancedTab = new ToggleButton("高级配置");
-        advancedTab.setToggleGroup(subTabGroup);
-        advancedTab.getStyleClass().addAll("settings-sub-tab", "settings-sub-tab-right");
-
-        HBox subTabBar = new HBox(0, basicTab, advancedTab);
-        subTabBar.getStyleClass().add("settings-sub-tab-bar");
-
-        // ==================== 基本配置面板内容 ====================
-
-        // 模型提供商
-        Label providerTitle = new Label("模型提供商");
-        providerTitle.getStyleClass().add("settings-group-title");
-
-        // 默认仅暴露 OpenAI 兼容格式；其余提供商由模型注册表按需接入，需要时把名称加回此数组即可。
-        String[] providers = {"OpenAI"};
-
-        // providerCombo 作为状态载体保留（loadSettings/save 仍读写它），展示换为设计稿分段控件
-        providerCombo = new ComboBox<>();
-        providerCombo.getItems().addAll(providers);
-        providerCombo.getStyleClass().add("settings-combo");
-        providerCombo.setOnAction(e -> applyProviderPreset(providerCombo.getValue()));
-
-        // 分段控件（沉陷容器 + 选中浮起白片），与 providerCombo 双向同步
-        ToggleGroup providerSegGroup = new ToggleGroup();
-        HBox providerSeg = new HBox(2);
-        providerSeg.getStyleClass().add("seg-container");
-        providerSeg.setAlignment(Pos.CENTER_LEFT);
-        for (String p : providers) {
-            ToggleButton tb = new ToggleButton(p);
-            tb.getStyleClass().add("seg-btn");
-            tb.setToggleGroup(providerSegGroup);
-            tb.setUserData(p);
-            tb.setOnAction(e -> {
-                if (!tb.isSelected()) {
-                    tb.setSelected(true);  // 不允许取消选中
-                    return;
-                }
-                if (!p.equals(providerCombo.getValue())) {
-                    providerCombo.setValue(p);  // 触发 onAction → applyProviderPreset
-                }
-            });
-            providerSeg.getChildren().add(tb);
+    private void coreSettingsApplied(Node panel,
+            com.javaclaw.application.settings.ModelSettingsApplicationService.SaveResult result) {
+        dirtyPanels.remove(panel);
+        if (panel == currentPanel && result != null && !result.message().isBlank()) {
+            setFooterStatus(result.message(), "status-success");
         }
-        providerCombo.valueProperty().addListener((obs, o, n) -> {
-            for (Node node : providerSeg.getChildren()) {
-                ToggleButton tb = (ToggleButton) node;
-                tb.setSelected(tb.getUserData().equals(n));
-            }
-        });
-
-        Label providerHint = new Label("切换提供商会自动填充推荐的 API 地址和模型名称");
-        providerHint.getStyleClass().add("settings-hint");
-
-        HBox providerRow = new HBox(10, createLabel("提供商："), providerSeg);
-        providerRow.setAlignment(Pos.CENTER_LEFT);
-
-        // API 连接
-        Label apiTitle = new Label("API 连接");
-        apiTitle.getStyleClass().add("settings-group-title");
-
-        baseUrlField = createTextField("API 地址");
-        baseUrlField.setPrefWidth(350);
-        modelNameField = createTextField("模型名称");
-        modelNameField.setPrefWidth(350);
-        apiKeyField = new PasswordField();
-        apiKeyField.setPromptText("API 密钥");
-        apiKeyField.setPrefWidth(350);
-
-        GridPane apiGrid = new GridPane();
-        apiGrid.setHgap(10);
-        apiGrid.setVgap(8);
-        apiGrid.add(createLabel("API 地址："), 0, 0);
-        apiGrid.add(baseUrlField, 1, 0);
-        apiGrid.add(createLabel("模型名称："), 0, 1);
-        apiGrid.add(modelNameField, 1, 1);
-        apiGrid.add(createLabel("API 密钥："), 0, 2);
-        apiGrid.add(secretField(apiKeyField), 1, 2);
-
-        // 模型参数
-        Label paramTitle = new Label("模型参数");
-        paramTitle.getStyleClass().add("settings-group-title");
-
-        thinkingEnabledCheck = new ToggleSwitch();
-        HBox thinkingRow = toggleRow(thinkingEnabledCheck, "思考模式",
-                "支持的模型生效（DashScope / Anthropic / Gemini 部分模型），OpenAI 兼容端启用会被忽略");
-
-        thinkingBudgetField = createTextField("思考预算（token 数）");
-        thinkingBudgetField.setPrefWidth(120);
-
-        // 思考模式关闭时禁用预算输入
-        thinkingEnabledCheck.selectedProperty().addListener((obs, oldVal, newVal) ->
-                thinkingBudgetField.setDisable(!newVal));
-
-        HBox paramRow = new HBox(10, createLabel("思考预算："), thinkingBudgetField);
-        paramRow.setAlignment(Pos.CENTER_LEFT);
-
-        // 恢复默认按钮（保留在面板内；保存/测试连接已上移全局页脚）
-        Button resetButton = new Button("恢复默认");
-        resetButton.getStyleClass().add("settings-reset-button");
-        resetButton.setOnAction(e -> {
-            Alert confirm = UIHelper.createConfirmAlert("重置配置",
-                    "确定要恢复所有模型配置为默认值？", null);
-            confirm.showAndWait().ifPresent(btn -> {
-                if (btn == ButtonType.OK) {
-                    agentConfig.resetToDefaults();
-                    runFormLoad(this::loadModelSettings);
-                    dirtyPanels.remove(currentPanel);
-                    refreshFooter();
-                    setFooterStatus("已恢复为默认配置", "status-info");
-                }
-            });
-        });
-
-        // 配置文件路径提示
-        Label pathHint = new Label("配置文件: " + agentConfig.getConfigFilePath());
-        pathHint.getStyleClass().add("settings-hint");
-
-        Label restartHint = new Label("修改保存后立即生效，当前对话的智能体服务将重建");
-        restartHint.getStyleClass().add("settings-hint");
-
-        HBox basicButtonBar = new HBox(10, resetButton);
-        basicButtonBar.setAlignment(Pos.CENTER_LEFT);
-
-        // 基本配置面板
-        VBox basicPanel = new VBox(12,
-                providerTitle, providerRow, providerHint,
-                new Separator(),
-                apiTitle, apiGrid,
-                new Separator(),
-                paramTitle, thinkingRow, paramRow,
-                new Separator(),
-                pathHint, restartHint,
-                basicButtonBar);
-
-        // ==================== 高级配置面板内容 ====================
-
-        // HTTP 版本
-        Label httpVersionTitle = new Label("HTTP 版本");
-        httpVersionTitle.getStyleClass().add("settings-group-title");
-
-        ToggleGroup httpVersionGroup = new ToggleGroup();
-        http11Radio = new RadioButton("HTTP/1.1");
-        http11Radio.setToggleGroup(httpVersionGroup);
-        http11Radio.getStyleClass().add("settings-checkbox");
-        http2Radio = new RadioButton("HTTP/2");
-        http2Radio.setToggleGroup(httpVersionGroup);
-        http2Radio.getStyleClass().add("settings-checkbox");
-
-        HBox httpVersionRow = new HBox(20, http11Radio, http2Radio);
-        httpVersionRow.setAlignment(Pos.CENTER_LEFT);
-
-        // 超时配置
-        Label timeoutTitle = new Label("超时配置（秒）");
-        timeoutTitle.getStyleClass().add("settings-group-title");
-
-        connectTimeoutField = createTextField("连接超时");
-        connectTimeoutField.setPrefWidth(80);
-        readTimeoutField = createTextField("读取超时");
-        readTimeoutField.setPrefWidth(80);
-        writeTimeoutField = createTextField("写入超时");
-        writeTimeoutField.setPrefWidth(80);
-
-        HBox timeoutRow = new HBox(10,
-                createLabel("连接："), connectTimeoutField,
-                createLabel("读取："), readTimeoutField,
-                createLabel("写入："), writeTimeoutField);
-        timeoutRow.setAlignment(Pos.CENTER_LEFT);
-
-        // 智能体迭代次数
-        Label iterTitle = new Label("智能体最大迭代次数");
-        iterTitle.getStyleClass().add("settings-group-title");
-
-        orchestratorMaxItersField = createTextField("编排智能体");
-        orchestratorMaxItersField.setPrefWidth(80);
-        webAgentMaxItersField = createTextField("Web 智能体");
-        webAgentMaxItersField.setPrefWidth(80);
-        emailAgentMaxItersField = createTextField("邮件智能体");
-        emailAgentMaxItersField.setPrefWidth(80);
-
-        HBox iterRow = new HBox(10,
-                createLabel("编排："), orchestratorMaxItersField,
-                createLabel("Web："), webAgentMaxItersField,
-                createLabel("邮件："), emailAgentMaxItersField);
-        iterRow.setAlignment(Pos.CENTER_LEFT);
-
-        // 循环检测
-        Label loopTitle = new Label("循环检测");
-        loopTitle.getStyleClass().add("settings-group-title");
-
-        maxRepeatedCallsField = createTextField("最大重复次数");
-        maxRepeatedCallsField.setPrefWidth(80);
-        loopThresholdField = createTextField("相似度阈值（0~1）");
-        loopThresholdField.setPrefWidth(120);
-
-        HBox loopRow = new HBox(10,
-                createLabel("最大重复："), maxRepeatedCallsField,
-                createLabel("相似阈值："), loopThresholdField);
-        loopRow.setAlignment(Pos.CENTER_LEFT);
-
-        // 任务评估
-        Label evalTitle = new Label("任务评估");
-        evalTitle.getStyleClass().add("settings-group-title");
-
-        evaluatorThresholdField = createTextField("通过阈值（1~5）");
-        evaluatorThresholdField.setPrefWidth(80);
-        evaluatorMaxRetriesField = createTextField("最大重试次数");
-        evaluatorMaxRetriesField.setPrefWidth(80);
-
-        HBox evalRow = new HBox(10,
-                createLabel("通过阈值："), evaluatorThresholdField,
-                createLabel("最大重试："), evaluatorMaxRetriesField);
-        evalRow.setAlignment(Pos.CENTER_LEFT);
-
-        Label evalHint = new Label("启用评估后建议将编排最大迭代次数调整至 15 以上");
-        evalHint.getStyleClass().add("settings-hint");
-
-        // 高级配置的恢复默认按钮（保存上移全局页脚；与基本配置共用一套 saveModelSettings）
-        Button advResetButton = new Button("恢复默认");
-        advResetButton.getStyleClass().add("settings-reset-button");
-        advResetButton.setOnAction(e -> {
-            Alert confirm = UIHelper.createConfirmAlert("重置配置",
-                    "确定要恢复所有模型配置为默认值？", null);
-            confirm.showAndWait().ifPresent(btn -> {
-                if (btn == ButtonType.OK) {
-                    agentConfig.resetToDefaults();
-                    runFormLoad(this::loadModelSettings);
-                    dirtyPanels.remove(currentPanel);
-                    refreshFooter();
-                    setFooterStatus("已恢复为默认配置", "status-info");
-                }
-            });
-        });
-
-        Label advPathHint = new Label("配置文件: " + agentConfig.getConfigFilePath());
-        advPathHint.getStyleClass().add("settings-hint");
-
-        Label advRestartHint = new Label("修改保存后立即生效，当前对话的智能体服务将重建");
-        advRestartHint.getStyleClass().add("settings-hint");
-
-        HBox advButtonBar = new HBox(10, advResetButton);
-        advButtonBar.setAlignment(Pos.CENTER_LEFT);
-
-        // 高级配置面板
-        VBox advancedPanel = new VBox(12,
-                httpVersionTitle, httpVersionRow,
-                new Separator(),
-                timeoutTitle, timeoutRow,
-                new Separator(),
-                iterTitle, iterRow,
-                new Separator(),
-                loopTitle, loopRow,
-                new Separator(),
-                evalTitle, evalRow, evalHint,
-                new Separator(),
-                advPathHint, advRestartHint,
-                advButtonBar);
-        advancedPanel.setVisible(false);
-        advancedPanel.setManaged(false);
-
-        // ==================== 子标签切换逻辑 ====================
-        basicTab.setOnAction(e -> {
-            if (basicTab.isSelected()) {
-                basicPanel.setVisible(true);
-                basicPanel.setManaged(true);
-                advancedPanel.setVisible(false);
-                advancedPanel.setManaged(false);
-            } else {
-                basicTab.setSelected(true);
-            }
-        });
-
-        advancedTab.setOnAction(e -> {
-            if (advancedTab.isSelected()) {
-                advancedPanel.setVisible(true);
-                advancedPanel.setManaged(true);
-                basicPanel.setVisible(false);
-                basicPanel.setManaged(false);
-            } else {
-                advancedTab.setSelected(true);
-            }
-        });
-
-        StackPane subContent = new StackPane(basicPanel, advancedPanel);
-
-        // 组装面板
-        ScrollPane scrollPane = new ScrollPane();
-        scrollPane.setFitToWidth(true);
-        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        scrollPane.getStyleClass().add("settings-scroll-pane");
-
-        VBox panel = new VBox(12, sectionTitle, subTabBar, subContent);
-        panel.setPadding(new Insets(4));
-
-        scrollPane.setContent(panel);
-        return scrollPane;
-    }
-
-    /**
-     * 将模型配置加载到表单
-     */
-    private void loadModelSettings() {
-        providerCombo.setValue(agentConfig.getProviderType());
-        baseUrlField.setText(agentConfig.getBaseUrl());
-        modelNameField.setText(agentConfig.getModelName());
-        apiKeyField.setText(agentConfig.getApiKey());
-        thinkingEnabledCheck.setSelected(agentConfig.isThinkingEnabled());
-        thinkingBudgetField.setText(String.valueOf(agentConfig.getThinkingBudget()));
-        thinkingBudgetField.setDisable(!agentConfig.isThinkingEnabled());
-        if (agentConfig.isHttp2()) {
-            http2Radio.setSelected(true);
-        } else {
-            http11Radio.setSelected(true);
-        }
-        connectTimeoutField.setText(String.valueOf(agentConfig.getConnectTimeoutSeconds()));
-        readTimeoutField.setText(String.valueOf(agentConfig.getReadTimeoutSeconds()));
-        writeTimeoutField.setText(String.valueOf(agentConfig.getWriteTimeoutSeconds()));
-        orchestratorMaxItersField.setText(String.valueOf(agentConfig.getOrchestratorMaxIters()));
-        webAgentMaxItersField.setText(String.valueOf(agentConfig.getWebAgentMaxIters()));
-        emailAgentMaxItersField.setText(String.valueOf(agentConfig.getEmailAgentMaxIters()));
-        maxRepeatedCallsField.setText(String.valueOf(agentConfig.getMaxRepeatedToolCalls()));
-        loopThresholdField.setText(String.valueOf(agentConfig.getLoopSimilarityThreshold()));
-        evaluatorThresholdField.setText(String.valueOf(agentConfig.getEvaluatorPassThreshold()));
-        evaluatorMaxRetriesField.setText(String.valueOf(agentConfig.getEvaluatorMaxRetries()));
-    }
-
-    /**
-     * 将模型表单内容保存到配置
-     */
-    private void saveModelSettings() {
-        clearAllFieldErrors();
-        boolean allValid = true;
-
-        agentConfig.setProviderType(providerCombo.getValue());
-
-        // 校验 API 地址不为空
-        String url = baseUrlField.getText().trim();
-        if (url.isEmpty()) {
-            markFieldError(baseUrlField, "API 地址不能为空");
-            allValid = false;
-        }
-        agentConfig.setBaseUrl(url);
-        agentConfig.setModelName(modelNameField.getText().trim());
-        agentConfig.setApiKey(apiKeyField.getText().trim());
-        agentConfig.setThinkingEnabled(thinkingEnabledCheck.isSelected());
-        allValid &= setIntSafe(thinkingBudgetField, agentConfig::setThinkingBudget, 4096, 1024, 65536);
-        agentConfig.setHttpVersion(http2Radio.isSelected() ? "HTTP_2" : "HTTP_1_1");
-        allValid &= setIntSafe(connectTimeoutField, agentConfig::setConnectTimeoutSeconds, 30, 1, 600);
-        allValid &= setIntSafe(readTimeoutField, agentConfig::setReadTimeoutSeconds, 300, 1, 3600);
-        allValid &= setIntSafe(writeTimeoutField, agentConfig::setWriteTimeoutSeconds, 30, 1, 600);
-        allValid &= setIntSafe(orchestratorMaxItersField, agentConfig::setOrchestratorMaxIters, 10, 1, 100);
-        allValid &= setIntSafe(webAgentMaxItersField, agentConfig::setWebAgentMaxIters, 8, 1, 50);
-        allValid &= setIntSafe(emailAgentMaxItersField, agentConfig::setEmailAgentMaxIters, 5, 1, 50);
-        allValid &= setIntSafe(maxRepeatedCallsField, agentConfig::setMaxRepeatedToolCalls, 8, 1, 50);
-        agentConfig.setLoopSimilarityThreshold(
-                parseDoubleSafe(loopThresholdField, 0.8, 0.0, 1.0));
-        agentConfig.setEvaluatorPassThreshold(
-                parseDoubleSafe(evaluatorThresholdField, 3.5, 1.0, 5.0));
-        allValid &= setIntSafe(evaluatorMaxRetriesField, agentConfig::setEvaluatorMaxRetries, 2, 0, 10);
-        agentConfig.save();
-
-        if (!allValid) {
-            log.warn("模型设置已保存，但部分字段值无效已使用默认值");
-        } else {
-            log.info("模型设置已保存");
+        refreshFooterStateOnly();
+        refreshNavDirtyMarks();
+        if (result != null && result.runtimeRefreshRequired() && onModelConfigChanged != null) {
+            onModelConfigChanged.run();
         }
     }
 
-    /**
-     * 切换模型提供商时自动填充推荐的 API 地址和模型名称
-     */
-    private void applyProviderPreset(String provider) {
-        if (provider == null) return;
-        switch (provider) {
-            case "OpenAI" -> {
-                baseUrlField.setText("https://api.openai.com/v1");
-                modelNameField.setText("gpt-4o");
-                apiKeyField.setPromptText("OpenAI API 密钥");
-            }
-            case "DashScope" -> {
-                baseUrlField.setText("https://dashscope.aliyuncs.com/compatible-mode/v1");
-                modelNameField.setText("qwen-max");
-                apiKeyField.setPromptText("DashScope API 密钥");
-            }
-            case "Anthropic" -> {
-                baseUrlField.setText("https://api.anthropic.com");
-                modelNameField.setText("claude-sonnet-4-5-20250929");
-                apiKeyField.setPromptText("Anthropic API 密钥");
-            }
-            case "Gemini" -> {
-                baseUrlField.setText("");
-                modelNameField.setText("gemini-2.5-flash");
-                apiKeyField.setPromptText("Gemini API 密钥");
-            }
-            case "Ollama" -> {
-                baseUrlField.setText("http://localhost:11434");
-                modelNameField.setText("qwen3:8b");
-                apiKeyField.setPromptText("Ollama 无需密钥，可留空");
-            }
+    private String appliedModelConfigTip() {
+        return onModelConfigChanged != null
+                ? "✓ 已保存并生效，下一轮对话重建智能体服务"
+                : "✓ 已保存（重启后生效）";
+    }
+
+    private static String failureMessage(Throwable failure) {
+        Throwable current = failure;
+        while ((current instanceof java.util.concurrent.CompletionException
+                || current instanceof java.util.concurrent.ExecutionException)
+                && current.getCause() != null) {
+            current = current.getCause();
         }
-    }
-
-    /**
-     * 模型 API 连通性测试（GET {baseUrl}/models），结果经 finishTest 写入全局页脚。
-     * 由全局页脚测试按钮在模型配置面板时触发。
-     */
-    private void runModelApiTest() {
-        Thread testThread = new Thread(() -> {
-            String result;
-            String cssClass;
-            try {
-                String url = baseUrlField.getText().trim();
-                if (url.isEmpty()) throw new Exception("API 地址不能为空");
-                long start = System.currentTimeMillis();
-                java.net.URL apiUrl = java.net.URI.create(url.endsWith("/") ? url + "models" : url + "/models").toURL();
-                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) apiUrl.openConnection();
-                conn.setConnectTimeout(5000);
-                conn.setReadTimeout(5000);
-                conn.setRequestMethod("GET");
-                String apiKey = apiKeyField.getText().trim();
-                if (!apiKey.isEmpty() && !"not-needed".equals(apiKey)) {
-                    conn.setRequestProperty("Authorization", "Bearer " + apiKey);
-                }
-                int code = conn.getResponseCode();
-                conn.disconnect();
-                long elapsed = System.currentTimeMillis() - start;
-                if (code >= 200 && code < 400) {
-                    result = "✓ 连接正常 · " + modelNameField.getText().trim() + " · " + elapsed + "ms";
-                    cssClass = "status-success";
-                } else {
-                    result = "连接异常 (HTTP " + code + ")";
-                    cssClass = "status-error";
-                }
-            } catch (Exception ex) {
-                result = "连接失败: " + ex.getMessage();
-                cssClass = "status-error";
-            }
-            String finalResult = result;
-            String finalCssClass = cssClass;
-            javafx.application.Platform.runLater(() -> finishTest(finalResult, finalCssClass));
-        }, "api-test-thread");
-        testThread.setDaemon(true);
-        testThread.start();
-    }
-
-    /**
-     * 知识库嵌入测试（设计稿「测试嵌入」）：POST {ragBaseUrl}/embeddings 试嵌一段短文本，
-     * 报告实际向量维度与耗时；维度与配置不一致时给出明确警告（维度错配会导致向量库写入失败）。
-     */
-    private void runRagEmbeddingTest() {
-        String url = ragBaseUrlField.getText().trim();
-        String model = ragModelNameField.getText().trim();
-        String apiKey = ragApiKeyField.getText().trim();
-        String dimText = ragDimensionsField.getText().trim();
-        int expectedDimensions;
-        try {
-            if (url.isEmpty()) throw new IllegalArgumentException("API 地址不能为空");
-            if (model.isEmpty()) throw new IllegalArgumentException("嵌入模型名称不能为空");
-            expectedDimensions = Integer.parseInt(dimText);
-            if (expectedDimensions <= 0) throw new NumberFormatException();
-        } catch (NumberFormatException invalidDimension) {
-            finishTest("嵌入测试失败: 向量维度必须是正整数", "status-error");
-            return;
-        } catch (IllegalArgumentException invalidForm) {
-            finishTest("嵌入测试失败: " + invalidForm.getMessage(), "status-error");
-            return;
-        }
-
-        EmbeddingTestConfig form = new EmbeddingTestConfig(
-                ragEnabledCheck.isSelected(), url, model, apiKey, expectedDimensions);
-        EmbeddingTestConfig saved = new EmbeddingTestConfig(
-                agentConfig.isRagEnabled(),
-                agentConfig.getRagEmbeddingBaseUrl(),
-                agentConfig.getRagEmbeddingModelName(),
-                agentConfig.getRagEmbeddingApiKey(),
-                agentConfig.getRagEmbeddingDimensions());
-        boolean matchesSavedConnection = sameEmbeddingConnection(form, saved);
-        boolean runtimeReady = embeddingGateway != null && embeddingGateway.isModelReady();
-        boolean probeRuntime = shouldProbeRuntime(form, saved, runtimeReady);
-
-        Thread testThread = new Thread(() -> {
-            String result;
-            String cssClass;
-            try {
-                if (probeRuntime) {
-                    long started = System.nanoTime();
-                    var snapshot = embeddingGateway.probe();
-                    long elapsed = (System.nanoTime() - started) / 1_000_000L;
-                    boolean healthy = snapshot.status()
-                            == com.javaclaw.memory.embed.EmbeddingHealthStatus.HEALTHY;
-                    result = healthy
-                            ? "✓ 嵌入正常 · 维度 " + embeddingGateway.dimensions()
-                                    + " · " + elapsed + "ms"
-                            : "嵌入测试失败: " + (snapshot.lastError() == null
-                                    ? snapshot.status().name() : snapshot.lastError());
-                    cssClass = healthy ? "status-success" : "status-error";
-                } else {
-                    EmbeddingProbeResult probe = probeEmbeddingForm(form);
-                    if (probe.actualDimensions() != form.expectedDimensions()) {
-                        result = "当前表单配置可用，但实际维度 " + probe.actualDimensions()
-                                + " 与配置 " + form.expectedDimensions()
-                                + " 不一致，写入向量库会失败，请修正向量维度";
-                        cssClass = "status-error";
-                    } else {
-                        result = "✓ 当前表单配置可用 · 维度 " + probe.actualDimensions()
-                                + " · " + probe.elapsedMillis() + "ms"
-                                + (matchesSavedConnection ? "" : "（尚未保存）");
-                        cssClass = "status-success";
-                    }
-                }
-            } catch (Exception ex) {
-                result = "嵌入测试失败: " + ex.getMessage();
-                cssClass = "status-error";
-            }
-            String finalResult = result;
-            String finalCssClass = cssClass;
-            javafx.application.Platform.runLater(() -> finishTest(finalResult, finalCssClass));
-        }, "rag-embedding-test-thread");
-        testThread.setDaemon(true);
-        testThread.start();
-    }
-
-    /** 连接探测只比较会影响实际嵌入请求的字段；检索参数变更不要求重建探测客户端。 */
-    static boolean sameEmbeddingConnection(EmbeddingTestConfig left,
-                                           EmbeddingTestConfig right) {
-        return left.equals(right);
-    }
-
-    static boolean shouldProbeRuntime(EmbeddingTestConfig form,
-                                      EmbeddingTestConfig saved,
-                                      boolean runtimeReady) {
-        return runtimeReady && sameEmbeddingConnection(form, saved);
-    }
-
-    static record EmbeddingTestConfig(boolean enabled,
-                                      String baseUrl,
-                                      String model,
-                                      String apiKey,
-                                      int expectedDimensions) {
-        EmbeddingTestConfig {
-            baseUrl = baseUrl == null ? "" : baseUrl.strip();
-            model = model == null ? "" : model.strip();
-            apiKey = apiKey == null ? "" : apiKey.strip();
-        }
-    }
-
-    static record EmbeddingProbeResult(int actualDimensions, long elapsedMillis) {}
-
-    static EmbeddingProbeResult probeEmbeddingForm(EmbeddingTestConfig form)
-            throws Exception {
-        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-        java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
-                .connectTimeout(java.time.Duration.ofSeconds(3))
-                .build();
-        long started = System.nanoTime();
-        java.net.http.HttpResponse<String> response = client.send(
-                buildEmbeddingProbeRequest(form),
-                java.net.http.HttpResponse.BodyHandlers.ofString());
-        long elapsed = (System.nanoTime() - started) / 1_000_000L;
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IllegalStateException("HTTP " + response.statusCode());
-        }
-        com.fasterxml.jackson.databind.JsonNode root = mapper.readTree(response.body());
-        int actualDimensions = root.path("data").path(0).path("embedding").size();
-        if (actualDimensions <= 0) {
-            throw new IllegalStateException("响应中未找到嵌入向量");
-        }
-        return new EmbeddingProbeResult(actualDimensions, elapsed);
-    }
-
-    static java.net.http.HttpRequest buildEmbeddingProbeRequest(EmbeddingTestConfig form)
-            throws com.fasterxml.jackson.core.JsonProcessingException {
-        java.net.URI endpoint = java.net.URI.create(form.baseUrl().endsWith("/")
-                ? form.baseUrl() + "embeddings" : form.baseUrl() + "/embeddings");
-        String body = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(
-                java.util.Map.of("model", form.model(), "input", "嵌入连通性测试"));
-        java.net.http.HttpRequest.Builder request = java.net.http.HttpRequest.newBuilder(endpoint)
-                .timeout(java.time.Duration.ofSeconds(3))
-                .header("Content-Type", "application/json")
-                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body));
-        if (!form.apiKey().isBlank()) {
-            request.header("Authorization", "Bearer " + form.apiKey());
-        }
-        return request.build();
+        String message = current.getMessage();
+        return message == null || message.isBlank()
+                ? current.getClass().getSimpleName() : message;
     }
 
     /**
@@ -1614,18 +1109,6 @@ public class SettingsView {
      * 仅做即时视觉反馈，不替代保存时的兜底逻辑。
      */
     private void attachLiveValidations() {
-        // 模型配置 — 基本/高级
-        attachLiveIntRange(thinkingBudgetField, 1024, 65536);
-        attachLiveIntRange(connectTimeoutField, 1, 600);
-        attachLiveIntRange(readTimeoutField, 1, 3600);
-        attachLiveIntRange(writeTimeoutField, 1, 600);
-        attachLiveIntRange(orchestratorMaxItersField, 1, 100);
-        attachLiveIntRange(webAgentMaxItersField, 1, 50);
-        attachLiveIntRange(emailAgentMaxItersField, 1, 50);
-        attachLiveIntRange(maxRepeatedCallsField, 1, 50);
-        attachLiveDoubleRange(loopThresholdField, 0.0, 1.0);
-        attachLiveDoubleRange(evaluatorThresholdField, 1.0, 5.0);
-        attachLiveIntRange(evaluatorMaxRetriesField, 0, 10);
         // GEPA 能力
         attachLiveIntRange(gepaEvalIntervalField, 1, 20);
         attachLiveDoubleRange(gepaEvalThresholdField, 1.0, 5.0);
@@ -1633,10 +1116,6 @@ public class SettingsView {
         // 技能进化
         attachLiveIntRange(skillEvolutionMinToolsField, 1, 50);
         attachLiveDoubleRange(skillEvolutionSuccessThresholdField, 0.0, 1.0);
-        // 嵌入模型（向量维度/检索）
-        attachLiveIntRange(ragDimensionsField, 1, Integer.MAX_VALUE);
-        attachLiveIntRange(ragRetrieveLimitField, 1, Integer.MAX_VALUE);
-        attachLiveDoubleRange(ragScoreThresholdField, 0.0, 1.0);
         // 邮件端口
         attachLiveIntRange(smtpPortField, 1, 65535);
         attachLiveIntRange(imapPortField, 1, 65535);
@@ -1703,28 +1182,6 @@ public class SettingsView {
     private void clearFieldError(TextField field) {
         field.getStyleClass().remove("field-error");
         field.setTooltip(null);
-    }
-
-    /**
-     * 清除所有模型配置输入框的错误状态
-     */
-    private void clearAllFieldErrors() {
-        clearFieldError(baseUrlField);
-        clearFieldError(modelNameField);
-        clearFieldError(connectTimeoutField);
-        clearFieldError(readTimeoutField);
-        clearFieldError(writeTimeoutField);
-        clearFieldError(orchestratorMaxItersField);
-        clearFieldError(webAgentMaxItersField);
-        clearFieldError(emailAgentMaxItersField);
-        clearFieldError(maxRepeatedCallsField);
-        clearFieldError(loopThresholdField);
-        clearFieldError(thinkingBudgetField);
-        clearFieldError(evaluatorThresholdField);
-        clearFieldError(evaluatorMaxRetriesField);
-        clearFieldError(gepaEvalIntervalField);
-        clearFieldError(gepaEvalThresholdField);
-        clearFieldError(gepaFeedbackMaxRoundsField);
     }
 
     // ==================== GEPA 能力面板 ====================
@@ -2735,188 +2192,14 @@ public class SettingsView {
         log.info("通知设置已保存");
     }
 
-    // ==================== 嵌入模型（知识库向量模型）配置面板 ====================
-
-    private Node buildEmbeddingPanel() {
-        Label sectionTitle = new Label("嵌入模型（知识库 RAG）");
-        sectionTitle.getStyleClass().add("settings-section-title");
-
-        // 启用开关
-        ragEnabledCheck = new ToggleSwitch();
-        HBox ragEnableRow = toggleRow(ragEnabledCheck, "本地知识库（RAG）",
-                "启用后，知识专家将具备文档导入和语义检索能力；嵌入向量模型在此统一配置，文档导入/检索/分块管理在「知识库中心」");
-
-        // 嵌入模型配置
-        Label embeddingTitle = new Label("嵌入模型");
-        embeddingTitle.getStyleClass().add("settings-group-title");
-
-        ragProviderCombo = new ComboBox<>();
-        ragProviderCombo.getItems().addAll("OpenAI", "DashScope", "Ollama");
-        ragProviderCombo.getStyleClass().add("settings-combo");
-        ragProviderCombo.setOnAction(e -> applyRagProviderPreset(ragProviderCombo.getValue()));
-
-        Label providerHint = new Label("选择嵌入模型提供商（可与聊天模型不同）");
-        providerHint.getStyleClass().add("settings-hint");
-
-        HBox providerRow = new HBox(10, createLabel("提供商："), ragProviderCombo);
-        providerRow.setAlignment(Pos.CENTER_LEFT);
-
-        ragBaseUrlField = createTextField("嵌入模型 API 地址");
-        ragBaseUrlField.setPrefWidth(350);
-        ragApiKeyField = new PasswordField();
-        ragApiKeyField.setPromptText("嵌入模型 API 密钥");
-        ragApiKeyField.getStyleClass().add("settings-field");
-        ragApiKeyField.setPrefWidth(350);
-        ragModelNameField = createTextField("嵌入模型名称");
-        ragModelNameField.setPrefWidth(350);
-        ragDimensionsField = createTextField("向量维度");
-        ragDimensionsField.setPrefWidth(120);
-
-        GridPane embeddingGrid = new GridPane();
-        embeddingGrid.setHgap(10);
-        embeddingGrid.setVgap(8);
-        embeddingGrid.add(createLabel("API 地址："), 0, 0);
-        embeddingGrid.add(ragBaseUrlField, 1, 0);
-        embeddingGrid.add(createLabel("API 密钥："), 0, 1);
-        embeddingGrid.add(secretField(ragApiKeyField), 1, 1);
-        embeddingGrid.add(createLabel("模型名称："), 0, 2);
-        embeddingGrid.add(ragModelNameField, 1, 2);
-        embeddingGrid.add(createLabel("向量维度："), 0, 3);
-        embeddingGrid.add(ragDimensionsField, 1, 3);
-
-        // 检索参数
-        Label retrieveTitle = new Label("检索参数");
-        retrieveTitle.getStyleClass().add("settings-group-title");
-
-        ragRetrieveLimitField = createTextField("返回数量");
-        ragRetrieveLimitField.setPrefWidth(80);
-        ragScoreThresholdField = createTextField("分数阈值");
-        ragScoreThresholdField.setPrefWidth(80);
-
-        HBox retrieveRow = new HBox(10,
-                createLabel("返回数量："), ragRetrieveLimitField,
-                createLabel("分数阈值："), ragScoreThresholdField);
-        retrieveRow.setAlignment(Pos.CENTER_LEFT);
-
-        Label retrieveHint = new Label("返回数量 3~5，分数阈值 0.3~0.5（越高越精确）");
-        retrieveHint.getStyleClass().add("settings-hint");
-
-        // 启用开关控制子控件可用性
-        ragEnabledCheck.selectedProperty().addListener((obs, oldVal, newVal) -> {
-            ragProviderCombo.setDisable(!newVal);
-            ragBaseUrlField.setDisable(!newVal);
-            ragApiKeyField.setDisable(!newVal);
-            ragModelNameField.setDisable(!newVal);
-            ragDimensionsField.setDisable(!newVal);
-            ragRetrieveLimitField.setDisable(!newVal);
-            ragScoreThresholdField.setDisable(!newVal);
-        });
-
-        // 提示信息（保存上移全局页脚）
-        Label restartHint = new Label("修改保存后立即生效，当前对话的智能体服务将重建 · 分块大小/重叠在「知识库中心 › 索引设置」调整");
-        restartHint.getStyleClass().add("settings-hint");
-
-        // 组装面板
-        ScrollPane scrollPane = new ScrollPane();
-        scrollPane.setFitToWidth(true);
-        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        scrollPane.getStyleClass().add("settings-scroll-pane");
-
-        VBox panel = new VBox(12,
-                sectionTitle,
-                ragEnableRow,
-                new Separator(),
-                embeddingTitle, providerRow, providerHint, embeddingGrid,
-                new Separator(),
-                retrieveTitle, retrieveRow, retrieveHint,
-                new Separator(),
-                restartHint);
-        panel.setPadding(new Insets(4));
-
-        scrollPane.setContent(panel);
-        return scrollPane;
-    }
-
-    /**
-     * 切换嵌入模型提供商时自动填充推荐配置
-     */
-    private void applyRagProviderPreset(String provider) {
-        if (provider == null) return;
-        switch (provider) {
-            case "OpenAI" -> {
-                ragBaseUrlField.setText("https://api.openai.com/v1");
-                ragModelNameField.setText("text-embedding-3-small");
-                ragDimensionsField.setText("1024");
-                ragApiKeyField.setPromptText("OpenAI API 密钥");
-            }
-            case "DashScope" -> {
-                ragBaseUrlField.setText("https://dashscope.aliyuncs.com/compatible-mode/v1");
-                ragModelNameField.setText("text-embedding-v3");
-                ragDimensionsField.setText("1024");
-                ragApiKeyField.setPromptText("DashScope API 密钥");
-            }
-            case "Ollama" -> {
-                ragBaseUrlField.setText("http://localhost:11434/v1");
-                ragModelNameField.setText("nomic-embed-text");
-                ragDimensionsField.setText("768");
-                ragApiKeyField.setPromptText("Ollama 无需密钥");
-            }
-        }
-    }
-
-    /**
-     * 将 RAG 配置加载到表单
-     */
-    private void loadRagSettings() {
-        ragEnabledCheck.setSelected(agentConfig.isRagEnabled());
-        ragProviderCombo.setValue(agentConfig.getRagEmbeddingProvider());
-        ragBaseUrlField.setText(agentConfig.getRagEmbeddingBaseUrl());
-        ragApiKeyField.setText(agentConfig.getRagEmbeddingApiKey());
-        ragModelNameField.setText(agentConfig.getRagEmbeddingModelName());
-        ragDimensionsField.setText(String.valueOf(agentConfig.getRagEmbeddingDimensions()));
-        ragRetrieveLimitField.setText(String.valueOf(agentConfig.getRagRetrieveLimit()));
-        ragScoreThresholdField.setText(String.valueOf(agentConfig.getRagScoreThreshold()));
-
-        // 初始化子控件可用性
-        boolean enabled = agentConfig.isRagEnabled();
-        ragProviderCombo.setDisable(!enabled);
-        ragBaseUrlField.setDisable(!enabled);
-        ragApiKeyField.setDisable(!enabled);
-        ragModelNameField.setDisable(!enabled);
-        ragDimensionsField.setDisable(!enabled);
-        ragRetrieveLimitField.setDisable(!enabled);
-        ragScoreThresholdField.setDisable(!enabled);
-    }
-
-    /**
-     * 将 RAG 表单内容保存到配置
-     */
-    private void saveRagSettings() {
-        agentConfig.setRagEnabled(ragEnabledCheck.isSelected());
-        agentConfig.setRagEmbeddingProvider(ragProviderCombo.getValue());
-        agentConfig.setRagEmbeddingBaseUrl(ragBaseUrlField.getText().trim());
-        agentConfig.setRagEmbeddingApiKey(ragApiKeyField.getText().trim());
-        agentConfig.setRagEmbeddingModelName(ragModelNameField.getText().trim());
-        setIntSafe(ragDimensionsField, agentConfig::setRagEmbeddingDimensions, 1024);
-        setIntSafe(ragRetrieveLimitField, agentConfig::setRagRetrieveLimit, 5);
-        try {
-            agentConfig.setRagScoreThreshold(
-                    Double.parseDouble(ragScoreThresholdField.getText().trim()));
-        } catch (NumberFormatException e) {
-            agentConfig.setRagScoreThreshold(0.3);
-        }
-        agentConfig.save();
-        log.info("RAG 知识库设置已保存");
-    }
-
     /**
      * 将当前配置加载到表单控件
      */
     private void loadSettings() {
-        loadModelSettings();
-        loadTieredModelSettings();
+        if (modelSettingsSection != null) modelSettingsSection.controller().reload();
+        if (tieredModelSettingsSection != null) tieredModelSettingsSection.controller().reload();
+        if (embeddingSettingsSection != null) embeddingSettingsSection.controller().reload();
         loadNotificationSettings();
-        loadRagSettings();
         loadGepaSettings();
         loadSkillEvolutionSettings();
         loadGeneralSettings();
@@ -3268,255 +2551,4 @@ public class SettingsView {
                 });
     }
 
-    // ==================== 分级模型面板 ====================
-
-    private Node buildTieredModelPanel() {
-        Label sectionTitle = new Label("分级模型");
-        sectionTitle.getStyleClass().add("settings-section-title");
-
-        Label intro = new Label("""
-                按任务复杂度划分三档模型：
-                  • 轻量模型 — 意图识别、工具路由、记忆蒸馏、视觉描述、过程评估等轻量调用
-                  • 普通模型 — 子专家、单步执行体、知识专家等常规任务
-                  • 高性能模型 — 主编排器、规划、ChallengerAgent、PlanEvolver 等复杂推理（即「模型配置」中的现有模型）
-                未启用独立配置时，对应档自动回落到「模型配置」中的高性能模型，保持向后兼容。""");
-        intro.getStyleClass().add("settings-hint");
-        intro.setWrapText(true);
-
-        // 普通模型卡片
-        Node normalCard = buildTierCard(
-                "普通模型（NORMAL）",
-                "子专家智能体、知识专家、单步执行体、记忆压缩等常规任务的模型",
-                /*tierName=*/"normal");
-
-        // 轻量模型卡片
-        Node lightCard = buildTierCard(
-                "轻量模型（LIGHT）",
-                "工具路由、意图识别、记忆蒸馏、视觉预处理、过程评估等一次性轻量调用；强烈建议关闭思考模式",
-                /*tierName=*/"light");
-
-        // 清除分级配置按钮（保留在面板内；保存上移全局页脚）
-        Button clearButton = new Button("清除分级配置");
-        clearButton.getStyleClass().add("settings-reset-button");
-        clearButton.setOnAction(e -> {
-            Alert confirm = UIHelper.createConfirmAlert("清除分级配置",
-                    "清除后普通/轻量模型都将回落到高性能模型（即「模型配置」中的现有模型），确定继续？",
-                    null);
-            confirm.showAndWait().ifPresent(btn -> {
-                if (btn == ButtonType.OK) {
-                    agentConfig.setNormalModelName("");
-                    agentConfig.setNormalProviderType("");
-                    agentConfig.setNormalBaseUrl("");
-                    agentConfig.setNormalApiKey("");
-                    agentConfig.setLightModelName("");
-                    agentConfig.setLightProviderType("");
-                    agentConfig.setLightBaseUrl("");
-                    agentConfig.setLightApiKey("");
-                    agentConfig.save();
-                    runFormLoad(this::loadTieredModelSettings);
-                    if (onModelConfigChanged != null) onModelConfigChanged.run();
-                    dirtyPanels.remove(currentPanel);
-                    refreshFooter();
-                    setFooterStatus("已清除分级配置，所有档位回落到高性能模型", "status-info");
-                }
-            });
-        });
-
-        HBox buttonBar = new HBox(10, clearButton);
-        buttonBar.setAlignment(Pos.CENTER_LEFT);
-
-        VBox panel = new VBox(14,
-                sectionTitle,
-                intro,
-                new Separator(),
-                normalCard,
-                new Separator(),
-                lightCard,
-                new Separator(),
-                buttonBar);
-        panel.setPadding(new Insets(4));
-
-        ScrollPane scrollPane = new ScrollPane(panel);
-        scrollPane.setFitToWidth(true);
-        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        scrollPane.getStyleClass().add("settings-scroll-pane");
-        return scrollPane;
-    }
-
-    /** 构建单个档位的卡片（NORMAL 或 LIGHT） */
-    private Node buildTierCard(String title, String description, String tierName) {
-        boolean isLight = "light".equals(tierName);
-
-        Label titleLabel = new Label(title);
-        titleLabel.getStyleClass().add("settings-group-title");
-
-        Label descLabel = new Label(description);
-        descLabel.getStyleClass().add("settings-hint");
-        descLabel.setWrapText(true);
-
-        ToggleSwitch enabledCheck = new ToggleSwitch();
-        HBox enabledRow = toggleRow(enabledCheck, "启用独立配置",
-                "关闭则该档回落到「模型配置」中的高性能模型");
-
-        ComboBox<String> providerCombo = new ComboBox<>();
-        providerCombo.getItems().addAll("OpenAI", "DashScope", "Anthropic", "Gemini", "Ollama");
-        providerCombo.getStyleClass().add("settings-combo");
-
-        TextField baseUrlField = createTextField("API 地址（留空则继承高性能模型）");
-        baseUrlField.setPrefWidth(350);
-        TextField modelNameField = createTextField("模型名称");
-        modelNameField.setPrefWidth(350);
-        PasswordField apiKeyField = new PasswordField();
-        apiKeyField.setPromptText("API 密钥（留空则继承高性能模型）");
-        apiKeyField.setPrefWidth(350);
-
-        ToggleSwitch thinkingCheck = new ToggleSwitch();
-        HBox thinkingCheckRow = toggleRow(thinkingCheck, "思考模式", isLight
-                ? "不推荐，会显著拖慢路由/分类调用"
-                : null);
-
-        // 切换 enabled 时启用/禁用所有字段
-        Runnable applyEnabled = () -> {
-            boolean en = enabledCheck.isSelected();
-            providerCombo.setDisable(!en);
-            baseUrlField.setDisable(!en);
-            modelNameField.setDisable(!en);
-            apiKeyField.setDisable(!en);
-            thinkingCheck.setDisable(!en);
-        };
-        enabledCheck.selectedProperty().addListener((obs, oldV, newV) -> applyEnabled.run());
-
-        // provider 切换时帮用户填一份推荐 baseUrl + modelName（仅作为提示，可手动改）
-        providerCombo.setOnAction(e -> applyTierProviderPreset(
-                providerCombo.getValue(), baseUrlField, modelNameField));
-
-        GridPane grid = new GridPane();
-        grid.setHgap(10);
-        grid.setVgap(8);
-        grid.add(createLabel("提供商："), 0, 0);
-        grid.add(providerCombo, 1, 0);
-        grid.add(createLabel("API 地址："), 0, 1);
-        grid.add(baseUrlField, 1, 1);
-        grid.add(createLabel("模型名称："), 0, 2);
-        grid.add(modelNameField, 1, 2);
-        grid.add(createLabel("API 密钥："), 0, 3);
-        grid.add(secretField(apiKeyField), 1, 3);
-
-        VBox card = new VBox(8, titleLabel, descLabel, enabledRow, grid, thinkingCheckRow);
-
-        // 把控件挂到对应字段
-        if (isLight) {
-            this.lightTierEnabledCheck = enabledCheck;
-            this.lightProviderCombo = providerCombo;
-            this.lightBaseUrlField = baseUrlField;
-            this.lightModelNameField = modelNameField;
-            this.lightApiKeyField = apiKeyField;
-            this.lightThinkingEnabledCheck = thinkingCheck;
-        } else {
-            this.normalTierEnabledCheck = enabledCheck;
-            this.normalProviderCombo = providerCombo;
-            this.normalBaseUrlField = baseUrlField;
-            this.normalModelNameField = modelNameField;
-            this.normalApiKeyField = apiKeyField;
-            this.normalThinkingEnabledCheck = thinkingCheck;
-        }
-
-        return card;
-    }
-
-    /** 切换分级档的提供商时，按提供商常用值预填 baseUrl + modelName */
-    private void applyTierProviderPreset(String provider, TextField baseUrlField, TextField modelNameField) {
-        if (provider == null) return;
-        switch (provider) {
-            case "OpenAI" -> {
-                if (baseUrlField.getText().isBlank()) baseUrlField.setText("https://api.openai.com/v1");
-                if (modelNameField.getText().isBlank()) modelNameField.setText("gpt-4o-mini");
-            }
-            case "DashScope" -> {
-                if (baseUrlField.getText().isBlank()) {
-                    baseUrlField.setText("https://dashscope.aliyuncs.com/compatible-mode/v1");
-                }
-                if (modelNameField.getText().isBlank()) modelNameField.setText("qwen-turbo");
-            }
-            case "Anthropic" -> {
-                if (baseUrlField.getText().isBlank()) baseUrlField.setText("https://api.anthropic.com");
-                if (modelNameField.getText().isBlank()) modelNameField.setText("claude-haiku-4-5-20251001");
-            }
-            case "Gemini" -> {
-                if (modelNameField.getText().isBlank()) modelNameField.setText("gemini-2.5-flash");
-            }
-            case "Ollama" -> {
-                if (baseUrlField.getText().isBlank()) baseUrlField.setText("http://localhost:11434");
-                if (modelNameField.getText().isBlank()) modelNameField.setText("qwen3:8b");
-            }
-        }
-    }
-
-    /** 将分级模型配置加载到表单 */
-    private void loadTieredModelSettings() {
-        // NORMAL 档
-        boolean normalEnabled = agentConfig.isNormalTierConfigured();
-        normalTierEnabledCheck.setSelected(normalEnabled);
-        normalProviderCombo.setValue(agentConfig.getNormalProviderType());
-        normalBaseUrlField.setText(agentConfig.getNormalBaseUrl());
-        normalModelNameField.setText(normalEnabled ? agentConfig.getNormalModelName() : "");
-        normalApiKeyField.setText(normalEnabled ? agentConfig.getNormalApiKey() : "");
-        normalThinkingEnabledCheck.setSelected(agentConfig.isNormalThinkingEnabled());
-        normalProviderCombo.setDisable(!normalEnabled);
-        normalBaseUrlField.setDisable(!normalEnabled);
-        normalModelNameField.setDisable(!normalEnabled);
-        normalApiKeyField.setDisable(!normalEnabled);
-        normalThinkingEnabledCheck.setDisable(!normalEnabled);
-
-        // LIGHT 档
-        boolean lightEnabled = agentConfig.isLightTierConfigured();
-        lightTierEnabledCheck.setSelected(lightEnabled);
-        lightProviderCombo.setValue(agentConfig.getLightProviderType());
-        lightBaseUrlField.setText(agentConfig.getLightBaseUrl());
-        lightModelNameField.setText(lightEnabled ? agentConfig.getLightModelName() : "");
-        lightApiKeyField.setText(lightEnabled ? agentConfig.getLightApiKey() : "");
-        lightThinkingEnabledCheck.setSelected(agentConfig.isLightThinkingEnabled());
-        lightProviderCombo.setDisable(!lightEnabled);
-        lightBaseUrlField.setDisable(!lightEnabled);
-        lightModelNameField.setDisable(!lightEnabled);
-        lightApiKeyField.setDisable(!lightEnabled);
-        lightThinkingEnabledCheck.setDisable(!lightEnabled);
-    }
-
-    /** 将分级模型表单保存到配置 */
-    private void saveTieredModelSettings() {
-        // NORMAL — enabled 未勾选 → 写空字符串触发回落
-        if (normalTierEnabledCheck.isSelected()) {
-            agentConfig.setNormalProviderType(
-                    normalProviderCombo.getValue() == null ? "" : normalProviderCombo.getValue());
-            agentConfig.setNormalBaseUrl(normalBaseUrlField.getText().trim());
-            agentConfig.setNormalModelName(normalModelNameField.getText().trim());
-            agentConfig.setNormalApiKey(normalApiKeyField.getText().trim());
-            agentConfig.setNormalThinkingEnabled(normalThinkingEnabledCheck.isSelected());
-        } else {
-            agentConfig.setNormalProviderType("");
-            agentConfig.setNormalBaseUrl("");
-            agentConfig.setNormalModelName("");
-            agentConfig.setNormalApiKey("");
-        }
-
-        // LIGHT
-        if (lightTierEnabledCheck.isSelected()) {
-            agentConfig.setLightProviderType(
-                    lightProviderCombo.getValue() == null ? "" : lightProviderCombo.getValue());
-            agentConfig.setLightBaseUrl(lightBaseUrlField.getText().trim());
-            agentConfig.setLightModelName(lightModelNameField.getText().trim());
-            agentConfig.setLightApiKey(lightApiKeyField.getText().trim());
-            agentConfig.setLightThinkingEnabled(lightThinkingEnabledCheck.isSelected());
-        } else {
-            agentConfig.setLightProviderType("");
-            agentConfig.setLightBaseUrl("");
-            agentConfig.setLightModelName("");
-            agentConfig.setLightApiKey("");
-        }
-
-        agentConfig.save();
-        log.info("分级模型配置已保存 — NORMAL configured: {}, LIGHT configured: {}",
-                agentConfig.isNormalTierConfigured(), agentConfig.isLightTierConfigured());
-    }
 }

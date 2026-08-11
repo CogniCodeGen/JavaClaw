@@ -2346,10 +2346,10 @@ public class ChatViewController implements AutoCloseable {
         log.info("打开设置对话框{}", category != null ? "（直达：" + category + "）" : "");
         javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
         SettingsView settingsView = new SettingsView(ownerStage,
-                runtime != null ? runtime.getEmbeddingGateway() : null,
                 applicationKernel.current().agentSettingsPanels(),
                 applicationKernel.current().siteCredentialPanels(),
-                applicationKernel.current().mcpCenters());
+                applicationKernel.current().mcpCenters(),
+                applicationKernel.current().modelSettingsSections());
         settingsView.setOnModelConfigChanged(this::rebuildAgentService);
         settingsView.show(category);
     }

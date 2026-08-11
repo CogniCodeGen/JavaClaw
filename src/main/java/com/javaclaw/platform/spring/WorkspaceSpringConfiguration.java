@@ -18,6 +18,11 @@ import com.javaclaw.application.mcp.McpManagementApplicationService;
 import com.javaclaw.application.mcp.McpManagementUseCase;
 import com.javaclaw.application.mcp.McpRuntimePort;
 import com.javaclaw.application.mcp.McpTemplatePort;
+import com.javaclaw.application.settings.ModelSettingsApplicationService;
+import com.javaclaw.application.settings.EmbeddingRuntimeProbePort;
+import com.javaclaw.application.settings.ModelSettingsPort;
+import com.javaclaw.application.settings.ModelSettingsProbePort;
+import com.javaclaw.application.settings.ModelSettingsUseCase;
 import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.loop.LoopService;
@@ -28,6 +33,9 @@ import com.javaclaw.infrastructure.mcp.McpClientManagerAdapter;
 import com.javaclaw.infrastructure.mcp.McpConfigManagerAdapter;
 import com.javaclaw.infrastructure.mcp.McpJsonImporterAdapter;
 import com.javaclaw.infrastructure.mcp.McpTemplateLibraryAdapter;
+import com.javaclaw.infrastructure.settings.AgentConfigModelSettingsAdapter;
+import com.javaclaw.infrastructure.settings.EmbeddingGatewayRuntimeProbeAdapter;
+import com.javaclaw.infrastructure.settings.HttpModelSettingsProbeAdapter;
 import com.javaclaw.mode.ChatMode;
 import com.javaclaw.mode.LoopMode;
 import com.javaclaw.mode.PlanMode;
@@ -55,7 +63,10 @@ import com.javaclaw.ui.javafx.mcp.McpServerEditorFactory;
 import com.javaclaw.ui.javafx.mcp.McpTemplateCellFactory;
 import com.javaclaw.ui.javafx.mcp.McpTemplateDialogFactory;
 import com.javaclaw.ui.javafx.mcp.McpToolRowFactory;
+import com.javaclaw.ui.javafx.settings.ModelSettingsSectionFactory;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
+import com.javaclaw.platform.http.HttpGateway;
+import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.workflow.node.PublicNodeCatalog;
 import com.javaclaw.workflow.runtime.NodeExecutorRegistry;
 import com.javaclaw.workflow.service.SystemGraphFactory;
@@ -245,6 +256,37 @@ public class WorkspaceSpringConfiguration {
     McpCenterViewFactory mcpCenterViewFactory(
             @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
         return new McpCenterViewFactory(loader);
+    }
+
+    @Bean
+    ModelSettingsPort modelSettingsPort(com.javaclaw.config.AgentConfig config) {
+        return new AgentConfigModelSettingsAdapter(config);
+    }
+
+    @Bean
+    EmbeddingRuntimeProbePort embeddingRuntimeProbePort(AgentRuntime runtime) {
+        return new EmbeddingGatewayRuntimeProbeAdapter(runtime.getEmbeddingGateway());
+    }
+
+    @Bean
+    ModelSettingsProbePort modelSettingsProbePort(
+            HttpGateway http,
+            JsonCodec json,
+            EmbeddingRuntimeProbePort runtimeEmbedding) {
+        return new HttpModelSettingsProbeAdapter(http, json, runtimeEmbedding);
+    }
+
+    @Bean
+    ModelSettingsApplicationService modelSettingsApplicationService(
+            ModelSettingsPort settings,
+            ModelSettingsProbePort probes) {
+        return new ModelSettingsUseCase(settings, probes);
+    }
+
+    @Bean
+    ModelSettingsSectionFactory modelSettingsSectionFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new ModelSettingsSectionFactory(loader);
     }
 
     @Bean

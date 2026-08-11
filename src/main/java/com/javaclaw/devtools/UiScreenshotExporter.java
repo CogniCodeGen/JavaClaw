@@ -123,10 +123,11 @@ public final class UiScreenshotExporter {
 
             shots.add(new Shot("01-main-chat.png", "JavaClaw 智能助手", null));
             shots.add(new Shot("02-settings.png", "设置", () -> showInternalStage(
-                    new SettingsView(primaryStage, runtime.getEmbeddingGateway(),
+                    new SettingsView(primaryStage,
                             workspaceRuntime.agentSettingsPanels(),
                             workspaceRuntime.siteCredentialPanels(),
-                            workspaceRuntime.mcpCenters()))));
+                            workspaceRuntime.mcpCenters(),
+                            workspaceRuntime.modelSettingsSections()))));
             shots.add(new Shot("03-knowledge-center.png", "知识库中心", () ->
                     new KnowledgeCenterView(primaryStage, runtime.getKnowledgeExpert(), port,
                             () -> {}, () -> {},

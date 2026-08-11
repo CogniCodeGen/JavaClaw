@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import com.javaclaw.ui.javafx.control.ToggleSwitch?>
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.ComboBox?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.control.Separator?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.VBox?>
+
+<ScrollPane fx:id="root" fitToWidth="true" hbarPolicy="NEVER"
+            styleClass="scroll-pane, settings-scroll-pane"
+            xmlns="http://javafx.com/javafx/25"
+            xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.javaclaw.ui.javafx.settings.EmbeddingSettingsController">
+    <content>
+        <VBox spacing="12.0" maxWidth="760.0">
+            <padding><Insets top="4.0" right="4.0" bottom="4.0" left="4.0"/></padding>
+            <children>
+                <Label text="嵌入模型（知识库 RAG）" styleClass="settings-section-title"/>
+                <HBox alignment="CENTER_LEFT" spacing="12.0" styleClass="row-toggle">
+                    <children>
+                        <VBox spacing="1.0" HBox.hgrow="ALWAYS">
+                            <children>
+                                <Label text="本地知识库（RAG）" styleClass="rt-main"/>
+                                <Label wrapText="true" styleClass="rt-sub"
+                                       text="启用后知识专家具备文档导入和语义检索能力；文档与分块管理位于知识库中心"/>
+                            </children>
+                        </VBox>
+                        <ToggleSwitch fx:id="enabledCheck"/>
+                    </children>
+                </HBox>
+                <Separator/>
+                <Label text="嵌入模型" styleClass="settings-group-title"/>
+                <HBox alignment="CENTER_LEFT" spacing="10.0">
+                    <children>
+                        <Label text="提供商：" minWidth="70.0" styleClass="settings-label"/>
+                        <ComboBox fx:id="providerCombo" prefWidth="220.0"
+                                  styleClass="combo-box, settings-combo" onAction="#providerChanged"/>
+                    </children>
+                </HBox>
+                <Label text="嵌入模型可使用与聊天模型不同的提供商" styleClass="settings-hint"/>
+                <HBox alignment="CENTER_LEFT" spacing="10.0">
+                    <children>
+                        <Label text="API 地址：" minWidth="70.0" styleClass="settings-label"/>
+                        <TextField fx:id="baseUrlField" prefWidth="350.0"
+                                   styleClass="text-input, text-field, settings-field"/>
+                    </children>
+                </HBox>
+                <HBox alignment="CENTER_LEFT" spacing="10.0">
+                    <children>
+                        <Label text="API 密钥：" minWidth="70.0" styleClass="settings-label"/>
+                        <fx:include fx:id="apiKeyField" source="../control/secret-field.fxml"/>
+                    </children>
+                </HBox>
+                <HBox alignment="CENTER_LEFT" spacing="10.0">
+                    <children>
+                        <Label text="模型名称：" minWidth="70.0" styleClass="settings-label"/>
+                        <TextField fx:id="modelNameField" prefWidth="350.0"
+                                   styleClass="text-input, text-field, settings-field"/>
+                    </children>
+                </HBox>
+                <HBox alignment="CENTER_LEFT" spacing="10.0">
+                    <children>
+                        <Label text="向量维度：" minWidth="70.0" styleClass="settings-label"/>
+                        <TextField fx:id="dimensionsField" prefWidth="120.0"
+                                   styleClass="text-input, text-field, settings-field"/>
+                    </children>
+                </HBox>
+                <Separator/>
+                <Label text="检索参数" styleClass="settings-group-title"/>
+                <HBox alignment="CENTER_LEFT" spacing="10.0">
+                    <children>
+                        <Label text="返回数量：" minWidth="70.0" styleClass="settings-label"/>
+                        <TextField fx:id="retrieveLimitField" prefWidth="80.0"
+                                   styleClass="text-input, text-field, settings-field"/>
+                        <Label text="分数阈值：" minWidth="70.0" styleClass="settings-label"/>
+                        <TextField fx:id="scoreThresholdField" prefWidth="80.0"
+                                   styleClass="text-input, text-field, settings-field"/>
+                    </children>
+                </HBox>
+                <Label text="返回数量建议 3~5，分数阈值建议 0.3~0.5（越高越精确）"
+                       styleClass="settings-hint"/>
+                <Separator/>
+                <Label wrapText="true" styleClass="settings-hint"
+                       text="修改保存后立即生效，当前对话的智能体服务将重建 · 分块大小/重叠在「知识库中心 › 索引设置」调整"/>
+            </children>
+        </VBox>
+    </content>
+</ScrollPane>

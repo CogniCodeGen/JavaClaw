@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import com.javaclaw.ui.javafx.control.ToggleSwitch?>
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.ComboBox?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.control.Separator?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.VBox?>
+
+<ScrollPane fx:id="root" fitToWidth="true" hbarPolicy="NEVER"
+            styleClass="scroll-pane, settings-scroll-pane"
+            xmlns="http://javafx.com/javafx/25"
+            xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.javaclaw.ui.javafx.settings.TieredModelSettingsController">
+    <content>
+        <VBox spacing="14.0" maxWidth="760.0">
+            <padding><Insets top="4.0" right="4.0" bottom="4.0" left="4.0"/></padding>
+            <children>
+                <Label text="分级模型" styleClass="settings-section-title"/>
+                <Label wrapText="true" styleClass="settings-hint"
+                       text="轻量模型服务路由、分类与视觉预处理；普通模型服务子专家和常规任务；高性能模型沿用「模型配置」。关闭独立配置时自动回落。"/>
+                <Separator/>
+                <VBox spacing="8.0">
+                    <children>
+                        <Label text="普通模型（NORMAL）" styleClass="settings-group-title"/>
+                        <Label text="子专家、知识专家、单步执行体与记忆压缩等常规任务"
+                               wrapText="true" styleClass="settings-hint"/>
+                        <HBox alignment="CENTER_LEFT" spacing="12.0" styleClass="row-toggle">
+                            <children>
+                                <VBox spacing="1.0" HBox.hgrow="ALWAYS">
+                                    <children>
+                                        <Label text="启用独立配置" styleClass="rt-main"/>
+                                        <Label text="关闭则回落到「模型配置」中的高性能模型" styleClass="rt-sub"/>
+                                    </children>
+                                </VBox>
+                                <ToggleSwitch fx:id="normalEnabledCheck"/>
+                            </children>
+                        </HBox>
+                        <HBox alignment="CENTER_LEFT" spacing="10.0">
+                            <children>
+                                <Label text="提供商：" minWidth="70.0" styleClass="settings-label"/>
+                                <ComboBox fx:id="normalProviderCombo" prefWidth="220.0"
+                                          styleClass="combo-box, settings-combo"
+                                          onAction="#normalProviderChanged"/>
+                            </children>
+                        </HBox>
+                        <HBox alignment="CENTER_LEFT" spacing="10.0">
+                            <children>
+                                <Label text="API 地址：" minWidth="70.0" styleClass="settings-label"/>
+                                <TextField fx:id="normalBaseUrlField" prefWidth="350.0"
+                                           promptText="API 地址（留空则继承高性能模型）"
+                                           styleClass="text-input, text-field, settings-field"/>
+                            </children>
+                        </HBox>
+                        <HBox alignment="CENTER_LEFT" spacing="10.0">
+                            <children>
+                                <Label text="模型名称：" minWidth="70.0" styleClass="settings-label"/>
+                                <TextField fx:id="normalModelNameField" prefWidth="350.0"
+                                           styleClass="text-input, text-field, settings-field"/>
+                            </children>
+                        </HBox>
+                        <HBox alignment="CENTER_LEFT" spacing="10.0">
+                            <children>
+                                <Label text="API 密钥：" minWidth="70.0" styleClass="settings-label"/>
+                                <fx:include fx:id="normalApiKeyField" source="../control/secret-field.fxml"/>
+                            </children>
+                        </HBox>
+                        <HBox alignment="CENTER_LEFT" spacing="12.0" styleClass="row-toggle">
+                            <children>
+                                <Label text="思考模式" styleClass="rt-main" HBox.hgrow="ALWAYS"/>
+                                <ToggleSwitch fx:id="normalThinkingCheck"/>
+                            </children>
+                        </HBox>
+                    </children>
+                </VBox>
+                <Separator/>
+                <VBox spacing="8.0">
+                    <children>
+                        <Label text="轻量模型（LIGHT）" styleClass="settings-group-title"/>
+                        <Label text="工具路由、意图识别、记忆蒸馏和过程评估等一次性轻量调用"
+                               wrapText="true" styleClass="settings-hint"/>
+                        <HBox alignment="CENTER_LEFT" spacing="12.0" styleClass="row-toggle">
+                            <children>
+                                <VBox spacing="1.0" HBox.hgrow="ALWAYS">
+                                    <children>
+                                        <Label text="启用独立配置" styleClass="rt-main"/>
+                                        <Label text="关闭则回落到「模型配置」中的高性能模型" styleClass="rt-sub"/>
+                                    </children>
+                                </VBox>
+                                <ToggleSwitch fx:id="lightEnabledCheck"/>
+                            </children>
+                        </HBox>
+                        <HBox alignment="CENTER_LEFT" spacing="10.0">
+                            <children>
+                                <Label text="提供商：" minWidth="70.0" styleClass="settings-label"/>
+                                <ComboBox fx:id="lightProviderCombo" prefWidth="220.0"
+                                          styleClass="combo-box, settings-combo"
+                                          onAction="#lightProviderChanged"/>
+                            </children>
+                        </HBox>
+                        <HBox alignment="CENTER_LEFT" spacing="10.0">
+                            <children>
+                                <Label text="API 地址：" minWidth="70.0" styleClass="settings-label"/>
+                                <TextField fx:id="lightBaseUrlField" prefWidth="350.0"
+                                           promptText="API 地址（留空则继承高性能模型）"
+                                           styleClass="text-input, text-field, settings-field"/>
+                            </children>
+                        </HBox>
+                        <HBox alignment="CENTER_LEFT" spacing="10.0">
+                            <children>
+                                <Label text="模型名称：" minWidth="70.0" styleClass="settings-label"/>
+                                <TextField fx:id="lightModelNameField" prefWidth="350.0"
+                                           styleClass="text-input, text-field, settings-field"/>
+                            </children>
+                        </HBox>
+                        <HBox alignment="CENTER_LEFT" spacing="10.0">
+                            <children>
+                                <Label text="API 密钥：" minWidth="70.0" styleClass="settings-label"/>
+                                <fx:include fx:id="lightApiKeyField" source="../control/secret-field.fxml"/>
+                            </children>
+                        </HBox>
+                        <HBox alignment="CENTER_LEFT" spacing="12.0" styleClass="row-toggle">
+                            <children>
+                                <VBox spacing="1.0" HBox.hgrow="ALWAYS">
+                                    <children>
+                                        <Label text="思考模式" styleClass="rt-main"/>
+                                        <Label text="不推荐，会显著拖慢路由与分类调用" styleClass="rt-sub"/>
+                                    </children>
+                                </VBox>
+                                <ToggleSwitch fx:id="lightThinkingCheck"/>
+                            </children>
+                        </HBox>
+                    </children>
+                </VBox>
+                <Separator/>
+                <Button text="清除分级配置" styleClass="button, settings-reset-button"
+                        onAction="#clearRequested"/>
+            </children>
+        </VBox>
+    </content>
+</ScrollPane>

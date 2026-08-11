@@ -39,7 +39,11 @@ public final class HttpGateway {
         });
     }
 
-    HttpGateway(ManagedTaskExecutor executor, Transport transport) {
+    /**
+     * 使用自定义传输创建网关。主要用于离线测试或宿主提供的受控传输；并发、重试、
+     * 超时和取消仍由本实例统一管理，传输实现只负责一次请求。
+     */
+    public HttpGateway(ManagedTaskExecutor executor, Transport transport) {
         this.executor = java.util.Objects.requireNonNull(executor, "executor");
         this.transport = java.util.Objects.requireNonNull(transport, "transport");
     }
@@ -145,7 +149,7 @@ public final class HttpGateway {
     }
 
     @FunctionalInterface
-    interface Transport {
+    public interface Transport {
         HttpResult send(HttpRequest request) throws IOException, InterruptedException;
     }
 }
