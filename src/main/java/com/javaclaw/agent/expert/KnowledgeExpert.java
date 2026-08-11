@@ -214,6 +214,10 @@ public class KnowledgeExpert {
                 return ToolResponse.error("knowledge_import_file", "文件不存在: " + filePath);
             }
             String name = path.getFileName().toString();
+            if (SensitiveDataRedactor.containsLikelyCredential(name)) {
+                return ToolResponse.error("knowledge_import_file",
+                        SensitiveDataRedactor.credentialStorageDeniedReason());
+            }
             String lower = name.toLowerCase();
             List<Document> docs;
             if (lower.endsWith(".pdf")) {
@@ -268,6 +272,10 @@ public class KnowledgeExpert {
                 return ToolResponse.error("knowledge_import_text", "文本内容不能为空");
             }
             if (SensitiveDataRedactor.containsLikelyCredential(text)) {
+                return ToolResponse.error("knowledge_import_text",
+                        SensitiveDataRedactor.credentialStorageDeniedReason());
+            }
+            if (SensitiveDataRedactor.containsLikelyCredential(title)) {
                 return ToolResponse.error("knowledge_import_text",
                         SensitiveDataRedactor.credentialStorageDeniedReason());
             }
@@ -686,7 +694,7 @@ public class KnowledgeExpert {
 
     /** 某文档前 max 个片段的正文（按 chunkIndex 排序），供详情抽屉「片段预览」。 */
     public List<String> getDocumentChunkPreviews(String docName, int max) {
-        if (!ragEnabled || docName == null) return List.of();
+        if (!ragEnabled || docName == null || max <= 0) return List.of();
         List<KnowledgeChunk> chunks = new ArrayList<>();
         for (KnowledgeChunk c : allChunks()) if (docName.equals(c.docName)) chunks.add(c);
         chunks.sort((a, b) -> Integer.compare(a.chunkIndex, b.chunkIndex));
