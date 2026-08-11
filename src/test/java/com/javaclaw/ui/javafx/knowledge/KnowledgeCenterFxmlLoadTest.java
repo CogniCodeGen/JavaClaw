@@ -144,7 +144,8 @@ class KnowledgeCenterFxmlLoadTest {
         context.registerBean(KnowledgeImportPicker.class, FakePicker::new);
         context.registerBean(KnowledgeTextImportDialogFactory.class,
                 () -> new KnowledgeTextImportDialogFactory(
-                        context.getBean(SpringFxmlLoader.class), fx));
+                        context.getBean(SpringFxmlLoader.class), fx,
+                        new com.javaclaw.app.UIHelper(fx)));
         context.registerBean(KnowledgeCenterViewFactory.class,
                 () -> new KnowledgeCenterViewFactory(context.getBean(SpringFxmlLoader.class)));
         context.refresh();

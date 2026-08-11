@@ -111,7 +111,9 @@ class MemoryFxmlLoadTest {
         context.registerBean(MemoryComponentFactory.class,
                 () -> new MemoryComponentFactory(context.getBean(SpringFxmlLoader.class)));
         context.registerBean(MemoryFactDialogFactory.class,
-                () -> new MemoryFactDialogFactory(context.getBean(SpringFxmlLoader.class)));
+                () -> new MemoryFactDialogFactory(
+                        context.getBean(SpringFxmlLoader.class),
+                        new com.javaclaw.app.UIHelper(context.getBean(FxDispatcher.class))));
         context.registerBean(MemoryViewFactory.class,
                 () -> new MemoryViewFactory(context.getBean(SpringFxmlLoader.class)));
         context.refresh();

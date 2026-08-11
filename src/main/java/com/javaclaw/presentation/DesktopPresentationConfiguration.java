@@ -30,6 +30,7 @@ import com.javaclaw.ui.javafx.theme.ThemeSelectionService;
 import com.javaclaw.ui.javafx.theme.FontManagerFontSelectionService;
 import com.javaclaw.ui.javafx.theme.FontManager;
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.app.UIHelper;
 import com.javaclaw.ui.javafx.theme.FontSelectionService;
 import com.javaclaw.ui.javafx.plugin.JavaFxPluginJarPicker;
 import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
@@ -55,8 +56,9 @@ public class DesktopPresentationConfiguration {
     }
 
     @Bean
-    ChatShortcutHelpFactory chatShortcutHelpFactory(SpringFxmlLoader loader) {
-        return new ChatShortcutHelpFactory(loader);
+    ChatShortcutHelpFactory chatShortcutHelpFactory(
+            SpringFxmlLoader loader, UIHelper ui) {
+        return new ChatShortcutHelpFactory(loader, ui);
     }
 
     @Bean

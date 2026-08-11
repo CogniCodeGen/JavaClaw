@@ -55,6 +55,7 @@ public final class ChatComposerController implements AutoCloseable {
 
     private final SpringFxmlLoader loader;
     private final ProjectAttachmentPicker attachmentPicker;
+    private final UIHelper ui;
     private final ChatComposerViewModel viewModel = new ChatComposerViewModel();
     private final List<ViewHandle<StackPane>> attachmentViews = new ArrayList<>();
     private Runnable sendAction = () -> { };
@@ -66,9 +67,11 @@ public final class ChatComposerController implements AutoCloseable {
     @Autowired
     public ChatComposerController(
             SpringFxmlLoader loader,
-            ProjectAttachmentPicker attachmentPicker) {
+            ProjectAttachmentPicker attachmentPicker,
+            UIHelper ui) {
         this.loader = Objects.requireNonNull(loader, "loader");
         this.attachmentPicker = Objects.requireNonNull(attachmentPicker, "attachmentPicker");
+        this.ui = Objects.requireNonNull(ui, "ui");
     }
 
     @FXML
@@ -91,7 +94,7 @@ public final class ChatComposerController implements AutoCloseable {
                 (observable, previous, blocked) -> renderInteractionState());
         viewModel.attachments().addListener(
                 (javafx.collections.ListChangeListener<File>) change -> refreshAttachmentViews());
-        UIHelper.addPressEffect(sendButton);
+        ui.addPressEffect(sendButton);
         renderInteractionState();
     }
 

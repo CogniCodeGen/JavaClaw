@@ -24,9 +24,11 @@ public final class SiteCredentialEditorFactory {
             SiteCredentialEditorFactory.class.getResource("/fxml/site/site-credential-editor.fxml"),
             "缺少 site-credential-editor.fxml");
     private final SpringFxmlLoader loader;
+    private final UIHelper ui;
 
-    public SiteCredentialEditorFactory(SpringFxmlLoader loader) {
+    public SiteCredentialEditorFactory(SpringFxmlLoader loader, UIHelper ui) {
         this.loader = Objects.requireNonNull(loader, "loader");
+        this.ui = Objects.requireNonNull(ui, "ui");
     }
 
     /** 必须在 FX 线程调用；取消返回空，表单关闭后不会保留明文密码节点。 */
@@ -53,7 +55,7 @@ public final class SiteCredentialEditorFactory {
             save.disableProperty().bind(controller.validBinding().not());
             dialog.setResultConverter(button -> button == ButtonType.OK
                     ? controller.command() : null);
-            UIHelper.styleDialog(dialog);
+            ui.styleDialog(dialog);
             return dialog.showAndWait();
         } finally {
             if (save != null) {

@@ -5,7 +5,7 @@ import java.awt.PopupMenu;
 import java.awt.SystemTray;
 import java.awt.TrayIcon;
 
-import javafx.application.Platform;
+import com.javaclaw.platform.fx.FxDispatcher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -13,7 +13,7 @@ import org.slf4j.LoggerFactory;
  * 系统托盘管理器 — 让应用在主窗口隐藏后仍能从托盘恢复 / 操作 / 退出（后台常驻）。
  *
  * <p>基于 AWT {@link SystemTray}（JavaFX 无原生托盘 API）。所有托盘菜单点击在 AWT 事件线程
- * 触发，本类统一通过 {@link Platform#runLater} 桥接回 JavaFX Application Thread 再执行注入的动作，
+ * 触发，本类统一通过 {@link FxDispatcher} 桥接回 JavaFX Application Thread 再执行注入的动作，
  * 调用方无需自行切线程。</p>
  *
  * <p>不支持托盘的平台上 {@link #install()} 返回 false，调用方应回退为"关闭即退出"。</p>
@@ -27,6 +27,7 @@ public class SystemTrayManager {
     private final Runnable onNewTask;
     private final Runnable onOpenSettings;
     private final Runnable onExit;
+    private final FxDispatcher fx;
 
     private TrayIcon trayIcon;
     private volatile boolean installed;
@@ -37,14 +38,16 @@ public class SystemTrayManager {
      * @param onNewTask      "新建任务"动作
      * @param onOpenSettings "打开设置"动作
      * @param onExit         "退出"动作（应触发应用真正退出）
+     * @param fx             AWT 事件线程到 JavaFX 线程的唯一调度入口
      */
     public SystemTrayManager(String tooltip, Runnable onShowWindow, Runnable onNewTask,
-                             Runnable onOpenSettings, Runnable onExit) {
+                             Runnable onOpenSettings, Runnable onExit, FxDispatcher fx) {
         this.tooltip = tooltip;
         this.onShowWindow = onShowWindow;
         this.onNewTask = onNewTask;
         this.onOpenSettings = onOpenSettings;
         this.onExit = onExit;
+        this.fx = java.util.Objects.requireNonNull(fx, "fx");
     }
 
     /**
@@ -120,7 +123,7 @@ public class SystemTrayManager {
     /** 把托盘菜单动作切回 JavaFX 线程执行，吞异常避免 AWT 线程崩溃。 */
     private void dispatch(Runnable action) {
         if (action == null) return;
-        Platform.runLater(() -> {
+        fx.dispatch(() -> {
             try {
                 action.run();
             } catch (Exception e) {

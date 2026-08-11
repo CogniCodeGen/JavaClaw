@@ -35,6 +35,7 @@ public class SidebarController implements AutoCloseable {
     private ComboBox<Workspace> workspaceCombo;
     private final FxDispatcher fx;
     private final WorkspaceManager workspaces;
+    private final UIHelper ui;
 
     private boolean closed;
 
@@ -50,9 +51,10 @@ public class SidebarController implements AutoCloseable {
 
     /** Spring/FXML 构造路径；FXMLLoader 随后注入所有静态控件。 */
     @Autowired
-    public SidebarController(FxDispatcher fx, WorkspaceManager workspaces) {
+    public SidebarController(FxDispatcher fx, WorkspaceManager workspaces, UIHelper ui) {
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
         this.workspaces = java.util.Objects.requireNonNull(workspaces, "workspaces");
+        this.ui = java.util.Objects.requireNonNull(ui, "ui");
     }
 
 
@@ -200,7 +202,8 @@ public class SidebarController implements AutoCloseable {
      */
     @FXML
     private void onCreateWorkspace() {
-        TextInputDialog dialog = UIHelper.createTextInputDialog("新工作区", "新建工作区", "工作区名称:", null);
+        TextInputDialog dialog = ui.createTextInputDialog(
+                "新工作区", "新建工作区", "工作区名称:", null);
         Optional<String> result = dialog.showAndWait();
         result.ifPresent(name -> {
             if (!name.isBlank()) {
@@ -224,17 +227,17 @@ public class SidebarController implements AutoCloseable {
         if (selected == null) return;
 
         if (wsMgr.getWorkspaces().size() <= 1) {
-            UIHelper.createWarningAlert("不能删除最后一个工作区", null).showAndWait();
+            ui.createWarningAlert("不能删除最后一个工作区", null).showAndWait();
             return;
         }
 
-        Alert confirm = UIHelper.createConfirmAlert("删除工作区",
+        Alert confirm = ui.createConfirmAlert("删除工作区",
                 "确定要删除工作区「" + selected.getName() + "」吗？\n此操作将永久删除该工作区的所有数据。", null);
         confirm.showAndWait().ifPresent(btn -> {
             if (btn == ButtonType.OK) {
                 boolean isCurrent = selected.getId().equals(wsMgr.getCurrentWorkspaceId());
                 if (isCurrent) {
-                    UIHelper.createWarningAlert("当前工作区仍被聊天、定时任务和插件服务使用，"
+                    ui.createWarningAlert("当前工作区仍被聊天、定时任务和插件服务使用，"
                             + "请先切换到其他工作区，待切换完成后再删除。", null).showAndWait();
                     return;
                 }

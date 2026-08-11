@@ -150,15 +150,23 @@ class McpFxmlLoadTest {
         context.registerBean(McpKeyValueRowFactory.class,
                 () -> new McpKeyValueRowFactory(context.getBean(SpringFxmlLoader.class)));
         context.registerBean(McpServerEditorFactory.class,
-                () -> new McpServerEditorFactory(context.getBean(SpringFxmlLoader.class)));
+                () -> new McpServerEditorFactory(
+                        context.getBean(SpringFxmlLoader.class),
+                        new com.javaclaw.app.UIHelper(context.getBean(FxDispatcher.class))));
         context.registerBean(McpTemplateCellFactory.class,
                 () -> new McpTemplateCellFactory(context.getBean(SpringFxmlLoader.class)));
         context.registerBean(McpTemplateDialogFactory.class,
-                () -> new McpTemplateDialogFactory(context.getBean(SpringFxmlLoader.class)));
+                () -> new McpTemplateDialogFactory(
+                        context.getBean(SpringFxmlLoader.class),
+                        new com.javaclaw.app.UIHelper(context.getBean(FxDispatcher.class))));
         context.registerBean(McpImportDialogFactory.class,
-                () -> new McpImportDialogFactory(context.getBean(SpringFxmlLoader.class)));
+                () -> new McpImportDialogFactory(
+                        context.getBean(SpringFxmlLoader.class),
+                        new com.javaclaw.app.UIHelper(context.getBean(FxDispatcher.class))));
         context.registerBean(McpLogDialogFactory.class,
-                () -> new McpLogDialogFactory(context.getBean(SpringFxmlLoader.class)));
+                () -> new McpLogDialogFactory(
+                        context.getBean(SpringFxmlLoader.class),
+                        new com.javaclaw.app.UIHelper(context.getBean(FxDispatcher.class))));
         context.registerBean(McpCenterViewFactory.class,
                 () -> new McpCenterViewFactory(context.getBean(SpringFxmlLoader.class)));
         context.refresh();

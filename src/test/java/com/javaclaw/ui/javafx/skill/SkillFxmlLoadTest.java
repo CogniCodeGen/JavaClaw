@@ -147,7 +147,9 @@ class SkillFxmlLoadTest {
         context.registerBean(SkillProposalCardFactory.class, SkillProposalCardFactory::new);
         context.registerBean(SkillScriptNameDialogFactory.class,
                 () -> new SkillScriptNameDialogFactory(
-                        context.getBean(SpringFxmlLoader.class), context.getBean(FxDispatcher.class)));
+                        context.getBean(SpringFxmlLoader.class),
+                        context.getBean(FxDispatcher.class),
+                        new com.javaclaw.app.UIHelper(context.getBean(FxDispatcher.class))));
         context.registerBean(SkillCenterViewFactory.class,
                 () -> new SkillCenterViewFactory(
                         context.getBean(SpringFxmlLoader.class), context.getBean(FxDispatcher.class)));

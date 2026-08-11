@@ -21,9 +21,11 @@ public final class ChatShortcutHelpFactory {
             "缺少 chat-shortcut-help.fxml");
 
     private final SpringFxmlLoader loader;
+    private final UIHelper ui;
 
-    public ChatShortcutHelpFactory(SpringFxmlLoader loader) {
+    public ChatShortcutHelpFactory(SpringFxmlLoader loader, UIHelper ui) {
         this.loader = Objects.requireNonNull(loader, "loader");
+        this.ui = Objects.requireNonNull(ui, "ui");
     }
 
     /** Must run on the JavaFX application thread; the FXML handle is closed with the modal dialog. */
@@ -45,7 +47,7 @@ public final class ChatShortcutHelpFactory {
                 dialog.initOwner(owner);
             }
             dialog.setOnHidden(event -> release(handle, released));
-            UIHelper.styleAlert(dialog);
+            ui.styleAlert(dialog);
             dialog.showAndWait();
             release(handle, released);
         } catch (RuntimeException | Error failure) {

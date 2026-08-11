@@ -291,7 +291,8 @@ public class JavaClawApp extends Application {
                                 .create(primaryStage).showCreate();
                     },
                     () -> { showMainWindow(); if (chatView != null) chatView.openSettings(); },
-                    this::requestFullExit);
+                    this::requestFullExit,
+                    fxDispatcher);
             if (!trayManager.install()) {
                 trayManager = null;
             }

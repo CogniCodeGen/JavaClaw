@@ -24,10 +24,13 @@ public final class WorkflowInputDialogFactory {
             "缺少 workflow-input-dialog.fxml");
     private final SpringFxmlLoader loader;
     private final FxDispatcher fx;
+    private final UIHelper ui;
 
-    public WorkflowInputDialogFactory(SpringFxmlLoader loader, FxDispatcher fx) {
+    public WorkflowInputDialogFactory(
+            SpringFxmlLoader loader, FxDispatcher fx, UIHelper ui) {
         this.loader = Objects.requireNonNull(loader, "loader");
         this.fx = Objects.requireNonNull(fx, "fx");
+        this.ui = Objects.requireNonNull(ui, "ui");
     }
 
     Optional<String> show(Window owner) {
@@ -40,7 +43,7 @@ public final class WorkflowInputDialogFactory {
             dialog.setHeaderText("输入工作流的 input 状态");
             dialog.getDialogPane().setContent(handle.root());
             dialog.getDialogPane().getButtonTypes().setAll(ButtonType.OK, ButtonType.CANCEL);
-            UIHelper.styleDialog(dialog);
+            ui.styleDialog(dialog);
             dialog.setOnShown(event -> fx.dispatchLater(controller::requestFocus));
             if (dialog.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) {
                 return Optional.empty();

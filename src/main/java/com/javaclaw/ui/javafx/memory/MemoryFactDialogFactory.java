@@ -26,9 +26,11 @@ public final class MemoryFactDialogFactory {
     private static final ButtonType SAVE =
             new ButtonType("保存", ButtonBar.ButtonData.OK_DONE);
     private final SpringFxmlLoader loader;
+    private final UIHelper ui;
 
-    public MemoryFactDialogFactory(SpringFxmlLoader loader) {
+    public MemoryFactDialogFactory(SpringFxmlLoader loader, UIHelper ui) {
         this.loader = Objects.requireNonNull(loader, "loader");
+        this.ui = Objects.requireNonNull(ui, "ui");
     }
 
     Optional<AddFactCommand> show(Window owner, List<String> sections) {
@@ -48,7 +50,7 @@ public final class MemoryFactDialogFactory {
             saveButton.disableProperty().bind(controller.invalidBinding());
             dialog.setResultConverter(button -> button == SAVE ? controller.command() : null);
             dialog.setOnShown(event -> controller.focusStatement());
-            UIHelper.styleDialog(dialog);
+            ui.styleDialog(dialog);
             return dialog.showAndWait();
         } finally {
             if (saveButton != null) saveButton.disableProperty().unbind();

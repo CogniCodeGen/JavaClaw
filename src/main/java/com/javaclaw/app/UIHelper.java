@@ -1,7 +1,7 @@
 package com.javaclaw.app;
 
 import javafx.animation.ScaleTransition;
-import javafx.application.Platform;
+import com.javaclaw.platform.fx.FxDispatcher;
 import javafx.geometry.Rectangle2D;
 import javafx.scene.Node;
 import javafx.scene.control.Alert;
@@ -31,6 +31,8 @@ import javafx.util.Duration;
  */
 public final class UIHelper {
 
+    private final FxDispatcher fx;
+
     /** 标准弹窗在桌面大屏上的尺寸上限；小屏会继续按可视区域自适应缩小。 */
     private static final double DIALOG_MAX_WIDTH = 720;
     private static final double DIALOG_MAX_HEIGHT = 680;
@@ -47,7 +49,9 @@ public final class UIHelper {
         CSS_PATH = url != null ? url.toExternalForm() : null;
     }
 
-    private UIHelper() {}
+    public UIHelper(FxDispatcher fx) {
+        this.fx = java.util.Objects.requireNonNull(fx, "fx");
+    }
 
     /**
      * 为任意 JavaFX Dialog 应用统一样式与响应式尺寸约束。
@@ -55,7 +59,7 @@ public final class UIHelper {
      * <p>自定义内容会放入无边框滚动容器，避免长表单或长说明把窗口撑出屏幕；
      * ListView / TextArea 等本身可滚动的控件会保留原结构。页脚按钮始终固定在内容区下方。</p>
      */
-    public static void styleDialog(Dialog<?> dialog) {
+    public void styleDialog(Dialog<?> dialog) {
         if (dialog == null) {
             return;
         }
@@ -80,7 +84,7 @@ public final class UIHelper {
                 }
                 // 调用方可能在 styleDialog 之后才设置 content，展示前再统一整理一次。
                 prepareScrollableContent(pane);
-                Platform.runLater(() -> constrainWindow(dialog));
+                fx.dispatchLater(() -> constrainWindow(dialog));
             });
         }
     }
@@ -91,7 +95,7 @@ public final class UIHelper {
      * <p>标准正文会被替换为可换行、可滚动的阅读区；短文案仍保持紧凑，
      * 长文案只滚动正文而不会继续放大整个弹窗。</p>
      */
-    public static void styleAlert(Alert alert) {
+    public void styleAlert(Alert alert) {
         if (alert == null) {
             return;
         }
@@ -104,7 +108,7 @@ public final class UIHelper {
     /**
      * 创建统一样式的确认弹窗
      */
-    public static Alert createConfirmAlert(String title, String content, Stage owner) {
+    public Alert createConfirmAlert(String title, String content, Stage owner) {
         Alert alert = new Alert(Alert.AlertType.CONFIRMATION, content, ButtonType.OK, ButtonType.CANCEL);
         alert.setTitle(title);
         alert.setHeaderText(null);
@@ -118,7 +122,7 @@ public final class UIHelper {
     /**
      * 创建统一样式的警告弹窗
      */
-    public static Alert createWarningAlert(String content, Stage owner) {
+    public Alert createWarningAlert(String content, Stage owner) {
         Alert alert = new Alert(Alert.AlertType.WARNING, content, ButtonType.OK);
         alert.setHeaderText(null);
         if (owner != null) {
@@ -131,7 +135,7 @@ public final class UIHelper {
     /**
      * 创建统一样式的文本输入弹窗
      */
-    public static TextInputDialog createTextInputDialog(String defaultValue, String title, String contentText, Stage owner) {
+    public TextInputDialog createTextInputDialog(String defaultValue, String title, String contentText, Stage owner) {
         TextInputDialog dialog = new TextInputDialog(defaultValue);
         dialog.setTitle(title);
         dialog.setHeaderText(null);
@@ -146,14 +150,14 @@ public final class UIHelper {
     /**
      * 创建统一样式的右键菜单
      */
-    public static ContextMenu createContextMenu() {
+    public ContextMenu createContextMenu() {
         return new ContextMenu();
     }
 
     /**
      * 创建危险操作菜单项（红色文字）
      */
-    public static MenuItem createDangerMenuItem(String text) {
+    public MenuItem createDangerMenuItem(String text) {
         MenuItem item = new MenuItem(text);
         item.getStyleClass().add("menu-item-danger");
         return item;
@@ -162,7 +166,7 @@ public final class UIHelper {
     /**
      * 为节点添加按下缩放效果（按下缩小到 95%，松开恢复）
      */
-    public static void addPressEffect(Node node) {
+    public void addPressEffect(Node node) {
         node.setOnMousePressed(e -> {
             ScaleTransition st = new ScaleTransition(Duration.millis(80), node);
             st.setToX(0.95);

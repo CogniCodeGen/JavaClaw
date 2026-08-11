@@ -37,6 +37,7 @@ public final class SidebarSessionListController
         implements SidebarSessionCellActions, AutoCloseable {
 
     private final SpringFxmlLoader fxmlLoader;
+    private final UIHelper ui;
     private final SidebarViewModel viewModel = new SidebarViewModel();
     private final List<SessionState> sessions = new ArrayList<>();
     private final Set<String> checkedSessionIds = new HashSet<>();
@@ -62,8 +63,9 @@ public final class SidebarSessionListController
     private boolean closed;
 
     @Autowired
-    public SidebarSessionListController(SpringFxmlLoader fxmlLoader) {
+    public SidebarSessionListController(SpringFxmlLoader fxmlLoader, UIHelper ui) {
         this.fxmlLoader = Objects.requireNonNull(fxmlLoader, "fxmlLoader");
+        this.ui = Objects.requireNonNull(ui, "ui");
     }
 
     @FXML
@@ -177,7 +179,7 @@ public final class SidebarSessionListController
     @FXML
     private void onBatchDelete() {
         if (checkedSessionIds.isEmpty()) return;
-        Alert alert = UIHelper.createConfirmAlert(
+        Alert alert = ui.createConfirmAlert(
                 "确认批量删除",
                 "确定要删除选中的 " + checkedSessionIds.size() + " 个会话吗？\n此操作不可恢复。",
                 null);

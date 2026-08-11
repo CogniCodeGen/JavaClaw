@@ -10,7 +10,7 @@ package com.javaclaw.api.conversation;
  * </ul>
  *
  * <p>每次运行必须且只能触发一次终态。UI 层实现本接口时负责线程切换
- * （例如 JavaFX 侧用 {@code Platform.runLater} 包装）。</p>
+ * （例如 JavaFX 侧经 {@code FxDispatcher} 包装）。</p>
  */
 public interface ConversationCallbacks {
 

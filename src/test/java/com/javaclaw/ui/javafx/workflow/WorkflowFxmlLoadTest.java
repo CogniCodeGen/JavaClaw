@@ -132,10 +132,13 @@ class WorkflowFxmlLoadTest {
         context.registerBean(WorkflowRunCellFactory.class, WorkflowRunCellFactory::new);
         context.registerBean(WorkflowNodeCardFactory.class, WorkflowNodeCardFactory::new);
         context.registerBean(WorkflowConditionDialogFactory.class,
-                () -> new WorkflowConditionDialogFactory(context.getBean(SpringFxmlLoader.class)));
+                () -> new WorkflowConditionDialogFactory(
+                        context.getBean(SpringFxmlLoader.class),
+                        new com.javaclaw.app.UIHelper(context.getBean(FxDispatcher.class))));
         context.registerBean(WorkflowInputDialogFactory.class,
                 () -> new WorkflowInputDialogFactory(context.getBean(SpringFxmlLoader.class),
-                        context.getBean(FxDispatcher.class)));
+                        context.getBean(FxDispatcher.class),
+                        new com.javaclaw.app.UIHelper(context.getBean(FxDispatcher.class))));
         context.registerBean(WorkflowViewFactory.class,
                 () -> new WorkflowViewFactory(context.getBean(SpringFxmlLoader.class),
                         context.getBean(FxDispatcher.class)));

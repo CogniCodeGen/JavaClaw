@@ -44,9 +44,11 @@ public final class InteractionDialogFactory {
             "拒绝", ButtonBar.ButtonData.CANCEL_CLOSE);
 
     private final SpringFxmlLoader loader;
+    private final UIHelper ui;
 
-    public InteractionDialogFactory(SpringFxmlLoader loader) {
+    public InteractionDialogFactory(SpringFxmlLoader loader, UIHelper ui) {
         this.loader = Objects.requireNonNull(loader, "loader");
+        this.ui = Objects.requireNonNull(ui, "ui");
     }
 
     public ConfirmDecision confirm(ConfirmRequest request) {
@@ -71,7 +73,7 @@ public final class InteractionDialogFactory {
             }
             bindAllowButtons(dialog, controller, request.managedTask(), boundButtons);
             dialog.setResultConverter(InteractionDialogFactory::decision);
-            UIHelper.styleDialog(dialog);
+            ui.styleDialog(dialog);
             return dialog.showAndWait().orElse(ConfirmDecision.DENY);
         } finally {
             boundButtons.forEach(button -> button.disableProperty().unbind());
@@ -95,7 +97,7 @@ public final class InteractionDialogFactory {
             accept.disableProperty().bind(controller.selectedProperty().isNull());
             dialog.setResultConverter(button -> button == ButtonType.OK
                     ? controller.selectedId() : null);
-            UIHelper.styleDialog(dialog);
+            ui.styleDialog(dialog);
             return dialog.showAndWait().orElse(null);
         } finally {
             if (accept != null) accept.disableProperty().unbind();
@@ -116,7 +118,7 @@ public final class InteractionDialogFactory {
             dialog.getDialogPane().getButtonTypes().setAll(DENY, ALLOW);
             dialog.setResultConverter(button -> button == ALLOW
                     ? controller.takeSecret() : null);
-            UIHelper.styleDialog(dialog);
+            ui.styleDialog(dialog);
             return dialog.showAndWait().orElse(null);
         } finally {
             handle.close();

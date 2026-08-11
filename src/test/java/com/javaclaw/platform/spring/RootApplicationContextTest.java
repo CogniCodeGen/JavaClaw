@@ -60,6 +60,7 @@ class RootApplicationContextTest {
             assertNotNull(context.getBean(CredentialCipher.class));
             assertNotNull(context.getBean(ManagedTaskExecutor.class));
             assertNotNull(context.getBean(FxDispatcher.class));
+            assertNotNull(context.getBean(com.javaclaw.app.UIHelper.class));
             assertNotNull(context.getBean(SpringFxmlLoader.class));
             assertNotNull(context.getBean(ProcessRunner.class));
             assertNotNull(context.getBean(HttpGateway.class));

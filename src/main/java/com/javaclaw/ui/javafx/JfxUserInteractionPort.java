@@ -147,7 +147,7 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
 
     @Override
     public boolean isAvailable() {
-        // JavaFX Platform 已启动即视为可用；Toolkit 未初始化时 Platform.runLater 抛 IllegalStateException
+        // JavaFX Platform 已启动即视为可用；Toolkit 未初始化时 FxDispatcher 排队会抛异常。
         try {
             return Platform.isFxApplicationThread() || !Platform.isImplicitExit()
                     || true; // 一旦进入 start()，Platform 始终可用

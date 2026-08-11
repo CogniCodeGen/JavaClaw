@@ -130,7 +130,9 @@ class SiteCredentialFxmlLoadTest {
         context.registerBean(SiteCredentialCardFactory.class,
                 () -> new SiteCredentialCardFactory(context.getBean(SpringFxmlLoader.class)));
         context.registerBean(SiteCredentialEditorFactory.class,
-                () -> new SiteCredentialEditorFactory(context.getBean(SpringFxmlLoader.class)));
+                () -> new SiteCredentialEditorFactory(
+                        context.getBean(SpringFxmlLoader.class),
+                        new com.javaclaw.app.UIHelper(context.getBean(FxDispatcher.class))));
         context.registerBean(SiteCredentialPanelFactory.class,
                 () -> new SiteCredentialPanelFactory(context.getBean(SpringFxmlLoader.class)));
         context.refresh();

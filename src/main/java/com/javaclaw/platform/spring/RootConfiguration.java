@@ -72,6 +72,7 @@ import com.javaclaw.system.CommandSessionManager;
 import com.javaclaw.system.CommandWhitelistManager;
 import com.javaclaw.system.CommandToolFactory;
 import com.javaclaw.chat.ChatHistoryManager;
+import com.javaclaw.app.UIHelper;
 import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationEventPublisher;
@@ -401,6 +402,11 @@ public class RootConfiguration {
     }
 
     @Bean
+    UIHelper uiHelper(FxDispatcher fx) {
+        return new UIHelper(fx);
+    }
+
+    @Bean
     JfxUserInteractionPort jfxUserInteractionPort(
             FxDispatcher fxDispatcher,
             ImageViewerFactory imageViewer,
@@ -419,8 +425,9 @@ public class RootConfiguration {
     }
 
     @Bean
-    InteractionDialogFactory interactionDialogFactory(SpringFxmlLoader loader) {
-        return new InteractionDialogFactory(loader);
+    InteractionDialogFactory interactionDialogFactory(
+            SpringFxmlLoader loader, UIHelper ui) {
+        return new InteractionDialogFactory(loader, ui);
     }
 
     @Bean

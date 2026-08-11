@@ -22,9 +22,11 @@ public final class WorkflowConditionDialogFactory {
                     "/fxml/workflow/workflow-condition-dialog.fxml"),
             "缺少 workflow-condition-dialog.fxml");
     private final SpringFxmlLoader loader;
+    private final UIHelper ui;
 
-    public WorkflowConditionDialogFactory(SpringFxmlLoader loader) {
+    public WorkflowConditionDialogFactory(SpringFxmlLoader loader, UIHelper ui) {
         this.loader = Objects.requireNonNull(loader, "loader");
+        this.ui = Objects.requireNonNull(ui, "ui");
     }
 
     Optional<WorkflowConditionDialogController.Selection> show(Window owner) {
@@ -34,7 +36,7 @@ public final class WorkflowConditionDialogFactory {
             dialog.setTitle("条件分支");
             dialog.getDialogPane().setContent(handle.root());
             dialog.getDialogPane().getButtonTypes().setAll(ButtonType.OK, ButtonType.CANCEL);
-            UIHelper.styleDialog(dialog);
+            ui.styleDialog(dialog);
             if (dialog.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) {
                 return Optional.empty();
             }

@@ -24,9 +24,11 @@ public final class McpServerEditorFactory {
             McpServerEditorFactory.class.getResource("/fxml/mcp/mcp-server-editor.fxml"),
             "缺少 mcp-server-editor.fxml");
     private final SpringFxmlLoader loader;
+    private final UIHelper ui;
 
-    public McpServerEditorFactory(SpringFxmlLoader loader) {
+    public McpServerEditorFactory(SpringFxmlLoader loader, UIHelper ui) {
         this.loader = Objects.requireNonNull(loader, "loader");
+        this.ui = Objects.requireNonNull(ui, "ui");
     }
 
     Optional<SaveCommand> show(Window owner, Server existing) {
@@ -62,7 +64,7 @@ public final class McpServerEditorFactory {
                 if (!controller.validate()) event.consume();
             });
             dialog.setResultConverter(button -> button == ButtonType.OK ? controller.command() : null);
-            UIHelper.styleDialog(dialog);
+            ui.styleDialog(dialog);
             addStylesheet(dialog);
             return dialog.showAndWait();
         } finally {

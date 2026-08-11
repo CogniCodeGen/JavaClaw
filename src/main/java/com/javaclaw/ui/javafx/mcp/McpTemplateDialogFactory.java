@@ -21,9 +21,11 @@ public final class McpTemplateDialogFactory {
             McpTemplateDialogFactory.class.getResource("/fxml/mcp/mcp-template-dialog.fxml"),
             "缺少 mcp-template-dialog.fxml");
     private final SpringFxmlLoader loader;
+    private final UIHelper ui;
 
-    public McpTemplateDialogFactory(SpringFxmlLoader loader) {
+    public McpTemplateDialogFactory(SpringFxmlLoader loader, UIHelper ui) {
         this.loader = Objects.requireNonNull(loader, "loader");
+        this.ui = Objects.requireNonNull(ui, "ui");
     }
 
     Optional<SaveCommand> show(Window owner) {
@@ -44,7 +46,7 @@ public final class McpTemplateDialogFactory {
             });
             dialog.setResultConverter(button -> button == ButtonType.OK
                     ? controller.selectedCommand() : null);
-            UIHelper.styleDialog(dialog);
+            ui.styleDialog(dialog);
             return dialog.showAndWait();
         } finally { handle.close(); }
     }

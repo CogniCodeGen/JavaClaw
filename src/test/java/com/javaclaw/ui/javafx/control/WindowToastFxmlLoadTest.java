@@ -104,7 +104,9 @@ class WindowToastFxmlLoadTest {
         context.registerBean(WindowToastFactory.class,
                 () -> new WindowToastFactory(context.getBean(SpringFxmlLoader.class)));
         context.registerBean(InteractionDialogFactory.class,
-                () -> new InteractionDialogFactory(context.getBean(SpringFxmlLoader.class)));
+                () -> new InteractionDialogFactory(
+                        context.getBean(SpringFxmlLoader.class),
+                        new com.javaclaw.app.UIHelper(context.getBean(FxDispatcher.class))));
         context.refresh();
         return context.getBean(WindowToastFactory.class);
     }

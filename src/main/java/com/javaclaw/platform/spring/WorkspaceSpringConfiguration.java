@@ -374,8 +374,9 @@ public class WorkspaceSpringConfiguration {
 
     @Bean
     McpServerEditorFactory mcpServerEditorFactory(
-            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
-        return new McpServerEditorFactory(loader);
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader,
+            com.javaclaw.app.UIHelper ui) {
+        return new McpServerEditorFactory(loader, ui);
     }
 
     @Bean
@@ -386,20 +387,23 @@ public class WorkspaceSpringConfiguration {
 
     @Bean
     McpTemplateDialogFactory mcpTemplateDialogFactory(
-            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
-        return new McpTemplateDialogFactory(loader);
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader,
+            com.javaclaw.app.UIHelper ui) {
+        return new McpTemplateDialogFactory(loader, ui);
     }
 
     @Bean
     McpImportDialogFactory mcpImportDialogFactory(
-            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
-        return new McpImportDialogFactory(loader);
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader,
+            com.javaclaw.app.UIHelper ui) {
+        return new McpImportDialogFactory(loader, ui);
     }
 
     @Bean
     McpLogDialogFactory mcpLogDialogFactory(
-            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
-        return new McpLogDialogFactory(loader);
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader,
+            com.javaclaw.app.UIHelper ui) {
+        return new McpLogDialogFactory(loader, ui);
     }
 
     @Bean
@@ -581,8 +585,9 @@ public class WorkspaceSpringConfiguration {
 
     @Bean
     SiteCredentialEditorFactory siteCredentialEditorFactory(
-            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
-        return new SiteCredentialEditorFactory(loader);
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader,
+            com.javaclaw.app.UIHelper ui) {
+        return new SiteCredentialEditorFactory(loader, ui);
     }
 
     @Bean
@@ -706,15 +711,17 @@ public class WorkspaceSpringConfiguration {
 
     @Bean
     WorkflowConditionDialogFactory workflowConditionDialogFactory(
-            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
-        return new WorkflowConditionDialogFactory(loader);
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader,
+            com.javaclaw.app.UIHelper ui) {
+        return new WorkflowConditionDialogFactory(loader, ui);
     }
 
     @Bean
     WorkflowInputDialogFactory workflowInputDialogFactory(
             @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader,
-            com.javaclaw.platform.fx.FxDispatcher fx) {
-        return new WorkflowInputDialogFactory(loader, fx);
+            com.javaclaw.platform.fx.FxDispatcher fx,
+            com.javaclaw.app.UIHelper ui) {
+        return new WorkflowInputDialogFactory(loader, fx, ui);
     }
 
     @Bean
@@ -819,8 +826,9 @@ public class WorkspaceSpringConfiguration {
     @Bean
     SkillScriptNameDialogFactory skillScriptNameDialogFactory(
             @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader,
-            com.javaclaw.platform.fx.FxDispatcher fx) {
-        return new SkillScriptNameDialogFactory(loader, fx);
+            com.javaclaw.platform.fx.FxDispatcher fx,
+            com.javaclaw.app.UIHelper ui) {
+        return new SkillScriptNameDialogFactory(loader, fx, ui);
     }
 
     @Bean
@@ -890,8 +898,9 @@ public class WorkspaceSpringConfiguration {
     @Bean
     KnowledgeTextImportDialogFactory knowledgeTextImportDialogFactory(
             @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader,
-            com.javaclaw.platform.fx.FxDispatcher fx) {
-        return new KnowledgeTextImportDialogFactory(loader, fx);
+            com.javaclaw.platform.fx.FxDispatcher fx,
+            com.javaclaw.app.UIHelper ui) {
+        return new KnowledgeTextImportDialogFactory(loader, fx, ui);
     }
 
     @Bean
@@ -921,8 +930,9 @@ public class WorkspaceSpringConfiguration {
 
     @Bean
     MemoryFactDialogFactory memoryFactDialogFactory(
-            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
-        return new MemoryFactDialogFactory(loader);
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader,
+            com.javaclaw.app.UIHelper ui) {
+        return new MemoryFactDialogFactory(loader, ui);
     }
 
     @Bean

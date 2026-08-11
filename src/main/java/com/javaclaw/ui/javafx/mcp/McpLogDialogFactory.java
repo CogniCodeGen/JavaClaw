@@ -20,9 +20,11 @@ public final class McpLogDialogFactory {
             McpLogDialogFactory.class.getResource("/fxml/mcp/mcp-log-dialog.fxml"),
             "缺少 mcp-log-dialog.fxml");
     private final SpringFxmlLoader loader;
+    private final UIHelper ui;
 
-    public McpLogDialogFactory(SpringFxmlLoader loader) {
+    public McpLogDialogFactory(SpringFxmlLoader loader, UIHelper ui) {
         this.loader = Objects.requireNonNull(loader, "loader");
+        this.ui = Objects.requireNonNull(ui, "ui");
     }
 
     void show(Window owner, LogSnapshot log) {
@@ -38,7 +40,7 @@ public final class McpLogDialogFactory {
             dialog.getDialogPane().setContent(handle.root());
             dialog.getDialogPane().getButtonTypes().setAll(ButtonType.CLOSE);
             dialog.getDialogPane().setPrefWidth(640);
-            UIHelper.styleDialog(dialog);
+            ui.styleDialog(dialog);
             dialog.showAndWait();
         } finally { handle.close(); }
     }

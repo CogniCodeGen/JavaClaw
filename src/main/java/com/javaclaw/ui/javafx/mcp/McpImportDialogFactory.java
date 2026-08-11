@@ -22,9 +22,11 @@ public final class McpImportDialogFactory {
             McpImportDialogFactory.class.getResource("/fxml/mcp/mcp-import-dialog.fxml"),
             "缺少 mcp-import-dialog.fxml");
     private final SpringFxmlLoader loader;
+    private final UIHelper ui;
 
-    public McpImportDialogFactory(SpringFxmlLoader loader) {
+    public McpImportDialogFactory(SpringFxmlLoader loader, UIHelper ui) {
         this.loader = Objects.requireNonNull(loader, "loader");
+        this.ui = Objects.requireNonNull(ui, "ui");
     }
 
     Optional<ImportCommand> show(Window owner) {
@@ -48,7 +50,7 @@ public final class McpImportDialogFactory {
             });
             dialog.setResultConverter(button -> button == ButtonType.OK
                     ? new ImportCommand(controller.json(), controller.fallbackName()) : null);
-            UIHelper.styleDialog(dialog);
+            ui.styleDialog(dialog);
             return dialog.showAndWait();
         } finally { handle.close(); }
     }
