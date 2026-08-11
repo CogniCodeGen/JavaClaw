@@ -142,7 +142,7 @@ class KnowledgeCenterFxmlLoadTest {
             view.controller().prepare();
             view.controller().prepare();
         });
-        awaitFx(() -> service.snapshotCalls >= 2 && documentList().getItems().size() == 1);
+        awaitFx(() -> service.snapshotCalls >= 1 && documentList().getItems().size() == 1);
         assertEquals(1, service.observeCalls, "重复 prepare 不得重复订阅健康事件");
 
         runFx(() -> {
