@@ -10,6 +10,12 @@ import java.util.List;
 /** 把现有 trace 文件格式适配到诊断应用端口；实例本身无状态且线程安全。 */
 public final class TraceExporterDiagnosticsArchive implements DiagnosticsArchivePort {
 
+    private final TraceExporter exporter;
+
+    public TraceExporterDiagnosticsArchive(TraceExporter exporter) {
+        this.exporter = java.util.Objects.requireNonNull(exporter, "exporter");
+    }
+
     @Override
     public List<String> query(
             String keyword,
@@ -17,11 +23,11 @@ public final class TraceExporterDiagnosticsArchive implements DiagnosticsArchive
             String eventType,
             long sinceEpochMillis,
             int limit) throws IOException {
-        return TraceExporter.grep(keyword, agent, eventType, sinceEpochMillis, limit);
+        return exporter.grep(keyword, agent, eventType, sinceEpochMillis, limit);
     }
 
     @Override
     public long export(Path target) throws IOException {
-        return TraceExporter.exportTo(target);
+        return exporter.exportTo(target);
     }
 }

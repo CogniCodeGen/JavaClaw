@@ -197,12 +197,14 @@ public class WorkspaceSpringConfiguration {
             SkillRuntimeServices skills,
             ObjectProvider<SddTaskApplicationService> sddTasks,
             com.javaclaw.system.JShellRunner jshellRunner,
+            com.javaclaw.diagnostics.TraceRecorder traceRecorder,
             com.javaclaw.config.AgentConfig settings,
             WorkspaceContext workspace,
             KnowledgeDocumentPreferencePort knowledgePreferences) {
         return new AgentRuntime(options.browserManager(), customAgents, siteCredentials,
                 mcpConfigurations, mcpClients, workspaceTaskScope, schedules, skills,
-                sddTasks::getObject, jshellRunner, settings, workspace, knowledgePreferences);
+                sddTasks::getObject, jshellRunner, traceRecorder, settings, workspace,
+                knowledgePreferences);
     }
 
     @Bean

@@ -38,6 +38,9 @@ public final class ApplicationKernel implements AutoCloseable {
     private final ManagedTaskExecutor taskExecutor;
     private final ToolInvocationPipeline toolPipeline;
     private final PluginManager pluginManager;
+    private final WorkspaceManager workspaces;
+    private final DataManager data;
+    private final TraceRecorder traceRecorder;
     private final AtomicBoolean transitioning = new AtomicBoolean(false);
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
@@ -52,12 +55,18 @@ public final class ApplicationKernel implements AutoCloseable {
                              WorkspaceSpringContextFactory workspaceContexts,
                              ManagedTaskExecutor taskExecutor,
                              ToolInvocationPipeline toolPipeline,
-                             PluginManager pluginManager) {
+                             PluginManager pluginManager,
+                             WorkspaceManager workspaces,
+                             DataManager data,
+                             TraceRecorder traceRecorder) {
         this.browserManager = Objects.requireNonNull(browserManager, "browserManager");
         this.interactionPort = Objects.requireNonNull(interactionPort, "interactionPort");
         this.taskExecutor = Objects.requireNonNull(taskExecutor, "taskExecutor");
         this.toolPipeline = Objects.requireNonNull(toolPipeline, "toolPipeline");
         this.pluginManager = Objects.requireNonNull(pluginManager, "pluginManager");
+        this.workspaces = Objects.requireNonNull(workspaces, "workspaces");
+        this.data = Objects.requireNonNull(data, "data");
+        this.traceRecorder = Objects.requireNonNull(traceRecorder, "traceRecorder");
         this.runtimeFactory = new RuntimeFactory(workspaceContexts, browserManager, openTaskView,
                 openWorkflowView, closeWorkflowView, java.util.Set.of());
     }
@@ -66,7 +75,7 @@ public final class ApplicationKernel implements AutoCloseable {
     public synchronized WorkspaceRuntime initialize() {
         ensureOpen();
         if (current != null) return current;
-        WorkspaceRuntime created = runtimeFactory.create(WorkspaceContext.captureCurrent());
+        WorkspaceRuntime created = runtimeFactory.create(captureWorkspace());
         externalServicesInitialized = true;
         try {
             activate(created, true);
@@ -106,7 +115,7 @@ public final class ApplicationKernel implements AutoCloseable {
 
     private synchronized WorkspaceRuntime rebuildCurrentInternal() {
         ensureOpen();
-        WorkspaceContext context = WorkspaceContext.captureCurrent();
+        WorkspaceContext context = captureWorkspace();
         WorkspaceRuntime old = current;
         current = null;
         if (old != null) {
@@ -144,7 +153,6 @@ public final class ApplicationKernel implements AutoCloseable {
 
     private synchronized WorkspaceRuntime switchWorkspaceInternal(String targetWorkspaceId) {
         ensureOpen();
-        WorkspaceManager workspaces = WorkspaceManager.getInstance();
         String previousId = workspaces.getCurrentWorkspaceId();
         if (targetWorkspaceId.equals(previousId)) return current();
 
@@ -157,7 +165,7 @@ public final class ApplicationKernel implements AutoCloseable {
                 throw new IllegalStateException("WorkspaceManager 拒绝切换到 " + targetWorkspaceId);
             }
             reloadWorkspaceState();
-            WorkspaceContext targetContext = WorkspaceContext.captureCurrent();
+            WorkspaceContext targetContext = captureWorkspace();
             browserManager.rebindWorkspace(targetContext.browserDir(), targetContext.screenshotsDir());
 
             WorkspaceRuntime replacement = createAndActivate(targetContext);
@@ -179,13 +187,12 @@ public final class ApplicationKernel implements AutoCloseable {
     }
 
     private void recoverWorkspace(String workspaceId, WorkspaceRuntime preserved) {
-        WorkspaceManager workspaces = WorkspaceManager.getInstance();
         if (!workspaceId.equals(workspaces.getCurrentWorkspaceId())
                 && !workspaces.switchWorkspace(workspaceId)) {
             throw new IllegalStateException("无法切回原工作区: " + workspaceId);
         }
         reloadWorkspaceState();
-        WorkspaceContext restoredContext = WorkspaceContext.captureCurrent();
+        WorkspaceContext restoredContext = captureWorkspace();
         browserManager.rebindWorkspace(restoredContext.browserDir(), restoredContext.screenshotsDir());
         activate(preserved, false);
         current = preserved;
@@ -208,8 +215,12 @@ public final class ApplicationKernel implements AutoCloseable {
         AgentConfig.getInstance().reload();
         EmailConfig.getInstance().reload();
         NotificationConfig.getInstance().reload();
-        DataManager.getInstance().reload();
-        TraceRecorder.getInstance().reload();
+        data.reload();
+        traceRecorder.reload();
+    }
+
+    private WorkspaceContext captureWorkspace() {
+        return WorkspaceContext.captureCurrent(workspaces, data);
     }
 
     /** 把全局订阅方统一切到新运行时，避免任何管理器继续持有旧服务。 */

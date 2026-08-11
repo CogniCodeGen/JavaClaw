@@ -72,9 +72,9 @@ class SettingsWindowFxmlLoadTest {
         previousDataDirectory = System.getProperty(DataRoot.DATA_DIR_PROPERTY);
         System.setProperty(DataRoot.DATA_DIR_PROPERTY, tempDirectory.resolve("data-v3").toString());
         root = ApplicationContexts.createRoot(DataRoot.resolve());
-        WorkspaceManager.getInstance().init();
-        DataManager.getInstance().reload();
-        WorkspaceContext current = WorkspaceContext.captureCurrent();
+        WorkspaceManager workspaces = root.getBean(WorkspaceManager.class);
+        DataManager data = root.getBean(DataManager.class);
+        WorkspaceContext current = WorkspaceContext.captureCurrent(workspaces, data);
         browser = new PlaywrightBrowserManager(true, current.browserDir(), current.screenshotsDir());
         workspace = root.getBean(WorkspaceSpringContextFactory.class).create(current,
                 new WorkspaceRuntimeOptions(browser, () -> { }, () -> { }, () -> { }, Set.of()));

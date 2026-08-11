@@ -1,6 +1,9 @@
 package com.javaclaw.config;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import com.javaclaw.platform.data.DataRoot;
+import com.javaclaw.platform.spring.ApplicationContexts;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -15,32 +18,47 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorkspaceManagerDeletionTest {
 
+    @TempDir
+    Path tempDirectory;
+
     @Test
     void 删除工作区会清理工作流数据索引行和全部文件分桶() throws Exception {
-        WorkspaceManager manager = WorkspaceManager.getInstance();
-        manager.init();
-        Workspace workspace = manager.createWorkspace("待删除工作区");
-        String workspaceId = workspace.getId();
+        String previous = System.getProperty(DataRoot.DATA_DIR_PROPERTY);
+        System.setProperty(DataRoot.DATA_DIR_PROPERTY,
+                tempDirectory.resolve("data-v3").toString());
+        try {
+            try (var root = ApplicationContexts.createRoot(DataRoot.resolve())) {
+                WorkspaceManager manager = root.getBean(WorkspaceManager.class);
+                Workspace workspace = manager.createWorkspace("待删除工作区");
+                String workspaceId = workspace.getId();
 
-        seedWorkspaceRows(workspaceId);
-        List<Path> assetDirs = workspaceAssetDirs(workspaceId);
-        for (Path dir : assetDirs) {
-            Files.createDirectories(dir);
-            Files.writeString(dir.resolve("marker.txt"), "workspace-private-data");
-        }
+                seedWorkspaceRows(workspaceId);
+                List<Path> assetDirs = workspaceAssetDirs(workspaceId);
+                for (Path dir : assetDirs) {
+                    Files.createDirectories(dir);
+                    Files.writeString(dir.resolve("marker.txt"), "workspace-private-data");
+                }
 
-        assertTrue(manager.deleteWorkspace(workspaceId));
-        assertNull(manager.findById(workspaceId));
-        for (Path dir : assetDirs) {
-            assertFalse(Files.exists(dir), "工作区文件资产未清理: " + dir);
+                assertTrue(manager.deleteWorkspace(workspaceId));
+                assertNull(manager.findById(workspaceId));
+                for (Path dir : assetDirs) {
+                    assertFalse(Files.exists(dir), "工作区文件资产未清理: " + dir);
+                }
+                for (String table : List.of(
+                        "workflow_checkpoints", "workflow_runs", "workflow_threads",
+                        "workflow_definitions", "app_properties")) {
+                    assertEquals(0, countByWorkspace(table, workspaceId),
+                            "工作区数据库行未清理: " + table);
+                }
+                assertEquals(0, countWorkspaceIndex(workspaceId));
+            }
+        } finally {
+            if (previous == null) {
+                System.clearProperty(DataRoot.DATA_DIR_PROPERTY);
+            } else {
+                System.setProperty(DataRoot.DATA_DIR_PROPERTY, previous);
+            }
         }
-        for (String table : List.of(
-                "workflow_checkpoints", "workflow_runs", "workflow_threads",
-                "workflow_definitions", "app_properties")) {
-            assertEquals(0, countByWorkspace(table, workspaceId),
-                    "工作区数据库行未清理: " + table);
-        }
-        assertEquals(0, countWorkspaceIndex(workspaceId));
     }
 
     private static void seedWorkspaceRows(String workspaceId) throws Exception {

@@ -3,7 +3,6 @@ package com.javaclaw.system;
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
-import com.javaclaw.config.DataManager;
 import com.javaclaw.util.ProjectAccessPolicy;
 import com.javaclaw.util.SensitiveDataRedactor;
 import io.agentscope.core.tool.Tool;
@@ -48,9 +47,11 @@ public class SystemTools {
 
     /** 调用来源令牌（装配期绑定），高风险确认随调用传给 ToolConfirmationManager。 */
     private final ToolCallOrigin origin;
+    private final Path screenshotsDir;
 
-    public SystemTools(ToolCallOrigin origin) {
+    public SystemTools(ToolCallOrigin origin, Path screenshotsDir) {
         this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
+        this.screenshotsDir = screenshotsDir.toAbsolutePath().normalize();
     }
 
     /**
@@ -138,7 +139,8 @@ public class SystemTools {
             String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
             String fileName = "screenshot_" + timestamp + ".png";
             Path savePath = ProjectAccessPolicy.requireProjectPath(
-                    DataManager.getInstance().getScreenshotsDir().resolve(fileName));
+                    screenshotsDir.resolve(fileName));
+            Files.createDirectories(savePath.getParent());
             ImageIO.write(capture, "png", savePath.toFile());
 
             log.info("屏幕截图已保存: {}", savePath);

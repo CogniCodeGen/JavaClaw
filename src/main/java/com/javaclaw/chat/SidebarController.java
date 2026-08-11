@@ -33,7 +33,8 @@ public class SidebarController implements AutoCloseable {
     @FXML private SidebarProfileController profileController;
     @FXML
     private ComboBox<Workspace> workspaceCombo;
-    private FxDispatcher fx;
+    private final FxDispatcher fx;
+    private final WorkspaceManager workspaces;
 
     private boolean closed;
 
@@ -49,8 +50,9 @@ public class SidebarController implements AutoCloseable {
 
     /** Spring/FXML 构造路径；FXMLLoader 随后注入所有静态控件。 */
     @Autowired
-    public SidebarController(FxDispatcher fx) {
+    public SidebarController(FxDispatcher fx, WorkspaceManager workspaces) {
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
+        this.workspaces = java.util.Objects.requireNonNull(workspaces, "workspaces");
     }
 
 
@@ -62,7 +64,6 @@ public class SidebarController implements AutoCloseable {
     }
 
     private void initializeWorkspaceSelector() {
-        WorkspaceManager workspaces = WorkspaceManager.getInstance();
         workspaceCombo.getItems().setAll(workspaces.getWorkspaces());
         workspaces.getWorkspaces().stream()
                 .filter(workspace -> workspace.getId().equals(workspaces.getCurrentWorkspaceId()))
@@ -74,7 +75,6 @@ public class SidebarController implements AutoCloseable {
     private void onWorkspaceSelected() {
         if (refreshingWorkspaceCombo) return;
         Workspace selected = workspaceCombo.getSelectionModel().getSelectedItem();
-        WorkspaceManager workspaces = WorkspaceManager.getInstance();
         if (selected == null || selected.getId().equals(workspaces.getCurrentWorkspaceId())) return;
         String targetId = selected.getId();
         fx.dispatch(() -> {
@@ -204,7 +204,7 @@ public class SidebarController implements AutoCloseable {
         Optional<String> result = dialog.showAndWait();
         result.ifPresent(name -> {
             if (!name.isBlank()) {
-                Workspace ws = WorkspaceManager.getInstance().createWorkspace(name.trim());
+                Workspace ws = workspaces.createWorkspace(name.trim());
                 workspaceCombo.getItems().add(ws);
                 workspaceCombo.getSelectionModel().select(ws);
                 if (onSwitchWorkspace != null) {
@@ -219,7 +219,7 @@ public class SidebarController implements AutoCloseable {
      */
     @FXML
     private void onDeleteWorkspace() {
-        WorkspaceManager wsMgr = WorkspaceManager.getInstance();
+        WorkspaceManager wsMgr = workspaces;
         Workspace selected = workspaceCombo.getSelectionModel().getSelectedItem();
         if (selected == null) return;
 
@@ -250,7 +250,7 @@ public class SidebarController implements AutoCloseable {
     public void refreshWorkspaceCombo() {
         refreshingWorkspaceCombo = true;
         try {
-            WorkspaceManager wsMgr = WorkspaceManager.getInstance();
+            WorkspaceManager wsMgr = workspaces;
             workspaceCombo.getItems().clear();
             workspaceCombo.getItems().addAll(wsMgr.getWorkspaces());
             for (Workspace ws : wsMgr.getWorkspaces()) {

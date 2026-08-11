@@ -53,10 +53,11 @@ public final class ApplicationContexts {
      */
     public static void registerDesktopInfrastructure(AnnotationConfigApplicationContext context) {
         Objects.requireNonNull(context, "context");
+        WorkspaceManager workspaces = context.getBean(WorkspaceManager.class);
+        DataManager data = context.getBean(DataManager.class);
         context.registerBean(PlaywrightBrowserManager.class,
                 () -> new PlaywrightBrowserManager(true,
-                        WorkspaceManager.getInstance().getCurrentBrowserDir(),
-                        DataManager.getInstance().getScreenshotsDir()),
+                        workspaces.getCurrentBrowserDir(), data.getScreenshotsDir()),
                 definition -> definition.setDestroyMethodName("shutdown"));
     }
 

@@ -1,9 +1,14 @@
 package com.javaclaw.chat;
 
 import com.javaclaw.config.WorkspaceManager;
+import com.javaclaw.platform.data.DataRoot;
+import com.javaclaw.platform.spring.ApplicationContexts;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 
@@ -11,9 +16,30 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ChatHistoryMetricsTest {
 
+    private static org.springframework.context.annotation.AnnotationConfigApplicationContext root;
+    private static String previousDataDirectory;
+
+    @TempDir
+    static Path tempDirectory;
+
     @BeforeAll
     static void initWorkspace() {
-        WorkspaceManager.getInstance().init();
+        previousDataDirectory = System.getProperty(DataRoot.DATA_DIR_PROPERTY);
+        System.setProperty(DataRoot.DATA_DIR_PROPERTY,
+                tempDirectory.resolve("data-v3").toString());
+        root = ApplicationContexts.createRoot(DataRoot.resolve());
+    }
+
+    @AfterAll
+    static void closeContext() {
+        if (root != null) {
+            root.close();
+        }
+        if (previousDataDirectory == null) {
+            System.clearProperty(DataRoot.DATA_DIR_PROPERTY);
+        } else {
+            System.setProperty(DataRoot.DATA_DIR_PROPERTY, previousDataDirectory);
+        }
     }
 
     @Test

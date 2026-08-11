@@ -3,8 +3,6 @@ package com.javaclaw.app;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.chat.ChatViewController;
-import com.javaclaw.config.DataManager;
-import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.runtime.ApplicationKernel;
 import com.javaclaw.platform.data.DataRoot;
@@ -87,7 +85,6 @@ public class JavaClawApp extends Application {
         DataRoot dataRoot = DataRoot.resolve().prepare();
         springContext = ApplicationContexts.createRoot(dataRoot);
         try {
-            WorkspaceManager.getInstance().init();
             ApplicationContexts.registerDesktopInfrastructure(springContext);
             fxDispatcher = springContext.getBean(FxDispatcher.class);
         } catch (Exception | Error failure) {
@@ -143,7 +140,10 @@ public class JavaClawApp extends Application {
                     springContext.getBean(WorkspaceSpringContextFactory.class),
                     springContext.getBean(com.javaclaw.platform.execution.ManagedTaskExecutor.class),
                     springContext.getBean(com.javaclaw.application.tool.ToolInvocationPipeline.class),
-                    springContext.getBean(com.javaclaw.plugin.PluginManager.class));
+                    springContext.getBean(com.javaclaw.plugin.PluginManager.class),
+                    springContext.getBean(com.javaclaw.config.WorkspaceManager.class),
+                    springContext.getBean(com.javaclaw.config.DataManager.class),
+                    springContext.getBean(com.javaclaw.diagnostics.TraceRecorder.class));
             applicationKernel.initialize();
             ApplicationContexts.registerApplicationKernel(springContext, applicationKernel);
 

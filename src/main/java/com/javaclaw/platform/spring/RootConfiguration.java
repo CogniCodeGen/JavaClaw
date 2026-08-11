@@ -22,6 +22,8 @@ import com.javaclaw.application.settings.TestDataMaintenanceApplicationService;
 import com.javaclaw.application.settings.TestDataMaintenancePort;
 import com.javaclaw.application.settings.TestDataMaintenanceUseCase;
 import com.javaclaw.config.DatabaseAccess;
+import com.javaclaw.config.DataManager;
+import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.data.DataSourceDatabaseAccess;
 import com.javaclaw.platform.data.H2DataSource;
@@ -43,6 +45,8 @@ import com.javaclaw.ui.javafx.interaction.InteractionDialogFactory;
 import com.javaclaw.infrastructure.tool.LoggingToolAuditSink;
 import com.javaclaw.infrastructure.config.AgentConfigToolReviewSettings;
 import com.javaclaw.infrastructure.diagnostics.TraceExporterDiagnosticsArchive;
+import com.javaclaw.diagnostics.TraceExporter;
+import com.javaclaw.diagnostics.TraceRecorder;
 import com.javaclaw.infrastructure.plugin.PluginManagerManagementAdapter;
 import com.javaclaw.infrastructure.onboarding.AgentConfigOnboardingSettings;
 import com.javaclaw.infrastructure.onboarding.HttpConnectionProbeAdapter;
@@ -94,6 +98,19 @@ public class RootConfiguration {
         return new DataSourceTransactionManager(dataSource);
     }
 
+    @Bean(initMethod = "init")
+    WorkspaceManager workspaceManager(
+            DataRoot dataRoot,
+            JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager) {
+        return new WorkspaceManager(dataRoot, jdbc, transactionManager);
+    }
+
+    @Bean
+    DataManager dataManager(WorkspaceManager workspaces) {
+        return new DataManager(workspaces);
+    }
+
     @Bean
     DatabaseAccess databaseAccess(DataSource dataSource, SchemaInitializer schemaInitializer) {
         String description = dataSource instanceof H2DataSource h2
@@ -126,9 +143,19 @@ public class RootConfiguration {
         return new ExternalDirectoryOpener(executor);
     }
 
+    @Bean(destroyMethod = "close")
+    TraceRecorder traceRecorder(WorkspaceManager workspaces, ObjectMapper mapper) {
+        return new TraceRecorder(workspaces, mapper);
+    }
+
     @Bean
-    DiagnosticsArchivePort diagnosticsArchivePort() {
-        return new TraceExporterDiagnosticsArchive();
+    TraceExporter traceExporter(WorkspaceManager workspaces, TraceRecorder recorder) {
+        return new TraceExporter(workspaces, recorder);
+    }
+
+    @Bean
+    DiagnosticsArchivePort diagnosticsArchivePort(TraceExporter exporter) {
+        return new TraceExporterDiagnosticsArchive(exporter);
     }
 
     @Bean

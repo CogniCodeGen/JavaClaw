@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Objects;
 
 /**
  * 数据目录管理器。
@@ -46,7 +47,7 @@ public class DataManager {
     /** 聊天记录文件名（旧版兼容） */
     private static final String CHAT_HISTORY_FILE = "chat_history.json";
 
-    private static DataManager INSTANCE;
+    private final WorkspaceManager workspaces;
 
     private Path dataRoot;
     private Path screenshotsDir;
@@ -58,16 +59,10 @@ public class DataManager {
     private Path chatHistoryFile;
     private Path taskEventsDir;
 
-    private DataManager() {
+    public DataManager(WorkspaceManager workspaces) {
+        this.workspaces = Objects.requireNonNull(workspaces, "workspaces");
         resolvePaths();
         initDirectories();
-    }
-
-    public static synchronized DataManager getInstance() {
-        if (INSTANCE == null) {
-            INSTANCE = new DataManager();
-        }
-        return INSTANCE;
     }
 
     /**
@@ -83,15 +78,14 @@ public class DataManager {
      * 根据当前工作区计算所有路径
      */
     private void resolvePaths() {
-        WorkspaceManager wm = WorkspaceManager.getInstance();
-        String workspaceId = wm.getCurrentWorkspaceId();
-        Path globalData = wm.getGlobalDataPath();
+        String workspaceId = workspaces.getCurrentWorkspaceId();
+        Path globalData = workspaces.getGlobalDataPath();
         dataRoot = globalData.resolve("workspace-data").resolve(workspaceId);
         screenshotsDir = globalData.resolve(SCREENSHOTS_DIR).resolve(workspaceId);
         chatDir = dataRoot.resolve(CHAT_DIR);
-        knowledgeDir = wm.getGlobalDataPath()
+        knowledgeDir = workspaces.getGlobalDataPath()
                 .resolve(KNOWLEDGE_DIR).resolve("workspaces").resolve(workspaceId);
-        globalKnowledgeDir = wm.getGlobalDataPath().resolve(KNOWLEDGE_DIR).resolve("global");
+        globalKnowledgeDir = workspaces.getGlobalDataPath().resolve(KNOWLEDGE_DIR).resolve("global");
         sessionsDir = chatDir.resolve(SESSIONS_DIR);
         sessionsIndexFile = chatDir.resolve(SESSIONS_INDEX_FILE);
         chatHistoryFile = chatDir.resolve(CHAT_HISTORY_FILE);

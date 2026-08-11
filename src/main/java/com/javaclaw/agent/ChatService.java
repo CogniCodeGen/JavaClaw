@@ -176,11 +176,9 @@ public class ChatService {
                         "长期记忆检索/蒸馏暂不可用：" + reason + "（详见 记忆中心 → 嵌入诊断）"));
             }
         });
-        com.javaclaw.config.WorkspaceManager workspaceManager =
-                com.javaclaw.config.WorkspaceManager.getInstance();
-        this.memoryService.open(workspaceManager.getGlobalDataPath()
+        this.memoryService.open(runtime.getWorkspace().globalDataRoot()
                 .resolve("memory-stores")
-                .resolve(workspaceManager.getCurrentWorkspaceId()));
+                .resolve(runtime.getWorkspace().workspaceId()));
 
         // 此后任一初始化步骤失败都必须随本次失败关闭刚打开的记忆库：构造器抛出后本实例
         // 不可达、无人能补 close，悬置的 EclipseStore 文件锁会让同工作区的下一次构造
@@ -192,7 +190,7 @@ public class ChatService {
             // 2. 三个钩子
             this.loopDetectionHook = new LoopDetectionHook();
             this.toolFallbackHook = new ToolFallbackHook();
-            this.loggingHook = new AgentLoggingHook();
+            this.loggingHook = new AgentLoggingHook(runtime.getTraceRecorder());
 
             // 3. 基础系统提示词（不含动态技能和 MCP，每轮按路由拼接）
             String verificationPrompt = "";

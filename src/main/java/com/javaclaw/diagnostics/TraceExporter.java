@@ -38,32 +38,38 @@ public final class TraceExporter {
             "api.key", "secret", "password", "token", "access.key"
     };
 
-    private TraceExporter() {}
+    private final WorkspaceManager workspaces;
+    private final TraceRecorder recorder;
+
+    public TraceExporter(WorkspaceManager workspaces, TraceRecorder recorder) {
+        this.workspaces = java.util.Objects.requireNonNull(workspaces, "workspaces");
+        this.recorder = java.util.Objects.requireNonNull(recorder, "recorder");
+    }
 
     /**
      * 导出诊断包到指定 zip 文件
      *
      * @return 写入的字节数
      */
-    public static long exportTo(Path zipFile) throws IOException {
+    public long exportTo(Path zipFile) throws IOException {
         Files.createDirectories(zipFile.getParent());
         try (OutputStream out = Files.newOutputStream(zipFile);
              ZipOutputStream zos = new ZipOutputStream(out)) {
 
             // 1. 诊断日志
-            Path trace = TraceRecorder.tracePath();
+            Path trace = recorder.tracePath();
             if (Files.exists(trace)) {
                 copyEntry(zos, trace, "agent-trace.jsonl");
             }
 
             // 2. 主日志
-            Path mainLog = WorkspaceManager.getInstance().getCurrentLogDir().resolve("javaclaw.log");
+            Path mainLog = workspaces.getCurrentLogDir().resolve("javaclaw.log");
             if (Files.exists(mainLog)) {
                 copyEntry(zos, mainLog, "javaclaw.log");
             }
 
             // 3. 任务日志
-            Path taskLog = WorkspaceManager.getInstance().getCurrentLogDir().resolve("task.log");
+            Path taskLog = workspaces.getCurrentLogDir().resolve("task.log");
             if (Files.exists(taskLog)) {
                 copyEntry(zos, taskLog, "task.log");
             }
@@ -95,7 +101,7 @@ public final class TraceExporter {
     /**
      * 读取全局 H2 中当前工作区的 agent properties，剔除敏感字段。
      */
-    private static byte[] redactedAgentProperties() throws IOException {
+    private byte[] redactedAgentProperties() throws IOException {
         Properties props = AgentConfig.getInstance().snapshotProperties();
         for (String key : new ArrayList<>(props.stringPropertyNames())) {
             String lower = key.toLowerCase();
@@ -111,7 +117,7 @@ public final class TraceExporter {
         return buf.toByteArray();
     }
 
-    private static String systemInfo() {
+    private String systemInfo() {
         StringBuilder sb = new StringBuilder();
         sb.append("export.time=").append(Instant.now()).append('\n');
         sb.append("java.version=").append(System.getProperty("java.version")).append('\n');
@@ -119,9 +125,9 @@ public final class TraceExporter {
         sb.append("os.name=").append(System.getProperty("os.name")).append('\n');
         sb.append("os.arch=").append(System.getProperty("os.arch")).append('\n');
         sb.append("os.version=").append(System.getProperty("os.version")).append('\n');
-        WorkspaceManager wm = WorkspaceManager.getInstance();
-        sb.append("workspace.id=").append(wm.getCurrentWorkspaceId()).append('\n');
-        sb.append("workspace.name=").append(wm.getCurrentWorkspace() == null ? "" : wm.getCurrentWorkspace().getName()).append('\n');
+        sb.append("workspace.id=").append(workspaces.getCurrentWorkspaceId()).append('\n');
+        sb.append("workspace.name=").append(workspaces.getCurrentWorkspace() == null
+                ? "" : workspaces.getCurrentWorkspace().getName()).append('\n');
         sb.append("provider=").append(AgentConfig.getInstance().getProviderType()).append('\n');
         sb.append("model=").append(AgentConfig.getInstance().getModelName()).append('\n');
         sb.append("base.url=").append(AgentConfig.getInstance().getBaseUrl()).append('\n');
@@ -135,9 +141,9 @@ public final class TraceExporter {
     /**
      * 读取 trace 文件并按筛选条件返回匹配行
      */
-    public static List<String> grep(String keyword, String agentFilter, String eventFilter,
-                                    long sinceMillis, int maxLines) throws IOException {
-        Path trace = TraceRecorder.tracePath();
+    public List<String> grep(String keyword, String agentFilter, String eventFilter,
+                             long sinceMillis, int maxLines) throws IOException {
+        Path trace = recorder.tracePath();
         if (!Files.exists(trace)) return List.of();
         List<String> matches = new ArrayList<>();
         try (var reader = Files.newBufferedReader(trace, StandardCharsets.UTF_8)) {

@@ -28,7 +28,7 @@ class SystemToolsIsolationTest {
 
     @Test
     void rejectsOutsideAndManagedFilesButReadsOrdinaryProjectFile(@TempDir Path outside) {
-        SystemTools tools = new SystemTools(ToolCallOrigin.INTERACTIVE);
+        SystemTools tools = new SystemTools(ToolCallOrigin.INTERACTIVE, outside);
 
         assertTrue(tools.fileRead(outside.resolve("secret.txt").toString()).contains("[失败]"));
         assertTrue(tools.fileRead("data/javaclaw.mv.db").contains("[失败]"));
@@ -36,16 +36,16 @@ class SystemToolsIsolationTest {
     }
 
     @Test
-    void desktopCaptureAndInputAreDisabledBeforeExecution() {
-        SystemTools tools = new SystemTools(ToolCallOrigin.INTERACTIVE);
+    void desktopCaptureAndInputAreDisabledBeforeExecution(@TempDir Path screenshots) {
+        SystemTools tools = new SystemTools(ToolCallOrigin.INTERACTIVE, screenshots);
 
         assertTrue(tools.screenshot().contains("严格项目文件隔离"));
         assertTrue(tools.keyType("不会输入").contains("严格项目文件隔离"));
     }
 
     @Test
-    void refusesToPersistCredentialLikeContent() {
-        SystemTools tools = new SystemTools(ToolCallOrigin.INTERACTIVE);
+    void refusesToPersistCredentialLikeContent(@TempDir Path screenshots) {
+        SystemTools tools = new SystemTools(ToolCallOrigin.INTERACTIVE, screenshots);
 
         String response = tools.fileWrite("target/should-not-exist-secret.txt",
                 "password: RealSecret-2026!");

@@ -20,33 +20,27 @@ import java.util.Map;
  * <p>写入路径：{@code {workspace}/logs/agent-trace.jsonl}。每行一个 JSON 对象，
  * 供诊断应用用例检索，并由 {@link TraceExporter} 打包。</p>
  *
- * <p>进程级单例，线程安全。首次使用时延迟创建文件。</p>
+ * <p>由根 Spring Context 管理，线程安全。首次写入时延迟创建文件。</p>
  */
-public final class TraceRecorder {
+public final class TraceRecorder implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(TraceRecorder.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final int MAX_CONTENT = 2048;
 
-    private static volatile TraceRecorder INSTANCE;
+    private final WorkspaceManager workspaces;
+    private final ObjectMapper mapper;
 
     private BufferedWriter writer;
     private Path currentPath;
     private boolean enabled = true;
 
-    private TraceRecorder() {}
-
-    public static TraceRecorder getInstance() {
-        if (INSTANCE == null) {
-            synchronized (TraceRecorder.class) {
-                if (INSTANCE == null) INSTANCE = new TraceRecorder();
-            }
-        }
-        return INSTANCE;
+    public TraceRecorder(WorkspaceManager workspaces, ObjectMapper mapper) {
+        this.workspaces = java.util.Objects.requireNonNull(workspaces, "workspaces");
+        this.mapper = java.util.Objects.requireNonNull(mapper, "mapper");
     }
 
-    public static Path tracePath() {
-        return WorkspaceManager.getInstance().getCurrentLogDir().resolve("agent-trace.jsonl");
+    public Path tracePath() {
+        return workspaces.getCurrentLogDir().resolve("agent-trace.jsonl");
     }
 
     public void setEnabled(boolean enabled) {
@@ -90,7 +84,7 @@ public final class TraceRecorder {
                     row.put(e.getKey(), truncate(e.getValue()));
                 }
             }
-            writer.write(MAPPER.writeValueAsString(row));
+            writer.write(mapper.writeValueAsString(row));
             writer.newLine();
             writer.flush();
         } catch (IOException e) {
@@ -104,9 +98,19 @@ public final class TraceRecorder {
         return s.substring(0, MAX_CONTENT) + "...(已截断)";
     }
 
+    @Override
+    public synchronized void close() {
+        closeQuietly();
+        currentPath = null;
+    }
+
     private void closeQuietly() {
         if (writer != null) {
-            try { writer.close(); } catch (IOException ignored) {}
+            try {
+                writer.close();
+            } catch (IOException failure) {
+                log.debug("关闭诊断日志失败: {}", failure.getMessage());
+            }
             writer = null;
         }
     }

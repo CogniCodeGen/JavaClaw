@@ -65,41 +65,41 @@ public final class SddHeadlessDriver {
 
         // 1. 基础设施（顺序对齐 JavaClawApp.start()）
         var rootContext = ApplicationContexts.createRoot(DataRoot.resolve());
-        WorkspaceManager.getInstance().init();
+        WorkspaceManager workspaces = rootContext.getBean(WorkspaceManager.class);
+        DataManager data = rootContext.getBean(DataManager.class);
         ToolConfirmationManager.setPort(port);
         PlaywrightBrowserManager browser = new PlaywrightBrowserManager(true,
-                WorkspaceManager.getInstance().getCurrentBrowserDir(),
-                DataManager.getInstance().getScreenshotsDir());
+                workspaces.getCurrentBrowserDir(), data.getScreenshotsDir());
         CustomAgentConfig customAgents = new CustomAgentConfig(
-                WorkspaceManager.getInstance().getCurrentWorkspaceId(),
+                workspaces.getCurrentWorkspaceId(),
                 rootContext.getBean(JdbcTemplate.class));
         SiteCredentialManager siteCredentials = new SiteCredentialManager(
                 rootContext.getBean(DatabaseAccess.class),
-                WorkspaceManager.getInstance().getCurrentWorkspaceId());
+                workspaces.getCurrentWorkspaceId());
         McpConfigManager mcpConfigurations = new McpConfigManager(
                 rootContext.getBean(DatabaseAccess.class),
-                WorkspaceManager.getInstance().getCurrentWorkspaceId());
+                workspaces.getCurrentWorkspaceId());
         TaskScope taskScope = rootContext.getBean(ManagedTaskExecutor.class)
                 .openScope("sdd-headless", 256);
         ManagedTaskExecutor taskExecutor = rootContext.getBean(ManagedTaskExecutor.class);
         AgentConfig settings = AgentConfig.getInstance();
         SkillManager skills = new SkillManager(
-                WorkspaceManager.getInstance().getGlobalDataPath().resolve("skills"),
+                workspaces.getGlobalDataPath().resolve("skills"),
                 rootContext.getBean(com.fasterxml.jackson.databind.ObjectMapper.class), settings);
         SkillUsageTracker usage = new SkillUsageTracker(
-                WorkspaceManager.getInstance().getCurrentWorkspaceId(),
+                workspaces.getCurrentWorkspaceId(),
                 rootContext.getBean(JdbcTemplate.class),
                 rootContext.getBean(PlatformTransactionManager.class), settings,
                 taskExecutor, taskScope);
         SkillProposalQueue proposals = new SkillProposalQueue(
-                WorkspaceManager.getInstance().getCurrentWorkspaceId(), skills, settings,
+                workspaces.getCurrentWorkspaceId(), skills, settings,
                 rootContext.getBean(JdbcTemplate.class),
                 rootContext.getBean(PlatformTransactionManager.class),
                 rootContext.getBean(JsonCodec.class), taskExecutor, taskScope);
         SkillRuntimeServices skillRuntime = new SkillRuntimeServices(skills, usage, proposals);
         java.util.concurrent.atomic.AtomicReference<SddTaskApplicationService> sddTasks =
                 new java.util.concurrent.atomic.AtomicReference<>();
-        WorkspaceContext workspace = WorkspaceContext.captureCurrent();
+        WorkspaceContext workspace = WorkspaceContext.captureCurrent(workspaces, data);
         var knowledgePreferences = new JdbcKnowledgeDocumentPreferenceAdapter(
                 workspace.workspaceId(), rootContext.getBean(JdbcTemplate.class),
                 rootContext.getBean(PlatformTransactionManager.class));
@@ -107,14 +107,15 @@ public final class SddHeadlessDriver {
                 mcpConfigurations, new McpClientManager(mcpConfigurations, taskScope), taskScope,
                 null, skillRuntime,
                 () -> java.util.Objects.requireNonNull(sddTasks.get(), "SDD 任务用例尚未装配"),
-                rootContext.getBean(com.javaclaw.system.JShellRunner.class), settings, workspace,
+                rootContext.getBean(com.javaclaw.system.JShellRunner.class),
+                rootContext.getBean(com.javaclaw.diagnostics.TraceRecorder.class), settings, workspace,
                 knowledgePreferences);
 
         // 2. 配置 SDD 管理器（注入自动放行端口 → PortReviewGate 评审直接批准）
         SkillCurator curator = new SkillCurator(
                 runtime.getModelFactory(), runtime.getTokenTracker(), skills, usage, proposals,
                 settings, taskScope, () -> port);
-        String workspaceId = WorkspaceManager.getInstance().getCurrentWorkspaceId();
+        String workspaceId = workspaces.getCurrentWorkspaceId();
         SddTaskStore sddStore = new SddTaskStore(workspaceId,
                 rootContext.getBean(JdbcTemplate.class),
                 rootContext.getBean(PlatformTransactionManager.class),

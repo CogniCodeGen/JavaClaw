@@ -2,8 +2,13 @@ package com.javaclaw.config;
 
 import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.joran.JoranConfigurator;
+import com.javaclaw.platform.data.DataRoot;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -13,11 +18,8 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.Statement;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
@@ -34,22 +36,32 @@ public class WorkspaceManager {
 
     private static final String DEFAULT_WORKSPACE_NAME = "默认工作区";
     private static final String STATE_CURRENT_WORKSPACE = "current_workspace_id";
-
-    private static WorkspaceManager instance;
+    private static final List<String> WORKSPACE_TABLES = List.of(
+            "workflow_checkpoints", "workflow_runs", "workflow_threads",
+            "workflow_definitions", "app_properties", "mcp_servers",
+            "site_account_bindings", "site_sessions", "site_credentials",
+            "scheduled_tasks", "custom_agents", "plugin_state", "plugin_storage",
+            "command_whitelist", "chat_messages", "chat_sessions", "token_usage_daily",
+            "skill_usage", "skill_proposals", "sdd_tasks", "sdd_spec_docs",
+            "sdd_verify_cache", "knowledge_doc_prefs", "browser_state");
 
     private final List<Workspace> workspaces = new CopyOnWriteArrayList<>();
+    private final Path globalDataPath;
+    private final JdbcTemplate jdbc;
+    private final TransactionTemplate transactions;
     private volatile String currentWorkspaceId;
 
     /** 工作区切换回调 */
     private Consumer<Workspace> onWorkspaceSwitched;
 
-    private WorkspaceManager() {}
-
-    public static synchronized WorkspaceManager getInstance() {
-        if (instance == null) {
-            instance = new WorkspaceManager();
-        }
-        return instance;
+    public WorkspaceManager(
+            DataRoot dataRoot,
+            JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager) {
+        globalDataPath = Objects.requireNonNull(dataRoot, "dataRoot").path();
+        this.jdbc = Objects.requireNonNull(jdbc, "jdbc");
+        transactions = new TransactionTemplate(
+                Objects.requireNonNull(transactionManager, "transactionManager"));
     }
 
     public void init() {
@@ -144,7 +156,7 @@ public class WorkspaceManager {
     // ==================== 路径查询 ====================
 
     public Path getGlobalDataPath() {
-        return AppDatabase.dataDirectory();
+        return globalDataPath;
     }
 
     public Path getCurrentBrowserDir() {
@@ -214,20 +226,19 @@ public class WorkspaceManager {
 
     private void loadIndex() {
         workspaces.clear();
-        try (Connection c = AppDatabase.getConnection();
-             Statement st = c.createStatement();
-             ResultSet rs = st.executeQuery("SELECT id, name, created_at FROM workspaces ORDER BY created_at")) {
-            while (rs.next()) {
-                Workspace ws = new Workspace();
-                ws.setId(rs.getString("id"));
-                ws.setName(rs.getString("name"));
-                ws.setCreatedAt(rs.getString("created_at"));
-                workspaces.add(ws);
-            }
-        } catch (Exception e) {
-            log.error("从 H2 加载工作区索引失败", e);
+        try {
+            workspaces.addAll(jdbc.query(
+                    "SELECT id, name, created_at FROM workspaces ORDER BY created_at",
+                    (result, row) -> {
+                        Workspace workspace = new Workspace();
+                        workspace.setId(result.getString("id"));
+                        workspace.setName(result.getString("name"));
+                        workspace.setCreatedAt(result.getString("created_at"));
+                        return workspace;
+                    }));
+        } catch (DataAccessException failure) {
+            log.error("从 H2 加载工作区索引失败", failure);
         }
-
         currentWorkspaceId = loadCurrentWorkspace();
         if (!workspaces.isEmpty()
                 && (currentWorkspaceId == null || findById(currentWorkspaceId) == null)) {
@@ -241,130 +252,81 @@ public class WorkspaceManager {
                 INSERT INTO workspaces(id, name, created_at, updated_at)
                 VALUES (?, ?, ?, CURRENT_TIMESTAMP)
                 """;
-        try (Connection c = AppDatabase.getConnection();
-             Statement del = c.createStatement();
-             PreparedStatement ps = c.prepareStatement(insert)) {
-            c.setAutoCommit(false);
-            del.executeUpdate("DELETE FROM workspaces");
-            for (Workspace ws : workspaces) {
-                ps.setString(1, ws.getId());
-                ps.setString(2, ws.getName());
-                ps.setString(3, ws.getCreatedAt());
-                ps.addBatch();
-            }
-            ps.executeBatch();
-            c.commit();
-            saveCurrentWorkspace();
-        } catch (Exception e) {
-            log.error("保存工作区索引到 H2 失败", e);
+        try {
+            transactions.executeWithoutResult(status -> {
+                jdbc.update("DELETE FROM workspaces");
+                jdbc.batchUpdate(insert, workspaces, Math.max(1, workspaces.size()),
+                        (statement, workspace) -> {
+                            statement.setString(1, workspace.getId());
+                            statement.setString(2, workspace.getName());
+                            statement.setString(3, workspace.getCreatedAt());
+                        });
+                saveCurrentWorkspaceRow();
+            });
+        } catch (DataAccessException failure) {
+            log.error("保存工作区索引到 H2 失败", failure);
         }
     }
 
     private String loadCurrentWorkspace() {
-        try (Connection c = AppDatabase.getConnection();
-             PreparedStatement ps = c.prepareStatement(
-                     "SELECT state_value FROM app_state WHERE state_key = ?")) {
-            ps.setString(1, STATE_CURRENT_WORKSPACE);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? rs.getString("state_value") : null;
-            }
-        } catch (Exception e) {
-            log.warn("读取当前工作区状态失败: {}", e.getMessage());
+        try {
+            return jdbc.query(
+                    "SELECT state_value FROM app_state WHERE state_key = ?",
+                    (result, row) -> result.getString("state_value"),
+                    STATE_CURRENT_WORKSPACE).stream().findFirst().orElse(null);
+        } catch (DataAccessException failure) {
+            log.warn("读取当前工作区状态失败: {}", failure.getMessage());
             return null;
         }
     }
 
     private boolean saveCurrentWorkspace() {
-        try (Connection c = AppDatabase.getConnection();
-             PreparedStatement ps = c.prepareStatement("""
-                     MERGE INTO app_state(state_key, state_value, updated_at)
-                     KEY(state_key)
-                     VALUES (?, ?, CURRENT_TIMESTAMP)
-                     """)) {
-            ps.setString(1, STATE_CURRENT_WORKSPACE);
-            ps.setString(2, currentWorkspaceId);
-            ps.executeUpdate();
+        try {
+            saveCurrentWorkspaceRow();
             return true;
-        } catch (Exception e) {
-            log.warn("保存当前工作区状态失败: {}", e.getMessage());
+        } catch (DataAccessException failure) {
+            log.warn("保存当前工作区状态失败: {}", failure.getMessage());
             return false;
         }
     }
 
+    private void saveCurrentWorkspaceRow() {
+        jdbc.update("""
+                MERGE INTO app_state(state_key, state_value, updated_at)
+                KEY(state_key)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                """, STATE_CURRENT_WORKSPACE, currentWorkspaceId);
+    }
+
     /**
-     * 删除工作区的全部数据库行与文件资产。
-     *
-     * <p>数据库删除先在未提交事务中执行，文件清理成功后再提交。文件系统无法参与 H2 事务，
-     * 因此失败时可能已有部分文件被删除，但数据库索引与剩余数据仍会回滚保留，调用方也不会把
-     * 工作区误报为删除成功；再次删除即可继续清理。</p>
+     * 在同一数据库事务内删除结构化数据，并尽力清理文件桶。
+     * 文件系统不具备事务性；部分清理失败后可安全重试，数据库删除会回滚。
      */
     private boolean deleteWorkspaceData(String workspaceId) {
-        String[] tables = {
-                "workflow_checkpoints",
-                "workflow_runs",
-                "workflow_threads",
-                "workflow_definitions",
-                "app_properties",
-                "mcp_servers",
-                "site_account_bindings",
-                "site_sessions",
-                "site_credentials",
-                "scheduled_tasks",
-                "custom_agents",
-                "plugin_state",
-                "plugin_storage",
-                "command_whitelist",
-                "chat_messages",
-                "chat_sessions",
-                "token_usage_daily",
-                "skill_usage",
-                "skill_proposals",
-                "sdd_tasks",
-                "sdd_spec_docs",
-                "sdd_verify_cache",
-                "knowledge_doc_prefs",
-                "browser_state"
-        };
-        try (Connection c = AppDatabase.getConnection()) {
-            c.setAutoCommit(false);
-            try {
-                for (String table : tables) {
-                    try (PreparedStatement ps = c.prepareStatement(
-                            "DELETE FROM " + table + " WHERE workspace_id = ?")) {
-                        ps.setString(1, workspaceId);
-                        ps.executeUpdate();
-                    }
+        try {
+            transactions.executeWithoutResult(status -> {
+                for (String table : WORKSPACE_TABLES) {
+                    jdbc.update("DELETE FROM " + table + " WHERE workspace_id = ?", workspaceId);
                 }
-                try (PreparedStatement ps = c.prepareStatement(
-                        "DELETE FROM workspaces WHERE id = ?")) {
-                    ps.setString(1, workspaceId);
-                    if (ps.executeUpdate() != 1) {
-                        throw new IllegalStateException("工作区索引行不存在: " + workspaceId);
-                    }
+                if (jdbc.update("DELETE FROM workspaces WHERE id = ?", workspaceId) != 1) {
+                    throw new IllegalStateException("工作区索引行不存在: " + workspaceId);
                 }
-
-                deleteWorkspaceFiles(workspaceId);
-                c.commit();
-                return true;
-            } catch (Exception e) {
                 try {
-                    c.rollback();
-                } catch (Exception rollbackFailure) {
-                    e.addSuppressed(rollbackFailure);
+                    deleteWorkspaceFiles(workspaceId);
+                } catch (IOException failure) {
+                    throw new java.io.UncheckedIOException(failure);
                 }
-                log.warn("删除工作区数据失败: workspaceId={}, error={}",
-                        workspaceId, e.getMessage(), e);
-                return false;
-            }
-        } catch (Exception e) {
+            });
+            return true;
+        } catch (RuntimeException failure) {
             log.warn("删除工作区数据失败: workspaceId={}, error={}",
-                    workspaceId, e.getMessage(), e);
+                    workspaceId, failure.getMessage(), failure);
             return false;
         }
     }
 
     private void deleteWorkspaceFiles(String workspaceId) throws IOException {
-        Path dataRoot = AppDatabase.dataDirectory();
+        Path dataRoot = globalDataPath;
         List<Path> buckets = List.of(
                 dataRoot.resolve("memory-stores"),
                 dataRoot.resolve("knowledge").resolve("workspaces"),

@@ -141,7 +141,7 @@ public final class ScheduledTaskAgent implements ScheduledTaskRunner {
             ExpertManager expertManager = new ExpertManager(
                     runtime.getModelFactory(), runBrowser,
                     runtime.getSiteCredentialManager(), origin,
-                    runtime.getCustomAgentConfig());
+                    runtime.getCustomAgentConfig(), runtime.getWorkspace());
             Toolkit toolkit = ToolkitAssembler.buildBaseToolkit(runtime, expertManager, false, origin);
 
             RoutingResult routing = route(prompt);

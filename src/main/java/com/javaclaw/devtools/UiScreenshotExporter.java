@@ -73,7 +73,6 @@ public final class UiScreenshotExporter {
 
         private void bootstrap(Stage primaryStage) throws Exception {
             springContext = ApplicationContexts.createRoot(DataRoot.resolve());
-            WorkspaceManager.getInstance().init();
             ApplicationContexts.registerDesktopInfrastructure(springContext);
             com.javaclaw.ui.javafx.theme.FontManager.loadBundledFonts();
 
@@ -94,7 +93,10 @@ public final class UiScreenshotExporter {
                     springContext.getBean(WorkspaceSpringContextFactory.class),
                     springContext.getBean(com.javaclaw.platform.execution.ManagedTaskExecutor.class),
                     springContext.getBean(com.javaclaw.application.tool.ToolInvocationPipeline.class),
-                    springContext.getBean(com.javaclaw.plugin.PluginManager.class));
+                    springContext.getBean(com.javaclaw.plugin.PluginManager.class),
+                    springContext.getBean(com.javaclaw.config.WorkspaceManager.class),
+                    springContext.getBean(com.javaclaw.config.DataManager.class),
+                    springContext.getBean(com.javaclaw.diagnostics.TraceRecorder.class));
             var workspaceRuntime = applicationKernel.initialize();
             runtime = workspaceRuntime.agentRuntime();
             chatService = workspaceRuntime.chatService();

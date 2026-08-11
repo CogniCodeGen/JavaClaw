@@ -10,6 +10,8 @@ import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.config.AppDatabase;
 import com.javaclaw.config.AppDatabaseAccess;
 import com.javaclaw.config.WorkspaceManager;
+import com.javaclaw.platform.data.DataRoot;
+import com.javaclaw.platform.spring.ApplicationContexts;
 import com.javaclaw.site.SiteCredential;
 import com.javaclaw.site.SiteCredentialManager;
 import com.microsoft.playwright.Page;
@@ -57,6 +59,11 @@ class SiteLoginFunctionalIT {
 
     private static HttpServer server;
     private static String baseUrl;
+    private static org.springframework.context.annotation.AnnotationConfigApplicationContext root;
+    private static String previousDataDirectory;
+
+    @TempDir
+    static Path sharedDataDirectory;
 
     @TempDir
     Path tempDir;
@@ -68,7 +75,10 @@ class SiteLoginFunctionalIT {
     @BeforeAll
     static void startTestSite() throws IOException {
         // 与真实应用启动顺序一致：所有工作区维度配置必须在 WorkspaceManager.init() 后加载。
-        WorkspaceManager.getInstance().init();
+        previousDataDirectory = System.getProperty(DataRoot.DATA_DIR_PROPERTY);
+        System.setProperty(DataRoot.DATA_DIR_PROPERTY,
+                sharedDataDirectory.resolve("data-v3").toString());
+        root = ApplicationContexts.createRoot(DataRoot.resolve());
         server = HttpServer.create(new InetSocketAddress(TEST_HOST, 0), 0);
         server.createContext("/", SiteLoginFunctionalIT::handleRequest);
         server.start();
@@ -79,6 +89,14 @@ class SiteLoginFunctionalIT {
     static void stopTestSite() {
         if (server != null) {
             server.stop(0);
+        }
+        if (root != null) {
+            root.close();
+        }
+        if (previousDataDirectory == null) {
+            System.clearProperty(DataRoot.DATA_DIR_PROPERTY);
+        } else {
+            System.setProperty(DataRoot.DATA_DIR_PROPERTY, previousDataDirectory);
         }
     }
 

@@ -9,6 +9,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 
@@ -61,7 +63,16 @@ public final class AppDatabase {
     }
 
     public static String currentWorkspaceId() {
-        return WorkspaceManager.getInstance().getCurrentWorkspaceId();
+        try (Connection connection = getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "SELECT state_value FROM app_state WHERE state_key = ?")) {
+            statement.setString(1, "current_workspace_id");
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() ? rows.getString(1) : "default";
+            }
+        } catch (SQLException failure) {
+            throw new IllegalStateException("读取当前工作区失败", failure);
+        }
     }
 
     /**

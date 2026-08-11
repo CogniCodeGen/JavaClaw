@@ -18,6 +18,7 @@ import com.javaclaw.platform.execution.TaskHandle;
 import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.runtime.WorkspaceContext;
+import com.javaclaw.diagnostics.TraceRecorder;
 import com.javaclaw.site.SiteCredentialManager;
 import com.javaclaw.skill.SkillRuntimeServices;
 import com.javaclaw.system.JShellRunner;
@@ -121,6 +122,9 @@ public final class AgentRuntime {
     /** 当前工作区的站点凭据与浏览器会话存储。 */
     private final SiteCredentialManager siteCredentialManager;
 
+    /** 运行时创建时捕获的工作区路径快照；工作区切换会整体重建本对象。 */
+    private final WorkspaceContext workspace;
+
     /** 当前工作区定时任务用例；devtools 可不装配该可选能力。 */
     private final ScheduleApplicationService scheduleApplicationService;
 
@@ -133,6 +137,7 @@ public final class AgentRuntime {
     /** 工作区后台任务的生命周期边界，不由本对象关闭。 */
     private final TaskScope workspaceTasks;
     private final JShellRunner jshellRunner;
+    private final TraceRecorder traceRecorder;
 
 
     /** 模型执行重试配置（超时 / 最大重试次数 / 指数退避），三模式共用 */
@@ -157,6 +162,7 @@ public final class AgentRuntime {
             SkillRuntimeServices skillRuntime,
             java.util.function.Supplier<SddTaskApplicationService> sddTasks,
             JShellRunner jshellRunner,
+            TraceRecorder traceRecorder,
             AgentConfig config,
             WorkspaceContext workspace,
             KnowledgeDocumentPreferencePort knowledgePreferences) {
@@ -171,6 +177,7 @@ public final class AgentRuntime {
                 customAgentConfig, "customAgentConfig");
         this.siteCredentialManager = java.util.Objects.requireNonNull(
                 siteCredentialManager, "siteCredentialManager");
+        this.workspace = workspace;
         this.mcpConfigManager = java.util.Objects.requireNonNull(
                 mcpConfigManager, "mcpConfigManager");
         this.mcpClientManager = java.util.Objects.requireNonNull(
@@ -180,6 +187,7 @@ public final class AgentRuntime {
         this.skillRuntime = java.util.Objects.requireNonNull(skillRuntime, "skillRuntime");
         this.sddTasks = java.util.Objects.requireNonNull(sddTasks, "sddTasks");
         this.jshellRunner = java.util.Objects.requireNonNull(jshellRunner, "jshellRunner");
+        this.traceRecorder = java.util.Objects.requireNonNull(traceRecorder, "traceRecorder");
 
         // 1. ModelFactory：共享 HttpTransport，所有模型实例共用
         this.modelFactory = new ModelFactory();
@@ -201,7 +209,7 @@ public final class AgentRuntime {
         //    buildCapabilityTools(origin) 产带任务归属的工具实例
         this.expertManager = new ExpertManager(
                 modelFactory, browserManager, siteCredentialManager,
-                ToolCallOrigin.INTERACTIVE, customAgentConfig);
+                ToolCallOrigin.INTERACTIVE, customAgentConfig, workspace);
         this.knowledgeExpert = new KnowledgeExpert(
                 modelFactory,
                 embeddingGateway,
@@ -265,6 +273,7 @@ public final class AgentRuntime {
     }
     public TaskScope getWorkspaceTasks() { return workspaceTasks; }
     public JShellRunner getJshellRunner() { return jshellRunner; }
+    public TraceRecorder getTraceRecorder() { return traceRecorder; }
     public TokenTracker getTokenTracker() { return tokenTracker; }
     public MemoryManager getMemoryManager() { return memoryManager; }
     public ExpertManager getExpertManager() { return expertManager; }
@@ -278,6 +287,7 @@ public final class AgentRuntime {
     public VisionPreprocessor getVisionPreprocessor() { return visionPreprocessor; }
     public PlaywrightBrowserManager getBrowserManager() { return browserManager; }
     public SiteCredentialManager getSiteCredentialManager() { return siteCredentialManager; }
+    public WorkspaceContext getWorkspace() { return workspace; }
     public ExecutionConfig getModelExecConfig() { return modelExecConfig; }
 
     /**

@@ -3,7 +3,6 @@ package com.javaclaw.desktop;
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
-import com.javaclaw.config.DataManager;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
@@ -54,6 +53,7 @@ public class DesktopTools {
 
     /** 调用来源令牌（装配期绑定），高风险确认随调用传给 ToolConfirmationManager。 */
     private final ToolCallOrigin origin;
+    private final Path screenshotsDir;
 
     /**
      * 全局共享的键鼠/截屏基座：AWT Robot 是原生资源（触碰图形工具链，macOS 走辅助功能层），
@@ -62,8 +62,9 @@ public class DesktopTools {
      */
     private static final RobotInput SHARED_INPUT = new RobotInput();
 
-    public DesktopTools(ToolCallOrigin origin) {
+    public DesktopTools(ToolCallOrigin origin, Path screenshotsDir) {
         this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
+        this.screenshotsDir = screenshotsDir.toAbsolutePath().normalize();
         this.port = DesktopAutomation.get();
         this.input = SHARED_INPUT;
         log.debug("桌面自动化工具初始化完成: 适配器={}, 键鼠基座可用={}", port.platform(), input.isAvailable());
@@ -444,7 +445,8 @@ public class DesktopTools {
     /** 把截图按时间戳保存到工作区截图目录。 */
     private Path saveImage(BufferedImage image) throws Exception {
         String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS"));
-        Path savePath = DataManager.getInstance().getScreenshotsDir().resolve("desktop_" + ts + ".png");
+        Path savePath = screenshotsDir.resolve("desktop_" + ts + ".png");
+        java.nio.file.Files.createDirectories(savePath.getParent());
         ImageIO.write(image, "png", savePath.toFile());
         log.info("桌面截图已保存: {}", savePath);
         return savePath;

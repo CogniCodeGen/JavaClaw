@@ -52,6 +52,11 @@ public class AgentLoggingHook implements Hook {
 
     /** 日志中内容摘要的最大字符数 */
     private static final int MAX_LOG_CONTENT_LENGTH = 200;
+    private final TraceRecorder recorder;
+
+    public AgentLoggingHook(TraceRecorder recorder) {
+        this.recorder = java.util.Objects.requireNonNull(recorder, "recorder");
+    }
 
     @Override
     public <T extends HookEvent> Mono<T> onEvent(T event) {
@@ -127,7 +132,7 @@ public class AgentLoggingHook implements Hook {
                 agentName, contentLength);
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("contentLength", contentLength);
-        TraceRecorder.getInstance().record(agentName, "model_call", fields);
+        recorder.record(agentName, "model_call", fields);
     }
 
     /**
@@ -154,7 +159,7 @@ public class AgentLoggingHook implements Hook {
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("tool", toolName);
         fields.put("input", toolInput);
-        TraceRecorder.getInstance().record(agentName, "tool_call", fields);
+        recorder.record(agentName, "tool_call", fields);
     }
 
     /**
@@ -169,7 +174,7 @@ public class AgentLoggingHook implements Hook {
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("tool", toolName);
         fields.put("resultLength", resultText.length());
-        TraceRecorder.getInstance().record(agentName, "tool_result", fields);
+        recorder.record(agentName, "tool_result", fields);
     }
 
     /**
@@ -194,7 +199,7 @@ public class AgentLoggingHook implements Hook {
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("errorType", errorType);
         fields.put("message", "执行失败（详细信息已隐藏）");
-        TraceRecorder.getInstance().record(agentName, "error", fields);
+        recorder.record(agentName, "error", fields);
     }
 
     /**

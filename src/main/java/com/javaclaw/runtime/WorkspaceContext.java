@@ -9,7 +9,7 @@ import java.util.Objects;
 /**
  * 一次工作区运行期所绑定的不可变路径快照。
  *
- * <p>运行期对象不得在执行中反复查询可变的 {@link WorkspaceManager} 单例；切换工作区时
+ * <p>运行期对象不得在执行中反复查询可变的 {@link WorkspaceManager}；切换工作区时
  * 由应用内核重新捕获快照并整体替换运行时，避免一个服务同时看到新旧两套路径。</p>
  */
 public record WorkspaceContext(
@@ -46,9 +46,10 @@ public record WorkspaceContext(
     }
 
     /** 从已经完成 reload 的全局路径管理器捕获一致快照。 */
-    public static WorkspaceContext captureCurrent() {
-        WorkspaceManager workspaces = WorkspaceManager.getInstance();
-        DataManager data = DataManager.getInstance();
+    public static WorkspaceContext captureCurrent(
+            WorkspaceManager workspaces, DataManager data) {
+        Objects.requireNonNull(workspaces, "workspaces");
+        Objects.requireNonNull(data, "data");
         com.javaclaw.config.Workspace current = workspaces.getCurrentWorkspace();
         return new WorkspaceContext(
                 workspaces.getCurrentWorkspaceId(),

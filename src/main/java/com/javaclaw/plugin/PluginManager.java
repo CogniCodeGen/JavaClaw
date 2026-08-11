@@ -5,7 +5,6 @@ import com.javaclaw.api.interaction.ConfirmKind;
 import com.javaclaw.api.interaction.ConfirmRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.config.CredentialEncryptor;
-import com.javaclaw.config.DataManager;
 import com.javaclaw.plugin.api.Capability;
 import com.javaclaw.plugin.api.PluginDescriptor;
 import com.javaclaw.plugin.api.PluginTool;
@@ -107,7 +106,7 @@ public final class PluginManager {
         this.schedules = java.util.Objects.requireNonNull(schedules, "schedules");
         this.appClassLoader = PluginManager.class.getClassLoader();
         ensureDir();
-        store.bind(DataManager.getInstance().getDataRoot());
+        store.bind(runtime.getWorkspace().dataRoot());
         discover();
         log.info("插件系统已初始化：目录 {}，发现 {} 个插件", pluginsDir.toAbsolutePath(), plugins.size());
         startWatcher();
@@ -127,7 +126,7 @@ public final class PluginManager {
         unloadAll();
         this.agentRuntime = newRuntime;
         this.schedules = java.util.Objects.requireNonNull(newSchedules, "newSchedules");
-        store.bind(DataManager.getInstance().getDataRoot());
+        store.bind(newRuntime.getWorkspace().dataRoot());
         discover();
         log.info("插件系统重载完成，发现 {} 个插件", plugins.size());
         autoEnablePersistedAsync();
@@ -522,7 +521,7 @@ public final class PluginManager {
                 return;
             }
             plugins.put(d.id(), new PluginRuntime(d, jar, agentRuntime, appClassLoader,
-                    DataManager.getInstance().getDataRoot(), taskExecutor, schedules));
+                    agentRuntime.getWorkspace().dataRoot(), taskExecutor, schedules));
             log.info("发现插件：{}（{}），目录 {}", d.name(), d.id(), pluginDir.getFileName());
         } catch (Exception e) {
             log.warn("解析插件失败，跳过 {}：{}", pluginDir.getFileName(), e.toString());
