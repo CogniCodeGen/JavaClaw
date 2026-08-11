@@ -19,7 +19,6 @@ import com.javaclaw.platform.spring.WorkspaceSpringContextFactory;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeCenterView;
 import com.javaclaw.ui.javafx.memory.MemoryCenterView;
 import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
-import com.javaclaw.ui.javafx.schedule.ScheduleView;
 import com.javaclaw.ui.javafx.skill.SkillCenterView;
 import com.javaclaw.ui.javafx.task.SddTaskView;
 import com.javaclaw.ui.javafx.control.WindowToastFactory;
@@ -139,7 +138,7 @@ public final class UiScreenshotExporter {
                 workspaceRuntime.mcpCenters().createWindow(primaryStage, () -> { }).show();
             }));
             shots.add(new Shot("08-schedule-center.png", "定时任务", () ->
-                    showInternalStage(new ScheduleView(primaryStage))));
+                    showInternalStage(workspaceRuntime.scheduleViews().create(primaryStage))));
             shots.add(new Shot("09-plugin-center.png", "插件中心", () ->
                     springContext.getBean(PluginCenterViewFactory.class)
                             .create(primaryStage).show()));

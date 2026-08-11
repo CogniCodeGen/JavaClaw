@@ -38,8 +38,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 
 /**
  * 定时任务管理器（基于 Quartz）
@@ -111,9 +109,7 @@ public class ScheduleManager {
     /** 正在执行中的任务 id 集合（实时运行状态：进入 executeTask 至本次完成期间为 true） */
     private final Set<String> runningTaskIds = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
-    private BiConsumer<String, String> onTaskLog;
-    private Consumer<String> onTaskExecutionComplete;
-    private Consumer<String> onTaskExecutionStart;
+    private final List<TaskListener> listeners = new CopyOnWriteArrayList<>();
 
     private ScheduleManager() {
         this.store = new ScheduledTaskStore(AppDatabase::getConnection);
@@ -1065,21 +1061,27 @@ public class ScheduleManager {
     }
 
     private void emitLog(String taskName, String message) {
-        if (onTaskLog != null) {
-            String time = LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
-            onTaskLog.accept(taskName, "[" + time + "] " + message);
-        }
+        String time = LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
+        String formatted = "[" + time + "] " + message;
+        listeners.forEach(listener -> notifySafely(
+                () -> listener.onLog(taskName, formatted), "日志"));
     }
 
     private void notifyExecutionComplete(String taskId) {
-        if (onTaskExecutionComplete != null) {
-            onTaskExecutionComplete.accept(taskId);
-        }
+        listeners.forEach(listener -> notifySafely(
+                () -> listener.onExecutionCompleted(taskId), "完成"));
     }
 
     private void notifyExecutionStart(String taskId) {
-        if (onTaskExecutionStart != null) {
-            onTaskExecutionStart.accept(taskId);
+        listeners.forEach(listener -> notifySafely(
+                () -> listener.onExecutionStarted(taskId), "开始"));
+    }
+
+    private void notifySafely(Runnable notification, String kind) {
+        try {
+            notification.run();
+        } catch (RuntimeException failure) {
+            log.warn("定时任务{}监听器失败（已隔离）", kind, failure);
         }
     }
 
@@ -1102,16 +1104,35 @@ public class ScheduleManager {
         log.info("定时任务调度器已关闭");
     }
 
-    public void setOnTaskLog(BiConsumer<String, String> callback) {
-        this.onTaskLog = callback;
+    /**
+     * 订阅任务运行事件。监听器在执行线程调用，必须快速返回；关闭句柄后不再接收新事件。
+     */
+    public AutoCloseable subscribe(TaskListener listener) {
+        Objects.requireNonNull(listener, "listener");
+        java.util.concurrent.atomic.AtomicBoolean active =
+                new java.util.concurrent.atomic.AtomicBoolean(true);
+        TaskListener guarded = new TaskListener() {
+            @Override public void onLog(String taskName, String message) {
+                if (active.get()) listener.onLog(taskName, message);
+            }
+            @Override public void onExecutionStarted(String taskId) {
+                if (active.get()) listener.onExecutionStarted(taskId);
+            }
+            @Override public void onExecutionCompleted(String taskId) {
+                if (active.get()) listener.onExecutionCompleted(taskId);
+            }
+        };
+        listeners.add(guarded);
+        return () -> {
+            active.set(false);
+            listeners.remove(guarded);
+        };
     }
 
-    public void setOnTaskExecutionComplete(Consumer<String> callback) {
-        this.onTaskExecutionComplete = callback;
-    }
-
-    public void setOnTaskExecutionStart(Consumer<String> callback) {
-        this.onTaskExecutionStart = callback;
+    public interface TaskListener {
+        default void onLog(String taskName, String message) { }
+        default void onExecutionStarted(String taskId) { }
+        default void onExecutionCompleted(String taskId) { }
     }
 
     // ==================== Quartz Job / JobFactory ====================

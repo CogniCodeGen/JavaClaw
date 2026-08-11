@@ -9,6 +9,7 @@ import com.javaclaw.platform.spring.WorkspaceContextHandle;
 import com.javaclaw.workflow.service.WorkflowService;
 import com.javaclaw.ui.javafx.mcp.McpCenterViewFactory;
 import com.javaclaw.ui.javafx.settings.SettingsViewFactory;
+import com.javaclaw.ui.javafx.schedule.ScheduleViewFactory;
 
 import java.util.Objects;
 
@@ -30,6 +31,7 @@ public final class WorkspaceRuntime implements AutoCloseable {
     private final ModeRegistry modeRegistry;
     private final McpCenterViewFactory mcpCenters;
     private final SettingsViewFactory settingsViews;
+    private final ScheduleViewFactory scheduleViews;
 
     WorkspaceRuntime(WorkspaceContextHandle springContext) {
         this.springContext = Objects.requireNonNull(springContext, "springContext");
@@ -42,6 +44,7 @@ public final class WorkspaceRuntime implements AutoCloseable {
         modeRegistry = springContext.bean(ModeRegistry.class);
         mcpCenters = springContext.bean(McpCenterViewFactory.class);
         settingsViews = springContext.bean(SettingsViewFactory.class);
+        scheduleViews = springContext.bean(ScheduleViewFactory.class);
     }
 
     public WorkspaceContext context() {
@@ -78,6 +81,10 @@ public final class WorkspaceRuntime implements AutoCloseable {
 
     public SettingsViewFactory settingsViews() {
         return settingsViews;
+    }
+
+    public ScheduleViewFactory scheduleViews() {
+        return scheduleViews;
     }
 
     public boolean isClosed() {

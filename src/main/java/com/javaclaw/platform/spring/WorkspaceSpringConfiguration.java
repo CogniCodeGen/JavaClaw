@@ -30,6 +30,9 @@ import com.javaclaw.application.settings.EmailConnectionProbePort;
 import com.javaclaw.application.settings.ModelSettingsPort;
 import com.javaclaw.application.settings.ModelSettingsProbePort;
 import com.javaclaw.application.settings.ModelSettingsUseCase;
+import com.javaclaw.application.schedule.ScheduleApplicationService;
+import com.javaclaw.application.schedule.SchedulePort;
+import com.javaclaw.application.schedule.ScheduleUseCase;
 import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.loop.LoopService;
@@ -46,6 +49,7 @@ import com.javaclaw.infrastructure.settings.EmbeddingGatewayRuntimeProbeAdapter;
 import com.javaclaw.infrastructure.settings.HttpModelSettingsProbeAdapter;
 import com.javaclaw.infrastructure.settings.JakartaMailConnectionProbeAdapter;
 import com.javaclaw.infrastructure.settings.LegacyCommunicationSettingsAdapter;
+import com.javaclaw.infrastructure.schedule.ScheduleManagerAdapter;
 import com.javaclaw.mode.ChatMode;
 import com.javaclaw.mode.LoopMode;
 import com.javaclaw.mode.PlanMode;
@@ -81,6 +85,9 @@ import com.javaclaw.ui.javafx.settings.TestDataCandidateCellFactory;
 import com.javaclaw.ui.javafx.settings.AppearanceSettingsSectionFactory;
 import com.javaclaw.ui.javafx.settings.SettingsPanelCatalogFactory;
 import com.javaclaw.ui.javafx.settings.SettingsViewFactory;
+import com.javaclaw.ui.javafx.schedule.ScheduleHistoryCellFactory;
+import com.javaclaw.ui.javafx.schedule.ScheduleTaskCellFactory;
+import com.javaclaw.ui.javafx.schedule.ScheduleViewFactory;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.http.HttpGateway;
 import com.javaclaw.platform.json.JsonCodec;
@@ -393,6 +400,32 @@ public class WorkspaceSpringConfiguration {
     SettingsViewFactory settingsViewFactory(
             @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
         return new SettingsViewFactory(loader);
+    }
+
+    @Bean
+    SchedulePort schedulePort() {
+        return new ScheduleManagerAdapter(com.javaclaw.schedule.ScheduleManager.getInstance());
+    }
+
+    @Bean
+    ScheduleApplicationService scheduleApplicationService(SchedulePort schedules) {
+        return new ScheduleUseCase(schedules);
+    }
+
+    @Bean
+    ScheduleTaskCellFactory scheduleTaskCellFactory() {
+        return new ScheduleTaskCellFactory();
+    }
+
+    @Bean
+    ScheduleHistoryCellFactory scheduleHistoryCellFactory() {
+        return new ScheduleHistoryCellFactory();
+    }
+
+    @Bean
+    ScheduleViewFactory scheduleViewFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new ScheduleViewFactory(loader);
     }
 
     @Bean

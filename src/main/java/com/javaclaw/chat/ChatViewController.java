@@ -33,7 +33,6 @@ import com.javaclaw.ui.javafx.image.ImageViewerFactory;
 import com.javaclaw.ui.javafx.control.WindowToastFactory;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuController;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuSnapshot;
-import com.javaclaw.ui.javafx.schedule.ScheduleView;
 import com.javaclaw.ui.javafx.skill.SkillCenterView;
 import com.javaclaw.ui.javafx.task.SddTaskView;
 import com.javaclaw.ui.javafx.theme.ThemeMenuController;
@@ -2621,8 +2620,7 @@ public class ChatViewController implements AutoCloseable {
     private void openScheduler() {
         log.info("打开定时任务管理");
         javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
-        ScheduleView scheduleView = new ScheduleView(ownerStage);
-        scheduleView.show();
+        applicationKernel.current().scheduleViews().create(ownerStage).show();
     }
 
     /**
