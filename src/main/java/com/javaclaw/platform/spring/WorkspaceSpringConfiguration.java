@@ -80,6 +80,7 @@ import com.javaclaw.schedule.ScheduleBuiltinActions;
 import com.javaclaw.schedule.ScheduledTaskStore;
 import com.javaclaw.skill.SkillInstaller;
 import com.javaclaw.skill.SkillManager;
+import com.javaclaw.skill.SkillRuntimeServices;
 import com.javaclaw.skill.SkillUsageTracker;
 import com.javaclaw.skill.curation.SkillProposalQueue;
 import com.javaclaw.system.CommandSessionManager;
@@ -167,9 +168,11 @@ public class WorkspaceSpringConfiguration {
             McpConfigManager mcpConfigurations,
             McpClientManager mcpClients,
             @Qualifier("workspaceTaskScope") TaskScope workspaceTaskScope,
-            ScheduleApplicationService schedules) {
+            ScheduleApplicationService schedules,
+            SkillRuntimeServices skills,
+            com.javaclaw.system.JShellRunner jshellRunner) {
         return new AgentRuntime(options.browserManager(), customAgents, siteCredentials,
-                mcpConfigurations, mcpClients, workspaceTaskScope, schedules);
+                mcpConfigurations, mcpClients, workspaceTaskScope, schedules, skills, jshellRunner);
     }
 
     @Bean
@@ -599,19 +602,46 @@ public class WorkspaceSpringConfiguration {
         return new WorkflowViewFactory(loader, fx);
     }
 
-    @Bean(destroyMethod = "")
-    SkillManager skillManager() {
-        return SkillManager.getInstance();
+    @Bean
+    SkillManager skillManager(
+            WorkspaceContext workspace,
+            com.fasterxml.jackson.databind.ObjectMapper json,
+            com.javaclaw.config.AgentConfig settings) {
+        return new SkillManager(workspace.globalDataRoot().resolve("skills"), json, settings);
     }
 
-    @Bean(destroyMethod = "")
-    SkillUsageTracker skillUsageTracker() {
-        return SkillUsageTracker.getInstance();
+    @Bean(destroyMethod = "close")
+    SkillUsageTracker skillUsageTracker(
+            WorkspaceContext workspace,
+            JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager,
+            com.javaclaw.config.AgentConfig settings,
+            ManagedTaskExecutor scheduler,
+            @Qualifier("workspaceTaskScope") TaskScope tasks) {
+        return new SkillUsageTracker(workspace.workspaceId(), jdbc, transactionManager,
+                settings, scheduler, tasks);
     }
 
-    @Bean(destroyMethod = "")
-    SkillProposalQueue skillProposalQueue() {
-        return SkillProposalQueue.getInstance();
+    @Bean(destroyMethod = "close")
+    SkillProposalQueue skillProposalQueue(
+            WorkspaceContext workspace,
+            SkillManager skills,
+            com.javaclaw.config.AgentConfig settings,
+            JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager,
+            JsonCodec json,
+            ManagedTaskExecutor scheduler,
+            @Qualifier("workspaceTaskScope") TaskScope tasks) {
+        return new SkillProposalQueue(workspace.workspaceId(), skills, settings, jdbc,
+                transactionManager, json, scheduler, tasks);
+    }
+
+    @Bean
+    SkillRuntimeServices skillRuntimeServices(
+            SkillManager manager,
+            SkillUsageTracker usage,
+            SkillProposalQueue proposals) {
+        return new SkillRuntimeServices(manager, usage, proposals);
     }
 
     @Bean
@@ -625,8 +655,10 @@ public class WorkspaceSpringConfiguration {
             SkillUsageTracker usage,
             SkillProposalQueue proposals,
             SkillInstaller installer,
-            com.javaclaw.config.AgentConfig settings) {
-        return new LegacySkillManagementAdapter(skills, usage, proposals, installer, settings);
+            com.javaclaw.config.AgentConfig settings,
+            com.javaclaw.system.JShellRunner jshellRunner) {
+        return new LegacySkillManagementAdapter(
+                skills, usage, proposals, installer, settings, jshellRunner);
     }
 
     @Bean

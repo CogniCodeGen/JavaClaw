@@ -28,7 +28,7 @@ import java.util.List;
  * </ul>
  * user-modified 保护：用户修改过的技能即使在 auto 模式下也不被静默覆盖，强制走提案。</p>
  *
- * <p>无状态：每次调用实时查询 {@link SkillManager} 单例与 {@link AgentConfig}。</p>
+ * <p>实例绑定工作区的技能仓库、配置快照和提案队列，不使用全局回调。</p>
  *
  * @author JavaClaw
  */
@@ -38,9 +38,19 @@ public final class SkillManageTools {
 
     /** 调用来源令牌（装配期绑定），直接落盘前的风险确认随调用传给 ToolConfirmationManager。 */
     private final ToolCallOrigin origin;
+    private final SkillManager skills;
+    private final AgentConfig settings;
+    private final ProposalSink proposalSink;
 
-    public SkillManageTools(ToolCallOrigin origin) {
+    public SkillManageTools(
+            ToolCallOrigin origin,
+            SkillManager skills,
+            AgentConfig settings,
+            ProposalSink proposalSink) {
         this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
+        this.skills = java.util.Objects.requireNonNull(skills, "skills");
+        this.settings = java.util.Objects.requireNonNull(settings, "settings");
+        this.proposalSink = java.util.Objects.requireNonNull(proposalSink, "proposalSink");
     }
 
     /**
@@ -55,23 +65,16 @@ public final class SkillManageTools {
     /**
      * 提案接收器：suggest 模式（及 auto 模式下的 user-modified 保护降级）时，
      * 写动作不直接落盘，而是把提案交给接收器排队待审。
-     * 由自学习闭环初始化时注入（SkillProposalQueue）；未注入时 suggest 暂按 auto 直落盘。
+     * 接收器由工作区 Context 在 toolkit 装配时注入。
      */
     public interface ProposalSink {
         /**
          * 提交一份技能变更提案
          *
-         * @param request 结构化变更请求（采纳后经 {@link SkillChangeRequest#apply()} 落盘）
+         * @param request 结构化变更请求（采纳后经 {@link SkillChangeRequest#apply(SkillManager)} 落盘）
          * @return 提案 ID；同指纹去重 / 被拒冷却拦截时返回 null
          */
         String submit(SkillChangeRequest request);
-    }
-
-    private static volatile ProposalSink proposalSink;
-
-    /** 注入提案接收器（自学习闭环装配时调用） */
-    public static void setProposalSink(ProposalSink sink) {
-        proposalSink = sink;
     }
 
     // ==================== 工具实现 ====================
@@ -97,7 +100,7 @@ public final class SkillManageTools {
         String secretError = rejectCredentialContent("skill_create", content);
         if (secretError != null) return secretError;
         String skillName = name.strip();
-        if (SkillManager.getInstance().getSkillByName(skillName) != null) {
+        if (skills.getSkillByName(skillName) != null) {
             return ToolResponse.error("skill_create",
                     "技能「" + skillName + "」已存在，请改用 skill_patch 定向修补或 skill_edit 整篇重写。");
         }
@@ -119,7 +122,7 @@ public final class SkillManageTools {
         }
         Skill skill;
         try {
-            skill = SkillManager.getInstance().createAgentSkill(
+            skill = skills.createAgentSkill(
                     skillName, safe(description), content, safe(category), splitTags(tags));
         } catch (RuntimeException e) {
             log.error("创建技能未能确认落盘: {}", skillName, e);
@@ -155,7 +158,7 @@ public final class SkillManageTools {
         }
         String secretError = rejectCredentialContent("skill_create_direct", content);
         if (secretError != null) return secretError;
-        if (SkillManager.getInstance().getSkillByName(skillName) != null) {
+        if (skills.getSkillByName(skillName) != null) {
             return ToolResponse.error("skill_create_direct",
                     "技能「" + skillName + "」已存在，请改用 skill_patch 或 skill_edit。");
         }
@@ -164,14 +167,14 @@ public final class SkillManageTools {
         }
         Skill skill;
         try {
-            skill = SkillManager.getInstance().createAgentSkill(
+            skill = skills.createAgentSkill(
                     skillName, safe(description), content, safe(category), splitTags(tags));
         } catch (RuntimeException e) {
             log.error("直接创建技能未能确认落盘: {}", skillName, e);
             return ToolResponse.error("skill_create_direct",
                     "技能「" + skillName + "」创建失败，未写入磁盘。");
         }
-        if (skill == null || SkillManager.getInstance().getSkillByName(skillName) == null) {
+        if (skill == null || skills.getSkillByName(skillName) == null) {
             return ToolResponse.error("skill_create_direct", "技能「" + skillName + "」未能确认落盘。");
         }
         log.info("用户确认后已直接创建技能: {} (v{})", skillName, skill.getVersion());
@@ -198,7 +201,7 @@ public final class SkillManageTools {
             return ToolResponse.error("skill_patch",
                     "旧片段疑似包含凭据，不能复制进变更提案；请改用 skill_edit 提交完整的脱敏正文。");
         }
-        Skill skill = SkillManager.getInstance().getSkillByName(strip(skillName));
+        Skill skill = skills.getSkillByName(strip(skillName));
         if (skill == null) {
             return ToolResponse.error("skill_patch", "未找到名为「" + strip(skillName) + "」的技能。");
         }
@@ -218,13 +221,13 @@ public final class SkillManageTools {
         if (!confirmApply("skill_patch", "修补技能「" + skill.getName() + "」")) {
             return ToolResponse.error("skill_patch", "用户拒绝修补该技能。");
         }
-        String error = SkillManager.getInstance().applyPatch(skill.getName(), oldString, newString);
+        String error = skills.applyPatch(skill.getName(), oldString, newString);
         if (error != null) {
             return ToolResponse.error("skill_patch", error + "。");
         }
         return ToolResponse.success("skill_patch",
                 "已修补技能「" + skill.getName() + "」，当前版本 v"
-                        + SkillManager.getInstance().getSkillByName(skill.getName()).getVersion() + "。");
+                        + skills.getSkillByName(skill.getName()).getVersion() + "。");
     }
 
     @Tool(name = "skill_edit",
@@ -240,7 +243,7 @@ public final class SkillManageTools {
         }
         String secretError = rejectCredentialContent("skill_edit", newContent);
         if (secretError != null) return secretError;
-        Skill skill = SkillManager.getInstance().getSkillByName(strip(skillName));
+        Skill skill = skills.getSkillByName(strip(skillName));
         if (skill == null) {
             return ToolResponse.error("skill_edit", "未找到名为「" + strip(skillName) + "」的技能。");
         }
@@ -259,13 +262,13 @@ public final class SkillManageTools {
         if (!confirmApply("skill_edit", "重写技能「" + skill.getName() + "」正文")) {
             return ToolResponse.error("skill_edit", "用户拒绝重写该技能。");
         }
-        String error = SkillManager.getInstance().applyEdit(skill.getName(), newContent);
+        String error = skills.applyEdit(skill.getName(), newContent);
         if (error != null) {
             return ToolResponse.error("skill_edit", error + "。");
         }
         return ToolResponse.success("skill_edit",
                 "已重写技能「" + skill.getName() + "」，当前版本 v"
-                        + SkillManager.getInstance().getSkillByName(skill.getName()).getVersion() + "。");
+                        + skills.getSkillByName(skill.getName()).getVersion() + "。");
     }
 
     @Tool(name = "skill_delete",
@@ -278,7 +281,7 @@ public final class SkillManageTools {
         if ("off".equals(mode)) {
             return refuseOff("skill_delete");
         }
-        Skill skill = SkillManager.getInstance().getSkillByName(strip(skillName));
+        Skill skill = skills.getSkillByName(strip(skillName));
         if (skill == null) {
             return ToolResponse.error("skill_delete", "未找到名为「" + strip(skillName) + "」的技能。");
         }
@@ -297,7 +300,7 @@ public final class SkillManageTools {
                 "删除技能「" + skill.getName() + "」（整个目录含版本历史，不可恢复）")) {
             return ToolResponse.error("skill_delete", "用户拒绝删除该技能。");
         }
-        SkillManager.getInstance().deleteSkill(skill.getId());
+        skills.deleteSkill(skill.getId());
         return ToolResponse.success("skill_delete", "已删除技能「" + skill.getName() + "」。");
     }
 
@@ -314,7 +317,7 @@ public final class SkillManageTools {
         }
         String secretError = rejectCredentialContent("skill_write_file", fileContent);
         if (secretError != null) return secretError;
-        Skill skill = SkillManager.getInstance().getSkillByName(strip(skillName));
+        Skill skill = skills.getSkillByName(strip(skillName));
         if (skill == null) {
             return ToolResponse.error("skill_write_file", "未找到名为「" + strip(skillName) + "」的技能。");
         }
@@ -334,7 +337,7 @@ public final class SkillManageTools {
                 "向技能「" + skill.getName() + "」写入支持文件 " + relPath)) {
             return ToolResponse.error("skill_write_file", "用户拒绝写入该文件。");
         }
-        String error = SkillManager.getInstance().writeSupportFile(skill.getName(), relPath, fileContent);
+        String error = skills.writeSupportFile(skill.getName(), relPath, fileContent);
         if (error != null) {
             return ToolResponse.error("skill_write_file", error + "。");
         }
@@ -351,7 +354,7 @@ public final class SkillManageTools {
         if ("off".equals(mode)) {
             return refuseOff("skill_remove_file");
         }
-        Skill skill = SkillManager.getInstance().getSkillByName(strip(skillName));
+        Skill skill = skills.getSkillByName(strip(skillName));
         if (skill == null) {
             return ToolResponse.error("skill_remove_file", "未找到名为「" + strip(skillName) + "」的技能。");
         }
@@ -370,7 +373,7 @@ public final class SkillManageTools {
                 "删除技能「" + skill.getName() + "」的支持文件 " + relPath)) {
             return ToolResponse.error("skill_remove_file", "用户拒绝删除该文件。");
         }
-        String error = SkillManager.getInstance().removeSupportFile(skill.getName(), relPath);
+        String error = skills.removeSupportFile(skill.getName(), relPath);
         if (error != null) {
             return ToolResponse.error("skill_remove_file", error + "。");
         }
@@ -380,23 +383,20 @@ public final class SkillManageTools {
 
     // ==================== 内部辅助 ====================
 
-    private static String evolutionMode() {
-        return AgentConfig.getInstance().getSkillEvolutionMode();
+    private String evolutionMode() {
+        return settings.getSkillEvolutionMode();
     }
 
     /**
      * 判定本次写动作是否应走提案而非直接落盘：
      * suggest 模式一律提案；auto 模式下 user-modified 技能强制降级为提案（绝不静默覆盖用户成果）。
-     * 提案接收器未注入时回落为直接落盘（自学习闭环未装配的过渡期行为）。
+     * 提案接收器是必需依赖，suggest 绝不会因装配缺失而意外直接落盘。
      */
-    private static boolean shouldPropose(String mode, boolean userModifiedTarget) {
-        if (proposalSink == null) {
-            return false;
-        }
+    private boolean shouldPropose(String mode, boolean userModifiedTarget) {
         return "suggest".equals(mode) || userModifiedTarget;
     }
 
-    private static String propose(String toolName, SkillChangeRequest request) {
+    private String propose(String toolName, SkillChangeRequest request) {
         String proposalId = proposalSink.submit(request);
         if (proposalId == null) {
             return ToolResponse.pending(toolName,

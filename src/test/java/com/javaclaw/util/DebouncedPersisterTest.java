@@ -1,5 +1,7 @@
 package com.javaclaw.util;
 
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.execution.TaskScope;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -21,46 +23,53 @@ class DebouncedPersisterTest {
         AtomicInteger active = new AtomicInteger();
         AtomicBoolean overlapped = new AtomicBoolean();
 
-        DebouncedPersister persister = new DebouncedPersister("test", Duration.ZERO, () -> {
-            if (active.incrementAndGet() > 1) overlapped.set(true);
+        try (ManagedTaskExecutor executor = new ManagedTaskExecutor();
+             TaskScope tasks = executor.openScope("debounce-test", 2)) {
+            DebouncedPersister persister = new DebouncedPersister(
+                    "test", Duration.ZERO, executor, tasks, () -> {
+                        if (active.incrementAndGet() > 1) overlapped.set(true);
+                        try {
+                            scheduledEntered.countDown();
+                            releaseScheduled.await(2, TimeUnit.SECONDS);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        } finally {
+                            active.decrementAndGet();
+                        }
+                    });
+
             try {
-                scheduledEntered.countDown();
-                releaseScheduled.await(2, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+                persister.request();
+                assertTrue(scheduledEntered.await(1, TimeUnit.SECONDS));
+
+                Thread flushThread = new Thread(persister::flush);
+                flushThread.start();
+                Thread.sleep(50);
+                assertFalse(overlapped.get());
+
+                releaseScheduled.countDown();
+                flushThread.join(1_000);
+                assertFalse(flushThread.isAlive());
+                assertFalse(overlapped.get());
             } finally {
-                active.decrementAndGet();
+                releaseScheduled.countDown();
+                persister.shutdown();
             }
-        });
-
-        try {
-            persister.request();
-            assertTrue(scheduledEntered.await(1, TimeUnit.SECONDS));
-
-            Thread flushThread = new Thread(persister::flush);
-            flushThread.start();
-            Thread.sleep(50);
-            assertFalse(overlapped.get());
-
-            releaseScheduled.countDown();
-            flushThread.join(1_000);
-            assertFalse(flushThread.isAlive());
-            assertFalse(overlapped.get());
-        } finally {
-            releaseScheduled.countDown();
-            persister.shutdown();
         }
     }
 
     @Test
     void shutdown后请求被安全忽略() {
         AtomicInteger calls = new AtomicInteger();
-        DebouncedPersister persister = new DebouncedPersister(
-                "test", Duration.ZERO, calls::incrementAndGet);
+        try (ManagedTaskExecutor executor = new ManagedTaskExecutor();
+             TaskScope tasks = executor.openScope("debounce-test", 1)) {
+            DebouncedPersister persister = new DebouncedPersister(
+                    "test", Duration.ZERO, executor, tasks, calls::incrementAndGet);
 
-        persister.shutdown();
-        persister.request();
+            persister.shutdown();
+            persister.request();
 
-        assertEquals(0, calls.get());
+            assertEquals(0, calls.get());
+        }
     }
 }

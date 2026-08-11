@@ -59,8 +59,8 @@ public class SkillChangeRequest {
      *
      * @return null 表示成功；否则返回失败原因（中文）
      */
-    public String apply() {
-        SkillManager mgr = SkillManager.getInstance();
+    public String apply(SkillManager manager) {
+        SkillManager mgr = java.util.Objects.requireNonNull(manager, "manager");
         return switch (action == null ? "" : action) {
             case "create" -> {
                 Skill created = mgr.createAgentSkill(skillName,

@@ -6,6 +6,8 @@ import com.javaclaw.agent.model.ModelTier;
 import com.javaclaw.agent.model.StructuredCalls;
 import com.javaclaw.prompt.SddPrompts;
 import com.javaclaw.skill.SkillManager;
+import com.javaclaw.skill.SkillRuntimeServices;
+import com.javaclaw.skill.SkillUsageTracker;
 import com.javaclaw.task.TaskTokenHook;
 import com.javaclaw.task.ValidationInspectionTools;
 import com.javaclaw.task.sdd.SddAgents;
@@ -57,6 +59,7 @@ public final class AgentScopeSddAgents implements SddAgents {
     private final ModelFactory modelFactory;
     private final java.util.Map<String, Object> capabilityTools;
     private final SkillManager skills;
+    private final SkillUsageTracker skillUsage;
     private final SddTokenSink tokenSink;
 
     private long structuredTimeoutSec = 120;
@@ -64,10 +67,12 @@ public final class AgentScopeSddAgents implements SddAgents {
     private int execMaxIters = 12;
 
     public AgentScopeSddAgents(ModelFactory modelFactory, java.util.Map<String, Object> capabilityTools,
-                               SkillManager skills, SddTokenSink tokenSink) {
+                               SkillRuntimeServices skillRuntime, SddTokenSink tokenSink) {
         this.modelFactory = modelFactory;
         this.capabilityTools = capabilityTools == null ? java.util.Map.of() : capabilityTools;
-        this.skills = skills;
+        SkillRuntimeServices runtime = Objects.requireNonNull(skillRuntime, "skillRuntime");
+        this.skills = runtime.manager();
+        this.skillUsage = runtime.usage();
         this.tokenSink = tokenSink == null ? SddTokenSink.NOOP : tokenSink;
     }
 
@@ -326,7 +331,7 @@ public final class AgentScopeSddAgents implements SddAgents {
             toolkit.registerTool(new ValidationInspectionTools(ctx.workDir()));
         }
         // 技能按需拉取工具：配合 withSkillsCompact 的目录式注入，让执行体只在需要时拉技能全文
-        toolkit.registerTool(new com.javaclaw.skill.SkillTools());
+        toolkit.registerTool(new com.javaclaw.skill.SkillTools(skills, skillUsage));
         // 瘦身：GUI 自动化类工具与代码实现无关，但 schema 随 ReAct 每轮迭代全量重发——
         // 留着每轮白付 ~1.5K token。需要 GUI 自动化的诉求走聊天模式 system_expert，不进托管执行体。
         for (String t : EXEC_IRRELEVANT_TOOLS) {

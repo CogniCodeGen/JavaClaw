@@ -11,7 +11,9 @@ import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.AppDatabase;
 import com.javaclaw.config.AppDatabaseAccess;
 import com.javaclaw.config.DatabaseAccess;
+import com.javaclaw.platform.execution.TaskSubmitter;
 import com.javaclaw.skill.SkillManager;
+import com.javaclaw.skill.SkillRuntimeServices;
 import com.javaclaw.task.sdd.SddOutcome;
 import com.javaclaw.task.sdd.SddProgress;
 import com.javaclaw.task.sdd.SddTaskRunner;
@@ -84,6 +86,9 @@ public final class SddTaskManager {
     private java.util.function.Function<com.javaclaw.agent.ToolCallOrigin, Map<String, Object>>
             capabilityToolsFactory = origin -> Map.of();
     private SkillManager skills;
+    private SkillRuntimeServices skillRuntime;
+    private AgentConfig settings;
+    private TaskSubmitter skillTasks;
     private UserInteractionPort interactionPort;
     private com.javaclaw.workflow.service.WorkflowService workflowService;
     private DatabaseAccess database = new AppDatabaseAccess();
@@ -100,38 +105,27 @@ public final class SddTaskManager {
      * @param capabilityToolsFactory 能力→工具表工厂：任务启动时以该任务的来源令牌
      *                               （taskId/workDir）逐任务构建，使高风险确认按任务归属
      *                               命中白名单/目录放行（共享实例承载不了逐任务归属）
-     * @param skills          技能管理器（可空）
+     * @param skillRuntime    当前工作区技能运行时
+     * @param settings        当前工作区配置
+     * @param skillTasks      技能蒸馏任务所属的工作区作用域
      * @param interactionPort 人机交互端口（评审闸门用；可空 → 自动放行）
      */
     public synchronized void configure(Path dataDir, ModelFactory modelFactory,
                                        java.util.function.Function<com.javaclaw.agent.ToolCallOrigin,
                                                Map<String, Object>> capabilityToolsFactory,
-                                       SkillManager skills,
-                                       UserInteractionPort interactionPort) {
-        // 兼容旧调用方，但不能沿用上一个工作区的 WorkflowService：它可能已经随
-        // WorkspaceRuntime 关闭。未显式传入新服务时安全降级到 SDD 原生编排器。
-        configure(dataDir, modelFactory, capabilityToolsFactory, skills, interactionPort, null);
-    }
-
-    public synchronized void configure(Path dataDir, ModelFactory modelFactory,
-                                       java.util.function.Function<com.javaclaw.agent.ToolCallOrigin,
-                                               Map<String, Object>> capabilityToolsFactory,
-                                       SkillManager skills, UserInteractionPort interactionPort,
-                                       com.javaclaw.workflow.service.WorkflowService workflowService) {
-        configure(dataDir, modelFactory, capabilityToolsFactory, skills, interactionPort,
-                workflowService, new AppDatabaseAccess(), AppDatabase.currentWorkspaceId());
-    }
-
-    public synchronized void configure(Path dataDir, ModelFactory modelFactory,
-                                       java.util.function.Function<com.javaclaw.agent.ToolCallOrigin,
-                                               Map<String, Object>> capabilityToolsFactory,
-                                       SkillManager skills, UserInteractionPort interactionPort,
+                                       SkillRuntimeServices skillRuntime,
+                                       AgentConfig settings,
+                                       TaskSubmitter skillTasks,
+                                       UserInteractionPort interactionPort,
                                        com.javaclaw.workflow.service.WorkflowService workflowService,
                                        DatabaseAccess database, String workspaceId) {
         this.modelFactory = modelFactory;
         this.capabilityToolsFactory = capabilityToolsFactory == null
                 ? origin -> Map.of() : capabilityToolsFactory;
-        this.skills = skills;
+        this.skillRuntime = java.util.Objects.requireNonNull(skillRuntime, "skillRuntime");
+        this.skills = skillRuntime.manager();
+        this.settings = java.util.Objects.requireNonNull(settings, "settings");
+        this.skillTasks = java.util.Objects.requireNonNull(skillTasks, "skillTasks");
         this.interactionPort = interactionPort;
         this.workflowService = workflowService;
         this.database = java.util.Objects.requireNonNull(database, "database");
@@ -141,31 +135,18 @@ public final class SddTaskManager {
     }
 
     /**
-     * 工作区切换时的轻量重配：重定向数据目录与刷新模型工厂/能力工具，
-     * 复用既有的技能管理器与交互端口（这两者跨工作区不变）。
+     * 工作区切换时的轻量重配：所有工作区协作者都替换，不保留旧 Context 句柄。
      */
     public synchronized void reload(Path dataDir, ModelFactory modelFactory,
                                     java.util.function.Function<com.javaclaw.agent.ToolCallOrigin,
-                                            Map<String, Object>> capabilityToolsFactory) {
-        // 同上：旧签名无法表达新工作区的 WorkflowService，禁止保留已关闭实例。
-        configure(dataDir, modelFactory, capabilityToolsFactory, this.skills, this.interactionPort, null);
-    }
-
-    public synchronized void reload(Path dataDir, ModelFactory modelFactory,
-                                    java.util.function.Function<com.javaclaw.agent.ToolCallOrigin,
                                             Map<String, Object>> capabilityToolsFactory,
-                                    com.javaclaw.workflow.service.WorkflowService workflowService) {
-        configure(dataDir, modelFactory, capabilityToolsFactory, this.skills, this.interactionPort,
-                workflowService);
-    }
-
-    public synchronized void reload(Path dataDir, ModelFactory modelFactory,
-                                    java.util.function.Function<com.javaclaw.agent.ToolCallOrigin,
-                                            Map<String, Object>> capabilityToolsFactory,
+                                    SkillRuntimeServices skillRuntime,
+                                    AgentConfig settings,
+                                    TaskSubmitter skillTasks,
                                     com.javaclaw.workflow.service.WorkflowService workflowService,
                                     DatabaseAccess database, String workspaceId) {
-        configure(dataDir, modelFactory, capabilityToolsFactory, this.skills, this.interactionPort,
-                workflowService, database, workspaceId);
+        configure(dataDir, modelFactory, capabilityToolsFactory, skillRuntime, settings,
+                skillTasks, this.interactionPort, workflowService, database, workspaceId);
     }
 
     public void subscribe(SddTaskListener l) {
@@ -310,7 +291,7 @@ public final class SddTaskManager {
                     runner = new SddTaskRunner(ctx, modelFactory,
                             capabilityToolsFactory.apply(
                                     com.javaclaw.agent.ToolCallOrigin.managedTask(id, task.workDir)),
-                            skills,
+                            skillRuntime,
                             (phase, in, out) -> recordTokens(task, phase, in, out), gate, progress,
                             completionStamp, workflowService, database, workspaceId)
                             .budgetGuard(() -> isOverBudget(task))
@@ -371,7 +352,8 @@ public final class SddTaskManager {
         }
         if (!caps.isBlank() && !caps.equalsIgnoreCase("auto")) return caps;
         try {
-            ToolRouter router = new ToolRouter(modelFactory.createLightChatModel());
+            ToolRouter router = new ToolRouter(
+                    modelFactory.createLightChatModel(), null, skills);
             RoutingResult r = router.route("【托管任务】" + task.title + "\n" + task.description);
             if (r.isFallback() || !r.hasToolGroups()) return "auto";
             Set<String> keys = new LinkedHashSet<>();
@@ -552,8 +534,8 @@ public final class SddTaskManager {
                 }
             });
             new com.javaclaw.skill.curation.SkillCurator(
-                    modelFactory, null,
-                    com.javaclaw.skill.curation.SkillProposalQueue.getInstance(),
+                    modelFactory, null, skillRuntime.manager(), skillRuntime.usage(),
+                    skillRuntime.proposals(), settings, skillTasks,
                     ToolConfirmationManager::getPort)
                     .distillFromSddTask(task.title, task.description, summary.toString())
                     .subscribe();

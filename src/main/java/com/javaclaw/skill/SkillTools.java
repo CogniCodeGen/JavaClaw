@@ -15,13 +15,20 @@ import java.util.stream.Collectors;
  * 相关、但本轮路由未预载其正文时，调用本工具按名称拉取该技能的详细指令（{@code SKILL.md}
  * 正文 + references）。设计上类比 {@code mcp_call_tool}：上下文里只放轻量目录，完整内容现需现取。</p>
  *
- * <p>无状态：每次调用实时查询 {@link SkillManager} 单例，故可在 toolkit 中以单实例长期注册。</p>
+ * <p>实例绑定工作区技能仓库，toolkit 与工作区 Context 共同回收。</p>
  *
  * @author JavaClaw
  */
 public final class SkillTools {
 
     private static final Logger log = LoggerFactory.getLogger(SkillTools.class);
+    private final SkillManager skills;
+    private final SkillUsageTracker usage;
+
+    public SkillTools(SkillManager skills, SkillUsageTracker usage) {
+        this.skills = java.util.Objects.requireNonNull(skills, "skills");
+        this.usage = java.util.Objects.requireNonNull(usage, "usage");
+    }
 
     @Tool(name = "skill_read",
             description = "按名称读取一个技能的详细指令（正文 + 参考文档）。" +
@@ -40,7 +47,7 @@ public final class SkillTools {
             return ToolResponse.error("skill_read", "skill_name 为空，请指定要读取的技能名称。");
         }
 
-        SkillManager mgr = SkillManager.getInstance();
+        SkillManager mgr = skills;
 
         // L2 文件级：仅拉取指定参考文档
         if (path != null && !path.isBlank()) {
@@ -50,7 +57,7 @@ public final class SkillTools {
                         "未找到技能「" + name + "」的参考文档「" + path + "」（或非文本文件）。");
             }
             log.info("skill_read 载入参考文档: {}/{}", name, path);
-            SkillUsageTracker.getInstance().recordSkillRead(name);
+            usage.recordSkillRead(name);
             return ToolResponse.success("skill_read",
                     "已载入技能「" + name + "」的参考文档「" + path + "」：\n\n" + refDetail);
         }
@@ -67,7 +74,7 @@ public final class SkillTools {
         }
 
         log.info("skill_read 载入技能正文: {}", name);
-        SkillUsageTracker.getInstance().recordSkillRead(name);
+        usage.recordSkillRead(name);
         return ToolResponse.success("skill_read",
                 "已载入技能「" + name + "」的详细指令，请据此执行：\n\n" + detail);
     }

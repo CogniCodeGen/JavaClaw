@@ -1,5 +1,7 @@
 package com.javaclaw.system;
 
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.execution.TaskSpec;
 import jdk.jshell.JShell;
 import jdk.jshell.Snippet;
 import jdk.jshell.SnippetEvent;
@@ -10,21 +12,23 @@ import org.slf4j.LoggerFactory;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.Objects;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * JShell 求值核心 —— 工具层（{@link JShellTools}）与 UI 层（技能中心脚本测试）共用的执行引擎。
  *
  * <p>一次性求值模型：每次 {@link #run} 新建独立 JShell 实例（默认远程执行引擎，
  * 代码在独立 JVM 进程中求值，与应用进程隔离），结束即关闭，无跨调用状态。
- * {@link #check} 仅做结构检查（片段切分 + 完整性诊断），不执行任何代码。</p>
+ * {@link #check} 仅做结构检查（片段切分 + 完整性诊断），不执行任何代码。
+ * 求值任务由全局进程配额管理，超时或调用线程中断时会同时停止 JShell 与托管任务。</p>
  *
  * @author JavaClaw
  */
@@ -38,7 +42,10 @@ public final class JShellRunner {
     /** 单次返回最大字符数（防止超大输出炸上下文） */
     private static final int MAX_OUTPUT_CHARS = 8000;
 
-    private JShellRunner() {
+    private final ManagedTaskExecutor tasks;
+
+    public JShellRunner(ManagedTaskExecutor tasks) {
+        this.tasks = Objects.requireNonNull(tasks, "tasks");
     }
 
     /**
@@ -60,62 +67,101 @@ public final class JShellRunner {
      * 在独立 JShell 实例中求值：preamble（预绑定变量等）→ code 逐段求值。
      * 超时经工作线程控制，到点 {@code stop()} 中止并返回已产生的部分输出。
      */
-    public static ExecResult run(String code, List<String> preamble, int timeoutSec) {
+    public ExecResult run(String code, List<String> preamble, int timeoutSec) {
         if (com.javaclaw.util.ProjectAccessPolicy.strictIsolationEnabled()) {
             return new ExecResult(false, false, "", "",
                     List.of(com.javaclaw.util.ProjectAccessPolicy.unconfinedExecutionDeniedReason()));
         }
+        int boundedTimeout = Math.max(1, timeoutSec);
         ByteArrayOutputStream outBuf = new ByteArrayOutputStream();
         PrintStream capture = new PrintStream(outBuf, true, StandardCharsets.UTF_8);
+        AtomicReference<JShell> activeShell = new AtomicReference<>();
+        var handle = tasks.submit(
+                TaskSpec.process("jshell-eval")
+                        .withTimeout(Duration.ofSeconds(boundedTimeout)),
+                context -> evaluate(code, preamble, capture, outBuf, activeShell));
 
-        ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
-            Thread t = new Thread(r, "jshell-exec");
-            t.setDaemon(true);
-            return t;
-        });
-
-        // 默认远程执行引擎：用户代码在独立 JVM 进程求值，与应用进程隔离
-        try (JShell shell = JShell.builder().out(capture).err(capture).build()) {
-            Future<EvalReport> future = executor.submit(() -> {
-                EvalReport report = new EvalReport();
-                if (preamble != null) {
-                    for (String pre : preamble) {
-                        evalOne(shell, pre, report, true);
-                    }
-                }
-                runSnippets(shell, code, report);
-                return report;
-            });
-
-            EvalReport report;
-            try {
-                report = future.get(Math.max(1, timeoutSec), TimeUnit.SECONDS);
-            } catch (TimeoutException e) {
-                shell.stop();
-                future.cancel(true);
+        try {
+            return handle.completion().get(boundedTimeout + 2L, TimeUnit.SECONDS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            stop(activeShell);
+            handle.cancel();
+            return new ExecResult(false, false, "", "", List.of("执行被中断"));
+        } catch (TimeoutException timeout) {
+            stop(activeShell);
+            handle.cancel();
+            capture.flush();
+            return timedOut(outBuf);
+        } catch (ExecutionException failed) {
+            Throwable cause = failed.getCause();
+            if (cause instanceof TimeoutException) {
+                stop(activeShell);
+                handle.cancel();
                 capture.flush();
-                return new ExecResult(false, true,
-                        truncate(outBuf.toString(StandardCharsets.UTF_8)), "", List.of());
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                shell.stop();
-                return new ExecResult(false, false, "", "", List.of("执行被中断"));
-            } catch (Exception e) {
-                return new ExecResult(false, false, "", "", List.of("执行异常：" + e.getMessage()));
+                return timedOut(outBuf);
             }
+            log.warn("JShell 求值失败", cause);
+            return new ExecResult(false, false, "", "",
+                    List.of("JShell 启动/求值失败：" + message(cause)));
+        }
+    }
 
+    private static ExecResult evaluate(
+            String code,
+            List<String> preamble,
+            PrintStream capture,
+            ByteArrayOutputStream outBuf,
+            AtomicReference<JShell> activeShell) {
+        // 默认远程执行引擎：用户代码在独立 JVM 进程求值，与应用进程隔离。
+        try (JShell shell = JShell.builder().out(capture).err(capture).build()) {
+            activeShell.set(shell);
+            EvalReport report = new EvalReport();
+            if (preamble != null) {
+                for (String pre : preamble) {
+                    if (Thread.currentThread().isInterrupted()) {
+                        throw new InterruptedException("执行被中断");
+                    }
+                    evalOne(shell, pre, report, true);
+                }
+            }
+            runSnippets(shell, code, report);
             capture.flush();
             return new ExecResult(!report.hasError, false,
                     truncate(outBuf.toString(StandardCharsets.UTF_8)),
                     report.lastValue == null ? "" : report.lastValue,
                     List.copyOf(report.problems));
-        } catch (Exception e) {
-            log.warn("JShell 求值失败", e);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return new ExecResult(false, false, "", "", List.of("执行被中断"));
+        } catch (Exception failure) {
+            log.warn("JShell 启动/求值失败", failure);
             return new ExecResult(false, false, "", "",
-                    List.of("JShell 启动/求值失败：" + e.getMessage()));
+                    List.of("JShell 启动/求值失败：" + message(failure)));
         } finally {
-            executor.shutdownNow();
+            activeShell.set(null);
         }
+    }
+
+    private static ExecResult timedOut(ByteArrayOutputStream output) {
+        return new ExecResult(false, true,
+                truncate(output.toString(StandardCharsets.UTF_8)), "", List.of());
+    }
+
+    private static void stop(AtomicReference<JShell> activeShell) {
+        JShell shell = activeShell.get();
+        if (shell == null) return;
+        try {
+            shell.stop();
+        } catch (RuntimeException ignored) {
+            // 远程引擎可能已经在超时边界退出。
+        }
+    }
+
+    private static String message(Throwable failure) {
+        if (failure == null) return "未知异常";
+        String message = failure.getMessage();
+        return message == null || message.isBlank() ? failure.getClass().getSimpleName() : message;
     }
 
     // ==================== 结构检查（不执行） ====================

@@ -26,7 +26,7 @@ import com.javaclaw.config.AgentConfig;
 import com.javaclaw.memory.correction.CorrectionGuard;
 import com.javaclaw.memory.correction.CorrectionTurnContext;
 import com.javaclaw.prompt.AgentPrompts;
-import com.javaclaw.skill.SkillManager;
+import com.javaclaw.skill.SkillRuntimeServices;
 import com.javaclaw.util.AtomicDisposable;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Event;
@@ -76,6 +76,7 @@ public class ChatService {
     private final AgentRuntime runtime;
     private final com.javaclaw.workflow.service.WorkflowService workflowService;
     private final TaskScope taskScope;
+    private final SkillRuntimeServices skills;
     private final com.javaclaw.api.conversation.SingleConversationRun conversationRun =
             new com.javaclaw.api.conversation.SingleConversationRun();
 
@@ -155,6 +156,7 @@ public class ChatService {
         this.runtime = runtime;
         this.workflowService = workflowService;
         this.taskScope = java.util.Objects.requireNonNull(taskScope, "taskScope");
+        this.skills = runtime.getSkillRuntime();
         if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
         AgentConfig config = AgentConfig.getInstance();
         log.info("========== 初始化 ChatService 普通模式 ==========");
@@ -187,10 +189,8 @@ public class ChatService {
             this.skillCurator = new com.javaclaw.skill.curation.SkillCurator(
                     runtime.getModelFactory(),
                     runtime.getTokenTracker(),
-                    com.javaclaw.skill.curation.SkillProposalQueue.getInstance(),
+                    skills.manager(), skills.usage(), skills.proposals(), config, taskScope,
                     ToolConfirmationManager::getPort);
-            com.javaclaw.skill.SkillManageTools.setProposalSink(
-                    com.javaclaw.skill.curation.SkillProposalQueue.getInstance());
 
             // 1. 构建 masterToolkit：按分组注册工具，后续按路由激活/禁用
             this.masterToolkit = buildMasterToolkit(runtime);
@@ -211,7 +211,7 @@ public class ChatService {
             // 4. 工具路由器（使用轻量模型，强制关闭 thinking 避免分类调用阻塞数分钟）
             if (config.isToolRoutingEnabled()) {
                 this.toolRouter = new ToolRouter(runtime.getModelFactory().createLightChatModel(),
-                        runtime.getTokenTracker());
+                        runtime.getTokenTracker(), skills.manager());
                 log.info("工具路由器已创建（启用状态，thinking 关闭）");
             } else {
                 this.toolRouter = null;
@@ -252,8 +252,8 @@ public class ChatService {
             this.orchestrator = buildOrchestrator(
                     baseSystemPrompt
                             + memoryService.recall("")
-                            + SkillManager.getInstance().buildSkillCatalogPrompt()
-                            + SkillManager.getInstance().buildEnabledSkillsPrompt()
+                            + skills.manager().buildSkillCatalogPrompt()
+                            + skills.manager().buildEnabledSkillsPrompt()
                             + runtime.getMcpClientManager().buildToolsPrompt());
             log.info("主编排智能体已创建 — name: {}, maxIters: {}, plan: enabled, memory: AutoContext, retry: enabled",
                     AgentConfig.AGENT_NAME, config.getOrchestratorMaxIters());
@@ -795,7 +795,7 @@ public class ChatService {
         try {
             List<String> injected = turnInjectedSkills;
             if (injected != null && !injected.isEmpty()) {
-                com.javaclaw.skill.SkillUsageTracker.getInstance().recordTurnOutcome(injected, success);
+                skills.usage().recordTurnOutcome(injected, success);
             }
         } catch (Exception e) {
             log.debug("记录技能轮次成败失败（忽略）: {}", e.getMessage());
@@ -868,21 +868,21 @@ public class ChatService {
 
             // 技能 L0 目录始终常驻（与路由解耦）：模型恒知全部技能存在，避免路由漏判致技能"消失"；
             // 传入本轮可用工具组做条件激活过滤（requires/fallback_for_toolsets）
-            String skillCatalog = SkillManager.getInstance()
+            String skillCatalog = skills.manager()
                     .buildSkillCatalogPrompt(new java.util.HashSet<>(groups));
             // 技能正文按路由结果预载：命中或降级则全量，否则仅筛选出的技能
             String skillsPrompt;
             if (routing.isAllSkills() || routing.isFallback()) {
-                skillsPrompt = SkillManager.getInstance().buildEnabledSkillsPrompt();
+                skillsPrompt = skills.manager().buildEnabledSkillsPrompt();
                 // 全量注入时信号被稀释，不计入使用统计
                 this.turnInjectedSkills = List.of();
             } else {
-                skillsPrompt = SkillManager.getInstance().buildFilteredSkillsPrompt(routing.skillNames());
+                skillsPrompt = skills.manager().buildFilteredSkillsPrompt(routing.skillNames());
                 // 仅显式路由命中的技能计入使用统计（命中 + 轮次成败归因）
                 List<String> hit = routing.skillNames() == null ? List.of() : List.copyOf(routing.skillNames());
                 this.turnInjectedSkills = hit;
                 for (String name : hit) {
-                    com.javaclaw.skill.SkillUsageTracker.getInstance().recordRouteHit(name);
+                    skills.usage().recordRouteHit(name);
                 }
             }
             // 技能包成组注入（包优先：路由命中包名时整包注入，缺失技能跳过不中断）
@@ -890,7 +890,7 @@ public class ChatService {
                     && com.javaclaw.config.AgentConfig.getInstance().isSkillBundlesEnabled()) {
                 StringBuilder bundlePrompts = new StringBuilder();
                 for (String bundleName : routing.bundleNames()) {
-                    bundlePrompts.append(SkillManager.getInstance().buildBundlePrompt(bundleName));
+                    bundlePrompts.append(skills.manager().buildBundlePrompt(bundleName));
                 }
                 skillsPrompt = skillsPrompt + bundlePrompts;
             }

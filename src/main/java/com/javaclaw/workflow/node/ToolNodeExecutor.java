@@ -8,6 +8,8 @@ import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolkitAssembler;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
+import com.javaclaw.platform.execution.TaskSpec;
+import com.javaclaw.platform.execution.TaskSubmitter;
 import com.javaclaw.workflow.model.StatePatch;
 import com.javaclaw.workflow.runtime.CancellationToken;
 import com.javaclaw.workflow.runtime.GraphCancelledException;
@@ -19,18 +21,17 @@ import io.agentscope.core.message.ToolResultBlock;
 import io.agentscope.core.message.ToolUseBlock;
 import io.agentscope.core.tool.ToolCallParam;
 import io.agentscope.core.tool.Toolkit;
-import reactor.core.Disposable;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.TimeoutException;
 
 /** 本地工具节点；工具对象本身继续执行 JavaClaw 的风险确认。 */
 public final class ToolNodeExecutor implements NodeExecutor {
@@ -85,7 +86,8 @@ public final class ToolNodeExecutor implements NodeExecutor {
                 : MAPPER.convertValue(rendered, new TypeReference<>() {});
         ToolUseBlock block = new ToolUseBlock(UUID.randomUUID().toString(), toolName, input);
         ToolCallParam param = ToolCallParam.builder().toolUseBlock(block).input(input).build();
-        ToolResultBlock result = awaitToolCall(toolkit.callTool(param), context.cancellation(), toolName);
+        ToolResultBlock result = awaitToolCall(toolkit.callTool(param),
+                runtime.getWorkspaceTasks(), context.cancellation(), toolName);
         StringBuilder text = new StringBuilder();
         for (var output : result.getOutput()) {
             if (output instanceof TextBlock tb) text.append(tb.getText());
@@ -102,37 +104,45 @@ public final class ToolNodeExecutor implements NodeExecutor {
     }
 
     static ToolResultBlock awaitToolCall(Mono<ToolResultBlock> call,
+                                         TaskSubmitter tasks,
                                          CancellationToken cancellation,
                                          String toolName) {
-        CountDownLatch done = new CountDownLatch(1);
-        AtomicReference<ToolResultBlock> value = new AtomicReference<>();
-        AtomicReference<Throwable> failure = new AtomicReference<>();
-        Disposable task = Schedulers.boundedElastic().schedule(() -> {
-            try {
-                value.set(call.block());
-            } catch (Throwable error) {
-                failure.set(error);
-            } finally {
-                done.countDown();
-            }
+        var task = tasks.submit(TaskSpec.io("workflow-tool-" + toolName), context -> {
+            context.cancellation().throwIfCancellationRequested();
+            return call.block();
         });
-        try (AutoCloseable ignored = cancellation.onCancel(task::dispose)) {
-            while (!done.await(100, TimeUnit.MILLISECONDS)) cancellation.throwIfCancelled();
+        try (AutoCloseable ignored = cancellation.onCancel(task::cancel)) {
+            while (true) {
+                cancellation.throwIfCancelled();
+                try {
+                    ToolResultBlock result = task.completion().get(100, TimeUnit.MILLISECONDS);
+                    if (result == null) {
+                        throw new IllegalStateException("工具未返回结果: " + toolName);
+                    }
+                    return result;
+                } catch (TimeoutException ignoredTimeout) {
+                    // 短轮询仅用于同步观察图取消令牌。
+                } catch (CancellationException cancelled) {
+                    cancellation.throwIfCancelled();
+                    throw new IllegalStateException("工具执行被取消: " + toolName, cancelled);
+                } catch (ExecutionException failed) {
+                    cancellation.throwIfCancelled();
+                    Throwable cause = failed.getCause() == null ? failed : failed.getCause();
+                    throw new IllegalStateException("工具执行失败: " + toolName, cause);
+                }
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            task.dispose();
+            task.cancel();
             cancellation.throwIfCancelled();
             throw new IllegalStateException("工具执行被中断", e);
         } catch (GraphCancelledException e) {
             throw e;
+        } catch (RuntimeException e) {
+            throw e;
         } catch (Exception e) {
             throw new IllegalStateException("工具取消钩子关闭失败", e);
         }
-        cancellation.throwIfCancelled();
-        if (failure.get() != null) throw new IllegalStateException("工具执行失败: " + toolName, failure.get());
-        ToolResultBlock result = value.get();
-        if (result == null) throw new IllegalStateException("工具未返回结果: " + toolName);
-        return result;
     }
 
     static boolean isFailureResult(String text) {

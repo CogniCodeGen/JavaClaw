@@ -1,6 +1,7 @@
 package com.javaclaw.system;
 
 import org.junit.jupiter.api.Test;
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
 
 import java.util.List;
 
@@ -11,11 +12,14 @@ class JShellRunnerIsolationTest {
 
     @Test
     void directRunnerCannotBypassStrictIsolation() {
-        JShellRunner.ExecResult result = JShellRunner.run(
-                "java.nio.file.Files.readString(java.nio.file.Path.of(\"/etc/passwd\"));",
-                List.of(), 5);
+        try (ManagedTaskExecutor tasks = new ManagedTaskExecutor()) {
+            JShellRunner.ExecResult result = new JShellRunner(tasks).run(
+                    "java.nio.file.Files.readString(java.nio.file.Path.of(\"/etc/passwd\"));",
+                    List.of(), 5);
 
-        assertFalse(result.success());
-        assertTrue(result.problems().stream().anyMatch(p -> p.contains("严格项目文件隔离")));
+            assertFalse(result.success());
+            assertTrue(result.problems().stream()
+                    .anyMatch(p -> p.contains("严格项目文件隔离")));
+        }
     }
 }

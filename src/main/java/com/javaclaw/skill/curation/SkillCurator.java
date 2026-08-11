@@ -4,9 +4,12 @@ import com.javaclaw.agent.TokenTracker;
 import com.javaclaw.agent.execution.ExecutionTrace;
 import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.agent.model.ModelTier;
+import com.javaclaw.agent.model.StructuredCalls;
 import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.platform.execution.TaskSpec;
+import com.javaclaw.platform.execution.TaskSubmitter;
 import com.javaclaw.prompt.SkillPrompts;
 import com.javaclaw.skill.Skill;
 import com.javaclaw.skill.SkillChangeRequest;
@@ -18,16 +21,11 @@ import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.util.JsonSchemaUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import reactor.core.Disposable;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 /**
@@ -47,7 +45,8 @@ import java.util.function.Supplier;
  * auto 直接落盘 + Toast 通知（user-modified 技能强制降级为提案）。
  * 与智能体主动 skill_manage 路径在队列层按指纹统一去重。</p>
  *
- * <p>关键设计（照 MemoryCurator）：boundedElastic 异步、失败静默、CAS 防重、轻量模型控成本。</p>
+ * <p>关键设计：工作区托管任务异步执行、失败不影响主流程、CAS 防重、
+ * 轻量模型控制成本。工作区关闭会取消在途蒸馏，迟到结果不会写入新工作区。</p>
  *
  * @author JavaClaw
  */
@@ -63,7 +62,11 @@ public class SkillCurator {
 
     private final ModelFactory modelFactory;
     private final TokenTracker tokenTracker;
+    private final SkillManager skills;
+    private final SkillUsageTracker usage;
     private final SkillProposalQueue proposalQueue;
+    private final AgentConfig settings;
+    private final TaskSubmitter tasks;
 
     /** 获取交互端口（auto 模式 Toast 通知用；为 null 时静默跳过通知） */
     private final Supplier<UserInteractionPort> portSupplier;
@@ -73,11 +76,19 @@ public class SkillCurator {
 
     public SkillCurator(ModelFactory modelFactory,
                         TokenTracker tokenTracker,
+                        SkillManager skills,
+                        SkillUsageTracker usage,
                         SkillProposalQueue proposalQueue,
+                        AgentConfig settings,
+                        TaskSubmitter tasks,
                         Supplier<UserInteractionPort> portSupplier) {
-        this.modelFactory = modelFactory;
+        this.modelFactory = java.util.Objects.requireNonNull(modelFactory, "modelFactory");
         this.tokenTracker = tokenTracker;
-        this.proposalQueue = proposalQueue;
+        this.skills = java.util.Objects.requireNonNull(skills, "skills");
+        this.usage = java.util.Objects.requireNonNull(usage, "usage");
+        this.proposalQueue = java.util.Objects.requireNonNull(proposalQueue, "proposalQueue");
+        this.settings = java.util.Objects.requireNonNull(settings, "settings");
+        this.tasks = java.util.Objects.requireNonNull(tasks, "tasks");
         this.portSupplier = portSupplier != null ? portSupplier : () -> null;
     }
 
@@ -126,18 +137,17 @@ public class SkillCurator {
      * 「踩坑后找到可行路径」最值得沉淀的时机。
      */
     private boolean shouldDistill(List<ExecutionTrace> traces, double successRate) {
-        AgentConfig config = AgentConfig.getInstance();
-        if ("off".equals(config.getSkillEvolutionMode())) {
+        if ("off".equals(settings.getSkillEvolutionMode())) {
             return false;
         }
         if (traces == null || traces.isEmpty()) {
             return false;
         }
-        boolean succeeded = successRate >= config.getSkillEvolutionSuccessThreshold();
+        boolean succeeded = successRate >= settings.getSkillEvolutionSuccessThreshold();
         if (!succeeded) {
             return false;
         }
-        if (traces.size() >= config.getSkillEvolutionMinTools()) {
+        if (traces.size() >= settings.getSkillEvolutionMinTools()) {
             return true;
         }
         // 踩坑恢复：存在失败轨迹但整体成功收尾，即使不足 min.tools 也值得蒸馏
@@ -147,11 +157,22 @@ public class SkillCurator {
     // ==================== 蒸馏执行 ====================
 
     private Mono<Void> distillAsync(String context, List<ExecutionTrace> traces) {
-        if ("off".equals(AgentConfig.getInstance().getSkillEvolutionMode())) {
+        if ("off".equals(settings.getSkillEvolutionMode())) {
             return Mono.empty();
         }
-        return Mono.fromRunnable(() -> distillSync(context, traces))
-                .subscribeOn(Schedulers.boundedElastic())
+        return Mono.defer(() -> {
+                    var handle = tasks.submit(
+                            TaskSpec.io("skill-distill")
+                                    .withTimeout(java.time.Duration.ofSeconds(
+                                            STRUCTURED_TIMEOUT_SEC + 5)),
+                            taskContext -> {
+                                taskContext.cancellation().throwIfCancellationRequested();
+                                distillSync(context, traces);
+                                return null;
+                            });
+                    return Mono.fromFuture(handle.completion())
+                            .doOnCancel(handle::cancel);
+                })
                 .onErrorResume(e -> {
                     log.warn("技能蒸馏失败（已静默忽略）: {}", e.getMessage());
                     distilling.set(false);
@@ -185,10 +206,10 @@ public class SkillCurator {
             return;
         }
 
-        String mode = AgentConfig.getInstance().getSkillEvolutionMode();
+        String mode = settings.getSkillEvolutionMode();
         boolean targetUserModified = false;
         if ("patch".equals(request.action)) {
-            Skill target = SkillManager.getInstance().getSkillByName(request.skillName);
+            Skill target = skills.getSkillByName(request.skillName);
             if (target == null) {
                 log.info("蒸馏产出 patch 但目标技能「{}」不存在，丢弃", request.skillName);
                 return;
@@ -198,7 +219,7 @@ public class SkillCurator {
         }
 
         if ("auto".equals(mode) && !targetUserModified) {
-            String error = request.apply();
+            String error = request.apply(skills);
             if (error != null) {
                 log.info("自动沉淀技能失败（转提案待审）: {}", error);
                 proposalQueue.submit(request);
@@ -229,7 +250,7 @@ public class SkillCurator {
                 return null;
             }
             // 蒸馏可能对既有技能产出 create：转为入队 patch 不可行（无 old/new），直接丢弃避免覆盖
-            if (SkillManager.getInstance().getSkillByName(request.skillName) != null) {
+            if (skills.getSkillByName(request.skillName) != null) {
                 log.info("蒸馏产出 create 但技能「{}」已存在，丢弃", request.skillName);
                 return null;
             }
@@ -267,29 +288,15 @@ public class SkillCurator {
                 })))
                 .build();
 
-        Msg userMsg = Msg.builder().role(MsgRole.USER).name("user").textContent(userPrompt).build();
-        AtomicReference<Msg> ref = new AtomicReference<>();
-        AtomicReference<Throwable> err = new AtomicReference<>();
-        CountDownLatch latch = new CountDownLatch(1);
-        Disposable d = curator.call(List.of(userMsg), SkillCurationDraft.class)
-                .subscribeOn(Schedulers.boundedElastic())
-                .subscribe(ref::set, e -> { err.set(e); latch.countDown(); }, latch::countDown);
         try {
-            if (!latch.await(STRUCTURED_TIMEOUT_SEC, TimeUnit.SECONDS)) {
-                d.dispose();
-                log.warn("技能蒸馏调用超时（{}s）", STRUCTURED_TIMEOUT_SEC);
-                return null;
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            d.dispose();
+            Msg result = StructuredCalls.blockingCall(
+                    curator, userPrompt, SkillCurationDraft.class,
+                    STRUCTURED_TIMEOUT_SEC, "技能蒸馏");
+            return extract(result);
+        } catch (RuntimeException failure) {
+            log.warn("技能蒸馏调用异常: {}", failure.getMessage());
             return null;
         }
-        if (err.get() != null) {
-            log.warn("技能蒸馏调用异常: {}", err.get().getMessage());
-            return null;
-        }
-        return extract(ref.get());
     }
 
     private static SkillCurationDraft extract(Msg msg) {
@@ -324,7 +331,7 @@ public class SkillCurator {
         }
 
         // 现有技能目录：供模型判断是 create 新技能还是 patch 既有技能
-        List<Skill> enabled = SkillManager.getInstance().getEnabledSkills();
+        List<Skill> enabled = skills.getEnabledSkills();
         sb.append("\n\n[现有技能目录]\n");
         if (enabled.isEmpty()) {
             sb.append("（无）\n");
@@ -335,7 +342,7 @@ public class SkillCurator {
         }
 
         // 低成功率技能：引导优先 patch 修补（使用统计反哺）
-        List<String> lowSuccess = SkillUsageTracker.getInstance().lowSuccessCandidates();
+        List<String> lowSuccess = usage.lowSuccessCandidates();
         if (!lowSuccess.isEmpty()) {
             sb.append("\n[低成功率技能]（这些技能被使用后任务常失败，若本次经验与之相关，优先产 patch 修正它们）\n");
             for (String name : lowSuccess) {

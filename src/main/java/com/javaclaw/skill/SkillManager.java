@@ -1,8 +1,9 @@
 package com.javaclaw.skill;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.javaclaw.config.AgentConfig;
 import com.javaclaw.util.SensitiveDataRedactor;
 import com.javaclaw.util.PathGuard;
-import com.javaclaw.util.ProjectAccessPolicy;
 import io.agentscope.core.skill.util.MarkdownSkillParser;
 import io.agentscope.core.skill.util.SkillFileSystemHelper;
 import org.slf4j.Logger;
@@ -56,8 +57,6 @@ public class SkillManager {
 
     private static final Logger log = LoggerFactory.getLogger(SkillManager.class);
 
-    private static final SkillManager INSTANCE = new SkillManager();
-
     /** 技能包配置文件名（位于 skills/ 根目录） */
     private static final String BUNDLES_FILE = "bundles.json";
 
@@ -71,26 +70,25 @@ public class SkillManager {
      * {@link #unregisterDynamicSkills} 同步移除，不影响磁盘技能。
      */
     private final java.util.Map<String, List<Skill>> dynamicSkills = new java.util.concurrent.ConcurrentHashMap<>();
-    private final com.fasterxml.jackson.databind.ObjectMapper mapper =
-            new com.fasterxml.jackson.databind.ObjectMapper();
+    private final ObjectMapper mapper;
+    private final AgentConfig settings;
 
-    private SkillManager() {
-        this(ProjectAccessPolicy.projectRoot().resolve("skills"));
-    }
-
-    /** 测试可注入项目内目录；生产始终使用项目根下的 skills/。 */
-    SkillManager(Path skillsDir) {
-        this.skillsDir = ProjectAccessPolicy.requireProjectFilePath(
-                skillsDir.toAbsolutePath().normalize());
+    /**
+     * 创建一个由工作区 Context 管理的技能仓库。
+     *
+     * <p>{@code skillsDir} 是宿主解析后的受管数据路径，不是模型提供的任意文件路径。
+     * 实例不共享全局状态；切换工作区时由 Spring 整体替换。</p>
+     */
+    public SkillManager(Path skillsDir, ObjectMapper mapper, AgentConfig settings) {
+        this.skillsDir = java.util.Objects.requireNonNull(skillsDir, "skillsDir")
+                .toAbsolutePath().normalize();
+        this.mapper = java.util.Objects.requireNonNull(mapper, "mapper");
+        this.settings = java.util.Objects.requireNonNull(settings, "settings");
         this.skills = new ArrayList<>();
         this.bundles = new ArrayList<>();
         initDirectory();
         loadAll();
         loadBundles();
-    }
-
-    public static SkillManager getInstance() {
-        return INSTANCE;
     }
 
     /**
@@ -901,7 +899,7 @@ public class SkillManager {
         }
 
         // 技能包目录：让模型知道可成组加载
-        if (com.javaclaw.config.AgentConfig.getInstance().isSkillBundlesEnabled()) {
+        if (settings.isSkillBundlesEnabled()) {
             List<SkillBundle> enabledBundles = getEnabledBundles();
             if (!enabledBundles.isEmpty()) {
                 sb.append("\n## 可用技能包\n");
@@ -917,8 +915,8 @@ public class SkillManager {
         }
 
         // 经验沉淀 nudge（常驻轻量提示，借鉴 hermes-agent）
-        if (com.javaclaw.config.AgentConfig.getInstance().isSkillNudgeEnabled()
-                && !"off".equals(com.javaclaw.config.AgentConfig.getInstance().getSkillEvolutionMode())) {
+        if (settings.isSkillNudgeEnabled()
+                && !"off".equals(settings.getSkillEvolutionMode())) {
             sb.append("\n## 经验沉淀\n");
             sb.append("若本次完成了非平凡的多步骤工作流、踩坑后找到了可行路径、或被用户纠正了做法，\n");
             sb.append("请考虑调用 skill_create 把经验沉淀为新技能，或用 skill_patch 把新认知合入相关既有技能（小修优先 patch）。\n");

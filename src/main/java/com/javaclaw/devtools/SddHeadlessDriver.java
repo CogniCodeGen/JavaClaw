@@ -9,6 +9,7 @@ import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.config.DataManager;
 import com.javaclaw.config.DatabaseAccess;
+import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.spring.ApplicationContexts;
@@ -16,7 +17,11 @@ import com.javaclaw.mcp.McpClientManager;
 import com.javaclaw.mcp.McpConfigManager;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskScope;
+import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.skill.SkillManager;
+import com.javaclaw.skill.SkillRuntimeServices;
+import com.javaclaw.skill.SkillUsageTracker;
+import com.javaclaw.skill.curation.SkillProposalQueue;
 import com.javaclaw.site.SiteCredentialManager;
 import com.javaclaw.task.sdd.run.SddManagedTask;
 import com.javaclaw.task.sdd.run.SddTaskListener;
@@ -26,6 +31,7 @@ import com.javaclaw.task.sdd.run.SddTaskState;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
 
 /**
  * SDD 托管任务无头驱动 —— 仅用于本地端到端验证/抓 bug，不参与正式构建逻辑。
@@ -69,14 +75,33 @@ public final class SddHeadlessDriver {
                 WorkspaceManager.getInstance().getCurrentWorkspaceId());
         TaskScope taskScope = rootContext.getBean(ManagedTaskExecutor.class)
                 .openScope("sdd-headless", 256);
+        ManagedTaskExecutor taskExecutor = rootContext.getBean(ManagedTaskExecutor.class);
+        AgentConfig settings = AgentConfig.getInstance();
+        SkillManager skills = new SkillManager(
+                WorkspaceManager.getInstance().getGlobalDataPath().resolve("skills"),
+                rootContext.getBean(com.fasterxml.jackson.databind.ObjectMapper.class), settings);
+        SkillUsageTracker usage = new SkillUsageTracker(
+                WorkspaceManager.getInstance().getCurrentWorkspaceId(),
+                rootContext.getBean(JdbcTemplate.class),
+                rootContext.getBean(PlatformTransactionManager.class), settings,
+                taskExecutor, taskScope);
+        SkillProposalQueue proposals = new SkillProposalQueue(
+                WorkspaceManager.getInstance().getCurrentWorkspaceId(), skills, settings,
+                rootContext.getBean(JdbcTemplate.class),
+                rootContext.getBean(PlatformTransactionManager.class),
+                rootContext.getBean(JsonCodec.class), taskExecutor, taskScope);
+        SkillRuntimeServices skillRuntime = new SkillRuntimeServices(skills, usage, proposals);
         AgentRuntime runtime = new AgentRuntime(browser, customAgents, siteCredentials,
-                mcpConfigurations, new McpClientManager(mcpConfigurations, taskScope), taskScope, null);
+                mcpConfigurations, new McpClientManager(mcpConfigurations, taskScope), taskScope,
+                null, skillRuntime, rootContext.getBean(com.javaclaw.system.JShellRunner.class));
 
         // 2. 配置 SDD 管理器（注入自动放行端口 → PortReviewGate 评审直接批准）
         SddTaskManager mgr = SddTaskManager.getInstance();
         mgr.configure(DataManager.getInstance().getDataRoot(),
                 runtime.getModelFactory(), runtime::buildCapabilityTools,
-                SkillManager.getInstance(), port);
+                skillRuntime, settings, taskScope, port, null,
+                rootContext.getBean(DatabaseAccess.class),
+                WorkspaceManager.getInstance().getCurrentWorkspaceId());
 
         mgr.subscribe(new SddTaskListener() {
             @Override public void onTaskChanged(SddManagedTask t) {
@@ -132,6 +157,8 @@ public final class SddHeadlessDriver {
         System.out.println("=============================================");
 
         try { runtime.shutdown(); } catch (Exception ignore) {}
+        proposals.close();
+        usage.close();
         taskScope.close();
         rootContext.close();
 

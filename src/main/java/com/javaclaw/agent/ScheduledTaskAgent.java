@@ -74,7 +74,8 @@ public final class ScheduledTaskAgent implements ScheduledTaskRunner {
         this.runtime = runtime;
         AgentConfig config = AgentConfig.getInstance();
         this.toolRouter = config.isToolRoutingEnabled()
-                ? new ToolRouter(runtime.getModelFactory().createLightChatModel(), runtime.getTokenTracker())
+                ? new ToolRouter(runtime.getModelFactory().createLightChatModel(),
+                        runtime.getTokenTracker(), runtime.getSkillRuntime().manager())
                 : null;
         this.baseSystemPrompt = AgentPrompts.ORCHESTRATOR_SYS_PROMPT;
 

@@ -53,14 +53,12 @@ public class ToolRouter {
     private final GenerateOptions generateOptions;
     /** 用于上报路由模型调用的真实 token；null 时跳过统计 */
     private final TokenTracker tokenTracker;
+    private final SkillManager skills;
 
-    public ToolRouter(ChatModelBase model) {
-        this(model, null);
-    }
-
-    public ToolRouter(ChatModelBase model, TokenTracker tokenTracker) {
-        this.model = model;
+    public ToolRouter(ChatModelBase model, TokenTracker tokenTracker, SkillManager skills) {
+        this.model = java.util.Objects.requireNonNull(model, "model");
         this.tokenTracker = tokenTracker;
+        this.skills = java.util.Objects.requireNonNull(skills, "skills");
         this.generateOptions = GenerateOptions.builder().build();
     }
 
@@ -147,7 +145,7 @@ public class ToolRouter {
         sb.append(RouterPrompts.ROUTING_PROMPT_HEADER);
 
         // 动态追加激活的技能列表（条件激活：platforms 按当前 OS 过滤；工具组判定路由期不可知，传 null 跳过）
-        List<Skill> enabledSkills = SkillManager.getInstance().getActiveSkills(null);
+        List<Skill> enabledSkills = skills.getActiveSkills(null);
         if (!enabledSkills.isEmpty()) {
             sb.append("\n## 可用技能\n\n");
             for (Skill skill : enabledSkills) {
@@ -162,7 +160,7 @@ public class ToolRouter {
         // 动态追加已启用的技能包列表（包优先：命中包时包内技能成组注入）
         if (com.javaclaw.config.AgentConfig.getInstance().isSkillBundlesEnabled()) {
             List<com.javaclaw.skill.SkillBundle> enabledBundles =
-                    SkillManager.getInstance().getEnabledBundles();
+                    skills.getEnabledBundles();
             if (!enabledBundles.isEmpty()) {
                 sb.append("\n## 可用技能包\n\n");
                 for (com.javaclaw.skill.SkillBundle bundle : enabledBundles) {

@@ -16,6 +16,8 @@ import com.javaclaw.platform.execution.TaskHandle;
 import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.site.SiteCredentialManager;
+import com.javaclaw.skill.SkillRuntimeServices;
+import com.javaclaw.system.JShellRunner;
 import com.javaclaw.util.ProjectAccessPolicy;
 import io.agentscope.core.message.Base64Source;
 import io.agentscope.core.message.ContentBlock;
@@ -119,6 +121,13 @@ public final class AgentRuntime {
     /** 当前工作区定时任务用例；devtools 可不装配该可选能力。 */
     private final ScheduleApplicationService scheduleApplicationService;
 
+    /** 当前工作区技能仓库、用量与提案队列的唯一运行时集合。 */
+    private final SkillRuntimeServices skillRuntime;
+
+    /** 工作区后台任务的生命周期边界，不由本对象关闭。 */
+    private final TaskScope workspaceTasks;
+    private final JShellRunner jshellRunner;
+
 
     /** 模型执行重试配置（超时 / 最大重试次数 / 指数退避），三模式共用 */
     private final ExecutionConfig modelExecConfig;
@@ -138,7 +147,9 @@ public final class AgentRuntime {
             McpConfigManager mcpConfigManager,
             McpClientManager mcpClientManager,
             TaskScope workspaceTasks,
-            ScheduleApplicationService scheduleApplicationService) {
+            ScheduleApplicationService scheduleApplicationService,
+            SkillRuntimeServices skillRuntime,
+            JShellRunner jshellRunner) {
         AgentConfig config = AgentConfig.getInstance();
         log.info("========== 初始化 AgentRuntime 基础设施 ==========");
         log.info("API 地址: {}", config.getBaseUrl());
@@ -154,7 +165,9 @@ public final class AgentRuntime {
         this.mcpClientManager = java.util.Objects.requireNonNull(
                 mcpClientManager, "mcpClientManager");
         this.scheduleApplicationService = scheduleApplicationService;
-        java.util.Objects.requireNonNull(workspaceTasks, "workspaceTasks");
+        this.workspaceTasks = java.util.Objects.requireNonNull(workspaceTasks, "workspaceTasks");
+        this.skillRuntime = java.util.Objects.requireNonNull(skillRuntime, "skillRuntime");
+        this.jshellRunner = java.util.Objects.requireNonNull(jshellRunner, "jshellRunner");
 
         // 1. ModelFactory：共享 HttpTransport，所有模型实例共用
         this.modelFactory = new ModelFactory();
@@ -227,6 +240,9 @@ public final class AgentRuntime {
     public ScheduleApplicationService getScheduleApplicationService() {
         return scheduleApplicationService;
     }
+    public SkillRuntimeServices getSkillRuntime() { return skillRuntime; }
+    public TaskScope getWorkspaceTasks() { return workspaceTasks; }
+    public JShellRunner getJshellRunner() { return jshellRunner; }
     public TokenTracker getTokenTracker() { return tokenTracker; }
     public MemoryManager getMemoryManager() { return memoryManager; }
     public ExpertManager getExpertManager() { return expertManager; }

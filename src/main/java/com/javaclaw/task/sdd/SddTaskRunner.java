@@ -4,7 +4,7 @@ import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.config.AppDatabase;
 import com.javaclaw.config.AppDatabaseAccess;
 import com.javaclaw.config.DatabaseAccess;
-import com.javaclaw.skill.SkillManager;
+import com.javaclaw.skill.SkillRuntimeServices;
 import com.javaclaw.task.sdd.agent.AgentScopeCriticJudge;
 import com.javaclaw.task.sdd.agent.AgentScopeSddAgents;
 import com.javaclaw.task.sdd.agent.ProcessCommandRunner;
@@ -21,7 +21,7 @@ import java.util.function.BooleanSupplier;
  * critic、评审闸门组装成一个可运行单元。
  *
  * <p>这是 B5d 接缝层调用的统一入口：任务管理器（或未来任何前端）只需提供运行期
- * 协作者（{@link ModelFactory}、能力工具表、{@link SkillManager}、token 汇聚、{@link ReviewGate}、
+ * 协作者（{@link ModelFactory}、能力工具表、{@link SkillRuntimeServices}、token 汇聚、{@link ReviewGate}、
  * {@link SddProgress}）与一个 {@link TaskContext}，即可驱动完整的 SDD 生命周期，无需感知内部装配。</p>
  *
  * <p>{@link #run()} 同步阻塞返回 {@link SddOutcome}（调用方在后台线程驱动）；{@link #cancel()}
@@ -47,20 +47,20 @@ public final class SddTaskRunner implements AutoCloseable {
      * @param ctx             任务上下文
      * @param modelFactory    模型工厂（提供分级模型）
      * @param capabilityTools 能力→工具对象表（web/email/system/notification/command）
-     * @param skills          技能管理器（注入 SDD/superpowers 子技能提示；可空）
+     * @param skills          当前工作区技能运行时
      * @param tokenSink       token 用量汇聚（按阶段标签 + input,output）；可空
      * @param gate            人机评审闸门（无头用 {@link AutoApproveReviewGate}）
      * @param progress        进度/日志回调；可空（NOOP）
      * @param completionStamp 归档完成时间戳文本（调用方注入，本层不依赖时钟）
      */
     public SddTaskRunner(TaskContext ctx, ModelFactory modelFactory, Map<String, Object> capabilityTools,
-                         SkillManager skills, SddTokenSink tokenSink, ReviewGate gate,
+                         SkillRuntimeServices skills, SddTokenSink tokenSink, ReviewGate gate,
                          SddProgress progress, String completionStamp) {
         this(ctx, modelFactory, capabilityTools, skills, tokenSink, gate, progress, completionStamp, null);
     }
 
     public SddTaskRunner(TaskContext ctx, ModelFactory modelFactory, Map<String, Object> capabilityTools,
-                         SkillManager skills, SddTokenSink tokenSink, ReviewGate gate,
+                         SkillRuntimeServices skills, SddTokenSink tokenSink, ReviewGate gate,
                          SddProgress progress, String completionStamp,
                          com.javaclaw.workflow.service.WorkflowService workflowService) {
         this(ctx, modelFactory, capabilityTools, skills, tokenSink, gate, progress, completionStamp,
@@ -68,7 +68,7 @@ public final class SddTaskRunner implements AutoCloseable {
     }
 
     public SddTaskRunner(TaskContext ctx, ModelFactory modelFactory, Map<String, Object> capabilityTools,
-                         SkillManager skills, SddTokenSink tokenSink, ReviewGate gate,
+                         SkillRuntimeServices skills, SddTokenSink tokenSink, ReviewGate gate,
                          SddProgress progress, String completionStamp,
                          com.javaclaw.workflow.service.WorkflowService workflowService,
                          DatabaseAccess database, String workspaceId) {

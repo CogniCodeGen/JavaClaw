@@ -57,6 +57,7 @@ public final class LegacySkillManagementAdapter implements SkillManagementPort {
     private final SkillProposalQueue proposals;
     private final SkillInstaller installer;
     private final AgentConfig settings;
+    private final JShellRunner jshellRunner;
     private final Object skillLock = new Object();
 
     public LegacySkillManagementAdapter(
@@ -64,12 +65,14 @@ public final class LegacySkillManagementAdapter implements SkillManagementPort {
             SkillUsageTracker usage,
             SkillProposalQueue proposals,
             SkillInstaller installer,
-            AgentConfig settings) {
+            AgentConfig settings,
+            JShellRunner jshellRunner) {
         this.skills = Objects.requireNonNull(skills, "skills");
         this.usage = Objects.requireNonNull(usage, "usage");
         this.proposals = Objects.requireNonNull(proposals, "proposals");
         this.installer = Objects.requireNonNull(installer, "installer");
         this.settings = Objects.requireNonNull(settings, "settings");
+        this.jshellRunner = Objects.requireNonNull(jshellRunner, "jshellRunner");
     }
 
     @Override
@@ -223,7 +226,7 @@ public final class LegacySkillManagementAdapter implements SkillManagementPort {
             preamble = JShellTools.buildPreamble(requiredSkill(skillId), arguments);
         }
         int timeout = settings.getJshellExecTimeoutSeconds();
-        JShellRunner.ExecResult result = JShellRunner.run(code, preamble, timeout);
+        JShellRunner.ExecResult result = jshellRunner.run(code, preamble, timeout);
         return new ScriptReport(result.success(), result.timedOut(), timeout,
                 result.output(), result.lastValue(), result.problems());
     }

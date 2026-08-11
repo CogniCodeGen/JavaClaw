@@ -2,6 +2,8 @@ package com.javaclaw.workflow.node;
 
 import com.javaclaw.workflow.runtime.CancellationToken;
 import com.javaclaw.workflow.runtime.GraphCancelledException;
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.execution.TaskScope;
 import io.agentscope.core.message.ToolResultBlock;
 import io.agentscope.core.tool.Toolkit;
 import org.junit.jupiter.api.Test;
@@ -71,10 +73,12 @@ class ToolNodeExecutorTest {
             return null;
         });
         ExecutorService caller = Executors.newSingleThreadExecutor();
-        try {
+        try (ManagedTaskExecutor executor = new ManagedTaskExecutor();
+             TaskScope tasks = executor.openScope("tool-node-test", 1)) {
             Future<Throwable> outcome = caller.submit(() -> {
                 try {
-                    ToolNodeExecutor.awaitToolCall(blockingCall, cancellation, "blocking_tool");
+                    ToolNodeExecutor.awaitToolCall(
+                            blockingCall, tasks, cancellation, "blocking_tool");
                     return null;
                 } catch (Throwable error) {
                     return error;

@@ -400,10 +400,8 @@ public class JavaClawApp extends Application {
         if (!resourcesReleased.compareAndSet(false, true)) return;
         log.info("JavaClaw 应用正在关闭...");
 
-        // 先排空各防抖/异步持久化队列，再关各子系统，避免退出丢最后一段数据
+        // 工作区 Context 按依赖反序关闭；持久化器会在任务作用域之前 flush。
         if (chatViewHandle != null) safeShutdown("主界面", chatViewHandle::close);
-        safeShutdown("技能使用统计", () -> com.javaclaw.skill.SkillUsageTracker.getInstance().shutdown());
-        safeShutdown("技能提案队列", () -> com.javaclaw.skill.curation.SkillProposalQueue.getInstance().shutdown());
         if (applicationKernel != null) safeShutdown("应用内核", applicationKernel::close);
         if (springContext != null) safeShutdown("Spring 根 Context", springContext::close);
         safeShutdown("单实例协调器", SingleInstanceCoordinator::closeCurrent);

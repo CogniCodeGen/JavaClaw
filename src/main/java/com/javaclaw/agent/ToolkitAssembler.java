@@ -89,10 +89,15 @@ public final class ToolkitAssembler {
         }
         // 技能三件套：skill 组不在 ALL_TOOL_GROUPS 中（属 ALWAYS_ACTIVE_GROUPS，不参与路由），手动建组
         tk.createToolGroup("skill", "skill", true);
-        tk.registration().tool(new com.javaclaw.skill.SkillTools()).group("skill").apply();
-        tk.registration().tool(new com.javaclaw.skill.SkillManageTools(origin)).group("skill").apply();
+        var skillRuntime = runtime.getSkillRuntime();
+        tk.registration().tool(new com.javaclaw.skill.SkillTools(
+                skillRuntime.manager(), skillRuntime.usage())).group("skill").apply();
+        tk.registration().tool(new com.javaclaw.skill.SkillManageTools(
+                origin, skillRuntime.manager(), AgentConfig.getInstance(),
+                skillRuntime.proposals())).group("skill").apply();
         if (!ProjectAccessPolicy.strictIsolationEnabled()) {
-            tk.registration().tool(new com.javaclaw.system.JShellTools(origin)).group("skill").apply();
+            tk.registration().tool(new com.javaclaw.system.JShellTools(
+                    origin, skillRuntime.manager(), runtime.getJshellRunner())).group("skill").apply();
         }
         tk.registration().tool(new com.javaclaw.task.sdd.run.SddTaskManageTools(origin)).group("task_manage").apply();
         if (runtime.getScheduleApplicationService() != null) {
@@ -134,7 +139,7 @@ public final class ToolkitAssembler {
         }
         toolkit.setActiveGroups(groups);
 
-        var skillManager = com.javaclaw.skill.SkillManager.getInstance();
+        var skillManager = runtime.getSkillRuntime().manager();
         String skillCatalog = skillManager.buildSkillCatalogPrompt(new java.util.HashSet<>(groups));
         String skillsPrompt = (routing.isAllSkills() || routing.isFallback())
                 ? skillManager.buildEnabledSkillsPrompt()

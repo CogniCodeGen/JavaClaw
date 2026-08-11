@@ -42,9 +42,13 @@ public final class JShellTools {
 
     /** 调用来源令牌（装配期绑定），执行前确认随调用传给 ToolConfirmationManager。 */
     private final ToolCallOrigin origin;
+    private final SkillManager skills;
+    private final JShellRunner runner;
 
-    public JShellTools(ToolCallOrigin origin) {
+    public JShellTools(ToolCallOrigin origin, SkillManager skills, JShellRunner runner) {
         this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
+        this.skills = java.util.Objects.requireNonNull(skills, "skills");
+        this.runner = java.util.Objects.requireNonNull(runner, "runner");
     }
 
     /** 超时硬上限（秒） */
@@ -83,7 +87,7 @@ public final class JShellTools {
             return ToolResponse.error("jshell_exec", "用户拒绝执行该代码。");
         }
         return toResponse("jshell_exec",
-                JShellRunner.run(code, List.of(), resolveTimeout(timeoutSeconds)),
+                runner.run(code, List.of(), resolveTimeout(timeoutSeconds)),
                 resolveTimeout(timeoutSeconds));
     }
 
@@ -106,7 +110,7 @@ public final class JShellTools {
             return ToolResponse.error("jshell_run_script",
                     ProjectAccessPolicy.unconfinedExecutionDeniedReason());
         }
-        Skill skill = SkillManager.getInstance().getSkillByName(skillName == null ? "" : skillName.strip());
+        Skill skill = skills.getSkillByName(skillName == null ? "" : skillName.strip());
         if (skill == null || !skill.isEnabled()) {
             return ToolResponse.error("jshell_run_script",
                     "未找到名为「" + (skillName == null ? "" : skillName.strip()) + "」的已启用技能。");
@@ -140,7 +144,7 @@ public final class JShellTools {
         int timeout = resolveTimeout(timeoutSeconds);
         log.info("jshell_run_script 运行技能脚本: {}/scripts/{}", skill.getId(), scriptFile.getFileName());
         return toResponse("jshell_run_script",
-                JShellRunner.run(code, buildPreamble(skill, args), timeout), timeout);
+                runner.run(code, buildPreamble(skill, args), timeout), timeout);
     }
 
     // ==================== 结果包装 ====================

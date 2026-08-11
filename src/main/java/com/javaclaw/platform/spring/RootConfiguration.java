@@ -35,6 +35,7 @@ import com.javaclaw.platform.http.HttpGateway;
 import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.platform.process.ProcessRunner;
 import com.javaclaw.platform.storage.AtomicContentStore;
+import com.javaclaw.system.JShellRunner;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.ui.javafx.JfxUserInteractionPort;
 import com.javaclaw.ui.javafx.image.ImageViewerFactory;
@@ -113,6 +114,11 @@ public class RootConfiguration {
     @Bean
     ProcessRunner processRunner(ManagedTaskExecutor executor) {
         return new ProcessRunner(executor);
+    }
+
+    @Bean
+    JShellRunner jshellRunner(ManagedTaskExecutor executor) {
+        return new JShellRunner(executor);
     }
 
     @Bean

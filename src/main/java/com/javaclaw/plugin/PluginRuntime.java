@@ -195,7 +195,7 @@ final class PluginRuntime {
             if (instance instanceof SkillProvider provider) {
                 List<com.javaclaw.plugin.api.PluginSkill> ps = provider.skills();
                 if (ps != null && !ps.isEmpty()) {
-                    SkillManager sm = SkillManager.getInstance();
+                    SkillManager sm = agentRuntime.getSkillRuntime().manager();
                     List<com.javaclaw.skill.Skill> dyn = new ArrayList<>();
                     for (var s : ps) {
                         if (s != null && s.name() != null && !s.name().isBlank()) {
@@ -384,7 +384,7 @@ final class PluginRuntime {
         providedTools.clear();
         providedSkills.clear();
         try {
-            SkillManager.getInstance().unregisterDynamicSkills(descriptor.id());
+            agentRuntime.getSkillRuntime().manager().unregisterDynamicSkills(descriptor.id());
         } catch (RuntimeException e) {
             log.warn("插件[{}]注销动态技能失败（继续回收）：{}", descriptor.id(), e.toString());
         }

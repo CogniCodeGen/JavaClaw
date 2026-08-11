@@ -16,9 +16,6 @@ import com.javaclaw.platform.spring.WorkspaceSpringContextFactory;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.application.tool.ToolInvocationPipeline;
 import com.javaclaw.schedule.ScheduleManager;
-import com.javaclaw.skill.SkillManager;
-import com.javaclaw.skill.SkillUsageTracker;
-import com.javaclaw.skill.curation.SkillProposalQueue;
 import com.javaclaw.task.sdd.run.SddTaskManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -213,8 +210,6 @@ public final class ApplicationKernel implements AutoCloseable {
         EmailConfig.getInstance().reload();
         NotificationConfig.getInstance().reload();
         DataManager.getInstance().reload();
-        SkillUsageTracker.getInstance().reload();
-        SkillProposalQueue.getInstance().reload();
         TraceRecorder.getInstance().reload();
     }
 
@@ -232,14 +227,17 @@ public final class ApplicationKernel implements AutoCloseable {
             SddTaskManager.getInstance().configure(
                     workspaceRuntime.context().dataRoot(),
                     runtime.getModelFactory(), runtime::buildCapabilityTools,
-                    SkillManager.getInstance(), interactionPort, workspaceRuntime.workflowService(),
+                    runtime.getSkillRuntime(), AgentConfig.getInstance(),
+                    runtime.getWorkspaceTasks(), interactionPort, workspaceRuntime.workflowService(),
                     workspaceRuntime.databaseAccess(), workspaceRuntime.context().workspaceId());
         } else {
             pluginManager.reload(runtime, workspaceRuntime.schedules());
             SddTaskManager.getInstance().reload(
                     workspaceRuntime.context().dataRoot(),
                     runtime.getModelFactory(), runtime::buildCapabilityTools,
-                    workspaceRuntime.workflowService(), workspaceRuntime.databaseAccess(),
+                    runtime.getSkillRuntime(), AgentConfig.getInstance(),
+                    runtime.getWorkspaceTasks(), workspaceRuntime.workflowService(),
+                    workspaceRuntime.databaseAccess(),
                     workspaceRuntime.context().workspaceId());
         }
     }

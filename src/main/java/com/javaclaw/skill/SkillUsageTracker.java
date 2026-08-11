@@ -1,22 +1,24 @@
 package com.javaclaw.skill;
 
 import com.javaclaw.config.AgentConfig;
-import com.javaclaw.config.AppDatabase;
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.execution.TaskSubmitter;
 import com.javaclaw.util.DebouncedPersister;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -33,28 +35,44 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p>持久化：全局 H2 {@code skill_usage} 表，按 {@code workspace_id} 隔离（技能本体是全局的，
  * 但同一技能在不同项目的命中率与成功率不同）。写入经 {@link DebouncedPersister} 防抖；
- * 切换工作区时由外部调用 {@link #reload()}。</p>
+ * 工作区切换时关闭旧实例并由子 Context 创建新实例。</p>
  *
  * @author JavaClaw
  */
-public final class SkillUsageTracker {
+public final class SkillUsageTracker implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(SkillUsageTracker.class);
-
-    private static final SkillUsageTracker INSTANCE = new SkillUsageTracker();
 
     /** 技能名 → 统计；技能以 name（而非目录 id）为键，与路由/注入层使用的标识一致 */
     private final Map<String, SkillUsageStat> stats = new ConcurrentHashMap<>();
 
-    private final DebouncedPersister persister =
-            new DebouncedPersister("skill-usage", Duration.ofSeconds(5), this::save);
+    private final String workspaceId;
+    private final JdbcTemplate jdbc;
+    private final TransactionTemplate transactions;
+    private final AgentConfig settings;
+    private final DebouncedPersister persister;
+    private final AtomicBoolean closed = new AtomicBoolean();
 
-    private SkillUsageTracker() {
+    public SkillUsageTracker(
+            String workspaceId,
+            JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager,
+            AgentConfig settings,
+            ManagedTaskExecutor scheduler,
+            TaskSubmitter tasks) {
+        if (workspaceId == null || workspaceId.isBlank()) {
+            throw new IllegalArgumentException("workspaceId 不能为空");
+        }
+        this.workspaceId = workspaceId;
+        this.jdbc = Objects.requireNonNull(jdbc, "jdbc");
+        this.transactions = new TransactionTemplate(
+                Objects.requireNonNull(transactionManager, "transactionManager"));
+        this.settings = Objects.requireNonNull(settings, "settings");
+        this.persister = new DebouncedPersister(
+                "skill-usage-" + workspaceId, Duration.ofSeconds(5),
+                Objects.requireNonNull(scheduler, "scheduler"),
+                Objects.requireNonNull(tasks, "tasks"), this::save);
         load();
-    }
-
-    public static SkillUsageTracker getInstance() {
-        return INSTANCE;
     }
 
     /**
@@ -140,9 +158,8 @@ public final class SkillUsageTracker {
      * 阈值与最小样本数从 AgentConfig 读取。
      */
     public List<String> lowSuccessCandidates() {
-        AgentConfig config = AgentConfig.getInstance();
-        double threshold = config.getSkillUsageLowSuccessThreshold();
-        int minSamples = config.getSkillUsageLowSuccessMinSamples();
+        double threshold = settings.getSkillUsageLowSuccessThreshold();
+        int minSamples = settings.getSkillUsageLowSuccessMinSamples();
         List<String> result = new ArrayList<>();
         for (Map.Entry<String, SkillUsageStat> entry : stats.entrySet()) {
             SkillUsageStat stat = entry.getValue();
@@ -156,21 +173,15 @@ public final class SkillUsageTracker {
 
     // ==================== 持久化 ====================
 
-    /** 切换工作区后重新加载 H2 中该工作区的统计 */
-    public synchronized void reload() {
-        persister.flush();
-        stats.clear();
-        load();
-        log.info("技能使用统计已随工作区切换重载: {} 条", stats.size());
-    }
-
     /** 关键节点立即落盘（如应用退出） */
     public void flush() {
-        persister.flush();
+        if (!closed.get()) persister.flush();
     }
 
-    /** 应用退出：落盘并停掉防抖调度线程 */
-    public void shutdown() {
+    /** 落盘并取消未执行的防抖任务；可重复调用。 */
+    @Override
+    public void close() {
+        if (!closed.compareAndSet(false, true)) return;
         persister.flush();
         persister.shutdown();
     }
@@ -181,27 +192,20 @@ public final class SkillUsageTracker {
                     workspace_id, skill_name, route_hits, reads, turn_success, turn_fail, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """;
-        try (Connection c = AppDatabase.getConnection();
-             PreparedStatement del = c.prepareStatement("DELETE FROM skill_usage WHERE workspace_id = ?");
-             PreparedStatement ps = c.prepareStatement(insert)) {
-            c.setAutoCommit(false);
-            String workspaceId = AppDatabase.currentWorkspaceId();
-            del.setString(1, workspaceId);
-            del.executeUpdate();
-            for (Map.Entry<String, SkillUsageStat> entry : stats.entrySet()) {
-                SkillUsageStat stat = entry.getValue();
-                ps.setString(1, workspaceId);
-                ps.setString(2, entry.getKey());
-                ps.setLong(3, stat.routeHits.get());
-                ps.setLong(4, stat.reads.get());
-                ps.setLong(5, stat.turnSuccess.get());
-                ps.setLong(6, stat.turnFail.get());
-                ps.addBatch();
-            }
-            ps.executeBatch();
-            c.commit();
-        } catch (Exception e) {
-            log.warn("保存技能使用统计失败: {}", e.getMessage());
+        Map<String, SkillUsageStat> snapshot = new HashMap<>(stats);
+        try {
+            transactions.executeWithoutResult(status -> {
+                jdbc.update("DELETE FROM skill_usage WHERE workspace_id = ?", workspaceId);
+                List<Object[]> rows = new ArrayList<>(snapshot.size());
+                for (Map.Entry<String, SkillUsageStat> entry : snapshot.entrySet()) {
+                    SkillUsageStat stat = entry.getValue();
+                    rows.add(new Object[]{workspaceId, entry.getKey(), stat.routeHits.get(),
+                            stat.reads.get(), stat.turnSuccess.get(), stat.turnFail.get()});
+                }
+                if (!rows.isEmpty()) jdbc.batchUpdate(insert, rows);
+            });
+        } catch (DataAccessException failure) {
+            log.warn("保存技能使用统计失败: {}", failure.getMessage());
         }
     }
 
@@ -212,23 +216,17 @@ public final class SkillUsageTracker {
                     FROM skill_usage
                     WHERE workspace_id = ?
                     """;
-            try (Connection c = AppDatabase.getConnection();
-                 PreparedStatement ps = c.prepareStatement(sql)) {
-                ps.setString(1, AppDatabase.currentWorkspaceId());
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        SkillUsageStat stat = new SkillUsageStat();
-                        stat.routeHits.set(rs.getLong("route_hits"));
-                        stat.reads.set(rs.getLong("reads"));
-                        stat.turnSuccess.set(rs.getLong("turn_success"));
-                        stat.turnFail.set(rs.getLong("turn_fail"));
-                        stats.put(rs.getString("skill_name"), stat);
-                    }
-                }
-            }
+            jdbc.query(sql, rs -> {
+                SkillUsageStat stat = new SkillUsageStat();
+                stat.routeHits.set(rs.getLong("route_hits"));
+                stat.reads.set(rs.getLong("reads"));
+                stat.turnSuccess.set(rs.getLong("turn_success"));
+                stat.turnFail.set(rs.getLong("turn_fail"));
+                stats.put(rs.getString("skill_name"), stat);
+            }, workspaceId);
             log.info("已从 H2 加载技能使用统计: {} 条", stats.size());
-        } catch (Exception e) {
-            log.warn("加载技能使用统计失败", e);
+        } catch (DataAccessException failure) {
+            log.warn("加载技能使用统计失败", failure);
         }
     }
 

@@ -1,5 +1,7 @@
 package com.javaclaw.skill;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.javaclaw.config.AgentConfig;
 import com.javaclaw.util.ProjectAccessPolicy;
 import org.junit.jupiter.api.Test;
 
@@ -19,7 +21,7 @@ class SkillManagerPersistenceTest {
         deleteTree(testRoot);
         Files.createDirectories(testRoot.getParent());
         Files.writeString(testRoot, "这是文件，不是目录");
-        SkillManager manager = new SkillManager(testRoot);
+        SkillManager manager = new SkillManager(testRoot, new ObjectMapper(), AgentConfig.getInstance());
 
         assertThrows(IllegalStateException.class,
                 () -> manager.createAgentSkill("不会落盘", "测试", "正文", "测试", java.util.List.of()));
@@ -32,7 +34,7 @@ class SkillManagerPersistenceTest {
     void successfulCreateIsReadBackFromSkillMdBeforePublication() throws Exception {
         Path testRoot = ProjectAccessPolicy.projectRoot().resolve("target/skill-manager-success");
         deleteTree(testRoot);
-        SkillManager manager = new SkillManager(testRoot);
+        SkillManager manager = new SkillManager(testRoot, new ObjectMapper(), AgentConfig.getInstance());
 
         Skill created = manager.createAgentSkill(
                 "原子技能", "描述", "可复用流程", "测试", java.util.List.of("原子"));
