@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.layout.ColumnConstraints?>
+<?import javafx.scene.layout.GridPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox fx:id="root" prefWidth="280.0" minWidth="240.0" maxWidth="320.0"
+      styleClass="thinking-panel-root"
+      xmlns="http://javafx.com/javafx/25"
+      xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.javaclaw.chat.ThinkingPanelController">
+    <children>
+        <HBox alignment="CENTER_LEFT">
+            <padding><Insets top="14.0" right="16.0" bottom="10.0" left="16.0"/></padding>
+            <children>
+                <Label text="处理进度" styleClass="thinking-panel-title"/>
+            </children>
+        </HBox>
+        <ScrollPane fx:id="scrollPane" fitToWidth="true" hbarPolicy="NEVER"
+                    VBox.vgrow="ALWAYS" styleClass="thinking-panel-scroll">
+            <content>
+                <VBox fx:id="contentBox" spacing="8.0">
+                    <padding><Insets right="12.0" bottom="12.0" left="12.0"/></padding>
+                    <children>
+                        <VBox fx:id="statusCard" spacing="8.0" styleClass="tp-status-card">
+                            <padding><Insets top="10.0" right="12.0" bottom="10.0" left="12.0"/></padding>
+                            <children>
+                                <HBox alignment="CENTER_LEFT" spacing="8.0">
+                                    <children>
+                                        <Label fx:id="statusTag" text="等待中"
+                                               styleClass="tp-status-tag, tp-status-tag-idle"/>
+                                        <Region HBox.hgrow="ALWAYS"/>
+                                        <Label fx:id="elapsedLabel" text="0.0s"
+                                               styleClass="tp-elapsed"/>
+                                    </children>
+                                </HBox>
+                                <HBox alignment="CENTER_LEFT" spacing="4.0">
+                                    <children>
+                                        <HBox alignment="CENTER_LEFT" spacing="4.0"
+                                              styleClass="tp-stage-pill, tp-stage-pill-thinking">
+                                            <padding><Insets top="2.0" right="8.0" bottom="2.0" left="8.0"/></padding>
+                                            <children>
+                                                <Label text="●" styleClass="tp-stage-pill-dot, status-thinking"/>
+                                                <Label text="思考" styleClass="tp-stage-pill-text"/>
+                                            </children>
+                                        </HBox>
+                                        <HBox alignment="CENTER_LEFT" spacing="4.0"
+                                              styleClass="tp-stage-pill, tp-stage-pill-planning">
+                                            <padding><Insets top="2.0" right="8.0" bottom="2.0" left="8.0"/></padding>
+                                            <children>
+                                                <Label text="●" styleClass="tp-stage-pill-dot, status-planning"/>
+                                                <Label text="规划" styleClass="tp-stage-pill-text"/>
+                                            </children>
+                                        </HBox>
+                                        <HBox alignment="CENTER_LEFT" spacing="4.0"
+                                              styleClass="tp-stage-pill, tp-stage-pill-executing">
+                                            <padding><Insets top="2.0" right="8.0" bottom="2.0" left="8.0"/></padding>
+                                            <children>
+                                                <Label text="●" styleClass="tp-stage-pill-dot, status-executing"/>
+                                                <Label text="执行" styleClass="tp-stage-pill-text"/>
+                                            </children>
+                                        </HBox>
+                                        <HBox alignment="CENTER_LEFT" spacing="4.0"
+                                              styleClass="tp-stage-pill, tp-stage-pill-replying">
+                                            <padding><Insets top="2.0" right="8.0" bottom="2.0" left="8.0"/></padding>
+                                            <children>
+                                                <Label text="●" styleClass="tp-stage-pill-dot, status-replying"/>
+                                                <Label text="回复" styleClass="tp-stage-pill-text"/>
+                                            </children>
+                                        </HBox>
+                                    </children>
+                                </HBox>
+                                <GridPane hgap="8.0" styleClass="tp-metrics">
+                                    <columnConstraints>
+                                        <ColumnConstraints percentWidth="33.33"/>
+                                        <ColumnConstraints percentWidth="33.33"/>
+                                        <ColumnConstraints percentWidth="33.34"/>
+                                    </columnConstraints>
+                                    <children>
+                                        <VBox alignment="CENTER_LEFT" spacing="2.0" GridPane.columnIndex="0">
+                                            <children>
+                                                <Label text="TOKENS IN" styleClass="tp-metric-label"/>
+                                                <Label fx:id="tokensInValue" text="0" styleClass="tp-metric-value"/>
+                                            </children>
+                                        </VBox>
+                                        <VBox alignment="CENTER_LEFT" spacing="2.0" GridPane.columnIndex="1">
+                                            <children>
+                                                <Label text="TOKENS OUT" styleClass="tp-metric-label"/>
+                                                <Label fx:id="tokensOutValue" text="0" styleClass="tp-metric-value"/>
+                                            </children>
+                                        </VBox>
+                                        <VBox alignment="CENTER_LEFT" spacing="2.0" GridPane.columnIndex="2">
+                                            <children>
+                                                <Label text="费用" styleClass="tp-metric-label"/>
+                                                <Label fx:id="costValue" text="¥0.00" styleClass="tp-metric-value"/>
+                                            </children>
+                                        </VBox>
+                                    </children>
+                                </GridPane>
+                            </children>
+                        </VBox>
+                        <HBox alignment="CENTER_LEFT" spacing="6.0"
+                              styleClass="thinking-panel-status-bar">
+                            <children>
+                                <Label fx:id="statusDot" text="●"
+                                       styleClass="thinking-panel-status-dot, status-idle"/>
+                                <Label fx:id="statusLabel" text="等待中"
+                                       styleClass="thinking-panel-status-text"/>
+                            </children>
+                        </HBox>
+                        <HBox alignment="CENTER_LEFT" spacing="8.0" styleClass="tp-status-legend">
+                            <padding><Insets top="2.0" right="10.0" bottom="6.0" left="10.0"/></padding>
+                            <children>
+                                <HBox alignment="CENTER_LEFT" spacing="3.0">
+                                    <children><Label text="●" styleClass="tp-legend-dot, status-thinking"/><Label text="思考" styleClass="tp-legend-text"/></children>
+                                </HBox>
+                                <HBox alignment="CENTER_LEFT" spacing="3.0">
+                                    <children><Label text="●" styleClass="tp-legend-dot, status-planning"/><Label text="规划" styleClass="tp-legend-text"/></children>
+                                </HBox>
+                                <HBox alignment="CENTER_LEFT" spacing="3.0">
+                                    <children><Label text="●" styleClass="tp-legend-dot, status-executing"/><Label text="执行" styleClass="tp-legend-text"/></children>
+                                </HBox>
+                                <HBox alignment="CENTER_LEFT" spacing="3.0">
+                                    <children><Label text="●" styleClass="tp-legend-dot, status-replying"/><Label text="回复" styleClass="tp-legend-text"/></children>
+                                </HBox>
+                                <HBox alignment="CENTER_LEFT" spacing="3.0">
+                                    <children><Label text="●" styleClass="tp-legend-dot, status-idle"/><Label text="空闲" styleClass="tp-legend-text"/></children>
+                                </HBox>
+                            </children>
+                        </HBox>
+                        <VBox fx:id="dynamicSectionsHost" spacing="8.0"/>
+                        <Label fx:id="emptyHint"
+                               text="发送消息后将在此显示&#10;智能体的思考与处理进度"
+                               wrapText="true" styleClass="thinking-panel-empty-hint"/>
+                    </children>
+                </VBox>
+            </content>
+        </ScrollPane>
+    </children>
+</VBox>

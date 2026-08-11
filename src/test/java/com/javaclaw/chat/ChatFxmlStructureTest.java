@@ -25,31 +25,10 @@ class ChatFxmlStructureTest {
 
     @Test
     void mainChatDeclaresEveryInjectedNodeAndEventEntrypoint() throws Exception {
-        URL resource = getClass().getResource("/fxml/chat/chat-view.fxml");
-        assertNotNull(resource);
-
-        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-        factory.setNamespaceAware(true);
-        Document document = factory.newDocumentBuilder().parse(resource.openStream());
+        Document document = document("/fxml/chat/chat-view.fxml");
         assertEquals(ChatViewController.class.getName(),
                 document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
-
-        Set<String> ids = IntStream.range(0, document.getElementsByTagName("*").getLength())
-                .mapToObj(document.getElementsByTagName("*")::item)
-                .map(node -> node.getAttributes().getNamedItemNS(FXML_NAMESPACE, "id"))
-                .filter(Objects::nonNull)
-                .map(org.w3c.dom.Node::getNodeValue)
-                .collect(Collectors.toSet());
-
-        for (Field field : ChatViewController.class.getDeclaredFields()) {
-            if (!field.isAnnotationPresent(FXML.class)) continue;
-            String fieldName = field.getName();
-            boolean declared = ids.contains(fieldName)
-                    || fieldName.endsWith("Controller")
-                    && ids.contains(fieldName.substring(
-                            0, fieldName.length() - "Controller".length()));
-            assertTrue(declared, "FXML 缺少 @FXML 字段: " + fieldName);
-        }
+        assertInjectedFields(document, ChatViewController.class);
 
         Set<String> handlers = eventHandlers(document);
         Set<String> controllerHandlers = Set.of(ChatViewController.class.getDeclaredMethods())
@@ -62,6 +41,41 @@ class ChatFxmlStructureTest {
         assertEquals(Set.of("toggleSidebar", "openTaskManager", "openSettingsRequested",
                 "onClearHistory", "onNewMessagesRequested", "onAddAttachment",
                 "onSendOrStop", "openWorkflowCenter"), handlers);
+    }
+
+    @Test
+    void thinkingPanelDeclaresEveryInjectedNode() throws Exception {
+        Document document = document("/fxml/chat/thinking-panel.fxml");
+        assertEquals(ThinkingPanelController.class.getName(),
+                document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
+        assertInjectedFields(document, ThinkingPanelController.class);
+        assertTrue(eventHandlers(document).isEmpty());
+    }
+
+    private static Document document(String path) throws Exception {
+        URL resource = ChatFxmlStructureTest.class.getResource(path);
+        assertNotNull(resource, path);
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setNamespaceAware(true);
+        return factory.newDocumentBuilder().parse(resource.openStream());
+    }
+
+    private static void assertInjectedFields(Document document, Class<?> controller) {
+        Set<String> ids = IntStream.range(0, document.getElementsByTagName("*").getLength())
+                .mapToObj(document.getElementsByTagName("*")::item)
+                .map(node -> node.getAttributes().getNamedItemNS(FXML_NAMESPACE, "id"))
+                .filter(Objects::nonNull)
+                .map(org.w3c.dom.Node::getNodeValue)
+                .collect(Collectors.toSet());
+        for (Field field : controller.getDeclaredFields()) {
+            if (!field.isAnnotationPresent(FXML.class)) continue;
+            String fieldName = field.getName();
+            boolean declared = ids.contains(fieldName)
+                    || fieldName.endsWith("Controller")
+                    && ids.contains(fieldName.substring(
+                    0, fieldName.length() - "Controller".length()));
+            assertTrue(declared, "FXML 缺少 @FXML 字段: " + fieldName);
+        }
     }
 
     private static Set<String> eventHandlers(Document document) {

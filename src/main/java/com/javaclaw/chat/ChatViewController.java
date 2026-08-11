@@ -123,7 +123,8 @@ public class ChatViewController implements AutoCloseable {
     private ChatHistoryManager chatHistoryManager;
     @FXML private SidebarController sidebarController;
     @FXML private StackPane thinkingPanelHost;
-    private ThinkingPanelView thinkingPanel;
+    @FXML private ThinkingPanelController thinkingPanelController;
+    private ThinkingPanelController thinkingPanel;
 
     /**
      * 聊天历史 JSON 持久化的串行执行器（单线程 + 守护线程）。
@@ -623,8 +624,7 @@ public class ChatViewController implements AutoCloseable {
     }
 
     private void configureThinkingPanel() {
-        thinkingPanel = new ThinkingPanelView();
-        thinkingPanelHost.getChildren().setAll(thinkingPanel.getRoot());
+        thinkingPanel = thinkingPanelController;
     }
 
     /**

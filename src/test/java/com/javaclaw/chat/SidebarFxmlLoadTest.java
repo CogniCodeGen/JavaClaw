@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -77,6 +78,35 @@ class SidebarFxmlLoadTest {
                 return null;
             });
             assertTrue(cell.isClosed());
+        }
+    }
+
+    @Test
+    void thinkingPanelRendersDynamicContentAndStopsOnClose(@TempDir Path directory)
+            throws Exception {
+        try (var context = ApplicationContexts.createRoot(
+                new DataRoot(directory.resolve("data")))) {
+            SpringFxmlLoader loader = context.getBean(SpringFxmlLoader.class);
+            ViewHandle<VBox> handle = callFx(() -> loader.load(
+                    getClass().getResource("/fxml/chat/thinking-panel.fxml")));
+            ThinkingPanelController controller =
+                    handle.controller(ThinkingPanelController.class);
+            callFx(() -> {
+                controller.startNewStream();
+                controller.appendThinking("分析中");
+                controller.recordPipelineProgress(
+                        "route", "路由", "done", "已选择普通对话");
+                controller.updateMetrics(12, 4, "¥0.01");
+                controller.endStream();
+                return null;
+            });
+            assertEquals("处理完成", controller.viewModel().statusTextProperty().get());
+            assertEquals(12, controller.viewModel().tokensInProperty().get());
+            callFx(() -> {
+                handle.close();
+                return null;
+            });
+            assertTrue(controller.isClosed());
         }
     }
 

@@ -191,7 +191,11 @@
                 </VBox>
             </bottom>
             <right>
-                <StackPane fx:id="thinkingPanelHost"/>
+                <StackPane fx:id="thinkingPanelHost">
+                    <children>
+                        <fx:include fx:id="thinkingPanel" source="thinking-panel.fxml"/>
+                    </children>
+                </StackPane>
             </right>
         </BorderPane>
     </center>
