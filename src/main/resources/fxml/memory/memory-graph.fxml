@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.geometry.Pos?>
+<?import javafx.scene.canvas.Canvas?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.Separator?>
+<?import javafx.scene.control.Slider?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Pane?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+
+<HBox xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.javaclaw.ui.javafx.memory.MemoryGraphController"
+      spacing="14.0" visible="false" managed="false">
+    <padding><Insets top="20.0" right="24.0" bottom="24.0" left="24.0"/></padding>
+    <children>
+        <VBox spacing="11.0" prefWidth="196.0" minWidth="176.0" styleClass="jc-card">
+            <padding><Insets top="15.0" right="15.0" bottom="15.0" left="15.0"/></padding>
+            <children>
+                <Label text="类别" style="-fx-font-size: 12.5px; -fx-font-weight: 700; -fx-text-fill: -jc-text-title;"/>
+                <VBox spacing="8.0"><children>
+                    <HBox fx:id="factToggle" spacing="8.0" alignment="CENTER_LEFT" onMouseClicked="#toggleFacts"
+                          style="-fx-cursor: hand; -fx-padding: 4 6 4 6; -fx-background-radius: 7;">
+                        <children><Region style="-fx-background-color: -jc-success; -fx-background-radius: 999; -fx-min-width: 9; -fx-min-height: 9; -fx-max-width: 9; -fx-max-height: 9;"/>
+                            <Label text="事实"/><Region HBox.hgrow="ALWAYS"/><Label fx:id="factCheck"/></children>
+                    </HBox>
+                    <HBox fx:id="episodeToggle" spacing="8.0" alignment="CENTER_LEFT" onMouseClicked="#toggleEpisodes"
+                          style="-fx-cursor: hand; -fx-padding: 4 6 4 6; -fx-background-radius: 7;">
+                        <children><Region style="-fx-background-color: -jc-warning; -fx-background-radius: 999; -fx-min-width: 9; -fx-min-height: 9; -fx-max-width: 9; -fx-max-height: 9;"/>
+                            <Label text="情景"/><Region HBox.hgrow="ALWAYS"/><Label fx:id="episodeCheck"/></children>
+                    </HBox>
+                    <HBox fx:id="entityToggle" spacing="8.0" alignment="CENTER_LEFT" onMouseClicked="#toggleEntities"
+                          style="-fx-cursor: hand; -fx-padding: 4 6 4 6; -fx-background-radius: 7;">
+                        <children><Region style="-fx-background-color: -jc-primary-400; -fx-background-radius: 999; -fx-min-width: 9; -fx-min-height: 9; -fx-max-width: 9; -fx-max-height: 9;"/>
+                            <Label text="实体"/><Region HBox.hgrow="ALWAYS"/><Label fx:id="entityCheck"/></children>
+                    </HBox>
+                </children></VBox>
+                <Label text="聚焦深度" style="-fx-font-size: 12.5px; -fx-font-weight: 700; -fx-text-fill: -jc-text-title;"/>
+                <Slider fx:id="focusDepth" min="1.0" max="3.0" value="3.0" majorTickUnit="1.0"
+                        minorTickCount="0" snapToTicks="true" showTickMarks="true"/>
+                <HBox><children><Label text="直接" styleClass="sec-hint"/><Region HBox.hgrow="ALWAYS"/>
+                    <Label text="2 跳" styleClass="sec-hint"/><Region HBox.hgrow="ALWAYS"/><Label text="全部" styleClass="sec-hint"/></children></HBox>
+                <Separator/>
+                <Button text="重新构建" maxWidth="Infinity" onAction="#rebuild"
+                        styleClass="button, jc-btn, jc-btn-ghost, jc-btn-sm"/>
+                <Label fx:id="graphStatus" text="切到此页签后自动构建…" wrapText="true" styleClass="sec-hint"/>
+                <Label text="拖拽平移 · 滚轮缩放&#10;点击节点查看关联" styleClass="sec-hint"/>
+            </children>
+        </VBox>
+        <StackPane fx:id="graphSurface" minWidth="300.0" HBox.hgrow="ALWAYS"
+                   style="-fx-border-color: -jc-border; -fx-border-width: 1; -fx-border-radius: 12; -fx-background-radius: 12;">
+            <children>
+                <Pane fx:id="canvasHolder"><children><Canvas fx:id="graphCanvas"/></children></Pane>
+                <VBox fx:id="graphEmpty" alignment="CENTER" spacing="4.0" visible="false"
+                      mouseTransparent="true" pickOnBounds="false">
+                    <children>
+                        <Label text="暂无记忆图谱数据"
+                               style="-fx-font-size: 14px; -fx-font-weight: 600; -fx-text-fill: -jc-text-title;"/>
+                        <Label text="随着对话积累事实与实体，这里会逐渐长出关联网络"
+                               wrapText="true" styleClass="sec-hint"/>
+                    </children>
+                </VBox>
+                <VBox alignment="TOP_LEFT" spacing="3.0" maxWidth="-Infinity" mouseTransparent="true"
+                      style="-fx-padding: 8 10 8 10; -fx-background-color: -jc-surface-elevated; -fx-background-radius: 8; -fx-border-color: -jc-border; -fx-border-radius: 8;"
+                      StackPane.alignment="TOP_LEFT">
+                    <StackPane.margin><Insets top="10.0" right="10.0" bottom="10.0" left="10.0"/></StackPane.margin>
+                    <children>
+                        <HBox alignment="CENTER_LEFT" spacing="7.0"><children>
+                            <Region style="-fx-background-color: -jc-success; -fx-background-radius: 999; -fx-min-width: 8; -fx-min-height: 8; -fx-max-width: 8; -fx-max-height: 8;"/>
+                            <Label text="事实" styleClass="sec-hint"/>
+                        </children></HBox>
+                        <HBox alignment="CENTER_LEFT" spacing="7.0"><children>
+                            <Region style="-fx-background-color: -jc-warning; -fx-background-radius: 999; -fx-min-width: 8; -fx-min-height: 8; -fx-max-width: 8; -fx-max-height: 8;"/>
+                            <Label text="情景" styleClass="sec-hint"/>
+                        </children></HBox>
+                        <HBox alignment="CENTER_LEFT" spacing="7.0"><children>
+                            <Region style="-fx-background-color: -jc-primary-400; -fx-background-radius: 999; -fx-min-width: 8; -fx-min-height: 8; -fx-max-width: 8; -fx-max-height: 8;"/>
+                            <Label text="实体" styleClass="sec-hint"/>
+                        </children></HBox>
+                        <Separator/>
+                        <Label text="──  来源" styleClass="sec-hint"/>
+                        <Label text="┄┄  关联实体" styleClass="sec-hint"/>
+                        <Label text="──  语义相近" styleClass="sec-hint"/>
+                    </children>
+                </VBox>
+                <Label fx:id="graphHud" mouseTransparent="true" opacity="0.65"
+                       style="-fx-font-size: 11.5px;" StackPane.alignment="BOTTOM_LEFT">
+                    <StackPane.margin><Insets top="10.0" right="10.0" bottom="10.0" left="10.0"/></StackPane.margin>
+                </Label>
+                <Button text="重置视图" focusTraversable="false" onAction="#resetView"
+                        styleClass="button, jc-btn, jc-btn-ghost, jc-btn-sm" StackPane.alignment="BOTTOM_RIGHT">
+                    <StackPane.margin><Insets top="10.0" right="10.0" bottom="10.0" left="10.0"/></StackPane.margin>
+                </Button>
+            </children>
+        </StackPane>
+        <VBox prefWidth="224.0" minWidth="200.0" styleClass="jc-card">
+            <padding><Insets top="16.0" right="16.0" bottom="16.0" left="16.0"/></padding>
+            <children>
+                <VBox fx:id="emptyInspector"><children>
+                    <Label text="点击图中节点&#10;查看其类型与关联记忆" wrapText="true" styleClass="sec-hint"/>
+                </children></VBox>
+                <VBox fx:id="detailInspector" spacing="10.0" visible="false" managed="false"><children>
+                    <Label fx:id="typeBadge" styleClass="jc-badge"/>
+                    <Label fx:id="nodeName" wrapText="true" style="-fx-font-size: 15px; -fx-font-weight: 700; -fx-text-fill: -jc-text-title;"/>
+                    <Label text="关联记忆" style="-fx-font-size: 12px; -fx-font-weight: 600; -fx-text-fill: -jc-text-muted;"/>
+                    <VBox fx:id="relatedHost"/>
+                </children></VBox>
+            </children>
+        </VBox>
+    </children>
+</HBox>

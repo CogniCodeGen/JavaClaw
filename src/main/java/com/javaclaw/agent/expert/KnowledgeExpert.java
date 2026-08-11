@@ -386,14 +386,20 @@ public class KnowledgeExpert {
         if (documentName == null || documentName.isBlank()) {
             return ToolResponse.error("knowledge_delete", "文档名称不能为空");
         }
-        int removed = globalStore.removeKnowledgeByDoc(documentName, "user")
-                + workspaceStore.removeKnowledgeByDoc(documentName, "user");
+        int removed = deleteDocument(documentName);
         if (removed == 0) {
             return ToolResponse.error("knowledge_delete", "未找到文档: " + documentName);
         }
         return ToolResponse.success("knowledge_delete",
                 String.format("已删除文档 [%s]（%d 个分块），知识库剩余 %d 个分块",
                         documentName, removed, getTotalChunkCount()));
+    }
+
+    /** 删除全局与当前工作区中同名文档，返回实际移除的分块数。 */
+    public int deleteDocument(String documentName) {
+        if (!ragEnabled || documentName == null || documentName.isBlank()) return 0;
+        return globalStore.removeKnowledgeByDoc(documentName, "user")
+                + workspaceStore.removeKnowledgeByDoc(documentName, "user");
     }
 
     @Tool(name = "knowledge_clear", description = "清空知识库中的所有文档")

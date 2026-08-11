@@ -19,7 +19,7 @@ import java.util.Set;
  * 记忆图谱构建器 —— 从 {@link MemoryStore} 一次性物化一张可视化用的 {@link MemoryGraph}。
  *
  * <p>纯读路径，不写库；向量近邻边通过既有 {@code factIndex} 即时检索得到（无额外 LLM 调用）。
- * 在调用线程执行（建议放后台线程，见 {@code MemoryGraphView}）。</p>
+ * 在调用线程执行，调用方应提交到托管后台执行器。</p>
  *
  * <p>构图规则见 {@link MemoryGraph} 文档：事实/情景/实体三类节点 + source/about/semantic 三类边。
  * 为控制规模，事实按更新时间倒序取前 {@code maxNodes} 个，情景与实体优先纳入被选中事实实际引用到的部分；

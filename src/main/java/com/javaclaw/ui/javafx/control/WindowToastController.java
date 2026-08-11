@@ -31,7 +31,8 @@ public final class WindowToastController implements AutoCloseable {
         messageLabel.visibleProperty().bind(viewModel.visibleProperty());
     }
 
-    void show(String text) {
+    /** 非阻塞显示一条窗口内通知；可从任意线程调用。 */
+    public void show(String text) {
         if (text == null || text.isBlank() || closed.get()) return;
         fx.dispatch(() -> animate(text));
     }

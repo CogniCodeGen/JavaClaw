@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.javaclaw.ui.javafx.memory.MemoryFactGroupController"
+      maxWidth="Infinity" styleClass="mc-group-card">
+    <children>
+        <HBox spacing="10.0" alignment="CENTER_LEFT" onMouseClicked="#toggleExpanded"
+              styleClass="mc-group-head">
+            <children>
+                <Label fx:id="arrow" text="▾" style="-fx-font-size: 11px; -fx-text-fill: -jc-text-hint;"/>
+                <Label fx:id="title" styleClass="mc-group-title"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Label fx:id="count" styleClass="mc-group-count"/>
+            </children>
+        </HBox>
+        <VBox fx:id="rowsArea"><children>
+            <Region minHeight="1.0" style="-fx-background-color: -jc-border;"/>
+            <VBox fx:id="rows" spacing="2.0">
+                <padding><Insets top="2.0" right="10.0" bottom="8.0" left="10.0"/></padding>
+            </VBox>
+        </children></VBox>
+    </children>
+</VBox>

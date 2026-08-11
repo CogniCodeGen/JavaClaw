@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.TextArea?>
+<?import javafx.scene.control.Tooltip?>
+<?import javafx.scene.layout.FlowPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.VBox?>
+
+<HBox xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.javaclaw.ui.javafx.memory.MemoryFactRowController"
+      alignment="CENTER_LEFT" styleClass="mc-fact-row">
+    <children>
+        <Button fx:id="selectionButton" visible="false" managed="false"
+                onAction="#selectionRequested" styleClass="button, mc-check"/>
+        <VBox HBox.hgrow="ALWAYS">
+            <children>
+                <VBox fx:id="displayBox" spacing="6.0"><children>
+                    <Label fx:id="factText" wrapText="true" styleClass="mc-fact-text"/>
+                    <FlowPane fx:id="metadata" hgap="9.0" vgap="4.0" alignment="CENTER_LEFT"><children>
+                        <Label fx:id="updated" styleClass="mc-fact-meta"/>
+                        <Label fx:id="hits" styleClass="mc-fact-meta"/>
+                        <Label fx:id="mentions" styleClass="mc-fact-meta"/>
+                        <Label fx:id="pending" text="待嵌入" styleClass="jc-badge, jc-badge-amber"><tooltip><Tooltip text="无向量，服务恢复后可重新嵌入"/></tooltip></Label>
+                        <Label fx:id="protectedBadge" text="用户保护" styleClass="jc-badge, jc-badge-soft"/>
+                        <Label fx:id="asserted" text="用户纠错" styleClass="jc-badge, jc-badge-soft"><tooltip><Tooltip text="来自对话中的显式纠正"/></tooltip></Label>
+                        <Label fx:id="superseded" text="已取代" styleClass="jc-badge, jc-badge-amber"><tooltip><Tooltip text="保留用于审计，但不会再被模型召回"/></tooltip></Label>
+                        <Label fx:id="contested" text="有争议" styleClass="jc-badge, jc-badge-amber"><tooltip><Tooltip text="用户已否定；核验前不会被模型召回"/></tooltip></Label>
+                        <Label fx:id="pinned" text="置顶" styleClass="jc-badge, jc-badge-amber"/>
+                    </children></FlowPane>
+                </children></VBox>
+                <VBox fx:id="editBox" spacing="6.0" visible="false" managed="false"><children>
+                    <TextArea fx:id="editArea" wrapText="true" prefRowCount="2" styleClass="mc-fact-edit-area"/>
+                    <HBox spacing="8.0"><children>
+                        <Button text="保存并重嵌入" onAction="#saveEdit" styleClass="button, jc-btn, jc-btn-save, jc-btn-sm"/>
+                        <Button text="取消" onAction="#cancelEdit" styleClass="button, jc-btn, jc-btn-ghost, jc-btn-sm"/>
+                    </children></HBox>
+                </children></VBox>
+            </children>
+        </VBox>
+        <HBox fx:id="tools" spacing="3.0" alignment="CENTER"><children>
+            <Button fx:id="restoreButton" text="↩" onAction="#restoreRequested" styleClass="button, mc-icon-btn"><tooltip><Tooltip text="恢复并重新参与召回与图谱"/></tooltip></Button>
+            <Button fx:id="pinButton" text="☆" onAction="#togglePin" styleClass="button, mc-icon-btn"/>
+            <Button text="✎" onAction="#editRequested" styleClass="button, mc-icon-btn"/>
+            <Button text="🗑" onAction="#deleteRequested" styleClass="button, mc-icon-btn, mc-icon-btn-danger"/>
+        </children></HBox>
+    </children>
+</HBox>

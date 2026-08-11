@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.layout.VBox?>
+
+<ScrollPane xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.javaclaw.ui.javafx.memory.MemoryEpisodesController"
+            fitToWidth="true" hbarPolicy="NEVER" visible="false" managed="false"
+            styleClass="modal-content-area">
+    <content>
+        <VBox spacing="16.0">
+            <padding><Insets top="24.0" right="24.0" bottom="24.0" left="24.0"/></padding>
+            <children>
+                <VBox spacing="3.0"><children>
+                    <Label text="情景记忆" styleClass="sec-title"/>
+                    <Label text="每一轮对话与当时做过的事，可回溯发生经过和沉淀事实数。" styleClass="sec-hint"/>
+                </children></VBox>
+                <Label fx:id="empty" visible="false" managed="false" styleClass="sec-hint"/>
+                <VBox fx:id="timeline" spacing="14.0"/>
+            </children>
+        </VBox>
+    </content>
+</ScrollPane>

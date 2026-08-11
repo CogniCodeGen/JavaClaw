@@ -4,7 +4,7 @@ import java.util.List;
 
 /**
  * 记忆图谱快照 —— 由 {@link MemoryGraphBuilder} 从记忆库一次性物化的只读节点/边集合，
- * 供 UI（{@code MemoryGraphView}）以 Canvas 力导向图直接渲染。
+ * 供 UI 以 Canvas 力导向图直接渲染。
  *
  * <p>三类节点：</p>
  * <ul>

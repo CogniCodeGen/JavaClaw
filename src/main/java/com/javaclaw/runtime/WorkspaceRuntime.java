@@ -12,6 +12,7 @@ import com.javaclaw.workflow.service.WorkflowService;
 import com.javaclaw.ui.javafx.mcp.McpCenterViewFactory;
 import com.javaclaw.ui.javafx.settings.SettingsViewFactory;
 import com.javaclaw.ui.javafx.schedule.ScheduleViewFactory;
+import com.javaclaw.ui.javafx.memory.MemoryViewFactory;
 
 import java.util.Objects;
 
@@ -34,6 +35,7 @@ public final class WorkspaceRuntime implements AutoCloseable {
     private final McpCenterViewFactory mcpCenters;
     private final SettingsViewFactory settingsViews;
     private final ScheduleViewFactory scheduleViews;
+    private final MemoryViewFactory memoryViews;
     private final ScheduleManager scheduleManager;
     private final ScheduleApplicationService schedules;
 
@@ -49,6 +51,7 @@ public final class WorkspaceRuntime implements AutoCloseable {
         mcpCenters = springContext.bean(McpCenterViewFactory.class);
         settingsViews = springContext.bean(SettingsViewFactory.class);
         scheduleViews = springContext.bean(ScheduleViewFactory.class);
+        memoryViews = springContext.bean(MemoryViewFactory.class);
         scheduleManager = springContext.bean(ScheduleManager.class);
         schedules = springContext.bean(ScheduleApplicationService.class);
     }
@@ -91,6 +94,10 @@ public final class WorkspaceRuntime implements AutoCloseable {
 
     public ScheduleViewFactory scheduleViews() {
         return scheduleViews;
+    }
+
+    public MemoryViewFactory memoryViews() {
+        return memoryViews;
     }
 
     public ScheduleManager scheduleManager() {

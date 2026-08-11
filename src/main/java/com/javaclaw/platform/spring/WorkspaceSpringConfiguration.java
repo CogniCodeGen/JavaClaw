@@ -5,6 +5,7 @@ import com.javaclaw.agent.ChatService;
 import com.javaclaw.agent.PlanModeService;
 import com.javaclaw.agent.ShellCommandService;
 import com.javaclaw.agent.expert.CustomAgentConfig;
+import com.javaclaw.agent.expert.KnowledgeExpert;
 import com.javaclaw.application.agent.AgentDefinitionPort;
 import com.javaclaw.application.agent.AgentManagementApplicationService;
 import com.javaclaw.application.agent.AgentManagementUseCase;
@@ -18,6 +19,9 @@ import com.javaclaw.application.mcp.McpManagementApplicationService;
 import com.javaclaw.application.mcp.McpManagementUseCase;
 import com.javaclaw.application.mcp.McpRuntimePort;
 import com.javaclaw.application.mcp.McpTemplatePort;
+import com.javaclaw.application.memory.MemoryApplicationService;
+import com.javaclaw.application.memory.MemoryPort;
+import com.javaclaw.application.memory.MemoryUseCase;
 import com.javaclaw.application.settings.ModelSettingsApplicationService;
 import com.javaclaw.application.settings.BehaviorSettingsApplicationService;
 import com.javaclaw.application.settings.BehaviorSettingsPort;
@@ -43,6 +47,7 @@ import com.javaclaw.infrastructure.mcp.McpClientManagerAdapter;
 import com.javaclaw.infrastructure.mcp.McpConfigManagerAdapter;
 import com.javaclaw.infrastructure.mcp.McpJsonImporterAdapter;
 import com.javaclaw.infrastructure.mcp.McpTemplateLibraryAdapter;
+import com.javaclaw.infrastructure.memory.MemoryServiceAdapter;
 import com.javaclaw.infrastructure.settings.AgentConfigModelSettingsAdapter;
 import com.javaclaw.infrastructure.settings.AgentConfigBehaviorSettingsAdapter;
 import com.javaclaw.infrastructure.settings.EmbeddingGatewayRuntimeProbeAdapter;
@@ -92,9 +97,13 @@ import com.javaclaw.ui.javafx.settings.SettingsViewFactory;
 import com.javaclaw.ui.javafx.schedule.ScheduleHistoryCellFactory;
 import com.javaclaw.ui.javafx.schedule.ScheduleTaskCellFactory;
 import com.javaclaw.ui.javafx.schedule.ScheduleViewFactory;
+import com.javaclaw.ui.javafx.memory.MemoryComponentFactory;
+import com.javaclaw.ui.javafx.memory.MemoryFactDialogFactory;
+import com.javaclaw.ui.javafx.memory.MemoryViewFactory;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.http.HttpGateway;
 import com.javaclaw.platform.json.JsonCodec;
+import com.javaclaw.platform.storage.AtomicContentStore;
 import com.javaclaw.workflow.node.PublicNodeCatalog;
 import com.javaclaw.workflow.runtime.NodeExecutorRegistry;
 import com.javaclaw.workflow.service.SystemGraphFactory;
@@ -525,6 +534,47 @@ public class WorkspaceSpringConfiguration {
             WorkflowService workflows,
             @Qualifier("workspaceTaskScope") TaskScope taskScope) {
         return new ChatService(runtime, workflows, taskScope);
+    }
+
+    @Bean(destroyMethod = "")
+    com.javaclaw.memory.MemoryService memoryService(ChatService chats) {
+        return chats.getMemoryService();
+    }
+
+    @Bean(destroyMethod = "")
+    KnowledgeExpert knowledgeExpert(AgentRuntime runtime) {
+        return runtime.getKnowledgeExpert();
+    }
+
+    @Bean
+    MemoryPort memoryPort(
+            com.javaclaw.memory.MemoryService memory,
+            KnowledgeExpert knowledge,
+            AtomicContentStore files) {
+        return new MemoryServiceAdapter(memory, knowledge, files);
+    }
+
+    @Bean
+    MemoryApplicationService memoryApplicationService(MemoryPort memory) {
+        return new MemoryUseCase(memory);
+    }
+
+    @Bean
+    MemoryComponentFactory memoryComponentFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new MemoryComponentFactory(loader);
+    }
+
+    @Bean
+    MemoryFactDialogFactory memoryFactDialogFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new MemoryFactDialogFactory(loader);
+    }
+
+    @Bean
+    MemoryViewFactory memoryViewFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new MemoryViewFactory(loader);
     }
 
     @Bean(destroyMethod = "close")

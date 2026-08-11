@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+
+<HBox xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.javaclaw.ui.javafx.memory.MemoryEntityCardController"
+      spacing="8.0" alignment="CENTER_LEFT" prefWidth="225.0" styleClass="mc-entity-card">
+    <children>
+        <Label fx:id="name" styleClass="mc-entity-name"/>
+        <Region HBox.hgrow="ALWAYS"/>
+        <Label fx:id="count" styleClass="mc-group-count"/>
+    </children>
+</HBox>

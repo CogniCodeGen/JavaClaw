@@ -17,7 +17,6 @@ import com.javaclaw.platform.fxml.ViewHandle;
 import com.javaclaw.platform.spring.ApplicationContexts;
 import com.javaclaw.platform.spring.WorkspaceSpringContextFactory;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeCenterView;
-import com.javaclaw.ui.javafx.memory.MemoryCenterView;
 import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
 import com.javaclaw.ui.javafx.skill.SkillCenterView;
 import com.javaclaw.ui.javafx.task.SddTaskView;
@@ -127,9 +126,7 @@ public final class UiScreenshotExporter {
                             () -> {}, () -> {},
                             springContext.getBean(WindowToastFactory.class)).show()));
             shots.add(new Shot("04-memory-center.png", "记忆中心", () ->
-                    new MemoryCenterView(primaryStage, chatService.getMemoryService(),
-                            runtime.getKnowledgeExpert(),
-                            springContext.getBean(WindowToastFactory.class)).show()));
+                    workspaceRuntime.memoryViews().create(primaryStage).show()));
             shots.add(new Shot("05-skill-center.png", "技能中心", () ->
                     showInternalStage(new SkillCenterView(primaryStage))));
             shots.add(new Shot("06-task-center.png", "托管任务", () ->

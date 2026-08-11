@@ -2589,9 +2589,7 @@ public class ChatViewController implements AutoCloseable {
         }
         log.info("打开记忆中心");
         javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
-        new com.javaclaw.ui.javafx.memory.MemoryCenterView(
-                ownerStage, chatService.getMemoryService(), runtime.getKnowledgeExpert(),
-                windowToasts).show();
+        applicationKernel.current().memoryViews().create(ownerStage).show();
     }
 
     /**
