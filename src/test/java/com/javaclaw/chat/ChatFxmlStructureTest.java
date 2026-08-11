@@ -39,7 +39,7 @@ class ChatFxmlStructureTest {
         assertTrue(controllerHandlers.containsAll(handlers),
                 "Controller 缺少 @FXML 事件方法: " + handlers);
         assertEquals(Set.of("toggleSidebar", "openTaskManager", "openSettingsRequested",
-                "onClearHistory", "onNewMessagesRequested"), handlers);
+                "onClearHistory"), handlers);
     }
 
     @Test
@@ -78,6 +78,15 @@ class ChatFxmlStructureTest {
         assertInjectedFields(document, ChatModeController.class);
         assertEquals(Set.of("openWorkflowCenterRequested", "openTaskManagerRequested"),
                 eventHandlers(document));
+    }
+
+    @Test
+    void sessionViewDeclaresEveryInjectedNodeAndEventEntrypoint() throws Exception {
+        Document document = document("/fxml/chat/chat-session-view.fxml");
+        assertEquals(ChatSessionController.class.getName(),
+                document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
+        assertInjectedFields(document, ChatSessionController.class);
+        assertEquals(Set.of("newMessagesRequested"), eventHandlers(document));
     }
 
     @Test

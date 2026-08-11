@@ -33,7 +33,6 @@ import javafx.animation.Animation;
 import javafx.animation.KeyFrame;
 import javafx.animation.KeyValue;
 import javafx.animation.Timeline;
-import javafx.beans.binding.Bindings;
 import javafx.beans.value.ChangeListener;
 import javafx.fxml.FXML;
 import javafx.geometry.Insets;
@@ -90,10 +89,7 @@ public class ChatViewController implements AutoCloseable {
 
     @FXML private BorderPane outerRoot;
     @FXML private BorderPane chatPane;
-    /** chatPane 的 center StackPane（含 scrollPane + 空状态占位 + 浮动新消息按钮）；工作区切换时用作恢复目标，避免回退到只挂 scrollPane 而丢失叠加层 */
-    @FXML private StackPane chatCenter;
-    @FXML private VBox messageList;
-    @FXML private ScrollPane scrollPane;
+    @FXML private ChatSessionController sessionViewController;
     @FXML private ChatComposerController composerController;
     @FXML private ChatModeController modeBarController;
     @FXML private Label topTitleLabel;
@@ -165,10 +161,8 @@ public class ChatViewController implements AutoCloseable {
 
     private void stopUiResources() {
         stopTimeline(statusBarClock);
-        stopTimeline(tailScrollAnimation);
         stopTimeline(activeGenPlaceholderAnim);
         statusBarClock = null;
-        tailScrollAnimation = null;
         activeGenPlaceholderAnim = null;
         if (themeListener != null) {
             com.javaclaw.ui.javafx.theme.ThemeManager.themeProperty()
@@ -193,15 +187,6 @@ public class ChatViewController implements AutoCloseable {
 
     // 浏览器已改为独立窗口，不再使用 browserVisible 标志
 
-    /** 聊天空状态提示 */
-    @FXML private VBox chatEmptyState;
-
-    /** "↓ N 条新消息" 浮动按钮（用户上滑离开底部时显示） */
-    @FXML private Button newMessagesButton;
-
-    /** 当前未读新消息计数 */
-    private int unreadNewCount = 0;
-
     /** 是否处于流式生成中（用于 Esc 取消逻辑） */
     private boolean streamingActive = false;
 
@@ -213,15 +198,6 @@ public class ChatViewController implements AutoCloseable {
 
     /** 当前侧栏自动隐藏状态（避免响应式监听重复触发） */
     private boolean sidebarAutoHidden = false;
-
-    /** 判断"接近底部"的像素阈值 */
-    private static final double NEAR_BOTTOM_THRESHOLD_PX = 100.0;
-    /** 仅由真实用户滚动改变；内容布局导致的 vvalue 变化不得关闭跟随。 */
-    private boolean followTail = true;
-    /** 当前由控制器驱动的尾部滚动动画；用户操作会先停止它。 */
-    private Timeline tailScrollAnimation;
-    /** 防止控制器自己的 vvalue 写入被误判为用户离开底部。 */
-    private boolean programmaticTailScroll;
 
     // ==================== 流式输出的活动 UI 引用 ====================
 
@@ -383,7 +359,6 @@ public class ChatViewController implements AutoCloseable {
         configureSidebar();
         configureTopBar();
         configureModeBar();
-        configureMessageArea();
         configureComposer();
         configureThinkingPanel();
 
@@ -443,56 +418,6 @@ public class ChatViewController implements AutoCloseable {
         });
     }
 
-    private void configureMessageArea() {
-        scrollPane.addEventFilter(javafx.scene.input.ScrollEvent.SCROLL, event -> {
-            double deltaY = event.getDeltaY();
-            if (deltaY == 0) return;
-            beginUserScroll();
-            double viewportHeight = scrollPane.getViewportBounds() == null
-                    ? 0 : scrollPane.getViewportBounds().getHeight();
-            double scrollable = messageList.getHeight() - viewportHeight;
-            if (scrollable <= 0) return;
-            double next = scrollPane.getVvalue() - deltaY / scrollable;
-            scrollPane.setVvalue(Math.max(0, Math.min(1, next)));
-            event.consume();
-        });
-        scrollPane.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
-            if (isScrollBarTarget(event.getTarget())) beginUserScroll();
-        });
-        scrollPane.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
-            switch (event.getCode()) {
-                case UP, DOWN, PAGE_UP, PAGE_DOWN, HOME, END, SPACE -> beginUserScroll();
-                default -> { }
-            }
-        });
-
-        messageList.heightProperty().addListener(
-                (observable, previous, height) -> {
-                    if (followTail) scrollToTail(true);
-                });
-        scrollPane.vvalueProperty().addListener((observable, previous, value) -> {
-            if (programmaticTailScroll) return;
-            followTail = isNearBottom();
-            if (followTail) resetUnreadCount();
-        });
-        messageList.getChildren().addListener(
-                (javafx.collections.ListChangeListener<javafx.scene.Node>) this::onMessagesChanged);
-        chatEmptyState.visibleProperty().bind(
-                Bindings.isEmpty(messageList.getChildren()));
-        chatEmptyState.managedProperty().bind(chatEmptyState.visibleProperty());
-    }
-
-    private void onMessagesChanged(
-            javafx.collections.ListChangeListener.Change<? extends javafx.scene.Node> change) {
-        while (change.next()) {
-            if (messageList.getChildren().isEmpty()) {
-                resetUnreadCount();
-            } else if (change.wasAdded() && !followTail) {
-                incrementUnreadCount(change.getAddedSize());
-            }
-        }
-    }
-
     private void configureComposer() {
         composerController.setOnSend(this::onSendMessage);
         composerController.setOnStop(this::stopActiveStream);
@@ -540,7 +465,7 @@ public class ChatViewController implements AutoCloseable {
 
             HBox row = new HBox(bubble);
             row.setAlignment(Pos.CENTER);
-            messageList.getChildren().add(row);
+            sessionViewController.addMessage(row);
         });
     }
 
@@ -563,11 +488,6 @@ public class ChatViewController implements AutoCloseable {
      */
     public BorderPane getOuterRoot() {
         return outerRoot;
-    }
-
-    @FXML
-    private void onNewMessagesRequested() {
-        scrollToTail(false);
     }
 
     @FXML
@@ -922,7 +842,7 @@ public class ChatViewController implements AutoCloseable {
         messageRow.setPadding(new Insets(6, 12, 6, 12));
         messageRow.setAlignment(Pos.TOP_LEFT);
 
-        messageList.getChildren().add(messageRow);
+        sessionViewController.addMessage(messageRow);
         log.debug("已添加用户消息（含 {} 个附件）", attachments.size());
     }
 
@@ -1072,10 +992,7 @@ public class ChatViewController implements AutoCloseable {
         MenuItem deleteItem = new MenuItem("删除此消息");
         deleteItem.setOnAction(e -> {
             if (activeUnifiedBubble == null) return;
-            javafx.scene.Node row = activeUnifiedBubble.getParent();
-            while (row != null && row.getParent() != messageList) row = row.getParent();
-            if (row != null) {
-                messageList.getChildren().remove(row);
+            if (sessionViewController.removeContaining(activeUnifiedBubble)) {
                 if (!currentSession.getMessages().isEmpty()) {
                     int lastIdx = currentSession.getMessages().size() - 1;
                     if (currentSession.getMessages().get(lastIdx).getRole() == ChatMessage.Role.ASSISTANT) {
@@ -1103,7 +1020,7 @@ public class ChatViewController implements AutoCloseable {
         messageRow.setPadding(new Insets(6, 12, 6, 12));
         messageRow.setAlignment(Pos.TOP_LEFT);
 
-        messageList.getChildren().add(messageRow);
+        sessionViewController.addMessage(messageRow);
         log.debug("已创建流式输出占位气泡（设计稿头像 + 头部 + 操作行）");
     }
 
@@ -2105,7 +2022,7 @@ public class ChatViewController implements AutoCloseable {
         HBox row = new HBox(10, avatar, right);
         row.setAlignment(Pos.TOP_LEFT);
         row.setPadding(new Insets(6, 12, 6, 12));
-        messageList.getChildren().add(row);
+        sessionViewController.addMessage(row);
 
         // 2. 持久化到当前会话：用 markdown blockquote 表达澄清结构，重载时也能渲染
         StringBuilder md = new StringBuilder();
@@ -2153,7 +2070,7 @@ public class ChatViewController implements AutoCloseable {
             if (streamingSession != null && streamingSession != currentSession) {
                 suspendedStreamingNodes.add(row);
             } else {
-                messageList.getChildren().add(row);
+                sessionViewController.addMessage(row);
             }
         }
         activeLoopStatusView.update(status);
@@ -2166,7 +2083,7 @@ public class ChatViewController implements AutoCloseable {
         ChatMessage message = new ChatMessage(role, content);
         currentSession.getMessages().add(message);
         HBox row = buildStaticMessageRow(role, message, java.util.Collections.emptyList());
-        messageList.getChildren().add(row);
+        sessionViewController.addMessage(row);
         log.debug("已添加 {} 静态消息", role.getDisplayName());
     }
 
@@ -2193,7 +2110,7 @@ public class ChatViewController implements AutoCloseable {
             }
         }
         HBox row = buildStaticMessageRow(message.getRole(), message, historyImages);
-        messageList.getChildren().add(row);
+        sessionViewController.addMessage(row);
     }
 
     /**
@@ -2278,7 +2195,7 @@ public class ChatViewController implements AutoCloseable {
      * 加载所有会话，恢复侧边栏列表和当前会话
      */
     private void loadSessions() {
-        enterMessageViewAtTail();
+        sessionViewController.enterAtTail();
         List<ChatSession> loaded = chatHistoryManager.loadSessionIndex();
         sessions.clear();
 
@@ -2328,7 +2245,7 @@ public class ChatViewController implements AutoCloseable {
             return;
         }
         log.info("用户请求新建会话");
-        enterMessageViewAtTail();
+        sessionViewController.enterAtTail();
 
         final boolean streamRunning = streamingActive && streamingSession != null;
 
@@ -2337,8 +2254,7 @@ public class ChatViewController implements AutoCloseable {
         if (streamRunning && currentSession == streamingSession) {
             // 流式进行中：挂起场景图让流在后台继续，不杀流、不动智能体上下文
             suspendedStreamingNodes.clear();
-            suspendedStreamingNodes.addAll(messageList.getChildren());
-            messageList.getChildren().clear();
+            suspendedStreamingNodes.addAll(sessionViewController.detachMessages());
             composerController.setThinkingText("其他会话正在后台生成回复…");
         } else if (!streamRunning) {
             if (streamingActive) {
@@ -2421,8 +2337,7 @@ public class ChatViewController implements AutoCloseable {
             // 流式进行中切走：挂起场景图（节点仍被流式回调实时更新），
             // 不杀流、不动智能体上下文、不清 active 引用
             suspendedStreamingNodes.clear();
-            suspendedStreamingNodes.addAll(messageList.getChildren());
-            messageList.getChildren().clear();
+            suspendedStreamingNodes.addAll(sessionViewController.detachMessages());
             composerController.setThinkingText("其他会话正在后台生成回复…");
         } else if (streamRunning) {
             // 当前是只读视图（流在别的会话跑）：仅释放本视图的静态气泡
@@ -2445,12 +2360,12 @@ public class ChatViewController implements AutoCloseable {
 
         // 切换当前会话
         currentSession = target;
-        enterMessageViewAtTail();
+        sessionViewController.enterAtTail();
 
         // ==== 进入目标会话 ====
         if (streamRunning && target == streamingSession) {
             // 切回流式中的会话：恢复挂起的场景图，输出与进度无缝继续
-            messageList.getChildren().setAll(suspendedStreamingNodes);
+            sessionViewController.setMessages(suspendedStreamingNodes);
             suspendedStreamingNodes.clear();
             composerController.setThinkingText("助手正在思考中...");
         } else {
@@ -2663,7 +2578,7 @@ public class ChatViewController implements AutoCloseable {
         messageRow.setPadding(new Insets(2, 5, 2, 5));
         messageRow.setAlignment(Pos.CENTER_LEFT);
 
-        messageList.getChildren().add(messageRow);
+        sessionViewController.addMessage(messageRow);
     }
 
     /**
@@ -2908,109 +2823,6 @@ public class ChatViewController implements AutoCloseable {
     }
 
     /**
-     * 判断 ScrollPane 是否接近底部（距底部 &lt;= {@link #NEAR_BOTTOM_THRESHOLD_PX} 像素）
-     * <p>短消息列表（内容未撑满视口）始终视为"在底部"。
-     */
-    private boolean isNearBottom() {
-        if (scrollPane == null) return true;
-        double viewportH = scrollPane.getViewportBounds() != null ? scrollPane.getViewportBounds().getHeight() : 0;
-        double contentH = messageList.getHeight();
-        double scrollableH = Math.max(0, contentH - viewportH);
-        if (scrollableH <= 0) return true;
-        double currentY = scrollableH * scrollPane.getVvalue();
-        return (scrollableH - currentY) <= NEAR_BOTTOM_THRESHOLD_PX;
-    }
-
-    /**
-     * 累加未读计数并显示浮动按钮
-     */
-    private void incrementUnreadCount(int delta) {
-        boolean wasHidden = unreadNewCount == 0;
-        unreadNewCount += delta;
-        if (newMessagesButton != null) {
-            newMessagesButton.setText("↓ " + unreadNewCount + " 条新消息");
-            newMessagesButton.setVisible(true);
-            newMessagesButton.setManaged(true);
-            // 从隐藏变为可见时使用 fadeIn，避免重复触发
-            if (wasHidden) {
-                com.javaclaw.app.UiMotion.fadeIn(newMessagesButton);
-            }
-        }
-    }
-
-    /**
-     * 重置未读计数并隐藏浮动按钮
-     */
-    private void resetUnreadCount() {
-        unreadNewCount = 0;
-        if (newMessagesButton != null) {
-            newMessagesButton.setVisible(false);
-            newMessagesButton.setManaged(false);
-        }
-    }
-
-    /**
-     * 进入另一会话的消息视图时默认从尾部开始，不继承上一会话的上滑状态。
-     * 同一会话内的 followTail 仍只由用户滚动或“新消息”按钮改变。
-     */
-    private void enterMessageViewAtTail() {
-        followTail = true;
-        resetUnreadCount();
-        fx.dispatch(() -> {
-            if (followTail) scrollToTail(false);
-        });
-    }
-
-    /** 控制器统一滚动到底部，动画期间屏蔽自身 vvalue 写入。 */
-    private void scrollToTail(boolean animated) {
-        stopTailScrollAnimation();
-        followTail = true;
-        programmaticTailScroll = true;
-        if (!animated) {
-            try {
-                scrollPane.setVvalue(1.0);
-            } finally {
-                programmaticTailScroll = false;
-            }
-            resetUnreadCount();
-            return;
-        }
-
-        Timeline animation = new Timeline(
-                new KeyFrame(Duration.millis(150),
-                        new KeyValue(scrollPane.vvalueProperty(), 1.0)));
-        tailScrollAnimation = animation;
-        animation.setOnFinished(event -> {
-            if (tailScrollAnimation == animation) tailScrollAnimation = null;
-            programmaticTailScroll = false;
-            if (isNearBottom()) resetUnreadCount();
-        });
-        animation.play();
-    }
-
-    /** 任意用户滚动手势先夺回控制权，防止未完成动画把视图重新拉到底部。 */
-    private void beginUserScroll() {
-        stopTailScrollAnimation();
-    }
-
-    private void stopTailScrollAnimation() {
-        Timeline animation = tailScrollAnimation;
-        tailScrollAnimation = null;
-        if (animation != null) animation.stop();
-        programmaticTailScroll = false;
-    }
-
-    private static boolean isScrollBarTarget(Object target) {
-        if (!(target instanceof javafx.scene.Node node)) return false;
-        javafx.scene.Node current = node;
-        while (current != null) {
-            if (current.getStyleClass().contains("scroll-bar")) return true;
-            current = current.getParent();
-        }
-        return false;
-    }
-
-    /**
      * 查找当前会话中最近一条用户消息内容（用于 ↑ 键回填编辑）
      */
     private String findLastUserMessage() {
@@ -3029,12 +2841,13 @@ public class ChatViewController implements AutoCloseable {
      * 清空消息列表并释放内嵌的 MarkdownBubble 资源。
      *
      * <p>{@link MarkdownBubble#getView()} 产生的视图节点上挂有 {@code markdownBubble}
-     * 属性；深度遍历 messageList 所有后代，对命中节点调用 dispose，
+     * 属性；深度遍历当前转录区所有后代，对命中节点调用 dispose，
      * 解除气泡与 FontManager 等全局对象之间的 listener 引用链。</p>
      */
     private void disposeMessageList() {
-        collectAndDisposeBubbles(messageList);
-        messageList.getChildren().clear();
+        for (javafx.scene.Node node : sessionViewController.detachMessages()) {
+            collectAndDisposeBubbles(node);
+        }
     }
 
     private void collectAndDisposeBubbles(javafx.scene.Node node) {
@@ -3703,9 +3516,8 @@ public class ChatViewController implements AutoCloseable {
                         log.info("工作区切换完成: {} ({})",
                                 wsMgr.getCurrentWorkspace().getName(), targetWorkspaceId);
                     } finally {
-                        // 恢复消息区域（必须恢复为 chatCenter StackPane，而非内层 scrollPane，
-                        // 否则空状态占位与浮动"新消息"按钮会因脱离 StackPane 失去叠加层）
-                        chatPane.setCenter(chatCenter);
+                        // 恢复完整转录根节点，保留空状态与浮动“新消息”叠加层。
+                        chatPane.setCenter(sessionViewController.root());
                     }
                 });
             } catch (Exception e) {
@@ -3718,7 +3530,7 @@ public class ChatViewController implements AutoCloseable {
                 }
                 fx.dispatch(() -> {
                     sidebarController.refreshWorkspaceCombo();
-                    chatPane.setCenter(chatCenter);
+                    chatPane.setCenter(sessionViewController.root());
                     var port = com.javaclaw.agent.ToolConfirmationManager.getPort();
                     if (port != null) {
                         port.notify(new com.javaclaw.api.interaction.ToastRequest(

@@ -4,7 +4,6 @@
 <?import javafx.scene.control.Button?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.control.MenuButton?>
-<?import javafx.scene.control.ScrollPane?>
 <?import javafx.scene.control.Tooltip?>
 <?import javafx.scene.layout.BorderPane?>
 <?import javafx.scene.layout.HBox?>
@@ -68,35 +67,7 @@
                 </HBox>
             </top>
             <center>
-                <StackPane fx:id="chatCenter">
-                    <children>
-                        <ScrollPane fx:id="scrollPane" fitToWidth="true" hbarPolicy="NEVER"
-                                    styleClass="message-scroll">
-                            <content>
-                                <VBox fx:id="messageList" spacing="10.0" styleClass="message-list">
-                                    <padding><Insets top="16.0" right="12.0" bottom="16.0" left="12.0"/></padding>
-                                </VBox>
-                            </content>
-                        </ScrollPane>
-                        <VBox fx:id="chatEmptyState" alignment="CENTER" spacing="12.0"
-                              mouseTransparent="true">
-                            <children>
-                                <Label text="💬" styleClass="empty-state-icon"/>
-                                <Label text="开始新对话" styleClass="empty-state-text"/>
-                                <Label text="输入消息开始与智能体对话&#10;支持发送图片、文档等附件"
-                                       maxWidth="300.0" wrapText="true"
-                                       styleClass="settings-hint, empty-state-hint"/>
-                            </children>
-                        </VBox>
-                        <Button fx:id="newMessagesButton" text="↓ 0 条新消息"
-                                visible="false" managed="false"
-                                StackPane.alignment="BOTTOM_CENTER"
-                                onAction="#onNewMessagesRequested"
-                                styleClass="new-messages-pill">
-                            <StackPane.margin><Insets bottom="16.0"/></StackPane.margin>
-                        </Button>
-                    </children>
-                </StackPane>
+                <fx:include fx:id="sessionView" source="chat-session-view.fxml"/>
             </center>
             <bottom>
                 <VBox fx:id="bottomArea" spacing="4.0">
