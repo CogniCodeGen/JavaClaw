@@ -3,13 +3,9 @@ package com.javaclaw.skill;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.util.SensitiveDataRedactor;
-import com.javaclaw.util.PathGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -23,13 +19,14 @@ import java.util.Set;
  * <p>磁盘格式、路径约束和版本历史由 {@link SkillFileRepository} 负责；技能包 JSON
  * 由 {@link SkillBundleStore} 负责。实例随工作区 Spring Context 创建和销毁。</p>
  */
-public class SkillManager {
+public class SkillManager implements SkillPromptRenderer.Source {
 
     private static final Logger log = LoggerFactory.getLogger(SkillManager.class);
 
     private final Path skillsDir;
     private final SkillFileRepository files;
     private final SkillBundleStore bundleStore;
+    private final SkillPromptRenderer prompts;
     private final List<Skill> skills;
 
     /**
@@ -38,8 +35,6 @@ public class SkillManager {
      * {@link #unregisterDynamicSkills} 同步移除，不影响磁盘技能。
      */
     private final java.util.Map<String, List<Skill>> dynamicSkills = new java.util.concurrent.ConcurrentHashMap<>();
-    private final AgentConfig settings;
-
     /**
      * 创建一个由工作区 Context 管理的技能仓库。
      *
@@ -50,8 +45,8 @@ public class SkillManager {
         this.files = new SkillFileRepository(skillsDir);
         this.skillsDir = files.root();
         this.bundleStore = new SkillBundleStore(this.skillsDir, mapper);
-        this.settings = java.util.Objects.requireNonNull(settings, "settings");
         this.skills = new ArrayList<>();
+        this.prompts = new SkillPromptRenderer(this, settings);
         loadAll();
     }
 
@@ -516,112 +511,7 @@ public class SkillManager {
      * @return 技能目录提示词，无激活技能时返回空字符串
      */
     public String buildSkillCatalogPrompt(Set<String> availableGroups) {
-        List<Skill> active = getActiveSkills(availableGroups).stream()
-                .filter(skill -> !hasSensitiveName(skill))
-                .toList();
-        StringBuilder sb = new StringBuilder();
-        if (!active.isEmpty()) {
-            sb.append("\n\n## 可用技能目录\n");
-            sb.append("以下是当前已配置的技能清单（仅名称与用途）。当任务与某技能相关时，请遵循对应技能的指令完成工作；\n");
-            sb.append("若清单中列出某技能、但下方未提供其详细指令，且该技能与当前任务相关，\n");
-            sb.append("请调用 skill_read 工具（参数 skill_name 填技能名称）按需拉取其完整指令后再执行；\n");
-            sb.append("技能若列出参考文档，可再用 skill_read 的 path 参数单独拉取某个文档；\n");
-            sb.append("严格项目隔离模式下不执行技能脚本；技能仅提供可审查的流程与参考资料。\n");
-            for (Skill skill : active) {
-                sb.append("- 【").append(skill.getName()).append("】");
-                if (!skill.getCategory().isBlank()) {
-                    sb.append("[").append(skill.getCategory()).append("] ");
-                }
-                if (!skill.getTags().isEmpty()) {
-                    sb.append("(").append(String.join("/", skill.getTags())).append(") ");
-                }
-                String desc = skill.getDescription();
-                if (desc != null && !desc.isBlank()) {
-                    sb.append(SensitiveDataRedactor.containsLikelyCredential(desc)
-                            ? "[描述包含疑似凭据，已隐藏]" : desc.strip());
-                }
-                List<String> refs = listReferenceFiles(skill);
-                if (!refs.isEmpty()) {
-                    sb.append("；参考文档：").append(String.join("、", refs));
-                }
-                List<String> scripts = listScriptFiles(skill);
-                if (!scripts.isEmpty()) {
-                    sb.append("；脚本：").append(String.join("、", scripts))
-                            .append("（严格隔离下不可执行）");
-                }
-                sb.append("\n");
-            }
-        }
-
-        // 技能包目录：让模型知道可成组加载
-        if (settings.isSkillBundlesEnabled()) {
-            List<SkillBundle> enabledBundles = getEnabledBundles().stream()
-                    .filter(bundle -> !SensitiveDataRedactor.containsLikelyCredential(bundle.name))
-                    .toList();
-            if (!enabledBundles.isEmpty()) {
-                sb.append("\n## 可用技能包\n");
-                sb.append("技能包是一组配合使用的技能；任务匹配某包描述时，包内技能将成组注入。\n");
-                for (SkillBundle bundle : enabledBundles) {
-                    sb.append("- 【").append(bundle.name).append("】")
-                            .append(bundle.description == null ? ""
-                                    : SensitiveDataRedactor.containsLikelyCredential(bundle.description)
-                                    ? "[描述包含疑似凭据，已隐藏]" : bundle.description.strip())
-                            .append("（含：").append(bundle.skills.stream()
-                                    .map(SkillManager::redactCatalogValue)
-                                    .collect(java.util.stream.Collectors.joining("、")))
-                            .append("）\n");
-                }
-            }
-        }
-
-        // 经验沉淀 nudge（常驻轻量提示，借鉴 hermes-agent）
-        if (settings.isSkillNudgeEnabled()
-                && !"off".equals(settings.getSkillEvolutionMode())) {
-            sb.append("\n## 经验沉淀\n");
-            sb.append("若本次完成了非平凡的多步骤工作流、踩坑后找到了可行路径、或被用户纠正了做法，\n");
-            sb.append("请考虑调用 skill_create 把经验沉淀为新技能，或用 skill_patch 把新认知合入相关既有技能（小修优先 patch）。\n");
-        }
-        return sb.toString();
-    }
-
-    /** 列出技能 scripts/ 目录下可经 JShell 执行的 Java 脚本名（L0 目录展示用，.jsh/.java） */
-    private List<String> listScriptFiles(Skill skill) {
-        if (!skill.hasScripts()) {
-            return List.of();
-        }
-        List<String> names = new ArrayList<>();
-        Path scriptsDir = skill.getDirectory().resolve(Skill.SCRIPTS_DIR);
-        try (DirectoryStream<Path> files = Files.newDirectoryStream(scriptsDir)) {
-            for (Path file : files) {
-                String lower = file.getFileName().toString().toLowerCase(Locale.ROOT);
-                if (Files.isRegularFile(file) && (lower.endsWith(".jsh") || lower.endsWith(".java"))) {
-                    names.add(file.getFileName().toString());
-                }
-            }
-        } catch (IOException e) {
-            log.debug("列出技能脚本失败: {}", scriptsDir);
-        }
-        return names;
-    }
-
-    /** 列出技能 references/ 目录下的文本文件名（L0 目录展示用） */
-    private List<String> listReferenceFiles(Skill skill) {
-        if (!skill.hasReferences()) {
-            return List.of();
-        }
-        List<String> names = new ArrayList<>();
-        Path refsDir = skill.getDirectory().resolve(Skill.REFERENCES_DIR);
-        try (DirectoryStream<Path> files = Files.newDirectoryStream(refsDir)) {
-            for (Path file : files) {
-                if (Files.isRegularFile(file) && SkillFileRepository.isTextFile(file)
-                        && PathGuard.isInside(refsDir, file)) {
-                    names.add(file.getFileName().toString());
-                }
-            }
-        } catch (IOException e) {
-            log.debug("列出参考文档失败: {}", refsDir);
-        }
-        return names;
+        return prompts.buildCatalog(availableGroups);
     }
 
     /**
@@ -632,60 +522,7 @@ public class SkillManager {
      * @return 拼接后的技能提示词，无启用技能时返回空字符串
      */
     public String buildEnabledSkillsPrompt() {
-        List<Skill> enabled = getEnabledSkills().stream()
-                .filter(skill -> !hasSensitiveName(skill))
-                .toList();
-        if (enabled.isEmpty()) {
-            return "";
-        }
-        StringBuilder sb = new StringBuilder();
-        sb.append("\n\n以下是用户配置的技能指令，请在回答时遵循：\n");
-        for (Skill skill : enabled) {
-            sb.append("\n【").append(skill.getName()).append("】\n");
-            if (SensitiveDataRedactor.containsLikelyCredential(skill.getContent())) {
-                sb.append("[技能正文包含疑似凭据，系统已阻止载入]\n");
-                continue;
-            }
-            sb.append(skill.getContent()).append("\n");
-
-            // 附加 references/ 下的文档内容
-            if (skill.hasReferences()) {
-                String refs = loadReferences(skill);
-                if (!refs.isEmpty()) {
-                    sb.append("\n[参考文档]\n").append(refs).append("\n");
-                }
-            }
-        }
-        return sb.toString();
-    }
-
-    /**
-     * 读取技能 references/ 目录下的所有文本文件内容
-     */
-    private String loadReferences(Skill skill) {
-        Path refsDir = skill.getDirectory().resolve(Skill.REFERENCES_DIR);
-        StringBuilder sb = new StringBuilder();
-        try (DirectoryStream<Path> files = Files.newDirectoryStream(refsDir)) {
-            for (Path file : files) {
-                if (Files.isRegularFile(file) && SkillFileRepository.isTextFile(file)
-                        && PathGuard.isInside(refsDir, file)) {
-                    sb.append("--- ").append(file.getFileName()).append(" ---\n");
-                    String text = Files.readString(file, StandardCharsets.UTF_8);
-                    if (SensitiveDataRedactor.containsLikelyCredential(text)) {
-                        sb.append("[该参考文档包含疑似凭据，系统已阻止载入]\n\n");
-                        continue;
-                    }
-                    // 限制单个参考文档最大 10000 字符
-                    if (text.length() > 10000) {
-                        text = text.substring(0, 10000) + "\n...(内容已截断)";
-                    }
-                    sb.append(text).append("\n\n");
-                }
-            }
-        } catch (IOException e) {
-            log.warn("读取参考文档失败: {}", refsDir, e);
-        }
-        return sb.toString();
+        return prompts.buildEnabledPrompt();
     }
 
     /**
@@ -697,33 +534,7 @@ public class SkillManager {
      * @return 筛选后的技能提示词
      */
     public String buildFilteredSkillsPrompt(List<String> skillNames) {
-        if (skillNames == null || skillNames.isEmpty()) {
-            return "";
-        }
-        List<Skill> filtered = getEnabledSkills().stream()
-                .filter(s -> skillNames.contains(s.getName()))
-                .filter(skill -> !hasSensitiveName(skill))
-                .toList();
-        if (filtered.isEmpty()) {
-            return "";
-        }
-        StringBuilder sb = new StringBuilder();
-        sb.append("\n\n以下是用户配置的技能指令，请在回答时遵循：\n");
-        for (Skill skill : filtered) {
-            sb.append("\n【").append(skill.getName()).append("】\n");
-            if (SensitiveDataRedactor.containsLikelyCredential(skill.getContent())) {
-                sb.append("[技能正文包含疑似凭据，系统已阻止载入]\n");
-                continue;
-            }
-            sb.append(skill.getContent()).append("\n");
-            if (skill.hasReferences()) {
-                String refs = loadReferences(skill);
-                if (!refs.isEmpty()) {
-                    sb.append("\n[参考文档]\n").append(refs).append("\n");
-                }
-            }
-        }
-        return sb.toString();
+        return prompts.buildFilteredPrompt(skillNames);
     }
 
     /**
@@ -736,33 +547,7 @@ public class SkillManager {
      * @return 该技能的正文 + 参考文档；技能不存在或未启用时返回 {@code null}
      */
     public String buildSkillDetail(String name) {
-        if (name == null || name.isBlank()) {
-            return null;
-        }
-        String target = name.strip();
-        Skill skill = getEnabledSkills().stream()
-                .filter(s -> s.getName().equals(target))
-                .findFirst()
-                .orElse(null);
-        if (skill == null) {
-            return null;
-        }
-        if (hasSensitiveName(skill)) {
-            return null;
-        }
-        if (SensitiveDataRedactor.containsLikelyCredential(skill.getContent())) {
-            return "【" + skill.getName() + "】\n[技能正文包含疑似凭据，系统已阻止载入]";
-        }
-        StringBuilder sb = new StringBuilder();
-        sb.append("【").append(skill.getName()).append("】\n");
-        sb.append(skill.getContent() != null ? skill.getContent() : "").append("\n");
-        if (skill.hasReferences()) {
-            String refs = loadReferences(skill);
-            if (!refs.isEmpty()) {
-                sb.append("\n[参考文档]\n").append(refs).append("\n");
-            }
-        }
-        return sb.toString();
+        return prompts.buildSkillDetail(name);
     }
 
     /**
@@ -776,36 +561,7 @@ public class SkillManager {
      * @return 文档内容（超长截断）；技能/文件不存在或非文本文件时返回 {@code null}
      */
     public String buildReferenceDetail(String name, String relPath) {
-        Skill skill = getSkillByName(name);
-        if (skill == null || !skill.isEnabled() || skill.getDirectory() == null
-                || relPath == null || relPath.isBlank()) {
-            return null;
-        }
-        String cleaned = relPath.strip().replace('\\', '/');
-        if (cleaned.startsWith(Skill.REFERENCES_DIR + "/")) {
-            cleaned = cleaned.substring(Skill.REFERENCES_DIR.length() + 1);
-        }
-        Path refsDir = skill.getDirectory().resolve(Skill.REFERENCES_DIR).toAbsolutePath().normalize();
-        Path target = refsDir.resolve(cleaned).normalize();
-        // 穿越防护：必须落在 references/ 内（含符号链接真实位置校验）
-        if (!target.startsWith(refsDir) || !Files.isRegularFile(target)
-                || !SkillFileRepository.isTextFile(target)
-                || !com.javaclaw.util.PathGuard.isInside(refsDir, target)) {
-            return null;
-        }
-        try {
-            String text = Files.readString(target, StandardCharsets.UTF_8);
-            if (SensitiveDataRedactor.containsLikelyCredential(text)) {
-                return "--- " + target.getFileName() + " ---\n[该参考文档包含疑似凭据，系统已阻止载入]";
-            }
-            if (text.length() > 10000) {
-                text = text.substring(0, 10000) + "\n...(内容已截断)";
-            }
-            return "--- " + target.getFileName() + " ---\n" + text;
-        } catch (IOException e) {
-            log.warn("读取参考文档失败: {}", target, e);
-            return null;
-        }
+        return prompts.buildReferenceDetail(name, relPath);
     }
 
     // ==================== 辅助方法 ====================
@@ -848,46 +604,7 @@ public class SkillManager {
      * @return 包不存在或包内无可用技能时返回空字符串
      */
     public String buildBundlePrompt(String bundleName) {
-        SkillBundle bundle = getBundle(bundleName);
-        if (bundle == null || bundle.skills.isEmpty()
-                || SensitiveDataRedactor.containsLikelyCredential(bundle.name)) {
-            return "";
-        }
-        StringBuilder sb = new StringBuilder();
-        int loaded = 0;
-        for (String skillName : bundle.skills) {
-            String detail = buildSkillDetail(skillName);
-            if (detail == null) {
-                log.warn("技能包「{}」内技能「{}」不存在或未启用，已跳过", bundle.name, skillName);
-                continue;
-            }
-            sb.append("\n").append(detail);
-            loaded++;
-        }
-        if (loaded == 0) {
-            return "";
-        }
-        StringBuilder result = new StringBuilder();
-        result.append("\n\n## 技能包【").append(bundle.name).append("】\n");
-        result.append("以下 ").append(loaded).append(" 项技能作为一组配合使用：\n");
-        result.append(sb);
-        if (bundle.extraInstructions != null && !bundle.extraInstructions.isBlank()) {
-            result.append("\n[本包附加指令]\n")
-                    .append(SensitiveDataRedactor.containsLikelyCredential(bundle.extraInstructions)
-                            ? "[附加指令包含疑似凭据，已隐藏]"
-                            : bundle.extraInstructions.strip())
-                    .append("\n");
-        }
-        return result.toString();
-    }
-
-    private static boolean hasSensitiveName(Skill skill) {
-        return SensitiveDataRedactor.containsLikelyCredential(skill.getName());
-    }
-
-    private static String redactCatalogValue(String value) {
-        if (value == null) return "";
-        return SensitiveDataRedactor.containsLikelyCredential(value) ? "[已隐藏]" : value;
+        return prompts.buildBundlePrompt(bundleName);
     }
 
 }
