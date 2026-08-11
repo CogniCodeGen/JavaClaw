@@ -6,7 +6,8 @@ import com.javaclaw.app.UIHelper;
 import com.javaclaw.mcp.McpClientManager;
 import com.javaclaw.ui.javafx.control.ToggleSwitch;
 import com.javaclaw.ui.javafx.mcp.McpSettingsView;
-import com.javaclaw.ui.javafx.site.SiteCredentialView;
+import com.javaclaw.ui.javafx.site.SiteCredentialPanel;
+import com.javaclaw.ui.javafx.site.SiteCredentialPanelFactory;
 import javafx.animation.PauseTransition;
 import javafx.animation.TranslateTransition;
 import javafx.application.Platform;
@@ -44,6 +45,8 @@ public class SettingsView {
     private final com.javaclaw.memory.embed.EmbeddingGateway embeddingGateway;
     private final AgentSettingsPanelFactory agentSettingsPanels;
     private AgentSettingsPanel agentSettingsPanel;
+    private final SiteCredentialPanelFactory siteCredentialPanels;
+    private SiteCredentialPanel siteCredentialPanel;
 
     // 布局容器
     private VBox categoryList;
@@ -221,7 +224,8 @@ public class SettingsView {
 
     public SettingsView(Stage owner, McpClientManager mcpClientManager,
                         com.javaclaw.memory.embed.EmbeddingGateway embeddingGateway,
-                        AgentSettingsPanelFactory agentSettingsPanels) {
+                        AgentSettingsPanelFactory agentSettingsPanels,
+                        SiteCredentialPanelFactory siteCredentialPanels) {
         this.emailConfig = EmailConfig.getInstance();
         this.agentConfig = AgentConfig.getInstance();
         this.notificationConfig = NotificationConfig.getInstance();
@@ -229,6 +233,8 @@ public class SettingsView {
         this.embeddingGateway = embeddingGateway;
         this.agentSettingsPanels = java.util.Objects.requireNonNull(
                 agentSettingsPanels, "agentSettingsPanels");
+        this.siteCredentialPanels = java.util.Objects.requireNonNull(
+                siteCredentialPanels, "siteCredentialPanels");
         this.stage = new Stage();
         stage.initModality(Modality.WINDOW_MODAL);
         stage.initOwner(owner);
@@ -313,8 +319,8 @@ public class SettingsView {
         registerPanelActions(mcpPanel, PanelActions.none());
 
         // 站点管理：组件型面板，自管理
-        SiteCredentialView siteView = new SiteCredentialView();
-        Node sitePanel = siteView.buildPanel();
+        siteCredentialPanel = siteCredentialPanels.create();
+        Node sitePanel = siteCredentialPanel.root();
         addCategory("站点管理", sitePanel, false,
                 "site 站点 网站 凭据 cookie 登录 自动登录 用户名 密码 password");
         registerPanelActions(sitePanel, PanelActions.none());
@@ -513,6 +519,10 @@ public class SettingsView {
             if (agentSettingsPanel != null) {
                 agentSettingsPanel.close();
                 agentSettingsPanel = null;
+            }
+            if (siteCredentialPanel != null) {
+                siteCredentialPanel.close();
+                siteCredentialPanel = null;
             }
         });
 

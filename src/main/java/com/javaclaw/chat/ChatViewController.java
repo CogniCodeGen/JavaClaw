@@ -2348,7 +2348,8 @@ public class ChatViewController implements AutoCloseable {
         SettingsView settingsView = new SettingsView(ownerStage,
                 runtime != null ? runtime.getMcpClientManager() : null,
                 runtime != null ? runtime.getEmbeddingGateway() : null,
-                applicationKernel.current().agentSettingsPanels());
+                applicationKernel.current().agentSettingsPanels(),
+                applicationKernel.current().siteCredentialPanels());
         settingsView.setOnModelConfigChanged(this::rebuildAgentService);
         settingsView.show(category);
     }

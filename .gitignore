@@ -25,6 +25,7 @@ replay_pid*
 /CLAUDE.md
 /workspaces/
 /data/
+/data-v3/
 /target/
 /logs/
 /plugins/

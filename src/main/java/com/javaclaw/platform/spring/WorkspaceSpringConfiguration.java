@@ -9,11 +9,15 @@ import com.javaclaw.application.agent.AgentDefinitionPort;
 import com.javaclaw.application.agent.AgentManagementApplicationService;
 import com.javaclaw.application.agent.AgentManagementUseCase;
 import com.javaclaw.application.agent.AgentPromptOptimizationPort;
+import com.javaclaw.application.site.SiteCredentialApplicationService;
+import com.javaclaw.application.site.SiteCredentialPort;
+import com.javaclaw.application.site.SiteCredentialUseCase;
 import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.loop.LoopService;
 import com.javaclaw.infrastructure.agent.AgentPromptOptimizerAdapter;
 import com.javaclaw.infrastructure.agent.CustomAgentDefinitionAdapter;
+import com.javaclaw.infrastructure.site.SiteCredentialManagerAdapter;
 import com.javaclaw.mode.ChatMode;
 import com.javaclaw.mode.LoopMode;
 import com.javaclaw.mode.PlanMode;
@@ -26,6 +30,9 @@ import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.runtime.WorkspaceContext;
 import com.javaclaw.ui.javafx.agent.AgentRowFactory;
 import com.javaclaw.ui.javafx.agent.AgentSettingsPanelFactory;
+import com.javaclaw.ui.javafx.site.SiteCredentialCardFactory;
+import com.javaclaw.ui.javafx.site.SiteCredentialEditorFactory;
+import com.javaclaw.ui.javafx.site.SiteCredentialPanelFactory;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.workflow.node.PublicNodeCatalog;
 import com.javaclaw.workflow.runtime.NodeExecutorRegistry;
@@ -107,6 +114,40 @@ public class WorkspaceSpringConfiguration {
     AgentSettingsPanelFactory agentSettingsPanelFactory(
             @Qualifier("workspaceFxmlLoader") SpringFxmlLoader workspaceFxmlLoader) {
         return new AgentSettingsPanelFactory(workspaceFxmlLoader);
+    }
+
+    @Bean
+    com.javaclaw.site.SiteCredentialManager siteCredentialManager() {
+        // 迁移期仍由现有工作区切换链负责 reload；Presentation 只接触下方应用服务。
+        return com.javaclaw.site.SiteCredentialManager.getInstance();
+    }
+
+    @Bean
+    SiteCredentialPort siteCredentialPort(com.javaclaw.site.SiteCredentialManager manager) {
+        return new SiteCredentialManagerAdapter(manager);
+    }
+
+    @Bean
+    SiteCredentialApplicationService siteCredentialApplicationService(SiteCredentialPort port) {
+        return new SiteCredentialUseCase(port);
+    }
+
+    @Bean
+    SiteCredentialCardFactory siteCredentialCardFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new SiteCredentialCardFactory(loader);
+    }
+
+    @Bean
+    SiteCredentialEditorFactory siteCredentialEditorFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new SiteCredentialEditorFactory(loader);
+    }
+
+    @Bean
+    SiteCredentialPanelFactory siteCredentialPanelFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new SiteCredentialPanelFactory(loader);
     }
 
     @Bean

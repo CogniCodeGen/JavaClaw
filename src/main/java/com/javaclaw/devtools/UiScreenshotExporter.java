@@ -126,7 +126,8 @@ public final class UiScreenshotExporter {
             shots.add(new Shot("02-settings.png", "设置", () -> showInternalStage(
                     new SettingsView(primaryStage, runtime.getMcpClientManager(),
                             runtime.getEmbeddingGateway(),
-                            workspaceRuntime.agentSettingsPanels()))));
+                            workspaceRuntime.agentSettingsPanels(),
+                            workspaceRuntime.siteCredentialPanels()))));
             shots.add(new Shot("03-knowledge-center.png", "知识库中心", () ->
                     new KnowledgeCenterView(primaryStage, runtime.getKnowledgeExpert(), port,
                             () -> {}, () -> {},
