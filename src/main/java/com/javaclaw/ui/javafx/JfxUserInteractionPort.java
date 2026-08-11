@@ -3,28 +3,14 @@ package com.javaclaw.ui.javafx;
 import com.javaclaw.api.interaction.ConfirmDecision;
 import com.javaclaw.api.interaction.ConfirmKind;
 import com.javaclaw.api.interaction.ConfirmRequest;
-import com.javaclaw.api.interaction.ChoiceOption;
 import com.javaclaw.api.interaction.ChoiceRequest;
 import com.javaclaw.api.interaction.SecretRequest;
 import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
-import com.javaclaw.app.UIHelper;
 import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.ui.javafx.image.ImageViewerFactory;
+import com.javaclaw.ui.javafx.interaction.InteractionDialogFactory;
 import javafx.application.Platform;
-import javafx.geometry.Insets;
-import javafx.scene.control.Alert;
-import javafx.scene.control.ButtonBar;
-import javafx.scene.control.ButtonType;
-import javafx.scene.control.ChoiceDialog;
-import javafx.scene.control.Dialog;
-import javafx.scene.control.Label;
-import javafx.scene.control.PasswordField;
-import javafx.scene.control.TextArea;
-import javafx.scene.control.TextField;
-import javafx.scene.layout.GridPane;
-import javafx.scene.layout.Priority;
-import javafx.scene.layout.VBox;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,10 +32,15 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
     private static final Logger log = LoggerFactory.getLogger(JfxUserInteractionPort.class);
     private final FxDispatcher fx;
     private final ImageViewerFactory imageViewer;
+    private final InteractionDialogFactory dialogs;
 
-    public JfxUserInteractionPort(FxDispatcher fx, ImageViewerFactory imageViewer) {
+    public JfxUserInteractionPort(
+            FxDispatcher fx,
+            ImageViewerFactory imageViewer,
+            InteractionDialogFactory dialogs) {
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
         this.imageViewer = java.util.Objects.requireNonNull(imageViewer, "imageViewer");
+        this.dialogs = java.util.Objects.requireNonNull(dialogs, "dialogs");
     }
 
     /** Toast 的 UI 层渲染器；未设置时 notify 降级为日志输出 */
@@ -78,8 +69,7 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
                 notify(new ToastRequest(request.toolName(), request.description()));
                 yield ConfirmDecision.ALLOW_ONCE;
             }
-            case CONFIRM -> showConfirmDialog(request);
-            case DOUBLE_CONFIRM -> showDoubleConfirmDialog(request);
+            case CONFIRM, DOUBLE_CONFIRM -> showConfirmDialog(request);
         };
     }
 
@@ -89,16 +79,7 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
         CompletableFuture<String> future = new CompletableFuture<>();
         fx.dispatch(() -> {
             try {
-                ChoiceOption initial = request.options().getFirst();
-                ChoiceDialog<ChoiceOption> dialog =
-                        new ChoiceDialog<>(initial, request.options());
-                dialog.setTitle(request.title().isBlank() ? "请选择" : request.title());
-                dialog.setHeaderText(request.message());
-                dialog.setContentText("账号：");
-                UIHelper.styleDialog(dialog);
-                dialog.showAndWait().ifPresentOrElse(
-                        option -> future.complete(option.id()),
-                        () -> future.complete(null));
+                future.complete(dialogs.choose(request));
             } catch (Exception e) {
                 log.error("选择对话框异常", e);
                 future.complete(null);
@@ -120,32 +101,9 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
         if (request == null) return null;
         CompletableFuture<char[]> future = new CompletableFuture<>();
         fx.dispatch(() -> {
-            PasswordField input = new PasswordField();
             try {
-                Dialog<char[]> dialog = new Dialog<>();
-                dialog.setTitle(request.title().isBlank() ? "安全输入" : request.title());
-                dialog.setHeaderText(request.message());
-                input.setPromptText("请输入（内容不会发送给模型）");
-                input.setMaxWidth(Double.MAX_VALUE);
-                input.textProperty().addListener((obs, oldValue, newValue) -> {
-                    if (newValue != null && newValue.length() > request.maxLength()) {
-                        input.setText(newValue.substring(0, request.maxLength()));
-                    }
-                });
-                dialog.getDialogPane().setContent(input);
-                dialog.getDialogPane().getButtonTypes().setAll(BTN_DENY, BTN_ALLOW);
-                dialog.setResultConverter(button -> {
-                    if (button != BTN_ALLOW) return null;
-                    char[] value = input.getText().toCharArray();
-                    input.clear();
-                    return value;
-                });
-                UIHelper.styleDialog(dialog);
-                dialog.showAndWait().ifPresentOrElse(
-                        future::complete,
-                        () -> future.complete(null));
+                future.complete(dialogs.requestSecret(request));
             } catch (Exception e) {
-                input.clear();
                 log.error("安全输入对话框异常", e);
                 future.complete(null);
             }
@@ -198,115 +156,17 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
         }
     }
 
-    // ==================== 内部实现 ====================
-
-    /** 标准确认按钮 — 同意 / 同意一次 / 同意全部 / 拒绝 */
-    private static final ButtonType BTN_ALLOW      = new ButtonType("同意",     ButtonBar.ButtonData.OK_DONE);
-    private static final ButtonType BTN_ALLOW_ONCE = new ButtonType("同意一次", ButtonBar.ButtonData.OK_DONE);
-    private static final ButtonType BTN_ALLOW_ALL  = new ButtonType("同意全部", ButtonBar.ButtonData.YES);
-    private static final ButtonType BTN_DENY       = new ButtonType("拒绝",     ButtonBar.ButtonData.CANCEL_CLOSE);
-
     private ConfirmDecision showConfirmDialog(ConfirmRequest req) {
         CompletableFuture<ConfirmDecision> future = new CompletableFuture<>();
-        int timeoutSec = req.timeoutSeconds();
-        // 「同意全部」白名单仅在托管任务场景生效（按 taskId 绑定）；普通聊天里它不起作用，
-        // 故非托管场景只给「同意 / 拒绝」两个按钮，避免误导。
-        boolean managed = req.managedTask();
-
         fx.dispatch(() -> {
             try {
-                Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-                alert.setTitle("操作确认");
-                alert.setHeaderText("是否同意执行：" + req.toolName());
-                if (managed) {
-                    alert.setContentText(req.description()
-                            + "\n\n选择「同意全部」后，本任务内所有后续高风险操作将自动放行不再弹窗。");
-                    alert.getButtonTypes().setAll(BTN_DENY, BTN_ALLOW_ONCE, BTN_ALLOW_ALL);
-                } else {
-                    alert.setContentText(req.description());
-                    alert.getButtonTypes().setAll(BTN_DENY, BTN_ALLOW);
-                }
-                attachDetails(alert, req);
-                UIHelper.styleAlert(alert);
-                alert.showAndWait().ifPresentOrElse(
-                        btn -> future.complete(toDecision(btn)),
-                        () -> future.complete(ConfirmDecision.DENY));
+                future.complete(dialogs.confirm(req));
             } catch (Exception e) {
                 log.error("确认对话框异常", e);
                 future.complete(ConfirmDecision.DENY);
             }
         });
-
-        return awaitDecision(future, req.toolName(), timeoutSec);
-    }
-
-    /**
-     * 不可逆操作的二次确认 — 仍要求键入关键词，但同样支持「同意全部」批量授权。
-     *
-     * <p>关键词输入正确后两个允许按钮才点亮；「同意全部」对该任务后续同名调用直接放行
-     * 不再弹窗。关键词错误或留空 = 拒绝。</p>
-     */
-    private ConfirmDecision showDoubleConfirmDialog(ConfirmRequest req) {
-        CompletableFuture<ConfirmDecision> future = new CompletableFuture<>();
-        int timeoutSec = req.timeoutSeconds();
-        String keyword = req.keyword();
-        boolean managed = req.managedTask();
-
-        fx.dispatch(() -> {
-            try {
-                Dialog<ConfirmDecision> dialog = new Dialog<>();
-                dialog.setTitle("二次确认（不可逆操作）");
-                dialog.setHeaderText("即将执行不可逆高风险操作：" + req.toolName());
-
-                Label hint = new Label(managed
-                        ? "请输入关键词「" + keyword + "」以启用允许按钮；选择「同意全部」后，本任务内所有后续高风险操作将自动放行不再弹窗。"
-                        : "请输入关键词「" + keyword + "」以启用允许按钮。");
-                hint.setWrapText(true);
-
-                Label desc = new Label(req.description());
-                desc.setWrapText(true);
-                desc.setStyle("-fx-text-fill: -jc-text-muted;");
-
-                TextField input = new TextField();
-                input.setPromptText("输入 " + keyword);
-
-                VBox box = new VBox(8, desc, hint, input);
-                box.setPadding(new Insets(8, 4, 4, 4));
-                dialog.getDialogPane().setContent(box);
-                if (managed) {
-                    dialog.getDialogPane().getButtonTypes().setAll(BTN_DENY, BTN_ALLOW_ONCE, BTN_ALLOW_ALL);
-                } else {
-                    dialog.getDialogPane().getButtonTypes().setAll(BTN_DENY, BTN_ALLOW);
-                }
-
-                javafx.scene.Node btnAllowOnce = dialog.getDialogPane().lookupButton(managed ? BTN_ALLOW_ONCE : BTN_ALLOW);
-                javafx.scene.Node btnAllowAll  = dialog.getDialogPane().lookupButton(BTN_ALLOW_ALL);
-                btnAllowOnce.setDisable(true);
-                if (btnAllowAll != null) btnAllowAll.setDisable(true);
-                input.textProperty().addListener((obs, o, n) -> {
-                    boolean ok = keyword.equals(n == null ? "" : n.trim());
-                    btnAllowOnce.setDisable(!ok);
-                    if (btnAllowAll != null) btnAllowAll.setDisable(!ok);
-                });
-
-                dialog.setResultConverter(this::toDecision);
-                UIHelper.styleDialog(dialog);
-                dialog.showAndWait().ifPresentOrElse(
-                        future::complete,
-                        () -> future.complete(ConfirmDecision.DENY));
-            } catch (Exception e) {
-                log.error("二次确认对话框异常", e);
-                future.complete(ConfirmDecision.DENY);
-            }
-        });
-
-        return awaitDecision(future, req.toolName(), timeoutSec);
-    }
-
-    private ConfirmDecision toDecision(ButtonType btn) {
-        if (btn == BTN_ALLOW_ALL) return ConfirmDecision.ALLOW_ALL;
-        if (btn == BTN_ALLOW_ONCE || btn == BTN_ALLOW) return ConfirmDecision.ALLOW_ONCE;
-        return ConfirmDecision.DENY;
+        return awaitDecision(future, req.toolName(), req.timeoutSeconds());
     }
 
     /** 配置为 0/负数时的兜底超时：与托管场景上限一致，避免 UI 线程卡死时调用线程永久阻塞 */
@@ -321,30 +181,6 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
             log.warn("等待用户交互超时或异常 [{}]（{}s）", toolName, effective);
             return ConfirmDecision.DENY;
         }
-    }
-
-    /** 附加可展开的"查看详情"区域 */
-    private void attachDetails(Alert alert, ConfirmRequest req) {
-        TextArea details = new TextArea(
-                "工具名：" + req.toolName() + "\n" +
-                "风险等级：" + req.riskLabel() + "\n" +
-                "超时：" + req.timeoutSeconds() + " 秒\n" +
-                "托管场景：" + (req.managedTask() ? "是" : "否") + "\n\n" +
-                "---- 操作参数 ----\n" + req.description());
-        details.setEditable(false);
-        details.setWrapText(true);
-        details.setMaxWidth(Double.MAX_VALUE);
-        details.setMaxHeight(Double.MAX_VALUE);
-        GridPane.setVgrow(details, Priority.ALWAYS);
-        GridPane.setHgrow(details, Priority.ALWAYS);
-
-        GridPane pane = new GridPane();
-        pane.setMaxWidth(Double.MAX_VALUE);
-        pane.setPadding(new Insets(8, 0, 0, 0));
-        pane.add(new Label("查看详情"), 0, 0);
-        pane.add(details, 0, 1);
-
-        alert.getDialogPane().setExpandableContent(pane);
     }
 
 }

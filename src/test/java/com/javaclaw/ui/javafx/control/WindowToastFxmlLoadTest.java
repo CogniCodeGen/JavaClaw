@@ -5,6 +5,7 @@ import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.ui.javafx.JfxUserInteractionPort;
 import com.javaclaw.ui.javafx.image.ImageViewerFactory;
+import com.javaclaw.ui.javafx.interaction.InteractionDialogFactory;
 import javafx.application.Platform;
 import javafx.scene.Scene;
 import javafx.scene.control.Label;
@@ -64,7 +65,8 @@ class WindowToastFxmlLoadTest {
         WindowToastFactory factory = createContext();
         FxDispatcher fx = context.getBean(FxDispatcher.class);
         JfxUserInteractionPort port = new JfxUserInteractionPort(
-                fx, context.getBean(ImageViewerFactory.class));
+                fx, context.getBean(ImageViewerFactory.class),
+                context.getBean(InteractionDialogFactory.class));
         Consumer<String> previous = ignored -> {};
         port.setToastHandler(previous);
 
@@ -101,6 +103,8 @@ class WindowToastFxmlLoadTest {
                         context.getBean(FxDispatcher.class)));
         context.registerBean(WindowToastFactory.class,
                 () -> new WindowToastFactory(context.getBean(SpringFxmlLoader.class)));
+        context.registerBean(InteractionDialogFactory.class,
+                () -> new InteractionDialogFactory(context.getBean(SpringFxmlLoader.class)));
         context.refresh();
         return context.getBean(WindowToastFactory.class);
     }

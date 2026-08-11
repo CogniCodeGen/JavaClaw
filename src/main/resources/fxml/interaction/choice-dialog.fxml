@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.ComboBox?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.javaclaw.ui.javafx.interaction.ChoiceDialogController"
+      spacing="10.0" style="-fx-padding: 8 4 4 4;" prefWidth="460.0">
+    <children>
+        <Label fx:id="messageLabel" wrapText="true" maxWidth="1.7976931348623157E308"/>
+        <Label text="账号：" styleClass="settings-group-title"/>
+        <ComboBox fx:id="optionBox" maxWidth="1.7976931348623157E308"
+                  styleClass="settings-field"/>
+    </children>
+</VBox>

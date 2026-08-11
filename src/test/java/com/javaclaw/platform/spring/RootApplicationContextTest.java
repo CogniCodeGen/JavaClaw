@@ -24,6 +24,7 @@ import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
 import com.javaclaw.ui.javafx.onboarding.OnboardingViewFactory;
 import com.javaclaw.ui.javafx.onboarding.ProviderCardFactory;
 import com.javaclaw.ui.javafx.image.ImageViewerFactory;
+import com.javaclaw.ui.javafx.interaction.InteractionDialogFactory;
 import com.javaclaw.ui.javafx.control.WindowToastFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -72,6 +73,7 @@ class RootApplicationContextTest {
             assertNotNull(context.getBean(OnboardingViewFactory.class));
             assertNotNull(context.getBean(ProviderCardFactory.class));
             assertNotNull(context.getBean(ImageViewerFactory.class));
+            assertNotNull(context.getBean(InteractionDialogFactory.class));
             assertNotNull(context.getBean(WindowToastFactory.class));
             assertNotNull(context.getBean(WorkspaceSpringContextFactory.class));
 

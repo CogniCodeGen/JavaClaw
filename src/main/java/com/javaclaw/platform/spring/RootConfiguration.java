@@ -35,6 +35,7 @@ import com.javaclaw.platform.storage.AtomicContentStore;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.ui.javafx.JfxUserInteractionPort;
 import com.javaclaw.ui.javafx.image.ImageViewerFactory;
+import com.javaclaw.ui.javafx.interaction.InteractionDialogFactory;
 import com.javaclaw.infrastructure.tool.LoggingToolAuditSink;
 import com.javaclaw.infrastructure.config.AgentConfigToolReviewSettings;
 import com.javaclaw.infrastructure.diagnostics.TraceExporterDiagnosticsArchive;
@@ -226,8 +227,9 @@ public class RootConfiguration {
     @Bean
     JfxUserInteractionPort jfxUserInteractionPort(
             FxDispatcher fxDispatcher,
-            ImageViewerFactory imageViewer) {
-        return new JfxUserInteractionPort(fxDispatcher, imageViewer);
+            ImageViewerFactory imageViewer,
+            InteractionDialogFactory dialogs) {
+        return new JfxUserInteractionPort(fxDispatcher, imageViewer, dialogs);
     }
 
     @Bean
@@ -238,6 +240,11 @@ public class RootConfiguration {
     @Bean
     SpringFxmlLoader springFxmlLoader(AutowireCapableBeanFactory beanFactory) {
         return new SpringFxmlLoader(beanFactory);
+    }
+
+    @Bean
+    InteractionDialogFactory interactionDialogFactory(SpringFxmlLoader loader) {
+        return new InteractionDialogFactory(loader);
     }
 
     @Bean
