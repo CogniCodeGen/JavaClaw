@@ -40,7 +40,7 @@ import java.util.Set;
  * <p>选择持久化到当前工作区配置（{@code ui.font.*}），切换工作区时 {@link #reload()} 重新读取。
  * 仅用 JavaFX 基础 API，不依赖任何特定版本的新特性。</p>
  */
-public final class FontManager implements AutoCloseable {
+public final class FontManager implements FontProfile, AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(FontManager.class);
 

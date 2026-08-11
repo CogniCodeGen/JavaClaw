@@ -6,6 +6,7 @@ import com.javaclaw.platform.execution.ExecutionLimits;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fx.FxDispatcher;
+import com.javaclaw.testsupport.FxmlTestBeans;
 import javafx.application.Platform;
 import javafx.css.PseudoClass;
 import javafx.scene.Node;
@@ -107,6 +108,7 @@ class ExpandableMarkdownBlockFxmlLoadTest {
         context.registerBean(ExpandableMarkdownBlockFactory.class,
                 () -> new ExpandableMarkdownBlockFactory(
                         context.getBean(SpringFxmlLoader.class)));
+        FxmlTestBeans.register(context);
         context.refresh();
         return callFx(() -> context.getBean(ExpandableMarkdownBlockFactory.class)
                 .create(variant, "规划协调者", initiallyVisible));

@@ -1,7 +1,7 @@
 package com.javaclaw.ui.javafx.memory;
 
 import com.javaclaw.memory.graph.MemoryGraph;
-import com.javaclaw.ui.javafx.theme.ThemeManager;
+import com.javaclaw.ui.javafx.theme.ThemeProfile;
 import javafx.animation.AnimationTimer;
 import javafx.scene.Cursor;
 import javafx.scene.canvas.Canvas;
@@ -77,7 +77,7 @@ final class MemoryGraphRenderer implements AutoCloseable {
     private final GraphicsContext graphics;
     private final VBox emptyState;
     private final Label hud;
-    private final ThemeManager themes;
+    private final ThemeProfile themes;
     private final boolean[] visibleTypes = {true, true, true};
     private final javafx.beans.value.ChangeListener<String> themeListener =
             (ignored, previous, current) -> applyTheme();
@@ -124,7 +124,7 @@ final class MemoryGraphRenderer implements AutoCloseable {
             Canvas canvas,
             VBox emptyState,
             Label hud,
-            ThemeManager themes) {
+            ThemeProfile themes) {
         this.surface = Objects.requireNonNull(surface, "surface");
         this.canvas = Objects.requireNonNull(canvas, "canvas");
         this.emptyState = Objects.requireNonNull(emptyState, "emptyState");
@@ -511,8 +511,8 @@ final class MemoryGraphRenderer implements AutoCloseable {
         String background = "#FBFAF6";
         String brand = "#2E9A6A";
         try {
-            ThemeManager.Theme theme = themes.getCurrentTheme();
-            background = theme.bg();
+            ThemeProfile.Palette theme = themes.currentPalette();
+            background = theme.background();
             brand = theme.brand();
         } catch (RuntimeException ignored) {
             // 主题系统尚未初始化时使用默认调色板。

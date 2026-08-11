@@ -7,7 +7,7 @@ import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.platform.fx.UiAsyncAction;
-import com.javaclaw.ui.javafx.theme.ThemeManager;
+import com.javaclaw.ui.javafx.theme.ThemeProfile;
 import javafx.fxml.FXML;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.control.Label;
@@ -44,7 +44,7 @@ public final class MemoryGraphController implements MemorySectionController, Aut
     private final MemoryApplicationService useCases;
     private final MemoryComponentFactory components;
     private final UiAsyncAction<MemoryGraph> loadAction;
-    private final ThemeManager themes;
+    private final ThemeProfile themes;
     private MemoryGraphRenderer renderer;
     private MemoryChildView<?> relatedView;
     private boolean factVisible = true;
@@ -58,7 +58,7 @@ public final class MemoryGraphController implements MemorySectionController, Aut
             MemoryComponentFactory components,
             @Qualifier("workspaceTaskScope") TaskScope tasks,
             FxDispatcher fx,
-            ThemeManager themes) {
+            ThemeProfile themes) {
         this.useCases = Objects.requireNonNull(useCases, "useCases");
         this.components = Objects.requireNonNull(components, "components");
         this.themes = Objects.requireNonNull(themes, "themes");

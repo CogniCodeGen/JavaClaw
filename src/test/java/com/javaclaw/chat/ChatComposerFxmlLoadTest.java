@@ -3,6 +3,7 @@ package com.javaclaw.chat;
 import com.javaclaw.platform.desktop.ProjectAttachmentPicker;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fxml.ViewHandle;
+import com.javaclaw.testsupport.FxmlTestBeans;
 import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.Parent;
@@ -118,6 +119,7 @@ class ChatComposerFxmlLoadTest {
         context.registerBean(ProjectAttachmentPicker.class, ProjectAttachmentPicker::new);
         context.registerBean(SpringFxmlLoader.class,
                 () -> new SpringFxmlLoader(context.getBeanFactory()));
+        FxmlTestBeans.register(context);
         context.refresh();
         URL resource = getClass().getResource("/fxml/chat/chat-composer.fxml");
         assertNotNull(resource);

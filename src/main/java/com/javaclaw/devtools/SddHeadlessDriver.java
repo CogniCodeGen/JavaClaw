@@ -196,7 +196,11 @@ public final class SddHeadlessDriver {
         System.out.println("=============================================");
 
         mgr.close();
-        try { runtime.shutdown(); } catch (Exception ignore) {}
+        try {
+            runtime.shutdown();
+        } catch (Exception shutdownFailure) {
+            System.err.println("关闭 SDD 验证运行时失败: " + shutdownFailure.getMessage());
+        }
         proposals.close();
         usage.close();
         taskScope.close();

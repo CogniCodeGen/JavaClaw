@@ -697,7 +697,11 @@ public class McpClient {
         if (prev != next) {
             Runnable listener = this.stateChangeListener;
             if (listener != null) {
-                try { listener.run(); } catch (Exception ignored) {}
+                try {
+                    listener.run();
+                } catch (Exception listenerFailure) {
+                    log.debug("MCP 状态监听器执行失败: {}", config.getName(), listenerFailure);
+                }
             }
         }
     }

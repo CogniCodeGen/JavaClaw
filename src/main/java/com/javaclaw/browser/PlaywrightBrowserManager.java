@@ -149,9 +149,30 @@ public class PlaywrightBrowserManager {
         } catch (Exception e) {
             // 启动失败时清理已分配的资源，防止浏览器进程泄漏
             log.error("Playwright 浏览器启动失败，正在清理资源", e);
-            if (context != null) { try { context.close(); } catch (Exception ignored) {} context = null; }
-            if (browser != null) { try { browser.close(); } catch (Exception ignored) {} browser = null; }
-            if (playwright != null) { try { playwright.close(); } catch (Exception ignored) {} playwright = null; }
+            if (context != null) {
+                try {
+                    context.close();
+                } catch (Exception closeFailure) {
+                    log.debug("启动失败后关闭浏览器 Context 失败", closeFailure);
+                }
+                context = null;
+            }
+            if (browser != null) {
+                try {
+                    browser.close();
+                } catch (Exception closeFailure) {
+                    log.debug("启动失败后关闭浏览器失败", closeFailure);
+                }
+                browser = null;
+            }
+            if (playwright != null) {
+                try {
+                    playwright.close();
+                } catch (Exception closeFailure) {
+                    log.debug("启动失败后关闭 Playwright 失败", closeFailure);
+                }
+                playwright = null;
+            }
             throw e;
         }
     }
@@ -721,7 +742,8 @@ public class PlaywrightBrowserManager {
             Page extra = pages.remove(pages.size() - 1);
             try {
                 extra.close();
-            } catch (Exception ignored) {
+            } catch (Exception closeFailure) {
+                log.debug("重置任务浏览器时关闭多余 Tab 失败", closeFailure);
             }
         }
         activePageIndex = 0;
@@ -730,7 +752,8 @@ public class PlaywrightBrowserManager {
         if (!pages.isEmpty()) {
             try {
                 pages.get(0).navigate("about:blank");
-            } catch (Exception ignored) {
+            } catch (Exception navigationFailure) {
+                log.debug("重置任务浏览器时导航空白页失败", navigationFailure);
             }
         }
 
@@ -766,7 +789,8 @@ public class PlaywrightBrowserManager {
         if (browser != null) {
             try {
                 browser.close();
-            } catch (Exception ignored) {
+            } catch (Exception closeFailure) {
+                log.debug("关闭浏览器失败", closeFailure);
             }
             browser = null;
         }
@@ -775,7 +799,8 @@ public class PlaywrightBrowserManager {
         if (playwright != null) {
             try {
                 playwright.close();
-            } catch (Exception ignored) {
+            } catch (Exception closeFailure) {
+                log.debug("关闭 Playwright 失败", closeFailure);
             }
             playwright = null;
         }
@@ -787,7 +812,8 @@ public class PlaywrightBrowserManager {
         for (Page page : pages) {
             try {
                 page.close();
-            } catch (Exception ignored) {
+            } catch (Exception closeFailure) {
+                log.debug("关闭浏览器页面失败: {}", page.url(), closeFailure);
             }
         }
         pages.clear();
@@ -796,7 +822,8 @@ public class PlaywrightBrowserManager {
         if (context != null) {
             try {
                 context.close();
-            } catch (Exception ignored) {
+            } catch (Exception closeFailure) {
+                log.debug("关闭浏览器 Context 失败", closeFailure);
             }
             context = null;
         }

@@ -8,8 +8,8 @@ import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskHandle;
 import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.platform.fx.FxDispatcher;
-import com.javaclaw.ui.javafx.theme.FontManager;
-import com.javaclaw.ui.javafx.theme.ThemeManager;
+import com.javaclaw.ui.javafx.theme.FontProfile;
+import com.javaclaw.ui.javafx.theme.ThemeProfile;
 import javafx.animation.Animation;
 import javafx.animation.FadeTransition;
 import javafx.animation.PauseTransition;
@@ -42,8 +42,8 @@ final class MarkdownBubblePresenter {
     private final FxDispatcher fx;
     private final MarkdownRenderEngine renderer;
     private final ExternalLinkOpener links;
-    private final FontManager fonts;
-    private final ThemeManager themes;
+    private final FontProfile fonts;
+    private final ThemeProfile themes;
     private final MarkdownBubbleViewModel viewModel = new MarkdownBubbleViewModel();
     private final PauseTransition renderingHintDelay = new PauseTransition();
     private final ChangeListener<Number> fontRevisionListener =
@@ -74,8 +74,8 @@ final class MarkdownBubblePresenter {
             FxDispatcher fx,
             MarkdownRenderEngine renderer,
             ExternalLinkOpener links,
-            FontManager fonts,
-            ThemeManager themes) {
+            FontProfile fonts,
+            ThemeProfile themes) {
         this.root = Objects.requireNonNull(root, "root");
         this.plainView = Objects.requireNonNull(plainView, "plainView");
         this.renderingHint = Objects.requireNonNull(renderingHint, "renderingHint");

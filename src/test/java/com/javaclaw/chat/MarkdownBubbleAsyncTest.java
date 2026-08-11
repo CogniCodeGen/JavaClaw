@@ -6,6 +6,7 @@ import com.javaclaw.platform.execution.ExecutionLimits;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fx.FxDispatcher;
+import com.javaclaw.testsupport.FxmlTestBeans;
 import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.Parent;
@@ -222,6 +223,7 @@ class MarkdownBubbleAsyncTest {
                 () -> new SpringFxmlLoader(context.getBeanFactory()));
         context.registerBean(MarkdownBubbleFactory.class,
                 () -> new MarkdownBubbleFactory(context.getBean(SpringFxmlLoader.class)));
+        FxmlTestBeans.register(context);
         context.refresh();
         MarkdownBubbleFactory factory = context.getBean(MarkdownBubbleFactory.class);
         return callFx(() -> factory.create(520, hintDelay));

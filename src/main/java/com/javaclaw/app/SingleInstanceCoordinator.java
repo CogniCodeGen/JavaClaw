@@ -60,7 +60,11 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
         try {
             writeEndpoint();
         } catch (IOException failure) {
-            try { server.close(); } catch (IOException ignored) { }
+            try {
+                server.close();
+            } catch (IOException closeFailure) {
+                log.debug("端点写入失败后关闭单实例服务端失败", closeFailure);
+            }
             throw failure;
         }
         this.listenerThread = new Thread(this::listen, "single-instance-listener");
@@ -96,7 +100,11 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
             try {
                 server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 8);
             } catch (IOException bindFailure) {
-                try { server.close(); } catch (IOException ignored) { }
+                try {
+                    server.close();
+                } catch (IOException closeFailure) {
+                    log.debug("绑定失败后关闭单实例服务端失败", closeFailure);
+                }
                 throw bindFailure;
             }
             String token = UUID.randomUUID().toString();
@@ -110,10 +118,18 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
             return coordinator;
         } catch (IOException | RuntimeException failure) {
             if (acquired != null && acquired.isValid()) {
-                try { acquired.release(); } catch (IOException ignored) { }
+                try {
+                    acquired.release();
+                } catch (IOException releaseFailure) {
+                    log.debug("启动失败后释放单实例文件锁失败", releaseFailure);
+                }
             }
             if (channel.isOpen()) {
-                try { channel.close(); } catch (IOException ignored) { }
+                try {
+                    channel.close();
+                } catch (IOException closeFailure) {
+                    log.debug("启动失败后关闭单实例锁文件失败", closeFailure);
+                }
             }
             throw failure;
         }
@@ -227,14 +243,22 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
     public void close() {
         if (!closed.compareAndSet(false, true)) return;
         CURRENT.compareAndSet(this, null);
-        try { server.close(); } catch (IOException ignored) { }
+        try {
+            server.close();
+        } catch (IOException closeFailure) {
+            log.debug("关闭单实例服务端失败", closeFailure);
+        }
         listenerThread.interrupt();
         try {
             if (lock.isValid()) lock.release();
         } catch (IOException failure) {
             log.debug("释放单实例文件锁失败: {}", failure.getMessage());
         }
-        try { lockChannel.close(); } catch (IOException ignored) { }
+        try {
+            lockChannel.close();
+        } catch (IOException closeFailure) {
+            log.debug("关闭单实例锁文件失败", closeFailure);
+        }
         try {
             List<String> lines = Files.exists(endpointFile)
                     ? Files.readAllLines(endpointFile, StandardCharsets.UTF_8) : List.of();

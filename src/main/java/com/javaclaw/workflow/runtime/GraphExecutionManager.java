@@ -9,6 +9,8 @@ import com.javaclaw.workflow.model.ResumeSafety;
 import com.javaclaw.workflow.model.RunStatus;
 import com.javaclaw.workflow.model.StatePatch;
 import com.javaclaw.workflow.store.GraphCheckpointStore;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.List;
@@ -24,6 +26,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** 工作区级图执行生命周期管理器。 */
 public final class GraphExecutionManager implements AutoCloseable {
+    private static final Logger log = LoggerFactory.getLogger(GraphExecutionManager.class);
     public static final String RESUME_NODE_STATE_KEY = "_workflow.resumeNode";
     private final NodeExecutorRegistry registry;
     private final GraphCheckpointStore store;
@@ -158,8 +161,11 @@ public final class GraphExecutionManager implements AutoCloseable {
                 release(run, token);
                 GraphEvent.RunFinished finished = terminal.get();
                 if (finished != null && listener != null) {
-                    try { listener.onEvent(finished); }
-                    catch (Throwable ignored) { }
+                    try {
+                        listener.onEvent(finished);
+                    } catch (Throwable listenerFailure) {
+                        log.debug("工作流终态监听器执行失败: run={}", run.id(), listenerFailure);
+                    }
                 }
             }
             return null;

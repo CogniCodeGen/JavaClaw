@@ -6,6 +6,7 @@ import com.javaclaw.platform.execution.ExecutionLimits;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fx.FxDispatcher;
+import com.javaclaw.testsupport.FxmlTestBeans;
 import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.Parent;
@@ -118,6 +119,7 @@ class ChatMessageRowFxmlLoadTest {
                 () -> new MarkdownBubbleFactory(context.getBean(SpringFxmlLoader.class)));
         context.registerBean(ChatMessageRowFactory.class,
                 () -> new ChatMessageRowFactory(context.getBean(SpringFxmlLoader.class)));
+        FxmlTestBeans.register(context);
         context.refresh();
         return callFx(() -> context.getBean(ChatMessageRowFactory.class).create(
                 variant, message, "JavaClaw", "gpt-5", "1.2s",

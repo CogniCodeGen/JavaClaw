@@ -166,7 +166,9 @@ public final class TraceExporter {
                             try {
                                 long ts = Long.parseLong(line.substring(tsIdx + 5, end).trim());
                                 if (ts < sinceMillis) continue;
-                            } catch (NumberFormatException ignored) {}
+                            } catch (NumberFormatException malformedTimestamp) {
+                                log.debug("忽略无法解析时间戳的诊断记录", malformedTimestamp);
+                            }
                         }
                     }
                 }

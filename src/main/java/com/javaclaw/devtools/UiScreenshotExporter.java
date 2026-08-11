@@ -216,15 +216,18 @@ public final class UiScreenshotExporter {
         private void cleanupAndExit(int code) {
             try {
                 if (chatViewHandle != null) chatViewHandle.close();
-            } catch (Throwable ignore) {
+            } catch (Throwable closeFailure) {
+                System.err.println("关闭截图页面失败: " + closeFailure.getMessage());
             }
             try {
                 if (applicationKernel != null) applicationKernel.close();
-            } catch (Throwable ignore) {
+            } catch (Throwable closeFailure) {
+                System.err.println("关闭截图应用内核失败: " + closeFailure.getMessage());
             }
             try {
                 if (springContext != null) springContext.close();
-            } catch (Throwable ignore) {
+            } catch (Throwable closeFailure) {
+                System.err.println("关闭截图 Spring Context 失败: " + closeFailure.getMessage());
             }
             Platform.exit();
             System.exit(code);

@@ -6,6 +6,7 @@ import com.javaclaw.platform.execution.ExecutionLimits;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fx.FxDispatcher;
+import com.javaclaw.testsupport.FxmlTestBeans;
 import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.Parent;
@@ -129,6 +130,7 @@ class AssistantMessageFxmlLoadTest {
         context.registerBean(ExpandableMarkdownBlockFactory.class,
                 () -> new ExpandableMarkdownBlockFactory(
                         context.getBean(SpringFxmlLoader.class)));
+        FxmlTestBeans.register(context);
         context.refresh();
         return callFx(() -> context.getBean(AssistantMessageFactory.class)
                 .create("JavaClaw", "gpt-5", "10:30"));

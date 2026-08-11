@@ -102,7 +102,9 @@ final class SiteSessionRestorer {
             for (const entry of %s) {
               window.localStorage.setItem(entry.name, entry.value);
             }
-          } catch (_) {}
+          } catch (ignored) {
+            // localStorage may be disabled by the page security policy.
+          }
         })();
         """
                 .formatted(json.writeValueAsString(origin), json.writeValueAsString(entries));

@@ -346,7 +346,8 @@ public class JavaClawApp extends Application {
             // 即使来不及执行，后续 halt 也会随进程结束清掉图标。
             try {
                 java.awt.EventQueue.invokeLater(tray::remove);
-            } catch (Throwable ignored) {
+            } catch (Throwable trayFailure) {
+                log.debug("提交托盘移除任务失败，退出看门狗将负责终止进程", trayFailure);
             }
         }
 

@@ -204,8 +204,11 @@ public final class GraphEngine {
     }
 
     private static void emit(GraphListener listener, GraphEvent event) {
-        try { listener.onEvent(event); }
-        catch (Throwable ignored) { }
+        try {
+            listener.onEvent(event);
+        } catch (Throwable listenerFailure) {
+            log.debug("工作流监听器处理事件失败: {}", event.getClass().getSimpleName(), listenerFailure);
+        }
     }
 
     private static String message(Throwable t) {

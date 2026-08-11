@@ -1,6 +1,6 @@
 package com.javaclaw.chat.markdown;
 
-import com.javaclaw.ui.javafx.theme.FontManager;
+import com.javaclaw.ui.javafx.theme.FontProfile;
 import javafx.application.Platform;
 import javafx.scene.layout.Region;
 import jfx.incubator.scene.control.richtext.model.SimpleViewOnlyStyledModel;
@@ -62,7 +62,7 @@ public final class MarkdownParagraphRenderer {
             .build();
 
     /**
-     * FX 线程取得的渲染配置快照。后台 renderer 不得再读取 FontManager 或 JavaFX 属性。
+     * FX 线程取得的渲染配置快照。后台 renderer 不得再读取 FontProfile 或 JavaFX 属性。
      */
     public record RenderStyleSnapshot(
             double fontSize,
@@ -79,7 +79,7 @@ public final class MarkdownParagraphRenderer {
         }
 
         /** 只允许调用方在 FX 线程进入后台任务之前获取一次。 */
-        public static RenderStyleSnapshot capture(FontManager fonts) {
+        public static RenderStyleSnapshot capture(FontProfile fonts) {
             if (!Platform.isFxApplicationThread()) {
                 throw new IllegalStateException("渲染样式必须在 JavaFX Application Thread 快照");
             }

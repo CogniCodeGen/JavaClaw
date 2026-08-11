@@ -3,8 +3,8 @@ package com.javaclaw.chat;
 import com.javaclaw.platform.desktop.ExternalLinkOpener;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.fx.FxDispatcher;
-import com.javaclaw.ui.javafx.theme.FontManager;
-import com.javaclaw.ui.javafx.theme.ThemeManager;
+import com.javaclaw.ui.javafx.theme.FontProfile;
+import com.javaclaw.ui.javafx.theme.ThemeProfile;
 import javafx.fxml.FXML;
 import javafx.scene.control.Label;
 import javafx.scene.layout.StackPane;
@@ -25,8 +25,8 @@ public final class MarkdownBubbleController implements AutoCloseable {
     private final FxDispatcher fx;
     private final MarkdownRenderEngine renderer;
     private final ExternalLinkOpener links;
-    private final FontManager fonts;
-    private final ThemeManager themes;
+    private final FontProfile fonts;
+    private final ThemeProfile themes;
     private final AtomicBoolean closed = new AtomicBoolean();
     private MarkdownBubblePresenter presenter;
 
@@ -36,8 +36,8 @@ public final class MarkdownBubbleController implements AutoCloseable {
             FxDispatcher fx,
             MarkdownRenderEngine renderer,
             ExternalLinkOpener links,
-            FontManager fonts,
-            ThemeManager themes) {
+            FontProfile fonts,
+            ThemeProfile themes) {
         this.tasks = java.util.Objects.requireNonNull(tasks, "tasks");
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
         this.renderer = java.util.Objects.requireNonNull(renderer, "renderer");

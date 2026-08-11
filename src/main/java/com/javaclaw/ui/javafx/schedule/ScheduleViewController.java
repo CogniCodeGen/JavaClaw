@@ -27,6 +27,8 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.util.Duration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Objects;
@@ -34,6 +36,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /** 定时任务窗口 Controller：协调事件、应用服务和异步生命周期。 */
 public final class ScheduleViewController implements AutoCloseable {
+    private static final Logger log = LoggerFactory.getLogger(ScheduleViewController.class);
 
     @FXML private HBox root;
     @FXML private Label listSubtitle;
@@ -322,8 +325,11 @@ public final class ScheduleViewController implements AutoCloseable {
         operationAction.close();
         decisionAction.close();
         if (subscription != null) {
-            try { subscription.close(); }
-            catch (Exception ignored) { }
+            try {
+                subscription.close();
+            } catch (Exception closeFailure) {
+                log.debug("关闭定时任务事件订阅失败", closeFailure);
+            }
             subscription = null;
         }
         taskList.setCellFactory(null);

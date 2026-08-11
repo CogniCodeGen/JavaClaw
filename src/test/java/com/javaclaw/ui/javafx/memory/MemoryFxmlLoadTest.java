@@ -11,6 +11,7 @@ import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fx.FxDispatcher;
+import com.javaclaw.testsupport.FxmlTestBeans;
 import javafx.application.Platform;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
@@ -116,6 +117,7 @@ class MemoryFxmlLoadTest {
                         new com.javaclaw.app.UIHelper(context.getBean(FxDispatcher.class))));
         context.registerBean(MemoryViewFactory.class,
                 () -> new MemoryViewFactory(context.getBean(SpringFxmlLoader.class)));
+        FxmlTestBeans.register(context);
         context.refresh();
     }
 

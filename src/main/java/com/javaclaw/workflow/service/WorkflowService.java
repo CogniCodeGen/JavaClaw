@@ -25,6 +25,8 @@ import com.javaclaw.workflow.runtime.NodeExecutorRegistry;
 import com.javaclaw.workflow.store.GraphCheckpointStore;
 import com.javaclaw.workflow.store.WorkflowDefinitionRecord;
 import com.javaclaw.workflow.store.WorkflowDefinitionStore;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Map;
@@ -35,6 +37,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** 自定义工作流门面：定义、发布、会话 thread、运行及聊天事件桥。 */
 public final class WorkflowService implements AutoCloseable {
+    private static final Logger log = LoggerFactory.getLogger(WorkflowService.class);
     private final String workspaceId;
     private final AgentRuntime agentRuntime;
     private final UserInteractionPort interaction;
@@ -403,25 +406,36 @@ public final class WorkflowService implements AutoCloseable {
     }
 
     private static void sendEvent(ConversationCallbacks callbacks, ConversationEvent event) {
-        try { callbacks.onEvent(event); }
-        catch (Throwable ignored) { }
+        try {
+            callbacks.onEvent(event);
+        } catch (Throwable callbackFailure) {
+            log.debug("工作流事件回调失败", callbackFailure);
+        }
     }
 
     private static void sendComplete(ConversationCallbacks callbacks) {
-        try { callbacks.onTerminal(ConversationOutcome.completed()); }
-        catch (Throwable ignored) { }
+        try {
+            callbacks.onTerminal(ConversationOutcome.completed());
+        } catch (Throwable callbackFailure) {
+            log.debug("工作流完成回调失败", callbackFailure);
+        }
     }
 
     private static void sendError(ConversationCallbacks callbacks, Throwable failure) {
-        try { callbacks.onTerminal(ConversationOutcome.failed(failure)); }
-        catch (Throwable ignored) { }
+        try {
+            callbacks.onTerminal(ConversationOutcome.failed(failure));
+        } catch (Throwable callbackFailure) {
+            log.debug("工作流失败回调失败", callbackFailure);
+        }
     }
 
     private static void sendCancelled(ConversationCallbacks callbacks) {
         try {
             callbacks.onTerminal(new ConversationOutcome.Cancelled(
                     com.javaclaw.api.conversation.CancellationReason.USER_REQUEST, true));
-        } catch (Throwable ignored) { }
+        } catch (Throwable callbackFailure) {
+            log.debug("工作流取消回调失败", callbackFailure);
+        }
     }
 
     private static ConversationCallbacks mutedRecoveryCallbacks() {

@@ -132,7 +132,11 @@ public class McpClientManager {
             String err = temp.getStartupError() != null ? temp.getStartupError() : e.getMessage();
             return new TestResult(false, List.of(), elapsed, err, null, null);
         } finally {
-            try { temp.stop(); } catch (Exception ignored) {}
+            try {
+                temp.stop();
+            } catch (Exception stopFailure) {
+                log.debug("关闭 MCP 连接测试客户端失败: {}", config.getName(), stopFailure);
+            }
         }
     }
 

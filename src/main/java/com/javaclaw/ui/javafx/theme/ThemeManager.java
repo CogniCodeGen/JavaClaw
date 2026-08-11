@@ -30,7 +30,7 @@ import java.util.List;
  * <p>选择持久化到全局 H2 配置库的 agent namespace（{@code ui.theme}，按 workspace_id 隔离），
  * 切换工作区时由 {@link #reload()} 重新读取。</p>
  */
-public final class ThemeManager implements AutoCloseable {
+public final class ThemeManager implements ThemeProfile, AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(ThemeManager.class);
 
@@ -136,6 +136,12 @@ public final class ThemeManager implements AutoCloseable {
     /** 当前主题描述（用于切换 UI 展示色块/名称） */
     public Theme getCurrentTheme() {
         return findTheme(current.get());
+    }
+
+    @Override
+    public Palette currentPalette() {
+        Theme theme = getCurrentTheme();
+        return new Palette(theme.brand(), theme.bg(), theme.surface());
     }
 
     /** 主题变更可观察属性（顶栏「风格」菜单等据此刷新色块） */
