@@ -1,7 +1,7 @@
 package com.javaclaw.schedule;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.javaclaw.config.AppDatabase;
+import com.javaclaw.config.FileDatabaseAccess;
 import com.javaclaw.platform.json.JsonCodec;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.AbstractDataSource;
@@ -17,10 +17,11 @@ final class ScheduleTestStoreFactory {
     private ScheduleTestStoreFactory() { }
 
     static ScheduledTaskStore create(Path dataDir) {
+        FileDatabaseAccess database = new FileDatabaseAccess(dataDir);
         AbstractDataSource dataSource = new AbstractDataSource() {
             @Override
             public Connection getConnection() throws SQLException {
-                return AppDatabase.open(dataDir);
+                return database.open();
             }
 
             @Override

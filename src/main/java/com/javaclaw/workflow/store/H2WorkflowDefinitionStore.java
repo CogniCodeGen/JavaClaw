@@ -1,7 +1,6 @@
 package com.javaclaw.workflow.store;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.javaclaw.config.AppDatabaseAccess;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.workflow.model.GraphDefinition;
 import com.javaclaw.workflow.model.GraphKind;
@@ -28,10 +27,6 @@ public final class H2WorkflowDefinitionStore implements WorkflowDefinitionStore 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private final String workspaceId;
     private final DatabaseAccess database;
-
-    public H2WorkflowDefinitionStore(String workspaceId) {
-        this(workspaceId, new AppDatabaseAccess());
-    }
 
     public H2WorkflowDefinitionStore(String workspaceId, DatabaseAccess database) {
         this.workspaceId = Objects.requireNonNull(workspaceId);

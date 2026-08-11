@@ -1,140 +1,22 @@
-package com.javaclaw.config;
+package com.javaclaw.platform.data;
 
-import com.javaclaw.platform.data.DataRoot;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 
 /**
- * 全局 H2 数据库入口。
+ * JavaClaw 3 初始数据库结构。
  *
- * <p>全应用只使用一个数据库文件：{@code data/javaclaw.mv.db}。
- * 工作区隔离由各业务表的 {@code workspace_id} 字段完成，调用方按当前工作区读写。</p>
+ * <p>所有 DDL 都可重复执行；对象没有运行时状态，只由根 Context 的
+ * {@link SchemaInitializer} 在启动时调用。这里不负责连接、目录解析或旧版本迁移。</p>
  */
-public final class AppDatabase {
-
-    private static final Logger log = LoggerFactory.getLogger(AppDatabase.class);
-    private static final String DB_BASENAME = "javaclaw";
-    public static final String DATA_DIR_PROPERTY = DataRoot.DATA_DIR_PROPERTY;
-    private static volatile boolean autoServerUnavailable;
-
-    private AppDatabase() {}
-
-    public static Connection getConnection() throws SQLException {
-        return openDatabaseBase(databaseBasePath());
-    }
-
-    /**
-     * 打开指定数据目录下的 JavaClaw 数据库，并执行同一套幂等建表/迁移。
-     * 主要供显式注入的测试数据库使用，不修改任何全局系统属性。
-     */
-    public static Connection open(Path dataDir) throws SQLException {
-        Path normalized = dataDir.toAbsolutePath().normalize();
-        return openDatabaseBase(normalized.resolve(DB_BASENAME));
-    }
-
-    private static Connection openDatabaseBase(Path dbBase) throws SQLException {
-        try {
-            Files.createDirectories(dbBase.getParent());
-        } catch (IOException e) {
-            throw new SQLException("创建数据库目录失败: " + dbBase.getParent(), e);
-        }
-        Connection c = openConnection(dbBase);
-        try {
-            initializeSchema(c);
-            return c;
-        } catch (SQLException | RuntimeException e) {
-            try {
-                c.close();
-            } catch (SQLException closeFailure) {
-                e.addSuppressed(closeFailure);
-            }
-            throw e;
-        }
-    }
-
-    public static String currentWorkspaceId() {
-        try (Connection connection = getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "SELECT state_value FROM app_state WHERE state_key = ?")) {
-            statement.setString(1, "current_workspace_id");
-            try (ResultSet rows = statement.executeQuery()) {
-                return rows.next() ? rows.getString(1) : "default";
-            }
-        } catch (SQLException failure) {
-            throw new IllegalStateException("读取当前工作区失败", failure);
-        }
-    }
-
-    /**
-     * 返回全应用统一的数据根目录。
-     *
-     * <p>生产环境未配置时使用 {@code {user.dir}/data-v3}；测试或显式部署配置
-     * {@value #DATA_DIR_PROPERTY} 时，数据库、工作区资产、日志和旧凭据迁移都应从此目录派生。</p>
-     */
-    public static Path dataDirectory() {
-        return DataRoot.resolve().path();
-    }
-
-    public static Path databaseFilePath() {
-        return databaseBasePath().resolveSibling(DB_BASENAME + ".mv.db");
-    }
-
-    public static String databaseDisplayPath() {
-        return databaseFilePath().toString();
-    }
-
-    private static Path databaseBasePath() {
-        return dataDirectory().resolve(DB_BASENAME);
-    }
-
-    private static Connection openConnection(Path dbBase) throws SQLException {
-        if (!autoServerUnavailable) {
-            try {
-                return DriverManager.getConnection(jdbcUrl(dbBase, true), "sa", "");
-            } catch (SQLException e) {
-                if (!canFallbackToEmbedded(e)) {
-                    throw e;
-                }
-                autoServerUnavailable = true;
-                log.warn("H2 mixed mode 不可用，回退 embedded 模式: {}", e.getMessage());
-            }
-        }
-        return DriverManager.getConnection(jdbcUrl(dbBase, false), "sa", "");
-    }
-
-    private static boolean canFallbackToEmbedded(SQLException e) {
-        String message = e.getMessage() == null ? "" : e.getMessage();
-        return e.getErrorCode() == 50100
-                || e.getErrorCode() == 90031
-                || message.contains("AUTO_SERVER")
-                || message.contains("SocketException")
-                || message.contains("Operation not permitted");
-    }
-
-    private static String jdbcUrl(Path dbBase, boolean autoServer) {
-        String path = dbBase.toString().replace('\\', '/');
-        String url = "jdbc:h2:file:" + path
-                + ";DATABASE_TO_UPPER=false"
-                + ";LOCK_TIMEOUT=10000"
-                + ";TRACE_LEVEL_FILE=0";
-        return autoServer ? url + ";AUTO_SERVER=TRUE" : url;
-    }
+final class JavaClawSchema {
 
     /**
      * 创建 JavaClaw 3 初始 schema。DDL 全部幂等；生产启动链只由根 Spring Context
      * 的 schema 初始化器调用一次，静态连接门面保留到旧调用方完成迁移为止。
      */
-    public static void initializeSchema(Connection c) throws SQLException {
+    void initialize(Connection c) throws SQLException {
         try (Statement st = c.createStatement()) {
             st.execute("""
                     CREATE TABLE IF NOT EXISTS workspaces (
@@ -514,6 +396,5 @@ public final class AppDatabase {
                     )
                     """);
         }
-        log.debug("全局 H2 数据库已就绪: {}", databaseFilePath());
     }
 }

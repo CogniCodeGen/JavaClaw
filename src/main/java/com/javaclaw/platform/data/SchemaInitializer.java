@@ -1,6 +1,5 @@
 package com.javaclaw.platform.data;
 
-import com.javaclaw.config.AppDatabase;
 import org.springframework.dao.DataAccessResourceFailureException;
 
 import javax.sql.DataSource;
@@ -18,6 +17,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class SchemaInitializer {
 
     private final DataSource dataSource;
+    private final JavaClawSchema schema = new JavaClawSchema();
     private final AtomicBoolean initialized = new AtomicBoolean(false);
 
     public SchemaInitializer(DataSource dataSource) {
@@ -29,7 +29,7 @@ public final class SchemaInitializer {
             return;
         }
         try (Connection connection = dataSource.getConnection()) {
-            AppDatabase.initializeSchema(connection);
+            schema.initialize(connection);
             initialized.set(true);
         } catch (SQLException failure) {
             throw new DataAccessResourceFailureException("初始化 JavaClaw 3 schema 失败", failure);

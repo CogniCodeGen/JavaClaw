@@ -106,8 +106,7 @@ public final class AgentScopeLoopRunner implements LoopIterationRunner {
         // 若任务已明确绑定站点账号，浏览器工具只从该账号对应的 site_sessions 恢复。
         this.loopBrowser = new com.javaclaw.browser.PlaywrightBrowserManager(true,
                 runtime.getWorkspace().browserDir().resolve("loop"),
-                runtime.getWorkspace().screenshotsDir(),
-                false);
+                runtime.getWorkspace().screenshotsDir());
         this.expertManager = new ExpertManager(
                 runtime.getModelFactory(), loopBrowser,
                 runtime.getSiteCredentialManager(), this.origin,

@@ -6,8 +6,8 @@ import java.sql.SQLException;
 /**
  * 应用数据库连接入口。
  *
- * <p>生产环境由 {@link AppDatabaseAccess} 提供，测试可注入临时 H2 实现，避免通过
- * 修改全局 {@code user.dir} 重定向数据库。</p>
+ * <p>生产环境由 Spring 根 Context 的 DataSource 适配器提供，测试可注入显式目录的
+ * H2 实现；调用方不得通过全局系统属性定位连接。</p>
  */
 public interface DatabaseAccess {
 

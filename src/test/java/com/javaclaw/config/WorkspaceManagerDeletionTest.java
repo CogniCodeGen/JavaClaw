@@ -29,11 +29,13 @@ class WorkspaceManagerDeletionTest {
         try {
             try (var root = ApplicationContexts.createRoot(DataRoot.resolve())) {
                 WorkspaceManager manager = root.getBean(WorkspaceManager.class);
+                DatabaseAccess database = root.getBean(DatabaseAccess.class);
+                Path dataRoot = root.getBean(DataRoot.class).path();
                 Workspace workspace = manager.createWorkspace("待删除工作区");
                 String workspaceId = workspace.getId();
 
-                seedWorkspaceRows(workspaceId);
-                List<Path> assetDirs = workspaceAssetDirs(workspaceId);
+                seedWorkspaceRows(database, workspaceId);
+                List<Path> assetDirs = workspaceAssetDirs(dataRoot, workspaceId);
                 for (Path dir : assetDirs) {
                     Files.createDirectories(dir);
                     Files.writeString(dir.resolve("marker.txt"), "workspace-private-data");
@@ -47,10 +49,10 @@ class WorkspaceManagerDeletionTest {
                 for (String table : List.of(
                         "workflow_checkpoints", "workflow_runs", "workflow_threads",
                         "workflow_definitions", "app_properties")) {
-                    assertEquals(0, countByWorkspace(table, workspaceId),
+                    assertEquals(0, countByWorkspace(database, table, workspaceId),
                             "工作区数据库行未清理: " + table);
                 }
-                assertEquals(0, countWorkspaceIndex(workspaceId));
+                assertEquals(0, countWorkspaceIndex(database, workspaceId));
             }
         } finally {
             if (previous == null) {
@@ -61,8 +63,9 @@ class WorkspaceManagerDeletionTest {
         }
     }
 
-    private static void seedWorkspaceRows(String workspaceId) throws Exception {
-        try (Connection c = AppDatabase.getConnection()) {
+    private static void seedWorkspaceRows(DatabaseAccess database, String workspaceId)
+            throws Exception {
+        try (Connection c = database.open()) {
             try (PreparedStatement ps = c.prepareStatement("""
                     INSERT INTO app_properties(
                         workspace_id, namespace, prop_key, prop_value)
@@ -110,8 +113,7 @@ class WorkspaceManagerDeletionTest {
         }
     }
 
-    private static List<Path> workspaceAssetDirs(String workspaceId) {
-        Path dataRoot = AppDatabase.dataDirectory();
+    private static List<Path> workspaceAssetDirs(Path dataRoot, String workspaceId) {
         return List.of(
                 dataRoot.resolve("memory-stores").resolve(workspaceId),
                 dataRoot.resolve("knowledge").resolve("workspaces").resolve(workspaceId),
@@ -122,8 +124,9 @@ class WorkspaceManagerDeletionTest {
         );
     }
 
-    private static int countByWorkspace(String table, String workspaceId) throws Exception {
-        try (Connection c = AppDatabase.getConnection();
+    private static int countByWorkspace(
+            DatabaseAccess database, String table, String workspaceId) throws Exception {
+        try (Connection c = database.open();
              PreparedStatement ps = c.prepareStatement(
                      "SELECT COUNT(*) FROM " + table + " WHERE workspace_id = ?")) {
             ps.setString(1, workspaceId);
@@ -134,8 +137,9 @@ class WorkspaceManagerDeletionTest {
         }
     }
 
-    private static int countWorkspaceIndex(String workspaceId) throws Exception {
-        try (Connection c = AppDatabase.getConnection();
+    private static int countWorkspaceIndex(DatabaseAccess database, String workspaceId)
+            throws Exception {
+        try (Connection c = database.open();
              PreparedStatement ps = c.prepareStatement(
                      "SELECT COUNT(*) FROM workspaces WHERE id = ?")) {
             ps.setString(1, workspaceId);

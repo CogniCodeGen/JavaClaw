@@ -17,15 +17,17 @@ class AppDataDirectoryIsolationTest {
 
     @Test
     void allGlobalPathsUseConfiguredTestDataDirectory() {
-        String previous = System.getProperty(AppDatabase.DATA_DIR_PROPERTY);
+        String previous = System.getProperty(DataRoot.DATA_DIR_PROPERTY);
         Path expected = tempDirectory.resolve("data-v3").toAbsolutePath().normalize();
-        System.setProperty(AppDatabase.DATA_DIR_PROPERTY, expected.toString());
+        System.setProperty(DataRoot.DATA_DIR_PROPERTY, expected.toString());
         try {
             try (var root = ApplicationContexts.createRoot(DataRoot.resolve())) {
-                assertEquals(expected, AppDatabase.dataDirectory());
+                assertEquals(expected, root.getBean(DataRoot.class).path());
                 assertEquals(expected, root.getBean(WorkspaceManager.class).getGlobalDataPath());
-                assertEquals(expected.resolve("javaclaw.mv.db"), AppDatabase.databaseFilePath());
-                assertTrue(AppDatabase.databaseFilePath().startsWith(expected));
+                Path databaseFile = root.getBean(
+                        com.javaclaw.platform.data.H2DataSource.class).databaseFile();
+                assertEquals(expected.resolve("javaclaw.mv.db"), databaseFile);
+                assertTrue(databaseFile.startsWith(expected));
             }
         } finally {
             restoreDataDirectory(previous);
@@ -34,9 +36,9 @@ class AppDataDirectoryIsolationTest {
 
     private static void restoreDataDirectory(String previous) {
         if (previous == null) {
-            System.clearProperty(AppDatabase.DATA_DIR_PROPERTY);
+            System.clearProperty(DataRoot.DATA_DIR_PROPERTY);
         } else {
-            System.setProperty(AppDatabase.DATA_DIR_PROPERTY, previous);
+            System.setProperty(DataRoot.DATA_DIR_PROPERTY, previous);
         }
     }
 }

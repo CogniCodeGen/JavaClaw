@@ -1,5 +1,10 @@
 package com.javaclaw.config;
 
+import com.javaclaw.platform.data.DataRoot;
+import com.javaclaw.platform.data.H2DataSource;
+import com.javaclaw.platform.data.SchemaInitializer;
+
+import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -11,19 +16,28 @@ import java.util.Objects;
  */
 public final class FileDatabaseAccess implements DatabaseAccess {
 
-    private final Path dataDir;
+    private final H2DataSource dataSource;
 
     public FileDatabaseAccess(Path dataDir) {
-        this.dataDir = Objects.requireNonNull(dataDir, "dataDir").toAbsolutePath().normalize();
+        Path normalized = Objects.requireNonNull(dataDir, "dataDir")
+                .toAbsolutePath().normalize();
+        DataRoot root = new DataRoot(normalized);
+        try {
+            root.prepare();
+        } catch (java.io.IOException failure) {
+            throw new UncheckedIOException("准备显式 JavaClaw 3 数据目录失败", failure);
+        }
+        this.dataSource = new H2DataSource(root);
+        new SchemaInitializer(dataSource).initialize();
     }
 
     @Override
     public Connection open() throws SQLException {
-        return AppDatabase.open(dataDir);
+        return dataSource.getConnection();
     }
 
     @Override
     public String description() {
-        return dataDir.resolve("javaclaw.mv.db").toString();
+        return dataSource.databaseFile().toString();
     }
 }

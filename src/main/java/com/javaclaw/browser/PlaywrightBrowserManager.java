@@ -1,6 +1,5 @@
 package com.javaclaw.browser;
 
-import com.javaclaw.config.AppDatabase;
 import com.javaclaw.util.ProjectAccessPolicy;
 import com.microsoft.playwright.*;
 import com.microsoft.playwright.options.*;
@@ -8,8 +7,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,7 +27,6 @@ import java.util.Map;
 public class PlaywrightBrowserManager {
 
     private static final Logger log = LoggerFactory.getLogger(PlaywrightBrowserManager.class);
-    private static final String STORAGE_STATE_KEY = "playwright-storage-state";
     private static final String DEFAULT_SCOPE_ID = "interactive:default";
 
     /** 默认视口宽度 */
@@ -85,25 +81,13 @@ public class PlaywrightBrowserManager {
     private String transientPersistenceBaseline;
 
     /**
-     * 兼容旧构造签名。完整账号隔离后，浏览器认证态不再写入工作区级 browser_state；
-     * 持久化只允许经 site_sessions 按具体账号配置写入。
-     *
-     * <p>置 {@code false} 时 {@link #saveCookies()} 变为空操作，用于与主浏览器并行运行的
-     * 隔离浏览器（循环、定时、SDD）。这些浏览器只会按明确选中的 site_sessions 账号恢复，
-     * 不继承任何聊天会话。</p>
+     * 创建会话内存隔离的浏览器管理器。认证态只允许经 site_sessions 按具体账号写入；
+     * 本对象不会读写工作区级默认 Cookie。
      */
-    private final boolean persistCookies;
-
     public PlaywrightBrowserManager(boolean headless, Path browserDir, Path screenshotDir) {
-        this(headless, browserDir, screenshotDir, true);
-    }
-
-    public PlaywrightBrowserManager(boolean headless, Path browserDir, Path screenshotDir,
-                                    boolean persistCookies) {
         this.headless = headless;
         this.browserDir = browserDir;
         this.screenshotDir = screenshotDir;
-        this.persistCookies = persistCookies;
     }
 
     /**
@@ -455,25 +439,13 @@ public class PlaywrightBrowserManager {
     }
 
     /**
-     * 清除旧版工作区级浏览器认证态。
+     * 兼容生命周期调用点，不持久化工作区级浏览器认证态。
      *
-     * <p>保留方法名是为了兼容应用生命周期调用点。登录持久化现在只能通过
-     * {@code SiteCredentialManager.tryWriteSession(...)} 写入具体账号配置；这里不再保存
-     * 当前 Context，避免任一会话成为整个工作区的隐式默认账号。</p>
+     * <p>登录持久化只能通过 {@code SiteCredentialManager.tryWriteSession(...)} 写入具体
+     * 账号配置；当前 Context 永远不会成为整个工作区的隐式默认账号。</p>
      */
     public synchronized void saveCookies() {
-        if (!persistCookies) return;
-        try {
-            try (Connection c = AppDatabase.getConnection();
-                 PreparedStatement ps = c.prepareStatement(
-                         "DELETE FROM browser_state WHERE workspace_id = ? AND state_key = ?")) {
-                ps.setString(1, AppDatabase.currentWorkspaceId());
-                ps.setString(2, STORAGE_STATE_KEY);
-                ps.executeUpdate();
-            }
-        } catch (Exception e) {
-            log.warn("清除旧版工作区浏览器认证态失败: {}", e.getMessage());
-        }
+        // 3.0 data-v3 从空 schema 启动，不读取也不写入旧版工作区级认证态。
     }
 
     // ==================== 视口与配置 ====================
@@ -645,7 +617,7 @@ public class PlaywrightBrowserManager {
         Path isolatedDir = browserDir == null ? null
                 : browserDir.resolve("isolated").resolve(Integer.toHexString(normalized.hashCode()));
         PlaywrightBrowserManager isolated = new PlaywrightBrowserManager(
-                true, isolatedDir, screenshotDir, false);
+                true, isolatedDir, screenshotDir);
         isolated.activateScope(normalized);
         return isolated;
     }

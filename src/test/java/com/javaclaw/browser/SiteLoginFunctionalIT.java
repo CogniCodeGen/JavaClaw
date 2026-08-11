@@ -7,8 +7,7 @@ import com.javaclaw.api.interaction.ConfirmRequest;
 import com.javaclaw.api.interaction.ChoiceRequest;
 import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
-import com.javaclaw.config.AppDatabase;
-import com.javaclaw.config.AppDatabaseAccess;
+import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.spring.ApplicationContexts;
@@ -106,7 +105,7 @@ class SiteLoginFunctionalIT {
         previousConfirmationEnabled = ToolConfirmationManager.isEnabled();
         ToolConfirmationManager.setEnabled(false);
         siteCredentials = new SiteCredentialManager(
-                new AppDatabaseAccess(), AppDatabase.currentWorkspaceId(),
+                root.getBean(DatabaseAccess.class), currentWorkspaceId(),
                 root.getBean(com.javaclaw.config.CredentialCipher.class));
         removeTestSites();
         clearWorkspaceBrowserState();
@@ -175,7 +174,7 @@ class SiteLoginFunctionalIT {
     @Test
     @Timeout(90)
     void decliningSaveRequiresLoginAgainInFreshBrowser() throws Exception {
-        PlaywrightBrowserManager firstBrowser = newBrowser("decline-first", true);
+        PlaywrightBrowserManager firstBrowser = newBrowser("decline-first");
         try {
             AutomatedLoginPort declineSave = new AutomatedLoginPort(firstBrowser, true, false);
             ToolConfirmationManager.setPort(declineSave);
@@ -195,7 +194,7 @@ class SiteLoginFunctionalIT {
         assertNull(readWorkspaceBrowserState(),
                 "完整隔离模式不再持久化任何工作区级浏览器认证态");
 
-        PlaywrightBrowserManager secondBrowser = newBrowser("decline-second", true);
+        PlaywrightBrowserManager secondBrowser = newBrowser("decline-second");
         try {
             AutomatedLoginPort loginAgain = new AutomatedLoginPort(secondBrowser, true, false);
             ToolConfirmationManager.setPort(loginAgain);
@@ -337,7 +336,7 @@ class SiteLoginFunctionalIT {
     @Test
     @Timeout(90)
     void loggingInThenCancellingDoesNotPersistAuthentication() throws Exception {
-        PlaywrightBrowserManager browser = newBrowser("login-then-cancel", true);
+        PlaywrightBrowserManager browser = newBrowser("login-then-cancel");
         try {
             LoginThenCancelPort cancel = new LoginThenCancelPort(browser);
             ToolConfirmationManager.setPort(cancel);
@@ -473,15 +472,10 @@ class SiteLoginFunctionalIT {
     }
 
     private PlaywrightBrowserManager newBrowser(String name) {
-        return newBrowser(name, false);
-    }
-
-    private PlaywrightBrowserManager newBrowser(String name, boolean persistCookies) {
         return new PlaywrightBrowserManager(
                 true,
                 tempDir.resolve(name).resolve("browser"),
-                tempDir.resolve(name).resolve("screenshots"),
-                persistCookies);
+                tempDir.resolve(name).resolve("screenshots"));
     }
 
     private PlaywrightBrowserTools browserTools(
@@ -530,23 +524,27 @@ class SiteLoginFunctionalIT {
     }
 
     private static void clearWorkspaceBrowserState() throws Exception {
-        try (Connection connection = AppDatabase.getConnection();
+        try (Connection connection = root.getBean(DatabaseAccess.class).open();
              PreparedStatement statement = connection.prepareStatement(
                      "DELETE FROM browser_state WHERE workspace_id = ?")) {
-            statement.setString(1, AppDatabase.currentWorkspaceId());
+            statement.setString(1, currentWorkspaceId());
             statement.executeUpdate();
         }
     }
 
     private static String readWorkspaceBrowserState() throws Exception {
-        try (Connection connection = AppDatabase.getConnection();
+        try (Connection connection = root.getBean(DatabaseAccess.class).open();
              PreparedStatement statement = connection.prepareStatement(
                      "SELECT state_json FROM browser_state WHERE workspace_id = ?")) {
-            statement.setString(1, AppDatabase.currentWorkspaceId());
+            statement.setString(1, currentWorkspaceId());
             try (var resultSet = statement.executeQuery()) {
                 return resultSet.next() ? resultSet.getString("state_json") : null;
             }
         }
+    }
+
+    private static String currentWorkspaceId() {
+        return root.getBean(WorkspaceManager.class).getCurrentWorkspaceId();
     }
 
     private static void handleRequest(HttpExchange exchange) throws IOException {
