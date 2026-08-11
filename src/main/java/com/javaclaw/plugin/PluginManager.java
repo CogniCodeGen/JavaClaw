@@ -162,6 +162,13 @@ public final class PluginManager {
         this.changeListener = listener;
     }
 
+    /** 仅当监听仍是调用方登记的实例时清除，避免旧窗口关闭误删新窗口订阅。 */
+    public synchronized void clearChangeListener(Runnable listener) {
+        if (changeListener == listener) {
+            changeListener = null;
+        }
+    }
+
     // ==================== 管理操作（供 UI 调用） ====================
 
     /** 重扫插件目录：发现新放入的 jar，并剔除已删除 jar 对应的非运行插件。 */

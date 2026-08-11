@@ -20,7 +20,7 @@ import com.javaclaw.platform.spring.WorkspaceSpringContextFactory;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeCenterView;
 import com.javaclaw.ui.javafx.memory.MemoryCenterView;
 import com.javaclaw.ui.javafx.mcp.McpSettingsView;
-import com.javaclaw.ui.javafx.plugin.PluginCenterView;
+import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
 import com.javaclaw.ui.javafx.schedule.ScheduleView;
 import com.javaclaw.ui.javafx.skill.SkillCenterView;
 import com.javaclaw.ui.javafx.task.SddTaskView;
@@ -96,9 +96,11 @@ public final class UiScreenshotExporter {
                     springContext.getBean(PlaywrightBrowserManager.class);
             applicationKernel = new ApplicationKernel(
                     browserManager, port, () -> new SddTaskView(primaryStage).show(),
+                    () -> {}, () -> {},
                     springContext.getBean(WorkspaceSpringContextFactory.class),
                     springContext.getBean(com.javaclaw.platform.execution.ManagedTaskExecutor.class),
-                    springContext.getBean(com.javaclaw.application.tool.ToolInvocationPipeline.class));
+                    springContext.getBean(com.javaclaw.application.tool.ToolInvocationPipeline.class),
+                    springContext.getBean(com.javaclaw.plugin.PluginManager.class));
             var workspaceRuntime = applicationKernel.initialize();
             runtime = workspaceRuntime.agentRuntime();
             chatService = workspaceRuntime.chatService();
@@ -142,7 +144,8 @@ public final class UiScreenshotExporter {
             shots.add(new Shot("08-schedule-center.png", "定时任务", () ->
                     showInternalStage(new ScheduleView(primaryStage))));
             shots.add(new Shot("09-plugin-center.png", "插件中心", () ->
-                    showInternalStage(new PluginCenterView(primaryStage))));
+                    springContext.getBean(PluginCenterViewFactory.class)
+                            .create(primaryStage).show()));
         }
 
         private void runNext(int index) {

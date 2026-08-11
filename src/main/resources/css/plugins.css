@@ -7,6 +7,11 @@
 
 /* ==================== 插件卡片 ==================== */
 
+.plugin-nav-bottom {
+    -fx-border-color: -jc-border transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+}
+
 .plugin-card {
     -fx-background-color: -jc-surface-card;
     -fx-border-color: -jc-border;

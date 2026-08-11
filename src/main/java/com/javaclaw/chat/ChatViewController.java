@@ -28,6 +28,7 @@ import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.ui.javafx.loop.LoopStatusView;
 import com.javaclaw.ui.javafx.loop.LoopStatusViewFactory;
 import com.javaclaw.ui.javafx.diagnostics.DiagnosticsViewFactory;
+import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuController;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuSnapshot;
 import com.javaclaw.ui.javafx.schedule.ScheduleView;
@@ -132,6 +133,7 @@ public class ChatViewController implements AutoCloseable {
     private final ClarificationCardFactory clarificationCards;
     private final LoopStatusViewFactory loopStatusViews;
     private final DiagnosticsViewFactory diagnosticsViews;
+    private final PluginCenterViewFactory pluginCenterViews;
 
     /** 兼容旧退出链；页面生命周期统一由 {@link #close()} 收口。 */
     public void shutdownPersistence() {
@@ -303,7 +305,8 @@ public class ChatViewController implements AutoCloseable {
             LoopDecisionFactory loopDecisions,
             ClarificationCardFactory clarificationCards,
             LoopStatusViewFactory loopStatusViews,
-            DiagnosticsViewFactory diagnosticsViews) {
+            DiagnosticsViewFactory diagnosticsViews,
+            PluginCenterViewFactory pluginCenterViews) {
         this.applicationKernel = java.util.Objects.requireNonNull(
                 applicationKernel, "applicationKernel");
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
@@ -318,6 +321,8 @@ public class ChatViewController implements AutoCloseable {
         this.loopStatusViews = java.util.Objects.requireNonNull(loopStatusViews, "loopStatusViews");
         this.diagnosticsViews = java.util.Objects.requireNonNull(
                 diagnosticsViews, "diagnosticsViews");
+        this.pluginCenterViews = java.util.Objects.requireNonNull(
+                pluginCenterViews, "pluginCenterViews");
         java.util.Objects.requireNonNull(taskExecutor, "taskExecutor");
         persistenceTasks = taskExecutor.openScope("chat-persistence", 1);
         backgroundTasks = taskExecutor.openScope("chat-ui-background", 2);
@@ -2591,9 +2596,7 @@ public class ChatViewController implements AutoCloseable {
     private void openPluginCenter() {
         log.info("打开插件中心");
         javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
-        com.javaclaw.ui.javafx.plugin.PluginCenterView pluginCenterView =
-                new com.javaclaw.ui.javafx.plugin.PluginCenterView(ownerStage);
-        pluginCenterView.show();
+        pluginCenterViews.create(ownerStage).showAndWait();
     }
 
     /**

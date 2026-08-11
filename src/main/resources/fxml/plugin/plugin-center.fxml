@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ProgressIndicator?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.control.ToggleButton?>
+<?import javafx.scene.control.ToggleGroup?>
+<?import javafx.scene.layout.FlowPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+
+<HBox fx:id="root" styleClass="settings-root"
+      xmlns="http://javafx.com/javafx/25"
+      xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.javaclaw.ui.javafx.plugin.PluginCenterController">
+    <fx:define>
+        <ToggleGroup fx:id="tabGroup"/>
+    </fx:define>
+    <children>
+        <VBox prefWidth="210.0" minWidth="180.0" styleClass="modal-left-pane">
+            <children>
+                <Label text="插件中心" styleClass="modal-left-title">
+                    <padding><Insets top="18.0" right="16.0" bottom="10.0" left="16.0"/></padding>
+                </Label>
+                <VBox>
+                    <padding><Insets right="12.0" bottom="12.0" left="12.0"/></padding>
+                    <children>
+                        <HBox spacing="3.0" styleClass="seg-container">
+                            <children>
+                                <ToggleButton fx:id="installedTab" text="已安装" selected="true"
+                                              maxWidth="Infinity" HBox.hgrow="ALWAYS"
+                                              toggleGroup="$tabGroup" styleClass="toggle-button, seg-btn"
+                                              onAction="#installedTabRequested"/>
+                                <ToggleButton fx:id="marketTab" text="市场" maxWidth="Infinity"
+                                              HBox.hgrow="ALWAYS" toggleGroup="$tabGroup"
+                                              styleClass="toggle-button, seg-btn"
+                                              onAction="#marketTabRequested"/>
+                            </children>
+                        </HBox>
+                    </children>
+                </VBox>
+                <Region VBox.vgrow="ALWAYS"/>
+                <VBox spacing="6.0" styleClass="plugin-nav-bottom">
+                    <padding><Insets top="10.0" right="12.0" bottom="12.0" left="12.0"/></padding>
+                    <children>
+                        <Button fx:id="installButton" text="从文件安装…" maxWidth="Infinity"
+                                accessibleText="从 jar 文件安装插件"
+                                styleClass="button, jc-btn, jc-btn-soft, jc-btn-sm"
+                                onAction="#installRequested"/>
+                        <Button fx:id="refreshButton" text="⟳ 刷新目录" maxWidth="Infinity"
+                                accessibleText="刷新插件目录"
+                                styleClass="button, jc-btn, jc-btn-ghost, jc-btn-sm"
+                                onAction="#refreshRequested"/>
+                    </children>
+                </VBox>
+            </children>
+        </VBox>
+        <VBox HBox.hgrow="ALWAYS">
+            <children>
+                <StackPane styleClass="modal-content-area" VBox.vgrow="ALWAYS">
+                    <children>
+                        <VBox fx:id="listView">
+                            <children>
+                                <HBox alignment="CENTER_LEFT" spacing="12.0">
+                                    <padding><Insets top="14.0" right="22.0" bottom="6.0" left="22.0"/></padding>
+                                    <children>
+                                        <TextField fx:id="searchField" promptText="⌕  搜索插件…"
+                                                   accessibleText="搜索已安装插件"
+                                                   styleClass="text-input, text-field, settings-field"
+                                                   HBox.hgrow="ALWAYS"/>
+                                        <Label fx:id="countLabel" styleClass="sec-hint"/>
+                                    </children>
+                                </HBox>
+                                <StackPane VBox.vgrow="ALWAYS">
+                                    <children>
+                                        <ScrollPane fx:id="cardScroll" fitToWidth="true"
+                                                    hbarPolicy="NEVER" styleClass="scroll-pane, settings-scroll-pane">
+                                            <content>
+                                                <FlowPane fx:id="cardGrid" hgap="12.0" vgap="12.0">
+                                                    <padding><Insets top="8.0" right="22.0" bottom="16.0" left="22.0"/></padding>
+                                                </FlowPane>
+                                            </content>
+                                        </ScrollPane>
+                                        <VBox fx:id="marketPlaceholder" alignment="CENTER" spacing="12.0"
+                                              visible="false" managed="false" accessibleText="插件市场尚未上线">
+                                            <children>
+                                                <Label text="⧉" styleClass="empty-state-icon"/>
+                                                <Label text="插件市场即将上线" styleClass="empty-state-text"/>
+                                                <Label maxWidth="360.0" wrapText="true"
+                                                       text="在线插件市场（搜索 / 一键安装 / 自动更新）尚未接入。&#10;当前可通过「从文件安装…」加载本地插件 jar。"
+                                                       styleClass="sec-hint, empty-state-hint"/>
+                                            </children>
+                                        </VBox>
+                                        <VBox fx:id="emptyPlaceholder" alignment="CENTER" spacing="10.0"
+                                              visible="false" managed="false">
+                                            <children>
+                                                <Label text="⧉" styleClass="empty-state-icon"/>
+                                                <Label fx:id="emptyMessage" maxWidth="360.0" wrapText="true"
+                                                       styleClass="sec-hint, empty-state-hint"/>
+                                            </children>
+                                        </VBox>
+                                    </children>
+                                </StackPane>
+                            </children>
+                        </VBox>
+                        <fx:include fx:id="detailPanel" source="plugin-detail.fxml"/>
+                        <StackPane fx:id="loadingOverlay" visible="false" managed="false"
+                                   styleClass="loading-overlay" accessibleText="插件操作进行中">
+                            <children><ProgressIndicator maxWidth="40.0" maxHeight="40.0"/></children>
+                        </StackPane>
+                    </children>
+                </StackPane>
+                <HBox alignment="CENTER_LEFT" spacing="10.0" styleClass="modal-foot">
+                    <children>
+                        <Label fx:id="directoryLabel" styleClass="sec-hint"/>
+                        <Label fx:id="statusLabel" visible="false" managed="false"
+                               styleClass="sec-hint"/>
+                        <Region HBox.hgrow="ALWAYS"/>
+                        <Button text="关闭" styleClass="button, jc-btn, jc-btn-ghost"
+                                onAction="#closeRequested"/>
+                    </children>
+                </HBox>
+            </children>
+        </VBox>
+    </children>
+</HBox>

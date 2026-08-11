@@ -43,6 +43,7 @@ public final class ApplicationKernel implements AutoCloseable {
     private final RuntimeFactory runtimeFactory;
     private final ManagedTaskExecutor taskExecutor;
     private final ToolInvocationPipeline toolPipeline;
+    private final PluginManager pluginManager;
     private final AtomicBoolean transitioning = new AtomicBoolean(false);
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
@@ -56,35 +57,15 @@ public final class ApplicationKernel implements AutoCloseable {
                              Runnable closeWorkflowView,
                              WorkspaceSpringContextFactory workspaceContexts,
                              ManagedTaskExecutor taskExecutor,
-                             ToolInvocationPipeline toolPipeline) {
+                             ToolInvocationPipeline toolPipeline,
+                             PluginManager pluginManager) {
         this.browserManager = Objects.requireNonNull(browserManager, "browserManager");
         this.interactionPort = Objects.requireNonNull(interactionPort, "interactionPort");
         this.taskExecutor = Objects.requireNonNull(taskExecutor, "taskExecutor");
         this.toolPipeline = Objects.requireNonNull(toolPipeline, "toolPipeline");
+        this.pluginManager = Objects.requireNonNull(pluginManager, "pluginManager");
         this.runtimeFactory = new RuntimeFactory(workspaceContexts, browserManager, openTaskView,
                 openWorkflowView, closeWorkflowView, java.util.Set.of());
-    }
-
-    public ApplicationKernel(PlaywrightBrowserManager browserManager,
-                             UserInteractionPort interactionPort,
-                             Runnable openTaskView,
-                             Runnable openWorkflowView,
-                             WorkspaceSpringContextFactory workspaceContexts,
-                             ManagedTaskExecutor taskExecutor,
-                             ToolInvocationPipeline toolPipeline) {
-        this(browserManager, interactionPort, openTaskView, openWorkflowView, () -> {},
-                workspaceContexts, taskExecutor, toolPipeline);
-    }
-
-    /** 兼容无工作流 UI 的无头/截图驱动。 */
-    public ApplicationKernel(PlaywrightBrowserManager browserManager,
-                             UserInteractionPort interactionPort,
-                             Runnable openTaskView,
-                             WorkspaceSpringContextFactory workspaceContexts,
-                             ManagedTaskExecutor taskExecutor,
-                             ToolInvocationPipeline toolPipeline) {
-        this(browserManager, interactionPort, openTaskView, () -> {}, () -> {},
-                workspaceContexts, taskExecutor, toolPipeline);
     }
 
     /** 创建首个工作区运行时并装配依赖它的全局子系统。 */
@@ -249,7 +230,7 @@ public final class ApplicationKernel implements AutoCloseable {
 
         if (initial) {
             ScheduleManager.getInstance().init(new ScheduledTaskAgent(runtime));
-            PluginManager.getInstance().init(
+            pluginManager.init(
                     runtime, interactionPort, taskExecutor, toolPipeline);
             SddTaskManager.getInstance().configure(
                     workspaceRuntime.context().dataRoot(),
@@ -258,7 +239,7 @@ public final class ApplicationKernel implements AutoCloseable {
                     workspaceRuntime.databaseAccess(), workspaceRuntime.context().workspaceId());
         } else {
             ScheduleManager.getInstance().reload(new ScheduledTaskAgent(runtime));
-            PluginManager.getInstance().reload(runtime);
+            pluginManager.reload(runtime);
             SddTaskManager.getInstance().reload(
                     workspaceRuntime.context().dataRoot(),
                     runtime.getModelFactory(), runtime::buildCapabilityTools,
@@ -272,7 +253,7 @@ public final class ApplicationKernel implements AutoCloseable {
         if (!externalServicesInitialized) return;
         closeQuietly("定时任务运行时", () -> ScheduleManager.getInstance().suspendForRuntimeTransition());
         closeQuietly("SDD 运行任务", () -> SddTaskManager.getInstance().suspendForRuntimeTransition());
-        closeQuietly("插件运行时", () -> PluginManager.getInstance().suspendForRuntimeTransition());
+        closeQuietly("插件运行时", pluginManager::suspendForRuntimeTransition);
     }
 
     private void beginTransition(String operation) {
@@ -292,7 +273,7 @@ public final class ApplicationKernel implements AutoCloseable {
         if (!closed.compareAndSet(false, true)) return;
         if (externalServicesInitialized) {
             closeQuietly("任务管理器", () -> SddTaskManager.getInstance().shutdown());
-            closeQuietly("插件系统", () -> PluginManager.getInstance().shutdown());
+            closeQuietly("插件系统", pluginManager::shutdown);
             closeQuietly("定时任务调度器", () -> ScheduleManager.getInstance().shutdown());
         }
         WorkspaceRuntime snapshot = current;

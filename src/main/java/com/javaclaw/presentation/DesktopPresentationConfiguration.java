@@ -22,6 +22,10 @@ import com.javaclaw.ui.javafx.diagnostics.JavaFxDiagnosticsExportTargetPicker;
 import com.javaclaw.ui.javafx.theme.ThemeManagerThemeSelectionService;
 import com.javaclaw.ui.javafx.theme.ThemeMenuEntryFactory;
 import com.javaclaw.ui.javafx.theme.ThemeSelectionService;
+import com.javaclaw.ui.javafx.plugin.JavaFxPluginJarPicker;
+import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
+import com.javaclaw.ui.javafx.plugin.PluginComponentFactory;
+import com.javaclaw.ui.javafx.plugin.PluginJarPicker;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -59,6 +63,21 @@ public class DesktopPresentationConfiguration {
     @Bean
     DiagnosticsViewFactory diagnosticsViewFactory(SpringFxmlLoader loader) {
         return new DiagnosticsViewFactory(loader);
+    }
+
+    @Bean
+    PluginJarPicker pluginJarPicker() {
+        return new JavaFxPluginJarPicker();
+    }
+
+    @Bean
+    PluginComponentFactory pluginComponentFactory(SpringFxmlLoader loader) {
+        return new PluginComponentFactory(loader);
+    }
+
+    @Bean
+    PluginCenterViewFactory pluginCenterViewFactory(SpringFxmlLoader loader) {
+        return new PluginCenterViewFactory(loader);
     }
 
     @Bean

@@ -7,6 +7,9 @@ import com.javaclaw.application.diagnostics.DiagnosticsArchivePort;
 import com.javaclaw.application.diagnostics.DiagnosticsUseCase;
 import com.javaclaw.application.event.DomainEventPublisher;
 import com.javaclaw.application.chat.ToolReviewSettingsPort;
+import com.javaclaw.application.plugin.PluginManagementApplicationService;
+import com.javaclaw.application.plugin.PluginManagementPort;
+import com.javaclaw.application.plugin.PluginManagementUseCase;
 import com.javaclaw.application.tool.ToolAuthorization;
 import com.javaclaw.application.tool.ToolAuthorizer;
 import com.javaclaw.application.tool.ToolAuditSink;
@@ -17,6 +20,7 @@ import com.javaclaw.platform.data.DataSourceDatabaseAccess;
 import com.javaclaw.platform.data.H2DataSource;
 import com.javaclaw.platform.data.SchemaInitializer;
 import com.javaclaw.platform.dialog.DialogService;
+import com.javaclaw.platform.desktop.ExternalDirectoryOpener;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fx.FxDispatcher;
@@ -29,7 +33,9 @@ import com.javaclaw.ui.javafx.JfxUserInteractionPort;
 import com.javaclaw.infrastructure.tool.LoggingToolAuditSink;
 import com.javaclaw.infrastructure.config.AgentConfigToolReviewSettings;
 import com.javaclaw.infrastructure.diagnostics.TraceExporterDiagnosticsArchive;
+import com.javaclaw.infrastructure.plugin.PluginManagerManagementAdapter;
 import com.javaclaw.agent.ToolConfirmationManager;
+import com.javaclaw.plugin.PluginManager;
 import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationEventPublisher;
@@ -94,6 +100,11 @@ public class RootConfiguration {
     }
 
     @Bean
+    ExternalDirectoryOpener externalDirectoryOpener(ManagedTaskExecutor executor) {
+        return new ExternalDirectoryOpener(executor);
+    }
+
+    @Bean
     DiagnosticsArchivePort diagnosticsArchivePort() {
         return new TraceExporterDiagnosticsArchive();
     }
@@ -102,6 +113,22 @@ public class RootConfiguration {
     DiagnosticsApplicationService diagnosticsApplicationService(
             DiagnosticsArchivePort archive) {
         return new DiagnosticsUseCase(archive, Clock.systemUTC());
+    }
+
+    @Bean
+    PluginManager pluginManager() {
+        return PluginManager.getInstance();
+    }
+
+    @Bean
+    PluginManagementPort pluginManagementPort(PluginManager manager) {
+        return new PluginManagerManagementAdapter(manager);
+    }
+
+    @Bean
+    PluginManagementApplicationService pluginManagementApplicationService(
+            PluginManagementPort plugins) {
+        return new PluginManagementUseCase(plugins);
     }
 
     @Bean

@@ -142,7 +142,8 @@ public class JavaClawApp extends Application {
                     this::closeWorkflowCenter,
                     springContext.getBean(WorkspaceSpringContextFactory.class),
                     springContext.getBean(com.javaclaw.platform.execution.ManagedTaskExecutor.class),
-                    springContext.getBean(com.javaclaw.application.tool.ToolInvocationPipeline.class));
+                    springContext.getBean(com.javaclaw.application.tool.ToolInvocationPipeline.class),
+                    springContext.getBean(com.javaclaw.plugin.PluginManager.class));
             applicationKernel.initialize();
             ApplicationContexts.registerApplicationKernel(springContext, applicationKernel);
 

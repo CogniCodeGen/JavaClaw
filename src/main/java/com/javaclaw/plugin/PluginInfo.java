@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * 插件只读信息快照 —— 供 UI（PluginCenterView）与外部调用方列举展示，不暴露内部容器。
+ * 插件只读信息快照 —— 供应用适配器与外部调用方列举展示，不暴露内部容器。
  *
  * @param id           插件 id
  * @param name         显示名称
