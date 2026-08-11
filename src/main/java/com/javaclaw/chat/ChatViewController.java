@@ -52,6 +52,7 @@ public class ChatViewController implements AutoCloseable {
     private final LoopStatusViewFactory loopStatusViews;
     private final ChatInlineImageRenderer inlineImages;
     private final ChatShortcutHelpFactory shortcutHelp;
+    private final ChatHistoryManager history;
     private final ChatRuntimeCoordinator runtimeCoordinator;
     private final ChatNavigationController navigation;
     private ChatShellController shell;
@@ -117,7 +118,8 @@ public class ChatViewController implements AutoCloseable {
             PluginCenterViewFactory pluginCenterViews,
             ChatInlineImageRenderer inlineImages,
             ChatShortcutHelpFactory shortcutHelp,
-            FontSelectionService fonts) {
+            FontSelectionService fonts,
+            ChatHistoryManager history) {
         this.applicationKernel = java.util.Objects.requireNonNull(
                 applicationKernel, "applicationKernel");
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
@@ -132,6 +134,7 @@ public class ChatViewController implements AutoCloseable {
         this.loopStatusViews = java.util.Objects.requireNonNull(loopStatusViews, "loopStatusViews");
         this.inlineImages = java.util.Objects.requireNonNull(inlineImages, "inlineImages");
         this.shortcutHelp = java.util.Objects.requireNonNull(shortcutHelp, "shortcutHelp");
+        this.history = java.util.Objects.requireNonNull(history, "history");
         java.util.Objects.requireNonNull(taskExecutor, "taskExecutor");
         persistenceTasks = taskExecutor.openScope("chat-persistence", 1);
         backgroundTasks = taskExecutor.openScope("chat-ui-background", 2);
@@ -237,6 +240,7 @@ public class ChatViewController implements AutoCloseable {
                 this::currentModelDisplayName);
         sessionCoordinator = new ChatSessionCoordinator(
                 persistExecutor,
+                history,
                 sessionViewController,
                 composerController,
                 thinkingPanel,

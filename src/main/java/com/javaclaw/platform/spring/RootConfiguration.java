@@ -60,6 +60,7 @@ import com.javaclaw.plugin.PluginManager;
 import com.javaclaw.ui.javafx.onboarding.OnboardingViewFactory;
 import com.javaclaw.ui.javafx.onboarding.ProviderCardFactory;
 import com.javaclaw.system.CommandSessionManager;
+import com.javaclaw.chat.ChatHistoryManager;
 import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationEventPublisher;
@@ -142,6 +143,16 @@ public class RootConfiguration {
     @Bean
     NotificationConfig notificationConfig(SqlPropertyStore properties, DatabaseAccess database) {
         return new NotificationConfig(properties, database);
+    }
+
+    @Bean
+    ChatHistoryManager chatHistoryManager(
+            JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager,
+            ObjectMapper json,
+            WorkspaceManager workspaces) {
+        return new ChatHistoryManager(
+                jdbc, transactionManager, json, workspaces::getCurrentWorkspaceId);
     }
 
     @Bean(destroyMethod = "close")

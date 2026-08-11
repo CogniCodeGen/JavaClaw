@@ -31,6 +31,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
     private static final Logger log = LoggerFactory.getLogger(ChatSessionCoordinator.class);
 
     private final Executor persistence;
+    private final ChatHistoryManager history;
     private final ChatSessionController transcript;
     private final ChatComposerController composer;
     private final ThinkingPanelController thinking;
@@ -48,12 +49,12 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
 
     private final List<ChatSession> sessions = new ArrayList<>();
     private final List<Node> suspendedStreamNodes = new ArrayList<>();
-    private ChatHistoryManager history = new ChatHistoryManager();
     private ChatSession currentSession;
     private ChatTurnController turns;
 
     ChatSessionCoordinator(
             Executor persistence,
+            ChatHistoryManager history,
             ChatSessionController transcript,
             ChatComposerController composer,
             ThinkingPanelController thinking,
@@ -69,6 +70,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
             Supplier<Window> owner,
             Predicate<String> rejectWhileRebuilding) {
         this.persistence = Objects.requireNonNull(persistence, "persistence");
+        this.history = Objects.requireNonNull(history, "history");
         this.transcript = Objects.requireNonNull(transcript, "transcript");
         this.composer = Objects.requireNonNull(composer, "composer");
         this.thinking = Objects.requireNonNull(thinking, "thinking");
@@ -240,7 +242,6 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         sidebar.clearSessions();
         sessions.clear();
         currentSession = null;
-        history = new ChatHistoryManager();
         load();
     }
 

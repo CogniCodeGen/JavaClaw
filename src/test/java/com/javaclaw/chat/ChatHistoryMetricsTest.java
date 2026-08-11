@@ -52,7 +52,7 @@ class ChatHistoryMetricsTest {
         legacy.setDeliveryState(null);
         legacy.setMetrics(null);
 
-        ChatHistoryManager history = new ChatHistoryManager();
+        ChatHistoryManager history = root.getBean(ChatHistoryManager.class);
         history.saveSessionMessages(sessionId, List.of(completed, legacy));
         List<ChatMessage> loaded = history.loadSessionMessages(sessionId);
 
