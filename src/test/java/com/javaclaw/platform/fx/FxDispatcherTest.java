@@ -36,4 +36,18 @@ class FxDispatcherTest {
         queue.remove().run();
         assertEquals("done", result.join());
     }
+
+    @Test
+    void dispatchLaterAlwaysWaitsForNextQueueTurn() {
+        Queue<Runnable> queue = new ArrayDeque<>();
+        AtomicBoolean called = new AtomicBoolean(false);
+        FxDispatcher dispatcher = new FxDispatcher(() -> true, queue::add);
+
+        dispatcher.dispatchLater(() -> called.set(true));
+
+        assertFalse(called.get());
+        assertEquals(1, queue.size());
+        queue.remove().run();
+        assertTrue(called.get());
+    }
 }

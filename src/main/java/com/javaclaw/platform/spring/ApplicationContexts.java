@@ -5,6 +5,7 @@ import com.javaclaw.config.DataManager;
 import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.runtime.ApplicationKernel;
+import com.javaclaw.presentation.DesktopPresentationConfiguration;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import java.io.IOException;
@@ -30,6 +31,7 @@ public final class ApplicationContexts {
         context.setDisplayName("JavaClaw root");
         context.registerBean(DataRoot.class, () -> dataRoot);
         context.register(RootConfiguration.class);
+        context.register(DesktopPresentationConfiguration.class);
         if (additionalConfigurations != null && additionalConfigurations.length > 0) {
             context.register(additionalConfigurations);
         }

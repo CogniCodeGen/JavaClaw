@@ -1,6 +1,11 @@
 package com.javaclaw.chat;
 
 import com.javaclaw.chat.markdown.MarkdownParagraphRenderer;
+import com.javaclaw.platform.desktop.ExternalLinkOpener;
+import com.javaclaw.platform.execution.ExecutionLimits;
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.fxml.SpringFxmlLoader;
+import com.javaclaw.platform.fx.FxDispatcher;
 import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.Parent;
@@ -9,11 +14,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -25,11 +29,11 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @EnabledIfSystemProperty(named = "javaclaw.fx.tests", matches = "true",
-        disabledReason = "需要可用的 JavaFX 显示服务；默认由 MarkdownBubbleDriver 端到端验收")
+        disabledReason = "需要可用的 JavaFX 显示服务")
 class MarkdownBubbleAsyncTest {
 
     private static final long TIMEOUT_SECONDS = 5;
-    private ExecutorService executor;
+    private AnnotationConfigApplicationContext context;
     private MarkdownBubble bubble;
 
     @BeforeAll
@@ -46,25 +50,25 @@ class MarkdownBubbleAsyncTest {
     @AfterEach
     void tearDown() throws Exception {
         if (bubble != null) runFx(bubble::dispose);
-        if (executor != null) executor.shutdownNow();
+        if (context != null) context.close();
     }
 
     @Test
     void thousandStreamingChunksParseOnlyOnceAfterFinish() throws Exception {
-        executor = daemonPool(2);
         AtomicInteger renderCount = new AtomicInteger();
         AtomicBoolean renderedOnFxThread = new AtomicBoolean(true);
-        bubble = callFx(() -> new MarkdownBubble(520, executor, (markdown, style) -> {
+        bubble = createBubble((markdown, style) -> {
             renderCount.incrementAndGet();
             renderedOnFxThread.set(Platform.isFxApplicationThread());
             return MarkdownParagraphRenderer.render(markdown, style);
-        }, 80));
+        }, 80);
 
         runFx(() -> {
-            for (int i = 0; i < 1_000; i++) bubble.appendText("片段" + i + " ");
+            for (int index = 0; index < 1_000; index++) {
+                bubble.appendText("片段" + index + " ");
+            }
         });
         assertEquals(0, renderCount.get());
-
         runFx(() -> {
             bubble.finish();
             bubble.finish();
@@ -73,28 +77,25 @@ class MarkdownBubbleAsyncTest {
 
         assertEquals(1, renderCount.get());
         assertFalse(renderedOnFxThread.get());
-        assertEquals(callFx(bubble::getText),
-                callFx(() -> bubble.getView().getProperties().get("markdownRenderedSource")));
+        assertEquals(callFx(bubble::getText), callFx(() ->
+                bubble.getView().getProperties().get("markdownRenderedSource")));
     }
 
     @Test
     void slowRenderKeepsFxThreadResponsiveAndShowsDelayedHint() throws Exception {
-        executor = daemonPool(1);
         CountDownLatch renderStarted = new CountDownLatch(1);
         CountDownLatch releaseRender = new CountDownLatch(1);
-        bubble = callFx(() -> new MarkdownBubble(520, executor, (markdown, style) -> {
+        bubble = createBubble((markdown, style) -> {
             renderStarted.countDown();
             awaitUninterruptibly(releaseRender);
             return MarkdownParagraphRenderer.render(markdown, style);
-        }, 80));
+        }, 80);
 
         runFx(() -> {
             bubble.appendText("**慢速渲染**");
             bubble.finish();
         });
         assertTrue(renderStarted.await(TIMEOUT_SECONDS, TimeUnit.SECONDS));
-
-        // renderer 被阻塞时，FX 队列中的 heartbeat 仍必须及时执行。
         assertTrue(callFx(() -> true));
         Thread.sleep(140);
         Label hint = callFx(() -> findLabel(bubble.getView(), "md-rendering-hint"));
@@ -108,10 +109,7 @@ class MarkdownBubbleAsyncTest {
 
     @Test
     void quickRenderNeverFlashesRenderingHint() throws Exception {
-        executor = daemonPool(1);
-        bubble = callFx(() -> new MarkdownBubble(
-                520, executor, MarkdownParagraphRenderer::render, 200));
-
+        bubble = createBubble(MarkdownParagraphRenderer::render, 200);
         runFx(() -> {
             bubble.appendText("快速内容");
             bubble.finish();
@@ -126,17 +124,16 @@ class MarkdownBubbleAsyncTest {
 
     @Test
     void staleRenderCannotOverwriteNewerGeneration() throws Exception {
-        executor = daemonPool(2);
         AtomicInteger invocation = new AtomicInteger();
         CountDownLatch firstStarted = new CountDownLatch(1);
         CountDownLatch releaseFirst = new CountDownLatch(1);
-        bubble = callFx(() -> new MarkdownBubble(520, executor, (markdown, style) -> {
+        bubble = createBubble((markdown, style) -> {
             if (invocation.incrementAndGet() == 1) {
                 firstStarted.countDown();
                 awaitUninterruptibly(releaseFirst);
             }
             return MarkdownParagraphRenderer.render(markdown, style);
-        }, 80));
+        }, 80);
 
         runFx(() -> {
             bubble.appendText("旧结果");
@@ -152,35 +149,33 @@ class MarkdownBubbleAsyncTest {
 
         releaseFirst.countDown();
         Thread.sleep(150);
-        assertEquals(expected,
-                callFx(() -> bubble.getView().getProperties().get("markdownRenderedSource")));
+        assertEquals(expected, callFx(() ->
+                bubble.getView().getProperties().get("markdownRenderedSource")));
         assertEquals(2, invocation.get());
     }
 
     @Test
     void oversizedMessageFallsBackWithoutCallingRenderer() throws Exception {
-        executor = daemonPool(1);
         AtomicInteger renderCount = new AtomicInteger();
-        bubble = callFx(() -> new MarkdownBubble(520, executor, (markdown, style) -> {
+        bubble = createBubble((markdown, style) -> {
             renderCount.incrementAndGet();
             return MarkdownParagraphRenderer.render(markdown, style);
-        }, 80));
-
+        }, 80);
         String oversized = "a".repeat(MarkdownBubble.MAX_MARKDOWN_BYTES + 1);
+
         runFx(() -> bubble.replaceText(oversized));
 
         assertEquals(MarkdownBubble.State.PLAIN_FALLBACK, callFx(bubble::state));
         assertEquals(0, renderCount.get());
-        assertEquals("message-too-large",
-                callFx(() -> bubble.getView().getProperties().get("markdownRenderFallback")));
+        assertEquals("message-too-large", callFx(() ->
+                bubble.getView().getProperties().get("markdownRenderFallback")));
     }
 
     @Test
     void renderFailureKeepsPlainTextAndReportsFallback() throws Exception {
-        executor = daemonPool(1);
-        bubble = callFx(() -> new MarkdownBubble(520, executor, (markdown, style) -> {
+        bubble = createBubble((markdown, style) -> {
             throw new IllegalStateException("synthetic render failure");
-        }, 0));
+        }, 0);
 
         runFx(() -> bubble.replaceText("保留 **原始文本**"));
         awaitState(MarkdownBubble.State.PLAIN_FALLBACK);
@@ -192,14 +187,13 @@ class MarkdownBubbleAsyncTest {
 
     @Test
     void disposeDropsResultFromAlreadyStartedRender() throws Exception {
-        executor = daemonPool(1);
         CountDownLatch renderStarted = new CountDownLatch(1);
         CountDownLatch releaseRender = new CountDownLatch(1);
-        bubble = callFx(() -> new MarkdownBubble(520, executor, (markdown, style) -> {
+        bubble = createBubble((markdown, style) -> {
             renderStarted.countDown();
             awaitUninterruptibly(releaseRender);
             return MarkdownParagraphRenderer.render(markdown, style);
-        }, 80));
+        }, 80);
 
         runFx(() -> bubble.replaceText("即将释放"));
         assertTrue(renderStarted.await(TIMEOUT_SECONDS, TimeUnit.SECONDS));
@@ -213,6 +207,26 @@ class MarkdownBubbleAsyncTest {
         bubble = null;
     }
 
+    private MarkdownBubble createBubble(MarkdownRenderEngine engine, long hintDelay)
+            throws Exception {
+        context = new AnnotationConfigApplicationContext();
+        ManagedTaskExecutor tasks = new ManagedTaskExecutor(
+                new ExecutionLimits(16, 2, 32, 1, 1));
+        context.registerBean(ManagedTaskExecutor.class, () -> tasks,
+                definition -> definition.setDestroyMethodName("close"));
+        context.registerBean(FxDispatcher.class, FxDispatcher::new);
+        context.registerBean(MarkdownRenderEngine.class, () -> engine);
+        context.registerBean(ExternalLinkOpener.class,
+                () -> new ExternalLinkOpener(tasks));
+        context.registerBean(SpringFxmlLoader.class,
+                () -> new SpringFxmlLoader(context.getBeanFactory()));
+        context.registerBean(MarkdownBubbleFactory.class,
+                () -> new MarkdownBubbleFactory(context.getBean(SpringFxmlLoader.class)));
+        context.refresh();
+        MarkdownBubbleFactory factory = context.getBean(MarkdownBubbleFactory.class);
+        return callFx(() -> factory.create(520, hintDelay));
+    }
+
     private void awaitState(MarkdownBubble.State expected) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(TIMEOUT_SECONDS);
         while (System.nanoTime() < deadline) {
@@ -222,16 +236,10 @@ class MarkdownBubbleAsyncTest {
         assertEquals(expected, callFx(bubble::state));
     }
 
-    private static ExecutorService daemonPool(int threads) {
-        AtomicInteger id = new AtomicInteger();
-        return Executors.newFixedThreadPool(threads, task -> Thread.ofPlatform()
-                .daemon(true)
-                .name("markdown-test-" + id.incrementAndGet())
-                .unstarted(task));
-    }
-
     private static Label findLabel(Node node, String styleClass) {
-        if (node instanceof Label label && label.getStyleClass().contains(styleClass)) return label;
+        if (node instanceof Label label && label.getStyleClass().contains(styleClass)) {
+            return label;
+        }
         if (node instanceof Parent parent) {
             for (Node child : parent.getChildrenUnmodifiable()) {
                 Label found = findLabel(child, styleClass);
@@ -276,11 +284,9 @@ class MarkdownBubbleAsyncTest {
             }
         });
         assertTrue(done.await(TIMEOUT_SECONDS, TimeUnit.SECONDS), "FX 操作超时");
-        if (failure.get() != null) {
-            if (failure.get() instanceof Exception exception) throw exception;
-            if (failure.get() instanceof Error error) throw error;
-            throw new RuntimeException(failure.get());
-        }
+        if (failure.get() instanceof Exception exception) throw exception;
+        if (failure.get() instanceof Error error) throw error;
+        if (failure.get() != null) throw new RuntimeException(failure.get());
         return result.get();
     }
 

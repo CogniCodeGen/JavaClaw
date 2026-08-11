@@ -38,6 +38,14 @@ public final class FxDispatcher {
         }
     }
 
+    /**
+     * 无论调用线程为何，都排到下一次 JavaFX pulse 前执行。用于必须等待 CSS/layout
+     * 完成的视图切换；与 {@link #dispatch(Runnable)} 一样，动作不得包含阻塞工作。
+     */
+    public void dispatchLater(Runnable action) {
+        enqueue.accept(Objects.requireNonNull(action, "action"));
+    }
+
     public <T> CompletableFuture<T> call(Callable<T> action) {
         Objects.requireNonNull(action, "action");
         CompletableFuture<T> result = new CompletableFuture<>();

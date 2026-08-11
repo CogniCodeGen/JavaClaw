@@ -1,0 +1,30 @@
+package com.javaclaw.presentation;
+
+import com.javaclaw.chat.MarkdownBubbleFactory;
+import com.javaclaw.chat.MarkdownRenderEngine;
+import com.javaclaw.chat.markdown.MarkdownParagraphRenderer;
+import com.javaclaw.platform.desktop.ExternalLinkOpener;
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.fxml.SpringFxmlLoader;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+/** 桌面 Presentation 层的显式工厂装配；页面 Controller 仍按 FXML 加载临时创建。 */
+@Configuration(proxyBeanMethods = false)
+public class DesktopPresentationConfiguration {
+
+    @Bean
+    MarkdownRenderEngine markdownRenderEngine() {
+        return MarkdownParagraphRenderer::render;
+    }
+
+    @Bean
+    ExternalLinkOpener externalLinkOpener(ManagedTaskExecutor tasks) {
+        return new ExternalLinkOpener(tasks);
+    }
+
+    @Bean
+    MarkdownBubbleFactory markdownBubbleFactory(SpringFxmlLoader loader) {
+        return new MarkdownBubbleFactory(loader);
+    }
+}

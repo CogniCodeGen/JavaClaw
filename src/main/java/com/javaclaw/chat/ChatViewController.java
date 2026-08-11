@@ -136,6 +136,7 @@ public class ChatViewController implements AutoCloseable {
     private final TaskScope backgroundTasks;
     private final java.util.concurrent.Executor persistExecutor;
     private final FxDispatcher fx;
+    private final MarkdownBubbleFactory markdownBubbles;
 
     /** 兼容旧退出链；页面生命周期统一由 {@link #close()} 收口。 */
     public void shutdownPersistence() {
@@ -390,10 +391,13 @@ public class ChatViewController implements AutoCloseable {
     public ChatViewController(
             ApplicationKernel applicationKernel,
             FxDispatcher fx,
-            ManagedTaskExecutor taskExecutor) {
+            ManagedTaskExecutor taskExecutor,
+            MarkdownBubbleFactory markdownBubbles) {
         this.applicationKernel = java.util.Objects.requireNonNull(
                 applicationKernel, "applicationKernel");
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
+        this.markdownBubbles = java.util.Objects.requireNonNull(
+                markdownBubbles, "markdownBubbles");
         java.util.Objects.requireNonNull(taskExecutor, "taskExecutor");
         persistenceTasks = taskExecutor.openScope("chat-persistence", 1);
         backgroundTasks = taskExecutor.openScope("chat-ui-background", 2);
@@ -1405,7 +1409,7 @@ public class ChatViewController implements AutoCloseable {
         activeToolResultsBox.setManaged(false);
 
         // ---- 回复气泡（Markdown） ----
-        activeReplyBubble = new MarkdownBubble(520);
+        activeReplyBubble = markdownBubbles.create(520);
         // 首个回复 chunk 到达前隐藏空气泡，改由占位动画占位
         activeReplyBubble.getView().setVisible(false);
         activeReplyBubble.getView().setManaged(false);
@@ -1699,7 +1703,7 @@ public class ChatViewController implements AutoCloseable {
         agentLabel.getStyleClass().add("agent-name-sub");
 
         // 回复区域（Markdown 气泡，宽度提升至 540 便于阅读长结果）
-        activeToolResultBubble = new MarkdownBubble(540);
+        activeToolResultBubble = markdownBubbles.create(540);
         final MarkdownBubble bubbleRef = activeToolResultBubble;
 
         // 气泡容器：仅回复区域，初始隐藏（有内容时再显示，避免空白占位）
@@ -2128,7 +2132,7 @@ public class ChatViewController implements AutoCloseable {
         agentLabel.getStyleClass().add("plan-agent-name");
 
         // 创建空的流式 Markdown 气泡（宽度 540 与子智能体气泡一致）
-        activePlanAgentBubble = new MarkdownBubble(540);
+        activePlanAgentBubble = markdownBubbles.create(540);
         final MarkdownBubble bubbleRef = activePlanAgentBubble;
 
         // 气泡容器
@@ -2679,7 +2683,7 @@ public class ChatViewController implements AutoCloseable {
 
         javafx.scene.Node text;
         if (role == ChatMessage.Role.ASSISTANT) {
-            MarkdownBubble bubble = new MarkdownBubble(520);
+            MarkdownBubble bubble = markdownBubbles.create(520);
             bubble.replaceText(message.getContent() == null ? "" : message.getContent());
             text = bubble.getView();
         } else {

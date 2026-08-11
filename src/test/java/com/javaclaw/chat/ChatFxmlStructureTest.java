@@ -52,6 +52,15 @@ class ChatFxmlStructureTest {
         assertTrue(eventHandlers(document).isEmpty());
     }
 
+    @Test
+    void markdownBubbleDeclaresEveryInjectedNode() throws Exception {
+        Document document = document("/fxml/chat/markdown-bubble.fxml");
+        assertEquals(MarkdownBubbleController.class.getName(),
+                document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
+        assertInjectedFields(document, MarkdownBubbleController.class);
+        assertTrue(eventHandlers(document).isEmpty());
+    }
+
     private static Document document(String path) throws Exception {
         URL resource = ChatFxmlStructureTest.class.getResource(path);
         assertNotNull(resource, path);
