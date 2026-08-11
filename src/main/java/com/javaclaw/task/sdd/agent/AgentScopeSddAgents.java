@@ -1,5 +1,6 @@
 package com.javaclaw.task.sdd.agent;
 
+import com.javaclaw.agent.ToolRegistrationSupport;
 import com.javaclaw.agent.hook.LoopDetectionHook;
 import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.config.AgentConfig;
@@ -331,7 +332,7 @@ public final class AgentScopeSddAgents implements SddAgents {
         for (var e : capabilityTools.entrySet()) {
             if (e.getValue() == null) continue;
             if (all || caps.contains(e.getKey().toLowerCase())) {
-                toolkit.registerTool(e.getValue());
+                ToolRegistrationSupport.register(toolkit, e.getValue());
             }
         }
         // 只读自检工具：执行体据此核实自己的产出

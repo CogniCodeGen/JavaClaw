@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.ToolCallOrigin;
+import com.javaclaw.agent.ToolRegistrationSupport;
 import com.javaclaw.agent.ToolkitAssembler;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
@@ -163,7 +164,7 @@ public final class ToolNodeExecutor implements NodeExecutor {
                 true, ToolCallOrigin.INTERACTIVE);
         // 主编排 Toolkit 只包含专家代理；TOOL 节点还需要直接注册专家背后的本地 @Tool。
         runtime.getExpertManager().getCapabilityTools().forEach((group, tools) ->
-                toolkit.registration().tool(tools).group(group).apply());
+                ToolRegistrationSupport.register(toolkit, tools, group));
         return toolkit;
     }
 }

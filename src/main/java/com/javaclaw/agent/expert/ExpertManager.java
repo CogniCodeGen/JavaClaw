@@ -1,6 +1,7 @@
 package com.javaclaw.agent.expert;
 
 import com.javaclaw.agent.ToolCallOrigin;
+import com.javaclaw.agent.ToolRegistrationSupport;
 import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.browser.PlaywrightBrowserTools;
@@ -405,7 +406,7 @@ public class ExpertManager {
 
         if (tools != null) {
             Toolkit toolkit = new Toolkit();
-            toolkit.registerTool(tools);
+            ToolRegistrationSupport.register(toolkit, tools);
             builder.toolkit(toolkit);
         }
 

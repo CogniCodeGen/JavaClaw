@@ -1,5 +1,6 @@
 package com.javaclaw.agent.expert;
 
+import com.javaclaw.agent.ToolRegistrationSupport;
 import com.javaclaw.agent.memory.MemoryManager;
 import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.prompt.AgentPrompts;
@@ -222,7 +223,7 @@ public class DynamicTaskTool {
         for (Capability cap : caps) {
             Object tools = capabilityTools.get(cap.key);
             if (tools != null) {
-                toolkit.registerTool(tools);
+                ToolRegistrationSupport.register(toolkit, tools);
                 hasTools = true;
             }
         }
