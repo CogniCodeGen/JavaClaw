@@ -12,5 +12,5 @@ public interface PluginCallable<T> {
     /**
      * 任务体，返回结果。允许抛出受检异常，宿主会包装为 {@code PluginExecException} 抛回调用方。
      */
-    T call() throws Exception;
+    T call(TaskContext context) throws Exception;
 }

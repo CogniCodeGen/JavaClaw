@@ -3,6 +3,7 @@ package com.javaclaw.plugin;
 import com.javaclaw.plugin.api.JavaClawPlugin;
 import com.javaclaw.plugin.api.PluginContext;
 import com.javaclaw.plugin.api.PluginDescriptor;
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -38,22 +39,26 @@ class PluginRuntimeTest {
             // 入口类由测试类加载器提供；空 jar 用于验证运行时类加载器的关闭与重建。
         }
         PluginDescriptor descriptor = new PluginDescriptor(
-                "failing-test", "Failing", "1.0.0", "1.0",
+                "failing-test", "Failing", "1.0.0", "3.0",
                 FailingPlugin.class.getName(), "test", Set.of(), List.of());
-        PluginRuntime runtime = new PluginRuntime(
-                descriptor, jar, null, getClass().getClassLoader(), tempDir.resolve("data"));
+        try (ManagedTaskExecutor executor = new ManagedTaskExecutor()) {
+            PluginRuntime runtime = new PluginRuntime(
+                    descriptor, jar, null, getClass().getClassLoader(),
+                    tempDir.resolve("data"), executor);
 
-        Exception first = assertThrows(Exception.class, () -> runtime.start(Set.of(), Map.of()));
-        assertEquals("start failed", first.getMessage());
-        assertEquals(PluginState.FAILED, runtime.state());
-        assertEquals(1, FailingPlugin.starts.get());
-        assertEquals(1, FailingPlugin.stops.get());
-        assertTicksStopAfterRollback();
+            Exception first = assertThrows(Exception.class,
+                    () -> runtime.start(Set.of(), Map.of()));
+            assertEquals("start failed", first.getMessage());
+            assertEquals(PluginState.FAILED, runtime.state());
+            assertEquals(1, FailingPlugin.starts.get());
+            assertEquals(1, FailingPlugin.stops.get());
+            assertTicksStopAfterRollback();
 
-        assertThrows(Exception.class, () -> runtime.start(Set.of(), Map.of()));
-        assertEquals(2, FailingPlugin.starts.get(), "失败后重试应重新加载入口实例");
-        assertEquals(2, FailingPlugin.stops.get());
-        runtime.unload();
+            assertThrows(Exception.class, () -> runtime.start(Set.of(), Map.of()));
+            assertEquals(2, FailingPlugin.starts.get(), "失败后重试应重新加载入口实例");
+            assertEquals(2, FailingPlugin.stops.get());
+            runtime.unload();
+        }
     }
 
     private void assertTicksStopAfterRollback() throws InterruptedException {
@@ -74,7 +79,9 @@ class PluginRuntimeTest {
         @Override
         public void start(PluginContext ctx) throws Exception {
             starts.incrementAndGet();
-            ctx.exec().scheduleAtRate(Duration.ofMillis(1), ticks::incrementAndGet);
+            ctx.exec().scheduleAtFixedRate(
+                    "ticks", Duration.ZERO, Duration.ofMillis(1),
+                    ignored -> ticks.incrementAndGet());
             throw new Exception("start failed");
         }
 

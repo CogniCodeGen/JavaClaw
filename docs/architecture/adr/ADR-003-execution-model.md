@@ -8,3 +8,7 @@
 
 所有后台工作通过 `ManagedTaskExecutor` 登记并返回 `TaskHandle`。关闭作用域时先
 拒绝新任务，再请求取消，最多等待五秒后释放资源。迟到的 UI 结果必须被丢弃。
+
+根级单 daemon 调度器只执行轻量触发。`ProcessRunner` 将短进程正文放进进程配额，
+并用 I/O 虚拟线程并行排空 stdout/stderr；超时、中断和取消均清理完整进程树。
+`HttpGateway` 运行于 I/O 配额，自动重试只允许幂等 HTTP 方法。

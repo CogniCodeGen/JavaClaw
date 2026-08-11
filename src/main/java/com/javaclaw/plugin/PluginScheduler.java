@@ -1,48 +1,41 @@
 package com.javaclaw.plugin;
 
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.execution.TaskScope;
+import com.javaclaw.platform.execution.TaskSpec;
+import com.javaclaw.platform.execution.TriggerHandle;
 import com.javaclaw.plugin.api.PluginException;
-import com.javaclaw.plugin.api.exec.Cancellation;
-import com.javaclaw.plugin.api.exec.LoopBody;
-import com.javaclaw.plugin.api.exec.ManagedTask;
 import com.javaclaw.plugin.api.exec.PluginCallable;
 import com.javaclaw.plugin.api.exec.PluginExecutor;
 import com.javaclaw.plugin.api.exec.PluginTask;
-import com.javaclaw.plugin.api.exec.ServiceHandle;
+import com.javaclaw.plugin.api.exec.TaskContext;
+import com.javaclaw.plugin.api.exec.TaskHandle;
+import com.javaclaw.plugin.api.exec.TaskState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.FutureTask;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * 插件执行引擎 —— {@link PluginExecutor} 的宿主实现，每个插件独占一个实例。
+ * Plugin API 3.0 执行适配器。
  *
- * <p>核心机制：</p>
- * <ul>
- *   <li><b>每插件独占虚拟线程执行器</b>（{@code Executors.newThreadPerTaskExecutor} + 虚拟线程工厂，
- *       线程名 {@code plugin-{id}-vt-N}）：一任务一虚拟线程，海量廉价；停用时 {@code shutdownNow()}
- *       只中断本插件的虚拟线程，不波及宿主与其他插件。</li>
- *   <li><b>ScopedValue 身份绑定</b>：派发每段执行前把插件身份绑入 {@link PluginScope#CURRENT}，
- *       能力实现据此鉴权与审计（见 {@link CapabilityGuard}）。</li>
- *   <li><b>定时触发</b>用单个 daemon 平台线程（{@code plugin-{id}-timer}），到点仅负责把活派发到
- *       虚拟线程执行器，绝不在定时线程上跑插件代码。</li>
- *   <li><b>配额</b>：信号量限制并发任务数，超出自动排队（背压），防插件瞬时提交失控。</li>
- *   <li><b>句柄注册表</b>：所有 {@link ManagedTask}/{@link ServiceHandle} 登记在册，停用时统一取消。</li>
- * </ul>
+ * <p>所有任务正文复用进程级 {@link ManagedTaskExecutor} 的 I/O 虚拟线程池；本类只增加插件身份、
+ * 独立并发配额、统一 API 句柄和卸载边界。延时及固定频率任务复用根级单线程触发器，触发线程
+ * 从不运行插件代码。</p>
  *
- * @author JavaClaw
+ * <p>实例线程安全。{@link #shutdown()} 后拒绝新任务，取消该插件的全部任务并等待作用域回收，
+ * 不影响宿主、工作区或其他插件。</p>
  */
 public final class PluginScheduler implements PluginExecutor {
 
@@ -50,378 +43,363 @@ public final class PluginScheduler implements PluginExecutor {
 
     private final String pluginId;
     private final PluginScope.PluginIdentity identity;
+    private final ManagedTaskExecutor executor;
+    private final TaskScope scope;
+    private final Set<ApiTaskHandle<?>> liveHandles = ConcurrentHashMap.newKeySet();
+    private final AtomicBoolean accepting = new AtomicBoolean(true);
 
-    /** 每插件独占的虚拟线程执行器（同步/异步/后台循环都跑在这里） */
-    private final ExecutorService vexec;
-    /** 单 daemon 平台线程，仅做定时触发，到点把活派发到 vexec */
-    private final ScheduledExecutorService timer;
-    /** 并发配额：超出则任务在虚拟线程内排队等待许可（背压） */
-    private final Semaphore concurrencyGate;
-
-    /** 活跃句柄注册表：停用时统一取消，自然结束的任务会自行移除 */
-    private final Set<Live> liveHandles = ConcurrentHashMap.newKeySet();
-
-    private volatile boolean shutdown = false;
-
-    /**
-     * @param pluginId           插件 id（线程命名 + 日志前缀）
-     * @param identity           插件身份（绑入 ScopedValue 供鉴权）
-     * @param maxConcurrentTasks 并发任务上限（≥1）
-     */
-    PluginScheduler(String pluginId, PluginScope.PluginIdentity identity, int maxConcurrentTasks) {
+    PluginScheduler(String pluginId, PluginScope.PluginIdentity identity,
+                    int maxConcurrentTasks, ManagedTaskExecutor executor) {
+        if (pluginId == null || pluginId.isBlank()) {
+            throw new IllegalArgumentException("插件 id 不能为空");
+        }
         this.pluginId = pluginId;
-        this.identity = identity;
-
-        ThreadFactory vtf = Thread.ofVirtual()
-                .name("plugin-" + pluginId + "-vt-", 0)
-                .inheritInheritableThreadLocals(false)
-                .factory();
-        this.vexec = Executors.newThreadPerTaskExecutor(vtf);
-
-        this.timer = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "plugin-" + pluginId + "-timer");
-            t.setDaemon(true);
-            return t;
-        });
-
-        this.concurrencyGate = new Semaphore(Math.max(1, maxConcurrentTasks));
-        log.info("插件[{}]执行器已创建（并发上限 {}）", pluginId, Math.max(1, maxConcurrentTasks));
-    }
-
-    // ==================== PluginExecutor 实现 ====================
-
-    @Override
-    public ManagedTask submit(PluginTask task) {
-        ensureActive();
-        ManagedTaskImpl handle = new ManagedTaskImpl();
-        handle.onCancel(() -> liveHandles.remove(handle));
-        // 先登记再提交，避免任务先完成、随后才被加入造成幽灵句柄。
-        liveHandles.add(handle);
-        try {
-            Future<?> f = vexec.submit(() -> {
-                try {
-                    runGuarded(task, "异步任务");
-                } finally {
-                    handle.complete();
-                }
-            });
-            handle.bind(f);
-            return handle;
-        } catch (RuntimeException e) {
-            liveHandles.remove(handle);
-            throw e;
-        }
+        this.identity = java.util.Objects.requireNonNull(identity, "identity");
+        this.executor = java.util.Objects.requireNonNull(executor, "executor");
+        this.scope = executor.openScope("plugin-" + pluginId, maxConcurrentTasks);
+        log.info("插件[{}]任务作用域已创建（并发上限 {}）", pluginId, maxConcurrentTasks);
     }
 
     @Override
-    public <T> T call(PluginCallable<T> task) throws Exception {
-        ensureActive();
-        Future<T> f = vexec.submit(() -> {
-            concurrencyGate.acquire();
-            try {
-                // 绑定插件身份后执行，使同步调用内部触发的能力调用也能被鉴权/审计
-                return ScopedValue.where(PluginScope.CURRENT, identity).call(task::call);
-            } finally {
-                concurrencyGate.release();
-            }
+    public TaskHandle<Void> submit(String name, PluginTask task) {
+        java.util.Objects.requireNonNull(task, "task");
+        return submitCallable(name, context -> {
+            task.run(context);
+            return null;
         });
+    }
+
+    @Override
+    public <T> T call(String name, PluginCallable<T> task) throws Exception {
+        java.util.Objects.requireNonNull(task, "task");
+        ApiTaskHandle<T> handle = submitCallable(name, task);
         try {
-            return f.get();
-        } catch (ExecutionException e) {
-            Throwable cause = e.getCause() != null ? e.getCause() : e;
-            log.warn("插件[{}]同步调用失败：{}", pluginId, cause.toString());
-            throw new PluginException.PluginExecException("插件[" + pluginId + "]同步调用失败", cause);
-        } catch (InterruptedException e) {
+            return handle.completion().toCompletableFuture().get();
+        } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
-            f.cancel(true);
-            throw e;
+            handle.cancel();
+            throw interrupted;
+        } catch (CancellationException cancelled) {
+            throw cancelled;
+        } catch (ExecutionException failed) {
+            Throwable cause = unwrap(failed);
+            log.warn("插件[{}]同步调用[{}]失败：{}", pluginId, name, cause.toString());
+            throw new PluginException.PluginExecException(
+                    "插件[" + pluginId + "]同步调用失败: " + name, cause);
         }
     }
 
     @Override
-    public ServiceHandle background(String name, LoopBody loop) {
-        ensureActive();
-        AtomicBoolean cancelled = new AtomicBoolean(false);
-        Cancellation signal = cancelled::get;
-        ServiceHandleImpl handle = new ServiceHandleImpl(cancelled);
-        handle.onCancel(() -> liveHandles.remove(handle));
-        liveHandles.add(handle);
+    public TaskHandle<Void> background(String name, PluginTask task) {
+        return submit(name, task);
+    }
+
+    @Override
+    public TaskHandle<Void> schedule(String name, Duration delay, PluginTask task) {
+        ensureAccepting();
+        java.util.Objects.requireNonNull(task, "task");
+        ApiTaskHandle<Void> handle = register(name);
         try {
-            Future<?> f = vexec.submit(() -> {
-                log.info("插件[{}]后台服务[{}]已启动", pluginId, name);
+            TriggerHandle trigger = executor.scheduleTrigger(delay,
+                    () -> dispatchOneShot(handle, task));
+            handle.bindTrigger(trigger);
+            return handle;
+        } catch (RuntimeException failure) {
+            handle.fail(failure);
+            throw failure;
+        }
+    }
+
+    @Override
+    public TaskHandle<Void> scheduleAtFixedRate(
+            String name, Duration initialDelay, Duration period, PluginTask task) {
+        ensureAccepting();
+        java.util.Objects.requireNonNull(task, "task");
+        ApiTaskHandle<Void> handle = register(name);
+        AtomicBoolean iterationRunning = new AtomicBoolean(false);
+        try {
+            TriggerHandle trigger = executor.scheduleTriggerAtFixedRate(initialDelay, period, () -> {
+                if (!handle.canRun() || !iterationRunning.compareAndSet(false, true)) {
+                    return;
+                }
+                handle.markRunning();
+                com.javaclaw.platform.execution.TaskHandle<Void> delegate;
                 try {
-                    ScopedValue.where(PluginScope.CURRENT, identity).run(() -> {
-                        try {
-                            loop.run(signal);
-                        } catch (InterruptedException ie) {
-                            Thread.currentThread().interrupt();
-                            log.info("插件[{}]后台服务[{}]被中断退出", pluginId, name);
-                        } catch (Exception e) {
-                            log.warn("插件[{}]后台服务[{}]异常退出：{}", pluginId, name, e.toString(), e);
+                    delegate = submitPlatform(handle, task);
+                } catch (RuntimeException failure) {
+                    iterationRunning.set(false);
+                    handle.fail(failure);
+                    return;
+                }
+                delegate.completion().whenComplete((ignored, failure) -> {
+                    handle.unbind(delegate);
+                    iterationRunning.set(false);
+                    if (failure != null && handle.canRun()) {
+                        if (delegate.state()
+                                == com.javaclaw.platform.execution.TaskState.CANCELLED) {
+                            handle.cancelFromHost();
+                        } else {
+                            handle.fail(unwrap(failure));
                         }
+                    }
+                });
+            });
+            handle.bindTrigger(trigger);
+            return handle;
+        } catch (RuntimeException failure) {
+            handle.fail(failure);
+            throw failure;
+        }
+    }
+
+    private <T> ApiTaskHandle<T> submitCallable(String name, PluginCallable<T> task) {
+        ensureAccepting();
+        ApiTaskHandle<T> handle = register(name);
+        try {
+            com.javaclaw.platform.execution.TaskHandle<T> delegate = scope.submit(
+                    TaskSpec.io(platformName(handle.name)), platformContext -> {
+                        handle.markRunning();
+                        TaskContext context = pluginContext(handle, platformContext);
+                        return ScopedValue.where(PluginScope.CURRENT, identity)
+                                .call(() -> task.call(context));
                     });
-                } finally {
-                    liveHandles.remove(handle);
-                    log.info("插件[{}]后台服务[{}]已结束", pluginId, name);
+            handle.bind(delegate);
+            delegate.completion().whenComplete((result, failure) -> {
+                handle.unbind(delegate);
+                if (failure == null) {
+                    handle.succeed(result);
+                } else if (delegate.state()
+                        == com.javaclaw.platform.execution.TaskState.CANCELLED) {
+                    handle.cancelFromHost();
+                } else {
+                    handle.fail(unwrap(failure));
                 }
             });
-            handle.bind(f);
             return handle;
-        } catch (RuntimeException e) {
-            liveHandles.remove(handle);
-            throw e;
+        } catch (RuntimeException failure) {
+            handle.fail(failure);
+            throw failure;
         }
     }
 
-    @Override
-    public ManagedTask schedule(Duration delay, PluginTask task) {
-        ensureActive();
-        ManagedTaskImpl handle = new ManagedTaskImpl();
-        handle.onCancel(() -> liveHandles.remove(handle));
-        liveHandles.add(handle);
+    private void dispatchOneShot(ApiTaskHandle<Void> handle, PluginTask task) {
+        if (!handle.canRun()) {
+            return;
+        }
+        handle.markRunning();
+        com.javaclaw.platform.execution.TaskHandle<Void> delegate;
         try {
-            ScheduledFuture<?> sf = timer.schedule(
-                    () -> dispatchOneShot(handle, task),
-                    Math.max(0, delay.toMillis()), TimeUnit.MILLISECONDS);
-            handle.bind(sf);
-            return handle;
-        } catch (RuntimeException e) {
-            liveHandles.remove(handle);
-            throw e;
+            delegate = submitPlatform(handle, task);
+        } catch (RuntimeException failure) {
+            handle.fail(failure);
+            return;
         }
-    }
-
-    @Override
-    public ManagedTask scheduleAtRate(Duration period, PluginTask task) {
-        ensureActive();
-        ManagedTaskImpl handle = new ManagedTaskImpl();
-        handle.onCancel(() -> liveHandles.remove(handle));
-        long ms = Math.max(1, period.toMillis());
-        liveHandles.add(handle);
-        try {
-            // 周期任务：每次触发派发到虚拟线程执行；句柄保留至显式取消
-            ScheduledFuture<?> sf = timer.scheduleAtFixedRate(
-                    () -> dispatchPeriodic(handle, task),
-                    ms, ms, TimeUnit.MILLISECONDS);
-            handle.bind(sf);
-            return handle;
-        } catch (RuntimeException e) {
-            liveHandles.remove(handle);
-            throw e;
-        }
-    }
-
-    // ==================== 生命周期（宿主调用） ====================
-
-    /** 取消该插件全部活跃句柄（停用回收第 2 步）。 */
-    void cancelAllHandles() {
-        int n = liveHandles.size();
-        for (Live h : liveHandles) {
-            try {
-                h.cancel();
-            } catch (Exception e) {
-                log.debug("插件[{}]取消句柄时忽略异常：{}", pluginId, e.toString());
+        delegate.completion().whenComplete((ignored, failure) -> {
+            handle.unbind(delegate);
+            if (failure == null) {
+                handle.succeed(null);
+            } else if (delegate.state()
+                    == com.javaclaw.platform.execution.TaskState.CANCELLED) {
+                handle.cancelFromHost();
+            } else {
+                handle.fail(unwrap(failure));
             }
+        });
+    }
+
+    private com.javaclaw.platform.execution.TaskHandle<Void> submitPlatform(
+            ApiTaskHandle<?> handle, PluginTask task) {
+        com.javaclaw.platform.execution.TaskHandle<Void> delegate = scope.submit(
+                TaskSpec.io(platformName(handle.name)), platformContext -> {
+                    TaskContext context = pluginContext(handle, platformContext);
+                    ScopedValue.where(PluginScope.CURRENT, identity).call(() -> {
+                        task.run(context);
+                        return null;
+                    });
+                    return null;
+                });
+        handle.bind(delegate);
+        return delegate;
+    }
+
+    private TaskContext pluginContext(
+            ApiTaskHandle<?> handle,
+            com.javaclaw.platform.execution.TaskContext platformContext) {
+        return new TaskContext(handle.id(), () -> handle.isCancellationRequested()
+                || platformContext.cancellation().isCancellationRequested());
+    }
+
+    private <T> ApiTaskHandle<T> register(String name) {
+        String checkedName = requireName(name);
+        ApiTaskHandle<T> handle = new ApiTaskHandle<>(checkedName);
+        liveHandles.add(handle);
+        handle.completion().whenComplete((ignored, failure) -> liveHandles.remove(handle));
+        if (!accepting.get()) {
+            handle.cancelFromHost();
+            throw new RejectedExecutionException("插件[" + pluginId + "]执行器已关闭");
         }
-        liveHandles.clear();
-        if (n > 0) {
-            log.info("插件[{}]已取消 {} 个活跃任务/服务句柄", pluginId, n);
+        return handle;
+    }
+
+    private String platformName(String taskName) {
+        return "plugin-" + pluginId + ":" + taskName;
+    }
+
+    private static String requireName(String name) {
+        if (name == null || name.isBlank()) {
+            throw new IllegalArgumentException("插件任务名称不能为空");
+        }
+        return name.strip();
+    }
+
+    private void ensureAccepting() {
+        if (!accepting.get()) {
+            throw new RejectedExecutionException("插件[" + pluginId + "]执行器已关闭");
         }
     }
 
-    /** 当前仍在宿主注册表中的句柄数，供生命周期诊断与回归测试使用。 */
+    void cancelAllHandles() {
+        for (ApiTaskHandle<?> handle : Set.copyOf(liveHandles)) {
+            handle.cancel();
+        }
+    }
+
     int activeHandleCount() {
         return liveHandles.size();
     }
 
-    /** 关闭执行器（停用回收第 3 步）：取消句柄 → 中断全部虚拟线程 → 关定时线程。 */
     void shutdown() {
-        shutdown = true;
+        if (!accepting.compareAndSet(true, false)) {
+            return;
+        }
         cancelAllHandles();
-        timer.shutdownNow();
-        vexec.shutdownNow();
-        try {
-            if (!vexec.awaitTermination(5, TimeUnit.SECONDS)) {
-                log.warn("插件[{}]虚拟线程未在 5 秒内全部结束（可能有未响应中断的循环）", pluginId);
+        scope.close();
+        liveHandles.clear();
+        log.info("插件[{}]任务作用域已关闭", pluginId);
+    }
+
+    private static Throwable unwrap(Throwable failure) {
+        Throwable current = failure;
+        while ((current instanceof CompletionException || current instanceof ExecutionException)
+                && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
+    }
+
+    private final class ApiTaskHandle<T> implements TaskHandle<T> {
+        private final String id = UUID.randomUUID().toString();
+        private final String name;
+        private final AtomicReference<TaskState> state = new AtomicReference<>(TaskState.QUEUED);
+        private final AtomicBoolean cancellationRequested = new AtomicBoolean(false);
+        private final CompletableFuture<T> completion = new CompletableFuture<>();
+        private final Set<com.javaclaw.platform.execution.TaskHandle<?>> delegates =
+                ConcurrentHashMap.newKeySet();
+        private volatile TriggerHandle trigger;
+
+        private ApiTaskHandle(String name) {
+            this.name = name;
+        }
+
+        @Override
+        public String id() {
+            return id;
+        }
+
+        @Override
+        public TaskState state() {
+            return state.get();
+        }
+
+        @Override
+        public CompletionStage<T> completion() {
+            return completion;
+        }
+
+        private boolean canRun() {
+            return !state.get().isTerminal() && accepting.get();
+        }
+
+        private boolean isCancellationRequested() {
+            return cancellationRequested.get();
+        }
+
+        private void markRunning() {
+            state.compareAndSet(TaskState.QUEUED, TaskState.RUNNING);
+        }
+
+        private void bind(com.javaclaw.platform.execution.TaskHandle<?> delegate) {
+            if (state.get().isTerminal()) {
+                delegate.cancel();
+                return;
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+            delegates.add(delegate);
+            if (state.get().isTerminal() && delegates.remove(delegate)) {
+                delegate.cancel();
+            }
         }
-        log.info("插件[{}]执行器已关闭", pluginId);
-    }
 
-    // ==================== 内部辅助 ====================
-
-    private void ensureActive() {
-        if (shutdown) {
-            throw new IllegalStateException("插件[" + pluginId + "]执行器已关闭，无法再提交任务");
+        private void unbind(com.javaclaw.platform.execution.TaskHandle<?> delegate) {
+            delegates.remove(delegate);
         }
-    }
 
-    /** 取许可 → 绑定身份 → 执行 → 释放许可；异常被吞并记录，绝不外溢拖垮宿主。 */
-    private void runGuarded(PluginTask task, String label) {
-        try {
-            concurrencyGate.acquire();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return;
+        private void bindTrigger(TriggerHandle value) {
+            trigger = value;
+            if (state.get().isTerminal()) {
+                value.cancel();
+            }
         }
-        try {
-            ScopedValue.where(PluginScope.CURRENT, identity).run(() -> {
-                try {
-                    task.run();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    log.debug("插件[{}]{}被中断", pluginId, label);
-                } catch (Exception e) {
-                    log.warn("插件[{}]{}执行异常：{}", pluginId, label, e.toString(), e);
+
+        private void succeed(T value) {
+            if (state.compareAndSet(TaskState.RUNNING, TaskState.SUCCEEDED)) {
+                cancelResources(false);
+                completion.complete(value);
+            }
+        }
+
+        private void fail(Throwable failure) {
+            completeExceptionally(TaskState.FAILED, failure, true);
+        }
+
+        private void cancelFromHost() {
+            cancellationRequested.set(true);
+            completeExceptionally(TaskState.CANCELLED,
+                    new CancellationException("插件任务已由宿主取消: " + name), true);
+        }
+
+        @Override
+        public boolean cancel() {
+            cancellationRequested.set(true);
+            return completeExceptionally(TaskState.CANCELLED,
+                    new CancellationException("插件任务已取消: " + name), true);
+        }
+
+        private boolean completeExceptionally(
+                TaskState terminalState, Throwable failure, boolean interrupt) {
+            while (true) {
+                TaskState current = state.get();
+                if (current.isTerminal()) {
+                    return false;
                 }
-            });
-        } finally {
-            concurrencyGate.release();
-        }
-    }
-
-    private void dispatchOneShot(ManagedTaskImpl handle, PluginTask task) {
-        if (handle.isDone()) {
-            return;
-        }
-        FutureTask<Void> execution = new FutureTask<>(() -> {
-            runGuarded(task, "延时任务");
-            return null;
-        }) {
-            @Override
-            protected void done() {
-                handle.complete();
-            }
-        };
-        dispatch(handle, execution, true);
-    }
-
-    private void dispatchPeriodic(ManagedTaskImpl handle, PluginTask task) {
-        if (handle.isDone()) {
-            return;
-        }
-        FutureTask<Void> execution = new FutureTask<>(() -> {
-            runGuarded(task, "周期任务");
-            return null;
-        }) {
-            @Override
-            protected void done() {
-                handle.unbind(this);
-            }
-        };
-        dispatch(handle, execution, false);
-    }
-
-    private void dispatch(ManagedTaskImpl handle, FutureTask<Void> execution, boolean oneShot) {
-        handle.bind(execution);
-        if (handle.isDone()) {
-            return;
-        }
-        try {
-            vexec.execute(execution);
-        } catch (RuntimeException e) {
-            execution.cancel(true);
-            if (!oneShot) {
-                handle.cancel();
-            }
-            log.debug("插件[{}]定时任务派发失败：{}", pluginId, e.toString());
-        }
-    }
-
-    // ==================== 句柄实现 ====================
-
-    /** 注册表内部统一取消接口（ManagedTask / ServiceHandle 共用） */
-    private interface Live {
-        void cancel();
-    }
-
-    /** {@link ManagedTask} 实现：包裹 Future/ScheduledFuture，对外仅暴露取消与状态查询。 */
-    private static final class ManagedTaskImpl implements ManagedTask, Live {
-        private final Set<Future<?>> futures = ConcurrentHashMap.newKeySet();
-        private volatile Runnable onCancel = () -> {
-        };
-        private final AtomicBoolean done = new AtomicBoolean();
-
-        void onCancel(Runnable action) {
-            this.onCancel = action;
-        }
-
-        void bind(Future<?> f) {
-            if (done.get()) {
-                f.cancel(true);
-                return;
-            }
-            futures.add(f);
-            if (done.get() && futures.remove(f)) {
-                f.cancel(true);
+                if (state.compareAndSet(current, terminalState)) {
+                    cancelResources(interrupt);
+                    completion.completeExceptionally(failure);
+                    return true;
+                }
             }
         }
 
-        void unbind(Future<?> f) {
-            futures.remove(f);
-        }
-
-        void complete() {
-            if (done.compareAndSet(false, true)) {
-                futures.clear();
-                onCancel.run();
+        private void cancelResources(boolean interrupt) {
+            TriggerHandle scheduled = trigger;
+            if (scheduled != null) {
+                scheduled.cancel();
             }
-        }
-
-        @Override
-        public void cancel() {
-            if (!done.compareAndSet(false, true)) {
-                return;
+            for (com.javaclaw.platform.execution.TaskHandle<?> delegate : delegates) {
+                if (interrupt) {
+                    delegate.cancel();
+                }
             }
-            for (Future<?> f : futures) {
-                f.cancel(true);
-            }
-            futures.clear();
-            onCancel.run();
-        }
-
-        @Override
-        public boolean isDone() {
-            return done.get();
-        }
-    }
-
-    /** {@link ServiceHandle} 实现：取消即翻转协作信号 + 中断承载虚拟线程，双保险退出循环。 */
-    private static final class ServiceHandleImpl implements ServiceHandle, Live {
-        private final AtomicBoolean cancelled;
-        private volatile Future<?> future;
-        private volatile Runnable onCancel = () -> {
-        };
-
-        ServiceHandleImpl(AtomicBoolean cancelled) {
-            this.cancelled = cancelled;
-        }
-
-        void onCancel(Runnable action) {
-            this.onCancel = action;
-        }
-
-        void bind(Future<?> f) {
-            this.future = f;
-            if (cancelled.get()) f.cancel(true);
-        }
-
-        @Override
-        public void cancel() {
-            cancelled.set(true);
-            Future<?> f = future;
-            if (f != null) {
-                f.cancel(true);
-            }
-            onCancel.run();
-        }
-
-        @Override
-        public boolean isRunning() {
-            Future<?> f = future;
-            return f != null && !f.isDone();
+            delegates.clear();
         }
     }
 }

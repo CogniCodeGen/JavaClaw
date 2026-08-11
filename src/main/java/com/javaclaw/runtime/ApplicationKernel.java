@@ -13,6 +13,8 @@ import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.diagnostics.TraceRecorder;
 import com.javaclaw.plugin.PluginManager;
 import com.javaclaw.platform.spring.WorkspaceSpringContextFactory;
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.application.tool.ToolInvocationPipeline;
 import com.javaclaw.mcp.McpConfigManager;
 import com.javaclaw.schedule.ScheduleManager;
 import com.javaclaw.site.SiteCredentialManager;
@@ -39,6 +41,8 @@ public final class ApplicationKernel implements AutoCloseable {
     private final PlaywrightBrowserManager browserManager;
     private final UserInteractionPort interactionPort;
     private final RuntimeFactory runtimeFactory;
+    private final ManagedTaskExecutor taskExecutor;
+    private final ToolInvocationPipeline toolPipeline;
     private final AtomicBoolean transitioning = new AtomicBoolean(false);
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
@@ -50,9 +54,13 @@ public final class ApplicationKernel implements AutoCloseable {
                              Runnable openTaskView,
                              Runnable openWorkflowView,
                              Runnable closeWorkflowView,
-                             WorkspaceSpringContextFactory workspaceContexts) {
+                             WorkspaceSpringContextFactory workspaceContexts,
+                             ManagedTaskExecutor taskExecutor,
+                             ToolInvocationPipeline toolPipeline) {
         this.browserManager = Objects.requireNonNull(browserManager, "browserManager");
         this.interactionPort = Objects.requireNonNull(interactionPort, "interactionPort");
+        this.taskExecutor = Objects.requireNonNull(taskExecutor, "taskExecutor");
+        this.toolPipeline = Objects.requireNonNull(toolPipeline, "toolPipeline");
         this.runtimeFactory = new RuntimeFactory(workspaceContexts, browserManager, openTaskView,
                 openWorkflowView, closeWorkflowView, java.util.Set.of());
     }
@@ -61,18 +69,22 @@ public final class ApplicationKernel implements AutoCloseable {
                              UserInteractionPort interactionPort,
                              Runnable openTaskView,
                              Runnable openWorkflowView,
-                             WorkspaceSpringContextFactory workspaceContexts) {
+                             WorkspaceSpringContextFactory workspaceContexts,
+                             ManagedTaskExecutor taskExecutor,
+                             ToolInvocationPipeline toolPipeline) {
         this(browserManager, interactionPort, openTaskView, openWorkflowView, () -> {},
-                workspaceContexts);
+                workspaceContexts, taskExecutor, toolPipeline);
     }
 
     /** 兼容无工作流 UI 的无头/截图驱动。 */
     public ApplicationKernel(PlaywrightBrowserManager browserManager,
                              UserInteractionPort interactionPort,
                              Runnable openTaskView,
-                             WorkspaceSpringContextFactory workspaceContexts) {
+                             WorkspaceSpringContextFactory workspaceContexts,
+                             ManagedTaskExecutor taskExecutor,
+                             ToolInvocationPipeline toolPipeline) {
         this(browserManager, interactionPort, openTaskView, () -> {}, () -> {},
-                workspaceContexts);
+                workspaceContexts, taskExecutor, toolPipeline);
     }
 
     /** 创建首个工作区运行时并装配依赖它的全局子系统。 */
@@ -237,7 +249,8 @@ public final class ApplicationKernel implements AutoCloseable {
 
         if (initial) {
             ScheduleManager.getInstance().init(new ScheduledTaskAgent(runtime));
-            PluginManager.getInstance().init(runtime, interactionPort);
+            PluginManager.getInstance().init(
+                    runtime, interactionPort, taskExecutor, toolPipeline);
             SddTaskManager.getInstance().configure(
                     workspaceRuntime.context().dataRoot(),
                     runtime.getModelFactory(), runtime::buildCapabilityTools,

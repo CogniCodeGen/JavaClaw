@@ -4,14 +4,14 @@ import com.javaclaw.plugin.api.JavaClawPlugin;
 import com.javaclaw.plugin.api.PluginContext;
 import com.javaclaw.plugin.api.PluginTool;
 import com.javaclaw.plugin.api.ToolProvider;
-import com.javaclaw.plugin.api.exec.ServiceHandle;
+import com.javaclaw.plugin.api.exec.TaskHandle;
 
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * P1 示例插件 —— 仅依赖 plugin-api，演示插件如何使用宿主托管能力：
+ * 示例插件 —— 仅依赖 plugin-api，演示插件如何使用宿主托管能力：
  * <ul>
  *   <li>同步调用：{@code ctx.exec().call(...)} 在托管虚拟线程上阻塞取值；</li>
  *   <li>后台监听：{@code ctx.exec().background(...)} 注册一个心跳循环（长活虚拟线程）；</li>
@@ -22,7 +22,7 @@ import java.util.regex.Pattern;
  */
 public class HelloPlugin implements JavaClawPlugin, ToolProvider {
 
-    private ServiceHandle heartbeat;
+    private TaskHandle<Void> heartbeat;
 
     @Override
     public void start(PluginContext ctx) throws Exception {
@@ -33,13 +33,14 @@ public class HelloPlugin implements JavaClawPlugin, ToolProvider {
         log("配置 greeting = " + greeting);
 
         // 1) 同步调用：在宿主托管虚拟线程上执行并阻塞取回结果
-        String calc = ctx.exec().call(() -> "1 + 1 = " + (1 + 1));
+        String calc = ctx.exec().call("startup-calculation",
+                task -> "1 + 1 = " + (1 + 1));
         log("同步调用结果：" + calc);
 
         // 2) 后台监听：注册一个心跳循环，跑在宿主命名的专属虚拟线程上
-        heartbeat = ctx.exec().background("hello-heartbeat", c -> {
+        heartbeat = ctx.exec().background("hello-heartbeat", task -> {
             int n = 0;
-            while (!c.isCancelled()) {
+            while (!task.cancellation().isCancelled()) {
                 n++;
                 log("心跳 #" + n + "（线程：" + Thread.currentThread() + "）");
                 // 3) CHAT 能力：发起一轮对话（无模型/网络时记录异常但不影响心跳）

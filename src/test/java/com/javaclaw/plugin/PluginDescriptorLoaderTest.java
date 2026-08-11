@@ -36,26 +36,19 @@ class PluginDescriptorLoaderTest {
     }
 
     @Test
-    void 缺失或空白apiVersion按旧版处理并被二点零宿主拒绝(@TempDir Path dir) throws Exception {
-        var missing = PluginDescriptorLoader.load(
-                pluginJar(dir, "legacy-missing", null));
-        var blank = PluginDescriptorLoader.load(
-                pluginJar(dir, "legacy-blank", ""));
-
-        assertEquals("1.0", missing.apiVersion());
-        assertEquals("1.0", blank.apiVersion());
-        org.junit.jupiter.api.Assertions.assertFalse(
-                PluginManager.isApiCompatible(missing.apiVersion()));
-        org.junit.jupiter.api.Assertions.assertFalse(
-                PluginManager.isApiCompatible(blank.apiVersion()));
+    void 缺失或空白apiVersion直接拒绝(@TempDir Path dir) throws Exception {
+        assertThrows(IOException.class, () -> PluginDescriptorLoader.load(
+                pluginJar(dir, "legacy-missing", null)));
+        assertThrows(IOException.class, () -> PluginDescriptorLoader.load(
+                pluginJar(dir, "legacy-blank", "")));
     }
 
     @Test
-    void 显式二点零插件保持兼容(@TempDir Path dir) throws Exception {
+    void 显式三点零插件保持兼容(@TempDir Path dir) throws Exception {
         var descriptor = PluginDescriptorLoader.load(
-                pluginJar(dir, "current-plugin", "2.0"));
+                pluginJar(dir, "current-plugin", "3.0"));
 
-        assertEquals("2.0", descriptor.apiVersion());
+        assertEquals("3.0", descriptor.apiVersion());
         org.junit.jupiter.api.Assertions.assertTrue(
                 PluginManager.isApiCompatible(descriptor.apiVersion()));
     }
@@ -80,7 +73,7 @@ class PluginDescriptorLoaderTest {
     }
 
     private static Path pluginJar(Path dir, String id) throws Exception {
-        return pluginJar(dir, id, "1.0");
+        return pluginJar(dir, id, "3.0");
     }
 
     private static Path pluginJar(Path dir, String id, String apiVersion) throws Exception {

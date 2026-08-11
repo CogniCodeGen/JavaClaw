@@ -6,6 +6,12 @@ import com.javaclaw.platform.data.SchemaInitializer;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fx.FxDispatcher;
+import com.javaclaw.platform.http.HttpGateway;
+import com.javaclaw.platform.json.JsonCodec;
+import com.javaclaw.platform.process.ProcessRunner;
+import com.javaclaw.platform.storage.AtomicContentStore;
+import com.javaclaw.platform.dialog.DialogService;
+import com.javaclaw.application.tool.ToolInvocationPipeline;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -35,6 +41,12 @@ class RootApplicationContextTest {
             assertNotNull(context.getBean(ManagedTaskExecutor.class));
             assertNotNull(context.getBean(FxDispatcher.class));
             assertNotNull(context.getBean(SpringFxmlLoader.class));
+            assertNotNull(context.getBean(ProcessRunner.class));
+            assertNotNull(context.getBean(HttpGateway.class));
+            assertNotNull(context.getBean(JsonCodec.class));
+            assertNotNull(context.getBean(AtomicContentStore.class));
+            assertNotNull(context.getBean(DialogService.class));
+            assertNotNull(context.getBean(ToolInvocationPipeline.class));
             assertNotNull(context.getBean(WorkspaceSpringContextFactory.class));
 
             SchemaInitializer initializer = context.getBean(SchemaInitializer.class);

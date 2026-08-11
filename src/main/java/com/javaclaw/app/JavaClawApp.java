@@ -116,7 +116,8 @@ public class JavaClawApp extends Application {
             // 0.5 注入 UI 交互端口（让 ToolConfirmationManager 等领域层能请求确认/通知，
             //     而不直接依赖 JavaFX）。未来接入 Web 前端时替换成对应的 Port 实现即可。
             log.info("正在装配 UI 交互端口（JavaFX）...");
-            JfxUserInteractionPort interactionPort = new JfxUserInteractionPort();
+            JfxUserInteractionPort interactionPort =
+                    springContext.getBean(JfxUserInteractionPort.class);
             ToolConfirmationManager.setPort(interactionPort);
 
             // 1. 创建 Playwright 浏览器管理器（懒加载，首次使用浏览器工具时才启动）
@@ -134,7 +135,9 @@ public class JavaClawApp extends Application {
                     () -> new SddTaskView(primaryStage).show(),
                     this::openWorkflowCenter,
                     this::closeWorkflowCenter,
-                    springContext.getBean(WorkspaceSpringContextFactory.class));
+                    springContext.getBean(WorkspaceSpringContextFactory.class),
+                    springContext.getBean(com.javaclaw.platform.execution.ManagedTaskExecutor.class),
+                    springContext.getBean(com.javaclaw.application.tool.ToolInvocationPipeline.class));
             applicationKernel.initialize();
 
             // 4. 构建聊天界面

@@ -9,6 +9,7 @@ import com.javaclaw.api.interaction.SecretRequest;
 import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.app.UIHelper;
+import com.javaclaw.platform.fx.FxDispatcher;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.control.Alert;
@@ -33,7 +34,7 @@ import java.util.function.Consumer;
 /**
  * {@link UserInteractionPort} 的 JavaFX 实现。
  *
- * <p>所有弹窗都通过 {@link Platform#runLater} 切换到 JavaFX Application Thread；
+ * <p>所有弹窗都通过 {@link FxDispatcher} 切换到 JavaFX Application Thread；
  * 调用线程阻塞等待 {@link CompletableFuture} 直到用户响应或超时。</p>
  *
  * <p>非阻塞通知的最终渲染由外部注入的 {@link #setToastHandler(Consumer) toastHandler}
@@ -42,6 +43,11 @@ import java.util.function.Consumer;
 public final class JfxUserInteractionPort implements UserInteractionPort {
 
     private static final Logger log = LoggerFactory.getLogger(JfxUserInteractionPort.class);
+    private final FxDispatcher fx;
+
+    public JfxUserInteractionPort(FxDispatcher fx) {
+        this.fx = java.util.Objects.requireNonNull(fx, "fx");
+    }
 
     /** Toast 的 UI 层渲染器；未设置时 notify 降级为日志输出 */
     private volatile Consumer<String> toastHandler;
@@ -78,7 +84,7 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
     public String choose(ChoiceRequest request) {
         if (request == null || request.options().isEmpty()) return null;
         CompletableFuture<String> future = new CompletableFuture<>();
-        Platform.runLater(() -> {
+        fx.dispatch(() -> {
             try {
                 ChoiceOption initial = request.options().getFirst();
                 ChoiceDialog<ChoiceOption> dialog =
@@ -110,7 +116,7 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
     public char[] requestSecret(SecretRequest request) {
         if (request == null) return null;
         CompletableFuture<char[]> future = new CompletableFuture<>();
-        Platform.runLater(() -> {
+        fx.dispatch(() -> {
             PasswordField input = new PasswordField();
             try {
                 Dialog<char[]> dialog = new Dialog<>();
@@ -155,7 +161,7 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
         String text = "[" + request.title() + "] " + request.message();
         Consumer<String> handler = toastHandler;
         if (handler != null) {
-            Platform.runLater(() -> handler.accept(text));
+            fx.dispatch(() -> handler.accept(text));
         } else {
             log.info("工具通知（无 Toast 处理器）：{}", text);
         }
@@ -169,7 +175,7 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
             log.warn("预览图片失败：文件不存在 {}", imagePath);
             return;
         }
-        Platform.runLater(() -> {
+        fx.dispatch(() -> {
             try {
                 com.javaclaw.chat.ImageViewerDialog.show(null, file);
             } catch (Exception e) {
@@ -204,7 +210,7 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
         // 故非托管场景只给「同意 / 拒绝」两个按钮，避免误导。
         boolean managed = req.managedTask();
 
-        Platform.runLater(() -> {
+        fx.dispatch(() -> {
             try {
                 Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
                 alert.setTitle("操作确认");
@@ -243,7 +249,7 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
         String keyword = req.keyword();
         boolean managed = req.managedTask();
 
-        Platform.runLater(() -> {
+        fx.dispatch(() -> {
             try {
                 Dialog<ConfirmDecision> dialog = new Dialog<>();
                 dialog.setTitle("二次确认（不可逆操作）");

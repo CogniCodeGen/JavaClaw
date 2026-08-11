@@ -8,7 +8,7 @@ import com.javaclaw.plugin.api.PluginSkill;
 import com.javaclaw.plugin.api.PluginTool;
 import com.javaclaw.plugin.api.SkillProvider;
 import com.javaclaw.plugin.api.ToolProvider;
-import com.javaclaw.plugin.api.exec.ServiceHandle;
+import com.javaclaw.plugin.api.exec.TaskHandle;
 
 import java.util.ArrayList;
 import java.util.Deque;
@@ -65,7 +65,7 @@ public class FeishuPlugin implements JavaClawPlugin, SkillProvider, ToolProvider
     private PluginContext ctx;
     private com.lark.oapi.Client apiClient;        // OpenAPI 客户端(发消息，自动管 token)
     private com.lark.oapi.ws.Client wsClient;      // 长连接客户端(收消息)
-    private ServiceHandle wsHandle;
+    private TaskHandle<Void> wsHandle;
 
     @Override
     public void start(PluginContext ctx) throws Exception {
@@ -102,7 +102,7 @@ public class FeishuPlugin implements JavaClawPlugin, SkillProvider, ToolProvider
                 .build();
 
         // 长连接跑在宿主托管的虚拟线程上(阻塞 I/O 不占用平台载体线程)
-        this.wsHandle = ctx.exec().background("feishu-ws", c -> {
+        this.wsHandle = ctx.exec().background("feishu-ws", task -> {
             log("飞书长连接启动中...");
             wsClient.start();
             log("飞书长连接已结束");
@@ -129,7 +129,7 @@ public class FeishuPlugin implements JavaClawPlugin, SkillProvider, ToolProvider
         // 记入消息历史（供 feishu_messages 工具查看）
         recordMessage(event, chatId, text);
         // 异步处理：丢到宿主托管虚拟线程，避免阻塞长连接接收线程；CHAT 调用在此线程的身份作用域内
-        ctx.exec().submit(() -> {
+        ctx.exec().submit("reply-message", task -> {
             replyText(chatId, "✅ 收到，正在思考…");
             String answer = ctx.chat().ask(text);
             replyText(chatId, (answer == null || answer.isBlank()) ? "（无输出）" : answer);

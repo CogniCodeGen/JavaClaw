@@ -16,6 +16,8 @@ import com.javaclaw.plugin.capability.ChatAccessImpl;
 import com.javaclaw.plugin.capability.MemoryAccessImpl;
 import com.javaclaw.plugin.capability.ScheduleAccessImpl;
 import com.javaclaw.plugin.capability.StorageAccessImpl;
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.skill.SkillManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,6 +31,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Stream;
 
 /**
@@ -54,6 +60,7 @@ final class PluginRuntime {
     private final Path jarPath;
     private final AgentRuntime agentRuntime;
     private final ClassLoader appClassLoader;
+    private final ManagedTaskExecutor taskExecutor;
     /** 工作区数据根（用于 STORAGE 能力的插件数据目录） */
     private final Path dataRoot;
 
@@ -75,12 +82,13 @@ final class PluginRuntime {
     private final List<com.javaclaw.plugin.api.PluginSkill> providedSkills = new ArrayList<>();
 
     PluginRuntime(PluginDescriptor descriptor, Path jarPath, AgentRuntime agentRuntime,
-                  ClassLoader appClassLoader, Path dataRoot) {
+                  ClassLoader appClassLoader, Path dataRoot, ManagedTaskExecutor taskExecutor) {
         this.descriptor = descriptor;
         this.jarPath = jarPath;
         this.agentRuntime = agentRuntime;
         this.appClassLoader = appClassLoader;
         this.dataRoot = dataRoot;
+        this.taskExecutor = java.util.Objects.requireNonNull(taskExecutor, "taskExecutor");
     }
 
     // ==================== 生命周期 ====================
@@ -132,7 +140,8 @@ final class PluginRuntime {
         try {
             this.grantedCapabilities = Set.copyOf(granted);
             this.identity = new PluginScope.PluginIdentity(descriptor.id(), grantedCapabilities);
-            this.scheduler = new PluginScheduler(descriptor.id(), identity, MAX_CONCURRENT_TASKS);
+            this.scheduler = new PluginScheduler(
+                    descriptor.id(), identity, MAX_CONCURRENT_TASKS, taskExecutor);
 
             // 仅装配已授权能力的句柄；未授权能力在网关里为 null → 调用即抛未授权
             ChatAccess chat = null;
@@ -225,7 +234,8 @@ final class PluginRuntime {
             throw new IllegalArgumentException("插件[" + descriptor.id() + "]无工具：" + toolName);
         }
         // scheduler.call 内部已绑定 ScopedValue 身份并跑在托管虚拟线程上
-        return scheduler.call(() -> tool.handler().call(argumentsJson));
+        return scheduler.call("tool-" + toolName,
+                ignored -> tool.handler().call(argumentsJson));
     }
 
     /** 本插件当前贡献的工具快照（停用后为空）。 */
@@ -297,23 +307,30 @@ final class PluginRuntime {
         if (instance == null) {
             return;
         }
-        Thread t = new Thread(() -> {
-            try {
-                ScopedValue.where(PluginScope.CURRENT, identity).run(instance::stop);
-            } catch (Throwable e) {
-                log.warn("插件[{}]stop() 抛异常（忽略，继续回收）：{}", descriptor.id(), e.toString(), e);
-            }
-        }, "plugin-" + descriptor.id() + "-stop");
-        t.setDaemon(true);
-        t.start();
+        JavaClawPlugin stopping = instance;
+        PluginScope.PluginIdentity stoppingIdentity = identity;
+        var handle = taskExecutor.submit(
+                TaskSpec.io("plugin-" + descriptor.id() + "-stop")
+                        .withTimeout(java.time.Duration.ofMillis(STOP_TIMEOUT_MS)),
+                ignored -> ScopedValue.where(PluginScope.CURRENT, stoppingIdentity).call(() -> {
+                    stopping.stop();
+                    return null;
+                }));
         try {
-            t.join(STOP_TIMEOUT_MS);
-        } catch (InterruptedException e) {
+            handle.completion().get(STOP_TIMEOUT_MS + 1_000, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
-        }
-        if (t.isAlive()) {
-            log.warn("插件[{}]stop() 超时（>{}ms），继续强制回收资源", descriptor.id(), STOP_TIMEOUT_MS);
-            t.interrupt();
+            handle.cancel();
+        } catch (TimeoutException timeout) {
+            handle.cancel();
+            log.warn("插件[{}]stop() 超时（>{}ms），继续强制回收资源",
+                    descriptor.id(), STOP_TIMEOUT_MS);
+        } catch (CancellationException cancelled) {
+            log.warn("插件[{}]stop() 被取消，继续回收资源", descriptor.id());
+        } catch (ExecutionException failed) {
+            Throwable cause = failed.getCause() == null ? failed : failed.getCause();
+            log.warn("插件[{}]stop() 抛异常（忽略，继续回收）：{}",
+                    descriptor.id(), cause.toString(), cause);
         }
     }
 

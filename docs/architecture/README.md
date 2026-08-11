@@ -14,3 +14,8 @@ ApplicationContext 或全局 `getBean()`。
 - [ADR-002：JavaFX FXML MVC](adr/ADR-002-fxml-mvc.md)
 - [ADR-003：执行与取消模型](adr/ADR-003-execution-model.md)
 - [ADR-004：3.0 数据格式](adr/ADR-004-data-format-v3.md)
+
+## 平台契约
+
+- [Plugin API 3.0](plugin-api-3.md)
+- [FXML MVC 约定](fxml-mvc.md)

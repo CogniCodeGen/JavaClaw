@@ -15,6 +15,12 @@ import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.api.conversation.ConversationRequest;
+import com.javaclaw.application.turn.TurnPipeline;
+import com.javaclaw.application.turn.TurnStage;
+import com.javaclaw.platform.execution.ManagedTask;
+import com.javaclaw.platform.execution.TaskHandle;
+import com.javaclaw.platform.execution.TaskScope;
+import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.chat.ChatMessage;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.memory.correction.CorrectionGuard;
@@ -23,6 +29,7 @@ import com.javaclaw.prompt.AgentPrompts;
 import com.javaclaw.skill.SkillManager;
 import com.javaclaw.util.AtomicDisposable;
 import io.agentscope.core.ReActAgent;
+import io.agentscope.core.agent.Event;
 import io.agentscope.core.agent.StreamOptions;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.session.InMemorySession;
@@ -32,7 +39,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.Disposable;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
+import reactor.core.publisher.Flux;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -68,6 +75,7 @@ public class ChatService {
     /** 共享基础设施容器 */
     private final AgentRuntime runtime;
     private final com.javaclaw.workflow.service.WorkflowService workflowService;
+    private final TaskScope taskScope;
     private final com.javaclaw.api.conversation.SingleConversationRun conversationRun =
             new com.javaclaw.api.conversation.SingleConversationRun();
 
@@ -141,13 +149,12 @@ public class ChatService {
      *
      * @param runtime 共享基础设施
      */
-    public ChatService(AgentRuntime runtime) {
-        this(runtime, null);
-    }
-
-    public ChatService(AgentRuntime runtime, com.javaclaw.workflow.service.WorkflowService workflowService) {
+    public ChatService(AgentRuntime runtime,
+                       com.javaclaw.workflow.service.WorkflowService workflowService,
+                       TaskScope taskScope) {
         this.runtime = runtime;
         this.workflowService = workflowService;
+        this.taskScope = java.util.Objects.requireNonNull(taskScope, "taskScope");
         if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
         AgentConfig config = AgentConfig.getInstance();
         log.info("========== 初始化 ChatService 普通模式 ==========");
@@ -506,149 +513,18 @@ public class ChatService {
                     log.info("[澄清] 已 dispose 编排器订阅");
                 });
 
-        // 管道顺序：视觉预处理 → 意图识别（工具路由）→ 目标分解 → 知识库检索 → 上下文整理 → 编排执行
-        // 每个阶段都通过 ConversationEvent.Progress 向 UI 实时报告 RUNNING / DONE / SKIPPED 状态
-        final AtomicReference<List<File>> effectiveAttachments = new AtomicReference<>(attachments);
+        ChatTurnState turnState = new ChatTurnState(
+                userInput, initialProcessedInput, attachments, visionPrepared);
+        TurnPipeline<ChatTurnState> turnPipeline = createTurnPipeline(
+                callbacks, previousAssistantReply, correctionContextRef);
         // doFinally 只清「本轮自己」的订阅引用：上一轮订阅被 set() 顶替时其取消信号会
         // 同步触发 doFinally，无条件 clear() 会抹掉刚 set 进去的新订阅，令停止按钮的
         // dispose 扑空、在途流杀不掉（与 AgentScopeLoopRunner 的 clearIf 同一模式）
         final AtomicReference<Disposable> selfSub = new AtomicReference<>();
-        Disposable sub = Mono.fromCallable(() -> {
-                    String processedInput = initialProcessedInput;
-
-                    // ── 阶段 0：显式纠错（同步 durable-first，先于本轮记忆召回） ──
-                    CorrectionTurnContext correctionContext =
-                            memoryService.prepareCorrectionTurn(userInput, previousAssistantReply);
-                    correctionContextRef.set(correctionContext);
-                    if (correctionContext.newlyApplied() != null) {
-                        emitProgress(callbacks, "correction", "纠错记忆",
-                                ConversationEvent.Progress.Status.DONE,
-                                correctionContext.newlyApplied().status
-                                        == com.javaclaw.memory.model.CorrectionRecord.Status.ACTIVE
-                                        ? "已更新长期事实" : "已标记争议，等待核验");
-                        callbacks.onEvent(new ConversationEvent.Hint(
-                                "[记忆] 已记录用户显式纠错，本轮优先采用纠错上下文"));
-                    } else {
-                        emitProgress(callbacks, "correction", "纠错记忆",
-                                ConversationEvent.Progress.Status.SKIPPED, "未检测到显式纠错");
-                    }
-
-                    // ── 阶段 1：视觉预处理（仅当含图片附件） ──
-                    if (!visionPrepared && runtime.hasImageAttachment(attachments)) {
-                        emitProgress(callbacks, "vision", "视觉预处理",
-                                ConversationEvent.Progress.Status.RUNNING, "正在分析图片内容…");
-                        callbacks.onEvent(new ConversationEvent.Hint("[视觉] 正在分析图片内容..."));
-                        String visionDesc = runtime.getVisionPreprocessor()
-                                .describe(userInput, attachments);
-                        if (visionDesc != null) {
-                            processedInput = "[附件图片分析]\n" + visionDesc
-                                    + "\n\n[用户提问]\n" + userInput;
-                            List<File> remaining = new ArrayList<>();
-                            for (File f : attachments) {
-                                if (!ChatMessage.isImageFile(f)) remaining.add(f);
-                            }
-                            effectiveAttachments.set(remaining);
-                            log.info("视觉预处理成功，剩余附件: {}", remaining.size());
-                            emitProgress(callbacks, "vision", "视觉预处理",
-                                    ConversationEvent.Progress.Status.DONE,
-                                    summarize(visionDesc, 60));
-                        } else {
-                            log.info("视觉预处理未产生文本（失败/超时），保留原附件直传模型");
-                            emitProgress(callbacks, "vision", "视觉预处理",
-                                    ConversationEvent.Progress.Status.SKIPPED,
-                                    "未生成描述，原图直传");
-                        }
-                    } else if (!visionPrepared) {
-                        emitProgress(callbacks, "vision", "视觉预处理",
-                                ConversationEvent.Progress.Status.SKIPPED, "无图片附件");
-                    }
-
-                    // ── 阶段 2：意图识别（工具路由） ──
-                    emitProgress(callbacks, "intent", "意图识别",
-                            ConversationEvent.Progress.Status.RUNNING, "分析所需工具…");
-                    RoutingResult routing = routeTools(processedInput);
-                    if (toolRouter == null) {
-                        emitProgress(callbacks, "intent", "意图识别",
-                                ConversationEvent.Progress.Status.SKIPPED, "工具路由已禁用");
-                    } else if (routing.isFallback()) {
-                        emitProgress(callbacks, "intent", "意图识别",
-                                ConversationEvent.Progress.Status.DONE, "降级为全量工具");
-                    } else {
-                        emitProgress(callbacks, "intent", "意图识别",
-                                ConversationEvent.Progress.Status.DONE,
-                                describeRouting(routing));
-                    }
-
-                    // ── 阶段 3：目标分解（GoalManager） ──
-                    GoalDecomposition goals;
-                    if (goalManager != null) {
-                        emitProgress(callbacks, "goal", "目标分解",
-                                ConversationEvent.Progress.Status.RUNNING, "拆解用户目标…");
-                        goals = goalManager.decompose(processedInput);
-                        if (goals != null && goals.hasGoals()) {
-                            emitProgress(callbacks, "goal", "目标分解",
-                                    ConversationEvent.Progress.Status.DONE,
-                                    "拆解为 " + goals.getGoals().size() + " 个目标");
-                        } else {
-                            emitProgress(callbacks, "goal", "目标分解",
-                                    ConversationEvent.Progress.Status.SKIPPED, "无需拆解");
-                        }
-                    } else {
-                        goals = null;
-                        emitProgress(callbacks, "goal", "目标分解",
-                                ConversationEvent.Progress.Status.SKIPPED, "GEPA 目标分解未启用");
-                    }
-                    rebuildOrchestratorForTurn(routing, goals);
-
-                    // ── 阶段 4：知识库检索（RAG） ──
-                    emitProgress(callbacks, "rag", "知识库检索",
-                            ConversationEvent.Progress.Status.RUNNING, "检索相关资料…");
-                    int beforeLen = processedInput.length();
-                    String enrichedInput = runtime.enrichWithKnowledge(processedInput);
-                    if (enrichedInput.length() > beforeLen) {
-                        emitProgress(callbacks, "rag", "知识库检索",
-                                ConversationEvent.Progress.Status.DONE,
-                                "已注入 " + (enrichedInput.length() - beforeLen) + " 字符上下文");
-                    } else {
-                        emitProgress(callbacks, "rag", "知识库检索",
-                                ConversationEvent.Progress.Status.SKIPPED,
-                                "未启用或未选中文档");
-                    }
-                    return enrichedInput;
-                })
-                .subscribeOn(Schedulers.boundedElastic())
-                .flatMapMany(enrichedInput -> {
-                    // ── 阶段 5：上下文整理（必要时压缩） ──
-                    emitProgress(callbacks, "memory", "上下文整理",
-                            ConversationEvent.Progress.Status.RUNNING, "检查上下文预算…");
-                    boolean fit = runtime.getMemoryManager().ensureContextBudget(enrichedInput.length(), 4096);
-                    if (!fit) {
-                        log.warn("上下文窗口接近上限，已触发主动压缩");
-                        callbacks.onEvent(new ConversationEvent.Hint(
-                                "[提示] 会话历史较长，已自动压缩上下文以保证回复质量"));
-                        emitProgress(callbacks, "memory", "上下文整理",
-                                ConversationEvent.Progress.Status.DONE, "已自动压缩历史");
-                    } else {
-                        emitProgress(callbacks, "memory", "上下文整理",
-                                ConversationEvent.Progress.Status.DONE, "无需压缩");
-                    }
-
-                    // ── 阶段 6：内容构建 + 编排执行 ──
-                    emitProgress(callbacks, "build", "内容构建",
-                            ConversationEvent.Progress.Status.RUNNING, "组装多模态消息…");
-                    Msg userMsg = runtime.buildUserMsg(enrichedInput, effectiveAttachments.get());
-                    emitProgress(callbacks, "build", "内容构建",
-                            ConversationEvent.Progress.Status.DONE, null);
-
-                    log.info("正在调用编排智能体...");
-                    emitProgress(callbacks, "orchestrate", "编排执行",
-                            ConversationEvent.Progress.Status.RUNNING, "调用主智能体…");
-                    ReActAgent snapshot;
-                    synchronized (orchestratorLock) {
-                        snapshot = orchestrator;
-                    }
-                    return snapshot.stream(userMsg, streamOptions);
-                })
+        Disposable sub = managedMono(
+                        TaskSpec.io("chat-turn-prepare-" + correctionSessionKey),
+                        context -> turnPipeline.execute(turnState))
+                .flatMapMany(ChatTurnState::stream)
                 .doFinally(signal -> {
                     activeSubscription.clearIf(selfSub.get());
                     clarifyTools.unbind(clarifyBindHandle);
@@ -698,22 +574,208 @@ public class ChatService {
                                                     violation.wrongClaim());
                                         });
                             }
-                            // 记忆：轮后异步落情景 + 向量去重蒸馏事实（替代旧 distill/consolidate 批处理）
-                            memoryService.rememberTurn("chat", userInput, memoryReply, null);
-                            // 技能蒸馏（程序性记忆）：达门槛时从执行轨迹蒸馏可沉淀的工作流经验
-                            if (!com.javaclaw.util.SensitiveDataRedactor.containsLikelyCredential(userInput)
-                                    && !com.javaclaw.util.SensitiveDataRedactor.containsLikelyCredential(memoryReply)) {
-                                skillCurator.distillFromChatTurn(userInput, memoryReply,
-                                                executionMonitor.getTraces(), executionMonitor.successRate())
-                                        .subscribe();
-                            } else {
-                                log.warn("本轮包含疑似凭据，已跳过技能蒸馏");
-                            }
+                            completeTurnPersistence(userInput, memoryReply);
                             callbacks.onTerminal(ConversationOutcome.completed());
                         }
                 );
         selfSub.set(sub);
         activeSubscription.set(sub);
+    }
+
+    private <T> Mono<T> managedMono(TaskSpec spec, ManagedTask<T> task) {
+        return Mono.create(sink -> {
+            TaskHandle<T> handle;
+            try {
+                handle = taskScope.submit(spec, task);
+            } catch (Throwable failure) {
+                sink.error(failure);
+                return;
+            }
+            sink.onCancel(handle::cancel);
+            handle.completion().whenComplete((value, failure) -> {
+                if (failure == null) {
+                    sink.success(value);
+                } else {
+                    sink.error(unwrapCompletionFailure(failure));
+                }
+            });
+        });
+    }
+
+    private static Throwable unwrapCompletionFailure(Throwable failure) {
+        Throwable current = failure;
+        while ((current instanceof java.util.concurrent.CompletionException
+                || current instanceof java.util.concurrent.ExecutionException)
+                && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
+    }
+
+    private TurnPipeline<ChatTurnState> createTurnPipeline(
+            ConversationCallbacks callbacks,
+            String previousAssistantReply,
+            AtomicReference<CorrectionTurnContext> correctionContextRef) {
+        return new TurnPipeline<>(List.of(
+                new TurnStage<>("correction", state -> prepareCorrection(
+                        state, callbacks, previousAssistantReply, correctionContextRef)),
+                new TurnStage<>("vision", state -> prepareVision(state, callbacks)),
+                new TurnStage<>("routing", state -> prepareRouting(state, callbacks)),
+                new TurnStage<>("goal", state -> prepareGoals(state, callbacks)),
+                new TurnStage<>("rag", state -> enrichKnowledge(state, callbacks)),
+                new TurnStage<>("context", state -> prepareContextBudget(state, callbacks)),
+                new TurnStage<>("build", state -> buildTurnMessage(state, callbacks)),
+                new TurnStage<>("stream", state -> beginTurnStream(state, callbacks))));
+    }
+
+    private void prepareCorrection(
+            ChatTurnState state,
+            ConversationCallbacks callbacks,
+            String previousAssistantReply,
+            AtomicReference<CorrectionTurnContext> correctionContextRef) {
+        CorrectionTurnContext correction = memoryService.prepareCorrectionTurn(
+                state.userInput, previousAssistantReply);
+        correctionContextRef.set(correction);
+        if (correction.newlyApplied() == null) {
+            emitProgress(callbacks, "correction", "纠错记忆",
+                    ConversationEvent.Progress.Status.SKIPPED, "未检测到显式纠错");
+            return;
+        }
+        String detail = correction.newlyApplied().status
+                == com.javaclaw.memory.model.CorrectionRecord.Status.ACTIVE
+                ? "已更新长期事实" : "已标记争议，等待核验";
+        emitProgress(callbacks, "correction", "纠错记忆",
+                ConversationEvent.Progress.Status.DONE, detail);
+        callbacks.onEvent(new ConversationEvent.Hint(
+                "[记忆] 已记录用户显式纠错，本轮优先采用纠错上下文"));
+    }
+
+    private void prepareVision(ChatTurnState state, ConversationCallbacks callbacks) {
+        if (state.visionPrepared) {
+            return;
+        }
+        if (!runtime.hasImageAttachment(state.attachments)) {
+            emitProgress(callbacks, "vision", "视觉预处理",
+                    ConversationEvent.Progress.Status.SKIPPED, "无图片附件");
+            return;
+        }
+        emitProgress(callbacks, "vision", "视觉预处理",
+                ConversationEvent.Progress.Status.RUNNING, "正在分析图片内容…");
+        callbacks.onEvent(new ConversationEvent.Hint("[视觉] 正在分析图片内容..."));
+        String description = runtime.getVisionPreprocessor()
+                .describe(state.userInput, state.attachments);
+        if (description == null) {
+            emitProgress(callbacks, "vision", "视觉预处理",
+                    ConversationEvent.Progress.Status.SKIPPED, "未生成描述，原图直传");
+            return;
+        }
+        state.processedInput = "[附件图片分析]\n" + description
+                + "\n\n[用户提问]\n" + state.userInput;
+        state.attachments = state.attachments.stream()
+                .filter(file -> !ChatMessage.isImageFile(file)).toList();
+        emitProgress(callbacks, "vision", "视觉预处理",
+                ConversationEvent.Progress.Status.DONE, summarize(description, 60));
+    }
+
+    private void prepareRouting(ChatTurnState state, ConversationCallbacks callbacks) {
+        emitProgress(callbacks, "intent", "意图识别",
+                ConversationEvent.Progress.Status.RUNNING, "分析所需工具…");
+        state.routing = routeTools(state.processedInput);
+        if (toolRouter == null) {
+            emitProgress(callbacks, "intent", "意图识别",
+                    ConversationEvent.Progress.Status.SKIPPED, "工具路由已禁用");
+        } else if (state.routing.isFallback()) {
+            emitProgress(callbacks, "intent", "意图识别",
+                    ConversationEvent.Progress.Status.DONE, "降级为全量工具");
+        } else {
+            emitProgress(callbacks, "intent", "意图识别",
+                    ConversationEvent.Progress.Status.DONE, describeRouting(state.routing));
+        }
+    }
+
+    private void prepareGoals(ChatTurnState state, ConversationCallbacks callbacks) {
+        if (goalManager == null) {
+            emitProgress(callbacks, "goal", "目标分解",
+                    ConversationEvent.Progress.Status.SKIPPED, "GEPA 目标分解未启用");
+        } else {
+            emitProgress(callbacks, "goal", "目标分解",
+                    ConversationEvent.Progress.Status.RUNNING, "拆解用户目标…");
+            state.goals = goalManager.decompose(state.processedInput);
+            boolean hasGoals = state.goals != null && state.goals.hasGoals();
+            emitProgress(callbacks, "goal", "目标分解",
+                    hasGoals ? ConversationEvent.Progress.Status.DONE
+                            : ConversationEvent.Progress.Status.SKIPPED,
+                    hasGoals ? "拆解为 " + state.goals.getGoals().size() + " 个目标" : "无需拆解");
+        }
+        rebuildOrchestratorForTurn(state.routing, state.goals);
+    }
+
+    private void enrichKnowledge(ChatTurnState state, ConversationCallbacks callbacks) {
+        emitProgress(callbacks, "rag", "知识库检索",
+                ConversationEvent.Progress.Status.RUNNING, "检索相关资料…");
+        int originalLength = state.processedInput.length();
+        state.processedInput = runtime.enrichWithKnowledge(state.processedInput);
+        int added = state.processedInput.length() - originalLength;
+        emitProgress(callbacks, "rag", "知识库检索",
+                added > 0 ? ConversationEvent.Progress.Status.DONE
+                        : ConversationEvent.Progress.Status.SKIPPED,
+                added > 0 ? "已注入 " + added + " 字符上下文" : "未启用或未选中文档");
+    }
+
+    private void prepareContextBudget(ChatTurnState state, ConversationCallbacks callbacks) {
+        emitProgress(callbacks, "memory", "上下文整理",
+                ConversationEvent.Progress.Status.RUNNING, "检查上下文预算…");
+        boolean fits = runtime.getMemoryManager()
+                .ensureContextBudget(state.processedInput.length(), 4096);
+        if (!fits) {
+            callbacks.onEvent(new ConversationEvent.Hint(
+                    "[提示] 会话历史较长，已自动压缩上下文以保证回复质量"));
+        }
+        emitProgress(callbacks, "memory", "上下文整理",
+                ConversationEvent.Progress.Status.DONE, fits ? "无需压缩" : "已自动压缩历史");
+    }
+
+    private void buildTurnMessage(ChatTurnState state, ConversationCallbacks callbacks) {
+        emitProgress(callbacks, "build", "内容构建",
+                ConversationEvent.Progress.Status.RUNNING, "组装多模态消息…");
+        state.userMessage = runtime.buildUserMsg(state.processedInput, state.attachments);
+        emitProgress(callbacks, "build", "内容构建",
+                ConversationEvent.Progress.Status.DONE, null);
+    }
+
+    private void beginTurnStream(ChatTurnState state, ConversationCallbacks callbacks) {
+        emitProgress(callbacks, "orchestrate", "编排执行",
+                ConversationEvent.Progress.Status.RUNNING, "调用主智能体…");
+        ReActAgent snapshot;
+        synchronized (orchestratorLock) {
+            snapshot = orchestrator;
+        }
+        state.stream = snapshot.stream(state.userMessage, streamOptions);
+    }
+
+    private void completeTurnPersistence(String userInput, String assistantReply) {
+        CompletedTurn state = new CompletedTurn(userInput, assistantReply);
+        TurnPipeline<CompletedTurn> completion = new TurnPipeline<>(List.of(
+                new TurnStage<>("memory", turn -> memoryService.rememberTurn(
+                        "chat", turn.userInput(), turn.assistantReply(), null)),
+                new TurnStage<>("skills", turn -> distillTurnSkill(turn))));
+        try {
+            completion.execute(state);
+        } catch (RuntimeException failure) {
+            log.warn("轮后记忆/技能流水线失败，不影响已交付回复: {}", failure.getMessage(), failure);
+        }
+    }
+
+    private void distillTurnSkill(CompletedTurn turn) {
+        if (com.javaclaw.util.SensitiveDataRedactor.containsLikelyCredential(turn.userInput())
+                || com.javaclaw.util.SensitiveDataRedactor
+                .containsLikelyCredential(turn.assistantReply())) {
+            log.warn("本轮包含疑似凭据，已跳过技能蒸馏");
+            return;
+        }
+        skillCurator.distillFromChatTurn(turn.userInput(), turn.assistantReply(),
+                        executionMonitor.getTraces(), executionMonitor.successRate())
+                .subscribe();
     }
 
     /**
@@ -1013,6 +1075,39 @@ public class ChatService {
             log.warn("关闭记忆服务异常: {}", e.getMessage());
         }
         log.info("ChatService 已关闭");
+    }
+
+    /** 单轮可变状态只在 TurnPipeline 执行期间流转，不跨轮共享。 */
+    private static final class ChatTurnState {
+        private final String userInput;
+        private final boolean visionPrepared;
+        private String processedInput;
+        private List<File> attachments;
+        private RoutingResult routing;
+        private GoalDecomposition goals;
+        private Msg userMessage;
+        private Flux<Event> stream;
+
+        private ChatTurnState(
+                String userInput,
+                String processedInput,
+                List<File> attachments,
+                boolean visionPrepared) {
+            this.userInput = userInput;
+            this.processedInput = processedInput;
+            this.attachments = List.copyOf(attachments);
+            this.visionPrepared = visionPrepared;
+        }
+
+        private Flux<Event> stream() {
+            if (stream == null) {
+                throw new IllegalStateException("stream 阶段尚未执行");
+            }
+            return stream;
+        }
+    }
+
+    private record CompletedTurn(String userInput, String assistantReply) {
     }
 
     /**

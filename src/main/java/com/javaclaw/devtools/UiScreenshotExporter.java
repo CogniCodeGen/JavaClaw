@@ -92,7 +92,9 @@ public final class UiScreenshotExporter {
                     springContext.getBean(PlaywrightBrowserManager.class);
             applicationKernel = new ApplicationKernel(
                     browserManager, port, () -> new SddTaskView(primaryStage).show(),
-                    springContext.getBean(WorkspaceSpringContextFactory.class));
+                    springContext.getBean(WorkspaceSpringContextFactory.class),
+                    springContext.getBean(com.javaclaw.platform.execution.ManagedTaskExecutor.class),
+                    springContext.getBean(com.javaclaw.application.tool.ToolInvocationPipeline.class));
             var workspaceRuntime = applicationKernel.initialize();
             runtime = workspaceRuntime.agentRuntime();
             chatService = workspaceRuntime.chatService();

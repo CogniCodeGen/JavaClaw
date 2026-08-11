@@ -80,8 +80,9 @@ public class WorkspaceSpringConfiguration {
     }
 
     @Bean(destroyMethod = "shutdown")
-    ChatService chatService(AgentRuntime runtime, WorkflowService workflows) {
-        return new ChatService(runtime, workflows);
+    ChatService chatService(
+            AgentRuntime runtime, WorkflowService workflows, TaskScope taskScope) {
+        return new ChatService(runtime, workflows, taskScope);
     }
 
     @Bean(destroyMethod = "shutdown")

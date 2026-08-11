@@ -3,8 +3,9 @@ package com.javaclaw.platform.execution;
 import org.slf4j.MDC;
 
 import java.time.Duration;
-import java.util.Map;
 import java.util.Collection;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CancellationException;
@@ -49,6 +50,7 @@ public final class ManagedTaskExecutor implements AutoCloseable {
     private final Semaphore processGate;
     private final ConcurrentHashMap<String, Semaphore> browserSerialGates = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Handle<?>> handles = new ConcurrentHashMap<>();
+    private final Set<ScheduledTrigger> triggers = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean accepting = new AtomicBoolean(true);
 
     public ManagedTaskExecutor() {
@@ -104,6 +106,24 @@ public final class ManagedTaskExecutor implements AutoCloseable {
         return submit(spec, task);
     }
 
+    /**
+     * 延迟触发一次轻量动作。动作运行在唯一的调度平台线程上，必须只做任务派发。
+     */
+    public TriggerHandle scheduleTrigger(Duration delay, Runnable trigger) {
+        Duration checkedDelay = requireNonNegative(delay, "触发延迟");
+        return registerTrigger(checkedDelay, null, trigger);
+    }
+
+    /**
+     * 按固定频率触发轻量动作。任务正文必须由动作显式派发到合适的托管执行器。
+     */
+    public TriggerHandle scheduleTriggerAtFixedRate(
+            Duration initialDelay, Duration period, Runnable trigger) {
+        Duration checkedInitialDelay = requireNonNegative(initialDelay, "首次触发延迟");
+        Duration checkedPeriod = requirePositive(period, "触发周期");
+        return registerTrigger(checkedInitialDelay, checkedPeriod, trigger);
+    }
+
     /** 创建共享全局资源池、但拥有独立任务登记和关闭边界的作用域。 */
     public TaskScope openScope(String name, int maxConcurrentTasks) {
         if (!accepting.get()) {
@@ -114,6 +134,57 @@ public final class ManagedTaskExecutor implements AutoCloseable {
 
     public int activeTaskCount() {
         return handles.size();
+    }
+
+    private TriggerHandle registerTrigger(Duration initialDelay, Duration period, Runnable action) {
+        if (!accepting.get()) {
+            throw new RejectedExecutionException("托管执行器已关闭");
+        }
+        if (action == null) {
+            throw new NullPointerException("trigger");
+        }
+        ScheduledTrigger trigger = new ScheduledTrigger(period == null);
+        triggers.add(trigger);
+        Runnable guarded = () -> {
+            if (trigger.isCancelled()) {
+                return;
+            }
+            try {
+                action.run();
+            } finally {
+                if (trigger.oneShot) {
+                    trigger.finish();
+                }
+            }
+        };
+        try {
+            ScheduledFuture<?> future = period == null
+                    ? scheduler.schedule(guarded, initialDelay.toNanos(), TimeUnit.NANOSECONDS)
+                    : scheduler.scheduleAtFixedRate(guarded, initialDelay.toNanos(),
+                    period.toNanos(), TimeUnit.NANOSECONDS);
+            trigger.bind(future);
+            if (!accepting.get()) {
+                trigger.cancel();
+            }
+            return trigger;
+        } catch (RuntimeException failure) {
+            triggers.remove(trigger);
+            throw failure;
+        }
+    }
+
+    private static Duration requireNonNegative(Duration value, String label) {
+        if (value == null || value.isNegative()) {
+            throw new IllegalArgumentException(label + "不能为 null 或负数");
+        }
+        return value;
+    }
+
+    private static Duration requirePositive(Duration value, String label) {
+        if (value == null || value.isZero() || value.isNegative()) {
+            throw new IllegalArgumentException(label + "必须大于零");
+        }
+        return value;
     }
 
     private <T> void runTask(Handle<T> handle, ManagedTask<T> task, Map<String, String> submittedMdc) {
@@ -231,6 +302,9 @@ public final class ManagedTaskExecutor implements AutoCloseable {
         for (Handle<?> handle : handles.values()) {
             handle.cancel();
         }
+        for (ScheduledTrigger trigger : triggers) {
+            trigger.cancel();
+        }
         scheduler.shutdownNow();
         ioExecutor.shutdownNow();
         cpuExecutor.shutdownNow();
@@ -244,6 +318,7 @@ public final class ManagedTaskExecutor implements AutoCloseable {
         await(processExecutor, deadline);
         await(scheduler, deadline);
         handles.clear();
+        triggers.clear();
         browserSerialGates.clear();
     }
 
@@ -403,6 +478,47 @@ public final class ManagedTaskExecutor implements AutoCloseable {
 
         private void markTerminated() {
             termination.complete(null);
+        }
+    }
+
+    private final class ScheduledTrigger implements TriggerHandle {
+        private final boolean oneShot;
+        private final AtomicBoolean cancelled = new AtomicBoolean(false);
+        private volatile ScheduledFuture<?> future;
+
+        private ScheduledTrigger(boolean oneShot) {
+            this.oneShot = oneShot;
+        }
+
+        private void bind(ScheduledFuture<?> value) {
+            future = value;
+            if (cancelled.get()) {
+                value.cancel(false);
+            }
+        }
+
+        private void finish() {
+            if (cancelled.compareAndSet(false, true)) {
+                triggers.remove(this);
+            }
+        }
+
+        @Override
+        public boolean cancel() {
+            if (!cancelled.compareAndSet(false, true)) {
+                return false;
+            }
+            ScheduledFuture<?> value = future;
+            if (value != null) {
+                value.cancel(false);
+            }
+            triggers.remove(this);
+            return true;
+        }
+
+        @Override
+        public boolean isCancelled() {
+            return cancelled.get();
         }
     }
 }

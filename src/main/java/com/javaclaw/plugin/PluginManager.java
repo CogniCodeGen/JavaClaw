@@ -9,6 +9,11 @@ import com.javaclaw.config.DataManager;
 import com.javaclaw.plugin.api.Capability;
 import com.javaclaw.plugin.api.PluginDescriptor;
 import com.javaclaw.plugin.api.PluginTool;
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.execution.TaskHandle;
+import com.javaclaw.platform.execution.TaskSpec;
+import com.javaclaw.application.tool.ToolInvocation;
+import com.javaclaw.application.tool.ToolInvocationPipeline;
 import com.javaclaw.util.PathGuard;
 import com.javaclaw.util.ProjectAccessPolicy;
 import org.slf4j.Logger;
@@ -55,6 +60,9 @@ public final class PluginManager {
 
     private volatile AgentRuntime agentRuntime;
     private volatile UserInteractionPort interactionPort;
+    private ManagedTaskExecutor taskExecutor;
+    private ToolInvocationPipeline toolPipeline;
+    private TaskHandle<Void> autoEnableTask;
     private ClassLoader appClassLoader;
 
     /** 目录热感知 */
@@ -84,10 +92,15 @@ public final class PluginManager {
      * @param runtime         智能体基础设施容器，供各能力使用
      * @param interactionPort 用户交互端口，供能力授权确认
      */
-    public synchronized void init(AgentRuntime runtime, UserInteractionPort interactionPort) {
+    public synchronized void init(AgentRuntime runtime, UserInteractionPort interactionPort,
+                                  ManagedTaskExecutor taskExecutor,
+                                  ToolInvocationPipeline toolPipeline) {
         lifecycleGeneration++;
+        cancelAutoEnable();
         this.agentRuntime = runtime;
         this.interactionPort = interactionPort;
+        this.taskExecutor = java.util.Objects.requireNonNull(taskExecutor, "taskExecutor");
+        this.toolPipeline = java.util.Objects.requireNonNull(toolPipeline, "toolPipeline");
         this.appClassLoader = PluginManager.class.getClassLoader();
         ensureDir();
         store.bind(DataManager.getInstance().getDataRoot());
@@ -105,6 +118,7 @@ public final class PluginManager {
     public synchronized void reload(AgentRuntime newRuntime) {
         log.info("插件系统随工作区切换重载...");
         lifecycleGeneration++;
+        cancelAutoEnable();
         unloadAll();
         this.agentRuntime = newRuntime;
         store.bind(DataManager.getInstance().getDataRoot());
@@ -119,6 +133,7 @@ public final class PluginManager {
      */
     public synchronized void suspendForRuntimeTransition() {
         lifecycleGeneration++;
+        cancelAutoEnable();
         unloadAll();
         agentRuntime = null;
         log.info("插件系统已暂停，等待新运行时接管");
@@ -128,6 +143,7 @@ public final class PluginManager {
     public synchronized void shutdown() {
         log.info("插件系统关闭中...");
         lifecycleGeneration++;
+        cancelAutoEnable();
         if (watcher != null) {
             watcher.stop();
             watcher = null;
@@ -253,7 +269,7 @@ public final class PluginManager {
             PluginDescriptor d = PluginDescriptorLoader.load(jar);
             if (!isApiCompatible(d.apiVersion())) {
                 log.warn("从文件安装失败：插件[{}]apiVersion={} 与宿主 {} 不兼容；"
-                                + "请使用 JavaClaw Plugin API 2.x 重新编译",
+                                + "请使用 JavaClaw Plugin API 3.x 重新编译",
                         d.id(), d.apiVersion(), PluginDescriptor.HOST_API_VERSION);
                 return null;
             }
@@ -404,7 +420,10 @@ public final class PluginManager {
             throw new IllegalStateException("未找到插件：" + pluginId);
         }
         // 不持管理器锁执行：handler 可能阻塞（如内部调 CHAT）
-        return rt.invokeTool(toolName, argumentsJson);
+        ToolInvocation invocation = ToolInvocation.plugin(
+                pluginId, toolName, "调用插件[" + pluginId + "]工具 " + toolName);
+        return toolPipeline.invoke(invocation,
+                () -> rt.invokeTool(toolName, argumentsJson)).formatted();
     }
 
     // ==================== 授权 ====================
@@ -476,7 +495,7 @@ public final class PluginManager {
             }
             if (!isApiCompatible(d.apiVersion())) {
                 log.warn("插件[{}]apiVersion={} 与宿主 {} 不兼容，已拒绝加载；"
-                                + "请使用 JavaClaw Plugin API 2.x 重新编译",
+                                + "请使用 JavaClaw Plugin API 3.x 重新编译",
                         d.id(), d.apiVersion(), PluginDescriptor.HOST_API_VERSION);
                 Path warningKey = jar.toAbsolutePath().normalize();
                 if (incompatiblePluginWarnings.add(warningKey) && interactionPort != null) {
@@ -484,12 +503,12 @@ public final class PluginManager {
                             "插件需要升级",
                             "“" + d.name() + "”使用 Plugin API " + d.apiVersion()
                                     + "，当前宿主为 " + PluginDescriptor.HOST_API_VERSION
-                                    + "。已拒绝加载，请用 Plugin API 2.x 重新编译。"));
+                                    + "。已拒绝加载，请用 Plugin API 3.x 重新编译。"));
                 }
                 return;
             }
             plugins.put(d.id(), new PluginRuntime(d, jar, agentRuntime, appClassLoader,
-                    DataManager.getInstance().getDataRoot()));
+                    DataManager.getInstance().getDataRoot(), taskExecutor));
             log.info("发现插件：{}（{}），目录 {}", d.name(), d.id(), pluginDir.getFileName());
         } catch (Exception e) {
             log.warn("解析插件失败，跳过 {}：{}", pluginDir.getFileName(), e.toString());
@@ -526,8 +545,14 @@ public final class PluginManager {
         if (toEnable.isEmpty()) {
             return;
         }
-        Thread t = new Thread(() -> {
+        ManagedTaskExecutor executor = taskExecutor;
+        if (executor == null) {
+            log.warn("插件自动恢复已跳过：托管执行器尚未装配");
+            return;
+        }
+        autoEnableTask = executor.submit(TaskSpec.io("plugin-auto-enable"), ignored -> {
             for (PluginRuntime rt : toEnable) {
+                ignored.cancellation().throwIfCancellationRequested();
                 String id = rt.id();
                 Set<Capability> declared = rt.descriptor().capabilities();
                 Set<Capability> granted = store.granted(id);
@@ -539,7 +564,7 @@ public final class PluginManager {
                     synchronized (PluginManager.this) {
                         if (generation != lifecycleGeneration) {
                             log.info("插件[{}]所属生命周期已失效，跳过迟到的自动恢复", id);
-                            return;
+                            return null;
                         }
                         if (plugins.get(id) != rt) continue;
                         rt.start(granted, configFor(id));
@@ -550,9 +575,16 @@ public final class PluginManager {
                     rt.markFailed(e.getMessage());
                 }
             }
-        }, "plugin-autoenable");
-        t.setDaemon(true);
-        t.start();
+            return null;
+        });
+    }
+
+    private void cancelAutoEnable() {
+        TaskHandle<Void> current = autoEnableTask;
+        autoEnableTask = null;
+        if (current != null) {
+            current.cancel();
+        }
     }
 
     /** api 主版本一致即视为兼容。 */

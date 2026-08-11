@@ -11,5 +11,5 @@ public interface PluginTask {
     /**
      * 任务体。允许抛出受检异常，宿主会捕获并记录（不会拖垮宿主或其他插件）。
      */
-    void run() throws Exception;
+    void run(TaskContext context) throws Exception;
 }
