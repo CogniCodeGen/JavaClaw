@@ -33,7 +33,7 @@ import java.util.List;
 /**
  * 2B 方案 POC：JavaFX 25 孵化 RichTextArea 作为聊天气泡渲染基座的可行性验证。
  *
- * <p>不参与正式构建，本地验证用（与 SddHeadlessDriver 同范式）。核心验证：
+ * <p>仅由 Maven {@code devtools} profile 编译，用于本地验证。核心验证：
  * 自定义 StyledTextModel（自持 RichParagraph 列表 + 手动 fireChangeEvent）能否同时满足
  * 「流式增量追加 + 尾段重写 + 嵌入任意 Region（代码块/表格）+ 选中复制 + CSS 换肤 + 高度自适应」。</p>
  *

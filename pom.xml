@@ -95,16 +95,9 @@
             <version>${javafx.version}</version>
         </dependency>
 
-        <!-- JavaFX Swing 桥接（devtools 驱动截图保存用） -->
-        <dependency>
-            <groupId>org.openjfx</groupId>
-            <artifactId>javafx-swing</artifactId>
-            <version>${javafx.version}</version>
-        </dependency>
-
         <!--
-            JavaFX 孵化富文本控件（RichTextArea/CodeArea，JavaFX 24 起孵化）
-            2B 方案 POC：评估用纯 JavaFX 节点替换 MarkdownBubble 的 WebView 渲染。
+            JavaFX 孵化富文本控件（RichTextArea/CodeArea）
+            用于聊天气泡的原生 Markdown 渲染。
             classpath（Launcher）模式下无需额外 JVM 参数；mvn javafx:run（module path）
             需要 add-modules jfx.incubator.richtext（见 javafx-maven-plugin options）。
         -->
@@ -376,6 +369,40 @@
     </build>
 
     <profiles>
+        <profile>
+            <id>devtools</id>
+            <dependencies>
+                <!-- 截图驱动将 JavaFX Image 转换为 ImageIO 可写的 BufferedImage。 -->
+                <dependency>
+                    <groupId>org.openjfx</groupId>
+                    <artifactId>javafx-swing</artifactId>
+                    <version>${javafx.version}</version>
+                </dependency>
+            </dependencies>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>build-helper-maven-plugin</artifactId>
+                        <version>3.6.1</version>
+                        <executions>
+                            <execution>
+                                <id>add-devtools-source</id>
+                                <phase>generate-sources</phase>
+                                <goals>
+                                    <goal>add-source</goal>
+                                </goals>
+                                <configuration>
+                                    <sources>
+                                        <source>src/devtools/java</source>
+                                    </sources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
         <profile>
             <id>ui-test</id>
             <properties>
