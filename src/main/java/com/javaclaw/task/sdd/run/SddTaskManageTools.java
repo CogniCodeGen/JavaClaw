@@ -3,6 +3,7 @@ package com.javaclaw.task.sdd.run;
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
+import com.javaclaw.application.task.SddTaskApplicationService;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
@@ -15,7 +16,7 @@ import java.util.List;
 /**
  * 长任务（SDD 托管任务）管理工具集 —— 让编排器在对话中自主创建与管理长时托管任务。
  *
- * <p>委派 {@link SddTaskManager} 单例。创建类受 {@link ToolConfirmationManager} 人工确认
+ * <p>委派当前工作区的 {@link SddTaskApplicationService}。创建类受 {@link ToolConfirmationManager} 人工确认
  * （会反复自主消耗 token）；查询/控制类直接执行。管理的是用户创建的任务实例。</p>
  */
 public final class SddTaskManageTools {
@@ -25,13 +26,11 @@ public final class SddTaskManageTools {
 
     /** 调用来源令牌（装配期绑定），高风险确认随调用传给 ToolConfirmationManager。 */
     private final ToolCallOrigin origin;
+    private final SddTaskApplicationService tasks;
 
-    public SddTaskManageTools(ToolCallOrigin origin) {
+    public SddTaskManageTools(ToolCallOrigin origin, SddTaskApplicationService tasks) {
         this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
-    }
-
-    private SddTaskManager mgr() {
-        return SddTaskManager.getInstance();
+        this.tasks = java.util.Objects.requireNonNull(tasks, "tasks");
     }
 
     @Tool(name = "task_create",
@@ -55,15 +54,17 @@ public final class SddTaskManageTools {
         try { if (tokenBudget != null && !tokenBudget.isBlank()) budget = Math.max(0, Long.parseLong(tokenBudget.trim())); }
         catch (NumberFormatException ignore) { /* 非法预算视为不限 */ }
         try {
-            String resolvedTitle = (title == null || title.isBlank()) ? mgr().generateTitle(desc) : title.trim();
+            String resolvedTitle = (title == null || title.isBlank()) ? tasks.generateTitle(desc) : title.trim();
             String stamp = LocalDateTime.now().format(TS);
-            SddManagedTask t = mgr().create(resolvedTitle, desc, "auto",
-                    (workDir == null || workDir.isBlank()) ? null : workDir.trim(),
-                    budget, "none", stamp);
-            if (t == null) return ToolResponse.error("task_create", "创建失败");
-            mgr().start(t.id, stamp);
+            SddTaskApplicationService.Task task = tasks.create(
+                    new SddTaskApplicationService.CreateCommand(
+                            resolvedTitle, desc, "auto",
+                            (workDir == null || workDir.isBlank()) ? null : workDir.trim(),
+                            budget, "none", stamp));
+            tasks.start(task.id(), stamp);
             return ToolResponse.success("task_create",
-                    "已创建并启动长任务「" + resolvedTitle + "」（id=" + t.id + "），可用 task_status 查询进度");
+                    "已创建并启动长任务「" + resolvedTitle + "」（id=" + task.id()
+                            + "），可用 task_status 查询进度");
         } catch (Exception e) {
             log.error("task_create 异常", e);
             return ToolResponse.fromException("task_create", e);
@@ -72,46 +73,61 @@ public final class SddTaskManageTools {
 
     @Tool(name = "task_list", description = "列出所有托管任务及其状态、进度。")
     public String taskList() {
-        List<SddManagedTask> all = mgr().list();
+        List<SddTaskApplicationService.Task> all = tasks.snapshot().tasks();
         if (all.isEmpty()) return ToolResponse.success("task_list", "当前没有托管任务");
         StringBuilder sb = new StringBuilder("共 ").append(all.size()).append(" 个托管任务：\n");
-        for (SddManagedTask t : all) {
-            sb.append("· [").append(t.id).append("] ").append(t.title)
-                    .append(" — ").append(t.state).append("，进度 ").append(t.progress).append("%\n");
+        for (SddTaskApplicationService.Task task : all) {
+            sb.append("· [").append(task.id()).append("] ").append(task.title())
+                    .append(" — ").append(task.state()).append("，进度 ").append(task.progress()).append("%\n");
         }
         return ToolResponse.success("task_list", sb.toString().trim());
     }
 
     @Tool(name = "task_status", description = "查询某个托管任务的状态、进度与结果说明。")
     public String taskStatus(@ToolParam(name = "id", description = "任务 id") String id) {
-        SddManagedTask t = mgr().get(id);
-        if (t == null) return ToolResponse.error("task_status", "未找到任务: " + id);
+        SddTaskApplicationService.Task task;
+        try {
+            task = tasks.require(id);
+        } catch (com.javaclaw.application.error.NotFoundException failure) {
+            return ToolResponse.error("task_status", failure.getMessage());
+        }
         StringBuilder sb = new StringBuilder();
-        sb.append("「").append(t.title).append("」状态=").append(t.state)
-                .append("，进度=").append(t.progress).append("%");
-        if (t.result != null && !t.result.isBlank()) sb.append("，说明：").append(t.result);
-        sb.append("，累计 token=").append(t.totalInputTokens + t.totalOutputTokens);
+        sb.append("「").append(task.title()).append("」状态=").append(task.state())
+                .append("，进度=").append(task.progress()).append("%");
+        if (task.result() != null && !task.result().isBlank()) {
+            sb.append("，说明：").append(task.result());
+        }
+        sb.append("，累计 token=").append(task.totalTokens());
         return ToolResponse.success("task_status", sb.toString());
     }
 
     @Tool(name = "task_pause", description = "暂停一个运行中的托管任务（可后续 task_resume 续跑）。")
     public String taskPause(@ToolParam(name = "id", description = "任务 id") String id) {
-        if (mgr().get(id) == null) return ToolResponse.error("task_pause", "未找到任务: " + id);
-        mgr().pause(id);
+        try {
+            tasks.pause(id);
+        } catch (com.javaclaw.application.error.NotFoundException failure) {
+            return ToolResponse.error("task_pause", failure.getMessage());
+        }
         return ToolResponse.success("task_pause", "已暂停任务: " + id);
     }
 
     @Tool(name = "task_resume", description = "续跑一个已暂停或待人工的托管任务（从首个未完成步骤继续）。")
     public String taskResume(@ToolParam(name = "id", description = "任务 id") String id) {
-        if (mgr().get(id) == null) return ToolResponse.error("task_resume", "未找到任务: " + id);
-        mgr().resume(id, LocalDateTime.now().format(TS));
+        try {
+            tasks.resume(id, LocalDateTime.now().format(TS));
+        } catch (com.javaclaw.application.error.NotFoundException failure) {
+            return ToolResponse.error("task_resume", failure.getMessage());
+        }
         return ToolResponse.success("task_resume", "已续跑任务: " + id);
     }
 
     @Tool(name = "task_cancel", description = "取消一个托管任务（终止运行，不可续跑）。")
     public String taskCancel(@ToolParam(name = "id", description = "任务 id") String id) {
-        if (mgr().get(id) == null) return ToolResponse.error("task_cancel", "未找到任务: " + id);
-        mgr().cancel(id);
+        try {
+            tasks.cancel(id);
+        } catch (com.javaclaw.application.error.NotFoundException failure) {
+            return ToolResponse.error("task_cancel", failure.getMessage());
+        }
         return ToolResponse.success("task_cancel", "已取消任务: " + id);
     }
 }

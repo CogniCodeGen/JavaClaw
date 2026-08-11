@@ -99,7 +99,8 @@ public final class ToolkitAssembler {
             tk.registration().tool(new com.javaclaw.system.JShellTools(
                     origin, skillRuntime.manager(), runtime.getJshellRunner())).group("skill").apply();
         }
-        tk.registration().tool(new com.javaclaw.task.sdd.run.SddTaskManageTools(origin)).group("task_manage").apply();
+        tk.registration().tool(new com.javaclaw.task.sdd.run.SddTaskManageTools(
+                origin, runtime.getSddTasks())).group("task_manage").apply();
         if (runtime.getScheduleApplicationService() != null) {
             tk.registration().tool(new com.javaclaw.schedule.ScheduleTools(
                     origin, runtime.getScheduleApplicationService())).group("schedule").apply();

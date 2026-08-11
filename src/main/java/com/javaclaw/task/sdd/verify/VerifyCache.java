@@ -1,19 +1,17 @@
 package com.javaclaw.task.sdd.verify;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.javaclaw.config.AppDatabase;
-import com.javaclaw.config.AppDatabaseAccess;
-import com.javaclaw.config.DatabaseAccess;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.task.sdd.spec.Scenario;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -34,7 +32,7 @@ import java.util.stream.Stream;
 public final class VerifyCache {
 
     private static final Logger log = LoggerFactory.getLogger(VerifyCache.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final TypeReference<Map<String, String>> PASSES_TYPE = new TypeReference<>() {};
 
     /** 指纹计算时跳过的目录（构建产物 / 版本控制 / spec 自身，避免自指与噪声）。 */
     private static final String[] SKIP_DIRS = {
@@ -43,23 +41,20 @@ public final class VerifyCache {
     private final Path workDir;
     private final String workDirKey;
     private final String slug;
-    private final DatabaseAccess database;
+    private final JdbcTemplate jdbc;
+    private final JsonCodec json;
     private final String workspaceId;
     private String fingerprint = "";
     private Map<String, String> passes = new LinkedHashMap<>();
 
     private VerifyCache(Path workDir, String workDirKey, String slug,
-                        DatabaseAccess database, String workspaceId) {
+                        JdbcTemplate jdbc, JsonCodec json, String workspaceId) {
         this.workDir = workDir;
         this.workDirKey = workDirKey;
         this.slug = slug;
-        this.database = database;
+        this.jdbc = jdbc;
+        this.json = json;
         this.workspaceId = workspaceId;
-    }
-
-    /** 加载（或新建）某变更的验收缓存。workDir/slug 无效时返回一个不持久化的空缓存。 */
-    public static VerifyCache load(String workDir, String slug) {
-        return load(workDir, slug, new AppDatabaseAccess(), AppDatabase.currentWorkspaceId());
     }
 
     /**
@@ -67,32 +62,30 @@ public final class VerifyCache {
      * workDir/slug 无效时返回一个不持久化的空缓存。
      */
     public static VerifyCache load(String workDir, String slug,
-                                   DatabaseAccess database, String workspaceId) {
-        Objects.requireNonNull(database, "database");
+                                   JdbcTemplate jdbc, JsonCodec json, String workspaceId) {
+        Objects.requireNonNull(jdbc, "jdbc");
+        Objects.requireNonNull(json, "json");
         Objects.requireNonNull(workspaceId, "workspaceId");
         Path wd = (workDir == null || workDir.isBlank()) ? null : Path.of(workDir).toAbsolutePath();
         if (wd == null || slug == null || slug.isBlank()) {
-            return new VerifyCache(wd, null, slug, database, workspaceId);
+            return new VerifyCache(wd, null, slug, jdbc, json, workspaceId);
         }
-        VerifyCache c = new VerifyCache(wd, wd.normalize().toString(), slug, database, workspaceId);
+        VerifyCache c = new VerifyCache(wd, wd.normalize().toString(), slug, jdbc, json, workspaceId);
         try {
-            try (Connection conn = database.open();
-                 PreparedStatement ps = conn.prepareStatement("""
-                         SELECT fingerprint, passes_json
-                         FROM sdd_verify_cache
-                         WHERE workspace_id = ? AND work_dir = ? AND slug = ?
-                         """)) {
-                ps.setString(1, workspaceId);
-                ps.setString(2, c.workDirKey);
-                ps.setString(3, slug);
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (rs.next()) {
-                        c.fingerprint = rs.getString("fingerprint") == null ? "" : rs.getString("fingerprint");
-                        c.passes = readPasses(rs.getString("passes_json"));
-                    }
-                }
-            }
-        } catch (Exception e) {
+            jdbc.query("""
+                            SELECT fingerprint, passes_json
+                            FROM sdd_verify_cache
+                            WHERE workspace_id = ? AND work_dir = ? AND slug = ?
+                            """,
+                    rows -> {
+                        if (rows.next()) {
+                            c.fingerprint = rows.getString("fingerprint") == null
+                                    ? "" : rows.getString("fingerprint");
+                            c.passes = c.readPasses(rows.getString("passes_json"));
+                        }
+                        return null;
+                    }, workspaceId, c.workDirKey, slug);
+        } catch (DataAccessException e) {
             log.debug("[VerifyCache] 读取缓存失败（忽略，按空缓存处理）：{}", e.getMessage());
         }
         return c;
@@ -154,31 +147,25 @@ public final class VerifyCache {
     /** 持久化到 H2。无效工作目录时静默跳过。 */
     public void save() {
         if (workDirKey == null || slug == null || slug.isBlank()) return;
-        try (Connection c = database.open();
-             PreparedStatement ps = c.prepareStatement("""
-                     MERGE INTO sdd_verify_cache(workspace_id, work_dir, slug, fingerprint, passes_json, updated_at)
-                     KEY(workspace_id, work_dir, slug)
-                     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                     """)) {
-            ps.setString(1, workspaceId);
-            ps.setString(2, workDirKey);
-            ps.setString(3, slug);
-            ps.setString(4, fingerprint);
-            ps.setString(5, MAPPER.writeValueAsString(passes));
-            ps.executeUpdate();
-        } catch (Exception e) {
+        try {
+            jdbc.update("""
+                            MERGE INTO sdd_verify_cache(
+                                workspace_id, work_dir, slug, fingerprint, passes_json, updated_at
+                            ) KEY(workspace_id, work_dir, slug)
+                            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                            """,
+                    workspaceId, workDirKey, slug, fingerprint, json.encode(passes));
+        } catch (DataAccessException | JsonProcessingException e) {
             log.debug("[VerifyCache] 写缓存失败（忽略）：{}", e.getMessage());
         }
     }
 
-    private static Map<String, String> readPasses(String json) {
+    private Map<String, String> readPasses(String value) {
         Map<String, String> out = new LinkedHashMap<>();
-        if (json == null || json.isBlank()) return out;
+        if (value == null || value.isBlank()) return out;
         try {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> raw = MAPPER.readValue(json, Map.class);
-            raw.forEach((k, v) -> out.put(String.valueOf(k), String.valueOf(v)));
-        } catch (Exception e) {
+            out.putAll(json.decode(value, PASSES_TYPE));
+        } catch (JsonProcessingException e) {
             log.debug("[VerifyCache] 解析 H2 passes_json 失败（忽略）：{}", e.getMessage());
         }
         return out;

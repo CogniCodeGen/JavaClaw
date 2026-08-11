@@ -1,19 +1,19 @@
 package com.javaclaw.task.sdd.run;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
+import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.ToolConfirmationManager;
-import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.agent.router.RoutingResult;
 import com.javaclaw.agent.router.ToolRouter;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.config.AgentConfig;
-import com.javaclaw.config.AppDatabase;
-import com.javaclaw.config.AppDatabaseAccess;
-import com.javaclaw.config.DatabaseAccess;
-import com.javaclaw.platform.execution.TaskSubmitter;
+import com.javaclaw.platform.execution.TaskHandle;
+import com.javaclaw.platform.execution.TaskScope;
+import com.javaclaw.platform.execution.TaskSpec;
+import com.javaclaw.platform.json.JsonCodec;
+import com.javaclaw.platform.process.ProcessRunner;
 import com.javaclaw.skill.SkillManager;
 import com.javaclaw.skill.SkillRuntimeServices;
+import com.javaclaw.skill.curation.SkillCurator;
 import com.javaclaw.task.sdd.SddOutcome;
 import com.javaclaw.task.sdd.SddProgress;
 import com.javaclaw.task.sdd.SddTaskRunner;
@@ -26,23 +26,21 @@ import com.javaclaw.task.sdd.spec.SpecStore;
 import com.javaclaw.util.ProjectAccessPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -54,142 +52,85 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p>本类通过 H2 管理任务索引与 OpenSpec 文档，工作区差异由 {@code workspace_id} 隔离。</p>
  *
- * <p>线程：每个运行中任务占一个后台线程跑同步的 {@code SddTaskRunner.run()/resume()}；
- * {@code cancel} 在阶段/循环边界生效。</p>
+ * <p>实例由工作区 Spring Context 管理，不跨工作区重绑。每个运行中任务都通过
+ * {@link TaskScope} 登记到 I/O 虚拟线程；暂停、取消或 Context 关闭会同时取消句柄并通知
+ * {@link SddTaskRunner}，且世代号会丢弃迟到结果。</p>
  *
  * @author JavaClaw
  */
-public final class SddTaskManager {
+public final class SddTaskManager implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(SddTaskManager.class);
 
-    private final ObjectMapper mapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
     private final List<SddManagedTask> tasks = new ArrayList<>();
     private final Map<String, SddTaskRunner> running = new ConcurrentHashMap<>();
+    private final Map<String, TaskHandle<Void>> runHandles = new ConcurrentHashMap<>();
     /** 每次启动的世代号；暂停/取消会使旧执行线程的迟到结果失效。 */
     private final Map<String, Long> runEpochs = new ConcurrentHashMap<>();
     private final AtomicLong epochSequence = new AtomicLong();
-    private final ExecutorService pool = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r, "sdd-task");
-        t.setDaemon(true);
-        return t;
-    });
+    private final AtomicBoolean closed = new AtomicBoolean();
+    private final List<SddTaskListener> listeners = new CopyOnWriteArrayList<>();
 
-    private static final SddTaskManager INSTANCE = new SddTaskManager();
-
-    /** 单例访问（与应用其余单例风格一致）。 */
-    public static SddTaskManager getInstance() {
-        return INSTANCE;
-    }
-
-    private ModelFactory modelFactory;
-    private java.util.function.Function<com.javaclaw.agent.ToolCallOrigin, Map<String, Object>>
-            capabilityToolsFactory = origin -> Map.of();
-    private SkillManager skills;
-    private SkillRuntimeServices skillRuntime;
-    private AgentConfig settings;
-    private TaskSubmitter skillTasks;
-    private UserInteractionPort interactionPort;
-    private com.javaclaw.workflow.service.WorkflowService workflowService;
-    private DatabaseAccess database = new AppDatabaseAccess();
-    private String workspaceId = AppDatabase.currentWorkspaceId();
-    private volatile SddTaskListener listener = new SddTaskListener() {};
+    private final AgentRuntime runtime;
+    private final SkillCurator skillCurator;
+    private final com.javaclaw.workflow.service.WorkflowService workflowService;
+    private final SkillManager skills;
+    private final SkillRuntimeServices skillRuntime;
+    private final AgentConfig settings;
+    private final TaskScope taskScope;
+    private final UserInteractionPort interactionPort;
+    private final JdbcTemplate jdbc;
+    private final JsonCodec json;
+    private final ProcessRunner processes;
+    private final String workspaceId;
+    private final SddTaskStore store;
 
     // ==================== 配置 / 持久化 ====================
 
-    /**
-     * 注入运行期协作者并从 H2 加载任务索引。工作区切换时重新调用即可重定向。
-     *
-     * @param dataDir         保留给调用方传入当前数据根；任务索引从 H2 读取
-     * @param modelFactory    模型工厂
-     * @param capabilityToolsFactory 能力→工具表工厂：任务启动时以该任务的来源令牌
-     *                               （taskId/workDir）逐任务构建，使高风险确认按任务归属
-     *                               命中白名单/目录放行（共享实例承载不了逐任务归属）
-     * @param skillRuntime    当前工作区技能运行时
-     * @param settings        当前工作区配置
-     * @param skillTasks      技能蒸馏任务所属的工作区作用域
-     * @param interactionPort 人机交互端口（评审闸门用；可空 → 自动放行）
-     */
-    public synchronized void configure(Path dataDir, ModelFactory modelFactory,
-                                       java.util.function.Function<com.javaclaw.agent.ToolCallOrigin,
-                                               Map<String, Object>> capabilityToolsFactory,
-                                       SkillRuntimeServices skillRuntime,
-                                       AgentConfig settings,
-                                       TaskSubmitter skillTasks,
-                                       UserInteractionPort interactionPort,
-                                       com.javaclaw.workflow.service.WorkflowService workflowService,
-                                       DatabaseAccess database, String workspaceId) {
-        this.modelFactory = modelFactory;
-        this.capabilityToolsFactory = capabilityToolsFactory == null
-                ? origin -> Map.of() : capabilityToolsFactory;
+    public SddTaskManager(
+            AgentRuntime runtime,
+            SkillRuntimeServices skillRuntime,
+            SkillCurator skillCurator,
+            AgentConfig settings,
+            TaskScope taskScope,
+            UserInteractionPort interactionPort,
+            com.javaclaw.workflow.service.WorkflowService workflowService,
+            JdbcTemplate jdbc,
+            JsonCodec json,
+            ProcessRunner processes,
+            String workspaceId,
+            SddTaskStore store) {
+        this.runtime = java.util.Objects.requireNonNull(runtime, "runtime");
         this.skillRuntime = java.util.Objects.requireNonNull(skillRuntime, "skillRuntime");
         this.skills = skillRuntime.manager();
+        this.skillCurator = java.util.Objects.requireNonNull(skillCurator, "skillCurator");
         this.settings = java.util.Objects.requireNonNull(settings, "settings");
-        this.skillTasks = java.util.Objects.requireNonNull(skillTasks, "skillTasks");
+        this.taskScope = java.util.Objects.requireNonNull(taskScope, "taskScope");
         this.interactionPort = interactionPort;
         this.workflowService = workflowService;
-        this.database = java.util.Objects.requireNonNull(database, "database");
+        this.jdbc = java.util.Objects.requireNonNull(jdbc, "jdbc");
+        this.json = java.util.Objects.requireNonNull(json, "json");
+        this.processes = java.util.Objects.requireNonNull(processes, "processes");
         this.workspaceId = java.util.Objects.requireNonNull(workspaceId, "workspaceId");
-        loadAll();
+        this.store = java.util.Objects.requireNonNull(store, "store");
+        tasks.addAll(store.loadAll());
         recoverInterrupted();
     }
 
     /**
-     * 工作区切换时的轻量重配：所有工作区协作者都替换，不保留旧 Context 句柄。
+     * 订阅当前工作区的任务事件。返回句柄关闭幂等；回调可能在任意托管线程执行。
      */
-    public synchronized void reload(Path dataDir, ModelFactory modelFactory,
-                                    java.util.function.Function<com.javaclaw.agent.ToolCallOrigin,
-                                            Map<String, Object>> capabilityToolsFactory,
-                                    SkillRuntimeServices skillRuntime,
-                                    AgentConfig settings,
-                                    TaskSubmitter skillTasks,
-                                    com.javaclaw.workflow.service.WorkflowService workflowService,
-                                    DatabaseAccess database, String workspaceId) {
-        configure(dataDir, modelFactory, capabilityToolsFactory, skillRuntime, settings,
-                skillTasks, this.interactionPort, workflowService, database, workspaceId);
-    }
-
-    public void subscribe(SddTaskListener l) {
-        this.listener = l == null ? new SddTaskListener() {} : l;
-    }
-
-    private synchronized void loadAll() {
-        tasks.clear();
-        try {
-            try (Connection c = database.open();
-                 PreparedStatement ps = c.prepareStatement(
-                         "SELECT task_json FROM sdd_tasks WHERE workspace_id = ? ORDER BY updated_at, id")) {
-                ps.setString(1, workspaceId);
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        tasks.add(mapper.readValue(rs.getString("task_json"), SddManagedTask.class));
-                    }
-                }
-            }
-        } catch (Exception e) {
-            log.warn("[SDD] 加载任务索引失败: {}", e.getMessage());
-        }
+    public AutoCloseable subscribe(SddTaskListener listener) {
+        SddTaskListener checked = java.util.Objects.requireNonNull(listener, "listener");
+        listeners.add(checked);
+        AtomicBoolean removed = new AtomicBoolean();
+        return () -> {
+            if (removed.compareAndSet(false, true)) listeners.remove(checked);
+        };
     }
 
     private synchronized void saveAll() {
-        String insert = "INSERT INTO sdd_tasks(workspace_id, id, task_json, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)";
-        try (Connection c = database.open();
-             PreparedStatement del = c.prepareStatement("DELETE FROM sdd_tasks WHERE workspace_id = ?");
-             PreparedStatement ps = c.prepareStatement(insert)) {
-            c.setAutoCommit(false);
-            del.setString(1, workspaceId);
-            del.executeUpdate();
-            for (SddManagedTask task : tasks) {
-                ps.setString(1, workspaceId);
-                ps.setString(2, task.id);
-                ps.setString(3, mapper.writeValueAsString(task));
-                ps.addBatch();
-            }
-            ps.executeBatch();
-            c.commit();
-        } catch (Exception e) {
-            log.warn("[SDD] 保存任务索引失败: {}", e.getMessage());
-        }
+        store.replaceAll(tasks);
     }
 
     // ==================== 查询 ====================
@@ -207,6 +148,7 @@ public final class SddTaskManager {
     public synchronized SddManagedTask create(String title, String description, String capabilities,
                                               String workDir, long tokenBudget, String notificationChannel,
                                               String nowStamp) {
+        ensureOpen();
         String safeWorkDir = workDir;
         if (workDir != null && !workDir.isBlank()) {
             Path resolved = ProjectAccessPolicy.resolveProjectPath(workDir);
@@ -222,7 +164,7 @@ public final class SddTaskManager {
                 capabilities == null ? "auto" : capabilities, tokenBudget, notificationChannel, nowStamp);
         tasks.add(t);
         saveAll();
-        listener.onTaskChanged(t);
+        notifyTaskChanged(t);
         log.info("[SDD] 已创建任务: {} ({})", title, id);
         return t;
     }
@@ -233,7 +175,8 @@ public final class SddTaskManager {
      * <p><b>务必在后台线程调用</b>：会发起一次模型请求，不可在 JavaFX 应用线程执行。</p>
      */
     public String generateTitle(String description) {
-        return SddTaskTitles.generate(modelFactory, description);
+        ensureOpen();
+        return SddTaskTitles.generate(runtime.getModelFactory(), description);
     }
 
     public void start(String id, String completionStamp) {
@@ -245,6 +188,7 @@ public final class SddTaskManager {
     }
 
     private void launch(String id, String completionStamp, boolean resume) {
+        ensureOpen();
         final SddManagedTask task;
         final long epoch;
         synchronized (this) {
@@ -252,10 +196,6 @@ public final class SddTaskManager {
             if (task == null) return;
             if (runEpochs.containsKey(id) || running.containsKey(id) || task.state == SddTaskState.RUNNING) {
                 log.warn("[SDD] 任务 {} 已在启动或运行，忽略重复启动", id);
-                return;
-            }
-            if (modelFactory == null) {
-                log.warn("[SDD] 未配置 modelFactory，无法启动任务 {}", id);
                 return;
             }
             if (isOverBudget(task)) {
@@ -279,58 +219,72 @@ public final class SddTaskManager {
         }
 
         try {
-            pool.submit(() -> {
-                SddTaskRunner runner;
-                try {
-                    // 能力按需路由（auto → 具体能力清单），失败回退全量
-                    String resolvedCaps = resolveCapabilities(task);
-                    AgentConfig cfg = AgentConfig.getInstance();
-                    TaskContext ctx = new TaskContext(task.id, task.title, task.description, task.workDir, resolvedCaps);
-                    SddProgress progress = new ProgressAdapter(task);
-                    var gate = interactionPort != null ? new PortReviewGate(interactionPort) : new AutoApproveReviewGate();
-                    runner = new SddTaskRunner(ctx, modelFactory,
-                            capabilityToolsFactory.apply(
-                                    com.javaclaw.agent.ToolCallOrigin.managedTask(id, task.workDir)),
-                            skillRuntime,
-                            (phase, in, out) -> recordTokens(task, phase, in, out), gate, progress,
-                            completionStamp, workflowService, database, workspaceId)
-                            .budgetGuard(() -> isOverBudget(task))
-                            .execTimeoutSec(cfg.getSddExecTimeoutSeconds())
-                            .structuredTimeoutSec(cfg.getSddStructuredTimeoutSeconds())
-                            .execMaxIters(cfg.getSddExecMaxIters());
-                } catch (Exception e) {
-                    // 装配失败不能让任务卡死在 RUNNING
-                    log.error("[SDD] 任务 {} 启动装配失败", id, e);
-                    applyOutcomeIfCurrent(task, epoch, SddOutcome.failed("启动装配失败：" + e.getMessage()));
-                    return;
-                }
-                synchronized (this) {
-                    if (task.state != SddTaskState.RUNNING
-                            || !java.util.Objects.equals(runEpochs.get(id), epoch)) {
-                        // 路由/装配窗口内被暂停或取消，不再起跑
-                        log.info("[SDD] 任务 {} 在启动装配期间被 {}，放弃本次启动", id, task.state);
-                        runner.close();
-                        return;
-                    }
-                    running.put(id, runner);
-                }
-
-                SddOutcome outcome;
-                // 确认待遇（放宽超时/「同意全部」白名单/目录放行基准）由能力工具构建时绑定的
-                // 来源令牌（taskId + workDir）承载，无需再登记全局托管场景
-                try {
-                    outcome = resume ? runner.resume() : runner.run();
-                } catch (Exception e) {
-                    log.error("[SDD] 任务 {} 运行异常", id, e);
-                    outcome = SddOutcome.failed("运行异常：" + e.getMessage());
-                } finally {
-                    running.remove(id, runner);
-                }
-                applyOutcomeIfCurrent(task, epoch, outcome);
-            });
+            TaskHandle<Void> handle = taskScope.submit(
+                    TaskSpec.io("sdd-task-" + id), context -> {
+                        context.cancellation().throwIfCancellationRequested();
+                        runTask(task, epoch, completionStamp, resume);
+                        return null;
+                    });
+            runHandles.put(id, handle);
+            handle.completion().whenComplete((ignored, failure) -> runHandles.remove(id, handle));
+            if (!java.util.Objects.equals(runEpochs.get(id), epoch)) {
+                handle.cancel();
+            }
         } catch (RejectedExecutionException e) {
             applyOutcomeIfCurrent(task, epoch, SddOutcome.failed("任务执行器已关闭"));
         }
+    }
+
+    private void runTask(SddManagedTask task, long epoch, String completionStamp, boolean resume) {
+        String id = task.id;
+        SddTaskRunner runner;
+        try {
+            String resolvedCaps = resolveCapabilities(task);
+            TaskContext context = new TaskContext(
+                    task.id, task.title, task.description, task.workDir, resolvedCaps);
+            SddProgress progress = new ProgressAdapter(task);
+            var gate = interactionPort != null
+                    ? new PortReviewGate(interactionPort) : new AutoApproveReviewGate();
+            runner = new SddTaskRunner(context, runtime.getModelFactory(),
+                    runtime.buildCapabilityTools(
+                            com.javaclaw.agent.ToolCallOrigin.managedTask(id, task.workDir)),
+                    skillRuntime,
+                    (phase, in, out) -> recordTokens(task, phase, in, out), gate, progress,
+                    completionStamp, workflowService, jdbc, json, processes, workspaceId)
+                    .budgetGuard(() -> isOverBudget(task))
+                    .execTimeoutSec(settings.getSddExecTimeoutSeconds())
+                    .structuredTimeoutSec(settings.getSddStructuredTimeoutSeconds())
+                    .execMaxIters(settings.getSddExecMaxIters());
+        } catch (Exception failure) {
+            log.error("[SDD] 任务 {} 启动装配失败", id, failure);
+            applyOutcomeIfCurrent(task, epoch,
+                    SddOutcome.failed("启动装配失败：" + failure.getMessage()));
+            return;
+        }
+
+        synchronized (this) {
+            if (task.state != SddTaskState.RUNNING
+                    || !java.util.Objects.equals(runEpochs.get(id), epoch)) {
+                log.info("[SDD] 任务 {} 在启动装配期间被 {}，放弃本次启动", id, task.state);
+                runner.close();
+                return;
+            }
+            running.put(id, runner);
+        }
+
+        SddOutcome outcome;
+        try {
+            outcome = resume ? runner.resume() : runner.run();
+        } catch (CancellationException cancelled) {
+            outcome = SddOutcome.cancelled();
+        } catch (Exception failure) {
+            log.error("[SDD] 任务 {} 运行异常", id, failure);
+            outcome = SddOutcome.failed("运行异常：" + failure.getMessage());
+        } finally {
+            running.remove(id, runner);
+            runner.close();
+        }
+        applyOutcomeIfCurrent(task, epoch, outcome);
     }
 
     /**
@@ -347,13 +301,13 @@ public final class SddTaskManager {
         // 因为 AgentScopeSddAgents.buildToolkit 视含 "auto" 的能力串为全量注册。
         if (caps.equalsIgnoreCase("all")) {
             log.info("[SDD] 任务 {} 能力=all：跳过路由，强制全量装配", task.id);
-            listener.onLog(task.id, task.title, "[路由] 能力=all：跳过裁剪，全量装配");
+            notifyLog(task.id, task.title, "[路由] 能力=all：跳过裁剪，全量装配");
             return "auto";
         }
         if (!caps.isBlank() && !caps.equalsIgnoreCase("auto")) return caps;
         try {
             ToolRouter router = new ToolRouter(
-                    modelFactory.createLightChatModel(), null, skills);
+                    runtime.getModelFactory().createLightChatModel(), null, skills);
             RoutingResult r = router.route("【托管任务】" + task.title + "\n" + task.description);
             if (r.isFallback() || !r.hasToolGroups()) return "auto";
             Set<String> keys = new LinkedHashSet<>();
@@ -370,7 +324,7 @@ public final class SddTaskManager {
             }
             String resolved = String.join(",", keys);
             log.info("[SDD] 任务 {} 能力路由: {} → {}", task.id, r.toolGroups(), resolved);
-            listener.onLog(task.id, task.title, "[路由] 能力按需裁剪：" + resolved);
+            notifyLog(task.id, task.title, "[路由] 能力按需裁剪：" + resolved);
             return resolved;
         } catch (Exception e) {
             log.warn("[SDD] 任务 {} 能力路由失败，回退全量: {}", task.id, e.getMessage());
@@ -404,9 +358,7 @@ public final class SddTaskManager {
 
     /** 暂停：取消运行线程并置 PAUSED（change 已落盘，可后续 resume 续跑）。 */
     public synchronized void pause(String id) {
-        runEpochs.remove(id);
-        SddTaskRunner r = running.remove(id);
-        if (r != null) r.cancel();
+        stopRun(id);
         SddManagedTask t = get(id);
         if (t != null && t.state.isActive()) setState(t, SddTaskState.PAUSED, "已暂停");
     }
@@ -427,9 +379,7 @@ public final class SddTaskManager {
     }
 
     public synchronized void cancel(String id) {
-        runEpochs.remove(id);
-        SddTaskRunner r = running.remove(id);
-        if (r != null) r.cancel();
+        stopRun(id);
         ToolConfirmationManager.clearTaskAllowlist(id);
         SddManagedTask t = get(id);
         if (t != null) setState(t, SddTaskState.CANCELLED, "已取消");
@@ -439,42 +389,18 @@ public final class SddTaskManager {
         cancel(id);
         SddManagedTask task = get(id);
         if (task != null) {
-            deleteSpecDocs(task);
+            store.deleteArtifacts(task);
         }
         tasks.removeIf(t -> t.id.equals(id));
         saveAll();
     }
 
-    private void deleteSpecDocs(SddManagedTask task) {
-        deleteSpecDocs(database, workspaceId, task);
-    }
-
-    static void deleteSpecDocs(DatabaseAccess database, String workspaceId, SddManagedTask task) {
-        String normalizedWorkDir = task.workDir == null || task.workDir.isBlank()
-                ? null
-                : Path.of(task.workDir).toAbsolutePath().normalize().toString();
-        if (normalizedWorkDir == null) return;
-        try (Connection c = database.open();
-             PreparedStatement spec = c.prepareStatement("""
-                     DELETE FROM sdd_spec_docs
-                     WHERE workspace_id = ? AND work_dir = ? AND slug = ?
-                     """);
-             PreparedStatement cache = c.prepareStatement("""
-                     DELETE FROM sdd_verify_cache
-                     WHERE workspace_id = ? AND work_dir = ? AND slug = ?
-                     """)) {
-            String slug = SpecPaths.makeSlug(task.id, task.title);
-            spec.setString(1, workspaceId);
-            spec.setString(2, normalizedWorkDir);
-            spec.setString(3, slug);
-            spec.executeUpdate();
-            cache.setString(1, workspaceId);
-            cache.setString(2, normalizedWorkDir);
-            cache.setString(3, slug);
-            cache.executeUpdate();
-        } catch (Exception e) {
-            log.warn("[SDD] 删除任务规格文档失败 task={}: {}", task.id, e.getMessage());
-        }
+    private void stopRun(String id) {
+        runEpochs.remove(id);
+        SddTaskRunner runner = running.remove(id);
+        if (runner != null) runner.cancel();
+        TaskHandle<Void> handle = runHandles.remove(id);
+        if (handle != null) handle.cancel();
     }
 
     // ==================== 启动恢复 ====================
@@ -523,7 +449,6 @@ public final class SddTaskManager {
 
     /** 从完成的托管任务异步蒸馏技能（程序性记忆，借鉴 hermes-agent；失败静默不影响任务终态） */
     private void distillSkillFromTask(SddManagedTask task, SddOutcome outcome) {
-        if (modelFactory == null) return;
         try {
             StringBuilder summary = new StringBuilder();
             summary.append("终态：").append(outcome.message() == null ? "完成" : outcome.message());
@@ -533,11 +458,7 @@ public final class SddTaskManager {
                             .append("\n变更：").append(ch.proposal().whatChanges());
                 }
             });
-            new com.javaclaw.skill.curation.SkillCurator(
-                    modelFactory, null, skillRuntime.manager(), skillRuntime.usage(),
-                    skillRuntime.proposals(), settings, skillTasks,
-                    ToolConfirmationManager::getPort)
-                    .distillFromSddTask(task.title, task.description, summary.toString())
+            skillCurator.distillFromSddTask(task.title, task.description, summary.toString())
                     .subscribe();
         } catch (Exception e) {
             log.debug("[SDD] 任务完成后技能蒸馏触发失败（忽略）: {}", e.getMessage());
@@ -546,7 +467,7 @@ public final class SddTaskManager {
 
     private void refreshProgress(SddManagedTask task) {
         try {
-            SpecStore store = new SpecStore(task.workDir, database, workspaceId);
+            SpecStore store = new SpecStore(task.workDir, jdbc, workspaceId);
             String slug = SpecPaths.makeSlug(task.id, task.title);
             OpenSpecChange ch = store.readChange(slug, task.id, task.title);
             task.progress = ch.progressPercent();
@@ -567,11 +488,11 @@ public final class SddTaskManager {
             // 越限只在跨过阈值的一刻提示一次；编排器在阶段/循环边界据闸门停为待人工
             log.warn("[SDD] 任务 {} token 预算耗尽：已用 {} / 预算 {}", task.id,
                     task.totalInputTokens + task.totalOutputTokens, task.tokenBudget);
-            listener.onLog(task.id, task.title, "⚠ token 预算已耗尽（已用 "
+            notifyLog(task.id, task.title, "⚠ token 预算已耗尽（已用 "
                     + (task.totalInputTokens + task.totalOutputTokens) + " / 预算 "
                     + task.tokenBudget + "），将在当前步骤结束后停为待人工");
         }
-        listener.onTaskChanged(task);
+        notifyTaskChanged(task);
     }
 
     /** 任务级累计预算判断：预算 ≤0 表示不限制。 */
@@ -585,7 +506,7 @@ public final class SddTaskManager {
         if (t == null) return;
         t.tokenBudget = Math.max(0, newBudget);
         saveAll();
-        listener.onTaskChanged(t);
+        notifyTaskChanged(t);
     }
 
     private synchronized void setState(SddManagedTask task, SddTaskState state, String result) {
@@ -593,7 +514,7 @@ public final class SddTaskManager {
         if (result != null) task.result = result;
         task.updatedAt = nowStamp();
         saveAll();
-        listener.onTaskChanged(task);
+        notifyTaskChanged(task);
     }
 
     /** 当前时间戳（yyyy-MM-dd HH:mm:ss），用于刷新 updatedAt 以便从索引看出任务最近变更时间。 */
@@ -602,11 +523,17 @@ public final class SddTaskManager {
                 .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
     }
 
-    public synchronized void shutdown() {
-        runEpochs.clear();
-        running.values().forEach(SddTaskRunner::cancel);
-        running.clear();
-        pool.shutdownNow();
+    private void ensureOpen() {
+        if (closed.get()) throw new RejectedExecutionException("SDD 任务运行时已关闭");
+    }
+
+    @Override
+    public synchronized void close() {
+        if (!closed.compareAndSet(false, true)) return;
+        suspendForRuntimeTransition();
+        runHandles.values().forEach(TaskHandle::cancel);
+        runHandles.clear();
+        listeners.clear();
     }
 
     /** 读出某任务的 change 全貌（供 UI 渲染 proposal/spec/tasks 勾选进度）。 */
@@ -614,7 +541,7 @@ public final class SddTaskManager {
         SddManagedTask t = get(id);
         if (t == null) return Optional.empty();
         try {
-            SpecStore store = new SpecStore(t.workDir, database, workspaceId);
+            SpecStore store = new SpecStore(t.workDir, jdbc, workspaceId);
             return Optional.of(store.readChange(SpecPaths.makeSlug(t.id, t.title), t.id, t.title));
         } catch (Exception e) {
             return Optional.empty();
@@ -629,14 +556,34 @@ public final class SddTaskManager {
         ProgressAdapter(SddManagedTask task) { this.task = task; }
 
         @Override public void phase(String phaseName) {
-            listener.onLog(task.id, task.title, "[阶段] " + phaseName);
+            notifyLog(task.id, task.title, "[阶段] " + phaseName);
         }
         @Override public void log(String message) {
-            listener.onLog(task.id, task.title, message);
+            notifyLog(task.id, task.title, message);
         }
         @Override public void progress(int percent) {
             task.progress = percent;
-            listener.onTaskChanged(task);
+            notifyTaskChanged(task);
+        }
+    }
+
+    private void notifyTaskChanged(SddManagedTask task) {
+        for (SddTaskListener listener : listeners) {
+            try {
+                listener.onTaskChanged(task);
+            } catch (RuntimeException failure) {
+                log.debug("[SDD] 任务监听回调失败: {}", failure.getMessage());
+            }
+        }
+    }
+
+    private void notifyLog(String taskId, String taskTitle, String message) {
+        for (SddTaskListener listener : listeners) {
+            try {
+                listener.onLog(taskId, taskTitle, message);
+            } catch (RuntimeException failure) {
+                log.debug("[SDD] 日志监听回调失败: {}", failure.getMessage());
+            }
         }
     }
 }

@@ -43,6 +43,8 @@ import com.javaclaw.application.schedule.ScheduleUseCase;
 import com.javaclaw.application.skill.SkillManagementApplicationService;
 import com.javaclaw.application.skill.SkillManagementPort;
 import com.javaclaw.application.skill.SkillManagementUseCase;
+import com.javaclaw.application.task.SddTaskApplicationService;
+import com.javaclaw.application.task.SddTaskUseCase;
 import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.config.DatabaseAccess;
@@ -83,6 +85,9 @@ import com.javaclaw.skill.SkillManager;
 import com.javaclaw.skill.SkillRuntimeServices;
 import com.javaclaw.skill.SkillUsageTracker;
 import com.javaclaw.skill.curation.SkillProposalQueue;
+import com.javaclaw.skill.curation.SkillCurator;
+import com.javaclaw.task.sdd.run.SddTaskManager;
+import com.javaclaw.task.sdd.run.SddTaskStore;
 import com.javaclaw.system.CommandSessionManager;
 import com.javaclaw.runtime.WorkspaceContext;
 import com.javaclaw.site.SiteCredentialManager;
@@ -125,6 +130,10 @@ import com.javaclaw.ui.javafx.skill.SkillCenterViewFactory;
 import com.javaclaw.ui.javafx.skill.SkillListCellFactory;
 import com.javaclaw.ui.javafx.skill.SkillProposalCardFactory;
 import com.javaclaw.ui.javafx.skill.SkillScriptNameDialogFactory;
+import com.javaclaw.ui.javafx.task.SddBudgetDialogFactory;
+import com.javaclaw.ui.javafx.task.SddDetailCellFactory;
+import com.javaclaw.ui.javafx.task.SddTaskCellFactory;
+import com.javaclaw.ui.javafx.task.SddTaskViewFactory;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.http.HttpGateway;
 import com.javaclaw.platform.json.JsonCodec;
@@ -139,6 +148,7 @@ import com.javaclaw.workflow.store.H2GraphCheckpointStore;
 import com.javaclaw.workflow.store.H2WorkflowDefinitionStore;
 import com.javaclaw.workflow.store.WorkflowDefinitionStore;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -170,9 +180,11 @@ public class WorkspaceSpringConfiguration {
             @Qualifier("workspaceTaskScope") TaskScope workspaceTaskScope,
             ScheduleApplicationService schedules,
             SkillRuntimeServices skills,
+            ObjectProvider<SddTaskApplicationService> sddTasks,
             com.javaclaw.system.JShellRunner jshellRunner) {
         return new AgentRuntime(options.browserManager(), customAgents, siteCredentials,
-                mcpConfigurations, mcpClients, workspaceTaskScope, schedules, skills, jshellRunner);
+                mcpConfigurations, mcpClients, workspaceTaskScope, schedules, skills,
+                sddTasks::getObject, jshellRunner);
     }
 
     @Bean
@@ -568,6 +580,56 @@ public class WorkspaceSpringConfiguration {
     }
 
     @Bean
+    SddTaskStore sddTaskStore(
+            WorkspaceContext workspace,
+            JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager,
+            JsonCodec json) {
+        return new SddTaskStore(workspace.workspaceId(), jdbc, transactionManager, json);
+    }
+
+    @Bean(destroyMethod = "close")
+    SddTaskManager sddTaskManager(
+            AgentRuntime runtime,
+            SkillRuntimeServices skills,
+            SkillCurator skillCurator,
+            com.javaclaw.config.AgentConfig settings,
+            @Qualifier("workspaceTaskScope") TaskScope tasks,
+            UserInteractionPort interaction,
+            WorkflowService workflows,
+            JdbcTemplate jdbc,
+            JsonCodec json,
+            com.javaclaw.platform.process.ProcessRunner processes,
+            WorkspaceContext workspace,
+            SddTaskStore store) {
+        return new SddTaskManager(runtime, skills, skillCurator, settings, tasks, interaction,
+                workflows, jdbc, json, processes, workspace.workspaceId(), store);
+    }
+
+    @Bean
+    SddTaskApplicationService sddTaskApplicationService(SddTaskManager tasks) {
+        return new SddTaskUseCase(tasks);
+    }
+
+    @Bean
+    SddTaskCellFactory sddTaskCellFactory() { return new SddTaskCellFactory(); }
+
+    @Bean
+    SddDetailCellFactory sddDetailCellFactory() { return new SddDetailCellFactory(); }
+
+    @Bean
+    SddBudgetDialogFactory sddBudgetDialogFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new SddBudgetDialogFactory(loader);
+    }
+
+    @Bean
+    SddTaskViewFactory sddTaskViewFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new SddTaskViewFactory(loader);
+    }
+
+    @Bean
     WorkflowDefinitionCellFactory workflowDefinitionCellFactory() {
         return new WorkflowDefinitionCellFactory();
     }
@@ -645,6 +707,18 @@ public class WorkspaceSpringConfiguration {
     }
 
     @Bean
+    SkillCurator skillCurator(
+            AgentRuntime runtime,
+            SkillRuntimeServices skills,
+            com.javaclaw.config.AgentConfig settings,
+            @Qualifier("workspaceTaskScope") TaskScope tasks,
+            UserInteractionPort interaction) {
+        return new SkillCurator(runtime.getModelFactory(), runtime.getTokenTracker(),
+                skills.manager(), skills.usage(), skills.proposals(), settings, tasks,
+                () -> interaction);
+    }
+
+    @Bean
     SkillInstaller skillInstaller(SkillManager skills) {
         return new SkillInstaller(skills);
     }
@@ -700,8 +774,9 @@ public class WorkspaceSpringConfiguration {
     ChatService chatService(
             AgentRuntime runtime,
             WorkflowService workflows,
+            SkillCurator skillCurator,
             @Qualifier("workspaceTaskScope") TaskScope taskScope) {
-        return new ChatService(runtime, workflows, taskScope);
+        return new ChatService(runtime, workflows, skillCurator, taskScope);
     }
 
     @Bean(destroyMethod = "")
@@ -760,16 +835,20 @@ public class WorkspaceSpringConfiguration {
     }
 
     @Bean(destroyMethod = "shutdown")
-    LoopService loopService(AgentRuntime runtime, WorkflowService workflows) {
-        return new LoopService(runtime, workflows);
+    LoopService loopService(
+            AgentRuntime runtime,
+            WorkflowService workflows,
+            com.javaclaw.platform.process.ProcessRunner processes) {
+        return new LoopService(runtime, workflows, processes);
     }
 
     @Bean
     ShellCommandService shellCommandService(
             AgentManagementApplicationService agents,
             ScheduleApplicationService schedules,
+            SddTaskApplicationService sddTasks,
             @Qualifier("workspaceTaskScope") TaskScope taskScope) {
-        return new ShellCommandService(agents, schedules, taskScope);
+        return new ShellCommandService(agents, schedules, sddTasks, taskScope);
     }
 
     @Bean

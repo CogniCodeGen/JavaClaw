@@ -1,8 +1,6 @@
 package com.javaclaw.task.sdd;
 
-import com.javaclaw.config.AppDatabase;
-import com.javaclaw.config.AppDatabaseAccess;
-import com.javaclaw.config.DatabaseAccess;
+import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.task.sdd.spec.Capability;
 import com.javaclaw.task.sdd.spec.OpenSpecChange;
 import com.javaclaw.task.sdd.spec.Proposal;
@@ -14,6 +12,7 @@ import com.javaclaw.task.sdd.verify.VerificationOutcome;
 import com.javaclaw.task.sdd.verify.VerifyCache;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -50,7 +49,8 @@ public final class SddOrchestrator {
     private final SddAgents agents;
     private final ReviewGate gate;
     private final SddProgress progress;
-    private final DatabaseAccess database;
+    private final JdbcTemplate jdbc;
+    private final JsonCodec json;
     private final String workspaceId;
 
     /** 单道评审最多返工轮数（提案 / 计划各自）。 */
@@ -72,21 +72,16 @@ public final class SddOrchestrator {
     private BooleanSupplier budgetExceeded = () -> false;
 
     public SddOrchestrator(TaskContext ctx, SpecStore store, ScenarioVerifier verifier,
-                           SddAgents agents, ReviewGate gate, SddProgress progress) {
-        this(ctx, store, verifier, agents, gate, progress,
-                new AppDatabaseAccess(), AppDatabase.currentWorkspaceId());
-    }
-
-    public SddOrchestrator(TaskContext ctx, SpecStore store, ScenarioVerifier verifier,
                            SddAgents agents, ReviewGate gate, SddProgress progress,
-                           DatabaseAccess database, String workspaceId) {
+                           JdbcTemplate jdbc, JsonCodec json, String workspaceId) {
         this.ctx = ctx;
         this.store = store;
         this.verifier = verifier;
         this.agents = agents;
         this.gate = gate;
         this.progress = progress == null ? SddProgress.NOOP : progress;
-        this.database = Objects.requireNonNull(database, "database");
+        this.jdbc = Objects.requireNonNull(jdbc, "jdbc");
+        this.json = Objects.requireNonNull(json, "json");
         this.workspaceId = Objects.requireNonNull(workspaceId, "workspaceId");
     }
 
@@ -256,7 +251,7 @@ public final class SddOrchestrator {
             progress.phase("验收");
             OpenSpecChange change = store.readChange(slug, ctx.id(), ctx.title());
             List<Scenario> scenarios = change.allScenarios();
-            VerifyCache cache = VerifyCache.load(ctx.workDir(), slug, database, workspaceId);
+            VerifyCache cache = VerifyCache.load(ctx.workDir(), slug, jdbc, json, workspaceId);
             cache.syncFingerprint(cache.fingerprint());
             int reused = 0;
             List<VerificationOutcome> outcomes = new ArrayList<>(scenarios.size());

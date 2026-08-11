@@ -1,16 +1,12 @@
 package com.javaclaw.task.sdd.spec;
 
-import com.javaclaw.config.AppDatabase;
-import com.javaclaw.config.AppDatabaseAccess;
-import com.javaclaw.config.DatabaseAccess;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -31,16 +27,12 @@ public final class SpecStore {
             Pattern.compile("^(\\s*[-*]\\s*\\[)([ xX])(\\]\\s*(\\d+)[.、].*)$");
 
     private final String workDir;
-    private final DatabaseAccess database;
+    private final JdbcTemplate jdbc;
     private final String workspaceId;
 
-    public SpecStore(String workDir) {
-        this(workDir, new AppDatabaseAccess(), AppDatabase.currentWorkspaceId());
-    }
-
-    public SpecStore(String workDir, DatabaseAccess database, String workspaceId) {
+    public SpecStore(String workDir, JdbcTemplate jdbc, String workspaceId) {
         this.workDir = normalizeWorkDir(workDir);
-        this.database = java.util.Objects.requireNonNull(database);
+        this.jdbc = java.util.Objects.requireNonNull(jdbc, "jdbc");
         this.workspaceId = java.util.Objects.requireNonNull(workspaceId);
     }
 
@@ -95,73 +87,56 @@ public final class SpecStore {
     }
 
     private List<Capability> readChangeCapabilities(String slug) {
-        List<Capability> out = new ArrayList<>();
-        if (!available()) return out;
+        if (!available()) return List.of();
         String prefix = SpecPaths.SPECS_DIR + "/";
         String suffix = "/" + SpecPaths.SPEC_FILE;
-        try (Connection c = database.open();
-             PreparedStatement ps = c.prepareStatement("""
-                     SELECT doc_path, doc_text
-                     FROM sdd_spec_docs
-                     WHERE workspace_id = ? AND work_dir = ? AND slug = ? AND doc_path LIKE ?
-                     ORDER BY doc_path
-                     """)) {
-            ps.setString(1, workspaceId);
-            ps.setString(2, workDir);
-            ps.setString(3, slug);
-            ps.setString(4, prefix + "%" + suffix);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    String path = rs.getString("doc_path");
-                    if (!path.startsWith(prefix) || !path.endsWith(suffix)) continue;
-                    String name = path.substring(prefix.length(), path.length() - suffix.length());
-                    out.add(SpecParser.parseCapabilitySpec(rs.getString("doc_text"), name));
-                }
-            }
-        } catch (Exception e) {
+        try {
+            return jdbc.query("""
+                            SELECT doc_path, doc_text
+                            FROM sdd_spec_docs
+                            WHERE workspace_id = ? AND work_dir = ? AND slug = ? AND doc_path LIKE ?
+                            ORDER BY doc_path
+                            """,
+                    (row, index) -> {
+                        String path = row.getString("doc_path");
+                        if (!path.startsWith(prefix) || !path.endsWith(suffix)) return null;
+                        String name = path.substring(prefix.length(), path.length() - suffix.length());
+                        return SpecParser.parseCapabilitySpec(row.getString("doc_text"), name);
+                    }, workspaceId, workDir, slug, prefix + "%" + suffix).stream()
+                    .filter(java.util.Objects::nonNull)
+                    .toList();
+        } catch (DataAccessException e) {
             log.warn("[Spec] 从 H2 列举能力规格失败 slug={}: {}", slug, e.getMessage());
+            return List.of();
         }
-        return out;
     }
 
     /** 列出当前 workDir 下所有变更 slug。 */
     public List<String> listChangeSlugs() {
-        List<String> out = new ArrayList<>();
-        if (!available()) return out;
-        try (Connection c = database.open();
-             PreparedStatement ps = c.prepareStatement("""
-                     SELECT DISTINCT slug
-                     FROM sdd_spec_docs
-                     WHERE workspace_id = ? AND work_dir = ?
-                     ORDER BY slug
-                     """)) {
-            ps.setString(1, workspaceId);
-            ps.setString(2, workDir);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) out.add(rs.getString("slug"));
-            }
-        } catch (Exception e) {
+        if (!available()) return List.of();
+        try {
+            return jdbc.queryForList("""
+                            SELECT DISTINCT slug
+                            FROM sdd_spec_docs
+                            WHERE workspace_id = ? AND work_dir = ?
+                            ORDER BY slug
+                            """, String.class, workspaceId, workDir);
+        } catch (DataAccessException e) {
             log.warn("[Spec] 从 H2 列举变更失败: {}", e.getMessage());
+            return List.of();
         }
-        return out;
     }
 
     public boolean changeExists(String slug) {
         if (!available()) return false;
-        try (Connection c = database.open();
-             PreparedStatement ps = c.prepareStatement("""
-                     SELECT 1
-                     FROM sdd_spec_docs
-                     WHERE workspace_id = ? AND work_dir = ? AND slug = ?
-                     LIMIT 1
-                     """)) {
-            ps.setString(1, workspaceId);
-            ps.setString(2, workDir);
-            ps.setString(3, slug);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next();
-            }
-        } catch (Exception e) {
+        try {
+            Integer count = jdbc.queryForObject("""
+                            SELECT COUNT(*)
+                            FROM sdd_spec_docs
+                            WHERE workspace_id = ? AND work_dir = ? AND slug = ?
+                            """, Integer.class, workspaceId, workDir, slug);
+            return count != null && count > 0;
+        } catch (DataAccessException e) {
             log.warn("[Spec] 检查变更存在性失败 slug={}: {}", slug, e.getMessage());
             return false;
         }
@@ -252,22 +227,18 @@ public final class SpecStore {
         if (!available() || slug == null || slug.isBlank() || docPath == null || docPath.isBlank()) {
             return false;
         }
-        try (Connection c = database.open();
-             PreparedStatement ps = c.prepareStatement("""
-                     MERGE INTO sdd_spec_docs(workspace_id, work_dir, slug, doc_path, doc_text, updated_at)
-                     KEY(workspace_id, work_dir, slug, doc_path)
-                     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                     """)) {
-            ps.setString(1, workspaceId);
-            ps.setString(2, workDir);
-            ps.setString(3, slug);
-            ps.setString(4, docPath);
-            ps.setString(5, content);
-            ps.executeUpdate();
+        try {
+            jdbc.update("""
+                            MERGE INTO sdd_spec_docs(
+                                workspace_id, work_dir, slug, doc_path, doc_text, updated_at
+                            ) KEY(workspace_id, work_dir, slug, doc_path)
+                            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                            """,
+                    workspaceId, workDir, slug, docPath, content);
             log.info("[Spec] 已写入 H2: slug={}, path={}, bytes={}",
                     slug, docPath, content == null ? 0 : content.getBytes(StandardCharsets.UTF_8).length);
             return true;
-        } catch (Exception e) {
+        } catch (DataAccessException e) {
             log.warn("[Spec] 写入 H2 失败 slug={}, path={}: {}", slug, docPath, e.getMessage());
             return false;
         }
@@ -277,20 +248,15 @@ public final class SpecStore {
         if (!available() || slug == null || slug.isBlank() || docPath == null || docPath.isBlank()) {
             return null;
         }
-        try (Connection c = database.open();
-             PreparedStatement ps = c.prepareStatement("""
-                     SELECT doc_text
-                     FROM sdd_spec_docs
-                     WHERE workspace_id = ? AND work_dir = ? AND slug = ? AND doc_path = ?
-                     """)) {
-            ps.setString(1, workspaceId);
-            ps.setString(2, workDir);
-            ps.setString(3, slug);
-            ps.setString(4, docPath);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? rs.getString(1) : null;
-            }
-        } catch (Exception e) {
+        try {
+            return jdbc.query("""
+                            SELECT doc_text
+                            FROM sdd_spec_docs
+                            WHERE workspace_id = ? AND work_dir = ? AND slug = ? AND doc_path = ?
+                            """,
+                    rows -> rows.next() ? rows.getString(1) : null,
+                    workspaceId, workDir, slug, docPath);
+        } catch (DataAccessException e) {
             log.debug("[Spec] 读取 H2 失败 slug={}, path={}: {}", slug, docPath, e.getMessage());
             return null;
         }

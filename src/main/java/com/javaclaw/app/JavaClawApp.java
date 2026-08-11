@@ -13,7 +13,6 @@ import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fxml.ViewHandle;
 import com.javaclaw.platform.spring.ApplicationContexts;
 import com.javaclaw.platform.spring.WorkspaceSpringContextFactory;
-import com.javaclaw.ui.javafx.task.SddTaskView;
 import com.javaclaw.ui.javafx.workflow.WorkflowView;
 import com.javaclaw.ui.javafx.JfxUserInteractionPort;
 import com.javaclaw.ui.javafx.SystemTrayManager;
@@ -137,7 +136,8 @@ public class JavaClawApp extends Application {
             log.info("正在初始化应用内核与工作区运行时...");
             applicationKernel = new ApplicationKernel(
                     browserManager, interactionPort,
-                    () -> new SddTaskView(primaryStage).show(),
+                    () -> applicationKernel.current().sddTaskViews()
+                            .create(primaryStage).show(),
                     this::openWorkflowCenter,
                     this::closeWorkflowCenter,
                     springContext.getBean(WorkspaceSpringContextFactory.class),
@@ -284,7 +284,11 @@ public class JavaClawApp extends Application {
             trayManager = new SystemTrayManager(
                     "JavaClaw 智能助手",
                     this::showMainWindow,
-                    () -> { showMainWindow(); new SddTaskView(primaryStage).showCreate(); },
+                    () -> {
+                        showMainWindow();
+                        applicationKernel.current().sddTaskViews()
+                                .create(primaryStage).showCreate();
+                    },
                     () -> { showMainWindow(); if (chatView != null) chatView.openSettings(); },
                     this::requestFullExit);
             if (!trayManager.install()) {

@@ -16,7 +16,6 @@ import com.javaclaw.platform.spring.WorkspaceSpringContextFactory;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.application.tool.ToolInvocationPipeline;
 import com.javaclaw.schedule.ScheduleManager;
-import com.javaclaw.task.sdd.run.SddTaskManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -224,21 +223,8 @@ public final class ApplicationKernel implements AutoCloseable {
             pluginManager.init(
                     runtime, interactionPort, taskExecutor, toolPipeline,
                     workspaceRuntime.schedules());
-            SddTaskManager.getInstance().configure(
-                    workspaceRuntime.context().dataRoot(),
-                    runtime.getModelFactory(), runtime::buildCapabilityTools,
-                    runtime.getSkillRuntime(), AgentConfig.getInstance(),
-                    runtime.getWorkspaceTasks(), interactionPort, workspaceRuntime.workflowService(),
-                    workspaceRuntime.databaseAccess(), workspaceRuntime.context().workspaceId());
         } else {
             pluginManager.reload(runtime, workspaceRuntime.schedules());
-            SddTaskManager.getInstance().reload(
-                    workspaceRuntime.context().dataRoot(),
-                    runtime.getModelFactory(), runtime::buildCapabilityTools,
-                    runtime.getSkillRuntime(), AgentConfig.getInstance(),
-                    runtime.getWorkspaceTasks(), workspaceRuntime.workflowService(),
-                    workspaceRuntime.databaseAccess(),
-                    workspaceRuntime.context().workspaceId());
         }
     }
 
@@ -249,7 +235,9 @@ public final class ApplicationKernel implements AutoCloseable {
         if (snapshot != null) {
             closeQuietly("定时任务运行时", snapshot.scheduleManager()::suspendForRuntimeTransition);
         }
-        closeQuietly("SDD 运行任务", () -> SddTaskManager.getInstance().suspendForRuntimeTransition());
+        if (snapshot != null) {
+            closeQuietly("SDD 运行任务", snapshot.sddTasks()::suspendForRuntimeTransition);
+        }
         closeQuietly("插件运行时", pluginManager::suspendForRuntimeTransition);
     }
 
@@ -269,7 +257,6 @@ public final class ApplicationKernel implements AutoCloseable {
     public synchronized void close() {
         if (!closed.compareAndSet(false, true)) return;
         if (externalServicesInitialized) {
-            closeQuietly("任务管理器", () -> SddTaskManager.getInstance().shutdown());
             closeQuietly("插件系统", pluginManager::shutdown);
         }
         WorkspaceRuntime snapshot = current;

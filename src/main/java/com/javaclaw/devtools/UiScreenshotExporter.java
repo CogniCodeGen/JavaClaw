@@ -18,7 +18,6 @@ import com.javaclaw.platform.spring.ApplicationContexts;
 import com.javaclaw.platform.spring.WorkspaceSpringContextFactory;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeCenterView;
 import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
-import com.javaclaw.ui.javafx.task.SddTaskView;
 import com.javaclaw.ui.javafx.control.WindowToastFactory;
 import javafx.animation.PauseTransition;
 import javafx.application.Application;
@@ -91,7 +90,8 @@ public final class UiScreenshotExporter {
             PlaywrightBrowserManager browserManager =
                     springContext.getBean(PlaywrightBrowserManager.class);
             applicationKernel = new ApplicationKernel(
-                    browserManager, port, () -> new SddTaskView(primaryStage).show(),
+                    browserManager, port, () -> applicationKernel.current().sddTaskViews()
+                            .create(primaryStage).show(),
                     () -> {}, () -> {},
                     springContext.getBean(WorkspaceSpringContextFactory.class),
                     springContext.getBean(com.javaclaw.platform.execution.ManagedTaskExecutor.class),
@@ -129,7 +129,7 @@ public final class UiScreenshotExporter {
             shots.add(new Shot("05-skill-center.png", "技能中心", () ->
                     workspaceRuntime.skillViews().create(primaryStage).show()));
             shots.add(new Shot("06-task-center.png", "托管任务", () ->
-                    new SddTaskView(primaryStage).show()));
+                    workspaceRuntime.sddTaskViews().create(primaryStage).show()));
             shots.add(new Shot("07-mcp-servers.png", "MCP 服务器", () -> {
                 workspaceRuntime.mcpCenters().createWindow(primaryStage, () -> { }).show();
             }));

@@ -1,7 +1,6 @@
 package com.javaclaw.task.sdd;
 
 import com.javaclaw.config.DatabaseAccess;
-import com.javaclaw.config.FileDatabaseAccess;
 import com.javaclaw.task.sdd.gate.AutoApproveReviewGate;
 import com.javaclaw.task.sdd.spec.Capability;
 import com.javaclaw.task.sdd.spec.OpenSpecChange;
@@ -31,12 +30,12 @@ class SddOrchestratorStageTest {
     void 准备阶段落盘后实现阶段从OpenSpec继续且不重复准备() throws Exception {
         Path workDir = temp.resolve("workspace");
         Files.createDirectories(workDir);
-        DatabaseAccess database = new FileDatabaseAccess(temp.resolve("database"));
+        SddTestDatabase database = new SddTestDatabase(temp.resolve("database"));
         String workspaceId = "stage-workspace";
         String id = "stage-test-" + System.nanoTime();
         TaskContext context = new TaskContext(id, "阶段恢复", "验证真实阶段边界",
                 workDir.toString(), "system");
-        SpecStore store = new SpecStore(workDir.toString(), database, workspaceId);
+        SpecStore store = new SpecStore(workDir.toString(), database.jdbc(), workspaceId);
         AtomicInteger prepareCalls = new AtomicInteger();
         AtomicInteger executeCalls = new AtomicInteger();
         SddAgents agents = new SddAgents() {
@@ -69,7 +68,8 @@ class SddOrchestratorStageTest {
         };
         SddOrchestrator orchestrator = new SddOrchestrator(context, store,
                 new ScenarioVerifier(workDir.toString(), null, null), agents,
-                new AutoApproveReviewGate(), SddProgress.NOOP, database, workspaceId)
+                new AutoApproveReviewGate(), SddProgress.NOOP,
+                database.jdbc(), database.json(), workspaceId)
                 .completionStamp("test");
 
         assertTrue(SddTaskRunner.requiresPreparation(true,
@@ -77,7 +77,7 @@ class SddOrchestratorStageTest {
         assertNull(orchestrator.prepare());
         assertEquals(1, prepareCalls.get());
         assertEquals(0, executeCalls.get());
-        String storedTasks = readTasksDocument(database, workspaceId, workDir, context.slug());
+        String storedTasks = readTasksDocument(database.access(), workspaceId, workDir, context.slug());
         assertNotNull(storedTasks);
         assertEquals(1, SpecParser.parseTasks(storedTasks).size());
         OpenSpecChange prepared = store.readChange(context.slug(), context.id(), context.title());
@@ -89,7 +89,7 @@ class SddOrchestratorStageTest {
         assertTrue(outcome.isCompleted());
         assertEquals(1, prepareCalls.get(), "实现阶段不得重新执行提案/规格/计划");
         assertEquals(1, executeCalls.get());
-        assertEquals(1, countVerifyCache(database, workspaceId, workDir, context.slug()),
+        assertEquals(1, countVerifyCache(database.access(), workspaceId, workDir, context.slug()),
                 "验收缓存必须写入与 OpenSpec 相同的注入数据库");
     }
 

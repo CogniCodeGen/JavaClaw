@@ -6,6 +6,7 @@ import com.javaclaw.application.schedule.ScheduleApplicationService;
 import com.javaclaw.application.schedule.ScheduleApplicationService.SaveCommand;
 import com.javaclaw.application.schedule.ScheduleApplicationService.Task;
 import com.javaclaw.application.schedule.ScheduleCommands;
+import com.javaclaw.application.task.SddTaskApplicationService;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.api.conversation.ConversationOutcome;
@@ -14,8 +15,6 @@ import com.javaclaw.api.conversation.CancellationReason;
 import com.javaclaw.platform.execution.TaskHandle;
 import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
-import com.javaclaw.task.sdd.run.SddManagedTask;
-import com.javaclaw.task.sdd.run.SddTaskManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,14 +39,17 @@ public final class ShellCommandService {
 
     private final AgentManagementApplicationService agents;
     private final ScheduleApplicationService schedules;
+    private final SddTaskApplicationService sddTasks;
     private final TaskScope tasks;
 
     public ShellCommandService(
             AgentManagementApplicationService agents,
             ScheduleApplicationService schedules,
+            SddTaskApplicationService sddTasks,
             TaskScope tasks) {
         this.agents = Objects.requireNonNull(agents, "agents");
         this.schedules = Objects.requireNonNull(schedules, "schedules");
+        this.sddTasks = Objects.requireNonNull(sddTasks, "sddTasks");
         this.tasks = Objects.requireNonNull(tasks, "tasks");
     }
 
@@ -101,49 +103,58 @@ public final class ShellCommandService {
         String[] p = rest.split("\\s+", 2);
         String sub = p[0].toLowerCase();
         String arg = p.length > 1 ? p[1].trim() : "";
-        SddTaskManager mgr = SddTaskManager.getInstance();
         switch (sub) {
             case "", "list" -> {
-                List<SddManagedTask> all = mgr.list();
+                List<SddTaskApplicationService.Task> all = sddTasks.snapshot().tasks();
                 if (all.isEmpty()) return "（无托管任务）";
                 StringBuilder sb = new StringBuilder("托管任务：\n");
-                for (SddManagedTask t : all) {
-                    sb.append("· [").append(t.id).append("] ").append(t.title)
-                            .append(" — ").append(t.state).append(" ").append(t.progress).append("%\n");
+                for (SddTaskApplicationService.Task task : all) {
+                    sb.append("· [").append(task.id()).append("] ").append(task.title())
+                            .append(" — ").append(task.state()).append(" ")
+                            .append(task.progress()).append("%\n");
                 }
                 return sb.toString().trim();
             }
             case "status" -> {
                 if (arg.isEmpty()) return "用法：/task status <id>";
-                SddManagedTask t = mgr.get(arg);
-                if (t == null) return "✗ 未找到任务：" + arg;
-                return "「" + t.title + "」状态=" + t.state + "，进度=" + t.progress + "%"
-                        + (t.result != null && !t.result.isBlank() ? "，" + t.result : "");
+                try {
+                    SddTaskApplicationService.Task task = sddTasks.require(arg);
+                    return "「" + task.title() + "」状态=" + task.state()
+                            + "，进度=" + task.progress() + "%"
+                            + (task.result() != null && !task.result().isBlank()
+                            ? "，" + task.result() : "");
+                } catch (com.javaclaw.application.error.NotFoundException failure) {
+                    return "✗ " + failure.getMessage();
+                }
             }
             case "create" -> {
                 if (arg.isEmpty()) return "用法：/task create <任务描述>";
-                String title = mgr.generateTitle(arg);
+                String title = sddTasks.generateTitle(arg);
                 String stamp = LocalDateTime.now().format(TS);
-                SddManagedTask t = mgr.create(title, arg, "auto", null, 0L, "none", stamp);
-                if (t == null) return "✗ 创建失败";
-                mgr.start(t.id, stamp);
-                return "✓ 已创建并启动长任务「" + title + "」（id=" + t.id + "）";
+                SddTaskApplicationService.Task task = sddTasks.create(
+                        new SddTaskApplicationService.CreateCommand(
+                                title, arg, "auto", null, 0L, "none", stamp));
+                sddTasks.start(task.id(), stamp);
+                return "✓ 已创建并启动长任务「" + title + "」（id=" + task.id() + "）";
             }
-            case "pause" -> { return ctrlTask(mgr, arg, "pause"); }
-            case "resume" -> { return ctrlTask(mgr, arg, "resume"); }
-            case "cancel" -> { return ctrlTask(mgr, arg, "cancel"); }
+            case "pause" -> { return ctrlTask(arg, "pause"); }
+            case "resume" -> { return ctrlTask(arg, "resume"); }
+            case "cancel" -> { return ctrlTask(arg, "cancel"); }
             default -> { return "✗ 未知子命令：task " + sub + "\n用法：/task list|status <id>|create <描述>|pause|resume|cancel <id>"; }
         }
     }
 
-    private String ctrlTask(SddTaskManager mgr, String id, String op) {
+    private String ctrlTask(String id, String op) {
         if (id.isEmpty()) return "用法：/task " + op + " <id>";
-        if (mgr.get(id) == null) return "✗ 未找到任务：" + id;
-        switch (op) {
-            case "pause" -> mgr.pause(id);
-            case "resume" -> mgr.resume(id, LocalDateTime.now().format(TS));
-            case "cancel" -> mgr.cancel(id);
-            default -> { }
+        try {
+            switch (op) {
+                case "pause" -> sddTasks.pause(id);
+                case "resume" -> sddTasks.resume(id, LocalDateTime.now().format(TS));
+                case "cancel" -> sddTasks.cancel(id);
+                default -> { }
+            }
+        } catch (com.javaclaw.application.error.NotFoundException failure) {
+            return "✗ " + failure.getMessage();
         }
         return "✓ 已" + (op.equals("pause") ? "暂停" : op.equals("resume") ? "续跑" : "取消") + "任务：" + id;
     }

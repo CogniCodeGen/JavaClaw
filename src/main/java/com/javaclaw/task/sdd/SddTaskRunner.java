@@ -1,9 +1,8 @@
 package com.javaclaw.task.sdd;
 
 import com.javaclaw.agent.model.ModelFactory;
-import com.javaclaw.config.AppDatabase;
-import com.javaclaw.config.AppDatabaseAccess;
-import com.javaclaw.config.DatabaseAccess;
+import com.javaclaw.platform.json.JsonCodec;
+import com.javaclaw.platform.process.ProcessRunner;
 import com.javaclaw.skill.SkillRuntimeServices;
 import com.javaclaw.task.sdd.agent.AgentScopeCriticJudge;
 import com.javaclaw.task.sdd.agent.AgentScopeSddAgents;
@@ -12,6 +11,7 @@ import com.javaclaw.task.sdd.gate.AutoApproveReviewGate;
 import com.javaclaw.task.sdd.spec.OpenSpecChange;
 import com.javaclaw.task.sdd.spec.SpecStore;
 import com.javaclaw.task.sdd.verify.ScenarioVerifier;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.Map;
 import java.util.function.BooleanSupplier;
@@ -55,36 +55,23 @@ public final class SddTaskRunner implements AutoCloseable {
      */
     public SddTaskRunner(TaskContext ctx, ModelFactory modelFactory, Map<String, Object> capabilityTools,
                          SkillRuntimeServices skills, SddTokenSink tokenSink, ReviewGate gate,
-                         SddProgress progress, String completionStamp) {
-        this(ctx, modelFactory, capabilityTools, skills, tokenSink, gate, progress, completionStamp, null);
-    }
-
-    public SddTaskRunner(TaskContext ctx, ModelFactory modelFactory, Map<String, Object> capabilityTools,
-                         SkillRuntimeServices skills, SddTokenSink tokenSink, ReviewGate gate,
-                         SddProgress progress, String completionStamp,
-                         com.javaclaw.workflow.service.WorkflowService workflowService) {
-        this(ctx, modelFactory, capabilityTools, skills, tokenSink, gate, progress, completionStamp,
-                workflowService, new AppDatabaseAccess(), AppDatabase.currentWorkspaceId());
-    }
-
-    public SddTaskRunner(TaskContext ctx, ModelFactory modelFactory, Map<String, Object> capabilityTools,
-                         SkillRuntimeServices skills, SddTokenSink tokenSink, ReviewGate gate,
                          SddProgress progress, String completionStamp,
                          com.javaclaw.workflow.service.WorkflowService workflowService,
-                         DatabaseAccess database, String workspaceId) {
+                         JdbcTemplate jdbc, JsonCodec json, ProcessRunner processes,
+                         String workspaceId) {
         this.context = ctx;
         this.capabilityTools = capabilityTools == null ? Map.of() : Map.copyOf(capabilityTools);
         this.workflowService = workflowService;
         if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
-        this.store = new SpecStore(ctx.workDir(), database, workspaceId);
+        this.store = new SpecStore(ctx.workDir(), jdbc, workspaceId);
         this.agents = new AgentScopeSddAgents(modelFactory, this.capabilityTools, skills, tokenSink);
-        this.commandRunner = new ProcessCommandRunner();
+        this.commandRunner = new ProcessCommandRunner(processes);
         this.critic = new AgentScopeCriticJudge(ctx.workDir(), modelFactory, tokenSink);
         ScenarioVerifier verifier = new ScenarioVerifier(ctx.workDir(), commandRunner, critic);
         this.orchestrator = new SddOrchestrator(ctx, store, verifier, agents,
                 gate == null ? new AutoApproveReviewGate() : gate,
                 progress == null ? SddProgress.NOOP : progress,
-                database, workspaceId)
+                jdbc, json, workspaceId)
                 .completionStamp(completionStamp == null ? "" : completionStamp);
     }
 

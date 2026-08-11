@@ -44,6 +44,7 @@ public final class LoopService {
 
     private final AgentRuntime runtime;
     private final com.javaclaw.workflow.service.WorkflowService workflowService;
+    private final com.javaclaw.platform.process.ProcessRunner processes;
     private final com.javaclaw.api.conversation.SingleConversationRun conversationRun =
             new com.javaclaw.api.conversation.SingleConversationRun();
     private final GoalManager goalManager;
@@ -77,13 +78,13 @@ public final class LoopService {
     /** 重建/关闭路径等待循环线程停稳的上限（毫秒）；超时仅告警，不无限阻塞调用线程。 */
     private static final long TERMINATION_WAIT_MILLIS = 5_000L;
 
-    public LoopService(AgentRuntime runtime) {
-        this(runtime, null);
-    }
-
-    public LoopService(AgentRuntime runtime, com.javaclaw.workflow.service.WorkflowService workflowService) {
+    public LoopService(
+            AgentRuntime runtime,
+            com.javaclaw.workflow.service.WorkflowService workflowService,
+            com.javaclaw.platform.process.ProcessRunner processes) {
         this.runtime = runtime;
         this.workflowService = workflowService;
+        this.processes = java.util.Objects.requireNonNull(processes, "processes");
         if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
         // skipLength=0：聊天模式的「短请求免分解」优化不适用于循环——循环目标多为短祈使句，
         // 而成功准则是循环完成判定的承重墙（不是可有可无的优化），必须对任意长度目标分解。
@@ -206,7 +207,7 @@ public final class LoopService {
                 // 验证命令超时对齐慢构建场景：默认 120s 会把「盯着 mvn test 直到通过」这类
                 // 分钟级命令逐轮误杀，done 永不可达（SDD 路径同理专门调大，见 execTimeoutSec）
                 CommandRunner commandRunner = new ProcessCommandRunner(
-                        AgentConfig.getInstance().getLoopVerifyTimeoutSeconds());
+                        processes, AgentConfig.getInstance().getLoopVerifyTimeoutSeconds());
                 var judge = plan.spec().useJudge()
                         ? new AgentScopeCompletionJudge(plan.spec().workDir(), runtime.getModelFactory())
                         : CompletionJudge.CONSERVATIVE_DENY;

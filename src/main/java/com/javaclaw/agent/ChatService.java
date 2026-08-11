@@ -152,11 +152,13 @@ public class ChatService {
      */
     public ChatService(AgentRuntime runtime,
                        com.javaclaw.workflow.service.WorkflowService workflowService,
+                       com.javaclaw.skill.curation.SkillCurator skillCurator,
                        TaskScope taskScope) {
         this.runtime = runtime;
         this.workflowService = workflowService;
         this.taskScope = java.util.Objects.requireNonNull(taskScope, "taskScope");
         this.skills = runtime.getSkillRuntime();
+        this.skillCurator = java.util.Objects.requireNonNull(skillCurator, "skillCurator");
         if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
         AgentConfig config = AgentConfig.getInstance();
         log.info("========== 初始化 ChatService 普通模式 ==========");
@@ -184,14 +186,6 @@ public class ChatService {
         // 不可达、无人能补 close，悬置的 EclipseStore 文件锁会让同工作区的下一次构造
         // （服务重建的恢复路径）必然撞锁。catch 必定重抛，final 字段的确定性赋值不受影响
         try {
-            // 技能蒸馏器（程序性记忆）：提案队列同时接收 skill_manage 主动路径与本蒸馏器的兜底路径，
-            // 两路按变更指纹统一去重；auto 模式 Toast 经 ToolConfirmationManager 注入的交互端口
-            this.skillCurator = new com.javaclaw.skill.curation.SkillCurator(
-                    runtime.getModelFactory(),
-                    runtime.getTokenTracker(),
-                    skills.manager(), skills.usage(), skills.proposals(), config, taskScope,
-                    ToolConfirmationManager::getPort);
-
             // 1. 构建 masterToolkit：按分组注册工具，后续按路由激活/禁用
             this.masterToolkit = buildMasterToolkit(runtime);
 

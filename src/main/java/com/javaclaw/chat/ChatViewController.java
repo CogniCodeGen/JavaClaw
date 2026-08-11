@@ -33,7 +33,6 @@ import com.javaclaw.ui.javafx.image.ImageViewerFactory;
 import com.javaclaw.ui.javafx.control.WindowToastFactory;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuController;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuSnapshot;
-import com.javaclaw.ui.javafx.task.SddTaskView;
 import com.javaclaw.ui.javafx.theme.ThemeMenuController;
 import com.javaclaw.util.ProjectAccessPolicy;
 import javafx.animation.Animation;
@@ -2431,9 +2430,9 @@ public class ChatViewController implements AutoCloseable {
         try {
             int proposals = applicationKernel.current().skills().pendingProposalCount();
             sidebarController.updateSkillBadge(proposals);
-            int activeTasks = (int) com.javaclaw.task.sdd.run.SddTaskManager.getInstance().list().stream()
-                    .filter(t -> t.state == com.javaclaw.task.sdd.run.SddTaskState.RUNNING
-                            || t.state == com.javaclaw.task.sdd.run.SddTaskState.NEEDS_HUMAN)
+            int activeTasks = (int) applicationKernel.current().sddTasks().snapshot().tasks().stream()
+                    .filter(task -> task.state() == com.javaclaw.task.sdd.run.SddTaskState.RUNNING
+                            || task.state() == com.javaclaw.task.sdd.run.SddTaskState.NEEDS_HUMAN)
                     .count();
             sidebarController.updateTaskBadge(activeTasks);
         } catch (Exception e) {
@@ -2652,7 +2651,7 @@ public class ChatViewController implements AutoCloseable {
     private void openTaskCreation(String description) {
         log.info("打开任务创建对话框（SDD）");
         javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
-        new SddTaskView(ownerStage).showCreate(description);
+        applicationKernel.current().sddTaskViews().create(ownerStage).showCreate(description);
     }
 
     /**

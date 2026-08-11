@@ -1,16 +1,15 @@
 package com.javaclaw.task.sdd.agent;
 
+import com.javaclaw.platform.process.ProcessRequest;
+import com.javaclaw.platform.process.ProcessRunner;
 import com.javaclaw.task.sdd.verify.CommandRunner;
-import com.javaclaw.util.ProcessTerminator;
 import com.javaclaw.util.ProjectAccessPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
-import java.util.concurrent.TimeUnit;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.Objects;
 
 /**
  * {@link CommandRunner} 的进程实现 —— 在工作目录内以 {@code bash -c} 执行验收命令
@@ -27,13 +26,15 @@ public final class ProcessCommandRunner implements CommandRunner {
     private static final Logger log = LoggerFactory.getLogger(ProcessCommandRunner.class);
     private static final int MAX_OUTPUT_CHARS = 64 * 1024;
 
+    private final ProcessRunner processes;
     private volatile long timeoutSeconds;
 
-    public ProcessCommandRunner() {
-        this(120);
+    public ProcessCommandRunner(ProcessRunner processes) {
+        this(processes, 120);
     }
 
-    public ProcessCommandRunner(long timeoutSeconds) {
+    public ProcessCommandRunner(ProcessRunner processes, long timeoutSeconds) {
+        this.processes = Objects.requireNonNull(processes, "processes");
         this.timeoutSeconds = Math.max(1, timeoutSeconds);
     }
 
@@ -50,49 +51,41 @@ public final class ProcessCommandRunner implements CommandRunner {
         if (command == null || command.isBlank()) {
             return new Result(-1, "（空命令）");
         }
-        Process proc = null;
         try {
-            ProcessBuilder pb = new ProcessBuilder("bash", "-lc", command);
+            ProcessRequest request = ProcessRequest.shell(
+                            "sdd-verify", command, Duration.ofSeconds(timeoutSeconds))
+                    .withOutputLimit(MAX_OUTPUT_CHARS);
             if (workDir != null && !workDir.isBlank()) {
-                File dir = new File(workDir);
-                if (dir.isDirectory()) pb.directory(dir);
-            }
-            pb.redirectErrorStream(true);
-            proc = pb.start();
-
-            StringBuffer out = new StringBuffer();
-            Process started = proc;
-            Thread outputPump = new Thread(() -> {
-                try (BufferedReader r = new BufferedReader(
-                        new InputStreamReader(started.getInputStream(), StandardCharsets.UTF_8))) {
-                    String line;
-                    while ((line = r.readLine()) != null) {
-                        if (out.length() < MAX_OUTPUT_CHARS) out.append(line).append('\n');
-                    }
-                } catch (Exception e) {
-                    log.debug("[Verify] 输出读取结束: {}", e.getMessage());
+                Path directory = Path.of(workDir).toAbsolutePath().normalize();
+                if (java.nio.file.Files.isDirectory(directory)) {
+                    request = request.withWorkingDirectory(directory);
                 }
-            }, "sdd-verify-output");
-            outputPump.setDaemon(true);
-            outputPump.start();
-
-            boolean finished = ProcessTerminator.waitForOrTerminateOnInterrupt(
-                    proc, timeoutSeconds, TimeUnit.SECONDS);
-            if (!finished) {
-                ProcessTerminator.destroyTreeForcibly(proc);
-                outputPump.join(2_000);
-                log.warn("[Verify] 命令超时（{}s）：{}", timeoutSeconds, command);
-                return new Result(-2, out + "\n（命令执行超时 " + timeoutSeconds + "s，已强制终止）");
             }
-            outputPump.join(2_000);
-            return new Result(proc.exitValue(), out.toString());
+            var result = processes.run(request);
+            String output = merge(result.stdout(), result.stderr());
+            if (result.timedOut()) {
+                log.warn("[Verify] 命令超时（{}s）：{}", timeoutSeconds, command);
+                return new Result(-2, output + "\n（命令执行超时 "
+                        + timeoutSeconds + "s，已强制终止）");
+            }
+            if (result.outputTruncated()) {
+                output += "\n（输出已截断）";
+            }
+            return new Result(result.exitCode(), output);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            ProcessTerminator.destroyTreeForcibly(proc);
             return new Result(-3, "（命令执行被中断）");
         } catch (Exception e) {
             log.warn("[Verify] 命令执行异常：{} — {}", command, e.getMessage());
             return new Result(-1, "（命令执行异常：" + e.getMessage() + "）");
         }
+    }
+
+    private static String merge(String stdout, String stderr) {
+        String out = stdout == null ? "" : stdout;
+        String err = stderr == null ? "" : stderr;
+        if (out.isBlank()) return err;
+        if (err.isBlank()) return out;
+        return out + (out.endsWith("\n") ? "" : "\n") + err;
     }
 }

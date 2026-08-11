@@ -49,6 +49,34 @@
     -fx-padding: 2 10 10 10;
 }
 
+/* FXML ListView 只负责虚拟化，卡片自身承载背景、边框与选中态。 */
+.sdd-list-box,
+.sdd-change-list,
+.sdd-scenario-list,
+.sdd-checklist-list,
+.sdd-log-list {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-background-insets: 0;
+}
+
+.sdd-list-box .list-cell,
+.sdd-change-list .list-cell,
+.sdd-scenario-list .list-cell,
+.sdd-checklist-list .list-cell,
+.sdd-log-list .list-cell {
+    -fx-background-color: transparent;
+    -fx-padding: 4 0 4 0;
+}
+
+.sdd-list-box .list-cell:selected,
+.sdd-change-list .list-cell:selected,
+.sdd-scenario-list .list-cell:selected,
+.sdd-checklist-list .list-cell:selected,
+.sdd-log-list .list-cell:selected {
+    -fx-background-color: transparent;
+}
+
 /* ==================== 左侧任务卡片 ==================== */
 
 .sdd-task-card {

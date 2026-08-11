@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.layout.HBox?>
+
+<HBox fx:id="root" spacing="11.0" alignment="TOP_LEFT" styleClass="sdd-change-item"
+      xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1">
+    <children>
+        <Label fx:id="numberLabel" styleClass="sdd-change-num"/>
+        <Label fx:id="textLabel" wrapText="true" maxWidth="Infinity" HBox.hgrow="ALWAYS" styleClass="sdd-body-text"/>
+    </children>
+</HBox>

@@ -5,6 +5,7 @@ import com.javaclaw.agent.ChatService;
 import com.javaclaw.agent.PlanModeService;
 import com.javaclaw.application.schedule.ScheduleApplicationService;
 import com.javaclaw.application.skill.SkillManagementApplicationService;
+import com.javaclaw.application.task.SddTaskApplicationService;
 import com.javaclaw.api.conversation.ModeRegistry;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.platform.spring.WorkspaceContextHandle;
@@ -16,6 +17,7 @@ import com.javaclaw.ui.javafx.schedule.ScheduleViewFactory;
 import com.javaclaw.ui.javafx.memory.MemoryViewFactory;
 import com.javaclaw.ui.javafx.workflow.WorkflowViewFactory;
 import com.javaclaw.ui.javafx.skill.SkillCenterViewFactory;
+import com.javaclaw.ui.javafx.task.SddTaskViewFactory;
 
 import java.util.Objects;
 
@@ -44,6 +46,8 @@ public final class WorkspaceRuntime implements AutoCloseable {
     private final ScheduleManager scheduleManager;
     private final ScheduleApplicationService schedules;
     private final SkillManagementApplicationService skills;
+    private final SddTaskApplicationService sddTasks;
+    private final SddTaskViewFactory sddTaskViews;
 
     WorkspaceRuntime(WorkspaceContextHandle springContext) {
         this.springContext = Objects.requireNonNull(springContext, "springContext");
@@ -63,6 +67,8 @@ public final class WorkspaceRuntime implements AutoCloseable {
         scheduleManager = springContext.bean(ScheduleManager.class);
         schedules = springContext.bean(ScheduleApplicationService.class);
         skills = springContext.bean(SkillManagementApplicationService.class);
+        sddTasks = springContext.bean(SddTaskApplicationService.class);
+        sddTaskViews = springContext.bean(SddTaskViewFactory.class);
     }
 
     public WorkspaceContext context() {
@@ -127,6 +133,14 @@ public final class WorkspaceRuntime implements AutoCloseable {
 
     public SkillManagementApplicationService skills() {
         return skills;
+    }
+
+    public SddTaskApplicationService sddTasks() {
+        return sddTasks;
+    }
+
+    public SddTaskViewFactory sddTaskViews() {
+        return sddTaskViews;
     }
 
     public boolean isClosed() {
