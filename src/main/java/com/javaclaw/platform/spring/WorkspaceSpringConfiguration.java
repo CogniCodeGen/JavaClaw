@@ -233,13 +233,14 @@ public class WorkspaceSpringConfiguration {
             com.javaclaw.config.AgentConfig settings,
             com.javaclaw.config.EmailConfig emailSettings,
             com.javaclaw.config.NotificationConfig notificationSettings,
+            com.javaclaw.system.CommandToolFactory commandTools,
             WorkspaceContext workspace,
             KnowledgeDocumentPreferencePort knowledgePreferences) {
         return new AgentRuntime(options.browserManager(), models, tokens, memories, embeddings,
                 customAgents, siteCredentials,
                 mcpConfigurations, mcpClients, workspaceTaskScope, schedules, skills,
                 sddTasks::getObject, jshellRunner, traceRecorder, settings,
-                emailSettings, notificationSettings, workspace,
+                emailSettings, notificationSettings, commandTools, workspace,
                 knowledgePreferences);
     }
 

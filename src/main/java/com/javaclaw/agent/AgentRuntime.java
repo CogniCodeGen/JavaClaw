@@ -91,6 +91,7 @@ public final class AgentRuntime {
     private final AgentConfig config;
     private final com.javaclaw.config.EmailConfig emailConfig;
     private final com.javaclaw.config.NotificationConfig notificationConfig;
+    private final com.javaclaw.system.CommandToolFactory commandTools;
 
     /** Token 用量追踪器 */
     private final TokenTracker tokenTracker;
@@ -173,6 +174,7 @@ public final class AgentRuntime {
             AgentConfig config,
             com.javaclaw.config.EmailConfig emailConfig,
             com.javaclaw.config.NotificationConfig notificationConfig,
+            com.javaclaw.system.CommandToolFactory commandTools,
             WorkspaceContext workspace,
             KnowledgeDocumentPreferencePort knowledgePreferences) {
         java.util.Objects.requireNonNull(config, "config");
@@ -181,6 +183,7 @@ public final class AgentRuntime {
         this.emailConfig = java.util.Objects.requireNonNull(emailConfig, "emailConfig");
         this.notificationConfig = java.util.Objects.requireNonNull(
                 notificationConfig, "notificationConfig");
+        this.commandTools = java.util.Objects.requireNonNull(commandTools, "commandTools");
         log.info("========== 初始化 AgentRuntime 基础设施 ==========");
         log.info("API 地址: {}", config.getBaseUrl());
         log.info("模型名称: {}", config.getModelName());
@@ -221,7 +224,7 @@ public final class AgentRuntime {
         this.expertManager = new ExpertManager(
                 modelFactory, browserManager, siteCredentialManager,
                 ToolCallOrigin.INTERACTIVE, customAgentConfig, workspace, config,
-                emailConfig, notificationConfig);
+                emailConfig, notificationConfig, commandTools);
         this.knowledgeExpert = new KnowledgeExpert(
                 modelFactory,
                 embeddingGateway,
@@ -280,6 +283,9 @@ public final class AgentRuntime {
     public com.javaclaw.config.EmailConfig getEmailConfig() { return emailConfig; }
     public com.javaclaw.config.NotificationConfig getNotificationConfig() {
         return notificationConfig;
+    }
+    public com.javaclaw.system.CommandToolFactory getCommandTools() {
+        return commandTools;
     }
     public ScheduleApplicationService getScheduleApplicationService() {
         return scheduleApplicationService;

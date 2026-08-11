@@ -1,5 +1,10 @@
 package com.javaclaw.system;
 
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.execution.TaskHandle;
+import com.javaclaw.platform.execution.TaskScope;
+import com.javaclaw.platform.execution.TaskSpec;
+import com.javaclaw.platform.execution.TriggerHandle;
 import com.javaclaw.util.ProcessTerminator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,21 +15,22 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Collection;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 命令行会话管理器
  *
  * <p>为命令行工具提供长生命周期的交互式 Shell 会话能力。每个会话独占一个
  * Shell 进程（Unix 用 {@code /bin/bash --norc}，Windows 用 {@code cmd.exe /q /k}），
- * stdin 可写、stdout/stderr 合并后由后台线程读入环形缓冲。</p>
+ * stdin 可写、stdout/stderr 合并后由托管虚拟线程读入环形缓冲。</p>
  *
  * <p>典型用法：</p>
  * <ol>
@@ -35,21 +41,15 @@ import java.util.concurrent.TimeUnit;
  * </ol>
  *
  * <p>限制：最多 {@link #MAX_SESSIONS} 个并发会话，缓冲上限 {@link #MAX_BUFFER_CHARS} 字符，
- * 空闲超过 {@link #IDLE_TIMEOUT_MS} 自动回收；JVM 退出时统一杀掉所有进程。</p>
+ * 空闲超过 {@link #IDLE_TIMEOUT_MS} 自动回收；根 Spring Context 关闭时统一清理进程树。</p>
  *
  * <p>本类不做命令安全检查（黑名单 / 高风险确认）；调用方在 send 之前自行约束。</p>
  *
  * @author JavaClaw
  */
-public final class CommandSessionManager {
+public final class CommandSessionManager implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(CommandSessionManager.class);
-
-    private static final CommandSessionManager INSTANCE = new CommandSessionManager();
-
-    public static CommandSessionManager getInstance() {
-        return INSTANCE;
-    }
 
     /** 最大并发会话数 */
     public static final int MAX_SESSIONS = 10;
@@ -57,24 +57,23 @@ public final class CommandSessionManager {
     /** 单个会话缓冲上限（字符） */
     public static final int MAX_BUFFER_CHARS = 1_000_000;
 
-    /** 空闲超时（毫秒），超过则后台线程自动回收 */
+    /** 空闲超时（毫秒），超过则由托管定时触发器回收。 */
     public static final long IDLE_TIMEOUT_MS = 30L * 60 * 1000;
 
     private final Map<String, ShellSession> sessions = new ConcurrentHashMap<>();
-    private final ScheduledExecutorService janitor;
+    private final TaskScope tasks;
+    private final TriggerHandle janitor;
+    private final AtomicBoolean closed = new AtomicBoolean(false);
 
     /** 自动回收观察者；订阅句柄由所属工作区负责关闭。 */
     private final CopyOnWriteArrayList<java.util.function.IntConsumer> cleanupListeners =
             new CopyOnWriteArrayList<>();
 
-    private CommandSessionManager() {
-        janitor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "cmd-session-janitor");
-            t.setDaemon(true);
-            return t;
-        });
-        janitor.scheduleAtFixedRate(this::janitorTick, 5, 5, TimeUnit.MINUTES);
-        Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown, "cmd-session-shutdown"));
+    public CommandSessionManager(ManagedTaskExecutor executor) {
+        ManagedTaskExecutor managed = java.util.Objects.requireNonNull(executor, "executor");
+        tasks = managed.openScope("command-sessions", MAX_SESSIONS + 1);
+        janitor = managed.scheduleTriggerAtFixedRate(
+                Duration.ofMinutes(5), Duration.ofMinutes(5), this::dispatchJanitor);
     }
 
     /** 订阅自动回收结果。监听器必须快速返回；关闭句柄后不再接收通知。 */
@@ -109,6 +108,7 @@ public final class CommandSessionManager {
      * @throws IOException 会话数已达上限，或进程启动失败
      */
     public ShellSession open(String workDir) throws IOException {
+        if (closed.get()) throw new IOException("命令会话管理器已关闭");
         if (sessions.size() >= MAX_SESSIONS) {
             throw new IOException("会话数量已达上限 " + MAX_SESSIONS + " 个，请先关闭部分会话再开新会话");
         }
@@ -128,7 +128,13 @@ public final class CommandSessionManager {
 
         String id = "sh-" + Long.toString(System.currentTimeMillis(), 36)
                 + "-" + ThreadLocalRandom.current().nextInt(1000, 9999);
-        ShellSession s = new ShellSession(id, workDir, proc);
+        ShellSession s;
+        try {
+            s = new ShellSession(id, workDir, proc, tasks);
+        } catch (RuntimeException failure) {
+            ProcessTerminator.destroyTreeForcibly(proc);
+            throw new IOException("启动命令会话输出读取失败", failure);
+        }
         sessions.put(id, s);
         log.info("已创建命令行会话: {} @ {}", id, workDir);
         return s;
@@ -179,14 +185,32 @@ public final class CommandSessionManager {
         return reclaimed[0];
     }
 
-    private void shutdown() {
-        janitor.shutdownNow();
+    private void dispatchJanitor() {
+        if (closed.get()) return;
+        try {
+            tasks.submit(TaskSpec.io("command-session-cleanup"), context -> {
+                janitorTick();
+                return null;
+            });
+        } catch (RejectedExecutionException rejected) {
+            if (!closed.get()) log.warn("命令会话清理任务被拒绝", rejected);
+        }
+    }
+
+    @Override
+    public void close() {
+        if (!closed.compareAndSet(false, true)) return;
+        janitor.close();
         for (ShellSession s : sessions.values()) {
             try {
                 s.terminate();
-            } catch (Exception ignored) {}
+            } catch (RuntimeException failure) {
+                log.warn("关闭命令会话失败: {}", s.id(), failure);
+            }
         }
         sessions.clear();
+        cleanupListeners.clear();
+        tasks.close();
     }
 
     // ==================== 内部会话对象 ====================
@@ -204,18 +228,20 @@ public final class CommandSessionManager {
         private final StringBuilder buffer = new StringBuilder();
         private final Object bufferLock = new Object();
         private volatile long lastActivity;
-        private final Thread readerThread;
+        private final TaskHandle<Void> readerTask;
+        private final AtomicBoolean terminated = new AtomicBoolean(false);
 
-        ShellSession(String id, String workDir, Process process) {
+        ShellSession(String id, String workDir, Process process, TaskScope tasks) {
             this.id = id;
             this.workDir = workDir;
             this.process = process;
             this.createdAt = System.currentTimeMillis();
             this.lastActivity = createdAt;
             this.stdin = new BufferedWriter(new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));
-            this.readerThread = new Thread(this::pumpOutput, "cmd-session-reader-" + id);
-            this.readerThread.setDaemon(true);
-            this.readerThread.start();
+            readerTask = tasks.submit(TaskSpec.io("command-session-output-" + id), context -> {
+                pumpOutput();
+                return null;
+            });
         }
 
         public String id() { return id; }
@@ -309,9 +335,12 @@ public final class CommandSessionManager {
         }
 
         public void terminate() {
+            if (!terminated.compareAndSet(false, true)) return;
             try {
                 stdin.close();
-            } catch (IOException ignored) {}
+            } catch (IOException failure) {
+                log.debug("关闭命令会话输入流失败: {}", id, failure);
+            }
             try {
                 // 持久 shell 的直接子进程可能是仍在运行的构建/脚本；只 destroy shell 会把它遗留。
                 ProcessTerminator.destroyTreeForcibly(process);
@@ -324,7 +353,7 @@ public final class CommandSessionManager {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-            readerThread.interrupt();
+            readerTask.cancel();
         }
 
         private void pumpOutput() {

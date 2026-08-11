@@ -16,6 +16,7 @@ import com.javaclaw.platform.spring.WorkspaceSpringContextFactory;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.application.tool.ToolInvocationPipeline;
 import com.javaclaw.schedule.ScheduleManager;
+import com.javaclaw.system.CommandWhitelistManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,6 +45,7 @@ public final class ApplicationKernel implements AutoCloseable {
     private final AgentConfig agentConfig;
     private final EmailConfig emailConfig;
     private final NotificationConfig notificationConfig;
+    private final CommandWhitelistManager commandWhitelist;
     private final AtomicBoolean transitioning = new AtomicBoolean(false);
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
@@ -64,7 +66,8 @@ public final class ApplicationKernel implements AutoCloseable {
                              TraceRecorder traceRecorder,
                              AgentConfig agentConfig,
                              EmailConfig emailConfig,
-                             NotificationConfig notificationConfig) {
+                             NotificationConfig notificationConfig,
+                             CommandWhitelistManager commandWhitelist) {
         this.browserManager = Objects.requireNonNull(browserManager, "browserManager");
         this.interactionPort = Objects.requireNonNull(interactionPort, "interactionPort");
         this.taskExecutor = Objects.requireNonNull(taskExecutor, "taskExecutor");
@@ -77,6 +80,7 @@ public final class ApplicationKernel implements AutoCloseable {
         this.emailConfig = Objects.requireNonNull(emailConfig, "emailConfig");
         this.notificationConfig = Objects.requireNonNull(
                 notificationConfig, "notificationConfig");
+        this.commandWhitelist = Objects.requireNonNull(commandWhitelist, "commandWhitelist");
         this.runtimeFactory = new RuntimeFactory(workspaceContexts, browserManager, openTaskView,
                 openWorkflowView, closeWorkflowView, java.util.Set.of());
     }
@@ -225,6 +229,7 @@ public final class ApplicationKernel implements AutoCloseable {
         agentConfig.reload();
         emailConfig.reload();
         notificationConfig.reload();
+        commandWhitelist.reload();
         data.reload();
         traceRecorder.reload();
     }

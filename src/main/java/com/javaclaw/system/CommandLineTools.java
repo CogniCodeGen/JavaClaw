@@ -4,7 +4,9 @@ import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.config.AgentConfig;
-import com.javaclaw.util.ProcessTerminator;
+import com.javaclaw.platform.process.ProcessRequest;
+import com.javaclaw.platform.process.ProcessResult;
+import com.javaclaw.platform.process.ProcessRunner;
 import com.javaclaw.util.ProjectAccessPolicy;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
@@ -15,10 +17,10 @@ import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.TimeUnit;
 
 /**
  * 命令行执行工具集
@@ -40,10 +42,21 @@ public class CommandLineTools {
     /** 调用来源令牌（装配期绑定）：托管任务来源走统一确认路径（白名单/目录放行），其余走本地白名单机制。 */
     private final ToolCallOrigin origin;
     private final AgentConfig settings;
+    private final CommandWhitelistManager whitelist;
+    private final CommandSessionManager sessionMgr;
+    private final ProcessRunner processes;
 
-    public CommandLineTools(ToolCallOrigin origin, AgentConfig settings) {
+    public CommandLineTools(
+            ToolCallOrigin origin,
+            AgentConfig settings,
+            CommandWhitelistManager whitelist,
+            CommandSessionManager sessionMgr,
+            ProcessRunner processes) {
         this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
         this.settings = java.util.Objects.requireNonNull(settings, "settings");
+        this.whitelist = java.util.Objects.requireNonNull(whitelist, "whitelist");
+        this.sessionMgr = java.util.Objects.requireNonNull(sessionMgr, "sessionMgr");
+        this.processes = java.util.Objects.requireNonNull(processes, "processes");
     }
 
     /** 严格禁止的文件操作命令（必须通过 system_expert 处理） */
@@ -73,9 +86,6 @@ public class CommandLineTools {
     private static final int TAIL_OUTPUT_LINES = 200;
     /** 输出总字符上限：工具结果会驻留在 ReAct 上下文中、每轮迭代全量重发，单条过胖会被放大数倍 */
     private static final int MAX_OUTPUT_CHARS = 16_000;
-
-    private final CommandWhitelistManager whitelist = CommandWhitelistManager.getInstance();
-    private final CommandSessionManager sessionMgr = CommandSessionManager.getInstance();
 
     // ==================== 工具方法 ====================
 
@@ -638,85 +648,30 @@ public class CommandLineTools {
      */
     private String doExecute(String command, String workDir, int timeoutSeconds) {
         try {
-            ProcessBuilder pb;
-            String os = System.getProperty("os.name", "").toLowerCase();
-            if (os.contains("win")) {
-                pb = new ProcessBuilder("cmd.exe", "/c", command);
-            } else {
-                pb = new ProcessBuilder("/bin/sh", "-c", command);
-            }
-
-            pb.directory(new File(workDir));
-            pb.redirectErrorStream(true);
-            // 关键：把子进程 stdin 接到空设备，使其立即读到 EOF。
-            // 否则像 mvn（JLine/jansi 会读 stdin 做终端探测）这类命令，在无 TTY、且 stdin 管道
-            // 一直开着不关闭时，会打印完输出后卡在读 stdin 上不退出（实测可挂数分钟）。
-            File nullFile = new File(os.contains("win") ? "NUL" : "/dev/null");
-            pb.redirectInput(ProcessBuilder.Redirect.from(nullFile));
-
-            Process process = pb.start();
-
-            // 后台线程抽干 stdout：避免旧写法"先把流读到 EOF 再 waitFor"——命令一旦挂起且
-            // stdout 不关闭，readLine 会无限阻塞，导致 timeoutSeconds 这道超时上限永远到不了。
-            final Process proc = process;
-            // 头尾双保留：头部 HEAD_OUTPUT_LINES 行 + 尾部 TAIL_OUTPUT_LINES 行环形缓冲。
-            // 旧实现保头弃尾，Maven/Gradle 的报错恰在尾部——执行体看不到错误就会换参数重跑，
-            // 既丢关键信息又多烧迭代；现在错误尾部始终保住。
-            final java.util.List<String> headLines = new java.util.ArrayList<>();
-            final java.util.ArrayDeque<String> tailLines = new java.util.ArrayDeque<>();
-            final java.util.concurrent.atomic.AtomicInteger totalLines =
-                    new java.util.concurrent.atomic.AtomicInteger(0);
-            final Object outputLock = new Object();
-            Thread reader = new Thread(() -> {
-                try (BufferedReader r = new BufferedReader(
-                        new InputStreamReader(proc.getInputStream()))) {
-                    String line;
-                    while ((line = r.readLine()) != null) {
-                        // 始终读到 EOF 抽干管道，防止子进程因 stdout 缓冲写满而阻塞
-                        int n = totalLines.getAndIncrement();
-                        synchronized (outputLock) {
-                            if (n < HEAD_OUTPUT_LINES) {
-                                headLines.add(line);
-                            } else {
-                                tailLines.addLast(line);
-                                if (tailLines.size() > TAIL_OUTPUT_LINES) tailLines.removeFirst();
-                            }
-                        }
-                    }
-                } catch (IOException ignored) {
-                    // 进程被强制终止 / 流被关闭时正常抛出，忽略
-                }
-            }, "cmd-exec-reader");
-            reader.setDaemon(true);
-            reader.start();
-
-            boolean finished = ProcessTerminator.waitForOrTerminateOnInterrupt(
-                    process, timeoutSeconds, TimeUnit.SECONDS);
-            if (!finished) {
-                ProcessTerminator.destroyTreeForcibly(process);
-                // destroyForcibly 异步触发 kill；等待子进程实际退出再返回，避免留下僵尸
-                ProcessTerminator.waitForOrTerminateOnInterrupt(
-                        process, 2, TimeUnit.SECONDS);
-                reader.interrupt();
+            ProcessRequest request = ProcessRequest.shell(
+                    "command-execute", command, Duration.ofSeconds(timeoutSeconds))
+                    .withWorkingDirectory(Path.of(workDir))
+                    .withOutputLimit(4 * ProcessRequest.DEFAULT_OUTPUT_LIMIT);
+            ProcessResult execution = processes.run(request);
+            if (execution.timedOut()) {
                 return ToolResponse.error("cmd_execute",
                         "命令执行超时（" + timeoutSeconds + " 秒），已强制终止。慢构建可调大 timeout_seconds（上限 "
                                 + MAX_EXEC_TIMEOUT_SECONDS + "）");
             }
-            // 进程已退出，等读线程把剩余输出抽完（封顶 2s，避免极端情况下卡住）
-            reader.join(2000);
-
-            int exitCode = process.exitValue();
-            String result;
-            synchronized (outputLock) {
-                result = assembleOutput(headLines, tailLines, totalLines.get());
+            String output = combineOutput(execution.stdout(), execution.stderr());
+            String result = summarizeOutput(output);
+            if (execution.outputTruncated()) {
+                result += (result.isEmpty() ? "" : "\n")
+                        + "...（进程输出超过 4 MiB 捕获上限，已继续排空并截断）";
             }
 
-            if (exitCode == 0) {
+            if (execution.exitCode() == 0) {
                 return ToolResponse.success("cmd_execute",
                         result.isEmpty() ? "命令执行成功（无输出）" : result);
             } else {
                 return ToolResponse.error("cmd_execute",
-                        "命令退出码: " + exitCode + "\n" + (result.isEmpty() ? "（无输出）" : result));
+                        "命令退出码: " + execution.exitCode() + "\n"
+                                + (result.isEmpty() ? "（无输出）" : result));
             }
 
         } catch (IOException e) {
@@ -726,6 +681,25 @@ public class CommandLineTools {
             Thread.currentThread().interrupt();
             return ToolResponse.error("cmd_execute", "命令执行被中断");
         }
+    }
+
+    private static String combineOutput(String stdout, String stderr) {
+        String out = stdout == null ? "" : stdout;
+        String err = stderr == null ? "" : stderr;
+        if (out.isBlank()) return err;
+        if (err.isBlank()) return out;
+        return out + (out.endsWith("\n") ? "" : "\n") + err;
+    }
+
+    private static String summarizeOutput(String output) {
+        if (output == null || output.isBlank()) return "";
+        List<String> lines = output.lines().toList();
+        int headEnd = Math.min(HEAD_OUTPUT_LINES, lines.size());
+        int tailStart = Math.max(headEnd, lines.size() - TAIL_OUTPUT_LINES);
+        List<String> head = lines.subList(0, headEnd);
+        java.util.ArrayDeque<String> tail = new java.util.ArrayDeque<>(
+                lines.subList(tailStart, lines.size()));
+        return assembleOutput(head, tail, lines.size());
     }
 
     /**

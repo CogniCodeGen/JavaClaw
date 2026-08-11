@@ -147,7 +147,8 @@ public class JavaClawApp extends Application {
                     springContext.getBean(com.javaclaw.diagnostics.TraceRecorder.class),
                     springContext.getBean(com.javaclaw.config.AgentConfig.class),
                     springContext.getBean(com.javaclaw.config.EmailConfig.class),
-                    springContext.getBean(com.javaclaw.config.NotificationConfig.class));
+                    springContext.getBean(com.javaclaw.config.NotificationConfig.class),
+                    springContext.getBean(com.javaclaw.system.CommandWhitelistManager.class));
             applicationKernel.initialize();
             ApplicationContexts.registerApplicationKernel(springContext, applicationKernel);
 

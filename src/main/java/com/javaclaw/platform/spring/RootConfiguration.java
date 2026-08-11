@@ -60,6 +60,8 @@ import com.javaclaw.plugin.PluginManager;
 import com.javaclaw.ui.javafx.onboarding.OnboardingViewFactory;
 import com.javaclaw.ui.javafx.onboarding.ProviderCardFactory;
 import com.javaclaw.system.CommandSessionManager;
+import com.javaclaw.system.CommandWhitelistManager;
+import com.javaclaw.system.CommandToolFactory;
 import com.javaclaw.chat.ChatHistoryManager;
 import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 import org.springframework.context.ApplicationContext;
@@ -155,6 +157,15 @@ public class RootConfiguration {
                 jdbc, transactionManager, json, workspaces::getCurrentWorkspaceId);
     }
 
+    @Bean
+    CommandWhitelistManager commandWhitelistManager(
+            JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager,
+            WorkspaceManager workspaces) {
+        return new CommandWhitelistManager(
+                jdbc, transactionManager, workspaces::getCurrentWorkspaceId);
+    }
+
     @Bean(destroyMethod = "close")
     ManagedTaskExecutor managedTaskExecutor() {
         return new ManagedTaskExecutor();
@@ -220,9 +231,18 @@ public class RootConfiguration {
         return PluginManager.getInstance();
     }
 
+    @Bean(destroyMethod = "close")
+    CommandSessionManager commandSessionManager(ManagedTaskExecutor executor) {
+        return new CommandSessionManager(executor);
+    }
+
     @Bean
-    CommandSessionManager commandSessionManager() {
-        return CommandSessionManager.getInstance();
+    CommandToolFactory commandToolFactory(
+            AgentConfig settings,
+            CommandWhitelistManager whitelist,
+            CommandSessionManager sessions,
+            ProcessRunner processes) {
+        return new CommandToolFactory(settings, whitelist, sessions, processes);
     }
 
     @Bean

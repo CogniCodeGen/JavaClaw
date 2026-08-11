@@ -100,7 +100,8 @@ public final class UiScreenshotExporter {
                     springContext.getBean(com.javaclaw.diagnostics.TraceRecorder.class),
                     springContext.getBean(com.javaclaw.config.AgentConfig.class),
                     springContext.getBean(com.javaclaw.config.EmailConfig.class),
-                    springContext.getBean(com.javaclaw.config.NotificationConfig.class));
+                    springContext.getBean(com.javaclaw.config.NotificationConfig.class),
+                    springContext.getBean(com.javaclaw.system.CommandWhitelistManager.class));
             var workspaceRuntime = applicationKernel.initialize();
             runtime = workspaceRuntime.agentRuntime();
             chatService = workspaceRuntime.chatService();
