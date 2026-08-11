@@ -12,6 +12,9 @@ import com.javaclaw.config.DataManager;
 import com.javaclaw.config.SettingsView;
 import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.runtime.ApplicationKernel;
+import com.javaclaw.platform.data.DataRoot;
+import com.javaclaw.platform.spring.ApplicationContexts;
+import com.javaclaw.platform.spring.WorkspaceSpringContextFactory;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeCenterView;
 import com.javaclaw.ui.javafx.memory.MemoryCenterView;
 import com.javaclaw.ui.javafx.mcp.McpSettingsView;
@@ -29,6 +32,7 @@ import javafx.scene.image.WritableImage;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 import javafx.util.Duration;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import javax.imageio.ImageIO;
 import java.io.File;
@@ -57,6 +61,7 @@ public final class UiScreenshotExporter {
         private AgentRuntime runtime;
         private ChatService chatService;
         private ApplicationKernel applicationKernel;
+        private AnnotationConfigApplicationContext springContext;
 
         @Override
         public void start(Stage primaryStage) {
@@ -70,7 +75,9 @@ public final class UiScreenshotExporter {
         }
 
         private void bootstrap(Stage primaryStage) {
+            springContext = ApplicationContexts.createRoot(DataRoot.resolve());
             WorkspaceManager.getInstance().init();
+            ApplicationContexts.registerDesktopInfrastructure(springContext);
             com.javaclaw.ui.javafx.theme.FontManager.loadBundledFonts();
 
             UserInteractionPort port = new UserInteractionPort() {
@@ -81,11 +88,11 @@ public final class UiScreenshotExporter {
             };
             ToolConfirmationManager.setPort(port);
 
-            PlaywrightBrowserManager browserManager = new PlaywrightBrowserManager(true,
-                    WorkspaceManager.getInstance().getCurrentBrowserDir(),
-                    DataManager.getInstance().getScreenshotsDir());
+            PlaywrightBrowserManager browserManager =
+                    springContext.getBean(PlaywrightBrowserManager.class);
             applicationKernel = new ApplicationKernel(
-                    browserManager, port, () -> new SddTaskView(primaryStage).show());
+                    browserManager, port, () -> new SddTaskView(primaryStage).show(),
+                    springContext.getBean(WorkspaceSpringContextFactory.class));
             var workspaceRuntime = applicationKernel.initialize();
             runtime = workspaceRuntime.agentRuntime();
             chatService = workspaceRuntime.chatService();
@@ -197,6 +204,10 @@ public final class UiScreenshotExporter {
         private void cleanupAndExit(int code) {
             try {
                 if (applicationKernel != null) applicationKernel.close();
+            } catch (Throwable ignore) {
+            }
+            try {
+                if (springContext != null) springContext.close();
             } catch (Throwable ignore) {
             }
             Platform.exit();

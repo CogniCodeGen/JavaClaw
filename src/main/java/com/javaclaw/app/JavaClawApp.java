@@ -8,6 +8,10 @@ import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.onboarding.OnboardingWizard;
 import com.javaclaw.runtime.ApplicationKernel;
+import com.javaclaw.platform.data.DataRoot;
+import com.javaclaw.platform.fx.FxDispatcher;
+import com.javaclaw.platform.spring.ApplicationContexts;
+import com.javaclaw.platform.spring.WorkspaceSpringContextFactory;
 import com.javaclaw.ui.javafx.task.SddTaskView;
 import com.javaclaw.ui.javafx.workflow.WorkflowCenterView;
 import com.javaclaw.ui.javafx.JfxUserInteractionPort;
@@ -20,6 +24,7 @@ import javafx.scene.image.Image;
 import javafx.stage.Stage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 /**
  * JavaClaw 主应用类
@@ -49,6 +54,9 @@ public class JavaClawApp extends Application {
 
     /** 应用组合根：统一拥有浏览器、工作区运行时及依赖它们的全局管理器。 */
     private ApplicationKernel applicationKernel;
+    /** 进程级 Spring 组合根；必须晚于所有工作区 Context 关闭。 */
+    private AnnotationConfigApplicationContext springContext;
+    private FxDispatcher fxDispatcher;
     /** 工作流中心为工作区级单实例，避免多窗口草稿互相覆盖。 */
     private volatile WorkflowCenterView workflowCenterView;
 
@@ -69,6 +77,22 @@ public class JavaClawApp extends Application {
     private final java.util.concurrent.atomic.AtomicBoolean resourcesReleased =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
+    /** 在 JavaFX 场景创建前建立数据、Spring 与工作区基础设施。 */
+    @Override
+    public void init() throws Exception {
+        DataRoot dataRoot = DataRoot.resolve().prepare();
+        springContext = ApplicationContexts.createRoot(dataRoot);
+        try {
+            WorkspaceManager.getInstance().init();
+            ApplicationContexts.registerDesktopInfrastructure(springContext);
+            fxDispatcher = springContext.getBean(FxDispatcher.class);
+        } catch (Exception | Error failure) {
+            springContext.close();
+            springContext = null;
+            throw failure;
+        }
+    }
+
     /**
      * JavaFX 应用启动方法
      *
@@ -82,10 +106,6 @@ public class JavaClawApp extends Application {
         log.info("========== JavaClaw 应用启动 ==========");
 
         try {
-            // 0. 初始化工作区管理器（必须在所有配置加载前完成）
-            log.info("正在初始化工作区管理器...");
-            WorkspaceManager.getInstance().init();
-
             // 0.05 预热凭据主密钥：H2 已就绪，趁健康期解析并缓存持久主密钥，
             //      避免此后某次瞬时不可用时加密回退漂移口令、埋下主机名变化后解不开的隐患
             com.javaclaw.config.CredentialEncryptor.warmUpMasterKey();
@@ -101,10 +121,8 @@ public class JavaClawApp extends Application {
 
             // 1. 创建 Playwright 浏览器管理器（懒加载，首次使用浏览器工具时才启动）
             log.info("正在创建 Playwright 浏览器管理器（懒加载模式）...");
-            PlaywrightBrowserManager browserManager = new PlaywrightBrowserManager(true,
-                    WorkspaceManager.getInstance().getCurrentBrowserDir(),
-                    DataManager.getInstance().getScreenshotsDir()
-            );
+            PlaywrightBrowserManager browserManager =
+                    springContext.getBean(PlaywrightBrowserManager.class);
 
             // 1.5. 首次使用向导（仅未完成时弹出，阻塞直到用户关闭）
             OnboardingWizard.showIfNeeded(primaryStage);
@@ -115,7 +133,8 @@ public class JavaClawApp extends Application {
                     browserManager, interactionPort,
                     () -> new SddTaskView(primaryStage).show(),
                     this::openWorkflowCenter,
-                    this::closeWorkflowCenter);
+                    this::closeWorkflowCenter,
+                    springContext.getBean(WorkspaceSpringContextFactory.class));
             applicationKernel.initialize();
 
             // 4. 构建聊天界面
@@ -158,7 +177,7 @@ public class JavaClawApp extends Application {
 
             // 窗口创建完成后才接管第二进程的唤起请求；早到请求由协调器缓存。
             SingleInstanceCoordinator.current().ifPresent(coordinator ->
-                    coordinator.setShowHandler(() -> Platform.runLater(this::showMainWindow)));
+                    coordinator.setShowHandler(() -> fxDispatcher.dispatch(this::showMainWindow)));
 
             // 6.5 安装系统托盘（后台常驻）：安装成功则关闭窗口最小化到托盘，
             //     应用继续在后台运行（定时任务/托管任务不中断），仅托盘"退出"才真正关闭。
@@ -365,6 +384,7 @@ public class JavaClawApp extends Application {
         safeShutdown("技能使用统计", () -> com.javaclaw.skill.SkillUsageTracker.getInstance().shutdown());
         safeShutdown("技能提案队列", () -> com.javaclaw.skill.curation.SkillProposalQueue.getInstance().shutdown());
         if (applicationKernel != null) safeShutdown("应用内核", applicationKernel::close);
+        if (springContext != null) safeShutdown("Spring 根 Context", springContext::close);
         safeShutdown("单实例协调器", SingleInstanceCoordinator::closeCurrent);
 
         log.info("JavaClaw 应用已关闭");

@@ -87,6 +87,13 @@
             <version>${javafx.version}</version>
         </dependency>
 
+        <!-- FXML：3.0 所有生产页面与复用控件的静态视图结构。 -->
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-fxml</artifactId>
+            <version>${javafx.version}</version>
+        </dependency>
+
         <!-- JavaFX Swing 桥接（devtools 驱动截图保存用） -->
         <dependency>
             <groupId>org.openjfx</groupId>

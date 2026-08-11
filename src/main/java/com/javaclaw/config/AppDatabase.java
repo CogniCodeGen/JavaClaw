@@ -48,7 +48,7 @@ public final class AppDatabase {
         }
         Connection c = openConnection(dbBase);
         try {
-            initSchema(c);
+            initializeSchema(c);
             return c;
         } catch (SQLException | RuntimeException e) {
             try {
@@ -119,7 +119,11 @@ public final class AppDatabase {
         return autoServer ? url + ";AUTO_SERVER=TRUE" : url;
     }
 
-    private static void initSchema(Connection c) throws SQLException {
+    /**
+     * 创建 JavaClaw 3 初始 schema。DDL 全部幂等；生产启动链只由根 Spring Context
+     * 的 schema 初始化器调用一次，静态连接门面保留到旧调用方完成迁移为止。
+     */
+    public static void initializeSchema(Connection c) throws SQLException {
         try (Statement st = c.createStatement()) {
             st.execute("""
                     CREATE TABLE IF NOT EXISTS workspaces (

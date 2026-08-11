@@ -12,6 +12,7 @@ import com.javaclaw.config.NotificationConfig;
 import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.diagnostics.TraceRecorder;
 import com.javaclaw.plugin.PluginManager;
+import com.javaclaw.platform.spring.WorkspaceSpringContextFactory;
 import com.javaclaw.mcp.McpConfigManager;
 import com.javaclaw.schedule.ScheduleManager;
 import com.javaclaw.site.SiteCredentialManager;
@@ -48,25 +49,30 @@ public final class ApplicationKernel implements AutoCloseable {
                              UserInteractionPort interactionPort,
                              Runnable openTaskView,
                              Runnable openWorkflowView,
-                             Runnable closeWorkflowView) {
+                             Runnable closeWorkflowView,
+                             WorkspaceSpringContextFactory workspaceContexts) {
         this.browserManager = Objects.requireNonNull(browserManager, "browserManager");
         this.interactionPort = Objects.requireNonNull(interactionPort, "interactionPort");
-        this.runtimeFactory = new RuntimeFactory(browserManager, openTaskView,
+        this.runtimeFactory = new RuntimeFactory(workspaceContexts, browserManager, openTaskView,
                 openWorkflowView, closeWorkflowView, java.util.Set.of());
     }
 
     public ApplicationKernel(PlaywrightBrowserManager browserManager,
                              UserInteractionPort interactionPort,
                              Runnable openTaskView,
-                             Runnable openWorkflowView) {
-        this(browserManager, interactionPort, openTaskView, openWorkflowView, () -> {});
+                             Runnable openWorkflowView,
+                             WorkspaceSpringContextFactory workspaceContexts) {
+        this(browserManager, interactionPort, openTaskView, openWorkflowView, () -> {},
+                workspaceContexts);
     }
 
     /** 兼容无工作流 UI 的无头/截图驱动。 */
     public ApplicationKernel(PlaywrightBrowserManager browserManager,
                              UserInteractionPort interactionPort,
-                             Runnable openTaskView) {
-        this(browserManager, interactionPort, openTaskView, () -> {}, () -> {});
+                             Runnable openTaskView,
+                             WorkspaceSpringContextFactory workspaceContexts) {
+        this(browserManager, interactionPort, openTaskView, () -> {}, () -> {},
+                workspaceContexts);
     }
 
     /** 创建首个工作区运行时并装配依赖它的全局子系统。 */
@@ -155,13 +161,9 @@ public final class ApplicationKernel implements AutoCloseable {
         String previousId = workspaces.getCurrentWorkspaceId();
         if (targetWorkspaceId.equals(previousId)) return current();
 
-        WorkspaceRuntime old = current;
+        WorkspaceRuntime old = current();
         browserManager.saveCookies();
-        current = null;
-        if (old != null) {
-            quiesceRuntimeDependents();
-            old.close();
-        }
+        quiesceRuntimeDependents();
 
         try {
             if (!workspaces.switchWorkspace(targetWorkspaceId)) {
@@ -173,12 +175,13 @@ public final class ApplicationKernel implements AutoCloseable {
 
             WorkspaceRuntime replacement = createAndActivate(targetContext);
             current = replacement;
+            closeQuietly("旧工作区 Context", old::close);
             return replacement;
         } catch (RuntimeException | Error switchFailure) {
             log.error("切换到工作区 {} 失败，开始回滚到 {}", targetWorkspaceId, previousId,
                     switchFailure);
             try {
-                recoverWorkspace(previousId);
+                recoverWorkspace(previousId, old);
             } catch (RuntimeException | Error rollbackFailure) {
                 switchFailure.addSuppressed(rollbackFailure);
                 log.error("工作区回滚失败，应用运行时不可用", rollbackFailure);
@@ -188,11 +191,7 @@ public final class ApplicationKernel implements AutoCloseable {
         }
     }
 
-    private void recoverWorkspace(String workspaceId) {
-        WorkspaceRuntime partial = current;
-        current = null;
-        if (partial != null) partial.close();
-
+    private void recoverWorkspace(String workspaceId, WorkspaceRuntime preserved) {
         WorkspaceManager workspaces = WorkspaceManager.getInstance();
         if (!workspaceId.equals(workspaces.getCurrentWorkspaceId())
                 && !workspaces.switchWorkspace(workspaceId)) {
@@ -201,8 +200,8 @@ public final class ApplicationKernel implements AutoCloseable {
         reloadWorkspaceState();
         WorkspaceContext restoredContext = WorkspaceContext.captureCurrent();
         browserManager.rebindWorkspace(restoredContext.browserDir(), restoredContext.screenshotsDir());
-        WorkspaceRuntime restored = createAndActivate(restoredContext);
-        current = restored;
+        activate(preserved, false);
+        current = preserved;
     }
 
     /** 创建后激活；激活链失败时必须释放未发布的运行时。 */
@@ -286,7 +285,7 @@ public final class ApplicationKernel implements AutoCloseable {
         WorkspaceRuntime snapshot = current;
         current = null;
         if (snapshot != null) closeQuietly("工作区运行时", snapshot::close);
-        closeQuietly("Playwright 浏览器", browserManager::shutdown);
+        // Playwright 属于根 Spring Context，由根 Context 在所有工作区之后关闭。
     }
 
     private void closeQuietly(String name, Runnable closer) {
