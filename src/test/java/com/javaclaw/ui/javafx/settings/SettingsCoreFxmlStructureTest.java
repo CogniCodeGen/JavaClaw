@@ -106,6 +106,8 @@ class SettingsCoreFxmlStructureTest {
         values.put("/fxml/settings/skill-evolution-settings.fxml",
                 SkillEvolutionSettingsController.class);
         values.put("/fxml/settings/general-settings.fxml", GeneralSettingsController.class);
+        values.put("/fxml/settings/test-data-maintenance.fxml",
+                TestDataMaintenanceController.class);
         return Map.copyOf(values);
     }
 }

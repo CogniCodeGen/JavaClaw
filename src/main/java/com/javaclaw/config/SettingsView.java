@@ -19,9 +19,10 @@ import com.javaclaw.ui.javafx.settings.NotificationSettingsController;
 import com.javaclaw.ui.javafx.settings.GeneralSettingsController;
 import com.javaclaw.ui.javafx.settings.GepaSettingsController;
 import com.javaclaw.ui.javafx.settings.SkillEvolutionSettingsController;
+import com.javaclaw.ui.javafx.settings.MaintenanceSettingsSectionFactory;
+import com.javaclaw.ui.javafx.settings.TestDataMaintenanceController;
 import javafx.animation.PauseTransition;
 import javafx.animation.TranslateTransition;
-import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -30,8 +31,6 @@ import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * 设置界面（模态对话框）
@@ -42,8 +41,6 @@ import org.slf4j.LoggerFactory;
  * @author JavaClaw
  */
 public class SettingsView {
-
-    private static final Logger log = LoggerFactory.getLogger(SettingsView.class);
 
     private final Stage stage;
     private Runnable onModelConfigChanged;
@@ -64,6 +61,8 @@ public class SettingsView {
     private SettingsSectionView<GepaSettingsController> gepaSettingsSection;
     private SettingsSectionView<SkillEvolutionSettingsController> skillEvolutionSettingsSection;
     private SettingsSectionView<GeneralSettingsController> generalSettingsSection;
+    private final MaintenanceSettingsSectionFactory maintenanceSettingsSections;
+    private SettingsSectionView<TestDataMaintenanceController> testDataMaintenanceSection;
 
     // 布局容器
     private VBox categoryList;
@@ -182,7 +181,8 @@ public class SettingsView {
                         com.javaclaw.ui.javafx.mcp.McpCenterViewFactory mcpCenters,
                         ModelSettingsSectionFactory modelSettingsSections,
                         CommunicationSettingsSectionFactory communicationSettingsSections,
-                        BehaviorSettingsSectionFactory behaviorSettingsSections) {
+                        BehaviorSettingsSectionFactory behaviorSettingsSections,
+                        MaintenanceSettingsSectionFactory maintenanceSettingsSections) {
         this.agentSettingsPanels = java.util.Objects.requireNonNull(
                 agentSettingsPanels, "agentSettingsPanels");
         this.siteCredentialPanels = java.util.Objects.requireNonNull(
@@ -194,6 +194,8 @@ public class SettingsView {
                 communicationSettingsSections, "communicationSettingsSections");
         this.behaviorSettingsSections = java.util.Objects.requireNonNull(
                 behaviorSettingsSections, "behaviorSettingsSections");
+        this.maintenanceSettingsSections = java.util.Objects.requireNonNull(
+                maintenanceSettingsSections, "maintenanceSettingsSections");
         this.stage = new Stage();
         stage.initModality(Modality.WINDOW_MODAL);
         stage.initOwner(owner);
@@ -350,7 +352,8 @@ public class SettingsView {
         // 系统维护：历史测试数据只读扫描，清理必须二次人工确认。
         addCategoryGroup("系统维护");
 
-        Node dataMaintenancePanel = buildDataMaintenancePanel();
+        testDataMaintenanceSection = maintenanceSettingsSections.createTestDataMaintenance();
+        Node dataMaintenancePanel = testDataMaintenanceSection.root();
         addCategory("测试数据清理", dataMaintenancePanel, false,
                 "data junit test 测试 数据 临时目录 清理 storage maintenance");
         registerPanelActions(dataMaintenancePanel, PanelActions.none());
@@ -577,6 +580,10 @@ public class SettingsView {
             if (generalSettingsSection != null) {
                 generalSettingsSection.close();
                 generalSettingsSection = null;
+            }
+            if (testDataMaintenanceSection != null) {
+                testDataMaintenanceSection.close();
+                testDataMaintenanceSection = null;
             }
         });
 
@@ -1076,125 +1083,6 @@ public class SettingsView {
         String message = current.getMessage();
         return message == null || message.isBlank()
                 ? current.getClass().getSimpleName() : message;
-    }
-
-    // ==================== 测试数据维护面板 ====================
-
-    /**
-     * 带 JavaClaw 数据库标记的历史 junit-* 目录只读扫描与人工确认清理。
-     * 正式数据和 target/test-data 不参与扫描，打开设置页也不会自动删除任何内容。
-     */
-    private Node buildDataMaintenancePanel() {
-        Label sectionTitle = new Label("测试数据清理");
-        sectionTitle.getStyleClass().add("sec-title");
-
-        Label hint = new Label(
-                "扫描系统临时目录和项目根目录中带 JavaClaw 数据库标记的 junit-* 测试目录。"
-                        + "扫描只读；无 JavaClaw 标记的其他项目测试目录不会列入候选。"
-                        + "只有点击清理并再次确认后才会删除。");
-        hint.getStyleClass().add("sec-hint");
-        hint.setWrapText(true);
-
-        ListView<String> candidatesView = new ListView<>();
-        candidatesView.setPrefHeight(280);
-        candidatesView.setPlaceholder(new Label("尚未扫描"));
-        candidatesView.setAccessibleText("历史 JUnit 测试目录扫描结果");
-
-        Label status = new Label("尚未扫描");
-        status.getStyleClass().add("settings-hint");
-
-        Button scan = new Button("扫描历史测试目录");
-        scan.getStyleClass().addAll("jc-btn", "jc-btn-soft");
-        scan.setAccessibleText("扫描历史 JUnit 测试目录");
-
-        Button cleanup = new Button("清理所列目录");
-        cleanup.getStyleClass().addAll("jc-btn", "jc-btn-danger");
-        cleanup.setDisable(true);
-        cleanup.setAccessibleText("清理扫描结果中的历史 JUnit 测试目录");
-
-        java.util.concurrent.atomic.AtomicReference<
-                java.util.List<LegacyTestDataManager.Candidate>> candidates =
-                new java.util.concurrent.atomic.AtomicReference<>(java.util.List.of());
-
-        scan.setOnAction(event -> {
-            scan.setDisable(true);
-            cleanup.setDisable(true);
-            status.setText("正在扫描…");
-            Thread.ofVirtual().name("legacy-test-data-scan").start(() -> {
-                var found = LegacyTestDataManager.scanDefaultLocations();
-                long bytes = found.stream().mapToLong(LegacyTestDataManager.Candidate::bytes).sum();
-                Platform.runLater(() -> {
-                    candidates.set(found);
-                    candidatesView.getItems().setAll(found.stream()
-                            .map(candidate -> candidate.path() + "  ·  "
-                                    + humanReadableBytes(candidate.bytes()))
-                            .toList());
-                    candidatesView.setPlaceholder(new Label(
-                            found.isEmpty() ? "未发现历史测试目录" : ""));
-                    status.setText(found.isEmpty()
-                            ? "未发现带 JavaClaw 标记的可清理目录"
-                            : "发现 " + found.size() + " 个 JavaClaw 测试目录，共 "
-                                    + humanReadableBytes(bytes));
-                    cleanup.setDisable(found.isEmpty());
-                    scan.setDisable(false);
-                });
-            });
-        });
-
-        cleanup.setOnAction(event -> {
-            var confirmedCandidates = candidates.get();
-            if (confirmedCandidates.isEmpty()) return;
-            Alert confirm = UIHelper.createConfirmAlert(
-                    "确认清理历史测试数据",
-                    "将永久删除扫描结果中的 " + confirmedCandidates.size()
-                            + " 个带 JavaClaw 数据库标记的 junit-* 目录。"
-                            + "该操作无法撤销，是否继续？",
-                    stage);
-            if (confirm.showAndWait().filter(button -> button == ButtonType.OK).isEmpty()) return;
-
-            scan.setDisable(true);
-            cleanup.setDisable(true);
-            status.setText("正在清理…");
-            Thread.ofVirtual().name("legacy-test-data-cleanup").start(() -> {
-                try {
-                    int deleted = LegacyTestDataManager.deleteConfirmed(confirmedCandidates);
-                    Platform.runLater(() -> {
-                        candidates.set(java.util.List.of());
-                        candidatesView.getItems().clear();
-                        candidatesView.setPlaceholder(new Label("已清理"));
-                        status.setText("已清理 " + deleted + " 个历史测试目录");
-                        scan.setDisable(false);
-                    });
-                } catch (Exception failure) {
-                    log.warn("清理历史测试目录失败", failure);
-                    Platform.runLater(() -> {
-                        status.setText("清理失败：" + failure.getMessage());
-                        scan.setDisable(false);
-                        cleanup.setDisable(false);
-                    });
-                }
-            });
-        });
-
-        HBox actions = new HBox(10, scan, cleanup, status);
-        actions.setAlignment(Pos.CENTER_LEFT);
-
-        VBox panel = new VBox(14, sectionTitle, hint, new Separator(), candidatesView, actions);
-        panel.setPadding(new Insets(4));
-        ScrollPane scroll = new ScrollPane(panel);
-        scroll.setFitToWidth(true);
-        scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        scroll.getStyleClass().add("settings-scroll-pane");
-        return scroll;
-    }
-
-    private static String humanReadableBytes(long bytes) {
-        if (bytes < 1024) return bytes + " B";
-        if (bytes < 1024L * 1024) return String.format("%.1f KB", bytes / 1024.0);
-        if (bytes < 1024L * 1024 * 1024) {
-            return String.format("%.1f MB", bytes / (1024.0 * 1024));
-        }
-        return String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024));
     }
 
     // ==================== 界面风格面板（设计稿 AppearancePanel） ====================

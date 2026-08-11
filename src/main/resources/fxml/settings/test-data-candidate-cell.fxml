@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.layout.HBox?>
+
+<HBox fx:id="root" alignment="CENTER_LEFT" spacing="12.0"
+      xmlns="http://javafx.com/javafx/25"
+      xmlns:fx="http://javafx.com/fxml/1">
+    <children>
+        <Label fx:id="pathLabel" maxWidth="1.7976931348623157E308"
+               styleClass="settings-label" HBox.hgrow="ALWAYS"/>
+        <Label fx:id="sizeLabel" minWidth="80.0" styleClass="settings-hint"/>
+    </children>
+</HBox>

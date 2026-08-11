@@ -76,6 +76,8 @@ import com.javaclaw.ui.javafx.mcp.McpToolRowFactory;
 import com.javaclaw.ui.javafx.settings.ModelSettingsSectionFactory;
 import com.javaclaw.ui.javafx.settings.BehaviorSettingsSectionFactory;
 import com.javaclaw.ui.javafx.settings.CommunicationSettingsSectionFactory;
+import com.javaclaw.ui.javafx.settings.MaintenanceSettingsSectionFactory;
+import com.javaclaw.ui.javafx.settings.TestDataCandidateCellFactory;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.http.HttpGateway;
 import com.javaclaw.platform.json.JsonCodec;
@@ -351,6 +353,17 @@ public class WorkspaceSpringConfiguration {
     BehaviorSettingsSectionFactory behaviorSettingsSectionFactory(
             @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
         return new BehaviorSettingsSectionFactory(loader);
+    }
+
+    @Bean
+    TestDataCandidateCellFactory testDataCandidateCellFactory() {
+        return new TestDataCandidateCellFactory();
+    }
+
+    @Bean
+    MaintenanceSettingsSectionFactory maintenanceSettingsSectionFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new MaintenanceSettingsSectionFactory(loader);
     }
 
     @Bean

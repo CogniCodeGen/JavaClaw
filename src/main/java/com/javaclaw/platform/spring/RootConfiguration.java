@@ -18,6 +18,9 @@ import com.javaclaw.application.tool.ToolAuthorization;
 import com.javaclaw.application.tool.ToolAuthorizer;
 import com.javaclaw.application.tool.ToolAuditSink;
 import com.javaclaw.application.tool.ToolInvocationPipeline;
+import com.javaclaw.application.settings.TestDataMaintenanceApplicationService;
+import com.javaclaw.application.settings.TestDataMaintenancePort;
+import com.javaclaw.application.settings.TestDataMaintenanceUseCase;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.data.DataSourceDatabaseAccess;
@@ -42,6 +45,7 @@ import com.javaclaw.infrastructure.diagnostics.TraceExporterDiagnosticsArchive;
 import com.javaclaw.infrastructure.plugin.PluginManagerManagementAdapter;
 import com.javaclaw.infrastructure.onboarding.AgentConfigOnboardingSettings;
 import com.javaclaw.infrastructure.onboarding.HttpConnectionProbeAdapter;
+import com.javaclaw.infrastructure.settings.LegacyTestDataMaintenanceAdapter;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.plugin.PluginManager;
@@ -124,6 +128,17 @@ public class RootConfiguration {
     DiagnosticsApplicationService diagnosticsApplicationService(
             DiagnosticsArchivePort archive) {
         return new DiagnosticsUseCase(archive, Clock.systemUTC());
+    }
+
+    @Bean
+    TestDataMaintenancePort testDataMaintenancePort() {
+        return new LegacyTestDataMaintenanceAdapter();
+    }
+
+    @Bean
+    TestDataMaintenanceApplicationService testDataMaintenanceApplicationService(
+            TestDataMaintenancePort maintenance) {
+        return new TestDataMaintenanceUseCase(maintenance);
     }
 
     @Bean

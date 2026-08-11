@@ -129,7 +129,8 @@ public final class UiScreenshotExporter {
                             workspaceRuntime.mcpCenters(),
                             workspaceRuntime.modelSettingsSections(),
                             workspaceRuntime.communicationSettingsSections(),
-                            workspaceRuntime.behaviorSettingsSections()))));
+                            workspaceRuntime.behaviorSettingsSections(),
+                            workspaceRuntime.maintenanceSettingsSections()))));
             shots.add(new Shot("03-knowledge-center.png", "知识库中心", () ->
                     new KnowledgeCenterView(primaryStage, runtime.getKnowledgeExpert(), port,
                             () -> {}, () -> {},

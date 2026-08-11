@@ -18,6 +18,8 @@ import com.javaclaw.application.diagnostics.DiagnosticsArchivePort;
 import com.javaclaw.application.plugin.PluginManagementApplicationService;
 import com.javaclaw.application.plugin.PluginManagementPort;
 import com.javaclaw.application.onboarding.OnboardingApplicationService;
+import com.javaclaw.application.settings.TestDataMaintenanceApplicationService;
+import com.javaclaw.application.settings.TestDataMaintenancePort;
 import com.javaclaw.plugin.PluginManager;
 import com.javaclaw.ui.javafx.diagnostics.DiagnosticsViewFactory;
 import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
@@ -64,6 +66,8 @@ class RootApplicationContextTest {
             assertNotNull(context.getBean(ToolReviewSettingsPort.class));
             assertNotNull(context.getBean(DiagnosticsArchivePort.class));
             assertNotNull(context.getBean(DiagnosticsApplicationService.class));
+            assertNotNull(context.getBean(TestDataMaintenancePort.class));
+            assertNotNull(context.getBean(TestDataMaintenanceApplicationService.class));
             assertSame(PluginManager.getInstance(), context.getBean(PluginManager.class));
             assertNotNull(context.getBean(PluginManagementPort.class));
             assertNotNull(context.getBean(PluginManagementApplicationService.class));
