@@ -82,8 +82,7 @@ public class ScheduleManager {
     private final Set<String> runningTaskIds = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private final ScheduleEventHub events = new ScheduleEventHub();
-    private final com.javaclaw.config.NotificationConfig notificationSettings;
-    private final com.javaclaw.config.EmailConfig emailSettings;
+    private final ScheduleCompletionNotifier completionNotifier;
 
     /**
      * 创建一个工作区定时任务运行时。
@@ -100,8 +99,7 @@ public class ScheduleManager {
         this.triggerFactory = new ScheduleTriggerFactory(JOB_GROUP);
         this.quartz = QuartzScheduleBackendFactory.create(this);
         this.taskDispatcher = ScheduleTaskDispatcher.managed(scheduledTasks);
-        this.notificationSettings = notificationSettings;
-        this.emailSettings = emailSettings;
+        this.completionNotifier = new ScheduleCompletionNotifier(notificationSettings, emailSettings);
         loadAll(workspaceId);
     }
 
@@ -120,8 +118,7 @@ public class ScheduleManager {
         this.quartz = Objects.requireNonNull(quartz, "quartz");
         this.taskDispatcher = ScheduleTaskDispatcher.testing(scheduledExec);
         this.scheduledRunner = runner;
-        this.notificationSettings = null;
-        this.emailSettings = null;
+        this.completionNotifier = new ScheduleCompletionNotifier(null, null);
         loadAll(workspaceId);
     }
 
@@ -135,8 +132,7 @@ public class ScheduleManager {
         this.quartz = Objects.requireNonNull(quartz, "quartz");
         this.taskDispatcher = ScheduleTaskDispatcher.managed(scheduledTasks);
         this.scheduledRunner = runner;
-        this.notificationSettings = null;
-        this.emailSettings = null;
+        this.completionNotifier = new ScheduleCompletionNotifier(null, null);
         loadAll(workspaceId);
     }
 
@@ -787,14 +783,14 @@ public class ScheduleManager {
                         runSnapshot.getName(), duration, detail);
                 taskLog.info("========== 任务结束（成功） ==========");
                 events.log(runSnapshot.getName(), "执行完成: " + shortText(detail, 200));
-                maybeNotify(persisted, true, detail);
+                completionNotifier.notifyCompletion(persisted, true, detail);
             }
             case FAILURE -> {
                 taskLog.error("[{}] 执行失败（耗时 {}）: {}",
                         runSnapshot.getName(), duration, detail, failure);
                 taskLog.info("========== 任务结束（失败） ==========");
                 events.log(runSnapshot.getName(), "执行失败: " + detail);
-                maybeNotify(persisted, false, detail);
+                completionNotifier.notifyCompletion(persisted, false, detail);
             }
             case CANCELLED -> {
                 taskLog.info("[{}] 执行已取消（耗时 {}）: {}",
@@ -846,28 +842,6 @@ public class ScheduleManager {
         long ms = (System.nanoTime() - startNanos) / 1_000_000L;
         if (ms < 1000) return ms + "ms";
         return String.format("%.1fs", ms / 1000.0);
-    }
-
-    /** 若任务开启了完成通知，按其渠道推送一条执行结果（失败静默，不影响主流程）。 */
-    private void maybeNotify(ScheduledTask task, boolean success, String detail) {
-        if (!task.isNotifyEnabled()) return;
-        String channel = task.getNotifyChannel();
-        if (channel == null || channel.isBlank() || "none".equalsIgnoreCase(channel)) return;
-        try {
-            String title = "定时任务「" + task.getName() + "」" + (success ? "执行完成" : "执行失败");
-            String body = (success ? "✅ " : "⚠️ ") + title + "\n"
-                    + (detail == null || detail.isBlank() ? "" : detail);
-            if (notificationSettings == null || emailSettings == null) {
-                log.debug("测试调度器未配置通知服务，跳过完成通知");
-                return;
-            }
-            String r = new com.javaclaw.notification.NotificationTools(
-                    com.javaclaw.agent.ToolCallOrigin.SCHEDULED,
-                    notificationSettings, emailSettings).sendByChannel(channel, title, body);
-            taskLog.info("[{}] 完成通知（{}）: {}", task.getName(), channel, r);
-        } catch (Exception e) {
-            log.warn("定时任务完成通知发送失败: {}", task.getName(), e);
-        }
     }
 
     // ==================== 生命周期 ====================

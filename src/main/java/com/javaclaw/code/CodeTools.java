@@ -3,8 +3,6 @@ package com.javaclaw.code;
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
-import com.javaclaw.platform.process.ProcessRequest;
-import com.javaclaw.platform.process.ProcessResult;
 import com.javaclaw.platform.process.ProcessRunner;
 import com.javaclaw.util.AtomicFileWriter;
 import com.javaclaw.util.PathGuard;
@@ -23,9 +21,7 @@ import java.nio.file.Path;
 import java.nio.file.PathMatcher;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.time.Duration;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import java.util.stream.Stream;
@@ -68,7 +64,7 @@ public class CodeTools {
 
     /** 调用来源令牌（装配期绑定），高风险确认随调用传给 ToolConfirmationManager。 */
     private final ToolCallOrigin origin;
-    private final ProcessRunner processes;
+    private final CodeProcessExecutor processExecutor;
 
     /** 会话级项目根（可空）。设定后相对路径以其解析、code_* 操作被围栏其内。 */
     private volatile Path projectRoot;
@@ -77,7 +73,7 @@ public class CodeTools {
 
     public CodeTools(ToolCallOrigin origin, ProcessRunner processes) {
         this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
-        this.processes = java.util.Objects.requireNonNull(processes, "processes");
+        this.processExecutor = new CodeProcessExecutor(processes);
         this.projectRoot = ProjectAccessPolicy.projectRoot();
     }
 
@@ -496,25 +492,26 @@ public class CodeTools {
                 return ToolResponse.error(tool, "用户拒绝了操作");
             }
 
-            ExecResult r = execArgv(argv, base, timeout);
-            if (r.timedOut) {
+            CodeProcessExecutor.Result r = processExecutor.run(argv, base, timeout);
+            if (r.timedOut()) {
                 return ToolResponse.error(tool, "执行超时（" + timeout + " 秒），已强制终止：" + cmd
                         + "。可调大 timeout_seconds（上限 " + MAX_BUILD_TIMEOUT_SECONDS + "）");
             }
 
-            List<String> issues = extractIssues(r.output);
+            List<String> issues = extractIssues(r.output());
             StringBuilder sb = new StringBuilder();
             sb.append("命令: ").append(cmd).append("　目录: ").append(base)
-                    .append("　退出码: ").append(r.exitCode).append(r.exitCode == 0 ? "（成功）" : "（失败）").append("\n\n");
+                    .append("　退出码: ").append(r.exitCode())
+                    .append(r.exitCode() == 0 ? "（成功）" : "（失败）").append("\n\n");
             if (!issues.isEmpty()) {
                 sb.append("关键错误/失败行（共 ").append(issues.size())
                         .append(issues.size() >= BUILD_MAX_ISSUE_LINES ? "，达上限" : "").append("）:\n");
                 for (String s : issues) sb.append("  ").append(s).append('\n');
                 sb.append('\n');
             }
-            sb.append("——原始输出（尾部截断）——\n").append(tailExcerpt(r.output));
+            sb.append("——原始输出（尾部截断）——\n").append(tailExcerpt(r.output()));
             String msg = sb.toString();
-            return r.exitCode == 0 ? ToolResponse.success(tool, msg) : ToolResponse.error(tool, msg);
+            return r.exitCode() == 0 ? ToolResponse.success(tool, msg) : ToolResponse.error(tool, msg);
         } catch (Exception e) {
             log.error("{} 执行异常", tool, e);
             return ToolResponse.fromException(tool, e);
@@ -569,13 +566,11 @@ public class CodeTools {
     static String firstToken(String cmd) {
         String[] parts = cmd.trim().split("\\s+");
         String w = parts.length == 0 ? "" : parts[0];
-        return executableName(w);
+        return CodeProcessExecutor.executableName(w);
     }
 
     private static String executableName(String executable) {
-        String w = executable == null ? "" : executable;
-        int slash = Math.max(w.lastIndexOf('/'), w.lastIndexOf('\\'));
-        return slash >= 0 ? w.substring(slash + 1) : w;
+        return CodeProcessExecutor.executableName(executable);
     }
 
     /**
@@ -583,99 +578,7 @@ public class CodeTools {
      * 支持常见的单/双引号与反斜杠转义；管道、重定向、命令连接等 shell 语法明确拒绝。
      */
     static List<String> parseCommand(String command) {
-        if (command == null || command.isBlank()) {
-            throw new IllegalArgumentException("命令不能为空");
-        }
-        List<String> argv = new ArrayList<>();
-        StringBuilder token = new StringBuilder();
-        char quote = 0;
-        boolean escaping = false;
-        boolean tokenStarted = false;
-        for (int i = 0; i < command.length(); i++) {
-            char c = command.charAt(i);
-            if (escaping) {
-                token.append(c);
-                tokenStarted = true;
-                escaping = false;
-                continue;
-            }
-            if (c == '\\' && quote != '\'') {
-                char next = i + 1 < command.length() ? command.charAt(i + 1) : 0;
-                if (next == '\\' || next == '"' || Character.isWhitespace(next)) {
-                    escaping = true;
-                } else {
-                    // Windows 路径中的反斜杠不是转义符（如 .\gradlew、C:\work）。
-                    token.append(c);
-                }
-                tokenStarted = true;
-                continue;
-            }
-            if (quote != 0) {
-                if (c == quote) quote = 0;
-                else token.append(c);
-                tokenStarted = true;
-                continue;
-            }
-            if (c == '\'' || c == '"') {
-                quote = c;
-                tokenStarted = true;
-            } else if (Character.isWhitespace(c)) {
-                if (tokenStarted) {
-                    argv.add(token.toString());
-                    token.setLength(0);
-                    tokenStarted = false;
-                }
-            } else if ("|&;<>`\n\r".indexOf(c) >= 0 || (c == '$' && i + 1 < command.length() && command.charAt(i + 1) == '(')) {
-                throw new IllegalArgumentException("不支持 shell 管道、重定向或命令连接符");
-            } else {
-                token.append(c);
-                tokenStarted = true;
-            }
-        }
-        if (escaping || quote != 0) throw new IllegalArgumentException("引号或转义未闭合");
-        if (tokenStarted) argv.add(token.toString());
-        if (argv.isEmpty()) throw new IllegalArgumentException("命令不能为空");
-        return List.copyOf(argv);
-    }
-
-    /** 构建/测试执行结果。 */
-    private record ExecResult(int exitCode, String output, boolean timedOut) {}
-
-    /**
-     * 直接按 argv 执行（<b>不经 shell</b>），参数原样传给进程——git 提交信息等含特殊字符的
-     * 参数不会被 shell 解释/注入。头尾截断收集输出。
-     */
-    private ExecResult execArgv(List<String> argv, Path dir, int timeoutSeconds)
-            throws IOException, InterruptedException {
-        ProcessRequest request = new ProcessRequest(
-                "code-" + Path.of(argv.getFirst()).getFileName(), argv, dir, Map.of(),
-                Duration.ofSeconds(timeoutSeconds), 4 * 1024 * 1024, StandardCharsets.UTF_8);
-        ProcessResult result = processes.run(request);
-        StringBuilder captured = new StringBuilder(result.stdout());
-        if (!result.stderr().isBlank()) {
-            if (!captured.isEmpty() && captured.charAt(captured.length() - 1) != '\n') {
-                captured.append('\n');
-            }
-            captured.append("[stderr]\n").append(result.stderr());
-        }
-        if (result.outputTruncated()) {
-            captured.append("\n...(输出超过 4 MiB，后续省略)\n");
-        }
-        return new ExecResult(
-                result.exitCode(), retainHeadAndTail(captured.toString()), result.timedOut());
-    }
-
-    private static String retainHeadAndTail(String output) {
-        List<String> lines = output.lines().toList();
-        if (lines.size() <= 520) {
-            return output;
-        }
-        StringBuilder retained = new StringBuilder();
-        lines.subList(0, 120).forEach(line -> retained.append(line).append('\n'));
-        retained.append("...(中段省略)\n");
-        lines.subList(lines.size() - 400, lines.size())
-                .forEach(line -> retained.append(line).append('\n'));
-        return retained.toString();
+        return CodeProcessExecutor.parseArgv(command);
     }
 
     // ==================== 版本控制（git） ====================
@@ -739,20 +642,24 @@ public class CodeTools {
                 return ToolResponse.error("git_commit", "工作目录无效: " + base);
             }
             if (stageAll) {
-                ExecResult add = execArgv(List.of("git", "add", "-A"), base, GIT_TIMEOUT_SECONDS);
-                if (add.timedOut) return ToolResponse.error("git_commit", "git add 超时");
-                if (add.exitCode != 0) {
-                    return ToolResponse.error("git_commit", "git add 失败（退出码 " + add.exitCode + "）\n" + add.output);
+                CodeProcessExecutor.Result add = processExecutor.run(
+                        List.of("git", "add", "-A"), base, GIT_TIMEOUT_SECONDS);
+                if (add.timedOut()) return ToolResponse.error("git_commit", "git add 超时");
+                if (add.exitCode() != 0) {
+                    return ToolResponse.error("git_commit", "git add 失败（退出码 "
+                            + add.exitCode() + "）\n" + add.output());
                 }
             }
             // 经 argv 直传，提交信息不过 shell，含引号/分号/换行也不会注入
-            ExecResult r = execArgv(List.of("git", "commit", "-m", message), base, GIT_TIMEOUT_SECONDS);
-            if (r.timedOut) return ToolResponse.error("git_commit", "git commit 超时");
-            String out = r.output.isBlank() ? "（无输出）" : tailExcerpt(r.output);
-            return r.exitCode == 0
+            CodeProcessExecutor.Result r = processExecutor.run(
+                    List.of("git", "commit", "-m", message), base, GIT_TIMEOUT_SECONDS);
+            if (r.timedOut()) return ToolResponse.error("git_commit", "git commit 超时");
+            String out = r.output().isBlank() ? "（无输出）" : tailExcerpt(r.output());
+            return r.exitCode() == 0
                     ? ToolResponse.success("git_commit", "提交成功　目录: " + base + "\n\n" + out)
                     : ToolResponse.error("git_commit",
-                            "git commit 退出码 " + r.exitCode + "（无改动可提交？未配置身份？）\n" + out);
+                            "git commit 退出码 " + r.exitCode()
+                                    + "（无改动可提交？未配置身份？）\n" + out);
         } catch (Exception e) {
             log.error("git_commit 执行异常", e);
             return ToolResponse.fromException("git_commit", e);
@@ -773,12 +680,13 @@ public class CodeTools {
         try {
             Path base = gitBase();
             if (!Files.isDirectory(base)) return ToolResponse.error(tool, "工作目录无效: " + base);
-            ExecResult r = execArgv(argv, base, GIT_TIMEOUT_SECONDS);
-            if (r.timedOut) return ToolResponse.error(tool, "git 执行超时");
-            String out = r.output.isBlank() ? "（无输出）" : tailExcerpt(r.output);
-            return r.exitCode == 0
+            CodeProcessExecutor.Result r = processExecutor.run(argv, base, GIT_TIMEOUT_SECONDS);
+            if (r.timedOut()) return ToolResponse.error(tool, "git 执行超时");
+            String out = r.output().isBlank() ? "（无输出）" : tailExcerpt(r.output());
+            return r.exitCode() == 0
                     ? ToolResponse.success(tool, "目录: " + base + "\n\n" + out)
-                    : ToolResponse.error(tool, "git 退出码 " + r.exitCode + "（当前目录是 git 仓库吗？）\n" + out);
+                    : ToolResponse.error(tool, "git 退出码 " + r.exitCode()
+                            + "（当前目录是 git 仓库吗？）\n" + out);
         } catch (Exception e) {
             log.error("{} 执行异常", tool, e);
             return ToolResponse.fromException(tool, e);

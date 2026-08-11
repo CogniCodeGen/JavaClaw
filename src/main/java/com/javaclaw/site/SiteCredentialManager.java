@@ -2,7 +2,6 @@ package com.javaclaw.site;
 
 import com.javaclaw.config.CredentialCipher;
 import com.javaclaw.config.DatabaseAccess;
-import com.javaclaw.util.SensitiveDataRedactor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -139,7 +138,7 @@ public final class SiteCredentialManager {
             c.setAutoCommit(false);
             deleteRemovedCredentials(c, workspaceId);
             for (SiteCredential cred : credentials.values()) {
-                validateNonSecretFields(cred);
+                SiteCredentialValues.validateMetadata(cred);
                 bindCredential(ps, workspaceId, cred);
                 ps.addBatch();
             }
@@ -180,8 +179,8 @@ public final class SiteCredentialManager {
     public synchronized SiteCredential putChecked(SiteCredential cred) {
         Objects.requireNonNull(cred, "cred");
         String workspaceId = requireLoadedWorkspace();
-        validateNonSecretFields(cred);
-        SiteCredential candidate = copyCredential(cred);
+        SiteCredentialValues.validateMetadata(cred);
+        SiteCredential candidate = SiteCredentialValues.copyOf(cred);
         if (candidate.getId() == null || candidate.getId().isBlank()) {
             candidate.setId(UUID.randomUUID().toString());
         }
@@ -223,9 +222,9 @@ public final class SiteCredentialManager {
         if (storageStateJson.length() > MAX_SESSION_STATE_CHARS) {
             throw new IllegalArgumentException("浏览器会话内容过大，已拒绝保存");
         }
-        validateNonSecretFields(credential);
+        SiteCredentialValues.validateMetadata(credential);
         String workspaceId = requireLoadedWorkspace();
-        SiteCredential candidate = copyCredential(credential);
+        SiteCredential candidate = SiteCredentialValues.copyOf(credential);
         if (candidate.getId() == null || candidate.getId().isBlank()) {
             candidate.setId(UUID.randomUUID().toString());
         }
@@ -584,7 +583,7 @@ public final class SiteCredentialManager {
     public synchronized void touchUsage(String id) {
         SiteCredential c = credentials.get(id);
         if (c != null) {
-            SiteCredential candidate = copyCredential(c);
+            SiteCredential candidate = SiteCredentialValues.copyOf(c);
             candidate.setLastUsedAt(System.currentTimeMillis());
             putChecked(candidate);
         }
@@ -615,7 +614,7 @@ public final class SiteCredentialManager {
                 }
             }
             conn.commit();
-            SiteCredential candidate = copyCredential(existing);
+            SiteCredential candidate = SiteCredentialValues.copyOf(existing);
             candidate.setHasSession(false);
             credentials.put(id, candidate);
             log.info("已清除站点会话: {}", id);
@@ -726,7 +725,7 @@ public final class SiteCredentialManager {
                                       Collection<SiteCredential> loadedCredentials)
             throws SQLException {
         for (SiteCredential credential : loadedCredentials) {
-            validateNonSecretFields(credential);
+            SiteCredentialValues.validateMetadata(credential);
         }
 
         Map<String, String> passwordUpdates = new LinkedHashMap<>();
@@ -839,33 +838,6 @@ public final class SiteCredentialManager {
 
     private static boolean hasEncryptedEnvelope(String value) {
         return value != null && value.startsWith("ENC(") && value.endsWith(")");
-    }
-
-    private static void validateNonSecretFields(SiteCredential credential) {
-        String[] fields = {
-                credential.getName(), credential.getHostPattern(), credential.getLoginUrl(),
-                credential.getUsername(), credential.getNotes()
-        };
-        for (String field : fields) {
-            if (SensitiveDataRedactor.containsLikelyCredential(field)) {
-                throw new IllegalArgumentException("站点非密码字段疑似包含密钥或密码，已拒绝保存");
-            }
-        }
-    }
-
-    private static SiteCredential copyCredential(SiteCredential source) {
-        SiteCredential copy = new SiteCredential();
-        copy.setId(source.getId());
-        copy.setName(source.getName());
-        copy.setHostPattern(source.getHostPattern());
-        copy.setLoginUrl(source.getLoginUrl());
-        copy.setUsername(source.getUsername());
-        copy.setPassword(source.getPassword());
-        copy.setNotes(source.getNotes());
-        copy.setCreatedAt(source.getCreatedAt());
-        copy.setLastUsedAt(source.getLastUsedAt());
-        copy.setHasSession(source.isHasSession());
-        return copy;
     }
 
     private static void rollbackQuietly(Connection c) {
