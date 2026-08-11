@@ -35,6 +35,12 @@
         <spring.version>7.0.8</spring.version>
         <archunit.version>1.4.2</archunit.version>
         <jacoco.version>0.8.14</jacoco.version>
+        <coverage.overall.line>0.55</coverage.overall.line>
+        <coverage.overall.branch>0.45</coverage.overall.branch>
+        <coverage.core.line>0.80</coverage.core.line>
+        <coverage.core.branch>0.70</coverage.core.branch>
+        <coverage.controller.line>0.70</coverage.controller.line>
+        <coverage.controller.branch>0.60</coverage.controller.branch>
         <!-- JaCoCo prepare-agent 会在测试前覆盖该属性；空值保证直接运行 Surefire 也合法。 -->
         <jacocoArgLine></jacocoArgLine>
         <!-- mvn javafx:run 的默认数据目录；ui-test profile 会覆盖为 target 隔离目录。 -->
@@ -313,7 +319,7 @@
                 </configuration>
             </plugin>
 
-            <!-- 第一阶段生成覆盖率报告；最终切换时由分包规则启用强制门禁。 -->
+            <!-- 覆盖率报告与三组聚合门禁：全项目、核心执行层、所有顶层 Controller。 -->
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
@@ -334,6 +340,92 @@
                         <goals>
                             <goal>report</goal>
                         </goals>
+                    </execution>
+                    <execution>
+                        <id>check-overall-coverage</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>${coverage.overall.line}</minimum>
+                                        </limit>
+                                        <limit>
+                                            <counter>BRANCH</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>${coverage.overall.branch}</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>check-core-coverage</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <includes>
+                                <include>com/javaclaw/application/**</include>
+                                <include>com/javaclaw/platform/execution/**</include>
+                                <include>com/javaclaw/runtime/**</include>
+                            </includes>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>${coverage.core.line}</minimum>
+                                        </limit>
+                                        <limit>
+                                            <counter>BRANCH</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>${coverage.core.branch}</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>check-controller-coverage</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <includes>
+                                <include>**/*Controller.class</include>
+                            </includes>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>${coverage.controller.line}</minimum>
+                                        </limit>
+                                        <limit>
+                                            <counter>BRANCH</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>${coverage.controller.branch}</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
