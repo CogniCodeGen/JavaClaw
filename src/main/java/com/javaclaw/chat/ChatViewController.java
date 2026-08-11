@@ -87,8 +87,8 @@ public class ChatViewController implements AutoCloseable {
             "png", "jpg", "jpeg", "gif", "bmp", "webp");
 
     @FXML private BorderPane outerRoot;
-    @FXML private BorderPane chatPane;
     @FXML private ChatSessionController sessionViewController;
+    @FXML private WorkspaceSwitchOverlayController workspaceSwitchOverlayController;
     @FXML private ChatComposerController composerController;
     @FXML private ChatModeController modeBarController;
     @FXML private Label topTitleLabel;
@@ -2765,16 +2765,7 @@ public class ChatViewController implements AutoCloseable {
             chatService.saveSession(currentSession.getId());
         }
 
-        // 显示加载遮罩
-        ProgressIndicator spinner = new ProgressIndicator();
-        spinner.setMaxSize(40, 40);
-        Label loadingLabel = new Label("正在切换工作区...");
-        loadingLabel.getStyleClass().add("loading-overlay-label");
-        VBox loadingBox = new VBox(12, spinner, loadingLabel);
-        loadingBox.setAlignment(Pos.CENTER);
-        StackPane loadingOverlay = new StackPane(loadingBox);
-        loadingOverlay.getStyleClass().add("loading-overlay");
-        chatPane.setCenter(loadingOverlay);
+        workspaceSwitchOverlayController.show("正在切换工作区...");
 
         // 在后台线程执行非 UI 操作（步骤 2-7）
         backgroundTasks.submit(TaskSpec.io("workspace-switch"), context -> {
@@ -2824,8 +2815,7 @@ public class ChatViewController implements AutoCloseable {
                         log.info("工作区切换完成: {} ({})",
                                 wsMgr.getCurrentWorkspace().getName(), targetWorkspaceId);
                     } finally {
-                        // 恢复完整转录根节点，保留空状态与浮动“新消息”叠加层。
-                        chatPane.setCenter(sessionViewController.root());
+                        workspaceSwitchOverlayController.hide();
                     }
                 });
             } catch (Exception e) {
@@ -2838,7 +2828,7 @@ public class ChatViewController implements AutoCloseable {
                 }
                 fx.dispatch(() -> {
                     sidebarController.refreshWorkspaceCombo();
-                    chatPane.setCenter(sessionViewController.root());
+                    workspaceSwitchOverlayController.hide();
                     var port = com.javaclaw.agent.ToolConfirmationManager.getPort();
                     if (port != null) {
                         port.notify(new com.javaclaw.api.interaction.ToastRequest(

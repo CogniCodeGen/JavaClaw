@@ -153,6 +153,15 @@ class ChatFxmlStructureTest {
     }
 
     @Test
+    void workspaceSwitchOverlayDeclaresEveryInjectedNode() throws Exception {
+        Document document = document("/fxml/chat/workspace-switch-overlay.fxml");
+        assertEquals(WorkspaceSwitchOverlayController.class.getName(),
+                document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
+        assertInjectedFields(document, WorkspaceSwitchOverlayController.class);
+        assertTrue(eventHandlers(document).isEmpty());
+    }
+
+    @Test
     void themeMenuDeclaresEveryInjectedNodeAndAction() throws Exception {
         Document document = document("/fxml/chat/theme-menu.fxml");
         assertEquals(ThemeMenuController.class.getName(),
