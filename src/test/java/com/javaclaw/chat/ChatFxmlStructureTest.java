@@ -39,8 +39,7 @@ class ChatFxmlStructureTest {
         assertTrue(controllerHandlers.containsAll(handlers),
                 "Controller 缺少 @FXML 事件方法: " + handlers);
         assertEquals(Set.of("toggleSidebar", "openTaskManager", "openSettingsRequested",
-                "onClearHistory", "onNewMessagesRequested", "onAddAttachment",
-                "onSendOrStop", "openWorkflowCenter"), handlers);
+                "onClearHistory", "onNewMessagesRequested", "openWorkflowCenter"), handlers);
     }
 
     @Test
@@ -59,6 +58,25 @@ class ChatFxmlStructureTest {
                 document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
         assertInjectedFields(document, MarkdownBubbleController.class);
         assertTrue(eventHandlers(document).isEmpty());
+    }
+
+    @Test
+    void composerDeclaresEveryInjectedNodeAndEventEntrypoint() throws Exception {
+        Document document = document("/fxml/chat/chat-composer.fxml");
+        assertEquals(ChatComposerController.class.getName(),
+                document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
+        assertInjectedFields(document, ChatComposerController.class);
+        assertEquals(Set.of("addAttachmentRequested", "sendOrStopRequested"),
+                eventHandlers(document));
+    }
+
+    @Test
+    void attachmentPreviewDeclaresEveryInjectedNodeAndEventEntrypoint() throws Exception {
+        Document document = document("/fxml/chat/attachment-preview-item.fxml");
+        assertEquals(AttachmentPreviewItemController.class.getName(),
+                document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
+        assertInjectedFields(document, AttachmentPreviewItemController.class);
+        assertEquals(Set.of("removeRequested"), eventHandlers(document));
     }
 
     @Test

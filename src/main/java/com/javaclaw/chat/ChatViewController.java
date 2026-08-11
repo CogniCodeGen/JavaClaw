@@ -95,14 +95,7 @@ public class ChatViewController implements AutoCloseable {
     @FXML private StackPane chatCenter;
     @FXML private VBox messageList;
     @FXML private ScrollPane scrollPane;
-    @FXML private InlineCssTextArea inputField;
-    @FXML private Button sendButton;
-    @FXML private HBox typingIndicator;
-    private Timeline typingAnimation;
-    @FXML private Label typingTextLabel;
-    @FXML private Label typingDotOne;
-    @FXML private Label typingDotTwo;
-    @FXML private Label typingDotThree;
+    @FXML private ChatComposerController composerController;
     @FXML private Label topTitleLabel;
     @FXML private Label topTitleStatusDot;
     @FXML private Label topTitleMetaLabel;
@@ -172,11 +165,9 @@ public class ChatViewController implements AutoCloseable {
 
     private void stopUiResources() {
         stopTimeline(statusBarClock);
-        stopTimeline(typingAnimation);
         stopTimeline(tailScrollAnimation);
         stopTimeline(activeGenPlaceholderAnim);
         statusBarClock = null;
-        typingAnimation = null;
         tailScrollAnimation = null;
         activeGenPlaceholderAnim = null;
         if (themeListener != null) {
@@ -201,14 +192,6 @@ public class ChatViewController implements AutoCloseable {
     private ChatSession currentSession;
 
     // 浏览器已改为独立窗口，不再使用 browserVisible 标志
-
-    // ==================== 附件相关 ====================
-
-    /** 待发送的附件列表 */
-    private final List<File> pendingAttachments = new ArrayList<>();
-
-    /** 附件预览容器 */
-    @FXML private FlowPane attachmentPreviewPane;
 
     /** 聊天空状态提示 */
     @FXML private VBox chatEmptyState;
@@ -300,7 +283,6 @@ public class ChatViewController implements AutoCloseable {
     @FXML private MenuButton themeMenuButton;
     @FXML private Region themeSwatch;
     @FXML private Button settingsButton;
-    @FXML private Label inputPlaceholder;
     @FXML private HBox modeChips;
 
     /** Token 用量摘要徽标（单一合并标签） */
@@ -562,69 +544,14 @@ public class ChatViewController implements AutoCloseable {
     }
 
     private void configureComposer() {
-        configureTypingAnimation();
-        inputField.addEventFilter(KeyEvent.KEY_PRESSED, this::onInputKeyPressed);
-        inputField.totalHeightEstimateProperty().addListener((observable, previous, height) -> {
-            if (height != null) {
-                inputField.setPrefHeight(Math.max(
-                        56, Math.min(240, height.doubleValue() + 28)));
-            }
-        });
-        inputPlaceholder.visibleProperty().bind(
-                Bindings.createBooleanBinding(
-                        () -> inputField.getLength() == 0,
-                        inputField.lengthProperty()));
-        UIHelper.addPressEffect(sendButton);
+        composerController.setOnSend(this::onSendMessage);
+        composerController.setOnStop(this::stopActiveStream);
+        composerController.setRecallPrevious(this::findLastUserMessage);
 
         statusBarClock = new Timeline(
                 new KeyFrame(Duration.seconds(10), event -> refreshStatusBar()));
         statusBarClock.setCycleCount(Animation.INDEFINITE);
         statusBarClock.play();
-    }
-
-    private void configureTypingAnimation() {
-        typingAnimation = new Timeline(
-                new KeyFrame(Duration.ZERO,
-                        new KeyValue(typingDotOne.opacityProperty(), 0.3),
-                        new KeyValue(typingDotTwo.opacityProperty(), 0.3),
-                        new KeyValue(typingDotThree.opacityProperty(), 0.3)),
-                new KeyFrame(Duration.millis(200),
-                        new KeyValue(typingDotOne.opacityProperty(), 1.0)),
-                new KeyFrame(Duration.millis(400),
-                        new KeyValue(typingDotOne.opacityProperty(), 0.3),
-                        new KeyValue(typingDotTwo.opacityProperty(), 1.0)),
-                new KeyFrame(Duration.millis(600),
-                        new KeyValue(typingDotTwo.opacityProperty(), 0.3),
-                        new KeyValue(typingDotThree.opacityProperty(), 1.0)),
-                new KeyFrame(Duration.millis(800),
-                        new KeyValue(typingDotThree.opacityProperty(), 0.3)));
-        typingAnimation.setCycleCount(Animation.INDEFINITE);
-    }
-
-    private void onInputKeyPressed(KeyEvent event) {
-        if (event.getCode() == KeyCode.ENTER) {
-            if (event.isShiftDown() || event.isShortcutDown()) {
-                inputField.insertText(inputField.getCaretPosition(), "\n");
-            } else {
-                onSendMessage();
-            }
-            event.consume();
-        } else if (event.getCode() == KeyCode.ESCAPE) {
-            if (inputField.getLength() > 0) {
-                inputField.clear();
-                event.consume();
-            } else if (streamingActive) {
-                stopActiveStream();
-                event.consume();
-            }
-        } else if (event.getCode() == KeyCode.UP && inputField.getLength() == 0) {
-            String previous = findLastUserMessage();
-            if (previous != null) {
-                inputField.replaceText(0, 0, previous);
-                inputField.moveTo(inputField.getLength());
-                event.consume();
-            }
-        }
     }
 
     private void configureThinkingPanel() {
@@ -698,151 +625,28 @@ public class ChatViewController implements AutoCloseable {
         openSettings();
     }
 
-    // ==================== 附件处理 ====================
-
-    /**
-     * 打开文件选择器添加附件
-     */
-    @FXML
-    private void onAddAttachment() {
-        FileChooser fileChooser = new FileChooser();
-        fileChooser.setTitle("选择附件");
-        fileChooser.setInitialDirectory(ProjectAccessPolicy.projectRoot().toFile());
-
-        // 添加文件过滤器
-        fileChooser.getExtensionFilters().addAll(
-                new FileChooser.ExtensionFilter("所有支持的文件",
-                        "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp", "*.webp",
-                        "*.txt", "*.md", "*.csv", "*.json", "*.xml", "*.html", "*.css",
-                        "*.java", "*.py", "*.js", "*.ts", "*.c", "*.cpp", "*.h", "*.go", "*.rs",
-                        "*.log", "*.yaml", "*.yml", "*.pdf"),
-                new FileChooser.ExtensionFilter("图片文件",
-                        "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp", "*.webp"),
-                new FileChooser.ExtensionFilter("文档文件",
-                        "*.txt", "*.md", "*.csv", "*.json", "*.xml", "*.pdf",
-                        "*.java", "*.py", "*.js", "*.html"),
-                new FileChooser.ExtensionFilter("所有文件", "*.*")
-        );
-
-        javafx.stage.Stage stage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
-        List<File> selectedFiles = fileChooser.showOpenMultipleDialog(stage);
-        if (selectedFiles != null && !selectedFiles.isEmpty()) {
-            int rejected = 0;
-            for (File file : selectedFiles) {
-                if (!ProjectAccessPolicy.isProjectFilePath(file.toPath())) {
-                    rejected++;
-                    continue;
-                }
-                File safe = ProjectAccessPolicy.requireProjectFilePath(file.toPath()).toFile();
-                if (!pendingAttachments.contains(safe)) {
-                    pendingAttachments.add(safe);
-                    log.info("已添加项目内附件: {}", safe.getName());
-                }
-            }
-            if (rejected > 0) {
-                Alert alert = new Alert(Alert.AlertType.WARNING,
-                        "严格项目隔离已拒绝 " + rejected + " 个项目外或受管配置目录中的附件。",
-                        ButtonType.OK);
-                alert.initOwner(stage);
-                alert.setHeaderText("只能选择当前项目内文件");
-                alert.showAndWait();
-            }
-            updateAttachmentPreview();
-        }
-    }
-
-    /**
-     * 更新附件预览区域
-     */
-    private void updateAttachmentPreview() {
-        attachmentPreviewPane.getChildren().clear();
-
-        if (pendingAttachments.isEmpty()) {
-            attachmentPreviewPane.setVisible(false);
-            attachmentPreviewPane.setManaged(false);
-            return;
-        }
-
-        attachmentPreviewPane.setVisible(true);
-        attachmentPreviewPane.setManaged(true);
-
-        for (File file : pendingAttachments) {
-            attachmentPreviewPane.getChildren().add(createAttachmentPreviewItem(file));
-        }
-    }
-
-    /**
-     * 创建单个附件预览项
-     *
-     * <p>图片文件显示缩略图，其他文件显示文件名图标。
-     * 每个预览项右上角有删除按钮。</p>
-     */
-    private StackPane createAttachmentPreviewItem(File file) {
-        VBox contentBox = new VBox(2);
-        contentBox.setAlignment(Pos.CENTER);
-        contentBox.getStyleClass().add("attachment-item");
-
-        if (ChatMessage.isImageFile(file)) {
-            // 图片缩略图
-            ImageView thumb = new ImageView(new Image(file.toURI().toString(), 60, 60, true, true));
-            thumb.setFitWidth(60);
-            thumb.setFitHeight(60);
-            thumb.setPreserveRatio(true);
-            contentBox.getChildren().add(thumb);
-        } else {
-            // 文件图标
-            String ext = ChatMessage.getFileExtension(file).toUpperCase();
-            Label iconLabel = new Label(ext.isEmpty() ? "FILE" : ext);
-            iconLabel.getStyleClass().add("attachment-icon");
-            contentBox.getChildren().add(iconLabel);
-        }
-
-        // 文件名
-        String displayName = file.getName();
-        if (displayName.length() > 12) {
-            displayName = displayName.substring(0, 9) + "...";
-        }
-        Label nameLabel = new Label(displayName);
-        nameLabel.getStyleClass().add("attachment-name");
-        nameLabel.setTooltip(new Tooltip(file.getName()));
-        contentBox.getChildren().add(nameLabel);
-
-        // 删除按钮
-        Button removeBtn = new Button("×");
-        removeBtn.getStyleClass().add("attachment-remove-btn");
-        removeBtn.setOnAction(e -> {
-            pendingAttachments.remove(file);
-            updateAttachmentPreview();
-            log.info("已移除附件: {}", file.getName());
-        });
-
-        StackPane itemPane = new StackPane(contentBox, removeBtn);
-        StackPane.setAlignment(removeBtn, Pos.TOP_RIGHT);
-        return itemPane;
-    }
-
     // ==================== 消息发送 ====================
 
     /**
      * 发送消息事件处理（多智能体流式模式，支持附件）
      */
     private void onSendMessage() {
-        String userText = inputField.getText().trim();
-        if (userText.isEmpty() && pendingAttachments.isEmpty()) {
+        String userText = composerController.trimmedInput();
+        if (userText.isEmpty() && !composerController.hasAttachments()) {
             return;
         }
 
         // /任务 命令：打开任务创建对话框
         if (userText.startsWith("/任务")) {
             String taskDesc = userText.substring(3).trim();
-            inputField.clear();
+            composerController.clearInput();
             openTaskCreation(taskDesc);
             return;
         }
 
         // /demo 命令：播放离线演示，无需 API Key
         if (userText.equals("/demo") || userText.equals("/演示")) {
-            inputField.clear();
+            composerController.clearInput();
             addUserBubbleWithAttachments(userText, List.of());
             setInputEnabled(false);
             streamingSession = currentSession;
@@ -856,7 +660,7 @@ public class ChatViewController implements AutoCloseable {
 
         // /诊断 斜杠命令：打开诊断面板
         if (userText.equals("/诊断") || userText.equals("/diagnostics")) {
-            inputField.clear();
+            composerController.clearInput();
             Stage owner = (Stage) outerRoot.getScene().getWindow();
             com.javaclaw.diagnostics.DiagnosticsView.open(owner);
             return;
@@ -874,10 +678,11 @@ public class ChatViewController implements AutoCloseable {
             }
         }
 
-        log.info("用户发送消息: {}，附件数: {}", userText, pendingAttachments.size());
+        log.info("用户发送消息: {}，附件数: {}", userText,
+                composerController.attachmentCount());
 
         // 复制附件列表用于发送（发送后清空预览）
-        List<File> attachmentsToSend = new ArrayList<>(pendingAttachments);
+        List<File> attachmentsToSend = composerController.attachmentSnapshot();
 
         // 附件能力闸门：目标模式声明不支持附件（如循环模式）时诚实拒发——
         // 否则附件在用户气泡里看似已送达，模式却静默丢弃，模型对着看不见的内容空转
@@ -889,7 +694,7 @@ public class ChatViewController implements AutoCloseable {
             if (!supportsAttachments) {
                 addStaticBubble(ChatMessage.Role.SYSTEM,
                         "当前模式不支持附件：请移除附件后再发送，或切回对话模式处理附件内容");
-                com.javaclaw.app.UiMotion.error(inputField);
+                composerController.showInputError();
                 return;
             }
         }
@@ -897,9 +702,8 @@ public class ChatViewController implements AutoCloseable {
         // 立即同步执行的轻量 UI 反馈：用户气泡入场景图、清输入框、禁用输入、思考指示器。
         // 这些 setter 不会自己触发渲染，仍要等当前事件处理器返回后下一次脉冲才能上屏。
         addUserBubbleWithAttachments(userText, attachmentsToSend);
-        inputField.clear();
-        pendingAttachments.clear();
-        updateAttachmentPreview();
+        composerController.clearInput();
+        composerController.clearAttachments();
         setInputEnabled(false);
         streamingSession = currentSession;  // 记录流所属会话（支持切走后后台继续）
         showThinkingIndicator(true);
@@ -1048,9 +852,8 @@ public class ChatViewController implements AutoCloseable {
     private void addLoopTemplate(String label, String value) {
         MenuItem item = new MenuItem(label);
         item.setOnAction(e -> {
-            inputField.replaceText(0, inputField.getLength(), value);
-            inputField.moveTo(inputField.getLength());
-            inputField.requestFocus();
+            composerController.replaceInput(value);
+            composerController.focusInput();
         });
         loopTemplateMenu.getItems().add(item);
     }
@@ -1450,7 +1253,7 @@ public class ChatViewController implements AutoCloseable {
         regenBtn.setOnAction(e -> {
             String last = findLastUserMessage();
             if (last != null) {
-                inputField.replaceText(0, inputField.getLength(), last);
+                composerController.replaceInput(last);
                 onSendMessage();
             }
         });
@@ -1460,9 +1263,8 @@ public class ChatViewController implements AutoCloseable {
             String current = activeReplyBubble != null ? activeReplyBubble.getText() : "";
             if (current != null && !current.isEmpty()) {
                 String quoted = "> " + current.replace("\n", "\n> ") + "\n\n";
-                inputField.replaceText(0, 0, quoted);
-                inputField.moveTo(inputField.getLength());
-                inputField.requestFocus();
+                composerController.insertInputAtStart(quoted);
+                composerController.focusInput();
             }
         });
         Button moreBtn = new Button("···");
@@ -1625,7 +1427,7 @@ public class ChatViewController implements AutoCloseable {
 
         if (activeReplyBubble.getLength() == 0) {
             dismissGenPlaceholder();
-            typingTextLabel.setText("助手正在回复...");
+            composerController.setThinkingText("助手正在回复...");
             thinkingPanel.setReplying();
             log.debug("开始接收回复内容");
         }
@@ -1763,7 +1565,7 @@ public class ChatViewController implements AutoCloseable {
      */
     private void appendSubThinking(String displayName, String thinking) {
         // 更新状态提示
-        typingTextLabel.setText(displayName + " 正在思考...");
+        composerController.setThinkingText(displayName + " 正在思考...");
 
         // 路由到右侧思考面板
         thinkingPanel.appendSubAgentThinking(displayName, thinking);
@@ -1788,7 +1590,7 @@ public class ChatViewController implements AutoCloseable {
         }
 
         // 更新状态提示
-        typingTextLabel.setText(displayName + " 已返回结果...");
+        composerController.setThinkingText(displayName + " 已返回结果...");
 
         // 通知右侧面板标记完成
         thinkingPanel.markSubAgentResult(displayName,
@@ -1930,7 +1732,7 @@ public class ChatViewController implements AutoCloseable {
      * 追加规划提示信息（路由到右侧思考面板）
      */
     private void appendPlanHint(String hint) {
-        typingTextLabel.setText("正在执行规划...");
+        composerController.setThinkingText("正在执行规划...");
         thinkingPanel.updatePlan(hint);
         log.debug("规划提示已更新: {} 字符", hint.length());
     }
@@ -2120,7 +1922,7 @@ public class ChatViewController implements AutoCloseable {
         }
 
         // 更新状态提示
-        typingTextLabel.setText(agentName + " 正在发言...");
+        composerController.setThinkingText(agentName + " 正在发言...");
 
         // 在右侧面板建立智能体卡片（初始状态"思考中..."，内容区待 reply chunk 追加）
         currentPlanAgentName = agentName;
@@ -2305,11 +2107,11 @@ public class ChatViewController implements AutoCloseable {
             clearActiveReferences();
             thinkingPanel.endStream();
             showThinkingIndicator(false);
-            typingTextLabel.setText("助手正在思考中...");
+            composerController.setThinkingText("助手正在思考中...");
             setInputEnabled(true);
             finishBackgroundStreamIfAway();
             activeTurn = null;
-            inputField.requestFocus();
+            composerController.focusInput();
         }
     }
 
@@ -2358,9 +2160,9 @@ public class ChatViewController implements AutoCloseable {
         } finally {
             clearActiveReferences();
             showThinkingIndicator(false);
-            typingTextLabel.setText("助手正在思考中...");
+            composerController.setThinkingText("助手正在思考中...");
             setInputEnabled(true);
-            inputField.requestFocus();
+            composerController.focusInput();
             finishBackgroundStreamIfAway();
             activeTurn = null;
         }
@@ -2398,11 +2200,11 @@ public class ChatViewController implements AutoCloseable {
             clearActiveReferences();
             thinkingPanel.endStreamCancelled();
             showThinkingIndicator(false);
-            typingTextLabel.setText("助手正在思考中...");
+            composerController.setThinkingText("助手正在思考中...");
             setInputEnabled(true);
             finishBackgroundStreamIfAway();
             activeTurn = null;
-            inputField.requestFocus();
+            composerController.focusInput();
         }
     }
 
@@ -2482,9 +2284,9 @@ public class ChatViewController implements AutoCloseable {
             clearActiveReferences();
             thinkingPanel.endStream();
             showThinkingIndicator(false);
-            typingTextLabel.setText("助手正在思考中...");
+            composerController.setThinkingText("助手正在思考中...");
             setInputEnabled(true);
-            inputField.requestFocus();
+            composerController.focusInput();
         }
     }
 
@@ -2560,7 +2362,7 @@ public class ChatViewController implements AutoCloseable {
         }
 
         // 3. 让输入框获得焦点，提示用户输入修正信息
-        inputField.requestFocus();
+        composerController.focusInput();
         log.info("已渲染澄清卡片: reason='{}' question='{}'", reason, question);
     }
 
@@ -2771,7 +2573,7 @@ public class ChatViewController implements AutoCloseable {
             suspendedStreamingNodes.clear();
             suspendedStreamingNodes.addAll(messageList.getChildren());
             messageList.getChildren().clear();
-            typingTextLabel.setText("其他会话正在后台生成回复…");
+            composerController.setThinkingText("其他会话正在后台生成回复…");
         } else if (!streamRunning) {
             if (streamingActive) {
                 stopActiveStream(CancellationReason.SESSION_SWITCH, false,
@@ -2800,8 +2602,7 @@ public class ChatViewController implements AutoCloseable {
 
         // 清空聊天区域并显示欢迎消息（后台流式期间不重置进度面板，保持可观察）
         disposeMessageList();
-        pendingAttachments.clear();
-        updateAttachmentPreview();
+        composerController.clearAttachments();
         if (!(streamingActive && streamingSession != null)) {
             thinkingPanel.reset();
         }
@@ -2856,7 +2657,7 @@ public class ChatViewController implements AutoCloseable {
             suspendedStreamingNodes.clear();
             suspendedStreamingNodes.addAll(messageList.getChildren());
             messageList.getChildren().clear();
-            typingTextLabel.setText("其他会话正在后台生成回复…");
+            composerController.setThinkingText("其他会话正在后台生成回复…");
         } else if (streamRunning) {
             // 当前是只读视图（流在别的会话跑）：仅释放本视图的静态气泡
             disposeMessageList();
@@ -2874,8 +2675,7 @@ public class ChatViewController implements AutoCloseable {
             activePlanAgentBubble = null;
             thinkingPanel.reset();
         }
-        pendingAttachments.clear();
-        updateAttachmentPreview();
+        composerController.clearAttachments();
 
         // 切换当前会话
         currentSession = target;
@@ -2886,7 +2686,7 @@ public class ChatViewController implements AutoCloseable {
             // 切回流式中的会话：恢复挂起的场景图，输出与进度无缝继续
             messageList.getChildren().setAll(suspendedStreamingNodes);
             suspendedStreamingNodes.clear();
-            typingTextLabel.setText("助手正在思考中...");
+            composerController.setThinkingText("助手正在思考中...");
         } else {
             // 智能体上下文仅在无活跃流时切换；后台流式期间目标会话为只读视图，
             // 流结束后由 finishBackgroundStreamIfAway 把上下文对齐到当前展示会话
@@ -3148,7 +2948,7 @@ public class ChatViewController implements AutoCloseable {
         }
         if (handle != null) {
             if (handle.cancel(reason)) {
-                if (showCancelFeedback) com.javaclaw.app.UiMotion.error(inputField);
+                if (showCancelFeedback) composerController.showInputError();
                 return;
             }
             // 服务终态可能已经产生，只是 JavaFX 终态回调仍排在事件队列中。
@@ -3176,12 +2976,12 @@ public class ChatViewController implements AutoCloseable {
             disposeSuspendedStreamingNodes();
             clearActiveReferences();
             showThinkingIndicator(false);
-            typingTextLabel.setText("助手正在思考中...");
+            composerController.setThinkingText("助手正在思考中...");
             thinkingPanel.endStreamCancelled();
             setInputEnabled(true);
         }, handle, reason);
         if (showCancelFeedback) {
-            com.javaclaw.app.UiMotion.error(inputField);
+            composerController.showInputError();
         }
     }
 
@@ -3209,8 +3009,8 @@ public class ChatViewController implements AutoCloseable {
             if (scene == null) return;
             scene.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
                 if (event.getCode() != KeyCode.ESCAPE) return;
-                if (inputField.getLength() > 0) {
-                    inputField.clear();
+                if (composerController.inputLength() > 0) {
+                    composerController.clearInput();
                     event.consume();
                 } else if (streamingActive) {
                     stopActiveStream();
@@ -3232,7 +3032,8 @@ public class ChatViewController implements AutoCloseable {
                     javafx.scene.input.KeyCombination.SHORTCUT_DOWN), this::toggleSidebar);
             // Ctrl/Cmd + K → 聚焦输入框（命令面板的轻量替代）
             acc.put(new javafx.scene.input.KeyCodeCombination(KeyCode.K,
-                    javafx.scene.input.KeyCombination.SHORTCUT_DOWN), () -> inputField.requestFocus());
+                    javafx.scene.input.KeyCombination.SHORTCUT_DOWN),
+                    composerController::focusInput);
             // Ctrl/Cmd + M → 打开 MCP 服务器窗口
             acc.put(new javafx.scene.input.KeyCodeCombination(KeyCode.M,
                     javafx.scene.input.KeyCombination.SHORTCUT_DOWN), this::openMcpServers);
@@ -3547,48 +3348,13 @@ public class ChatViewController implements AutoCloseable {
     }
 
     private void showThinkingIndicator(boolean show) {
-        typingIndicator.setVisible(show);
-        typingIndicator.setManaged(show);
-        if (show) {
-            typingAnimation.play();
-        } else {
-            typingAnimation.stop();
-        }
+        composerController.setThinkingVisible(show);
     }
 
     private void setInputEnabled(boolean enabled) {
-        inputField.setDisable(!enabled);
         streamingActive = !enabled;
-        // 按钮在两种状态都保持可点击：空闲=发送、流式=停止
-        sendButton.setDisable(false);
-        if (streamingActive) {
-            sendButton.setText("停止");
-            sendButton.getStyleClass().remove("send-button");
-            if (!sendButton.getStyleClass().contains("stop-button")) {
-                sendButton.getStyleClass().add("stop-button");
-            }
-            sendButton.setTooltip(new Tooltip("中断当前对话（Esc）"));
-        } else {
-            sendButton.setText("发送");
-            sendButton.getStyleClass().remove("stop-button");
-            if (!sendButton.getStyleClass().contains("send-button")) {
-                sendButton.getStyleClass().add("send-button");
-            }
-            sendButton.setTooltip(null);
-        }
+        composerController.setStreaming(streamingActive);
         updateTopTitleStatusDot();
-    }
-
-    /**
-     * 发送/停止按钮的统一处理：根据 streamingActive 决定行为
-     */
-    @FXML
-    private void onSendOrStop() {
-        if (streamingActive) {
-            stopActiveStream();
-        } else {
-            onSendMessage();
-        }
     }
 
     /**
@@ -3994,8 +3760,7 @@ public class ChatViewController implements AutoCloseable {
         currentSession.setTitle("新的对话");
 
         // 清除附件
-        pendingAttachments.clear();
-        updateAttachmentPreview();
+        composerController.clearAttachments();
 
         thinkingPanel.reset();
 
@@ -4200,8 +3965,7 @@ public class ChatViewController implements AutoCloseable {
                     try {
                         // 8. 清空所有 UI 状态
                         disposeMessageList();
-                        pendingAttachments.clear();
-                        updateAttachmentPreview();
+                        composerController.clearAttachments();
                         clearActiveReferences();
                         thinkingPanel.reset();
 

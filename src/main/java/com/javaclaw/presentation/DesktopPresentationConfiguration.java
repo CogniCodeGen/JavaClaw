@@ -5,6 +5,7 @@ import com.javaclaw.chat.MarkdownRenderEngine;
 import com.javaclaw.chat.markdown.MarkdownParagraphRenderer;
 import com.javaclaw.chat.markdown.MarkdownRegionViewFactory;
 import com.javaclaw.platform.desktop.ExternalLinkOpener;
+import com.javaclaw.platform.desktop.ProjectAttachmentPicker;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fx.FxDispatcher;
@@ -30,6 +31,11 @@ public class DesktopPresentationConfiguration {
     @Bean
     ExternalLinkOpener externalLinkOpener(ManagedTaskExecutor tasks) {
         return new ExternalLinkOpener(tasks);
+    }
+
+    @Bean
+    ProjectAttachmentPicker projectAttachmentPicker() {
+        return new ProjectAttachmentPicker();
     }
 
     @Bean
