@@ -7,6 +7,10 @@ import com.javaclaw.application.diagnostics.DiagnosticsArchivePort;
 import com.javaclaw.application.diagnostics.DiagnosticsUseCase;
 import com.javaclaw.application.event.DomainEventPublisher;
 import com.javaclaw.application.chat.ToolReviewSettingsPort;
+import com.javaclaw.application.onboarding.ConnectionProbePort;
+import com.javaclaw.application.onboarding.OnboardingApplicationService;
+import com.javaclaw.application.onboarding.OnboardingSettingsPort;
+import com.javaclaw.application.onboarding.OnboardingUseCase;
 import com.javaclaw.application.plugin.PluginManagementApplicationService;
 import com.javaclaw.application.plugin.PluginManagementPort;
 import com.javaclaw.application.plugin.PluginManagementUseCase;
@@ -34,8 +38,13 @@ import com.javaclaw.infrastructure.tool.LoggingToolAuditSink;
 import com.javaclaw.infrastructure.config.AgentConfigToolReviewSettings;
 import com.javaclaw.infrastructure.diagnostics.TraceExporterDiagnosticsArchive;
 import com.javaclaw.infrastructure.plugin.PluginManagerManagementAdapter;
+import com.javaclaw.infrastructure.onboarding.AgentConfigOnboardingSettings;
+import com.javaclaw.infrastructure.onboarding.HttpConnectionProbeAdapter;
 import com.javaclaw.agent.ToolConfirmationManager;
+import com.javaclaw.config.AgentConfig;
 import com.javaclaw.plugin.PluginManager;
+import com.javaclaw.ui.javafx.onboarding.OnboardingViewFactory;
+import com.javaclaw.ui.javafx.onboarding.ProviderCardFactory;
 import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationEventPublisher;
@@ -157,6 +166,24 @@ public class RootConfiguration {
     }
 
     @Bean
+    OnboardingSettingsPort onboardingSettingsPort() {
+        // AgentConfig 只有在 JavaFX init 完成 WorkspaceManager 初始化后才可安全实例化。
+        return new AgentConfigOnboardingSettings(AgentConfig::getInstance);
+    }
+
+    @Bean
+    ConnectionProbePort connectionProbePort(HttpGateway gateway) {
+        return new HttpConnectionProbeAdapter(gateway);
+    }
+
+    @Bean
+    OnboardingApplicationService onboardingApplicationService(
+            OnboardingSettingsPort settings,
+            ConnectionProbePort connection) {
+        return new OnboardingUseCase(settings, connection);
+    }
+
+    @Bean
     AtomicContentStore atomicContentStore() {
         return new AtomicContentStore();
     }
@@ -208,6 +235,18 @@ public class RootConfiguration {
     @Bean
     SpringFxmlLoader springFxmlLoader(AutowireCapableBeanFactory beanFactory) {
         return new SpringFxmlLoader(beanFactory);
+    }
+
+    @Bean
+    ProviderCardFactory providerCardFactory(SpringFxmlLoader loader) {
+        return new ProviderCardFactory(loader);
+    }
+
+    @Bean
+    OnboardingViewFactory onboardingViewFactory(
+            OnboardingApplicationService onboarding,
+            SpringFxmlLoader loader) {
+        return new OnboardingViewFactory(onboarding, loader);
     }
 
     @Bean

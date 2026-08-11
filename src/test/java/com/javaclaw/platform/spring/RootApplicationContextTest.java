@@ -17,9 +17,12 @@ import com.javaclaw.application.diagnostics.DiagnosticsApplicationService;
 import com.javaclaw.application.diagnostics.DiagnosticsArchivePort;
 import com.javaclaw.application.plugin.PluginManagementApplicationService;
 import com.javaclaw.application.plugin.PluginManagementPort;
+import com.javaclaw.application.onboarding.OnboardingApplicationService;
 import com.javaclaw.plugin.PluginManager;
 import com.javaclaw.ui.javafx.diagnostics.DiagnosticsViewFactory;
 import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
+import com.javaclaw.ui.javafx.onboarding.OnboardingViewFactory;
+import com.javaclaw.ui.javafx.onboarding.ProviderCardFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -63,6 +66,9 @@ class RootApplicationContextTest {
             assertNotNull(context.getBean(PluginManagementApplicationService.class));
             assertNotNull(context.getBean(DiagnosticsViewFactory.class));
             assertNotNull(context.getBean(PluginCenterViewFactory.class));
+            assertNotNull(context.getBean(OnboardingApplicationService.class));
+            assertNotNull(context.getBean(OnboardingViewFactory.class));
+            assertNotNull(context.getBean(ProviderCardFactory.class));
             assertNotNull(context.getBean(WorkspaceSpringContextFactory.class));
 
             SchemaInitializer initializer = context.getBean(SchemaInitializer.class);

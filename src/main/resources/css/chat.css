@@ -158,6 +158,75 @@
     -fx-font-size: 11px;
 }
 
+/* ==================== 首次启动向导 ==================== */
+.onboarding-root {
+    -fx-background-color: -jc-surface-page;
+}
+.onboarding-title {
+    -fx-text-fill: -jc-text-title;
+    -fx-font-size: 20px;
+    -fx-font-weight: bold;
+}
+.onboarding-step-indicator,
+.onboarding-connection-status {
+    -fx-text-fill: -jc-text-hint;
+    -fx-font-size: 12px;
+}
+.onboarding-step-title {
+    -fx-text-fill: -jc-text-title;
+    -fx-font-size: 16px;
+    -fx-font-weight: 600;
+}
+.onboarding-hint,
+.onboarding-provider-description {
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 12px;
+}
+.onboarding-provider-description {
+    -fx-font-size: 11px;
+}
+.onboarding-provider-card {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 8;
+    -fx-background-radius: 8;
+    -fx-cursor: hand;
+}
+.onboarding-provider-card:hover {
+    -fx-border-color: -jc-primary-300;
+}
+.onboarding-provider-card-selected {
+    -fx-background-color: -jc-primary-50;
+    -fx-border-color: -jc-primary-500;
+    -fx-border-width: 2;
+}
+.onboarding-provider-name {
+    -fx-text-fill: -jc-text-title;
+    -fx-font-size: 14px;
+    -fx-font-weight: 600;
+}
+.onboarding-provider-tag {
+    -fx-text-fill: white;
+    -fx-padding: 2 8;
+    -fx-background-radius: 4;
+    -fx-font-size: 10px;
+}
+.onboarding-provider-tag-recommended { -fx-background-color: -jc-success; }
+.onboarding-provider-tag-local { -fx-background-color: -jc-primary-500; }
+.onboarding-status-info { -fx-text-fill: -jc-text-hint; }
+.onboarding-status-success { -fx-text-fill: -jc-success; }
+.onboarding-status-error { -fx-text-fill: -jc-danger; }
+.onboarding-complete-title {
+    -fx-text-fill: -jc-success;
+    -fx-font-size: 18px;
+    -fx-font-weight: 600;
+}
+.onboarding-summary {
+    -fx-text-fill: -jc-text-body;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 12px;
+}
+
 /* ==================== 现代化滚动条 ==================== */
 
 .scroll-bar {

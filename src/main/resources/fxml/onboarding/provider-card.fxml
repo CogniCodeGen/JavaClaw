@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox fx:id="root"
+      xmlns="http://javafx.com/javafx/25"
+      xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.javaclaw.ui.javafx.onboarding.ProviderCardController"
+      prefWidth="200.0" prefHeight="110.0" spacing="6.0"
+      styleClass="onboarding-provider-card"
+      accessibleRole="BUTTON"
+      onMouseClicked="#selectRequested">
+    <padding><Insets top="14.0" right="14.0" bottom="14.0" left="14.0"/></padding>
+    <children>
+        <Label fx:id="nameLabel" styleClass="onboarding-provider-name"/>
+        <Label fx:id="descriptionLabel" wrapText="true"
+               styleClass="onboarding-provider-description"/>
+        <Region VBox.vgrow="ALWAYS"/>
+        <HBox fx:id="tagsBox" spacing="6.0">
+            <children>
+                <Label fx:id="recommendedTag" text="推荐"
+                       styleClass="onboarding-provider-tag, onboarding-provider-tag-recommended"/>
+                <Label fx:id="localTag" text="本地"
+                       styleClass="onboarding-provider-tag, onboarding-provider-tag-local"/>
+            </children>
+        </HBox>
+    </children>
+</VBox>

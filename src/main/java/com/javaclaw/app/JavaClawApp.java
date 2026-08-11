@@ -6,7 +6,6 @@ import com.javaclaw.chat.ChatViewController;
 import com.javaclaw.config.DataManager;
 import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.config.AgentConfig;
-import com.javaclaw.onboarding.OnboardingWizard;
 import com.javaclaw.runtime.ApplicationKernel;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.fx.FxDispatcher;
@@ -18,6 +17,7 @@ import com.javaclaw.ui.javafx.task.SddTaskView;
 import com.javaclaw.ui.javafx.workflow.WorkflowCenterView;
 import com.javaclaw.ui.javafx.JfxUserInteractionPort;
 import com.javaclaw.ui.javafx.SystemTrayManager;
+import com.javaclaw.ui.javafx.onboarding.OnboardingViewFactory;
 
 import javafx.application.Application;
 import javafx.application.Platform;
@@ -131,7 +131,7 @@ public class JavaClawApp extends Application {
                     springContext.getBean(PlaywrightBrowserManager.class);
 
             // 1.5. 首次使用向导（仅未完成时弹出，阻塞直到用户关闭）
-            OnboardingWizard.showIfNeeded(primaryStage);
+            springContext.getBean(OnboardingViewFactory.class).showIfNeeded(primaryStage);
 
             // 2-3. 应用内核是唯一组合根：整体创建工作区运行时，并装配定时任务、插件与 SDD。
             log.info("正在初始化应用内核与工作区运行时...");
@@ -197,7 +197,7 @@ public class JavaClawApp extends Application {
             // 6.5 安装系统托盘（后台常驻）：安装成功则关闭窗口最小化到托盘，
             //     应用继续在后台运行（定时任务/托管任务不中断），仅托盘"退出"才真正关闭。
             //     平台不支持或安装失败时回退为"关闭即退出"。
-            if (Boolean.getBoolean(OnboardingWizard.UI_TEST_PROPERTY)) {
+            if (Boolean.getBoolean(OnboardingViewFactory.UI_TEST_PROPERTY)) {
                 log.info("UI 测试模式：不安装系统托盘");
             } else {
                 setupSystemTray();
