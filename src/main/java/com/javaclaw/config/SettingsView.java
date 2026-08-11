@@ -7,11 +7,14 @@ import com.javaclaw.ui.javafx.control.ToggleSwitch;
 import com.javaclaw.ui.javafx.site.SiteCredentialPanel;
 import com.javaclaw.ui.javafx.site.SiteCredentialPanelFactory;
 import com.javaclaw.ui.javafx.settings.EmbeddingSettingsController;
+import com.javaclaw.ui.javafx.settings.CommunicationSettingsSectionFactory;
+import com.javaclaw.ui.javafx.settings.EmailSettingsController;
 import com.javaclaw.ui.javafx.settings.ModelSettingsController;
 import com.javaclaw.ui.javafx.settings.ModelSettingsSectionFactory;
 import com.javaclaw.ui.javafx.settings.SettingsFieldSupport;
 import com.javaclaw.ui.javafx.settings.SettingsSectionView;
 import com.javaclaw.ui.javafx.settings.TieredModelSettingsController;
+import com.javaclaw.ui.javafx.settings.NotificationSettingsController;
 import javafx.animation.PauseTransition;
 import javafx.animation.TranslateTransition;
 import javafx.application.Platform;
@@ -39,9 +42,7 @@ public class SettingsView {
     private static final Logger log = LoggerFactory.getLogger(SettingsView.class);
 
     private final Stage stage;
-    private final EmailConfig emailConfig;
     private final AgentConfig agentConfig;
-    private final NotificationConfig notificationConfig;
     private Runnable onModelConfigChanged;
     private final AgentSettingsPanelFactory agentSettingsPanels;
     private AgentSettingsPanel agentSettingsPanel;
@@ -53,6 +54,9 @@ public class SettingsView {
     private SettingsSectionView<ModelSettingsController> modelSettingsSection;
     private SettingsSectionView<TieredModelSettingsController> tieredModelSettingsSection;
     private SettingsSectionView<EmbeddingSettingsController> embeddingSettingsSection;
+    private final CommunicationSettingsSectionFactory communicationSettingsSections;
+    private SettingsSectionView<EmailSettingsController> emailSettingsSection;
+    private SettingsSectionView<NotificationSettingsController> notificationSettingsSection;
 
     // 布局容器
     private VBox categoryList;
@@ -165,32 +169,6 @@ public class SettingsView {
         }
     }
 
-    // 邮件配置表单控件
-    private TextField smtpHostField;
-    private TextField smtpPortField;
-    private TextField imapHostField;
-    private TextField imapPortField;
-    private TextField usernameField;
-    private PasswordField passwordField;
-    private TextField fromAddressField;
-    /** 加密方式（设计稿 SelectField）：SSL / STARTTLS / 无，映射 EmailConfig 的两个布尔 */
-    private ComboBox<String> encryptionCombo;
-
-    // 通知配置表单控件
-    private ToggleSwitch dingtalkEnabledCheck;
-    private TextField dingtalkWebhookField;
-    private PasswordField dingtalkSecretField;
-    private ToggleSwitch wechatEnabledCheck;
-    private TextField wechatWebhookField;
-    private ToggleSwitch feishuEnabledCheck;
-    private TextField feishuWebhookField;
-    private PasswordField feishuSecretField;
-    private ToggleSwitch emailNotifyEnabledCheck;
-    private TextField emailNotifyToField;
-    private ToggleSwitch customEnabledCheck;
-    private TextField customWebhookField;
-    private TextField customBodyTemplateField;
-
     // 通用配置表单控件
     private ToggleSwitch trayMinimizeOnCloseCheck;
     private ToggleSwitch taskRiskAutoApproveCheck;
@@ -213,10 +191,9 @@ public class SettingsView {
                         AgentSettingsPanelFactory agentSettingsPanels,
                         SiteCredentialPanelFactory siteCredentialPanels,
                         com.javaclaw.ui.javafx.mcp.McpCenterViewFactory mcpCenters,
-                        ModelSettingsSectionFactory modelSettingsSections) {
-        this.emailConfig = EmailConfig.getInstance();
+                        ModelSettingsSectionFactory modelSettingsSections,
+                        CommunicationSettingsSectionFactory communicationSettingsSections) {
         this.agentConfig = AgentConfig.getInstance();
-        this.notificationConfig = NotificationConfig.getInstance();
         this.agentSettingsPanels = java.util.Objects.requireNonNull(
                 agentSettingsPanels, "agentSettingsPanels");
         this.siteCredentialPanels = java.util.Objects.requireNonNull(
@@ -224,6 +201,8 @@ public class SettingsView {
         this.mcpCenters = java.util.Objects.requireNonNull(mcpCenters, "mcpCenters");
         this.modelSettingsSections = java.util.Objects.requireNonNull(
                 modelSettingsSections, "modelSettingsSections");
+        this.communicationSettingsSections = java.util.Objects.requireNonNull(
+                communicationSettingsSections, "communicationSettingsSections");
         this.stage = new Stage();
         stage.initModality(Modality.WINDOW_MODAL);
         stage.initOwner(owner);
@@ -373,18 +352,34 @@ public class SettingsView {
         // 通信渠道：邮件与外部通知
         addCategoryGroup("通信渠道");
 
-        // 邮件配置：保存 + 测试连接（IMAP）
-        Node emailPanel = buildEmailPanel();
+        // 邮件配置：FXML Controller 负责持久化和 SMTP/IMAP 探测。
+        emailSettingsSection = communicationSettingsSections.createEmail(ignored -> { });
+        Node emailPanel = emailSettingsSection.root();
+        emailSettingsSection.controller().configure(
+                result -> communicationSettingsApplied(emailPanel, result));
         addCategory("邮件配置", emailPanel, false,
                 "smtp imap email mail 邮箱 发件 收件");
-        registerPanelActions(emailPanel, PanelActions.saveAndTest(
-                this::saveSettings, () -> "✓ 已保存", this::runEmailTest, "测试收发"));
+        registerPanelActions(emailPanel, PanelActions.asyncSaveAndTest(
+                (success, failure) -> emailSettingsSection.controller().save(
+                        ignored -> success.run(), failure),
+                () -> "✓ 已保存",
+                () -> emailSettingsSection.controller().probe(
+                        result -> finishTest(emailPanel, result.message(),
+                                result.succeeded() ? "status-success" : "status-error"),
+                        failure -> finishTest(emailPanel,
+                                "邮件测试失败: " + failureMessage(failure), "status-error")),
+                "测试收发"));
 
-        Node notificationPanel = buildNotificationPanel();
+        notificationSettingsSection = communicationSettingsSections.createNotifications(
+                ignored -> { });
+        Node notificationPanel = notificationSettingsSection.root();
+        notificationSettingsSection.controller().configure(
+                result -> communicationSettingsApplied(notificationPanel, result));
         addCategory("通知配置", notificationPanel, false,
                 "钉钉 dingtalk 企业微信 wework 飞书 lark webhook notification 通知");
-        registerPanelActions(notificationPanel, PanelActions.saveOnly(
-                this::saveNotificationSettings, () -> "✓ 已保存"));
+        registerPanelActions(notificationPanel, PanelActions.asyncSaveOnly(
+                (success, failure) -> notificationSettingsSection.controller().save(
+                        ignored -> success.run(), failure), () -> "✓ 已保存"));
 
         // ==================== 全局页脚（测试连接 / 状态 / 关闭 / 保存） ====================
         // 测试按钮（soft 左置）：仅当前面板支持测试时可用，文案随面板（测试连接/测试收发/测试嵌入），
@@ -556,6 +551,14 @@ public class SettingsView {
             if (embeddingSettingsSection != null) {
                 embeddingSettingsSection.close();
                 embeddingSettingsSection = null;
+            }
+            if (emailSettingsSection != null) {
+                emailSettingsSection.close();
+                emailSettingsSection = null;
+            }
+            if (notificationSettingsSection != null) {
+                notificationSettingsSection.close();
+                notificationSettingsSection = null;
             }
         });
 
@@ -945,7 +948,7 @@ public class SettingsView {
         }
     }
 
-    /** 测试结束回调：恢复测试按钮文案/可用性并写入结果（异步测试线程经 Platform.runLater 调用） */
+    /** 测试结束回调：恢复测试按钮文案/可用性并写入结果。 */
     private void finishTest(String resultText, String cssClass) {
         finishTest(currentPanel, resultText, cssClass);
     }
@@ -1026,15 +1029,24 @@ public class SettingsView {
 
     private void coreSettingsApplied(Node panel,
             com.javaclaw.application.settings.ModelSettingsApplicationService.SaveResult result) {
-        dirtyPanels.remove(panel);
-        if (panel == currentPanel && result != null && !result.message().isBlank()) {
-            setFooterStatus(result.message(), "status-success");
-        }
-        refreshFooterStateOnly();
-        refreshNavDirtyMarks();
+        settingsApplied(panel, result == null ? "" : result.message());
         if (result != null && result.runtimeRefreshRequired() && onModelConfigChanged != null) {
             onModelConfigChanged.run();
         }
+    }
+
+    private void communicationSettingsApplied(Node panel,
+            com.javaclaw.application.settings.CommunicationSettingsApplicationService.SaveResult result) {
+        settingsApplied(panel, result == null ? "" : result.message());
+    }
+
+    private void settingsApplied(Node panel, String message) {
+        dirtyPanels.remove(panel);
+        if (panel == currentPanel && message != null && !message.isBlank()) {
+            setFooterStatus(message, "status-success");
+        }
+        refreshFooterStateOnly();
+        refreshNavDirtyMarks();
     }
 
     private String appliedModelConfigTip() {
@@ -1058,10 +1070,6 @@ public class SettingsView {
     /**
      * 安全设置整数值（含范围校验），返回是否校验通过
      */
-    private boolean setIntSafe(TextField field, java.util.function.IntConsumer setter, int defaultValue) {
-        return setIntSafe(field, setter, defaultValue, 1, Integer.MAX_VALUE);
-    }
-
     /**
      * 安全设置整数值（含范围校验），超出范围时使用默认值并标记错误
      */
@@ -1116,9 +1124,6 @@ public class SettingsView {
         // 技能进化
         attachLiveIntRange(skillEvolutionMinToolsField, 1, 50);
         attachLiveDoubleRange(skillEvolutionSuccessThresholdField, 0.0, 1.0);
-        // 邮件端口
-        attachLiveIntRange(smtpPortField, 1, 65535);
-        attachLiveIntRange(imapPortField, 1, 65535);
     }
 
     /** 整数字段实时校验；max 为 Integer.MAX_VALUE 时提示语退化为「≥ min 的整数」。 */
@@ -1868,330 +1873,6 @@ public class SettingsView {
         log.info("通用设置已保存");
     }
 
-    // ==================== 邮件配置面板 ====================
-
-    private Node buildEmailPanel() {
-        Label sectionTitle = new Label("邮件配置");
-        sectionTitle.getStyleClass().add("settings-section-title");
-
-        // 快捷选择邮箱服务商
-        Label presetLabel = new Label("邮箱服务商：");
-        presetLabel.getStyleClass().add("settings-label");
-        ComboBox<String> presetCombo = new ComboBox<>();
-        presetCombo.getItems().addAll("QQ 邮箱", "163 邮箱", "Gmail", "Outlook", "自定义");
-        presetCombo.getStyleClass().add("settings-combo");
-        presetCombo.setOnAction(e -> applyPreset(presetCombo.getValue()));
-
-        HBox presetRow = new HBox(10, presetLabel, presetCombo);
-        presetRow.setAlignment(Pos.CENTER_LEFT);
-
-        // SMTP 配置
-        Label smtpTitle = new Label("发送服务器 (SMTP)");
-        smtpTitle.getStyleClass().add("settings-group-title");
-
-        smtpHostField = createTextField("SMTP 服务器地址");
-        smtpPortField = createTextField("端口号");
-        smtpPortField.setPrefWidth(80);
-
-        HBox smtpRow = new HBox(10,
-                new Label("地址："), smtpHostField,
-                new Label("端口："), smtpPortField);
-        smtpRow.setAlignment(Pos.CENTER_LEFT);
-        applyLabelStyle(smtpRow);
-
-        // IMAP 配置
-        Label imapTitle = new Label("接收服务器 (IMAP)");
-        imapTitle.getStyleClass().add("settings-group-title");
-
-        imapHostField = createTextField("IMAP 服务器地址");
-        imapPortField = createTextField("端口号");
-        imapPortField.setPrefWidth(80);
-
-        HBox imapRow = new HBox(10,
-                new Label("地址："), imapHostField,
-                new Label("端口："), imapPortField);
-        imapRow.setAlignment(Pos.CENTER_LEFT);
-        applyLabelStyle(imapRow);
-
-        // 加密方式（设计稿 SelectField：SSL / STARTTLS / 无）
-        encryptionCombo = new ComboBox<>();
-        encryptionCombo.getItems().addAll("SSL", "STARTTLS", "无");
-        encryptionCombo.getStyleClass().add("settings-combo");
-
-        Label encryptHint = new Label("SSL 对应端口 465/993，STARTTLS 对应端口 587");
-        encryptHint.getStyleClass().add("settings-hint");
-
-        HBox encryptRow = new HBox(10, createLabel("加密方式："), encryptionCombo, encryptHint);
-        encryptRow.setAlignment(Pos.CENTER_LEFT);
-
-        // 账号配置
-        Label accountTitle = new Label("账号信息");
-        accountTitle.getStyleClass().add("settings-group-title");
-
-        usernameField = createTextField("邮箱地址");
-        usernameField.setPrefWidth(300);
-
-        passwordField = new PasswordField();
-        passwordField.setPromptText("授权码（非登录密码）");
-        passwordField.getStyleClass().add("settings-field");
-        passwordField.setPrefWidth(300);
-
-        fromAddressField = createTextField("发件人地址（留空则使用登录邮箱）");
-        fromAddressField.setPrefWidth(300);
-
-        GridPane accountGrid = new GridPane();
-        accountGrid.setHgap(10);
-        accountGrid.setVgap(8);
-        accountGrid.add(createLabel("登录邮箱："), 0, 0);
-        accountGrid.add(usernameField, 1, 0);
-        accountGrid.add(createLabel("授权码："), 0, 1);
-        accountGrid.add(secretField(passwordField), 1, 1);
-        accountGrid.add(createLabel("发件人："), 0, 2);
-        accountGrid.add(fromAddressField, 1, 2);
-
-        // 配置文件路径提示（保存/测试连接上移全局页脚）
-        Label pathHint = new Label("配置文件: " + emailConfig.getConfigFilePath());
-        pathHint.getStyleClass().add("settings-hint");
-
-        // 自动检测当前服务商
-        detectPreset(presetCombo);
-
-        // 组装面板
-        ScrollPane scrollPane = new ScrollPane();
-        scrollPane.setFitToWidth(true);
-        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        scrollPane.getStyleClass().add("settings-scroll-pane");
-
-        VBox panel = new VBox(12,
-                sectionTitle,
-                presetRow,
-                new Separator(),
-                smtpTitle, smtpRow,
-                imapTitle, imapRow,
-                encryptRow,
-                new Separator(),
-                accountTitle, accountGrid,
-                new Separator(),
-                pathHint);
-        panel.setPadding(new Insets(4));
-
-        scrollPane.setContent(panel);
-        return scrollPane;
-    }
-
-    // ==================== 通知配置面板 ====================
-
-    private Node buildNotificationPanel() {
-        Label sectionTitle = new Label("通知渠道配置");
-        sectionTitle.getStyleClass().add("settings-section-title");
-
-        Label hint = new Label("配置各通知渠道的 Webhook 地址，启用后通知专家可通过这些渠道发送消息");
-        hint.getStyleClass().add("settings-hint");
-        hint.setWrapText(true);
-
-        // ===== 钉钉机器人 =====
-        Label dingtalkTitle = new Label("钉钉机器人");
-        dingtalkTitle.getStyleClass().add("settings-group-title");
-
-        dingtalkEnabledCheck = new ToggleSwitch();
-        HBox dingtalkRow = toggleRow(dingtalkEnabledCheck, "钉钉机器人", "群机器人 Webhook + 加签");
-
-        dingtalkWebhookField = createTextField("Webhook 地址（群机器人 Webhook URL）");
-        dingtalkWebhookField.setPrefWidth(380);
-        dingtalkSecretField = new PasswordField();
-        dingtalkSecretField.setPromptText("加签密钥（可选）");
-        dingtalkSecretField.getStyleClass().add("settings-field");
-        dingtalkSecretField.setPrefWidth(380);
-
-        dingtalkEnabledCheck.selectedProperty().addListener((obs, o, n) -> {
-            dingtalkWebhookField.setDisable(!n);
-            dingtalkSecretField.setDisable(!n);
-        });
-
-        GridPane dingtalkGrid = new GridPane();
-        dingtalkGrid.setHgap(10);
-        dingtalkGrid.setVgap(8);
-        dingtalkGrid.add(createLabel("Webhook："), 0, 0);
-        dingtalkGrid.add(dingtalkWebhookField, 1, 0);
-        dingtalkGrid.add(createLabel("加签密钥："), 0, 1);
-        dingtalkGrid.add(secretField(dingtalkSecretField), 1, 1);
-
-        // ===== 企业微信机器人 =====
-        Label wechatTitle = new Label("企业微信机器人");
-        wechatTitle.getStyleClass().add("settings-group-title");
-
-        wechatEnabledCheck = new ToggleSwitch();
-        HBox wechatToggleRow = toggleRow(wechatEnabledCheck, "企业微信", "群机器人 Webhook");
-
-        wechatWebhookField = createTextField("Webhook 地址（群机器人 Webhook URL）");
-        wechatWebhookField.setPrefWidth(380);
-
-        wechatEnabledCheck.selectedProperty().addListener((obs, o, n) ->
-                wechatWebhookField.setDisable(!n));
-
-        HBox wechatRow = new HBox(10, createLabel("Webhook："), wechatWebhookField);
-        wechatRow.setAlignment(Pos.CENTER_LEFT);
-
-        // ===== 飞书机器人 =====
-        Label feishuTitle = new Label("飞书机器人");
-        feishuTitle.getStyleClass().add("settings-group-title");
-
-        feishuEnabledCheck = new ToggleSwitch();
-        HBox feishuToggleRow = toggleRow(feishuEnabledCheck, "飞书", "自定义机器人 Webhook + 签名");
-
-        feishuWebhookField = createTextField("Webhook 地址（群机器人 Webhook URL）");
-        feishuWebhookField.setPrefWidth(380);
-        feishuSecretField = new PasswordField();
-        feishuSecretField.setPromptText("签名校验密钥（可选）");
-        feishuSecretField.getStyleClass().add("settings-field");
-        feishuSecretField.setPrefWidth(380);
-
-        feishuEnabledCheck.selectedProperty().addListener((obs, o, n) -> {
-            feishuWebhookField.setDisable(!n);
-            feishuSecretField.setDisable(!n);
-        });
-
-        GridPane feishuGrid = new GridPane();
-        feishuGrid.setHgap(10);
-        feishuGrid.setVgap(8);
-        feishuGrid.add(createLabel("Webhook："), 0, 0);
-        feishuGrid.add(feishuWebhookField, 1, 0);
-        feishuGrid.add(createLabel("签名密钥："), 0, 1);
-        feishuGrid.add(secretField(feishuSecretField), 1, 1);
-
-        // ===== 邮件通知 =====
-        Label emailNotifyTitle = new Label("邮件通知");
-        emailNotifyTitle.getStyleClass().add("settings-group-title");
-
-        emailNotifyEnabledCheck = new ToggleSwitch();
-        HBox emailNotifyToggleRow = toggleRow(emailNotifyEnabledCheck, "邮件",
-                "复用「邮件配置」中的 SMTP 账号发送");
-
-        emailNotifyToField = createTextField("默认通知收件人邮箱地址");
-        emailNotifyToField.setPrefWidth(380);
-
-        emailNotifyEnabledCheck.selectedProperty().addListener((obs, o, n) ->
-                emailNotifyToField.setDisable(!n));
-
-        HBox emailNotifyRow = new HBox(10, createLabel("收件人："), emailNotifyToField);
-        emailNotifyRow.setAlignment(Pos.CENTER_LEFT);
-
-        // ===== 自定义 Webhook =====
-        Label customTitle = new Label("自定义 Webhook");
-        customTitle.getStyleClass().add("settings-group-title");
-
-        customEnabledCheck = new ToggleSwitch();
-        HBox customToggleRow = toggleRow(customEnabledCheck, "自定义 Webhook",
-                "POST JSON 到任意端点");
-
-        customWebhookField = createTextField("Webhook URL");
-        customWebhookField.setPrefWidth(380);
-        customBodyTemplateField = createTextField("请求体模板，用 ${message} 表示消息内容");
-        customBodyTemplateField.setPrefWidth(380);
-
-        customEnabledCheck.selectedProperty().addListener((obs, o, n) -> {
-            customWebhookField.setDisable(!n);
-            customBodyTemplateField.setDisable(!n);
-        });
-
-        GridPane customGrid = new GridPane();
-        customGrid.setHgap(10);
-        customGrid.setVgap(8);
-        customGrid.add(createLabel("URL："), 0, 0);
-        customGrid.add(customWebhookField, 1, 0);
-        customGrid.add(createLabel("请求体："), 0, 1);
-        customGrid.add(customBodyTemplateField, 1, 1);
-
-        Label customHint = new Label("请求体模板示例: {\"content\": \"${message}\"}");
-        customHint.getStyleClass().add("settings-hint");
-
-        // 配置文件路径（保存上移全局页脚）
-        Label pathHint = new Label("配置文件: " + notificationConfig.getConfigFilePath());
-        pathHint.getStyleClass().add("settings-hint");
-
-        // 组装面板
-        ScrollPane scrollPane = new ScrollPane();
-        scrollPane.setFitToWidth(true);
-        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        scrollPane.getStyleClass().add("settings-scroll-pane");
-
-        VBox panel = new VBox(12,
-                sectionTitle, hint,
-                new Separator(),
-                dingtalkTitle, dingtalkRow, dingtalkGrid,
-                new Separator(),
-                wechatTitle, wechatToggleRow, wechatRow,
-                new Separator(),
-                feishuTitle, feishuToggleRow, feishuGrid,
-                new Separator(),
-                emailNotifyTitle, emailNotifyToggleRow, emailNotifyRow,
-                new Separator(),
-                customTitle, customToggleRow, customGrid, customHint,
-                new Separator(),
-                pathHint);
-        panel.setPadding(new Insets(4));
-
-        scrollPane.setContent(panel);
-        return scrollPane;
-    }
-
-    /**
-     * 将通知配置加载到表单
-     */
-    private void loadNotificationSettings() {
-        dingtalkEnabledCheck.setSelected(notificationConfig.isDingtalkEnabled());
-        dingtalkWebhookField.setText(notificationConfig.getDingtalkWebhook());
-        dingtalkSecretField.setText(notificationConfig.getDingtalkSecret());
-        dingtalkWebhookField.setDisable(!notificationConfig.isDingtalkEnabled());
-        dingtalkSecretField.setDisable(!notificationConfig.isDingtalkEnabled());
-
-        wechatEnabledCheck.setSelected(notificationConfig.isWechatEnabled());
-        wechatWebhookField.setText(notificationConfig.getWechatWebhook());
-        wechatWebhookField.setDisable(!notificationConfig.isWechatEnabled());
-
-        feishuEnabledCheck.setSelected(notificationConfig.isFeishuEnabled());
-        feishuWebhookField.setText(notificationConfig.getFeishuWebhook());
-        feishuSecretField.setText(notificationConfig.getFeishuSecret());
-        feishuWebhookField.setDisable(!notificationConfig.isFeishuEnabled());
-        feishuSecretField.setDisable(!notificationConfig.isFeishuEnabled());
-
-        emailNotifyEnabledCheck.setSelected(notificationConfig.isEmailNotifyEnabled());
-        emailNotifyToField.setText(notificationConfig.getEmailNotifyTo());
-        emailNotifyToField.setDisable(!notificationConfig.isEmailNotifyEnabled());
-
-        customEnabledCheck.setSelected(notificationConfig.isCustomEnabled());
-        customWebhookField.setText(notificationConfig.getCustomWebhook());
-        customBodyTemplateField.setText(notificationConfig.getCustomBodyTemplate());
-        customWebhookField.setDisable(!notificationConfig.isCustomEnabled());
-        customBodyTemplateField.setDisable(!notificationConfig.isCustomEnabled());
-    }
-
-    /**
-     * 将通知表单内容保存到配置
-     */
-    private void saveNotificationSettings() {
-        notificationConfig.setDingtalkEnabled(dingtalkEnabledCheck.isSelected());
-        notificationConfig.setDingtalkWebhook(dingtalkWebhookField.getText().trim());
-        notificationConfig.setDingtalkSecret(dingtalkSecretField.getText().trim());
-
-        notificationConfig.setWechatEnabled(wechatEnabledCheck.isSelected());
-        notificationConfig.setWechatWebhook(wechatWebhookField.getText().trim());
-
-        notificationConfig.setFeishuEnabled(feishuEnabledCheck.isSelected());
-        notificationConfig.setFeishuWebhook(feishuWebhookField.getText().trim());
-        notificationConfig.setFeishuSecret(feishuSecretField.getText().trim());
-
-        notificationConfig.setEmailNotifyEnabled(emailNotifyEnabledCheck.isSelected());
-        notificationConfig.setEmailNotifyTo(emailNotifyToField.getText().trim());
-
-        notificationConfig.setCustomEnabled(customEnabledCheck.isSelected());
-        notificationConfig.setCustomWebhook(customWebhookField.getText().trim());
-        notificationConfig.setCustomBodyTemplate(customBodyTemplateField.getText().trim());
-
-        notificationConfig.save();
-        log.info("通知设置已保存");
-    }
-
     /**
      * 将当前配置加载到表单控件
      */
@@ -2199,175 +1880,13 @@ public class SettingsView {
         if (modelSettingsSection != null) modelSettingsSection.controller().reload();
         if (tieredModelSettingsSection != null) tieredModelSettingsSection.controller().reload();
         if (embeddingSettingsSection != null) embeddingSettingsSection.controller().reload();
-        loadNotificationSettings();
+        if (emailSettingsSection != null) emailSettingsSection.controller().reload();
+        if (notificationSettingsSection != null) {
+            notificationSettingsSection.controller().reload();
+        }
         loadGepaSettings();
         loadSkillEvolutionSettings();
         loadGeneralSettings();
-        smtpHostField.setText(emailConfig.getSmtpHost());
-        smtpPortField.setText(String.valueOf(emailConfig.getSmtpPort()));
-        imapHostField.setText(emailConfig.getImapHost());
-        imapPortField.setText(String.valueOf(emailConfig.getImapPort()));
-        usernameField.setText(emailConfig.getUsername());
-        passwordField.setText(emailConfig.getPassword());
-        fromAddressField.setText(emailConfig.getFromAddress());
-        // 两个布尔折叠为单选加密方式：SSL 优先，其次 STARTTLS，否则无
-        encryptionCombo.setValue(emailConfig.isUseSsl() ? "SSL"
-                : emailConfig.isUseStarttls() ? "STARTTLS" : "无");
-    }
-
-    /**
-     * 将表单内容保存到配置
-     */
-    private void saveSettings() {
-        emailConfig.setSmtpHost(smtpHostField.getText().trim());
-        setIntSafe(smtpPortField, emailConfig::setSmtpPort, 465, 1, 65535);
-        emailConfig.setImapHost(imapHostField.getText().trim());
-        setIntSafe(imapPortField, emailConfig::setImapPort, 993, 1, 65535);
-        emailConfig.setUsername(usernameField.getText().trim());
-        emailConfig.setPassword(passwordField.getText());
-        // 发件人为空时自动使用用户名
-        String fromAddr = fromAddressField.getText().trim();
-        if (fromAddr.isEmpty()) {
-            fromAddr = usernameField.getText().trim();
-        }
-        emailConfig.setFromAddress(fromAddr);
-        String encryption = encryptionCombo.getValue();
-        emailConfig.setUseSsl("SSL".equals(encryption));
-        emailConfig.setUseStarttls("STARTTLS".equals(encryption));
-
-        emailConfig.save();
-        log.info("邮件设置已保存");
-    }
-
-    /**
-     * 应用邮箱服务商预设
-     */
-    private void applyPreset(String preset) {
-        if (preset == null) return;
-        switch (preset) {
-            case "QQ 邮箱" -> {
-                smtpHostField.setText("smtp.qq.com");
-                smtpPortField.setText("465");
-                imapHostField.setText("imap.qq.com");
-                imapPortField.setText("993");
-                encryptionCombo.setValue("SSL");
-            }
-            case "163 邮箱" -> {
-                smtpHostField.setText("smtp.163.com");
-                smtpPortField.setText("465");
-                imapHostField.setText("imap.163.com");
-                imapPortField.setText("993");
-                encryptionCombo.setValue("SSL");
-            }
-            case "Gmail" -> {
-                smtpHostField.setText("smtp.gmail.com");
-                smtpPortField.setText("587");
-                imapHostField.setText("imap.gmail.com");
-                imapPortField.setText("993");
-                encryptionCombo.setValue("STARTTLS");
-            }
-            case "Outlook" -> {
-                smtpHostField.setText("smtp.office365.com");
-                smtpPortField.setText("587");
-                imapHostField.setText("outlook.office365.com");
-                imapPortField.setText("993");
-                encryptionCombo.setValue("STARTTLS");
-            }
-            // "自定义" 不做任何修改
-        }
-    }
-
-    /**
-     * 根据当前 SMTP 地址检测对应的预设
-     */
-    private void detectPreset(ComboBox<String> combo) {
-        String smtp = emailConfig.getSmtpHost();
-        if (smtp.contains("qq.com")) {
-            combo.setValue("QQ 邮箱");
-        } else if (smtp.contains("163.com")) {
-            combo.setValue("163 邮箱");
-        } else if (smtp.contains("gmail.com")) {
-            combo.setValue("Gmail");
-        } else if (smtp.contains("office365.com")) {
-            combo.setValue("Outlook");
-        } else {
-            combo.setValue("自定义");
-        }
-    }
-
-    /**
-     * 全局页脚「测试收发」在邮件配置面板时触发：先保存，再分别测试 SMTP 发送与 IMAP 接收连通性
-     * （设计稿 ok 文案「✓ SMTP 已连接 · IMAP 已连接」），结果经 finishTest 写全局状态标签。
-     */
-    private void runEmailTest() {
-        // 与原「先保存再测试」语义一致：保存即清除未保存状态
-        saveSettings();
-        dirtyPanels.remove(currentPanel);
-        footSaveButton.setDisable(true);
-        refreshNavDirtyMarks();
-
-        Thread testThread = new Thread(() -> {
-            // SMTP 发送通道
-            String smtpError = null;
-            try {
-                java.util.Properties props = new java.util.Properties();
-                props.put("mail.smtp.host", emailConfig.getSmtpHost());
-                props.put("mail.smtp.port", String.valueOf(emailConfig.getSmtpPort()));
-                props.put("mail.smtp.auth", "true");
-                props.put("mail.smtp.ssl.enable", String.valueOf(emailConfig.isUseSsl()));
-                props.put("mail.smtp.starttls.enable", String.valueOf(emailConfig.isUseStarttls()));
-                props.put("mail.smtp.connectiontimeout", "5000");
-                props.put("mail.smtp.timeout", "5000");
-                jakarta.mail.Session session = jakarta.mail.Session.getInstance(props);
-                jakarta.mail.Transport transport = session.getTransport("smtp");
-                transport.connect(emailConfig.getSmtpHost(),
-                        emailConfig.getUsername(), emailConfig.getPassword());
-                transport.close();
-            } catch (Exception e) {
-                smtpError = e.getMessage();
-                log.warn("SMTP 连接测试失败: {}", e.getMessage());
-            }
-
-            // IMAP 接收通道
-            String imapError = null;
-            try {
-                java.util.Properties props = new java.util.Properties();
-                props.put("mail.imap.host", emailConfig.getImapHost());
-                props.put("mail.imap.port", String.valueOf(emailConfig.getImapPort()));
-                props.put("mail.imap.ssl.enable", "true");
-                props.put("mail.imap.connectiontimeout", "5000");
-                props.put("mail.imap.timeout", "5000");
-                jakarta.mail.Session session = jakarta.mail.Session.getInstance(props);
-                jakarta.mail.Store store = session.getStore("imap");
-                store.connect(emailConfig.getImapHost(),
-                        emailConfig.getUsername(), emailConfig.getPassword());
-                store.close();
-            } catch (Exception e) {
-                imapError = e.getMessage();
-                log.warn("IMAP 连接测试失败: {}", e.getMessage());
-            }
-
-            String result;
-            String cssClass;
-            if (smtpError == null && imapError == null) {
-                result = "✓ SMTP 已连接 · IMAP 已连接";
-                cssClass = "status-success";
-                log.info("邮件收发测试成功");
-            } else {
-                StringBuilder sb = new StringBuilder();
-                sb.append(smtpError == null ? "SMTP 正常" : "SMTP 失败: " + smtpError);
-                sb.append(" · ");
-                sb.append(imapError == null ? "IMAP 正常" : "IMAP 失败: " + imapError);
-                result = sb.toString();
-                cssClass = "status-error";
-            }
-
-            String finalResult = result;
-            String finalCssClass = cssClass;
-            javafx.application.Platform.runLater(() -> finishTest(finalResult, finalCssClass));
-        }, "email-test-thread");
-        testThread.setDaemon(true);
-        testThread.start();
     }
 
     /**
@@ -2463,60 +1982,6 @@ public class SettingsView {
      * 密钥输入框包装（设计稿 SecretField）：在 PasswordField 右侧吸附「显示/隐藏」与「复制」小按钮。
      * 明文态用与之双向绑定的 TextField 呈现，状态仍由传入的 PasswordField 承载（load/save 不变）。
      */
-    private Node secretField(PasswordField secret) {
-        TextField plain = new TextField();
-        plain.textProperty().bindBidirectional(secret.textProperty());
-        plain.promptTextProperty().bind(secret.promptTextProperty());
-        // 镜像密钥框的样式类（password-field 行为类除外）
-        secret.getStyleClass().stream()
-                .filter(c -> !"password-field".equals(c) && !plain.getStyleClass().contains(c))
-                .forEach(plain.getStyleClass()::add);
-        plain.setVisible(false);
-        plain.setManaged(false);
-        plain.prefWidthProperty().bind(secret.prefWidthProperty());
-
-        Button showBtn = new Button("显示");
-        showBtn.getStyleClass().add("field-adorn");
-        showBtn.setFocusTraversable(false);
-        showBtn.setOnAction(e -> {
-            boolean toPlain = !plain.isVisible();
-            plain.setVisible(toPlain);
-            plain.setManaged(toPlain);
-            secret.setVisible(!toPlain);
-            secret.setManaged(!toPlain);
-            showBtn.setText(toPlain ? "隐藏" : "显示");
-        });
-
-        Button copyBtn = new Button("复制");
-        copyBtn.getStyleClass().add("field-adorn");
-        copyBtn.setFocusTraversable(false);
-        PauseTransition copiedReset = new PauseTransition(javafx.util.Duration.millis(1200));
-        copyBtn.setOnAction(e -> {
-            var content = new javafx.scene.input.ClipboardContent();
-            content.putString(secret.getText() == null ? "" : secret.getText());
-            javafx.scene.input.Clipboard.getSystemClipboard().setContent(content);
-            copyBtn.setText("已复制");
-            copyBtn.getStyleClass().add("field-adorn-active");
-            copiedReset.stop();
-            copiedReset.setOnFinished(ev -> {
-                copyBtn.setText("复制");
-                copyBtn.getStyleClass().remove("field-adorn-active");
-            });
-            copiedReset.playFromStart();
-        });
-
-        HBox adorns = new HBox(4, showBtn, copyBtn);
-        adorns.setAlignment(Pos.CENTER_RIGHT);
-        adorns.setPickOnBounds(false);
-        adorns.setPadding(new Insets(0, 6, 0, 0));
-        adorns.setMaxWidth(Region.USE_PREF_SIZE);
-        adorns.setMaxHeight(Region.USE_PREF_SIZE);
-
-        StackPane wrap = new StackPane(secret, plain, adorns);
-        StackPane.setAlignment(adorns, Pos.CENTER_RIGHT);
-        wrap.setMaxWidth(Region.USE_PREF_SIZE);
-        return wrap;
-    }
 
     /** 程序性填表（load/reset）统一入口：守卫期间的控件变更不计入 dirty */
     private void runFormLoad(Runnable loader) {
@@ -2540,15 +2005,6 @@ public class SettingsView {
         label.getStyleClass().add("settings-label");
         label.setMinWidth(70);
         return label;
-    }
-
-    private void applyLabelStyle(HBox row) {
-        row.getChildren().stream()
-                .filter(n -> n instanceof Label)
-                .forEach(n -> {
-                    ((Label) n).getStyleClass().add("settings-label");
-                    ((Label) n).setMinWidth(40);
-                });
     }
 
 }

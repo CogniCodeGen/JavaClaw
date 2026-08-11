@@ -99,6 +99,9 @@ class SettingsCoreFxmlStructureTest {
         values.put("/fxml/settings/tiered-model-settings.fxml",
                 TieredModelSettingsController.class);
         values.put("/fxml/settings/embedding-settings.fxml", EmbeddingSettingsController.class);
+        values.put("/fxml/settings/email-settings.fxml", EmailSettingsController.class);
+        values.put("/fxml/settings/notification-settings.fxml",
+                NotificationSettingsController.class);
         return Map.copyOf(values);
     }
 }

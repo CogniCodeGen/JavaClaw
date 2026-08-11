@@ -95,6 +95,18 @@ public final class SettingsFieldSupport {
         return Boolean.TRUE.equals(root.getProperties().get(LOADING_KEY));
     }
 
+    static String failureMessage(Throwable failure) {
+        Throwable current = failure;
+        while ((current instanceof java.util.concurrent.CompletionException
+                || current instanceof java.util.concurrent.ExecutionException)
+                && current.getCause() != null) {
+            current = current.getCause();
+        }
+        String message = current.getMessage();
+        return message == null || message.isBlank()
+                ? current.getClass().getSimpleName() : message;
+    }
+
     static String text(TextField field) {
         return field.getText() == null ? "" : field.getText().strip();
     }

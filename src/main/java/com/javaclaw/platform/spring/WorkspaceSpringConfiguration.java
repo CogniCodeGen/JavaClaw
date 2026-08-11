@@ -20,6 +20,10 @@ import com.javaclaw.application.mcp.McpRuntimePort;
 import com.javaclaw.application.mcp.McpTemplatePort;
 import com.javaclaw.application.settings.ModelSettingsApplicationService;
 import com.javaclaw.application.settings.EmbeddingRuntimeProbePort;
+import com.javaclaw.application.settings.CommunicationSettingsApplicationService;
+import com.javaclaw.application.settings.CommunicationSettingsPort;
+import com.javaclaw.application.settings.CommunicationSettingsUseCase;
+import com.javaclaw.application.settings.EmailConnectionProbePort;
 import com.javaclaw.application.settings.ModelSettingsPort;
 import com.javaclaw.application.settings.ModelSettingsProbePort;
 import com.javaclaw.application.settings.ModelSettingsUseCase;
@@ -36,6 +40,8 @@ import com.javaclaw.infrastructure.mcp.McpTemplateLibraryAdapter;
 import com.javaclaw.infrastructure.settings.AgentConfigModelSettingsAdapter;
 import com.javaclaw.infrastructure.settings.EmbeddingGatewayRuntimeProbeAdapter;
 import com.javaclaw.infrastructure.settings.HttpModelSettingsProbeAdapter;
+import com.javaclaw.infrastructure.settings.JakartaMailConnectionProbeAdapter;
+import com.javaclaw.infrastructure.settings.LegacyCommunicationSettingsAdapter;
 import com.javaclaw.mode.ChatMode;
 import com.javaclaw.mode.LoopMode;
 import com.javaclaw.mode.PlanMode;
@@ -64,6 +70,7 @@ import com.javaclaw.ui.javafx.mcp.McpTemplateCellFactory;
 import com.javaclaw.ui.javafx.mcp.McpTemplateDialogFactory;
 import com.javaclaw.ui.javafx.mcp.McpToolRowFactory;
 import com.javaclaw.ui.javafx.settings.ModelSettingsSectionFactory;
+import com.javaclaw.ui.javafx.settings.CommunicationSettingsSectionFactory;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.http.HttpGateway;
 import com.javaclaw.platform.json.JsonCodec;
@@ -114,6 +121,16 @@ public class WorkspaceSpringConfiguration {
     @Bean
     com.javaclaw.config.AgentConfig agentConfig() {
         return com.javaclaw.config.AgentConfig.getInstance();
+    }
+
+    @Bean
+    com.javaclaw.config.EmailConfig emailConfig() {
+        return com.javaclaw.config.EmailConfig.getInstance();
+    }
+
+    @Bean
+    com.javaclaw.config.NotificationConfig notificationConfig() {
+        return com.javaclaw.config.NotificationConfig.getInstance();
     }
 
     @Bean
@@ -287,6 +304,31 @@ public class WorkspaceSpringConfiguration {
     ModelSettingsSectionFactory modelSettingsSectionFactory(
             @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
         return new ModelSettingsSectionFactory(loader);
+    }
+
+    @Bean
+    CommunicationSettingsPort communicationSettingsPort(
+            com.javaclaw.config.EmailConfig email,
+            com.javaclaw.config.NotificationConfig notifications) {
+        return new LegacyCommunicationSettingsAdapter(email, notifications);
+    }
+
+    @Bean
+    EmailConnectionProbePort emailConnectionProbePort() {
+        return new JakartaMailConnectionProbeAdapter();
+    }
+
+    @Bean
+    CommunicationSettingsApplicationService communicationSettingsApplicationService(
+            CommunicationSettingsPort settings,
+            EmailConnectionProbePort probes) {
+        return new CommunicationSettingsUseCase(settings, probes);
+    }
+
+    @Bean
+    CommunicationSettingsSectionFactory communicationSettingsSectionFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new CommunicationSettingsSectionFactory(loader);
     }
 
     @Bean

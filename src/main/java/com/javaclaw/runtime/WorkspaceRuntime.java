@@ -11,6 +11,7 @@ import com.javaclaw.ui.javafx.agent.AgentSettingsPanelFactory;
 import com.javaclaw.ui.javafx.site.SiteCredentialPanelFactory;
 import com.javaclaw.ui.javafx.mcp.McpCenterViewFactory;
 import com.javaclaw.ui.javafx.settings.ModelSettingsSectionFactory;
+import com.javaclaw.ui.javafx.settings.CommunicationSettingsSectionFactory;
 
 import java.util.Objects;
 
@@ -34,6 +35,7 @@ public final class WorkspaceRuntime implements AutoCloseable {
     private final SiteCredentialPanelFactory siteCredentialPanels;
     private final McpCenterViewFactory mcpCenters;
     private final ModelSettingsSectionFactory modelSettingsSections;
+    private final CommunicationSettingsSectionFactory communicationSettingsSections;
 
     WorkspaceRuntime(WorkspaceContextHandle springContext) {
         this.springContext = Objects.requireNonNull(springContext, "springContext");
@@ -48,6 +50,8 @@ public final class WorkspaceRuntime implements AutoCloseable {
         siteCredentialPanels = springContext.bean(SiteCredentialPanelFactory.class);
         mcpCenters = springContext.bean(McpCenterViewFactory.class);
         modelSettingsSections = springContext.bean(ModelSettingsSectionFactory.class);
+        communicationSettingsSections = springContext.bean(
+                CommunicationSettingsSectionFactory.class);
     }
 
     public WorkspaceContext context() {
@@ -92,6 +96,10 @@ public final class WorkspaceRuntime implements AutoCloseable {
 
     public ModelSettingsSectionFactory modelSettingsSections() {
         return modelSettingsSections;
+    }
+
+    public CommunicationSettingsSectionFactory communicationSettingsSections() {
+        return communicationSettingsSections;
     }
 
     public boolean isClosed() {
