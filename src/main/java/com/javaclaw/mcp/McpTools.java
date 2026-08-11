@@ -1,8 +1,8 @@
 package com.javaclaw.mcp;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.agent.model.ToolResponse;
+import com.javaclaw.platform.json.JsonCodec;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
@@ -25,12 +25,12 @@ import java.util.Map;
 public class McpTools {
 
     private static final Logger log = LoggerFactory.getLogger(McpTools.class);
-    private static final ObjectMapper objectMapper = new ObjectMapper();
-
     private final McpClientManager clientManager;
+    private final JsonCodec json;
 
-    public McpTools(McpClientManager clientManager) {
-        this.clientManager = clientManager;
+    public McpTools(McpClientManager clientManager, JsonCodec json) {
+        this.clientManager = java.util.Objects.requireNonNull(clientManager, "clientManager");
+        this.json = java.util.Objects.requireNonNull(json, "json");
     }
 
     /**
@@ -94,9 +94,9 @@ public class McpTools {
             // 解析参数 JSON
             JsonNode arguments;
             if (argumentsJson == null || argumentsJson.isBlank() || "{}".equals(argumentsJson.trim())) {
-                arguments = objectMapper.createObjectNode();
+                arguments = json.mapper().createObjectNode();
             } else {
-                arguments = objectMapper.readTree(argumentsJson);
+                arguments = json.tree(argumentsJson);
             }
 
             // arguments_json 可能包含 token/secret 等远端工具凭据；日志只记录长度，不落原文。

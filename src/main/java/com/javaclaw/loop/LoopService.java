@@ -38,7 +38,6 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class LoopService {
 
     private static final Logger log = LoggerFactory.getLogger(LoopService.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final com.javaclaw.workflow.model.GraphDefinition SYSTEM_GRAPH =
             com.javaclaw.workflow.service.SystemGraphFactory.loop();
 
@@ -48,6 +47,7 @@ public final class LoopService {
     private final com.javaclaw.api.conversation.SingleConversationRun conversationRun =
             new com.javaclaw.api.conversation.SingleConversationRun();
     private final GoalManager goalManager;
+    private final ObjectMapper json;
 
     /** 当前活跃循环控制器（供取消）；无活跃循环为 null。 */
     private final AtomicReference<LoopController> active = new AtomicReference<>();
@@ -85,11 +85,12 @@ public final class LoopService {
         this.runtime = runtime;
         this.workflowService = workflowService;
         this.processes = java.util.Objects.requireNonNull(processes, "processes");
+        this.json = runtime.getJson().mapper();
         if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
         // skipLength=0：聊天模式的「短请求免分解」优化不适用于循环——循环目标多为短祈使句，
         // 而成功准则是循环完成判定的承重墙（不是可有可无的优化），必须对任意长度目标分解。
         this.goalManager = new GoalManager(runtime.getModelFactory().createChatModel(),
-                runtime.getTokenTracker(), 0, GOAL_CACHE_TTL_MILLIS);
+                runtime.getTokenTracker(), 0, GOAL_CACHE_TTL_MILLIS, json);
     }
 
     /**
@@ -133,13 +134,13 @@ public final class LoopService {
                 }
                 yield com.javaclaw.workflow.runtime.NodeResult.next(
                         com.javaclaw.workflow.model.StatePatch.builder()
-                                .set("system.loop.spec", plan.spec())
+                                .setJson("system.loop.spec", json.valueToTree(plan.spec()))
                                 .set("system.loop.contextPrompt", plan.contextPrompt())
                                 .set("system.loop.explicitWorkDir", plan.explicitWorkDir())
                                 .build());
             }
             case "run" -> {
-                LoopSpec spec = MAPPER.treeToValue(
+                LoopSpec spec = json.treeToValue(
                         context.state().get("system.loop.spec"), LoopSpec.class);
                 Plan plan = new Plan(spec,
                         context.state().get("system.loop.contextPrompt").asText(),

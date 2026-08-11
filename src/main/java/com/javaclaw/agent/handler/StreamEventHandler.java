@@ -49,7 +49,11 @@ public class StreamEventHandler {
     private static final String META_SUBAGENT_NAME = "subagent_name";
 
     /** JSON 解析器（用于降级处理无 metadata 的转发事件） */
-    private static final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
+
+    public StreamEventHandler(ObjectMapper objectMapper) {
+        this.objectMapper = java.util.Objects.requireNonNull(objectMapper, "objectMapper");
+    }
 
     /**
      * 处理单个流式事件，翻译为 {@link ConversationEvent} 并推送到回调。

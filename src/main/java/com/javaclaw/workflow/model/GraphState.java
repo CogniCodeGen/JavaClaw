@@ -13,7 +13,6 @@ import java.util.Map;
 /** JSON-only 工作流状态，禁止把 Agent、UI 节点等运行期对象塞入检查点。 */
 public final class GraphState {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
     private final ObjectNode root;
 
     public GraphState() {
@@ -24,10 +23,10 @@ public final class GraphState {
         this.root = root == null ? JsonNodeFactory.instance.objectNode() : root.deepCopy();
     }
 
-    public static GraphState fromJson(String json) {
-        if (json == null || json.isBlank()) return new GraphState();
+    public static GraphState fromJson(String source, ObjectMapper json) {
+        if (source == null || source.isBlank()) return new GraphState();
         try {
-            JsonNode parsed = MAPPER.readTree(json);
+            JsonNode parsed = java.util.Objects.requireNonNull(json, "json").readTree(source);
             if (!parsed.isObject()) throw new IllegalArgumentException("GraphState 根必须是 JSON object");
             return new GraphState((ObjectNode) parsed);
         } catch (Exception e) {

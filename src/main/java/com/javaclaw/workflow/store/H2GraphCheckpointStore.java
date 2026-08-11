@@ -22,13 +22,15 @@ import org.slf4j.LoggerFactory;
 /** 工作区隔离的 H2 图检查点实现。每次写入均为独立短事务。 */
 public final class H2GraphCheckpointStore implements GraphCheckpointStore {
     private static final Logger log = LoggerFactory.getLogger(H2GraphCheckpointStore.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper();
     private final String workspaceId;
     private final DatabaseAccess database;
+    private final ObjectMapper json;
 
-    public H2GraphCheckpointStore(String workspaceId, DatabaseAccess database) {
+    public H2GraphCheckpointStore(
+            String workspaceId, DatabaseAccess database, ObjectMapper json) {
         this.workspaceId = Objects.requireNonNull(workspaceId);
         this.database = Objects.requireNonNull(database);
+        this.json = Objects.requireNonNull(json);
     }
 
     @Override
@@ -243,7 +245,7 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
                      """)) {
             ps.setString(1, workspaceId); ps.setString(2, workflowId); ps.setString(3, threadId);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? GraphState.fromJson(rs.getString(1)) : new GraphState();
+                return rs.next() ? GraphState.fromJson(rs.getString(1), json) : new GraphState();
             }
         } catch (Exception e) {
             throw new IllegalStateException("读取工作流 thread 状态失败", e);
@@ -282,11 +284,11 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
     private void bindRun(PreparedStatement ps, GraphRun run) throws Exception {
         ps.setString(1, workspaceId); ps.setString(2, run.id()); ps.setString(3, run.workflowId());
         ps.setInt(4, run.workflowVersion()); ps.setString(5, run.threadId());
-        ps.setString(6, MAPPER.writeValueAsString(run.definition())); ps.setString(7, run.state().toJson());
+        ps.setString(6, json.writeValueAsString(run.definition())); ps.setString(7, run.state().toJson());
         ps.setString(8, run.status().name()); ps.setString(9, run.currentNodeId());
         ps.setString(10, run.nextNodeId()); ps.setInt(11, run.stepCount());
         ps.setString(12, run.output()); ps.setString(13, run.error());
-        ps.setString(14, run.interrupt() == null ? null : MAPPER.writeValueAsString(run.interrupt()));
+        ps.setString(14, run.interrupt() == null ? null : json.writeValueAsString(run.interrupt()));
         ps.setLong(15, run.createdAt()); ps.setLong(16, run.updatedAt());
     }
 
@@ -310,7 +312,7 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
         ps.setInt(5, run.stepCount());
         ps.setString(6, run.output());
         ps.setString(7, run.error());
-        ps.setString(8, run.interrupt() == null ? null : MAPPER.writeValueAsString(run.interrupt()));
+        ps.setString(8, run.interrupt() == null ? null : json.writeValueAsString(run.interrupt()));
         ps.setLong(9, run.updatedAt());
         ps.setString(10, workspaceId);
         ps.setString(11, run.id());
@@ -344,11 +346,12 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
     private GraphRun readRun(ResultSet rs) throws Exception {
         String interruptJson = rs.getString("interrupt_json");
         NodeResult.Interrupt interrupt = interruptJson == null ? null
-                : MAPPER.readValue(interruptJson, NodeResult.Interrupt.class);
+                : json.readValue(interruptJson, NodeResult.Interrupt.class);
         return new GraphRun(rs.getString("id"), rs.getString("workflow_id"),
                 rs.getInt("workflow_version"), rs.getString("thread_id"),
-                MAPPER.readValue(rs.getString("definition_json"), GraphDefinition.class),
-                GraphState.fromJson(rs.getString("state_json")), RunStatus.valueOf(rs.getString("status")),
+                json.readValue(rs.getString("definition_json"), GraphDefinition.class),
+                GraphState.fromJson(rs.getString("state_json"), json),
+                RunStatus.valueOf(rs.getString("status")),
                 rs.getString("current_node_id"), rs.getString("next_node_id"), rs.getInt("step_count"),
                 rs.getInt("checkpoint_seq"), rs.getString("output_text"), rs.getString("error_text"),
                 interrupt, rs.getLong("created_at"), rs.getLong("updated_at"));

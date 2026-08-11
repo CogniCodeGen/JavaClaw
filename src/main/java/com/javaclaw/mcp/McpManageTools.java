@@ -41,18 +41,25 @@ public final class McpManageTools {
     private final ToolCallOrigin origin;
     private final ServerStore store;
     private final ServerRuntime runtime;
+    private final McpJsonImporter importer;
 
     public McpManageTools(McpConfigManager configManager,
                           McpClientManager clientManager,
-                          ToolCallOrigin origin) {
+                          ToolCallOrigin origin,
+                          McpJsonImporter importer) {
         this(origin, liveStore(Objects.requireNonNull(configManager, "configManager")),
-                liveRuntime(Objects.requireNonNull(clientManager, "clientManager")));
+                liveRuntime(Objects.requireNonNull(clientManager, "clientManager")), importer);
     }
 
-    McpManageTools(ToolCallOrigin origin, ServerStore store, ServerRuntime runtime) {
+    McpManageTools(
+            ToolCallOrigin origin,
+            ServerStore store,
+            ServerRuntime runtime,
+            McpJsonImporter importer) {
         this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
         this.store = Objects.requireNonNull(store, "store");
         this.runtime = Objects.requireNonNull(runtime, "runtime");
+        this.importer = Objects.requireNonNull(importer, "importer");
     }
 
     @Tool(name = "mcp_server_list",
@@ -251,7 +258,7 @@ public final class McpManageTools {
         }
         McpServerConfig candidate;
         try {
-            List<McpServerConfig> parsed = McpJsonImporter.parse(configJson, serverName);
+            List<McpServerConfig> parsed = importer.parse(configJson, serverName);
             if (parsed.size() != 1) {
                 return ToolResponse.error(toolName, "config_json 必须只包含一个 MCP Server 配置。");
             }

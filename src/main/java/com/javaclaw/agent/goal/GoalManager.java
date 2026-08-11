@@ -32,7 +32,6 @@ import java.util.Map;
 public class GoalManager {
 
     private static final Logger log = LoggerFactory.getLogger(GoalManager.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final int MAX_REQUEST_LEN = 600;
     /** 缓存最多保留 16 条最近分解，过满时按 LRU 淘汰 */
     private static final int CACHE_CAPACITY = 16;
@@ -45,6 +44,7 @@ public class GoalManager {
     private final long ttlMillis;
     /** 用于上报真实 token 用量；null 时跳过统计（向后兼容） */
     private final TokenTracker tokenTracker;
+    private final ObjectMapper json;
 
     /** 会话级缓存（LRU 由 LinkedHashMap.removeEldestEntry 实现） */
     private final Map<String, CacheEntry> cache = new LinkedHashMap<>(CACHE_CAPACITY, 0.75f, true) {
@@ -54,19 +54,25 @@ public class GoalManager {
         }
     };
 
-    public GoalManager(ChatModelBase model) {
-        this(model, null, 50, 600_000L); // 默认 50 字阈值、TTL 10 分钟
+    public GoalManager(ChatModelBase model, ObjectMapper json) {
+        this(model, null, 50, 600_000L, json); // 默认 50 字阈值、TTL 10 分钟
     }
 
-    public GoalManager(ChatModelBase model, TokenTracker tokenTracker) {
-        this(model, tokenTracker, 50, 600_000L);
+    public GoalManager(ChatModelBase model, TokenTracker tokenTracker, ObjectMapper json) {
+        this(model, tokenTracker, 50, 600_000L, json);
     }
 
-    public GoalManager(ChatModelBase model, TokenTracker tokenTracker, int skipLength, long ttlMillis) {
+    public GoalManager(
+            ChatModelBase model,
+            TokenTracker tokenTracker,
+            int skipLength,
+            long ttlMillis,
+            ObjectMapper json) {
         this.model = model;
         this.tokenTracker = tokenTracker;
         this.skipLength = Math.max(0, skipLength);
         this.ttlMillis = Math.max(0, ttlMillis);
+        this.json = java.util.Objects.requireNonNull(json, "json");
         this.generateOptions = GenerateOptions.builder().build();
     }
 
@@ -145,7 +151,7 @@ public class GoalManager {
                 int end = json.lastIndexOf('}');
                 if (start >= 0 && end > start) json = json.substring(start, end + 1);
             }
-            JsonNode root = MAPPER.readTree(json);
+            JsonNode root = this.json.readTree(json);
 
             List<String> goals = new ArrayList<>();
             JsonNode goalsNode = root.get("goals");

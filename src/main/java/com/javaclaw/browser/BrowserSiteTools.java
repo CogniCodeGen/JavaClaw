@@ -1,10 +1,10 @@
 package com.javaclaw.browser;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.api.interaction.ChoiceOption;
+import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.site.SiteCredential;
 import com.javaclaw.site.SiteCredentialManager;
 import com.javaclaw.util.ProjectAccessPolicy;
@@ -33,20 +33,23 @@ final class BrowserSiteTools {
     private final BrowserOperationGate gate;
     private final BrowserTargetResolver targets;
     private final SiteSessionRestorer sessionRestorer;
+    private final JsonCodec json;
 
     BrowserSiteTools(
             PlaywrightBrowserManager browserManager,
             SiteCredentialManager siteCredentials,
             SnapshotManager snapshotManager,
             ToolCallOrigin origin,
-            BrowserOperationGate gate) {
+            BrowserOperationGate gate,
+            JsonCodec json) {
         this.browserManager = java.util.Objects.requireNonNull(browserManager, "browserManager");
         this.siteCredentials = java.util.Objects.requireNonNull(siteCredentials, "siteCredentials");
         this.snapshotManager = java.util.Objects.requireNonNull(snapshotManager, "snapshotManager");
         this.origin = java.util.Objects.requireNonNull(origin, "origin");
         this.gate = java.util.Objects.requireNonNull(gate, "gate");
+        this.json = java.util.Objects.requireNonNull(json, "json");
         this.targets = new BrowserTargetResolver(snapshotManager);
-        this.sessionRestorer = new SiteSessionRestorer(new ObjectMapper());
+        this.sessionRestorer = new SiteSessionRestorer(json);
     }
 
     @Tool(
@@ -371,7 +374,7 @@ final class BrowserSiteTools {
                 if (saved) {
                     String storageState =
                             SiteLoginSupport.filterStorageStateForUrl(
-                                    page.context().storageState(), currentUrl);
+                                    page.context().storageState(), currentUrl, json);
                     if (!siteCredentials.tryWriteSession(site.getId(), storageState)) {
                         browserManager.keepSessionTransientUntilTaskReset(stateBeforeLogin);
                         return ToolResponse.error(
@@ -476,7 +479,7 @@ final class BrowserSiteTools {
                 }
                 String storageState =
                         SiteLoginSupport.filterStorageStateForUrl(
-                                page.context().storageState(), page.url());
+                                page.context().storageState(), page.url(), json);
                 site = manager.saveSessionChecked(site, storageState, scopeId, page.url());
                 return ToolResponse.success(
                         "site_save_session", "已保存 " + site.getName() + " 的会话，下次访问该站点会自动恢复");
@@ -574,9 +577,9 @@ final class BrowserSiteTools {
             String saveUrl = chooseSiteUrl(targetUrl, finalUrl);
             String storageState =
                     SiteLoginSupport.filterStorageStateForUrl(
-                            page.context().storageState(), saveUrl);
+                            page.context().storageState(), saveUrl, json);
             String comparableBeforeLogin =
-                    SiteLoginSupport.filterStorageStateForUrl(stateBeforeLogin, saveUrl);
+                    SiteLoginSupport.filterStorageStateForUrl(stateBeforeLogin, saveUrl, json);
             if (java.util.Objects.equals(comparableBeforeLogin, storageState)
                     && java.util.Objects.equals(urlBeforeLogin, finalUrl)
                     && SiteLoginSupport.looksLikeLoginUrl(finalUrl)) {

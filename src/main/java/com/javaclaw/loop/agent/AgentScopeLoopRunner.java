@@ -57,7 +57,7 @@ public final class AgentScopeLoopRunner implements LoopIterationRunner {
      * 明确绑定的站点账号，退出时不回写全局状态，由 {@link #shutdown()} 关闭。
      */
     private final com.javaclaw.browser.PlaywrightBrowserManager loopBrowser;
-    private final StreamEventHandler eventHandler = new StreamEventHandler();
+    private final StreamEventHandler eventHandler;
     private final ToolRouter toolRouter;
     private final String baseSystemPrompt;
     private final String routingText;
@@ -100,6 +100,7 @@ public final class AgentScopeLoopRunner implements LoopIterationRunner {
         this.runtime = runtime;
         this.routingText = routingText == null ? "" : routingText;
         this.origin = origin == null ? com.javaclaw.agent.ToolCallOrigin.UNKNOWN : origin;
+        this.eventHandler = new StreamEventHandler(runtime.getJson().mapper());
         AgentConfig config = runtime.getConfig();
         // 隔离浏览器：独立于 runtime 的交互浏览器，避免与并行聊天抢同一浏览器/Tab（见字段注释）。
         // 浏览器状态目录用工作区浏览器目录下的 loop 子目录；不继承聊天 Context，也不写全局认证态。
@@ -112,10 +113,11 @@ public final class AgentScopeLoopRunner implements LoopIterationRunner {
                 runtime.getSiteCredentialManager(), this.origin,
                 runtime.getCustomAgentConfig(), runtime.getWorkspace(), runtime.getConfig(),
                 runtime.getEmailConfig(), runtime.getNotificationConfig(),
-                runtime.getCommandTools(), runtime.getDesktopTools());
+                runtime.getCommandTools(), runtime.getDesktopTools(), runtime.getJson());
         this.toolRouter = config.isToolRoutingEnabled()
                 ? new ToolRouter(runtime.getModelFactory().createLightChatModel(),
-                        runtime.getTokenTracker(), runtime.getSkillRuntime().manager(), config)
+                        runtime.getTokenTracker(), runtime.getSkillRuntime().manager(), config,
+                        runtime.getJson().mapper())
                 : null;
         this.baseSystemPrompt = AgentPrompts.ORCHESTRATOR_SYS_PROMPT
                 + "\n\n" + (loopContextPrompt == null ? "" : loopContextPrompt);

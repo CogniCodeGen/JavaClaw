@@ -63,7 +63,7 @@ public class PlanModeService {
     private static final String PLAN_COMPLETE_MARKER = "[PLAN_COMPLETE]";
 
     /** JSON 解析器（用于解析协调者首轮输出的结构化专家选择） */
-    private static final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     /** 规划协调者 */
     private final ReActAgent coordinator;
@@ -97,6 +97,7 @@ public class PlanModeService {
     }
 
     public PlanModeService(AgentRuntime runtime, com.javaclaw.workflow.service.WorkflowService workflowService) {
+        this.objectMapper = runtime.getJson().mapper();
         this.runtime = runtime;
         this.workflowService = workflowService;
         if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);

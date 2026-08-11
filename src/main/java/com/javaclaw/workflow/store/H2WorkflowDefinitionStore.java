@@ -24,13 +24,15 @@ import java.util.UUID;
 
 /** 自定义工作流草稿/发布存储。系统图不写入本表。 */
 public final class H2WorkflowDefinitionStore implements WorkflowDefinitionStore {
-    private static final ObjectMapper MAPPER = new ObjectMapper();
     private final String workspaceId;
     private final DatabaseAccess database;
+    private final ObjectMapper json;
 
-    public H2WorkflowDefinitionStore(String workspaceId, DatabaseAccess database) {
+    public H2WorkflowDefinitionStore(
+            String workspaceId, DatabaseAccess database, ObjectMapper json) {
         this.workspaceId = Objects.requireNonNull(workspaceId);
         this.database = Objects.requireNonNull(database);
+        this.json = Objects.requireNonNull(json);
     }
 
     @Override
@@ -73,8 +75,9 @@ public final class H2WorkflowDefinitionStore implements WorkflowDefinitionStore 
                      """)) {
             ps.setString(1, workspaceId); ps.setString(2, definition.id());
             ps.setString(3, definition.name()); ps.setString(4, definition.description());
-            ps.setString(5, MAPPER.writeValueAsString(definition));
-            ps.setString(6, old == null || old.published() == null ? null : MAPPER.writeValueAsString(old.published()));
+            ps.setString(5, json.writeValueAsString(definition));
+            ps.setString(6, old == null || old.published() == null
+                    ? null : json.writeValueAsString(old.published()));
             ps.setInt(7, revision); ps.setInt(8, old == null ? 0 : old.publishedVersion());
             ps.setBoolean(9, old != null && old.archived());
             ps.setLong(10, old == null ? now : old.createdAt()); ps.setLong(11, now);
@@ -100,7 +103,7 @@ public final class H2WorkflowDefinitionStore implements WorkflowDefinitionStore 
                      UPDATE workflow_definitions SET published_json=?,published_version=?,updated_at=?
                      WHERE workspace_id=? AND id=?
                      """)) {
-            ps.setString(1, MAPPER.writeValueAsString(published)); ps.setInt(2, version);
+            ps.setString(1, json.writeValueAsString(published)); ps.setInt(2, version);
             ps.setLong(3, System.currentTimeMillis()); ps.setString(4, workspaceId); ps.setString(5, id);
             ps.executeUpdate();
             return get(id);
@@ -125,9 +128,9 @@ public final class H2WorkflowDefinitionStore implements WorkflowDefinitionStore 
      * 内置 SYSTEM 节点依赖对应领域服务，不能泄漏到用户定义中。复制系统图时生成等价用途的
      * 公共 AGENT → OUTPUT 模板，使副本开箱即可校验、发布，并允许用户继续选择工具组和改提示词。
      */
-    private static GraphDefinition editableSystemTemplate(
+    private GraphDefinition editableSystemTemplate(
             GraphDefinition source, String id, String name) {
-        var json = MAPPER.getNodeFactory();
+        var nodes = json.getNodeFactory();
         NodeDefinition sourceStart = source.nodes().stream()
                 .filter(node -> node.type() == NodeType.START).findFirst().orElse(null);
         NodeDefinition sourceEnd = source.nodes().stream()
@@ -143,15 +146,15 @@ public final class H2WorkflowDefinitionStore implements WorkflowDefinitionStore 
         double endX = outputX + 240;
         double endY = sourceEnd == null ? agentY : sourceEnd.y();
 
-        var empty = json.objectNode();
-        var agentConfig = json.objectNode();
+        var empty = nodes.objectNode();
+        var agentConfig = nodes.objectNode();
         agentConfig.put("prompt", "你正在执行从内置系统工作流「" + source.name()
                 + "」复制的本地流程。请围绕以下目标严谨完成用户请求：\n" + source.description());
         agentConfig.put("inputTemplate", "{{input}}");
         agentConfig.put("outputKey", "agent.output");
         agentConfig.put("maxIters", 8);
         agentConfig.putArray("toolGroups");
-        var outputConfig = json.objectNode();
+        var outputConfig = nodes.objectNode();
         outputConfig.put("template", "{{agent.output}}");
         outputConfig.put("outputKey", "output");
 
@@ -212,8 +215,9 @@ public final class H2WorkflowDefinitionStore implements WorkflowDefinitionStore 
     private WorkflowDefinitionRecord read(ResultSet rs) throws Exception {
         String published = rs.getString("published_json");
         return new WorkflowDefinitionRecord(rs.getString("id"), rs.getString("name"),
-                rs.getString("description"), MAPPER.readValue(rs.getString("draft_json"), GraphDefinition.class),
-                published == null ? null : MAPPER.readValue(published, GraphDefinition.class),
+                rs.getString("description"),
+                json.readValue(rs.getString("draft_json"), GraphDefinition.class),
+                published == null ? null : json.readValue(published, GraphDefinition.class),
                 rs.getInt("draft_revision"), rs.getInt("published_version"), rs.getBoolean("archived"),
                 rs.getLong("created_at"), rs.getLong("updated_at"));
     }

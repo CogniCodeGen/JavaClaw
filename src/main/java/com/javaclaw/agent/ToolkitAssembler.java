@@ -74,10 +74,12 @@ public final class ToolkitAssembler {
         tk.registration().tool(new DynamicTaskTool(runtime.getModelFactory(),
                 runtime.getMemoryManager(), expertManager.getCapabilityTools())).group("dynamic_task").apply();
         // MCP 工具始终注册：内部对 McpClientManager 是动态引用，热启动新 server 无需重建 toolkit
-        tk.registration().tool(new McpTools(runtime.getMcpClientManager())).group("mcp").apply();
+        tk.registration().tool(new McpTools(runtime.getMcpClientManager(), runtime.getJson()))
+                .group("mcp").apply();
         // MCP 配置管理同属 mcp 组：可在对话中新增/更新/启停服务器，成功响应只在 H2 已提交后返回
         tk.registration().tool(new com.javaclaw.mcp.McpManageTools(
-                runtime.getMcpConfigManager(), runtime.getMcpClientManager(), origin))
+                runtime.getMcpConfigManager(), runtime.getMcpClientManager(), origin,
+                new com.javaclaw.mcp.McpJsonImporter(runtime.getJson())))
                 .group("mcp").apply();
         // 站点凭据配置属于浏览器能力；与 web_expert 内的 site_save_session 互补：前者登记
         // 账号/元数据，后者保存当前已登录 BrowserContext。路由命中 web 即可直接使用。

@@ -2,6 +2,7 @@ package com.javaclaw.mcp;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.javaclaw.platform.execution.TaskScope;
+import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.util.ProjectAccessPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,6 +24,7 @@ public class McpClientManager {
 
     private final McpConfigManager configurations;
     private final TaskScope tasks;
+    private final JsonCodec json;
 
     /** 活跃的客户端（服务器名称 → 客户端） */
     private final Map<String, McpClient> clients = new ConcurrentHashMap<>();
@@ -30,9 +32,11 @@ public class McpClientManager {
     /** 状态变化监听器；任意 client 状态变化或 client 增删时触发 */
     private final List<Runnable> stateListeners = new CopyOnWriteArrayList<>();
 
-    public McpClientManager(McpConfigManager configurations, TaskScope tasks) {
+    public McpClientManager(
+            McpConfigManager configurations, TaskScope tasks, JsonCodec json) {
         this.configurations = Objects.requireNonNull(configurations, "configurations");
         this.tasks = Objects.requireNonNull(tasks, "tasks");
+        this.json = Objects.requireNonNull(json, "json");
     }
 
     /**
@@ -68,7 +72,7 @@ public class McpClientManager {
             existing.stop();
         }
 
-        McpClient client = new McpClient(config, tasks);
+        McpClient client = new McpClient(config, tasks, json);
         // 把状态变化广播给 UI 监听器
         client.setStateChangeListener(this::notifyStateListeners);
         // 即便启动失败，也保留 client 实例，供 UI 展示 FAILED 状态和错误信息
@@ -120,7 +124,7 @@ public class McpClientManager {
             return new TestResult(false, List.of(), 0L,
                     denial, null, null);
         }
-        McpClient temp = new McpClient(config, tasks);
+        McpClient temp = new McpClient(config, tasks, json);
         try {
             temp.start();
             List<McpClient.McpToolInfo> tools = List.copyOf(temp.getTools());

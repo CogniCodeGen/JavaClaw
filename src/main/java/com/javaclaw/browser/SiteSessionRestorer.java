@@ -1,7 +1,7 @@
 package com.javaclaw.browser;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.javaclaw.platform.json.JsonCodec;
 import com.microsoft.playwright.BrowserContext;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.PlaywrightException;
@@ -22,9 +22,9 @@ final class SiteSessionRestorer {
 
     private static final Logger log = LoggerFactory.getLogger(SiteSessionRestorer.class);
 
-    private final ObjectMapper json;
+    private final JsonCodec json;
 
-    SiteSessionRestorer(ObjectMapper json) {
+    SiteSessionRestorer(JsonCodec json) {
         this.json = Objects.requireNonNull(json, "json");
     }
 
@@ -37,7 +37,7 @@ final class SiteSessionRestorer {
     boolean restore(Page activePage, String storageStateJson, String targetUrl) {
         try {
             BrowserContext context = activePage.context();
-            JsonNode root = json.readTree(storageStateJson);
+            JsonNode root = json.tree(storageStateJson);
             boolean restored = restoreCookies(context, root.path("cookies"));
             List<String> scripts = localStorageScripts(root.path("origins"));
             return scripts.isEmpty() ? restored : hydrateLocalStorage(context, targetUrl, scripts);
@@ -107,7 +107,7 @@ final class SiteSessionRestorer {
           }
         })();
         """
-                .formatted(json.writeValueAsString(origin), json.writeValueAsString(entries));
+                .formatted(json.encode(origin), json.encode(entries));
     }
 
     private static boolean hydrateLocalStorage(

@@ -36,7 +36,6 @@ import java.util.regex.Pattern;
 public class ToolRouter {
 
     private static final Logger log = LoggerFactory.getLogger(ToolRouter.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /** 匹配 JSON 块的正则（支持 ```json 包裹和裸 JSON） */
     private static final Pattern JSON_PATTERN = Pattern.compile(
@@ -56,13 +55,15 @@ public class ToolRouter {
     private final TokenTracker tokenTracker;
     private final SkillManager skills;
     private final AgentConfig settings;
+    private final ObjectMapper json;
 
     public ToolRouter(ChatModelBase model, TokenTracker tokenTracker, SkillManager skills,
-                      AgentConfig settings) {
+                      AgentConfig settings, ObjectMapper json) {
         this.model = java.util.Objects.requireNonNull(model, "model");
         this.tokenTracker = tokenTracker;
         this.skills = java.util.Objects.requireNonNull(skills, "skills");
         this.settings = java.util.Objects.requireNonNull(settings, "settings");
+        this.json = java.util.Objects.requireNonNull(json, "json");
         this.generateOptions = GenerateOptions.builder().build();
     }
 
@@ -198,7 +199,7 @@ public class ToolRouter {
                 return RoutingResult.fallbackAll();
             }
 
-            JsonNode root = MAPPER.readTree(json);
+            JsonNode root = this.json.readTree(json);
 
             List<String> toolGroups = parseStringList(root, "toolGroups");
             List<String> skillNames = parseStringList(root, "skillNames");

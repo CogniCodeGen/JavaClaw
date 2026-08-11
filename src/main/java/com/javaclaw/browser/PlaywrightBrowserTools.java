@@ -2,6 +2,7 @@ package com.javaclaw.browser;
 
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolObjectProvider;
+import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.site.SiteCredentialManager;
 
 import java.util.List;
@@ -28,14 +29,16 @@ public final class PlaywrightBrowserTools implements AutoCloseable, ToolObjectPr
     public PlaywrightBrowserTools(
             PlaywrightBrowserManager browserManager,
             SiteCredentialManager siteCredentials,
-            ToolCallOrigin origin) {
-        this(browserManager, siteCredentials, origin, false);
+            ToolCallOrigin origin,
+            JsonCodec json) {
+        this(browserManager, siteCredentials, origin, json, false);
     }
 
     public PlaywrightBrowserTools(
             PlaywrightBrowserManager browserManager,
             SiteCredentialManager siteCredentials,
             ToolCallOrigin origin,
+            JsonCodec json,
             boolean ownsBrowserManager) {
         this.browserManager = Objects.requireNonNull(browserManager, "browserManager");
         SiteCredentialManager checkedCredentials =
@@ -45,7 +48,7 @@ public final class PlaywrightBrowserTools implements AutoCloseable, ToolObjectPr
         BrowserOperationGate gate = new BrowserOperationGate();
         this.site =
                 new BrowserSiteTools(
-                        browserManager, checkedCredentials, snapshots, checkedOrigin, gate);
+                        browserManager, checkedCredentials, snapshots, checkedOrigin, gate, json);
         this.page = new BrowserPageTools(browserManager, snapshots, checkedOrigin, gate);
         this.read = new BrowserReadTools(browserManager, snapshots, gate);
         this.session = new BrowserSessionTools(browserManager, snapshots, checkedOrigin, gate);

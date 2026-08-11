@@ -1,7 +1,6 @@
 package com.javaclaw.workflow.node;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.workflow.model.StatePatch;
@@ -18,7 +17,6 @@ import java.util.Map;
 
 /** START/END/CONDITION/TRANSFORM/HUMAN_INPUT/OUTPUT 节点实现。 */
 public final class BasicNodeExecutors {
-    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private BasicNodeExecutors() {}
 
@@ -86,7 +84,7 @@ public final class BasicNodeExecutors {
                     case "remove" -> patch.remove(path);
                     case "append" -> {
                         JsonNode value = TemplateRenderer.renderJson(op.get("value"), context.state());
-                        patch.append(path, MAPPER.convertValue(value, Object.class));
+                        patch.append(path, value);
                     }
                     default -> throw new IllegalArgumentException("未知 transform 操作: " + kind);
                 }

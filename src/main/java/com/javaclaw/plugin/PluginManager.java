@@ -63,6 +63,7 @@ public final class PluginManager implements PluginToolGateway {
     private final UserInteractionPort interactionPort;
     private final CredentialCipher credentials;
     private final ClassLoader appClassLoader;
+    private final PluginDescriptorLoader descriptors;
 
     private volatile AgentRuntime agentRuntime;
     private ScheduleApplicationService schedules;
@@ -83,10 +84,12 @@ public final class PluginManager implements PluginToolGateway {
             ToolInvocationPipeline toolPipeline,
             PluginStorageFactory storageFactory,
             UserInteractionPort interactionPort,
-            CredentialCipher credentials) {
+            CredentialCipher credentials,
+            com.fasterxml.jackson.databind.ObjectMapper json) {
         this(ProjectAccessPolicy.requireProjectFilePath(
                         ProjectAccessPolicy.projectRoot().resolve("plugins")),
-                store, taskExecutor, toolPipeline, storageFactory, interactionPort, credentials);
+                store, taskExecutor, toolPipeline, storageFactory, interactionPort, credentials,
+                json);
     }
 
     PluginManager(
@@ -96,7 +99,8 @@ public final class PluginManager implements PluginToolGateway {
             ToolInvocationPipeline toolPipeline,
             PluginStorageFactory storageFactory,
             UserInteractionPort interactionPort,
-            CredentialCipher credentials) {
+            CredentialCipher credentials,
+            com.fasterxml.jackson.databind.ObjectMapper json) {
         this.pluginsDir = Objects.requireNonNull(pluginsDir, "pluginsDir")
                 .toAbsolutePath().normalize();
         this.store = Objects.requireNonNull(store, "store");
@@ -105,6 +109,7 @@ public final class PluginManager implements PluginToolGateway {
         this.storageFactory = Objects.requireNonNull(storageFactory, "storageFactory");
         this.interactionPort = Objects.requireNonNull(interactionPort, "interactionPort");
         this.credentials = Objects.requireNonNull(credentials, "credentials");
+        this.descriptors = new PluginDescriptorLoader(json);
         this.appClassLoader = PluginManager.class.getClassLoader();
     }
 
@@ -305,7 +310,7 @@ public final class PluginManager implements PluginToolGateway {
             return null;
         }
         try {
-            PluginDescriptor d = PluginDescriptorLoader.load(jar);
+            PluginDescriptor d = descriptors.load(jar);
             if (!isApiCompatible(d.apiVersion())) {
                 log.warn("从文件安装失败：插件[{}]apiVersion={} 与宿主 {} 不兼容；"
                                 + "请使用 JavaClaw Plugin API 3.x 重新编译",
@@ -530,7 +535,7 @@ public final class PluginManager implements PluginToolGateway {
             return;
         }
         try {
-            PluginDescriptor d = PluginDescriptorLoader.load(jar);
+            PluginDescriptor d = descriptors.load(jar);
             if (plugins.containsKey(d.id())) {
                 return;   // 已发现/已启用，跳过
             }

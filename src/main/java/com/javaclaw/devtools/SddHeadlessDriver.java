@@ -80,7 +80,8 @@ public final class SddHeadlessDriver {
         McpConfigManager mcpConfigurations = new McpConfigManager(
                 rootContext.getBean(DatabaseAccess.class),
                 workspaces.getCurrentWorkspaceId(),
-                rootContext.getBean(com.javaclaw.config.CredentialCipher.class));
+                rootContext.getBean(com.javaclaw.config.CredentialCipher.class),
+                rootContext.getBean(com.fasterxml.jackson.databind.ObjectMapper.class));
         TaskScope taskScope = rootContext.getBean(ManagedTaskExecutor.class)
                 .openScope("sdd-headless", 256);
         ManagedTaskExecutor taskExecutor = rootContext.getBean(ManagedTaskExecutor.class);
@@ -113,7 +114,8 @@ public final class SddHeadlessDriver {
                 models, taskScope, settings);
         AgentRuntime runtime = new AgentRuntime(browser, models, tokens, memories, embeddings,
                 customAgents, siteCredentials,
-                mcpConfigurations, new McpClientManager(mcpConfigurations, taskScope), taskScope,
+                mcpConfigurations, new McpClientManager(
+                        mcpConfigurations, taskScope, rootContext.getBean(JsonCodec.class)), taskScope,
                 null, skillRuntime,
                 () -> java.util.Objects.requireNonNull(sddTasks.get(), "SDD 任务用例尚未装配"),
                 rootContext.getBean(com.javaclaw.system.JShellRunner.class),
@@ -124,7 +126,7 @@ public final class SddHeadlessDriver {
                 rootContext.getBean(com.javaclaw.config.NotificationConfig.class),
                 rootContext.getBean(com.javaclaw.system.CommandToolFactory.class),
                 rootContext.getBean(com.javaclaw.plugin.PluginManager.class), workspace,
-                knowledgePreferences);
+                knowledgePreferences, rootContext.getBean(JsonCodec.class));
 
         // 2. 配置 SDD 管理器（注入自动放行端口 → PortReviewGate 评审直接批准）
         SkillCurator curator = new SkillCurator(

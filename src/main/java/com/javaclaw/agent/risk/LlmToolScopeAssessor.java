@@ -32,7 +32,6 @@ import java.util.List;
 public final class LlmToolScopeAssessor implements ToolScopeAssessor {
 
     private static final Logger log = LoggerFactory.getLogger(LlmToolScopeAssessor.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /** 单次评估硬超时：托管任务确认本就阻塞，但不应让一次范围评估拖过 12s */
     private static final Duration ASSESS_TIMEOUT = Duration.ofSeconds(12);
@@ -63,11 +62,14 @@ public final class LlmToolScopeAssessor implements ToolScopeAssessor {
     private final ChatModelBase model;
     private final GenerateOptions generateOptions;
     private final TokenTracker tokenTracker;
+    private final ObjectMapper json;
 
-    public LlmToolScopeAssessor(ModelFactory modelFactory, TokenTracker tokenTracker) {
+    public LlmToolScopeAssessor(
+            ModelFactory modelFactory, TokenTracker tokenTracker, ObjectMapper json) {
         // 轻量档已强制关闭 thinking，适合这类一次性分类/判定任务
         this.model = modelFactory.createLightChatModel();
         this.tokenTracker = tokenTracker;
+        this.json = java.util.Objects.requireNonNull(json, "json");
         this.generateOptions = GenerateOptions.builder().build();
     }
 
@@ -120,7 +122,7 @@ public final class LlmToolScopeAssessor implements ToolScopeAssessor {
                 int end = json.lastIndexOf('}');
                 if (start >= 0 && end > start) json = json.substring(start, end + 1);
             }
-            JsonNode root = MAPPER.readTree(json);
+            JsonNode root = this.json.readTree(json);
             boolean withinScope = root.path("withinScope").asBoolean(false);
             String reason = root.path("reason").asText("");
 

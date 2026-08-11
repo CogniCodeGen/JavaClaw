@@ -313,8 +313,10 @@ public class RootConfiguration {
             ToolInvocationPipeline tools,
             PluginStorageFactory storage,
             UserInteractionPort interaction,
-            CredentialCipher credentials) {
-        return new PluginManager(store, executor, tools, storage, interaction, credentials);
+            CredentialCipher credentials,
+            ObjectMapper json) {
+        return new PluginManager(
+                store, executor, tools, storage, interaction, credentials, json);
     }
 
     @Bean(destroyMethod = "close")

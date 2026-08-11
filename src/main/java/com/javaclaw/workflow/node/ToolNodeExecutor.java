@@ -2,7 +2,6 @@ package com.javaclaw.workflow.node;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolRegistrationSupport;
@@ -36,7 +35,6 @@ import java.util.concurrent.TimeoutException;
 
 /** 本地工具节点；工具对象本身继续执行 JavaClaw 的风险确认。 */
 public final class ToolNodeExecutor implements NodeExecutor {
-    private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Set<String> REMOTE_MCP_TOOLS = Set.of("mcp_list_tools", "mcp_call_tool");
     private final AgentRuntime validationRuntime;
 
@@ -84,7 +82,7 @@ public final class ToolNodeExecutor implements NodeExecutor {
         if (toolkit.getTool(toolName) == null) throw new IllegalArgumentException("本地工具不存在: " + toolName);
         JsonNode rendered = TemplateRenderer.renderJson(config.path("arguments"), context.state());
         Map<String, Object> input = rendered == null || !rendered.isObject() ? Map.of()
-                : MAPPER.convertValue(rendered, new TypeReference<>() {});
+                : runtime.getJson().mapper().convertValue(rendered, new TypeReference<>() {});
         ToolUseBlock block = new ToolUseBlock(UUID.randomUUID().toString(), toolName, input);
         ToolCallParam param = ToolCallParam.builder().toolUseBlock(block).input(input).build();
         ToolResultBlock result = awaitToolCall(toolkit.callTool(param),

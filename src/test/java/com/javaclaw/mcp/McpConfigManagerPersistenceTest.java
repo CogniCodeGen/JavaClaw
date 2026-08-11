@@ -1,5 +1,6 @@
 package com.javaclaw.mcp;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.config.FileDatabaseAccess;
 import org.junit.jupiter.api.Test;
@@ -46,7 +47,8 @@ class McpConfigManagerPersistenceTest {
         McpConfigManager manager = new McpConfigManager(
                 database, workspace::get,
                 McpConfigManagerPersistenceTest::encrypt,
-                McpConfigManagerPersistenceTest::decrypt);
+                McpConfigManagerPersistenceTest::decrypt,
+                new ObjectMapper());
 
         McpServerConfig loaded = manager.getServer("remote");
         assertEquals("arg-secret", loaded.getArgs().get(1));

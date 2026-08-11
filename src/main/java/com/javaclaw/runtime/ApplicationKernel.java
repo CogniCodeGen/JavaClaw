@@ -230,7 +230,9 @@ public final class ApplicationKernel implements AutoCloseable {
     private void activate(WorkspaceRuntime workspaceRuntime, boolean initial) {
         var runtime = workspaceRuntime.agentRuntime();
         ToolConfirmationManager.setScopeAssessor(
-                new LlmToolScopeAssessor(runtime.getModelFactory(), runtime.getTokenTracker()));
+                new LlmToolScopeAssessor(
+                        runtime.getModelFactory(), runtime.getTokenTracker(),
+                        runtime.getJson().mapper()));
 
         workspaceRuntime.scheduleManager().init(new ScheduledTaskAgent(runtime));
         if (initial) {

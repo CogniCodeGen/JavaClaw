@@ -29,12 +29,14 @@ import java.util.jar.JarFile;
 final class PluginDescriptorLoader {
 
     private static final Logger log = LoggerFactory.getLogger(PluginDescriptorLoader.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final String DESCRIPTOR_ENTRY = "plugin.json";
     /** 同时用于目录名、数据库键与线程名前缀，必须是单个安全路径段。 */
     private static final Pattern SAFE_ID = Pattern.compile("[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?");
 
-    private PluginDescriptorLoader() {
+    private final ObjectMapper json;
+
+    PluginDescriptorLoader(ObjectMapper json) {
+        this.json = java.util.Objects.requireNonNull(json, "json");
     }
 
     /**
@@ -44,14 +46,14 @@ final class PluginDescriptorLoader {
      * @return 解析后的描述符
      * @throws IOException jar 无法打开、缺少 plugin.json、或必填字段缺失/非法
      */
-    static PluginDescriptor load(Path jarPath) throws IOException {
+    PluginDescriptor load(Path jarPath) throws IOException {
         try (JarFile jar = new JarFile(jarPath.toFile())) {
             JarEntry entry = jar.getJarEntry(DESCRIPTOR_ENTRY);
             if (entry == null) {
                 throw new IOException("插件 jar 缺少 " + DESCRIPTOR_ENTRY + "：" + jarPath.getFileName());
             }
             try (InputStream in = jar.getInputStream(entry)) {
-                JsonNode root = MAPPER.readTree(in);
+                JsonNode root = json.readTree(in);
                 return parse(root, jarPath);
             }
         }

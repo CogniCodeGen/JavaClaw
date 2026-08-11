@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.javaclaw.platform.execution.TaskHandle;
 import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
+import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.util.ProcessTerminator;
 import com.javaclaw.util.ProjectAccessPolicy;
 import com.javaclaw.util.SensitiveDataRedactor;
@@ -64,7 +65,7 @@ public class McpClient {
 
     private final McpServerConfig config;
     private final TaskScope tasks;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
     private final AtomicInteger requestIdCounter = new AtomicInteger(1);
     private final Map<Integer, CompletableFuture<JsonNode>> pendingRequests = new ConcurrentHashMap<>();
 
@@ -104,9 +105,10 @@ public class McpClient {
     /** initialize 响应中由服务器分配的会话 ID（部分实现要求后续请求带回） */
     private volatile String mcpSessionId;
 
-    public McpClient(McpServerConfig config, TaskScope tasks) {
+    public McpClient(McpServerConfig config, TaskScope tasks, JsonCodec json) {
         this.config = Objects.requireNonNull(config, "config");
         this.tasks = Objects.requireNonNull(tasks, "tasks");
+        this.objectMapper = Objects.requireNonNull(json, "json").mapper();
     }
 
     /**

@@ -106,7 +106,7 @@ public final class AgentNodeExecutor implements NodeExecutor {
         String input = TemplateRenderer.render(config.path("inputTemplate").asText("{{input}}"), context.state());
         Msg msg = Msg.builder().role(MsgRole.USER).name("user").textContent(input).build();
         StringBuilder reply = new StringBuilder();
-        StreamEventHandler eventHandler = new StreamEventHandler();
+        StreamEventHandler eventHandler = new StreamEventHandler(runtime.getJson().mapper());
         ConversationCallbacks capturing = new ConversationCallbacks() {
             @Override public void onEvent(ConversationEvent event) {
                 if (event instanceof ConversationEvent.Reply r) {

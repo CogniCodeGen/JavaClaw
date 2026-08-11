@@ -13,6 +13,7 @@ import com.javaclaw.site.SiteCredentialManager;
 import com.javaclaw.desktop.DesktopToolFactory;
 import com.javaclaw.email.EmailTools;
 import com.javaclaw.notification.NotificationTools;
+import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.runtime.WorkspaceContext;
 import com.javaclaw.system.CommandToolFactory;
 import com.javaclaw.system.SystemTools;
@@ -99,6 +100,7 @@ public class ExpertManager {
     private final NotificationConfig notificationSettings;
     private final CommandToolFactory commandTools;
     private final DesktopToolFactory desktopTools;
+    private final JsonCodec json;
 
     /**
      * 构造专家管理器并创建所有普通模式子智能体
@@ -114,7 +116,8 @@ public class ExpertManager {
                          ToolCallOrigin origin, CustomAgentConfig customAgentConfig,
                          WorkspaceContext workspace, AgentConfig settings,
                          EmailConfig emailSettings, NotificationConfig notificationSettings,
-                         CommandToolFactory commandTools, DesktopToolFactory desktopTools) {
+                         CommandToolFactory commandTools, DesktopToolFactory desktopTools,
+                         JsonCodec json) {
         this.browserManager = java.util.Objects.requireNonNull(browserManager, "browserManager");
         this.siteCredentialManager = java.util.Objects.requireNonNull(
                 siteCredentialManager, "siteCredentialManager");
@@ -128,9 +131,10 @@ public class ExpertManager {
                 notificationSettings, "notificationSettings");
         this.commandTools = java.util.Objects.requireNonNull(commandTools, "commandTools");
         this.desktopTools = java.util.Objects.requireNonNull(desktopTools, "desktopTools");
+        this.json = java.util.Objects.requireNonNull(json, "json");
         this.expertDefs = buildExpertDefs(
                 browserManager, siteCredentialManager, this.origin, workspace, settings,
-                emailSettings, notificationSettings, commandTools, desktopTools);
+                emailSettings, notificationSettings, commandTools, desktopTools, json);
 
         // 能力 → 工具实例映射（供 DynamicTaskTool 使用）：直接复用专家定义里的同一批实例
         // （令牌相同），而非再 new 一套——否则不仅白付双份构造（含 AWT Robot），还会把
@@ -177,7 +181,8 @@ public class ExpertManager {
             EmailConfig emailConfig,
             NotificationConfig notificationConfig,
             CommandToolFactory commandTools,
-            DesktopToolFactory desktopTools) {
+            DesktopToolFactory desktopTools,
+            JsonCodec json) {
 
         List<ExpertDef> defs = new ArrayList<>();
 
@@ -204,7 +209,7 @@ public class ExpertManager {
                 "web_expert",
                 AgentConfig.WEB_AGENT_DESCRIPTION,
                 config.getWebAgentMaxIters(),
-                new PlaywrightBrowserTools(browserManager, siteCredentialManager, origin),
+                new PlaywrightBrowserTools(browserManager, siteCredentialManager, origin, json),
                 "web", PlanRole.DOMAIN));
 
         defs.add(new ExpertDef(
@@ -272,7 +277,7 @@ public class ExpertManager {
         PlaywrightBrowserManager isolatedBrowser =
                 browserManager.createIsolated(effective.browserScopeId());
         tools.put("web", new PlaywrightBrowserTools(
-                isolatedBrowser, siteCredentialManager, effective, true));
+                isolatedBrowser, siteCredentialManager, effective, json, true));
         tools.put("email", new EmailTools(effective, emailSettings));
         tools.put("system", new SystemTools(effective, workspace.screenshotsDir()));
         if (!ProjectAccessPolicy.strictIsolationEnabled()) {

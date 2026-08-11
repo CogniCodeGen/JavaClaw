@@ -1,5 +1,6 @@
 package com.javaclaw.workflow;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.config.FileDatabaseAccess;
 import com.javaclaw.platform.execution.ManagedTask;
 import com.javaclaw.platform.execution.TaskHandle;
@@ -26,11 +27,13 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class WorkflowRunLifecycleTest {
 
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     @TempDir Path temp;
 
     @Test
     void 父运行缺失时更新与检查点都明确失败() {
-        var store = new H2GraphCheckpointStore("ws", new FileDatabaseAccess(temp));
+        var store = new H2GraphCheckpointStore("ws", new FileDatabaseAccess(temp), JSON);
         GraphRun missing = runWithStatus("missing", RunStatus.RUNNING);
 
         assertThrows(WorkflowRunMissingException.class, () -> store.updateRun(missing));
@@ -41,7 +44,7 @@ class WorkflowRunLifecycleTest {
 
     @Test
     void 恢复必须匹配预期旧状态() {
-        var store = new H2GraphCheckpointStore("ws", new FileDatabaseAccess(temp));
+        var store = new H2GraphCheckpointStore("ws", new FileDatabaseAccess(temp), JSON);
         GraphRun paused = runWithStatus("paused", RunStatus.PAUSED);
         store.createRun(paused);
         GraphRun run = runWithStatus(paused.id(), RunStatus.RUNNING);
@@ -53,7 +56,7 @@ class WorkflowRunLifecycleTest {
 
     @Test
     void 执行线程提交失败会把已创建运行置为失败() {
-        var store = new H2GraphCheckpointStore("ws", new FileDatabaseAccess(temp));
+        var store = new H2GraphCheckpointStore("ws", new FileDatabaseAccess(temp), JSON);
         var rejecting = new RejectingExecutor();
         var graph = validGraph();
         try (var executions = new GraphExecutionManager(

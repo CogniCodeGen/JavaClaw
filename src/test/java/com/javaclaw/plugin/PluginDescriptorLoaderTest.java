@@ -1,5 +1,6 @@
 package com.javaclaw.plugin;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -16,36 +17,39 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PluginDescriptorLoaderTest {
 
+    private static final PluginDescriptorLoader LOADER =
+            new PluginDescriptorLoader(new ObjectMapper());
+
     @Test
     void 接受安全插件id(@TempDir Path dir) throws Exception {
         Path jar = pluginJar(dir, "demo-plugin-2");
-        assertEquals("demo-plugin-2", PluginDescriptorLoader.load(jar).id());
+        assertEquals("demo-plugin-2", LOADER.load(jar).id());
     }
 
     @Test
     void 拒绝可导致目录穿越的插件id(@TempDir Path dir) throws Exception {
         Path jar = pluginJar(dir, "../../outside");
-        assertThrows(IOException.class, () -> PluginDescriptorLoader.load(jar));
+        assertThrows(IOException.class, () -> LOADER.load(jar));
     }
 
     @Test
     void 拒绝非规范大小写和首尾短横线(@TempDir Path dir) throws Exception {
-        assertThrows(IOException.class, () -> PluginDescriptorLoader.load(pluginJar(dir, "Demo")));
-        assertThrows(IOException.class, () -> PluginDescriptorLoader.load(pluginJar(dir, "-demo")));
-        assertThrows(IOException.class, () -> PluginDescriptorLoader.load(pluginJar(dir, "demo-")));
+        assertThrows(IOException.class, () -> LOADER.load(pluginJar(dir, "Demo")));
+        assertThrows(IOException.class, () -> LOADER.load(pluginJar(dir, "-demo")));
+        assertThrows(IOException.class, () -> LOADER.load(pluginJar(dir, "demo-")));
     }
 
     @Test
     void 缺失或空白apiVersion直接拒绝(@TempDir Path dir) throws Exception {
-        assertThrows(IOException.class, () -> PluginDescriptorLoader.load(
+        assertThrows(IOException.class, () -> LOADER.load(
                 pluginJar(dir, "legacy-missing", null)));
-        assertThrows(IOException.class, () -> PluginDescriptorLoader.load(
+        assertThrows(IOException.class, () -> LOADER.load(
                 pluginJar(dir, "legacy-blank", "")));
     }
 
     @Test
     void 显式三点零插件保持兼容(@TempDir Path dir) throws Exception {
-        var descriptor = PluginDescriptorLoader.load(
+        var descriptor = LOADER.load(
                 pluginJar(dir, "current-plugin", "3.0"));
 
         assertEquals("3.0", descriptor.apiVersion());
@@ -63,7 +67,7 @@ class PluginDescriptorLoaderTest {
                 Files.copy(descriptor, out);
                 out.closeEntry();
             }
-            var loaded = PluginDescriptorLoader.load(jar);
+            var loaded = LOADER.load(jar);
             org.junit.jupiter.api.Assertions.assertTrue(
                     PluginManager.isApiCompatible(loaded.apiVersion()),
                     sample + " 示例插件 API " + loaded.apiVersion()

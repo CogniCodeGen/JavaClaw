@@ -1,11 +1,13 @@
 package com.javaclaw.mcp;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.api.interaction.ConfirmRequest;
 import com.javaclaw.api.interaction.SecretRequest;
 import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
+import com.javaclaw.platform.json.JsonCodec;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,6 +20,9 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 class McpManageToolsTest {
+
+    private static final McpJsonImporter IMPORTER =
+            new McpJsonImporter(new JsonCodec(new ObjectMapper()));
 
     private boolean previousConfirmationState;
     private UserInteractionPort previousPort;
@@ -39,7 +44,8 @@ class McpManageToolsTest {
     void addRejectsHeaderSecretFromConversationJson() {
         FakeStore store = new FakeStore();
         FakeRuntime runtime = new FakeRuntime();
-        McpManageTools tools = new McpManageTools(ToolCallOrigin.INTERACTIVE, store, runtime);
+        McpManageTools tools = new McpManageTools(
+                ToolCallOrigin.INTERACTIVE, store, runtime, IMPORTER);
 
         String response = tools.addServer("remote", """
                 {"url":"https://93.184.216.34/api","headers":{"Authorization":"Bearer secret-token"}}
@@ -64,7 +70,8 @@ class McpManageToolsTest {
             }
             @Override public void notify(ToastRequest request) { }
         });
-        McpManageTools tools = new McpManageTools(ToolCallOrigin.INTERACTIVE, store, runtime);
+        McpManageTools tools = new McpManageTools(
+                ToolCallOrigin.INTERACTIVE, store, runtime, IMPORTER);
 
         String response = tools.setHeaderSecure("remote", "Authorization");
 
@@ -80,7 +87,8 @@ class McpManageToolsTest {
         FakeStore store = new FakeStore();
         FakeRuntime runtime = new FakeRuntime();
         runtime.startSucceeds = false;
-        McpManageTools tools = new McpManageTools(ToolCallOrigin.INTERACTIVE, store, runtime);
+        McpManageTools tools = new McpManageTools(
+                ToolCallOrigin.INTERACTIVE, store, runtime, IMPORTER);
 
         String response = tools.addServer("remote-failing",
                 "{\"url\":\"https://93.184.216.34/failing\"}", true);
@@ -94,7 +102,7 @@ class McpManageToolsTest {
     void strictIsolationRejectsLocalStdioServer() {
         FakeStore store = new FakeStore();
         McpManageTools tools = new McpManageTools(
-                ToolCallOrigin.INTERACTIVE, store, new FakeRuntime());
+                ToolCallOrigin.INTERACTIVE, store, new FakeRuntime(), IMPORTER);
 
         String response = tools.addServer(
                 "local", "{\"command\":\"npx\",\"args\":[\"-y\",\"pkg\"]}", true);
@@ -107,7 +115,7 @@ class McpManageToolsTest {
     void strictIsolationRejectsLoopbackHttpServer() {
         FakeStore store = new FakeStore();
         McpManageTools tools = new McpManageTools(
-                ToolCallOrigin.INTERACTIVE, store, new FakeRuntime());
+                ToolCallOrigin.INTERACTIVE, store, new FakeRuntime(), IMPORTER);
 
         String response = tools.addServer(
                 "local-http", "{\"url\":\"http://127.0.0.1:8080/mcp\"}", true);
@@ -121,7 +129,7 @@ class McpManageToolsTest {
         FakeStore store = new FakeStore();
         store.save(new McpServerConfig("existing", "node", List.of("server.js"), Map.of(), false));
         McpManageTools tools = new McpManageTools(
-                ToolCallOrigin.INTERACTIVE, store, new FakeRuntime());
+                ToolCallOrigin.INTERACTIVE, store, new FakeRuntime(), IMPORTER);
 
         String response = tools.addServer("existing", "{\"command\":\"other\"}", false);
 
@@ -136,7 +144,7 @@ class McpManageToolsTest {
                 "https://user:secret@93.184.216.34/mcp?token=opaque#part",
                 Map.of("Authorization", "Bearer hidden"), false));
         McpManageTools tools = new McpManageTools(
-                ToolCallOrigin.INTERACTIVE, store, new FakeRuntime());
+                ToolCallOrigin.INTERACTIVE, store, new FakeRuntime(), IMPORTER);
 
         String response = tools.listServers();
 

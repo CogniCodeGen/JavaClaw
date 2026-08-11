@@ -307,7 +307,8 @@ public final class SddTaskManager implements AutoCloseable {
         if (!caps.isBlank() && !caps.equalsIgnoreCase("auto")) return caps;
         try {
             ToolRouter router = new ToolRouter(
-                    runtime.getModelFactory().createLightChatModel(), null, skills, settings);
+                    runtime.getModelFactory().createLightChatModel(), null, skills, settings,
+                    json.mapper());
             RoutingResult r = router.route("【托管任务】" + task.title + "\n" + task.description);
             if (r.isFallback() || !r.hasToolGroups()) return "auto";
             Set<String> keys = new LinkedHashSet<>();

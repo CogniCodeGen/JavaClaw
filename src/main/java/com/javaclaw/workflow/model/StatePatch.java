@@ -1,9 +1,13 @@
 package com.javaclaw.workflow.model;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import java.lang.reflect.Array;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.ArrayList;
@@ -15,7 +19,6 @@ import java.util.Set;
 /** 不可变状态增量。 */
 public final class StatePatch {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
     public static final StatePatch EMPTY = new StatePatch(Map.of(), Set.of(), Map.of());
     private final Map<String, JsonNode> values;
     private final Set<String> removals;
@@ -35,13 +38,13 @@ public final class StatePatch {
                        Map<String, ArrayNode> appends, List<Operation> operations) {
         Map<String, JsonNode> copiedValues = new LinkedHashMap<>();
         if (values != null) values.forEach((path, value) -> copiedValues.put(path,
-                value == null ? MAPPER.nullNode() : value.deepCopy()));
+                value == null ? JsonNodeFactory.instance.nullNode() : value.deepCopy()));
         this.values = Collections.unmodifiableMap(copiedValues);
         this.removals = removals == null ? Set.of()
                 : Collections.unmodifiableSet(new LinkedHashSet<>(removals));
         Map<String, ArrayNode> copiedAppends = new LinkedHashMap<>();
         if (appends != null) appends.forEach((path, value) -> copiedAppends.put(path,
-                value == null ? MAPPER.createArrayNode() : value.deepCopy()));
+                value == null ? JsonNodeFactory.instance.arrayNode() : value.deepCopy()));
         this.appends = Collections.unmodifiableMap(copiedAppends);
         this.operations = operations == null ? List.of() : operations.stream()
                 .map(Operation::copy).toList();
@@ -61,7 +64,7 @@ public final class StatePatch {
         private final List<Operation> operations = new ArrayList<>();
 
         public Builder set(String path, Object value) {
-            JsonNode json = MAPPER.valueToTree(value);
+            JsonNode json = toJsonNode(value);
             values.put(path, json);
             removals.remove(path);
             appends.remove(path);
@@ -70,7 +73,7 @@ public final class StatePatch {
         }
 
         public Builder setJson(String path, JsonNode value) {
-            JsonNode json = value == null ? MAPPER.nullNode() : value.deepCopy();
+            JsonNode json = value == null ? JsonNodeFactory.instance.nullNode() : value.deepCopy();
             values.put(path, json);
             removals.remove(path);
             appends.remove(path);
@@ -86,12 +89,49 @@ public final class StatePatch {
             return this;
         }
         public Builder append(String path, Object value) {
-            JsonNode json = MAPPER.valueToTree(value);
-            appends.computeIfAbsent(path, ignored -> MAPPER.createArrayNode()).add(json);
+            JsonNode json = toJsonNode(value);
+            appends.computeIfAbsent(path, ignored -> JsonNodeFactory.instance.arrayNode()).add(json);
             operations.add(new Operation(Kind.APPEND, path, json));
             return this;
         }
         public StatePatch build() { return new StatePatch(values, removals, appends, operations); }
+    }
+
+    private static JsonNode toJsonNode(Object value) {
+        JsonNodeFactory nodes = JsonNodeFactory.instance;
+        if (value == null) return nodes.nullNode();
+        if (value instanceof JsonNode node) return node.deepCopy();
+        if (value instanceof String text) return nodes.textNode(text);
+        if (value instanceof Character character) return nodes.textNode(character.toString());
+        if (value instanceof Enum<?> enumeration) return nodes.textNode(enumeration.name());
+        if (value instanceof Boolean bool) return nodes.booleanNode(bool);
+        if (value instanceof Byte number) return nodes.numberNode(number);
+        if (value instanceof Short number) return nodes.numberNode(number);
+        if (value instanceof Integer number) return nodes.numberNode(number);
+        if (value instanceof Long number) return nodes.numberNode(number);
+        if (value instanceof Float number) return nodes.numberNode(number);
+        if (value instanceof Double number) return nodes.numberNode(number);
+        if (value instanceof BigInteger number) return nodes.numberNode(number);
+        if (value instanceof BigDecimal number) return nodes.numberNode(number);
+        if (value instanceof Map<?, ?> map) {
+            ObjectNode object = nodes.objectNode();
+            map.forEach((key, item) -> object.set(String.valueOf(key), toJsonNode(item)));
+            return object;
+        }
+        if (value instanceof Iterable<?> iterable) {
+            ArrayNode array = nodes.arrayNode();
+            iterable.forEach(item -> array.add(toJsonNode(item)));
+            return array;
+        }
+        if (value.getClass().isArray()) {
+            ArrayNode array = nodes.arrayNode();
+            for (int index = 0; index < Array.getLength(value); index++) {
+                array.add(toJsonNode(Array.get(value, index)));
+            }
+            return array;
+        }
+        throw new IllegalArgumentException(
+                "工作流状态只接受 JSON 值，实际类型: " + value.getClass().getName());
     }
 
     enum Kind { SET, REMOVE, APPEND }

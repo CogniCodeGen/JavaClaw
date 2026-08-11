@@ -1,9 +1,7 @@
 package com.javaclaw.mcp;
 
 import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
 import com.javaclaw.config.CredentialCipher;
 import com.javaclaw.config.DatabaseAccess;
 import org.slf4j.Logger;
@@ -52,33 +50,36 @@ public final class McpConfigManager {
      * 更新内存。该类型线程安全，但数据库操作仍应通过托管 I/O 执行器调用。</p>
      */
     public McpConfigManager(
-            DatabaseAccess databaseAccess, String workspaceId, CredentialCipher credentials) {
+            DatabaseAccess databaseAccess,
+            String workspaceId,
+            CredentialCipher credentials,
+            ObjectMapper objectMapper) {
         this(databaseAccess, () -> Objects.requireNonNull(workspaceId, "workspaceId"),
-                credentials::encrypt, credentials::decrypt, credentials::isEncrypted);
+                credentials::encrypt, credentials::decrypt, credentials::isEncrypted,
+                objectMapper);
     }
 
     McpConfigManager(DatabaseAccess databaseAccess,
                      Supplier<String> workspaceIdSupplier,
                      UnaryOperator<String> encryptor,
-                     UnaryOperator<String> decryptor) {
+                     UnaryOperator<String> decryptor,
+                     ObjectMapper objectMapper) {
         this(databaseAccess, workspaceIdSupplier, encryptor, decryptor,
-                McpConfigManager::hasEncryptedEnvelope);
+                McpConfigManager::hasEncryptedEnvelope, objectMapper);
     }
 
     private McpConfigManager(DatabaseAccess databaseAccess,
                              Supplier<String> workspaceIdSupplier,
                              UnaryOperator<String> encryptor,
                              UnaryOperator<String> decryptor,
-                             Predicate<String> encryptedValue) {
+                             Predicate<String> encryptedValue,
+                             ObjectMapper objectMapper) {
         this.databaseAccess = Objects.requireNonNull(databaseAccess, "databaseAccess");
         this.workspaceIdSupplier = Objects.requireNonNull(workspaceIdSupplier, "workspaceIdSupplier");
         this.encryptor = Objects.requireNonNull(encryptor, "encryptor");
         this.decryptor = Objects.requireNonNull(decryptor, "decryptor");
         this.encryptedValue = Objects.requireNonNull(encryptedValue, "encryptedValue");
-        this.objectMapper = new ObjectMapper();
-        this.objectMapper.enable(SerializationFeature.INDENT_OUTPUT);
-        // 对历史 JSON 中的派生字段（如 "transport"）保持兼容：宽容未知字段，避免整份配置加载失败
-        this.objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
         load();
     }
 

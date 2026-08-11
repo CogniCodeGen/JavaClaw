@@ -19,10 +19,12 @@ import com.javaclaw.workflow.node.ToolNodeExecutor;
 import com.javaclaw.workflow.editor.WorkflowEditorModel;
 import com.javaclaw.workflow.runtime.GraphValidator;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorkflowStateAndSecurityTest {
@@ -169,6 +171,32 @@ class WorkflowStateAndSecurityTest {
     }
 
     @Test
+    void 状态补丁只接受显式JSON值并保留嵌套类型() {
+        GraphState state = new GraphState().apply(StatePatch.builder()
+                .set("profile", Map.of(
+                        "roles", List.of("author", "reviewer"),
+                        "active", true,
+                        "priority", ResumeSafety.CONFIRM_RETRY))
+                .set("scores", new int[] {3, 5, 8})
+                .append("events", new Object[] {"started", 2})
+                .build());
+
+        assertEquals("reviewer", state.get("profile.roles").get(1).asText());
+        assertTrue(state.get("profile.active").asBoolean());
+        assertEquals("CONFIRM_RETRY", state.get("profile.priority").asText());
+        assertEquals(5, state.get("scores").get(1).asInt());
+        assertEquals(2, state.get("events").get(0).get(1).asInt());
+    }
+
+    @Test
+    void 状态补丁拒绝隐式对象序列化() {
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> StatePatch.builder().set("unsafe", new UnsupportedState("hidden")));
+
+        assertTrue(error.getMessage().contains(UnsupportedState.class.getName()));
+    }
+
+    @Test
     void 不能通过省略source调用Mcp桥() {
         var config = JsonNodeFactory.instance.objectNode()
                 .put("toolName", "mcp_call_tool");
@@ -291,4 +319,6 @@ class WorkflowStateAndSecurityTest {
         assertTrue(PublicNodeCatalog.createRegistry().require("human_input").validate(human).stream()
                 .anyMatch(message -> message.contains("responseKey")));
     }
+
+    private record UnsupportedState(String value) { }
 }

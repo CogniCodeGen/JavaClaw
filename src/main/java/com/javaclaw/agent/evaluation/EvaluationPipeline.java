@@ -29,7 +29,6 @@ import java.util.function.Consumer;
 public class EvaluationPipeline {
 
     private static final Logger log = LoggerFactory.getLogger(EvaluationPipeline.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private static final String SYS_PROMPT = """
             你是执行过程评估专家。根据任务目标和已执行的工具调用历史，评估当前执行进度和质量。
@@ -51,23 +50,31 @@ public class EvaluationPipeline {
     private final GenerateOptions generateOptions;
     /** 评估模型调用的 token 用量上报；null 时跳过统计 */
     private final TokenTracker tokenTracker;
+    private final ObjectMapper json;
 
     private final AtomicInteger toolCallCount = new AtomicInteger(0);
     private final AtomicInteger feedbackRounds = new AtomicInteger(0);
     private final List<String> toolCallHistory = new ArrayList<>();
     private volatile String currentTask = "";
 
-    public EvaluationPipeline(ChatModelBase model, int intervalTasks, double threshold, int maxFeedbackRounds) {
-        this(model, null, intervalTasks, threshold, maxFeedbackRounds);
+    public EvaluationPipeline(
+            ChatModelBase model,
+            int intervalTasks,
+            double threshold,
+            int maxFeedbackRounds,
+            ObjectMapper json) {
+        this(model, null, intervalTasks, threshold, maxFeedbackRounds, json);
     }
 
     public EvaluationPipeline(ChatModelBase model, TokenTracker tokenTracker,
-                              int intervalTasks, double threshold, int maxFeedbackRounds) {
+                              int intervalTasks, double threshold, int maxFeedbackRounds,
+                              ObjectMapper json) {
         this.model = model;
         this.tokenTracker = tokenTracker;
         this.intervalTasks = intervalTasks;
         this.threshold = threshold;
         this.maxFeedbackRounds = maxFeedbackRounds;
+        this.json = java.util.Objects.requireNonNull(json, "json");
         this.generateOptions = GenerateOptions.builder().build();
     }
 
@@ -171,7 +178,7 @@ public class EvaluationPipeline {
                 int end = json.lastIndexOf('}');
                 if (start >= 0 && end > start) json = json.substring(start, end + 1);
             }
-            JsonNode root = MAPPER.readTree(json);
+            JsonNode root = this.json.readTree(json);
             double score = root.path("score").asDouble(3.0);
             String summary = root.path("summary").asText("");
             boolean needsCorrection = root.path("needsCorrection").asBoolean(false) || score < threshold;

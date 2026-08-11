@@ -1,10 +1,5 @@
 package com.javaclaw.util;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,7 +11,6 @@ import java.util.regex.Pattern;
 /** 对日志和诊断轨迹中的工具入参做保守脱敏。 */
 public final class SensitiveDataRedactor {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final String REDACTED = "<redacted>";
 
     private static final Pattern MAP_SECRET = Pattern.compile(
@@ -56,18 +50,6 @@ public final class SensitiveDataRedactor {
             return redactMap(toolName, map).toString();
         }
         return redactFallback(String.valueOf(input));
-    }
-
-    /** 对 JSON 文本按敏感字段名递归脱敏；无法解析时做正则兜底。 */
-    public static String redactJson(String json) {
-        if (json == null || json.isBlank()) return json == null ? "" : json;
-        try {
-            JsonNode node = MAPPER.readTree(json);
-            redactJsonNode(node);
-            return MAPPER.writeValueAsString(node);
-        } catch (Exception ignored) {
-            return redactFallback(json);
-        }
     }
 
     /**
@@ -152,22 +134,6 @@ public final class SensitiveDataRedactor {
         }
         if (value instanceof String text) return redactFallback(text);
         return value;
-    }
-
-    private static void redactJsonNode(JsonNode node) {
-        if (node instanceof ObjectNode object) {
-            List<String> fields = new ArrayList<>();
-            object.fieldNames().forEachRemaining(fields::add);
-            for (String field : fields) {
-                if (isSensitiveKey(field)) {
-                    object.put(field, REDACTED);
-                } else {
-                    redactJsonNode(object.get(field));
-                }
-            }
-        } else if (node instanceof ArrayNode array) {
-            array.forEach(SensitiveDataRedactor::redactJsonNode);
-        }
     }
 
     private static boolean isSensitiveKey(String key) {

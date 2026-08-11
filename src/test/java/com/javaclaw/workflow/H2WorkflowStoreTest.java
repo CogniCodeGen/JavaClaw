@@ -1,5 +1,6 @@
 package com.javaclaw.workflow;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.config.FileDatabaseAccess;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.workflow.editor.WorkflowEditorModel;
@@ -24,13 +25,14 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.*;
 
 class H2WorkflowStoreTest {
+    private static final ObjectMapper JSON = new ObjectMapper();
     @TempDir Path temp;
 
     @Test void 草稿发布与运行快照可从H2往返() throws Exception {
             var database = new FileDatabaseAccess(temp);
             String workspace = "ws-test";
             var registry = PublicNodeCatalog.createRegistry();
-            var definitions = new H2WorkflowDefinitionStore(workspace, database);
+            var definitions = new H2WorkflowDefinitionStore(workspace, database, JSON);
             var draftEditor = new WorkflowEditorModel(WorkflowEditorModel.blank("持久化测试"));
             var draft = draftEditor.current();
             var saved = definitions.saveDraft(draft);
@@ -38,9 +40,9 @@ class H2WorkflowStoreTest {
             var published = definitions.publish(draft.id(), registry);
             assertTrue(published.isPublished());
             assertEquals(draft.id(), definitions.get(draft.id()).published().id());
-            assertNull(new H2WorkflowDefinitionStore("ws-other", database).get(draft.id()));
+            assertNull(new H2WorkflowDefinitionStore("ws-other", database, JSON).get(draft.id()));
 
-            var checkpoints = new H2GraphCheckpointStore(workspace, database);
+            var checkpoints = new H2GraphCheckpointStore(workspace, database, JSON);
             try (var tasks = new ManagedTaskExecutor();
                  var executions = new GraphExecutionManager(registry, checkpoints, tasks)) {
                 CountDownLatch done = new CountDownLatch(1);
@@ -64,7 +66,7 @@ class H2WorkflowStoreTest {
 
             checkpoints.saveThreadState(draft.id(), "same-thread", new GraphState().apply(
                     StatePatch.builder().set("owner", "a").build()));
-            var otherWorkspace = new H2GraphCheckpointStore("ws-other", database);
+            var otherWorkspace = new H2GraphCheckpointStore("ws-other", database, JSON);
             otherWorkspace.saveThreadState(draft.id(), "same-thread", new GraphState().apply(
                     StatePatch.builder().set("owner", "b").build()));
             assertEquals("a", checkpoints.loadThreadState(draft.id(), "same-thread").get("owner").asText());

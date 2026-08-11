@@ -481,7 +481,10 @@ class SiteLoginFunctionalIT {
     private PlaywrightBrowserTools browserTools(
             PlaywrightBrowserManager browser,
             ToolCallOrigin origin) {
-        return new PlaywrightBrowserTools(browser, siteCredentials, origin);
+        return new PlaywrightBrowserTools(
+                browser, siteCredentials, origin,
+                new com.javaclaw.platform.json.JsonCodec(
+                        new com.fasterxml.jackson.databind.ObjectMapper()));
     }
 
     private SiteCredential savedIdentity(String name, String username, String accountValue) {

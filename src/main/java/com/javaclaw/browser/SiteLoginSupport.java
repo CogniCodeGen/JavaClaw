@@ -1,9 +1,9 @@
 package com.javaclaw.browser;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.site.SiteCredential;
 
 import java.net.URI;
@@ -130,7 +130,8 @@ final class SiteLoginSupport {
      * 账号配置，恢复该账号时会顺带注入其他网站的身份令牌。这里在持久化边界做最小化裁剪；
      * 身份提供方若没有把会话换成目标站点自己的 Cookie，则下次会要求重新走 SSO，安全优先。</p>
      */
-    static String filterStorageStateForUrl(String storageStateJson, String targetUrl) {
+    static String filterStorageStateForUrl(
+            String storageStateJson, String targetUrl, JsonCodec json) {
         if (storageStateJson == null || storageStateJson.isBlank()) {
             return "{\"cookies\":[],\"origins\":[]}";
         }
@@ -139,9 +140,8 @@ final class SiteLoginSupport {
             throw new IllegalArgumentException("无法识别要保存会话的站点域名");
         }
         try {
-            ObjectMapper mapper = new ObjectMapper();
-            JsonNode root = mapper.readTree(storageStateJson);
-            ObjectNode filtered = mapper.createObjectNode();
+            JsonNode root = json.tree(storageStateJson);
+            ObjectNode filtered = json.mapper().createObjectNode();
             ArrayNode cookies = filtered.putArray("cookies");
             JsonNode sourceCookies = root.path("cookies");
             if (sourceCookies.isArray()) {
@@ -159,7 +159,7 @@ final class SiteLoginSupport {
                     if (hostRelated(targetHost, originHost)) origins.add(origin.deepCopy());
                 });
             }
-            return mapper.writeValueAsString(filtered);
+            return json.encode(filtered);
         } catch (Exception e) {
             throw new IllegalArgumentException("浏览器会话状态格式无效", e);
         }

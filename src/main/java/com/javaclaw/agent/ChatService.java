@@ -196,7 +196,8 @@ public class ChatService {
             // 4. 工具路由器（使用轻量模型，强制关闭 thinking 避免分类调用阻塞数分钟）
             if (config.isToolRoutingEnabled()) {
                 this.toolRouter = new ToolRouter(runtime.getModelFactory().createLightChatModel(),
-                        runtime.getTokenTracker(), skills.manager(), config);
+                        runtime.getTokenTracker(), skills.manager(), config,
+                        runtime.getJson().mapper());
                 log.info("工具路由器已创建（启用状态，thinking 关闭）");
             } else {
                 this.toolRouter = null;
@@ -206,7 +207,7 @@ public class ChatService {
             // 5. GEPA 组件
             if (config.isGepaGoalEnabled()) {
                 this.goalManager = new GoalManager(runtime.getModelFactory().createChatModel(),
-                        runtime.getTokenTracker());
+                        runtime.getTokenTracker(), runtime.getJson().mapper());
                 log.info("GEPA 目标管理器已启用");
             } else {
                 this.goalManager = null;
@@ -218,7 +219,7 @@ public class ChatService {
                     runtime.getTokenTracker(),
                     config.getGepaEvalInterval(),
                     config.getGepaEvalThreshold(),
-                    config.getGepaFeedbackMaxRounds());
+                    config.getGepaFeedbackMaxRounds(), runtime.getJson().mapper());
             this.planningEngineAccessor = new PlanEvolverAccessor(
                     config.isGepaPlanAdaptive()
                             ? new PlanEvolver(runtime.getModelFactory().createHighChatModel(),
@@ -248,7 +249,7 @@ public class ChatService {
             this.streamOptions = ToolkitAssembler.buildStreamOptions(config);
 
             // 8. 事件处理器
-            this.eventHandler = new StreamEventHandler();
+            this.eventHandler = new StreamEventHandler(runtime.getJson().mapper());
             this.turnPreparation = new ChatTurnPreparationPipeline(
                     runtime, memoryService, toolRouter, goalManager, streamOptions,
                     this::orchestratorSnapshot, this::rebuildOrchestratorForTurn);

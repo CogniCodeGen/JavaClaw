@@ -21,6 +21,8 @@ class SourceHygieneTest {
     private static final Pattern EMPTY_CATCH =
             Pattern.compile("catch\\s*\\([^)]*\\)\\s*\\{\\s*}", Pattern.DOTALL);
     private static final Pattern NEW_THREAD = Pattern.compile("\\bnew\\s+Thread\\s*\\(");
+    private static final Pattern NEW_OBJECT_MAPPER =
+            Pattern.compile("\\bnew\\s+ObjectMapper\\s*\\(");
     private static final Pattern SINGLETON_DECLARATION =
             Pattern.compile("\\bstatic\\s+[\\w<>, ?.$\\[\\]]+\\s+getInstance\\s*\\(");
     private static final Pattern HISTORICAL_COMMENT =
@@ -92,6 +94,29 @@ class SourceHygieneTest {
             }
         }
         assertNoViolations("framework access", violations);
+    }
+
+    @Test
+    void objectMapperIsCreatedOnlyByTheRootCompositionContext() throws IOException {
+        String factory = "com/javaclaw/platform/spring/RootConfiguration.java";
+        List<String> violations = new ArrayList<>();
+        int factoryOccurrences = 0;
+        for (Path file : files(JAVA_ROOT, ".java")) {
+            String source = Files.readString(file);
+            int count = occurrences(NEW_OBJECT_MAPPER, source);
+            if (count == 0) continue;
+            String sourcePath = JAVA_ROOT.relativize(file).toString().replace('\\', '/');
+            if (!sourcePath.equals(factory)) {
+                violations.add(relative(file) + " creates a private ObjectMapper");
+            } else {
+                factoryOccurrences += count;
+            }
+        }
+        if (factoryOccurrences != 1) {
+            violations.add(factory + " must create exactly one shared ObjectMapper (found "
+                    + factoryOccurrences + ")");
+        }
+        assertNoViolations("shared JSON configuration", violations);
     }
 
     @Test

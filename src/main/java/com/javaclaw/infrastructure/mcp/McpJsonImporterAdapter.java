@@ -8,9 +8,16 @@ import java.util.List;
 
 /** 复用经过兼容性验证的 MCP JSON 解析器。 */
 public final class McpJsonImporterAdapter implements McpImportPort {
+
+    private final McpJsonImporter importer;
+
+    public McpJsonImporterAdapter(McpJsonImporter importer) {
+        this.importer = java.util.Objects.requireNonNull(importer, "importer");
+    }
+
     @Override
     public List<McpConfigurationPort.Entry> parse(String json, String fallbackName) {
-        return McpJsonImporter.parse(json, fallbackName).stream()
+        return importer.parse(json, fallbackName).stream()
                 .map(McpConfigManagerAdapter::toEntry).toList();
     }
 }

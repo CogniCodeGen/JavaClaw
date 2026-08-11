@@ -191,13 +191,14 @@ public class WorkspaceSpringConfiguration {
             com.javaclaw.system.CommandToolFactory commandTools,
             com.javaclaw.application.plugin.PluginToolGateway pluginTools,
             WorkspaceContext workspace,
-            KnowledgeDocumentPreferencePort knowledgePreferences) {
+            KnowledgeDocumentPreferencePort knowledgePreferences,
+            JsonCodec json) {
         return new AgentRuntime(options.browserManager(), models, tokens, memories, embeddings,
                 customAgents, siteCredentials,
                 mcpConfigurations, mcpClients, workspaceTaskScope, schedules, skills,
                 sddTasks::getObject, jshellRunner, processRunner, desktopTools, traceRecorder, settings,
                 emailSettings, notificationSettings, commandTools, pluginTools, workspace,
-                knowledgePreferences);
+                knowledgePreferences, json);
     }
 
     @Bean
@@ -267,15 +268,18 @@ public class WorkspaceSpringConfiguration {
     McpConfigManager mcpConfigManager(
             DatabaseAccess databaseAccess,
             com.javaclaw.config.CredentialCipher credentials,
-            WorkspaceContext workspace) {
-        return new McpConfigManager(databaseAccess, workspace.workspaceId(), credentials);
+            WorkspaceContext workspace,
+            com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
+        return new McpConfigManager(
+                databaseAccess, workspace.workspaceId(), credentials, objectMapper);
     }
 
     @Bean
     McpClientManager mcpClientManager(
             McpConfigManager configurations,
-            @Qualifier("workspaceTaskScope") TaskScope workspaceTaskScope) {
-        return new McpClientManager(configurations, workspaceTaskScope);
+            @Qualifier("workspaceTaskScope") TaskScope workspaceTaskScope,
+            JsonCodec json) {
+        return new McpClientManager(configurations, workspaceTaskScope, json);
     }
 
     @Bean
@@ -289,8 +293,8 @@ public class WorkspaceSpringConfiguration {
     }
 
     @Bean
-    McpImportPort mcpImportPort() {
-        return new McpJsonImporterAdapter();
+    McpImportPort mcpImportPort(JsonCodec json) {
+        return new McpJsonImporterAdapter(new com.javaclaw.mcp.McpJsonImporter(json));
     }
 
     @Bean
@@ -556,14 +560,18 @@ public class WorkspaceSpringConfiguration {
 
     @Bean
     GraphCheckpointStore graphCheckpointStore(
-            WorkspaceContext workspace, DatabaseAccess databaseAccess) {
-        return new H2GraphCheckpointStore(workspace.workspaceId(), databaseAccess);
+            WorkspaceContext workspace,
+            DatabaseAccess databaseAccess,
+            com.fasterxml.jackson.databind.ObjectMapper json) {
+        return new H2GraphCheckpointStore(workspace.workspaceId(), databaseAccess, json);
     }
 
     @Bean
     WorkflowDefinitionStore workflowDefinitionStore(
-            WorkspaceContext workspace, DatabaseAccess databaseAccess) {
-        return new H2WorkflowDefinitionStore(workspace.workspaceId(), databaseAccess);
+            WorkspaceContext workspace,
+            DatabaseAccess databaseAccess,
+            com.fasterxml.jackson.databind.ObjectMapper json) {
+        return new H2WorkflowDefinitionStore(workspace.workspaceId(), databaseAccess, json);
     }
 
     @Bean

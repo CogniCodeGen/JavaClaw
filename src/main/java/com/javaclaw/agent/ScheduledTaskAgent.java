@@ -55,7 +55,7 @@ public final class ScheduledTaskAgent implements ScheduledTaskRunner {
     private static final long RUN_TIMEOUT_MINUTES = 12;
 
     private final AgentRuntime runtime;
-    private final StreamEventHandler eventHandler = new StreamEventHandler();
+    private final StreamEventHandler eventHandler;
     private final ToolRouter toolRouter;
     private final String baseSystemPrompt;
     private final StreamOptions streamOptions;
@@ -75,8 +75,10 @@ public final class ScheduledTaskAgent implements ScheduledTaskRunner {
         AgentConfig config = runtime.getConfig();
         this.toolRouter = config.isToolRoutingEnabled()
                 ? new ToolRouter(runtime.getModelFactory().createLightChatModel(),
-                        runtime.getTokenTracker(), runtime.getSkillRuntime().manager(), config)
+                        runtime.getTokenTracker(), runtime.getSkillRuntime().manager(), config,
+                        runtime.getJson().mapper())
                 : null;
+        this.eventHandler = new StreamEventHandler(runtime.getJson().mapper());
         this.baseSystemPrompt = AgentPrompts.ORCHESTRATOR_SYS_PROMPT;
 
         this.streamOptions = ToolkitAssembler.buildStreamOptions(config);
@@ -143,7 +145,7 @@ public final class ScheduledTaskAgent implements ScheduledTaskRunner {
                     runtime.getSiteCredentialManager(), origin,
                     runtime.getCustomAgentConfig(), runtime.getWorkspace(), runtime.getConfig(),
                     runtime.getEmailConfig(), runtime.getNotificationConfig(),
-                    runtime.getCommandTools(), runtime.getDesktopTools());
+                    runtime.getCommandTools(), runtime.getDesktopTools(), runtime.getJson());
             Toolkit toolkit = ToolkitAssembler.buildBaseToolkit(runtime, expertManager, false, origin);
 
             RoutingResult routing = route(prompt);

@@ -1,7 +1,7 @@
 package com.javaclaw.mcp;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.javaclaw.platform.json.JsonCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,23 +29,25 @@ import java.util.Map;
 public final class McpJsonImporter {
 
     private static final Logger log = LoggerFactory.getLogger(McpJsonImporter.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private final JsonCodec json;
 
-    private McpJsonImporter() {}
+    public McpJsonImporter(JsonCodec json) {
+        this.json = java.util.Objects.requireNonNull(json, "json");
+    }
 
     /**
      * 解析 JSON 文本为 MCP 服务器配置列表。
      *
-     * @param json         待解析文本（去除首尾空白）
+     * @param source       待解析文本（去除首尾空白）
      * @param fallbackName 当输入是单条不带 name 的服务器配置时使用的名称；可为 null（此时该形态不支持）
      * @return 解析得到的配置列表（永不返回 null；空 JSON 返回空列表）
      * @throws IllegalArgumentException 输入既不是有效 JSON 也不能匹配任何受支持的形态
      */
-    public static List<McpServerConfig> parse(String json, String fallbackName) {
-        if (json == null || json.isBlank()) return List.of();
+    public List<McpServerConfig> parse(String source, String fallbackName) {
+        if (source == null || source.isBlank()) return List.of();
         JsonNode root;
         try {
-            root = MAPPER.readTree(json.trim());
+            root = json.tree(source.trim());
         } catch (Exception e) {
             throw new IllegalArgumentException("无法解析为 JSON：" + e.getMessage());
         }
@@ -78,11 +80,6 @@ public final class McpJsonImporter {
         throw new IllegalArgumentException("无法识别 MCP 配置形态。请粘贴：" +
                 "1) 完整 {\"mcpServers\": {...}}；2) 仅 mcpServers 内部映射 {\"名称\": {...}}；" +
                 "3) 单条 {\"command\": \"...\"} 配置（需另填名称）");
-    }
-
-    /** 三参数的兼容入口，无 fallbackName */
-    public static List<McpServerConfig> parse(String json) {
-        return parse(json, null);
     }
 
     private static boolean allValuesLookLikeServer(JsonNode obj) {

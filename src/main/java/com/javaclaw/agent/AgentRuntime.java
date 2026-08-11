@@ -147,6 +147,7 @@ public final class AgentRuntime {
     private final ProcessRunner processRunner;
     private final com.javaclaw.desktop.DesktopToolFactory desktopTools;
     private final TraceRecorder traceRecorder;
+    private final com.javaclaw.platform.json.JsonCodec json;
 
 
     /** 模型执行重试配置（超时 / 最大重试次数 / 指数退避），三模式共用 */
@@ -184,7 +185,8 @@ public final class AgentRuntime {
             com.javaclaw.system.CommandToolFactory commandTools,
             PluginToolGateway pluginTools,
             WorkspaceContext workspace,
-            KnowledgeDocumentPreferencePort knowledgePreferences) {
+            KnowledgeDocumentPreferencePort knowledgePreferences,
+            com.javaclaw.platform.json.JsonCodec json) {
         java.util.Objects.requireNonNull(config, "config");
         java.util.Objects.requireNonNull(workspace, "workspace");
         this.config = config;
@@ -215,6 +217,7 @@ public final class AgentRuntime {
         this.processRunner = java.util.Objects.requireNonNull(processRunner, "processRunner");
         this.desktopTools = java.util.Objects.requireNonNull(desktopTools, "desktopTools");
         this.traceRecorder = java.util.Objects.requireNonNull(traceRecorder, "traceRecorder");
+        this.json = java.util.Objects.requireNonNull(json, "json");
 
         // 1. 模型、计量、记忆与嵌入均由工作区 Spring Context 管理。
         this.modelFactory = java.util.Objects.requireNonNull(modelFactory, "modelFactory");
@@ -235,7 +238,7 @@ public final class AgentRuntime {
         this.expertManager = new ExpertManager(
                 modelFactory, browserManager, siteCredentialManager,
                 ToolCallOrigin.INTERACTIVE, customAgentConfig, workspace, config,
-                emailConfig, notificationConfig, commandTools, desktopTools);
+                emailConfig, notificationConfig, commandTools, desktopTools, json);
         this.knowledgeExpert = new KnowledgeExpert(
                 modelFactory,
                 embeddingGateway,
@@ -311,6 +314,7 @@ public final class AgentRuntime {
     public ProcessRunner getProcessRunner() { return processRunner; }
     public com.javaclaw.desktop.DesktopToolFactory getDesktopTools() { return desktopTools; }
     public TraceRecorder getTraceRecorder() { return traceRecorder; }
+    public com.javaclaw.platform.json.JsonCodec getJson() { return json; }
     public TokenTracker getTokenTracker() { return tokenTracker; }
     public MemoryManager getMemoryManager() { return memoryManager; }
     public ExpertManager getExpertManager() { return expertManager; }

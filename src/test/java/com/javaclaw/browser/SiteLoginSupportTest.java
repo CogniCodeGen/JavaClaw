@@ -1,5 +1,7 @@
 package com.javaclaw.browser;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.site.SiteCredential;
 import org.junit.jupiter.api.Test;
 
@@ -9,6 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SiteLoginSupportTest {
+
+    private static final JsonCodec JSON = new JsonCodec(new ObjectMapper());
 
     @Test
     void detectsAuthenticationResponseWithoutFormSignals() {
@@ -81,7 +85,7 @@ class SiteLoginSupportTest {
                     {"origin":"https://other.test","localStorage":[{"name":"token","value":"b"}]}
                   ]
                 }
-                """, "https://app.example.com/dashboard");
+                """, "https://app.example.com/dashboard", JSON);
 
         assertTrue(filtered.contains("\"app\""));
         assertTrue(filtered.contains("app.example.com"));
