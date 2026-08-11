@@ -3,7 +3,6 @@
 <?import javafx.geometry.Insets?>
 <?import javafx.scene.control.Button?>
 <?import javafx.scene.control.Label?>
-<?import javafx.scene.control.MenuButton?>
 <?import javafx.scene.control.Tooltip?>
 <?import javafx.scene.layout.BorderPane?>
 <?import javafx.scene.layout.HBox?>
@@ -47,9 +46,7 @@
                         <Label fx:id="embeddingHealthBadge" text="嵌入：检查中"
                                accessibleText="嵌入服务健康状态" styleClass="local-mode-badge"/>
                         <Region HBox.hgrow="ALWAYS"/>
-                        <MenuButton fx:id="knowledgeMenu" text="📖 知识库" styleClass="knowledge-menu">
-                            <tooltip><Tooltip fx:id="knowledgeTooltip" text="选择知识库中的文档作为对话参考"/></tooltip>
-                        </MenuButton>
+                        <fx:include fx:id="knowledgeMenu" source="knowledge-menu.fxml"/>
                         <fx:include fx:id="themeMenu" source="theme-menu.fxml"/>
                         <Button text="▦" onAction="#openTaskManager" styleClass="top-icon-btn">
                             <tooltip><Tooltip text="托管任务"/></tooltip>

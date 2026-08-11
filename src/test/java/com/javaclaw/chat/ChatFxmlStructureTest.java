@@ -1,6 +1,10 @@
 package com.javaclaw.chat;
 
 import com.javaclaw.ui.javafx.loop.LoopStatusController;
+import com.javaclaw.ui.javafx.knowledge.KnowledgeActionItemController;
+import com.javaclaw.ui.javafx.knowledge.KnowledgeCheckItemController;
+import com.javaclaw.ui.javafx.knowledge.KnowledgeHeaderItemController;
+import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuController;
 import com.javaclaw.ui.javafx.theme.ThemeMenuController;
 import com.javaclaw.ui.javafx.theme.ThemeMenuEntryController;
 import javafx.fxml.FXML;
@@ -167,6 +171,26 @@ class ChatFxmlStructureTest {
     }
 
     @Test
+    void knowledgeMenuDeclaresEveryInjectedNodeAndActions() throws Exception {
+        Document document = document("/fxml/chat/knowledge-menu.fxml");
+        assertEquals(KnowledgeMenuController.class.getName(),
+                document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
+        assertInjectedFields(document, KnowledgeMenuController.class);
+        assertEquals(Set.of("showing", "hidden"), eventHandlers(document));
+    }
+
+    @Test
+    void knowledgeMenuEntriesDeclareControllersAndActions() throws Exception {
+        assertMenuEntry("/fxml/chat/knowledge-check-item.fxml",
+                KnowledgeCheckItemController.class, Set.of("selectionChanged"));
+        assertMenuEntry("/fxml/chat/knowledge-action-item.fxml",
+                KnowledgeActionItemController.class, Set.of("requested"));
+        assertMenuEntry("/fxml/chat/knowledge-header-item.fxml",
+                KnowledgeHeaderItemController.class, Set.of());
+        assertControllerlessFxml("/fxml/chat/knowledge-separator.fxml", Set.of());
+    }
+
+    @Test
     void attachmentPreviewDeclaresEveryInjectedNodeAndEventEntrypoint() throws Exception {
         Document document = document("/fxml/chat/attachment-preview-item.fxml");
         assertEquals(AttachmentPreviewItemController.class.getName(),
@@ -200,6 +224,15 @@ class ChatFxmlStructureTest {
                 .collect(Collectors.toSet());
         assertTrue(ids.containsAll(requiredIds), path + " 缺少 fx:id: " + requiredIds);
         assertTrue(eventHandlers(document).isEmpty(), path + " 不应绕过统一事件装配");
+    }
+
+    private static void assertMenuEntry(
+            String path, Class<?> controller, Set<String> handlers) throws Exception {
+        Document document = document(path);
+        assertEquals(controller.getName(),
+                document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
+        assertInjectedFields(document, controller);
+        assertEquals(handlers, eventHandlers(document));
     }
 
     private static Document document(String path) throws Exception {

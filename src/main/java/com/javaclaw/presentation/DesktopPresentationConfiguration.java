@@ -15,6 +15,7 @@ import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.ui.javafx.loop.LoopStatusViewFactory;
+import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuEntryFactory;
 import com.javaclaw.ui.javafx.theme.ThemeManagerThemeSelectionService;
 import com.javaclaw.ui.javafx.theme.ThemeMenuEntryFactory;
 import com.javaclaw.ui.javafx.theme.ThemeSelectionService;
@@ -90,5 +91,10 @@ public class DesktopPresentationConfiguration {
     @Bean
     ThemeMenuEntryFactory themeMenuEntryFactory(SpringFxmlLoader loader) {
         return new ThemeMenuEntryFactory(loader);
+    }
+
+    @Bean
+    KnowledgeMenuEntryFactory knowledgeMenuEntryFactory(SpringFxmlLoader loader) {
+        return new KnowledgeMenuEntryFactory(loader);
     }
 }

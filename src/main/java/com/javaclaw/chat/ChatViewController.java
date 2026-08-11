@@ -27,6 +27,8 @@ import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.ui.javafx.loop.LoopStatusView;
 import com.javaclaw.ui.javafx.loop.LoopStatusViewFactory;
+import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuController;
+import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuSnapshot;
 import com.javaclaw.ui.javafx.schedule.ScheduleView;
 import com.javaclaw.ui.javafx.skill.SkillCenterView;
 import com.javaclaw.ui.javafx.task.SddTaskView;
@@ -214,10 +216,7 @@ public class ChatViewController implements AutoCloseable {
     /** 规划模式下当前发言智能体的回复累积文本（用于摘要截断） */
     private final StringBuilder currentPlanAgentBuffer = new StringBuilder();
 
-    /** 知识库多选菜单按钮 */
-    @FXML private MenuButton knowledgeMenu;
-    @FXML private Tooltip knowledgeTooltip;
-
+    @FXML private KnowledgeMenuController knowledgeMenuController;
     @FXML private ThemeMenuController themeMenuController;
     @FXML private Button settingsButton;
     private Timeline statusBarClock;
@@ -374,12 +373,10 @@ public class ChatViewController implements AutoCloseable {
                 "设置（" + shortcutHint() + " + ,）"));
         wireEmbeddingHealth();
 
-        knowledgeMenu.setOnShowing(event -> {
-            knowledgeTooltip.hide();
-            knowledgeMenu.setTooltip(null);
-            rebuildKnowledgeMenu();
-        });
-        knowledgeMenu.setOnHidden(event -> knowledgeMenu.setTooltip(knowledgeTooltip));
+        knowledgeMenuController.configure(
+                this::knowledgeMenuSnapshot,
+                this::applyKnowledgeSelection,
+                this::openKnowledgeBase);
         wireTokenTracker();
     }
 
@@ -1036,147 +1033,36 @@ public class ChatViewController implements AutoCloseable {
         log.info("规划模式已{}", enable ? "开启" : "关闭");
     }
 
-    /**
-     * 动态构建知识库多选下拉菜单（按全局/工作区分组）
-     */
-    private void rebuildKnowledgeMenu() {
-        knowledgeMenu.getItems().clear();
-
+    /** 构建顶栏知识库菜单所需的稳定快照，避免 Controller 解析展示文案。 */
+    private KnowledgeMenuSnapshot knowledgeMenuSnapshot() {
         var expert = runtime.getKnowledgeExpert();
         if (!expert.isRagEnabled()) {
-            MenuItem hint = new MenuItem("RAG 未启用（请在设置 → 嵌入模型中开启）");
-            hint.setDisable(true);
-            knowledgeMenu.getItems().add(hint);
-            return;
+            return KnowledgeMenuSnapshot.ragDisabled();
         }
-
         var globalDocs = expert.getDocumentNames(com.javaclaw.agent.expert.KnowledgeExpert.Scope.GLOBAL);
         var workspaceDocs = expert.getDocumentNames(com.javaclaw.agent.expert.KnowledgeExpert.Scope.WORKSPACE);
-
-        if (globalDocs.isEmpty() && workspaceDocs.isEmpty()) {
-            MenuItem hint = new MenuItem("知识库为空，请先导入文档");
-            hint.setDisable(true);
-            knowledgeMenu.getItems().add(hint);
-            knowledgeMenu.getItems().add(new SeparatorMenuItem());
-            MenuItem manageItem = new MenuItem("知识库中心...");
-            manageItem.setOnAction(e -> openKnowledgeBase());
-            knowledgeMenu.getItems().add(manageItem);
-            return;
-        }
-
-        // 选中态 = 知识库中心持久化的「参与检索」文档集合（默认全部启用），与知识库中心一致
-        Set<String> currentSelected = expert.getEnabledDocs();
-        int totalDocs = globalDocs.size() + workspaceDocs.size();
-        List<CheckMenuItem> allCheckItems = new ArrayList<>();
-
-        // 全选/取消全选
-        CheckMenuItem selectAllItem = new CheckMenuItem("全选 / 取消全选");
-        selectAllItem.setSelected(currentSelected.size() == totalDocs && totalDocs > 0);
-        knowledgeMenu.getItems().add(selectAllItem);
-
-        // 全局知识库分组
-        if (!globalDocs.isEmpty()) {
-            knowledgeMenu.getItems().add(new SeparatorMenuItem());
-            addKnowledgeSectionHeader("全局知识库");
-
-            for (String name : globalDocs) {
-                int chunks = expert.getDocumentChunkCount(name);
-                CheckMenuItem item = new CheckMenuItem(name + "  " + chunks + " 片段");
-                item.getStyleClass().add("knowledge-doc-item");
-                item.setSelected(currentSelected.contains(name));
-                item.setOnAction(e -> onKnowledgeSelectionChanged(allCheckItems, selectAllItem));
-                allCheckItems.add(item);
-                knowledgeMenu.getItems().add(item);
-            }
-        }
-
-        // 工作区知识库分组
-        if (!workspaceDocs.isEmpty()) {
-            knowledgeMenu.getItems().add(new SeparatorMenuItem());
-            addKnowledgeSectionHeader("工作区知识库");
-
-            for (String name : workspaceDocs) {
-                int chunks = expert.getDocumentChunkCount(name);
-                CheckMenuItem item = new CheckMenuItem(name + "  " + chunks + " 片段");
-                item.getStyleClass().add("knowledge-doc-item");
-                item.setSelected(currentSelected.contains(name));
-                item.setOnAction(e -> onKnowledgeSelectionChanged(allCheckItems, selectAllItem));
-                allCheckItems.add(item);
-                knowledgeMenu.getItems().add(item);
-            }
-        }
-
-        // 全选逻辑
-        selectAllItem.setOnAction(e -> {
-            boolean selectAll = selectAllItem.isSelected();
-            for (CheckMenuItem ci : allCheckItems) {
-                ci.setSelected(selectAll);
-            }
-            onKnowledgeSelectionChanged(allCheckItems, selectAllItem);
-        });
-
-        // 管理知识库入口
-        knowledgeMenu.getItems().add(new SeparatorMenuItem());
-        MenuItem manageItem = new MenuItem("知识库中心...");
-        manageItem.getStyleClass().add("knowledge-manage-entry");
-        manageItem.setOnAction(e -> openKnowledgeBase());
-        knowledgeMenu.getItems().add(manageItem);
+        List<KnowledgeMenuSnapshot.Document> global = globalDocs.stream()
+                .map(name -> new KnowledgeMenuSnapshot.Document(
+                        name, expert.getDocumentChunkCount(name)))
+                .toList();
+        List<KnowledgeMenuSnapshot.Document> workspace = workspaceDocs.stream()
+                .map(name -> new KnowledgeMenuSnapshot.Document(
+                        name, expert.getDocumentChunkCount(name)))
+                .toList();
+        return new KnowledgeMenuSnapshot(
+                true, global, workspace, expert.getEnabledDocs());
     }
 
-    /**
-     * 添加知识库分组标题（使用自定义 Label 代替 disabled MenuItem）
-     */
-    private void addKnowledgeSectionHeader(String title) {
-        Label header = new Label(title);
-        header.getStyleClass().add("knowledge-section-header");
-        CustomMenuItem headerItem = new CustomMenuItem(header, false);
-        headerItem.setHideOnClick(false);
-        headerItem.getStyleClass().add("knowledge-header-item");
-        knowledgeMenu.getItems().add(headerItem);
-    }
-
-    /**
-     * 知识库文档勾选状态变更回调
-     */
-    private void onKnowledgeSelectionChanged(List<CheckMenuItem> docItems, CheckMenuItem selectAllItem) {
+    /** 将明确的文档 ID 集合持久化到当前工作区知识库。 */
+    private void applyKnowledgeSelection(Set<String> selectedNames) {
         var expert = runtime.getKnowledgeExpert();
-        int selectedCount = 0;
-        for (CheckMenuItem item : docItems) {
-            String text = item.getText();
-            // 解析文档名：去掉末尾的 "  N 片段"
-            int sep = text.lastIndexOf("  ");
-            String docName = sep > 0 ? text.substring(0, sep) : text;
-            // 直接落到知识库中心的持久化启用状态，使顶栏临时调整与中心保持一致
-            expert.setDocEnabled(docName, item.isSelected());
-            if (item.isSelected()) selectedCount++;
+        List<String> documentNames = new ArrayList<>(expert.getDocumentNames(
+                com.javaclaw.agent.expert.KnowledgeExpert.Scope.GLOBAL));
+        documentNames.addAll(expert.getDocumentNames(
+                com.javaclaw.agent.expert.KnowledgeExpert.Scope.WORKSPACE));
+        for (String documentName : documentNames) {
+            expert.setDocEnabled(documentName, selectedNames.contains(documentName));
         }
-
-        selectAllItem.setSelected(selectedCount == docItems.size());
-        updateKnowledgeMenuStyle(selectedCount);
-    }
-
-    /**
-     * 更新知识库按钮样式和文字
-     */
-    private void updateKnowledgeMenuStyle(int selectedCount) {
-        if (selectedCount > 0) {
-            knowledgeMenu.setText("知识库(" + selectedCount + ")");
-            if (!knowledgeMenu.getStyleClass().contains("knowledge-active")) {
-                knowledgeMenu.getStyleClass().add("knowledge-active");
-            }
-        } else {
-            knowledgeMenu.setText("知识库");
-            knowledgeMenu.getStyleClass().remove("knowledge-active");
-        }
-    }
-
-    /**
-     * 重置知识库按钮显示（工作区切换时调用）。
-     * 文档「参与检索」状态已按工作区持久化在 KnowledgeExpert，切换工作区时随服务重建自动加载，
-     * 此处仅复位顶栏按钮文案，菜单将在下次打开时按新工作区的启用状态重建。
-     */
-    private void clearKnowledgeSelection() {
-        updateKnowledgeMenuStyle(0);
     }
 
     /**
@@ -2599,8 +2485,8 @@ public class ChatViewController implements AutoCloseable {
                         // 知识库配置可能变化：直接按新 runtime 重建菜单（清空选中态后重建，
                         // 而非只清空——关知识库中心的 onHidden 重建在异步重建期间被跳过，
                         // 此处是它的唯一补偿点）
-                        clearKnowledgeSelection();
-                        rebuildKnowledgeMenu();
+                        knowledgeMenuController.reset();
+                        knowledgeMenuController.refresh();
                         wireTokenTracker();
                         modeBarController.refreshModes(modeBarController.selectedModeId());
                         modeBarController.refreshWorkflows();
@@ -2779,10 +2665,10 @@ public class ChatViewController implements AutoCloseable {
                 () -> openSettings("嵌入模型"));
         // 关闭后重建顶栏知识库菜单（文档增删 / 启用状态可能已变化）
         // 重建进行中跳过：此刻旧 runtime 正被后台线程关闭（EclipseStore 知识库已 close），
-        // 读它会抛异常且刚建好的菜单也会被重建收尾清掉——收尾的 rebuildKnowledgeMenu 补偿
+        // 读它会抛异常且刚建好的菜单也会被重建收尾清掉，收尾刷新是唯一补偿点。
         view.setOnHidden(() -> {
             if (!rebuildInProgress.get()) {
-                rebuildKnowledgeMenu();
+                knowledgeMenuController.refresh();
             }
         });
         view.show();
@@ -2913,8 +2799,7 @@ public class ChatViewController implements AutoCloseable {
                         loadSessions();
 
                         // 10. 重置知识库菜单（清除旧工作区的文档列表和选中状态）
-                        knowledgeMenu.getItems().clear();
-                        clearKnowledgeSelection();
+                        knowledgeMenuController.reset();
 
                         // 10.5. 重新绑定 TokenTracker 回调（新工作区的追踪器）
                         wireTokenTracker();
