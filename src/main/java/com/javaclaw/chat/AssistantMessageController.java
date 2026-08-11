@@ -221,10 +221,16 @@ public final class AssistantMessageController implements AutoCloseable {
         deleteAction = () -> { };
         adoptionAction = null;
         if (replyBubble != null) replyBubble.dispose();
-        disposeNestedMarkdown(toolResultsBox);
+        disposeNestedViews(toolResultsBox);
     }
 
-    private static void disposeNestedMarkdown(javafx.scene.Node node) {
+    private static void disposeNestedViews(javafx.scene.Node node) {
+        if (node.hasProperties()
+                && node.getProperties().get("expandableMarkdownBlockView")
+                instanceof ExpandableMarkdownBlockView block) {
+            block.close();
+            return;
+        }
         if (node.hasProperties()
                 && node.getProperties().get("markdownBubble") instanceof MarkdownBubble bubble) {
             bubble.dispose();
@@ -232,7 +238,7 @@ public final class AssistantMessageController implements AutoCloseable {
         }
         if (node instanceof javafx.scene.Parent parent) {
             for (javafx.scene.Node child : parent.getChildrenUnmodifiable()) {
-                disposeNestedMarkdown(child);
+                disposeNestedViews(child);
             }
         }
     }

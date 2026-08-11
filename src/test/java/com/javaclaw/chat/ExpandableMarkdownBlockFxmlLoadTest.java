@@ -7,10 +7,11 @@ import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fx.FxDispatcher;
 import javafx.application.Platform;
+import javafx.css.PseudoClass;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.control.Button;
-import javafx.scene.layout.StackPane;
+import javafx.scene.control.Label;
 import javafx.scene.layout.VBox;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -21,7 +22,6 @@ import org.springframework.context.annotation.AnnotationConfigApplicationContext
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -31,11 +31,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @EnabledIfSystemProperty(named = "javaclaw.fx.tests", matches = "true",
         disabledReason = "需要可用的 JavaFX 显示服务")
-class AssistantMessageFxmlLoadTest {
+class ExpandableMarkdownBlockFxmlLoadTest {
 
     private static final long TIMEOUT_SECONDS = 5;
     private AnnotationConfigApplicationContext context;
-    private AssistantMessageView view;
+    private ExpandableMarkdownBlockView view;
 
     @BeforeAll
     static void startToolkit() throws Exception {
@@ -55,61 +55,41 @@ class AssistantMessageFxmlLoadTest {
     }
 
     @Test
-    void routesActionsAndOwnsNestedMarkdownLifecycle() throws Exception {
-        view = createView();
-        MarkdownBubble reply = callFx(view::reply);
-        ExpandableMarkdownBlockView nested = callFx(() ->
-                context.getBean(ExpandableMarkdownBlockFactory.class).create(
-                        ExpandableMarkdownBlockFactory.Variant.SUB_AGENT,
-                        "编程专家", true));
-        MarkdownBubble nestedReply = callFx(nested::bubble);
-        AtomicBoolean regenerated = new AtomicBoolean();
-        AtomicReference<String> quoted = new AtomicReference<>();
-        AtomicBoolean adopted = new AtomicBoolean();
+    void subAgentResultRevealsCollapsesAndOwnsMarkdown() throws Exception {
+        view = create(ExpandableMarkdownBlockFactory.Variant.SUB_AGENT, false);
+        MarkdownBubble bubble = callFx(view::bubble);
+        VBox content = find(view.root(), "contentBox", VBox.class);
+        Button collapse = find(view.root(), "collapseButton", Button.class);
 
         runFx(() -> {
-            view.setRegenerateAction(() -> regenerated.set(true));
-            view.setQuoteAction(quoted::set);
-            view.reply().appendText("**answer**");
-            view.revealReply();
-            view.showTools();
-            view.toolsHost().getChildren().add(nested.root());
-            view.enableAdoption(() -> adopted.set(true));
-            button("↻ 重新生成").fire();
-            button("↩ 引用回复").fire();
-            button("✓ 采纳").fire();
+            view.bubble().appendText("result");
+            view.revealContent();
         });
-
-        assertTrue(regenerated.get());
-        assertEquals("**answer**", quoted.get());
-        assertTrue(adopted.get());
-        StackPane replyHost = find(view.root(), "replyHost", StackPane.class);
-        VBox tools = find(view.root(), "toolResultsBox", VBox.class);
-        assertTrue(callFx(replyHost::isVisible));
-        assertTrue(callFx(tools::isVisible));
-        assertNotNull(callFx(() -> view.root().getProperties().get("assistantMessageView")));
+        assertTrue(callFx(content::isVisible));
+        runFx(collapse::fire);
+        assertFalse(callFx(content::isManaged));
+        assertEquals("▶", callFx(collapse::getText));
 
         runFx(view::close);
-        assertEquals(MarkdownBubble.State.DISPOSED, callFx(reply::state));
-        assertEquals(MarkdownBubble.State.DISPOSED, callFx(nestedReply::state));
+        assertEquals(MarkdownBubble.State.DISPOSED, callFx(bubble::state));
         view = null;
     }
 
     @Test
-    void replyCardCanBeHiddenWithoutHidingToolResults() throws Exception {
-        view = createView();
-        runFx(() -> {
-            view.showTools();
-            view.hideReplyCard();
-        });
+    void planVariantKeepsSemanticPseudoClassAndTitle() throws Exception {
+        view = create(ExpandableMarkdownBlockFactory.Variant.PLAN_AGENT, true);
+        Label title = find(view.root(), "titleLabel", Label.class);
 
-        VBox card = find(view.root(), "unifiedBubble", VBox.class);
-        VBox tools = find(view.root(), "toolResultsBox", VBox.class);
-        assertFalse(callFx(card::isManaged));
-        assertTrue(callFx(tools::isManaged));
+        assertEquals("规划协调者", callFx(title::getText));
+        assertTrue(callFx(() -> view.root().getPseudoClassStates()
+                .contains(PseudoClass.getPseudoClass("plan-agent"))));
+        assertNotNull(callFx(() -> view.root().getProperties()
+                .get("expandableMarkdownBlockView")));
     }
 
-    private AssistantMessageView createView() throws Exception {
+    private ExpandableMarkdownBlockView create(
+            ExpandableMarkdownBlockFactory.Variant variant,
+            boolean initiallyVisible) throws Exception {
         context = new AnnotationConfigApplicationContext();
         ManagedTaskExecutor tasks = new ManagedTaskExecutor(
                 new ExecutionLimits(16, 2, 32, 1, 1));
@@ -124,31 +104,12 @@ class AssistantMessageFxmlLoadTest {
                 () -> new SpringFxmlLoader(context.getBeanFactory()));
         context.registerBean(MarkdownBubbleFactory.class,
                 () -> new MarkdownBubbleFactory(context.getBean(SpringFxmlLoader.class)));
-        context.registerBean(AssistantMessageFactory.class,
-                () -> new AssistantMessageFactory(context.getBean(SpringFxmlLoader.class)));
         context.registerBean(ExpandableMarkdownBlockFactory.class,
                 () -> new ExpandableMarkdownBlockFactory(
                         context.getBean(SpringFxmlLoader.class)));
         context.refresh();
-        return callFx(() -> context.getBean(AssistantMessageFactory.class)
-                .create("JavaClaw", "gpt-5", "10:30"));
-    }
-
-    private Button button(String text) {
-        Button found = findButton(view.root(), text);
-        assertNotNull(found, text);
-        return found;
-    }
-
-    private static Button findButton(Node node, String text) {
-        if (node instanceof Button button && text.equals(button.getText())) return button;
-        if (node instanceof Parent parent) {
-            for (Node child : parent.getChildrenUnmodifiable()) {
-                Button found = findButton(child, text);
-                if (found != null) return found;
-            }
-        }
-        return null;
+        return callFx(() -> context.getBean(ExpandableMarkdownBlockFactory.class)
+                .create(variant, "规划协调者", initiallyVisible));
     }
 
     private static <N extends Node> N find(Node root, String id, Class<N> type)

@@ -101,6 +101,15 @@ class ChatFxmlStructureTest {
     }
 
     @Test
+    void expandableMarkdownBlockDeclaresInjectedNodesAndActions() throws Exception {
+        Document document = document("/fxml/chat/expandable-markdown-block.fxml");
+        assertEquals(ExpandableMarkdownBlockController.class.getName(),
+                document.getDocumentElement().getAttributeNS(FXML_NAMESPACE, "controller"));
+        assertInjectedFields(document, ExpandableMarkdownBlockController.class);
+        assertEquals(Set.of("collapseRequested", "copyRequested"), eventHandlers(document));
+    }
+
+    @Test
     void attachmentPreviewDeclaresEveryInjectedNodeAndEventEntrypoint() throws Exception {
         Document document = document("/fxml/chat/attachment-preview-item.fxml");
         assertEquals(AttachmentPreviewItemController.class.getName(),

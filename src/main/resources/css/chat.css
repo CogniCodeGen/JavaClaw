@@ -1719,6 +1719,19 @@
     -fx-padding: 0 0 3 6;
 }
 
+.expandable-result-title {
+    -fx-text-fill: -jc-primary-500;
+    -fx-font-size: 11px;
+    -fx-font-weight: 600;
+    -fx-padding: 0 0 3 6;
+}
+
+.expandable-markdown-block:plan-agent .expandable-result-title {
+    -fx-text-fill: -jc-accent-600;
+    -fx-font-size: 12px;
+    -fx-font-weight: 700;
+}
+
 /* 时间戳 */
 .time-label {
     -fx-text-fill: -jc-neutral-400;
