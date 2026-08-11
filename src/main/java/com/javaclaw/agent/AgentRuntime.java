@@ -8,6 +8,7 @@ import com.javaclaw.agent.vision.VisionPreprocessor;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.application.schedule.ScheduleApplicationService;
 import com.javaclaw.application.task.SddTaskApplicationService;
+import com.javaclaw.application.knowledge.KnowledgeDocumentPreferencePort;
 import com.javaclaw.chat.ChatMessage;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.mcp.McpClientManager;
@@ -16,6 +17,7 @@ import com.javaclaw.memory.embed.EmbeddingGateway;
 import com.javaclaw.platform.execution.TaskHandle;
 import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
+import com.javaclaw.runtime.WorkspaceContext;
 import com.javaclaw.site.SiteCredentialManager;
 import com.javaclaw.skill.SkillRuntimeServices;
 import com.javaclaw.system.JShellRunner;
@@ -154,8 +156,12 @@ public final class AgentRuntime {
             ScheduleApplicationService scheduleApplicationService,
             SkillRuntimeServices skillRuntime,
             java.util.function.Supplier<SddTaskApplicationService> sddTasks,
-            JShellRunner jshellRunner) {
-        AgentConfig config = AgentConfig.getInstance();
+            JShellRunner jshellRunner,
+            AgentConfig config,
+            WorkspaceContext workspace,
+            KnowledgeDocumentPreferencePort knowledgePreferences) {
+        java.util.Objects.requireNonNull(config, "config");
+        java.util.Objects.requireNonNull(workspace, "workspace");
         log.info("========== 初始化 AgentRuntime 基础设施 ==========");
         log.info("API 地址: {}", config.getBaseUrl());
         log.info("模型名称: {}", config.getModelName());
@@ -196,7 +202,14 @@ public final class AgentRuntime {
         this.expertManager = new ExpertManager(
                 modelFactory, browserManager, siteCredentialManager,
                 ToolCallOrigin.INTERACTIVE, customAgentConfig);
-        this.knowledgeExpert = new KnowledgeExpert(modelFactory, embeddingGateway);
+        this.knowledgeExpert = new KnowledgeExpert(
+                modelFactory,
+                embeddingGateway,
+                config,
+                workspace.globalDataRoot().resolve("knowledge/global"),
+                workspace.globalDataRoot().resolve("knowledge/workspaces")
+                        .resolve(workspace.workspaceId()),
+                knowledgePreferences);
 
         // 6. MCP 客户端：连接可能涉及进程和网络 I/O，不阻塞 Spring/JavaFX 启动线程。
         if (mcpConfigManager.hasEnabledServers()) {

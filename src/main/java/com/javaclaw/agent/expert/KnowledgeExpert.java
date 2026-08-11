@@ -2,9 +2,8 @@ package com.javaclaw.agent.expert;
 
 import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.agent.model.ToolResponse;
+import com.javaclaw.application.knowledge.KnowledgeDocumentPreferencePort;
 import com.javaclaw.config.AgentConfig;
-import com.javaclaw.config.AppDatabase;
-import com.javaclaw.config.DataManager;
 import com.javaclaw.memory.embed.EmbeddingGateway;
 import com.javaclaw.memory.embed.EmbeddingPurpose;
 import com.javaclaw.memory.model.KnowledgeChunk;
@@ -28,10 +27,6 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -47,8 +42,8 @@ import java.util.Set;
  * <p>双知识库（全局 + 工作区）各由一个 {@link MemoryStore} 承载（EclipseStore 对象图 + JVector 向量索引），
  * 使用 {@link MemoryStore} 直接持久化知识分块与来源文档名。</p>
  *
- * <p>存储目录：全局 {@code data/knowledge/global/store}、工作区 {@code data/knowledge/workspaces/{workspace_id}/store}；
- * 启动时只打开当前 H2 指向的存储目录。</p>
+ * <p>存储目录由当前 {@code WorkspaceContext} 注入：全局与工作区存储互相隔离，
+ * 启动时只打开当前工作区对应的目录。</p>
  *
  * @author JavaClaw
  */
@@ -66,6 +61,8 @@ public class KnowledgeExpert {
 
     private final boolean ragEnabled;
     private final EmbeddingGateway gate;
+    private final AgentConfig config;
+    private final KnowledgeDocumentPreferencePort documentPreferences;
     private final String ragInitializationError;
     private MemoryStore globalStore;
     private MemoryStore workspaceStore;
@@ -85,8 +82,16 @@ public class KnowledgeExpert {
 
     // ==================== 构造 ====================
 
-    public KnowledgeExpert(ModelFactory modelFactory, EmbeddingGateway embeddingGateway) {
-        AgentConfig config = AgentConfig.getInstance();
+    public KnowledgeExpert(
+            ModelFactory modelFactory,
+            EmbeddingGateway embeddingGateway,
+            AgentConfig config,
+            Path globalKnowledgeDirectory,
+            Path workspaceKnowledgeDirectory,
+            KnowledgeDocumentPreferencePort documentPreferences) {
+        this.config = java.util.Objects.requireNonNull(config, "config");
+        this.documentPreferences = java.util.Objects.requireNonNull(
+                documentPreferences, "documentPreferences");
         boolean enabled = config.isRagEnabled();
         this.modelFactory = modelFactory;
         this.gate = java.util.Objects.requireNonNull(embeddingGateway, "embeddingGateway");
@@ -96,9 +101,13 @@ public class KnowledgeExpert {
             try {
                 int dim = gate.dimensions();
                 this.globalStore = new MemoryStore(
-                        DataManager.getInstance().getGlobalKnowledgeDir().resolve("store"), dim, "knowledge-global");
+                        java.util.Objects.requireNonNull(globalKnowledgeDirectory,
+                                "globalKnowledgeDirectory").resolve("store"),
+                        dim, "knowledge-global");
                 this.workspaceStore = new MemoryStore(
-                        DataManager.getInstance().getKnowledgeDir().resolve("store"), dim, "knowledge-workspace");
+                        java.util.Objects.requireNonNull(workspaceKnowledgeDirectory,
+                                "workspaceKnowledgeDirectory").resolve("store"),
+                        dim, "knowledge-workspace");
                 this.globalStore.open();
                 this.workspaceStore.open();
 
@@ -422,7 +431,7 @@ public class KnowledgeExpert {
         if (keywords == null || keywords.isBlank()) {
             return ToolResponse.error("knowledge_search", "关键词不能为空");
         }
-        String result = textSearch(keywords, null, AgentConfig.getInstance().getRagRetrieveLimit());
+        String result = textSearch(keywords, null, config.getRagRetrieveLimit());
         if (result == null) {
             return ToolResponse.error("knowledge_search", "未找到包含关键词的文档分块，请换用更宽泛的关键词重试");
         }
@@ -437,9 +446,8 @@ public class KnowledgeExpert {
         if (!ragEnabled || getTotalChunkCount() == 0) {
             return null;
         }
-        AgentConfig cfg = AgentConfig.getInstance();
-        int limit = cfg.getRagRetrieveLimit();
-        double threshold = cfg.getRagScoreThreshold();
+        int limit = config.getRagRetrieveLimit();
+        double threshold = config.getRagScoreThreshold();
         boolean filter = selectedDocs != null && !selectedDocs.isEmpty();
 
         float[] q = gate.embed(query, EmbeddingPurpose.INTERACTIVE_RECALL);
@@ -640,7 +648,7 @@ public class KnowledgeExpert {
         if (!ragEnabled || query == null || query.isBlank() || getTotalChunkCount() == 0) return out;
         Set<String> enabled = getEnabledDocs();
         if (enabled.isEmpty()) return out;
-        double threshold = AgentConfig.getInstance().getRagScoreThreshold();
+        double threshold = config.getRagScoreThreshold();
 
         float[] q = gate.embed(query, EmbeddingPurpose.INTERACTIVE_RECALL);
         if (q != null) {
@@ -711,44 +719,15 @@ public class KnowledgeExpert {
     private void loadDocPrefs() {
         try {
             disabledDocs.clear();
-            try (Connection c = AppDatabase.getConnection();
-                 PreparedStatement ps = c.prepareStatement("""
-                         SELECT doc_name
-                         FROM knowledge_doc_prefs
-                         WHERE workspace_id = ? AND scope = 'all' AND excluded = TRUE
-                         ORDER BY doc_name
-                         """)) {
-                ps.setString(1, AppDatabase.currentWorkspaceId());
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        disabledDocs.add(rs.getString("doc_name"));
-                    }
-                }
-            }
+            disabledDocs.addAll(documentPreferences.loadExcluded());
         } catch (Exception e) {
             log.warn("读取知识库文档检索偏好失败（忽略，按默认全部启用）: {}", e.getMessage());
         }
     }
 
     private void saveDocPrefs() {
-        String insert = """
-                INSERT INTO knowledge_doc_prefs(workspace_id, scope, doc_name, excluded, updated_at)
-                VALUES (?, 'all', ?, TRUE, CURRENT_TIMESTAMP)
-                """;
-        try (Connection c = AppDatabase.getConnection();
-             PreparedStatement del = c.prepareStatement("DELETE FROM knowledge_doc_prefs WHERE workspace_id = ? AND scope = 'all'");
-             PreparedStatement ps = c.prepareStatement(insert)) {
-            c.setAutoCommit(false);
-            String workspaceId = AppDatabase.currentWorkspaceId();
-            del.setString(1, workspaceId);
-            del.executeUpdate();
-            for (String doc : disabledDocs) {
-                ps.setString(1, workspaceId);
-                ps.setString(2, doc);
-                ps.addBatch();
-            }
-            ps.executeBatch();
-            c.commit();
+        try {
+            documentPreferences.replaceExcluded(Set.copyOf(disabledDocs));
         } catch (Exception e) {
             log.warn("保存知识库文档检索偏好失败: {}", e.getMessage());
         }

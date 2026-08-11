@@ -21,12 +21,22 @@ class WorkspaceContextTest {
                 Path.of("data/logs/workspace-a"));
 
         assertEquals("workspace-a", context.workspaceId());
+        assertEquals("workspace-a", context.workspaceName());
         assertTrue(context.globalDataRoot().isAbsolute());
         assertEquals(Path.of("data").toAbsolutePath().normalize(), context.globalDataRoot());
         assertTrue(context.dataRoot().isAbsolute());
         assertTrue(context.browserDir().isAbsolute());
         assertTrue(context.screenshotsDir().isAbsolute());
         assertTrue(context.logDir().isAbsolute());
+    }
+
+    @Test
+    void keepsExplicitWorkspaceDisplayName() {
+        Path path = Path.of("data");
+        WorkspaceContext context = new WorkspaceContext(
+                "workspace-a", "研发工作区", path, path, path, path, path);
+
+        assertEquals("研发工作区", context.workspaceName());
     }
 
     @Test

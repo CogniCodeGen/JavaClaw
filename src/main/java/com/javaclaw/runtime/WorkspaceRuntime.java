@@ -15,6 +15,7 @@ import com.javaclaw.ui.javafx.mcp.McpCenterViewFactory;
 import com.javaclaw.ui.javafx.settings.SettingsViewFactory;
 import com.javaclaw.ui.javafx.schedule.ScheduleViewFactory;
 import com.javaclaw.ui.javafx.memory.MemoryViewFactory;
+import com.javaclaw.ui.javafx.knowledge.KnowledgeCenterViewFactory;
 import com.javaclaw.ui.javafx.workflow.WorkflowViewFactory;
 import com.javaclaw.ui.javafx.skill.SkillCenterViewFactory;
 import com.javaclaw.ui.javafx.task.SddTaskViewFactory;
@@ -41,6 +42,7 @@ public final class WorkspaceRuntime implements AutoCloseable {
     private final SettingsViewFactory settingsViews;
     private final ScheduleViewFactory scheduleViews;
     private final MemoryViewFactory memoryViews;
+    private final KnowledgeCenterViewFactory knowledgeViews;
     private final WorkflowViewFactory workflowViews;
     private final SkillCenterViewFactory skillViews;
     private final ScheduleManager scheduleManager;
@@ -62,6 +64,7 @@ public final class WorkspaceRuntime implements AutoCloseable {
         settingsViews = springContext.bean(SettingsViewFactory.class);
         scheduleViews = springContext.bean(ScheduleViewFactory.class);
         memoryViews = springContext.bean(MemoryViewFactory.class);
+        knowledgeViews = springContext.bean(KnowledgeCenterViewFactory.class);
         workflowViews = springContext.bean(WorkflowViewFactory.class);
         skillViews = springContext.bean(SkillCenterViewFactory.class);
         scheduleManager = springContext.bean(ScheduleManager.class);
@@ -113,6 +116,10 @@ public final class WorkspaceRuntime implements AutoCloseable {
 
     public MemoryViewFactory memoryViews() {
         return memoryViews;
+    }
+
+    public KnowledgeCenterViewFactory knowledgeViews() {
+        return knowledgeViews;
     }
 
     public WorkflowViewFactory workflowViews() {

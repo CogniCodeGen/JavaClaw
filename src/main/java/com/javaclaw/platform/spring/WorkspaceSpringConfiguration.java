@@ -22,6 +22,11 @@ import com.javaclaw.application.mcp.McpTemplatePort;
 import com.javaclaw.application.memory.MemoryApplicationService;
 import com.javaclaw.application.memory.MemoryPort;
 import com.javaclaw.application.memory.MemoryUseCase;
+import com.javaclaw.application.knowledge.KnowledgeApplicationService;
+import com.javaclaw.application.knowledge.KnowledgeDocumentPreferencePort;
+import com.javaclaw.application.knowledge.KnowledgePort;
+import com.javaclaw.application.knowledge.KnowledgeSettingsPort;
+import com.javaclaw.application.knowledge.KnowledgeUseCase;
 import com.javaclaw.application.workflow.WorkflowApplicationService;
 import com.javaclaw.application.workflow.WorkflowPort;
 import com.javaclaw.application.workflow.WorkflowUseCase;
@@ -57,6 +62,9 @@ import com.javaclaw.infrastructure.mcp.McpConfigManagerAdapter;
 import com.javaclaw.infrastructure.mcp.McpJsonImporterAdapter;
 import com.javaclaw.infrastructure.mcp.McpTemplateLibraryAdapter;
 import com.javaclaw.infrastructure.memory.MemoryServiceAdapter;
+import com.javaclaw.infrastructure.knowledge.AgentConfigKnowledgeSettingsAdapter;
+import com.javaclaw.infrastructure.knowledge.JdbcKnowledgeDocumentPreferenceAdapter;
+import com.javaclaw.infrastructure.knowledge.KnowledgeExpertAdapter;
 import com.javaclaw.infrastructure.workflow.WorkflowServiceAdapter;
 import com.javaclaw.infrastructure.settings.AgentConfigModelSettingsAdapter;
 import com.javaclaw.infrastructure.settings.AgentConfigBehaviorSettingsAdapter;
@@ -119,6 +127,13 @@ import com.javaclaw.ui.javafx.schedule.ScheduleViewFactory;
 import com.javaclaw.ui.javafx.memory.MemoryComponentFactory;
 import com.javaclaw.ui.javafx.memory.MemoryFactDialogFactory;
 import com.javaclaw.ui.javafx.memory.MemoryViewFactory;
+import com.javaclaw.ui.javafx.knowledge.JavaFxKnowledgeImportPicker;
+import com.javaclaw.ui.javafx.knowledge.KnowledgeCenterViewFactory;
+import com.javaclaw.ui.javafx.knowledge.KnowledgeDocumentCellFactory;
+import com.javaclaw.ui.javafx.knowledge.KnowledgeImportPicker;
+import com.javaclaw.ui.javafx.knowledge.KnowledgePreviewCellFactory;
+import com.javaclaw.ui.javafx.knowledge.KnowledgeSearchHitCellFactory;
+import com.javaclaw.ui.javafx.knowledge.KnowledgeTextImportDialogFactory;
 import com.javaclaw.ui.javafx.workflow.WorkflowConditionDialogFactory;
 import com.javaclaw.ui.javafx.workflow.WorkflowDefinitionCellFactory;
 import com.javaclaw.ui.javafx.workflow.WorkflowInputDialogFactory;
@@ -181,10 +196,13 @@ public class WorkspaceSpringConfiguration {
             ScheduleApplicationService schedules,
             SkillRuntimeServices skills,
             ObjectProvider<SddTaskApplicationService> sddTasks,
-            com.javaclaw.system.JShellRunner jshellRunner) {
+            com.javaclaw.system.JShellRunner jshellRunner,
+            com.javaclaw.config.AgentConfig settings,
+            WorkspaceContext workspace,
+            KnowledgeDocumentPreferencePort knowledgePreferences) {
         return new AgentRuntime(options.browserManager(), customAgents, siteCredentials,
                 mcpConfigurations, mcpClients, workspaceTaskScope, schedules, skills,
-                sddTasks::getObject, jshellRunner);
+                sddTasks::getObject, jshellRunner, settings, workspace, knowledgePreferences);
     }
 
     @Bean
@@ -197,6 +215,15 @@ public class WorkspaceSpringConfiguration {
     @Bean
     com.javaclaw.config.AgentConfig agentConfig() {
         return com.javaclaw.config.AgentConfig.getInstance();
+    }
+
+    @Bean
+    KnowledgeDocumentPreferencePort knowledgeDocumentPreferencePort(
+            WorkspaceContext workspace,
+            JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager) {
+        return new JdbcKnowledgeDocumentPreferenceAdapter(
+                workspace.workspaceId(), jdbc, transactionManager);
     }
 
     @Bean
@@ -787,6 +814,57 @@ public class WorkspaceSpringConfiguration {
     @Bean(destroyMethod = "")
     KnowledgeExpert knowledgeExpert(AgentRuntime runtime) {
         return runtime.getKnowledgeExpert();
+    }
+
+    @Bean
+    KnowledgePort knowledgePort(KnowledgeExpert expert) {
+        return new KnowledgeExpertAdapter(expert);
+    }
+
+    @Bean
+    KnowledgeSettingsPort knowledgeSettingsPort(com.javaclaw.config.AgentConfig settings) {
+        return new AgentConfigKnowledgeSettingsAdapter(settings);
+    }
+
+    @Bean
+    KnowledgeApplicationService knowledgeApplicationService(
+            KnowledgePort knowledge,
+            KnowledgeSettingsPort settings,
+            WorkspaceContext workspace) {
+        return new KnowledgeUseCase(knowledge, settings, workspace.workspaceName());
+    }
+
+    @Bean
+    KnowledgeImportPicker knowledgeImportPicker() {
+        return new JavaFxKnowledgeImportPicker();
+    }
+
+    @Bean
+    KnowledgeDocumentCellFactory knowledgeDocumentCellFactory() {
+        return new KnowledgeDocumentCellFactory();
+    }
+
+    @Bean
+    KnowledgePreviewCellFactory knowledgePreviewCellFactory() {
+        return new KnowledgePreviewCellFactory();
+    }
+
+    @Bean
+    KnowledgeSearchHitCellFactory knowledgeSearchHitCellFactory() {
+        return new KnowledgeSearchHitCellFactory();
+    }
+
+    @Bean
+    KnowledgeTextImportDialogFactory knowledgeTextImportDialogFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader,
+            com.javaclaw.platform.fx.FxDispatcher fx) {
+        return new KnowledgeTextImportDialogFactory(loader, fx);
+    }
+
+    @Bean
+    KnowledgeCenterViewFactory knowledgeCenterViewFactory(
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
+        return new KnowledgeCenterViewFactory(loader);
     }
 
     @Bean

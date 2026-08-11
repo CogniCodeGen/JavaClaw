@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.TextArea?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox spacing="10.0" prefWidth="520.0" accessibleText="粘贴文本导入知识库"
+      xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.javaclaw.ui.javafx.knowledge.KnowledgeTextImportDialogController">
+    <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
+    <children>
+        <Label text="文档标题" styleClass="grp-title"/>
+        <TextField fx:id="titleField" promptText="可选，默认使用“手动导入文本”"/>
+        <Label text="文本内容" styleClass="grp-title"/>
+        <TextArea fx:id="contentArea" prefRowCount="12" wrapText="true"
+                  promptText="在此粘贴要导入的文本内容…"/>
+        <Label text="文本会按当前分块参数建立向量索引" styleClass="sec-hint"/>
+    </children>
+</VBox>

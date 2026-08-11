@@ -8,6 +8,7 @@ import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.application.task.SddTaskApplicationService;
 import com.javaclaw.application.task.SddTaskUseCase;
+import com.javaclaw.infrastructure.knowledge.JdbcKnowledgeDocumentPreferenceAdapter;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.config.DataManager;
 import com.javaclaw.config.DatabaseAccess;
@@ -20,6 +21,7 @@ import com.javaclaw.mcp.McpConfigManager;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.json.JsonCodec;
+import com.javaclaw.runtime.WorkspaceContext;
 import com.javaclaw.skill.SkillManager;
 import com.javaclaw.skill.SkillRuntimeServices;
 import com.javaclaw.skill.SkillUsageTracker;
@@ -97,11 +99,16 @@ public final class SddHeadlessDriver {
         SkillRuntimeServices skillRuntime = new SkillRuntimeServices(skills, usage, proposals);
         java.util.concurrent.atomic.AtomicReference<SddTaskApplicationService> sddTasks =
                 new java.util.concurrent.atomic.AtomicReference<>();
+        WorkspaceContext workspace = WorkspaceContext.captureCurrent();
+        var knowledgePreferences = new JdbcKnowledgeDocumentPreferenceAdapter(
+                workspace.workspaceId(), rootContext.getBean(JdbcTemplate.class),
+                rootContext.getBean(PlatformTransactionManager.class));
         AgentRuntime runtime = new AgentRuntime(browser, customAgents, siteCredentials,
                 mcpConfigurations, new McpClientManager(mcpConfigurations, taskScope), taskScope,
                 null, skillRuntime,
                 () -> java.util.Objects.requireNonNull(sddTasks.get(), "SDD 任务用例尚未装配"),
-                rootContext.getBean(com.javaclaw.system.JShellRunner.class));
+                rootContext.getBean(com.javaclaw.system.JShellRunner.class), settings, workspace,
+                knowledgePreferences);
 
         // 2. 配置 SDD 管理器（注入自动放行端口 → PortReviewGate 评审直接批准）
         SkillCurator curator = new SkillCurator(

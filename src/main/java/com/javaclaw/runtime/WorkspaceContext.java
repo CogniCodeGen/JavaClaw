@@ -14,6 +14,7 @@ import java.util.Objects;
  */
 public record WorkspaceContext(
         String workspaceId,
+        String workspaceName,
         Path globalDataRoot,
         Path dataRoot,
         Path browserDir,
@@ -24,6 +25,8 @@ public record WorkspaceContext(
         if (workspaceId == null || workspaceId.isBlank()) {
             throw new IllegalArgumentException("workspaceId 不能为空");
         }
+        workspaceName = workspaceName == null || workspaceName.isBlank()
+                ? "默认工作区" : workspaceName.strip();
         globalDataRoot = normalize(globalDataRoot, "globalDataRoot");
         dataRoot = normalize(dataRoot, "dataRoot");
         browserDir = normalize(browserDir, "browserDir");
@@ -31,12 +34,25 @@ public record WorkspaceContext(
         logDir = normalize(logDir, "logDir");
     }
 
+    public WorkspaceContext(
+            String workspaceId,
+            Path globalDataRoot,
+            Path dataRoot,
+            Path browserDir,
+            Path screenshotsDir,
+            Path logDir) {
+        this(workspaceId, workspaceId, globalDataRoot, dataRoot, browserDir,
+                screenshotsDir, logDir);
+    }
+
     /** 从已经完成 reload 的全局路径管理器捕获一致快照。 */
     public static WorkspaceContext captureCurrent() {
         WorkspaceManager workspaces = WorkspaceManager.getInstance();
         DataManager data = DataManager.getInstance();
+        com.javaclaw.config.Workspace current = workspaces.getCurrentWorkspace();
         return new WorkspaceContext(
                 workspaces.getCurrentWorkspaceId(),
+                current == null ? "默认工作区" : current.getName(),
                 workspaces.getGlobalDataPath(),
                 data.getDataRoot(),
                 workspaces.getCurrentBrowserDir(),

@@ -16,9 +16,7 @@ import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fxml.ViewHandle;
 import com.javaclaw.platform.spring.ApplicationContexts;
 import com.javaclaw.platform.spring.WorkspaceSpringContextFactory;
-import com.javaclaw.ui.javafx.knowledge.KnowledgeCenterView;
 import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
-import com.javaclaw.ui.javafx.control.WindowToastFactory;
 import javafx.animation.PauseTransition;
 import javafx.application.Application;
 import javafx.application.Platform;
@@ -121,9 +119,8 @@ public final class UiScreenshotExporter {
             shots.add(new Shot("02-settings.png", "设置", () -> showInternalStage(
                     workspaceRuntime.settingsViews().create(primaryStage))));
             shots.add(new Shot("03-knowledge-center.png", "知识库中心", () ->
-                    new KnowledgeCenterView(primaryStage, runtime.getKnowledgeExpert(), port,
-                            () -> {}, () -> {},
-                            springContext.getBean(WindowToastFactory.class)).show()));
+                    workspaceRuntime.knowledgeViews().create(
+                            primaryStage, () -> {}, () -> {}).show()));
             shots.add(new Shot("04-memory-center.png", "记忆中心", () ->
                     workspaceRuntime.memoryViews().create(primaryStage).show()));
             shots.add(new Shot("05-skill-center.png", "技能中心", () ->

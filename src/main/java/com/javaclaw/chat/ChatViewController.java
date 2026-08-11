@@ -2664,12 +2664,9 @@ public class ChatViewController implements AutoCloseable {
         }
         log.info("打开知识库中心");
         javafx.stage.Stage ownerStage = (javafx.stage.Stage) outerRoot.getScene().getWindow();
-        var view = new com.javaclaw.ui.javafx.knowledge.KnowledgeCenterView(
-                ownerStage, runtime.getKnowledgeExpert(),
-                com.javaclaw.agent.ToolConfirmationManager.getPort(),
-                this::rebuildAgentService,
-                () -> openSettings("嵌入模型"),
-                windowToasts);
+        var view = applicationKernel.current().knowledgeViews().create(
+                ownerStage, this::rebuildAgentService,
+                () -> openSettings("嵌入模型"));
         // 关闭后重建顶栏知识库菜单（文档增删 / 启用状态可能已变化）
         // 重建进行中跳过：此刻旧 runtime 正被后台线程关闭（EclipseStore 知识库已 close），
         // 读它会抛异常且刚建好的菜单也会被重建收尾清掉，收尾刷新是唯一补偿点。

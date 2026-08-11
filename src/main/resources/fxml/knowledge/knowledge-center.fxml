@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ProgressIndicator?>
+<?import javafx.scene.layout.BorderPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+
+<StackPane fx:id="root" styleClass="kc-root" accessibleText="知识库中心"
+           xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1"
+           fx:controller="com.javaclaw.ui.javafx.knowledge.KnowledgeCenterController">
+    <children>
+        <BorderPane>
+            <top>
+                <HBox alignment="CENTER_LEFT" spacing="12.0" styleClass="kc-header">
+                    <children>
+                        <Label text="J" styleClass="kc-logo"/>
+                        <Label text="知识库中心" styleClass="kc-title"/>
+                        <HBox fx:id="ragBadge" alignment="CENTER_LEFT" spacing="6.0"
+                              styleClass="kc-rag-badge">
+                            <children>
+                                <Region styleClass="kc-badge-dot"/>
+                                <Label fx:id="ragBadgeLabel" text="RAG 检查中"/>
+                            </children>
+                        </HBox>
+                        <Region HBox.hgrow="ALWAYS"/>
+                        <HBox alignment="CENTER_LEFT" spacing="7.0" styleClass="kc-emb-chip"
+                              onMouseClicked="#embeddingSettingsRequested"
+                              accessibleText="打开嵌入模型设置">
+                            <children>
+                                <Region fx:id="embeddingDot" styleClass="kc-health-dot, kc-health-checking"/>
+                                <Label text="嵌入" styleClass="kc-emb-tag"/>
+                                <Label fx:id="embeddingModelLabel" text="检查中" styleClass="kc-emb-name"/>
+                                <Label text="·" styleClass="kc-emb-sep"/>
+                                <Label fx:id="embeddingDimensionsLabel" text="—" styleClass="kc-emb-dim"/>
+                            </children>
+                        </HBox>
+                        <Button text="关闭" onAction="#closeRequested"
+                                styleClass="button, jc-btn, jc-btn-ghost, jc-btn-sm"/>
+                    </children>
+                </HBox>
+            </top>
+            <center>
+                <HBox>
+                    <children>
+                        <VBox prefWidth="252.0" minWidth="252.0" styleClass="kc-rail">
+                            <children>
+                                <HBox alignment="CENTER_LEFT" spacing="9.0" styleClass="kc-ws-chip">
+                                    <children>
+                                        <Label text="⌂" styleClass="kc-ws-icon"/>
+                                        <VBox spacing="1.0">
+                                            <children>
+                                                <Label text="当前工作区" styleClass="kc-ws-caption"/>
+                                                <Label fx:id="workspaceNameLabel" text="默认工作区"
+                                                       styleClass="kc-ws-name"/>
+                                            </children>
+                                        </VBox>
+                                    </children>
+                                </HBox>
+                                <Label text="浏览范围" styleClass="kc-rail-group"/>
+                                <HBox fx:id="allNavigation" alignment="CENTER_LEFT" spacing="9.0"
+                                      styleClass="kc-rail-item" onMouseClicked="#allRequested">
+                                    <children>
+                                        <Label text="▦" styleClass="kc-rail-icon"/>
+                                        <Label text="全部文档" styleClass="kc-rail-label"/>
+                                        <Region HBox.hgrow="ALWAYS"/>
+                                        <Label fx:id="allCountLabel" text="0" styleClass="kc-rail-count"/>
+                                    </children>
+                                </HBox>
+                                <HBox fx:id="workspaceNavigation" alignment="CENTER_LEFT" spacing="9.0"
+                                      styleClass="kc-rail-item" onMouseClicked="#workspaceRequested">
+                                    <children>
+                                        <Label text="⌂" styleClass="kc-rail-icon"/>
+                                        <Label text="工作区知识库" styleClass="kc-rail-label"/>
+                                        <Region HBox.hgrow="ALWAYS"/>
+                                        <Label fx:id="workspaceCountLabel" text="0" styleClass="kc-rail-count"/>
+                                    </children>
+                                </HBox>
+                                <HBox fx:id="globalNavigation" alignment="CENTER_LEFT" spacing="9.0"
+                                      styleClass="kc-rail-item" onMouseClicked="#globalRequested">
+                                    <children>
+                                        <Label text="◎" styleClass="kc-rail-icon"/>
+                                        <Label text="全局知识库" styleClass="kc-rail-label"/>
+                                        <Region HBox.hgrow="ALWAYS"/>
+                                        <Label fx:id="globalCountLabel" text="0" styleClass="kc-rail-count"/>
+                                    </children>
+                                </HBox>
+                                <Region prefHeight="12.0"/>
+                                <Region styleClass="kc-rail-divider"/>
+                                <Label text="工具" styleClass="kc-rail-group"/>
+                                <HBox fx:id="searchNavigation" alignment="CENTER_LEFT" spacing="9.0"
+                                      styleClass="kc-rail-item" onMouseClicked="#searchRequested">
+                                    <children>
+                                        <Label text="⌕" styleClass="kc-rail-icon"/>
+                                        <Label text="检索测试" styleClass="kc-rail-label"/>
+                                    </children>
+                                </HBox>
+                                <HBox fx:id="settingsNavigation" alignment="CENTER_LEFT" spacing="9.0"
+                                      styleClass="kc-rail-item" onMouseClicked="#settingsRequested">
+                                    <children>
+                                        <Label text="⚙" styleClass="kc-rail-icon"/>
+                                        <Label text="索引设置" styleClass="kc-rail-label"/>
+                                    </children>
+                                </HBox>
+                                <Region VBox.vgrow="ALWAYS"/>
+                                <VBox spacing="7.0" styleClass="kc-rail-stats">
+                                    <children>
+                                        <HBox><children>
+                                            <Label text="文档" styleClass="kc-stat-label"/>
+                                            <Region HBox.hgrow="ALWAYS"/>
+                                            <Label fx:id="totalDocumentsLabel" text="0" styleClass="kc-stat-value"/>
+                                        </children></HBox>
+                                        <HBox><children>
+                                            <Label text="片段" styleClass="kc-stat-label"/>
+                                            <Region HBox.hgrow="ALWAYS"/>
+                                            <Label fx:id="totalChunksLabel" text="0" styleClass="kc-stat-value"/>
+                                        </children></HBox>
+                                        <HBox><children>
+                                            <Label text="参与检索" styleClass="kc-stat-label"/>
+                                            <Region HBox.hgrow="ALWAYS"/>
+                                            <Label fx:id="enabledDocumentsLabel" text="0"
+                                                   styleClass="kc-stat-value-accent"/>
+                                        </children></HBox>
+                                    </children>
+                                </VBox>
+                            </children>
+                        </VBox>
+                        <StackPane HBox.hgrow="ALWAYS" styleClass="kc-main">
+                            <children>
+                                <fx:include fx:id="documentsPanel" source="knowledge-documents.fxml"/>
+                                <fx:include fx:id="searchPanel" source="knowledge-search.fxml"/>
+                                <fx:include fx:id="settingsPanel" source="knowledge-settings.fxml"/>
+                            </children>
+                        </StackPane>
+                    </children>
+                </HBox>
+            </center>
+            <bottom>
+                <HBox minHeight="28.0" alignment="CENTER_LEFT">
+                    <padding><Insets left="16.0" right="16.0"/></padding>
+                    <children>
+                        <Label fx:id="feedbackLabel" maxWidth="Infinity" wrapText="false"
+                               styleClass="kc-search-meta"/>
+                    </children>
+                </HBox>
+            </bottom>
+        </BorderPane>
+        <StackPane fx:id="loadingOverlay" visible="false" managed="false"
+                   styleClass="loading-overlay" accessibleText="正在加载知识库">
+            <children><ProgressIndicator maxWidth="44.0" maxHeight="44.0"/></children>
+        </StackPane>
+        <StackPane fx:id="toastHost" mouseTransparent="true" pickOnBounds="false"/>
+    </children>
+</StackPane>
