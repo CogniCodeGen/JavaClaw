@@ -2,6 +2,7 @@ package com.javaclaw.chat.markdown;
 
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fx.FxDispatcher;
+import com.javaclaw.ui.javafx.image.ImageViewerFactory;
 import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.Parent;
@@ -33,8 +34,11 @@ class MarkdownRegionViewFactoryTest {
     private static final MarkdownParagraphRenderer.RenderStyleSnapshot STYLE =
             new MarkdownParagraphRenderer.RenderStyleSnapshot(
                     14.5, 1.65, "\"System\", sans-serif", "\"SF Mono\", monospace");
+    private static final SpringFxmlLoader LOADER =
+            new SpringFxmlLoader(new DefaultListableBeanFactory());
+    private static final FxDispatcher FX = new FxDispatcher();
     private static final MarkdownRegionViewFactory FACTORY = new MarkdownRegionViewFactory(
-            new SpringFxmlLoader(new DefaultListableBeanFactory()), new FxDispatcher());
+            LOADER, FX, new ImageViewerFactory(LOADER, FX));
 
     @BeforeAll
     static void startToolkit() throws Exception {

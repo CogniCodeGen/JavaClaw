@@ -10,6 +10,7 @@ import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.app.UIHelper;
 import com.javaclaw.platform.fx.FxDispatcher;
+import com.javaclaw.ui.javafx.image.ImageViewerFactory;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.control.Alert;
@@ -44,9 +45,11 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
 
     private static final Logger log = LoggerFactory.getLogger(JfxUserInteractionPort.class);
     private final FxDispatcher fx;
+    private final ImageViewerFactory imageViewer;
 
-    public JfxUserInteractionPort(FxDispatcher fx) {
+    public JfxUserInteractionPort(FxDispatcher fx, ImageViewerFactory imageViewer) {
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
+        this.imageViewer = java.util.Objects.requireNonNull(imageViewer, "imageViewer");
     }
 
     /** Toast 的 UI 层渲染器；未设置时 notify 降级为日志输出 */
@@ -177,7 +180,7 @@ public final class JfxUserInteractionPort implements UserInteractionPort {
         }
         fx.dispatch(() -> {
             try {
-                com.javaclaw.chat.ImageViewerDialog.show(null, file);
+                imageViewer.open(null, file.toPath());
             } catch (Exception e) {
                 log.warn("打开图片查看窗口失败: {}", imagePath, e);
             }

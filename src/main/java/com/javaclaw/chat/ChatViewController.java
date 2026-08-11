@@ -29,6 +29,7 @@ import com.javaclaw.ui.javafx.loop.LoopStatusView;
 import com.javaclaw.ui.javafx.loop.LoopStatusViewFactory;
 import com.javaclaw.ui.javafx.diagnostics.DiagnosticsViewFactory;
 import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
+import com.javaclaw.ui.javafx.image.ImageViewerFactory;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuController;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuSnapshot;
 import com.javaclaw.ui.javafx.schedule.ScheduleView;
@@ -134,6 +135,7 @@ public class ChatViewController implements AutoCloseable {
     private final LoopStatusViewFactory loopStatusViews;
     private final DiagnosticsViewFactory diagnosticsViews;
     private final PluginCenterViewFactory pluginCenterViews;
+    private final ImageViewerFactory imageViewer;
 
     /** 兼容旧退出链；页面生命周期统一由 {@link #close()} 收口。 */
     public void shutdownPersistence() {
@@ -306,7 +308,8 @@ public class ChatViewController implements AutoCloseable {
             ClarificationCardFactory clarificationCards,
             LoopStatusViewFactory loopStatusViews,
             DiagnosticsViewFactory diagnosticsViews,
-            PluginCenterViewFactory pluginCenterViews) {
+            PluginCenterViewFactory pluginCenterViews,
+            ImageViewerFactory imageViewer) {
         this.applicationKernel = java.util.Objects.requireNonNull(
                 applicationKernel, "applicationKernel");
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
@@ -323,6 +326,7 @@ public class ChatViewController implements AutoCloseable {
                 diagnosticsViews, "diagnosticsViews");
         this.pluginCenterViews = java.util.Objects.requireNonNull(
                 pluginCenterViews, "pluginCenterViews");
+        this.imageViewer = java.util.Objects.requireNonNull(imageViewer, "imageViewer");
         java.util.Objects.requireNonNull(taskExecutor, "taskExecutor");
         persistenceTasks = taskExecutor.openScope("chat-persistence", 1);
         backgroundTasks = taskExecutor.openScope("chat-ui-background", 2);
@@ -941,7 +945,7 @@ public class ChatViewController implements AutoCloseable {
     /**
      * 为对话中的图片视图启用双击放大查看。
      *
-     * <p>双击后弹出 {@link ImageViewerDialog}，支持滚轮缩放与拖拽平移；
+     * <p>双击后弹出 FXML 图片查看器，支持滚轮缩放与拖拽平移；
      * 鼠标悬停显示手型并提示可点击。</p>
      *
      * @param imageView 图片视图
@@ -956,7 +960,7 @@ public class ChatViewController implements AutoCloseable {
             if (e.getButton() == javafx.scene.input.MouseButton.PRIMARY && e.getClickCount() == 2) {
                 javafx.stage.Window owner = imageView.getScene() != null
                         ? imageView.getScene().getWindow() : null;
-                ImageViewerDialog.show(owner, file);
+                imageViewer.open(owner, file.toPath());
                 e.consume();
             }
         });

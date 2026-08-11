@@ -3,6 +3,7 @@ package com.javaclaw.chat.markdown;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fxml.ViewHandle;
 import com.javaclaw.platform.fx.FxDispatcher;
+import com.javaclaw.ui.javafx.image.ImageViewerFactory;
 import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.Parent;
@@ -34,10 +35,15 @@ public final class MarkdownRegionViewFactory {
 
     private final SpringFxmlLoader loader;
     private final FxDispatcher fx;
+    private final ImageViewerFactory imageViewer;
 
-    public MarkdownRegionViewFactory(SpringFxmlLoader loader, FxDispatcher fx) {
+    public MarkdownRegionViewFactory(
+            SpringFxmlLoader loader,
+            FxDispatcher fx,
+            ImageViewerFactory imageViewer) {
         this.loader = Objects.requireNonNull(loader, "loader");
         this.fx = Objects.requireNonNull(fx, "fx");
+        this.imageViewer = Objects.requireNonNull(imageViewer, "imageViewer");
     }
 
     Region createCodeCard(
@@ -110,14 +116,13 @@ public final class MarkdownRegionViewFactory {
         reset.play();
     }
 
-    private static void openLocalImageOnDoubleClick(
+    private void openLocalImageOnDoubleClick(
             int clickCount, String url, ImageView imageView) {
         if (clickCount != 2 || url == null || !url.startsWith("file:")) return;
         try {
             java.io.File file = new java.io.File(URI.create(url));
             if (file.exists() && imageView.getScene() != null) {
-                com.javaclaw.chat.ImageViewerDialog.show(
-                        imageView.getScene().getWindow(), file);
+                imageViewer.open(imageView.getScene().getWindow(), file.toPath());
             }
         } catch (RuntimeException ignored) {
             // 非法本地 URI 不影响其余 Markdown。

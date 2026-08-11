@@ -15,6 +15,7 @@ import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.ui.javafx.loop.LoopStatusViewFactory;
+import com.javaclaw.ui.javafx.image.ImageViewerFactory;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuEntryFactory;
 import com.javaclaw.ui.javafx.diagnostics.DiagnosticsExportTargetPicker;
 import com.javaclaw.ui.javafx.diagnostics.DiagnosticsViewFactory;
@@ -34,10 +35,18 @@ import org.springframework.context.annotation.Configuration;
 public class DesktopPresentationConfiguration {
 
     @Bean
-    MarkdownRegionViewFactory markdownRegionViewFactory(
+    ImageViewerFactory imageViewerFactory(
             SpringFxmlLoader loader,
             FxDispatcher fx) {
-        return new MarkdownRegionViewFactory(loader, fx);
+        return new ImageViewerFactory(loader, fx);
+    }
+
+    @Bean
+    MarkdownRegionViewFactory markdownRegionViewFactory(
+            SpringFxmlLoader loader,
+            FxDispatcher fx,
+            ImageViewerFactory imageViewer) {
+        return new MarkdownRegionViewFactory(loader, fx, imageViewer);
     }
 
     @Bean

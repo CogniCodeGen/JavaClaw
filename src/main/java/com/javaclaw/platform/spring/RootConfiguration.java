@@ -34,6 +34,7 @@ import com.javaclaw.platform.process.ProcessRunner;
 import com.javaclaw.platform.storage.AtomicContentStore;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.ui.javafx.JfxUserInteractionPort;
+import com.javaclaw.ui.javafx.image.ImageViewerFactory;
 import com.javaclaw.infrastructure.tool.LoggingToolAuditSink;
 import com.javaclaw.infrastructure.config.AgentConfigToolReviewSettings;
 import com.javaclaw.infrastructure.diagnostics.TraceExporterDiagnosticsArchive;
@@ -223,8 +224,10 @@ public class RootConfiguration {
     }
 
     @Bean
-    JfxUserInteractionPort jfxUserInteractionPort(FxDispatcher fxDispatcher) {
-        return new JfxUserInteractionPort(fxDispatcher);
+    JfxUserInteractionPort jfxUserInteractionPort(
+            FxDispatcher fxDispatcher,
+            ImageViewerFactory imageViewer) {
+        return new JfxUserInteractionPort(fxDispatcher, imageViewer);
     }
 
     @Bean

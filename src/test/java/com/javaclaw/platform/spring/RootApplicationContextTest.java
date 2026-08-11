@@ -23,6 +23,7 @@ import com.javaclaw.ui.javafx.diagnostics.DiagnosticsViewFactory;
 import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
 import com.javaclaw.ui.javafx.onboarding.OnboardingViewFactory;
 import com.javaclaw.ui.javafx.onboarding.ProviderCardFactory;
+import com.javaclaw.ui.javafx.image.ImageViewerFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -69,6 +70,7 @@ class RootApplicationContextTest {
             assertNotNull(context.getBean(OnboardingApplicationService.class));
             assertNotNull(context.getBean(OnboardingViewFactory.class));
             assertNotNull(context.getBean(ProviderCardFactory.class));
+            assertNotNull(context.getBean(ImageViewerFactory.class));
             assertNotNull(context.getBean(WorkspaceSpringContextFactory.class));
 
             SchemaInitializer initializer = context.getBean(SchemaInitializer.class);
