@@ -2,6 +2,7 @@ package com.javaclaw.task.sdd.agent;
 
 import com.javaclaw.agent.hook.LoopDetectionHook;
 import com.javaclaw.agent.model.ModelFactory;
+import com.javaclaw.config.AgentConfig;
 import com.javaclaw.agent.model.ModelTier;
 import com.javaclaw.agent.model.StructuredCalls;
 import com.javaclaw.prompt.SddPrompts;
@@ -61,14 +62,17 @@ public final class AgentScopeSddAgents implements SddAgents {
     private final SkillManager skills;
     private final SkillUsageTracker skillUsage;
     private final SddTokenSink tokenSink;
+    private final AgentConfig settings;
 
     private long structuredTimeoutSec = 120;
     private long execTimeoutSec = 300;
     private int execMaxIters = 12;
 
-    public AgentScopeSddAgents(ModelFactory modelFactory, java.util.Map<String, Object> capabilityTools,
+    public AgentScopeSddAgents(ModelFactory modelFactory, AgentConfig settings,
+                               java.util.Map<String, Object> capabilityTools,
                                SkillRuntimeServices skillRuntime, SddTokenSink tokenSink) {
         this.modelFactory = modelFactory;
+        this.settings = Objects.requireNonNull(settings, "settings");
         this.capabilityTools = capabilityTools == null ? java.util.Map.of() : capabilityTools;
         SkillRuntimeServices runtime = Objects.requireNonNull(skillRuntime, "skillRuntime");
         this.skills = runtime.manager();
@@ -247,7 +251,7 @@ public final class AgentScopeSddAgents implements SddAgents {
                 .maxIters(execMaxIters)
                 .toolkit(toolkit)
                 .memory(buildMemory())
-                .hooks(List.of(new LoopDetectionHook(), new TaskTokenHook(tok("implement"))))
+                .hooks(List.of(new LoopDetectionHook(settings), new TaskTokenHook(tok("implement"))))
                 .enablePendingToolRecovery(true)
                 .build();
 

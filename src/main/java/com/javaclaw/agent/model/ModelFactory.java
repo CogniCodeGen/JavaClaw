@@ -41,7 +41,7 @@ import java.util.Map;
  *
  * @author JavaClaw
  */
-public class ModelFactory {
+public class ModelFactory implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(ModelFactory.class);
 
@@ -66,6 +66,7 @@ public class ModelFactory {
 
     /** 单次模型请求总超时（秒）— 覆盖 AgentScope MODEL_DEFAULTS 的 5 分钟默认 */
     private final long modelRequestTimeoutSeconds;
+    private final AgentConfig config;
 
     /**
      * 模型构建器 —— 每个 provider 一条，签名对齐既有 {@code createXxxModel(spec, options, multiAgent)}。
@@ -78,8 +79,8 @@ public class ModelFactory {
     /** providerType → 构建器的注册表；未命中回退 OpenAI 兼容（等价旧 switch 的 default 分支） */
     private final Map<String, ChatModelBuilder> chatModelRegistry = new HashMap<>();
 
-    public ModelFactory() {
-        AgentConfig config = AgentConfig.getInstance();
+    public ModelFactory(AgentConfig config) {
+        this.config = java.util.Objects.requireNonNull(config, "config");
 
         // 构建 HTTP 传输层（使用 HttpTransportConfig 统一管理超时）
         HttpTransportConfig transportConfig = HttpTransportConfig.builder()
@@ -169,7 +170,7 @@ public class ModelFactory {
      * 单点收口。</p>
      */
     public AutoContextMemory defaultAutoContextMemory() {
-        AgentConfig cfg = AgentConfig.getInstance();
+        AgentConfig cfg = config;
         AutoContextConfig mc = AutoContextConfig.builder()
                 .maxToken(cfg.getMemoryMaxToken())
                 .msgThreshold(cfg.getMemoryMsgThreshold())
@@ -274,7 +275,6 @@ public class ModelFactory {
      * 端点/Key 未配置时，失败发生在实际 embed 调用，由调用方降级处理。</p>
      */
     public EmbeddingModel createEmbeddingModel() {
-        AgentConfig config = AgentConfig.getInstance();
         String modelName = config.getRagEmbeddingModelName();
         int dimensions = config.getRagEmbeddingDimensions();
         String apiKey = config.getRagEmbeddingApiKey();
@@ -425,5 +425,11 @@ public class ModelFactory {
         }
 
         return builder.build();
+    }
+
+    /** 关闭工作区共享 HTTP 传输；重复调用由底层传输安全处理。 */
+    @Override
+    public void close() {
+        rawTransport.close();
     }
 }

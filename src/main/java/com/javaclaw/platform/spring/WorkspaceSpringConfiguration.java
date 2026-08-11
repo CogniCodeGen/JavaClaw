@@ -176,6 +176,34 @@ import org.springframework.transaction.PlatformTransactionManager;
 public class WorkspaceSpringConfiguration {
 
     @Bean(destroyMethod = "close")
+    com.javaclaw.agent.model.ModelFactory modelFactory(com.javaclaw.config.AgentConfig settings) {
+        return new com.javaclaw.agent.model.ModelFactory(settings);
+    }
+
+    @Bean
+    com.javaclaw.agent.TokenTracker tokenTracker(
+            WorkspaceContext workspace,
+            JdbcTemplate jdbc,
+            com.javaclaw.config.AgentConfig settings) {
+        return new com.javaclaw.agent.TokenTracker(workspace.workspaceId(), jdbc, settings);
+    }
+
+    @Bean
+    com.javaclaw.agent.memory.MemoryManager memoryManager(
+            com.javaclaw.agent.model.ModelFactory models,
+            com.javaclaw.config.AgentConfig settings) {
+        return new com.javaclaw.agent.memory.MemoryManager(models, settings);
+    }
+
+    @Bean
+    com.javaclaw.memory.embed.EmbeddingGateway embeddingGateway(
+            com.javaclaw.agent.model.ModelFactory models,
+            @Qualifier("workspaceTaskScope") TaskScope tasks,
+            com.javaclaw.config.AgentConfig settings) {
+        return new com.javaclaw.memory.embed.EmbeddingGateway(models, tasks, settings);
+    }
+
+    @Bean(destroyMethod = "close")
     TaskScope workspaceTaskScope(ManagedTaskExecutor executor, WorkspaceContext workspace) {
         return executor.openScope("workspace-" + workspace.workspaceId(), 256);
     }
@@ -188,6 +216,10 @@ public class WorkspaceSpringConfiguration {
     @Bean(destroyMethod = "shutdown")
     AgentRuntime agentRuntime(
             WorkspaceRuntimeOptions options,
+            com.javaclaw.agent.model.ModelFactory models,
+            com.javaclaw.agent.TokenTracker tokens,
+            com.javaclaw.agent.memory.MemoryManager memories,
+            com.javaclaw.memory.embed.EmbeddingGateway embeddings,
             CustomAgentConfig customAgents,
             SiteCredentialManager siteCredentials,
             McpConfigManager mcpConfigurations,
@@ -199,11 +231,15 @@ public class WorkspaceSpringConfiguration {
             com.javaclaw.system.JShellRunner jshellRunner,
             com.javaclaw.diagnostics.TraceRecorder traceRecorder,
             com.javaclaw.config.AgentConfig settings,
+            com.javaclaw.config.EmailConfig emailSettings,
+            com.javaclaw.config.NotificationConfig notificationSettings,
             WorkspaceContext workspace,
             KnowledgeDocumentPreferencePort knowledgePreferences) {
-        return new AgentRuntime(options.browserManager(), customAgents, siteCredentials,
+        return new AgentRuntime(options.browserManager(), models, tokens, memories, embeddings,
+                customAgents, siteCredentials,
                 mcpConfigurations, mcpClients, workspaceTaskScope, schedules, skills,
-                sddTasks::getObject, jshellRunner, traceRecorder, settings, workspace,
+                sddTasks::getObject, jshellRunner, traceRecorder, settings,
+                emailSettings, notificationSettings, workspace,
                 knowledgePreferences);
     }
 
@@ -215,27 +251,12 @@ public class WorkspaceSpringConfiguration {
     }
 
     @Bean
-    com.javaclaw.config.AgentConfig agentConfig() {
-        return com.javaclaw.config.AgentConfig.getInstance();
-    }
-
-    @Bean
     KnowledgeDocumentPreferencePort knowledgeDocumentPreferencePort(
             WorkspaceContext workspace,
             JdbcTemplate jdbc,
             PlatformTransactionManager transactionManager) {
         return new JdbcKnowledgeDocumentPreferenceAdapter(
                 workspace.workspaceId(), jdbc, transactionManager);
-    }
-
-    @Bean
-    com.javaclaw.config.EmailConfig emailConfig() {
-        return com.javaclaw.config.EmailConfig.getInstance();
-    }
-
-    @Bean
-    com.javaclaw.config.NotificationConfig notificationConfig() {
-        return com.javaclaw.config.NotificationConfig.getInstance();
     }
 
     @Bean
@@ -502,8 +523,11 @@ public class WorkspaceSpringConfiguration {
     ScheduleManager scheduleManager(
             ScheduledTaskStore store,
             WorkspaceContext workspace,
-            @Qualifier("scheduleTaskScope") TaskScope scheduleTasks) {
-        return new ScheduleManager(store, workspace.workspaceId(), scheduleTasks);
+            @Qualifier("scheduleTaskScope") TaskScope scheduleTasks,
+            com.javaclaw.config.NotificationConfig notificationSettings,
+            com.javaclaw.config.EmailConfig emailSettings) {
+        return new ScheduleManager(store, workspace.workspaceId(), scheduleTasks,
+                notificationSettings, emailSettings);
     }
 
     @Bean

@@ -3,6 +3,7 @@ package com.javaclaw.agent.router;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.agent.TokenTracker;
+import com.javaclaw.config.AgentConfig;
 import com.javaclaw.mcp.McpClientManager;
 import com.javaclaw.prompt.RouterPrompts;
 import com.javaclaw.skill.Skill;
@@ -54,11 +55,14 @@ public class ToolRouter {
     /** 用于上报路由模型调用的真实 token；null 时跳过统计 */
     private final TokenTracker tokenTracker;
     private final SkillManager skills;
+    private final AgentConfig settings;
 
-    public ToolRouter(ChatModelBase model, TokenTracker tokenTracker, SkillManager skills) {
+    public ToolRouter(ChatModelBase model, TokenTracker tokenTracker, SkillManager skills,
+                      AgentConfig settings) {
         this.model = java.util.Objects.requireNonNull(model, "model");
         this.tokenTracker = tokenTracker;
         this.skills = java.util.Objects.requireNonNull(skills, "skills");
+        this.settings = java.util.Objects.requireNonNull(settings, "settings");
         this.generateOptions = GenerateOptions.builder().build();
     }
 
@@ -158,7 +162,7 @@ public class ToolRouter {
         }
 
         // 动态追加已启用的技能包列表（包优先：命中包时包内技能成组注入）
-        if (com.javaclaw.config.AgentConfig.getInstance().isSkillBundlesEnabled()) {
+        if (settings.isSkillBundlesEnabled()) {
             List<com.javaclaw.skill.SkillBundle> enabledBundles =
                     skills.getEnabledBundles();
             if (!enabledBundles.isEmpty()) {

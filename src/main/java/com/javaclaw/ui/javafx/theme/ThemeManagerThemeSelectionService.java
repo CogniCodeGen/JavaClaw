@@ -7,11 +7,16 @@ import java.util.List;
 /** 将现有全局主题引擎隔离在可注入的 Presentation 端口之后。 */
 public final class ThemeManagerThemeSelectionService implements ThemeSelectionService {
 
+    private final ThemeManager manager;
     private final List<ThemeOption> themes = ThemeManager.THEMES.stream()
             .map(theme -> new ThemeOption(
                     theme.id(), theme.name(), theme.subtitle(),
                     theme.brand(), theme.bg(), theme.surface()))
             .toList();
+
+    public ThemeManagerThemeSelectionService(ThemeManager manager) {
+        this.manager = java.util.Objects.requireNonNull(manager, "manager");
+    }
 
     @Override
     public List<ThemeOption> availableThemes() {
@@ -29,21 +34,21 @@ public final class ThemeManagerThemeSelectionService implements ThemeSelectionSe
 
     @Override
     public String currentThemeId() {
-        return ThemeManager.getTheme();
+        return manager.getTheme();
     }
 
     @Override
     public ReadOnlyStringProperty currentThemeProperty() {
-        return ThemeManager.themeProperty();
+        return manager.themeProperty();
     }
 
     @Override
     public void select(String themeId) {
-        ThemeManager.setTheme(themeId);
+        manager.setTheme(themeId);
     }
 
     @Override
     public void reloadFromWorkspace() {
-        ThemeManager.reload();
+        manager.reload();
     }
 }

@@ -68,7 +68,8 @@ public final class AgentNodeExecutor implements NodeExecutor {
         var config = context.node().config();
 
         String sysPrompt = config.path("prompt").asText();
-        int maxIters = config.path("maxIters").asInt(AgentConfig.getInstance().getOrchestratorMaxIters());
+        AgentConfig settings = runtime.getConfig();
+        int maxIters = config.path("maxIters").asInt(settings.getOrchestratorMaxIters());
         String expertRef = config.path("expertRef").asText();
         if (!expertRef.isBlank()) {
             var def = runtime.getExpertManager().getExpertDefs().stream()
@@ -120,12 +121,12 @@ public final class AgentNodeExecutor implements NodeExecutor {
 
         CountDownLatch done = new CountDownLatch(1);
         AtomicReference<Throwable> failure = new AtomicReference<>();
-        Disposable subscription = agent.stream(msg, ToolkitAssembler.buildStreamOptions(AgentConfig.getInstance()))
+        Disposable subscription = agent.stream(msg, ToolkitAssembler.buildStreamOptions(settings))
                 .subscribeOn(Schedulers.boundedElastic())
                 .doFinally(signal -> done.countDown())
                 .subscribe(event -> eventHandler.handleEvent(event, capturing), failure::set, () -> {});
         try (AutoCloseable ignored = context.cancellation().onCancel(subscription::dispose)) {
-            long timeout = Math.max(30L, AgentConfig.getInstance().getReadTimeoutSeconds() * 2L);
+            long timeout = Math.max(30L, settings.getReadTimeoutSeconds() * 2L);
             while (!done.await(Math.min(timeout, 1L), TimeUnit.SECONDS)) {
                 context.cancellation().throwIfCancelled();
                 timeout--;

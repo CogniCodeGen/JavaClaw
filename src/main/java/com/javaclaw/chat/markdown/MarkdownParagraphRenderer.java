@@ -79,15 +79,16 @@ public final class MarkdownParagraphRenderer {
         }
 
         /** 只允许调用方在 FX 线程进入后台任务之前获取一次。 */
-        public static RenderStyleSnapshot capture() {
+        public static RenderStyleSnapshot capture(FontManager fonts) {
             if (!Platform.isFxApplicationThread()) {
                 throw new IllegalStateException("渲染样式必须在 JavaFX Application Thread 快照");
             }
+            Objects.requireNonNull(fonts, "fonts");
             return new RenderStyleSnapshot(
-                    FontManager.chatFontPx(),
-                    FontManager.chatLineHeight(),
-                    FontManager.uiStack(),
-                    FontManager.monoStack());
+                    fonts.chatFontPx(),
+                    fonts.chatLineHeight(),
+                    fonts.uiStack(),
+                    fonts.monoStack());
         }
 
         String monoFamily() {

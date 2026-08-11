@@ -90,9 +90,9 @@ public class LoopDetectionHook implements Hook {
     /**
      * 使用默认配置创建
      */
-    public LoopDetectionHook() {
-        this(AgentConfig.getInstance().getMaxRepeatedToolCalls(),
-                AgentConfig.getInstance().getLoopSimilarityThreshold());
+    public LoopDetectionHook(AgentConfig config) {
+        this(java.util.Objects.requireNonNull(config, "config").getMaxRepeatedToolCalls(),
+                config.getLoopSimilarityThreshold());
     }
 
     /**

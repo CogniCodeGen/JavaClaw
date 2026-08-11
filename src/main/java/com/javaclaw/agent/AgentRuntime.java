@@ -88,6 +88,9 @@ public final class AgentRuntime {
 
     /** 模型工厂（共享 HTTP 传输层） */
     private final ModelFactory modelFactory;
+    private final AgentConfig config;
+    private final com.javaclaw.config.EmailConfig emailConfig;
+    private final com.javaclaw.config.NotificationConfig notificationConfig;
 
     /** Token 用量追踪器 */
     private final TokenTracker tokenTracker;
@@ -153,6 +156,10 @@ public final class AgentRuntime {
      */
     public AgentRuntime(
             PlaywrightBrowserManager browserManager,
+            ModelFactory modelFactory,
+            TokenTracker tokenTracker,
+            MemoryManager memoryManager,
+            EmbeddingGateway embeddingGateway,
             com.javaclaw.agent.expert.CustomAgentConfig customAgentConfig,
             SiteCredentialManager siteCredentialManager,
             McpConfigManager mcpConfigManager,
@@ -164,10 +171,16 @@ public final class AgentRuntime {
             JShellRunner jshellRunner,
             TraceRecorder traceRecorder,
             AgentConfig config,
+            com.javaclaw.config.EmailConfig emailConfig,
+            com.javaclaw.config.NotificationConfig notificationConfig,
             WorkspaceContext workspace,
             KnowledgeDocumentPreferencePort knowledgePreferences) {
         java.util.Objects.requireNonNull(config, "config");
         java.util.Objects.requireNonNull(workspace, "workspace");
+        this.config = config;
+        this.emailConfig = java.util.Objects.requireNonNull(emailConfig, "emailConfig");
+        this.notificationConfig = java.util.Objects.requireNonNull(
+                notificationConfig, "notificationConfig");
         log.info("========== 初始化 AgentRuntime 基础设施 ==========");
         log.info("API 地址: {}", config.getBaseUrl());
         log.info("模型名称: {}", config.getModelName());
@@ -189,19 +202,17 @@ public final class AgentRuntime {
         this.jshellRunner = java.util.Objects.requireNonNull(jshellRunner, "jshellRunner");
         this.traceRecorder = java.util.Objects.requireNonNull(traceRecorder, "traceRecorder");
 
-        // 1. ModelFactory：共享 HttpTransport，所有模型实例共用
-        this.modelFactory = new ModelFactory();
-
-        // 2. TokenTracker：按会话/日期统计 token 用量
-        this.tokenTracker = new TokenTracker();
+        // 1. 模型、计量、记忆与嵌入均由工作区 Spring Context 管理。
+        this.modelFactory = java.util.Objects.requireNonNull(modelFactory, "modelFactory");
+        this.tokenTracker = java.util.Objects.requireNonNull(tokenTracker, "tokenTracker");
         // 传输层用量观测接入：截获各提供商返回的缓存命中 token（cached_tokens），
         // 让账本能区分全价输入与缓存折扣输入（命中率 = cachedInput / meteredInput）
         com.javaclaw.agent.model.UsageMeteredTransport.setSink(tokenTracker::recordCachedObservation);
 
         // 3. MemoryManager：统一管理所有智能体的 AutoContextMemory
         //    注意依赖 modelFactory，因此必须在其之后创建
-        this.memoryManager = new MemoryManager(modelFactory);
-        this.embeddingGateway = new EmbeddingGateway(modelFactory, workspaceTasks);
+        this.memoryManager = java.util.Objects.requireNonNull(memoryManager, "memoryManager");
+        this.embeddingGateway = java.util.Objects.requireNonNull(embeddingGateway, "embeddingGateway");
 
         // 4. ExpertManager + KnowledgeExpert：子智能体定义的中心。
         //    runtime 的共享专家只服务交互路径（聊天/规划），来源令牌固定 INTERACTIVE；
@@ -209,7 +220,8 @@ public final class AgentRuntime {
         //    buildCapabilityTools(origin) 产带任务归属的工具实例
         this.expertManager = new ExpertManager(
                 modelFactory, browserManager, siteCredentialManager,
-                ToolCallOrigin.INTERACTIVE, customAgentConfig, workspace);
+                ToolCallOrigin.INTERACTIVE, customAgentConfig, workspace, config,
+                emailConfig, notificationConfig);
         this.knowledgeExpert = new KnowledgeExpert(
                 modelFactory,
                 embeddingGateway,
@@ -264,6 +276,11 @@ public final class AgentRuntime {
     // ==================== 基础组件 Getter ====================
 
     public ModelFactory getModelFactory() { return modelFactory; }
+    public AgentConfig getConfig() { return config; }
+    public com.javaclaw.config.EmailConfig getEmailConfig() { return emailConfig; }
+    public com.javaclaw.config.NotificationConfig getNotificationConfig() {
+        return notificationConfig;
+    }
     public ScheduleApplicationService getScheduleApplicationService() {
         return scheduleApplicationService;
     }
@@ -517,7 +534,7 @@ public final class AgentRuntime {
 
         // 网络连接类错误
         if (cause instanceof java.net.ConnectException) {
-            return "无法连接到模型服务，请确认 " + AgentConfig.getInstance().getBaseUrl() + " 是否已启动";
+            return "无法连接到模型服务，请确认 " + config.getBaseUrl() + " 是否已启动";
         }
         if (cause instanceof java.net.http.HttpTimeoutException) {
             return "请求超时，模型响应时间过长，可在设置中调大超时时间";

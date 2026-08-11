@@ -3,6 +3,7 @@ package com.javaclaw.system;
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
+import com.javaclaw.config.AgentConfig;
 import com.javaclaw.util.ProcessTerminator;
 import com.javaclaw.util.ProjectAccessPolicy;
 import io.agentscope.core.tool.Tool;
@@ -38,9 +39,11 @@ public class CommandLineTools {
 
     /** 调用来源令牌（装配期绑定）：托管任务来源走统一确认路径（白名单/目录放行），其余走本地白名单机制。 */
     private final ToolCallOrigin origin;
+    private final AgentConfig settings;
 
-    public CommandLineTools(ToolCallOrigin origin) {
+    public CommandLineTools(ToolCallOrigin origin, AgentConfig settings) {
         this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
+        this.settings = java.util.Objects.requireNonNull(settings, "settings");
     }
 
     /** 严格禁止的文件操作命令（必须通过 system_expert 处理） */
@@ -487,8 +490,7 @@ public class CommandLineTools {
         }
 
         boolean highRisk = isHighRiskCommand(trimmedCmd);
-        com.javaclaw.config.ToolReviewMode reviewMode =
-                com.javaclaw.config.AgentConfig.getInstance().getToolReviewMode();
+        com.javaclaw.config.ToolReviewMode reviewMode = settings.getToolReviewMode();
         boolean manualReview = reviewMode == com.javaclaw.config.ToolReviewMode.MANUAL;
 
         // 「确认即记住」白名单读取：托管与交互/定时来源共用的<b>单一短路点</b>（写仍只在下方

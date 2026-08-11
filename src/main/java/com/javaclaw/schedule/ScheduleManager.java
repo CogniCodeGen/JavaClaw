@@ -82,6 +82,8 @@ public class ScheduleManager {
     private final Set<String> runningTaskIds = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private final ScheduleEventHub events = new ScheduleEventHub();
+    private final com.javaclaw.config.NotificationConfig notificationSettings;
+    private final com.javaclaw.config.EmailConfig emailSettings;
 
     /**
      * 创建一个工作区定时任务运行时。
@@ -89,14 +91,23 @@ public class ScheduleManager {
      * <p>实例归工作区 Spring Context 所有；关闭后不可复用。Quartz 的单平台工作线程只负责
      * 产生触发信号，任务正文始终转交给 {@code scheduledTasks} 的 I/O 虚拟线程。</p>
      */
-    public ScheduleManager(ScheduledTaskStore store, String workspaceId, TaskScope scheduledTasks) {
+    public ScheduleManager(ScheduledTaskStore store, String workspaceId, TaskScope scheduledTasks,
+                           com.javaclaw.config.NotificationConfig notificationSettings,
+                           com.javaclaw.config.EmailConfig emailSettings) {
         this.store = Objects.requireNonNull(store, "store");
         this.tasks = new CopyOnWriteArrayList<>();
         this.builtins = new BuiltinScheduleRegistry();
         this.triggerFactory = new ScheduleTriggerFactory(JOB_GROUP);
         this.quartz = QuartzScheduleBackendFactory.create(this);
         this.taskDispatcher = ScheduleTaskDispatcher.managed(scheduledTasks);
+        this.notificationSettings = notificationSettings;
+        this.emailSettings = emailSettings;
         loadAll(workspaceId);
+    }
+
+    /** 测试构造：通知能力不参与执行模型测试。 */
+    ScheduleManager(ScheduledTaskStore store, String workspaceId, TaskScope scheduledTasks) {
+        this(store, workspaceId, scheduledTasks, null, null);
     }
 
     /** 测试构造：允许注入临时 H2、Quartz 与可控 runner，不触碰全局单例数据。 */
@@ -109,6 +120,8 @@ public class ScheduleManager {
         this.quartz = Objects.requireNonNull(quartz, "quartz");
         this.taskDispatcher = ScheduleTaskDispatcher.testing(scheduledExec);
         this.scheduledRunner = runner;
+        this.notificationSettings = null;
+        this.emailSettings = null;
         loadAll(workspaceId);
     }
 
@@ -122,6 +135,8 @@ public class ScheduleManager {
         this.quartz = Objects.requireNonNull(quartz, "quartz");
         this.taskDispatcher = ScheduleTaskDispatcher.managed(scheduledTasks);
         this.scheduledRunner = runner;
+        this.notificationSettings = null;
+        this.emailSettings = null;
         loadAll(workspaceId);
     }
 
@@ -842,8 +857,13 @@ public class ScheduleManager {
             String title = "定时任务「" + task.getName() + "」" + (success ? "执行完成" : "执行失败");
             String body = (success ? "✅ " : "⚠️ ") + title + "\n"
                     + (detail == null || detail.isBlank() ? "" : detail);
+            if (notificationSettings == null || emailSettings == null) {
+                log.debug("测试调度器未配置通知服务，跳过完成通知");
+                return;
+            }
             String r = new com.javaclaw.notification.NotificationTools(
-                    com.javaclaw.agent.ToolCallOrigin.SCHEDULED).sendByChannel(channel, title, body);
+                    com.javaclaw.agent.ToolCallOrigin.SCHEDULED,
+                    notificationSettings, emailSettings).sendByChannel(channel, title, body);
             taskLog.info("[{}] 完成通知（{}）: {}", task.getName(), channel, r);
         } catch (Exception e) {
             log.warn("定时任务完成通知发送失败: {}", task.getName(), e);

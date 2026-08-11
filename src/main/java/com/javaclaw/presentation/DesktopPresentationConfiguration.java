@@ -24,9 +24,12 @@ import com.javaclaw.ui.javafx.diagnostics.DiagnosticsExportTargetPicker;
 import com.javaclaw.ui.javafx.diagnostics.DiagnosticsViewFactory;
 import com.javaclaw.ui.javafx.diagnostics.JavaFxDiagnosticsExportTargetPicker;
 import com.javaclaw.ui.javafx.theme.ThemeManagerThemeSelectionService;
+import com.javaclaw.ui.javafx.theme.ThemeManager;
 import com.javaclaw.ui.javafx.theme.ThemeMenuEntryFactory;
 import com.javaclaw.ui.javafx.theme.ThemeSelectionService;
 import com.javaclaw.ui.javafx.theme.FontManagerFontSelectionService;
+import com.javaclaw.ui.javafx.theme.FontManager;
+import com.javaclaw.config.AgentConfig;
 import com.javaclaw.ui.javafx.theme.FontSelectionService;
 import com.javaclaw.ui.javafx.plugin.JavaFxPluginJarPicker;
 import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
@@ -144,14 +147,30 @@ public class DesktopPresentationConfiguration {
         return new LoopStatusViewFactory(loader);
     }
 
-    @Bean
-    ThemeSelectionService themeSelectionService() {
-        return new ThemeManagerThemeSelectionService();
+    @Bean(destroyMethod = "close")
+    ThemeManager themeManager(
+            AgentConfig config,
+            FxDispatcher fx,
+            ManagedTaskExecutor tasks) {
+        return new ThemeManager(config, fx, tasks);
+    }
+
+    @Bean(destroyMethod = "close")
+    FontManager fontManager(
+            AgentConfig config,
+            FxDispatcher fx,
+            ManagedTaskExecutor tasks) {
+        return new FontManager(config, fx, tasks);
     }
 
     @Bean
-    FontSelectionService fontSelectionService() {
-        return new FontManagerFontSelectionService();
+    ThemeSelectionService themeSelectionService(ThemeManager manager) {
+        return new ThemeManagerThemeSelectionService(manager);
+    }
+
+    @Bean
+    FontSelectionService fontSelectionService(FontManager manager) {
+        return new FontManagerFontSelectionService(manager);
     }
 
     @Bean

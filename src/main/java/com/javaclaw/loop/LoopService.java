@@ -207,7 +207,7 @@ public final class LoopService {
                 // 验证命令超时对齐慢构建场景：默认 120s 会把「盯着 mvn test 直到通过」这类
                 // 分钟级命令逐轮误杀，done 永不可达（SDD 路径同理专门调大，见 execTimeoutSec）
                 CommandRunner commandRunner = new ProcessCommandRunner(
-                        processes, AgentConfig.getInstance().getLoopVerifyTimeoutSeconds());
+                        processes, runtime.getConfig().getLoopVerifyTimeoutSeconds());
                 var judge = plan.spec().useJudge()
                         ? new AgentScopeCompletionJudge(plan.spec().workDir(), runtime.getModelFactory())
                         : CompletionJudge.CONSERVATIVE_DENY;
@@ -346,7 +346,7 @@ public final class LoopService {
      * 从请求构建执行计划：解析指令 → 分解目标 → 套用配置默认 → 拼装 spec 与上下文提示词。
      */
     private Plan buildPlan(ConversationRequest request) {
-        AgentConfig cfg = AgentConfig.getInstance();
+        AgentConfig cfg = runtime.getConfig();
         LoopDirectives directives = LoopDirectives.parse(request.userInput());
         // 空目标兜底：带着空目标启动只会白烧满上限轮数的模型调用，诚实失败
         if (directives.goal().isBlank()) {

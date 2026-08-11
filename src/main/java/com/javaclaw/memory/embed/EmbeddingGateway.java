@@ -46,17 +46,18 @@ public class EmbeddingGateway {
             new CopyOnWriteArrayList<>();
     private volatile EmbeddingHealthSnapshot health;
 
-    public EmbeddingGateway(ModelFactory modelFactory, TaskScope tasks) {
+    public EmbeddingGateway(ModelFactory modelFactory, TaskScope tasks, AgentConfig config) {
         Objects.requireNonNull(modelFactory, "modelFactory");
         this.tasks = Objects.requireNonNull(tasks, "tasks");
+        Objects.requireNonNull(config, "config");
         this.clock = Clock.systemUTC();
-        this.dimensions = AgentConfig.getInstance().getRagEmbeddingDimensions();
+        this.dimensions = config.getRagEmbeddingDimensions();
         EmbeddingModel created = null;
         EmbeddingHealthStatus initial;
         String error = null;
-        if (!AgentConfig.getInstance().isRagEnabled()
-                || AgentConfig.getInstance().getRagEmbeddingModelName() == null
-                || AgentConfig.getInstance().getRagEmbeddingModelName().isBlank()) {
+        if (!config.isRagEnabled()
+                || config.getRagEmbeddingModelName() == null
+                || config.getRagEmbeddingModelName().isBlank()) {
             initial = EmbeddingHealthStatus.UNCONFIGURED;
         } else {
             try {

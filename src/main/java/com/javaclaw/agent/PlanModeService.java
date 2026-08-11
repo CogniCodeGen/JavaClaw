@@ -101,7 +101,7 @@ public class PlanModeService {
         this.workflowService = workflowService;
         if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
         this.memoryManager = runtime.getMemoryManager();
-        AgentConfig config = AgentConfig.getInstance();
+        AgentConfig config = runtime.getConfig();
         log.info("========== 初始化规划模式服务 ==========");
 
         // 先创建专家，再用真实专家名清单动态拼接协调者系统提示词，

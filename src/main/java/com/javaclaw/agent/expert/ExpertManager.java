@@ -5,6 +5,8 @@ import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.browser.PlaywrightBrowserTools;
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.config.EmailConfig;
+import com.javaclaw.config.NotificationConfig;
 import com.javaclaw.prompt.AgentPrompts;
 import com.javaclaw.site.SiteCredentialManager;
 import com.javaclaw.desktop.DesktopTools;
@@ -91,6 +93,9 @@ public class ExpertManager {
     private final ToolCallOrigin origin;
     private final CustomAgentConfig customAgentConfig;
     private final WorkspaceContext workspace;
+    private final AgentConfig settings;
+    private final EmailConfig emailSettings;
+    private final NotificationConfig notificationSettings;
 
     /**
      * 构造专家管理器并创建所有普通模式子智能体
@@ -104,7 +109,8 @@ public class ExpertManager {
     public ExpertManager(ModelFactory modelFactory, PlaywrightBrowserManager browserManager,
                          SiteCredentialManager siteCredentialManager,
                          ToolCallOrigin origin, CustomAgentConfig customAgentConfig,
-                         WorkspaceContext workspace) {
+                         WorkspaceContext workspace, AgentConfig settings,
+                         EmailConfig emailSettings, NotificationConfig notificationSettings) {
         this.browserManager = java.util.Objects.requireNonNull(browserManager, "browserManager");
         this.siteCredentialManager = java.util.Objects.requireNonNull(
                 siteCredentialManager, "siteCredentialManager");
@@ -112,8 +118,13 @@ public class ExpertManager {
         this.customAgentConfig = java.util.Objects.requireNonNull(
                 customAgentConfig, "customAgentConfig");
         this.workspace = java.util.Objects.requireNonNull(workspace, "workspace");
+        this.settings = java.util.Objects.requireNonNull(settings, "settings");
+        this.emailSettings = java.util.Objects.requireNonNull(emailSettings, "emailSettings");
+        this.notificationSettings = java.util.Objects.requireNonNull(
+                notificationSettings, "notificationSettings");
         this.expertDefs = buildExpertDefs(
-                browserManager, siteCredentialManager, this.origin, workspace);
+                browserManager, siteCredentialManager, this.origin, workspace, settings,
+                emailSettings, notificationSettings);
 
         // 能力 → 工具实例映射（供 DynamicTaskTool 使用）：直接复用专家定义里的同一批实例
         // （令牌相同），而非再 new 一套——否则不仅白付双份构造（含 AWT Robot），还会把
@@ -155,8 +166,10 @@ public class ExpertManager {
             PlaywrightBrowserManager browserManager,
             SiteCredentialManager siteCredentialManager,
             ToolCallOrigin origin,
-            WorkspaceContext workspace) {
-        AgentConfig config = AgentConfig.getInstance();
+            WorkspaceContext workspace,
+            AgentConfig config,
+            EmailConfig emailConfig,
+            NotificationConfig notificationConfig) {
 
         List<ExpertDef> defs = new ArrayList<>();
 
@@ -192,7 +205,7 @@ public class ExpertManager {
                 "email_expert",
                 AgentConfig.EMAIL_AGENT_DESCRIPTION,
                 config.getEmailAgentMaxIters(),
-                new EmailTools(origin), "email", PlanRole.DOMAIN));
+                new EmailTools(origin, emailConfig), "email", PlanRole.DOMAIN));
 
         defs.add(new ExpertDef(
                 AgentConfig.SYSTEM_AGENT_NAME,
@@ -218,7 +231,8 @@ public class ExpertManager {
                 "notification_expert",
                 AgentConfig.NOTIFICATION_AGENT_DESCRIPTION,
                 config.getNotificationAgentMaxIters(),
-                new NotificationTools(origin), "notification", PlanRole.DOMAIN));
+                new NotificationTools(origin, notificationConfig, emailConfig),
+                "notification", PlanRole.DOMAIN));
 
         if (!ProjectAccessPolicy.strictIsolationEnabled()) {
             defs.add(new ExpertDef(
@@ -227,7 +241,7 @@ public class ExpertManager {
                     "command_expert",
                     AgentConfig.COMMAND_AGENT_DESCRIPTION,
                     config.getCommandAgentMaxIters(),
-                    new CommandLineTools(origin), "command", PlanRole.DOMAIN));
+                    new CommandLineTools(origin, config), "command", PlanRole.DOMAIN));
         }
 
         return defs;
@@ -249,14 +263,15 @@ public class ExpertManager {
                 browserManager.createIsolated(effective.browserScopeId());
         tools.put("web", new PlaywrightBrowserTools(
                 isolatedBrowser, siteCredentialManager, effective, true));
-        tools.put("email", new EmailTools(effective));
+        tools.put("email", new EmailTools(effective, emailSettings));
         tools.put("system", new SystemTools(effective, workspace.screenshotsDir()));
         if (!ProjectAccessPolicy.strictIsolationEnabled()) {
             tools.put("desktop", new DesktopTools(effective, workspace.screenshotsDir()));
         }
-        tools.put("notification", new NotificationTools(effective));
+        tools.put("notification", new NotificationTools(
+                effective, notificationSettings, emailSettings));
         if (!ProjectAccessPolicy.strictIsolationEnabled()) {
-            tools.put("command", new CommandLineTools(effective));
+            tools.put("command", new CommandLineTools(effective, settings));
         }
         log.info("能力工具集已构建: {} (来源={})", tools.keySet(), effective.kind());
         return tools;

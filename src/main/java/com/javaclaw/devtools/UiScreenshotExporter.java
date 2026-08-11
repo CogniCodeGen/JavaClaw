@@ -74,7 +74,8 @@ public final class UiScreenshotExporter {
         private void bootstrap(Stage primaryStage) throws Exception {
             springContext = ApplicationContexts.createRoot(DataRoot.resolve());
             ApplicationContexts.registerDesktopInfrastructure(springContext);
-            com.javaclaw.ui.javafx.theme.FontManager.loadBundledFonts();
+            springContext.getBean(
+                    com.javaclaw.ui.javafx.theme.FontManager.class).loadBundledFonts();
 
             UserInteractionPort port = new UserInteractionPort() {
                 @Override public boolean confirm(ConfirmRequest request) { return true; }
@@ -96,7 +97,10 @@ public final class UiScreenshotExporter {
                     springContext.getBean(com.javaclaw.plugin.PluginManager.class),
                     springContext.getBean(com.javaclaw.config.WorkspaceManager.class),
                     springContext.getBean(com.javaclaw.config.DataManager.class),
-                    springContext.getBean(com.javaclaw.diagnostics.TraceRecorder.class));
+                    springContext.getBean(com.javaclaw.diagnostics.TraceRecorder.class),
+                    springContext.getBean(com.javaclaw.config.AgentConfig.class),
+                    springContext.getBean(com.javaclaw.config.EmailConfig.class),
+                    springContext.getBean(com.javaclaw.config.NotificationConfig.class));
             var workspaceRuntime = applicationKernel.initialize();
             runtime = workspaceRuntime.agentRuntime();
             chatService = workspaceRuntime.chatService();
@@ -111,8 +115,10 @@ public final class UiScreenshotExporter {
                     chatViewHandle.controller(ChatViewController.class);
             Scene scene = new Scene(chatViewHandle.root(), 1200, 700);
             addStyles(scene);
-            com.javaclaw.ui.javafx.theme.ThemeManager.init();
-            com.javaclaw.ui.javafx.theme.FontManager.init();
+            springContext.getBean(
+                    com.javaclaw.ui.javafx.theme.ThemeManager.class).init();
+            springContext.getBean(
+                    com.javaclaw.ui.javafx.theme.FontManager.class).init();
             primaryStage.setTitle("JavaClaw 智能助手");
             primaryStage.setScene(scene);
             primaryStage.show();

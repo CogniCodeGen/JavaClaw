@@ -41,6 +41,9 @@ public final class ApplicationKernel implements AutoCloseable {
     private final WorkspaceManager workspaces;
     private final DataManager data;
     private final TraceRecorder traceRecorder;
+    private final AgentConfig agentConfig;
+    private final EmailConfig emailConfig;
+    private final NotificationConfig notificationConfig;
     private final AtomicBoolean transitioning = new AtomicBoolean(false);
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
@@ -58,7 +61,10 @@ public final class ApplicationKernel implements AutoCloseable {
                              PluginManager pluginManager,
                              WorkspaceManager workspaces,
                              DataManager data,
-                             TraceRecorder traceRecorder) {
+                             TraceRecorder traceRecorder,
+                             AgentConfig agentConfig,
+                             EmailConfig emailConfig,
+                             NotificationConfig notificationConfig) {
         this.browserManager = Objects.requireNonNull(browserManager, "browserManager");
         this.interactionPort = Objects.requireNonNull(interactionPort, "interactionPort");
         this.taskExecutor = Objects.requireNonNull(taskExecutor, "taskExecutor");
@@ -67,6 +73,10 @@ public final class ApplicationKernel implements AutoCloseable {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces");
         this.data = Objects.requireNonNull(data, "data");
         this.traceRecorder = Objects.requireNonNull(traceRecorder, "traceRecorder");
+        this.agentConfig = Objects.requireNonNull(agentConfig, "agentConfig");
+        this.emailConfig = Objects.requireNonNull(emailConfig, "emailConfig");
+        this.notificationConfig = Objects.requireNonNull(
+                notificationConfig, "notificationConfig");
         this.runtimeFactory = new RuntimeFactory(workspaceContexts, browserManager, openTaskView,
                 openWorkflowView, closeWorkflowView, java.util.Set.of());
     }
@@ -212,9 +222,9 @@ public final class ApplicationKernel implements AutoCloseable {
 
     /** 让跨工作区单例重新绑定到 WorkspaceManager 当前指向的数据。 */
     private void reloadWorkspaceState() {
-        AgentConfig.getInstance().reload();
-        EmailConfig.getInstance().reload();
-        NotificationConfig.getInstance().reload();
+        agentConfig.reload();
+        emailConfig.reload();
+        notificationConfig.reload();
         data.reload();
         traceRecorder.reload();
     }

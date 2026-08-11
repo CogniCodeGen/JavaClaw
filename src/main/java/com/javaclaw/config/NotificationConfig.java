@@ -9,7 +9,7 @@ import java.util.Properties;
  * 通知渠道配置管理器（持久化到全局 H2 数据库）
  *
  * <p>管理多种通知渠道的配置：钉钉机器人、企业微信机器人、飞书机器人、邮件通知、自定义 Webhook。
- * 采用单例模式，配置保存在全局 {@code javaclaw.mv.db}
+ * 实例由根 Spring Context 管理，配置保存在全局 {@code javaclaw.mv.db}
  * 的 {@code app_properties} 表中，并按 {@code workspace_id} 隔离。</p>
  *
  * @author JavaClaw
@@ -19,9 +19,9 @@ public final class NotificationConfig {
     private static final Logger log = LoggerFactory.getLogger(NotificationConfig.class);
 
     private static final String CONFIG_NAMESPACE = "notification";
-    private static NotificationConfig INSTANCE;
-
     private final Properties properties;
+    private final SqlPropertyStore store;
+    private final String databaseDescription;
 
     // ==================== 配置项 key ====================
 
@@ -50,18 +50,14 @@ public final class NotificationConfig {
     private static final String KEY_CUSTOM_CONTENT_TYPE = "custom.content.type";
     private static final String KEY_CUSTOM_BODY_TEMPLATE = "custom.body.template";
 
-    // ==================== 构造与单例 ====================
+    // ==================== 构造与生命周期 ====================
 
-    private NotificationConfig() {
+    public NotificationConfig(SqlPropertyStore store, DatabaseAccess database) {
+        this.store = java.util.Objects.requireNonNull(store, "store");
+        this.databaseDescription = java.util.Objects.requireNonNull(
+                database, "database").description();
         this.properties = new Properties();
         load();
-    }
-
-    public static synchronized NotificationConfig getInstance() {
-        if (INSTANCE == null) {
-            INSTANCE = new NotificationConfig();
-        }
-        return INSTANCE;
     }
 
     /**
@@ -70,19 +66,19 @@ public final class NotificationConfig {
     public void reload() {
         properties.clear();
         load();
-        log.info("通知配置已重新加载: {}", AppDatabase.databaseDisplayPath());
+        log.info("通知配置已重新加载: {}", databaseDescription);
     }
 
     // ==================== H2 读写 ====================
 
     private void load() {
-        Properties loaded = SqlPropertyStore.load(CONFIG_NAMESPACE);
+        Properties loaded = store.load(CONFIG_NAMESPACE);
         properties.putAll(loaded);
         if (properties.isEmpty()) {
-            log.info("通知配置数据库为空，使用默认值: {}", AppDatabase.databaseDisplayPath());
+            log.info("通知配置数据库为空，使用默认值: {}", databaseDescription);
             setDefaults();
         } else {
-            log.info("通知配置已从 H2 加载: {}", AppDatabase.databaseDisplayPath());
+            log.info("通知配置已从 H2 加载: {}", databaseDescription);
         }
     }
 
@@ -105,8 +101,8 @@ public final class NotificationConfig {
     }
 
     public void save() {
-        if (SqlPropertyStore.save(CONFIG_NAMESPACE, properties)) {
-            log.info("通知配置已保存到 H2: {}", AppDatabase.databaseDisplayPath());
+        if (store.save(CONFIG_NAMESPACE, properties)) {
+            log.info("通知配置已保存到 H2: {}", databaseDescription);
         }
     }
 
@@ -245,7 +241,7 @@ public final class NotificationConfig {
     // ==================== 辅助方法 ====================
 
     public String getConfigFilePath() {
-        return AppDatabase.databaseDisplayPath();
+        return databaseDescription;
     }
 
     /**

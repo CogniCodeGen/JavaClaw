@@ -53,21 +53,24 @@ public class HabitReviewer {
     private final EmbeddingGateway gate;
     private final TokenTracker tokenTracker;
     private final GenerateOptions generateOptions;
+    private final AgentConfig settings;
 
     /** 防并发重入：相邻两轮几乎同时结束时只跑一次回顾 */
     private final AtomicBoolean reviewing = new AtomicBoolean(false);
 
-    public HabitReviewer(ChatModelBase lightModel, MemoryStore store, EmbeddingGateway gate, TokenTracker tokenTracker) {
+    public HabitReviewer(ChatModelBase lightModel, MemoryStore store, EmbeddingGateway gate,
+                         TokenTracker tokenTracker, AgentConfig settings) {
         this.lightModel = lightModel;
         this.store = store;
         this.gate = gate;
         this.tokenTracker = tokenTracker;
+        this.settings = java.util.Objects.requireNonNull(settings, "settings");
         this.generateOptions = GenerateOptions.builder().build();
     }
 
     /** 在当前线程检查并按需回顾；失败静默，供受生命周期追踪的上层工作线程调用。 */
     public void maybeReviewNow() {
-        if (!AgentConfig.getInstance().getMemoryHabitReviewEnabled()) return;
+        if (!settings.getMemoryHabitReviewEnabled()) return;
         if (!reviewing.compareAndSet(false, true)) return;
         try {
             reviewSync(false);
@@ -90,7 +93,9 @@ public class HabitReviewer {
      * 供定时任务模块「立即执行」调用；正在回顾中或已关闭时返回相应提示。
      */
     public String reviewNow() {
-        if (!AgentConfig.getInstance().getMemoryHabitReviewEnabled()) return "习惯回顾已关闭（memory.habit.review.enabled=false）";
+        if (!settings.getMemoryHabitReviewEnabled()) {
+            return "习惯回顾已关闭（memory.habit.review.enabled=false）";
+        }
         if (!reviewing.compareAndSet(false, true)) return "习惯回顾正在进行中，已跳过本次触发";
         try {
             return reviewSync(true);
@@ -106,7 +111,7 @@ public class HabitReviewer {
      * @return 结果摘要（供手动触发展示；自动触发忽略返回值）
      */
     private String reviewSync(boolean force) {
-        AgentConfig cfg = AgentConfig.getInstance();
+        AgentConfig cfg = settings;
         long last = store.lastHabitReviewAt();
         long now = System.currentTimeMillis();
         if (!force && now - last < cfg.getMemoryHabitReviewIntervalHours() * 3600_000L) {

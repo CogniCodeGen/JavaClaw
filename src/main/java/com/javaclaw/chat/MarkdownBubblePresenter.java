@@ -42,6 +42,8 @@ final class MarkdownBubblePresenter {
     private final FxDispatcher fx;
     private final MarkdownRenderEngine renderer;
     private final ExternalLinkOpener links;
+    private final FontManager fonts;
+    private final ThemeManager themes;
     private final MarkdownBubbleViewModel viewModel = new MarkdownBubbleViewModel();
     private final PauseTransition renderingHintDelay = new PauseTransition();
     private final ChangeListener<Number> fontRevisionListener =
@@ -71,7 +73,9 @@ final class MarkdownBubblePresenter {
             ManagedTaskExecutor tasks,
             FxDispatcher fx,
             MarkdownRenderEngine renderer,
-            ExternalLinkOpener links) {
+            ExternalLinkOpener links,
+            FontManager fonts,
+            ThemeManager themes) {
         this.root = Objects.requireNonNull(root, "root");
         this.plainView = Objects.requireNonNull(plainView, "plainView");
         this.renderingHint = Objects.requireNonNull(renderingHint, "renderingHint");
@@ -80,10 +84,12 @@ final class MarkdownBubblePresenter {
         this.fx = Objects.requireNonNull(fx, "fx");
         this.renderer = Objects.requireNonNull(renderer, "renderer");
         this.links = Objects.requireNonNull(links, "links");
+        this.fonts = Objects.requireNonNull(fonts, "fonts");
+        this.themes = Objects.requireNonNull(themes, "themes");
         configurePlainView();
         currentContent = plainView;
-        FontManager.revisionProperty().addListener(fontRevisionListener);
-        ThemeManager.revisionProperty().addListener(themeRevisionListener);
+        fonts.revisionProperty().addListener(fontRevisionListener);
+        themes.revisionProperty().addListener(themeRevisionListener);
         setState(MarkdownBubble.State.STREAMING_PLAIN);
     }
 
@@ -147,8 +153,8 @@ final class MarkdownBubblePresenter {
         renderingHintDelay.stop();
         stopRenderingHintFade();
         discardVisualTransition();
-        FontManager.revisionProperty().removeListener(fontRevisionListener);
-        ThemeManager.revisionProperty().removeListener(themeRevisionListener);
+        fonts.revisionProperty().removeListener(fontRevisionListener);
+        themes.revisionProperty().removeListener(themeRevisionListener);
         clearDiagnostics();
         disposeRenderedContent(currentContent);
         root.getChildren().clear();
@@ -174,7 +180,7 @@ final class MarkdownBubblePresenter {
 
     private void updatePlainFallbackHeight() {
         int lines = Math.max(1, plainView.getParagraphs().size());
-        double lineHeight = Math.max(20, FontManager.chatFontPx() * 1.4);
+        double lineHeight = Math.max(20, fonts.chatFontPx() * 1.4);
         setPlainHeight(Math.max(28, lines * lineHeight + 8));
     }
 
@@ -206,7 +212,7 @@ final class MarkdownBubblePresenter {
         clearRenderDiagnostics();
         long generation = ++renderGeneration;
         submittedSource = source;
-        RenderStyleSnapshot style = RenderStyleSnapshot.capture();
+        RenderStyleSnapshot style = RenderStyleSnapshot.capture(fonts);
         setState(MarkdownBubble.State.RENDERING);
         scheduleRenderingHint(generation);
         try {

@@ -77,6 +77,7 @@ final class MemoryGraphRenderer implements AutoCloseable {
     private final GraphicsContext graphics;
     private final VBox emptyState;
     private final Label hud;
+    private final ThemeManager themes;
     private final boolean[] visibleTypes = {true, true, true};
     private final javafx.beans.value.ChangeListener<String> themeListener =
             (ignored, previous, current) -> applyTheme();
@@ -101,7 +102,7 @@ final class MemoryGraphRenderer implements AutoCloseable {
     private GraphNode hovered;
     private GraphNode dragged;
     private Consumer<NodeDetail> selectionListener;
-    private Palette palette = derivePalette();
+    private Palette palette;
     private double scale = 1;
     private double offsetX;
     private double offsetY;
@@ -122,11 +123,14 @@ final class MemoryGraphRenderer implements AutoCloseable {
             Pane canvasHolder,
             Canvas canvas,
             VBox emptyState,
-            Label hud) {
+            Label hud,
+            ThemeManager themes) {
         this.surface = Objects.requireNonNull(surface, "surface");
         this.canvas = Objects.requireNonNull(canvas, "canvas");
         this.emptyState = Objects.requireNonNull(emptyState, "emptyState");
         this.hud = Objects.requireNonNull(hud, "hud");
+        this.themes = Objects.requireNonNull(themes, "themes");
+        palette = derivePalette();
         graphics = canvas.getGraphicsContext2D();
         canvas.widthProperty().bind(canvasHolder.widthProperty());
         canvas.heightProperty().bind(canvasHolder.heightProperty());
@@ -134,7 +138,7 @@ final class MemoryGraphRenderer implements AutoCloseable {
         canvas.heightProperty().addListener((ignored, previous, current) -> draw());
         canvas.setCursor(Cursor.OPEN_HAND);
         wireMouse();
-        ThemeManager.themeProperty().addListener(themeListener);
+        themes.themeProperty().addListener(themeListener);
         applyTheme();
     }
 
@@ -503,11 +507,11 @@ final class MemoryGraphRenderer implements AutoCloseable {
         draw();
     }
 
-    private static Palette derivePalette() {
+    private Palette derivePalette() {
         String background = "#FBFAF6";
         String brand = "#2E9A6A";
         try {
-            ThemeManager.Theme theme = ThemeManager.getCurrentTheme();
+            ThemeManager.Theme theme = themes.getCurrentTheme();
             background = theme.bg();
             brand = theme.brand();
         } catch (RuntimeException ignored) {
@@ -542,7 +546,7 @@ final class MemoryGraphRenderer implements AutoCloseable {
         closed = true;
         timer.stop();
         loopRunning = false;
-        ThemeManager.themeProperty().removeListener(themeListener);
+        themes.themeProperty().removeListener(themeListener);
         canvas.widthProperty().unbind();
         canvas.heightProperty().unbind();
         canvas.setOnMousePressed(null);

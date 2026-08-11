@@ -15,7 +15,7 @@ import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.runtime.ApplicationKernel;
 import com.javaclaw.runtime.WorkspaceRuntime;
 import com.javaclaw.ui.javafx.knowledge.KnowledgeMenuSnapshot;
-import com.javaclaw.ui.javafx.theme.FontManager;
+import com.javaclaw.ui.javafx.theme.FontSelectionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,6 +39,7 @@ final class ChatRuntimeCoordinator {
     private final ApplicationKernel kernel;
     private final FxDispatcher fx;
     private final TaskScope backgroundTasks;
+    private final FontSelectionService fonts;
     private final AtomicBoolean transitioning = new AtomicBoolean();
     private final AtomicBoolean rebuildQueued = new AtomicBoolean();
 
@@ -52,10 +53,12 @@ final class ChatRuntimeCoordinator {
     ChatRuntimeCoordinator(
             ApplicationKernel kernel,
             FxDispatcher fx,
-            TaskScope backgroundTasks) {
+            TaskScope backgroundTasks,
+            FontSelectionService fonts) {
         this.kernel = Objects.requireNonNull(kernel, "kernel");
         this.fx = Objects.requireNonNull(fx, "fx");
         this.backgroundTasks = Objects.requireNonNull(backgroundTasks, "backgroundTasks");
+        this.fonts = Objects.requireNonNull(fonts, "fonts");
         adopt(kernel.current());
     }
 
@@ -234,7 +237,7 @@ final class ChatRuntimeCoordinator {
             view.modes().refreshWorkflows();
             view.sidebar().refreshWorkspaceCombo();
             view.header().reloadTheme();
-            FontManager.reload();
+            fonts.reloadFromWorkspace();
             view.modes().refreshReviewMode();
             log.info("工作区切换完成: {} ({})",
                     workspace.context().workspaceName(), targetWorkspaceId);

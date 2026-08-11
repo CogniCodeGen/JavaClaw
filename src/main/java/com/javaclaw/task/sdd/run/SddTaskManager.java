@@ -245,7 +245,7 @@ public final class SddTaskManager implements AutoCloseable {
             SddProgress progress = new ProgressAdapter(task);
             var gate = interactionPort != null
                     ? new PortReviewGate(interactionPort) : new AutoApproveReviewGate();
-            runner = new SddTaskRunner(context, runtime.getModelFactory(),
+            runner = new SddTaskRunner(context, runtime.getModelFactory(), settings,
                     runtime.buildCapabilityTools(
                             com.javaclaw.agent.ToolCallOrigin.managedTask(id, task.workDir)),
                     skillRuntime,
@@ -307,7 +307,7 @@ public final class SddTaskManager implements AutoCloseable {
         if (!caps.isBlank() && !caps.equalsIgnoreCase("auto")) return caps;
         try {
             ToolRouter router = new ToolRouter(
-                    runtime.getModelFactory().createLightChatModel(), null, skills);
+                    runtime.getModelFactory().createLightChatModel(), null, skills, settings);
             RoutingResult r = router.route("【托管任务】" + task.title + "\n" + task.description);
             if (r.isFallback() || !r.hasToolGroups()) return "auto";
             Set<String> keys = new LinkedHashSet<>();

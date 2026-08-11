@@ -62,8 +62,9 @@ public class MemoryManager {
      *
      * @param modelFactory 模型工厂（用于创建 AutoContextMemory 的压缩模型）
      */
-    public MemoryManager(ModelFactory modelFactory) {
-        AgentConfig config = AgentConfig.getInstance();
+    public MemoryManager(ModelFactory modelFactory, AgentConfig config) {
+        java.util.Objects.requireNonNull(modelFactory, "modelFactory");
+        java.util.Objects.requireNonNull(config, "config");
 
         // 构建 AutoContextMemory 配置
         this.autoContextConfig = AutoContextConfig.builder()

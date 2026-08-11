@@ -93,11 +93,12 @@ public final class ToolkitAssembler {
         tk.registration().tool(new com.javaclaw.skill.SkillTools(
                 skillRuntime.manager(), skillRuntime.usage())).group("skill").apply();
         tk.registration().tool(new com.javaclaw.skill.SkillManageTools(
-                origin, skillRuntime.manager(), AgentConfig.getInstance(),
+                origin, skillRuntime.manager(), runtime.getConfig(),
                 skillRuntime.proposals())).group("skill").apply();
         if (!ProjectAccessPolicy.strictIsolationEnabled()) {
             tk.registration().tool(new com.javaclaw.system.JShellTools(
-                    origin, skillRuntime.manager(), runtime.getJshellRunner())).group("skill").apply();
+                    origin, skillRuntime.manager(), runtime.getJshellRunner(), runtime.getConfig()))
+                    .group("skill").apply();
         }
         tk.registration().tool(new com.javaclaw.task.sdd.run.SddTaskManageTools(
                 origin, runtime.getSddTasks())).group("task_manage").apply();
@@ -148,7 +149,7 @@ public final class ToolkitAssembler {
         // 技能包成组注入（包优先，缺失技能跳过）：与聊天路径同一规则——此前 headless 路径
         // 丢弃路由命中的包名，定时/循环任务永远拿不到整包指令
         if (routing.hasBundles()
-                && AgentConfig.getInstance().isSkillBundlesEnabled()) {
+                && runtime.getConfig().isSkillBundlesEnabled()) {
             StringBuilder bundlePrompts = new StringBuilder();
             for (String bundleName : routing.bundleNames()) {
                 bundlePrompts.append(skillManager.buildBundlePrompt(bundleName));
@@ -194,9 +195,9 @@ public final class ToolkitAssembler {
      */
     public static ReActAgent buildHeadlessOrchestrator(AgentRuntime runtime, String sysPrompt,
                                                        Toolkit toolkit, Hook... extraHooks) {
-        AgentConfig config = AgentConfig.getInstance();
+        AgentConfig config = runtime.getConfig();
         List<Hook> hooks = new ArrayList<>();
-        hooks.add(new LoopDetectionHook());
+        hooks.add(new LoopDetectionHook(config));
         Collections.addAll(hooks, extraHooks);
         return ReActAgent.builder()
                 .name(AgentConfig.AGENT_NAME)

@@ -50,9 +50,15 @@ public class NotificationTools {
 
     /** 调用来源令牌（装配期绑定），高风险确认随调用传给 ToolConfirmationManager。 */
     private final ToolCallOrigin origin;
+    private final NotificationConfig notificationConfig;
+    private final EmailConfig emailConfig;
 
-    public NotificationTools(ToolCallOrigin origin) {
+    public NotificationTools(ToolCallOrigin origin, NotificationConfig notificationConfig,
+                             EmailConfig emailConfig) {
         this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
+        this.notificationConfig = java.util.Objects.requireNonNull(
+                notificationConfig, "notificationConfig");
+        this.emailConfig = java.util.Objects.requireNonNull(emailConfig, "emailConfig");
         this.httpClient = SHARED_HTTP_CLIENT;
     }
 
@@ -69,7 +75,7 @@ public class NotificationTools {
             return ToolResponse.error("notify_send", "用户取消了操作");
         }
 
-        NotificationConfig config = NotificationConfig.getInstance();
+        NotificationConfig config = notificationConfig;
         if (!config.hasEnabledChannel()) {
             return ToolResponse.error("notify_send", "没有已启用的通知渠道，请先在设置中配置并启用至少一个通知渠道。");
         }
@@ -131,7 +137,7 @@ public class NotificationTools {
             return ToolResponse.error("notify_dingtalk", "用户取消了操作");
         }
 
-        NotificationConfig config = NotificationConfig.getInstance();
+        NotificationConfig config = notificationConfig;
         if (!config.isDingtalkEnabled() || config.getDingtalkWebhook().isBlank()) {
             return ToolResponse.error("notify_dingtalk", "钉钉通知未启用或未配置 Webhook 地址。");
         }
@@ -171,7 +177,7 @@ public class NotificationTools {
             return ToolResponse.error("notify_wechat", "用户取消了操作");
         }
 
-        NotificationConfig config = NotificationConfig.getInstance();
+        NotificationConfig config = notificationConfig;
         if (!config.isWechatEnabled() || config.getWechatWebhook().isBlank()) {
             return ToolResponse.error("notify_wechat", "企业微信通知未启用或未配置 Webhook 地址。");
         }
@@ -210,7 +216,7 @@ public class NotificationTools {
             return ToolResponse.error("notify_feishu", "用户取消了操作");
         }
 
-        NotificationConfig config = NotificationConfig.getInstance();
+        NotificationConfig config = notificationConfig;
         if (!config.isFeishuEnabled() || config.getFeishuWebhook().isBlank()) {
             return ToolResponse.error("notify_feishu", "飞书通知未启用或未配置 Webhook 地址。");
         }
@@ -257,8 +263,7 @@ public class NotificationTools {
             return ToolResponse.error("notify_email", "用户取消了操作");
         }
 
-        NotificationConfig notifyConfig = NotificationConfig.getInstance();
-        EmailConfig emailConfig = EmailConfig.getInstance();
+        NotificationConfig notifyConfig = notificationConfig;
 
         if (!emailConfig.isConfigured()) {
             return ToolResponse.error("notify_email", "邮件账号未配置，请先在设置中配置邮件账号。");
@@ -316,7 +321,7 @@ public class NotificationTools {
             return ToolResponse.error("notify_custom_webhook", "用户取消了操作");
         }
 
-        NotificationConfig config = NotificationConfig.getInstance();
+        NotificationConfig config = notificationConfig;
         if (!config.isCustomEnabled() || config.getCustomWebhook().isBlank()) {
             return ToolResponse.error("notify_custom_webhook", "自定义 Webhook 未启用或未配置 URL。");
         }
@@ -336,7 +341,7 @@ public class NotificationTools {
     @Tool(name = "notify_list_channels", description = "列出所有已配置的通知渠道及其启用状态。")
     public String listChannels() {
         log.debug("工具调用: notify_list_channels");
-        NotificationConfig config = NotificationConfig.getInstance();
+        NotificationConfig config = notificationConfig;
 
         StringBuilder sb = new StringBuilder("通知渠道配置状态：\n\n");
         sb.append(String.format("1. 钉钉机器人: %s %s\n",
@@ -375,7 +380,7 @@ public class NotificationTools {
         if (channel == null || channel.isBlank() || "none".equalsIgnoreCase(channel)) {
             return "未选择通知渠道";
         }
-        NotificationConfig config = NotificationConfig.getInstance();
+        NotificationConfig config = notificationConfig;
         String key = channel.toLowerCase();
         return switch (key) {
             case "all" -> {
@@ -402,7 +407,7 @@ public class NotificationTools {
 
     private String sendDingtalkInternal(String title, String message) {
         try {
-            NotificationConfig config = NotificationConfig.getInstance();
+            NotificationConfig config = notificationConfig;
             String webhookUrl = buildDingtalkUrl(config);
             String body = String.format(
                     "{\"msgtype\":\"text\",\"text\":{\"content\":\"%s\"}}",
@@ -419,7 +424,7 @@ public class NotificationTools {
 
     private String sendWechatInternal(String title, String message) {
         try {
-            NotificationConfig config = NotificationConfig.getInstance();
+            NotificationConfig config = notificationConfig;
             String body = String.format(
                     "{\"msgtype\":\"text\",\"text\":{\"content\":\"%s\"}}",
                     escapeJson(title + "\n" + message));
@@ -435,7 +440,7 @@ public class NotificationTools {
 
     private String sendFeishuInternal(String title, String message) {
         try {
-            NotificationConfig config = NotificationConfig.getInstance();
+            NotificationConfig config = notificationConfig;
             String body = String.format(
                     "{\"msg_type\":\"text\",\"content\":{\"text\":\"%s\"}}",
                     escapeJson(title + "\n" + message));
@@ -451,8 +456,7 @@ public class NotificationTools {
 
     private String sendEmailNotifyInternal(String title, String message) {
         try {
-            NotificationConfig notifyConfig = NotificationConfig.getInstance();
-            EmailConfig emailConfig = EmailConfig.getInstance();
+            NotificationConfig notifyConfig = notificationConfig;
 
             if (!emailConfig.isConfigured() || notifyConfig.getEmailNotifyTo().isBlank()) {
                 return "发送失败: 邮件未配置";
@@ -492,7 +496,7 @@ public class NotificationTools {
 
     private String sendCustomWebhookInternal(String title, String message) {
         try {
-            NotificationConfig config = NotificationConfig.getInstance();
+            NotificationConfig config = notificationConfig;
             String bodyTemplate = config.getCustomBodyTemplate();
             String body = bodyTemplate.replace("${message}", escapeJson(title + "\n" + message));
             sendHttpPost(config.getCustomWebhook(), body, config.getCustomContentType());

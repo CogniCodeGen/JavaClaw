@@ -160,13 +160,13 @@ public class ChatService {
         this.skills = runtime.getSkillRuntime();
         this.skillCurator = java.util.Objects.requireNonNull(skillCurator, "skillCurator");
         if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
-        AgentConfig config = AgentConfig.getInstance();
+        AgentConfig config = runtime.getConfig();
         log.info("========== 初始化 ChatService 普通模式 ==========");
 
         // 0. 记忆服务：打开当前工作区的 EclipseStore 记忆库（人格默认骨架自动写入）
         this.memoryService = new com.javaclaw.memory.MemoryService(
                 runtime.getModelFactory(), runtime.getTokenTracker(),
-                runtime.getEmbeddingGateway(), taskScope);
+                runtime.getEmbeddingGateway(), taskScope, runtime.getConfig());
         // 嵌入降级可感知：首次嵌入失败弹一次 Toast，避免端点配错时记忆系统静默失效而用户长期不知情
         this.memoryService.setOnEmbeddingDegraded(reason -> {
             com.javaclaw.api.interaction.UserInteractionPort port = ToolConfirmationManager.getPort();
@@ -188,7 +188,7 @@ public class ChatService {
             this.masterToolkit = buildMasterToolkit(runtime);
 
             // 2. 三个钩子
-            this.loopDetectionHook = new LoopDetectionHook();
+            this.loopDetectionHook = new LoopDetectionHook(config);
             this.toolFallbackHook = new ToolFallbackHook();
             this.loggingHook = new AgentLoggingHook(runtime.getTraceRecorder());
 
@@ -203,7 +203,7 @@ public class ChatService {
             // 4. 工具路由器（使用轻量模型，强制关闭 thinking 避免分类调用阻塞数分钟）
             if (config.isToolRoutingEnabled()) {
                 this.toolRouter = new ToolRouter(runtime.getModelFactory().createLightChatModel(),
-                        runtime.getTokenTracker(), skills.manager());
+                        runtime.getTokenTracker(), skills.manager(), config);
                 log.info("工具路由器已创建（启用状态，thinking 关闭）");
             } else {
                 this.toolRouter = null;
@@ -290,7 +290,7 @@ public class ChatService {
     }
 
     private ReActAgent buildOrchestrator(String fullSysPrompt) {
-        AgentConfig config = AgentConfig.getInstance();
+        AgentConfig config = runtime.getConfig();
         return ReActAgent.builder()
                 .name(AgentConfig.AGENT_NAME)
                 .sysPrompt(AgentPrompts.withMandatoryGlobalRules(fullSysPrompt))
@@ -779,7 +779,7 @@ public class ChatService {
             return true;
         }
         return executionMonitor.successRate()
-                >= AgentConfig.getInstance().getSkillEvolutionSuccessThreshold();
+                >= runtime.getConfig().getSkillEvolutionSuccessThreshold();
     }
 
     /** 把本轮注入技能的成败归因写入使用统计（异常不抛出，避免阻断主流程） */
@@ -879,7 +879,7 @@ public class ChatService {
             }
             // 技能包成组注入（包优先：路由命中包名时整包注入，缺失技能跳过不中断）
             if (routing.hasBundles()
-                    && com.javaclaw.config.AgentConfig.getInstance().isSkillBundlesEnabled()) {
+                    && runtime.getConfig().isSkillBundlesEnabled()) {
                 StringBuilder bundlePrompts = new StringBuilder();
                 for (String bundleName : routing.bundleNames()) {
                     bundlePrompts.append(skills.manager().buildBundlePrompt(bundleName));

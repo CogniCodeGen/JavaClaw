@@ -10,7 +10,7 @@ import java.util.Properties;
  *
  * <p>负责读取和保存邮件相关配置项，配置保存在全局 {@code javaclaw.mv.db}
  * 的 {@code app_properties} 表中，并按 {@code workspace_id} 隔离。
- * 采用单例模式，全局共享同一份配置。</p>
+ * 实例由根 Spring Context 管理；切换工作区时显式重新加载。</p>
  *
  * @author JavaClaw
  */
@@ -20,10 +20,9 @@ public final class EmailConfig {
 
     private static final String CONFIG_NAMESPACE = "email";
 
-    /** 单例实例 */
-    private static EmailConfig INSTANCE;
-
     private final Properties properties;
+    private final SqlPropertyStore store;
+    private final String databaseDescription;
 
     // ==================== 配置项 key ====================
     private static final String KEY_SMTP_HOST = "smtp.host";
@@ -36,16 +35,12 @@ public final class EmailConfig {
     private static final String KEY_USE_STARTTLS = "use.starttls";
     private static final String KEY_USE_SSL = "use.ssl";
 
-    private EmailConfig() {
+    public EmailConfig(SqlPropertyStore store, DatabaseAccess database) {
+        this.store = java.util.Objects.requireNonNull(store, "store");
+        this.databaseDescription = java.util.Objects.requireNonNull(
+                database, "database").description();
         this.properties = new Properties();
         load();
-    }
-
-    public static synchronized EmailConfig getInstance() {
-        if (INSTANCE == null) {
-            INSTANCE = new EmailConfig();
-        }
-        return INSTANCE;
     }
 
     /**
@@ -54,20 +49,20 @@ public final class EmailConfig {
     public void reload() {
         properties.clear();
         load();
-        log.info("邮件配置已重新加载: {}", AppDatabase.databaseDisplayPath());
+        log.info("邮件配置已重新加载: {}", databaseDescription);
     }
 
     /**
      * 从 H2 加载配置。
      */
     private void load() {
-        Properties loaded = SqlPropertyStore.load(CONFIG_NAMESPACE);
+        Properties loaded = store.load(CONFIG_NAMESPACE);
         properties.putAll(loaded);
         if (properties.isEmpty()) {
-            log.info("邮件配置数据库为空，使用默认值: {}", AppDatabase.databaseDisplayPath());
+            log.info("邮件配置数据库为空，使用默认值: {}", databaseDescription);
             setDefaults();
         } else {
-            log.info("邮件配置已从 H2 加载: {}", AppDatabase.databaseDisplayPath());
+            log.info("邮件配置已从 H2 加载: {}", databaseDescription);
         }
     }
 
@@ -90,8 +85,8 @@ public final class EmailConfig {
      * 保存配置到 H2
      */
     public void save() {
-        if (SqlPropertyStore.save(CONFIG_NAMESPACE, properties)) {
-            log.info("邮件配置已保存到 H2: {}", AppDatabase.databaseDisplayPath());
+        if (store.save(CONFIG_NAMESPACE, properties)) {
+            log.info("邮件配置已保存到 H2: {}", databaseDescription);
         }
     }
 
@@ -189,6 +184,6 @@ public final class EmailConfig {
      * 获取配置文件路径（用于界面显示）
      */
     public String getConfigFilePath() {
-        return AppDatabase.databaseDisplayPath();
+        return databaseDescription;
     }
 }

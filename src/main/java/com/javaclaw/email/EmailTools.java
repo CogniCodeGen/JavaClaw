@@ -30,16 +30,17 @@ public class EmailTools {
 
     /** 调用来源令牌（装配期绑定），高风险确认随调用传给 ToolConfirmationManager。 */
     private final ToolCallOrigin origin;
+    private final EmailConfig config;
 
-    public EmailTools(ToolCallOrigin origin) {
+    public EmailTools(ToolCallOrigin origin, EmailConfig config) {
         this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
+        this.config = java.util.Objects.requireNonNull(config, "config");
     }
 
     /**
      * 获取 SMTP 发送会话
      */
     private Session getSmtpSession() {
-        EmailConfig config = EmailConfig.getInstance();
         Properties props = new Properties();
         props.put("mail.smtp.host", config.getSmtpHost());
         props.put("mail.smtp.port", String.valueOf(config.getSmtpPort()));
@@ -64,7 +65,6 @@ public class EmailTools {
      * 获取 IMAP 接收会话并连接到 Store
      */
     private Store getImapStore() throws MessagingException {
-        EmailConfig config = EmailConfig.getInstance();
         Properties props = new Properties();
         props.put("mail.imap.host", config.getImapHost());
         props.put("mail.imap.port", String.valueOf(config.getImapPort()));
@@ -406,7 +406,7 @@ public class EmailTools {
 
             Session smtpSession = getSmtpSession();
             MimeMessage reply = (MimeMessage) originalMsg.reply(replyAll);
-            reply.setFrom(new InternetAddress(EmailConfig.getInstance().getFromAddress()));
+            reply.setFrom(new InternetAddress(config.getFromAddress()));
 
             // 构建回复正文：新内容 + 原始邮件引用
             String originalFrom = originalMsg.getFrom() != null && originalMsg.getFrom().length > 0
@@ -419,7 +419,6 @@ public class EmailTools {
             reply.setText(body + quotedBody, "UTF-8");
 
             // 使用 SMTP 会话发送
-            EmailConfig config = EmailConfig.getInstance();
             try (Transport transport = smtpSession.getTransport("smtp")) {
                 transport.connect(config.getSmtpHost(),
                         config.getUsername(), config.getPassword());
@@ -444,7 +443,6 @@ public class EmailTools {
      * 获取有效的发件人地址：fromAddress 无效时回退到 username
      */
     private String getValidFromAddress() {
-        EmailConfig config = EmailConfig.getInstance();
         String from = config.getFromAddress();
         if (from == null || from.isBlank() || !from.contains("@")) {
             log.warn("发件人地址无效（{}），回退使用登录用户名: {}", from, config.getUsername());

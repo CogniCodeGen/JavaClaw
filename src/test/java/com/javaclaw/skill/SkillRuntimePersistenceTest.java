@@ -54,7 +54,7 @@ class SkillRuntimePersistenceTest {
         try (var root = ApplicationContexts.createRoot(new DataRoot(tempDirectory.resolve("proposal-db")));
              TaskScope tasks = root.getBean(ManagedTaskExecutor.class)
                      .openScope("skill-proposal-test", 4)) {
-            AgentConfig settings = AgentConfig.getInstance();
+            AgentConfig settings = root.getBean(AgentConfig.class);
             SkillManager skills = new SkillManager(
                     tempDirectory.resolve("managed-skills"),
                     root.getBean(ObjectMapper.class), settings);
@@ -86,7 +86,7 @@ class SkillRuntimePersistenceTest {
             TaskScope tasks,
             String workspaceId) {
         return new SkillUsageTracker(workspaceId, root.getBean(JdbcTemplate.class),
-                root.getBean(PlatformTransactionManager.class), AgentConfig.getInstance(),
+                root.getBean(PlatformTransactionManager.class), root.getBean(AgentConfig.class),
                 root.getBean(ManagedTaskExecutor.class), tasks);
     }
 

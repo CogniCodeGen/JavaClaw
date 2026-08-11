@@ -2,6 +2,7 @@ package com.javaclaw.memory;
 
 import com.javaclaw.agent.TokenTracker;
 import com.javaclaw.agent.model.ModelFactory;
+import com.javaclaw.config.AgentConfig;
 import com.javaclaw.memory.curation.Distiller;
 import com.javaclaw.memory.curation.HabitReviewer;
 import com.javaclaw.memory.correction.CorrectionEngine;
@@ -56,6 +57,7 @@ public class MemoryService implements AutoCloseable {
     private final ChatModelBase lightModel;
     private final TokenTracker tokenTracker;
     private final TaskScope tasks;
+    private final AgentConfig settings;
     private MemoryTaskTracker backgroundWork = new MemoryTaskTracker();
 
     private MemoryStoreRegistry.Lease storeLease;
@@ -66,11 +68,12 @@ public class MemoryService implements AutoCloseable {
     private CorrectionEngine correctionEngine;
 
     public MemoryService(ModelFactory modelFactory, TokenTracker tokenTracker,
-                         EmbeddingGateway gateway, TaskScope tasks) {
+                         EmbeddingGateway gateway, TaskScope tasks, AgentConfig settings) {
         this.gate = java.util.Objects.requireNonNull(gateway, "gateway");
         this.lightModel = modelFactory.createLightChatModel();
         this.tokenTracker = tokenTracker;
         this.tasks = java.util.Objects.requireNonNull(tasks, "tasks");
+        this.settings = java.util.Objects.requireNonNull(settings, "settings");
     }
 
     /**
@@ -93,9 +96,10 @@ public class MemoryService implements AutoCloseable {
         try {
             this.storeLease = acquired;
             this.store = acquired.store();
-            this.recaller = new Recaller(store, gate);
-            this.distiller = new Distiller(lightModel, store, gate, tokenTracker);
-            this.habitReviewer = new HabitReviewer(lightModel, store, gate, tokenTracker);
+            this.recaller = new Recaller(store, gate, settings);
+            this.distiller = new Distiller(lightModel, store, gate, tokenTracker, settings);
+            this.habitReviewer = new HabitReviewer(
+                    lightModel, store, gate, tokenTracker, settings);
             this.correctionEngine = new CorrectionEngine(
                     store, text -> gate.embed(text, EmbeddingPurpose.BACKGROUND_INDEX));
             seedDefaultPersona();
@@ -642,8 +646,8 @@ public class MemoryService implements AutoCloseable {
         if (store == null) {
             return com.javaclaw.memory.graph.MemoryGraph.empty();
         }
-        double semThreshold = com.javaclaw.config.AgentConfig.getInstance().getMemoryGraphSemanticThreshold();
-        int maxNodes = com.javaclaw.config.AgentConfig.getInstance().getMemoryGraphMaxNodes();
+        double semThreshold = settings.getMemoryGraphSemanticThreshold();
+        int maxNodes = settings.getMemoryGraphMaxNodes();
         var opt = new com.javaclaw.memory.graph.MemoryGraphBuilder.Options(
                 maxNodes, semThreshold, 3, true, 36);
         return com.javaclaw.memory.graph.MemoryGraphBuilder.build(store, opt);

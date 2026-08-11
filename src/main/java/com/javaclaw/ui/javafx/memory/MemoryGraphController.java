@@ -7,6 +7,7 @@ import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.platform.fx.UiAsyncAction;
+import com.javaclaw.ui.javafx.theme.ThemeManager;
 import javafx.fxml.FXML;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.control.Label;
@@ -43,6 +44,7 @@ public final class MemoryGraphController implements MemorySectionController, Aut
     private final MemoryApplicationService useCases;
     private final MemoryComponentFactory components;
     private final UiAsyncAction<MemoryGraph> loadAction;
+    private final ThemeManager themes;
     private MemoryGraphRenderer renderer;
     private MemoryChildView<?> relatedView;
     private boolean factVisible = true;
@@ -55,16 +57,18 @@ public final class MemoryGraphController implements MemorySectionController, Aut
             MemoryApplicationService useCases,
             MemoryComponentFactory components,
             @Qualifier("workspaceTaskScope") TaskScope tasks,
-            FxDispatcher fx) {
+            FxDispatcher fx,
+            ThemeManager themes) {
         this.useCases = Objects.requireNonNull(useCases, "useCases");
         this.components = Objects.requireNonNull(components, "components");
+        this.themes = Objects.requireNonNull(themes, "themes");
         loadAction = new UiAsyncAction<>(tasks, fx);
     }
 
     @FXML
     private void initialize() {
         renderer = new MemoryGraphRenderer(
-                graphSurface, canvasHolder, graphCanvas, graphEmpty, graphHud);
+                graphSurface, canvasHolder, graphCanvas, graphEmpty, graphHud, themes);
         focusDepth.valueProperty().addListener((ignored, previous, value) ->
                 renderer.setFocusDepth((int) Math.round(value.doubleValue())));
         renderer.setOnNodeSelected(this::showInspector);

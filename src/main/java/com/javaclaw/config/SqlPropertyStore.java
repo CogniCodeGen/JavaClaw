@@ -2,112 +2,123 @@ package com.javaclaw.config;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.util.List;
+import java.util.Objects;
 import java.util.Properties;
+import java.util.function.Supplier;
 
 /**
- * 基于 H2 的配置属性存储。
+ * 工作区隔离的 H2 属性仓储。
  *
- * <p>每类配置使用一个 namespace，键值落在 app_properties 表中，并以
- * {@code workspace_id} 隔离。启动时只读取 H2，不再从旧目录或 properties 文件导入。</p>
+ * <p>实例由根 Spring Context 管理。命名空间替换在单一事务中完成，确保内存中已经
+ * 删除的键不会在下一次加载时复活。该类不缓存工作区 ID；每次操作在入口捕获一次，
+ * 因此同一次保存不会跨越工作区切换。</p>
  */
 public final class SqlPropertyStore {
 
     private static final Logger log = LoggerFactory.getLogger(SqlPropertyStore.class);
 
-    private SqlPropertyStore() {}
+    private final JdbcTemplate jdbc;
+    private final TransactionTemplate transactions;
+    private final Supplier<String> workspaceId;
 
-    public static Properties load(String namespace) {
-        return loadNamespace(namespace);
+    public SqlPropertyStore(
+            JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager,
+            Supplier<String> workspaceId) {
+        this.jdbc = Objects.requireNonNull(jdbc, "jdbc");
+        this.transactions = new TransactionTemplate(
+                Objects.requireNonNull(transactionManager, "transactionManager"));
+        this.workspaceId = Objects.requireNonNull(workspaceId, "workspaceId");
     }
 
-    public static boolean save(String namespace, Properties props) {
-        return save(namespace, props, AppDatabase.currentWorkspaceId());
+    public Properties load(String namespace) {
+        return load(namespace, currentWorkspaceId());
     }
 
-    static boolean save(String namespace, Properties props, String workspaceId) {
-        try (Connection c = AppDatabase.getConnection()) {
-            c.setAutoCommit(false);
-            replaceNamespace(c, workspaceId, namespace, props);
-            c.commit();
+    Properties load(String namespace, String targetWorkspaceId) {
+        Properties properties = new Properties();
+        try {
+            jdbc.query("""
+                    SELECT prop_key, prop_value
+                    FROM app_properties
+                    WHERE workspace_id = ? AND namespace = ?
+                    ORDER BY prop_key
+                    """, (org.springframework.jdbc.core.RowCallbackHandler) result ->
+                            properties.setProperty(
+                            result.getString("prop_key"),
+                            Objects.requireNonNullElse(result.getString("prop_value"), "")),
+                    targetWorkspaceId, namespace);
+        } catch (DataAccessException failure) {
+            log.error("读取 H2 配置失败: namespace={}, workspace={}",
+                    namespace, targetWorkspaceId, failure);
+        }
+        return properties;
+    }
+
+    public boolean save(String namespace, Properties properties) {
+        return save(namespace, properties, currentWorkspaceId());
+    }
+
+    boolean save(String namespace, Properties properties, String targetWorkspaceId) {
+        Properties snapshot = new Properties();
+        snapshot.putAll(Objects.requireNonNull(properties, "properties"));
+        try {
+            transactions.executeWithoutResult(status ->
+                    replaceNamespace(targetWorkspaceId, namespace, snapshot));
             return true;
-        } catch (SQLException e) {
-            log.error("保存 H2 配置失败: namespace={}", namespace, e);
+        } catch (DataAccessException failure) {
+            log.error("保存 H2 配置失败: namespace={}, workspace={}",
+                    namespace, targetWorkspaceId, failure);
             return false;
         }
     }
 
-    static boolean saveProperty(String namespace, String key, String value, String workspaceId) {
-        String sql = """
-                MERGE INTO app_properties(workspace_id, namespace, prop_key, prop_value, updated_at)
-                KEY (workspace_id, namespace, prop_key)
-                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """;
-        try (Connection c = AppDatabase.getConnection();
-             PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setString(1, workspaceId);
-            ps.setString(2, namespace);
-            ps.setString(3, key);
-            ps.setString(4, value);
-            ps.executeUpdate();
+    boolean saveProperty(String namespace, String key, String value, String targetWorkspaceId) {
+        try {
+            jdbc.update("""
+                    MERGE INTO app_properties(
+                        workspace_id, namespace, prop_key, prop_value, updated_at)
+                    KEY (workspace_id, namespace, prop_key)
+                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    """, targetWorkspaceId, namespace, key, value);
             return true;
-        } catch (SQLException e) {
-            log.error("保存 H2 配置项失败: namespace={}, key={}", namespace, key, e);
+        } catch (DataAccessException failure) {
+            log.error("保存 H2 配置项失败: namespace={}, key={}, workspace={}",
+                    namespace, key, targetWorkspaceId, failure);
             return false;
         }
     }
 
-    /** 在调用方事务内完整替换命名空间，使内存中已删除的键不会在重载时复活。 */
-    static void replaceNamespace(Connection c, String workspaceId, String namespace, Properties props)
-            throws SQLException {
-        try (PreparedStatement delete = c.prepareStatement(
-                "DELETE FROM app_properties WHERE workspace_id = ? AND namespace = ?")) {
-            delete.setString(1, workspaceId);
-            delete.setString(2, namespace);
-            delete.executeUpdate();
+    String currentWorkspaceId() {
+        String value = workspaceId.get();
+        if (value == null || value.isBlank()) {
+            throw new IllegalStateException("当前工作区 ID 尚未初始化");
         }
-        String sql = """
-                INSERT INTO app_properties(workspace_id, namespace, prop_key, prop_value, updated_at)
+        return value;
+    }
+
+    /** 必须在 {@link #transactions} 的事务回调中调用。 */
+    private void replaceNamespace(
+            String targetWorkspaceId, String namespace, Properties properties) {
+        jdbc.update("DELETE FROM app_properties WHERE workspace_id = ? AND namespace = ?",
+                targetWorkspaceId, namespace);
+        List<String> keys = properties.stringPropertyNames().stream().sorted().toList();
+        if (keys.isEmpty()) return;
+        jdbc.batchUpdate("""
+                INSERT INTO app_properties(
+                    workspace_id, namespace, prop_key, prop_value, updated_at)
                 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """;
-        try (PreparedStatement ps = c.prepareStatement(sql)) {
-            for (String key : props.stringPropertyNames()) {
-                ps.setString(1, workspaceId);
-                ps.setString(2, namespace);
-                ps.setString(3, key);
-                ps.setString(4, props.getProperty(key));
-                ps.addBatch();
-            }
-            ps.executeBatch();
-        }
+                """, keys, keys.size(), (statement, key) -> {
+                    statement.setString(1, targetWorkspaceId);
+                    statement.setString(2, namespace);
+                    statement.setString(3, key);
+                    statement.setString(4, properties.getProperty(key));
+                });
     }
-
-    public static Properties loadNamespace(String namespace) {
-        Properties props = new Properties();
-        String sql = """
-                SELECT prop_key, prop_value
-                FROM app_properties
-                WHERE workspace_id = ? AND namespace = ?
-                ORDER BY prop_key
-                """;
-        try (Connection c = AppDatabase.getConnection();
-             PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setString(1, AppDatabase.currentWorkspaceId());
-            ps.setString(2, namespace);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    String value = rs.getString("prop_value");
-                    props.setProperty(rs.getString("prop_key"), value == null ? "" : value);
-                }
-            }
-        } catch (SQLException e) {
-            log.error("读取 H2 配置失败: namespace={}", namespace, e);
-        }
-        return props;
-    }
-
 }

@@ -35,10 +35,12 @@ public class Recaller {
 
     private final MemoryStore store;
     private final EmbeddingGateway gate;
+    private final AgentConfig settings;
 
-    public Recaller(MemoryStore store, EmbeddingGateway gate) {
+    public Recaller(MemoryStore store, EmbeddingGateway gate, AgentConfig settings) {
         this.store = store;
         this.gate = gate;
+        this.settings = java.util.Objects.requireNonNull(settings, "settings");
     }
 
     /**
@@ -47,7 +49,7 @@ public class Recaller {
      * @return {@code <loaded_context>...</loaded_context>} 文本；无任何内容时返回空串
      */
     public String recall(String query) {
-        AgentConfig cfg = AgentConfig.getInstance();
+        AgentConfig cfg = settings;
         int topK = cfg.getMemoryRecallTopK();
         int epK = cfg.getMemoryRecallEpisodes();
         double threshold = cfg.getMemoryRecallThreshold();

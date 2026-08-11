@@ -24,6 +24,9 @@ import com.javaclaw.application.settings.TestDataMaintenanceUseCase;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.config.DataManager;
 import com.javaclaw.config.WorkspaceManager;
+import com.javaclaw.config.SqlPropertyStore;
+import com.javaclaw.config.EmailConfig;
+import com.javaclaw.config.NotificationConfig;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.data.DataSourceDatabaseAccess;
 import com.javaclaw.platform.data.H2DataSource;
@@ -118,14 +121,39 @@ public class RootConfiguration {
         return new DataSourceDatabaseAccess(dataSource, description);
     }
 
+    @Bean
+    SqlPropertyStore sqlPropertyStore(
+            JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager,
+            WorkspaceManager workspaces) {
+        return new SqlPropertyStore(jdbc, transactionManager, workspaces::getCurrentWorkspaceId);
+    }
+
+    @Bean
+    AgentConfig agentConfig(SqlPropertyStore properties, DatabaseAccess database) {
+        return new AgentConfig(properties, database);
+    }
+
+    @Bean
+    EmailConfig emailConfig(SqlPropertyStore properties, DatabaseAccess database) {
+        return new EmailConfig(properties, database);
+    }
+
+    @Bean
+    NotificationConfig notificationConfig(SqlPropertyStore properties, DatabaseAccess database) {
+        return new NotificationConfig(properties, database);
+    }
+
     @Bean(destroyMethod = "close")
     ManagedTaskExecutor managedTaskExecutor() {
         return new ManagedTaskExecutor();
     }
 
     @Bean(destroyMethod = "close")
-    ToolReviewSettingsPort toolReviewSettings(ManagedTaskExecutor executor) {
-        return new AgentConfigToolReviewSettings(executor);
+    ToolReviewSettingsPort toolReviewSettings(
+            ManagedTaskExecutor executor, AgentConfig config) {
+        ToolConfirmationManager.configure(config);
+        return new AgentConfigToolReviewSettings(executor, config);
     }
 
     @Bean
@@ -149,8 +177,9 @@ public class RootConfiguration {
     }
 
     @Bean
-    TraceExporter traceExporter(WorkspaceManager workspaces, TraceRecorder recorder) {
-        return new TraceExporter(workspaces, recorder);
+    TraceExporter traceExporter(
+            WorkspaceManager workspaces, TraceRecorder recorder, AgentConfig config) {
+        return new TraceExporter(workspaces, recorder, config);
     }
 
     @Bean
@@ -222,9 +251,8 @@ public class RootConfiguration {
     }
 
     @Bean
-    OnboardingSettingsPort onboardingSettingsPort() {
-        // AgentConfig 只有在 JavaFX init 完成 WorkspaceManager 初始化后才可安全实例化。
-        return new AgentConfigOnboardingSettings(AgentConfig::getInstance);
+    OnboardingSettingsPort onboardingSettingsPort(AgentConfig config) {
+        return new AgentConfigOnboardingSettings(() -> config);
     }
 
     @Bean

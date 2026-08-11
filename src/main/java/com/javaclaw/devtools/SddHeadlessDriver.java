@@ -82,7 +82,7 @@ public final class SddHeadlessDriver {
         TaskScope taskScope = rootContext.getBean(ManagedTaskExecutor.class)
                 .openScope("sdd-headless", 256);
         ManagedTaskExecutor taskExecutor = rootContext.getBean(ManagedTaskExecutor.class);
-        AgentConfig settings = AgentConfig.getInstance();
+        AgentConfig settings = rootContext.getBean(AgentConfig.class);
         SkillManager skills = new SkillManager(
                 workspaces.getGlobalDataPath().resolve("skills"),
                 rootContext.getBean(com.fasterxml.jackson.databind.ObjectMapper.class), settings);
@@ -103,12 +103,21 @@ public final class SddHeadlessDriver {
         var knowledgePreferences = new JdbcKnowledgeDocumentPreferenceAdapter(
                 workspace.workspaceId(), rootContext.getBean(JdbcTemplate.class),
                 rootContext.getBean(PlatformTransactionManager.class));
-        AgentRuntime runtime = new AgentRuntime(browser, customAgents, siteCredentials,
+        var models = new com.javaclaw.agent.model.ModelFactory(settings);
+        var tokens = new com.javaclaw.agent.TokenTracker(
+                workspace.workspaceId(), rootContext.getBean(JdbcTemplate.class), settings);
+        var memories = new com.javaclaw.agent.memory.MemoryManager(models, settings);
+        var embeddings = new com.javaclaw.memory.embed.EmbeddingGateway(
+                models, taskScope, settings);
+        AgentRuntime runtime = new AgentRuntime(browser, models, tokens, memories, embeddings,
+                customAgents, siteCredentials,
                 mcpConfigurations, new McpClientManager(mcpConfigurations, taskScope), taskScope,
                 null, skillRuntime,
                 () -> java.util.Objects.requireNonNull(sddTasks.get(), "SDD 任务用例尚未装配"),
                 rootContext.getBean(com.javaclaw.system.JShellRunner.class),
-                rootContext.getBean(com.javaclaw.diagnostics.TraceRecorder.class), settings, workspace,
+                rootContext.getBean(com.javaclaw.diagnostics.TraceRecorder.class), settings,
+                rootContext.getBean(com.javaclaw.config.EmailConfig.class),
+                rootContext.getBean(com.javaclaw.config.NotificationConfig.class), workspace,
                 knowledgePreferences);
 
         // 2. 配置 SDD 管理器（注入自动放行端口 → PortReviewGate 评审直接批准）

@@ -1,7 +1,10 @@
 package com.javaclaw.ui.javafx.theme;
 
 import com.javaclaw.config.AgentConfig;
-import javafx.application.Platform;
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.execution.TaskScope;
+import com.javaclaw.platform.execution.TaskSpec;
+import com.javaclaw.platform.fx.FxDispatcher;
 import javafx.beans.property.ReadOnlyIntegerProperty;
 import javafx.beans.property.SimpleIntegerProperty;
 import javafx.collections.ListChangeListener;
@@ -37,7 +40,7 @@ import java.util.Set;
  * <p>选择持久化到当前工作区配置（{@code ui.font.*}），切换工作区时 {@link #reload()} 重新读取。
  * 仅用 JavaFX 基础 API，不依赖任何特定版本的新特性。</p>
  */
-public final class FontManager {
+public final class FontManager implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(FontManager.class);
 
@@ -110,22 +113,40 @@ public final class FontManager {
     };
 
     /** 变更计数：「设置 › 字体」面板监听它刷新选中态与预览。 */
-    private static final SimpleIntegerProperty revision = new SimpleIntegerProperty(0);
+    private final SimpleIntegerProperty revision = new SimpleIntegerProperty(0);
 
-    private static String fontId = DEFAULT_FONT;
-    private static String monoId = DEFAULT_MONO;
-    private static String densityId = DEFAULT_DENSITY;
+    private String fontId = DEFAULT_FONT;
+    private String monoId = DEFAULT_MONO;
+    private String densityId = DEFAULT_DENSITY;
 
-    private static boolean loaded = false;
-    private static boolean initialized = false;
-    private static Set<String> availableFamilies = Set.of();
+    private final AgentConfig config;
+    private final FxDispatcher fx;
+    private final TaskScope persistence;
+    private final ListChangeListener<Window> windowListener = change -> {
+        while (change.next()) {
+            for (Window window : change.getAddedSubList()) {
+                hookWindow(window);
+            }
+        }
+    };
+    private boolean loaded;
+    private boolean initialized;
+    private Set<String> availableFamilies = Set.of();
 
-    private FontManager() {}
+    public FontManager(
+            AgentConfig config,
+            FxDispatcher fx,
+            ManagedTaskExecutor tasks) {
+        this.config = java.util.Objects.requireNonNull(config, "config");
+        this.fx = java.util.Objects.requireNonNull(fx, "fx");
+        persistence = java.util.Objects.requireNonNull(tasks, "tasks")
+                .openScope("font-preferences", 1);
+    }
 
     // ==================== 启动期 ====================
 
     /** 注册全部打包字体。幂等。须在构建任何 Scene 之前调用一次。 */
-    public static synchronized void loadBundledFonts() {
+    public synchronized void loadBundledFonts() {
         if (loaded) return;
         int bundled = 0;
         int missing = 0;
@@ -156,19 +177,16 @@ public final class FontManager {
      * 初始化：读取持久化选择并挂接全局窗口监听（含已存在与后续新建的窗口/弹窗）。
      * 须在 JavaFX Application Thread 调用一次（建议在 ThemeManager.init() 之后）。
      */
-    public static synchronized void init() {
+    public synchronized void init() {
         if (initialized) return;
-        AgentConfig cfg = AgentConfig.getInstance();
+        requireFxThread("初始化字体");
+        AgentConfig cfg = config;
         if (!loaded) loadBundledFonts();
         fontId = normalize(cfg.getUiFontFamily(), availableFontOptions().stream().map(FontOption::id).toList(), DEFAULT_FONT);
         monoId = normalize(cfg.getUiFontMono(), availableMonoOptions().stream().map(MonoOption::id).toList(), DEFAULT_MONO);
         densityId = normalize(cfg.getUiFontDensity(), DENSITIES.stream().map(Density::id).toList(), DEFAULT_DENSITY);
 
-        Window.getWindows().addListener((ListChangeListener<Window>) change -> {
-            while (change.next()) {
-                for (Window w : change.getAddedSubList()) hookWindow(w);
-            }
-        });
+        Window.getWindows().addListener(windowListener);
         for (Window w : Window.getWindows()) hookWindow(w);
         initialized = true;
         log.info("字体管理器已初始化: font={} mono={} density={}", fontId, monoId, densityId);
@@ -176,27 +194,47 @@ public final class FontManager {
 
     // ==================== 配置入口（面板调用，立即全局生效） ====================
 
-    public static void setFontFamily(String id) { apply(() -> fontId = normalizeFont(id)); AgentConfig.getInstance().setUiFontFamily(fontId); persist(); }
-    public static void setMonoFamily(String id) { apply(() -> monoId = normalizeMono(id)); AgentConfig.getInstance().setUiFontMono(monoId); persist(); }
-    public static void setDensity(String id)    { apply(() -> densityId = normalizeDensity(id)); AgentConfig.getInstance().setUiFontDensity(densityId); persist(); }
+    public void setFontFamily(String id) {
+        fx.dispatch(() -> {
+            apply(() -> fontId = normalizeFont(id));
+            config.setUiFontFamily(fontId);
+            persist();
+        });
+    }
 
-    public static String getFontFamily() { return fontId; }
-    public static String getMonoFamily() { return monoId; }
-    public static String getDensity()    { return densityId; }
+    public void setMonoFamily(String id) {
+        fx.dispatch(() -> {
+            apply(() -> monoId = normalizeMono(id));
+            config.setUiFontMono(monoId);
+            persist();
+        });
+    }
+
+    public void setDensity(String id) {
+        fx.dispatch(() -> {
+            apply(() -> densityId = normalizeDensity(id));
+            config.setUiFontDensity(densityId);
+            persist();
+        });
+    }
+
+    public String getFontFamily() { return fontId; }
+    public String getMonoFamily() { return monoId; }
+    public String getDensity()    { return densityId; }
 
     /** 对话气泡正文字号；MarkdownBubble 的段落渲染器（chat.markdown）读取。 */
-    public static double chatFontPx()     { return density().fontPx(); }
-    public static double chatLineHeight() { return density().lineHeight(); }
+    public double chatFontPx()     { return density().fontPx(); }
+    public double chatLineHeight() { return density().lineHeight(); }
 
     /** 当前界面字体的完整回退栈（供内联样式复用）。 */
-    public static String uiStack()   { return fontOption().stack(); }
-    public static String monoStack() { return monoOption().stack(); }
+    public String uiStack()   { return fontOption().stack(); }
+    public String monoStack() { return monoOption().stack(); }
 
     /** 变更可观察属性（面板据此刷新）。 */
-    public static ReadOnlyIntegerProperty revisionProperty() { return revision; }
+    public ReadOnlyIntegerProperty revisionProperty() { return revision; }
 
     /** 当前运行环境中真实可选的界面字体；系统回退项始终保留。 */
-    public static List<FontOption> availableFontOptions() {
+    public List<FontOption> availableFontOptions() {
         ensureFamilySnapshot();
         return FONT_OPTIONS.stream()
                 .filter(option -> isAvailable(option.requiredFamily()))
@@ -204,7 +242,7 @@ public final class FontManager {
     }
 
     /** 当前运行环境中真实可选的等宽字体；系统回退项始终保留。 */
-    public static List<MonoOption> availableMonoOptions() {
+    public List<MonoOption> availableMonoOptions() {
         ensureFamilySnapshot();
         return MONO_OPTIONS.stream()
                 .filter(option -> isAvailable(option.requiredFamily()))
@@ -212,49 +250,54 @@ public final class FontManager {
     }
 
     /** 工作区切换后重读该工作区记忆的字体。 */
-    public static void reload() {
-        AgentConfig cfg = AgentConfig.getInstance();
-        fontId = normalizeFont(cfg.getUiFontFamily());
-        monoId = normalizeMono(cfg.getUiFontMono());
-        densityId = normalizeDensity(cfg.getUiFontDensity());
-        applyToAllWindows();
-        revision.set(revision.get() + 1);
+    public void reload() {
+        fx.dispatch(() -> {
+            fontId = normalizeFont(config.getUiFontFamily());
+            monoId = normalizeMono(config.getUiFontMono());
+            densityId = normalizeDensity(config.getUiFontDensity());
+            applyToAllWindows();
+            revision.set(revision.get() + 1);
+        });
     }
 
     // ==================== 内部实现 ====================
 
-    private static void apply(Runnable mutate) {
+    private void apply(Runnable mutate) {
         mutate.run();
         applyToAllWindows();
         revision.set(revision.get() + 1);
     }
 
-    private static void persist() { AgentConfig.getInstance().save(); }
+    private void persist() {
+        persistence.submit(TaskSpec.io("save-font-preferences"), context -> {
+            config.save();
+            return null;
+        });
+    }
 
-    private static void hookWindow(Window window) {
+    private void hookWindow(Window window) {
         Scene scene = window.getScene();
         if (scene != null) hookScene(scene);
         window.sceneProperty().addListener((obs, o, n) -> { if (n != null) hookScene(n); });
     }
 
-    private static void hookScene(Scene scene) {
+    private void hookScene(Scene scene) {
         applyToScene(scene);
         // 主题切换会替换 root 而非 scene，这里也跟随 root 变化补挂
         scene.rootProperty().addListener((obs, o, n) -> applyToScene(scene));
     }
 
-    private static void applyToAllWindows() {
-        Runnable r = () -> { for (Window w : Window.getWindows()) {
+    private void applyToAllWindows() {
+        fx.dispatch(() -> { for (Window w : Window.getWindows()) {
             if (w.getScene() != null) applyToScene(w.getScene());
-        }};
-        if (Platform.isFxApplicationThread()) r.run(); else Platform.runLater(r);
+        }});
     }
 
     /**
      * 默认（native 字体 + cascadia 等宽）时移除用户样式表，回到 chat.css 基线；
      * 否则生成一张覆盖样式表追加到 chat.css 之后。
      */
-    private static void applyToScene(Scene scene) {
+    private void applyToScene(Scene scene) {
         if (scene == null) return;
         // 先移除旧的用户字体样式表（data: URI，以特征串识别）
         scene.getStylesheets().removeIf(s -> s.startsWith("data:text/css") && s.contains("JC_USER_FONT"));
@@ -264,7 +307,7 @@ public final class FontManager {
     }
 
     /** 生成 data: URI 用户样式表：重指向 .root 字体族 + 全部等宽类。 */
-    private static String buildUserStylesheet() {
+    private String buildUserStylesheet() {
         StringBuilder css = new StringBuilder("/* JC_USER_FONT */\n");
         css.append(".root { -fx-font-family: ").append(fontOption().stack()).append("; }\n");
         if (!DEFAULT_MONO.equals(monoId)) {
@@ -276,21 +319,21 @@ public final class FontManager {
         return "data:text/css," + enc;
     }
 
-    private static FontOption fontOption() {
+    private FontOption fontOption() {
         return FONT_OPTIONS.stream().filter(f -> f.id().equals(fontId)).findFirst().orElse(FONT_OPTIONS.get(0));
     }
-    private static MonoOption monoOption() {
+    private MonoOption monoOption() {
         return MONO_OPTIONS.stream().filter(m -> m.id().equals(monoId)).findFirst().orElse(MONO_OPTIONS.get(0));
     }
-    private static Density density() {
+    private Density density() {
         return DENSITIES.stream().filter(d -> d.id().equals(densityId)).findFirst().orElse(DENSITIES.get(1));
     }
 
-    private static String normalizeFont(String id)    { return normalize(id, availableFontOptions().stream().map(FontOption::id).toList(), DEFAULT_FONT); }
-    private static String normalizeMono(String id)    { return normalize(id, availableMonoOptions().stream().map(MonoOption::id).toList(), DEFAULT_MONO); }
+    private String normalizeFont(String id)    { return normalize(id, availableFontOptions().stream().map(FontOption::id).toList(), DEFAULT_FONT); }
+    private String normalizeMono(String id)    { return normalize(id, availableMonoOptions().stream().map(MonoOption::id).toList(), DEFAULT_MONO); }
     private static String normalizeDensity(String id) { return normalize(id, DENSITIES.stream().map(Density::id).toList(), DEFAULT_DENSITY); }
 
-    private static void ensureFamilySnapshot() {
+    private void ensureFamilySnapshot() {
         if (availableFamilies.isEmpty()) {
             availableFamilies = snapshotAvailableFamilies();
         }
@@ -304,12 +347,27 @@ public final class FontManager {
         return Set.copyOf(families);
     }
 
-    private static boolean isAvailable(String requiredFamily) {
+    private boolean isAvailable(String requiredFamily) {
         return requiredFamily == null
                 || availableFamilies.contains(requiredFamily.toLowerCase(java.util.Locale.ROOT));
     }
 
     private static String normalize(String id, List<String> valid, String fallback) {
         return (id != null && valid.contains(id)) ? id : fallback;
+    }
+
+    private void requireFxThread(String operation) {
+        if (!fx.isFxThread()) {
+            throw new IllegalStateException(operation + "必须在 JavaFX Application Thread 执行");
+        }
+    }
+
+    @Override
+    public synchronized void close() {
+        if (initialized) {
+            Window.getWindows().removeListener(windowListener);
+            initialized = false;
+        }
+        persistence.close();
     }
 }

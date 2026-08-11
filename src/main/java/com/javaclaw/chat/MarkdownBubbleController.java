@@ -3,6 +3,8 @@ package com.javaclaw.chat;
 import com.javaclaw.platform.desktop.ExternalLinkOpener;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.fx.FxDispatcher;
+import com.javaclaw.ui.javafx.theme.FontManager;
+import com.javaclaw.ui.javafx.theme.ThemeManager;
 import javafx.fxml.FXML;
 import javafx.scene.control.Label;
 import javafx.scene.layout.StackPane;
@@ -23,6 +25,8 @@ public final class MarkdownBubbleController implements AutoCloseable {
     private final FxDispatcher fx;
     private final MarkdownRenderEngine renderer;
     private final ExternalLinkOpener links;
+    private final FontManager fonts;
+    private final ThemeManager themes;
     private final AtomicBoolean closed = new AtomicBoolean();
     private MarkdownBubblePresenter presenter;
 
@@ -31,18 +35,22 @@ public final class MarkdownBubbleController implements AutoCloseable {
             ManagedTaskExecutor tasks,
             FxDispatcher fx,
             MarkdownRenderEngine renderer,
-            ExternalLinkOpener links) {
+            ExternalLinkOpener links,
+            FontManager fonts,
+            ThemeManager themes) {
         this.tasks = java.util.Objects.requireNonNull(tasks, "tasks");
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
         this.renderer = java.util.Objects.requireNonNull(renderer, "renderer");
         this.links = java.util.Objects.requireNonNull(links, "links");
+        this.fonts = java.util.Objects.requireNonNull(fonts, "fonts");
+        this.themes = java.util.Objects.requireNonNull(themes, "themes");
     }
 
     @FXML
     private void initialize() {
         presenter = new MarkdownBubblePresenter(
                 root, plainView, renderingHint, renderingOverlay,
-                tasks, fx, renderer, links);
+                tasks, fx, renderer, links, fonts, themes);
     }
 
     void configure(double prefWidth, long hintDelayMillis) {

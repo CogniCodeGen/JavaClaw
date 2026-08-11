@@ -7,6 +7,8 @@ import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.ToolReviewMode;
+import com.javaclaw.platform.data.DataRoot;
+import com.javaclaw.platform.spring.ApplicationContexts;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -180,10 +182,12 @@ class CodeToolsTest {
     void code_build_严格隔离下在确认前即被禁用(@TempDir Path dir) {
         UserInteractionPort oldPort = ToolConfirmationManager.getPort();
         boolean oldEnabled = ToolConfirmationManager.isEnabled();
-        ToolReviewMode oldMode = AgentConfig.getInstance().getToolReviewMode();
         AtomicReference<ConfirmRequest> seen = new AtomicReference<>();
-        try {
-            AgentConfig.getInstance().setToolReviewMode(ToolReviewMode.SMART);
+        try (var root = ApplicationContexts.createRoot(new DataRoot(dir.resolve("data-v3")))) {
+            AgentConfig settings = root.getBean(AgentConfig.class);
+            ToolReviewMode oldMode = settings.getToolReviewMode();
+            ToolConfirmationManager.configure(settings);
+            settings.setToolReviewMode(ToolReviewMode.SMART);
             ToolConfirmationManager.setEnabled(true);
             ToolConfirmationManager.setPort(new UserInteractionPort() {
                 @Override
@@ -204,8 +208,8 @@ class CodeToolsTest {
 
             assertTrue(out.contains("失败") && out.contains("严格项目文件隔离"), out);
             assertNull(seen.get(), "严格隔离应在弹出执行确认前直接拒绝");
+            settings.setToolReviewMode(oldMode);
         } finally {
-            AgentConfig.getInstance().setToolReviewMode(oldMode);
             ToolConfirmationManager.setEnabled(oldEnabled);
             ToolConfirmationManager.setPort(oldPort);
         }

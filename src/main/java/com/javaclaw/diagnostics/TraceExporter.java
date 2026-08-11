@@ -40,10 +40,13 @@ public final class TraceExporter {
 
     private final WorkspaceManager workspaces;
     private final TraceRecorder recorder;
+    private final AgentConfig config;
 
-    public TraceExporter(WorkspaceManager workspaces, TraceRecorder recorder) {
+    public TraceExporter(
+            WorkspaceManager workspaces, TraceRecorder recorder, AgentConfig config) {
         this.workspaces = java.util.Objects.requireNonNull(workspaces, "workspaces");
         this.recorder = java.util.Objects.requireNonNull(recorder, "recorder");
+        this.config = java.util.Objects.requireNonNull(config, "config");
     }
 
     /**
@@ -102,7 +105,7 @@ public final class TraceExporter {
      * 读取全局 H2 中当前工作区的 agent properties，剔除敏感字段。
      */
     private byte[] redactedAgentProperties() throws IOException {
-        Properties props = AgentConfig.getInstance().snapshotProperties();
+        Properties props = config.snapshotProperties();
         for (String key : new ArrayList<>(props.stringPropertyNames())) {
             String lower = key.toLowerCase();
             for (String pat : SECRET_KEY_PATTERNS) {
@@ -128,9 +131,9 @@ public final class TraceExporter {
         sb.append("workspace.id=").append(workspaces.getCurrentWorkspaceId()).append('\n');
         sb.append("workspace.name=").append(workspaces.getCurrentWorkspace() == null
                 ? "" : workspaces.getCurrentWorkspace().getName()).append('\n');
-        sb.append("provider=").append(AgentConfig.getInstance().getProviderType()).append('\n');
-        sb.append("model=").append(AgentConfig.getInstance().getModelName()).append('\n');
-        sb.append("base.url=").append(AgentConfig.getInstance().getBaseUrl()).append('\n');
+        sb.append("provider=").append(config.getProviderType()).append('\n');
+        sb.append("model=").append(config.getModelName()).append('\n');
+        sb.append("base.url=").append(config.getBaseUrl()).append('\n');
         Runtime r = Runtime.getRuntime();
         sb.append("jvm.max.mem.mb=").append(r.maxMemory() / (1024 * 1024)).append('\n');
         sb.append("jvm.free.mem.mb=").append(r.freeMemory() / (1024 * 1024)).append('\n');

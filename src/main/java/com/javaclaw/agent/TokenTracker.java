@@ -1,18 +1,15 @@
 package com.javaclaw.agent;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.javaclaw.config.AppDatabase;
+import com.javaclaw.config.AgentConfig;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.model.ChatResponse;
 import io.agentscope.core.model.ChatUsage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
@@ -81,7 +78,14 @@ public class TokenTracker {
     /** 当前流式对话是否收到过真实 usage（决定 UI/落盘用真实值还是字符估算回退） */
     private volatile boolean streamingHasRealUsage = false;
 
-    public TokenTracker() {
+    private final String workspaceId;
+    private final JdbcTemplate jdbc;
+    private final AgentConfig settings;
+
+    public TokenTracker(String workspaceId, JdbcTemplate jdbc, AgentConfig settings) {
+        this.workspaceId = java.util.Objects.requireNonNull(workspaceId, "workspaceId");
+        this.jdbc = java.util.Objects.requireNonNull(jdbc, "jdbc");
+        this.settings = java.util.Objects.requireNonNull(settings, "settings");
         load();
     }
 
@@ -351,7 +355,7 @@ public class TokenTracker {
      */
     public double getMonthlyCostCny() {
         DailyUsage u = aggregateMonth();
-        String model = com.javaclaw.config.AgentConfig.getInstance().getModelName();
+        String model = settings.getModelName();
         return PricingTable.estimateCostCny(model, u.input, u.output);
     }
 
@@ -426,22 +430,20 @@ public class TokenTracker {
                 KEY(workspace_id, usage_date)
                 VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """;
-        try (Connection c = AppDatabase.getConnection();
-             PreparedStatement ps = c.prepareStatement(sql)) {
-            String workspaceId = AppDatabase.currentWorkspaceId();
-            for (Map.Entry<String, DailyUsage> entry : dailyUsage.entrySet()) {
+        List<Map.Entry<String, DailyUsage>> snapshot = List.copyOf(dailyUsage.entrySet());
+        if (snapshot.isEmpty()) return;
+        try {
+            jdbc.batchUpdate(sql, snapshot, snapshot.size(), (statement, entry) -> {
                 DailyUsage usage = entry.getValue();
-                ps.setString(1, workspaceId);
-                ps.setString(2, entry.getKey());
-                ps.setLong(3, usage.input);
-                ps.setLong(4, usage.output);
-                ps.setLong(5, usage.meteredInput);
-                ps.setLong(6, usage.cachedInput);
-                ps.addBatch();
-            }
-            ps.executeBatch();
-        } catch (Exception e) {
-            log.warn("保存 token 用量数据失败: {}", e.getMessage());
+                statement.setString(1, workspaceId);
+                statement.setString(2, entry.getKey());
+                statement.setLong(3, usage.input);
+                statement.setLong(4, usage.output);
+                statement.setLong(5, usage.meteredInput);
+                statement.setLong(6, usage.cachedInput);
+            });
+        } catch (DataAccessException failure) {
+            log.warn("保存 token 用量数据失败: {}", failure.getMessage());
         }
     }
 
@@ -453,22 +455,16 @@ public class TokenTracker {
                     WHERE workspace_id = ?
                     ORDER BY usage_date
                     """;
-            try (Connection c = AppDatabase.getConnection();
-                 PreparedStatement ps = c.prepareStatement(sql)) {
-                ps.setString(1, AppDatabase.currentWorkspaceId());
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        DailyUsage u = new DailyUsage();
-                        u.input = rs.getLong("input_tokens");
-                        u.output = rs.getLong("output_tokens");
-                        u.meteredInput = rs.getLong("metered_input");
-                        u.cachedInput = rs.getLong("cached_input");
-                        dailyUsage.put(rs.getString("usage_date"), u);
-                    }
-                }
-            }
+            jdbc.query(sql, result -> {
+                DailyUsage usage = new DailyUsage();
+                usage.input = result.getLong("input_tokens");
+                usage.output = result.getLong("output_tokens");
+                usage.meteredInput = result.getLong("metered_input");
+                usage.cachedInput = result.getLong("cached_input");
+                dailyUsage.put(result.getString("usage_date"), usage);
+            }, workspaceId);
             log.info("已从 H2 加载 token 用量数据: {} 天记录", dailyUsage.size());
-        } catch (Exception e) {
+        } catch (DataAccessException e) {
             // 带堆栈输出便于定位数据库或 schema 不兼容的根因
             log.warn("加载 token 用量数据失败", e);
         }

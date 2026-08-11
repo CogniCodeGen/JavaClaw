@@ -44,11 +44,14 @@ public final class JShellTools {
     private final ToolCallOrigin origin;
     private final SkillManager skills;
     private final JShellRunner runner;
+    private final AgentConfig settings;
 
-    public JShellTools(ToolCallOrigin origin, SkillManager skills, JShellRunner runner) {
+    public JShellTools(ToolCallOrigin origin, SkillManager skills, JShellRunner runner,
+                       AgentConfig settings) {
         this.origin = origin == null ? ToolCallOrigin.UNKNOWN : origin;
         this.skills = java.util.Objects.requireNonNull(skills, "skills");
         this.runner = java.util.Objects.requireNonNull(runner, "runner");
+        this.settings = java.util.Objects.requireNonNull(settings, "settings");
     }
 
     /** 超时硬上限（秒） */
@@ -242,8 +245,8 @@ public final class JShellTools {
 
     // ==================== 辅助 ====================
 
-    private static int resolveTimeout(Integer timeoutSeconds) {
-        int configured = AgentConfig.getInstance().getJshellExecTimeoutSeconds();
+    private int resolveTimeout(Integer timeoutSeconds) {
+        int configured = settings.getJshellExecTimeoutSeconds();
         int effective = (timeoutSeconds == null || timeoutSeconds <= 0) ? configured : timeoutSeconds;
         return Math.min(Math.max(1, effective), MAX_TIMEOUT_SECONDS);
     }

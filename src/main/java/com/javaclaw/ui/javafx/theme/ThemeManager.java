@@ -1,7 +1,10 @@
 package com.javaclaw.ui.javafx.theme;
 
 import com.javaclaw.config.AgentConfig;
-import javafx.application.Platform;
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.execution.TaskScope;
+import com.javaclaw.platform.execution.TaskSpec;
+import com.javaclaw.platform.fx.FxDispatcher;
 import javafx.beans.property.ReadOnlyIntegerProperty;
 import javafx.beans.property.SimpleIntegerProperty;
 import javafx.beans.property.ReadOnlyStringProperty;
@@ -27,7 +30,7 @@ import java.util.List;
  * <p>选择持久化到全局 H2 配置库的 agent namespace（{@code ui.theme}，按 workspace_id 隔离），
  * 切换工作区时由 {@link #reload()} 重新读取。</p>
  */
-public final class ThemeManager {
+public final class ThemeManager implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(ThemeManager.class);
 
@@ -50,7 +53,7 @@ public final class ThemeManager {
 
     private static final String CLASS_PREFIX = "theme-";
 
-    private static final StringProperty current = new SimpleStringProperty(DEFAULT_THEME);
+    private final StringProperty current = new SimpleStringProperty(DEFAULT_THEME);
 
     /**
      * 主题样式类已经应用到全部窗口后的修订号。
@@ -58,28 +61,41 @@ public final class ThemeManager {
      * <p>普通 JavaFX 控件会自动重新解析 looked-up colors；RichTextArea 的稳定段落会缓存其
      * 内部 Text 节点，需要在主题真正落到 Scene 根节点后主动重建。</p>
      */
-    private static final SimpleIntegerProperty revision = new SimpleIntegerProperty(0);
+    private final SimpleIntegerProperty revision = new SimpleIntegerProperty(0);
 
-    private static boolean initialized = false;
+    private final AgentConfig config;
+    private final FxDispatcher fx;
+    private final TaskScope persistence;
+    private final ListChangeListener<Window> windowListener = change -> {
+        while (change.next()) {
+            for (Window window : change.getAddedSubList()) {
+                hookWindow(window);
+            }
+        }
+    };
+    private boolean initialized;
 
-    private ThemeManager() {}
+    public ThemeManager(
+            AgentConfig config,
+            FxDispatcher fx,
+            ManagedTaskExecutor tasks) {
+        this.config = java.util.Objects.requireNonNull(config, "config");
+        this.fx = java.util.Objects.requireNonNull(fx, "fx");
+        persistence = java.util.Objects.requireNonNull(tasks, "tasks")
+                .openScope("theme-preferences", 1);
+    }
 
     /**
      * 初始化：读取持久化主题并挂接全局窗口监听（含已存在与后续新建的窗口/弹出层）。
      * 须在 JavaFX Application Thread 上调用一次。
      */
-    public static synchronized void init() {
+    public synchronized void init() {
         if (initialized) {
             return;
         }
-        current.set(normalize(AgentConfig.getInstance().getUiTheme()));
-        Window.getWindows().addListener((ListChangeListener<Window>) change -> {
-            while (change.next()) {
-                for (Window w : change.getAddedSubList()) {
-                    hookWindow(w);
-                }
-            }
-        });
+        requireFxThread("初始化主题");
+        current.set(normalize(config.getUiTheme()));
+        Window.getWindows().addListener(windowListener);
         for (Window w : Window.getWindows()) {
             hookWindow(w);
         }
@@ -91,13 +107,13 @@ public final class ThemeManager {
     /**
      * 切换主题：更新全部已打开窗口的根节点 style class 并持久化到工作区配置。
      */
-    public static void setTheme(String id) {
+    public void setTheme(String id) {
         String normalized = normalize(id);
-        if (normalized.equals(current.get())) {
-            return;
-        }
-        current.set(normalized);
-        Runnable apply = () -> {
+        fx.dispatch(() -> {
+            if (normalized.equals(current.get())) {
+                return;
+            }
+            current.set(normalized);
             for (Window w : Window.getWindows()) {
                 Scene scene = w.getScene();
                 if (scene != null && scene.getRoot() != null) {
@@ -106,41 +122,35 @@ public final class ThemeManager {
             }
             // 必须在根节点主题类全部更新后再通知 RichTextArea 等缓存型控件。
             revision.set(revision.get() + 1);
-        };
-        if (Platform.isFxApplicationThread()) {
-            apply.run();
-        } else {
-            Platform.runLater(apply);
-        }
-        AgentConfig config = AgentConfig.getInstance();
-        config.setUiTheme(normalized);
-        config.save();
-        log.info("界面风格已切换: {}", normalized);
+            config.setUiTheme(normalized);
+            savePreferences();
+            log.info("界面风格已切换: {}", normalized);
+        });
     }
 
     /** 当前主题 ID */
-    public static String getTheme() {
+    public String getTheme() {
         return current.get();
     }
 
     /** 当前主题描述（用于切换 UI 展示色块/名称） */
-    public static Theme getCurrentTheme() {
+    public Theme getCurrentTheme() {
         return findTheme(current.get());
     }
 
     /** 主题变更可观察属性（顶栏「风格」菜单等据此刷新色块） */
-    public static ReadOnlyStringProperty themeProperty() {
+    public ReadOnlyStringProperty themeProperty() {
         return current;
     }
 
     /** 主题已应用完成的修订属性，供缓存型自定义控件刷新。 */
-    public static ReadOnlyIntegerProperty revisionProperty() {
+    public ReadOnlyIntegerProperty revisionProperty() {
         return revision;
     }
 
     /** 工作区切换后重新读取该工作区记忆的主题 */
-    public static void reload() {
-        setTheme(AgentConfig.getInstance().getUiTheme());
+    public void reload() {
+        setTheme(config.getUiTheme());
     }
 
     /** 按 id 查找主题，未知 id 回落默认主题 */
@@ -154,7 +164,7 @@ public final class ThemeManager {
     // ==================== 内部实现 ====================
 
     /** 给窗口当前及后续 Scene 应用主题（scene/root 可能延迟设置或被替换） */
-    private static void hookWindow(Window window) {
+    private void hookWindow(Window window) {
         Scene scene = window.getScene();
         if (scene != null) {
             hookScene(scene);
@@ -166,7 +176,7 @@ public final class ThemeManager {
         });
     }
 
-    private static void hookScene(Scene scene) {
+    private void hookScene(Scene scene) {
         if (scene.getRoot() != null) {
             applyToRoot(scene.getRoot());
         }
@@ -178,7 +188,7 @@ public final class ThemeManager {
     }
 
     /** 根节点仅保留当前主题 class；默认主题不挂 class（令牌基线即翡翠） */
-    private static void applyToRoot(Parent root) {
+    private void applyToRoot(Parent root) {
         root.getStyleClass().removeIf(s -> s.startsWith(CLASS_PREFIX));
         String id = current.get();
         if (!DEFAULT_THEME.equals(id)) {
@@ -191,5 +201,27 @@ public final class ThemeManager {
             return DEFAULT_THEME;
         }
         return THEMES.stream().anyMatch(t -> t.id().equals(id)) ? id : DEFAULT_THEME;
+    }
+
+    private void savePreferences() {
+        persistence.submit(TaskSpec.io("save-theme-preference"), context -> {
+            config.save();
+            return null;
+        });
+    }
+
+    private void requireFxThread(String operation) {
+        if (!fx.isFxThread()) {
+            throw new IllegalStateException(operation + "必须在 JavaFX Application Thread 执行");
+        }
+    }
+
+    @Override
+    public synchronized void close() {
+        if (initialized) {
+            Window.getWindows().removeListener(windowListener);
+            initialized = false;
+        }
+        persistence.close();
     }
 }

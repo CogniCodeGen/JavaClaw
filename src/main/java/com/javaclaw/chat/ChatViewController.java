@@ -11,6 +11,7 @@ import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.ui.javafx.loop.LoopStatusViewFactory;
 import com.javaclaw.ui.javafx.diagnostics.DiagnosticsViewFactory;
 import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
+import com.javaclaw.ui.javafx.theme.FontSelectionService;
 import javafx.fxml.FXML;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.StackPane;
@@ -115,7 +116,8 @@ public class ChatViewController implements AutoCloseable {
             DiagnosticsViewFactory diagnosticsViews,
             PluginCenterViewFactory pluginCenterViews,
             ChatInlineImageRenderer inlineImages,
-            ChatShortcutHelpFactory shortcutHelp) {
+            ChatShortcutHelpFactory shortcutHelp,
+            FontSelectionService fonts) {
         this.applicationKernel = java.util.Objects.requireNonNull(
                 applicationKernel, "applicationKernel");
         this.fx = java.util.Objects.requireNonNull(fx, "fx");
@@ -139,7 +141,9 @@ public class ChatViewController implements AutoCloseable {
                     return null;
                 });
 
-        runtimeCoordinator = new ChatRuntimeCoordinator(applicationKernel, fx, backgroundTasks);
+        runtimeCoordinator = new ChatRuntimeCoordinator(
+                applicationKernel, fx, backgroundTasks,
+                java.util.Objects.requireNonNull(fonts, "fonts"));
         navigation = new ChatNavigationController(
                 applicationKernel,
                 java.util.Objects.requireNonNull(diagnosticsViews, "diagnosticsViews"),

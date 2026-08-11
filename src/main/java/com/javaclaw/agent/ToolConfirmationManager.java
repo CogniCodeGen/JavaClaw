@@ -67,6 +67,12 @@ public class ToolConfirmationManager {
 
     /** 全局开关：是否启用确认机制 */
     private static volatile boolean enabled = true;
+    private static volatile AgentConfig settings;
+
+    /** 由根 Spring Context 注入当前工作区配置；切换工作区时同一实例会重新加载。 */
+    public static void configure(AgentConfig config) {
+        settings = java.util.Objects.requireNonNull(config, "config");
+    }
 
     /**
      * 风险评估智能体：判定目录作用域高风险工具的影响范围是否限于任务工作目录。
@@ -171,7 +177,7 @@ public class ToolConfirmationManager {
      */
     public static boolean requiresConfirmation(String toolName) {
         if (!enabled || !ToolRiskRegistry.isManaged(toolName)) return false;
-        return AgentConfig.getInstance().getToolReviewMode() != ToolReviewMode.AUTO;
+        return reviewMode() != ToolReviewMode.AUTO;
     }
 
     /**
@@ -300,7 +306,7 @@ public class ToolConfirmationManager {
         ToolRiskLevel level = ToolRiskRegistry.levelOf(toolName);
         if (level == null) return ConfirmOutcome.ALLOWED_AUTO;
 
-        ToolReviewMode reviewMode = AgentConfig.getInstance().getToolReviewMode();
+        ToolReviewMode reviewMode = reviewMode();
         if (reviewMode == ToolReviewMode.AUTO && !humanGateInAuto) {
             log.info("[全自动审核] 默认放行 origin={} tool={} desc={}", origin.kind(), toolName, description);
             return ConfirmOutcome.ALLOWED_AUTO;
@@ -347,7 +353,7 @@ public class ToolConfirmationManager {
         // 风险评估智能体「目录内自动放行」：仅托管任务令牌 + 目录作用域工具 + 开关开启时尝试。
         // 评估基准就是令牌自带的工作目录，不存在借并发任务目录的可能。
         if (!manualReview && managedTask && ToolRiskRegistry.isDirScopedTool(toolName)
-                && AgentConfig.getInstance().isTaskRiskAutoApproveEnabled()) {
+                && taskRiskAutoApproveEnabled()) {
             // 0) 确定性只读命令直接放行：零副作用，越界读取（如 ls ~/.m2）也无需人工，且省一次范围评估调用。
             //    无人值守时这类命令走人工确认只会等满超时按拒绝处理，浪费时间且诱发执行体重试。
             if ("cmd_execute".equals(toolName)) {
@@ -496,9 +502,22 @@ public class ToolConfirmationManager {
 
     /** 确认超时：托管任务来源放宽（半无人值守，短超时会被误判为拒绝），其余用默认。 */
     private static int timeoutSeconds(ToolCallOrigin origin) {
-        AgentConfig cfg = AgentConfig.getInstance();
+        AgentConfig config = settings;
+        if (config == null) {
+            return origin.isManagedTask() ? 600 : 60;
+        }
         return origin.isManagedTask()
-                ? cfg.getConfirmationTimeoutManaged()
-                : cfg.getConfirmationTimeoutDefault();
+                ? config.getConfirmationTimeoutManaged()
+                : config.getConfirmationTimeoutDefault();
+    }
+
+    private static ToolReviewMode reviewMode() {
+        AgentConfig config = settings;
+        return config == null ? ToolReviewMode.SMART : config.getToolReviewMode();
+    }
+
+    private static boolean taskRiskAutoApproveEnabled() {
+        AgentConfig config = settings;
+        return config == null || config.isTaskRiskAutoApproveEnabled();
     }
 }

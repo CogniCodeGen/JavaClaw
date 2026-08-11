@@ -10,7 +10,7 @@ import java.util.Properties;
  *
  * <p>负责读取和保存智能体相关配置项，配置保存在全局 {@code javaclaw.mv.db}
  * 的 {@code app_properties} 表中，并按 {@code workspace_id} 隔离。
- * 采用单例模式，全局共享同一份配置。</p>
+ * 实例由根 Spring Context 管理；切换工作区时显式重新加载。</p>
  *
  * <p>系统提示词等不常修改的内容保留为类常量，
  * API 连接、模型参数、超时等运行时可调配置项存储在 H2 中。</p>
@@ -23,10 +23,9 @@ public final class AgentConfig {
 
     private static final String CONFIG_NAMESPACE = "agent";
 
-    /** 单例实例 */
-    private static AgentConfig INSTANCE;
-
     private final Properties properties;
+    private final SqlPropertyStore store;
+    private final String databaseDescription;
 
     // ==================== 配置项 key ====================
 
@@ -316,18 +315,14 @@ public final class AgentConfig {
 
     /** 规划模式专家补充提示词已迁移至 {@link com.javaclaw.prompt.AgentPrompts#PLAN_MODE_EXPERT_SUFFIX} */
 
-    // ==================== 构造与单例 ====================
+    // ==================== 构造与生命周期 ====================
 
-    private AgentConfig() {
+    public AgentConfig(SqlPropertyStore store, DatabaseAccess database) {
+        this.store = java.util.Objects.requireNonNull(store, "store");
+        this.databaseDescription = java.util.Objects.requireNonNull(
+                database, "database").description();
         this.properties = new Properties();
         load();
-    }
-
-    public static synchronized AgentConfig getInstance() {
-        if (INSTANCE == null) {
-            INSTANCE = new AgentConfig();
-        }
-        return INSTANCE;
     }
 
     /**
@@ -336,7 +331,7 @@ public final class AgentConfig {
     public void reload() {
         properties.clear();
         load();
-        log.info("智能体配置已重新加载: {}", AppDatabase.databaseDisplayPath());
+        log.info("智能体配置已重新加载: {}", databaseDescription);
     }
 
     // ==================== H2 读写 ====================
@@ -345,16 +340,16 @@ public final class AgentConfig {
      * 从 H2 加载配置。
      */
     private void load() {
-        Properties loaded = SqlPropertyStore.load(CONFIG_NAMESPACE);
+        Properties loaded = store.load(CONFIG_NAMESPACE);
         properties.putAll(loaded);
         boolean removedObsoletePlanConfig = removeObsoletePlanModeProperties(properties);
         if (properties.isEmpty()) {
-            log.info("智能体配置数据库为空，使用默认值: {}", AppDatabase.databaseDisplayPath());
+            log.info("智能体配置数据库为空，使用默认值: {}", databaseDescription);
             setDefaults();
         } else {
-            log.info("智能体配置已从 H2 加载: {}", AppDatabase.databaseDisplayPath());
+            log.info("智能体配置已从 H2 加载: {}", databaseDescription);
         }
-        if (removedObsoletePlanConfig && !SqlPropertyStore.save(CONFIG_NAMESPACE, properties)) {
+        if (removedObsoletePlanConfig && !store.save(CONFIG_NAMESPACE, properties)) {
             log.warn("已忽略废弃的规划模式配置，但未能从 H2 中清理");
         }
     }
@@ -420,8 +415,8 @@ public final class AgentConfig {
      * 保存配置到 H2
      */
     public synchronized void save() {
-        if (SqlPropertyStore.save(CONFIG_NAMESPACE, properties)) {
-            log.info("智能体配置已保存到 H2: {}", AppDatabase.databaseDisplayPath());
+        if (store.save(CONFIG_NAMESPACE, properties)) {
+            log.info("智能体配置已保存到 H2: {}", databaseDescription);
         }
     }
 
@@ -434,11 +429,11 @@ public final class AgentConfig {
         String workspaceId;
         String value;
         synchronized (this) {
-            workspaceId = AppDatabase.currentWorkspaceId();
+            workspaceId = store.currentWorkspaceId();
             value = properties.getProperty(KEY_TOOL_REVIEW_MODE, DEFAULT_TOOL_REVIEW_MODE.id());
         }
         executor.execute(() -> {
-            if (SqlPropertyStore.saveProperty(
+            if (store.saveProperty(
                     CONFIG_NAMESPACE, KEY_TOOL_REVIEW_MODE, value, workspaceId)) {
                 log.info("工具审核模式已异步保存到 H2: workspace={}, mode={}", workspaceId, value);
             }
@@ -1435,7 +1430,7 @@ public final class AgentConfig {
      * 获取配置文件路径（用于界面显示）
      */
     public String getConfigFilePath() {
-        return AppDatabase.databaseDisplayPath();
+        return databaseDescription;
     }
 
     /**

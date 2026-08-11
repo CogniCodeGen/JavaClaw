@@ -1,6 +1,7 @@
 package com.javaclaw.task.sdd;
 
 import com.javaclaw.agent.model.ModelFactory;
+import com.javaclaw.config.AgentConfig;
 import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.platform.process.ProcessRunner;
 import com.javaclaw.skill.SkillRuntimeServices;
@@ -53,7 +54,8 @@ public final class SddTaskRunner implements AutoCloseable {
      * @param progress        进度/日志回调；可空（NOOP）
      * @param completionStamp 归档完成时间戳文本（调用方注入，本层不依赖时钟）
      */
-    public SddTaskRunner(TaskContext ctx, ModelFactory modelFactory, Map<String, Object> capabilityTools,
+    public SddTaskRunner(TaskContext ctx, ModelFactory modelFactory, AgentConfig settings,
+                         Map<String, Object> capabilityTools,
                          SkillRuntimeServices skills, SddTokenSink tokenSink, ReviewGate gate,
                          SddProgress progress, String completionStamp,
                          com.javaclaw.workflow.service.WorkflowService workflowService,
@@ -64,7 +66,8 @@ public final class SddTaskRunner implements AutoCloseable {
         this.workflowService = workflowService;
         if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
         this.store = new SpecStore(ctx.workDir(), jdbc, workspaceId);
-        this.agents = new AgentScopeSddAgents(modelFactory, this.capabilityTools, skills, tokenSink);
+        this.agents = new AgentScopeSddAgents(
+                modelFactory, settings, this.capabilityTools, skills, tokenSink);
         this.commandRunner = new ProcessCommandRunner(processes);
         this.critic = new AgentScopeCriticJudge(ctx.workDir(), modelFactory, tokenSink);
         ScenarioVerifier verifier = new ScenarioVerifier(ctx.workDir(), commandRunner, critic);

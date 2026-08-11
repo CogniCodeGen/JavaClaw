@@ -100,7 +100,7 @@ public final class AgentScopeLoopRunner implements LoopIterationRunner {
         this.runtime = runtime;
         this.routingText = routingText == null ? "" : routingText;
         this.origin = origin == null ? com.javaclaw.agent.ToolCallOrigin.UNKNOWN : origin;
-        AgentConfig config = AgentConfig.getInstance();
+        AgentConfig config = runtime.getConfig();
         // 隔离浏览器：独立于 runtime 的交互浏览器，避免与并行聊天抢同一浏览器/Tab（见字段注释）。
         // 浏览器状态目录用工作区浏览器目录下的 loop 子目录；不继承聊天 Context，也不写全局认证态。
         // 若任务已明确绑定站点账号，浏览器工具只从该账号对应的 site_sessions 恢复。
@@ -111,10 +111,11 @@ public final class AgentScopeLoopRunner implements LoopIterationRunner {
         this.expertManager = new ExpertManager(
                 runtime.getModelFactory(), loopBrowser,
                 runtime.getSiteCredentialManager(), this.origin,
-                runtime.getCustomAgentConfig(), runtime.getWorkspace());
+                runtime.getCustomAgentConfig(), runtime.getWorkspace(), runtime.getConfig(),
+                runtime.getEmailConfig(), runtime.getNotificationConfig());
         this.toolRouter = config.isToolRoutingEnabled()
                 ? new ToolRouter(runtime.getModelFactory().createLightChatModel(),
-                        runtime.getTokenTracker(), runtime.getSkillRuntime().manager())
+                        runtime.getTokenTracker(), runtime.getSkillRuntime().manager(), config)
                 : null;
         this.baseSystemPrompt = AgentPrompts.ORCHESTRATOR_SYS_PROMPT
                 + "\n\n" + (loopContextPrompt == null ? "" : loopContextPrompt);

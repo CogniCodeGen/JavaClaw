@@ -48,19 +48,22 @@ public class Distiller {
     private final EmbeddingGateway gate;
     private final TokenTracker tokenTracker;
     private final GenerateOptions generateOptions;
+    private final AgentConfig settings;
 
-    public Distiller(ChatModelBase lightModel, MemoryStore store, EmbeddingGateway gate, TokenTracker tokenTracker) {
+    public Distiller(ChatModelBase lightModel, MemoryStore store, EmbeddingGateway gate,
+                     TokenTracker tokenTracker, AgentConfig settings) {
         this.lightModel = lightModel;
         this.store = store;
         this.gate = gate;
         this.tokenTracker = tokenTracker;
+        this.settings = java.util.Objects.requireNonNull(settings, "settings");
         this.generateOptions = GenerateOptions.builder().build();
     }
 
     /** 在当前线程蒸馏一次情景；失败静默，供受生命周期追踪的上层工作线程调用。 */
     public void distillNow(Episode ep) {
         if (ep == null || ep.userInput == null
-                || (ep.userInput.trim().length() < AgentConfig.getInstance().getMemoryDistillMinInput()
+                || (ep.userInput.trim().length() < settings.getMemoryDistillMinInput()
                     && !com.javaclaw.memory.correction.CorrectionDetector
                             .isExplicitCorrection(ep.userInput))) {
             return;
@@ -104,7 +107,7 @@ public class Distiller {
         // 实体抽取（阶段二）：本轮先抽一次实体并 get-or-create，供新增事实按名称匹配关联 about 边。
         List<EntityNode> turnEntities = extractEntities(conversation);
 
-        double dedup = AgentConfig.getInstance().getMemoryDistillDedupThreshold();
+        double dedup = settings.getMemoryDistillDedupThreshold();
         List<CorrectionRecord> correctionRules = store.allCorrections();
         int added = 0, merged = 0, skipped = 0;
         for (String raw : factsText.lines().toList()) {
@@ -161,7 +164,7 @@ public class Distiller {
      * 无候选时不调用模型（成本控制）；全程失败静默，不影响蒸馏主流程。</p>
      */
     private void supersedeStale(String newFact, float[] vec, double dedup) {
-        AgentConfig cfg = AgentConfig.getInstance();
+        AgentConfig cfg = settings;
         if (!cfg.getMemorySupersedeEnabled()) return;
         double threshold = cfg.getMemorySupersedeThreshold();
         if (threshold >= dedup) return; // 阈值配置异常：取代区间须严格低于去重区间，否则无候选可判
@@ -246,7 +249,7 @@ public class Distiller {
      * 受 {@code memory.graph.entities.enabled} 闸门；失败/关闭时返回空列表（蒸馏不受影响）。
      */
     private List<EntityNode> extractEntities(String conversation) {
-        if (!AgentConfig.getInstance().getMemoryGraphEntitiesEnabled()) {
+        if (!settings.getMemoryGraphEntitiesEnabled()) {
             return List.of();
         }
         List<EntityNode> out = new java.util.ArrayList<>();

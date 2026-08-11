@@ -14,21 +14,22 @@ public final class AgentConfigToolReviewSettings
         implements ToolReviewSettingsPort, AutoCloseable {
 
     private final TaskScope persistence;
+    private final AgentConfig config;
 
-    public AgentConfigToolReviewSettings(ManagedTaskExecutor tasks) {
+    public AgentConfigToolReviewSettings(ManagedTaskExecutor tasks, AgentConfig config) {
         persistence = Objects.requireNonNull(tasks, "tasks")
                 .openScope("tool-review-settings", 1);
+        this.config = Objects.requireNonNull(config, "config");
     }
 
     @Override
     public ToolReviewMode current() {
-        return AgentConfig.getInstance().getToolReviewMode();
+        return config.getToolReviewMode();
     }
 
     @Override
     public void update(ToolReviewMode mode) {
         ToolReviewMode resolved = mode == null ? ToolReviewMode.SMART : mode;
-        AgentConfig config = AgentConfig.getInstance();
         config.setToolReviewMode(resolved);
         config.saveToolReviewModeAsync(command -> persistence.submit(
                 TaskSpec.io("tool-review-mode-save"), context -> {
