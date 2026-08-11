@@ -38,6 +38,7 @@ import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -69,7 +70,8 @@ class RootApplicationContextTest {
             assertNotNull(context.getBean(DiagnosticsApplicationService.class));
             assertNotNull(context.getBean(TestDataMaintenancePort.class));
             assertNotNull(context.getBean(TestDataMaintenanceApplicationService.class));
-            assertSame(PluginManager.getInstance(), context.getBean(PluginManager.class));
+            PluginManager plugins = context.getBean(PluginManager.class);
+            assertSame(plugins, context.getBean(PluginManager.class));
             assertNotNull(context.getBean(PluginManagementPort.class));
             assertNotNull(context.getBean(PluginManagementApplicationService.class));
             assertNotNull(context.getBean(DiagnosticsViewFactory.class));
@@ -106,6 +108,17 @@ class RootApplicationContextTest {
             Integer count = jdbc.queryForObject(
                     "SELECT COUNT(*) FROM app_state WHERE state_key = ?", Integer.class, "rollback");
             assertEquals(0, count);
+        }
+    }
+
+    @Test
+    void rootContextsOwnIndependentPluginHosts() {
+        try (var first = ApplicationContexts.createRoot(
+                     new DataRoot(tempDirectory.resolve("plugins-first")));
+             var second = ApplicationContexts.createRoot(
+                     new DataRoot(tempDirectory.resolve("plugins-second")))) {
+            assertNotSame(first.getBean(PluginManager.class), second.getBean(PluginManager.class),
+                    "插件宿主必须由各自根 Context 管理，不能退回静态单例");
         }
     }
 }

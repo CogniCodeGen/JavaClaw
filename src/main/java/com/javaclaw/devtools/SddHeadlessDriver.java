@@ -118,7 +118,8 @@ public final class SddHeadlessDriver {
                 rootContext.getBean(com.javaclaw.diagnostics.TraceRecorder.class), settings,
                 rootContext.getBean(com.javaclaw.config.EmailConfig.class),
                 rootContext.getBean(com.javaclaw.config.NotificationConfig.class),
-                rootContext.getBean(com.javaclaw.system.CommandToolFactory.class), workspace,
+                rootContext.getBean(com.javaclaw.system.CommandToolFactory.class),
+                rootContext.getBean(com.javaclaw.plugin.PluginManager.class), workspace,
                 knowledgePreferences);
 
         // 2. 配置 SDD 管理器（注入自动放行端口 → PortReviewGate 评审直接批准）

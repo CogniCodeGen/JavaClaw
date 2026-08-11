@@ -133,14 +133,12 @@ public class JavaClawApp extends Application {
             // 2-3. 应用内核是唯一组合根：整体创建工作区运行时，并装配定时任务、插件与 SDD。
             log.info("正在初始化应用内核与工作区运行时...");
             applicationKernel = new ApplicationKernel(
-                    browserManager, interactionPort,
+                    browserManager,
                     () -> applicationKernel.current().sddTaskViews()
                             .create(primaryStage).show(),
                     this::openWorkflowCenter,
                     this::closeWorkflowCenter,
                     springContext.getBean(WorkspaceSpringContextFactory.class),
-                    springContext.getBean(com.javaclaw.platform.execution.ManagedTaskExecutor.class),
-                    springContext.getBean(com.javaclaw.application.tool.ToolInvocationPipeline.class),
                     springContext.getBean(com.javaclaw.plugin.PluginManager.class),
                     springContext.getBean(com.javaclaw.config.WorkspaceManager.class),
                     springContext.getBean(com.javaclaw.config.DataManager.class),

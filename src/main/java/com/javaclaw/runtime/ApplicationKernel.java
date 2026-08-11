@@ -3,7 +3,6 @@ package com.javaclaw.runtime;
 import com.javaclaw.agent.ScheduledTaskAgent;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.risk.LlmToolScopeAssessor;
-import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.DataManager;
@@ -13,8 +12,6 @@ import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.diagnostics.TraceRecorder;
 import com.javaclaw.plugin.PluginManager;
 import com.javaclaw.platform.spring.WorkspaceSpringContextFactory;
-import com.javaclaw.platform.execution.ManagedTaskExecutor;
-import com.javaclaw.application.tool.ToolInvocationPipeline;
 import com.javaclaw.schedule.ScheduleManager;
 import com.javaclaw.system.CommandWhitelistManager;
 import org.slf4j.Logger;
@@ -34,10 +31,7 @@ public final class ApplicationKernel implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(ApplicationKernel.class);
 
     private final PlaywrightBrowserManager browserManager;
-    private final UserInteractionPort interactionPort;
     private final RuntimeFactory runtimeFactory;
-    private final ManagedTaskExecutor taskExecutor;
-    private final ToolInvocationPipeline toolPipeline;
     private final PluginManager pluginManager;
     private final WorkspaceManager workspaces;
     private final DataManager data;
@@ -53,13 +47,10 @@ public final class ApplicationKernel implements AutoCloseable {
     private boolean externalServicesInitialized;
 
     public ApplicationKernel(PlaywrightBrowserManager browserManager,
-                             UserInteractionPort interactionPort,
                              Runnable openTaskView,
                              Runnable openWorkflowView,
                              Runnable closeWorkflowView,
                              WorkspaceSpringContextFactory workspaceContexts,
-                             ManagedTaskExecutor taskExecutor,
-                             ToolInvocationPipeline toolPipeline,
                              PluginManager pluginManager,
                              WorkspaceManager workspaces,
                              DataManager data,
@@ -69,9 +60,6 @@ public final class ApplicationKernel implements AutoCloseable {
                              NotificationConfig notificationConfig,
                              CommandWhitelistManager commandWhitelist) {
         this.browserManager = Objects.requireNonNull(browserManager, "browserManager");
-        this.interactionPort = Objects.requireNonNull(interactionPort, "interactionPort");
-        this.taskExecutor = Objects.requireNonNull(taskExecutor, "taskExecutor");
-        this.toolPipeline = Objects.requireNonNull(toolPipeline, "toolPipeline");
         this.pluginManager = Objects.requireNonNull(pluginManager, "pluginManager");
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces");
         this.data = Objects.requireNonNull(data, "data");
@@ -246,9 +234,7 @@ public final class ApplicationKernel implements AutoCloseable {
 
         workspaceRuntime.scheduleManager().init(new ScheduledTaskAgent(runtime));
         if (initial) {
-            pluginManager.init(
-                    runtime, interactionPort, taskExecutor, toolPipeline,
-                    workspaceRuntime.schedules());
+            pluginManager.init(runtime, workspaceRuntime.schedules());
         } else {
             pluginManager.reload(runtime, workspaceRuntime.schedules());
         }

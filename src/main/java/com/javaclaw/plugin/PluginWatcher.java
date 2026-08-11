@@ -1,5 +1,9 @@
 package com.javaclaw.plugin;
 
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
+import com.javaclaw.platform.execution.TaskContext;
+import com.javaclaw.platform.execution.TaskHandle;
+import com.javaclaw.platform.execution.TaskSpec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -13,44 +17,43 @@ import java.nio.file.WatchService;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 /**
- * 插件目录热感知 —— 监听 {@code plugins/} 根目录及其各插件子目录的变化，触发回调
- * （由 {@link PluginManager} 重扫 + 通知 UI 刷新），实现"放入插件子目录即出现在插件中心"。
+ * 插件目录热感知。
  *
- * <p>插件按 {@code plugins/{名称}/{jar} + lib/} 组织，jar 在子目录里，故需同时监听根目录
- * （感知新增/删除插件子目录）与各子目录（感知子目录内 jar 增删）；新子目录出现后会动态补登监听。
- * 单 daemon 线程；事件去抖合并，避免文件复制过程中的抖动。</p>
- *
- * @author JavaClaw
+ * <p>同时监听插件根目录与一级插件目录，并用三层文件快照补偿平台 WatchService 的延迟。
+ * 监听循环运行在全局托管 I/O 虚拟线程中；关闭时先拒绝后续回调、关闭 WatchService，
+ * 再协作取消任务并有限等待承载线程退出。</p>
  */
 final class PluginWatcher {
 
     private static final Logger log = LoggerFactory.getLogger(PluginWatcher.class);
-
-    /** 去抖窗口：收到事件后等待该时长再统一回调一次 */
     private static final long DEBOUNCE_MS = 500;
-    /** 标准 WatchService 在部分平台延迟较高；周期快照保证变化在此窗口内被发现。 */
     private static final long SNAPSHOT_POLL_MS = 1_000;
 
     private final Path root;
     private final Runnable onChange;
+    private final ManagedTaskExecutor taskExecutor;
+    private final Map<Path, WatchKey> registered = new HashMap<>();
 
     private WatchService watchService;
-    private Thread thread;
-    private volatile boolean running = false;
-    /** 已登记监听的目录及 key（根 + 各插件子目录），失效 key 会被移除以允许同名目录重建。 */
-    private final Map<Path, WatchKey> registered = new HashMap<>();
+    private TaskHandle<Void> watchTask;
+    private volatile Thread carrier;
+    private volatile CountDownLatch terminated = new CountDownLatch(0);
+    private volatile boolean running;
     private Map<Path, FileStamp> snapshot = Map.of();
 
-    PluginWatcher(Path root, Runnable onChange) {
-        this.root = root;
-        this.onChange = onChange;
+    PluginWatcher(Path root, Runnable onChange, ManagedTaskExecutor taskExecutor) {
+        this.root = Objects.requireNonNull(root, "root");
+        this.onChange = Objects.requireNonNull(onChange, "onChange");
+        this.taskExecutor = Objects.requireNonNull(taskExecutor, "taskExecutor");
     }
 
-    /** 启动监听（幂等）。 */
+    /** 启动监听；重复调用不会创建第二个任务。 */
     synchronized void start() {
         if (running) {
             return;
@@ -59,69 +62,128 @@ final class PluginWatcher {
             watchService = FileSystems.getDefault().newWatchService();
             registerAll();
             snapshot = scanSnapshot();
-        } catch (Exception e) {
+        } catch (Exception failure) {
             closeWatchService();
             registered.clear();
-            log.warn("插件目录热感知启动失败（将仅支持手动刷新）：{}", e.toString());
+            log.warn("插件目录热感知启动失败（将仅支持手动刷新）：{}", failure.toString());
             return;
         }
+
         running = true;
-        thread = new Thread(this::loop, "plugin-watcher");
-        thread.setDaemon(true);
-        thread.start();
-        log.info("插件目录热感知已启动：{}（监听 {} 个目录）", root, registered.size());
+        terminated = new CountDownLatch(1);
+        try {
+            watchTask = taskExecutor.submit(TaskSpec.io("plugin-directory-watcher"), context -> {
+                carrier = Thread.currentThread();
+                try {
+                    loop(context);
+                } finally {
+                    carrier = null;
+                    terminated.countDown();
+                }
+                return null;
+            });
+            log.info("插件目录热感知已启动：{}（监听 {} 个目录）", root, registered.size());
+        } catch (RuntimeException failure) {
+            running = false;
+            closeWatchService();
+            registered.clear();
+            terminated.countDown();
+            log.warn("插件目录热感知任务提交失败（将仅支持手动刷新）：{}", failure.toString());
+        }
     }
 
-    /** 停止监听（幂等）。 */
+    /** 停止监听；关闭可重复调用，最长等待两秒。 */
     void stop() {
-        Thread stoppingThread;
+        TaskHandle<Void> stoppingTask;
+        Thread stoppingCarrier;
+        CountDownLatch stoppingLatch;
         synchronized (this) {
             running = false;
-            stoppingThread = thread;
+            stoppingTask = watchTask;
+            stoppingCarrier = carrier;
+            stoppingLatch = terminated;
             closeWatchService();
-            if (stoppingThread != null) stoppingThread.interrupt();
+            if (stoppingTask != null) {
+                stoppingTask.cancel();
+            }
         }
-        if (stoppingThread != null && stoppingThread != Thread.currentThread()) {
+        if (stoppingCarrier != Thread.currentThread()) {
             try {
-                stoppingThread.join(2_000);
-            } catch (InterruptedException e) {
+                stoppingLatch.await(2, TimeUnit.SECONDS);
+            } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
             }
         }
         synchronized (this) {
-            thread = null;
+            watchTask = null;
             registered.clear();
             snapshot = Map.of();
         }
         log.info("插件目录热感知已停止");
     }
 
-    private void closeWatchService() {
-        if (watchService == null) return;
-        try {
-            watchService.close();
-        } catch (Exception e) {
-            log.debug("关闭 WatchService 忽略异常：{}", e.toString());
-        } finally {
-            watchService = null;
+    private void loop(TaskContext context) {
+        WatchService service = watchService;
+        if (service == null) {
+            return;
+        }
+        while (running && !context.cancellation().isCancellationRequested()) {
+            boolean changed = pollForChange(service);
+            Map<Path, FileStamp> currentSnapshot = scanSnapshot();
+            if (!currentSnapshot.equals(snapshot)) {
+                changed = true;
+            }
+            if (!changed) {
+                continue;
+            }
+
+            drainFor(service, DEBOUNCE_MS, context);
+            if (!running || context.cancellation().isCancellationRequested()) {
+                break;
+            }
+            synchronized (this) {
+                registerAll();
+                snapshot = scanSnapshot();
+            }
+            log.info("检测到插件目录变化，触发重扫");
+            try {
+                onChange.run();
+            } catch (Exception failure) {
+                log.warn("插件目录变化回调异常：{}", failure.toString());
+            }
         }
     }
 
-    /** 登记根目录与全部一级子目录的监听（已登记的跳过）。 */
+    private boolean pollForChange(WatchService service) {
+        try {
+            WatchKey key = service.poll(SNAPSHOT_POLL_MS, TimeUnit.MILLISECONDS);
+            if (key == null) {
+                return false;
+            }
+            consume(key);
+            return true;
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (Exception closedOrFailed) {
+            return false;
+        }
+    }
+
     private void registerAll() {
         registerDir(root);
         if (!Files.isDirectory(root)) {
             return;
         }
-        try (Stream<Path> s = Files.list(root)) {
-            s.filter(Files::isDirectory).forEach(this::registerDir);
-        } catch (Exception e) {
-            log.debug("枚举插件子目录失败：{}", e.toString());
+        try (Stream<Path> paths = Files.list(root)) {
+            paths.filter(Files::isDirectory).forEach(this::registerDir);
+        } catch (Exception failure) {
+            log.debug("枚举插件子目录失败：{}", failure.toString());
         }
     }
 
-    private void registerDir(Path dir) {
-        Path normalized = dir.toAbsolutePath().normalize();
+    private void registerDir(Path directory) {
+        Path normalized = directory.toAbsolutePath().normalize();
         WatchKey existing = registered.get(normalized);
         if ((existing != null && existing.isValid()) || !Files.isDirectory(normalized)) {
             return;
@@ -133,48 +195,11 @@ final class PluginWatcher {
         };
         try {
             WatchService service = watchService;
-            if (service == null) return;
-            registered.put(normalized, normalized.register(service, kinds));
-        } catch (Exception e) {
-            log.debug("登记目录监听失败 {}：{}", normalized, e.toString());
-        }
-    }
-
-    private void loop() {
-        WatchService service = watchService;
-        if (service == null) return;
-        while (running) {
-            boolean changed = false;
-            try {
-                WatchKey key = service.poll(SNAPSHOT_POLL_MS, TimeUnit.MILLISECONDS);
-                if (key != null) {
-                    consume(key);
-                    changed = true;
-                }
-            } catch (Exception e) {
-                break;   // 关闭或中断
+            if (service != null) {
+                registered.put(normalized, normalized.register(service, kinds));
             }
-
-            Map<Path, FileStamp> currentSnapshot = scanSnapshot();
-            if (!currentSnapshot.equals(snapshot)) changed = true;
-            if (!changed) continue;
-
-            // 去抖：吸收文件复制/批量变更的后续事件，再统一回调一次
-            drainFor(service, DEBOUNCE_MS);
-            if (!running) {
-                break;
-            }
-            // 补登新出现的插件子目录，使其内 jar 的后续变化也能被感知
-            synchronized (this) {
-                registerAll();
-                snapshot = scanSnapshot();
-            }
-            log.info("检测到插件目录变化，触发重扫");
-            try {
-                onChange.run();
-            } catch (Exception e) {
-                log.warn("插件目录变化回调异常：{}", e.toString());
-            }
+        } catch (Exception failure) {
+            log.debug("登记目录监听失败 {}：{}", normalized, failure.toString());
         }
     }
 
@@ -185,44 +210,63 @@ final class PluginWatcher {
         }
     }
 
-    /** 在去抖窗口内吸收并丢弃后续事件，避免连续触发。 */
-    private void drainFor(WatchService service, long millis) {
-        long deadline = System.nanoTime() + millis * 1_000_000;
+    private void drainFor(WatchService service, long millis, TaskContext context) {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
         try {
-            while (running) {
-                long remain = deadline - System.nanoTime();
-                if (remain <= 0) {
-                    break;
+            while (running && !context.cancellation().isCancellationRequested()) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    return;
                 }
-                WatchKey k = service.poll(remain / 1_000_000 + 1, TimeUnit.MILLISECONDS);
-                if (k != null) {
-                    consume(k);
+                WatchKey key = service.poll(
+                        TimeUnit.NANOSECONDS.toMillis(remaining) + 1, TimeUnit.MILLISECONDS);
+                if (key != null) {
+                    consume(key);
                 }
             }
-        } catch (Exception e) {
+        } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
+        } catch (Exception closedOrFailed) {
+            // stop() 通过关闭 WatchService 唤醒监听循环。
         }
     }
 
-    /** 快照覆盖插件根下三层：插件目录、顶层 jar 以及 lib/ 依赖。 */
+    private synchronized void closeWatchService() {
+        if (watchService == null) {
+            return;
+        }
+        try {
+            watchService.close();
+        } catch (Exception failure) {
+            log.debug("关闭 WatchService 忽略异常：{}", failure.toString());
+        } finally {
+            watchService = null;
+        }
+    }
+
+    /** 快照覆盖插件目录、顶层 jar 与 lib 依赖。 */
     private Map<Path, FileStamp> scanSnapshot() {
-        if (!Files.isDirectory(root)) return Map.of();
+        if (!Files.isDirectory(root)) {
+            return Map.of();
+        }
         Map<Path, FileStamp> result = new LinkedHashMap<>();
         try (Stream<Path> paths = Files.walk(root, 3)) {
-            paths.sorted().forEach(path -> {
-                try {
-                    boolean directory = Files.isDirectory(path);
-                    long size = directory ? 0L : Files.size(path);
-                    long modified = Files.getLastModifiedTime(path).toMillis();
-                    result.put(root.relativize(path), new FileStamp(directory, size, modified));
-                } catch (Exception ignored) {
-                    // 文件可能正在被复制/替换；下一轮快照会再次观察。
-                }
-            });
-        } catch (Exception e) {
-            log.debug("扫描插件目录快照失败：{}", e.toString());
+            paths.sorted().forEach(path -> addStamp(result, path));
+        } catch (Exception failure) {
+            log.debug("扫描插件目录快照失败：{}", failure.toString());
         }
         return Map.copyOf(result);
+    }
+
+    private void addStamp(Map<Path, FileStamp> result, Path path) {
+        try {
+            boolean directory = Files.isDirectory(path);
+            long size = directory ? 0L : Files.size(path);
+            long modified = Files.getLastModifiedTime(path).toMillis();
+            result.put(root.relativize(path), new FileStamp(directory, size, modified));
+        } catch (Exception ignored) {
+            // 文件可能正在复制或替换；下一轮快照会再次观察。
+        }
     }
 
     private record FileStamp(boolean directory, long size, long modified) {

@@ -85,7 +85,8 @@ public final class ToolkitAssembler {
         // 插件工具桥：独立成组，激活时由各路径强制加入（动态工具与路由解耦，避免被路由漏判）
         tk.createToolGroup("plugins", "plugins", true);
         if (!ProjectAccessPolicy.strictIsolationEnabled()) {
-            tk.registration().tool(new com.javaclaw.plugin.PluginTools()).group("plugins").apply();
+            tk.registration().tool(new com.javaclaw.plugin.PluginTools(runtime.getPluginTools()))
+                    .group("plugins").apply();
         }
         // 技能三件套：skill 组不在 ALL_TOOL_GROUPS 中（属 ALWAYS_ACTIVE_GROUPS，不参与路由），手动建组
         tk.createToolGroup("skill", "skill", true);
@@ -161,7 +162,7 @@ public final class ToolkitAssembler {
                 : runtime.getMcpClientManager().buildFilteredToolsPrompt(routing.mcpServers());
         // 插件工具清单：toolkit 已强制注册 plugins 组（见 buildBaseToolkit），提示词却不注入
         // 的话模型不知道插件工具存在——写明要用某插件工具的定时任务只能盲目探索或静默不用
-        String pluginPrompt = com.javaclaw.plugin.PluginManager.getInstance().buildToolsPrompt();
+        String pluginPrompt = runtime.getPluginTools().buildToolsPrompt();
         return skillCatalog + skillsPrompt + mcpPrompt + pluginPrompt;
     }
 

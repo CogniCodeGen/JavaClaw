@@ -14,6 +14,7 @@ import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.application.tool.ToolInvocation;
 import com.javaclaw.application.tool.ToolInvocationPipeline;
 import com.javaclaw.application.schedule.ScheduleApplicationService;
+import com.javaclaw.application.plugin.PluginToolGateway;
 import com.javaclaw.util.PathGuard;
 import com.javaclaw.util.ProjectAccessPolicy;
 import org.slf4j.Logger;
@@ -26,12 +27,13 @@ import java.util.LinkedHashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * 插件管理器（单例）—— 插件系统的总控：发现、授权、启停、卸载、持久化、生命周期管理。
+ * 插件宿主生命周期控制器：发现、授权、启停、卸载、持久化和资源回收。
  *
  * <p>插件 jar 放在运行目录下的全局 {@code plugins/}（与 {@code skills/} 同级、同为全局约定）；
  * 启用态与能力授权按工作区持久化到 H2 {@code plugin_state} 表。每个插件由一个
@@ -40,31 +42,30 @@ import java.util.stream.Stream;
  * <p>能力授权门控：插件 {@code plugin.json} 声明的能力 = 权限申请；首次启用时经
  * {@link UserInteractionPort} 弹确认授权，授权结果持久化，下次启用不再重复询问。</p>
  *
- * @author JavaClaw
+ * <p>实例由根 Spring Context 唯一管理。工作区切换只替换绑定的运行时和状态快照，
+ * 不提供静态访问入口；关闭后所有插件、监听任务和异步恢复任务都会被回收。</p>
  */
-public final class PluginManager {
+public final class PluginManager implements PluginToolGateway {
 
     private static final Logger log = LoggerFactory.getLogger(PluginManager.class);
 
-    private static PluginManager instance;
-
     /** 插件根目录（全局，{user.dir}/plugins） */
-    private final Path pluginsDir = ProjectAccessPolicy.requireProjectFilePath(
-            ProjectAccessPolicy.projectRoot().resolve("plugins"));
+    private final Path pluginsDir;
 
     /** id → 容器，按发现顺序保序 */
     private final Map<String, PluginRuntime> plugins = new LinkedHashMap<>();
 
     /** 启用态 + 授权持久化（工作区维度） */
-    private final PluginStore store = new PluginStore();
+    private final PluginStore store;
+    private final ManagedTaskExecutor taskExecutor;
+    private final ToolInvocationPipeline toolPipeline;
+    private final PluginStorageFactory storageFactory;
+    private final UserInteractionPort interactionPort;
+    private final ClassLoader appClassLoader;
 
     private volatile AgentRuntime agentRuntime;
-    private volatile UserInteractionPort interactionPort;
-    private ManagedTaskExecutor taskExecutor;
-    private ToolInvocationPipeline toolPipeline;
     private ScheduleApplicationService schedules;
     private TaskHandle<Void> autoEnableTask;
-    private ClassLoader appClassLoader;
 
     /** 目录热感知 */
     private PluginWatcher watcher;
@@ -75,14 +76,32 @@ public final class PluginManager {
     /** init/reload/shutdown 每次推进；旧世代的异步自动启用线程不得再启动插件。 */
     private long lifecycleGeneration;
 
-    private PluginManager() {
+    public PluginManager(
+            PluginStore store,
+            ManagedTaskExecutor taskExecutor,
+            ToolInvocationPipeline toolPipeline,
+            PluginStorageFactory storageFactory,
+            UserInteractionPort interactionPort) {
+        this(ProjectAccessPolicy.requireProjectFilePath(
+                        ProjectAccessPolicy.projectRoot().resolve("plugins")),
+                store, taskExecutor, toolPipeline, storageFactory, interactionPort);
     }
 
-    public static synchronized PluginManager getInstance() {
-        if (instance == null) {
-            instance = new PluginManager();
-        }
-        return instance;
+    PluginManager(
+            Path pluginsDir,
+            PluginStore store,
+            ManagedTaskExecutor taskExecutor,
+            ToolInvocationPipeline toolPipeline,
+            PluginStorageFactory storageFactory,
+            UserInteractionPort interactionPort) {
+        this.pluginsDir = Objects.requireNonNull(pluginsDir, "pluginsDir")
+                .toAbsolutePath().normalize();
+        this.store = Objects.requireNonNull(store, "store");
+        this.taskExecutor = Objects.requireNonNull(taskExecutor, "taskExecutor");
+        this.toolPipeline = Objects.requireNonNull(toolPipeline, "toolPipeline");
+        this.storageFactory = Objects.requireNonNull(storageFactory, "storageFactory");
+        this.interactionPort = Objects.requireNonNull(interactionPort, "interactionPort");
+        this.appClassLoader = PluginManager.class.getClassLoader();
     }
 
     // ==================== 生命周期接线 ====================
@@ -91,22 +110,15 @@ public final class PluginManager {
      * 初始化插件系统（应用启动时调用）：发现插件并在后台自动恢复上次已启用的插件。
      *
      * @param runtime         智能体基础设施容器，供各能力使用
-     * @param interactionPort 用户交互端口，供能力授权确认
      */
-    public synchronized void init(AgentRuntime runtime, UserInteractionPort interactionPort,
-                                  ManagedTaskExecutor taskExecutor,
-                                  ToolInvocationPipeline toolPipeline,
-                                  ScheduleApplicationService schedules) {
+    public synchronized void init(
+            AgentRuntime runtime, ScheduleApplicationService schedules) {
         lifecycleGeneration++;
         cancelAutoEnable();
-        this.agentRuntime = runtime;
-        this.interactionPort = interactionPort;
-        this.taskExecutor = java.util.Objects.requireNonNull(taskExecutor, "taskExecutor");
-        this.toolPipeline = java.util.Objects.requireNonNull(toolPipeline, "toolPipeline");
-        this.schedules = java.util.Objects.requireNonNull(schedules, "schedules");
-        this.appClassLoader = PluginManager.class.getClassLoader();
+        this.agentRuntime = Objects.requireNonNull(runtime, "runtime");
+        this.schedules = Objects.requireNonNull(schedules, "schedules");
         ensureDir();
-        store.bind(runtime.getWorkspace().dataRoot());
+        store.bind(runtime.getWorkspace().workspaceId());
         discover();
         log.info("插件系统已初始化：目录 {}，发现 {} 个插件", pluginsDir.toAbsolutePath(), plugins.size());
         startWatcher();
@@ -126,7 +138,7 @@ public final class PluginManager {
         unloadAll();
         this.agentRuntime = newRuntime;
         this.schedules = java.util.Objects.requireNonNull(newSchedules, "newSchedules");
-        store.bind(newRuntime.getWorkspace().dataRoot());
+        store.bind(newRuntime.getWorkspace().workspaceId());
         discover();
         log.info("插件系统重载完成，发现 {} 个插件", plugins.size());
         autoEnablePersistedAsync();
@@ -155,6 +167,9 @@ public final class PluginManager {
             watcher = null;
         }
         unloadAll();
+        agentRuntime = null;
+        schedules = null;
+        changeListener = null;
         log.info("插件系统已关闭");
     }
 
@@ -221,7 +236,13 @@ public final class PluginManager {
 
         try {
             rt.start(granted, configFor(id));
-            store.setEnabled(id, true);
+            try {
+                store.setEnabled(id, true);
+            } catch (RuntimeException persistenceFailure) {
+                rt.stop();
+                throw new IllegalStateException(
+                        "插件已启动但启用状态未能持久化，已回滚运行时", persistenceFailure);
+            }
         } catch (Exception e) {
             log.error("插件[{}]启用失败：{}", id, e.toString(), e);
             rt.markFailed(e.getMessage());
@@ -241,8 +262,9 @@ public final class PluginManager {
         try {
             rt.stop();
             store.setEnabled(id, false);
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
             log.error("插件[{}]停用异常：{}", id, e.toString(), e);
+            throw e;
         }
     }
 
@@ -384,6 +406,7 @@ public final class PluginManager {
     /**
      * 汇总所有已启用插件贡献的工具，生成注入编排器系统提示词的描述块（无则返回空串）。
      */
+    @Override
     public synchronized String buildToolsPrompt() {
         if (ProjectAccessPolicy.strictIsolationEnabled()) return "";
         List<PluginRuntime> withTools = plugins.values().stream()
@@ -421,6 +444,7 @@ public final class PluginManager {
      * @return 工具结果文本
      * @throws Exception 插件未启用、工具不存在或 handler 抛出
      */
+    @Override
     public String invokeTool(String pluginId, String toolName, String argumentsJson) throws Exception {
         if (ProjectAccessPolicy.strictIsolationEnabled()) {
             throw new SecurityException(ProjectAccessPolicy.unconfinedExecutionDeniedReason());
@@ -520,8 +544,10 @@ public final class PluginManager {
                 }
                 return;
             }
-            plugins.put(d.id(), new PluginRuntime(d, jar, agentRuntime, appClassLoader,
-                    agentRuntime.getWorkspace().dataRoot(), taskExecutor, schedules));
+            plugins.put(d.id(), new PluginRuntime(
+                    d, jar, agentRuntime, appClassLoader,
+                    agentRuntime.getWorkspace().workspaceId(), taskExecutor, schedules,
+                    storageFactory));
             log.info("发现插件：{}（{}），目录 {}", d.name(), d.id(), pluginDir.getFileName());
         } catch (Exception e) {
             log.warn("解析插件失败，跳过 {}：{}", pluginDir.getFileName(), e.toString());
@@ -625,7 +651,7 @@ public final class PluginManager {
         watcher = new PluginWatcher(pluginsDir, () -> {
             refresh();
             fireChange();
-        });
+        }, taskExecutor);
         watcher.start();
     }
 

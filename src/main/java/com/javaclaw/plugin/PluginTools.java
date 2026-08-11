@@ -1,5 +1,6 @@
 package com.javaclaw.plugin;
 
+import com.javaclaw.application.plugin.PluginToolGateway;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.util.ProjectAccessPolicy;
 import io.agentscope.core.tool.Tool;
@@ -19,11 +20,16 @@ import org.slf4j.LoggerFactory;
 public final class PluginTools {
 
     private static final Logger log = LoggerFactory.getLogger(PluginTools.class);
+    private final PluginToolGateway plugins;
+
+    public PluginTools(PluginToolGateway plugins) {
+        this.plugins = java.util.Objects.requireNonNull(plugins, "plugins");
+    }
 
     @Tool(name = "plugin_list_tools",
             description = "列出当前已启用插件提供的可调用工具及其参数")
     public String listTools() {
-        String prompt = PluginManager.getInstance().buildToolsPrompt();
+        String prompt = plugins.buildToolsPrompt();
         return ToolResponse.success("plugin_list_tools",
                 prompt.isBlank() ? "当前没有已启用插件提供工具。" : prompt.strip());
     }
@@ -41,7 +47,7 @@ public final class PluginTools {
         }
         String args = (argumentsJson == null || argumentsJson.isBlank()) ? "{}" : argumentsJson;
         try {
-            String result = PluginManager.getInstance().invokeTool(pluginId, toolName, args);
+            String result = plugins.invokeTool(pluginId, toolName, args);
             return ToolResponse.success("plugin_call_tool", result == null ? "（无输出）" : result);
         } catch (Exception e) {
             log.warn("插件工具调用失败 plugin_id={} tool_name={}：{}", pluginId, toolName, e.toString());

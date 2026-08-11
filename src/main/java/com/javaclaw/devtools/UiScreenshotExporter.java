@@ -88,12 +88,10 @@ public final class UiScreenshotExporter {
             PlaywrightBrowserManager browserManager =
                     springContext.getBean(PlaywrightBrowserManager.class);
             applicationKernel = new ApplicationKernel(
-                    browserManager, port, () -> applicationKernel.current().sddTaskViews()
+                    browserManager, () -> applicationKernel.current().sddTaskViews()
                             .create(primaryStage).show(),
                     () -> {}, () -> {},
                     springContext.getBean(WorkspaceSpringContextFactory.class),
-                    springContext.getBean(com.javaclaw.platform.execution.ManagedTaskExecutor.class),
-                    springContext.getBean(com.javaclaw.application.tool.ToolInvocationPipeline.class),
                     springContext.getBean(com.javaclaw.plugin.PluginManager.class),
                     springContext.getBean(com.javaclaw.config.WorkspaceManager.class),
                     springContext.getBean(com.javaclaw.config.DataManager.class),

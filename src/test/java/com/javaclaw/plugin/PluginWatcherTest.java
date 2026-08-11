@@ -1,5 +1,6 @@
 package com.javaclaw.plugin;
 
+import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -7,35 +8,61 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PluginWatcherTest {
 
+    @TempDir
+    Path pluginsDirectory;
+
     @Test
-    void 检测子目录文件变化且停止后可重新启动(@TempDir Path root) throws Exception {
-        AtomicInteger callbacks = new AtomicInteger();
-        CountDownLatch first = new CountDownLatch(1);
-        CountDownLatch second = new CountDownLatch(1);
-        PluginWatcher watcher = new PluginWatcher(root, () -> {
-            int count = callbacks.incrementAndGet();
-            if (count == 1) first.countDown();
-            if (count == 2) second.countDown();
-        });
+    void watcherRestartsOnManagedVirtualThreadAndReleasesTasks() throws Exception {
+        CountDownLatch firstChange = new CountDownLatch(1);
+        CountDownLatch secondChange = new CountDownLatch(1);
+        AtomicInteger phase = new AtomicInteger(1);
+        AtomicBoolean callbacksWereVirtual = new AtomicBoolean(true);
+        try (ManagedTaskExecutor executor = new ManagedTaskExecutor()) {
+            PluginWatcher watcher = new PluginWatcher(pluginsDirectory, () -> {
+                if (!Thread.currentThread().isVirtual()) {
+                    callbacksWereVirtual.set(false);
+                }
+                if (phase.get() == 1) {
+                    firstChange.countDown();
+                } else {
+                    secondChange.countDown();
+                }
+            }, executor);
+            try {
+                watcher.start();
+                Path pluginDirectory = Files.createDirectory(pluginsDirectory.resolve("demo"));
+                Files.writeString(pluginDirectory.resolve("demo.jar"), "test");
+                assertTrue(firstChange.await(5, TimeUnit.SECONDS),
+                        "首次目录变化没有触发插件重扫");
 
-        try {
-            watcher.start();
-            Path plugin = Files.createDirectories(root.resolve("demo"));
-            Files.writeString(plugin.resolve("demo.jar"), "v1");
-            assertTrue(first.await(5, TimeUnit.SECONDS), "首次文件变化应触发回调");
+                watcher.stop();
+                phase.set(2);
+                watcher.start();
+                Files.writeString(pluginDirectory.resolve("demo.jar"), "updated-content");
+                assertTrue(secondChange.await(5, TimeUnit.SECONDS),
+                        "监听任务重启后没有触发插件重扫");
+                assertTrue(callbacksWereVirtual.get(), "监听回调应由托管虚拟线程执行");
+            } finally {
+                watcher.stop();
+            }
 
-            watcher.stop();
-            watcher.start();
-            Files.writeString(plugin.resolve("demo.jar"), "v2-longer");
-            assertTrue(second.await(5, TimeUnit.SECONDS), "停止后重新启动仍应正常监听");
-        } finally {
-            watcher.stop();
+            awaitNoTasks(executor);
+            assertEquals(0, executor.activeTaskCount());
+        }
+    }
+
+    private static void awaitNoTasks(ManagedTaskExecutor executor) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (executor.activeTaskCount() > 0 && System.nanoTime() < deadline) {
+            Thread.sleep(5);
         }
     }
 }

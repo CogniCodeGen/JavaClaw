@@ -57,6 +57,9 @@ import com.javaclaw.infrastructure.settings.LegacyTestDataMaintenanceAdapter;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.plugin.PluginManager;
+import com.javaclaw.plugin.PluginStorageFactory;
+import com.javaclaw.plugin.PluginStore;
+import com.javaclaw.plugin.capability.StorageAccessImpl;
 import com.javaclaw.ui.javafx.onboarding.OnboardingViewFactory;
 import com.javaclaw.ui.javafx.onboarding.ProviderCardFactory;
 import com.javaclaw.system.CommandSessionManager;
@@ -227,8 +230,29 @@ public class RootConfiguration {
     }
 
     @Bean
-    PluginManager pluginManager() {
-        return PluginManager.getInstance();
+    PluginStore pluginStore(
+            JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager,
+            ObjectMapper json) {
+        return new PluginStore(jdbc, transactionManager, json);
+    }
+
+    @Bean
+    PluginStorageFactory pluginStorageFactory(
+            JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager) {
+        return (pluginId, workspaceId) -> new StorageAccessImpl(
+                pluginId, workspaceId, jdbc, transactionManager);
+    }
+
+    @Bean(destroyMethod = "shutdown")
+    PluginManager pluginManager(
+            PluginStore store,
+            ManagedTaskExecutor executor,
+            ToolInvocationPipeline tools,
+            PluginStorageFactory storage,
+            UserInteractionPort interaction) {
+        return new PluginManager(store, executor, tools, storage, interaction);
     }
 
     @Bean(destroyMethod = "close")

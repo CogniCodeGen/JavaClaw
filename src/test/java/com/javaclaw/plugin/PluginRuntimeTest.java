@@ -44,7 +44,10 @@ class PluginRuntimeTest {
         try (ManagedTaskExecutor executor = new ManagedTaskExecutor()) {
             PluginRuntime runtime = new PluginRuntime(
                     descriptor, jar, null, getClass().getClassLoader(),
-                    tempDir.resolve("data"), executor, null);
+                    "test-workspace", executor, null,
+                    (pluginId, workspaceId) -> {
+                        throw new AssertionError("未授权 STORAGE 时不应创建存储能力");
+                    });
 
             Exception first = assertThrows(Exception.class,
                     () -> runtime.start(Set.of(), Map.of()));

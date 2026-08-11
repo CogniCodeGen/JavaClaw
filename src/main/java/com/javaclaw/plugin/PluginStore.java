@@ -1,176 +1,220 @@
 package com.javaclaw.plugin;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.javaclaw.config.AppDatabase;
 import com.javaclaw.plugin.api.Capability;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
-import java.io.IOException;
-import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
- * 插件状态持久化（工作区维度）—— 记录每个插件的"是否启用"与"已授权能力"，落在当前工作区
- * H2 数据库的 {@code plugin_state} 表。供下次启动自动恢复已启用插件、跳过已授权能力的重复确认。
+ * 工作区插件状态仓储。
  *
- * <p>插件本体 jar 是全局的（{@code {user.dir}/plugins/}），但启用态与授权按工作区隔离并存入 H2。</p>
- *
- * @author JavaClaw
+ * <p>实例由根 Spring Context 管理，但每次只绑定一个明确的工作区快照。切换工作区时
+ * {@link #bind(String)} 会完整替换内存状态；后续写入始终使用该快照，不读取可变的全局
+ * 工作区指针。所有操作线程安全，写操作在单个 Spring 事务内提交。</p>
  */
-final class PluginStore {
+public final class PluginStore {
 
     private static final Logger log = LoggerFactory.getLogger(PluginStore.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    /** 单插件的持久化条目（公开字段，便于 Jackson 读写） */
-    static final class Persist {
-        public boolean enabled;
-        public List<String> granted = new ArrayList<>();
-        /** 插件自有配置（secret 项以密文存储，由 PluginManager 加解密） */
-        public Map<String, String> config = new LinkedHashMap<>();
-    }
-
+    private final JdbcTemplate jdbc;
+    private final TransactionTemplate transaction;
+    private final ObjectMapper json;
     private final Map<String, Persist> entries = new LinkedHashMap<>();
+    private String workspaceId;
 
-    /** （重新）绑定到当前工作区并从 H2 加载。 */
-    void bind(Path dataRoot) {
+    public PluginStore(
+            JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager,
+            ObjectMapper json) {
+        this.jdbc = Objects.requireNonNull(jdbc, "jdbc");
+        this.transaction = new TransactionTemplate(
+                Objects.requireNonNull(transactionManager, "transactionManager"));
+        this.json = Objects.requireNonNull(json, "json");
+    }
+
+    /** 绑定并加载一个工作区；加载失败时不发布部分状态。 */
+    synchronized void bind(String workspaceId) {
+        String checkedId = requireWorkspaceId(workspaceId);
+        Map<String, Persist> loaded = load(checkedId);
+        this.workspaceId = checkedId;
         entries.clear();
-        load();
+        entries.putAll(loaded);
+        log.info("工作区 {} 的插件状态已加载：{} 条", checkedId, entries.size());
     }
 
-    boolean isEnabled(String id) {
-        Persist p = entries.get(id);
-        return p != null && p.enabled;
+    synchronized boolean isEnabled(String id) {
+        Persist persisted = entries.get(id);
+        return persisted != null && persisted.enabled;
     }
 
-    /** 读取已授权能力集合（未知能力名跳过）。 */
-    Set<Capability> granted(String id) {
-        Persist p = entries.get(id);
+    /** 读取已授权能力集合；未知能力名属于旧数据，安全忽略。 */
+    synchronized Set<Capability> granted(String id) {
+        Persist persisted = entries.get(id);
         Set<Capability> result = new LinkedHashSet<>();
-        if (p != null) {
-            for (String name : p.granted) {
-                try {
-                    result.add(Capability.valueOf(name.toUpperCase(Locale.ROOT)));
-                } catch (IllegalArgumentException ignored) {
-                    // 旧版本遗留的未知能力名，忽略
-                }
+        if (persisted == null) {
+            return result;
+        }
+        for (String name : persisted.granted) {
+            try {
+                result.add(Capability.valueOf(name.toUpperCase(Locale.ROOT)));
+            } catch (IllegalArgumentException ignored) {
+                log.debug("插件[{}]包含宿主未知的历史能力名：{}", id, name);
             }
         }
         return result;
     }
 
-    /** 记录启用态与授权能力并持久化。 */
-    void update(String id, boolean enabled, Set<Capability> granted) {
-        Persist p = entries.computeIfAbsent(id, k -> new Persist());
-        p.enabled = enabled;
-        p.granted = granted.stream().map(Enum::name).toList();
-        save();
+    synchronized void update(String id, boolean enabled, Set<Capability> granted) {
+        Map<String, Persist> next = copyEntries();
+        Persist persisted = next.computeIfAbsent(id, ignored -> new Persist());
+        persisted.enabled = enabled;
+        persisted.granted = granted.stream().map(Enum::name).toList();
+        replaceAfterCommit(next);
     }
 
-    /** 仅更新启用态（保留已授权能力）。 */
-    void setEnabled(String id, boolean enabled) {
-        Persist p = entries.computeIfAbsent(id, k -> new Persist());
-        p.enabled = enabled;
-        save();
+    synchronized void setEnabled(String id, boolean enabled) {
+        Map<String, Persist> next = copyEntries();
+        Persist persisted = next.computeIfAbsent(id, ignored -> new Persist());
+        persisted.enabled = enabled;
+        replaceAfterCommit(next);
     }
 
-    /** 读取插件配置（原样返回，secret 项为密文，由 PluginManager 解密）。 */
-    Map<String, String> config(String id) {
-        Persist p = entries.get(id);
-        return p == null ? new LinkedHashMap<>() : new LinkedHashMap<>(p.config);
+    synchronized Map<String, String> config(String id) {
+        Persist persisted = entries.get(id);
+        return persisted == null
+                ? new LinkedHashMap<>()
+                : new LinkedHashMap<>(persisted.config);
     }
 
-    /** 写入插件配置（secret 项应已由 PluginManager 加密）并持久化。 */
-    void setConfig(String id, Map<String, String> config) {
-        Persist p = entries.computeIfAbsent(id, k -> new Persist());
-        p.config = new LinkedHashMap<>(config);
-        save();
+    synchronized void setConfig(String id, Map<String, String> config) {
+        Map<String, Persist> next = copyEntries();
+        Persist persisted = next.computeIfAbsent(id, ignored -> new Persist());
+        persisted.config = new LinkedHashMap<>(config);
+        replaceAfterCommit(next);
     }
 
-    private void load() {
+    private Map<String, Persist> load(String workspaceId) {
         String sql = """
                 SELECT plugin_id, enabled, granted_json, config_json
                 FROM plugin_state
                 WHERE workspace_id = ?
                 ORDER BY plugin_id
                 """;
-        try (Connection c = AppDatabase.getConnection();
-             PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setString(1, AppDatabase.currentWorkspaceId());
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    Persist p = new Persist();
-                    p.enabled = rs.getBoolean("enabled");
-                    p.granted = readStringList(rs.getString("granted_json"));
-                    p.config = readStringMap(rs.getString("config_json"));
-                    entries.put(rs.getString("plugin_id"), p);
-                }
-            }
-            log.info("插件状态已从 H2 加载：{} 条", entries.size());
-        } catch (SQLException e) {
-            log.warn("从 H2 加载插件状态失败，使用空状态：{}", e.toString());
-        }
+        Map<String, Persist> loaded = new LinkedHashMap<>();
+        jdbc.query(sql, result -> {
+            Persist persisted = new Persist();
+            persisted.enabled = result.getBoolean("enabled");
+            persisted.granted = readStringList(result.getString("granted_json"));
+            persisted.config = readStringMap(result.getString("config_json"));
+            loaded.put(result.getString("plugin_id"), persisted);
+        }, workspaceId);
+        return loaded;
     }
 
-    private void save() {
-        String insert = """
-                INSERT INTO plugin_state(workspace_id, plugin_id, enabled, granted_json, config_json, updated_at)
-                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """;
-        try (Connection c = AppDatabase.getConnection();
-             PreparedStatement del = c.prepareStatement("DELETE FROM plugin_state WHERE workspace_id = ?");
-             PreparedStatement ps = c.prepareStatement(insert)) {
-            c.setAutoCommit(false);
-            String workspaceId = AppDatabase.currentWorkspaceId();
-            del.setString(1, workspaceId);
-            del.executeUpdate();
-            for (Map.Entry<String, Persist> e : entries.entrySet()) {
-                ps.setString(1, workspaceId);
-                ps.setString(2, e.getKey());
-                ps.setBoolean(3, e.getValue().enabled);
-                ps.setString(4, MAPPER.writeValueAsString(e.getValue().granted));
-                ps.setString(5, MAPPER.writeValueAsString(e.getValue().config));
-                ps.addBatch();
+    /**
+     * 以工作区快照替换持久状态。先完成 JSON 编码再开启事务，编码失败不会触碰数据库。
+     */
+    private void replaceAfterCommit(Map<String, Persist> next) {
+        String boundWorkspaceId = requireWorkspaceId(workspaceId);
+        List<Object[]> rows = encodeRows(boundWorkspaceId, next);
+        transaction.executeWithoutResult(status -> {
+            jdbc.update("DELETE FROM plugin_state WHERE workspace_id = ?", boundWorkspaceId);
+            if (!rows.isEmpty()) {
+                jdbc.batchUpdate("""
+                        INSERT INTO plugin_state(
+                            workspace_id, plugin_id, enabled, granted_json, config_json, updated_at)
+                        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                        """, rows);
             }
-            ps.executeBatch();
-            c.commit();
-        } catch (SQLException | IOException e) {
-            log.error("保存插件状态到 H2 失败：{}", e.toString());
-        }
+        });
+        entries.clear();
+        entries.putAll(next);
     }
 
-    private List<String> readStringList(String json) {
-        if (json == null || json.isBlank()) return new ArrayList<>();
+    private List<Object[]> encodeRows(
+            String boundWorkspaceId, Map<String, Persist> snapshot) {
+        List<Object[]> rows = new ArrayList<>(snapshot.size());
         try {
-            List<String> out = MAPPER.readValue(json, new TypeReference<>() {});
-            return out != null ? out : new ArrayList<>();
-        } catch (IOException e) {
-            log.warn("解析插件授权列表失败：{}", e.toString());
+            for (Map.Entry<String, Persist> entry : snapshot.entrySet()) {
+                Persist persisted = entry.getValue();
+                rows.add(new Object[]{
+                        boundWorkspaceId,
+                        entry.getKey(),
+                        persisted.enabled,
+                        json.writeValueAsString(persisted.granted),
+                        json.writeValueAsString(persisted.config)
+                });
+            }
+            return rows;
+        } catch (JsonProcessingException failure) {
+            throw new IllegalStateException("插件状态无法编码为 JSON", failure);
+        }
+    }
+
+    private Map<String, Persist> copyEntries() {
+        Map<String, Persist> copy = new LinkedHashMap<>();
+        entries.forEach((id, persisted) -> copy.put(id, persisted.copy()));
+        return copy;
+    }
+
+    private List<String> readStringList(String value) {
+        if (value == null || value.isBlank()) {
+            return new ArrayList<>();
+        }
+        try {
+            List<String> parsed = json.readValue(value, new TypeReference<>() { });
+            return parsed == null ? new ArrayList<>() : parsed;
+        } catch (JsonProcessingException failure) {
+            log.warn("解析插件授权列表失败，已按空列表处理：{}", failure.getMessage());
             return new ArrayList<>();
         }
     }
 
-    private Map<String, String> readStringMap(String json) {
-        if (json == null || json.isBlank()) return new LinkedHashMap<>();
-        try {
-            Map<String, String> out = MAPPER.readValue(json, new TypeReference<>() {});
-            return out != null ? out : new LinkedHashMap<>();
-        } catch (IOException e) {
-            log.warn("解析插件配置失败：{}", e.toString());
+    private Map<String, String> readStringMap(String value) {
+        if (value == null || value.isBlank()) {
             return new LinkedHashMap<>();
+        }
+        try {
+            Map<String, String> parsed = json.readValue(value, new TypeReference<>() { });
+            return parsed == null ? new LinkedHashMap<>() : parsed;
+        } catch (JsonProcessingException failure) {
+            log.warn("解析插件配置失败，已按空配置处理：{}", failure.getMessage());
+            return new LinkedHashMap<>();
+        }
+    }
+
+    private static String requireWorkspaceId(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalStateException("插件状态仓储尚未绑定工作区");
+        }
+        return value;
+    }
+
+    private static final class Persist {
+        private boolean enabled;
+        private List<String> granted = new ArrayList<>();
+        private Map<String, String> config = new LinkedHashMap<>();
+
+        private Persist copy() {
+            Persist copy = new Persist();
+            copy.enabled = enabled;
+            copy.granted = new ArrayList<>(granted);
+            copy.config = new LinkedHashMap<>(config);
+            return copy;
         }
     }
 }

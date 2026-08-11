@@ -15,7 +15,6 @@ import com.javaclaw.plugin.api.capability.StorageAccess;
 import com.javaclaw.plugin.capability.ChatAccessImpl;
 import com.javaclaw.plugin.capability.MemoryAccessImpl;
 import com.javaclaw.plugin.capability.ScheduleAccessImpl;
-import com.javaclaw.plugin.capability.StorageAccessImpl;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.application.schedule.ScheduleApplicationService;
 import com.javaclaw.platform.execution.TaskSpec;
@@ -63,8 +62,9 @@ final class PluginRuntime {
     private final ClassLoader appClassLoader;
     private final ManagedTaskExecutor taskExecutor;
     private final ScheduleApplicationService schedules;
-    /** 工作区数据根（用于 STORAGE 能力的插件数据目录） */
-    private final Path dataRoot;
+    /** 运行时创建时捕获的工作区标识；插件存储不得跟随全局指针漂移。 */
+    private final String workspaceId;
+    private final PluginStorageFactory storageFactory;
 
     private volatile PluginState state = PluginState.DISCOVERED;
     private volatile String errorMessage = "";
@@ -84,15 +84,17 @@ final class PluginRuntime {
     private final List<com.javaclaw.plugin.api.PluginSkill> providedSkills = new ArrayList<>();
 
     PluginRuntime(PluginDescriptor descriptor, Path jarPath, AgentRuntime agentRuntime,
-                  ClassLoader appClassLoader, Path dataRoot, ManagedTaskExecutor taskExecutor,
-                  ScheduleApplicationService schedules) {
+                  ClassLoader appClassLoader, String workspaceId,
+                  ManagedTaskExecutor taskExecutor, ScheduleApplicationService schedules,
+                  PluginStorageFactory storageFactory) {
         this.descriptor = descriptor;
         this.jarPath = jarPath;
         this.agentRuntime = agentRuntime;
         this.appClassLoader = appClassLoader;
-        this.dataRoot = dataRoot;
+        this.workspaceId = java.util.Objects.requireNonNull(workspaceId, "workspaceId");
         this.taskExecutor = java.util.Objects.requireNonNull(taskExecutor, "taskExecutor");
         this.schedules = schedules;
+        this.storageFactory = java.util.Objects.requireNonNull(storageFactory, "storageFactory");
     }
 
     // ==================== 生命周期 ====================
@@ -162,7 +164,7 @@ final class PluginRuntime {
             MemoryAccess memory = granted.contains(Capability.MEMORY)
                     ? new MemoryAccessImpl(descriptor.id(), agentRuntime.getMemoryManager()) : null;
             StorageAccess storage = granted.contains(Capability.STORAGE)
-                    ? new StorageAccessImpl(descriptor.id(), dataRoot) : null;
+                    ? storageFactory.create(descriptor.id(), workspaceId) : null;
 
             PluginContext ctx = new PluginContextImpl(descriptor.id(), scheduler,
                     new PluginConfigImpl(config), chat, schedule, memory, storage);
@@ -383,10 +385,12 @@ final class PluginRuntime {
         }
         providedTools.clear();
         providedSkills.clear();
-        try {
-            agentRuntime.getSkillRuntime().manager().unregisterDynamicSkills(descriptor.id());
-        } catch (RuntimeException e) {
-            log.warn("插件[{}]注销动态技能失败（继续回收）：{}", descriptor.id(), e.toString());
+        if (agentRuntime != null) {
+            try {
+                agentRuntime.getSkillRuntime().manager().unregisterDynamicSkills(descriptor.id());
+            } catch (RuntimeException e) {
+                log.warn("插件[{}]注销动态技能失败（继续回收）：{}", descriptor.id(), e.toString());
+            }
         }
     }
 

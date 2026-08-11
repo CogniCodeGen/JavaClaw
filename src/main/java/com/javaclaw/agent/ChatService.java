@@ -899,7 +899,7 @@ public class ChatService {
             // 记忆注入：按本轮 query 检索人格 + 相关事实 + 相关情景（替代旧整文件注入）
             String personaContext = memoryService.recall(currentUserInput);
             // 已启用插件贡献的工具清单注入提示词，agent 据此直接 plugin_call_tool 调用
-            String pluginPrompt = com.javaclaw.plugin.PluginManager.getInstance().buildToolsPrompt();
+            String pluginPrompt = runtime.getPluginTools().buildToolsPrompt();
             // Recaller 已把相关纠错置于 loaded_context 首部；这里不重复拼接，避免双份 token。
             String fullSysPrompt = baseSystemPrompt + personaContext + skillCatalog + skillsPrompt
                     + mcpPrompt + pluginPrompt + goalPrompt;

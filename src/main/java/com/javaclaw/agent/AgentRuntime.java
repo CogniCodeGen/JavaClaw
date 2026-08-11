@@ -17,6 +17,7 @@ import com.javaclaw.memory.embed.EmbeddingGateway;
 import com.javaclaw.platform.execution.TaskHandle;
 import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
+import com.javaclaw.application.plugin.PluginToolGateway;
 import com.javaclaw.runtime.WorkspaceContext;
 import com.javaclaw.diagnostics.TraceRecorder;
 import com.javaclaw.site.SiteCredentialManager;
@@ -92,6 +93,7 @@ public final class AgentRuntime {
     private final com.javaclaw.config.EmailConfig emailConfig;
     private final com.javaclaw.config.NotificationConfig notificationConfig;
     private final com.javaclaw.system.CommandToolFactory commandTools;
+    private final PluginToolGateway pluginTools;
 
     /** Token 用量追踪器 */
     private final TokenTracker tokenTracker;
@@ -175,6 +177,7 @@ public final class AgentRuntime {
             com.javaclaw.config.EmailConfig emailConfig,
             com.javaclaw.config.NotificationConfig notificationConfig,
             com.javaclaw.system.CommandToolFactory commandTools,
+            PluginToolGateway pluginTools,
             WorkspaceContext workspace,
             KnowledgeDocumentPreferencePort knowledgePreferences) {
         java.util.Objects.requireNonNull(config, "config");
@@ -184,6 +187,7 @@ public final class AgentRuntime {
         this.notificationConfig = java.util.Objects.requireNonNull(
                 notificationConfig, "notificationConfig");
         this.commandTools = java.util.Objects.requireNonNull(commandTools, "commandTools");
+        this.pluginTools = java.util.Objects.requireNonNull(pluginTools, "pluginTools");
         log.info("========== 初始化 AgentRuntime 基础设施 ==========");
         log.info("API 地址: {}", config.getBaseUrl());
         log.info("模型名称: {}", config.getModelName());
@@ -287,6 +291,7 @@ public final class AgentRuntime {
     public com.javaclaw.system.CommandToolFactory getCommandTools() {
         return commandTools;
     }
+    public PluginToolGateway getPluginTools() { return pluginTools; }
     public ScheduleApplicationService getScheduleApplicationService() {
         return scheduleApplicationService;
     }
