@@ -32,7 +32,7 @@ class ChatTurnCancellationTest {
         DefaultConversationHandle handle =
                 new DefaultConversationHandle(callbacks, ignored -> true);
 
-        ChatViewController.invalidateBeforeCancel(
+        ChatTurnController.invalidateBeforeCancel(
                 () -> invalidated.set(true), handle, CancellationReason.SESSION_SWITCH);
 
         assertTrue(invalidated.get());

@@ -2,6 +2,8 @@ package com.javaclaw.chat;
 
 /** 单轮消息计量，不包含会话累计值。 */
 public record TurnMetrics(long inputTokens, long outputTokens, long durationMs) {
+    public static final TurnMetrics ZERO = new TurnMetrics(0, 0, 0);
+
     public TurnMetrics {
         inputTokens = Math.max(0, inputTokens);
         outputTokens = Math.max(0, outputTokens);
