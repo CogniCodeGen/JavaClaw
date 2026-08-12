@@ -39,8 +39,7 @@ HTML 报告位于 `target/site/jacoco/index.html`。门禁使用聚合覆盖率�
 
 JavaFX 测试在真实 FX runtime 中装载页面，主聊天场景固定为 1200×700，并检查窗口尺寸、
 FXML 注入、CSS class、控件可见性、交互路径和关闭行为。参考截图保存在
-`docs/images/screenshots/01-main-chat.png` 至 `09-plugin-center.png`，由 `devtools` profile 中的
-`UiScreenshotExporter` 使用真实页面和打包字体生成。
+`docs/images/screenshots/01-main-chat.png` 至 `09-plugin-center.png`，用于主要窗口的显式视觉审查。
 
 截图目前是显式审查基线，不做脆弱的逐像素自动比较；抗锯齿差异可以接受，但布局、CSS class、
 控件可见性、窗口尺寸和交互路径变化必须由审查者确认并同步更新基线。
