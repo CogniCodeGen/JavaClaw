@@ -194,7 +194,7 @@ class CodeToolsTest {
         UserInteractionPort oldPort = ToolConfirmationManager.getPort();
         boolean oldEnabled = ToolConfirmationManager.isEnabled();
         AtomicReference<ConfirmRequest> seen = new AtomicReference<>();
-        try (var root = ApplicationContexts.createRoot(new DataRoot(dir.resolve("data-v3")))) {
+        try (var root = ApplicationContexts.createRoot(new DataRoot(dir.resolve("data")))) {
             AgentConfig settings = root.getBean(AgentConfig.class);
             ToolReviewMode oldMode = settings.getToolReviewMode();
             ToolConfirmationManager.configure(settings);

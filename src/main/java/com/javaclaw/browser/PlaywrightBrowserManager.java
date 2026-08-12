@@ -466,7 +466,7 @@ public class PlaywrightBrowserManager {
      * 账号配置；当前 Context 永远不会成为整个工作区的隐式默认账号。</p>
      */
     public synchronized void saveCookies() {
-        // 3.0 data-v3 从空 schema 启动，不读取也不写入旧版工作区级认证态。
+        // 3.0 格式从空 schema 启动，不读取也不写入旧版工作区级认证态。
     }
 
     // ==================== 视口与配置 ====================

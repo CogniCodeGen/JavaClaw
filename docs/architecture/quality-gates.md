@@ -7,7 +7,7 @@ mvn clean -Pui-test verify
 ```
 
 `clean` 是必要条件，避免历史 class 或覆盖率数据掩盖删除、过滤器和资源问题。`ui-test`
-使用 `target/ui-test-data-v3` 隔离数据，启用需要 JavaFX runtime 的测试，并跳过首启向导和托盘安装。
+使用 `target/ui-test-data` 隔离数据，启用需要 JavaFX runtime 的测试，并跳过首启向导和托盘安装。
 
 ## 自动门禁
 
@@ -47,11 +47,11 @@ FXML 注入、CSS class、控件可见性、交互路径和关闭行为。参考
 
 ## 3.0 验收记录
 
-2026-08-12 在 JDK 25 上执行全新 `mvn clean -Pui-test verify`：779 个测试通过，0 失败、
+2026-08-12 在 JDK 25 上执行全新 `mvn clean -Pui-test verify`：780 个测试通过，0 失败、
 0 错误、0 跳过。对应覆盖率为：
 
 | 范围 | 行覆盖率 | 分支覆盖率 |
 |---|---:|---:|
-| 整体 | 61.32% | 45.26% |
-| 核心 | 90.07% | 71.83% |
-| Controller | 81.26% | 60.17% |
+| 整体 | 61.33% | 45.26% |
+| 核心 | 90.03% | 71.73% |
+| Controller | 81.28% | 60.20% |

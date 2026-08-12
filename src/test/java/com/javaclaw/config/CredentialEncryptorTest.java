@@ -26,7 +26,7 @@ class CredentialEncryptorTest {
 
     @BeforeEach
     void createCipher() {
-        context = ApplicationContexts.createRoot(new DataRoot(tempDirectory.resolve("data-v3")));
+        context = ApplicationContexts.createRoot(new DataRoot(tempDirectory.resolve("data")));
         credentials = context.getBean(CredentialCipher.class);
     }
 

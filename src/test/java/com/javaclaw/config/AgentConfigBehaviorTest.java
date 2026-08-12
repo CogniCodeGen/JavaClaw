@@ -29,7 +29,7 @@ class AgentConfigBehaviorTest {
     @BeforeEach
     void createConfiguration() {
         context = ApplicationContexts.createRoot(
-                new DataRoot(temporaryDirectory.resolve("data-v3")));
+                new DataRoot(temporaryDirectory.resolve("data")));
         config = context.getBean(AgentConfig.class);
         store = context.getBean(SqlPropertyStore.class);
         config.save();

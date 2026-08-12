@@ -21,7 +21,7 @@ class CommandSessionManagerTest {
         assumeFalse(System.getProperty("os.name", "")
                 .toLowerCase(Locale.ROOT).contains("win"));
         try (var root = ApplicationContexts.createRoot(
-                new DataRoot(temporaryDirectory.resolve("data-v3")))) {
+                new DataRoot(temporaryDirectory.resolve("data")))) {
             CommandSessionManager sessions = root.getBean(CommandSessionManager.class);
             CommandSessionManager.ShellSession session =
                     sessions.open(temporaryDirectory.toString());

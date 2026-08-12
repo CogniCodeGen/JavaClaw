@@ -91,7 +91,7 @@ class ChatTurnControllerBehaviorTest {
     @BeforeEach
     void loadChat() throws Exception {
         rootContext = ApplicationContexts.createRoot(
-                new DataRoot(tempDirectory.resolve("data-v3")));
+                new DataRoot(tempDirectory.resolve("data")));
         ApplicationContexts.registerDesktopInfrastructure(rootContext);
         kernel = createKernel(rootContext);
         assertNotNull(kernel.initialize());

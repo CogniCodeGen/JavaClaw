@@ -30,7 +30,7 @@ class NotificationToolsBehaviorTest {
     @BeforeAll
     void createConfiguration(@TempDir Path temporaryDirectory) {
         context = ApplicationContexts.createRoot(
-                new DataRoot(temporaryDirectory.resolve("data-v3")));
+                new DataRoot(temporaryDirectory.resolve("data")));
         notificationConfig = context.getBean(NotificationConfig.class);
         emailConfig = context.getBean(EmailConfig.class);
         previousConfirmationState = ToolConfirmationManager.isEnabled();

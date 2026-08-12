@@ -76,7 +76,7 @@ class SiteLoginFunctionalIT {
         // 与真实应用启动顺序一致：所有工作区维度配置必须在 WorkspaceManager.init() 后加载。
         previousDataDirectory = System.getProperty(DataRoot.DATA_DIR_PROPERTY);
         System.setProperty(DataRoot.DATA_DIR_PROPERTY,
-                sharedDataDirectory.resolve("data-v3").toString());
+                sharedDataDirectory.resolve("data").toString());
         root = ApplicationContexts.createRoot(DataRoot.resolve());
         server = HttpServer.create(new InetSocketAddress(TEST_HOST, 0), 0);
         server.createContext("/", SiteLoginFunctionalIT::handleRequest);

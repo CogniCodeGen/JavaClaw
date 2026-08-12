@@ -21,14 +21,14 @@ public record DataRoot(Path path) {
     public static final String DATA_DIR_PROPERTY = "javaclaw.data.dir";
     public static final String FORMAT_FILE = ".javaclaw-format";
     public static final String FORMAT_VERSION = "3";
-    private static final String DEFAULT_DIRECTORY = "data-v3";
+    private static final String DEFAULT_DIRECTORY = "data";
 
     public DataRoot {
         path = path.toAbsolutePath().normalize();
     }
 
     /**
-     * 从系统属性解析数据根目录，未显式配置时使用 {@code {user.dir}/data-v3}。
+     * 从系统属性解析数据根目录，未显式配置时使用 {@code {user.dir}/data}。
      */
     public static DataRoot resolve() {
         String configured = System.getProperty(DATA_DIR_PROPERTY);

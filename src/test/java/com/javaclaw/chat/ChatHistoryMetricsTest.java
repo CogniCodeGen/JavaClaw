@@ -31,7 +31,7 @@ class ChatHistoryMetricsTest {
     static void initWorkspace() {
         previousDataDirectory = System.getProperty(DataRoot.DATA_DIR_PROPERTY);
         System.setProperty(DataRoot.DATA_DIR_PROPERTY,
-                tempDirectory.resolve("data-v3").toString());
+                tempDirectory.resolve("data").toString());
         root = ApplicationContexts.createRoot(DataRoot.resolve());
     }
 

@@ -70,7 +70,7 @@ class SettingsWindowFxmlLoadTest {
     @Test
     void completeWindowLoadsAllSectionsFromWorkspaceContextAndClosesCleanly() throws Exception {
         previousDataDirectory = System.getProperty(DataRoot.DATA_DIR_PROPERTY);
-        System.setProperty(DataRoot.DATA_DIR_PROPERTY, tempDirectory.resolve("data-v3").toString());
+        System.setProperty(DataRoot.DATA_DIR_PROPERTY, tempDirectory.resolve("data").toString());
         root = ApplicationContexts.createRoot(DataRoot.resolve());
         WorkspaceManager workspaces = root.getBean(WorkspaceManager.class);
         DataManager data = root.getBean(DataManager.class);

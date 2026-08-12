@@ -28,7 +28,7 @@ class SkillManagerPersistenceTest {
         Files.createDirectories(testRoot.getParent());
         Files.writeString(testRoot, "这是文件，不是目录");
         try (var root = ApplicationContexts.createRoot(
-                new DataRoot(temporaryDirectory.resolve("data-v3")))) {
+                new DataRoot(temporaryDirectory.resolve("data")))) {
             SkillManager manager = new SkillManager(
                     testRoot, new ObjectMapper(), root.getBean(AgentConfig.class));
             assertThrows(IllegalStateException.class,
@@ -46,7 +46,7 @@ class SkillManagerPersistenceTest {
         Path testRoot = temporaryDirectory.resolve("skill-manager-success");
         deleteTree(testRoot);
         try (var root = ApplicationContexts.createRoot(
-                new DataRoot(temporaryDirectory.resolve("data-v3")))) {
+                new DataRoot(temporaryDirectory.resolve("data")))) {
             SkillManager manager = new SkillManager(
                     testRoot, new ObjectMapper(), root.getBean(AgentConfig.class));
             Skill created = manager.createAgentSkill(
@@ -65,7 +65,7 @@ class SkillManagerPersistenceTest {
             @TempDir Path temporaryDirectory) throws Exception {
         Path skills = temporaryDirectory.resolve("durable-skills");
         try (var root = ApplicationContexts.createRoot(
-                new DataRoot(temporaryDirectory.resolve("data-v3")))) {
+                new DataRoot(temporaryDirectory.resolve("data")))) {
             ObjectMapper mapper = root.getBean(ObjectMapper.class);
             AgentConfig settings = root.getBean(AgentConfig.class);
             SkillManager manager = new SkillManager(skills, mapper, settings);

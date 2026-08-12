@@ -17,7 +17,7 @@ class CommandWhitelistManagerTest {
     @Test
     void entriesArePersistedAndReloadedPerWorkspace(@TempDir Path temporaryDirectory) {
         try (var root = ApplicationContexts.createRoot(
-                new DataRoot(temporaryDirectory.resolve("data-v3")))) {
+                new DataRoot(temporaryDirectory.resolve("data")))) {
             WorkspaceManager workspaces = root.getBean(WorkspaceManager.class);
             CommandWhitelistManager whitelist = root.getBean(CommandWhitelistManager.class);
             String firstWorkspace = workspaces.getCurrentWorkspaceId();

@@ -39,7 +39,7 @@ class TokenTrackerBehaviorTest {
     @BeforeEach
     void createTracker() {
         context = ApplicationContexts.createRoot(
-                new DataRoot(temporaryDirectory.resolve("data-v3")));
+                new DataRoot(temporaryDirectory.resolve("data")));
         jdbc = context.getBean(JdbcTemplate.class);
         settings = context.getBean(AgentConfig.class);
         settings.setModelName("qwen-plus");

@@ -17,6 +17,21 @@ class DataRootTest {
     Path tempDirectory;
 
     @Test
+    void defaultDirectoryUsesDataUnderWorkingDirectory() {
+        String previousDataDirectory = System.getProperty(DataRoot.DATA_DIR_PROPERTY);
+        String previousWorkingDirectory = System.getProperty("user.dir");
+        System.clearProperty(DataRoot.DATA_DIR_PROPERTY);
+        System.setProperty("user.dir", tempDirectory.toString());
+        try {
+            assertEquals(tempDirectory.resolve("data").toAbsolutePath().normalize(),
+                    DataRoot.resolve().path());
+        } finally {
+            restoreProperty(DataRoot.DATA_DIR_PROPERTY, previousDataDirectory);
+            restoreProperty("user.dir", previousWorkingDirectory);
+        }
+    }
+
+    @Test
     void emptyDirectoryIsInitializedAndCanBePreparedAgain() throws IOException {
         DataRoot root = new DataRoot(tempDirectory.resolve("fresh"));
 
@@ -48,5 +63,13 @@ class DataRootTest {
                 () -> new DataRoot(tempDirectory).prepare());
 
         assertTrue(failure.getMessage().contains("格式版本为 2"));
+    }
+
+    private static void restoreProperty(String name, String value) {
+        if (value == null) {
+            System.clearProperty(name);
+        } else {
+            System.setProperty(name, value);
+        }
     }
 }

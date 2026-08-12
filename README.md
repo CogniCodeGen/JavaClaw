@@ -155,7 +155,7 @@ mvn clean compile
 # 运行
 mvn javafx:run
 
-# 隔离数据的 JavaFX 功能测试（target/ui-test-data-v3，跳过向导且不安装托盘）
+# 隔离数据的 JavaFX 功能测试（target/ui-test-data，跳过向导且不安装托盘）
 mvn -Pui-test javafx:run
 
 # 打包
@@ -167,7 +167,7 @@ mvn clean package
 > ⚠️ IDE 运行还需补 VM 参数 **`--add-modules jdk.incubator.vector --enable-native-access=ALL-UNNAMED`**（JVector 向量索引依赖；`mvn javafx:run` 已在插件配置中内置，无需手动添加）。
 
 ### 首次配置
-首次启动会进入引导向导：选择模型提供商模板 → 填写 `baseUrl` / `model` / API Key → 完成。3.0 默认使用带格式标记的 `data-v3/`，配置持久化在全局 H2 数据库 `data-v3/javaclaw.mv.db`（按工作区隔离，API Key 加密存储），之后可在「设置」中随时修改。旧版 `data/` 不会被迁移或修改。
+首次启动会进入引导向导：选择模型提供商模板 → 填写 `baseUrl` / `model` / API Key → 完成。3.0 默认使用带格式标记的 `data/`，配置持久化在全局 H2 数据库 `data/javaclaw.mv.db`（按工作区隔离，API Key 加密存储），之后可在「设置」中随时修改。非空旧格式目录不会被自动迁移，启动时会直接拒绝使用。
 
 ## 📚 文档
 - 3.0 架构与决策记录：[`docs/architecture/README.md`](docs/architecture/README.md)

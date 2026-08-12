@@ -51,7 +51,7 @@ class DistillerBehaviorTest {
     void createConfiguration(@TempDir Path temporaryDirectory) {
         this.temporaryDirectory = temporaryDirectory;
         context = ApplicationContexts.createRoot(
-                new DataRoot(temporaryDirectory.resolve("data-v3")));
+                new DataRoot(temporaryDirectory.resolve("data")));
         settings = context.getBean(AgentConfig.class);
         propertyStore = context.getBean(SqlPropertyStore.class);
     }

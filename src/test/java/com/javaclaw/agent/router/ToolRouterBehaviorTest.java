@@ -170,7 +170,7 @@ class ToolRouterBehaviorTest {
 
     private Fixture fixture(String name) {
         var root = ApplicationContexts.createRoot(
-                new DataRoot(tempDirectory.resolve("data-v3-" + name)));
+                new DataRoot(tempDirectory.resolve("data-" + name)));
         ObjectMapper mapper = root.getBean(ObjectMapper.class);
         AgentConfig settings = root.getBean(AgentConfig.class);
         SkillManager skills = new SkillManager(

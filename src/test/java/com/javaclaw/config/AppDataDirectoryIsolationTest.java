@@ -18,7 +18,7 @@ class AppDataDirectoryIsolationTest {
     @Test
     void allGlobalPathsUseConfiguredTestDataDirectory() {
         String previous = System.getProperty(DataRoot.DATA_DIR_PROPERTY);
-        Path expected = tempDirectory.resolve("data-v3").toAbsolutePath().normalize();
+        Path expected = tempDirectory.resolve("data").toAbsolutePath().normalize();
         System.setProperty(DataRoot.DATA_DIR_PROPERTY, expected.toString());
         try {
             try (var root = ApplicationContexts.createRoot(DataRoot.resolve())) {

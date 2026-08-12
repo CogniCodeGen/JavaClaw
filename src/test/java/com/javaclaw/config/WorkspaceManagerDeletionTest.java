@@ -25,7 +25,7 @@ class WorkspaceManagerDeletionTest {
     void 删除工作区会清理工作流数据索引行和全部文件分桶() throws Exception {
         String previous = System.getProperty(DataRoot.DATA_DIR_PROPERTY);
         System.setProperty(DataRoot.DATA_DIR_PROPERTY,
-                tempDirectory.resolve("data-v3").toString());
+                tempDirectory.resolve("data").toString());
         try {
             try (var root = ApplicationContexts.createRoot(DataRoot.resolve())) {
                 WorkspaceManager manager = root.getBean(WorkspaceManager.class);
