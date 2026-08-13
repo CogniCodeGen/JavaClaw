@@ -1,53 +1,69 @@
 package com.javaclaw.workflow.node;
 
-import com.javaclaw.agent.AgentRuntime;
-import com.javaclaw.agent.ToolCallOrigin;
-import com.javaclaw.agent.ToolkitAssembler;
-import com.javaclaw.agent.handler.StreamEventHandler;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
-import com.javaclaw.api.conversation.ConversationOutcome;
-import com.javaclaw.config.AgentConfig;
-import com.javaclaw.prompt.AgentPrompts;
+import com.javaclaw.agent.ToolCallOrigin;
+import com.javaclaw.application.agent.FrameworkToolApprovalCoordinator;
+import com.javaclaw.framework.api.AgentClient;
+import com.javaclaw.framework.api.AgentDefinitionRef;
+import com.javaclaw.framework.api.CancelReason;
+import com.javaclaw.framework.api.InputBlock;
+import com.javaclaw.framework.api.InvocationSource;
+import com.javaclaw.framework.api.PermissionSet;
+import com.javaclaw.framework.api.RunBudget;
+import com.javaclaw.framework.api.RunEventEnvelope;
+import com.javaclaw.framework.api.RunLinkage;
+import com.javaclaw.framework.api.RunOutcome;
+import com.javaclaw.framework.api.RunProfileRef;
+import com.javaclaw.framework.api.RunRequest;
+import com.javaclaw.framework.api.RunScope;
+import com.javaclaw.runtime.WorkspaceContext;
 import com.javaclaw.workflow.model.StatePatch;
-import com.javaclaw.workflow.runtime.GraphCancelledException;
 import com.javaclaw.workflow.runtime.NodeExecutionContext;
 import com.javaclaw.workflow.runtime.NodeExecutor;
 import com.javaclaw.workflow.runtime.NodeResult;
-import io.agentscope.core.ReActAgent;
-import io.agentscope.core.message.Msg;
-import io.agentscope.core.message.MsgRole;
-import io.agentscope.core.tool.Toolkit;
 import reactor.core.Disposable;
-import reactor.core.scheduler.Schedulers;
 
+import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
+import java.util.Map;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.TimeoutException;
 
-/** 通用 Agent 节点：每次执行创建隔离的 ReActAgent，流式事件复用现有转换器。 */
+/** Workflow AGENT_RUN node. It can only start and observe a child run through AgentClient. */
 public final class AgentNodeExecutor implements NodeExecutor {
-    private final AgentRuntime validationRuntime;
+    private final AgentClient agents;
+    private final WorkspaceContext workspace;
 
-    public AgentNodeExecutor() { this(null); }
-    public AgentNodeExecutor(AgentRuntime validationRuntime) { this.validationRuntime = validationRuntime; }
+    /** Validation-only constructor used by graph schema tests. */
+    public AgentNodeExecutor() {
+        this(null, null);
+    }
 
-    @Override public String type() { return "agent"; }
+    public AgentNodeExecutor(AgentClient agents, WorkspaceContext workspace) {
+        this.agents = agents;
+        this.workspace = workspace;
+    }
+
+    @Override
+    public String type() {
+        return "agent";
+    }
 
     @Override
     public List<String> validate(com.javaclaw.workflow.model.NodeDefinition node) {
         List<String> errors = new ArrayList<>();
         if (node.config().path("prompt").asText().isBlank()
-                && node.config().path("expertRef").asText().isBlank()) {
-            errors.add("AGENT 必须配置 prompt 或 expertRef");
-        }
-        String expertRef = node.config().path("expertRef").asText();
-        if (validationRuntime != null && !expertRef.isBlank()
-                && validationRuntime.getExpertManager().getExpertDefs().stream()
-                .noneMatch(d -> d.toolName().equals(expertRef) || d.agentName().equals(expertRef))) {
-            errors.add("未知专家: " + expertRef);
+                && node.config().path("expertRef").asText().isBlank()
+                && node.config().path("agentDefinitionRef").asText().isBlank()) {
+            errors.add("AGENT 必须配置 prompt 或 agentDefinitionRef");
         }
         int maxIters = node.config().path("maxIters").asInt(8);
         if (maxIters < 1 || maxIters > 100) errors.add("maxIters 必须在 1..100 之间");
@@ -57,97 +73,138 @@ public final class AgentNodeExecutor implements NodeExecutor {
         WorkflowToolGroupPolicy.validate(node.config().path("toolGroups"), errors);
         StatePathValidator.validate(node.config().path("outputKey").asText("agent.output"),
                 "AGENT outputKey", errors);
-        return errors;
+        return List.copyOf(errors);
     }
 
     @Override
     public NodeResult execute(NodeExecutionContext context) throws Exception {
-        AgentRuntime runtime = context.require(AgentRuntime.class);
-        ConversationCallbacks outer = context.optional(ConversationCallbacks.class);
-        ConversationCallbacks callbacks = outer == null ? silentCallbacks() : outer;
-        var config = context.node().config();
-
-        String sysPrompt = config.path("prompt").asText();
-        AgentConfig settings = runtime.getConfig();
-        int maxIters = config.path("maxIters").asInt(settings.getOrchestratorMaxIters());
-        String expertRef = config.path("expertRef").asText();
-        if (!expertRef.isBlank()) {
-            var def = runtime.getExpertManager().getExpertDefs().stream()
-                    .filter(d -> d.toolName().equals(expertRef) || d.agentName().equals(expertRef))
-                    .findFirst().orElseThrow(() -> new IllegalArgumentException("未知专家: " + expertRef));
-            if (sysPrompt.isBlank()) sysPrompt = def.sysPrompt();
-            if (!config.has("maxIters")) maxIters = def.maxIters();
+        if (agents == null || workspace == null) {
+            throw new IllegalStateException("AGENT_RUN executor is not bound to AgentClient");
         }
+        JsonNode config = context.node().config();
+        String input = TemplateRenderer.render(
+                config.path("inputTemplate").asText("{{input}}"), context.state());
+        String instruction = config.path("prompt").asText("").strip();
+        if (!instruction.isBlank()) input = instruction + "\n\n" + input;
 
-        Toolkit toolkit = ToolkitAssembler.buildBaseToolkit(runtime, runtime.getExpertManager(),
-                true, ToolCallOrigin.INTERACTIVE);
-        List<String> groups = WorkflowToolGroupPolicy.read(config.path("toolGroups"));
-        // AgentScope 的 setActiveGroups 只会激活指定组，不会关闭创建时已激活的组。
-        // 先显式停用全部已知组，并物理移除 MCP 桥，再只开启工作流声明的本地能力。
-        WorkflowToolGroupPolicy.restrict(toolkit, groups, false);
+        String agentId = config.path("agentDefinitionRef").asText("").strip();
+        if (agentId.isBlank()) {
+            // Old expertRef values are imported into Agent Studio separately. Until published,
+            // preserve execution with the built-in definition and include the role in the input.
+            String legacyRole = config.path("expertRef").asText("").strip();
+            agentId = "system.default";
+            if (!legacyRole.isBlank()) input = "Requested role: " + legacyRole + "\n\n" + input;
+        }
+        String profile = config.path("runProfileRef").asText("chat").strip();
+        int maxToolCalls = config.path("maxIters").asInt(8) * 4;
+        long timeoutSeconds = Math.max(30, config.path("timeoutSeconds").asLong(600));
+        RunBudget budget = new RunBudget(Duration.ofSeconds(timeoutSeconds),
+                250_000, 80_000, maxToolCalls, new BigDecimal("100"));
 
-        String profile = config.path("modelProfile").asText("default");
-        var model = switch (profile) {
-            case "light" -> runtime.getModelFactory().createLightChatModel();
-            case "high" -> runtime.getModelFactory().createHighChatModel();
-            case "multi" -> runtime.getModelFactory().createMultiAgentChatModel();
-            default -> runtime.getModelFactory().createChatModel();
-        };
-        ReActAgent agent = ReActAgent.builder()
-                .name(config.path("name").asText(context.node().label()))
-                .sysPrompt(AgentPrompts.withMandatoryGlobalRules(sysPrompt))
-                .model(model)
-                .toolkit(toolkit)
-                .memory(runtime.getModelFactory().defaultAutoContextMemory())
-                .modelExecutionConfig(runtime.getModelExecConfig())
-                .maxIters(maxIters)
+        Map<String, JsonNode> attributes = new LinkedHashMap<>();
+        attributes.put("workflowNodeId", JsonNodeFactory.instance.textNode(context.node().id()));
+        attributes.put("modelProfile", JsonNodeFactory.instance.textNode(
+                config.path("modelProfile").asText("default")));
+        var allowedToolGroups = JsonNodeFactory.instance.arrayNode();
+        WorkflowToolGroupPolicy.read(config.path("toolGroups"))
+                .forEach(allowedToolGroups::add);
+        attributes.put(com.javaclaw.framework.core.ToolGroupAccess.ATTRIBUTE,
+                allowedToolGroups);
+        JsonNode workDir = context.state().get("workDir");
+        if (!workDir.isMissingNode() && !workDir.isNull()) attributes.put("workDir", workDir);
+
+        RunRequest request = RunRequest.builder()
+                .agent(AgentDefinitionRef.latest(agentId))
+                .profile(RunProfileRef.latest(profile))
+                .source(InvocationSource.workflow(context.runId()))
+                .scope(new RunScope(workspace.workspaceId(), "workflow", context.threadId()))
+                .input(InputBlock.text(input))
+                .linkage(new RunLinkage(null, context.runId(), context.runId()))
+                .permissionCeiling(permissions(config))
+                .budget(budget)
+                .attributes(attributes)
                 .build();
 
-        String input = TemplateRenderer.render(config.path("inputTemplate").asText("{{input}}"), context.state());
-        Msg msg = Msg.builder().role(MsgRole.USER).name("user").textContent(input).build();
-        StringBuilder reply = new StringBuilder();
-        StreamEventHandler eventHandler = new StreamEventHandler(runtime.getJson().mapper());
-        ConversationCallbacks capturing = new ConversationCallbacks() {
-            @Override public void onEvent(ConversationEvent event) {
-                if (event instanceof ConversationEvent.Reply r) {
-                    // 最终用户可见输出由 OUTPUT 节点统一发送，避免 AGENT→OUTPUT 重复回复。
-                    reply.append(r.chunk());
-                } else {
-                    callbacks.onEvent(event);
-                }
+        var handle = agents.start(request);
+        ConversationCallbacks callbacks = context.callbacks();
+        ToolCallOrigin approvalOrigin = ToolCallOrigin.managedTask(
+                context.runId(), workDir.isTextual() ? workDir.asText() : null);
+        Disposable events = handle.events(0).subscribe(event -> forward(
+                event, callbacks, agents, handle, approvalOrigin));
+        try (AutoCloseable ignored = context.cancellation().onCancel(() -> agents.cancel(
+                handle.id(), new CancelReason("WORKFLOW_CANCELLED", context.runId())))) {
+            RunOutcome outcome = await(handle.completion().toCompletableFuture(), context,
+                    timeoutSeconds, handle.id());
+            if (!outcome.successful()) {
+                throw new IllegalStateException(outcome.error() == null
+                        ? "Agent child run ended in " + outcome.state() : outcome.error());
             }
-            @Override public void onTerminal(ConversationOutcome outcome) { }
-        };
+            JsonNode output = outcome.output();
+            String text = output == null ? "" : output.path("text").asText("");
+            if (text.isBlank() && output != null) text = output.path("value").asText("");
+            text = com.javaclaw.util.ChineseOutputGuard.enforceUserVisibleReply(text);
+            String outputKey = config.path("outputKey").asText("agent.output");
+            return NodeResult.output(StatePatch.builder().set(outputKey, text).build(), text);
+        } finally {
+            events.dispose();
+        }
+    }
 
-        CountDownLatch done = new CountDownLatch(1);
-        AtomicReference<Throwable> failure = new AtomicReference<>();
-        Disposable subscription = agent.stream(msg, ToolkitAssembler.buildStreamOptions(settings))
-                .subscribeOn(Schedulers.boundedElastic())
-                .doFinally(signal -> done.countDown())
-                .subscribe(event -> eventHandler.handleEvent(event, capturing), failure::set, () -> {});
-        try (AutoCloseable ignored = context.cancellation().onCancel(subscription::dispose)) {
-            long timeout = Math.max(30L, settings.getReadTimeoutSeconds() * 2L);
-            while (!done.await(Math.min(timeout, 1L), TimeUnit.SECONDS)) {
-                context.cancellation().throwIfCancelled();
-                timeout--;
-                if (timeout <= 0) {
-                    subscription.dispose();
-                    throw new IllegalStateException("Agent 节点执行超时");
+    private RunOutcome await(
+            java.util.concurrent.CompletableFuture<RunOutcome> completion,
+            NodeExecutionContext context,
+            long timeoutSeconds,
+            com.javaclaw.framework.api.RunId runId) throws Exception {
+        long remaining = timeoutSeconds * 10;
+        while (remaining-- > 0) {
+            context.cancellation().throwIfCancelled();
+            try {
+                return completion.get(100, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException ignored) {
+                // Observe workflow cancellation between waits.
+            } catch (ExecutionException failure) {
+                Throwable cause = failure.getCause() == null ? failure : failure.getCause();
+                if (cause instanceof Exception checked) throw checked;
+                throw new IllegalStateException(cause);
+            }
+        }
+        agents.cancel(runId, new CancelReason("WORKFLOW_NODE_TIMEOUT", context.node().id()));
+        throw new TimeoutException("Agent workflow node timed out");
+    }
+
+    private static PermissionSet permissions(JsonNode config) {
+        if (config.path("allowMutatingTools").asBoolean(false)) {
+            return PermissionSet.of("tool.read", "tool.execute");
+        }
+        return PermissionSet.of("tool.read");
+    }
+
+    private static void forward(
+            RunEventEnvelope event,
+            ConversationCallbacks callbacks,
+            AgentClient agents,
+            com.javaclaw.framework.api.RunHandle handle,
+            ToolCallOrigin origin) {
+        if (event.type().equals("core.run.waiting_approval")) {
+            java.util.concurrent.CompletableFuture.runAsync(
+                    () -> FrameworkToolApprovalCoordinator.resolve(
+                            agents, handle, origin, event.payload()));
+            return;
+        }
+        if (callbacks == null) return;
+        switch (event.type()) {
+            case "core.model.started" -> callbacks.onEvent(new ConversationEvent.Hint(
+                    "工作流 Agent 正在推理…"));
+            case "core.tool.started" -> callbacks.onEvent(new ConversationEvent.Hint(
+                    "工作流 Agent 调用工具：" + event.payload().path("tool").asText("unknown")));
+            case "core.tool.completed" -> callbacks.onEvent(new ConversationEvent.ToolResult(
+                    event.payload().path("tool").asText("unknown"),
+                    event.payload().path("output").toString()));
+            default -> {
+                if (!event.type().startsWith("core.run.")) {
+                    callbacks.onEvent(new ConversationEvent.Custom(event.type(), event.payload()));
                 }
             }
         }
-        context.cancellation().throwIfCancelled();
-        if (failure.get() != null) throw new IllegalStateException("Agent 节点失败", failure.get());
-        String guardedReply = com.javaclaw.util.ChineseOutputGuard
-                .enforceUserVisibleReply(reply.toString());
-        String outputKey = config.path("outputKey").asText("agent.output");
-        return NodeResult.output(StatePatch.builder().set(outputKey, guardedReply).build(), guardedReply);
-    }
-
-    private static ConversationCallbacks silentCallbacks() {
-        return new ConversationCallbacks() {
-            @Override public void onEvent(ConversationEvent event) { }
-            @Override public void onTerminal(ConversationOutcome outcome) { }
-        };
     }
 }

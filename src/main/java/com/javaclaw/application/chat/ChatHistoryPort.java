@@ -8,15 +8,15 @@ import java.util.List;
 /** Durable workspace-scoped storage boundary for chat history snapshots. */
 public interface ChatHistoryPort {
 
-    List<SessionSnapshot> sessions();
+    List<SessionSnapshot> sessions(String workspaceId);
 
-    void saveSessions(List<SessionSnapshot> sessions);
+    void saveSessions(String workspaceId, List<SessionSnapshot> sessions);
 
-    boolean hasMessages(String sessionId);
+    boolean hasMessages(String workspaceId, String sessionId);
 
-    List<MessageSnapshot> messages(String sessionId);
+    List<MessageSnapshot> messages(String workspaceId, String sessionId);
 
-    void saveMessages(String sessionId, List<MessageSnapshot> messages);
+    void saveMessages(String workspaceId, String sessionId, List<MessageSnapshot> messages);
 
-    void delete(String sessionId);
+    void delete(String workspaceId, String sessionId);
 }

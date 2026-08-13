@@ -13,7 +13,14 @@ import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -136,5 +143,61 @@ class NotificationToolsBehaviorTest {
                         .contains("未启用或未配置")),
                 () -> assertTrue(tools.sendCustomWebhook("message")
                         .contains("未启用或未配置")));
+    }
+
+    @Test
+    void allWebhookTransportsPostToTheLocalFixture() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        AtomicReference<String> lastBody = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> respond(exchange, requests, lastBody));
+        server.start();
+        try {
+            String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+            notificationConfig.setDingtalkEnabled(true);
+            notificationConfig.setDingtalkWebhook(baseUrl + "/dingtalk");
+            notificationConfig.setWechatEnabled(true);
+            notificationConfig.setWechatWebhook(baseUrl + "/wechat");
+            notificationConfig.setFeishuEnabled(true);
+            notificationConfig.setFeishuWebhook(baseUrl + "/feishu");
+            notificationConfig.setCustomEnabled(true);
+            notificationConfig.setCustomWebhook(baseUrl + "/custom");
+            notificationConfig.setCustomContentType("application/json");
+            notificationConfig.setCustomBodyTemplate("{\"message\":\"${message}\"}");
+
+            String all = tools.sendNotification("E2E webhook body", "E2E webhook title");
+            String dingtalk = tools.sendDingtalk("title", "message", true);
+            String wechat = tools.sendWechat("message", true);
+            String feishu = tools.sendFeishu("title", "message");
+            String custom = tools.sendCustomWebhook("message");
+            String routed = tools.sendByChannel("custom", "title", "message");
+
+            assertAll(
+                    () -> assertTrue(all.contains("成功: 4, 失败: 0"), all),
+                    () -> assertTrue(dingtalk.contains("发送成功"), dingtalk),
+                    () -> assertTrue(wechat.contains("发送成功"), wechat),
+                    () -> assertTrue(feishu.contains("发送成功"), feishu),
+                    () -> assertTrue(custom.contains("发送成功"), custom),
+                    () -> assertTrue(routed.contains("发送成功"), routed),
+                    () -> assertTrue(lastBody.get().contains("message"), lastBody.get()));
+            assertTrue(requests.get() == 9, "本地 Webhook 请求数不符: " + requests.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private static void respond(
+            HttpExchange exchange,
+            AtomicInteger requests,
+            AtomicReference<String> lastBody) throws IOException {
+        requests.incrementAndGet();
+        lastBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+        String body = exchange.getRequestURI().getPath().contains("feishu")
+                ? "{\"code\":0}" : "{\"errcode\":0,\"errmsg\":\"ok\"}";
+        byte[] response = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.sendResponseHeaders(200, response.length);
+        exchange.getResponseBody().write(response);
+        exchange.close();
     }
 }

@@ -25,13 +25,13 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.function.Supplier;
 
 /**
  * Transactional H2 implementation of workspace-scoped chat history storage.
  *
- * <p>The store is thread-safe. Every operation captures one workspace id and snapshot writes run in
- * one transaction, so a concurrent workspace transition cannot split data across workspaces.</p>
+ * <p>The store is thread-safe. Every operation receives an immutable workspace id and snapshot
+ * writes run in one transaction, so a delayed save cannot follow a concurrent workspace
+ * transition.</p>
  */
 public final class JdbcChatHistoryStore implements ChatHistoryPort {
 
@@ -42,25 +42,22 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transactions;
     private final ObjectMapper json;
-    private final Supplier<String> workspaceId;
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
     public JdbcChatHistoryStore(
             JdbcTemplate jdbc,
             PlatformTransactionManager transactionManager,
-            ObjectMapper json,
-            Supplier<String> workspaceId) {
+            ObjectMapper json) {
         this.jdbc = Objects.requireNonNull(jdbc, "jdbc");
         this.transactions =
                 new TransactionTemplate(
                         Objects.requireNonNull(transactionManager, "transactionManager"));
         this.json = Objects.requireNonNull(json, "json");
-        this.workspaceId = Objects.requireNonNull(workspaceId, "workspaceId");
     }
 
     @Override
-    public List<SessionSnapshot> sessions() {
-        String workspace = currentWorkspaceId();
+    public List<SessionSnapshot> sessions(String workspaceId) {
+        String workspace = requireWorkspaceId(workspaceId);
         lock.readLock().lock();
         try {
             List<SessionSnapshot> sessions =
@@ -90,9 +87,9 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
     }
 
     @Override
-    public void saveSessions(List<SessionSnapshot> sessions) {
+    public void saveSessions(String workspaceId, List<SessionSnapshot> sessions) {
         List<SessionSnapshot> snapshot = List.copyOf(sessions);
-        String workspace = currentWorkspaceId();
+        String workspace = requireWorkspaceId(workspaceId);
         lock.writeLock().lock();
         try {
             transactions.executeWithoutResult(
@@ -125,9 +122,9 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
     }
 
     @Override
-    public List<MessageSnapshot> messages(String sessionId) {
+    public List<MessageSnapshot> messages(String workspaceId, String sessionId) {
         String checkedSessionId = requireSessionId(sessionId);
-        String workspace = currentWorkspaceId();
+        String workspace = requireWorkspaceId(workspaceId);
         lock.readLock().lock();
         try {
             List<MessageSnapshot> messages =
@@ -157,7 +154,8 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
     }
 
     @Override
-    public void saveMessages(String sessionId, List<MessageSnapshot> messages) {
+    public void saveMessages(
+            String workspaceId, String sessionId, List<MessageSnapshot> messages) {
         String checkedSessionId = requireSessionId(sessionId);
         List<PersistedMessage> snapshot;
         try {
@@ -166,7 +164,7 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
             log.error("序列化会话消息失败: session={}", checkedSessionId, failure);
             return;
         }
-        String workspace = currentWorkspaceId();
+        String workspace = requireWorkspaceId(workspaceId);
         lock.writeLock().lock();
         try {
             transactions.executeWithoutResult(
@@ -196,9 +194,9 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
     }
 
     @Override
-    public boolean hasMessages(String sessionId) {
+    public boolean hasMessages(String workspaceId, String sessionId) {
         String checkedSessionId = requireSessionId(sessionId);
-        String workspace = currentWorkspaceId();
+        String workspace = requireWorkspaceId(workspaceId);
         try {
             Long count =
                     jdbc.queryForObject(
@@ -221,9 +219,9 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
     }
 
     @Override
-    public void delete(String sessionId) {
+    public void delete(String workspaceId, String sessionId) {
         String checkedSessionId = requireSessionId(sessionId);
-        String workspace = currentWorkspaceId();
+        String workspace = requireWorkspaceId(workspaceId);
         lock.writeLock().lock();
         try {
             transactions.executeWithoutResult(
@@ -377,10 +375,9 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
         }
     }
 
-    private String currentWorkspaceId() {
-        String value = workspaceId.get();
+    private static String requireWorkspaceId(String value) {
         if (value == null || value.isBlank()) {
-            throw new IllegalStateException("当前工作区 ID 尚未初始化");
+            throw new IllegalArgumentException("工作区 ID 不能为空");
         }
         return value;
     }

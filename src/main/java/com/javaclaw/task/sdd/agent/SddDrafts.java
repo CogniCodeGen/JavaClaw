@@ -7,9 +7,9 @@ import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 import java.util.List;
 
 /**
- * SDD 各阶段智能体的结构化输出 schema（AgentScope 据此生成 JSON Schema 约束模型）。
+ * SDD 各阶段智能体的结构化输出 schema（Spring AI 据此生成 JSON Schema 约束模型）。
  *
- * <p>这些是<b>线缆层 DTO</b>：仅用于承接模型结构化输出，随即被 {@link AgentScopeSddAgents}
+ * <p>这些是<b>线缆层 DTO</b>：仅用于承接模型结构化输出，随即被 {@link FrameworkSddAgents}
  * 映射为 {@code task.sdd.spec} 的不可变领域记录。字段描述直接作为给模型的指令。</p>
  *
  * @author JavaClaw

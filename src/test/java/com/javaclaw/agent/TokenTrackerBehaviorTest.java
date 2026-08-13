@@ -3,10 +3,6 @@ package com.javaclaw.agent;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.spring.ApplicationContexts;
-import io.agentscope.core.message.Msg;
-import io.agentscope.core.message.MsgRole;
-import io.agentscope.core.model.ChatResponse;
-import io.agentscope.core.model.ChatUsage;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,13 +13,9 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 import java.nio.file.Path;
 import java.time.LocalDate;
-import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TokenTrackerBehaviorTest {
@@ -120,39 +112,6 @@ class TokenTrackerBehaviorTest {
         TokenTracker reloaded = new TokenTracker("token-test", jdbc, settings);
         assertEquals(38, reloaded.getTodayTokens());
         assertEquals(1.0 / 3.0, reloaded.getTodayCacheHitRate(), 0.0001);
-    }
-
-    @Test
-    void usageExtractionAndMessageRecordingIgnoreMissingOrNegativeCounters() {
-        ChatResponse first = ChatResponse.builder()
-                .usage(new ChatUsage(12, 4, 0.1)).build();
-        ChatResponse negative = ChatResponse.builder()
-                .usage(new ChatUsage(-3, -2, 0.1)).build();
-        ChatResponse noUsage = ChatResponse.builder().build();
-        assertArrayEquals(new long[]{12, 4}, TokenTracker.extractUsage(
-                List.of(first, negative, noUsage)));
-        assertArrayEquals(new long[]{0, 0}, TokenTracker.extractUsage(null));
-        assertArrayEquals(new long[]{0, 0}, TokenTracker.extractUsage(
-                java.util.Arrays.asList(null, noUsage)));
-
-        assertFalse(tracker.recordMsgUsage("none", null));
-        Msg plain = Msg.builder().name("assistant").role(MsgRole.ASSISTANT)
-                .textContent("plain").build();
-        assertFalse(tracker.recordMsgUsage("none", plain));
-        Msg objectUsage = Msg.builder().name("assistant").role(MsgRole.ASSISTANT)
-                .textContent("used")
-                .metadata(Map.of("_chat_usage", new ChatUsage(7, 3, 0.2))).build();
-        assertTrue(tracker.recordMsgUsage("object", objectUsage));
-        Msg mapUsage = Msg.builder().name("assistant").role(MsgRole.ASSISTANT)
-                .textContent("used")
-                .metadata(new java.util.HashMap<>(Map.of("_chat_usage",
-                        Map.of("inputTokens", 2, "outputTokens", 1, "time", 0.1)))).build();
-        assertTrue(tracker.recordMsgUsage("map", mapUsage));
-        Msg zeroUsage = Msg.builder().name("assistant").role(MsgRole.ASSISTANT)
-                .textContent("zero")
-                .metadata(Map.of("_chat_usage", new ChatUsage(0, 0, 0))).build();
-        assertFalse(tracker.recordMsgUsage("zero", zeroUsage));
-        assertEquals(13, tracker.getTodayTokens());
     }
 
     @Test

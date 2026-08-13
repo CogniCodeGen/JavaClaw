@@ -17,7 +17,7 @@ import java.util.Locale;
 /** 插件中心页面状态，不持有插件服务、文件系统或窗口对象。 */
 final class PluginCenterViewModel {
 
-    enum Tab { INSTALLED, MARKET }
+    enum Tab { INSTALLED, MARKET, AGENT_EXTENSIONS }
 
     private final ObservableList<Plugin> plugins = FXCollections.observableArrayList();
     private final ObjectProperty<Tab> tab = new SimpleObjectProperty<>(Tab.INSTALLED);

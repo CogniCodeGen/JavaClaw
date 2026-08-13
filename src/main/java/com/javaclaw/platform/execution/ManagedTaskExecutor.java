@@ -84,16 +84,17 @@ public final class ManagedTaskExecutor implements TaskSubmitter, AutoCloseable {
         handle.termination().whenComplete((ignored, failure) ->
                 handles.remove(handle.id(), handle));
 
-        Duration timeout = spec.timeout();
-        if (!timeout.isZero()) {
-            ScheduledFuture<?> timeoutFuture = scheduler.schedule(
-                    handle::timeout, timeout.toNanos(), TimeUnit.NANOSECONDS);
-            handle.bindTimeout(timeoutFuture);
-        }
-
         try {
+            Duration timeout = spec.timeout();
+            if (!timeout.isZero()) {
+                ScheduledFuture<?> timeoutFuture = scheduler.schedule(
+                        handle::timeout, timeout.toNanos(), TimeUnit.NANOSECONDS);
+                handle.bindTimeout(timeoutFuture);
+            }
             Future<?> future = executorFor(spec.workload()).submit(
-                    () -> runTask(handle, task, mdc));
+                    () -> {
+                        if (handle.beginCarrier()) runTask(handle, task, mdc);
+                    });
             handle.bindExecution(future);
             return handle;
         } catch (RuntimeException failure) {
@@ -369,6 +370,9 @@ public final class ManagedTaskExecutor implements TaskSubmitter, AutoCloseable {
         private final AtomicBoolean cancellationRequested = new AtomicBoolean(false);
         private final CompletableFuture<T> completion = new CompletableFuture<>();
         private final CompletableFuture<Void> termination = new CompletableFuture<>();
+        private final Object carrierLock = new Object();
+        private boolean carrierStarted;
+        private boolean carrierPrevented;
         private volatile Future<?> execution;
         private volatile ScheduledFuture<?> timeout;
 
@@ -417,7 +421,7 @@ public final class ManagedTaskExecutor implements TaskSubmitter, AutoCloseable {
                     completion.completeExceptionally(failure);
                     cancelExecution(false);
                     if (current == TaskState.QUEUED) {
-                        markTerminated();
+                        preventCarrier();
                     }
                     return;
                 }
@@ -440,7 +444,7 @@ public final class ManagedTaskExecutor implements TaskSubmitter, AutoCloseable {
                     cancelExecution(true);
                     completion.completeExceptionally(reason);
                     if (current == TaskState.QUEUED) {
-                        markTerminated();
+                        preventCarrier();
                     }
                     return true;
                 }
@@ -453,6 +457,25 @@ public final class ManagedTaskExecutor implements TaskSubmitter, AutoCloseable {
 
         private boolean isCancellationRequested() {
             return cancellationRequested.get();
+        }
+
+        private boolean beginCarrier() {
+            synchronized (carrierLock) {
+                if (carrierPrevented || carrierStarted) return false;
+                carrierStarted = true;
+                return true;
+            }
+        }
+
+        private void preventCarrier() {
+            boolean prevented = false;
+            synchronized (carrierLock) {
+                if (!carrierStarted) {
+                    carrierPrevented = true;
+                    prevented = true;
+                }
+            }
+            if (prevented) markTerminated();
         }
 
         private void bindExecution(Future<?> value) {
@@ -483,7 +506,8 @@ public final class ManagedTaskExecutor implements TaskSubmitter, AutoCloseable {
             }
         }
 
-        private CompletableFuture<Void> termination() {
+        @Override
+        public CompletableFuture<Void> termination() {
             return termination;
         }
 

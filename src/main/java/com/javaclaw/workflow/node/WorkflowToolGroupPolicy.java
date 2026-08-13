@@ -1,8 +1,6 @@
 package com.javaclaw.workflow.node;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.javaclaw.agent.router.RoutingResult;
-import io.agentscope.core.tool.Toolkit;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -15,8 +13,10 @@ final class WorkflowToolGroupPolicy {
     static final Set<String> ALLOWED_TOOL_GROUPS;
 
     static {
-        LinkedHashSet<String> known = new LinkedHashSet<>(RoutingResult.ALL_TOOL_GROUPS);
-        known.addAll(List.of("agents", "plugins", "skill"));
+        LinkedHashSet<String> known = new LinkedHashSet<>(List.of(
+                "coding", "web", "email", "system", "desktop", "notification",
+                "command", "knowledge", "dynamic_task", "task_manage", "schedule",
+                "media", "agents", "plugins", "skill", "mcp"));
         KNOWN_TOOL_GROUPS = List.copyOf(known);
         known.remove("mcp");
         ALLOWED_TOOL_GROUPS = Set.copyOf(known);
@@ -45,17 +45,5 @@ final class WorkflowToolGroupPolicy {
             throw new SecurityException("自定义工作流包含未授权或未知工具组");
         }
         return List.copyOf(groups);
-    }
-
-    /**
-     * Agent 节点的空声明表示不开放工具；Tool 节点的空声明仍允许其显式命名的本地工具。
-     * 两者都会物理移除 MCP 桥，非空声明则只激活白名单中的指定组。
-     */
-    static void restrict(Toolkit toolkit, List<String> groups, boolean allowAllLocalWhenEmpty) {
-        if (!allowAllLocalWhenEmpty || !groups.isEmpty()) {
-            toolkit.updateToolGroups(KNOWN_TOOL_GROUPS, false);
-        }
-        toolkit.removeToolGroups(List.of("mcp"));
-        if (!groups.isEmpty()) toolkit.updateToolGroups(groups, true);
     }
 }

@@ -29,7 +29,9 @@ public interface AgentManagementApplicationService {
             String systemPrompt,
             int maxIters,
             boolean enabled,
-            boolean builtIn) {
+            boolean builtIn,
+            java.util.Map<com.javaclaw.framework.api.CapabilityId,
+                    com.fasterxml.jackson.databind.JsonNode> capabilityBindings) {
 
         public Agent {
             id = required(id, "智能体 id");
@@ -38,13 +40,27 @@ public interface AgentManagementApplicationService {
             description = text(description);
             systemPrompt = text(systemPrompt);
             if (maxIters < 1) throw new IllegalArgumentException("maxIters 必须大于 0");
+            java.util.LinkedHashMap<com.javaclaw.framework.api.CapabilityId,
+                    com.fasterxml.jackson.databind.JsonNode> copied = new java.util.LinkedHashMap<>();
+            if (capabilityBindings != null) capabilityBindings.forEach((capabilityId, value) ->
+                    copied.put(capabilityId, value.deepCopy()));
+            capabilityBindings = java.util.Map.copyOf(copied);
+        }
+
+        public Agent(String id, String name, String toolName, String description,
+                     String systemPrompt, int maxIters, boolean enabled, boolean builtIn) {
+            this(id, name, toolName, description, systemPrompt, maxIters, enabled, builtIn,
+                    java.util.Map.of());
         }
     }
 
-    record Catalog(List<Agent> agents) {
+    record Catalog(List<Agent> agents, List<com.javaclaw.framework.api.CapabilityForm> forms) {
         public Catalog {
             agents = List.copyOf(agents == null ? List.of() : agents);
+            forms = List.copyOf(forms == null ? List.of() : forms);
         }
+
+        public Catalog(List<Agent> agents) { this(agents, List.of()); }
 
         public Agent require(String id) {
             return agents.stream()
@@ -69,7 +85,20 @@ public interface AgentManagementApplicationService {
             String description,
             String systemPrompt,
             int maxIters,
-            boolean enabled) {}
+            boolean enabled,
+            java.util.Map<com.javaclaw.framework.api.CapabilityId,
+                    com.fasterxml.jackson.databind.JsonNode> capabilityBindings) {
+        public SaveAgentCommand {
+            capabilityBindings = java.util.Map.copyOf(
+                    capabilityBindings == null ? java.util.Map.of() : capabilityBindings);
+        }
+
+        public SaveAgentCommand(String id, String name, String toolName, String description,
+                                String systemPrompt, int maxIters, boolean enabled) {
+            this(id, name, toolName, description, systemPrompt, maxIters, enabled,
+                    java.util.Map.of());
+        }
+    }
 
     record OptimizePromptCommand(String name, String description, String draft) {}
 

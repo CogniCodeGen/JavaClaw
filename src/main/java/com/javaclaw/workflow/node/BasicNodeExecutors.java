@@ -134,7 +134,7 @@ public final class BasicNodeExecutors {
         public NodeResult execute(NodeExecutionContext context) {
             String text = TemplateRenderer.render(context.node().config().path("template").asText("{{output}}"),
                     context.state());
-            ConversationCallbacks callbacks = context.optional(ConversationCallbacks.class);
+            ConversationCallbacks callbacks = context.callbacks();
             if (callbacks != null && !text.isEmpty()) callbacks.onEvent(new ConversationEvent.Reply(text));
             String outputKey = context.node().config().path("outputKey").asText("output");
             return NodeResult.output(StatePatch.builder().set(outputKey, text).build(), text);

@@ -28,6 +28,7 @@ public final class AgentEditorController implements AutoCloseable {
     @FXML private TextField toolNameField;
     @FXML private TextArea descriptionArea;
     @FXML private TextArea systemPromptArea;
+    @FXML private VBox capabilityFormsBox;
     @FXML private Spinner<Integer> maxItersSpinner;
     @FXML private Button optimizePromptButton;
     @FXML private Button saveButton;
@@ -39,6 +40,11 @@ public final class AgentEditorController implements AutoCloseable {
     private Runnable onDelete = () -> {};
     private Agent current;
     private AgentSettingsViewModel viewModel;
+    private final CapabilityFormRenderer capabilityForms;
+
+    public AgentEditorController(com.fasterxml.jackson.databind.ObjectMapper json) {
+        this.capabilityForms = new CapabilityFormRenderer(json);
+    }
 
     @FXML
     private void initialize() {
@@ -64,7 +70,7 @@ public final class AgentEditorController implements AutoCloseable {
         applyStatusStyle();
     }
 
-    void show(Agent agent) {
+    void show(Agent agent, java.util.List<com.javaclaw.framework.api.CapabilityForm> forms) {
         current = Objects.requireNonNull(agent, "agent");
         boolean readOnly = agent.builtIn();
         root.setVisible(true);
@@ -86,11 +92,13 @@ public final class AgentEditorController implements AutoCloseable {
                 : "# 角色\n你是一名…\n\n# 能力\n…\n\n# 行为准则\n…");
         maxItersSpinner.getValueFactory().setValue(agent.maxIters());
         enabledCheck.setSelected(agent.enabled());
+        capabilityForms.render(capabilityFormsBox, forms, agent.capabilityBindings(), readOnly);
         setReadOnly(readOnly);
     }
 
     void hide() {
         current = null;
+        capabilityForms.clear(capabilityFormsBox);
         root.setVisible(false);
         root.setManaged(false);
     }
@@ -99,7 +107,7 @@ public final class AgentEditorController implements AutoCloseable {
         if (current == null) throw new IllegalStateException("尚未选择智能体");
         return new SaveAgentCommand(current.id(), nameField.getText(), toolNameField.getText(),
                 descriptionArea.getText(), systemPromptArea.getText(),
-                maxItersSpinner.getValue(), enabledCheck.isSelected());
+                maxItersSpinner.getValue(), enabledCheck.isSelected(), capabilityForms.values());
     }
 
     OptimizePromptCommand optimizeCommand() {

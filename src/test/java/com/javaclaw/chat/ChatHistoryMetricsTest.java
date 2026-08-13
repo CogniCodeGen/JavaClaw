@@ -5,6 +5,7 @@ import com.javaclaw.application.chat.ChatHistoryApplicationService.DeliveryStatu
 import com.javaclaw.application.chat.ChatHistoryApplicationService.MessageRole;
 import com.javaclaw.application.chat.ChatHistoryApplicationService.MessageSnapshot;
 import com.javaclaw.application.chat.ChatHistoryApplicationService.TurnUsage;
+import com.javaclaw.config.WorkspaceManager;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.spring.ApplicationContexts;
 import org.junit.jupiter.api.AfterAll;
@@ -59,15 +60,16 @@ class ChatHistoryMetricsTest {
 
         ChatHistoryApplicationService history =
                 root.getBean(ChatHistoryApplicationService.class);
-        history.saveMessages(sessionId, List.of(completed, legacy));
-        List<MessageSnapshot> loaded = history.messages(sessionId);
+        String workspaceId = root.getBean(WorkspaceManager.class).getCurrentWorkspaceId();
+        history.saveMessages(workspaceId, sessionId, List.of(completed, legacy));
+        List<MessageSnapshot> loaded = history.messages(workspaceId, sessionId);
 
         assertEquals(2, loaded.size());
         assertEquals(DeliveryStatus.COMPLETE, loaded.getFirst().deliveryStatus());
         assertEquals(new TurnUsage(12, 7, 345), loaded.getFirst().usage());
         assertNull(loaded.get(1).deliveryStatus());
         assertNull(loaded.get(1).usage());
-        history.delete(sessionId);
+        history.delete(workspaceId, sessionId);
     }
 
     @Test

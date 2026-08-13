@@ -6,8 +6,8 @@ import org.slf4j.LoggerFactory;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** 跨线程取消/暂停令牌；取消钩子用于 dispose 正在流式执行的 AgentScope 调用。 */
-public final class CancellationToken {
+/** 跨线程取消/暂停令牌；取消钩子用于停止正在执行的工作流节点。 */
+public final class CancellationToken implements com.javaclaw.framework.spi.CancellationToken {
     private static final Logger log = LoggerFactory.getLogger(CancellationToken.class);
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
     private final AtomicBoolean pauseRequested = new AtomicBoolean(false);
@@ -28,9 +28,11 @@ public final class CancellationToken {
 
     public boolean requestPause() { return pauseRequested.compareAndSet(false, true); }
     public boolean isCancelled() { return cancelled.get(); }
+    @Override public boolean cancelled() { return isCancelled(); }
     public boolean isPauseRequested() { return pauseRequested.get(); }
 
-    public AutoCloseable onCancel(Runnable hook) {
+    @Override
+    public CancellationRegistration onCancel(Runnable hook) {
         if (hook == null) return () -> {};
         if (cancelled.get()) {
             hook.run();

@@ -7,23 +7,24 @@ import java.util.List;
  * Workspace-scoped chat history commands and queries.
  *
  * <p>All methods may block on JDBC and therefore must run on a managed I/O task, except during the
- * serialized application startup sequence. Implementations are thread-safe and capture one
- * workspace id per call. Writes publish only complete snapshots; interruption is observed at the
- * surrounding managed-task boundary.</p>
+ * serialized application startup sequence. Callers must capture the workspace id before queuing
+ * asynchronous work; this prevents a delayed save from following a later workspace switch. Writes
+ * publish only complete snapshots; interruption is observed at the surrounding managed-task
+ * boundary.</p>
  */
 public interface ChatHistoryApplicationService {
 
-    List<SessionSnapshot> sessions();
+    List<SessionSnapshot> sessions(String workspaceId);
 
-    void saveSessions(List<SessionSnapshot> sessions);
+    void saveSessions(String workspaceId, List<SessionSnapshot> sessions);
 
-    boolean hasMessages(String sessionId);
+    boolean hasMessages(String workspaceId, String sessionId);
 
-    List<MessageSnapshot> messages(String sessionId);
+    List<MessageSnapshot> messages(String workspaceId, String sessionId);
 
-    void saveMessages(String sessionId, List<MessageSnapshot> messages);
+    void saveMessages(String workspaceId, String sessionId, List<MessageSnapshot> messages);
 
-    void delete(String sessionId);
+    void delete(String workspaceId, String sessionId);
 
     record SessionSnapshot(String id, String title, LocalDateTime createdAt) {
         public SessionSnapshot {

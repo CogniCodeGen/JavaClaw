@@ -192,7 +192,8 @@ public final class H2WorkflowDefinitionStore implements WorkflowDefinitionStore 
         try (Connection c = database.open();
              PreparedStatement active = c.prepareStatement("""
                      SELECT 1 FROM workflow_runs WHERE workspace_id=? AND workflow_id=?
-                     AND status IN ('CREATED','RUNNING','WAITING_INPUT','PAUSED','RECOVERY_REQUIRED') LIMIT 1
+                     AND status IN ('CREATED','RUNNING','WAITING_INPUT','PAUSED','RECOVERY_REQUIRED',
+                                    'RECOVERY_BLOCKED_MISSING_EXTENSION') LIMIT 1
                      """)) {
             active.setString(1, workspaceId); active.setString(2, id);
             try (ResultSet rs = active.executeQuery()) {

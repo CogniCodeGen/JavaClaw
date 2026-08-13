@@ -1,6 +1,5 @@
 package com.javaclaw.chat;
 
-import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.ChatService;
 import com.javaclaw.agent.PlanModeService;
 import com.javaclaw.agent.ToolConfirmationManager;
@@ -43,7 +42,7 @@ final class ChatRuntimeCoordinator {
     private final AtomicBoolean transitioning = new AtomicBoolean();
     private final AtomicBoolean rebuildQueued = new AtomicBoolean();
 
-    private volatile AgentRuntime runtime;
+    private volatile WorkspaceRuntime workspaceRuntime;
     private volatile ChatService chatService;
     private volatile PlanModeService planModeService;
     private volatile ModeRegistry modeRegistry;
@@ -77,10 +76,6 @@ final class ChatRuntimeCoordinator {
         chatService.setLoopInteractiveHandler(loopHandler);
     }
 
-    AgentRuntime runtime() {
-        return runtime;
-    }
-
     ChatService chatService() {
         return chatService;
     }
@@ -105,7 +100,7 @@ final class ChatRuntimeCoordinator {
     }
 
     KnowledgeMenuSnapshot knowledgeMenuSnapshot() {
-        KnowledgeExpert expert = runtime.getKnowledgeExpert();
+        KnowledgeExpert expert = workspaceRuntime.knowledgeExpert();
         if (!expert.isRagEnabled()) return KnowledgeMenuSnapshot.ragDisabled();
         List<KnowledgeMenuSnapshot.Document> global = documents(
                 expert, KnowledgeExpert.Scope.GLOBAL);
@@ -115,7 +110,7 @@ final class ChatRuntimeCoordinator {
     }
 
     void applyKnowledgeSelection(Set<String> selectedNames) {
-        KnowledgeExpert expert = runtime.getKnowledgeExpert();
+        KnowledgeExpert expert = workspaceRuntime.knowledgeExpert();
         List<String> names = new ArrayList<>(
                 expert.getDocumentNames(KnowledgeExpert.Scope.GLOBAL));
         names.addAll(expert.getDocumentNames(KnowledgeExpert.Scope.WORKSPACE));
@@ -274,7 +269,7 @@ final class ChatRuntimeCoordinator {
     }
 
     private void adopt(WorkspaceRuntime workspace) {
-        runtime = workspace.agentRuntime();
+        workspaceRuntime = workspace;
         chatService = workspace.chatService();
         planModeService = workspace.planModeService();
         modeRegistry = workspace.modeRegistry();

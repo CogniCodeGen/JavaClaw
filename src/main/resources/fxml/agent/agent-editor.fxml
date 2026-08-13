@@ -108,6 +108,14 @@
                                           VBox.vgrow="ALWAYS"/>
                             </children>
                         </VBox>
+                        <VBox spacing="10.0" styleClass="agent-section-card">
+                            <children>
+                                <Label text="Agent 能力" styleClass="agent-card-title"/>
+                                <Label text="能力面板由已安装扩展的 JSON Schema 自动生成；保存后发布为新版本，仅影响新 Run。"
+                                       wrapText="true" styleClass="settings-hint"/>
+                                <VBox fx:id="capabilityFormsBox" spacing="10.0"/>
+                            </children>
+                        </VBox>
                     </children>
                 </VBox>
             </content>

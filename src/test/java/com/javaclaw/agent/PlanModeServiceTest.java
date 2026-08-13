@@ -44,7 +44,7 @@ class PlanModeServiceTest {
         ConversationEvent.Custom finalEvent =
                 assertInstanceOf(ConversationEvent.Custom.class, events.getFirst());
         assertEquals("plan_final", finalEvent.kind());
-        assertEquals("最终方案正文", finalEvent.payload());
+        assertEquals("最终方案正文", finalEvent.payload().asText());
         assertTrue(events.stream().anyMatch(event ->
                 event instanceof ConversationEvent.Hint hint
                         && hint.text().contains("已保留协调者最终方案")));

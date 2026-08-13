@@ -4,8 +4,8 @@ import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.config.EmailConfig;
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import jakarta.mail.*;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
@@ -17,13 +17,14 @@ import java.io.IOException;
 import java.util.Properties;
 
 /**
- * 邮件工具类（基于 AgentScope @Tool 注解）
+ * 邮件工具类（基于 Spring AI {@code @Tool} 注解）
  *
  * <p>为邮件智能体提供邮件收发工具，所有方法返回 {@link ToolResponse} 格式化的结构化响应，
  * 确保智能体能准确判断操作是否成功。</p>
  *
  * @author JavaClaw
  */
+@com.javaclaw.framework.spi.ToolContract(group = "email", permissions = {"tool.execute"}, idempotent = false)
 public class EmailTools {
 
     private static final Logger log = LoggerFactory.getLogger(EmailTools.class);
@@ -68,7 +69,8 @@ public class EmailTools {
         Properties props = new Properties();
         props.put("mail.imap.host", config.getImapHost());
         props.put("mail.imap.port", String.valueOf(config.getImapPort()));
-        props.put("mail.imap.ssl.enable", "true");
+        props.put("mail.imap.starttls.enable", String.valueOf(config.isUseStarttls()));
+        props.put("mail.imap.ssl.enable", String.valueOf(config.isUseSsl()));
         props.put("mail.imap.connectiontimeout", "10000");
         props.put("mail.imap.timeout", "15000");
 
@@ -88,10 +90,10 @@ public class EmailTools {
     @Tool(name = "email_send", description = "发送一封邮件。支持纯文本和 HTML 格式。" +
             "用于给指定收件人发送邮件，可选抄送。")
     public String sendEmail(
-            @ToolParam(name = "to", description = "收件人邮箱地址，多个地址用逗号分隔") String to,
-            @ToolParam(name = "subject", description = "邮件主题") String subject,
-            @ToolParam(name = "body", description = "邮件正文内容") String body,
-            @ToolParam(name = "is_html", description = "是否为 HTML 格式，true 为 HTML，false 为纯文本") boolean isHtml) {
+            @ToolParam( description = "收件人邮箱地址，多个地址用逗号分隔") String to,
+            @ToolParam( description = "邮件主题") String subject,
+            @ToolParam( description = "邮件正文内容") String body,
+            @ToolParam( description = "是否为 HTML 格式，true 为 HTML，false 为纯文本") boolean isHtml) {
         log.debug("工具调用: email_send(to={}, subject={})", to, subject);
         if (!ToolConfirmationManager.requestConfirmation(origin, "email_send",
                 "发送邮件给: " + to + "\n主题: " + subject)) {
@@ -123,12 +125,12 @@ public class EmailTools {
     @Tool(name = "email_send_with_cc", description = "发送一封带抄送的邮件。" +
             "支持指定抄送和密送收件人。")
     public String sendEmailWithCc(
-            @ToolParam(name = "to", description = "收件人邮箱地址，多个地址用逗号分隔") String to,
-            @ToolParam(name = "cc", description = "抄送邮箱地址，多个地址用逗号分隔，不需要抄送时传空字符串") String cc,
-            @ToolParam(name = "bcc", description = "密送邮箱地址，多个地址用逗号分隔，不需要密送时传空字符串") String bcc,
-            @ToolParam(name = "subject", description = "邮件主题") String subject,
-            @ToolParam(name = "body", description = "邮件正文内容") String body,
-            @ToolParam(name = "is_html", description = "是否为 HTML 格式") boolean isHtml) {
+            @ToolParam( description = "收件人邮箱地址，多个地址用逗号分隔") String to,
+            @ToolParam( description = "抄送邮箱地址，多个地址用逗号分隔，不需要抄送时传空字符串") String cc,
+            @ToolParam( description = "密送邮箱地址，多个地址用逗号分隔，不需要密送时传空字符串") String bcc,
+            @ToolParam( description = "邮件主题") String subject,
+            @ToolParam( description = "邮件正文内容") String body,
+            @ToolParam( description = "是否为 HTML 格式") boolean isHtml) {
         log.debug("工具调用: email_send_with_cc(to={}, cc={}, subject={})", to, cc, subject);
         if (!ToolConfirmationManager.requestConfirmation(origin, "email_send_with_cc",
                 "发送邮件给: " + to + (cc != null && !cc.isBlank() ? "\n抄送: " + cc : "") + "\n主题: " + subject)) {
@@ -165,10 +167,11 @@ public class EmailTools {
         }
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "email", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "email_list_inbox", description = "获取收件箱中最近的邮件列表。" +
             "返回每封邮件的序号、发件人、主题、日期和是否已读状态。")
     public String listInbox(
-            @ToolParam(name = "count", description = "要获取的邮件数量，建议 10-30") int count) {
+            @ToolParam( description = "要获取的邮件数量，建议 10-30") int count) {
         log.debug("工具调用: email_list_inbox(count={})", count);
         Store store = null;
         Folder inbox = null;
@@ -216,10 +219,11 @@ public class EmailTools {
         }
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "email", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "email_read", description = "读取指定序号的邮件详细内容。" +
             "返回发件人、收件人、主题、日期和正文内容。")
     public String readEmail(
-            @ToolParam(name = "message_number", description = "邮件序号，来自 email_list_inbox 返回的序号") int messageNumber) {
+            @ToolParam( description = "邮件序号，来自 email_list_inbox 返回的序号") int messageNumber) {
         log.debug("工具调用: email_read(messageNumber={})", messageNumber);
         Store store = null;
         Folder inbox = null;
@@ -270,11 +274,12 @@ public class EmailTools {
         }
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "email", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "email_search", description = "在收件箱中搜索包含指定关键词的邮件。" +
             "搜索范围包括邮件主题和发件人。")
     public String searchEmail(
-            @ToolParam(name = "keyword", description = "搜索关键词") String keyword,
-            @ToolParam(name = "max_results", description = "最大返回结果数，建议 5-20") int maxResults) {
+            @ToolParam( description = "搜索关键词") String keyword,
+            @ToolParam( description = "最大返回结果数，建议 5-20") int maxResults) {
         log.debug("工具调用: email_search(keyword={}, maxResults={})", keyword, maxResults);
         Store store = null;
         Folder inbox = null;
@@ -333,10 +338,11 @@ public class EmailTools {
         }
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "email", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "email_list_unread", description = "获取收件箱中所有未读邮件。" +
             "返回未读邮件的序号、发件人、主题和日期。")
     public String listUnread(
-            @ToolParam(name = "max_results", description = "最大返回结果数，建议 10-50") int maxResults) {
+            @ToolParam( description = "最大返回结果数，建议 10-50") int maxResults) {
         log.debug("工具调用: email_list_unread(maxResults={})", maxResults);
         Store store = null;
         Folder inbox = null;
@@ -383,9 +389,9 @@ public class EmailTools {
 
     @Tool(name = "email_reply", description = "回复一封邮件。自动设置回复的收件人和主题（Re: 前缀）。")
     public String replyEmail(
-            @ToolParam(name = "message_number", description = "要回复的邮件序号") int messageNumber,
-            @ToolParam(name = "body", description = "回复正文内容") String body,
-            @ToolParam(name = "reply_all", description = "是否回复全部（包括所有收件人和抄送人）") boolean replyAll) {
+            @ToolParam( description = "要回复的邮件序号") int messageNumber,
+            @ToolParam( description = "回复正文内容") String body,
+            @ToolParam( description = "是否回复全部（包括所有收件人和抄送人）") boolean replyAll) {
         log.debug("工具调用: email_reply(messageNumber={}, replyAll={})", messageNumber, replyAll);
         if (!ToolConfirmationManager.requestConfirmation(origin, "email_reply",
                 "回复邮件 #" + messageNumber + (replyAll ? "（回复全部）" : ""))) {

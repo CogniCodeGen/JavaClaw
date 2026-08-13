@@ -18,6 +18,9 @@ public interface TaskHandle<T> extends AutoCloseable {
 
     CompletableFuture<T> completion();
 
+    /** Completes only after the carrier thread has exited and released its workload permits. */
+    CompletableFuture<Void> termination();
+
     boolean cancel();
 
     @Override

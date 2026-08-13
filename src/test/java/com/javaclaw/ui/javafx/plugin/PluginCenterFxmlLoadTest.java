@@ -3,6 +3,9 @@ package com.javaclaw.ui.javafx.plugin;
 import com.javaclaw.api.interaction.ConfirmRequest;
 import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
+import com.javaclaw.application.plugin.AgentExtensionManagementApplicationService;
+import com.javaclaw.application.plugin.AgentExtensionManagementApplicationService.AgentExtension;
+import com.javaclaw.application.plugin.AgentExtensionManagementApplicationService.InstallPreview;
 import com.javaclaw.application.plugin.PluginManagementApplicationService;
 import com.javaclaw.platform.desktop.ExternalDirectoryOpener;
 import com.javaclaw.platform.dialog.DialogService;
@@ -18,6 +21,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
+import javafx.scene.control.ToggleButton;
 import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
@@ -51,6 +55,7 @@ class PluginCenterFxmlLoadTest {
     private AnnotationConfigApplicationContext context;
     private ViewHandle<HBox> handle;
     private FakePluginService service;
+    private FakeAgentExtensionService extensionService;
     private FakeInteraction interaction;
 
     @BeforeAll
@@ -152,6 +157,44 @@ class PluginCenterFxmlLoadTest {
         assertTrue(service.subscriptionClosed);
     }
 
+    @Test
+    void previewsInstallsRefreshesAndTogglesAgentExtensions() throws Exception {
+        Path selectedJar = Path.of("/tmp/agent-extension.jar");
+        loadView(Optional.of(selectedJar));
+        awaitFx(() -> cardGrid().getChildren().size() == 2);
+
+        runFx(() -> toggleButton("agentExtensionsTab").fire());
+        awaitFx(() -> extensionList().getChildren().size() == 1);
+        assertTrue(callFx(() -> extensionView().isVisible()));
+        assertEquals("1 个 Agent 扩展", callFx(() -> extensionCount().getText()));
+
+        runFx(() -> extensionToggle(0).fire());
+        awaitFx(() -> extensionService.toggleCalls == 1
+                && !extensionService.require("agent.alpha").enabledForNewRuns());
+        assertEquals("启用", callFx(() -> extensionToggle(0).getText()));
+
+        runFx(() -> extensionToggle(0).fire());
+        awaitFx(() -> extensionService.toggleCalls == 2
+                && extensionService.require("agent.alpha").enabledForNewRuns());
+        assertEquals("停用", callFx(() -> extensionToggle(0).getText()));
+
+        int listCalls = extensionService.installedCalls;
+        runFx(() -> button("refreshButton").fire());
+        awaitFx(() -> extensionService.installedCalls > listCalls);
+
+        runFx(() -> button("installAgentExtensionButton").fire());
+        awaitFx(() -> extensionService.installCalls == 1
+                && extensionList().getChildren().size() == 2);
+        assertEquals(selectedJar, extensionService.previewPath);
+        assertEquals(extensionService.lastPreview, extensionService.installedPreview);
+        assertTrue(interaction.confirmed);
+        assertEquals("2 个 Agent 扩展", callFx(() -> extensionCount().getText()));
+        awaitFx(() -> handle.root().lookupAll("#statusLabel").stream()
+                .filter(Label.class::isInstance)
+                .map(Label.class::cast)
+                .anyMatch(label -> label.getText().contains("已安装并启用")));
+    }
+
     private void loadView(Optional<Path> selectedJar) throws Exception {
         prepareContext(selectedJar);
         URL resource = getClass().getResource("/fxml/plugin/plugin-center.fxml");
@@ -165,8 +208,11 @@ class PluginCenterFxmlLoadTest {
     private void prepareContext(Optional<Path> selectedJar) {
         context = new AnnotationConfigApplicationContext();
         service = new FakePluginService();
+        extensionService = new FakeAgentExtensionService();
         interaction = new FakeInteraction();
         context.registerBean(PluginManagementApplicationService.class, () -> service);
+        context.registerBean(AgentExtensionManagementApplicationService.class,
+                () -> extensionService);
         context.registerBean(PluginJarPicker.class, () -> owner -> selectedJar);
         context.registerBean(UserInteractionPort.class, () -> interaction);
         context.registerBean(DialogService.class,
@@ -184,8 +230,18 @@ class PluginCenterFxmlLoadTest {
     }
 
     private Button button(String id) { return (Button) handle.root().lookup("#" + id); }
+    private ToggleButton toggleButton(String id) {
+        return (ToggleButton) handle.root().lookup("#" + id);
+    }
     private TextField text(String id) { return (TextField) handle.root().lookup("#" + id); }
     private FlowPane cardGrid() { return (FlowPane) handle.root().lookup("#cardGrid"); }
+    private VBox extensionView() { return (VBox) handle.root().lookup("#agentExtensionView"); }
+    private VBox extensionList() { return (VBox) handle.root().lookup("#agentExtensionList"); }
+    private Label extensionCount() { return (Label) handle.root().lookup("#agentExtensionCount"); }
+    private Button extensionToggle(int index) {
+        HBox row = (HBox) extensionList().getChildren().get(index);
+        return (Button) row.getChildren().get(1);
+    }
     private ScrollPane detail() {
         return handle.controller(PluginCenterController.class).detailRoot();
     }
@@ -323,6 +379,59 @@ class PluginCenterFxmlLoadTest {
                     List.of(new NamedItem("send-message", "发送一条消息")),
                     List.of(new NamedItem("message_send", "发送工具")),
                     state, "");
+        }
+    }
+
+    private static final class FakeAgentExtensionService
+            implements AgentExtensionManagementApplicationService {
+        private final List<AgentExtension> extensions = new ArrayList<>(List.of(
+                new AgentExtension("agent.alpha", "[1.0.0]", "[aaaa]", true)));
+        private volatile int installedCalls;
+        private volatile int installCalls;
+        private volatile int toggleCalls;
+        private volatile Path previewPath;
+        private volatile InstallPreview lastPreview;
+        private volatile InstallPreview installedPreview;
+
+        @Override
+        public synchronized InstallPreview preview(Path jar) {
+            previewPath = jar;
+            lastPreview = new InstallPreview(jar, "a".repeat(64), 128);
+            return lastPreview;
+        }
+
+        @Override
+        public synchronized List<AgentExtension> installed() {
+            installedCalls++;
+            return List.copyOf(extensions);
+        }
+
+        @Override
+        public synchronized List<AgentExtension> install(InstallPreview preview) {
+            installCalls++;
+            installedPreview = preview;
+            extensions.add(new AgentExtension(
+                    "agent.installed", "[3.0.0]", "[" + preview.sha256() + "]", true));
+            return List.copyOf(extensions);
+        }
+
+        @Override
+        public synchronized List<AgentExtension> setEnabled(String extensionId, boolean enabled) {
+            toggleCalls++;
+            for (int index = 0; index < extensions.size(); index++) {
+                AgentExtension current = extensions.get(index);
+                if (!current.id().equals(extensionId)) continue;
+                extensions.set(index, new AgentExtension(
+                        current.id(), current.versions(), current.artifactHashes(), enabled));
+            }
+            return List.copyOf(extensions);
+        }
+
+        synchronized AgentExtension require(String id) {
+            return extensions.stream()
+                    .filter(extension -> extension.id().equals(id))
+                    .findFirst()
+                    .orElseThrow();
         }
     }
 }

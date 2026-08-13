@@ -78,7 +78,7 @@ class SystemPipelineAwaiterTest {
                 JsonNodeFactory.instance.objectNode().put("stageId", "stage"),
                 0, 0, RetryPolicy.NONE, ResumeSafety.CONFIRM_RETRY);
         return new NodeExecutionContext("run", "thread", node, new GraphState(),
-                cancellation, GraphListener.NOOP, Map.of());
+                cancellation, GraphListener.NOOP, com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY);
     }
 
     private static ConversationCallbacks silentCallbacks() {

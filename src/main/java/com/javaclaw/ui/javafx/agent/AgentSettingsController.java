@@ -180,7 +180,7 @@ public final class AgentSettingsController implements AutoCloseable {
     private void showEditor(Agent agent) {
         emptyPanel.setVisible(false);
         emptyPanel.setManaged(false);
-        editorPanelController.show(agent);
+        editorPanelController.show(agent, viewModel.catalogProperty().get().forms());
     }
 
     private void showEmptyEditor() {

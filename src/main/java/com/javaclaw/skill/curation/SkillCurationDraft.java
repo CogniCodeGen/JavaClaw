@@ -7,7 +7,7 @@ import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 import java.util.List;
 
 /**
- * 技能蒸馏结构化输出 schema（AgentScope 据此生成 JSON Schema 约束模型）。
+ * 技能蒸馏结构化输出 schema（Spring AI 据此生成 JSON Schema 约束模型）。
  *
  * <p>线缆层 DTO：SkillCurator 用轻量模型从一轮对话/一个 SDD 任务的执行轨迹中
  * 蒸馏「是否值得沉淀为技能、create 新技能还是 patch 既有技能」的判断。

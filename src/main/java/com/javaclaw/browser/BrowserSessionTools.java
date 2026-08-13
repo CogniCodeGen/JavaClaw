@@ -7,8 +7,8 @@ import com.javaclaw.util.ProjectAccessPolicy;
 import com.microsoft.playwright.*;
 import com.microsoft.playwright.options.*;
 
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 /** Tab, JavaScript, cookie and document-export tools. */
+@com.javaclaw.framework.spi.ToolContract(group = "web", permissions = {"tool.execute"}, idempotent = false)
 final class BrowserSessionTools {
 
     private static final Logger log = LoggerFactory.getLogger(BrowserSessionTools.class);
@@ -43,7 +44,7 @@ final class BrowserSessionTools {
     }
 
     @Tool(name = "web_tab_new", description = "新建浏览器 Tab 页。可选指定初始 URL。")
-    public String tabNew(@ToolParam(name = "url", description = "初始 URL，传空字符串打开空白页") String url) {
+    public String tabNew(@ToolParam( description = "初始 URL，传空字符串打开空白页") String url) {
         gate.enter();
         try {
             log.debug("工具调用: web_tab_new({})", url);
@@ -71,6 +72,7 @@ final class BrowserSessionTools {
         }
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "web", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "web_tab_list", description = "列出所有打开的 Tab 页信息（索引、标题、URL）。")
     public String tabList() {
         gate.enter();
@@ -92,7 +94,7 @@ final class BrowserSessionTools {
 
     @Tool(name = "web_tab_close", description = "关闭指定 Tab 页。传 -1 关闭当前 Tab。至少保留一个 Tab。")
     public String tabClose(
-            @ToolParam(name = "index", description = "Tab 索引，-1 表示关闭当前 Tab") int index) {
+            @ToolParam( description = "Tab 索引，-1 表示关闭当前 Tab") int index) {
         gate.enter();
         try {
             log.debug("工具调用: web_tab_close({})", index);
@@ -120,7 +122,7 @@ final class BrowserSessionTools {
     }
 
     @Tool(name = "web_tab_switch", description = "切换到指定索引的 Tab 页。")
-    public String tabSwitch(@ToolParam(name = "index", description = "目标 Tab 索引") int index) {
+    public String tabSwitch(@ToolParam( description = "目标 Tab 索引") int index) {
         gate.enter();
         try {
             log.debug("工具调用: web_tab_switch({})", index);
@@ -151,7 +153,7 @@ final class BrowserSessionTools {
             name = "web_eval_js",
             description = "在当前页面中执行 JavaScript 代码并返回结果。" + "可用于获取复杂数据、操作 DOM、调用页面 API 等。")
     public String evalJs(
-            @ToolParam(name = "script", description = "要执行的 JavaScript 代码") String script) {
+            @ToolParam( description = "要执行的 JavaScript 代码") String script) {
         gate.enter();
         try {
             log.debug(
@@ -194,9 +196,10 @@ final class BrowserSessionTools {
 
     // ==================== Cookie 管理工具 ====================
 
+    @com.javaclaw.framework.spi.ToolContract(group = "web", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "web_cookie_get", description = "获取当前浏览器的所有 Cookie 或指定 URL 的 Cookie。")
     public String cookieGet(
-            @ToolParam(name = "url", description = "可选的 URL 过滤，传空字符串获取所有 Cookie") String url) {
+            @ToolParam( description = "可选的 URL 过滤，传空字符串获取所有 Cookie") String url) {
         gate.enter();
         try {
             log.debug("工具调用: web_cookie_get({})", url);
@@ -243,10 +246,10 @@ final class BrowserSessionTools {
 
     @Tool(name = "web_cookie_set", description = "设置一个 Cookie。")
     public String cookieSet(
-            @ToolParam(name = "name", description = "Cookie 名称") String name,
-            @ToolParam(name = "value", description = "Cookie 值") String value,
-            @ToolParam(name = "domain", description = "Cookie 域名") String domain,
-            @ToolParam(name = "path", description = "Cookie 路径，默认 /") String path) {
+            @ToolParam( description = "Cookie 名称") String name,
+            @ToolParam( description = "Cookie 值") String value,
+            @ToolParam( description = "Cookie 域名") String domain,
+            @ToolParam( description = "Cookie 路径，默认 /") String path) {
         gate.enter();
         try {
             log.debug("工具调用: web_cookie_set({}, {}, {})", name, domain, path);

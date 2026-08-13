@@ -3,8 +3,8 @@ package com.javaclaw.plugin;
 import com.javaclaw.application.plugin.PluginToolGateway;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.util.ProjectAccessPolicy;
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -17,6 +17,7 @@ import org.slf4j.LoggerFactory;
  *
  * @author JavaClaw
  */
+@com.javaclaw.framework.spi.ToolContract(group = "plugins", permissions = {"tool.execute"}, idempotent = false)
 public final class PluginTools {
 
     private static final Logger log = LoggerFactory.getLogger(PluginTools.class);
@@ -26,6 +27,7 @@ public final class PluginTools {
         this.plugins = java.util.Objects.requireNonNull(plugins, "plugins");
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "plugins", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "plugin_list_tools",
             description = "列出当前已启用插件提供的可调用工具及其参数")
     public String listTools() {
@@ -37,9 +39,9 @@ public final class PluginTools {
     @Tool(name = "plugin_call_tool",
             description = "调用某个已启用插件提供的工具。plugin_id 与 tool_name 见 plugin_list_tools 或系统提示词中的「插件工具」清单")
     public String callTool(
-            @ToolParam(name = "plugin_id", description = "插件 id") String pluginId,
-            @ToolParam(name = "tool_name", description = "工具名") String toolName,
-            @ToolParam(name = "arguments_json",
+            @ToolParam( description = "插件 id") String pluginId,
+            @ToolParam( description = "工具名") String toolName,
+            @ToolParam(
                     description = "工具参数，JSON 对象字符串；无参数时传 \"{}\"") String argumentsJson) {
         if (ProjectAccessPolicy.strictIsolationEnabled()) {
             return ToolResponse.error("plugin_call_tool",

@@ -19,6 +19,6 @@ public final class SystemPipelineNodeExecutor implements NodeExecutor {
 
     @Override public NodeResult execute(NodeExecutionContext context) throws Exception {
         String stageId = context.node().config().path("stageId").asText();
-        return context.require(SystemPipeline.class).executeStage(stageId, context);
+        return context.requireSystemPipeline().executeStage(stageId, context);
     }
 }

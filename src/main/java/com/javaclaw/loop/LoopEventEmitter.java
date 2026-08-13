@@ -62,7 +62,7 @@ final class LoopEventEmitter {
         callbacks.onEvent(new ConversationEvent.Custom(
                 LoopConstants.EVENT_STATUS_KIND,
                 new LoopStatus(iteration, verdict.decision(), verdict.message(),
-                        check.satisfied(), check.total(), tokensUsed, nextDelaySeconds)));
+                        check.satisfied(), check.total(), tokensUsed, nextDelaySeconds).toJson()));
     }
 
     void stopped(
@@ -76,7 +76,7 @@ final class LoopEventEmitter {
         callbacks.onEvent(new ConversationEvent.Custom(
                 LoopConstants.EVENT_STATUS_KIND,
                 new LoopStatus(iteration, Decision.STOP, message, satisfied, total,
-                        tokensUsed, 0L)));
+                        tokensUsed, 0L).toJson()));
         log.info("循环停止：轮次={} 原因={} 说明={}", iteration, reason, message);
     }
 }

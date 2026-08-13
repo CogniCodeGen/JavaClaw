@@ -8,8 +8,8 @@ import com.javaclaw.application.schedule.ScheduleApplicationService.DisablePolic
 import com.javaclaw.application.schedule.ScheduleApplicationService.SaveCommand;
 import com.javaclaw.application.schedule.ScheduleApplicationService.Task;
 import com.javaclaw.application.schedule.ScheduleCommands;
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,6 +26,7 @@ import java.util.Objects;
  * <p>创建类受人工确认（会反复自主消耗 token）；查询/停用/删除类直接执行——其中停用/删除必须
  * 非阻塞，以便定时任务自身的后台执行线程能调用它们完成自停。</p>
  */
+@com.javaclaw.framework.spi.ToolContract(group = "schedule", permissions = {"tool.execute"}, idempotent = false)
 public final class ScheduleTools {
 
     private static final Logger log = LoggerFactory.getLogger(ScheduleTools.class);
@@ -46,10 +47,10 @@ public final class ScheduleTools {
                     + "需要持续监测直到满足条件时用本工具：prompt 内写明检查逻辑，并指示达标后调 notify_send 通知用户、"
                     + "再调 schedule_disable(本任务id) 自停。需要用户确认后才会创建。")
     public String scheduleCreate(
-            @ToolParam(name = "name", description = "定时任务名称") String name,
-            @ToolParam(name = "triggerType", description = "触发类型：interval / daily / cron") String triggerType,
-            @ToolParam(name = "triggerValue", description = "interval 填分钟数；daily 填 HH:mm；cron 填 Cron 表达式") String triggerValue,
-            @ToolParam(name = "prompt", description = "到点发给智能体执行的提示词指令") String prompt) {
+            @ToolParam( description = "定时任务名称") String name,
+            @ToolParam( description = "触发类型：interval / daily / cron") String triggerType,
+            @ToolParam( description = "interval 填分钟数；daily 填 HH:mm；cron 填 Cron 表达式") String triggerValue,
+            @ToolParam( description = "到点发给智能体执行的提示词指令") String prompt) {
         String nm = name == null ? "" : name.trim();
         String type = triggerType == null ? "" : triggerType.trim().toLowerCase();
         String val = triggerValue == null ? "" : triggerValue.trim();
@@ -96,6 +97,7 @@ public final class ScheduleTools {
         }
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "schedule", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "schedule_list", description = "列出所有定时任务及其触发规则、启用状态、上次执行结果。")
     public String scheduleList() {
         List<Task> all = schedules.snapshot().tasks();
@@ -114,8 +116,9 @@ public final class ScheduleTools {
         return ToolResponse.success("schedule_list", sb.toString().trim());
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "schedule", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "schedule_get", description = "查询某个定时任务的详情与近期执行历史。")
-    public String scheduleGet(@ToolParam(name = "id", description = "定时任务 id") String id) {
+    public String scheduleGet(@ToolParam( description = "定时任务 id") String id) {
         Task t = find(id);
         if (t == null) return ToolResponse.error("schedule_get", "未找到定时任务: " + id);
         StringBuilder sb = new StringBuilder();
@@ -134,7 +137,7 @@ public final class ScheduleTools {
     }
 
     @Tool(name = "schedule_disable", description = "停用一个定时任务（停止后续触发，保留记录）。定时任务达成条件后可调用本工具自停。")
-    public String scheduleDisable(@ToolParam(name = "id", description = "定时任务 id") String id) {
+    public String scheduleDisable(@ToolParam( description = "定时任务 id") String id) {
         try {
             Task t = find(id);
             if (t == null) return ToolResponse.error("schedule_disable", "未找到定时任务: " + id);
@@ -153,7 +156,7 @@ public final class ScheduleTools {
     }
 
     @Tool(name = "schedule_delete", description = "删除一个定时任务（不可恢复）。")
-    public String scheduleDelete(@ToolParam(name = "id", description = "定时任务 id") String id) {
+    public String scheduleDelete(@ToolParam( description = "定时任务 id") String id) {
         try {
             Task t = find(id);
             if (t == null) return ToolResponse.error("schedule_delete", "未找到定时任务: " + id);
@@ -167,7 +170,7 @@ public final class ScheduleTools {
     }
 
     @Tool(name = "schedule_run_now", description = "立即手动执行一次某个定时任务（不影响其后续调度）。")
-    public String scheduleRunNow(@ToolParam(name = "id", description = "定时任务 id") String id) {
+    public String scheduleRunNow(@ToolParam( description = "定时任务 id") String id) {
         try {
             Task t = find(id);
             if (t == null) return ToolResponse.error("schedule_run_now", "未找到定时任务: " + id);

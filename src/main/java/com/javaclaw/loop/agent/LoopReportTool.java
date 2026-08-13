@@ -3,8 +3,8 @@ package com.javaclaw.loop.agent;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.loop.LoopConstants;
 import com.javaclaw.loop.model.LoopReport;
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,6 +27,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * 的是已关闸的旧轮实例，新一轮用的是全新实例，陈旧汇报无法被误当成新一轮的汇报消费
  * （假完成提议 / 幻影等待轮）。</p>
  */
+@com.javaclaw.framework.spi.ToolContract(group = "dynamic_task", permissions = {"tool.execute"}, idempotent = false)
 public final class LoopReportTool {
 
     private static final Logger log = LoggerFactory.getLogger(LoopReportTool.class);
@@ -36,6 +37,10 @@ public final class LoopReportTool {
 
     /** 接收闸：true 时接受写入。reset() 开闸、close() 关闸（超时/取消轮的失败出口）。 */
     private volatile boolean accepting;
+
+    public LoopReportTool() {
+        reset();
+    }
 
     /** 每轮开始前清空上一轮残留并开闸。 */
     public void reset() {
@@ -67,15 +72,15 @@ public final class LoopReportTool {
                     + "等待轮不计入停滞，但受循环总时长上限约束，不要用等待逃避干活。"
                     + "4. 调用本工具后即可结束本轮回复。")
     public String report(
-            @ToolParam(name = "done",
+            @ToolParam(
                     description = "目标是否已全部达成（会被独立核验，如实填写）") boolean done,
-            @ToolParam(name = "summary",
+            @ToolParam(
                     description = "本轮做了什么的一两句简述。中文。") String summary,
-            @ToolParam(name = "remaining", required = false,
+            @ToolParam( required = false,
                     description = "还差什么、下一轮打算怎么做；done=true 时可省略。中文。") String remaining,
-            @ToolParam(name = "next_delay_seconds", required = false,
+            @ToolParam( required = false,
                     description = "建议的下轮延迟秒数：0=立即；等外部条件时填正数") Integer nextDelaySeconds,
-            @ToolParam(name = "reason", required = false,
+            @ToolParam( required = false,
                     description = "next_delay_seconds>0 时必填：在等什么。中文。") String reason) {
 
         long delay = nextDelaySeconds == null ? 0L : nextDelaySeconds;

@@ -268,6 +268,37 @@ class SiteLoginFunctionalIT {
 
     @Test
     @Timeout(90)
+    void interactiveToolBundlesKeepThePageAndReadBareElementSelectors() {
+        PlaywrightBrowserManager browser = newBrowser("interactive-resume");
+        browser.activateScope(PlaywrightBrowserManager.conversationScopeId("resume-session"));
+        try {
+            PlaywrightBrowserTools firstTurn = browserTools(
+                    browser, ToolCallOrigin.INTERACTIVE);
+            String navigation = firstTurn.navigate(baseUrl + "/readable");
+            assertTrue(ToolResponse.isSuccess(navigation), navigation);
+            firstTurn.close();
+
+            assertTrue(browser.isRunning(),
+                    "结束一次推理工具束时不得关闭交互会话浏览器");
+            PlaywrightBrowserTools resumedTurn = browserTools(
+                    browser, ToolCallOrigin.INTERACTIVE);
+            String body = resumedTurn.getText("body");
+            String pre = resumedTurn.getText("pre");
+
+            assertTrue(ToolResponse.isSuccess(body), body);
+            assertTrue(body.contains("WEATHER_OK"), body);
+            assertTrue(ToolResponse.isSuccess(pre), pre);
+            assertTrue(pre.contains("WEATHER_OK"), pre);
+            assertTrue(resumedTurn.getUrl().contains("/readable"),
+                    "审批恢复后的工具束应继续使用原页面");
+            resumedTurn.close();
+        } finally {
+            browser.shutdown();
+        }
+    }
+
+    @Test
+    @Timeout(90)
     void storedCredentialsLoginAlsoRequiresAndPersistsSaveDecision() {
         SiteCredential credential = new SiteCredential();
         credential.setName("功能测试账号");
@@ -275,7 +306,7 @@ class SiteLoginFunctionalIT {
         credential.setLoginUrl(baseUrl + "/login");
         credential.setUsername("demo");
         credential.setPassword("secret");
-        siteCredentials.put(credential);
+        SiteCredential savedCredential = siteCredentials.put(credential);
 
         PlaywrightBrowserManager browser = newBrowser("stored-credentials");
         try {
@@ -293,9 +324,9 @@ class SiteLoginFunctionalIT {
             assertEquals(0, saveSession.loginPrompts.get(),
                     "账号密码自动登录不应走手动登录提示");
             assertEquals(1, saveSession.savePrompts.get());
-            assertTrue(credential.isHasSession());
+            assertTrue(siteCredentials.get(savedCredential.getId()).isHasSession());
             assertTrue(siteCredentials
-                    .readSession(credential.getId()).contains(STORAGE_KEY));
+                    .readSession(savedCredential.getId()).contains(STORAGE_KEY));
         } finally {
             browser.shutdown();
         }
@@ -311,7 +342,7 @@ class SiteLoginFunctionalIT {
         credential.setUsername("");
         credential.setPassword("");
         SiteCredentialManager manager = siteCredentials;
-        manager.put(credential);
+        credential = manager.put(credential);
         assertTrue(manager.tryWriteSession(
                 credential.getId(), "{\"cookies\":[],\"origins\":[]}"));
 
@@ -495,7 +526,7 @@ class SiteLoginFunctionalIT {
         credential.setUsername(username);
         credential.setPassword("");
         SiteCredentialManager manager = siteCredentials;
-        manager.put(credential);
+        credential = manager.put(credential);
         assertTrue(manager.tryWriteSession(credential.getId(), """
                 {
                   "cookies": [{
@@ -511,7 +542,7 @@ class SiteLoginFunctionalIT {
                   "origins": []
                 }
                 """.formatted(accountValue, TEST_HOST)));
-        return credential;
+        return manager.get(credential.getId());
     }
 
     private void removeTestSites() {
@@ -581,6 +612,14 @@ class SiteLoginFunctionalIT {
                         <body><h1 id="result">%s</h1></body>
                         </html>
                         """.formatted(account == null ? "ANONYMOUS" : account));
+            } else if ("/readable".equals(path)) {
+                sendHtml(exchange, 200, """
+                        <!doctype html>
+                        <html lang="zh-CN">
+                        <head><meta charset="utf-8"><title>可读取页面</title></head>
+                        <body><main>本地天气夹具</main><pre>WEATHER_OK</pre></body>
+                        </html>
+                        """);
             } else if ("/favicon.ico".equals(path)) {
                 exchange.sendResponseHeaders(204, -1);
             } else {

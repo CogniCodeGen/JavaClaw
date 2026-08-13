@@ -3,7 +3,9 @@ package com.javaclaw.workflow.runtime;
 import com.javaclaw.workflow.model.GraphDefinition;
 import com.javaclaw.workflow.model.GraphState;
 import com.javaclaw.workflow.model.RunStatus;
+import com.javaclaw.framework.spi.ExtensionLock;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -14,6 +16,7 @@ public final class GraphRun {
     private final int workflowVersion;
     private final String threadId;
     private final GraphDefinition definition;
+    private final List<ExtensionLock> extensionLocks;
     private final long createdAt;
     private GraphState state;
     private RunStatus status;
@@ -27,9 +30,15 @@ public final class GraphRun {
     private long updatedAt;
 
     public GraphRun(GraphDefinition definition, String threadId, GraphState initialState) {
+        this(definition, threadId, initialState, List.of());
+    }
+
+    public GraphRun(GraphDefinition definition, String threadId, GraphState initialState,
+                    List<ExtensionLock> extensionLocks) {
         this(UUID.randomUUID().toString(), definition.id(), definition.version(), threadId,
                 definition, initialState, RunStatus.CREATED, null, definition.startNodeId(),
-                0, 0, null, null, null, System.currentTimeMillis(), System.currentTimeMillis());
+                0, 0, null, null, null, extensionLocks,
+                System.currentTimeMillis(), System.currentTimeMillis());
     }
 
     public GraphRun(String id, String workflowId, int workflowVersion, String threadId,
@@ -37,11 +46,23 @@ public final class GraphRun {
                     String currentNodeId, String nextNodeId, int stepCount, int checkpointSeq,
                     String output, String error, NodeResult.Interrupt interrupt,
                     long createdAt, long updatedAt) {
+        this(id, workflowId, workflowVersion, threadId, definition, state, status,
+                currentNodeId, nextNodeId, stepCount, checkpointSeq, output, error, interrupt,
+                List.of(), createdAt, updatedAt);
+    }
+
+    public GraphRun(String id, String workflowId, int workflowVersion, String threadId,
+                    GraphDefinition definition, GraphState state, RunStatus status,
+                    String currentNodeId, String nextNodeId, int stepCount, int checkpointSeq,
+                    String output, String error, NodeResult.Interrupt interrupt,
+                    List<ExtensionLock> extensionLocks, long createdAt, long updatedAt) {
         this.id = Objects.requireNonNull(id);
         this.workflowId = Objects.requireNonNull(workflowId);
         this.workflowVersion = workflowVersion;
         this.threadId = Objects.requireNonNull(threadId);
         this.definition = Objects.requireNonNull(definition);
+        this.extensionLocks = List.copyOf(
+                extensionLocks == null ? List.of() : extensionLocks);
         this.state = state == null ? new GraphState() : state;
         this.status = status == null ? RunStatus.CREATED : status;
         this.currentNodeId = currentNodeId;
@@ -60,6 +81,7 @@ public final class GraphRun {
     public int workflowVersion() { return workflowVersion; }
     public String threadId() { return threadId; }
     public GraphDefinition definition() { return definition; }
+    public List<ExtensionLock> extensionLocks() { return extensionLocks; }
     public GraphState state() { return state; }
     public RunStatus status() { return status; }
     public String currentNodeId() { return currentNodeId; }

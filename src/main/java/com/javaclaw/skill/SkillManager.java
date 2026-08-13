@@ -357,7 +357,7 @@ public class SkillManager implements SkillPromptRenderer.Source {
     }
 
     /**
-     * 删除技能（使用 AgentScope SkillFileSystemHelper 递归删除整个目录）
+     * 删除技能并由 SkillFileRepository 递归清理目录。
      */
     public void deleteSkill(String id) {
         skills.removeIf(s -> s.getId().equals(id));

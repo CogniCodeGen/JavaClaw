@@ -77,7 +77,7 @@ class SystemGraphDefinitionTest {
                 "run", "thread", node, new com.javaclaw.workflow.model.GraphState(),
                 new com.javaclaw.workflow.runtime.CancellationToken(),
                 com.javaclaw.workflow.runtime.GraphListener.NOOP,
-                Map.of(com.javaclaw.workflow.service.SystemPipeline.class, pipeline));
+                com.javaclaw.workflow.runtime.WorkflowExecutionServices.system(null, pipeline));
 
         new SystemPipelineNodeExecutor().execute(context);
 

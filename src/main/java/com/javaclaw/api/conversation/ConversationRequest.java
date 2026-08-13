@@ -19,7 +19,8 @@ import java.util.List;
  * @param options     本轮行为选项
  */
 public record ConversationRequest(String userInput, List<File> attachments, String sessionId,
-                                  ConversationOptions options) {
+                                  ConversationOptions options,
+                                  List<ConversationMessage> priorMessages) {
 
     public ConversationRequest {
         if (userInput == null) userInput = "";
@@ -42,18 +43,26 @@ public record ConversationRequest(String userInput, List<File> attachments, Stri
         }
         if (sessionId != null && sessionId.isBlank()) sessionId = null;
         if (options == null) options = ConversationOptions.DEFAULT;
+        priorMessages = List.copyOf(priorMessages == null ? List.of() : priorMessages);
+    }
+
+    public ConversationRequest(
+            String userInput, List<File> attachments, String sessionId,
+            ConversationOptions options) {
+        this(userInput, attachments, sessionId, options, List.of());
     }
 
     public ConversationRequest(String userInput, List<File> attachments, String sessionId) {
-        this(userInput, attachments, sessionId, ConversationOptions.DEFAULT);
+        this(userInput, attachments, sessionId, ConversationOptions.DEFAULT, List.of());
     }
 
     public ConversationRequest(String userInput, List<File> attachments) {
-        this(userInput, attachments, null, ConversationOptions.DEFAULT);
+        this(userInput, attachments, null, ConversationOptions.DEFAULT, List.of());
     }
 
     /** 仅含文本的请求（常见简单场景） */
     public static ConversationRequest ofText(String userInput) {
-        return new ConversationRequest(userInput, List.of(), null, ConversationOptions.DEFAULT);
+        return new ConversationRequest(
+                userInput, List.of(), null, ConversationOptions.DEFAULT, List.of());
     }
 }

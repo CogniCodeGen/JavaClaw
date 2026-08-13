@@ -42,7 +42,7 @@ class GraphRuntimeTest {
         GraphRun run = manager.start(graph, "thread",
                 new GraphState().apply(StatePatch.builder()
                         .set("input", "workflow-default-output").build()),
-                finishLatch(done), Map.of());
+                finishLatch(done), com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY);
 
         assertTrue(done.await(3, TimeUnit.SECONDS));
         GraphRun saved = store.loadRun(run.id());
@@ -72,7 +72,7 @@ class GraphRuntimeTest {
                 edge("b", "yes", "end"), edge("c", "no", "end")), 20);
         CountDownLatch done = new CountDownLatch(1);
         GraphRun run = manager.start(graph, "thread", new GraphState().apply(
-                StatePatch.builder().set("score", 90).build()), finishLatch(done), Map.of());
+                StatePatch.builder().set("score", 90).build()), finishLatch(done), com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY);
 
         assertTrue(done.await(3, TimeUnit.SECONDS));
         assertEquals(RunStatus.COMPLETED, store.loadRun(run.id()).status());
@@ -96,7 +96,7 @@ class GraphRuntimeTest {
         GraphDefinition graph = graph(List.of(start, work, end),
                 List.of(edge("a", "start", "work"), edge("b", "work", "end")), 10);
         CountDownLatch done = new CountDownLatch(1);
-        GraphRun run = manager.start(graph, "thread", new GraphState(), finishLatch(done), Map.of());
+        GraphRun run = manager.start(graph, "thread", new GraphState(), finishLatch(done), com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY);
 
         assertTrue(done.await(3, TimeUnit.SECONDS));
         assertEquals(3, calls.get());
@@ -116,13 +116,13 @@ class GraphRuntimeTest {
                 List.of(edge("a", "start", "human"), edge("b", "human", "end")), 10);
 
         CountDownLatch waiting = new CountDownLatch(1);
-        GraphRun run = manager.start(graph, "thread", new GraphState(), finishLatch(waiting), Map.of());
+        GraphRun run = manager.start(graph, "thread", new GraphState(), finishLatch(waiting), com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY);
         assertTrue(waiting.await(3, TimeUnit.SECONDS));
         assertEquals(RunStatus.WAITING_INPUT, store.loadRun(run.id()).status());
         assertEquals("approval", store.loadRun(run.id()).interrupt().responseKey());
 
         CountDownLatch complete = new CountDownLatch(1);
-        manager.resume(run.id(), "允许", false, finishLatch(complete), Map.of());
+        manager.resume(run.id(), "允许", false, finishLatch(complete), com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY);
         assertTrue(complete.await(3, TimeUnit.SECONDS));
         assertEquals(RunStatus.COMPLETED, store.loadRun(run.id()).status());
         assertEquals("允许", store.loadRun(run.id()).state().get("approval").asText());
@@ -130,7 +130,7 @@ class GraphRuntimeTest {
 
         CountDownLatch waitingAgain = new CountDownLatch(1);
         GraphRun second = manager.start(graph, "thread",
-                store.loadRun(run.id()).state(), finishLatch(waitingAgain), Map.of());
+                store.loadRun(run.id()).state(), finishLatch(waitingAgain), com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY);
         assertTrue(waitingAgain.await(3, TimeUnit.SECONDS));
         assertEquals(RunStatus.WAITING_INPUT, store.loadRun(second.id()).status(),
                 "持久化的旧响应不能让新 run 跳过 HUMAN_INPUT");
@@ -151,7 +151,7 @@ class GraphRuntimeTest {
         GraphDefinition graph = graph(List.of(start, block, end),
                 List.of(edge("a", "start", "block"), edge("b", "block", "end")), 10);
         CountDownLatch done = new CountDownLatch(1);
-        GraphRun run = manager.start(graph, "thread", new GraphState(), finishLatch(done), Map.of());
+        GraphRun run = manager.start(graph, "thread", new GraphState(), finishLatch(done), com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY);
         assertTrue(entered.await(2, TimeUnit.SECONDS));
         assertTrue(manager.cancel(run.id()));
         assertTrue(done.await(3, TimeUnit.SECONDS));
@@ -177,14 +177,14 @@ class GraphRuntimeTest {
                         node("end", NodeType.END, "end")),
                 List.of(edge("a", "start", "work"), edge("b", "work", "end")), 10);
         GraphRun run = manager.start(graph, "thread", new GraphState(),
-                GraphListener.NOOP, Map.of());
+                GraphListener.NOOP, com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY);
         assertTrue(entered.await(2, TimeUnit.SECONDS));
 
         manager.close();
 
         assertEquals(RunStatus.CANCELLED, store.loadRun(run.id()).status());
         assertThrows(java.util.concurrent.RejectedExecutionException.class,
-                () -> manager.start(graph, "late", new GraphState(), GraphListener.NOOP, Map.of()));
+                () -> manager.start(graph, "late", new GraphState(), GraphListener.NOOP, com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY));
     }
 
     @Test
@@ -202,7 +202,7 @@ class GraphRuntimeTest {
                         node("end", NodeType.END, "end")),
                 List.of(edge("a", "start", "work"), edge("b", "work", "end")), 10);
         CountDownLatch done = new CountDownLatch(1);
-        GraphRun run = manager.start(graph, "thread", new GraphState(), finishLatch(done), Map.of());
+        GraphRun run = manager.start(graph, "thread", new GraphState(), finishLatch(done), com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY);
 
         assertTrue(entered.await(2, TimeUnit.SECONDS));
         assertTrue(manager.cancel(run.id()));
@@ -232,7 +232,7 @@ class GraphRuntimeTest {
                         new EdgeDefinition("error", "work", "recover",
                                 EdgeKind.ERROR, null, 0, false)), 10);
         CountDownLatch done = new CountDownLatch(1);
-        GraphRun run = manager.start(graph, "thread", new GraphState(), finishLatch(done), Map.of());
+        GraphRun run = manager.start(graph, "thread", new GraphState(), finishLatch(done), com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY);
 
         assertTrue(entered.await(2, TimeUnit.SECONDS));
         assertTrue(manager.cancel(run.id()));
@@ -260,7 +260,7 @@ class GraphRuntimeTest {
                 activeAtTerminal.set(manager.isActive(finished.runId()));
                 done.countDown();
             }
-        }, Map.of());
+        }, com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY);
 
         assertTrue(done.await(3, TimeUnit.SECONDS));
         assertEquals(Boolean.FALSE, activeAtTerminal.get());
@@ -294,7 +294,7 @@ class GraphRuntimeTest {
                         edge("normal-edge", "work", "normal"),
                         new EdgeDefinition("error", "work", "recover", EdgeKind.ERROR, null, 0, false)), 10);
         CountDownLatch done = new CountDownLatch(1);
-        GraphRun run = manager.start(graph, "thread", new GraphState(), finishLatch(done), Map.of());
+        GraphRun run = manager.start(graph, "thread", new GraphState(), finishLatch(done), com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY);
         assertTrue(done.await(3, TimeUnit.SECONDS));
         GraphRun saved = store.loadRun(run.id());
         assertEquals(RunStatus.COMPLETED, saved.status());
@@ -370,7 +370,7 @@ class GraphRuntimeTest {
         IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
                 () -> manager.start(invalid, "thread", new GraphState(), event -> {
                     fail("同步校验失败不应产生运行事件");
-                }, Map.of()));
+                }, com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY));
 
         assertTrue(failure.getMessage().contains("图定义无效"));
         assertTrue(store.runs.isEmpty());
@@ -389,7 +389,7 @@ class GraphRuntimeTest {
                         new EdgeDefinition("continue", "a", "b", EdgeKind.CONDITIONAL,
                                 null, 99, true), edge("ba", "b", "a")), 5);
         CountDownLatch done = new CountDownLatch(1);
-        GraphRun run = manager.start(graph, "thread", new GraphState(), finishLatch(done), Map.of());
+        GraphRun run = manager.start(graph, "thread", new GraphState(), finishLatch(done), com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY);
         assertTrue(done.await(3, TimeUnit.SECONDS));
         assertEquals(RunStatus.FAILED, store.loadRun(run.id()).status());
         assertTrue(store.loadRun(run.id()).error().contains("最大步数"));
@@ -405,7 +405,7 @@ class GraphRuntimeTest {
                         node("work", NodeType.SYSTEM, "gate"), node("end", NodeType.END, "end")),
                 List.of(edge("a", "start", "work"), edge("b", "work", "end")), 10);
         CountDownLatch paused = new CountDownLatch(1);
-        GraphRun run = manager.start(graph, "thread", new GraphState(), finishLatch(paused), Map.of());
+        GraphRun run = manager.start(graph, "thread", new GraphState(), finishLatch(paused), com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY);
         assertTrue(entered.await(2, TimeUnit.SECONDS));
         assertTrue(manager.pause(run.id()));
         release.countDown();
@@ -416,7 +416,7 @@ class GraphRuntimeTest {
         assertTrue(store.phases.contains(CheckpointPhase.PAUSE));
 
         CountDownLatch complete = new CountDownLatch(1);
-        manager.resume(run.id(), null, false, finishLatch(complete), Map.of());
+        manager.resume(run.id(), null, false, finishLatch(complete), com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY);
         assertTrue(complete.await(3, TimeUnit.SECONDS));
         assertEquals(RunStatus.COMPLETED, store.loadRun(run.id()).status());
         assertTrue(store.phases.contains(CheckpointPhase.TERMINAL));
@@ -444,11 +444,11 @@ class GraphRuntimeTest {
 
         CountDownLatch finished = new CountDownLatch(1);
         GraphRun activeRun = manager.start(graph, "shared-thread", new GraphState(),
-                finishLatch(finished), Map.of());
+                finishLatch(finished), com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY);
         assertTrue(entered.await(2, TimeUnit.SECONDS));
 
         IllegalStateException failure = assertThrows(IllegalStateException.class,
-                () -> manager.resume(paused.id(), null, false, GraphListener.NOOP, Map.of()));
+                () -> manager.resume(paused.id(), null, false, GraphListener.NOOP, com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY));
         assertTrue(failure.getMessage().contains("thread"), failure.getMessage());
         assertEquals(RunStatus.PAUSED, store.loadRun(paused.id()).status(),
                 "被拒绝的恢复不能改写原运行状态");
@@ -475,9 +475,9 @@ class GraphRuntimeTest {
                 1, 0, null, null, null, now, now);
         store.createRun(recovery);
         assertThrows(SecurityException.class,
-                () -> manager.resume(recovery.id(), null, false, GraphListener.NOOP, Map.of()));
+                () -> manager.resume(recovery.id(), null, false, GraphListener.NOOP, com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY));
         CountDownLatch done = new CountDownLatch(1);
-        manager.resume(recovery.id(), null, true, finishLatch(done), Map.of());
+        manager.resume(recovery.id(), null, true, finishLatch(done), com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY);
         assertTrue(done.await(3, TimeUnit.SECONDS));
         assertEquals(1, calls.get());
         assertEquals(RunStatus.COMPLETED, store.loadRun(recovery.id()).status());

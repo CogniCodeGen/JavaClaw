@@ -5,8 +5,8 @@ import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.util.SensitiveDataRedactor;
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,6 +32,7 @@ import java.util.List;
  *
  * @author JavaClaw
  */
+@com.javaclaw.framework.spi.ToolContract(group = "skill", permissions = {"tool.execute"}, idempotent = false)
 public final class SkillManageTools {
 
     private static final Logger log = LoggerFactory.getLogger(SkillManageTools.class);
@@ -85,11 +86,11 @@ public final class SkillManageTools {
                     "content 应按「适用场景 → 操作步骤 → 注意事项 → 验证方法」组织。" +
                     "若已有相近技能，优先用 skill_patch 修补而非新建。")
     public String createSkill(
-            @ToolParam(name = "name", description = "技能名称（简短、能表达用途）") String name,
-            @ToolParam(name = "description", description = "技能描述：一句话说明何时该用这个技能") String description,
-            @ToolParam(name = "content", description = "技能正文（Markdown）：按「适用场景→操作步骤→注意事项→验证方法」组织") String content,
-            @ToolParam(name = "category", description = "分类（如：编码/浏览器/系统/办公），可为空", required = false) String category,
-            @ToolParam(name = "tags", description = "标签，逗号分隔，可为空", required = false) String tags) {
+            @ToolParam( description = "技能名称（简短、能表达用途）") String name,
+            @ToolParam( description = "技能描述：一句话说明何时该用这个技能") String description,
+            @ToolParam( description = "技能正文（Markdown）：按「适用场景→操作步骤→注意事项→验证方法」组织") String content,
+            @ToolParam( description = "分类（如：编码/浏览器/系统/办公），可为空", required = false) String category,
+            @ToolParam( description = "标签，逗号分隔，可为空", required = false) String tags) {
         String mode = evolutionMode();
         if ("off".equals(mode)) {
             return refuseOff("skill_create");
@@ -147,11 +148,11 @@ public final class SkillManageTools {
                     + "技能只能保存可复用流程/方法，严禁写入密码、令牌、验证码、Cookie 或其他凭据；"
                     + "站点凭据应使用 site_credential_save 或 site_save_session。")
     public String createSkillDirect(
-            @ToolParam(name = "name", description = "技能名称（简短、能表达用途）") String name,
-            @ToolParam(name = "description", description = "一句话说明何时使用该技能") String description,
-            @ToolParam(name = "content", description = "技能正文（Markdown），不得包含任何凭据或秘密") String content,
-            @ToolParam(name = "category", description = "分类，可为空", required = false) String category,
-            @ToolParam(name = "tags", description = "标签，逗号分隔，可为空", required = false) String tags) {
+            @ToolParam( description = "技能名称（简短、能表达用途）") String name,
+            @ToolParam( description = "一句话说明何时使用该技能") String description,
+            @ToolParam( description = "技能正文（Markdown），不得包含任何凭据或秘密") String content,
+            @ToolParam( description = "分类，可为空", required = false) String category,
+            @ToolParam( description = "标签，逗号分隔，可为空", required = false) String tags) {
         String skillName = strip(name);
         if (skillName.isEmpty() || content == null || content.isBlank()) {
             return ToolResponse.error("skill_create_direct", "name 与 content 不能为空。");
@@ -187,10 +188,10 @@ public final class SkillManageTools {
                     "用于把新发现的注意事项、更优步骤合入技能。这是更新技能的推荐方式（token 高效）。" +
                     "old_string 必须与技能正文中的片段完全一致且唯一；不确定当前内容时先用 skill_read 查看。")
     public String patchSkill(
-            @ToolParam(name = "skill_name", description = "目标技能名称，须与「可用技能目录」中展示的名称一致") String skillName,
-            @ToolParam(name = "old_string", description = "要被替换的原文片段（须在正文中唯一）") String oldString,
-            @ToolParam(name = "new_string", description = "替换后的新内容") String newString,
-            @ToolParam(name = "reason", description = "本次修补的理由（一句话）", required = false) String reason) {
+            @ToolParam( description = "目标技能名称，须与「可用技能目录」中展示的名称一致") String skillName,
+            @ToolParam( description = "要被替换的原文片段（须在正文中唯一）") String oldString,
+            @ToolParam( description = "替换后的新内容") String newString,
+            @ToolParam( description = "本次修补的理由（一句话）", required = false) String reason) {
         String mode = evolutionMode();
         if ("off".equals(mode)) {
             return refuseOff("skill_patch");
@@ -234,9 +235,9 @@ public final class SkillManageTools {
             description = "整篇重写既有技能的正文（结构性变更时使用）。" +
                     "仅在 skill_patch 无法表达的大规模调整时使用；小修小补请用 skill_patch。")
     public String editSkill(
-            @ToolParam(name = "skill_name", description = "目标技能名称") String skillName,
-            @ToolParam(name = "new_content", description = "完整的新正文（Markdown），将整体替换原正文") String newContent,
-            @ToolParam(name = "reason", description = "重写理由（一句话）", required = false) String reason) {
+            @ToolParam( description = "目标技能名称") String skillName,
+            @ToolParam( description = "完整的新正文（Markdown），将整体替换原正文") String newContent,
+            @ToolParam( description = "重写理由（一句话）", required = false) String reason) {
         String mode = evolutionMode();
         if ("off".equals(mode)) {
             return refuseOff("skill_edit");
@@ -275,8 +276,8 @@ public final class SkillManageTools {
             description = "删除一个技能（整个技能目录，含版本历史，不可恢复）。" +
                     "仅在技能内容已完全过时或确认有害时使用；内容部分过时请优先用 skill_patch 修正。")
     public String deleteSkill(
-            @ToolParam(name = "skill_name", description = "要删除的技能名称") String skillName,
-            @ToolParam(name = "reason", description = "删除理由（一句话）", required = false) String reason) {
+            @ToolParam( description = "要删除的技能名称") String skillName,
+            @ToolParam( description = "删除理由（一句话）", required = false) String reason) {
         String mode = evolutionMode();
         if ("off".equals(mode)) {
             return refuseOff("skill_delete");
@@ -308,9 +309,9 @@ public final class SkillManageTools {
             description = "向技能目录写入支持文件（如 references/ 下的参考文档、assets/ 下的模板）。" +
                     "references/ 中的文本文件会自动随技能正文一起注入。rel_path 相对技能根目录，如 references/api-notes.md。")
     public String writeFile(
-            @ToolParam(name = "skill_name", description = "目标技能名称") String skillName,
-            @ToolParam(name = "rel_path", description = "相对技能根目录的文件路径，如 references/notes.md") String relPath,
-            @ToolParam(name = "file_content", description = "文件内容") String fileContent) {
+            @ToolParam( description = "目标技能名称") String skillName,
+            @ToolParam( description = "相对技能根目录的文件路径，如 references/notes.md") String relPath,
+            @ToolParam( description = "文件内容") String fileContent) {
         String mode = evolutionMode();
         if ("off".equals(mode)) {
             return refuseOff("skill_write_file");
@@ -348,8 +349,8 @@ public final class SkillManageTools {
     @Tool(name = "skill_remove_file",
             description = "删除技能目录中的支持文件（不可删除 SKILL.md 本体）。")
     public String removeFile(
-            @ToolParam(name = "skill_name", description = "目标技能名称") String skillName,
-            @ToolParam(name = "rel_path", description = "相对技能根目录的文件路径") String relPath) {
+            @ToolParam( description = "目标技能名称") String skillName,
+            @ToolParam( description = "相对技能根目录的文件路径") String relPath) {
         String mode = evolutionMode();
         if ("off".equals(mode)) {
             return refuseOff("skill_remove_file");

@@ -44,6 +44,7 @@ final class WorkflowLabels {
             case WAITING_INPUT -> "待输入";
             case PAUSED -> "已暂停";
             case RECOVERY_REQUIRED -> "待恢复";
+            case RECOVERY_BLOCKED_MISSING_EXTENSION -> "缺少扩展";
             case COMPLETED -> "已完成";
             case FAILED -> "失败";
             case CANCELLED -> "已取消";
@@ -53,7 +54,8 @@ final class WorkflowLabels {
     static String runStyle(RunStatus status) {
         return switch (status) {
             case RUNNING -> "jc-badge-running";
-            case WAITING_INPUT, RECOVERY_REQUIRED -> "jc-badge-amber";
+            case WAITING_INPUT, RECOVERY_REQUIRED, RECOVERY_BLOCKED_MISSING_EXTENSION ->
+                    "jc-badge-amber";
             case COMPLETED -> "jc-badge-ok";
             case FAILED -> "jc-badge-failed";
             default -> "jc-badge-stopped";

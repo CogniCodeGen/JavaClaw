@@ -37,6 +37,11 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public class McpClient {
 
+    interface TransportPolicy {
+        void requireStdioAllowed();
+        URI requireHttpEndpoint(String rawUrl);
+    }
+
     private static final Logger log = LoggerFactory.getLogger(McpClient.class);
 
     /** MCP 协议版本 */
@@ -66,6 +71,7 @@ public class McpClient {
     private final McpServerConfig config;
     private final TaskScope tasks;
     private final ObjectMapper objectMapper;
+    private final TransportPolicy transportPolicy;
     private final AtomicInteger requestIdCounter = new AtomicInteger(1);
     private final Map<Integer, CompletableFuture<JsonNode>> pendingRequests = new ConcurrentHashMap<>();
 
@@ -106,9 +112,18 @@ public class McpClient {
     private volatile String mcpSessionId;
 
     public McpClient(McpServerConfig config, TaskScope tasks, JsonCodec json) {
+        this(config, tasks, json, strictTransportPolicy());
+    }
+
+    McpClient(
+            McpServerConfig config,
+            TaskScope tasks,
+            JsonCodec json,
+            TransportPolicy transportPolicy) {
         this.config = Objects.requireNonNull(config, "config");
         this.tasks = Objects.requireNonNull(tasks, "tasks");
         this.objectMapper = Objects.requireNonNull(json, "json").mapper();
+        this.transportPolicy = Objects.requireNonNull(transportPolicy, "transportPolicy");
     }
 
     /**
@@ -132,15 +147,11 @@ public class McpClient {
     }
 
     private void doStart() throws Exception {
-        if (ProjectAccessPolicy.strictIsolationEnabled()) {
-            if (config == null || !"http".equals(config.getTransport())) {
-                throw new SecurityException("严格项目文件隔离已启用：本地 stdio MCP 已被系统禁用");
-            }
-            ProjectAccessPolicy.requireRemoteMcpEndpoint(config.getUrl());
-        }
         if ("http".equals(config.getTransport())) {
+            transportPolicy.requireHttpEndpoint(config.getUrl());
             doStartHttp();
         } else {
+            transportPolicy.requireStdioAllowed();
             doStartStdio();
         }
     }
@@ -156,7 +167,7 @@ public class McpClient {
             throw new IllegalStateException("HTTP MCP 配置缺少 url");
         }
         // URL 早期校验，给出友好错误而非 NPE
-        ProjectAccessPolicy.requireRemoteMcpEndpoint(config.getUrl());
+        transportPolicy.requireHttpEndpoint(config.getUrl());
 
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(REQUEST_TIMEOUT_SECONDS))
@@ -457,7 +468,7 @@ public class McpClient {
      * 构造一个 POST 请求，自动注入 Accept、自定义 headers 和 mcp-session-id
      */
     private HttpRequest buildHttpRequest(String body, boolean expectsResponse) {
-        URI endpoint = ProjectAccessPolicy.requireRemoteMcpEndpoint(config.getUrl());
+        URI endpoint = transportPolicy.requireHttpEndpoint(config.getUrl());
         HttpRequest.Builder b = HttpRequest.newBuilder()
                 .uri(endpoint)
                 .timeout(Duration.ofSeconds(REQUEST_TIMEOUT_SECONDS))
@@ -715,6 +726,23 @@ public class McpClient {
             }
             stderrTail.addLast(line);
         }
+    }
+
+    private static TransportPolicy strictTransportPolicy() {
+        return new TransportPolicy() {
+            @Override
+            public void requireStdioAllowed() {
+                if (ProjectAccessPolicy.strictIsolationEnabled()) {
+                    throw new SecurityException(
+                            "严格项目文件隔离已启用：本地 stdio MCP 已被系统禁用");
+                }
+            }
+
+            @Override
+            public URI requireHttpEndpoint(String rawUrl) {
+                return ProjectAccessPolicy.requireRemoteMcpEndpoint(rawUrl);
+            }
+        };
     }
 
     private static String summarizeError(Throwable e) {

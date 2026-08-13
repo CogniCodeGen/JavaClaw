@@ -11,8 +11,8 @@ import com.javaclaw.util.ProjectAccessPolicy;
 import com.microsoft.playwright.*;
 import com.microsoft.playwright.options.*;
 
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 /** Site navigation, account selection and authenticated-session tools. */
+@com.javaclaw.framework.spi.ToolContract(group = "web", permissions = {"tool.execute"}, idempotent = false)
 final class BrowserSiteTools {
 
     private static final Logger log = LoggerFactory.getLogger(BrowserSiteTools.class);
@@ -59,7 +60,6 @@ final class BrowserSiteTools {
                             + "若站点已保存会话会自动恢复；交互任务检测到登录页时，会打开可见浏览器让用户本人登录，并在成功后询问是否保存站点。")
     public String navigate(
             @ToolParam(
-                            name = "url",
                             description = "目标 URL 地址，例如 www.baidu.com 或 https://github.com")
                     String url) {
         gate.enter();
@@ -164,8 +164,8 @@ final class BrowserSiteTools {
                             + "account 可传账号配置名称、用户名、配置 ID，或 new 表示使用全新空白账号。"
                             + "切换会创建干净 BrowserContext，旧账号数据不会混入。")
     public String siteSelectAccount(
-            @ToolParam(name = "url", description = "目标站点 URL，例如 https://github.com") String url,
-            @ToolParam(name = "account", description = "账号配置名称、用户名、配置 ID；传 new/新账号 表示不恢复已保存登录")
+            @ToolParam( description = "目标站点 URL，例如 https://github.com") String url,
+            @ToolParam( description = "账号配置名称、用户名、配置 ID；传 new/新账号 表示不恢复已保存登录")
                     String account) {
         gate.enter();
         try {
@@ -269,14 +269,12 @@ final class BrowserSiteTools {
                             + "无需指定用户名/密码：工具内部根据当前页面 URL 匹配到站点条目后直接填入。"
                             + "支持可选选择器覆盖默认启发式（用户名/密码/提交按钮）。登录成功后会询问是否保存会话。")
     public String siteLoginNow(
-            @ToolParam(name = "username_selector", description = "用户名输入框的 CSS 选择器；留空则按常见命名启发式查找")
+            @ToolParam( description = "用户名输入框的 CSS 选择器；留空则按常见命名启发式查找")
                     String usernameSelector,
             @ToolParam(
-                            name = "password_selector",
                             description = "密码输入框的 CSS 选择器；留空则按 input[type=password] 自动定位")
                     String passwordSelector,
             @ToolParam(
-                            name = "submit_selector",
                             description = "提交按钮的 CSS 选择器；留空则尝试 button[type=submit] / 含登录文案的按钮")
                     String submitSelector) {
         gate.enter();
@@ -407,7 +405,7 @@ final class BrowserSiteTools {
                     "把已登记的密码填入指定输入框。用于 site_login_now 启发式无法覆盖的非常规登录表单。"
                             + "本工具不向 LLM 暴露密码，密码由站点管理器内部读取。")
     public String siteFillPassword(
-            @ToolParam(name = "target_selector", description = "目标密码输入框的 CSS 选择器或元素引用 @e1")
+            @ToolParam( description = "目标密码输入框的 CSS 选择器或元素引用 @e1")
                     String targetSelector) {
         gate.enter();
         try {

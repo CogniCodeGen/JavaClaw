@@ -8,8 +8,8 @@ import com.javaclaw.util.AtomicFileWriter;
 import com.javaclaw.util.PathGuard;
 import com.javaclaw.util.ProjectAccessPolicy;
 import com.javaclaw.util.SensitiveDataRedactor;
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -48,6 +48,7 @@ import java.util.stream.Stream;
  *
  * @author JavaClaw
  */
+@com.javaclaw.framework.spi.ToolContract(group = "coding", permissions = {"tool.execute"}, idempotent = false)
 public class CodeTools {
 
     private static final Logger log = LoggerFactory.getLogger(CodeTools.class);
@@ -89,7 +90,7 @@ public class CodeTools {
             description = "设定当前编程任务的项目根目录。设定后：相对路径以此为基准解析；所有 code_* "
                     + "文件操作被限制在此目录内（越界拒绝，防误改项目外文件）。传入绝对路径，须已存在且为目录。")
     public String setProjectRoot(
-            @ToolParam(name = "path", description = "项目根目录的绝对路径") String path) {
+            @ToolParam( description = "项目根目录的绝对路径") String path) {
         log.debug("工具调用: code_set_project_root('{}')", path);
         if (!ToolConfirmationManager.requestConfirmation(origin, "code_set_project_root",
                 "设置项目根目录: " + path)) {
@@ -119,13 +120,14 @@ public class CodeTools {
 
     // ==================== 读取（按行区间） ====================
 
+    @com.javaclaw.framework.spi.ToolContract(group = "coding", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "code_read",
             description = "读取文本文件，可指定行区间（from_line/to_line，1 起、含端点；不传则整读）。"
                     + "输出带行号，便于后续用 code_edit 定位。大文件请用行区间分段读，避免一次拉满上下文。")
     public String read(
-            @ToolParam(name = "path", description = "文件路径（相对路径以项目根解析）") String path,
-            @ToolParam(name = "from_line", description = "起始行号（1 起，含）；0 或不传表示从头") int fromLine,
-            @ToolParam(name = "to_line", description = "结束行号（含）；0 或不传表示到末尾") int toLine) {
+            @ToolParam( description = "文件路径（相对路径以项目根解析）") String path,
+            @ToolParam( description = "起始行号（1 起，含）；0 或不传表示从头") int fromLine,
+            @ToolParam( description = "结束行号（含）；0 或不传表示到末尾") int toLine) {
         log.debug("工具调用: code_read('{}', {}, {})", path, fromLine, toLine);
         try {
             Path file = resolve(path);
@@ -178,15 +180,16 @@ public class CodeTools {
 
     // ==================== 内容检索（grep） ====================
 
+    @com.javaclaw.framework.spi.ToolContract(group = "coding", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "code_grep",
             description = "在目录下按正则表达式检索文件内容，返回 文件:行号: 匹配行。跳过 .git/node_modules/target "
                     + "等构建与依赖目录及二进制/超大文件。用 glob 限定文件类型（如 **/*.java）。只读、可并行、免确认。")
     public String grep(
-            @ToolParam(name = "pattern", description = "Java 正则表达式（对每行匹配）") String pattern,
-            @ToolParam(name = "path", description = "检索起点目录（相对以项目根解析）；不传则用项目根或当前目录") String path,
-            @ToolParam(name = "glob", description = "文件名 glob 过滤（如 **/*.java、*.py）；不传则全部文本文件") String glob,
-            @ToolParam(name = "ignore_case", description = "是否忽略大小写") boolean ignoreCase,
-            @ToolParam(name = "max_results", description = "最多返回匹配行数（默认 100，上限 500）") int maxResults) {
+            @ToolParam( description = "Java 正则表达式（对每行匹配）") String pattern,
+            @ToolParam( description = "检索起点目录（相对以项目根解析）；不传则用项目根或当前目录") String path,
+            @ToolParam( description = "文件名 glob 过滤（如 **/*.java、*.py）；不传则全部文本文件") String glob,
+            @ToolParam( description = "是否忽略大小写") boolean ignoreCase,
+            @ToolParam( description = "最多返回匹配行数（默认 100，上限 500）") int maxResults) {
         log.debug("工具调用: code_grep('{}', path='{}', glob='{}')", pattern, path, glob);
         try {
             if (pattern == null || pattern.isBlank()) {
@@ -264,12 +267,13 @@ public class CodeTools {
 
     // ==================== 文件名检索（glob） ====================
 
+    @com.javaclaw.framework.spi.ToolContract(group = "coding", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "code_glob",
             description = "按 glob 模式在目录下查找文件（如 **/*.java、src/**/*Test.java）。跳过构建/依赖目录。"
                     + "返回相对路径列表（按路径排序）。只读、免确认。")
     public String glob(
-            @ToolParam(name = "pattern", description = "glob 模式（如 **/*.java）") String pattern,
-            @ToolParam(name = "base", description = "查找起点目录（相对以项目根解析）；不传则用项目根或当前目录") String base) {
+            @ToolParam( description = "glob 模式（如 **/*.java）") String pattern,
+            @ToolParam( description = "查找起点目录（相对以项目根解析）；不传则用项目根或当前目录") String base) {
         log.debug("工具调用: code_glob('{}', base='{}')", pattern, base);
         try {
             if (pattern == null || pattern.isBlank()) {
@@ -323,9 +327,9 @@ public class CodeTools {
             description = "精确编辑文件：把 old_string 唯一一次替换为 new_string（不整文件重写）。old_string 须在文件中"
                     + "恰好出现一次——0 次报「未找到」，多次报「不唯一，请给更长片段」。先用 code_read 看清上下文再改。")
     public String edit(
-            @ToolParam(name = "path", description = "文件路径（相对以项目根解析）") String path,
-            @ToolParam(name = "old_string", description = "要被替换的原文片段（须在文件中唯一）") String oldString,
-            @ToolParam(name = "new_string", description = "替换后的新文本") String newString) {
+            @ToolParam( description = "文件路径（相对以项目根解析）") String path,
+            @ToolParam( description = "要被替换的原文片段（须在文件中唯一）") String oldString,
+            @ToolParam( description = "替换后的新文本") String newString) {
         log.debug("工具调用: code_edit('{}')", path);
         if (!ToolConfirmationManager.requestConfirmation(origin, "code_edit", "编辑文件: " + path)) {
             return ToolResponse.error("code_edit", "用户取消了操作");
@@ -373,9 +377,9 @@ public class CodeTools {
     @Tool(name = "code_insert",
             description = "在文件指定行后插入文本（line=0 表示插到文件开头）。用于新增代码块而不改动既有行。")
     public String insert(
-            @ToolParam(name = "path", description = "文件路径（相对以项目根解析）") String path,
-            @ToolParam(name = "line", description = "在此行号之后插入（1 起；0 表示插到开头）") int line,
-            @ToolParam(name = "text", description = "要插入的文本（可含多行）") String text) {
+            @ToolParam( description = "文件路径（相对以项目根解析）") String path,
+            @ToolParam( description = "在此行号之后插入（1 起；0 表示插到开头）") int line,
+            @ToolParam( description = "要插入的文本（可含多行）") String text) {
         log.debug("工具调用: code_insert('{}', line={})", path, line);
         if (!ToolConfirmationManager.requestConfirmation(origin, "code_insert",
                 "在 " + path + " 第 " + line + " 行后插入")) {
@@ -437,8 +441,8 @@ public class CodeTools {
                     + "自动探测（pom.xml→mvn、build.gradle→gradle、package.json→npm、go.mod→go、Cargo.toml→cargo…）。"
                     + "仅允许构建/测试工具（mvn/gradle/npm/go/cargo/make…），慢构建可调 timeout_seconds（默认 600、上限 1800）。")
     public String build(
-            @ToolParam(name = "command", description = "构建命令（如 'mvn -q compile'）；留空则自动探测") String command,
-            @ToolParam(name = "timeout_seconds", description = "超时秒数（默认 600，上限 1800）") int timeoutSeconds) {
+            @ToolParam( description = "构建命令（如 'mvn -q compile'）；留空则自动探测") String command,
+            @ToolParam( description = "超时秒数（默认 600，上限 1800）") int timeoutSeconds) {
         return runBuildLike("code_build", command, timeoutSeconds, false);
     }
 
@@ -447,8 +451,8 @@ public class CodeTools {
                     + "自动探测（pom.xml→mvn test、package.json→npm test、go.mod→go test、Cargo.toml→cargo test…）。"
                     + "仅允许构建/测试工具，慢测试可调 timeout_seconds（默认 600、上限 1800）。")
     public String test(
-            @ToolParam(name = "command", description = "测试命令（如 'mvn -q test'）；留空则自动探测") String command,
-            @ToolParam(name = "timeout_seconds", description = "超时秒数（默认 600，上限 1800）") int timeoutSeconds) {
+            @ToolParam( description = "测试命令（如 'mvn -q test'）；留空则自动探测") String command,
+            @ToolParam( description = "超时秒数（默认 600，上限 1800）") int timeoutSeconds) {
         return runBuildLike("code_test", command, timeoutSeconds, true);
     }
 
@@ -585,17 +589,19 @@ public class CodeTools {
 
     private static final int GIT_TIMEOUT_SECONDS = 60;
 
+    @com.javaclaw.framework.spi.ToolContract(group = "coding", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "git_status",
             description = "显示 git 工作区状态（当前分支 + 变更文件，--short --branch）。在项目根/当前目录执行。只读、免确认。")
     public String gitStatus() {
         return runGit("git_status", List.of("git", "status", "--short", "--branch"));
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "coding", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "git_diff",
             description = "显示 git 差异。staged=true 看已暂存(--staged)，否则看工作区未暂存改动；可用 path 限定文件/目录。只读。")
     public String gitDiff(
-            @ToolParam(name = "path", description = "限定的文件/目录（相对仓库根）；不传则全部") String path,
-            @ToolParam(name = "staged", description = "是否看已暂存区差异（false 看工作区）") boolean staged) {
+            @ToolParam( description = "限定的文件/目录（相对仓库根）；不传则全部") String path,
+            @ToolParam( description = "是否看已暂存区差异（false 看工作区）") boolean staged) {
         List<String> argv = new ArrayList<>(List.of("git", "diff"));
         if (staged) argv.add("--staged");
         if (path != null && !path.isBlank()) {
@@ -605,11 +611,12 @@ public class CodeTools {
         return runGit("git_diff", argv);
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "coding", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "git_log",
             description = "显示提交历史（--oneline）。max_count 限定条数（默认 20，上限 200），path 限定某文件的历史。只读。")
     public String gitLog(
-            @ToolParam(name = "max_count", description = "返回的提交条数（默认 20，上限 200）") int maxCount,
-            @ToolParam(name = "path", description = "限定某文件/目录的历史；不传则全部") String path) {
+            @ToolParam( description = "返回的提交条数（默认 20，上限 200）") int maxCount,
+            @ToolParam( description = "限定某文件/目录的历史；不传则全部") String path) {
         int n = maxCount <= 0 ? 20 : Math.min(maxCount, 200);
         List<String> argv = new ArrayList<>(List.of("git", "log", "--oneline", "-n", String.valueOf(n)));
         if (path != null && !path.isBlank()) {
@@ -622,8 +629,8 @@ public class CodeTools {
     @Tool(name = "git_commit",
             description = "提交变更。stage_all=true 先 git add -A 暂存全部改动再提交；false 则只提交已暂存内容。需用户确认。")
     public String gitCommit(
-            @ToolParam(name = "message", description = "提交信息") String message,
-            @ToolParam(name = "stage_all", description = "是否先暂存全部改动（git add -A）再提交") boolean stageAll) {
+            @ToolParam( description = "提交信息") String message,
+            @ToolParam( description = "是否先暂存全部改动（git add -A）再提交") boolean stageAll) {
         log.debug("工具调用: git_commit(stageAll={})", stageAll);
         if (ProjectAccessPolicy.strictIsolationEnabled()) {
             return ToolResponse.error("git_commit",

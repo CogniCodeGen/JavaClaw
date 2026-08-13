@@ -7,8 +7,8 @@ import com.javaclaw.util.ProjectAccessPolicy;
 import com.microsoft.playwright.*;
 import com.microsoft.playwright.options.*;
 
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 /** Navigation history, element interaction, waiting and pointer tools. */
+@com.javaclaw.framework.spi.ToolContract(group = "web", permissions = {"tool.execute"}, idempotent = false)
 final class BrowserPageTools {
 
     private static final Logger log = LoggerFactory.getLogger(BrowserPageTools.class);
@@ -119,7 +120,7 @@ final class BrowserPageTools {
             name = "web_click",
             description = "点击页面元素。通过引用（如 @e1）、CSS选择器或文本内容定位元素。" + "引用来自 web_snapshot 返回的元素列表。")
     public String click(
-            @ToolParam(name = "target", description = "目标元素：引用（@e1）、CSS选择器（#id、.class）或文本内容")
+            @ToolParam( description = "目标元素：引用（@e1）、CSS选择器（#id、.class）或文本内容")
                     String target) {
         gate.enter();
         try {
@@ -151,7 +152,7 @@ final class BrowserPageTools {
 
     @Tool(name = "web_dblclick", description = "双击页面元素。")
     public String doubleClick(
-            @ToolParam(name = "target", description = "目标元素：引用（@e1）、CSS选择器或文本内容") String target) {
+            @ToolParam( description = "目标元素：引用（@e1）、CSS选择器或文本内容") String target) {
         gate.enter();
         try {
             log.debug("工具调用: web_dblclick({})", target);
@@ -183,8 +184,8 @@ final class BrowserPageTools {
             name = "web_fill",
             description = "在输入框中填充文本（会先清空原有内容）。触发 input 和 change 事件。" + "适用于文本框、搜索框、密码框等。")
     public String fill(
-            @ToolParam(name = "target", description = "目标输入框：引用（@e1）、CSS选择器或标签文本") String target,
-            @ToolParam(name = "text", description = "要填充的文本内容") String text) {
+            @ToolParam( description = "目标输入框：引用（@e1）、CSS选择器或标签文本") String target,
+            @ToolParam( description = "要填充的文本内容") String text) {
         gate.enter();
         try {
             log.debug("工具调用: web_fill({}, '{}')", target, text);
@@ -214,9 +215,9 @@ final class BrowserPageTools {
             name = "web_type",
             description = "在当前焦点元素或指定元素中逐字输入文本（模拟键盘输入，不清空原有内容）。" + "适用于需要逐字触发事件的场景（如搜索自动补全）。")
     public String type(
-            @ToolParam(name = "target", description = "目标元素：引用（@e1）、CSS选择器或文本。传空字符串则在当前焦点元素输入")
+            @ToolParam( description = "目标元素：引用（@e1）、CSS选择器或文本。传空字符串则在当前焦点元素输入")
                     String target,
-            @ToolParam(name = "text", description = "要输入的文本") String text) {
+            @ToolParam( description = "要输入的文本") String text) {
         gate.enter();
         try {
             log.debug("工具调用: web_type({}, '{}')", target, text);
@@ -253,7 +254,7 @@ final class BrowserPageTools {
 
     @Tool(name = "web_hover", description = "将鼠标悬停在指定元素上。可用于触发悬停菜单、提示框等。")
     public String hover(
-            @ToolParam(name = "target", description = "目标元素：引用（@e1）、CSS选择器或文本") String target) {
+            @ToolParam( description = "目标元素：引用（@e1）、CSS选择器或文本") String target) {
         gate.enter();
         try {
             log.debug("工具调用: web_hover({})", target);
@@ -281,8 +282,8 @@ final class BrowserPageTools {
 
     @Tool(name = "web_select", description = "在下拉选择框中选择指定选项。可通过值、标签文本或索引选择。")
     public String select(
-            @ToolParam(name = "target", description = "目标下拉框：引用（@e1）、CSS选择器") String target,
-            @ToolParam(name = "value", description = "要选择的选项值或标签文本") String value) {
+            @ToolParam( description = "目标下拉框：引用（@e1）、CSS选择器") String target,
+            @ToolParam( description = "要选择的选项值或标签文本") String value) {
         gate.enter();
         try {
             log.debug("工具调用: web_select({}, '{}')", target, value);
@@ -319,8 +320,8 @@ final class BrowserPageTools {
 
     @Tool(name = "web_check", description = "勾选或取消勾选复选框/开关。")
     public String check(
-            @ToolParam(name = "target", description = "目标复选框：引用（@e1）、CSS选择器") String target,
-            @ToolParam(name = "checked", description = "是否勾选，true 为勾选，false 为取消") boolean checked) {
+            @ToolParam( description = "目标复选框：引用（@e1）、CSS选择器") String target,
+            @ToolParam( description = "是否勾选，true 为勾选，false 为取消") boolean checked) {
         gate.enter();
         try {
             log.debug("工具调用: web_check({}, {})", target, checked);
@@ -349,7 +350,7 @@ final class BrowserPageTools {
 
     @Tool(name = "web_focus", description = "将焦点移到指定元素上。")
     public String focus(
-            @ToolParam(name = "target", description = "目标元素：引用（@e1）、CSS选择器") String target) {
+            @ToolParam( description = "目标元素：引用（@e1）、CSS选择器") String target) {
         gate.enter();
         try {
             log.debug("工具调用: web_focus({})", target);
@@ -377,8 +378,8 @@ final class BrowserPageTools {
 
     @Tool(name = "web_upload", description = "上传文件到文件输入框。")
     public String upload(
-            @ToolParam(name = "target", description = "文件输入框：引用（@e1）、CSS选择器") String target,
-            @ToolParam(name = "file_path", description = "要上传的文件路径") String filePath) {
+            @ToolParam( description = "文件输入框：引用（@e1）、CSS选择器") String target,
+            @ToolParam( description = "要上传的文件路径") String filePath) {
         gate.enter();
         try {
             log.debug("工具调用: web_upload({}, {})", target, filePath);
@@ -410,8 +411,8 @@ final class BrowserPageTools {
 
     @Tool(name = "web_drag", description = "将元素拖拽到目标位置。")
     public String drag(
-            @ToolParam(name = "source", description = "源元素：引用（@e1）、CSS选择器") String source,
-            @ToolParam(name = "target_element", description = "目标元素：引用（@e2）、CSS选择器")
+            @ToolParam( description = "源元素：引用（@e1）、CSS选择器") String source,
+            @ToolParam( description = "目标元素：引用（@e2）、CSS选择器")
                     String targetElement) {
         gate.enter();
         try {
@@ -451,7 +452,6 @@ final class BrowserPageTools {
                             + "和组合键（Control+C、Meta+A、Shift+Tab 等）。")
     public String pressKey(
             @ToolParam(
-                            name = "key",
                             description = "按键名称，如 Enter、Tab、Escape、ArrowDown、Control+A、Meta+C")
                     String key) {
         gate.enter();
@@ -483,10 +483,10 @@ final class BrowserPageTools {
             description =
                     "滚动页面。direction 为 up/down/left/right，amount 为像素数（默认500）。" + "也可指定目标元素，在该元素内滚动。")
     public String scroll(
-            @ToolParam(name = "direction", description = "滚动方向：up、down、left、right")
+            @ToolParam( description = "滚动方向：up、down、left、right")
                     String direction,
-            @ToolParam(name = "amount", description = "滚动像素数，默认 500") int amount,
-            @ToolParam(name = "target", description = "可选的目标元素（在该元素内滚动），传空字符串则滚动整个页面")
+            @ToolParam( description = "滚动像素数，默认 500") int amount,
+            @ToolParam( description = "可选的目标元素（在该元素内滚动），传空字符串则滚动整个页面")
                     String target) {
         gate.enter();
         try {
@@ -539,7 +539,7 @@ final class BrowserPageTools {
 
     @Tool(name = "web_scroll_to_element", description = "滚动页面直到指定元素出现在可见区域内。")
     public String scrollToElement(
-            @ToolParam(name = "target", description = "目标元素：引用（@e1）、CSS选择器") String target) {
+            @ToolParam( description = "目标元素：引用（@e1）、CSS选择器") String target) {
         gate.enter();
         try {
             log.debug("工具调用: web_scroll_to_element({})", target);
@@ -568,8 +568,8 @@ final class BrowserPageTools {
 
     @Tool(name = "web_wait_for_element", description = "等待指定元素出现在页面上。超时时间默认 10 秒。")
     public String waitForElement(
-            @ToolParam(name = "selector", description = "CSS 选择器") String selector,
-            @ToolParam(name = "timeout_seconds", description = "超时秒数，默认 10") int timeoutSeconds) {
+            @ToolParam( description = "CSS 选择器") String selector,
+            @ToolParam( description = "超时秒数，默认 10") int timeoutSeconds) {
         gate.enter();
         try {
             log.debug("工具调用: web_wait_for_element({}, {}s)", selector, timeoutSeconds);
@@ -598,8 +598,8 @@ final class BrowserPageTools {
 
     @Tool(name = "web_wait_for_text", description = "等待页面上出现指定文本。超时时间默认 10 秒。")
     public String waitForText(
-            @ToolParam(name = "text", description = "要等待的文本内容") String text,
-            @ToolParam(name = "timeout_seconds", description = "超时秒数，默认 10") int timeoutSeconds) {
+            @ToolParam( description = "要等待的文本内容") String text,
+            @ToolParam( description = "超时秒数，默认 10") int timeoutSeconds) {
         gate.enter();
         try {
             log.debug("工具调用: web_wait_for_text('{}', {}s)", text, timeoutSeconds);
@@ -629,8 +629,8 @@ final class BrowserPageTools {
 
     @Tool(name = "web_wait_for_url", description = "等待页面 URL 匹配指定模式。超时时间默认 10 秒。")
     public String waitForUrl(
-            @ToolParam(name = "url_pattern", description = "URL 匹配模式（支持通配符 *）") String urlPattern,
-            @ToolParam(name = "timeout_seconds", description = "超时秒数，默认 10") int timeoutSeconds) {
+            @ToolParam( description = "URL 匹配模式（支持通配符 *）") String urlPattern,
+            @ToolParam( description = "超时秒数，默认 10") int timeoutSeconds) {
         gate.enter();
         try {
             log.debug("工具调用: web_wait_for_url('{}', {}s)", urlPattern, timeoutSeconds);
@@ -662,7 +662,7 @@ final class BrowserPageTools {
             description =
                     "等待页面加载到指定状态。" + "状态可选：load（完全加载）、domcontentloaded（DOM解析完成）、networkidle（网络空闲）。")
     public String waitForLoad(
-            @ToolParam(name = "state", description = "加载状态：load、domcontentloaded、networkidle")
+            @ToolParam( description = "加载状态：load、domcontentloaded、networkidle")
                     String state) {
         gate.enter();
         try {
@@ -693,8 +693,8 @@ final class BrowserPageTools {
 
     @Tool(name = "web_mouse_move", description = "将鼠标移动到页面上的指定坐标位置。")
     public String mouseMove(
-            @ToolParam(name = "x", description = "X 坐标") int x,
-            @ToolParam(name = "y", description = "Y 坐标") int y) {
+            @ToolParam( description = "X 坐标") int x,
+            @ToolParam( description = "Y 坐标") int y) {
         gate.enter();
         try {
             log.debug("工具调用: web_mouse_move({}, {})", x, y);
@@ -720,8 +720,8 @@ final class BrowserPageTools {
 
     @Tool(name = "web_mouse_click_at", description = "在页面上指定坐标位置点击鼠标。")
     public String mouseClickAt(
-            @ToolParam(name = "x", description = "X 坐标") int x,
-            @ToolParam(name = "y", description = "Y 坐标") int y) {
+            @ToolParam( description = "X 坐标") int x,
+            @ToolParam( description = "Y 坐标") int y) {
         gate.enter();
         try {
             log.debug("工具调用: web_mouse_click_at({}, {})", x, y);
@@ -755,8 +755,8 @@ final class BrowserPageTools {
                             + "accept 为 true 表示接受（确定），false 表示拒绝（取消）。"
                             + "对于 prompt 对话框可以提供输入文本。使用前需要先调用此方法注册处理器，然后触发对话框。")
     public String dialogHandle(
-            @ToolParam(name = "accept", description = "true 接受/确定，false 拒绝/取消") boolean accept,
-            @ToolParam(name = "prompt_text", description = "prompt 对话框的输入文本，非 prompt 对话框传空字符串")
+            @ToolParam( description = "true 接受/确定，false 拒绝/取消") boolean accept,
+            @ToolParam( description = "prompt 对话框的输入文本，非 prompt 对话框传空字符串")
                     String promptText) {
         gate.enter();
         try {
@@ -810,8 +810,8 @@ final class BrowserPageTools {
 
     @Tool(name = "web_set_viewport", description = "设置浏览器视口大小。可用于测试响应式布局或模拟移动设备。")
     public String setViewport(
-            @ToolParam(name = "width", description = "视口宽度（像素）") int width,
-            @ToolParam(name = "height", description = "视口高度（像素）") int height) {
+            @ToolParam( description = "视口宽度（像素）") int width,
+            @ToolParam( description = "视口高度（像素）") int height) {
         gate.enter();
         try {
             log.debug("工具调用: web_set_viewport({}, {})", width, height);

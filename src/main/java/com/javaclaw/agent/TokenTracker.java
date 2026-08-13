@@ -2,9 +2,6 @@ package com.javaclaw.agent;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.javaclaw.config.AgentConfig;
-import io.agentscope.core.message.Msg;
-import io.agentscope.core.model.ChatResponse;
-import io.agentscope.core.model.ChatUsage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
@@ -115,8 +112,8 @@ public class TokenTracker {
     /**
      * 累加一次来自模型 API 返回的真实 token 用量
      *
-     * <p>在流式过程中，编排器和子智能体每次模型调用都会在 {@code Msg.getChatUsage()} 携带
-     * 一段 usage；本方法逐段累加，流结束时由 {@link #recordUsage()} 一次性落盘。</p>
+     * <p>框架事件适配器可逐段累加 Spring AI 返回的 usage；流结束时由
+     * {@link #recordUsage()} 一次性落盘。</p>
      */
     public void addStreamingUsage(long inputTokens, long outputTokens) {
         if (inputTokens <= 0 && outputTokens <= 0) return;
@@ -195,9 +192,7 @@ public class TokenTracker {
     /**
      * 记录一次非流式模型调用的真实 token 用量（通用入口）
      *
-     * <p>适用于所有"非聊天主流程"的单次模型调用：GoalManager / ToolRouter /
-     * VisionPreprocessor / EvaluationPipeline / PlanEvolver / AgentPromptOptimizer
-     * 以及任务模式下 ChallengerAgent 等。把真实 token 直接累加到会话计数与当日
+     * <p>适用于所有经统一 RunUsageLedger 观测到的模型调用。把真实 token 直接累加到会话计数与当日
      * 统计中，并立即落盘，使状态栏和月度成本能反映所有模型消耗。</p>
      *
      * <p>{@code source} 仅用于诊断日志归因，不影响落盘结构。</p>
@@ -214,7 +209,7 @@ public class TokenTracker {
     }
 
     /**
-     * 记录一次传输层观测到的 prompt/缓存命中 token（由 {@code UsageMeteredTransport} 回调）。
+     * 记录一次 Spring AI Observation 观测到的 prompt/缓存命中 token。
      *
      * <p>与 {@link #recordModelUsage} 是两套口径：本方法覆盖<b>所有</b>经共享传输层的模型调用
      * （聊天、SDD 各阶段、路由器、评估器……），用于计算当日缓存命中率
@@ -240,50 +235,6 @@ public class TokenTracker {
         DailyUsage d = dailyUsage.get(LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE));
         if (d == null || d.meteredInput <= 0) return -1;
         return (double) d.cachedInput / d.meteredInput;
-    }
-
-    /**
-     * 从一次 {@code model.stream(...).collectList().block()} 收集到的响应列表中提取真实
-     * token 用量。
-     *
-     * <p>大多数 OpenAI 兼容流式 API 只在最终 chunk 携带 usage，AgentScope 把它逐次
-     * 透传到 {@link ChatResponse}。本方法把所有非空 usage 累加，等价于"取最后一次
-     * 非零 usage"——在常见提供商下两者一致。</p>
-     *
-     * @return {@code long[]{inputTokens, outputTokens}}，无 usage 时返回 {@code {0,0}}
-     */
-    public static long[] extractUsage(List<ChatResponse> responses) {
-        long in = 0, out = 0;
-        if (responses != null) {
-            for (ChatResponse resp : responses) {
-                if (resp == null) continue;
-                ChatUsage u = resp.getUsage();
-                if (u == null) continue;
-                in += Math.max(0, u.getInputTokens());
-                out += Math.max(0, u.getOutputTokens());
-            }
-        }
-        return new long[]{in, out};
-    }
-
-    /**
-     * 从单条 {@link Msg} 中提取 ChatUsage 并记录（用于 {@code agent.call()} 类一次性
-     * 阻塞调用，返回的 Msg 携带累计 ChatUsage 的场景）。
-     *
-     * @return 是否记录了非零用量
-     */
-    public boolean recordMsgUsage(String source, Msg msg) {
-        if (msg == null) return false;
-        try {
-            ChatUsage u = msg.getChatUsage();
-            if (u != null && (u.getInputTokens() > 0 || u.getOutputTokens() > 0)) {
-                recordModelUsage(source, u.getInputTokens(), u.getOutputTokens());
-                return true;
-            }
-        } catch (Throwable t) {
-            log.debug("读取 Msg.getChatUsage 失败，忽略", t);
-        }
-        return false;
     }
 
     /**

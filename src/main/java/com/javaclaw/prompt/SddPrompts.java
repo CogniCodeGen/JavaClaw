@@ -5,7 +5,7 @@ package com.javaclaw.prompt;
  *
  * <p>统一收口在 {@code com.javaclaw.prompt} 包下，便于集中优化。本类仅承载提示词正文；
  * 阶段智能体的模型选型、超时、token 统计、技能注入等编排逻辑仍留在
- * {@link com.javaclaw.task.sdd.agent.AgentScopeSddAgents} 等实现类中。</p>
+ * {@link com.javaclaw.task.sdd.agent.FrameworkSddAgents} 等实现类中。</p>
  */
 public final class SddPrompts {
 

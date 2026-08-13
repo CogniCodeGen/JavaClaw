@@ -99,7 +99,7 @@ public class ToolConfirmationManager {
      *
      * <p>定时执行由 {@code ScheduleManager} 的<b>单线程串行执行器</b>驱动——同一时刻至多一个定时任务
      * 在跑。放行按<b>令牌实例身份（{@code ==}）</b>匹配而非 taskId 值匹配：令牌由
-     * {@link #beginAuthorizedScheduledRun} 逐 run 全新构造并交给 {@code ScheduledTaskAgent}
+     * {@link #beginAuthorizedScheduledRun} 逐 run 全新构造并交给统一 Schedule Run 适配器
      * 装配本次 run 的全部工具，归属是装配期事实。由 {@link #beginAuthorizedScheduledRun}/
      * {@link #endScheduledRun} 在每次定时执行前后成对设置/清除。</p>
      *
@@ -150,7 +150,7 @@ public class ToolConfirmationManager {
      * 已授权时，其间携带<b>该令牌实例</b>的确认自动放行。必须与 {@link #endScheduledRun()}
      * 成对（在定时执行的 finally 里清除），且只由串行定时执行器调用。
      *
-     * <p>返回的令牌须交给 {@code ScheduledTaskAgent} 装配本次 run 的全部工具——授权窗与工具
+     * <p>返回的令牌须随本次 Schedule Run 提交——授权窗与工具
      * 令牌由同一次构造共享同一实例，实例身份匹配才成立；僵尸线程携带的旧实例（即便同任务
      * 同 taskId）永远对不上。</p>
      *
@@ -189,8 +189,14 @@ public class ToolConfirmationManager {
      * @return true=放行，false=拒绝
      */
     public static boolean requestConfirmation(ToolCallOrigin origin, String toolName, String description) {
-        return confirmInternal(origin == null ? ToolCallOrigin.UNKNOWN : origin, toolName, description, false)
-                .isAllow();
+        return requestConfirmationOutcome(origin, toolName, description).isAllow();
+    }
+
+    /** Runs the normal confirmation policy while retaining whether a human explicitly approved. */
+    public static ConfirmOutcome requestConfirmationOutcome(
+            ToolCallOrigin origin, String toolName, String description) {
+        return confirmInternal(origin == null ? ToolCallOrigin.UNKNOWN : origin,
+                toolName, description, false);
     }
 
     /**
@@ -302,6 +308,13 @@ public class ToolConfirmationManager {
      */
     private static ConfirmOutcome confirmInternal(ToolCallOrigin origin, String toolName,
                                                   String description, boolean humanGateInAuto) {
+        var frameworkGrant = com.javaclaw.framework.api.ToolApprovalScope.current()
+                .filter(grant -> grant.approved()
+                        && grant.tool().equals(toolName));
+        if (frameworkGrant.isPresent()) {
+            return frameworkGrant.get().humanApproved()
+                    ? ConfirmOutcome.ALLOWED_HUMAN : ConfirmOutcome.ALLOWED_AUTO;
+        }
         if (!enabled) return ConfirmOutcome.ALLOWED_AUTO;
         ToolRiskLevel level = ToolRiskRegistry.levelOf(toolName);
         if (level == null) return ConfirmOutcome.ALLOWED_AUTO;

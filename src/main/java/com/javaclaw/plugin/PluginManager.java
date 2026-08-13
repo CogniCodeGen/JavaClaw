@@ -1,6 +1,5 @@
 package com.javaclaw.plugin;
 
-import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.api.interaction.ConfirmKind;
 import com.javaclaw.api.interaction.ConfirmRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
@@ -58,6 +57,8 @@ public final class PluginManager implements PluginToolGateway {
     /** 启用态 + 授权持久化（工作区维度） */
     private final PluginStore store;
     private final ManagedTaskExecutor taskExecutor;
+    private final com.javaclaw.framework.api.AgentClient agentClient;
+    private final java.util.concurrent.Executor agentCallbacksExecutor;
     private final ToolInvocationPipeline toolPipeline;
     private final PluginStorageFactory storageFactory;
     private final UserInteractionPort interactionPort;
@@ -65,7 +66,7 @@ public final class PluginManager implements PluginToolGateway {
     private final ClassLoader appClassLoader;
     private final PluginDescriptorLoader descriptors;
 
-    private volatile AgentRuntime agentRuntime;
+    private volatile PluginWorkspaceServices workspaceServices;
     private ScheduleApplicationService schedules;
     private TaskHandle<Void> autoEnableTask;
 
@@ -81,6 +82,8 @@ public final class PluginManager implements PluginToolGateway {
     public PluginManager(
             PluginStore store,
             ManagedTaskExecutor taskExecutor,
+            com.javaclaw.framework.api.AgentClient agentClient,
+            java.util.concurrent.Executor agentCallbacksExecutor,
             ToolInvocationPipeline toolPipeline,
             PluginStorageFactory storageFactory,
             UserInteractionPort interactionPort,
@@ -88,14 +91,16 @@ public final class PluginManager implements PluginToolGateway {
             com.fasterxml.jackson.databind.ObjectMapper json) {
         this(ProjectAccessPolicy.requireProjectFilePath(
                         ProjectAccessPolicy.projectRoot().resolve("plugins")),
-                store, taskExecutor, toolPipeline, storageFactory, interactionPort, credentials,
-                json);
+                store, taskExecutor, agentClient, agentCallbacksExecutor, toolPipeline,
+                storageFactory, interactionPort, credentials, json);
     }
 
     PluginManager(
             Path pluginsDir,
             PluginStore store,
             ManagedTaskExecutor taskExecutor,
+            com.javaclaw.framework.api.AgentClient agentClient,
+            java.util.concurrent.Executor agentCallbacksExecutor,
             ToolInvocationPipeline toolPipeline,
             PluginStorageFactory storageFactory,
             UserInteractionPort interactionPort,
@@ -105,6 +110,9 @@ public final class PluginManager implements PluginToolGateway {
                 .toAbsolutePath().normalize();
         this.store = Objects.requireNonNull(store, "store");
         this.taskExecutor = Objects.requireNonNull(taskExecutor, "taskExecutor");
+        this.agentClient = Objects.requireNonNull(agentClient, "agentClient");
+        this.agentCallbacksExecutor = Objects.requireNonNull(
+                agentCallbacksExecutor, "agentCallbacksExecutor");
         this.toolPipeline = Objects.requireNonNull(toolPipeline, "toolPipeline");
         this.storageFactory = Objects.requireNonNull(storageFactory, "storageFactory");
         this.interactionPort = Objects.requireNonNull(interactionPort, "interactionPort");
@@ -120,14 +128,13 @@ public final class PluginManager implements PluginToolGateway {
      *
      * @param runtime         智能体基础设施容器，供各能力使用
      */
-    public synchronized void init(
-            AgentRuntime runtime, ScheduleApplicationService schedules) {
+    public synchronized void init(PluginWorkspaceServices services) {
         lifecycleGeneration++;
         cancelAutoEnable();
-        this.agentRuntime = Objects.requireNonNull(runtime, "runtime");
-        this.schedules = Objects.requireNonNull(schedules, "schedules");
+        this.workspaceServices = Objects.requireNonNull(services, "services");
+        this.schedules = services.schedules();
         ensureDir();
-        store.bind(runtime.getWorkspace().workspaceId());
+        store.bind(services.workspace().workspaceId());
         discover();
         log.info("插件系统已初始化：目录 {}，发现 {} 个插件", pluginsDir.toAbsolutePath(), plugins.size());
         startWatcher();
@@ -139,29 +146,28 @@ public final class PluginManager implements PluginToolGateway {
      *
      * @param newRuntime 新工作区的智能体基础设施容器
      */
-    public synchronized void reload(
-            AgentRuntime newRuntime, ScheduleApplicationService newSchedules) {
+    public synchronized void reload(PluginWorkspaceServices services) {
         log.info("插件系统随工作区切换重载...");
         lifecycleGeneration++;
         cancelAutoEnable();
         unloadAll();
-        this.agentRuntime = newRuntime;
-        this.schedules = java.util.Objects.requireNonNull(newSchedules, "newSchedules");
-        store.bind(newRuntime.getWorkspace().workspaceId());
+        this.workspaceServices = java.util.Objects.requireNonNull(services, "services");
+        this.schedules = services.schedules();
+        store.bind(services.workspace().workspaceId());
         discover();
         log.info("插件系统重载完成，发现 {} 个插件", plugins.size());
         autoEnablePersistedAsync();
     }
 
     /**
-     * 运行时替换前卸载所有插件能力句柄，防止插件线程在旧 AgentRuntime 关闭后继续调用它。
-     * watcher 保持运行，随后 {@link #reload(AgentRuntime)} 会重新发现并恢复启用项。
+     * 工作区替换前卸载所有插件能力句柄，防止插件线程继续调用已关闭的工作区服务。
+     * watcher 保持运行，随后 {@link #reload(PluginWorkspaceServices)} 会重新发现并恢复启用项。
      */
     public synchronized void suspendForRuntimeTransition() {
         lifecycleGeneration++;
         cancelAutoEnable();
         unloadAll();
-        agentRuntime = null;
+        workspaceServices = null;
         schedules = null;
         log.info("插件系统已暂停，等待新运行时接管");
     }
@@ -176,7 +182,7 @@ public final class PluginManager implements PluginToolGateway {
             watcher = null;
         }
         unloadAll();
-        agentRuntime = null;
+        workspaceServices = null;
         schedules = null;
         changeListener = null;
         log.info("插件系统已关闭");
@@ -554,8 +560,8 @@ public final class PluginManager implements PluginToolGateway {
                 return;
             }
             plugins.put(d.id(), new PluginRuntime(
-                    d, jar, agentRuntime, appClassLoader,
-                    agentRuntime.getWorkspace().workspaceId(), taskExecutor, schedules,
+                    d, jar, workspaceServices, agentClient, agentCallbacksExecutor, appClassLoader,
+                    workspaceServices.workspace().workspaceId(), taskExecutor, schedules,
                     storageFactory));
             log.info("发现插件：{}（{}），目录 {}", d.name(), d.id(), pluginDir.getFileName());
         } catch (Exception e) {

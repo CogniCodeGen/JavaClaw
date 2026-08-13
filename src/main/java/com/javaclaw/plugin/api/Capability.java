@@ -11,7 +11,7 @@ package com.javaclaw.plugin.api;
  */
 public enum Capability {
 
-    /** AI 流式对话：经宿主隔离编排器（ScheduledTaskAgent）发起一轮对话并取回结果 */
+    /** AI 流式对话：经宿主 AgentClient 发起受限 Run 并取回结果 */
     CHAT("AI 对话"),
 
     /** 创建定时任务：向宿主 ScheduleManager 注册带插件标签的定时任务（P2） */

@@ -388,7 +388,7 @@ public final class AgentConfig {
     }
 
     /**
-     * 单次模型请求总超时（秒）。覆盖 AgentScope MODEL_DEFAULTS 的 5 分钟默认。
+     * 单次模型请求总超时（秒）。统一约束 Spring AI Provider 请求。
      * 取值 ≤0 时回退为默认值（不支持"无限"，避免请求永不失败）。
      */
     public int getModelRequestTimeoutSeconds() {

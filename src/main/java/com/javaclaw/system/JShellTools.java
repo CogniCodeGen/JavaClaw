@@ -7,8 +7,8 @@ import com.javaclaw.config.AgentConfig;
 import com.javaclaw.skill.Skill;
 import com.javaclaw.skill.SkillManager;
 import com.javaclaw.util.ProjectAccessPolicy;
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,6 +36,7 @@ import java.util.Locale;
  *
  * @author JavaClaw
  */
+@com.javaclaw.framework.spi.ToolContract(group = "coding", permissions = {"tool.execute"}, idempotent = false)
 public final class JShellTools {
 
     private static final Logger log = LoggerFactory.getLogger(JShellTools.class);
@@ -68,8 +69,8 @@ public final class JShellTools {
                     "代码在独立 JVM 进程中执行，每次调用相互独立（变量不跨调用保留）。" +
                     "适合：快速计算、验证 Java API 行为、数据转换等无需建工程的 Java 任务。")
     public String execJava(
-            @ToolParam(name = "code", description = "要求值的 Java 代码（可多段：声明/表达式/打印混排）") String code,
-            @ToolParam(name = "timeout_seconds",
+            @ToolParam( description = "要求值的 Java 代码（可多段：声明/表达式/打印混排）") String code,
+            @ToolParam(
                     description = "可选：执行超时秒数（默认读配置 jshell.exec.timeout.seconds=60，上限 600）",
                     required = false) Integer timeoutSeconds) {
         if (code == null || code.isBlank()) {
@@ -102,11 +103,11 @@ public final class JShellTools {
                     "SKILL_DIR（String，技能目录绝对路径，可用于访问技能的 assets/ 等文件）、" +
                     "ARGS（String[]，调用方传入的参数数组）。每次调用独立求值，不跨调用保留状态。")
     public String runSkillScript(
-            @ToolParam(name = "skill_name", description = "技能名称，须与「可用技能目录」中展示的名称一致") String skillName,
-            @ToolParam(name = "script", description = "脚本文件名（scripts/ 下，如 process.jsh）") String script,
-            @ToolParam(name = "args", description = "可选：传给脚本的参数，逗号分隔（脚本内经 ARGS 数组读取）",
+            @ToolParam( description = "技能名称，须与「可用技能目录」中展示的名称一致") String skillName,
+            @ToolParam( description = "脚本文件名（scripts/ 下，如 process.jsh）") String script,
+            @ToolParam( description = "可选：传给脚本的参数，逗号分隔（脚本内经 ARGS 数组读取）",
                     required = false) String args,
-            @ToolParam(name = "timeout_seconds",
+            @ToolParam(
                     description = "可选：执行超时秒数（默认读配置 jshell.exec.timeout.seconds=60，上限 600）",
                     required = false) Integer timeoutSeconds) {
         if (ProjectAccessPolicy.strictIsolationEnabled()) {

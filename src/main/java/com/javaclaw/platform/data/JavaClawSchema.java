@@ -262,7 +262,7 @@ final class JavaClawSchema {
                         id VARCHAR(128) NOT NULL,
                         request_json CLOB,
                         created_at BIGINT NOT NULL,
-                        status VARCHAR(32) NOT NULL,
+                        status VARCHAR(64) NOT NULL,
                         resolved_at BIGINT NOT NULL,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         PRIMARY KEY (workspace_id, id)
@@ -373,11 +373,14 @@ final class JavaClawSchema {
                         output_text CLOB,
                         error_text CLOB,
                         interrupt_json CLOB,
+                        extension_locks_json CLOB,
                         created_at BIGINT NOT NULL,
                         updated_at BIGINT NOT NULL,
                         PRIMARY KEY (workspace_id, id)
                     )
                     """);
+            st.execute("ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS extension_locks_json CLOB");
+            st.execute("ALTER TABLE workflow_runs ALTER COLUMN status VARCHAR(64) NOT NULL");
             st.execute("CREATE INDEX IF NOT EXISTS idx_workflow_runs_thread "
                     + "ON workflow_runs(workspace_id, workflow_id, thread_id, updated_at)");
             st.execute("CREATE INDEX IF NOT EXISTS idx_workflow_runs_status "
@@ -395,6 +398,149 @@ final class JavaClawSchema {
                         PRIMARY KEY (workspace_id, run_id, seq)
                     )
                     """);
+
+            // Unified Agent Framework definitions and immutable published versions.
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS agent_definitions (
+                        workspace_id VARCHAR(128) NOT NULL,
+                        id VARCHAR(256) NOT NULL,
+                        name VARCHAR(512) NOT NULL,
+                        builtin BOOLEAN NOT NULL DEFAULT FALSE,
+                        archived BOOLEAN NOT NULL DEFAULT FALSE,
+                        draft_json CLOB,
+                        draft_revision BIGINT NOT NULL DEFAULT 0,
+                        published_version BIGINT NOT NULL DEFAULT 0,
+                        created_at BIGINT NOT NULL,
+                        updated_at BIGINT NOT NULL,
+                        PRIMARY KEY (workspace_id, id)
+                    )
+                    """);
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS agent_definition_versions (
+                        workspace_id VARCHAR(128) NOT NULL,
+                        definition_id VARCHAR(256) NOT NULL,
+                        version BIGINT NOT NULL,
+                        definition_json CLOB NOT NULL,
+                        checksum VARCHAR(64) NOT NULL,
+                        published_at BIGINT NOT NULL,
+                        PRIMARY KEY (workspace_id, definition_id, version)
+                    )
+                    """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_agent_definition_versions_latest "
+                    + "ON agent_definition_versions(workspace_id, definition_id, version DESC)");
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS run_profiles (
+                        workspace_id VARCHAR(128) NOT NULL,
+                        id VARCHAR(256) NOT NULL,
+                        name VARCHAR(512) NOT NULL,
+                        builtin BOOLEAN NOT NULL DEFAULT FALSE,
+                        archived BOOLEAN NOT NULL DEFAULT FALSE,
+                        draft_json CLOB,
+                        draft_revision BIGINT NOT NULL DEFAULT 0,
+                        published_version BIGINT NOT NULL DEFAULT 0,
+                        created_at BIGINT NOT NULL,
+                        updated_at BIGINT NOT NULL,
+                        PRIMARY KEY (workspace_id, id)
+                    )
+                    """);
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS run_profile_versions (
+                        workspace_id VARCHAR(128) NOT NULL,
+                        profile_id VARCHAR(256) NOT NULL,
+                        version BIGINT NOT NULL,
+                        profile_json CLOB NOT NULL,
+                        checksum VARCHAR(64) NOT NULL,
+                        published_at BIGINT NOT NULL,
+                        PRIMARY KEY (workspace_id, profile_id, version)
+                    )
+                    """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_run_profile_versions_latest "
+                    + "ON run_profile_versions(workspace_id, profile_id, version DESC)");
+
+            // Exact plans are retained for paused/non-terminal run recovery.
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS compiled_execution_plans (
+                        plan_id VARCHAR(128) PRIMARY KEY,
+                        extension_generation BIGINT NOT NULL,
+                        plan_json CLOB NOT NULL,
+                        checksum VARCHAR(64) NOT NULL,
+                        created_at BIGINT NOT NULL
+                    )
+                    """);
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS agent_runs (
+                        run_id VARCHAR(128) PRIMARY KEY,
+                        workspace_id VARCHAR(128) NOT NULL,
+                        user_id VARCHAR(256) NOT NULL,
+                        session_id VARCHAR(256) NOT NULL,
+                        idempotency_key VARCHAR(512),
+                        request_json CLOB NOT NULL,
+                        execution_plan_id VARCHAR(128) NOT NULL,
+                        state VARCHAR(64) NOT NULL,
+                        last_sequence BIGINT NOT NULL,
+                        output_json CLOB,
+                        error_text CLOB,
+                        version BIGINT NOT NULL,
+                        created_at BIGINT NOT NULL,
+                        updated_at BIGINT NOT NULL
+                    )
+                    """);
+            st.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_runs_idempotency "
+                    + "ON agent_runs(workspace_id, idempotency_key)");
+            st.execute("CREATE INDEX IF NOT EXISTS idx_agent_runs_state "
+                    + "ON agent_runs(workspace_id, state, updated_at)");
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS agent_run_events (
+                        run_id VARCHAR(128) NOT NULL,
+                        event_sequence BIGINT NOT NULL,
+                        timestamp_ms BIGINT NOT NULL,
+                        type VARCHAR(256) NOT NULL,
+                        schema_version INT NOT NULL,
+                        producer VARCHAR(256) NOT NULL,
+                        correlation_id VARCHAR(256),
+                        causation_id VARCHAR(256),
+                        payload_json CLOB NOT NULL,
+                        PRIMARY KEY (run_id, event_sequence)
+                    )
+                    """);
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS agent_run_outbox (
+                        run_id VARCHAR(128) NOT NULL,
+                        event_sequence BIGINT NOT NULL,
+                        event_type VARCHAR(256) NOT NULL,
+                        envelope_json CLOB NOT NULL,
+                        created_at BIGINT NOT NULL,
+                        published_at BIGINT,
+                        PRIMARY KEY (run_id, event_sequence)
+                    )
+                    """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_agent_run_outbox_pending "
+                    + "ON agent_run_outbox(published_at, created_at)");
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS agent_extension_state (
+                        run_id VARCHAR(128) NOT NULL,
+                        extension_id VARCHAR(256) NOT NULL,
+                        state_key VARCHAR(256) NOT NULL,
+                        schema_version INT NOT NULL,
+                        state_json CLOB NOT NULL,
+                        updated_at BIGINT NOT NULL,
+                        PRIMARY KEY (run_id, extension_id, state_key)
+                    )
+                    """);
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS extension_artifact_cache (
+                        extension_id VARCHAR(256) NOT NULL,
+                        extension_version VARCHAR(64) NOT NULL,
+                        artifact_sha256 VARCHAR(64) NOT NULL,
+                        artifact_path CLOB NOT NULL,
+                        authorized BOOLEAN NOT NULL,
+                        enabled_for_new_runs BOOLEAN NOT NULL DEFAULT TRUE,
+                        cached_at BIGINT NOT NULL,
+                        PRIMARY KEY (extension_id, extension_version, artifact_sha256)
+                    )
+                    """);
+            st.execute("ALTER TABLE extension_artifact_cache ADD COLUMN IF NOT EXISTS "
+                    + "enabled_for_new_runs BOOLEAN NOT NULL DEFAULT TRUE");
         }
     }
 }

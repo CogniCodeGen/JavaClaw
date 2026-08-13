@@ -39,8 +39,8 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
             PreparedStatement ps = c.prepareStatement("""
                      INSERT INTO workflow_runs(workspace_id,id,workflow_id,workflow_version,thread_id,
                          definition_json,state_json,status,current_node_id,next_node_id,step_count,
-                         output_text,error_text,interrupt_json,created_at,updated_at)
-                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                         output_text,error_text,interrupt_json,extension_locks_json,created_at,updated_at)
+                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                      """)) {
             bindRun(ps, run);
             if (ps.executeUpdate() != 1) {
@@ -63,8 +63,8 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
                 try (PreparedStatement ps = c.prepareStatement("""
                         INSERT INTO workflow_runs(workspace_id,id,workflow_id,workflow_version,thread_id,
                             definition_json,state_json,status,current_node_id,next_node_id,step_count,
-                            output_text,error_text,interrupt_json,created_at,updated_at)
-                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                            output_text,error_text,interrupt_json,extension_locks_json,created_at,updated_at)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                         """)) {
                     bindRun(ps, run);
                     if (ps.executeUpdate() != 1) {
@@ -207,6 +207,24 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
     }
 
     @Override
+    public List<GraphRun> listNonTerminalRuns() {
+        List<GraphRun> out = new ArrayList<>();
+        try (Connection c = database.open(); PreparedStatement ps = c.prepareStatement("""
+                SELECT *, 0 checkpoint_seq FROM workflow_runs
+                WHERE workspace_id=? AND status NOT IN ('COMPLETED','FAILED','CANCELLED')
+                ORDER BY updated_at DESC
+                """)) {
+            ps.setString(1, workspaceId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) out.add(readRun(rs));
+            }
+            return List.copyOf(out);
+        } catch (Exception e) {
+            throw new IllegalStateException("列出非终态工作流运行失败", e);
+        }
+    }
+
+    @Override
     public GraphRun findWaitingRun(String workflowId, String threadId) {
         try (Connection c = database.open();
              PreparedStatement ps = c.prepareStatement("""
@@ -227,7 +245,7 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
              PreparedStatement ps = c.prepareStatement("""
                      SELECT *, 0 checkpoint_seq FROM workflow_runs
                      WHERE workspace_id=? AND workflow_id=? AND thread_id=?
-                       AND status IN ('PAUSED','RECOVERY_REQUIRED')
+                       AND status IN ('PAUSED','RECOVERY_REQUIRED','RECOVERY_BLOCKED_MISSING_EXTENSION')
                      ORDER BY updated_at DESC LIMIT 1
                      """)) {
             ps.setString(1, workspaceId); ps.setString(2, workflowId); ps.setString(3, threadId);
@@ -289,7 +307,8 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
         ps.setString(10, run.nextNodeId()); ps.setInt(11, run.stepCount());
         ps.setString(12, run.output()); ps.setString(13, run.error());
         ps.setString(14, run.interrupt() == null ? null : json.writeValueAsString(run.interrupt()));
-        ps.setLong(15, run.createdAt()); ps.setLong(16, run.updatedAt());
+        ps.setString(15, json.writeValueAsString(run.extensionLocks()));
+        ps.setLong(16, run.createdAt()); ps.setLong(17, run.updatedAt());
     }
 
     private void updateRunOnConnection(Connection c, GraphRun run) throws Exception {
@@ -347,6 +366,12 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
         String interruptJson = rs.getString("interrupt_json");
         NodeResult.Interrupt interrupt = interruptJson == null ? null
                 : json.readValue(interruptJson, NodeResult.Interrupt.class);
+        String locksJson = rs.getString("extension_locks_json");
+        java.util.List<com.javaclaw.framework.spi.ExtensionLock> extensionLocks =
+                locksJson == null || locksJson.isBlank() ? java.util.List.of()
+                        : json.readValue(locksJson, json.getTypeFactory().constructCollectionType(
+                                java.util.List.class,
+                                com.javaclaw.framework.spi.ExtensionLock.class));
         return new GraphRun(rs.getString("id"), rs.getString("workflow_id"),
                 rs.getInt("workflow_version"), rs.getString("thread_id"),
                 json.readValue(rs.getString("definition_json"), GraphDefinition.class),
@@ -354,6 +379,6 @@ public final class H2GraphCheckpointStore implements GraphCheckpointStore {
                 RunStatus.valueOf(rs.getString("status")),
                 rs.getString("current_node_id"), rs.getString("next_node_id"), rs.getInt("step_count"),
                 rs.getInt("checkpoint_seq"), rs.getString("output_text"), rs.getString("error_text"),
-                interrupt, rs.getLong("created_at"), rs.getLong("updated_at"));
+                interrupt, extensionLocks, rs.getLong("created_at"), rs.getLong("updated_at"));
     }
 }

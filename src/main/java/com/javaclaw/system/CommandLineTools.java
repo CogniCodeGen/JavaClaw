@@ -8,8 +8,8 @@ import com.javaclaw.platform.process.ProcessRequest;
 import com.javaclaw.platform.process.ProcessResult;
 import com.javaclaw.platform.process.ProcessRunner;
 import com.javaclaw.util.ProjectAccessPolicy;
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,6 +35,7 @@ import java.util.concurrent.ThreadLocalRandom;
  *
  * @author JavaClaw
  */
+@com.javaclaw.framework.spi.ToolContract(group = "command", permissions = {"tool.execute"}, idempotent = false)
 public class CommandLineTools {
 
     private static final Logger log = LoggerFactory.getLogger(CommandLineTools.class);
@@ -98,10 +99,10 @@ public class CommandLineTools {
                     "进程查看（ps/top）、网络诊断（ping/curl）、脚本执行（python/node）等。" +
                     "慢构建/测试可用 timeout_seconds 放宽超时（默认 60 秒，上限 600 秒）。")
     public String executeCommand(
-            @ToolParam(name = "command", description = "要执行的 Shell 命令") String command,
-            @ToolParam(name = "work_dir",
+            @ToolParam( description = "要执行的 Shell 命令") String command,
+            @ToolParam(
                     description = "命令执行的工作目录（绝对路径），留空则使用用户主目录") String workDir,
-            @ToolParam(name = "timeout_seconds",
+            @ToolParam(
                     description = "执行超时秒数（默认 60，上限 600）；0 或不传用默认。慢构建/测试请调大") int timeoutSeconds) {
 
         log.info("命令执行工具: {} @ {} (timeout={}s)", command, workDir, timeoutSeconds);
@@ -131,6 +132,7 @@ public class CommandLineTools {
         return doExecute(trimmedCmd, effectiveWorkDir, timeout);
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "command", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "cmd_whitelist_list",
             description = "列出命令白名单中所有已批准的高风险命令条目。")
     public String listWhitelist() {
@@ -156,11 +158,11 @@ public class CommandLineTools {
             description = "手动将命令前缀添加到白名单。白名单命令在指定目录下执行时无需用户确认。" +
                     "通常由系统在用户首次确认后自动添加，也可手动管理。")
     public String addToWhitelist(
-            @ToolParam(name = "command_prefix",
+            @ToolParam(
                     description = "命令前缀，如 'git push'、'npm run build'、'sudo systemctl'") String commandPrefix,
-            @ToolParam(name = "work_dir",
+            @ToolParam(
                     description = "白名单规则生效的工作目录（绝对路径），留空表示所有目录") String workDir,
-            @ToolParam(name = "reason", description = "添加理由") String reason) {
+            @ToolParam( description = "添加理由") String reason) {
 
         if (commandPrefix == null || commandPrefix.isBlank()) {
             return ToolResponse.error("cmd_whitelist_add", "命令前缀不能为空");
@@ -203,7 +205,7 @@ public class CommandLineTools {
     @Tool(name = "cmd_whitelist_remove",
             description = "从白名单移除指定条目（使用 cmd_whitelist_list 获取条目 ID）。")
     public String removeFromWhitelist(
-            @ToolParam(name = "entry_id", description = "白名单条目 ID") String entryId) {
+            @ToolParam( description = "白名单条目 ID") String entryId) {
 
         if (entryId == null || entryId.isBlank()) {
             return ToolResponse.error("cmd_whitelist_remove", "条目 ID 不能为空");
@@ -228,7 +230,7 @@ public class CommandLineTools {
                     " 个会话；空闲 30 分钟自动回收。" +
                     "注意：底层没有 PTY，强 TTY 依赖的程序（vim/top/less 等）可能无法正常工作。")
     public String openSession(
-            @ToolParam(name = "work_dir",
+            @ToolParam(
                     description = "会话初始工作目录（绝对路径），留空则使用用户主目录") String workDir) {
 
         if (ProjectAccessPolicy.strictIsolationEnabled()) {
@@ -259,9 +261,9 @@ public class CommandLineTools {
                     "安全策略与 cmd_execute 完全一致：禁止文件操作命令、高风险命令需用户确认/白名单。" +
                     "适用于需要拿到确定结果的场景；交互式程序的多轮对话请用 cmd_session_input。")
     public String execInSession(
-            @ToolParam(name = "session_id", description = "由 cmd_session_open 返回的会话 ID") String sessionId,
-            @ToolParam(name = "command", description = "要执行的 Shell 命令") String command,
-            @ToolParam(name = "timeout_seconds",
+            @ToolParam( description = "由 cmd_session_open 返回的会话 ID") String sessionId,
+            @ToolParam( description = "要执行的 Shell 命令") String command,
+            @ToolParam(
                     description = "命令最长等待时间（秒），默认 60；超时会话保留，命令可能仍在运行") Integer timeoutSeconds) {
 
         if (ProjectAccessPolicy.strictIsolationEnabled()) {
@@ -345,10 +347,10 @@ public class CommandLineTools {
                     "Shell 级危险命令请改用 cmd_session_exec（它会走完整安全栈）。" +
                     "发送完后会等待最多 wait_seconds 秒收集输出。")
     public String sendInputToSession(
-            @ToolParam(name = "session_id", description = "会话 ID") String sessionId,
-            @ToolParam(name = "input",
+            @ToolParam( description = "会话 ID") String sessionId,
+            @ToolParam(
                     description = "要写入 stdin 的原始文本；如需提交一行，请自行在末尾加 \\n") String input,
-            @ToolParam(name = "wait_seconds",
+            @ToolParam(
                     description = "发送后等待输出的最长秒数，默认 5；缺省/0 表示立刻返回当前累积输出") Integer waitSeconds) {
 
         if (ProjectAccessPolicy.strictIsolationEnabled()) {
@@ -398,13 +400,14 @@ public class CommandLineTools {
                 "session_id: " + sessionId + "\n" + collected.stripTrailing());
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "command", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "cmd_session_read",
             description = "读取会话当前累积的输出而不发送任何输入。" +
                     "用于 cmd_session_input 之后命令仍在打字、或需要继续读取分批到来的输出。" +
                     "wait_seconds 内若有任意新增输出会立即返回；为 0 时只取当前缓冲并立即返回。")
     public String readFromSession(
-            @ToolParam(name = "session_id", description = "会话 ID") String sessionId,
-            @ToolParam(name = "wait_seconds",
+            @ToolParam( description = "会话 ID") String sessionId,
+            @ToolParam(
                     description = "无输出时最多等待秒数，默认 10；缓冲已有输出时立即返回") Integer waitSeconds) {
 
         if (sessionId == null || sessionId.isBlank()) {
@@ -437,7 +440,7 @@ public class CommandLineTools {
     @Tool(name = "cmd_session_close",
             description = "关闭指定命令行会话，销毁底层 Shell 进程。任务完成后应主动关闭以释放资源。")
     public String closeSession(
-            @ToolParam(name = "session_id", description = "要关闭的会话 ID") String sessionId) {
+            @ToolParam( description = "要关闭的会话 ID") String sessionId) {
 
         if (sessionId == null || sessionId.isBlank()) {
             return ToolResponse.error("cmd_session_close", "session_id 不能为空");
@@ -448,6 +451,7 @@ public class CommandLineTools {
                 : ToolResponse.error("cmd_session_close", "未找到会话: " + sessionId);
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "command", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "cmd_session_list",
             description = "列出当前所有命令行会话的元数据（ID、工作目录、存活状态、缓冲大小、活跃时间）。")
     public String listSessions() {

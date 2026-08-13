@@ -66,9 +66,6 @@
         <appender-ref ref="TASK_FILE"/>
     </logger>
 
-    <!-- AgentScope 框架日志：INFO 级别，需要调试时可改为 DEBUG -->
-    <logger name="io.agentscope" level="INFO"/>
-
     <!-- OkHttp 网络库日志：INFO 级别，避免过多网络细节 -->
     <logger name="okhttp3" level="INFO"/>
 

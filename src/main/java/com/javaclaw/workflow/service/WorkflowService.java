@@ -1,6 +1,5 @@
 package com.javaclaw.workflow.service;
 
-import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.api.conversation.ConversationOutcome;
@@ -39,7 +38,8 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class WorkflowService implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(WorkflowService.class);
     private final String workspaceId;
-    private final AgentRuntime agentRuntime;
+    private final PlaywrightBrowserManager browsers;
+    private final com.javaclaw.site.SiteCredentialManager siteCredentials;
     private final UserInteractionPort interaction;
     private final TaskSubmitter tasks;
     private final NodeExecutorRegistry nodeRegistry;
@@ -52,19 +52,33 @@ public final class WorkflowService implements AutoCloseable {
     /** 自定义工作流 thread 对应的浏览器会话；避免它继承最近一次聊天的账号状态。 */
     private final ConcurrentHashMap<String, String> browserScopeByThread = new ConcurrentHashMap<>();
 
-    public WorkflowService(String workspaceId, AgentRuntime agentRuntime,
+    public WorkflowService(String workspaceId, PlaywrightBrowserManager browsers,
+                           com.javaclaw.site.SiteCredentialManager siteCredentials,
                            NodeExecutorRegistry nodeRegistry, WorkflowDefinitionStore definitions,
                            GraphCheckpointStore checkpoints, SystemGraphRegistry systemGraphs,
-                           UserInteractionPort interaction, TaskSubmitter tasks) {
+                           UserInteractionPort interaction, TaskSubmitter tasks,
+                           com.javaclaw.workflow.runtime.WorkflowExtensionPlanProvider extensionPlans) {
         this.workspaceId = Objects.requireNonNull(workspaceId);
-        this.agentRuntime = Objects.requireNonNull(agentRuntime);
+        this.browsers = Objects.requireNonNull(browsers);
+        this.siteCredentials = Objects.requireNonNull(siteCredentials);
         this.interaction = Objects.requireNonNull(interaction);
         this.tasks = Objects.requireNonNull(tasks);
         this.nodeRegistry = Objects.requireNonNull(nodeRegistry);
         this.definitions = Objects.requireNonNull(definitions);
         this.checkpoints = Objects.requireNonNull(checkpoints);
-        this.executions = new GraphExecutionManager(nodeRegistry, checkpoints, tasks);
+        this.executions = new GraphExecutionManager(
+                nodeRegistry, checkpoints, tasks, extensionPlans);
         this.systemGraphs = Objects.requireNonNull(systemGraphs);
+    }
+
+    public WorkflowService(String workspaceId, PlaywrightBrowserManager browsers,
+                           com.javaclaw.site.SiteCredentialManager siteCredentials,
+                           NodeExecutorRegistry nodeRegistry, WorkflowDefinitionStore definitions,
+                           GraphCheckpointStore checkpoints, SystemGraphRegistry systemGraphs,
+                           UserInteractionPort interaction, TaskSubmitter tasks) {
+        this(workspaceId, browsers, siteCredentials, nodeRegistry, definitions, checkpoints,
+                systemGraphs, interaction, tasks,
+                com.javaclaw.workflow.runtime.WorkflowExtensionPlanProvider.NONE);
     }
 
     public synchronized GraphRun startOrResume(String workflowId, String sessionId, String input,
@@ -78,8 +92,8 @@ public final class WorkflowService implements AutoCloseable {
         requireIdleThread(thread);
         GraphRun waiting = checkpoints.findWaitingRun(workflowId, thread);
         GraphListener listener = bridge(callbacks, thread);
-        Map<Class<?>, Object> services = Map.of(AgentRuntime.class, agentRuntime,
-                ConversationCallbacks.class, callbacks);
+        com.javaclaw.workflow.runtime.WorkflowExecutionServices services =
+                com.javaclaw.workflow.runtime.WorkflowExecutionServices.conversation(callbacks);
         GraphRun run;
         if (waiting != null) {
             run = executions.resume(waiting.id(), input, false, listener, services);
@@ -110,8 +124,7 @@ public final class WorkflowService implements AutoCloseable {
         };
         try {
             GraphRun run = executions.start(draft, thread, state, releasing,
-                    Map.of(AgentRuntime.class, agentRuntime,
-                            ConversationCallbacks.class, callbacks));
+                    com.javaclaw.workflow.runtime.WorkflowExecutionServices.conversation(callbacks));
             trackActive(thread, run);
             return run;
         } catch (RuntimeException | Error failure) {
@@ -196,8 +209,7 @@ public final class WorkflowService implements AutoCloseable {
                 : delegate;
         try {
             GraphRun run = executions.resume(runId, input, unsafeRetryConfirmed, listener,
-                    Map.of(AgentRuntime.class, agentRuntime,
-                            ConversationCallbacks.class, callbacks));
+                    com.javaclaw.workflow.runtime.WorkflowExecutionServices.conversation(callbacks));
             trackActive(saved.threadId(), run);
             return run;
         } catch (RuntimeException | Error failure) {
@@ -239,7 +251,8 @@ public final class WorkflowService implements AutoCloseable {
 
     private GraphListener bridge(ConversationCallbacks callbacks, String thread) {
         return event -> {
-            sendEvent(callbacks, new ConversationEvent.Custom("graph_trace", event));
+            sendEvent(callbacks, new ConversationEvent.Custom("graph_trace",
+                    com.javaclaw.workflow.runtime.GraphEventJson.encode(event)));
             if (event instanceof GraphEvent.NodeStarted e) {
                 sendEvent(callbacks, new ConversationEvent.Progress(
                         "graph:" + e.nodeId(), e.label(),
@@ -249,7 +262,8 @@ public final class WorkflowService implements AutoCloseable {
                         "graph:" + e.nodeId(), e.label(),
                         ConversationEvent.Progress.Status.DONE, null));
             } else if (event instanceof GraphEvent.Interrupted e) {
-                sendEvent(callbacks, new ConversationEvent.Custom("workflow_interrupt", e));
+                sendEvent(callbacks, new ConversationEvent.Custom("workflow_interrupt",
+                        com.javaclaw.workflow.runtime.GraphEventJson.encode(e)));
                 // WAITING_INPUT 仍需结束当前聊天流以重新开放输入框。发送可持久化的
                 // Reply 后再 onComplete，避免 UI 把空回复误写成“模型未返回有效回复”。
                 sendEvent(callbacks, new ConversationEvent.Reply(e.prompt()));
@@ -283,16 +297,16 @@ public final class WorkflowService implements AutoCloseable {
 
     private String activateBrowserScope(String thread, String fallbackScope) {
         String scope = browserScopeByThread.computeIfAbsent(thread, ignored -> fallbackScope);
-        agentRuntime.getBrowserManager().activateScope(scope);
+        browsers.activateScope(scope);
         return scope;
     }
 
     private void releaseTransientBrowserScope(String thread, String scope) {
         browserScopeByThread.remove(thread, scope);
         try {
-            agentRuntime.getBrowserManager().releaseScope(scope);
+            browsers.releaseScope(scope);
         } finally {
-            agentRuntime.getSiteCredentialManager().clearScopeBindings(scope);
+            siteCredentials.clearScopeBindings(scope);
         }
     }
 
@@ -332,7 +346,7 @@ public final class WorkflowService implements AutoCloseable {
                 try {
                     ConversationCallbacks recoveryCallbacks = mutedRecoveryCallbacks();
                     GraphListener listener = queuedRecoveryBridge(pending, thread);
-                    Map<Class<?>, Object> services = systemServices(
+                    com.javaclaw.workflow.runtime.WorkflowExecutionServices services = systemServices(
                             recoveryCallbacks, pending.pipeline());
                     GraphRun resumed = executions.resume(recoverable.id(), null, true, listener, services);
                     trackActive(thread, resumed);
@@ -358,16 +372,16 @@ public final class WorkflowService implements AutoCloseable {
         return run;
     }
 
-    private Map<Class<?>, Object> systemServices(
+    private com.javaclaw.workflow.runtime.WorkflowExecutionServices systemServices(
             ConversationCallbacks callbacks, SystemPipeline pipeline) {
-        return Map.of(AgentRuntime.class, agentRuntime,
-                ConversationCallbacks.class, callbacks, SystemPipeline.class, pipeline);
+        return com.javaclaw.workflow.runtime.WorkflowExecutionServices.system(callbacks, pipeline);
     }
 
     private GraphListener queuedRecoveryBridge(PendingRecovery pending, String thread) {
         return event -> {
             if (!(event instanceof GraphEvent.RunFinished finished)) {
-                sendEvent(pending.callbacks(), new ConversationEvent.Custom("graph_trace", event));
+                sendEvent(pending.callbacks(), new ConversationEvent.Custom("graph_trace",
+                        com.javaclaw.workflow.runtime.GraphEventJson.encode(event)));
                 if (event instanceof GraphEvent.NodeStarted e) {
                     sendEvent(pending.callbacks(), new ConversationEvent.Progress(
                             "graph:recovery:" + e.nodeId(), "恢复 · " + e.label(),
@@ -381,7 +395,8 @@ public final class WorkflowService implements AutoCloseable {
             }
             activeByThread.remove(thread, finished.runId());
             if (!pendingRecoveryByThread.remove(thread, pending) || pending.cancelled().get()) return;
-            sendEvent(pending.callbacks(), new ConversationEvent.Custom("graph_trace", event));
+            sendEvent(pending.callbacks(), new ConversationEvent.Custom("graph_trace",
+                    com.javaclaw.workflow.runtime.GraphEventJson.encode(event)));
             if (pending.recoveryPolicy() == SystemRecoveryPolicy.RESUME_ONLY) {
                 if (finished.status() == RunStatus.FAILED) {
                     sendError(pending.callbacks(), new IllegalStateException(finished.error()));

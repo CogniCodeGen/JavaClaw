@@ -11,7 +11,7 @@ import java.util.Objects;
 /**
  * Lifecycle owner and compatibility facade for the Playwright tool components.
  *
- * <p>AgentScope scans each object returned by {@link #toolObjects()}; direct Java callers may use
+ * <p>The framework scans each object returned by {@link #toolObjects()}; direct Java callers may use
  * the forwarding methods below. All components share one interruptible operation gate, so a
  * BrowserContext/Page is never accessed concurrently. Closing this facade shuts down the browser
  * only when ownership was explicitly transferred at construction.
@@ -70,6 +70,12 @@ public final class PlaywrightBrowserTools implements AutoCloseable, ToolObjectPr
     @Override
     public List<Object> toolObjects() {
         return toolObjects;
+    }
+
+    /** Tool component types used for startup-time authorization contract validation. */
+    public static List<Class<?>> toolContractTypes() {
+        return List.of(BrowserSiteTools.class, BrowserPageTools.class,
+                BrowserReadTools.class, BrowserSessionTools.class);
     }
 
     @Override

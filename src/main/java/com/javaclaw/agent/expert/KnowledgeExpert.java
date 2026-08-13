@@ -1,6 +1,5 @@
 package com.javaclaw.agent.expert;
 
-import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.application.knowledge.KnowledgeDocumentPreferencePort;
 import com.javaclaw.config.AgentConfig;
@@ -8,20 +7,13 @@ import com.javaclaw.memory.embed.EmbeddingGateway;
 import com.javaclaw.memory.embed.EmbeddingPurpose;
 import com.javaclaw.memory.model.KnowledgeChunk;
 import com.javaclaw.memory.store.MemoryStore;
-import com.javaclaw.prompt.AgentPrompts;
 import com.javaclaw.util.ProjectAccessPolicy;
 import com.javaclaw.util.SensitiveDataRedactor;
-import io.agentscope.core.ReActAgent;
-import io.agentscope.core.rag.model.Document;
-import io.agentscope.core.rag.reader.PDFReader;
-import io.agentscope.core.rag.reader.ReaderInput;
-import io.agentscope.core.rag.reader.SplitStrategy;
-import io.agentscope.core.rag.reader.TextReader;
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
-import io.agentscope.core.tool.Toolkit;
-import io.agentscope.core.tool.subagent.SubAgentConfig;
-import io.agentscope.core.tool.subagent.SubAgentTool;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -47,17 +39,14 @@ import java.util.Set;
  *
  * @author JavaClaw
  */
-public class KnowledgeExpert {
+@com.javaclaw.framework.spi.ToolContract(group = "knowledge", permissions = {"tool.execute"}, idempotent = false)
+public class KnowledgeExpert implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(KnowledgeExpert.class);
 
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     /** 知识库作用域 */
     public enum Scope { GLOBAL, WORKSPACE }
-
-    private final SubAgentTool tool;
-    /** 保留以便 {@link #provideAgent()} 每次调用构建全新子智能体实例（见其注释）。 */
-    private final ModelFactory modelFactory;
 
     private final boolean ragEnabled;
     private final EmbeddingGateway gate;
@@ -66,8 +55,8 @@ public class KnowledgeExpert {
     private final String ragInitializationError;
     private MemoryStore globalStore;
     private MemoryStore workspaceStore;
-    private TextReader textReader;
-    private PDFReader pdfReader;
+    private final int chunkSize;
+    private final int chunkOverlap;
 
     /**
      * 「不参与检索」的文档名集合（持久化到工作区 {@code data/knowledge-doc-prefs.json}）。
@@ -83,7 +72,6 @@ public class KnowledgeExpert {
     // ==================== 构造 ====================
 
     public KnowledgeExpert(
-            ModelFactory modelFactory,
             EmbeddingGateway embeddingGateway,
             AgentConfig config,
             Path globalKnowledgeDirectory,
@@ -93,8 +81,10 @@ public class KnowledgeExpert {
         this.documentPreferences = java.util.Objects.requireNonNull(
                 documentPreferences, "documentPreferences");
         boolean enabled = config.isRagEnabled();
-        this.modelFactory = modelFactory;
         this.gate = java.util.Objects.requireNonNull(embeddingGateway, "embeddingGateway");
+        this.chunkSize = Math.max(100, config.getRagChunkSize());
+        this.chunkOverlap = Math.max(0, Math.min(
+                config.getRagChunkOverlap(), this.chunkSize / 2));
         String initializationError = null;
 
         if (enabled) {
@@ -111,11 +101,6 @@ public class KnowledgeExpert {
                 this.globalStore.open();
                 this.workspaceStore.open();
 
-                int chunkSize = config.getRagChunkSize();
-                int chunkOverlap = config.getRagChunkOverlap();
-                this.textReader = new TextReader(chunkSize, SplitStrategy.PARAGRAPH, chunkOverlap);
-                this.pdfReader = new PDFReader(chunkSize, SplitStrategy.PARAGRAPH, chunkOverlap);
-
                 loadDocPrefs();
             } catch (Exception e) {
                 log.warn("RAG 知识库初始化失败，回退到纯推理模式: {}", e.getMessage());
@@ -128,63 +113,8 @@ public class KnowledgeExpert {
         this.ragEnabled = enabled;
         this.ragInitializationError = initializationError;
 
-        log.info("知识专家子智能体已创建: {}, RAG: {}", AgentConfig.KNOWLEDGE_AGENT_NAME,
+        log.info("知识库扩展已创建: {}, RAG: {}", AgentConfig.KNOWLEDGE_AGENT_NAME,
                 enabled ? "已启用(EclipseStore+JVector)" : "未启用");
-
-        SubAgentConfig subConfig = SubAgentConfig.builder()
-                .toolName("knowledge_expert")
-                .description(AgentConfig.KNOWLEDGE_AGENT_DESCRIPTION)
-                .forwardEvents(true)
-                .build();
-        // 每次子智能体调用构建全新 ReActAgent 实例（provideAgent）：SubAgentTool 按其文档契约
-        // 每会话调用 provider.provide() 获取独立实例以保证线程安全；此前的 () -> 单例写法让循环
-        // 与聊天并行调用时共享同一 agent 内存而竞争。底层知识存储（MemoryStore）读并发安全，故
-        // 唯一被隔离的是各调用的推理上下文。
-        this.tool = new SubAgentTool(this::provideAgent, subConfig);
-        log.info("已注册子智能体工具: knowledge_expert");
-    }
-
-    /**
-     * 为单次子智能体会话构建全新 {@link ReActAgent} 实例（RAG 或纯推理，取决于初始化结果）。
-     *
-     * <p>由 {@link SubAgentTool} 每次调用触发；工具方法（{@code this})读取共享的
-     * {@link MemoryStore}（向量检索为并发安全的读操作），故多实例共享检索能力而各自隔离对话内存。</p>
-     */
-    private ReActAgent provideAgent() {
-        if (!ragEnabled) {
-            return buildSimpleAgent(modelFactory);
-        }
-        // RAG agent 组装若在调用期抛异常（模型/toolkit 构建失败），降级到纯推理简单 agent 仍能答，
-        // 而非让委派轮整体报错——对齐旧的构造期 try/catch 兜底语义（改为每次调用构建后此处补回）
-        try {
-            return buildRagAgent(modelFactory);
-        } catch (Exception e) {
-            log.warn("知识专家 RAG agent 构建失败，本次降级为纯推理简单 agent: {}", e.getMessage());
-            return buildSimpleAgent(modelFactory);
-        }
-    }
-
-    private ReActAgent buildSimpleAgent(ModelFactory modelFactory) {
-        return ReActAgent.builder()
-                .name(AgentConfig.KNOWLEDGE_AGENT_NAME)
-                .sysPrompt(AgentPrompts.withMandatoryGlobalRules(
-                        AgentPrompts.KNOWLEDGE_AGENT_SYS_PROMPT))
-                .model(modelFactory.createChatModel())
-                .maxIters(1)
-                .build();
-    }
-
-    private ReActAgent buildRagAgent(ModelFactory modelFactory) {
-        Toolkit toolkit = new Toolkit();
-        toolkit.registerTool(this);
-        return ReActAgent.builder()
-                .name(AgentConfig.KNOWLEDGE_AGENT_NAME)
-                .sysPrompt(AgentPrompts.withMandatoryGlobalRules(
-                        AgentPrompts.KNOWLEDGE_AGENT_RAG_SYS_PROMPT))
-                .model(modelFactory.createChatModel())
-                .toolkit(toolkit)
-                .maxIters(8)
-                .build();
     }
 
     private MemoryStore storeOf(Scope scope) {
@@ -200,7 +130,7 @@ public class KnowledgeExpert {
 
     @Tool(name = "knowledge_import_file", description = "导入文件到知识库，支持 TXT、MD、PDF 格式。")
     public String knowledge_import_file(
-            @ToolParam(name = "filePath", description = "文件的绝对路径") String filePath) {
+            @ToolParam( description = "文件的绝对路径") String filePath) {
         return importFile(filePath, Scope.WORKSPACE);
     }
 
@@ -219,30 +149,32 @@ public class KnowledgeExpert {
                         SensitiveDataRedactor.credentialStorageDeniedReason());
             }
             String lower = name.toLowerCase();
-            List<Document> docs;
+            String fileText;
             if (lower.endsWith(".pdf")) {
-                docs = pdfReader.read(ReaderInput.fromString(path.toString())).block();
+                try (PDDocument document = Loader.loadPDF(path.toFile())) {
+                    fileText = new PDFTextStripper().getText(document);
+                }
             } else if (isTextLike(lower)) {
                 // 纯文本与 Markdown：按文本读取并分块。Markdown 保留原文结构（标题/列表/代码块），
                 // 对检索友好，无需先转纯文本。读取失败（如二进制/编码错误）由外层 catch 返回明确原因。
-                String fileText = Files.readString(path);
+                fileText = Files.readString(path);
                 if (SensitiveDataRedactor.containsLikelyCredential(fileText)) {
                     return ToolResponse.error("knowledge_import_file",
                             SensitiveDataRedactor.credentialStorageDeniedReason());
                 }
-                docs = textReader.read(ReaderInput.fromString(fileText)).block();
             } else {
                 return ToolResponse.error("knowledge_import_file",
                         "不支持的文件类型: " + name + "（目前支持 PDF 与 TXT / Markdown 等文本文件）");
             }
-            if (docs == null || docs.isEmpty()) {
-                return ToolResponse.error("knowledge_import_file", "文件内容为空或无法解析: " + filePath);
-            }
-            if (documentsContainCredential(docs)) {
+            if (SensitiveDataRedactor.containsLikelyCredential(fileText)) {
                 return ToolResponse.error("knowledge_import_file",
                         SensitiveDataRedactor.credentialStorageDeniedReason());
             }
-            int added = storeChunks(name, scope, docs);
+            List<String> chunks = chunkText(fileText);
+            if (chunks.isEmpty()) {
+                return ToolResponse.error("knowledge_import_file", "文件内容为空或无法解析: " + filePath);
+            }
+            int added = storeChunks(name, scope, chunks);
             String scopeLabel = scope == Scope.GLOBAL ? "全局" : "工作区";
             if (added == 0) {
                 return ToolResponse.error("knowledge_import_file", embedFailureDetail());
@@ -258,8 +190,8 @@ public class KnowledgeExpert {
 
     @Tool(name = "knowledge_import_text", description = "导入文本内容到知识库。")
     public String knowledge_import_text(
-            @ToolParam(name = "text", description = "文本内容") String text,
-            @ToolParam(name = "title", description = "文档标题") String title) {
+            @ToolParam( description = "文本内容") String text,
+            @ToolParam( description = "文档标题") String title) {
         return importText(text, title, Scope.WORKSPACE);
     }
 
@@ -280,11 +212,11 @@ public class KnowledgeExpert {
                         SensitiveDataRedactor.credentialStorageDeniedReason());
             }
             String docName = (title == null || title.isBlank()) ? "手动导入文本" : title;
-            List<Document> docs = textReader.read(ReaderInput.fromString(text)).block();
-            if (docs == null || docs.isEmpty()) {
+            List<String> chunks = chunkText(text);
+            if (chunks.isEmpty()) {
                 return ToolResponse.error("knowledge_import_text", "文本内容无法解析为文档分块");
             }
-            int added = storeChunks(docName, scope, docs);
+            int added = storeChunks(docName, scope, chunks);
             String scopeLabel = scope == Scope.GLOBAL ? "全局" : "工作区";
             if (added == 0) {
                 return ToolResponse.error("knowledge_import_text", embedFailureDetail());
@@ -308,16 +240,15 @@ public class KnowledgeExpert {
     }
 
     /** 把分块嵌入后写入指定 scope 的库，返回成功写入数（嵌入失败的分块跳过）。 */
-    private int storeChunks(String docName, Scope scope, List<Document> docs) {
-        if (documentsContainCredential(docs)) {
+    private int storeChunks(String docName, Scope scope, List<String> chunks) {
+        if (chunks.stream().anyMatch(SensitiveDataRedactor::containsLikelyCredential)) {
             throw new SecurityException(SensitiveDataRedactor.credentialStorageDeniedReason());
         }
         String now = LocalDateTime.now().format(TIME_FMT);
         MemoryStore store = storeOf(scope);
         int expectedDim = gate.dimensions();
         int added = 0, idx = 0;
-        for (Document doc : docs) {
-            String content = doc.getMetadata().getContentText();
+        for (String content : chunks) {
             if (content == null || content.isBlank()) continue;
             float[] vec = gate.embed(content, EmbeddingPurpose.BACKGROUND_INDEX);
             if (vec == null) continue; // 无嵌入 → 跳过（不写无向量分块）
@@ -338,16 +269,30 @@ public class KnowledgeExpert {
         return added;
     }
 
-    private static boolean documentsContainCredential(List<Document> docs) {
-        if (docs == null) return false;
-        for (Document doc : docs) {
-            if (doc != null && doc.getMetadata() != null
-                    && SensitiveDataRedactor.containsLikelyCredential(
-                    doc.getMetadata().getContentText())) {
-                return true;
+    /** Paragraph-aware bounded chunking owned by the knowledge extension, not an Agent runtime. */
+    private List<String> chunkText(String text) {
+        if (text == null || text.isBlank()) return List.of();
+        String normalized = text.replace("\r\n", "\n").replace('\r', '\n').strip();
+        List<String> chunks = new ArrayList<>();
+        int start = 0;
+        while (start < normalized.length()) {
+            int hardEnd = Math.min(normalized.length(), start + chunkSize);
+            int end = hardEnd;
+            if (hardEnd < normalized.length()) {
+                int paragraph = normalized.lastIndexOf("\n\n", hardEnd);
+                int line = normalized.lastIndexOf('\n', hardEnd);
+                int space = normalized.lastIndexOf(' ', hardEnd);
+                int candidate = Math.max(paragraph, Math.max(line, space));
+                if (candidate > start + chunkSize / 2) end = candidate;
             }
+            String chunk = normalized.substring(start, end).strip();
+            if (!chunk.isEmpty()) chunks.add(chunk);
+            if (end >= normalized.length()) break;
+            int next = Math.max(start + 1, end - chunkOverlap);
+            while (next < end && Character.isWhitespace(normalized.charAt(next))) next++;
+            start = next;
         }
-        return false;
+        return List.copyOf(chunks);
     }
 
     /**
@@ -365,6 +310,7 @@ public class KnowledgeExpert {
 
     // ==================== 列表 / 删除 / 清空 ====================
 
+    @com.javaclaw.framework.spi.ToolContract(group = "knowledge", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "knowledge_list", description = "查看知识库中已导入的文档列表和统计信息")
     public String knowledge_list() {
         if (!ragEnabled) {
@@ -392,7 +338,7 @@ public class KnowledgeExpert {
 
     @Tool(name = "knowledge_delete", description = "删除知识库中的指定文档。")
     public String knowledge_delete(
-            @ToolParam(name = "documentName", description = "文档名称（文件名或导入标题）") String documentName) {
+            @ToolParam( description = "文档名称（文件名或导入标题）") String documentName) {
         if (!ragEnabled) {
             return ToolResponse.error("knowledge_delete", "RAG 知识库未启用，请在设置中开启");
         }
@@ -429,10 +375,11 @@ public class KnowledgeExpert {
 
     // ==================== 检索 ====================
 
+    @com.javaclaw.framework.spi.ToolContract(group = "knowledge", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "knowledge_search",
             description = "基于关键词搜索知识库文档内容。当向量检索不可用时作为备选。传入多个关键词（空格分隔）。")
     public String knowledge_search(
-            @ToolParam(name = "keywords", description = "搜索关键词，多个关键词用空格分隔") String keywords) {
+            @ToolParam( description = "搜索关键词，多个关键词用空格分隔") String keywords) {
         if (!ragEnabled) {
             return ToolResponse.error("knowledge_search", "RAG 知识库未启用，请在设置中开启");
         }
@@ -515,12 +462,11 @@ public class KnowledgeExpert {
 
     // ==================== 公开访问器（供 UI / 其它模块） ====================
 
-    /** 关闭知识库存储（释放 EclipseStore 目录锁与写线程）；工作区切换/应用退出时由 AgentRuntime 调用。 */
+    /** 关闭知识库存储（释放 EclipseStore 目录锁与写线程）；由工作区 Context 销毁回调调用。 */
+    @Override
     public void close() {
         closeStores();
     }
-
-    public SubAgentTool getTool() { return tool; }
 
     public boolean isRagEnabled() { return ragEnabled; }
 

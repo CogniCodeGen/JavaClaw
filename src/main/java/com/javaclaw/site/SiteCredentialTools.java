@@ -6,8 +6,8 @@ import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.api.interaction.SecretRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.util.SensitiveDataRedactor;
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,6 +25,7 @@ import java.util.Arrays;
  * 显式创建传统账号/密码条目或预先登记站点元数据。所有返回内容均不包含密码，密码只会
  * 交给 {@link SiteCredentialManager} 加密落盘。</p>
  */
+@com.javaclaw.framework.spi.ToolContract(group = "web", permissions = {"tool.execute"}, idempotent = false)
 public final class SiteCredentialTools {
 
     private static final Logger log = LoggerFactory.getLogger(SiteCredentialTools.class);
@@ -61,6 +62,7 @@ public final class SiteCredentialTools {
         @Override public boolean delete(String id) { return manager.removeChecked(id); }
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "web", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "site_credential_list",
             description = "列出“站点管理”中已登记的凭据条目。只返回名称、匹配域名、登录页、脱敏用户名和会话状态，绝不返回密码。")
     public String listCredentials() {
@@ -91,13 +93,13 @@ public final class SiteCredentialTools {
                     + "若当前浏览器已经登录，优先委派 web_expert 调 site_save_session 保存会话。"
                     + "严禁把账号密码改写到技能、AGENTS.md、MEMORY.md 或普通文件中。")
     public String saveCredential(
-            @ToolParam(name = "name", description = "站点展示名，如 GitHub、内部 OA") String name,
-            @ToolParam(name = "site_url", description = "站点 URL、域名或通配域名，如 https://example.com 或 *.example.com") String siteUrl,
-            @ToolParam(name = "credential_id", description = "更新已有条目时传其 ID；创建时留空", required = false) String credentialId,
-            @ToolParam(name = "login_url", description = "登录页 URL；省略时更新保留原值，空字符串表示清除", required = false) String loginUrl,
-            @ToolParam(name = "username", description = "用户名/邮箱；省略时更新保留原值，空字符串表示清除", required = false) String username,
-            @ToolParam(name = "password", description = "已停用的兼容参数；不得传入明文密码", required = false) String password,
-            @ToolParam(name = "notes", description = "非敏感备注；不得包含密码、令牌或验证码", required = false) String notes) {
+            @ToolParam( description = "站点展示名，如 GitHub、内部 OA") String name,
+            @ToolParam( description = "站点 URL、域名或通配域名，如 https://example.com 或 *.example.com") String siteUrl,
+            @ToolParam( description = "更新已有条目时传其 ID；创建时留空", required = false) String credentialId,
+            @ToolParam( description = "登录页 URL；省略时更新保留原值，空字符串表示清除", required = false) String loginUrl,
+            @ToolParam( description = "用户名/邮箱；省略时更新保留原值，空字符串表示清除", required = false) String username,
+            @ToolParam( description = "已停用的兼容参数；不得传入明文密码", required = false) String password,
+            @ToolParam( description = "非敏感备注；不得包含密码、令牌或验证码", required = false) String notes) {
         String displayName = strip(name);
         if (displayName.isEmpty()) {
             return ToolResponse.error("site_credential_save", "name 不能为空。");
@@ -170,7 +172,7 @@ public final class SiteCredentialTools {
     @Tool(name = "site_credential_set_password_secure",
             description = "为已存在的站点条目设置密码。系统会弹出本地安全密码框；密码不会进入模型消息、工具参数、日志或回复。")
     public String setPasswordSecure(
-            @ToolParam(name = "credential_id", description = "site_credential_list 返回的凭据 ID") String credentialId) {
+            @ToolParam( description = "site_credential_list 返回的凭据 ID") String credentialId) {
         String id = strip(credentialId);
         SiteCredential existing = store.get(id);
         if (existing == null) {
@@ -210,7 +212,7 @@ public final class SiteCredentialTools {
     @Tool(name = "site_credential_delete",
             description = "从“站点管理”删除一个凭据条目，并连带删除其保存的浏览器会话和账号绑定。不可恢复，需二次确认。")
     public String deleteCredential(
-            @ToolParam(name = "credential_id", description = "site_credential_list 返回的凭据 ID") String credentialId) {
+            @ToolParam( description = "site_credential_list 返回的凭据 ID") String credentialId) {
         String id = strip(credentialId);
         SiteCredential existing = store.get(id);
         if (existing == null) {

@@ -3,8 +3,8 @@ package com.javaclaw.mcp;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.platform.json.JsonCodec;
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * MCP 工具桥接 — 将 MCP 服务器工具暴露为 AgentScope @Tool 方法
+ * MCP 工具桥接 — 将 MCP 服务器工具暴露为 Spring AI {@code @Tool} 方法
  *
  * <p>提供两个工具方法：
  * <ul>
@@ -22,6 +22,7 @@ import java.util.Map;
  *
  * @author JavaClaw
  */
+@com.javaclaw.framework.spi.ToolContract(group = "mcp", permissions = {"tool.execute"}, idempotent = false)
 public class McpTools {
 
     private static final Logger log = LoggerFactory.getLogger(McpTools.class);
@@ -36,6 +37,7 @@ public class McpTools {
     /**
      * 列出所有 MCP 服务器上可用的工具
      */
+    @com.javaclaw.framework.spi.ToolContract(group = "mcp", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "mcp_list_tools",
           description = "列出所有已连接 MCP 服务器上可用的工具列表，包含工具名称、描述和参数说明")
     public String listTools() {
@@ -86,9 +88,9 @@ public class McpTools {
           description = "调用指定 MCP 服务器上的工具。需要指定服务器名称、工具名称和参数（JSON 格式）。" +
                         "调用前可先用 mcp_list_tools 查看可用的服务器和工具。")
     public String callTool(
-            @ToolParam(name = "server_name", description = "MCP 服务器名称") String serverName,
-            @ToolParam(name = "tool_name", description = "要调用的工具名称") String toolName,
-            @ToolParam(name = "arguments_json", description = "工具参数，JSON 对象格式字符串，无参数时传 \"{}\"")
+            @ToolParam( description = "MCP 服务器名称") String serverName,
+            @ToolParam( description = "要调用的工具名称") String toolName,
+            @ToolParam( description = "工具参数，JSON 对象格式字符串，无参数时传 \"{}\"")
             String argumentsJson) {
         try {
             // 解析参数 JSON

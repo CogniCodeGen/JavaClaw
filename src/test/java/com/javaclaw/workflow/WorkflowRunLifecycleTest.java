@@ -62,7 +62,7 @@ class WorkflowRunLifecycleTest {
         try (var executions = new GraphExecutionManager(
                 PublicNodeCatalog.createRegistry(), store, rejecting)) {
             assertThrows(RejectedExecutionException.class, () ->
-                    executions.start(graph, "thread", new GraphState(), event -> {}, Map.of()));
+                    executions.start(graph, "thread", new GraphState(), event -> {}, com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY));
         }
         var runs = store.listRuns(graph.id(), 10);
         assertEquals(1, runs.size());

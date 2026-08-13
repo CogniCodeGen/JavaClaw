@@ -84,4 +84,86 @@ class ArchitectureRulesTest {
                 .because("workspace commands and queries cross the application workspace port")
                 .check(productionClasses);
     }
+
+    @Test
+    void productFeaturesDependOnlyOnFrameworkApiAndSpi() {
+        noClasses()
+                .that()
+                .resideOutsideOfPackages(
+                        "com.javaclaw.framework..",
+                        "com.javaclaw.platform.spring..")
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage(
+                        "com.javaclaw.framework.core..",
+                        "com.javaclaw.framework.springai..")
+                .because("product features use framework API/SPI; only the composition root wires internals")
+                .check(productionClasses);
+
+        noClasses()
+                .that()
+                .resideOutsideOfPackages(
+                        "com.javaclaw.framework..",
+                        "com.javaclaw.platform.spring..",
+                        "com.javaclaw.infrastructure..")
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage(
+                        "com.javaclaw.framework.extension..",
+                        "com.javaclaw.framework.store..",
+                        "com.javaclaw.framework.builtin..")
+                .because("product features consume public framework API/SPI, not extension loading, stores or built-ins")
+                .check(productionClasses);
+    }
+
+    @Test
+    void onlySpringAiAdapterOwnsChatClientChatModelAndToolCallingLoop() {
+        noClasses()
+                .that()
+                .resideOutsideOfPackage("com.javaclaw.framework.springai..")
+                .should()
+                .dependOnClassesThat()
+                .haveFullyQualifiedName("org.springframework.ai.chat.client.ChatClient")
+                .because("ChatClient construction belongs to framework.springai")
+                .check(productionClasses);
+        noClasses()
+                .that()
+                .resideOutsideOfPackage("com.javaclaw.framework.springai..")
+                .should()
+                .dependOnClassesThat()
+                .haveFullyQualifiedName("org.springframework.ai.chat.model.ChatModel")
+                .because("ChatModel construction belongs to framework.springai")
+                .check(productionClasses);
+        noClasses()
+                .that()
+                .resideOutsideOfPackage("com.javaclaw.framework.springai..")
+                .should()
+                .dependOnClassesThat()
+                .haveFullyQualifiedName(
+                        "org.springframework.ai.chat.client.advisor.ToolCallingAdvisor")
+                .because("the recursive tool-calling loop belongs to framework.springai")
+                .check(productionClasses);
+    }
+
+    @Test
+    void onlySpringAiAdapterDependsOnToolCallback() {
+        noClasses()
+                .that()
+                .resideOutsideOfPackage("com.javaclaw.framework.springai..")
+                .should()
+                .dependOnClassesThat()
+                .haveFullyQualifiedName("org.springframework.ai.tool.ToolCallback")
+                .because("all ToolCallback execution must pass through the framework tool gateway")
+                .check(productionClasses);
+    }
+
+    @Test
+    void removedAgentLibraryCannotReenterProductionCode() {
+        noClasses()
+                .should()
+                .dependOnClassesThat()
+                .resideInAPackage("io." + "agent" + "scope..")
+                .because("Spring AI 2.0 is the only model and agent substrate")
+                .check(productionClasses);
+    }
 }

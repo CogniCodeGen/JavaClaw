@@ -1,16 +1,14 @@
 package com.javaclaw.loop;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.goal.GoalDecomposition;
-import com.javaclaw.agent.goal.GoalManager;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationOutcome;
 import com.javaclaw.api.conversation.ConversationRequest;
 import com.javaclaw.config.AgentConfig;
-import com.javaclaw.loop.agent.AgentScopeCompletionJudge;
-import com.javaclaw.loop.agent.AgentScopeLoopRunner;
+import com.javaclaw.loop.agent.FrameworkCompletionJudge;
+import com.javaclaw.loop.agent.FrameworkLoopRunner;
 import com.javaclaw.loop.model.Cadence;
 import com.javaclaw.loop.model.CarryForwardMode;
 import com.javaclaw.loop.model.LoopSpec;
@@ -25,6 +23,7 @@ import reactor.core.scheduler.Schedulers;
 
 import java.time.Clock;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -32,8 +31,9 @@ import java.util.concurrent.atomic.AtomicReference;
  * 循环模式门面：把一次「循环」请求装配成确定性引擎并驱动运行。
  *
  * <p>职责：解析指令 → 目标分解出成功准则 → 组装 {@link LoopController}（注入真实执行体
- * {@link AgentScopeLoopRunner}、可选验收员、命令执行器）→ 在 {@code boundedElastic} 上跑，
- * 联动 {@link ToolConfirmationManager} 放宽托管确认。同一时刻只允许一个活跃循环。</p>
+ * {@link FrameworkLoopRunner}、可选验收员、命令执行器）→ 在 {@code boundedElastic} 上跑，
+ * 联动 {@link ToolConfirmationManager} 放宽托管确认。运行态按会话封装在独立的
+ * {@link LoopInvocation} 中，服务本身不保存“当前运行”的单例状态。</p>
  */
 public final class LoopService {
 
@@ -41,56 +41,34 @@ public final class LoopService {
     private static final com.javaclaw.workflow.model.GraphDefinition SYSTEM_GRAPH =
             com.javaclaw.workflow.service.SystemGraphFactory.loop();
 
-    private final AgentRuntime runtime;
+    private final com.javaclaw.framework.api.AgentClient agents;
+    private final com.javaclaw.runtime.WorkspaceContext workspace;
+    private final com.javaclaw.framework.spi.ModelTaskGateway modelTasks;
+    private final AgentConfig config;
     private final com.javaclaw.workflow.service.WorkflowService workflowService;
     private final com.javaclaw.platform.process.ProcessRunner processes;
-    private final com.javaclaw.api.conversation.SingleConversationRun conversationRun =
-            new com.javaclaw.api.conversation.SingleConversationRun();
-    private final GoalManager goalManager;
+    private final ConcurrentHashMap<String, LoopInvocation> invocations = new ConcurrentHashMap<>();
     private final ObjectMapper json;
 
-    /** 当前活跃循环控制器（供取消）；无活跃循环为 null。 */
-    private final AtomicReference<LoopController> active = new AtomicReference<>();
-    /** 当前活跃循环的执行体（取消时需 dispose 进行中的轮，否则在途轮会烧到单轮超时）。 */
-    private final AtomicReference<AgentScopeLoopRunner> activeRunner = new AtomicReference<>();
-    /** 单活跃循环闸：CAS 抢占，避免并发启动多个循环。 */
-    private final AtomicBoolean running = new AtomicBoolean(false);
-    /**
-     * 生命周期锁：串行化「启动抢位」与「取消/等待停稳」的状态迁移。start() 在锁内一并完成
-     * {@code running 抢占 + finished 换本代次新闩 + cancelRequested 复位} 三步，cancelActive()
-     * 与 awaitTermination() 也在锁内读写这些字段——否则 running 已置真而 finished 尚指向上一
-     * 代次已归零的闩（并发关闭误判已停稳、在运行中的循环下关共享资源），或取消请求落在 CAS
-     * 与复位之间被静默清掉（两处 CONFIRMED 竞争）。
-     */
-    private final Object lifecycleLock = new Object();
-    /**
-     * 启动窗口取消标志：{@code active}/{@code activeRunner} 在目标分解（阻塞模型调用）与
-     * 验证命令确认弹窗（最长 60 秒）之后才 set，这段窗口里 {@link #cancelActive()} 找不到
-     * 可取消对象——用户此时按停止会空转，循环随后照常启动且事件全被旧代次丢弃（不可见地
-     * 烧满预算）。置位后启动流程在各检查点主动让位。
-     */
-    private volatile boolean cancelRequested;
-    /** 活跃循环的停稳闩：run 线程退出（finally）时放行，供服务重建路径等待真正停稳。 */
-    private volatile java.util.concurrent.CountDownLatch finished;
-
-    /** 目标分解缓存 TTL（毫秒），与 GoalManager 聊天模式默认一致。 */
-    private static final long GOAL_CACHE_TTL_MILLIS = 600_000L;
     /** 重建/关闭路径等待循环线程停稳的上限（毫秒）；超时仅告警，不无限阻塞调用线程。 */
     private static final long TERMINATION_WAIT_MILLIS = 5_000L;
 
     public LoopService(
-            AgentRuntime runtime,
+            AgentConfig config,
             com.javaclaw.workflow.service.WorkflowService workflowService,
-            com.javaclaw.platform.process.ProcessRunner processes) {
-        this.runtime = runtime;
+            com.javaclaw.platform.process.ProcessRunner processes,
+            com.javaclaw.framework.api.AgentClient agents,
+            com.javaclaw.runtime.WorkspaceContext workspace,
+            com.javaclaw.framework.spi.ModelTaskGateway modelTasks,
+            ObjectMapper json) {
+        this.config = java.util.Objects.requireNonNull(config, "config");
         this.workflowService = workflowService;
         this.processes = java.util.Objects.requireNonNull(processes, "processes");
-        this.json = runtime.getJson().mapper();
+        this.agents = java.util.Objects.requireNonNull(agents, "agents");
+        this.workspace = java.util.Objects.requireNonNull(workspace, "workspace");
+        this.modelTasks = java.util.Objects.requireNonNull(modelTasks, "modelTasks");
+        this.json = java.util.Objects.requireNonNull(json, "json");
         if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
-        // skipLength=0：聊天模式的「短请求免分解」优化不适用于循环——循环目标多为短祈使句，
-        // 而成功准则是循环完成判定的承重墙（不是可有可无的优化），必须对任意长度目标分解。
-        this.goalManager = new GoalManager(runtime.getModelFactory().createChatModel(),
-                runtime.getTokenTracker(), 0, GOAL_CACHE_TTL_MILLIS, json);
     }
 
     /**
@@ -98,27 +76,67 @@ public final class LoopService {
      */
     public com.javaclaw.api.conversation.ConversationHandle start(
             ConversationRequest request, ConversationCallbacks callbacks) {
-        return conversationRun.start(callbacks,
-                guarded -> startLoopPipeline(request, guarded),
-                ignored -> cancelActive(request.sessionId()));
+        java.util.Objects.requireNonNull(request, "request");
+        java.util.Objects.requireNonNull(callbacks, "callbacks");
+        LoopInvocation invocation = new LoopInvocation(request.sessionId());
+        com.javaclaw.api.conversation.TerminalCallbackGuard userCallbacks =
+                new com.javaclaw.api.conversation.TerminalCallbackGuard(callbacks);
+        if (invocations.putIfAbsent(request.sessionId(), invocation) != null) {
+            userCallbacks.onTerminal(ConversationOutcome.failed(
+                    new IllegalStateException("当前会话已有循环正在运行，请先停止或等待完成")));
+            return new com.javaclaw.api.conversation.DefaultConversationHandle(
+                    userCallbacks, ignored -> false);
+        }
+
+        // 底层终态和句柄取消分开仲裁：句柄可立即反馈已取消，但会话运行槽只在 Workflow/
+        // Loop 节点真正退出后释放，防止旧运行收尾期间同会话的新运行穿透。
+        com.javaclaw.api.conversation.TerminalCallbackGuard pipelineCallbacks =
+                new com.javaclaw.api.conversation.TerminalCallbackGuard(new ConversationCallbacks() {
+                    @Override
+                    public void onEvent(com.javaclaw.api.conversation.ConversationEvent event) {
+                        userCallbacks.onEvent(event);
+                    }
+
+                    @Override
+                    public void onTerminal(ConversationOutcome outcome) {
+                        invocation.finish();
+                        invocations.remove(invocation.sessionId, invocation);
+                        userCallbacks.onTerminal(outcome);
+                    }
+                });
+        try {
+            startLoopPipeline(invocation, request, pipelineCallbacks);
+        } catch (Throwable failure) {
+            pipelineCallbacks.onTerminal(ConversationOutcome.failed(failure));
+        }
+        return new com.javaclaw.api.conversation.DefaultConversationHandle(
+                userCallbacks, ignored -> cancelInvocation(invocation));
     }
 
-    private void startLoopPipeline(ConversationRequest request, ConversationCallbacks callbacks) {
+    private void startLoopPipeline(
+            LoopInvocation invocation,
+            ConversationRequest request,
+            ConversationCallbacks callbacks) {
         if (workflowService == null) {
-            executeLoopPipeline(request, callbacks);
+            executeLoopPipeline(invocation, request, callbacks);
             return;
         }
         workflowService.runSystem(SYSTEM_GRAPH, request.sessionId(),
                 com.javaclaw.workflow.service.SystemInvocationState.from(request), callbacks,
-                this::executeLoopGraphStage);
+                (stageId, context) -> executeLoopGraphStage(invocation, stageId, context));
     }
 
-    private void executeLoopPipeline(ConversationRequest request, ConversationCallbacks callbacks) {
-        executeLoopPipeline(request, null, false, callbacks);
+    private void executeLoopPipeline(
+            LoopInvocation invocation,
+            ConversationRequest request,
+            ConversationCallbacks callbacks) {
+        executeLoopPipeline(invocation, request, null, false, callbacks);
     }
 
     private com.javaclaw.workflow.runtime.NodeResult executeLoopGraphStage(
-            String stageId, com.javaclaw.workflow.runtime.NodeExecutionContext context) throws Exception {
+            LoopInvocation invocation,
+            String stageId,
+            com.javaclaw.workflow.runtime.NodeExecutionContext context) throws Exception {
         ConversationRequest request = com.javaclaw.workflow.service.SystemInvocationState.request(context);
         return switch (stageId) {
             case "preflight" -> {
@@ -147,39 +165,33 @@ public final class LoopService {
                         context.state().get("system.loop.explicitWorkDir").asBoolean());
                 yield com.javaclaw.workflow.service.SystemPipelineAwaiter.await(
                         context,
-                        inner -> executeLoopPipeline(request, plan, true, inner),
-                        context.require(ConversationCallbacks.class),
-                        this::cancelPipeline);
+                        inner -> executeLoopPipeline(invocation, request, plan, true, inner),
+                        java.util.Objects.requireNonNull(context.callbacks(), "conversation callbacks"),
+                        invocation::cancel);
             }
             default -> throw new IllegalArgumentException("未知循环系统阶段: " + stageId);
         };
     }
 
-    private void executeLoopPipeline(ConversationRequest request, Plan preparedPlan,
+    private void executeLoopPipeline(LoopInvocation invocation,
+                                     ConversationRequest request, Plan preparedPlan,
                                      boolean verificationConfirmed,
                                      ConversationCallbacks callbacks) {
-        java.util.concurrent.CountDownLatch latch;
-        synchronized (lifecycleLock) {
-            if (!running.compareAndSet(false, true)) {
-                callbacks.onTerminal(ConversationOutcome.failed(
-                        new IllegalStateException("已有循环正在运行，请先停止当前循环")));
-                return;
-            }
-            // 三步锁内原子完成：抢占运行位 + 装本代次停稳闩 + 复位取消标志（见 lifecycleLock 注释）
-            latch = new java.util.concurrent.CountDownLatch(1);
-            finished = latch;
-            cancelRequested = false;
+        if (!invocation.begin()) {
+            callbacks.onTerminal(ConversationOutcome.failed(
+                    new IllegalStateException("循环 Workflow 节点被重复启动")));
+            return;
         }
-        final java.util.concurrent.CountDownLatch finishedLatch = latch;
         Schedulers.boundedElastic().schedule(() -> {
             String loopId = "loop-" + System.nanoTime();
-            AgentScopeLoopRunner runner = null;
+            FrameworkLoopRunner runner = null;
             try {
                 Plan plan = preparedPlan == null ? buildPlan(request) : preparedPlan;
                 // 启动检查点①：目标分解（阻塞数秒）期间被取消 → 不再弹确认、不启动
-                if (cancelRequested) {
+                if (invocation.cancelRequested()) {
                     log.info("循环在目标分解阶段被取消，未启动");
-                    callbacks.onTerminal(ConversationOutcome.completed());
+                    callbacks.onTerminal(ConversationOutcome.cancelled(
+                            com.javaclaw.api.conversation.CancellationReason.USER_REQUEST));
                     return;
                 }
 
@@ -192,36 +204,33 @@ public final class LoopService {
                     return;
                 }
                 // 启动检查点②：确认弹窗（最长 60 秒）期间被取消 → 不启动
-                if (cancelRequested) {
+                if (invocation.cancelRequested()) {
                     log.info("循环在验证命令确认阶段被取消，未启动");
-                    callbacks.onTerminal(ConversationOutcome.completed());
+                    callbacks.onTerminal(ConversationOutcome.cancelled(
+                            com.javaclaw.api.conversation.CancellationReason.USER_REQUEST));
                     return;
                 }
 
                 // 路由文本用目标原文（而非拼装轮次提示）：轮次提示不含目标信息，会导致工具组选错。
                 // 来源令牌带 loopId 与显式 workdir=（白名单归属/目录放行基准，见 Plan.explicitWorkDir 注释）
-                runner = new AgentScopeLoopRunner(runtime, plan.contextPrompt(), plan.spec().goalPrompt(),
-                        com.javaclaw.agent.ToolCallOrigin.managedTask(loopId,
-                                plan.explicitWorkDir() ? plan.spec().workDir() : null));
-                activeRunner.set(runner);
+                runner = new FrameworkLoopRunner(
+                        agents, workspace, request.sessionId(), loopId, plan.contextPrompt(),
+                        plan.explicitWorkDir() ? plan.spec().workDir() : null,
+                        config.getLoopIterationTimeoutSeconds());
+                invocation.attachRunner(runner);
 
                 // 验证命令超时对齐慢构建场景：默认 120s 会把「盯着 mvn test 直到通过」这类
                 // 分钟级命令逐轮误杀，done 永不可达（SDD 路径同理专门调大，见 execTimeoutSec）
                 CommandRunner commandRunner = new ProcessCommandRunner(
-                        processes, runtime.getConfig().getLoopVerifyTimeoutSeconds());
+                        processes, config.getLoopVerifyTimeoutSeconds());
                 var judge = plan.spec().useJudge()
-                        ? new AgentScopeCompletionJudge(
-                                plan.spec().workDir(), runtime.getModelFactory(), processes)
+                        ? new FrameworkCompletionJudge(modelTasks, runner::lastRunId,
+                                runner::cancelled, plan.spec().workDir())
                         : CompletionJudge.CONSERVATIVE_DENY;
 
                 LoopController controller = LoopController.create(
                         plan.spec(), runner, commandRunner, judge, Clock.systemUTC());
-                active.set(controller);
-                // 启动检查点③：cancelActive 可能恰在 active.set 之前读到 null 而漏掉
-                // controller.cancel()——此处补一刀，run() 的轮前护栏会立即以 CANCELLED 收束
-                if (cancelRequested) {
-                    controller.cancel();
-                }
+                invocation.attachController(controller);
 
                 // 循环半无人值守：确认待遇（放宽超时/白名单/目录放行）由 runner 构造时绑定的
                 // 来源令牌承载，无需再登记全局场景；此处只负责循环结束时清掉「同意全部」授权
@@ -239,15 +248,8 @@ public final class LoopService {
             } finally {
                 if (runner != null) {
                     runner.shutdown();
-                    // 同步关浏览器兜底：本 finally 跑在循环 run 线程（boundedElastic）上，
-                    // 停稳闩在其后放行——应用退出路径 cancelAndAwait 等到闩放行时浏览器
-                    // 已优雅落地；shutdown() 里的异步关闭在 JVM 退出前可能来不及执行
-                    runner.closeBrowserSync();
                 }
-                activeRunner.set(null);
-                active.set(null);
-                running.set(false);
-                finishedLatch.countDown(); // 最后放行停稳闩：重建路径以此确认循环线程已退出
+                invocation.finish();
             }
         });
     }
@@ -260,39 +262,23 @@ public final class LoopService {
      * 烧 token 直到单轮超时（默认 12 分钟）才回到取消检查点。</p>
      */
     public boolean cancelActive() {
-        return conversationRun.cancelActive(
-                com.javaclaw.api.conversation.CancellationReason.USER_REQUEST);
+        boolean accepted = false;
+        for (LoopInvocation invocation : invocations.values()) {
+            accepted |= cancelInvocation(invocation);
+        }
+        return accepted;
     }
 
     /** 只取消指定会话对应的系统图运行；由本轮句柄捕获调用。 */
     public boolean cancelActive(String sessionId) {
-        boolean graphCancelled = workflowService != null
-                && workflowService.cancelSystem(SYSTEM_GRAPH.id(), sessionId);
-        return cancelPipeline() || graphCancelled;
+        LoopInvocation invocation = invocations.get(sessionId);
+        return invocation != null && cancelInvocation(invocation);
     }
 
-    private boolean cancelPipeline() {
-        LoopController controller;
-        AgentScopeLoopRunner runner;
-        // 锁内置标志 + 读快照：与 start() 的三步锁段互斥，取消请求绝不会落在 CAS 与复位之间被清掉。
-        // 先置启动窗口标志再取消具体对象：controller/runner 可能尚未 set（目标分解、确认弹窗阶段），
-        // 标志保证启动流程在检查点让位，不会「取消空转、循环照跑」
-        synchronized (lifecycleLock) {
-            if (!running.get()) {
-                return false;
-            }
-            cancelRequested = true;
-            controller = active.get();
-            runner = activeRunner.get();
-        }
-        // cancel()/shutdown() 放到锁外执行：仅置标志/唤醒/dispose 订阅，不必占着生命周期锁
-        if (controller != null) {
-            controller.cancel();
-        }
-        if (runner != null) {
-            runner.shutdown();
-        }
-        return true;
+    private boolean cancelInvocation(LoopInvocation invocation) {
+        boolean graphCancelled = workflowService != null
+                && workflowService.cancelSystem(SYSTEM_GRAPH.id(), invocation.sessionId);
+        return invocation.cancel() || graphCancelled;
     }
 
     /**
@@ -301,20 +287,15 @@ public final class LoopService {
      * @return 是否已停稳（false = 超时或被中断，循环线程可能仍在收尾）
      */
     public boolean awaitTermination(long timeoutMillis) {
-        // 锁内取本代次闩：与 start() 的换闩锁段互斥，绝不会读到上一代次已归零的旧闩而误判已停稳
-        java.util.concurrent.CountDownLatch latch;
-        synchronized (lifecycleLock) {
-            latch = finished;
+        long deadline = System.nanoTime()
+                + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(Math.max(0, timeoutMillis));
+        for (LoopInvocation invocation : List.copyOf(invocations.values())) {
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0 || !invocation.await(remaining, java.util.concurrent.TimeUnit.NANOSECONDS)) {
+                return false;
+            }
         }
-        if (latch == null) {
-            return true;
-        }
-        try {
-            return latch.await(timeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        }
+        return true;
     }
 
     /** 工作区切换：停掉当前循环并等待停稳（随后共享基础设施会被关闭，不能带着在途轮切换）。 */
@@ -333,7 +314,7 @@ public final class LoopService {
      * 旧循环的 clearTaskAllowlist 与新循环的「同意全部」授权交错弄乱确认白名单）。
      */
     private void cancelAndAwait(com.javaclaw.api.conversation.CancellationReason reason) {
-        if (!conversationRun.cancelActive(reason)) {
+        if (!cancelActive()) {
             return;
         }
         if (!awaitTermination(TERMINATION_WAIT_MILLIS)) {
@@ -348,7 +329,7 @@ public final class LoopService {
      * 从请求构建执行计划：解析指令 → 分解目标 → 套用配置默认 → 拼装 spec 与上下文提示词。
      */
     private Plan buildPlan(ConversationRequest request) {
-        AgentConfig cfg = runtime.getConfig();
+        AgentConfig cfg = config;
         LoopDirectives directives = LoopDirectives.parse(request.userInput());
         // 空目标兜底：带着空目标启动只会白烧满上限轮数的模型调用，诚实失败
         if (directives.goal().isBlank()) {
@@ -359,7 +340,11 @@ public final class LoopService {
         if (!request.attachments().isEmpty()) {
             log.warn("循环模式不处理附件，已忽略 {} 个附件", request.attachments().size());
         }
-        GoalDecomposition goal = goalManager.decompose(directives.goal());
+        // Goal decomposition is a framework capability (gepa.goal), not a service-owned model
+        // runtime. The workflow starts with a deterministic goal shell; the agent profile enriches
+        // and evaluates it through the common Run/ModelTask paths.
+        GoalDecomposition goal = new GoalDecomposition(
+                directives.goal(), List.of(directives.goal()), "完成用户目标", List.of());
 
         Cadence cadence;
         if (directives.intervalSeconds() > 0) {
@@ -509,4 +494,65 @@ public final class LoopService {
      *                        等于把整个主目录纳入无确认写删范围（准则核验仍照常用默认目录）
      */
     private record Plan(LoopSpec spec, String contextPrompt, boolean explicitWorkDir) {}
+
+    /** Mutable state owned by one Workflow/Loop run, never by the singleton service. */
+    private static final class LoopInvocation {
+        private final String sessionId;
+        private final AtomicBoolean started = new AtomicBoolean();
+        private final AtomicBoolean cancelled = new AtomicBoolean();
+        private final AtomicBoolean finished = new AtomicBoolean();
+        private final AtomicReference<LoopController> controller = new AtomicReference<>();
+        private final AtomicReference<FrameworkLoopRunner> runner = new AtomicReference<>();
+        private final java.util.concurrent.CountDownLatch stopped =
+                new java.util.concurrent.CountDownLatch(1);
+
+        private LoopInvocation(String sessionId) {
+            this.sessionId = java.util.Objects.requireNonNull(sessionId, "sessionId");
+        }
+
+        private boolean begin() {
+            return started.compareAndSet(false, true);
+        }
+
+        private boolean cancelRequested() {
+            return cancelled.get();
+        }
+
+        private void attachController(LoopController value) {
+            controller.set(value);
+            if (cancelled.get()) value.cancel();
+        }
+
+        private void attachRunner(FrameworkLoopRunner value) {
+            runner.set(value);
+            if (cancelled.get()) value.shutdown();
+        }
+
+        private boolean cancel() {
+            if (finished.get()) return false;
+            boolean accepted = cancelled.compareAndSet(false, true);
+            LoopController currentController = controller.get();
+            if (currentController != null) currentController.cancel();
+            FrameworkLoopRunner currentRunner = runner.get();
+            if (currentRunner != null) currentRunner.shutdown();
+            return accepted;
+        }
+
+        private void finish() {
+            if (finished.compareAndSet(false, true)) {
+                controller.set(null);
+                runner.set(null);
+                stopped.countDown();
+            }
+        }
+
+        private boolean await(long timeout, java.util.concurrent.TimeUnit unit) {
+            try {
+                return stopped.await(timeout, unit);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+    }
 }

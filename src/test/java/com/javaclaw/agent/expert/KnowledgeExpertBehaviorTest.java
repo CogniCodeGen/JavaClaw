@@ -1,7 +1,6 @@
 package com.javaclaw.agent.expert;
 
 import com.javaclaw.application.knowledge.KnowledgeDocumentPreferencePort;
-import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.memory.embed.EmbeddingPurpose;
 import com.javaclaw.memory.embed.TestEmbeddingGatewayFactory;
@@ -11,6 +10,11 @@ import com.javaclaw.util.ProjectAccessPolicy;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import java.nio.file.Files;
@@ -34,13 +38,11 @@ class KnowledgeExpertBehaviorTest {
 
     private AnnotationConfigApplicationContext context;
     private TestEmbeddingGatewayFactory.Fixture embeddings;
-    private ModelFactory models;
     private KnowledgeExpert expert;
 
     @AfterEach
     void closeResources() {
         if (expert != null) expert.close();
-        if (models != null) models.close();
         if (embeddings != null) embeddings.close();
         if (context != null) context.close();
     }
@@ -51,8 +53,7 @@ class KnowledgeExpertBehaviorTest {
         embeddings = TestEmbeddingGatewayFactory.create(4,
                 (text, timeout) -> new double[]{1, 0, 0, 0});
         Preferences preferences = new Preferences();
-        models = new ModelFactory(config);
-        expert = new KnowledgeExpert(models, embeddings.gateway(), config,
+        expert = new KnowledgeExpert(embeddings.gateway(), config,
                 null, null, preferences);
 
         assertFalse(expert.isRagEnabled());
@@ -87,7 +88,7 @@ class KnowledgeExpertBehaviorTest {
         expert.close();
         expert = null;
         config.setRagEnabled(true);
-        expert = new KnowledgeExpert(models, embeddings.gateway(), config,
+        expert = new KnowledgeExpert(embeddings.gateway(), config,
                 null, temporaryDirectory.resolve("workspace"), preferences);
         assertFalse(expert.isRagEnabled());
         assertNotNull(expert.ragInitializationError());
@@ -112,15 +113,13 @@ class KnowledgeExpertBehaviorTest {
         });
         Preferences preferences = new Preferences();
         preferences.excluded.add("disabled-on-load");
-        models = new ModelFactory(config);
-        expert = new KnowledgeExpert(models, embeddings.gateway(), config,
+        expert = new KnowledgeExpert(embeddings.gateway(), config,
                 temporaryDirectory.resolve("global"), temporaryDirectory.resolve("workspace"),
                 preferences);
 
         assertTrue(expert.isRagEnabled());
         assertNull(expert.ragInitializationError());
         assertFalse(expert.isDocEnabled("disabled-on-load"));
-        assertNotNull(expert.getTool());
         assertNotNull(expert.embeddingHealth());
         AtomicInteger healthEvents = new AtomicInteger();
         AutoCloseable healthSubscription = expert.onEmbeddingHealthChanged(
@@ -212,8 +211,7 @@ class KnowledgeExpertBehaviorTest {
         AgentConfig config = config(true);
         embeddings = TestEmbeddingGatewayFactory.create(4,
                 (text, timeout) -> new double[]{1, 0, 0, 0});
-        models = new ModelFactory(config);
-        expert = new KnowledgeExpert(models, embeddings.gateway(), config,
+        expert = new KnowledgeExpert(embeddings.gateway(), config,
                 temporaryDirectory.resolve("global-files"),
                 temporaryDirectory.resolve("workspace-files"), new Preferences());
 
@@ -240,7 +238,24 @@ class KnowledgeExpertBehaviorTest {
             assertTrue(expert.importFile(file.toString(), KnowledgeExpert.Scope.WORKSPACE)
                     .contains("已导入"), extension);
         }
-        assertTrue(expert.getDocumentCount() >= 10);
+        Path pdf = importDirectory.resolve("document.pdf");
+        try (PDDocument document = new PDDocument()) {
+            PDPage page = new PDPage();
+            document.addPage(page);
+            try (PDPageContentStream content = new PDPageContentStream(document, page)) {
+                content.beginText();
+                content.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+                content.newLineAtOffset(50, 700);
+                content.showText("alpha content from local PDF fixture");
+                content.endText();
+            }
+            document.save(pdf.toFile());
+        }
+        assertTrue(expert.importFile(pdf.toString(), KnowledgeExpert.Scope.WORKSPACE)
+                .contains("已导入"));
+        assertTrue(expert.getDocumentChunkPreviews("document.pdf", 2).stream()
+                .anyMatch(value -> value.contains("local PDF fixture")));
+        assertTrue(expert.getDocumentCount() >= 11);
         assertTrue(expert.importFile(null, KnowledgeExpert.Scope.WORKSPACE).contains("导入失败"));
         assertTrue(expert.importFile(temporaryDirectory.resolve("outside.txt").toString(),
                 KnowledgeExpert.Scope.WORKSPACE).contains("导入失败"));
@@ -254,8 +269,7 @@ class KnowledgeExpertBehaviorTest {
         Preferences preferences = new Preferences();
         preferences.failLoad = true;
         preferences.failSave = true;
-        models = new ModelFactory(config);
-        expert = new KnowledgeExpert(models, embeddings.gateway(), config,
+        expert = new KnowledgeExpert(embeddings.gateway(), config,
                 temporaryDirectory.resolve("global-prefs"),
                 temporaryDirectory.resolve("workspace-prefs"), preferences);
 

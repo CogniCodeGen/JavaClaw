@@ -1,47 +1,48 @@
 package com.javaclaw.plugin.capability;
 
-import com.javaclaw.agent.AgentRuntime;
-import com.javaclaw.agent.ScheduledTaskAgent;
+import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
+import com.javaclaw.api.conversation.ConversationHandle;
 import com.javaclaw.api.conversation.ConversationOutcome;
-import com.javaclaw.api.conversation.TerminalCallbackGuard;
+import com.javaclaw.application.agent.AgentConversationRunner;
+import com.javaclaw.application.agent.RunRequestFactory;
+import com.javaclaw.framework.api.AgentClient;
+import com.javaclaw.framework.api.InvocationSource;
+import com.javaclaw.framework.api.PermissionSet;
 import com.javaclaw.plugin.CapabilityGuard;
 import com.javaclaw.plugin.api.Capability;
 import com.javaclaw.plugin.api.PluginException;
 import com.javaclaw.plugin.api.capability.ChatAccess;
 import com.javaclaw.plugin.api.capability.ChatChunkListener;
-import com.javaclaw.schedule.ScheduledRunControl;
+import com.javaclaw.runtime.WorkspaceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Objects;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * CHAT 能力实现 —— 背靠 {@link ScheduledTaskAgent}（与交互聊天<b>完全隔离</b>的非交互编排器，
- * 每轮独立上下文与记忆），为插件提供一轮 AI 对话。
- *
- * <p>每个插件独占一个本实例与一个 {@link ScheduledTaskAgent}（懒建：仅当插件确实调用 CHAT 时才创建）。
- * {@code ScheduledTaskAgent.run} 阻塞且需串行，故 {@link #ask}/{@link #stream} 经实例锁串行化——插件
- * 从多个后台虚拟线程并发发起对话时自动排队，互不踩踏。来源令牌按 {@code plugin:<id>} 逐 run 绑定：
- * 该 id 永不出现在定时任务授权窗里，插件对话的高风险工具确认永远走逐次人工（保守语义）。</p>
- *
- * @author JavaClaw
- */
+/** Plugin CHAT capability backed directly by the single AgentClient. */
 public final class ChatAccessImpl implements ChatAccess {
-
     private static final Logger log = LoggerFactory.getLogger(ChatAccessImpl.class);
+    private static final long TIMEOUT_MINUTES = 30;
 
     private final String pluginId;
-    private final AgentRuntime runtime;
+    private final AgentConversationRunner runs;
+    private final RunRequestFactory requests;
     private final Object lock = new Object();
 
-    /** 懒建的隔离编排器（首次调用 CHAT 时创建） */
-    private volatile ScheduledTaskAgent agent;
-
-    public ChatAccessImpl(String pluginId, AgentRuntime runtime) {
-        this.pluginId = pluginId;
-        this.runtime = runtime;
+    public ChatAccessImpl(
+            String pluginId,
+            AgentClient agents,
+            WorkspaceContext workspace,
+            Executor executor) {
+        this.pluginId = Objects.requireNonNull(pluginId, "pluginId");
+        this.runs = new AgentConversationRunner(agents, executor);
+        this.requests = new RunRequestFactory(workspace);
     }
 
     @Override
@@ -49,18 +50,39 @@ public final class ChatAccessImpl implements ChatAccess {
         CapabilityGuard.require(Capability.CHAT);
         StringBuilder reply = new StringBuilder();
         AtomicReference<Throwable> error = new AtomicReference<>();
+        execute(prompt, chunk -> reply.append(chunk), error);
+        Throwable failure = error.get();
+        if (failure != null) {
+            throw new PluginException("插件[" + pluginId + "]CHAT 调用失败："
+                    + failure.getMessage(), failure);
+        }
+        return reply.toString();
+    }
 
+    @Override
+    public void stream(String prompt, ChatChunkListener listener) {
+        CapabilityGuard.require(Capability.CHAT);
+        AtomicReference<Throwable> error = new AtomicReference<>();
+        execute(prompt, chunk -> safe(() -> listener.onChunk(chunk)), error);
+        Throwable failure = error.get();
+        if (failure == null) safe(listener::onComplete);
+        else safe(() -> listener.onError(failure.getMessage()));
+    }
+
+    private void execute(
+            String prompt,
+            java.util.function.Consumer<String> chunks,
+            AtomicReference<Throwable> error) {
         synchronized (lock) {
-            log.debug("插件[{}]发起同步对话，prompt 长度={}", pluginId, prompt == null ? 0 : prompt.length());
-            // 插件路径不开授权窗：逐次构造的令牌只承载归属标识，永远走常规确认
-            agent().run(new ScheduledRunControl("plugin:" + pluginId),
-                    com.javaclaw.agent.ToolCallOrigin.scheduled("plugin:" + pluginId),
-                    prompt, new TerminalCallbackGuard(new ConversationCallbacks() {
+            CountDownLatch done = new CountDownLatch(1);
+            ConversationHandle handle = runs.start(requests.text(prompt, "plugin:" + pluginId, "plugin",
+                            InvocationSource.plugin(pluginId),
+                            // CHAT capability does not implicitly authorize host tools.
+                            PermissionSet.NONE, null),
+                    ToolCallOrigin.UNKNOWN, new ConversationCallbacks() {
                 @Override
                 public void onEvent(ConversationEvent event) {
-                    if (event instanceof ConversationEvent.Reply r) {
-                        reply.append(r.chunk());
-                    }
+                    if (event instanceof ConversationEvent.Reply reply) chunks.accept(reply.chunk());
                 }
 
                 @Override
@@ -71,77 +93,32 @@ public final class ChatAccessImpl implements ChatAccess {
                         error.set(new java.util.concurrent.CancellationException(
                                 "插件对话已取消: " + cancelled.reason()));
                     }
+                    done.countDown();
                 }
-            }));
-        }
-
-        Throwable t = error.get();
-        if (t != null) {
-            log.warn("插件[{}]同步对话失败：{}", pluginId, t.toString());
-            throw new PluginException("插件[" + pluginId + "]CHAT 调用失败：" + t.getMessage(), t);
-        }
-        return reply.toString();
-    }
-
-    @Override
-    public void stream(String prompt, ChatChunkListener listener) {
-        CapabilityGuard.require(Capability.CHAT);
-        synchronized (lock) {
-            log.debug("插件[{}]发起流式对话", pluginId);
-            agent().run(new ScheduledRunControl("plugin:" + pluginId),
-                    com.javaclaw.agent.ToolCallOrigin.scheduled("plugin:" + pluginId),
-                    prompt, new TerminalCallbackGuard(new ConversationCallbacks() {
-                @Override
-                public void onEvent(ConversationEvent event) {
-                    if (event instanceof ConversationEvent.Reply r) {
-                        safe(() -> listener.onChunk(r.chunk()));
-                    }
+            });
+            try {
+                if (!done.await(TIMEOUT_MINUTES, TimeUnit.MINUTES)) {
+                    handle.cancel(com.javaclaw.api.conversation.CancellationReason.RUNTIME_REBUILD);
+                    error.compareAndSet(null, new java.util.concurrent.TimeoutException(
+                            "插件 CHAT 超过 " + TIMEOUT_MINUTES + " 分钟"));
                 }
-
-                @Override
-                public void onTerminal(ConversationOutcome outcome) {
-                    if (outcome instanceof ConversationOutcome.Completed) {
-                        safe(listener::onComplete);
-                    } else if (outcome instanceof ConversationOutcome.Failed failed) {
-                        safe(() -> listener.onError(failed.error().getMessage()));
-                    } else if (outcome instanceof ConversationOutcome.Cancelled cancelled) {
-                        safe(() -> listener.onError("已取消: " + cancelled.reason()));
-                    }
-                }
-            }));
-        }
-    }
-
-    /** 释放编排器资源（插件停用时调用）。 */
-    public void shutdown() {
-        ScheduledTaskAgent a = agent;
-        if (a != null) {
-            a.shutdown();
-        }
-    }
-
-    /** 懒建隔离编排器（双重检查锁）。 */
-    private ScheduledTaskAgent agent() {
-        ScheduledTaskAgent a = agent;
-        if (a == null) {
-            synchronized (lock) {
-                a = agent;
-                if (a == null) {
-                    a = new ScheduledTaskAgent(runtime);
-                    agent = a;
-                    log.info("插件[{}]CHAT 编排器已创建（隔离 ScheduledTaskAgent）", pluginId);
-                }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                handle.cancel(com.javaclaw.api.conversation.CancellationReason.RUNTIME_REBUILD);
+                error.compareAndSet(null, interrupted);
             }
         }
-        return a;
     }
 
-    /** 包裹插件回调，回调内异常不得影响对话流程。 */
-    private void safe(Runnable r) {
+    public void shutdown() {
+        runs.close();
+    }
+
+    private void safe(Runnable callback) {
         try {
-            r.run();
-        } catch (Exception e) {
-            log.warn("插件[{}]CHAT 回调抛异常（已忽略）：{}", pluginId, e.toString());
+            callback.run();
+        } catch (Exception failure) {
+            log.warn("插件[{}]CHAT 回调异常（已隔离）：{}", pluginId, failure.toString());
         }
     }
 }

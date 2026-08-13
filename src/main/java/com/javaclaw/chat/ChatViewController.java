@@ -1,6 +1,5 @@
 package com.javaclaw.chat;
 
-import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.ChatService;
 import com.javaclaw.agent.PlanModeService;
 import com.javaclaw.application.chat.ChatHistoryApplicationService;
@@ -242,6 +241,7 @@ public class ChatViewController implements AutoCloseable {
         sessionCoordinator = new ChatSessionCoordinator(
                 persistExecutor,
                 history,
+                () -> applicationKernel.current().context().workspaceId(),
                 sessionViewController,
                 composerController,
                 thinkingPanel,
@@ -265,7 +265,6 @@ public class ChatViewController implements AutoCloseable {
                 status,
                 streamRenderer,
                 navigation,
-                runtimeCoordinator::runtime,
                 runtimeCoordinator::modeRegistry,
                 runtimeCoordinator::isTransitioning,
                 sessionCoordinator);
@@ -363,11 +362,6 @@ public class ChatViewController implements AutoCloseable {
         navigation.openSettings(category);
     }
 
-
-    /** 获取共享基础设施容器（供外部使用） */
-    public AgentRuntime getRuntime() {
-        return runtimeCoordinator.runtime();
-    }
 
     /** 获取普通模式服务 */
     public ChatService getChatService() {

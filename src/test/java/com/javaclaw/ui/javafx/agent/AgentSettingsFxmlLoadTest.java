@@ -1,9 +1,15 @@
 package com.javaclaw.ui.javafx.agent;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.javaclaw.api.interaction.ConfirmRequest;
 import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.application.agent.AgentManagementApplicationService;
+import com.javaclaw.framework.api.CapabilityForm;
+import com.javaclaw.framework.api.CapabilityId;
 import com.javaclaw.platform.dialog.DialogService;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
@@ -11,6 +17,7 @@ import com.javaclaw.platform.fx.FxDispatcher;
 import javafx.application.Platform;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
@@ -38,6 +45,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AgentSettingsFxmlLoadTest {
 
     private static final long TIMEOUT_SECONDS = 5;
+    private static final CapabilityId TEST_CAPABILITY = new CapabilityId("test.capability");
     private AnnotationConfigApplicationContext context;
     private AgentSettingsPanel panel;
     private AgentSettingsController controller;
@@ -79,6 +87,9 @@ class AgentSettingsFxmlLoadTest {
         runFx(() -> box("customRows").getChildren().getFirst()
                 .getOnMouseClicked().handle(null));
         assertEquals("自定义", callFx(() -> text("nameField").getText()));
+        awaitFx(() -> box("capabilityFormsBox").getChildren().size() == 1);
+        assertTrue(callFx(() -> capabilityToggle().isSelected()));
+        assertEquals("initial", callFx(() -> capabilityTextField().getText()));
 
         runFx(() -> {
             text("nameField").clear();
@@ -89,9 +100,12 @@ class AgentSettingsFxmlLoadTest {
         runFx(() -> {
             text("nameField").setText("Java 专家");
             text("toolNameField").setText("java_expert");
+            capabilityTextField().setText("updated");
             button("saveButton").fire();
         });
         awaitFx(() -> "Java 专家".equals(service.require("custom-1").name())
+                && "updated".equals(service.require("custom-1").capabilityBindings()
+                        .get(TEST_CAPABILITY).path("endpoint").asText())
                 && changes.get() == 1);
 
         runFx(() -> button("optimizePromptButton").fire());
@@ -113,6 +127,7 @@ class AgentSettingsFxmlLoadTest {
     private void createContext(FakeService service) {
         context = new AnnotationConfigApplicationContext();
         context.registerBean(AgentManagementApplicationService.class, () -> service);
+        context.registerBean(ObjectMapper.class, AgentSettingsFxmlLoadTest::productionObjectMapper);
         context.registerBean(UserInteractionPort.class, AllowInteraction::new);
         context.registerBean(ManagedTaskExecutor.class, () -> new ManagedTaskExecutor(),
                 definition -> definition.setDestroyMethodName("close"));
@@ -133,6 +148,24 @@ class AgentSettingsFxmlLoadTest {
     private Label label(String id) { return (Label) panel.root().lookup("#" + id); }
     private TextField text(String id) { return (TextField) panel.root().lookup("#" + id); }
     private TextArea area(String id) { return (TextArea) panel.root().lookup("#" + id); }
+
+    private CheckBox capabilityToggle() {
+        VBox card = (VBox) box("capabilityFormsBox").getChildren().getFirst();
+        return (CheckBox) card.getChildren().get(2);
+    }
+
+    private TextField capabilityTextField() {
+        VBox card = (VBox) box("capabilityFormsBox").getChildren().getFirst();
+        VBox fields = (VBox) card.getChildren().get(3);
+        VBox row = (VBox) fields.getChildren().getFirst();
+        return (TextField) row.getChildren().get(1);
+    }
+
+    private static ObjectMapper productionObjectMapper() {
+        return new ObjectMapper()
+                .findAndRegisterModules()
+                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+    }
 
     private static void awaitFx(BooleanSupplier condition) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(TIMEOUT_SECONDS);
@@ -169,10 +202,14 @@ class AgentSettingsFxmlLoadTest {
     private static final class FakeService implements AgentManagementApplicationService {
         private final List<Agent> agents = new ArrayList<>(List.of(
                 new Agent("builtin", "内置", "coding_expert", "", "", 1, true, true),
-                new Agent("custom-1", "自定义", "custom_one", "描述", "草稿", 2, true, false)));
+                new Agent("custom-1", "自定义", "custom_one", "描述", "草稿", 2, true,
+                        false, java.util.Map.of(TEST_CAPABILITY, capabilityValue("initial")))));
         private int sequence = 1;
 
-        @Override public synchronized Catalog catalog() { return new Catalog(agents); }
+        @Override
+        public synchronized Catalog catalog() {
+            return new Catalog(agents, List.of(capabilityForm()));
+        }
 
         @Override
         public synchronized ChangeResult create() {
@@ -190,7 +227,7 @@ class AgentSettingsFxmlLoadTest {
             agents.removeIf(agent -> agent.id().equals(command.id()));
             agents.add(new Agent(command.id(), command.name(), command.toolName(),
                     command.description(), command.systemPrompt(), command.maxIters(),
-                    command.enabled(), false));
+                    command.enabled(), false, command.capabilityBindings()));
             return catalog();
         }
 
@@ -203,5 +240,20 @@ class AgentSettingsFxmlLoadTest {
         @Override public String optimize(OptimizePromptCommand command) { return "优化结果"; }
 
         synchronized Agent require(String id) { return catalog().require(id); }
+
+        private static CapabilityForm capabilityForm() {
+            ObjectNode schema = JsonNodeFactory.instance.objectNode();
+            schema.put("type", "object");
+            ObjectNode endpoint = schema.putObject("properties").putObject("endpoint");
+            endpoint.put("type", "string");
+            endpoint.put("title", "服务地址");
+            return new CapabilityForm(TEST_CAPABILITY, "test.extension", "测试能力",
+                    "验证扩展能力表单可加载、编辑并保存", schema,
+                    JsonNodeFactory.instance.objectNode());
+        }
+
+        private static ObjectNode capabilityValue(String endpoint) {
+            return JsonNodeFactory.instance.objectNode().put("endpoint", endpoint);
+        }
     }
 }

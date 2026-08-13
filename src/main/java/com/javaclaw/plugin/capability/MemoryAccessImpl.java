@@ -1,52 +1,49 @@
 package com.javaclaw.plugin.capability;
 
-import com.javaclaw.agent.memory.MemoryManager;
+import com.javaclaw.memory.MemoryService;
 import com.javaclaw.plugin.CapabilityGuard;
 import com.javaclaw.plugin.api.Capability;
 import com.javaclaw.plugin.api.capability.MemoryAccess;
-import io.agentscope.core.message.Msg;
-import io.agentscope.core.message.MsgRole;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
+import java.util.Objects;
 
-/**
- * MEMORY 能力实现（只读）—— 背靠宿主 {@link MemoryManager}，把内部 {@link Msg} 转为可序列化的
- * {@link MemoryMessage} 只读视图，不暴露任何写/清空入口。
- *
- * @author JavaClaw
- */
+/** Read-only plugin projection over durable workspace episodes, never over Agent internals. */
 public final class MemoryAccessImpl implements MemoryAccess {
-
     private static final Logger log = LoggerFactory.getLogger(MemoryAccessImpl.class);
+    private static final String WORKSPACE_MEMORY = "workspace";
 
     private final String pluginId;
-    private final MemoryManager memoryManager;
+    private final MemoryService memory;
 
-    public MemoryAccessImpl(String pluginId, MemoryManager memoryManager) {
-        this.pluginId = pluginId;
-        this.memoryManager = memoryManager;
+    public MemoryAccessImpl(String pluginId, MemoryService memory) {
+        this.pluginId = Objects.requireNonNull(pluginId, "pluginId");
+        this.memory = Objects.requireNonNull(memory, "memory");
     }
 
     @Override
     public List<String> listAgents() {
         CapabilityGuard.require(Capability.MEMORY);
-        return memoryManager.getSnapshotAgentNames();
+        return memory.episodes().isEmpty() ? List.of() : List.of(WORKSPACE_MEMORY);
     }
 
     @Override
     public List<MemoryMessage> snapshot(String agentName) {
         CapabilityGuard.require(Capability.MEMORY);
-        List<Msg> snapshot = memoryManager.getSnapshot(agentName);
-        log.debug("插件[{}]读取智能体[{}]记忆快照，{} 条", pluginId, agentName, snapshot.size());
-        return snapshot.stream()
-                .map(m -> new MemoryMessage(roleName(m.getRole()), m.getName(), m.getTextContent()))
-                .toList();
-    }
-
-    private String roleName(MsgRole role) {
-        return role == null ? "" : role.name().toLowerCase(Locale.ROOT);
+        if (!WORKSPACE_MEMORY.equals(agentName)) return List.of();
+        List<MemoryMessage> result = new ArrayList<>();
+        for (var episode : memory.episodes()) {
+            if (episode.userInput != null) {
+                result.add(new MemoryMessage("user", "user", episode.userInput));
+            }
+            if (episode.assistantReply != null) {
+                result.add(new MemoryMessage("assistant", "JavaClaw", episode.assistantReply));
+            }
+        }
+        log.debug("插件[{}]读取 durable 记忆快照，{} 条", pluginId, result.size());
+        return List.copyOf(result);
     }
 }

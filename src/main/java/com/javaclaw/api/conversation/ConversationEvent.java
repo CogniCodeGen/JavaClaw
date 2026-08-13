@@ -1,12 +1,18 @@
 package com.javaclaw.api.conversation;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.NullNode;
+import com.fasterxml.jackson.databind.node.TextNode;
 import com.javaclaw.agent.evaluation.EvaluationResult;
 
+import java.util.Objects;
+
 /**
- * 对话事件（{@link ConversationMode} 产出的统一事件流）。
+ * JavaFX 对话视图的兼容事件投影。
  *
- * <p>采用 sealed 接口：所有子类型在此一次性枚举，消费者 switch 处理即可。
- * 新增事件类型必须显式加入 permits 列表（编译期保护）。</p>
+ * <p>框架的权威、可扩展事件协议是
+ * {@link com.javaclaw.framework.api.RunEventEnvelope}；此类型只存在于产品 UI 适配层，
+ * 不得被协议端口、扩展或运行存储当作事件模型。</p>
  *
  * <p>事件可粗分为几类：</p>
  * <ul>
@@ -19,20 +25,7 @@ import com.javaclaw.agent.evaluation.EvaluationResult;
  *
  * <p>本类型不依赖任何 UI 框架。</p>
  */
-public sealed interface ConversationEvent
-        permits ConversationEvent.Thinking,
-                ConversationEvent.Reply,
-                ConversationEvent.ToolResult,
-                ConversationEvent.Hint,
-                ConversationEvent.SubAgentThinking,
-                ConversationEvent.SubAgentReply,
-                ConversationEvent.AgentStart,
-                ConversationEvent.AgentReply,
-                ConversationEvent.Usage,
-                ConversationEvent.Evaluation,
-                ConversationEvent.LoopDetected,
-                ConversationEvent.Progress,
-                ConversationEvent.Custom {
+public interface ConversationEvent {
 
     /** 编排器思考过程增量（模型推理链的可见部分） */
     record Thinking(String chunk) implements ConversationEvent {}
@@ -111,7 +104,19 @@ public sealed interface ConversationEvent
      * 扩展事件：供未来模式携带自定义负载，避免每次新事件类型都修改 sealed 家族。
      *
      * @param kind    事件类型标识（由模式自行定义，消费者按 kind 判断如何处理）
-     * @param payload 负载内容（消费者需按 kind 做类型转换）
+     * @param payload JSON 负载；不允许携带任意 Java 对象
      */
-    record Custom(String kind, Object payload) implements ConversationEvent {}
+    record Custom(String kind, JsonNode payload) implements ConversationEvent {
+        public Custom {
+            kind = Objects.requireNonNull(kind, "kind").trim();
+            if (kind.isEmpty()) throw new IllegalArgumentException("event kind must not be blank");
+            payload = payload == null ? NullNode.getInstance() : payload.deepCopy();
+        }
+
+        public Custom(String kind, String payload) {
+            this(kind, TextNode.valueOf(payload == null ? "" : payload));
+        }
+
+        @Override public JsonNode payload() { return payload.deepCopy(); }
+    }
 }

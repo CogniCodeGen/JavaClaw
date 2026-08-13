@@ -142,6 +142,53 @@ class SourceHygieneTest {
         assertNoViolations("source hygiene", violations);
     }
 
+    @Test
+    void removedAgentLibraryLeavesNoSourceOrBuildReferences() throws IOException {
+        String forbidden = "agent" + "scope";
+        List<String> violations = new ArrayList<>();
+        List<Path> roots = List.of(PROJECT.resolve("pom.xml"), PROJECT.resolve("src/main"),
+                PROJECT.resolve("src/test"));
+        for (Path root : roots) {
+            if (Files.isRegularFile(root)) {
+                if (Files.readString(root).toLowerCase().contains(forbidden)) {
+                    violations.add(relative(root) + " still references the removed agent library");
+                }
+                continue;
+            }
+            try (var paths = Files.walk(root)) {
+                for (Path file : paths.filter(Files::isRegularFile)
+                        .filter(SourceHygieneTest::isReviewableText).toList()) {
+                    if (Files.readString(file).toLowerCase().contains(forbidden)) {
+                        violations.add(relative(file) + " still references the removed agent library");
+                    }
+                }
+            }
+        }
+        assertNoViolations("removed agent library", violations);
+    }
+
+    @Test
+    void conversationCompatibilityProjectionCannotReintroduceObjectPayloads() throws IOException {
+        String source = Files.readString(JAVA_ROOT.resolve(
+                "com/javaclaw/api/conversation/ConversationEvent.java"));
+        List<String> violations = new ArrayList<>();
+        if (source.contains("sealed interface ConversationEvent")) {
+            violations.add("ConversationEvent must remain open for adapter-side projections");
+        }
+        if (source.contains("Object payload")) {
+            violations.add("ConversationEvent.Custom must use JsonNode instead of Object payload");
+        }
+        assertNoViolations("conversation event projection", violations);
+    }
+
+    private static boolean isReviewableText(Path path) {
+        String name = path.getFileName().toString().toLowerCase();
+        return name.endsWith(".java") || name.endsWith(".xml") || name.endsWith(".fxml")
+                || name.endsWith(".properties") || name.endsWith(".css") || name.endsWith(".md")
+                || name.endsWith(".json") || name.endsWith(".yaml") || name.endsWith(".yml")
+                || name.endsWith(".txt") || name.endsWith(".sql");
+    }
+
     private static List<Path> files(Path root, String suffix) throws IOException {
         try (var paths = Files.walk(root)) {
             return paths.filter(Files::isRegularFile)

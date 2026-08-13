@@ -19,6 +19,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -47,7 +48,7 @@ class H2WorkflowStoreTest {
                  var executions = new GraphExecutionManager(registry, checkpoints, tasks)) {
                 CountDownLatch done = new CountDownLatch(1);
                 var run = executions.start(published.published(), "thread", new com.javaclaw.workflow.model.GraphState(),
-                        event -> { if (event instanceof GraphEvent.RunFinished) done.countDown(); }, Map.of());
+                        event -> { if (event instanceof GraphEvent.RunFinished) done.countDown(); }, com.javaclaw.workflow.runtime.WorkflowExecutionServices.EMPTY);
                 assertTrue(done.await(3, TimeUnit.SECONDS));
                 var loaded = checkpoints.loadRun(run.id());
                 assertNotNull(loaded);
@@ -77,10 +78,13 @@ class H2WorkflowStoreTest {
                     "recovery-run", published.published().id(), published.published().version(),
                     "recovery-thread", published.published(), new GraphState(),
                     RunStatus.RECOVERY_REQUIRED, "start", null, 0, 0,
-                    null, null, null, now, now);
+                    null, null, null, List.of(new com.javaclaw.framework.spi.ExtensionLock(
+                    "test.workflow", com.javaclaw.framework.spi.SemanticVersion.parse("1.2.3"),
+                    "a".repeat(64), 7)), now, now);
             checkpoints.createRun(recovery);
-            assertEquals(recovery.id(),
-                    checkpoints.findRecoverableRun(draft.id(), "recovery-thread").id());
+            var recovered = checkpoints.findRecoverableRun(draft.id(), "recovery-thread");
+            assertEquals(recovery.id(), recovered.id());
+            assertEquals(recovery.extensionLocks(), recovered.extensionLocks());
             assertNull(otherWorkspace.findRecoverableRun(draft.id(), "recovery-thread"));
 
             var createdBeforeCrash = new com.javaclaw.workflow.runtime.GraphRun(
@@ -90,6 +94,8 @@ class H2WorkflowStoreTest {
                  var startup = new GraphExecutionManager(registry, checkpoints, tasks)) {
                 assertEquals(RunStatus.RECOVERY_REQUIRED,
                         checkpoints.loadRun(createdBeforeCrash.id()).status());
+                assertEquals(RunStatus.RECOVERY_BLOCKED_MISSING_EXTENSION,
+                        checkpoints.loadRun(recovery.id()).status());
             }
 
             var copiedSystem = definitions.cloneFrom(SystemGraphFactory.pipeline(

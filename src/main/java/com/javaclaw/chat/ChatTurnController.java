@@ -1,12 +1,12 @@
 package com.javaclaw.chat;
 
-import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.PricingTable;
 import com.javaclaw.agent.TokenTracker;
 import com.javaclaw.api.conversation.CancellationReason;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
 import com.javaclaw.api.conversation.ConversationHandle;
+import com.javaclaw.api.conversation.ConversationMessage;
 import com.javaclaw.api.conversation.ConversationMode;
 import com.javaclaw.api.conversation.ConversationOptions;
 import com.javaclaw.api.conversation.ConversationOutcome;
@@ -26,14 +26,7 @@ import java.util.Objects;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
-/**
- * Coordinates one conversation turn from composer submission through its single terminal outcome.
- *
- * <p>Conversation callbacks may arrive on arbitrary threads and are marshalled through
- * {@link FxDispatcher}. Destructive cancellation invalidates the generation before invoking the
- * handle, so synchronous terminal callbacks cannot resurrect deleted UI or history. The controller
- * owns no workspace service permanently; suppliers are resolved at each turn.</p>
- */
+/** Coordinates a conversation turn and isolates late callbacks after cancellation. */
 final class ChatTurnController {
 
     enum StopPolicy { PRESERVE_PARTIAL, DISCARD_AND_INVALIDATE }
@@ -78,7 +71,6 @@ final class ChatTurnController {
     private final ChatStatusController status;
     private final ChatStreamRenderer renderer;
     private final ChatNavigationController navigation;
-    private final Supplier<AgentRuntime> runtime;
     private final Supplier<ModeRegistry> modes;
     private final BooleanSupplier rebuilding;
     private final Host host;
@@ -100,7 +92,6 @@ final class ChatTurnController {
             ChatStatusController status,
             ChatStreamRenderer renderer,
             ChatNavigationController navigation,
-            Supplier<AgentRuntime> runtime,
             Supplier<ModeRegistry> modes,
             BooleanSupplier rebuilding,
             Host host) {
@@ -112,11 +103,10 @@ final class ChatTurnController {
         this.status = Objects.requireNonNull(status, "status");
         this.renderer = Objects.requireNonNull(renderer, "renderer");
         this.navigation = Objects.requireNonNull(navigation, "navigation");
-        this.runtime = Objects.requireNonNull(runtime, "runtime");
         this.modes = Objects.requireNonNull(modes, "modes");
         this.rebuilding = Objects.requireNonNull(rebuilding, "rebuilding");
         this.host = Objects.requireNonNull(host, "host");
-        this.outcomes = new ChatTurnOutcomeHandler(runtime, thinking, renderer, host);
+        this.outcomes = new ChatTurnOutcomeHandler(thinking, renderer, host);
         this.replyExporter = new ChatReplyExporter(backgroundTasks, host::ownerWindow);
         this.events = new ChatTurnEventRouter(
                 renderer,
@@ -216,6 +206,7 @@ final class ChatTurnController {
 
     private void start(String text, List<File> attachments, String targetModeId) {
         ChatSession session = host.currentSession();
+        var priorMessages = ChatConversationHistory.snapshot(session);
         host.addUserMessage(text, attachments);
         composer.clearInput();
         composer.clearAttachments();
@@ -228,11 +219,16 @@ final class ChatTurnController {
         thinking.startNewStream();
 
         String sessionId = session == null ? null : session.getId();
-        fx.dispatchLater(() -> startMode(turn, text, attachments, sessionId));
+        fx.dispatchLater(() -> startMode(
+                turn, text, attachments, sessionId, priorMessages));
     }
 
     private void startMode(
-            ChatActiveTurn turn, String text, List<File> attachments, String sessionId) {
+            ChatActiveTurn turn,
+            String text,
+            List<File> attachments,
+            String sessionId,
+            List<ConversationMessage> priorMessages) {
         if (generation != turn.generation || activeTurn != turn) {
             return;
         }
@@ -250,7 +246,7 @@ final class ChatTurnController {
         try {
             ConversationHandle handle = conversationMode.start(
                     new ConversationRequest(text, attachments, sessionId,
-                            new ConversationOptions(profile)),
+                            new ConversationOptions(profile), priorMessages),
                     callbacks(turn.generation));
             if (!handle.isTerminal() && generation == turn.generation && activeTurn == turn) {
                 turn.handle = handle;

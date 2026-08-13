@@ -1,7 +1,6 @@
 package com.javaclaw.platform.spring;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.ChatService;
 import com.javaclaw.agent.PlanModeService;
 import com.javaclaw.agent.ShellCommandService;
@@ -123,13 +122,14 @@ class WorkspaceIntelligenceConfiguration {
 
     @Bean
     SkillCurator skillCurator(
-            AgentRuntime runtime,
+            com.javaclaw.framework.api.AgentClient agents,
+            WorkspaceContext workspace,
             SkillRuntimeServices skills,
             com.javaclaw.config.AgentConfig settings,
             @Qualifier("workspaceTaskScope") TaskScope tasks,
             UserInteractionPort interaction) {
-        return new SkillCurator(runtime.getModelFactory(), runtime.getTokenTracker(),
-                skills.manager(), skills.usage(), skills.proposals(), settings, tasks,
+        return new SkillCurator(agents, workspace, skills.manager(), skills.usage(),
+                skills.proposals(), settings, tasks,
                 () -> interaction);
     }
 
@@ -188,21 +188,80 @@ class WorkspaceIntelligenceConfiguration {
 
     @Bean(destroyMethod = "shutdown")
     ChatService chatService(
-            AgentRuntime runtime,
+            com.javaclaw.platform.spring.WorkspaceRuntimeOptions options,
             WorkflowService workflows,
+            com.javaclaw.site.SiteCredentialManager siteCredentials,
             SkillCurator skillCurator,
-            @Qualifier("workspaceTaskScope") TaskScope taskScope) {
-        return new ChatService(runtime, workflows, skillCurator, taskScope);
+            @Qualifier("workspaceTaskScope") TaskScope taskScope,
+            com.javaclaw.framework.api.AgentClient agents,
+            com.javaclaw.memory.MemoryService memory,
+            com.javaclaw.runtime.WorkspaceContext workspace,
+            @Qualifier("agentKernelExecutor") java.util.concurrent.Executor executor) {
+        return new ChatService(options.browserManager(), workflows, siteCredentials,
+                skillCurator, taskScope,
+                agents, memory, workspace, executor);
     }
 
-    @Bean(destroyMethod = "")
-    com.javaclaw.memory.MemoryService memoryService(ChatService chats) {
-        return chats.getMemoryService();
+    @Bean(destroyMethod = "close")
+    com.javaclaw.memory.MemoryService memoryService(
+            com.javaclaw.framework.spi.ModelTaskGateway modelTasks,
+            com.javaclaw.memory.embed.EmbeddingGateway embeddings,
+            @Qualifier("workspaceTaskScope") TaskScope tasks,
+            com.javaclaw.config.AgentConfig settings,
+            WorkspaceContext workspace) {
+        var memory = new com.javaclaw.memory.MemoryService(
+                modelTasks, embeddings, tasks, settings);
+        memory.setOnEmbeddingDegraded(reason -> {
+            var port = com.javaclaw.agent.ToolConfirmationManager.getPort();
+            if (port != null) {
+                port.notify(new com.javaclaw.api.interaction.ToastRequest(
+                        "记忆嵌入已降级",
+                        "长期记忆检索/蒸馏暂不可用：" + reason + "（详见 记忆中心 → 嵌入诊断）"));
+            }
+        });
+        memory.open(workspace.globalDataRoot().resolve("memory-stores")
+                .resolve(workspace.workspaceId()));
+        return memory;
     }
 
-    @Bean(destroyMethod = "")
-    KnowledgeExpert knowledgeExpert(AgentRuntime runtime) {
-        return runtime.getKnowledgeExpert();
+    @Bean
+    com.javaclaw.infrastructure.memory.EclipseStoreMemoryExtensionAdapter memoryExtensionAdapter(
+            com.javaclaw.memory.MemoryService memory,
+            com.javaclaw.framework.spi.ModelTaskGateway modelTasks) {
+        return new com.javaclaw.infrastructure.memory.EclipseStoreMemoryExtensionAdapter(
+                memory, modelTasks);
+    }
+
+    @Bean(destroyMethod = "close")
+    KnowledgeExpert knowledgeExpert(
+            com.javaclaw.memory.embed.EmbeddingGateway embeddings,
+            com.javaclaw.config.AgentConfig settings,
+            WorkspaceContext workspace,
+            com.javaclaw.application.knowledge.KnowledgeDocumentPreferencePort preferences) {
+        return new KnowledgeExpert(embeddings, settings,
+                workspace.globalDataRoot().resolve("knowledge/global"),
+                workspace.globalDataRoot().resolve("knowledge/workspaces")
+                        .resolve(workspace.workspaceId()), preferences);
+    }
+
+    @Bean(destroyMethod = "close")
+    com.javaclaw.framework.builtin.WorkspaceCapabilityRegistry.Registration
+    workspaceCapabilityRegistration(
+            WorkspaceContext workspace,
+            com.javaclaw.framework.builtin.WorkspaceCapabilityRegistry registry,
+            com.javaclaw.infrastructure.memory.EclipseStoreMemoryExtensionAdapter memory,
+            KnowledgeExpert knowledge,
+            SkillRuntimeServices skills) {
+        com.javaclaw.framework.spi.RetrieverContribution retriever = (query, request) -> {
+            String context = knowledge.retrieveContext(query, knowledge.getEnabledDocs());
+            return context == null || context.isBlank() ? java.util.List.of()
+                    : java.util.List.of(
+                    com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.textNode(context));
+        };
+        com.javaclaw.framework.spi.PromptContributor skillContributor = (request, state) ->
+                skills.manager().buildSkillCatalogPrompt(null);
+        return registry.register(workspace.workspaceId(), memory, memory,
+                retriever, skillContributor);
     }
 
     @Bean
@@ -298,16 +357,31 @@ class WorkspaceIntelligenceConfiguration {
     }
 
     @Bean(destroyMethod = "shutdown")
-    PlanModeService planModeService(AgentRuntime runtime, WorkflowService workflows) {
-        return new PlanModeService(runtime, workflows);
+    PlanModeService planModeService(
+            com.javaclaw.framework.api.AgentClient agents,
+            com.javaclaw.runtime.WorkspaceContext workspace,
+            @Qualifier("agentKernelExecutor") java.util.concurrent.Executor executor) {
+        return new PlanModeService(agents, workspace, executor);
+    }
+
+    @Bean(destroyMethod = "shutdown")
+    com.javaclaw.schedule.FrameworkScheduledTaskRunner scheduledTaskRunner(
+            com.javaclaw.framework.api.AgentClient agents,
+            com.javaclaw.runtime.WorkspaceContext workspace,
+            @Qualifier("agentKernelExecutor") java.util.concurrent.Executor executor) {
+        return new com.javaclaw.schedule.FrameworkScheduledTaskRunner(agents, workspace, executor);
     }
 
     @Bean(destroyMethod = "shutdown")
     LoopService loopService(
-            AgentRuntime runtime,
+            com.javaclaw.config.AgentConfig settings,
             WorkflowService workflows,
-            com.javaclaw.platform.process.ProcessRunner processes) {
-        return new LoopService(runtime, workflows, processes);
+            com.javaclaw.platform.process.ProcessRunner processes,
+            com.javaclaw.framework.api.AgentClient agents,
+            com.javaclaw.runtime.WorkspaceContext workspace,
+            com.javaclaw.framework.spi.ModelTaskGateway modelTasks,
+            com.fasterxml.jackson.databind.ObjectMapper json) {
+        return new LoopService(settings, workflows, processes, agents, workspace, modelTasks, json);
     }
 
     @Bean

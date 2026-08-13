@@ -1,8 +1,6 @@
 package com.javaclaw.runtime;
 
-import com.javaclaw.agent.ScheduledTaskAgent;
 import com.javaclaw.agent.ToolConfirmationManager;
-import com.javaclaw.agent.risk.LlmToolScopeAssessor;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.DataManager;
@@ -228,18 +226,16 @@ public final class ApplicationKernel implements AutoCloseable {
 
     /** 把全局订阅方统一切到新运行时，避免任何管理器继续持有旧服务。 */
     private void activate(WorkspaceRuntime workspaceRuntime, boolean initial) {
-        var runtime = workspaceRuntime.agentRuntime();
-        ToolConfirmationManager.setScopeAssessor(
-                new LlmToolScopeAssessor(
-                        runtime.getModelFactory(), runtime.getTokenTracker(),
-                        runtime.getJson().mapper()));
+        // Directory-scope authorization is now enforced deterministically by the framework tool
+        // gateway. A model may never widen permissions, so the legacy LLM assessor is disabled.
+        ToolConfirmationManager.setScopeAssessor(null);
 
-        workspaceRuntime.scheduleManager().init(new ScheduledTaskAgent(runtime));
-        if (initial) {
-            pluginManager.init(runtime, workspaceRuntime.schedules());
-        } else {
-            pluginManager.reload(runtime, workspaceRuntime.schedules());
-        }
+        workspaceRuntime.scheduleManager().init(workspaceRuntime.scheduledTaskRunner());
+        var pluginServices = new com.javaclaw.plugin.PluginWorkspaceServices(
+                workspaceRuntime.context(), workspaceRuntime.schedules(),
+                workspaceRuntime.skillRuntimeServices().manager(), workspaceRuntime.memoryService());
+        if (initial) pluginManager.init(pluginServices);
+        else pluginManager.reload(pluginServices);
     }
 
     /** 先停靠所有持有旧运行时句柄的后台系统，再释放旧基础设施。 */

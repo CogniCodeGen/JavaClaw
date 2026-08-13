@@ -1,10 +1,6 @@
 package com.javaclaw.skill.curation;
 
-import com.javaclaw.agent.TokenTracker;
 import com.javaclaw.agent.execution.ExecutionTrace;
-import com.javaclaw.agent.model.ModelFactory;
-import com.javaclaw.agent.model.ModelTier;
-import com.javaclaw.agent.model.StructuredCalls;
 import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.config.AgentConfig;
@@ -15,10 +11,9 @@ import com.javaclaw.skill.Skill;
 import com.javaclaw.skill.SkillChangeRequest;
 import com.javaclaw.skill.SkillManager;
 import com.javaclaw.skill.SkillUsageTracker;
-import io.agentscope.core.ReActAgent;
-import io.agentscope.core.message.Msg;
-import io.agentscope.core.message.MsgRole;
-import io.agentscope.core.util.JsonSchemaUtils;
+import com.javaclaw.framework.api.*;
+import com.javaclaw.runtime.WorkspaceContext;
+import org.springframework.ai.converter.BeanOutputConverter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
@@ -26,6 +21,7 @@ import reactor.core.publisher.Mono;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
 /**
@@ -60,8 +56,8 @@ public class SkillCurator {
     /** 参与蒸馏的对话/任务描述最大字符数（超过截尾） */
     private static final int MAX_CONTEXT_CHARS = 6000;
 
-    private final ModelFactory modelFactory;
-    private final TokenTracker tokenTracker;
+    private final AgentClient agents;
+    private final WorkspaceContext workspace;
     private final SkillManager skills;
     private final SkillUsageTracker usage;
     private final SkillProposalQueue proposalQueue;
@@ -73,17 +69,18 @@ public class SkillCurator {
 
     /** 蒸馏互斥：同时最多一个蒸馏在跑，避免连续轮次并发烧 token */
     private final AtomicBoolean distilling = new AtomicBoolean(false);
+    private final AtomicLong runSequence = new AtomicLong();
 
-    public SkillCurator(ModelFactory modelFactory,
-                        TokenTracker tokenTracker,
+    public SkillCurator(AgentClient agents,
+                        WorkspaceContext workspace,
                         SkillManager skills,
                         SkillUsageTracker usage,
                         SkillProposalQueue proposalQueue,
                         AgentConfig settings,
                         TaskSubmitter tasks,
                         Supplier<UserInteractionPort> portSupplier) {
-        this.modelFactory = java.util.Objects.requireNonNull(modelFactory, "modelFactory");
-        this.tokenTracker = tokenTracker;
+        this.agents = java.util.Objects.requireNonNull(agents, "agents");
+        this.workspace = java.util.Objects.requireNonNull(workspace, "workspace");
         this.skills = java.util.Objects.requireNonNull(skills, "skills");
         this.usage = java.util.Objects.requireNonNull(usage, "usage");
         this.proposalQueue = java.util.Objects.requireNonNull(proposalQueue, "proposalQueue");
@@ -273,45 +270,47 @@ public class SkillCurator {
         return null;
     }
 
-    // ==================== 结构化模型调用（照 AgentScopeCriticJudge 范式） ====================
+    // ==================== 结构化模型调用（统一 AgentEngine） ====================
 
     private SkillCurationDraft callStructured(String userPrompt) {
-        ReActAgent curator = ReActAgent.builder()
-                .name("技能蒸馏器")
-                .sysPrompt(SkillPrompts.CURATION_PROMPT)
-                .model(modelFactory.createStructuredChatModel(ModelTier.LIGHT))
-                .maxIters(3)
-                .hooks(List.of(new com.javaclaw.task.TaskTokenHook((in, out) -> {
-                    if (tokenTracker != null) {
-                        tokenTracker.recordModelUsage("SkillCurator", in, out);
-                    }
-                })))
-                .build();
-
         try {
-            Msg result = StructuredCalls.blockingCall(
-                    curator, userPrompt, SkillCurationDraft.class,
-                    STRUCTURED_TIMEOUT_SEC, "技能蒸馏");
-            return extract(result);
-        } catch (RuntimeException failure) {
+            BeanOutputConverter<SkillCurationDraft> converter =
+                    new BeanOutputConverter<>(SkillCurationDraft.class);
+            var text = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.textNode(
+                    SkillPrompts.CURATION_PROMPT + "\n\n" + converter.getFormat());
+            var disabled = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.booleanNode(true);
+            RunRequest request = RunRequest.builder()
+                    .agent(AgentDefinitionRef.latest("system.default"))
+                    .profile(RunProfileRef.latest("subagent"))
+                    .source(InvocationSource.workflow("skill-distillation"))
+                    .scope(new RunScope(workspace.workspaceId(), "local-user", "skill-distillation"))
+                    .input(InputBlock.text(userPrompt))
+                    .linkage(RunLinkage.root("skill-distillation"))
+                    .permissionCeiling(PermissionSet.NONE)
+                    .budget(new RunBudget(java.time.Duration.ofSeconds(STRUCTURED_TIMEOUT_SEC),
+                            100_000, 20_000, 0, new java.math.BigDecimal("20")))
+                    .idempotencyKey("skill-distillation:" + runSequence.incrementAndGet())
+                    .attributes(java.util.Map.of(
+                            "framework.systemPrompt", text,
+                            "framework.disableTools", disabled))
+                    .build();
+            RunOutcome outcome = agents.start(request).completion().toCompletableFuture()
+                    .get(STRUCTURED_TIMEOUT_SEC + 5, java.util.concurrent.TimeUnit.SECONDS);
+            if (outcome.state() != RunState.COMPLETED || outcome.output() == null) return null;
+            String result = outcome.output().path("text").asText("");
+            return converter.convert(stripFence(result));
+        } catch (Exception failure) {
             log.warn("技能蒸馏调用异常: {}", failure.getMessage());
             return null;
         }
     }
 
-    private static SkillCurationDraft extract(Msg msg) {
-        if (msg == null || msg.getMetadata() == null) {
-            return null;
-        }
-        Object raw = msg.getMetadata().get("_structured_output");
-        if (raw == null) {
-            return null;
-        }
-        try {
-            return JsonSchemaUtils.convertToObject(raw, SkillCurationDraft.class);
-        } catch (Exception e) {
-            return null;
-        }
+    private static String stripFence(String value) {
+        String text = value == null ? "" : value.trim();
+        if (!text.startsWith("```")) return text;
+        int start = text.indexOf('\n');
+        int end = text.lastIndexOf("```");
+        return start >= 0 && end > start ? text.substring(start + 1, end).trim() : text;
     }
 
     // ==================== 提示词构建 ====================

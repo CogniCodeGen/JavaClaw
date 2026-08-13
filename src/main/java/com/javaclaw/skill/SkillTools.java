@@ -1,8 +1,8 @@
 package com.javaclaw.skill;
 
 import com.javaclaw.agent.model.ToolResponse;
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,6 +19,7 @@ import java.util.stream.Collectors;
  *
  * @author JavaClaw
  */
+@com.javaclaw.framework.spi.ToolContract(group = "skill", permissions = {"tool.read"}, idempotent = true)
 public final class SkillTools {
 
     private static final Logger log = LoggerFactory.getLogger(SkillTools.class);
@@ -37,9 +38,9 @@ public final class SkillTools {
                     "skill_name 必须与目录中展示的技能名称完全一致。" +
                     "可选 path 参数：只读取该技能的某一份参考文档（填目录中列出的文件名），进一步节省上下文。")
     public String readSkill(
-            @ToolParam(name = "skill_name",
+            @ToolParam(
                     description = "要读取的技能名称，须与「可用技能目录」中展示的名称完全一致") String skillName,
-            @ToolParam(name = "path",
+            @ToolParam(
                     description = "可选：只读取该技能 references/ 下的某个参考文档（填文件名，如 api-doc.md）",
                     required = false) String path) {
         String name = skillName == null ? "" : skillName.strip();

@@ -28,8 +28,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p>持久化、调度、执行定时任务。用户任务持久化到全局 H2 数据库的
  * {@code scheduled_tasks} 表，并按 {@code workspace_id} 隔离；启动时只从 H2 读取。
- * 底层使用 Quartz 2.5.2（通过 AgentScope
- * scheduler-quartz 扩展引入），由 Quartz 接管 cron 解析与触发器机制；
+ * 底层显式使用 Quartz 2.5.2，由 Quartz 接管 cron 解析与触发器机制；
  * 任务到点后调用隔离的 {@link ScheduledTaskRunner} 执行。</p>
  *
  * <p>三种触发模式（UI 语义保持不变，内部统一翻译为 Quartz Trigger）：
@@ -60,7 +59,7 @@ public class ScheduleManager {
     private final ScheduleBackend quartz;
     private final ScheduleTriggerFactory triggerFactory;
 
-    /** 定时任务专用编排器（与交互聊天完全隔离，独立子智能体/toolkit/订阅，可与聊天并行不互相干扰） */
+    /** Schedule 入口适配器；每次触发均提交统一 RunRequest，不拥有独立 Agent Runtime。 */
     private volatile ScheduledTaskRunner scheduledRunner;
 
     /** 工作区每次重载递增；旧代队列任务在真正开始及回调落盘前均会被拦截。 */

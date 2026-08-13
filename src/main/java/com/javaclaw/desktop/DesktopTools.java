@@ -3,8 +3,8 @@ package com.javaclaw.desktop;
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,6 +35,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * @see DesktopToolFactory 生命周期工厂
  */
+@com.javaclaw.framework.spi.ToolContract(group = "desktop", permissions = {"tool.execute"}, idempotent = false)
 public class DesktopTools {
 
     private static final Logger log = LoggerFactory.getLogger(DesktopTools.class);
@@ -66,6 +67,7 @@ public class DesktopTools {
 
     // ==================== 能力探测 ====================
 
+    @com.javaclaw.framework.spi.ToolContract(group = "desktop", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "desktop_probe",
             description = "探测当前系统的桌面自动化能力（能否枚举窗口、激活窗口、启动程序、截屏、键鼠注入），"
                     + "并给出权限 / 依赖缺失的提示。操作其他软件前建议先调用以确认可用路径。")
@@ -88,8 +90,8 @@ public class DesktopTools {
             description = "启动一个桌面程序，可选同时打开指定文件 / 目录。app 与 path 至少提供一个。"
                     + "例如启动 VS Code 并打开项目：app=\"Visual Studio Code\", path=\"/path/to/project\"。")
     public String launch(
-            @ToolParam(name = "app", description = "应用名或可执行文件路径，可空", required = false) String app,
-            @ToolParam(name = "path", description = "要打开的文件 / 目录路径，可空", required = false) String path) {
+            @ToolParam( description = "应用名或可执行文件路径，可空", required = false) String app,
+            @ToolParam( description = "要打开的文件 / 目录路径，可空", required = false) String path) {
         log.debug("工具调用: desktop_launch(app={}, path={})", app, path);
         if (!ToolConfirmationManager.requestConfirmation(origin, "desktop_launch",
                 "启动程序: " + firstNonBlank(app, path))) {
@@ -104,6 +106,7 @@ public class DesktopTools {
         }
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "desktop", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "desktop_list_windows",
             description = "枚举当前可见的应用窗口，返回每个窗口的应用名、标题与屏幕位置尺寸。"
                     + "用于在操作前了解有哪些窗口、确定目标窗口。某些平台可能只返回标题而无位置。")
@@ -129,7 +132,7 @@ public class DesktopTools {
             description = "把匹配的窗口激活到前台（按应用名或标题模糊匹配）。注入键鼠前应先激活目标窗口，"
                     + "确保输入落在正确的程序上。")
     public String activate(
-            @ToolParam(name = "target", description = "目标应用名或窗口标题的关键词（模糊匹配）") String target) {
+            @ToolParam( description = "目标应用名或窗口标题的关键词（模糊匹配）") String target) {
         log.debug("工具调用: desktop_activate(target={})", target);
         if (!ToolConfirmationManager.requestConfirmation(origin, "desktop_activate", "激活窗口: " + target)) {
             return ToolResponse.error("desktop_activate", "用户取消了操作");
@@ -154,7 +157,7 @@ public class DesktopTools {
                     + "提供 target 时尝试激活并只截该窗口区域；不提供或位置未知时截取整个屏幕。"
                     + "这是读取其他程序界面内容的主要方式。")
     public String capture(
-            @ToolParam(name = "target", description = "目标应用名或窗口标题关键词，可空（空则整屏截图）",
+            @ToolParam( description = "目标应用名或窗口标题关键词，可空（空则整屏截图）",
                     required = false) String target) {
         log.debug("工具调用: desktop_capture(target={})", target);
         if (!ToolConfirmationManager.requestConfirmation(origin, "desktop_capture",
@@ -186,13 +189,14 @@ public class DesktopTools {
 
     // ==================== 结构化定位（Set-of-Mark，Tier 2） ====================
 
+    @com.javaclaw.framework.spi.ToolContract(group = "desktop", permissions = {"tool.execute"}, idempotent = false)
     @Tool(name = "desktop_inspect",
             description = "检视目标窗口的可交互元素（按钮/输入框等），为每个元素分配编号 @ref，"
                     + "生成带编号方框的标注截图并返回元素清单。随后用 desktop_click_ref / desktop_type_ref "
                     + "按编号精确操作，无需猜坐标。若当前系统无法读取元素（无障碍未授权/平台不支持），"
                     + "会提示改用 desktop_capture + 坐标方式。")
     public String inspect(
-            @ToolParam(name = "target", description = "目标应用名或窗口标题关键词，可空（空则检视当前前台窗口）",
+            @ToolParam( description = "目标应用名或窗口标题关键词，可空（空则检视当前前台窗口）",
                     required = false) String target) {
         log.debug("工具调用: desktop_inspect(target={})", target);
         if (!ToolConfirmationManager.requestConfirmation(origin, "desktop_inspect",
@@ -274,8 +278,8 @@ public class DesktopTools {
             description = "点击 desktop_inspect 标注过的某个元素（按其 @ref 编号，如 e7），自动定位到元素中心。"
                     + "比坐标点击更精确，应优先使用。")
     public String clickRef(
-            @ToolParam(name = "ref", description = "元素编号，来自最近一次 desktop_inspect，如 e3") String ref,
-            @ToolParam(name = "clicks", description = "点击次数: 1 单击、2 双击，默认 1",
+            @ToolParam( description = "元素编号，来自最近一次 desktop_inspect，如 e3") String ref,
+            @ToolParam( description = "点击次数: 1 单击、2 双击，默认 1",
                     required = false) int clicks) {
         int n = clicks <= 0 ? 1 : clicks;
         log.debug("工具调用: desktop_click_ref(ref={}, clicks={})", ref, n);
@@ -303,8 +307,8 @@ public class DesktopTools {
             description = "向 desktop_inspect 标注过的某个输入框（按 @ref 编号）输入文本：先点击聚焦该元素再输入，"
                     + "支持中文。")
     public String typeRef(
-            @ToolParam(name = "ref", description = "目标输入框编号，来自最近一次 desktop_inspect") String ref,
-            @ToolParam(name = "text", description = "要输入的文本") String text) {
+            @ToolParam( description = "目标输入框编号，来自最近一次 desktop_inspect") String ref,
+            @ToolParam( description = "要输入的文本") String text) {
         log.debug("工具调用: desktop_type_ref(ref={}, len={})", ref, text == null ? 0 : text.length());
         UiElement element = lastElements.get(ref == null ? "" : ref.trim());
         if (element == null) {
@@ -333,11 +337,11 @@ public class DesktopTools {
             description = "在屏幕坐标 (x, y) 处点击。坐标可由 desktop_capture 截图后经视觉模型判读得到。"
                     + "支持左右中键与单 / 双击。")
     public String click(
-            @ToolParam(name = "x", description = "屏幕 X 坐标（逻辑像素）") int x,
-            @ToolParam(name = "y", description = "屏幕 Y 坐标（逻辑像素）") int y,
-            @ToolParam(name = "button", description = "鼠标键: left / right / middle，默认 left",
+            @ToolParam( description = "屏幕 X 坐标（逻辑像素）") int x,
+            @ToolParam( description = "屏幕 Y 坐标（逻辑像素）") int y,
+            @ToolParam( description = "鼠标键: left / right / middle，默认 left",
                     required = false) String button,
-            @ToolParam(name = "clicks", description = "点击次数: 1 单击、2 双击，默认 1",
+            @ToolParam( description = "点击次数: 1 单击、2 双击，默认 1",
                     required = false) int clicks) {
         int n = clicks <= 0 ? 1 : clicks;
         String btn = button == null || button.isBlank() ? "left" : button;
@@ -360,7 +364,7 @@ public class DesktopTools {
             description = "向当前焦点控件输入文本（经系统剪贴板粘贴，支持中文与任意 Unicode）。"
                     + "输入前通常先 desktop_activate 激活目标窗口、再 desktop_click 聚焦输入框。")
     public String type(
-            @ToolParam(name = "text", description = "要输入的文本") String text) {
+            @ToolParam( description = "要输入的文本") String text) {
         log.debug("工具调用: desktop_type(len={})", text == null ? 0 : text.length());
         if (!ToolConfirmationManager.requestConfirmation(origin, "desktop_type",
                 "输入文本: " + preview(text))) {
@@ -379,7 +383,7 @@ public class DesktopTools {
             description = "按下一个按键或组合键，如 enter、tab、esc、ctrl+c、cmd+v、alt+tab。"
                     + "cmd 在非 macOS 上自动等价为 ctrl。")
     public String key(
-            @ToolParam(name = "combo", description = "按键 / 组合键，用 + 连接，如 ctrl+s") String combo) {
+            @ToolParam( description = "按键 / 组合键，用 + 连接，如 ctrl+s") String combo) {
         log.debug("工具调用: desktop_key(combo={})", combo);
         if (!ToolConfirmationManager.requestConfirmation(origin, "desktop_key", "按键: " + combo)) {
             return ToolResponse.error("desktop_key", "用户取消了操作");

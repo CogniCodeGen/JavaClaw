@@ -1,20 +1,20 @@
 package com.javaclaw.memory.curation;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.config.SqlPropertyStore;
+import com.javaclaw.framework.api.RunId;
+import com.javaclaw.framework.spi.ModelTaskGateway;
+import com.javaclaw.framework.spi.ModelTaskRequest;
+import com.javaclaw.framework.spi.ModelTaskResult;
 import com.javaclaw.memory.embed.TestEmbeddingGatewayFactory;
 import com.javaclaw.memory.model.Episode;
 import com.javaclaw.memory.model.Fact;
 import com.javaclaw.memory.store.MemoryStore;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.spring.ApplicationContexts;
-import io.agentscope.core.message.ContentBlock;
-import io.agentscope.core.message.Msg;
-import io.agentscope.core.message.TextBlock;
-import io.agentscope.core.model.ChatModelBase;
-import io.agentscope.core.model.ChatResponse;
-import io.agentscope.core.model.GenerateOptions;
-import io.agentscope.core.model.ToolSchema;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -22,14 +22,16 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
-import reactor.core.publisher.Flux;
 
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -39,13 +41,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class DistillerBehaviorTest {
-
-    Path temporaryDirectory;
-
     private final AtomicInteger stores = new AtomicInteger();
+    private Path temporaryDirectory;
     private AnnotationConfigApplicationContext context;
     private AgentConfig settings;
-    private SqlPropertyStore propertyStore;
+    private SqlPropertyStore properties;
 
     @BeforeAll
     void createConfiguration(@TempDir Path temporaryDirectory) {
@@ -53,12 +53,12 @@ class DistillerBehaviorTest {
         context = ApplicationContexts.createRoot(
                 new DataRoot(temporaryDirectory.resolve("data")));
         settings = context.getBean(AgentConfig.class);
-        propertyStore = context.getBean(SqlPropertyStore.class);
+        properties = context.getBean(SqlPropertyStore.class);
     }
 
     @BeforeEach
     void resetMemorySettings() {
-        assertTrue(propertyStore.save("agent", new Properties()));
+        assertTrue(properties.save("agent", new Properties()));
         settings.reload();
     }
 
@@ -68,69 +68,39 @@ class DistillerBehaviorTest {
     }
 
     @Test
-    void invalidShortAndBlankEpisodesNeverCallTheModel() throws Exception {
+    void modelUseRequiresAnOwnerRunAndAnEligibleEpisode() {
         try (Fixture fixture = fixture((text, timeout) -> vector(1, 0, 0, 0))) {
-            fixture.distiller.distillNow(null);
-            fixture.distiller.distillNow(new Episode("s", null, "reply"));
-            fixture.distiller.distillNow(new Episode("s", "short", "reply"));
-            fixture.distiller.distillNow(new Episode("s", "long enough input", null));
-            fixture.distiller.distillNow(new Episode("s", "long enough input", " "));
-            assertEquals(0, fixture.model.calls);
+            RunId owner = RunId.random();
+            fixture.gateway.respond(extraction());
+            fixture.distiller.distillNow(null, episode("long enough user input", "reply"));
+            fixture.distiller.distillNow(owner, null);
+            fixture.distiller.distillNow(owner, new Episode("s", null, "reply"));
+            fixture.distiller.distillNow(owner, new Episode("s", "short", "reply"));
+            fixture.distiller.distillNow(owner, new Episode("s", "long enough input", " "));
+            assertEquals(0, fixture.gateway.calls);
 
-            fixture.model.respond("无");
-            fixture.distiller.distillNow(new Episode(
-                    "s", "不是张三，而是李四", "previous answer"));
-            assertEquals(1, fixture.model.calls,
-                    "显式纠错即使很短也必须越过普通蒸馏长度门槛");
+            fixture.distiller.distillNow(owner,
+                    new Episode("s", "不是张三，而是李四", "previous answer"));
+            assertEquals(1, fixture.gateway.calls,
+                    "显式纠错必须越过普通蒸馏长度门槛");
+            assertEquals(owner, fixture.gateway.requests.getFirst().ownerRunId());
         }
     }
 
     @Test
-    void emptyNoneFailureAndLongReplyPathsAreContained() throws Exception {
-        try (Fixture fixture = fixture((text, timeout) -> vector(1, 0, 0, 0))) {
-            fixture.model.empty();
-            fixture.distiller.distillNow(episode("first valid input", "answer"));
-            assertTrue(fixture.store.allFacts().isEmpty());
+    void structuredHighConfidenceEvidencePromotesFactsAndEntities() {
+        try (Fixture fixture = fixture((text, timeout) -> text.contains("Kotlin")
+                ? vector(0, 1, 0, 0) : vector(1, 0, 0, 0))) {
+            ObjectNode response = extraction();
+            addFact(response, "用户偏好 Java", 0.96);
+            addFact(response, "用户计划学习 Kotlin", 0.91);
+            addFact(response, "api_key=sk-live-secret-value", 0.99);
+            addEntity(response, "Java", "technology");
+            addEntity(response, "Kotlin", "language");
+            fixture.gateway.respond(response);
 
-            fixture.model.respond("- 无。");
-            fixture.distiller.distill(episode("second valid input", "answer")).block();
-            assertTrue(fixture.store.allFacts().isEmpty());
-
-            fixture.model.fail(new IllegalStateException("model unavailable"));
-            assertDoesNotThrow(() -> fixture.distiller.distillNow(
-                    episode("third valid input", "answer")));
-
-            fixture.model.respond("无");
-            fixture.distiller.distillNow(episode(
-                    "fourth valid input", "r".repeat(6_001)));
-            String prompt = fixture.model.lastMessages.get(1).getTextContent();
-            assertTrue(prompt.contains("...(截断)"));
-            assertFalse(prompt.contains("r".repeat(6_001)));
-        }
-    }
-
-    @Test
-    void factsEntitiesCredentialsAndMixedModelBlocksAreHandledDeterministically() throws Exception {
-        try (Fixture fixture = fixture((text, timeout) -> {
-            if (text.contains("Kotlin")) return vector(0, 1, 0, 0);
-            return vector(1, 0, 0, 0);
-        })) {
-            fixture.model.respondWithNullContentThen("""
-                    - 用户使用 Java
-                    - 无。
-                    - api_key=sk-live-secret-value
-                    - 用户计划学习 Kotlin
-                    """);
-            fixture.model.respond("""
-                    - Java | technology
-                    invalid line
-                    - A | person
-                    - authorization: Bearer secret-value | token
-                    - Kotlin | language
-                    """);
-
-            fixture.distiller.distillNow(episode(
-                    "请记录我的长期技术偏好设置", "好的，我会记住。"));
+            fixture.distiller.distillNow(RunId.random(), episode(
+                    "请记住用户偏好 Java，用户计划学习 Kotlin", "好的，我会记住"));
 
             List<Fact> facts = fixture.store.allFacts();
             assertEquals(2, facts.size());
@@ -141,90 +111,68 @@ class DistillerBehaviorTest {
                     && f.about.stream().anyMatch(e -> "Java".equals(e.name))));
             assertTrue(facts.stream().anyMatch(f -> f.text.contains("Kotlin")
                     && f.about.stream().anyMatch(e -> "Kotlin".equals(e.name))));
+            assertEquals("memory.distillation.extract",
+                    fixture.gateway.requests.getFirst().purpose());
         }
     }
 
     @Test
-    void embeddingFailureCreatesPendingFactsWhileDuplicateMentionsMerge() throws Exception {
-        try (Fixture unavailable = fixture((text, timeout) -> null)) {
-            unavailable.model.respond("- 用户喜欢离线工作");
-            unavailable.model.respond("无");
-            unavailable.distiller.distillNow(episode(
-                    "请记住我偏好离线模式", "已经记住"));
-            assertTrue(unavailable.store.allFacts().isEmpty());
-            assertEquals(1, unavailable.store.allPendingFacts().size());
-            assertTrue(unavailable.store.allPendingFacts().getFirst().pending);
+    void lowConfidenceOrUnavailableEmbeddingsRemainPendingAndFailuresAreContained() {
+        try (Fixture low = fixture((text, timeout) -> vector(1, 0, 0, 0))) {
+            ObjectNode response = extraction();
+            addFact(response, "用户偏好离线模式", 0.4);
+            low.gateway.respond(response);
+            low.distiller.distillNow(RunId.random(), episode(
+                    "请记住用户偏好离线模式", "已经记住"));
+            assertTrue(low.store.allFacts().isEmpty());
+            assertEquals(1, low.store.allPendingFacts().size());
         }
 
+        try (Fixture unavailable = fixture((text, timeout) -> null)) {
+            ObjectNode response = extraction();
+            addFact(response, "用户偏好离线模式", 0.99);
+            unavailable.gateway.respond(response);
+            unavailable.distiller.distillNow(RunId.random(), episode(
+                    "请记住用户偏好离线模式", "已经记住"));
+            assertEquals(1, unavailable.store.allPendingFacts().size());
+
+            unavailable.gateway.fail(new IllegalStateException("model unavailable"));
+            assertDoesNotThrow(() -> unavailable.distiller.distillNow(
+                    RunId.random(), episode("another valid user input", "answer")));
+        }
+    }
+
+    @Test
+    void duplicateFactsMergeAndModelApprovedReplacementSupersedesOldFact() {
         try (Fixture duplicate = fixture((text, timeout) -> vector(1, 0, 0, 0))) {
-            Fact existing = new Fact("preferences", "用户喜欢 Java",
-                    storedVector(1, 0, 0, 0));
+            Fact existing = new Fact("preferences", "用户喜欢 Java", storedVector(1, 0, 0, 0));
             duplicate.store.addFact(existing, "test");
-            duplicate.model.respond("- 用户仍然喜欢 Java");
-            duplicate.model.respond("无");
-            duplicate.distiller.distillNow(episode(
-                    "再次说明我的语言偏好", "了解"));
+            ObjectNode response = extraction();
+            addFact(response, "用户喜欢 Java", 0.99);
+            duplicate.gateway.respond(response);
+            duplicate.distiller.distillNow(RunId.random(), episode(
+                    "再次说明用户喜欢 Java", "了解"));
             assertEquals(1, duplicate.store.allFacts().size());
             assertEquals(1, existing.mergeCount);
         }
 
-        try (Fixture protectedFact = fixture((text, timeout) -> vector(1, 0, 0, 0))) {
-            Fact existing = new Fact("preferences", "用户喜欢 Java",
-                    storedVector(1, 0, 0, 0));
-            existing.userEdited = true;
-            protectedFact.store.addFact(existing, "user");
-            protectedFact.model.respond("- 用户仍然喜欢 Java");
-            protectedFact.model.respond("无");
-            protectedFact.distiller.distillNow(episode(
-                    "再次说明我的语言偏好", "了解"));
-            assertEquals(2, protectedFact.store.allFacts().size());
-            assertEquals(0, existing.mergeCount);
-        }
-    }
-
-    @Test
-    void relatedUnprotectedFactCanBeSupersededByAValidatedModelVerdict() throws Exception {
-        try (Fixture fixture = fixture((text, timeout) -> text.contains("Kotlin")
+        try (Fixture replacement = fixture((text, timeout) -> text.contains("Kotlin")
                 ? vector(0.8, 0.6, 0, 0) : vector(1, 0, 0, 0))) {
             Fact old = new Fact("tools", "用户主要使用 Java", storedVector(1, 0, 0, 0));
-            fixture.store.addFact(old, "test");
-            fixture.model.respond("- 用户现在主要使用 Kotlin");
-            fixture.model.respond("无");
-            fixture.model.respond("输出：1");
+            replacement.store.addFact(old, "test");
+            ObjectNode extraction = extraction();
+            addFact(extraction, "用户现在主要使用 Kotlin", 0.99);
+            replacement.gateway.respond(extraction);
+            replacement.gateway.respond(indexes(1));
 
-            fixture.distiller.distillNow(episode(
-                    "我已经从 Java 切换到 Kotlin", "已更新技术栈"));
+            replacement.distiller.distill(RunId.random(), episode(
+                    "用户现在主要使用 Kotlin，已经从 Java 切换", "已更新技术栈")).block();
 
             assertTrue(old.superseded);
-            assertEquals(2, fixture.store.allFacts().size());
-            assertTrue(fixture.store.allFacts().stream()
+            assertEquals(2, replacement.store.allFacts().size());
+            assertTrue(replacement.store.allFacts().stream()
                     .anyMatch(f -> f.text.contains("Kotlin") && !f.superseded));
         }
-    }
-
-    @Test
-    void disabledEntityAndSupersedeGatesAvoidUnnecessaryModelCalls() throws Exception {
-        configure("memory.graph.entities.enabled", "false");
-        configure("memory.supersede.enabled", "false");
-        try (Fixture fixture = fixture((text, timeout) -> vector(0.8, 0.6, 0, 0))) {
-            fixture.store.addFact(new Fact(
-                    "tools", "old fact", storedVector(1, 0, 0, 0)), "test");
-            fixture.model.respond("- replacement fact");
-
-            fixture.distiller.distillNow(episode(
-                    "long enough replacement request", "replacement answer"));
-
-            assertEquals(1, fixture.model.calls);
-            assertTrue(fixture.store.allEntities().isEmpty());
-            assertEquals(2, fixture.store.allFacts().size());
-        }
-    }
-
-    private void configure(String key, String value) {
-        Properties properties = settings.snapshotProperties();
-        properties.setProperty(key, value);
-        assertTrue(propertyStore.save("agent", properties));
-        settings.reload();
     }
 
     private Fixture fixture(TestEmbeddingGatewayFactory.Invoker invoker) {
@@ -234,26 +182,42 @@ class DistillerBehaviorTest {
                 temporaryDirectory.resolve("memory-" + stores.incrementAndGet()),
                 4, "distiller-test");
         store.open();
-        FakeModel model = new FakeModel();
-        Distiller distiller = new Distiller(
-                model, store, embedding.gateway(), null, settings);
-        return new Fixture(model, store, embedding, distiller);
+        FakeGateway gateway = new FakeGateway();
+        return new Fixture(gateway, store, embedding,
+                new Distiller(gateway, store, embedding.gateway(), settings));
     }
 
     private static Episode episode(String input, String reply) {
         return new Episode("session", input, reply);
     }
 
-    private static double[] vector(double... values) {
-        return values;
+    private static ObjectNode extraction() {
+        ObjectNode result = JsonNodeFactory.instance.objectNode();
+        result.putArray("facts");
+        result.putArray("entities");
+        return result;
     }
 
-    private static float[] storedVector(float... values) {
-        return values;
+    private static void addFact(ObjectNode result, String text, double confidence) {
+        result.withArray("facts").addObject().put("text", text).put("confidence", confidence);
     }
+
+    private static void addEntity(ObjectNode result, String name, String type) {
+        result.withArray("entities").addObject().put("name", name).put("type", type);
+    }
+
+    private static ObjectNode indexes(int... values) {
+        ObjectNode result = JsonNodeFactory.instance.objectNode();
+        var indexes = result.putArray("indexes");
+        for (int value : values) indexes.add(value);
+        return result;
+    }
+
+    private static double[] vector(double... values) { return values; }
+    private static float[] storedVector(float... values) { return values; }
 
     private record Fixture(
-            FakeModel model,
+            FakeGateway gateway,
             MemoryStore store,
             TestEmbeddingGatewayFactory.Fixture embedding,
             Distiller distiller) implements AutoCloseable {
@@ -264,51 +228,24 @@ class DistillerBehaviorTest {
         }
     }
 
-    private static final class FakeModel extends ChatModelBase {
-        private final Deque<Flux<ChatResponse>> responses = new ArrayDeque<>();
+    private static final class FakeGateway implements ModelTaskGateway {
+        private final Deque<Object> responses = new ArrayDeque<>();
+        private final List<ModelTaskRequest> requests = new ArrayList<>();
         private int calls;
-        private List<Msg> lastMessages = List.of();
 
-        void respond(String text) {
-            responses.add(Flux.just(response(List.of(text(text)))));
-        }
-
-        void respondWithNullContentThen(String text) {
-            List<ChatResponse> values = new ArrayList<>();
-            values.add(response(null));
-            values.add(response(List.of(text(text))));
-            responses.add(Flux.fromIterable(values));
-        }
-
-        void empty() {
-            responses.add(Flux.empty());
-        }
-
-        void fail(Throwable failure) {
-            responses.add(Flux.error(failure));
-        }
+        void respond(JsonNode output) { responses.addLast(output.deepCopy()); }
+        void fail(Throwable failure) { responses.addLast(failure); }
 
         @Override
-        public String getModelName() {
-            return "distiller-test";
-        }
-
-        @Override
-        protected Flux<ChatResponse> doStream(
-                List<Msg> messages,
-                List<ToolSchema> tools,
-                GenerateOptions options) {
+        public CompletionStage<ModelTaskResult> execute(ModelTaskRequest request) {
             calls++;
-            lastMessages = List.copyOf(messages);
-            return responses.isEmpty() ? Flux.empty() : responses.removeFirst();
-        }
-
-        private static ChatResponse response(List<ContentBlock> content) {
-            return ChatResponse.builder().content(content).build();
-        }
-
-        private static TextBlock text(String value) {
-            return TextBlock.builder().text(value).build();
+            requests.add(request);
+            Object value = responses.isEmpty() ? extraction() : responses.removeFirst();
+            if (value instanceof Throwable failure) {
+                return CompletableFuture.failedFuture(failure);
+            }
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    (JsonNode) value, "distiller-test", 3, 2, false, Map.of()));
         }
     }
 }

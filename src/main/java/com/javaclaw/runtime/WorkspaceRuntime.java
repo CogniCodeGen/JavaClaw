@@ -1,6 +1,5 @@
 package com.javaclaw.runtime;
 
-import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.ChatService;
 import com.javaclaw.agent.PlanModeService;
 import com.javaclaw.application.schedule.ScheduleApplicationService;
@@ -35,9 +34,14 @@ public final class WorkspaceRuntime implements AutoCloseable {
     private final WorkspaceContext context;
     private final DatabaseAccess databaseAccess;
     private final AgentConfig agentConfig;
-    private final AgentRuntime agentRuntime;
+    private final com.javaclaw.memory.MemoryService memoryService;
+    private final com.javaclaw.skill.SkillRuntimeServices skillRuntimeServices;
+    private final com.javaclaw.agent.TokenTracker tokenTracker;
+    private final com.javaclaw.memory.embed.EmbeddingGateway embeddingGateway;
+    private final com.javaclaw.agent.expert.KnowledgeExpert knowledgeExpert;
     private final ChatService chatService;
     private final PlanModeService planModeService;
+    private final com.javaclaw.schedule.FrameworkScheduledTaskRunner scheduledTaskRunner;
     private final WorkflowService workflowService;
     private final ModeRegistry modeRegistry;
     private final McpCenterViewFactory mcpCenters;
@@ -58,9 +62,15 @@ public final class WorkspaceRuntime implements AutoCloseable {
         context = springContext.workspace();
         databaseAccess = springContext.bean(DatabaseAccess.class);
         agentConfig = springContext.bean(AgentConfig.class);
-        agentRuntime = springContext.bean(AgentRuntime.class);
+        memoryService = springContext.bean(com.javaclaw.memory.MemoryService.class);
+        skillRuntimeServices = springContext.bean(com.javaclaw.skill.SkillRuntimeServices.class);
+        tokenTracker = springContext.bean(com.javaclaw.agent.TokenTracker.class);
+        embeddingGateway = springContext.bean(com.javaclaw.memory.embed.EmbeddingGateway.class);
+        knowledgeExpert = springContext.bean(com.javaclaw.agent.expert.KnowledgeExpert.class);
         chatService = springContext.bean(ChatService.class);
         planModeService = springContext.bean(PlanModeService.class);
+        scheduledTaskRunner = springContext.bean(
+                com.javaclaw.schedule.FrameworkScheduledTaskRunner.class);
         workflowService = springContext.bean(WorkflowService.class);
         modeRegistry = springContext.bean(ModeRegistry.class);
         mcpCenters = springContext.bean(McpCenterViewFactory.class);
@@ -89,8 +99,20 @@ public final class WorkspaceRuntime implements AutoCloseable {
         return agentConfig;
     }
 
-    public AgentRuntime agentRuntime() {
-        return agentRuntime;
+    public com.javaclaw.memory.MemoryService memoryService() { return memoryService; }
+
+    public com.javaclaw.skill.SkillRuntimeServices skillRuntimeServices() {
+        return skillRuntimeServices;
+    }
+
+    public com.javaclaw.agent.TokenTracker tokenTracker() { return tokenTracker; }
+
+    public com.javaclaw.memory.embed.EmbeddingGateway embeddingGateway() {
+        return embeddingGateway;
+    }
+
+    public com.javaclaw.agent.expert.KnowledgeExpert knowledgeExpert() {
+        return knowledgeExpert;
     }
 
     public ChatService chatService() {
@@ -99,6 +121,10 @@ public final class WorkspaceRuntime implements AutoCloseable {
 
     public PlanModeService planModeService() {
         return planModeService;
+    }
+
+    public com.javaclaw.schedule.ScheduledTaskRunner scheduledTaskRunner() {
+        return scheduledTaskRunner;
     }
 
     public WorkflowService workflowService() {

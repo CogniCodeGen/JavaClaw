@@ -30,6 +30,10 @@ public interface GraphCheckpointStore {
     void checkpoint(GraphRun run, String nodeId, CheckpointPhase phase);
     GraphRun loadRun(String runId);
     List<GraphRun> listRuns(String workflowId, int limit);
+    default List<GraphRun> listNonTerminalRuns() {
+        return listRuns(null, 10_000).stream()
+                .filter(run -> !run.status().terminal()).toList();
+    }
     GraphRun findWaitingRun(String workflowId, String threadId);
     GraphRun findRecoverableRun(String workflowId, String threadId);
     GraphState loadThreadState(String workflowId, String threadId);

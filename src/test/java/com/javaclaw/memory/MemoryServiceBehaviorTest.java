@@ -1,7 +1,9 @@
 package com.javaclaw.memory;
 
-import com.javaclaw.agent.model.ModelFactory;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.framework.spi.ModelTaskGateway;
+import com.javaclaw.framework.spi.ModelTaskResult;
 import com.javaclaw.memory.correction.CorrectionGuard;
 import com.javaclaw.memory.correction.CorrectionTurnContext;
 import com.javaclaw.memory.embed.EmbeddingHealthStatus;
@@ -12,27 +14,19 @@ import com.javaclaw.memory.model.KnowledgeChunk;
 import com.javaclaw.memory.store.MemoryStore;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.spring.ApplicationContexts;
-import io.agentscope.core.message.ContentBlock;
-import io.agentscope.core.message.Msg;
-import io.agentscope.core.message.TextBlock;
-import io.agentscope.core.model.ChatModelBase;
-import io.agentscope.core.model.ChatResponse;
-import io.agentscope.core.model.GenerateOptions;
-import io.agentscope.core.model.ToolSchema;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
-import reactor.core.publisher.Flux;
 
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -81,9 +75,6 @@ class MemoryServiceBehaviorTest {
             assertNull(service.getPersona());
             service.setPersona("persona", "user");
             service.setPersonaStructured("identity", "tone", null, null);
-            service.checkpoint("key", "[]");
-            assertNull(service.loadCheckpoint("key"));
-            service.deleteCheckpoint("key");
             assertTrue(service.recentChangeLog(5).isEmpty());
             assertTrue(service.facts().isEmpty());
             service.deleteFact(fact);
@@ -145,11 +136,6 @@ class MemoryServiceBehaviorTest {
                     List.of("clarity"), List.of("secrets"));
             assertTrue(service.getPersona().structured);
             assertTrue(service.getPersona().content.contains("clarity"));
-
-            service.checkpoint("session", "[1]");
-            assertEquals("[1]", service.loadCheckpoint("session").messagesJson);
-            service.deleteCheckpoint("session");
-            assertNull(service.loadCheckpoint("session"));
 
             service.addFact(null, null);
             service.addFact(null, " ");
@@ -280,7 +266,6 @@ class MemoryServiceBehaviorTest {
             service.rememberTurn("secret", "authorization: Bearer secret-value",
                     "answer", null);
             assertTrue(service.episodes().isEmpty());
-            fixture.model.respond("无");
             service.rememberTurn(null, "long enough ordinary question",
                     "long enough ordinary answer", "{}");
             await(() -> service.store().allPendingEpisodes().isEmpty()
@@ -299,11 +284,10 @@ class MemoryServiceBehaviorTest {
     private Fixture fixture(TestEmbeddingGatewayFactory.Invoker invoker) {
         TestEmbeddingGatewayFactory.Fixture embedding =
                 TestEmbeddingGatewayFactory.create(4, invoker);
-        FakeModel model = new FakeModel();
-        FakeModelFactory modelFactory = new FakeModelFactory(settings, model);
+        FakeModelTasks modelTasks = new FakeModelTasks();
         MemoryService service = new MemoryService(
-                modelFactory, null, embedding.gateway(), embedding.tasks(), settings);
-        return new Fixture(service, model, modelFactory, embedding);
+                modelTasks, embedding.gateway(), embedding.tasks(), settings);
+        return new Fixture(service, modelTasks, embedding);
     }
 
     private Path nextStoreDirectory() {
@@ -333,52 +317,26 @@ class MemoryServiceBehaviorTest {
 
     private record Fixture(
             MemoryService service,
-            FakeModel model,
-            FakeModelFactory modelFactory,
+            FakeModelTasks modelTasks,
             TestEmbeddingGatewayFactory.Fixture embedding) implements AutoCloseable {
         @Override
         public void close() {
             service.close();
-            modelFactory.close();
             embedding.close();
         }
     }
 
-    private static final class FakeModelFactory extends ModelFactory {
-        private final ChatModelBase model;
-
-        private FakeModelFactory(AgentConfig settings, ChatModelBase model) {
-            super(settings);
-            this.model = model;
-        }
-
+    private static final class FakeModelTasks implements ModelTaskGateway {
         @Override
-        public ChatModelBase createLightChatModel() {
-            return model;
-        }
-    }
-
-    private static final class FakeModel extends ChatModelBase {
-        private final Deque<Flux<ChatResponse>> responses = new ArrayDeque<>();
-
-        void respond(String text) {
-            responses.add(Flux.just(ChatResponse.builder()
-                    .content(List.<ContentBlock>of(
-                            TextBlock.builder().text(text).build()))
-                    .build()));
-        }
-
-        @Override
-        public String getModelName() {
-            return "memory-service-test";
-        }
-
-        @Override
-        protected Flux<ChatResponse> doStream(
-                List<Msg> messages,
-                List<ToolSchema> tools,
-                GenerateOptions options) {
-            return responses.isEmpty() ? Flux.empty() : responses.removeFirst();
+        public java.util.concurrent.CompletionStage<ModelTaskResult> execute(
+                com.javaclaw.framework.spi.ModelTaskRequest request) {
+            var output = JsonNodeFactory.instance.objectNode();
+            output.putArray("facts");
+            output.putArray("entities");
+            output.putArray("indexes");
+            output.putArray("habits");
+            return CompletableFuture.completedFuture(new ModelTaskResult(
+                    output, "memory-test", 0, 0, false, Map.of()));
         }
     }
 }

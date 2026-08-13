@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.agentscope.core.tool.Tool;
+import org.springframework.ai.tool.annotation.Tool;
 
 import org.junit.jupiter.api.Test;
 
@@ -95,6 +95,15 @@ class BrowserToolCompositionTest {
 
         assertEquals(53, actual.size());
         assertEquals(EXPECTED_TOOL_NAMES, actual);
+    }
+
+    @Test
+    void bareHtmlElementsAreResolvedAsCssSelectors() {
+        assertTrue(BrowserTargetResolver.looksLikeSelector("body"));
+        assertTrue(BrowserTargetResolver.looksLikeSelector("pre"));
+        assertTrue(BrowserTargetResolver.looksLikeSelector("my-weather-card"));
+        assertTrue(BrowserTargetResolver.looksLikeSelector("#forecast"));
+        assertFalse(BrowserTargetResolver.looksLikeSelector("上海天气"));
     }
 
     @Test

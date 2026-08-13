@@ -1,12 +1,11 @@
 package com.javaclaw.task.sdd;
 
-import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.platform.process.ProcessRunner;
 import com.javaclaw.skill.SkillRuntimeServices;
-import com.javaclaw.task.sdd.agent.AgentScopeCriticJudge;
-import com.javaclaw.task.sdd.agent.AgentScopeSddAgents;
+import com.javaclaw.task.sdd.agent.FrameworkCriticJudge;
+import com.javaclaw.task.sdd.agent.FrameworkSddAgents;
 import com.javaclaw.task.sdd.agent.ProcessCommandRunner;
 import com.javaclaw.task.sdd.gate.AutoApproveReviewGate;
 import com.javaclaw.task.sdd.spec.OpenSpecChange;
@@ -14,15 +13,14 @@ import com.javaclaw.task.sdd.spec.SpecStore;
 import com.javaclaw.task.sdd.verify.ScenarioVerifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-import java.util.Map;
 import java.util.function.BooleanSupplier;
 
 /**
- * SDD 任务的<b>装配与运行入口</b> —— 把真相层、验证层、编排器、AgentScope 智能体、命令执行器、
+ * SDD 任务的<b>装配与运行入口</b> —— 把真相层、验证层、编排器、框架 Agent Run、命令执行器、
  * critic、评审闸门组装成一个可运行单元。
  *
  * <p>这是 B5d 接缝层调用的统一入口：任务管理器（或未来任何前端）只需提供运行期
- * 协作者（{@link ModelFactory}、能力工具表、{@link SkillRuntimeServices}、token 汇聚、{@link ReviewGate}、
+ * 协作者（统一 Agent/ModelTask 网关、{@link SkillRuntimeServices}、token 汇聚、{@link ReviewGate}、
  * {@link SddProgress}）与一个 {@link TaskContext}，即可驱动完整的 SDD 生命周期，无需感知内部装配。</p>
  *
  * <p>{@link #run()} 同步阻塞返回 {@link SddOutcome}（调用方在后台线程驱动）；{@link #cancel()}
@@ -38,38 +36,37 @@ public final class SddTaskRunner implements AutoCloseable {
     private final TaskContext context;
     private final com.javaclaw.workflow.service.WorkflowService workflowService;
     private final SpecStore store;
-    private final AgentScopeSddAgents agents;
+    private final FrameworkSddAgents agents;
     /** 验证层子件引用：用于把核验超时与实现/结构化阶段超时对齐（避免默认 120s 误杀慢构建/慢 critic）。 */
     private final ProcessCommandRunner commandRunner;
-    private final AgentScopeCriticJudge critic;
-    private final Map<String, Object> capabilityTools;
+    private final FrameworkCriticJudge critic;
 
     /**
      * @param ctx             任务上下文
-     * @param modelFactory    模型工厂（提供分级模型）
-     * @param capabilityTools 能力→工具对象表（web/email/system/notification/command）
      * @param skills          当前工作区技能运行时
      * @param tokenSink       token 用量汇聚（按阶段标签 + input,output）；可空
      * @param gate            人机评审闸门（无头用 {@link AutoApproveReviewGate}）
      * @param progress        进度/日志回调；可空（NOOP）
      * @param completionStamp 归档完成时间戳文本（调用方注入，本层不依赖时钟）
      */
-    public SddTaskRunner(TaskContext ctx, ModelFactory modelFactory, AgentConfig settings,
-                         Map<String, Object> capabilityTools,
+    public SddTaskRunner(TaskContext ctx, AgentConfig settings,
                          SkillRuntimeServices skills, SddTokenSink tokenSink, ReviewGate gate,
                          SddProgress progress, String completionStamp,
                          com.javaclaw.workflow.service.WorkflowService workflowService,
                          JdbcTemplate jdbc, JsonCodec json, ProcessRunner processes,
-                         String workspaceId) {
+                         String workspaceId,
+                         com.javaclaw.framework.api.AgentClient agentClient,
+                         com.javaclaw.framework.spi.ModelTaskGateway modelTasks,
+                         com.javaclaw.runtime.WorkspaceContext workspace) {
         this.context = ctx;
-        this.capabilityTools = capabilityTools == null ? Map.of() : Map.copyOf(capabilityTools);
         this.workflowService = workflowService;
         if (workflowService != null) workflowService.systemGraphs().register(SYSTEM_GRAPH);
         this.store = new SpecStore(ctx.workDir(), jdbc, workspaceId);
-        this.agents = new AgentScopeSddAgents(
-                modelFactory, settings, this.capabilityTools, skills, tokenSink, processes);
+        this.agents = new FrameworkSddAgents(
+                agentClient, workspace, settings, skills, tokenSink, json.mapper());
         this.commandRunner = new ProcessCommandRunner(processes);
-        this.critic = new AgentScopeCriticJudge(ctx.workDir(), modelFactory, tokenSink, processes);
+        this.critic = new FrameworkCriticJudge(ctx.workDir(), modelTasks,
+                agents::lastRunId, agents::cancelled, tokenSink);
         ScenarioVerifier verifier = new ScenarioVerifier(ctx.workDir(), commandRunner, critic);
         this.orchestrator = new SddOrchestrator(ctx, store, verifier, agents,
                 gate == null ? new AutoApproveReviewGate() : gate,
@@ -135,15 +132,7 @@ public final class SddTaskRunner implements AutoCloseable {
     /** 关闭本任务私有能力资源（当前主要是隔离浏览器）；可重复调用。 */
     @Override
     public void close() {
-        for (Object tool : new java.util.LinkedHashSet<>(capabilityTools.values())) {
-            if (tool instanceof AutoCloseable closeable) {
-                try {
-                    closeable.close();
-                } catch (Exception ignored) {
-                    // 任务终态不能被资源清理失败覆盖
-                }
-            }
-        }
+        agents.close();
     }
 
     private SddOutcome runViaGraph(boolean resume) {
@@ -154,9 +143,12 @@ public final class SddTaskRunner implements AutoCloseable {
                 new com.javaclaw.api.conversation.ConversationCallbacks() {
                     @Override
                     public void onEvent(com.javaclaw.api.conversation.ConversationEvent event) {
-                        if (event instanceof com.javaclaw.api.conversation.ConversationEvent.Custom custom
-                                && custom.payload() instanceof com.javaclaw.workflow.runtime.GraphEvent.RunFinished finished
-                                && workflowService != null) {
+                        com.javaclaw.workflow.runtime.GraphEvent.RunFinished finished =
+                                event instanceof com.javaclaw.api.conversation.ConversationEvent.Custom custom
+                                        && "graph_trace".equals(custom.kind())
+                                        ? com.javaclaw.workflow.runtime.GraphEventJson
+                                        .runFinished(custom.payload()).orElse(null) : null;
+                        if (finished != null && workflowService != null) {
                             if (finished.status() == com.javaclaw.workflow.model.RunStatus.CANCELLED) {
                                 outcome.compareAndSet(null, SddOutcome.cancelled());
                             } else if (outcome.get() == null) {

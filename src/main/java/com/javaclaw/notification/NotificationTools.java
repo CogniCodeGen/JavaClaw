@@ -5,8 +5,8 @@ import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.config.EmailConfig;
 import com.javaclaw.config.NotificationConfig;
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import jakarta.mail.*;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
@@ -26,13 +26,14 @@ import java.util.Base64;
 import java.util.Properties;
 
 /**
- * 通知工具类（基于 AgentScope @Tool 注解）
+ * 通知工具类（基于 Spring AI {@code @Tool} 注解）
  *
  * <p>为通知智能体提供多渠道消息发送工具，支持钉钉机器人、企业微信机器人、
  * 飞书机器人、邮件通知和自定义 Webhook。所有方法返回 {@link ToolResponse} 格式化响应。</p>
  *
  * @author JavaClaw
  */
+@com.javaclaw.framework.spi.ToolContract(group = "notification", permissions = {"tool.execute"}, idempotent = false)
 public class NotificationTools {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationTools.class);
@@ -67,8 +68,8 @@ public class NotificationTools {
     @Tool(name = "notify_send", description = "向所有已启用的通知渠道发送消息。" +
             "会自动检测已配置并启用的渠道（钉钉、企业微信、飞书、邮件、自定义Webhook），逐一发送。")
     public String sendNotification(
-            @ToolParam(name = "message", description = "要发送的通知消息内容") String message,
-            @ToolParam(name = "title", description = "通知标题，部分渠道会显示标题") String title) {
+            @ToolParam( description = "要发送的通知消息内容") String message,
+            @ToolParam( description = "通知标题，部分渠道会显示标题") String title) {
         log.debug("工具调用: notify_send(title={})", title);
         if (!ToolConfirmationManager.requestConfirmation(origin, "notify_send",
                 "向所有已启用渠道发送通知: " + (title == null ? "" : title))) {
@@ -128,9 +129,9 @@ public class NotificationTools {
     @Tool(name = "notify_dingtalk", description = "通过钉钉机器人发送消息通知。" +
             "需要在设置中配置钉钉 Webhook 地址。支持文本消息和 Markdown 格式。")
     public String sendDingtalk(
-            @ToolParam(name = "title", description = "消息标题") String title,
-            @ToolParam(name = "message", description = "消息内容，支持 Markdown 格式") String message,
-            @ToolParam(name = "is_markdown", description = "是否使用 Markdown 格式，true 为 Markdown，false 为纯文本") boolean isMarkdown) {
+            @ToolParam( description = "消息标题") String title,
+            @ToolParam( description = "消息内容，支持 Markdown 格式") String message,
+            @ToolParam( description = "是否使用 Markdown 格式，true 为 Markdown，false 为纯文本") boolean isMarkdown) {
         log.debug("工具调用: notify_dingtalk(title={})", title);
         if (!ToolConfirmationManager.requestConfirmation(origin, "notify_dingtalk",
                 "向钉钉机器人发送通知: " + (title == null ? "" : title))) {
@@ -169,8 +170,8 @@ public class NotificationTools {
     @Tool(name = "notify_wechat", description = "通过企业微信机器人发送消息通知。" +
             "需要在设置中配置企业微信 Webhook 地址。支持文本消息和 Markdown 格式。")
     public String sendWechat(
-            @ToolParam(name = "message", description = "消息内容，支持 Markdown 格式") String message,
-            @ToolParam(name = "is_markdown", description = "是否使用 Markdown 格式") boolean isMarkdown) {
+            @ToolParam( description = "消息内容，支持 Markdown 格式") String message,
+            @ToolParam( description = "是否使用 Markdown 格式") boolean isMarkdown) {
         log.debug("工具调用: notify_wechat");
         if (!ToolConfirmationManager.requestConfirmation(origin, "notify_wechat",
                 "向企业微信机器人发送通知")) {
@@ -208,8 +209,8 @@ public class NotificationTools {
     @Tool(name = "notify_feishu", description = "通过飞书机器人发送消息通知。" +
             "需要在设置中配置飞书 Webhook 地址。支持富文本格式。")
     public String sendFeishu(
-            @ToolParam(name = "title", description = "消息标题") String title,
-            @ToolParam(name = "message", description = "消息内容") String message) {
+            @ToolParam( description = "消息标题") String title,
+            @ToolParam( description = "消息内容") String message) {
         log.debug("工具调用: notify_feishu(title={})", title);
         if (!ToolConfirmationManager.requestConfirmation(origin, "notify_feishu",
                 "向飞书机器人发送通知: " + (title == null ? "" : title))) {
@@ -253,9 +254,9 @@ public class NotificationTools {
     @Tool(name = "notify_email", description = "通过邮件发送通知。" +
             "使用已配置的邮件账号向指定收件人发送通知邮件。")
     public String sendEmailNotify(
-            @ToolParam(name = "to", description = "收件人邮箱地址，留空则使用默认通知收件人") String to,
-            @ToolParam(name = "subject", description = "邮件主题") String subject,
-            @ToolParam(name = "body", description = "邮件正文") String body) {
+            @ToolParam( description = "收件人邮箱地址，留空则使用默认通知收件人") String to,
+            @ToolParam( description = "邮件主题") String subject,
+            @ToolParam( description = "邮件正文") String body) {
         log.debug("工具调用: notify_email(to={}, subject={})", to, subject);
         if (!ToolConfirmationManager.requestConfirmation(origin, "notify_email",
                 "发送通知邮件到 " + (to == null || to.isBlank() ? "默认收件人" : to)
@@ -314,7 +315,7 @@ public class NotificationTools {
     @Tool(name = "notify_custom_webhook", description = "通过自定义 Webhook 发送通知。" +
             "使用用户配置的自定义 Webhook URL 和请求模板发送消息。")
     public String sendCustomWebhook(
-            @ToolParam(name = "message", description = "通知消息内容") String message) {
+            @ToolParam( description = "通知消息内容") String message) {
         log.debug("工具调用: notify_custom_webhook");
         if (!ToolConfirmationManager.requestConfirmation(origin, "notify_custom_webhook",
                 "通过自定义 Webhook 发送通知")) {
@@ -338,6 +339,7 @@ public class NotificationTools {
         }
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "notification", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "notify_list_channels", description = "列出所有已配置的通知渠道及其启用状态。")
     public String listChannels() {
         log.debug("工具调用: notify_list_channels");

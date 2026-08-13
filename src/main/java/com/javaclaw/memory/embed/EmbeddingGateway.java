@@ -1,11 +1,9 @@
 package com.javaclaw.memory.embed;
 
-import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.framework.spi.EmbeddingModelProvider;
 import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
-import io.agentscope.core.embedding.EmbeddingModel;
-import io.agentscope.core.message.TextBlock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,32 +44,35 @@ public class EmbeddingGateway {
             new CopyOnWriteArrayList<>();
     private volatile EmbeddingHealthSnapshot health;
 
-    public EmbeddingGateway(ModelFactory modelFactory, TaskScope tasks, AgentConfig config) {
-        Objects.requireNonNull(modelFactory, "modelFactory");
+    public EmbeddingGateway(
+            EmbeddingModelProvider provider, TaskScope tasks, AgentConfig config) {
+        Objects.requireNonNull(provider, "provider");
         this.tasks = Objects.requireNonNull(tasks, "tasks");
         Objects.requireNonNull(config, "config");
         this.clock = Clock.systemUTC();
         this.dimensions = config.getRagEmbeddingDimensions();
-        EmbeddingModel created = null;
         EmbeddingHealthStatus initial;
-        String error = null;
-        if (!config.isRagEnabled()
-                || config.getRagEmbeddingModelName() == null
-                || config.getRagEmbeddingModelName().isBlank()) {
+        String error = provider.initializationError();
+        if (!provider.configured()) {
             initial = EmbeddingHealthStatus.UNCONFIGURED;
+        } else if (error != null) {
+            initial = EmbeddingHealthStatus.UNAVAILABLE;
         } else {
-            try {
-                created = modelFactory.createEmbeddingModel();
-                initial = EmbeddingHealthStatus.CHECKING;
-            } catch (Exception e) {
-                error = "嵌入模型创建失败: " + describe(e);
-                initial = EmbeddingHealthStatus.UNAVAILABLE;
-            }
+            initial = EmbeddingHealthStatus.CHECKING;
         }
-        EmbeddingModel readyModel = created;
-        this.invoker = readyModel == null ? null
-                : (text, timeout) -> readyModel.embed(
-                        TextBlock.builder().text(text).build()).block(timeout);
+        this.invoker = !provider.configured() || error != null ? null : (text, timeout) -> {
+            var handle = tasks.submit(TaskSpec.io("spring-ai-embedding")
+                    .withTimeout(timeout), context -> {
+                context.cancellation().throwIfCancellationRequested();
+                return provider.embed(text, timeout);
+            });
+            try {
+                return handle.completion().get(
+                        timeout.toMillis() + 250, java.util.concurrent.TimeUnit.MILLISECONDS);
+            } finally {
+                if (!handle.state().isTerminal()) handle.cancel();
+            }
+        };
         this.health = new EmbeddingHealthSnapshot(
                 initial, error, error == null ? 0 : 1, null, Instant.now(clock));
         this.hardUnavailable.set(error != null);

@@ -5,6 +5,7 @@ import org.eclipse.store.gigamap.types.GigaMap;
 import java.util.HashMap;
 import java.util.Map;
 
+
 /**
  * 记忆根对象图 —— 一个工作区(或全局库)的全部记忆形态的单一持久化根。
  *
@@ -43,7 +44,7 @@ public class MemoryRoot {
     /** 用户显式纠错记录（无向量索引；按确定性相关性 + 近因高优先级召回）。 */
     public GigaMap<CorrectionRecord> corrections = GigaMap.New();
 
-    /** 工作记忆检查点(会话/智能体 key → 快照) */
+    /** Working-memory checkpoints keyed by conversation or agent id. */
     public Map<String, AgentCheckpoint> working = new HashMap<>();
 
     /** 人格(可空,未设置时由上层注入默认) */

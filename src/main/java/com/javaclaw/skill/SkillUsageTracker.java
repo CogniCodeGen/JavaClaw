@@ -26,7 +26,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p>按技能维度追踪三类信号：
  * <ul>
- *   <li>路由命中（ToolRouter 把技能选入本轮注入集）</li>
+ *   <li>编译命中（AgentCompiler 把技能选入本轮 ExecutionPlan）</li>
  *   <li>按需读取（模型调用 skill_read 拉取正文）</li>
  *   <li>轮次成败（注入该技能的对话轮结束时的滑窗成功率判定）</li>
  * </ul>
@@ -102,7 +102,7 @@ public final class SkillUsageTracker implements AutoCloseable {
 
     // ==================== 埋点入口 ====================
 
-    /** 记录路由命中（ToolRouter 把该技能选入本轮注入集） */
+    /** 记录编译命中（AgentCompiler 把该技能选入本轮 ExecutionPlan）。 */
     public void recordRouteHit(String skillName) {
         if (skillName == null || skillName.isBlank()) {
             return;

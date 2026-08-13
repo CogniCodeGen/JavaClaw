@@ -55,9 +55,8 @@ class LoopControllerTest {
         @Override
         public void onEvent(ConversationEvent event) {
             if (event instanceof ConversationEvent.Custom c
-                    && LoopConstants.EVENT_STATUS_KIND.equals(c.kind())
-                    && c.payload() instanceof LoopStatus s) {
-                statuses.add(s);
+                    && LoopConstants.EVENT_STATUS_KIND.equals(c.kind())) {
+                LoopStatus.fromJson(c.payload()).ifPresent(statuses::add);
             }
         }
 

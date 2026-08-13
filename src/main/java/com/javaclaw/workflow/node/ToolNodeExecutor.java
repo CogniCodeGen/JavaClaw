@@ -1,47 +1,50 @@
 package com.javaclaw.workflow.node;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.javaclaw.agent.AgentRuntime;
-import com.javaclaw.agent.ToolCallOrigin;
-import com.javaclaw.agent.ToolRegistrationSupport;
-import com.javaclaw.agent.ToolkitAssembler;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
-import com.javaclaw.platform.execution.TaskSpec;
-import com.javaclaw.platform.execution.TaskSubmitter;
+import com.javaclaw.framework.api.InvocationSource;
+import com.javaclaw.framework.api.PermissionSet;
+import com.javaclaw.framework.api.RunBudget;
+import com.javaclaw.framework.api.RunScope;
+import com.javaclaw.framework.api.ToolCallOutcome;
+import com.javaclaw.framework.api.ToolCallRequest;
+import com.javaclaw.framework.api.ToolClient;
+import com.javaclaw.runtime.WorkspaceContext;
 import com.javaclaw.workflow.model.StatePatch;
-import com.javaclaw.workflow.runtime.CancellationToken;
-import com.javaclaw.workflow.runtime.GraphCancelledException;
 import com.javaclaw.workflow.runtime.NodeExecutionContext;
 import com.javaclaw.workflow.runtime.NodeExecutor;
 import com.javaclaw.workflow.runtime.NodeResult;
-import io.agentscope.core.message.TextBlock;
-import io.agentscope.core.message.ToolResultBlock;
-import io.agentscope.core.message.ToolUseBlock;
-import io.agentscope.core.tool.ToolCallParam;
-import io.agentscope.core.tool.Toolkit;
-import reactor.core.publisher.Mono;
 
+import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.CancellationException;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeoutException;
 
-/** 本地工具节点；工具对象本身继续执行 JavaClaw 的风险确认。 */
+/** Workflow TOOL node. It resolves and invokes tools only through the framework ToolClient. */
 public final class ToolNodeExecutor implements NodeExecutor {
     private static final Set<String> REMOTE_MCP_TOOLS = Set.of("mcp_list_tools", "mcp_call_tool");
-    private final AgentRuntime validationRuntime;
+    private final ToolClient tools;
+    private final WorkspaceContext workspace;
 
-    public ToolNodeExecutor() { this(null); }
-    public ToolNodeExecutor(AgentRuntime validationRuntime) { this.validationRuntime = validationRuntime; }
+    /** Validation-only constructor used by graph schema tests. */
+    public ToolNodeExecutor() {
+        this(null, null);
+    }
 
-    @Override public String type() { return "tool"; }
+    public ToolNodeExecutor(ToolClient tools, WorkspaceContext workspace) {
+        this.tools = tools;
+        this.workspace = workspace;
+    }
+
+    @Override
+    public String type() {
+        return "tool";
+    }
 
     @Override
     public List<String> validate(com.javaclaw.workflow.model.NodeDefinition node) {
@@ -60,88 +63,59 @@ public final class ToolNodeExecutor implements NodeExecutor {
         WorkflowToolGroupPolicy.validate(node.config().path("toolGroups"), errors);
         StatePathValidator.validate(node.config().path("outputKey").asText("tool.output"),
                 "TOOL outputKey", errors);
-        if (validationRuntime != null && !name.isBlank()) {
-            Toolkit toolkit = buildLocalToolkit(validationRuntime);
-            if (toolkit.getTool(name) == null) errors.add("本地工具不存在: " + name);
-        }
         return List.copyOf(errors);
     }
 
     @Override
-    public NodeResult execute(NodeExecutionContext context) {
-        AgentRuntime runtime = context.require(AgentRuntime.class);
+    public NodeResult execute(NodeExecutionContext context) throws Exception {
+        if (tools == null || workspace == null) {
+            throw new IllegalStateException("TOOL executor is not bound to ToolClient");
+        }
         JsonNode config = context.node().config();
-        Toolkit toolkit = buildLocalToolkit(runtime);
-        List<String> groups = WorkflowToolGroupPolicy.read(config.path("toolGroups"));
-        WorkflowToolGroupPolicy.restrict(toolkit, groups, true);
-
         String toolName = config.path("toolName").asText();
         if ("mcp".equals(config.path("source").asText()) || REMOTE_MCP_TOOLS.contains(toolName)) {
             throw new SecurityException("自定义工作流默认不允许远程 MCP 工具");
         }
-        if (toolkit.getTool(toolName) == null) throw new IllegalArgumentException("本地工具不存在: " + toolName);
-        JsonNode rendered = TemplateRenderer.renderJson(config.path("arguments"), context.state());
-        Map<String, Object> input = rendered == null || !rendered.isObject() ? Map.of()
-                : runtime.getJson().mapper().convertValue(rendered, new TypeReference<>() {});
-        ToolUseBlock block = new ToolUseBlock(UUID.randomUUID().toString(), toolName, input);
-        ToolCallParam param = ToolCallParam.builder().toolUseBlock(block).input(input).build();
-        ToolResultBlock result = awaitToolCall(toolkit.callTool(param),
-                runtime.getWorkspaceTasks(), context.cancellation(), toolName);
-        StringBuilder text = new StringBuilder();
-        for (var output : result.getOutput()) {
-            if (output instanceof TextBlock tb) text.append(tb.getText());
-            else text.append(output);
+        JsonNode arguments = TemplateRenderer.renderJson(config.path("arguments"), context.state());
+        if (arguments == null || !arguments.isObject()) {
+            arguments = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
         }
-        String resultText = text.toString();
-        ConversationCallbacks callbacks = context.optional(ConversationCallbacks.class);
+        long timeoutSeconds = Math.max(1, config.path("timeoutSeconds").asLong(120));
+        PermissionSet permissions = config.path("allowMutatingTools").asBoolean(false)
+                ? PermissionSet.of("tool.read", "tool.execute")
+                : PermissionSet.of("tool.read");
+        ToolCallRequest request = new ToolCallRequest(
+                new RunScope(workspace.workspaceId(), "workflow", context.threadId()),
+                InvocationSource.workflow(context.runId()), toolName, arguments, permissions,
+                new RunBudget(Duration.ofSeconds(timeoutSeconds), 0, 0, 1,
+                        new BigDecimal("10")), context.runId(),
+                context.cancellation(),
+                Set.copyOf(WorkflowToolGroupPolicy.read(config.path("toolGroups"))));
+        ToolCallOutcome outcome;
+        try {
+            // The ToolClient stage settles only after its managed task has really terminated
+            // and all run-scoped tools/extension leases have been closed.
+            outcome = tools.invoke(request).toCompletableFuture().join();
+        } catch (CompletionException failure) {
+            Throwable cause = unwrap(failure);
+            if (cause instanceof TimeoutException timeout) {
+                throw new IllegalStateException("工具节点执行超时: " + toolName, timeout);
+            }
+            throw new IllegalStateException("工具执行失败: " + toolName, cause);
+        } catch (CancellationException cancelled) {
+            context.cancellation().throwIfCancelled();
+            throw new IllegalStateException("工具执行被取消: " + toolName, cancelled);
+        }
+        context.cancellation().throwIfCancelled();
+        String resultText = outcome.output() == null ? ""
+                : outcome.output().isTextual() ? outcome.output().asText() : outcome.output().toString();
+        ConversationCallbacks callbacks = context.callbacks();
         if (callbacks != null) callbacks.onEvent(new ConversationEvent.ToolResult(toolName, resultText));
         if (isFailureResult(resultText)) {
             throw new IllegalStateException("工具返回失败: " + resultText);
         }
         String outputKey = config.path("outputKey").asText("tool.output");
         return NodeResult.next(StatePatch.builder().set(outputKey, resultText).build());
-    }
-
-    static ToolResultBlock awaitToolCall(Mono<ToolResultBlock> call,
-                                         TaskSubmitter tasks,
-                                         CancellationToken cancellation,
-                                         String toolName) {
-        var task = tasks.submit(TaskSpec.io("workflow-tool-" + toolName), context -> {
-            context.cancellation().throwIfCancellationRequested();
-            return call.block();
-        });
-        try (AutoCloseable ignored = cancellation.onCancel(task::cancel)) {
-            while (true) {
-                cancellation.throwIfCancelled();
-                try {
-                    ToolResultBlock result = task.completion().get(100, TimeUnit.MILLISECONDS);
-                    if (result == null) {
-                        throw new IllegalStateException("工具未返回结果: " + toolName);
-                    }
-                    return result;
-                } catch (TimeoutException ignoredTimeout) {
-                    // 短轮询仅用于同步观察图取消令牌。
-                } catch (CancellationException cancelled) {
-                    cancellation.throwIfCancelled();
-                    throw new IllegalStateException("工具执行被取消: " + toolName, cancelled);
-                } catch (ExecutionException failed) {
-                    cancellation.throwIfCancelled();
-                    Throwable cause = failed.getCause() == null ? failed : failed.getCause();
-                    throw new IllegalStateException("工具执行失败: " + toolName, cause);
-                }
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            task.cancel();
-            cancellation.throwIfCancelled();
-            throw new IllegalStateException("工具执行被中断", e);
-        } catch (GraphCancelledException e) {
-            throw e;
-        } catch (RuntimeException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new IllegalStateException("工具取消钩子关闭失败", e);
-        }
     }
 
     static boolean isFailureResult(String text) {
@@ -157,12 +131,11 @@ public final class ToolNodeExecutor implements NodeExecutor {
         return "失败".equals(status) || "超时".equals(status);
     }
 
-    private static Toolkit buildLocalToolkit(AgentRuntime runtime) {
-        Toolkit toolkit = ToolkitAssembler.buildBaseToolkit(runtime, runtime.getExpertManager(),
-                true, ToolCallOrigin.INTERACTIVE);
-        // 主编排 Toolkit 只包含专家代理；TOOL 节点还需要直接注册专家背后的本地 @Tool。
-        runtime.getExpertManager().getCapabilityTools().forEach((group, tools) ->
-                ToolRegistrationSupport.register(toolkit, tools, group));
-        return toolkit;
+    private static Throwable unwrap(Throwable failure) {
+        Throwable current = failure;
+        while ((current instanceof CompletionException
+                || current instanceof java.util.concurrent.ExecutionException)
+                && current.getCause() != null) current = current.getCause();
+        return current;
     }
 }

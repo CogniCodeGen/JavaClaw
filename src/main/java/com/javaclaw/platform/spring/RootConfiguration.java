@@ -15,6 +15,7 @@ import com.javaclaw.application.onboarding.OnboardingApplicationService;
 import com.javaclaw.application.onboarding.OnboardingSettingsPort;
 import com.javaclaw.application.onboarding.OnboardingUseCase;
 import com.javaclaw.application.plugin.PluginManagementApplicationService;
+import com.javaclaw.application.plugin.AgentExtensionManagementApplicationService;
 import com.javaclaw.application.plugin.PluginManagementPort;
 import com.javaclaw.application.plugin.PluginManagementUseCase;
 import com.javaclaw.application.tool.ToolAuthorization;
@@ -65,6 +66,7 @@ import com.javaclaw.infrastructure.diagnostics.TraceExporterDiagnosticsArchive;
 import com.javaclaw.diagnostics.TraceExporter;
 import com.javaclaw.diagnostics.TraceRecorder;
 import com.javaclaw.infrastructure.plugin.PluginManagerManagementAdapter;
+import com.javaclaw.infrastructure.plugin.FrameworkAgentExtensionManagementAdapter;
 import com.javaclaw.infrastructure.onboarding.AgentConfigOnboardingSettings;
 import com.javaclaw.infrastructure.onboarding.HttpConnectionProbeAdapter;
 import com.javaclaw.infrastructure.settings.LegacyTestDataMaintenanceAdapter;
@@ -99,6 +101,14 @@ import java.time.Duration;
 /** 进程级基础设施的显式 Spring 装配。 */
 @Configuration(proxyBeanMethods = false)
 public class RootConfiguration {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory
+            .getLogger(RootConfiguration.class);
+
+    /** Shared Spring AI observation registry for models, ChatClient, advisors and tools. */
+    @Bean
+    io.micrometer.observation.ObservationRegistry springAiObservationRegistry() {
+        return io.micrometer.observation.ObservationRegistry.create();
+    }
 
     @Bean
     DataSource dataSource(DataRoot dataRoot) {
@@ -188,10 +198,8 @@ public class RootConfiguration {
     ChatHistoryPort chatHistoryPort(
             JdbcTemplate jdbc,
             PlatformTransactionManager transactionManager,
-            ObjectMapper json,
-            WorkspaceManager workspaces) {
-        return new JdbcChatHistoryStore(
-                jdbc, transactionManager, json, workspaces::getCurrentWorkspaceId);
+            ObjectMapper json) {
+        return new JdbcChatHistoryStore(jdbc, transactionManager, json);
     }
 
     @Bean
@@ -211,6 +219,340 @@ public class RootConfiguration {
     @Bean(destroyMethod = "close")
     ManagedTaskExecutor managedTaskExecutor() {
         return new ManagedTaskExecutor();
+    }
+
+    /** Shared kernel executor adapter; extensions never create their own thread pools. */
+    @Bean("agentKernelExecutor")
+    com.javaclaw.framework.spi.CancellableTaskExecutor agentKernelExecutor(
+            ManagedTaskExecutor executor) {
+        return new com.javaclaw.platform.execution.ManagedCancellableTaskExecutor(executor);
+    }
+
+    @Bean
+    Clock frameworkClock() {
+        return Clock.systemUTC();
+    }
+
+    @Bean
+    com.javaclaw.framework.store.JdbcRunStore frameworkRunStore(
+            JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager,
+            ObjectMapper json,
+            Clock frameworkClock) {
+        return new com.javaclaw.framework.store.JdbcRunStore(
+                jdbc, transactionManager, json, frameworkClock);
+    }
+
+    @Bean
+    com.javaclaw.framework.store.JdbcExecutionPlanStore frameworkExecutionPlanStore(
+            JdbcTemplate jdbc, ObjectMapper json, Clock frameworkClock) {
+        return new com.javaclaw.framework.store.JdbcExecutionPlanStore(jdbc, json, frameworkClock);
+    }
+
+    @Bean
+    com.javaclaw.framework.store.JdbcExtensionStateStore frameworkExtensionStateStore(
+            JdbcTemplate jdbc, ObjectMapper json, Clock frameworkClock) {
+        return new com.javaclaw.framework.store.JdbcExtensionStateStore(jdbc, json, frameworkClock);
+    }
+
+    @Bean
+    com.javaclaw.framework.store.JdbcExtensionArtifactRepository extensionArtifactRepository(
+            JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager,
+            Clock frameworkClock) {
+        return new com.javaclaw.framework.store.JdbcExtensionArtifactRepository(
+                jdbc, transactionManager, frameworkClock);
+    }
+
+    @Bean
+    com.javaclaw.framework.extension.TrustedExtensionInstaller trustedExtensionInstaller(
+            DataRoot dataRoot,
+            com.javaclaw.framework.store.JdbcExtensionArtifactRepository artifacts,
+            Clock frameworkClock) {
+        return new com.javaclaw.framework.extension.TrustedExtensionInstaller(
+                dataRoot.path().resolve("extension-cache"), artifacts, frameworkClock);
+    }
+
+    @Bean
+    com.javaclaw.framework.store.JdbcAgentDefinitionStore frameworkDefinitionStore(
+            JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager,
+            ObjectMapper json,
+            Clock frameworkClock) {
+        return new com.javaclaw.framework.store.JdbcAgentDefinitionStore(
+                jdbc, transactionManager, json, frameworkClock);
+    }
+
+    @Bean
+    com.javaclaw.infrastructure.agent.WorkspaceUsageRegistry workspaceUsageRegistry() {
+        return new com.javaclaw.infrastructure.agent.WorkspaceUsageRegistry();
+    }
+
+    @Bean
+    com.javaclaw.framework.core.RunUsageLedger frameworkUsageLedger(
+            com.javaclaw.infrastructure.agent.WorkspaceUsageRegistry usageObservers) {
+        return new com.javaclaw.framework.core.RunUsageLedger(usageObservers);
+    }
+
+    @Bean
+    com.javaclaw.framework.springai.SpringAiModelRegistry springAiModelRegistry() {
+        return new com.javaclaw.framework.springai.SpringAiModelRegistry();
+    }
+
+    @Bean
+    com.javaclaw.framework.springai.SpringAiAdvisorRegistry springAiAdvisorRegistry() {
+        return new com.javaclaw.framework.springai.SpringAiAdvisorRegistry();
+    }
+
+    @Bean
+    com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry springAiAnnotatedToolRegistry(
+            ObjectMapper json) {
+        return new com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry(json);
+    }
+
+    @Bean
+    com.javaclaw.framework.builtin.WorkspaceCapabilityRegistry workspaceCapabilityRegistry() {
+        return new com.javaclaw.framework.builtin.WorkspaceCapabilityRegistry();
+    }
+
+    @Bean
+    com.javaclaw.framework.builtin.BuiltinDefinitionRegistry builtinDefinitionRegistry() {
+        return new com.javaclaw.framework.builtin.BuiltinDefinitionRegistry();
+    }
+
+    @Bean
+    com.javaclaw.framework.core.RunEventModelTaskAuditSink modelTaskAuditSink(
+            com.javaclaw.framework.store.JdbcRunStore runs) {
+        return new com.javaclaw.framework.core.RunEventModelTaskAuditSink(runs);
+    }
+
+    @Bean
+    com.javaclaw.framework.springai.SpringAiModelTaskGateway modelTaskGateway(
+            com.javaclaw.framework.springai.SpringAiModelRegistry models,
+            com.javaclaw.framework.core.RunUsageLedger usage,
+            com.javaclaw.framework.core.RunEventModelTaskAuditSink audit,
+            com.javaclaw.framework.store.JdbcRunStore runs,
+            ObjectMapper json,
+            @org.springframework.beans.factory.annotation.Qualifier("agentKernelExecutor")
+            com.javaclaw.framework.spi.CancellableTaskExecutor executor) {
+        return new com.javaclaw.framework.springai.SpringAiModelTaskGateway(
+                models, usage, audit, json, executor, runs);
+    }
+
+    @Bean(destroyMethod = "close")
+    com.javaclaw.framework.extension.ExtensionManager extensionManager(
+            Clock frameworkClock,
+            @org.springframework.beans.factory.annotation.Qualifier("agentKernelExecutor")
+            java.util.concurrent.Executor executor,
+            com.javaclaw.framework.springai.SpringAiModelTaskGateway modelTasks,
+            com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry hostTools,
+            com.javaclaw.framework.builtin.WorkspaceCapabilityRegistry capabilities,
+            com.javaclaw.framework.store.JdbcExtensionStateStore extensionState,
+            ManagedTaskExecutor managedTasks,
+            com.javaclaw.framework.extension.TrustedExtensionInstaller installer) {
+        var manager = new com.javaclaw.framework.extension.ExtensionManager(
+                new com.javaclaw.framework.spi.ExtensionContext(
+                        frameworkClock, executor, modelTasks, extensionState),
+                new com.javaclaw.infrastructure.agent.ManagedBackgroundJobScheduler(managedTasks));
+        var artifacts = new java.util.ArrayList<com.javaclaw.framework.extension.ExtensionArtifact>(
+                com.javaclaw.framework.builtin.BuiltinExtensionCatalog.create(
+                        capabilities, capabilities, capabilities, capabilities, hostTools));
+        var restored = installer.loadAuthorized();
+        artifacts.addAll(restored.artifacts());
+        restored.failures().forEach(failure ->
+                log.error("系统扩展缓存恢复失败，引用该版本的 Run 将进入恢复阻塞: {}", failure));
+        try {
+            manager.publish(artifacts, restored.disabledExtensionIds());
+            return manager;
+        } catch (RuntimeException failure) {
+            try {
+                manager.close();
+            } catch (RuntimeException closeFailure) {
+                failure.addSuppressed(closeFailure);
+            }
+            try {
+                com.javaclaw.framework.extension.ExtensionArtifact.closeClassLoaders(
+                        restored.artifacts());
+            } catch (RuntimeException closeFailure) {
+                failure.addSuppressed(closeFailure);
+            }
+            throw failure;
+        }
+    }
+
+    @Bean
+    com.javaclaw.framework.api.AgentStudioClient agentStudioClient(
+            com.javaclaw.framework.store.JdbcAgentDefinitionStore definitions,
+            com.javaclaw.framework.extension.ExtensionManager extensions,
+            ObjectMapper json) {
+        return new com.javaclaw.framework.core.DefaultAgentStudio(definitions, extensions, json);
+    }
+
+    @Bean
+    com.javaclaw.framework.extension.TrustedExtensionService trustedExtensionService(
+            com.javaclaw.framework.extension.TrustedExtensionInstaller installer,
+            com.javaclaw.framework.store.JdbcExtensionArtifactRepository artifacts,
+            com.javaclaw.framework.extension.ExtensionManager extensions) {
+        return new com.javaclaw.framework.extension.TrustedExtensionService(
+                installer, artifacts, extensions);
+    }
+
+    @Bean
+    AgentExtensionManagementApplicationService agentExtensionManagementApplicationService(
+            com.javaclaw.framework.extension.TrustedExtensionService extensions) {
+        return new FrameworkAgentExtensionManagementAdapter(extensions);
+    }
+
+    @Bean
+    com.javaclaw.framework.core.AgentCompiler agentCompiler(
+            com.javaclaw.framework.store.JdbcAgentDefinitionStore definitions,
+            com.javaclaw.framework.extension.ExtensionManager extensions,
+            ObjectMapper json,
+            com.javaclaw.framework.builtin.BuiltinDefinitionRegistry builtins) {
+        return new com.javaclaw.framework.core.AgentCompiler(
+                definitions, extensions, json,
+                new com.javaclaw.framework.spi.RunConstraints(
+                        com.javaclaw.framework.api.PermissionSet.UNRESTRICTED,
+                        com.javaclaw.framework.api.RunBudget.UNBOUNDED),
+                builtins);
+    }
+
+    @Bean
+    com.javaclaw.framework.spi.ToolApprovalPolicy frameworkToolApprovalPolicy(
+            AgentConfig settings) {
+        return new com.javaclaw.framework.spi.ToolApprovalPolicy() {
+            private com.javaclaw.agent.ToolApprovalRiskPolicy.Assessment assess(
+                    com.javaclaw.framework.spi.ToolDescriptor tool) {
+                return com.javaclaw.agent.ToolApprovalRiskPolicy.assess(
+                        tool.name(), ToolConfirmationManager.isEnabled(),
+                        settings.getToolReviewMode());
+            }
+
+            @Override
+            public com.javaclaw.framework.spi.ToolApprovalDecision evaluate(
+                    com.javaclaw.framework.spi.ToolDescriptor tool,
+                    com.fasterxml.jackson.databind.JsonNode arguments,
+                    com.javaclaw.framework.api.RunRequest request) {
+                return assess(tool).decision();
+            }
+
+            @Override
+            public String approvalKind(
+                    com.javaclaw.framework.spi.ToolDescriptor tool,
+                    com.fasterxml.jackson.databind.JsonNode arguments,
+                    com.javaclaw.framework.api.RunRequest request) {
+                return assess(tool).kind();
+            }
+        };
+    }
+
+    @Bean
+    com.javaclaw.framework.core.ToolInvocationGateway frameworkToolInvocationGateway(
+            com.javaclaw.framework.spi.ToolApprovalPolicy approvals,
+            @org.springframework.beans.factory.annotation.Qualifier("agentKernelExecutor")
+            com.javaclaw.framework.spi.CancellableTaskExecutor executor,
+            Clock frameworkClock) {
+        return new com.javaclaw.framework.core.DefaultToolInvocationGateway(
+                approvals, executor, frameworkClock);
+    }
+
+    @Bean
+    com.javaclaw.framework.spi.ToolApprovalResolver frameworkToolApprovalResolver(
+            @org.springframework.beans.factory.annotation.Qualifier("agentKernelExecutor")
+            java.util.concurrent.Executor executor) {
+        return (challenge, request) -> java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+            String kind = request.source().kind();
+            String id = request.source().id();
+            String workDir = request.attributes().containsKey("workDir")
+                    ? request.attributes().get("workDir").asText(null) : null;
+            com.javaclaw.agent.ToolCallOrigin origin = switch (kind) {
+                case "chat", "plan" -> com.javaclaw.agent.ToolCallOrigin.INTERACTIVE;
+                case "schedule" -> com.javaclaw.agent.ToolCallOrigin.scheduled(id);
+                case "loop", "sdd", "workflow" ->
+                        com.javaclaw.agent.ToolCallOrigin.managedTask(id, workDir);
+                default -> com.javaclaw.agent.ToolCallOrigin.UNKNOWN;
+            };
+            String description;
+            if (challenge.tool().equals("cmd_execute")) {
+                String command = challenge.arguments().path("command").asText("");
+                String directory = challenge.arguments().path("workDir").asText(workDir);
+                description = ToolConfirmationManager.buildCommandDescription(
+                        command, directory == null ? "" : directory);
+            } else {
+                description = challenge.description()
+                        + (challenge.arguments().isEmpty()
+                        ? "" : "\n参数: " + challenge.arguments());
+            }
+            var outcome = ToolConfirmationManager.requestConfirmationOutcome(
+                    origin, challenge.tool(), description);
+            return outcome.isAllow()
+                    ? com.javaclaw.framework.api.ToolApprovalGrant.approve(
+                            challenge, outcome == ToolConfirmationManager.ConfirmOutcome.ALLOWED_HUMAN)
+                    : com.javaclaw.framework.api.ToolApprovalGrant.deny(challenge);
+        }, executor);
+    }
+
+    @Bean
+    com.javaclaw.framework.api.ToolClient frameworkToolClient(
+            com.javaclaw.framework.core.ToolInvocationGateway gateway,
+            com.javaclaw.framework.core.AgentCompiler compiler,
+            com.javaclaw.framework.spi.ToolApprovalResolver approvals,
+            Clock frameworkClock) {
+        return new com.javaclaw.framework.core.DefaultToolClient(
+                gateway, compiler, frameworkClock, approvals);
+    }
+
+    @Bean
+    com.javaclaw.framework.core.ReasoningGateway springAiReasoningGateway(
+            com.javaclaw.framework.springai.SpringAiModelRegistry models,
+            com.javaclaw.framework.springai.SpringAiAdvisorRegistry advisors,
+            com.javaclaw.framework.core.ToolInvocationGateway tools,
+            com.javaclaw.framework.store.JdbcExtensionStateStore extensionState,
+            com.javaclaw.framework.core.RunUsageLedger usage,
+            com.javaclaw.framework.springai.SpringAiModelTaskGateway modelTasks,
+            com.javaclaw.framework.store.JdbcRunStore runs,
+            ObjectMapper json,
+            @org.springframework.beans.factory.annotation.Qualifier("agentKernelExecutor")
+            com.javaclaw.framework.spi.CancellableTaskExecutor executor,
+            io.micrometer.observation.ObservationRegistry observations) {
+        return new com.javaclaw.framework.springai.SpringAiReasoningGateway(
+                models, advisors, tools, extensionState, usage, modelTasks, runs, json, executor,
+                observations);
+    }
+
+    @Bean(destroyMethod = "close")
+    com.javaclaw.framework.core.AgentEngine agentEngine(
+            com.javaclaw.framework.core.AgentCompiler compiler,
+            com.javaclaw.framework.store.JdbcRunStore runs,
+            com.javaclaw.framework.store.JdbcExecutionPlanStore plans,
+            com.javaclaw.framework.core.ReasoningGateway reasoning,
+            @org.springframework.beans.factory.annotation.Qualifier("agentKernelExecutor")
+            java.util.concurrent.Executor executor,
+            ObjectMapper json,
+            Clock frameworkClock,
+            com.javaclaw.framework.core.RunUsageLedger usage) {
+        return new com.javaclaw.framework.core.AgentEngine(
+                compiler, runs, plans, reasoning, executor, json, frameworkClock, usage);
+    }
+
+    @Bean
+    com.javaclaw.framework.core.ExecutionKernel executionKernel(
+            com.javaclaw.framework.core.AgentEngine engine) {
+        return new com.javaclaw.framework.core.ExecutionKernel(engine);
+    }
+
+    @Bean
+    com.javaclaw.workflow.runtime.WorkflowExtensionPlanProvider workflowExtensionPlanProvider(
+            com.javaclaw.framework.extension.ExtensionManager extensions,
+            com.javaclaw.framework.api.AgentClient agents,
+            com.javaclaw.framework.api.ToolClient tools) {
+        return new com.javaclaw.framework.extension.FrameworkWorkflowExtensionProvider(
+                extensions, agents, tools);
+    }
+
+    @Bean
+    FrameworkStartupDiagnostics frameworkStartupDiagnostics(ApplicationContext context) {
+        return new FrameworkStartupDiagnostics(context);
     }
 
     @Bean(destroyMethod = "close")
@@ -310,13 +652,17 @@ public class RootConfiguration {
     PluginManager pluginManager(
             PluginStore store,
             ManagedTaskExecutor executor,
+            com.javaclaw.framework.api.AgentClient agents,
+            @org.springframework.beans.factory.annotation.Qualifier("agentKernelExecutor")
+            java.util.concurrent.Executor agentCallbacksExecutor,
             ToolInvocationPipeline tools,
             PluginStorageFactory storage,
             UserInteractionPort interaction,
             CredentialCipher credentials,
             ObjectMapper json) {
         return new PluginManager(
-                store, executor, tools, storage, interaction, credentials, json);
+                store, executor, agents, agentCallbacksExecutor, tools, storage,
+                interaction, credentials, json);
     }
 
     @Bean(destroyMethod = "close")

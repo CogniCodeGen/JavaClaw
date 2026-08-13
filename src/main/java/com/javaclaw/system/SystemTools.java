@@ -5,8 +5,8 @@ import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.util.ProjectAccessPolicy;
 import com.javaclaw.util.SensitiveDataRedactor;
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,6 +38,7 @@ import java.util.stream.Stream;
  *
  * @author JavaClaw
  */
+@com.javaclaw.framework.spi.ToolContract(group = "system", permissions = {"tool.execute"}, idempotent = false)
 public class SystemTools {
 
     private static final Logger log = LoggerFactory.getLogger(SystemTools.class);
@@ -83,6 +84,7 @@ public class SystemTools {
 
     // ==================== 系统信息 ====================
 
+    @com.javaclaw.framework.spi.ToolContract(group = "system", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "sys_get_info", description = "获取系统信息，包括操作系统、CPU、内存、磁盘等基本信息。")
     public String getSystemInfo() {
         log.debug("工具调用: sys_get_info()");
@@ -110,6 +112,7 @@ public class SystemTools {
         }
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "system", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "sys_get_time", description = "获取当前系统日期和时间。")
     public String getCurrentTime() {
         log.debug("工具调用: sys_get_time()");
@@ -155,8 +158,8 @@ public class SystemTools {
 
     @Tool(name = "sys_mouse_move", description = "将鼠标移动到屏幕上指定的坐标位置。")
     public String mouseMove(
-            @ToolParam(name = "x", description = "目标 X 坐标（像素）") int x,
-            @ToolParam(name = "y", description = "目标 Y 坐标（像素）") int y) {
+            @ToolParam( description = "目标 X 坐标（像素）") int x,
+            @ToolParam( description = "目标 Y 坐标（像素）") int y) {
         log.debug("工具调用: sys_mouse_move({}, {})", x, y);
         if (ProjectAccessPolicy.strictIsolationEnabled()) {
             return ToolResponse.error("sys_mouse_move",
@@ -177,8 +180,8 @@ public class SystemTools {
 
     @Tool(name = "sys_mouse_click", description = "在当前鼠标位置执行点击操作。支持左键、右键、双击。")
     public String mouseClick(
-            @ToolParam(name = "button", description = "鼠标按钮: left（左键）、right（右键）、middle（中键）") String button,
-            @ToolParam(name = "clicks", description = "点击次数，1 为单击，2 为双击") int clicks) {
+            @ToolParam( description = "鼠标按钮: left（左键）、right（右键）、middle（中键）") String button,
+            @ToolParam( description = "点击次数，1 为单击，2 为双击") int clicks) {
         log.debug("工具调用: sys_mouse_click({}, {})", button, clicks);
         if (ProjectAccessPolicy.strictIsolationEnabled()) {
             return ToolResponse.error("sys_mouse_click",
@@ -211,8 +214,8 @@ public class SystemTools {
 
     @Tool(name = "sys_mouse_click_at", description = "将鼠标移动到指定坐标并执行左键单击。")
     public String mouseClickAt(
-            @ToolParam(name = "x", description = "目标 X 坐标（像素）") int x,
-            @ToolParam(name = "y", description = "目标 Y 坐标（像素）") int y) {
+            @ToolParam( description = "目标 X 坐标（像素）") int x,
+            @ToolParam( description = "目标 Y 坐标（像素）") int y) {
         log.debug("工具调用: sys_mouse_click_at({}, {})", x, y);
         if (ProjectAccessPolicy.strictIsolationEnabled()) {
             return ToolResponse.error("sys_mouse_click_at",
@@ -237,7 +240,7 @@ public class SystemTools {
 
     @Tool(name = "sys_mouse_scroll", description = "在当前鼠标位置滚动鼠标滚轮。正数向下滚动，负数向上滚动。")
     public String mouseScroll(
-            @ToolParam(name = "amount", description = "滚动量，正数向下，负数向上") int amount) {
+            @ToolParam( description = "滚动量，正数向下，负数向上") int amount) {
         log.debug("工具调用: sys_mouse_scroll({})", amount);
         if (ProjectAccessPolicy.strictIsolationEnabled()) {
             return ToolResponse.error("sys_mouse_scroll",
@@ -262,7 +265,7 @@ public class SystemTools {
 
     @Tool(name = "sys_key_type", description = "模拟键盘输入一段文本。逐字符输入，适用于在当前焦点输入框中输入内容。")
     public String keyType(
-            @ToolParam(name = "text", description = "要输入的文本内容") String text) {
+            @ToolParam( description = "要输入的文本内容") String text) {
         log.debug("工具调用: sys_key_type('{}')", text);
         if (ProjectAccessPolicy.strictIsolationEnabled()) {
             return ToolResponse.error("sys_key_type",
@@ -286,7 +289,7 @@ public class SystemTools {
     @Tool(name = "sys_key_press", description = "模拟按下并释放一个键。支持特殊键名如: ENTER, TAB, ESCAPE, BACKSPACE, DELETE, " +
             "UP, DOWN, LEFT, RIGHT, HOME, END, PAGE_UP, PAGE_DOWN, F1-F12, SPACE 等。")
     public String keyPress(
-            @ToolParam(name = "key", description = "键名，如 ENTER、TAB、ESCAPE 等") String key) {
+            @ToolParam( description = "键名，如 ENTER、TAB、ESCAPE 等") String key) {
         log.debug("工具调用: sys_key_press('{}')", key);
         if (ProjectAccessPolicy.strictIsolationEnabled()) {
             return ToolResponse.error("sys_key_press",
@@ -313,7 +316,7 @@ public class SystemTools {
     @Tool(name = "sys_key_combo", description = "模拟组合键操作，如 Ctrl+C、Ctrl+V、Alt+Tab、Cmd+Space 等。" +
             "修饰键支持: CTRL, ALT, SHIFT, META(Mac的Command键)。多个修饰键用+连接。")
     public String keyCombo(
-            @ToolParam(name = "combo", description = "组合键描述，如 CTRL+C、ALT+TAB、META+SPACE") String combo) {
+            @ToolParam( description = "组合键描述，如 CTRL+C、ALT+TAB、META+SPACE") String combo) {
         log.debug("工具调用: sys_key_combo('{}')", combo);
         if (ProjectAccessPolicy.strictIsolationEnabled()) {
             return ToolResponse.error("sys_key_combo",
@@ -356,9 +359,10 @@ public class SystemTools {
 
     // ==================== 文件管理 ====================
 
+    @com.javaclaw.framework.spi.ToolContract(group = "system", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "sys_file_list", description = "列出指定目录下的文件和子目录。返回名称、大小、类型、修改时间。")
     public String fileList(
-            @ToolParam(name = "path", description = "目录路径") String path) {
+            @ToolParam( description = "目录路径") String path) {
         log.debug("工具调用: sys_file_list('{}')", path);
         try {
             Path dir = ProjectAccessPolicy.resolveProjectPath(path);
@@ -394,9 +398,10 @@ public class SystemTools {
         }
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "system", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "sys_file_read", description = "读取文本文件的内容。适用于文本文件，返回文件的全部内容。")
     public String fileRead(
-            @ToolParam(name = "path", description = "文件路径") String path) {
+            @ToolParam( description = "文件路径") String path) {
         log.debug("工具调用: sys_file_read('{}')", path);
         try {
             Path file = ProjectAccessPolicy.resolveProjectPath(path);
@@ -429,8 +434,8 @@ public class SystemTools {
 
     @Tool(name = "sys_file_write", description = "将文本内容写入文件。如果文件已存在则覆盖，不存在则创建。")
     public String fileWrite(
-            @ToolParam(name = "path", description = "文件路径") String path,
-            @ToolParam(name = "content", description = "要写入的文本内容") String content) {
+            @ToolParam( description = "文件路径") String path,
+            @ToolParam( description = "要写入的文本内容") String content) {
         log.debug("工具调用: sys_file_write('{}')", path);
         if (SensitiveDataRedactor.containsLikelyCredential(content)) {
             return ToolResponse.error("sys_file_write",
@@ -457,7 +462,7 @@ public class SystemTools {
 
     @Tool(name = "sys_file_delete", description = "删除指定的文件或空目录。非空目录不能直接删除。")
     public String fileDelete(
-            @ToolParam(name = "path", description = "要删除的文件或空目录路径") String path) {
+            @ToolParam( description = "要删除的文件或空目录路径") String path) {
         log.debug("工具调用: sys_file_delete('{}')", path);
         if (!ToolConfirmationManager.requestConfirmation(origin, "sys_file_delete",
                 "删除文件: " + path)) {
@@ -480,8 +485,8 @@ public class SystemTools {
 
     @Tool(name = "sys_file_copy", description = "复制文件或目录到指定位置。")
     public String fileCopy(
-            @ToolParam(name = "source", description = "源文件路径") String source,
-            @ToolParam(name = "target", description = "目标路径") String target) {
+            @ToolParam( description = "源文件路径") String source,
+            @ToolParam( description = "目标路径") String target) {
         log.debug("工具调用: sys_file_copy('{}' -> '{}')", source, target);
         if (!ToolConfirmationManager.requestConfirmation(origin, "sys_file_copy",
                 "复制文件: " + source + " -> " + target)) {
@@ -511,8 +516,8 @@ public class SystemTools {
 
     @Tool(name = "sys_file_move", description = "移动或重命名文件/目录。")
     public String fileMove(
-            @ToolParam(name = "source", description = "源路径") String source,
-            @ToolParam(name = "target", description = "目标路径") String target) {
+            @ToolParam( description = "源路径") String source,
+            @ToolParam( description = "目标路径") String target) {
         log.debug("工具调用: sys_file_move('{}' -> '{}')", source, target);
         if (!ToolConfirmationManager.requestConfirmation(origin, "sys_file_move",
                 "移动文件: " + source + " -> " + target)) {
@@ -542,7 +547,7 @@ public class SystemTools {
 
     @Tool(name = "sys_file_mkdir", description = "创建目录，包括所有不存在的父目录。")
     public String fileMkdir(
-            @ToolParam(name = "path", description = "要创建的目录路径") String path) {
+            @ToolParam( description = "要创建的目录路径") String path) {
         log.debug("工具调用: sys_file_mkdir('{}')", path);
         if (!ToolConfirmationManager.requestConfirmation(origin, "sys_file_mkdir",
                 "创建目录: " + path)) {

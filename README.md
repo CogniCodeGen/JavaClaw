@@ -2,12 +2,12 @@
 
 # JavaClaw
 
-**基于 JavaFX、Spring Framework 与 AgentScope 的多智能体桌面工作台**
+**基于 JavaFX、Spring Framework 与 Spring AI 2.0 的可扩展 Agent 桌面工作台**
 
 ![Java](https://img.shields.io/badge/Java-25-orange)
 ![JavaFX](https://img.shields.io/badge/JavaFX-25-blue)
 ![Spring](https://img.shields.io/badge/Spring_Framework-7.0.8-6DB33F)
-![AgentScope](https://img.shields.io/badge/AgentScope-1.0.12-green)
+![Spring AI](https://img.shields.io/badge/Spring_AI-2.0.0-6DB33F)
 ![Playwright](https://img.shields.io/badge/Playwright-1.52.0-2EAD33)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
@@ -37,7 +37,7 @@ JavaClaw 将对话、方案研讨、自动循环、长时托管任务和可视�
 | 运行环境 | JDK | 25 |
 | 桌面 UI | JavaFX | 25 |
 | 对象装配、JDBC、事务 | Spring Framework | 7.0.8 |
-| 智能体框架 | AgentScope Java | 1.0.12 |
+| Agent 底座 | Spring AI + JavaClaw Agent Framework | 2.0.0 / 2.0 |
 | 记忆与向量 | EclipseStore + JVector | 4.1.0 |
 | 结构化数据 | H2 | 2.3.232 |
 | 浏览器自动化 | Playwright Java | 1.52.0 |
@@ -74,6 +74,9 @@ mvn clean -Pui-test verify
 ```
 
 该命令运行单元测试、JavaFX/FXML 测试、架构规则、源码卫生、规模和覆盖率门禁。
+
+Agent 扩展只能依赖 `com.javaclaw.framework.api` / `spi`；产品功能统一通过
+`AgentClient` 提交 `RunRequest`，不得自建 `ChatClient`、工具循环或运行时。
 
 ## 许可证
 

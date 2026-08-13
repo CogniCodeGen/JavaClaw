@@ -38,6 +38,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
 
     private final Executor persistence;
     private final ChatHistoryApplicationService history;
+    private final Supplier<String> workspaceId;
     private final ChatSessionController transcript;
     private final ChatComposerController composer;
     private final ThinkingPanelController thinking;
@@ -61,6 +62,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
     ChatSessionCoordinator(
             Executor persistence,
             ChatHistoryApplicationService history,
+            Supplier<String> workspaceId,
             ChatSessionController transcript,
             ChatComposerController composer,
             ThinkingPanelController thinking,
@@ -77,6 +79,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
             Predicate<String> rejectWhileRebuilding) {
         this.persistence = Objects.requireNonNull(persistence, "persistence");
         this.history = Objects.requireNonNull(history, "history");
+        this.workspaceId = Objects.requireNonNull(workspaceId, "workspaceId");
         this.transcript = Objects.requireNonNull(transcript, "transcript");
         this.composer = Objects.requireNonNull(composer, "composer");
         this.thinking = Objects.requireNonNull(thinking, "thinking");
@@ -103,34 +106,35 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
 
     void load() {
         transcript.enterAtTail();
-        List<ChatSession> loaded = history.sessions().stream()
+        String workspace = currentWorkspaceId();
+        List<ChatSession> loaded = history.sessions(workspace).stream()
                 .map(ChatSessionCoordinator::sessionFrom)
                 .toList();
         sessions.clear();
         List<ChatSession> valid = loaded.stream()
-                .filter(session -> history.hasMessages(session.getId()))
+                .filter(session -> history.hasMessages(workspace, session.getId()))
                 .toList();
         if (valid.isEmpty()) {
             currentSession = new ChatSession("新的对话");
             sessions.add(currentSession);
-            history.saveSessions(sessionSnapshots(sessions));
+            history.saveSessions(workspace, sessionSnapshots(sessions));
             sidebar.addSession(currentSession, true);
             addWelcomeMessage();
         } else {
             sessions.addAll(valid);
             if (valid.size() != loaded.size()) {
-                history.saveSessions(sessionSnapshots(sessions));
+                history.saveSessions(workspace, sessionSnapshots(sessions));
             }
             for (int index = 0; index < sessions.size(); index++) {
                 sidebar.addSession(sessions.get(index), index == 0);
             }
             currentSession = sessions.getFirst();
-            List<ChatMessage> messages = history.messages(currentSession.getId()).stream()
+            List<ChatMessage> messages = history.messages(
+                            workspace, currentSession.getId()).stream()
                     .map(ChatSessionCoordinator::messageFrom)
                     .toList();
             currentSession.getMessages().addAll(messages);
             messages.forEach(this::renderPersistedMessage);
-            chatService.get().loadSession(currentSession.getId());
         }
         status.refreshTitle();
     }
@@ -148,7 +152,6 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
                 turns.stop(CancellationReason.SESSION_SWITCH, false,
                         ChatTurnController.StopPolicy.DISCARD_AND_INVALIDATE);
             }
-            if (currentSession != null) chatService.get().saveSession(currentSession.getId());
             clearRuntimeHistory();
         }
         removeEmptyCurrentSession();
@@ -160,7 +163,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         if (!(turns.isStreaming() && turns.streamingSession() != null)) thinking.reset();
         addWelcomeMessage();
         status.refreshTitle();
-        history.saveSessions(sessionSnapshots(sessions));
+        history.saveSessions(currentWorkspaceId(), sessionSnapshots(sessions));
     }
 
     void switchSession(String targetId) {
@@ -194,12 +197,13 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         }
         sessions.removeIf(session -> session.getId().equals(sessionId));
         sidebar.removeSession(sessionId);
-        history.delete(sessionId);
+        String workspace = currentWorkspaceId();
+        history.delete(workspace, sessionId);
         chatService.get().deleteSession(sessionId);
         if (currentSession != null && currentSession.getId().equals(sessionId)) {
             selectAfterCurrentDeletion();
         }
-        history.saveSessions(sessionSnapshots(sessions));
+        history.saveSessions(workspace, sessionSnapshots(sessions));
     }
 
     void deleteSessions(List<String> sessionIds) {
@@ -211,14 +215,15 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         }
         boolean currentDeleted = currentSession != null
                 && sessionIds.contains(currentSession.getId());
+        String workspace = currentWorkspaceId();
         for (String id : sessionIds) {
             sessions.removeIf(session -> session.getId().equals(id));
             sidebar.removeSession(id);
-            history.delete(id);
+            history.delete(workspace, id);
             chatService.get().deleteSession(id);
         }
         if (currentDeleted) selectAfterCurrentDeletion();
-        history.saveSessions(sessionSnapshots(sessions));
+        history.saveSessions(workspace, sessionSnapshots(sessions));
     }
 
     void clearCurrentHistory() {
@@ -286,7 +291,6 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
     @Override
     public void saveChatHistory() {
         saveCurrentSession();
-        if (currentSession != null) chatService.get().saveSession(currentSession.getId());
     }
 
     @Override
@@ -296,7 +300,6 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         if (target == currentSession) status.refreshTitle();
         sidebar.updateSessionTitle(target.getId(), target.getTitle());
         saveSessionMessages(target);
-        chatService.get().saveSession(target.getId());
     }
 
     @Override
@@ -378,9 +381,7 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
             disposeSuspendedStreamNodes();
             return;
         }
-        chatService.get().saveSession(finishedSession.getId());
         clearRuntimeHistory();
-        chatService.get().loadSession(currentSession.getId());
         disposeSuspendedStreamNodes();
     }
 
@@ -396,7 +397,6 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
         } else if (running) {
             disposeTranscript();
         } else {
-            if (currentSession != null) chatService.get().saveSession(currentSession.getId());
             clearRuntimeHistory();
             disposeTranscript();
             streamRenderer.resetReferences();
@@ -412,9 +412,9 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
             composer.setThinkingText("助手正在思考中...");
             return;
         }
-        if (!running) chatService.get().loadSession(target.getId());
         if (target.getMessages().isEmpty()) {
-            target.getMessages().addAll(history.messages(target.getId()).stream()
+            target.getMessages().addAll(history.messages(
+                            currentWorkspaceId(), target.getId()).stream()
                     .map(ChatSessionCoordinator::messageFrom)
                     .toList());
         }
@@ -465,11 +465,20 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
                 .map(ChatSessionCoordinator::messageSnapshot)
                 .toList();
         List<SessionSnapshot> index = sessionSnapshots(sessions);
+        String workspace = currentWorkspaceId();
         ChatHistoryApplicationService targetHistory = history;
         persistence.execute(() -> {
-            targetHistory.saveMessages(id, messages);
-            targetHistory.saveSessions(index);
+            targetHistory.saveMessages(workspace, id, messages);
+            targetHistory.saveSessions(workspace, index);
         });
+    }
+
+    private String currentWorkspaceId() {
+        String value = workspaceId.get();
+        if (value == null || value.isBlank()) {
+            throw new IllegalStateException("当前工作区 ID 尚未初始化");
+        }
+        return value;
     }
 
     private static List<SessionSnapshot> sessionSnapshots(List<ChatSession> sessions) {

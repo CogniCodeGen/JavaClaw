@@ -219,7 +219,8 @@ class ChatTurnControllerBehaviorTest {
 
         runFx(() -> plan.event(new ConversationEvent.Custom(
                 "clarify_request",
-                new com.javaclaw.agent.clarify.ClarifyPayload("缺少边界", "目标版本是什么？"))));
+                new com.javaclaw.agent.clarify.ClarifyPayload(
+                        "缺少边界", "目标版本是什么？").toJson())));
         assertFalse(turns.isStreaming());
         assertEquals(messagesBeforeClarification + 1,
                 sessions.currentSession().getMessages().size());
@@ -404,7 +405,6 @@ class ChatTurnControllerBehaviorTest {
                 field(turns, "status", ChatStatusController.class),
                 field(turns, "renderer", ChatStreamRenderer.class),
                 field(turns, "navigation", ChatNavigationController.class),
-                field(turns, "runtime", java.util.function.Supplier.class),
                 field(turns, "modes", java.util.function.Supplier.class),
                 () -> rebuilding,
                 sessions);

@@ -1,6 +1,7 @@
 package com.javaclaw.ui.javafx.plugin;
 
 import com.javaclaw.api.interaction.ToastRequest;
+import com.javaclaw.application.plugin.AgentExtensionManagementApplicationService;
 import com.javaclaw.application.plugin.PluginManagementApplicationService;
 import com.javaclaw.application.plugin.PluginManagementApplicationService.Catalog;
 import com.javaclaw.application.plugin.PluginManagementApplicationService.InstallResult;
@@ -36,6 +37,7 @@ public final class PluginCenterController implements AutoCloseable {
     @FXML private HBox root;
     @FXML private ToggleButton installedTab;
     @FXML private ToggleButton marketTab;
+    @FXML private ToggleButton agentExtensionsTab;
     @FXML private Button refreshButton;
     @FXML private Button installButton;
     @FXML private VBox listView;
@@ -51,12 +53,18 @@ public final class PluginCenterController implements AutoCloseable {
     @FXML private PluginDetailController detailPanelController;
     @FXML private Label directoryLabel;
     @FXML private Label statusLabel;
+    @FXML private VBox agentExtensionView;
+    @FXML private VBox agentExtensionList;
+    @FXML private Label agentExtensionCount;
+    @FXML private Button installAgentExtensionButton;
 
     private final PluginManagementApplicationService useCases;
     private final PluginJarPicker jarPicker;
     private final DialogService dialogs;
+    private final ManagedTaskExecutor tasks;
     private final FxDispatcher fx;
     private final PluginComponentFactory components;
+    private final AgentExtensionManagementApplicationService agentExtensions;
     private final UiAsyncAction<Catalog> refreshAction;
     private final UiAsyncAction<Catalog> toggleAction;
     private final UiAsyncAction<InstallResult> installAction;
@@ -64,6 +72,7 @@ public final class PluginCenterController implements AutoCloseable {
     private final List<PluginChildView<VBox>> cardViews = new ArrayList<>();
     private final AtomicBoolean closed = new AtomicBoolean();
     private AutoCloseable catalogSubscription;
+    private AgentExtensionPanel agentExtensionPanel;
 
     public PluginCenterController(
             PluginManagementApplicationService useCases,
@@ -71,12 +80,15 @@ public final class PluginCenterController implements AutoCloseable {
             DialogService dialogs,
             ManagedTaskExecutor tasks,
             FxDispatcher fx,
-            PluginComponentFactory components) {
+            PluginComponentFactory components,
+            AgentExtensionManagementApplicationService agentExtensions) {
         this.useCases = Objects.requireNonNull(useCases, "useCases");
         this.jarPicker = Objects.requireNonNull(jarPicker, "jarPicker");
         this.dialogs = Objects.requireNonNull(dialogs, "dialogs");
+        this.tasks = Objects.requireNonNull(tasks, "tasks");
         this.fx = Objects.requireNonNull(fx, "fx");
         this.components = Objects.requireNonNull(components, "components");
+        this.agentExtensions = Objects.requireNonNull(agentExtensions, "agentExtensions");
         refreshAction = new UiAsyncAction<>(tasks, fx);
         toggleAction = new UiAsyncAction<>(tasks, fx);
         installAction = new UiAsyncAction<>(tasks, fx);
@@ -84,6 +96,10 @@ public final class PluginCenterController implements AutoCloseable {
 
     @FXML
     private void initialize() {
+        agentExtensionPanel = new AgentExtensionPanel(
+                agentExtensions, dialogs, tasks, fx,
+                agentExtensionView, agentExtensionList, agentExtensionCount,
+                installAgentExtensionButton, viewModel::showStatus, this::showFailure);
         directoryLabel.setText(useCases.pluginsDirectory().toString());
         searchField.textProperty().bindBidirectional(viewModel.queryProperty());
         statusLabel.textProperty().bind(viewModel.statusProperty());
@@ -91,7 +107,8 @@ public final class PluginCenterController implements AutoCloseable {
         statusLabel.managedProperty().bind(statusLabel.visibleProperty());
         viewModel.loadingProperty().bind(refreshAction.busyProperty());
         viewModel.mutatingProperty().bind(Bindings.or(
-                toggleAction.busyProperty(), installAction.busyProperty()));
+                Bindings.or(toggleAction.busyProperty(), installAction.busyProperty()),
+                agentExtensionPanel.busyProperty()));
         loadingOverlay.visibleProperty().bind(Bindings.or(
                 viewModel.loadingProperty(), viewModel.mutatingProperty()));
         loadingOverlay.managedProperty().bind(loadingOverlay.visibleProperty());
@@ -120,11 +137,33 @@ public final class PluginCenterController implements AutoCloseable {
     }
 
     @FXML
-    private void refreshRequested() { requestRefresh(); }
+    private void agentExtensionsTabRequested() {
+        agentExtensionsTab.setSelected(true);
+        viewModel.tabProperty().set(PluginCenterViewModel.Tab.AGENT_EXTENSIONS);
+        viewModel.selectedIdProperty().set(null);
+        detailPanelController.hide();
+        listView.setVisible(false);
+        listView.setManaged(false);
+        agentExtensionPanel.show();
+    }
+
+    @FXML
+    private void refreshRequested() {
+        if (viewModel.tabProperty().get() == PluginCenterViewModel.Tab.AGENT_EXTENSIONS) {
+            agentExtensionPanel.refresh();
+        } else {
+            requestRefresh();
+        }
+    }
 
     @FXML
     private void installRequested() {
         jarPicker.choose(owner()).ifPresent(this::install);
+    }
+
+    @FXML
+    private void installAgentExtensionRequested() {
+        jarPicker.choose(owner()).ifPresent(agentExtensionPanel::install);
     }
 
     @FXML
@@ -192,6 +231,7 @@ public final class PluginCenterController implements AutoCloseable {
         detailPanelController.hide();
         listView.setVisible(true);
         listView.setManaged(true);
+        agentExtensionPanel.hide();
         renderCards();
     }
 
@@ -206,6 +246,9 @@ public final class PluginCenterController implements AutoCloseable {
         if (cardGrid == null || closed.get()) return;
         closeCards();
         PluginCenterViewModel.Tab tab = viewModel.tabProperty().get();
+        if (tab == PluginCenterViewModel.Tab.AGENT_EXTENSIONS) {
+            return;
+        }
         boolean market = tab == PluginCenterViewModel.Tab.MARKET;
         marketPlaceholder.setVisible(market);
         marketPlaceholder.setManaged(market);
@@ -267,6 +310,9 @@ public final class PluginCenterController implements AutoCloseable {
         failure = closeStep(failure, refreshAction::close);
         failure = closeStep(failure, toggleAction::close);
         failure = closeStep(failure, installAction::close);
+        if (agentExtensionPanel != null) {
+            failure = closeStep(failure, agentExtensionPanel::close);
+        }
         if (detailPanelController != null) {
             failure = closeStep(failure, detailPanelController::close);
         }

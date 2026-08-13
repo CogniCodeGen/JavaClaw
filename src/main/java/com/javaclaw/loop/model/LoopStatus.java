@@ -17,4 +17,32 @@ package com.javaclaw.loop.model;
  */
 public record LoopStatus(int iteration, Decision decision, String reason,
                          int satisfied, int total, long tokensUsed, long nextDelaySeconds) {
+    public com.fasterxml.jackson.databind.JsonNode toJson() {
+        var value = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+        value.put("iteration", iteration);
+        value.put("decision", decision == null ? "" : decision.name());
+        value.put("reason", reason == null ? "" : reason);
+        value.put("satisfied", satisfied);
+        value.put("total", total);
+        value.put("tokensUsed", tokensUsed);
+        value.put("nextDelaySeconds", nextDelaySeconds);
+        return value;
+    }
+
+    public static java.util.Optional<LoopStatus> fromJson(
+            com.fasterxml.jackson.databind.JsonNode value) {
+        if (value == null || !value.isObject()) return java.util.Optional.empty();
+        try {
+            return java.util.Optional.of(new LoopStatus(
+                    value.path("iteration").asInt(),
+                    Decision.valueOf(value.path("decision").asText()),
+                    value.path("reason").asText(""),
+                    value.path("satisfied").asInt(),
+                    value.path("total").asInt(),
+                    value.path("tokensUsed").asLong(),
+                    value.path("nextDelaySeconds").asLong()));
+        } catch (IllegalArgumentException invalid) {
+            return java.util.Optional.empty();
+        }
+    }
 }

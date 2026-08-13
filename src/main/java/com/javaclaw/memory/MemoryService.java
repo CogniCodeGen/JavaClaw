@@ -1,8 +1,8 @@
 package com.javaclaw.memory;
 
-import com.javaclaw.agent.TokenTracker;
-import com.javaclaw.agent.model.ModelFactory;
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.framework.api.RunId;
+import com.javaclaw.framework.spi.ModelTaskGateway;
 import com.javaclaw.memory.curation.Distiller;
 import com.javaclaw.memory.curation.HabitReviewer;
 import com.javaclaw.memory.correction.CorrectionEngine;
@@ -10,8 +10,8 @@ import com.javaclaw.memory.correction.CorrectionGuard;
 import com.javaclaw.memory.correction.CorrectionTurnContext;
 import com.javaclaw.memory.embed.EmbeddingGateway;
 import com.javaclaw.memory.embed.EmbeddingPurpose;
-import com.javaclaw.memory.model.AgentCheckpoint;
 import com.javaclaw.memory.model.ChangeLogEntry;
+import com.javaclaw.memory.model.AgentCheckpoint;
 import com.javaclaw.memory.model.Episode;
 import com.javaclaw.memory.model.Persona;
 import com.javaclaw.memory.retrieval.Recaller;
@@ -22,7 +22,6 @@ import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.prompt.MemoryPrompts;
 import com.javaclaw.util.SensitiveDataRedactor;
-import io.agentscope.core.model.ChatModelBase;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,10 +53,11 @@ public class MemoryService implements AutoCloseable {
     private static final long BACKGROUND_CANCEL_WAIT_MILLIS = 5_000;
 
     private final EmbeddingGateway gate;
-    private final ChatModelBase lightModel;
-    private final TokenTracker tokenTracker;
+    private final ModelTaskGateway modelTasks;
     private final TaskScope tasks;
     private final AgentConfig settings;
+    private final java.util.concurrent.atomic.AtomicReference<RunId> lastOwnerRun =
+            new java.util.concurrent.atomic.AtomicReference<>();
     private MemoryTaskTracker backgroundWork = new MemoryTaskTracker();
 
     private MemoryStoreRegistry.Lease storeLease;
@@ -67,11 +67,10 @@ public class MemoryService implements AutoCloseable {
     private HabitReviewer habitReviewer;
     private CorrectionEngine correctionEngine;
 
-    public MemoryService(ModelFactory modelFactory, TokenTracker tokenTracker,
-                         EmbeddingGateway gateway, TaskScope tasks, AgentConfig settings) {
+    public MemoryService(ModelTaskGateway modelTasks, EmbeddingGateway gateway,
+                         TaskScope tasks, AgentConfig settings) {
         this.gate = java.util.Objects.requireNonNull(gateway, "gateway");
-        this.lightModel = modelFactory.createLightChatModel();
-        this.tokenTracker = tokenTracker;
+        this.modelTasks = java.util.Objects.requireNonNull(modelTasks, "modelTasks");
         this.tasks = java.util.Objects.requireNonNull(tasks, "tasks");
         this.settings = java.util.Objects.requireNonNull(settings, "settings");
     }
@@ -97,9 +96,8 @@ public class MemoryService implements AutoCloseable {
             this.storeLease = acquired;
             this.store = acquired.store();
             this.recaller = new Recaller(store, gate, settings);
-            this.distiller = new Distiller(lightModel, store, gate, tokenTracker, settings);
-            this.habitReviewer = new HabitReviewer(
-                    lightModel, store, gate, tokenTracker, settings);
+            this.distiller = new Distiller(modelTasks, store, gate, settings);
+            this.habitReviewer = new HabitReviewer(modelTasks, store, gate, settings);
             this.correctionEngine = new CorrectionEngine(
                     store, text -> gate.embed(text, EmbeddingPurpose.BACKGROUND_INDEX));
             seedDefaultPersona();
@@ -193,6 +191,21 @@ public class MemoryService implements AutoCloseable {
         }
     }
 
+    public void checkpoint(String key, String messagesJson) {
+        MemoryStore current = store;
+        if (current != null) current.checkpoint(key, messagesJson);
+    }
+
+    public AgentCheckpoint loadCheckpoint(String key) {
+        MemoryStore current = store;
+        return current == null ? null : current.loadCheckpoint(key);
+    }
+
+    public void deleteCheckpoint(String key) {
+        MemoryStore current = store;
+        if (current != null) current.removeCheckpoint(key);
+    }
+
     /**
      * 在本轮模型调用前同步处理用户显式纠错，并返回需要注入/守卫的上下文。
      *
@@ -278,6 +291,20 @@ public class MemoryService implements AutoCloseable {
      * 这样关闭时可以安全取消耗时模型调用，而不会丢掉已经完成回复的一轮对话。
      */
     public void rememberTurn(String sessionId, String userInput, String reply, String toolTraceJson) {
+        rememberTurn(null, sessionId, userInput, reply, toolTraceJson);
+    }
+
+    /**
+     * Framework-owned turn write. Model-assisted distillation is charged to {@code ownerRunId};
+     * callers without a Run may still persist the episode but cannot launch auxiliary model work.
+     */
+    public void rememberTurn(RunId ownerRunId, String sessionId, String userInput,
+                             String reply, String toolTraceJson) {
+        rememberTurn(ownerRunId, sessionId, userInput, reply, toolTraceJson, true);
+    }
+
+    public void rememberTurn(RunId ownerRunId, String sessionId, String userInput,
+                             String reply, String toolTraceJson, boolean reviewHabits) {
         if (SensitiveDataRedactor.containsLikelyCredential(userInput)
                 || SensitiveDataRedactor.containsLikelyCredential(reply)
                 || SensitiveDataRedactor.containsLikelyCredential(toolTraceJson)) {
@@ -308,7 +335,7 @@ public class MemoryService implements AutoCloseable {
                     TaskSpec.io("memory-turn-" + taskName(sessionId)), context -> {
                 try {
                     rememberTurn(context, lease, turnStore, turnDistiller, reviewer,
-                            ep, userInput, reply);
+                            ownerRunId, ep, userInput, reply, reviewHabits);
                 } catch (RuntimeException e) {
                     log.warn("rememberTurn 失败（静默）: {}", e.getMessage());
                 } finally {
@@ -332,9 +359,11 @@ public class MemoryService implements AutoCloseable {
             MemoryStore turnStore,
             Distiller turnDistiller,
             HabitReviewer reviewer,
+            RunId ownerRunId,
             Episode episode,
             String userInput,
-            String reply) {
+            String reply,
+            boolean reviewHabits) {
         if (cancelled(context, lease)) return;
         float[] embedding = gate.embed(
                 cap(userInput) + " " + cap(reply), EmbeddingPurpose.BACKGROUND_INDEX);
@@ -351,8 +380,11 @@ public class MemoryService implements AutoCloseable {
         }
 
         if (cancelled(context, lease)) return;
-        turnDistiller.distillNow(episode);
-        if (!cancelled(context, lease)) reviewer.maybeReviewNow();
+        if (ownerRunId != null) {
+            lastOwnerRun.set(ownerRunId);
+            turnDistiller.distillNow(ownerRunId, episode);
+            if (reviewHabits && !cancelled(context, lease)) reviewer.maybeReviewNow(ownerRunId);
+        }
     }
 
     private static boolean cancelled(
@@ -418,18 +450,6 @@ public class MemoryService implements AutoCloseable {
             }
         }
         return sb.toString();
-    }
-
-    public void checkpoint(String key, String messagesJson) {
-        if (store != null) store.checkpoint(key, messagesJson);
-    }
-
-    public AgentCheckpoint loadCheckpoint(String key) {
-        return store != null ? store.loadCheckpoint(key) : null;
-    }
-
-    public void deleteCheckpoint(String key) {
-        if (store != null) store.removeCheckpoint(key);
     }
 
     public List<ChangeLogEntry> recentChangeLog(int limit) {
@@ -669,7 +689,7 @@ public class MemoryService implements AutoCloseable {
         }
         lease.onCancel(Thread.currentThread()::interrupt);
         try (lease) {
-            return reviewer.reviewNow();
+            return reviewer.reviewNow(lastOwnerRun.get());
         }
     }
 

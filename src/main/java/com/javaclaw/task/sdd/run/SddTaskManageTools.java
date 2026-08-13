@@ -3,9 +3,11 @@ package com.javaclaw.task.sdd.run;
 import com.javaclaw.agent.ToolCallOrigin;
 import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
+import com.javaclaw.application.error.NotFoundException;
+import com.javaclaw.application.error.ValidationException;
 import com.javaclaw.application.task.SddTaskApplicationService;
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,6 +21,7 @@ import java.util.List;
  * <p>委派当前工作区的 {@link SddTaskApplicationService}。创建类受 {@link ToolConfirmationManager} 人工确认
  * （会反复自主消耗 token）；查询/控制类直接执行。管理的是用户创建的任务实例。</p>
  */
+@com.javaclaw.framework.spi.ToolContract(group = "task_manage", permissions = {"tool.execute"}, idempotent = false)
 public final class SddTaskManageTools {
 
     private static final Logger log = LoggerFactory.getLogger(SddTaskManageTools.class);
@@ -39,10 +42,10 @@ public final class SddTaskManageTools {
                     + "标题留空会自动生成；工作目录留空默认在程序目录 task/ 下新建；预算 0 表示不限。"
                     + "需要用户确认后才会创建。")
     public String taskCreate(
-            @ToolParam(name = "description", description = "任务需求的详细描述") String description,
-            @ToolParam(name = "title", description = "任务标题，可留空（自动从描述生成）") String title,
-            @ToolParam(name = "workDir", description = "工作目录绝对路径，可留空（默认 task/ 下新建独立目录）") String workDir,
-            @ToolParam(name = "tokenBudget", description = "token 预算，0 或留空表示不限，例如 120000") String tokenBudget) {
+            @ToolParam( description = "任务需求的详细描述") String description,
+            @ToolParam( description = "任务标题，可留空（自动从描述生成）") String title,
+            @ToolParam( description = "工作目录绝对路径，可留空（默认 task/ 下新建独立目录）") String workDir,
+            @ToolParam( description = "token 预算，0 或留空表示不限，例如 120000") String tokenBudget) {
         String desc = description == null ? "" : description.trim();
         if (desc.isEmpty()) {
             return ToolResponse.error("task_create", "任务描述不能为空");
@@ -71,6 +74,7 @@ public final class SddTaskManageTools {
         }
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "task_manage", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "task_list", description = "列出所有托管任务及其状态、进度。")
     public String taskList() {
         List<SddTaskApplicationService.Task> all = tasks.snapshot().tasks();
@@ -83,12 +87,13 @@ public final class SddTaskManageTools {
         return ToolResponse.success("task_list", sb.toString().trim());
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "task_manage", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "task_status", description = "查询某个托管任务的状态、进度与结果说明。")
-    public String taskStatus(@ToolParam(name = "id", description = "任务 id") String id) {
+    public String taskStatus(@ToolParam( description = "任务 id") String id) {
         SddTaskApplicationService.Task task;
         try {
             task = tasks.require(id);
-        } catch (com.javaclaw.application.error.NotFoundException failure) {
+        } catch (NotFoundException | ValidationException failure) {
             return ToolResponse.error("task_status", failure.getMessage());
         }
         StringBuilder sb = new StringBuilder();
@@ -102,30 +107,30 @@ public final class SddTaskManageTools {
     }
 
     @Tool(name = "task_pause", description = "暂停一个运行中的托管任务（可后续 task_resume 续跑）。")
-    public String taskPause(@ToolParam(name = "id", description = "任务 id") String id) {
+    public String taskPause(@ToolParam( description = "任务 id") String id) {
         try {
             tasks.pause(id);
-        } catch (com.javaclaw.application.error.NotFoundException failure) {
+        } catch (NotFoundException | ValidationException failure) {
             return ToolResponse.error("task_pause", failure.getMessage());
         }
         return ToolResponse.success("task_pause", "已暂停任务: " + id);
     }
 
     @Tool(name = "task_resume", description = "续跑一个已暂停或待人工的托管任务（从首个未完成步骤继续）。")
-    public String taskResume(@ToolParam(name = "id", description = "任务 id") String id) {
+    public String taskResume(@ToolParam( description = "任务 id") String id) {
         try {
             tasks.resume(id, LocalDateTime.now().format(TS));
-        } catch (com.javaclaw.application.error.NotFoundException failure) {
+        } catch (NotFoundException | ValidationException failure) {
             return ToolResponse.error("task_resume", failure.getMessage());
         }
         return ToolResponse.success("task_resume", "已续跑任务: " + id);
     }
 
     @Tool(name = "task_cancel", description = "取消一个托管任务（终止运行，不可续跑）。")
-    public String taskCancel(@ToolParam(name = "id", description = "任务 id") String id) {
+    public String taskCancel(@ToolParam( description = "任务 id") String id) {
         try {
             tasks.cancel(id);
-        } catch (com.javaclaw.application.error.NotFoundException failure) {
+        } catch (NotFoundException | ValidationException failure) {
             return ToolResponse.error("task_cancel", failure.getMessage());
         }
         return ToolResponse.success("task_cancel", "已取消任务: " + id);

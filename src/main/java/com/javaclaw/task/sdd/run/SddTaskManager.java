@@ -1,9 +1,6 @@
 package com.javaclaw.task.sdd.run;
 
-import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.ToolConfirmationManager;
-import com.javaclaw.agent.router.RoutingResult;
-import com.javaclaw.agent.router.ToolRouter;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.platform.execution.TaskHandle;
@@ -11,7 +8,6 @@ import com.javaclaw.platform.execution.TaskScope;
 import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.platform.process.ProcessRunner;
-import com.javaclaw.skill.SkillManager;
 import com.javaclaw.skill.SkillRuntimeServices;
 import com.javaclaw.skill.curation.SkillCurator;
 import com.javaclaw.task.sdd.SddOutcome;
@@ -31,7 +27,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -71,10 +66,11 @@ public final class SddTaskManager implements AutoCloseable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final List<SddTaskListener> listeners = new CopyOnWriteArrayList<>();
 
-    private final AgentRuntime runtime;
+    private final com.javaclaw.framework.api.AgentClient agents;
+    private final com.javaclaw.framework.spi.ModelTaskGateway modelTasks;
+    private final com.javaclaw.runtime.WorkspaceContext workspace;
     private final SkillCurator skillCurator;
     private final com.javaclaw.workflow.service.WorkflowService workflowService;
-    private final SkillManager skills;
     private final SkillRuntimeServices skillRuntime;
     private final AgentConfig settings;
     private final TaskScope taskScope;
@@ -88,7 +84,9 @@ public final class SddTaskManager implements AutoCloseable {
     // ==================== 配置 / 持久化 ====================
 
     public SddTaskManager(
-            AgentRuntime runtime,
+            com.javaclaw.framework.api.AgentClient agents,
+            com.javaclaw.framework.spi.ModelTaskGateway modelTasks,
+            com.javaclaw.runtime.WorkspaceContext workspace,
             SkillRuntimeServices skillRuntime,
             SkillCurator skillCurator,
             AgentConfig settings,
@@ -100,9 +98,10 @@ public final class SddTaskManager implements AutoCloseable {
             ProcessRunner processes,
             String workspaceId,
             SddTaskStore store) {
-        this.runtime = java.util.Objects.requireNonNull(runtime, "runtime");
+        this.agents = java.util.Objects.requireNonNull(agents, "agents");
+        this.modelTasks = java.util.Objects.requireNonNull(modelTasks, "modelTasks");
+        this.workspace = java.util.Objects.requireNonNull(workspace, "workspace");
         this.skillRuntime = java.util.Objects.requireNonNull(skillRuntime, "skillRuntime");
-        this.skills = skillRuntime.manager();
         this.skillCurator = java.util.Objects.requireNonNull(skillCurator, "skillCurator");
         this.settings = java.util.Objects.requireNonNull(settings, "settings");
         this.taskScope = java.util.Objects.requireNonNull(taskScope, "taskScope");
@@ -176,7 +175,7 @@ public final class SddTaskManager implements AutoCloseable {
      */
     public String generateTitle(String description) {
         ensureOpen();
-        return SddTaskTitles.generate(runtime.getModelFactory(), description);
+        return SddTaskTitles.fallback(description);
     }
 
     public void start(String id, String completionStamp) {
@@ -239,18 +238,16 @@ public final class SddTaskManager implements AutoCloseable {
         String id = task.id;
         SddTaskRunner runner;
         try {
-            String resolvedCaps = resolveCapabilities(task);
             TaskContext context = new TaskContext(
-                    task.id, task.title, task.description, task.workDir, resolvedCaps);
+                    task.id, task.title, task.description, task.workDir,
+                    task.capabilities == null ? "auto" : task.capabilities);
             SddProgress progress = new ProgressAdapter(task);
             var gate = interactionPort != null
                     ? new PortReviewGate(interactionPort) : new AutoApproveReviewGate();
-            runner = new SddTaskRunner(context, runtime.getModelFactory(), settings,
-                    runtime.buildCapabilityTools(
-                            com.javaclaw.agent.ToolCallOrigin.managedTask(id, task.workDir)),
-                    skillRuntime,
+            runner = new SddTaskRunner(context, settings, skillRuntime,
                     (phase, in, out) -> recordTokens(task, phase, in, out), gate, progress,
-                    completionStamp, workflowService, jdbc, json, processes, workspaceId)
+                    completionStamp, workflowService, jdbc, json, processes, workspaceId,
+                    agents, modelTasks, workspace)
                     .budgetGuard(() -> isOverBudget(task))
                     .execTimeoutSec(settings.getSddExecTimeoutSeconds())
                     .structuredTimeoutSec(settings.getSddStructuredTimeoutSeconds())
@@ -288,51 +285,13 @@ public final class SddTaskManager implements AutoCloseable {
     }
 
     /**
-     * 能力按需裁剪 —— 复用 {@link ToolRouter} 的按需获取逻辑：capabilities=auto 时用单次轻量
+     * 能力按需裁剪：capabilities=auto 时由 AgentCompiler 根据 CapabilityBinding
      * 模型调用预判任务所需工具组，仅把命中的能力注册进执行体 toolkit，避免全量 schema 撑大
      * 上下文、无关工具（如给桌面代码任务挂浏览器）勾走执行体注意力。
      *
      * <p>始终保底 system+command（实现循环离不开文件读写与编译核验）；用户显式指定的能力
      * 清单原样尊重；路由失败/降级时回退 auto（全量，与改造前行为一致）。</p>
      */
-    private String resolveCapabilities(SddManagedTask task) {
-        String caps = task.capabilities == null ? "auto" : task.capabilities.trim();
-        // 哨兵 "all"：强制全量装配，跳过 ToolRouter 裁剪。回退到 "auto"，
-        // 因为 AgentScopeSddAgents.buildToolkit 视含 "auto" 的能力串为全量注册。
-        if (caps.equalsIgnoreCase("all")) {
-            log.info("[SDD] 任务 {} 能力=all：跳过路由，强制全量装配", task.id);
-            notifyLog(task.id, task.title, "[路由] 能力=all：跳过裁剪，全量装配");
-            return "auto";
-        }
-        if (!caps.isBlank() && !caps.equalsIgnoreCase("auto")) return caps;
-        try {
-            ToolRouter router = new ToolRouter(
-                    runtime.getModelFactory().createLightChatModel(), null, skills, settings,
-                    json.mapper());
-            RoutingResult r = router.route("【托管任务】" + task.title + "\n" + task.description);
-            if (r.isFallback() || !r.hasToolGroups()) return "auto";
-            Set<String> keys = new LinkedHashSet<>();
-            keys.add("system");   // 保底：文件读写
-            keys.add("command");  // 保底：编译/脚本核验
-            for (String g : r.toolGroups()) {
-                switch (g) {
-                    case "web" -> keys.add("web");
-                    case "email" -> keys.add("email");
-                    case "notification" -> keys.add("notification");
-                    // coding/system/command 已被保底覆盖；knowledge/evaluator/dynamic_task/mcp 无对应能力工具
-                    default -> { }
-                }
-            }
-            String resolved = String.join(",", keys);
-            log.info("[SDD] 任务 {} 能力路由: {} → {}", task.id, r.toolGroups(), resolved);
-            notifyLog(task.id, task.title, "[路由] 能力按需裁剪：" + resolved);
-            return resolved;
-        } catch (Exception e) {
-            log.warn("[SDD] 任务 {} 能力路由失败，回退全量: {}", task.id, e.getMessage());
-            return "auto";
-        }
-    }
-
     /**
      * 工作目录留空时，默认 {@code {user.dir}/task/{id}/} 并建目录、回填任务（与 SkillManager/WorkspaceManager
      * 基于 {@code user.dir} 建子目录的先例一致）。已指定目录则原样保留。

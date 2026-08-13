@@ -6,8 +6,8 @@ import com.javaclaw.platform.process.ProcessResult;
 import com.javaclaw.platform.process.ProcessRunner;
 import com.javaclaw.util.PathGuard;
 import com.javaclaw.util.ProjectAccessPolicy;
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,6 +40,7 @@ import java.util.stream.Stream;
  * inspect_compile / inspect_run_smoke 通过命令首词白名单 + 危险 shell 语法过滤限制可执行命令，
  * 让 ChallengerAgent 真正能"跑一下看能不能用"，而不是只看文件存不存在。</p>
  */
+@com.javaclaw.framework.spi.ToolContract(group = "task_manage", permissions = {"tool.execute"}, idempotent = false)
 public final class ValidationInspectionTools {
 
     private static final Logger log = LoggerFactory.getLogger(ValidationInspectionTools.class);
@@ -90,10 +91,11 @@ public final class ValidationInspectionTools {
         }
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "task_manage", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "inspect_list",
             description = "列出目录内容（只读）。用于验证子任务声称的文件/目录是否真的存在。路径必须在任务工作目录内。")
     public String list(
-            @ToolParam(name = "path", description = "目录绝对路径（必须在任务工作目录内）") String path) {
+            @ToolParam( description = "目录绝对路径（必须在任务工作目录内）") String path) {
         Path dir = resolveWithinWorkDir(path);
         if (dir == null) {
             return ToolResponse.error("inspect_list", "路径不在任务工作目录内或无效: " + path);
@@ -123,13 +125,14 @@ public final class ValidationInspectionTools {
     /** 不指定行区间时，inspect_read 最多内联的行数（其余只给指针，避免整文件灌爆上下文）。 */
     private static final int MAX_INLINE_READ_LINES = 200;
 
+    @com.javaclaw.framework.spi.ToolContract(group = "task_manage", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "inspect_read",
             description = "读取文件内容（只读）。**优先用 from_line/to_line 只读需要的行区间**，避免把整文件灌进上下文。"
                     + "不指定区间时：小文件全文返回，大文件只回前若干行 + 总行数 + 提示你用区间续读。路径必须在任务工作目录内。")
     public String read(
-            @ToolParam(name = "path", description = "文件绝对路径（必须在任务工作目录内）") String path,
-            @ToolParam(name = "from_line", description = "可选：起始行号（1 起，含）。与 to_line 配合只读区间；留空读全文/头部。") String fromLine,
-            @ToolParam(name = "to_line", description = "可选：结束行号（含）。留空则到文件末尾或头部上限。") String toLine) {
+            @ToolParam( description = "文件绝对路径（必须在任务工作目录内）") String path,
+            @ToolParam( description = "可选：起始行号（1 起，含）。与 to_line 配合只读区间；留空读全文/头部。") String fromLine,
+            @ToolParam( description = "可选：结束行号（含）。留空则到文件末尾或头部上限。") String toLine) {
         Path file = resolveWithinWorkDir(path);
         if (file == null) {
             return ToolResponse.error("inspect_read", "路径不在任务工作目录内或无效: " + path);
@@ -193,9 +196,9 @@ public final class ValidationInspectionTools {
                     + "**重要**：若实际项目位于工作目录的子目录（如 chinese-chess/pom.xml），"
                     + "必须用 subdir 参数指定子目录，否则 mvn / gradle 等会在错误的目录里跑找不到构建文件。")
     public String inspectCompile(
-            @ToolParam(name = "command",
+            @ToolParam(
                     description = "完整构建命令，例如 'mvn -q -DskipTests compile'、'gradle build'、'npm run build'、'tsc --noEmit'") String command,
-            @ToolParam(name = "subdir",
+            @ToolParam(
                     description = "可选：相对工作目录的子目录路径作为命令的 cwd（如 'chinese-chess'）。"
                             + "留空 / null 表示直接在工作目录根跑。子目录必须真实存在且在 workDir 内，否则报错。") String subdir) {
         return execWithinWorkDir("inspect_compile", command, subdir, COMPILE_WHITELIST, COMPILE_TIMEOUT_SECONDS);
@@ -210,9 +213,9 @@ public final class ValidationInspectionTools {
                     + "启动成功的横幅/端口监听等可视为已启动；CLI 类一次性程序应在超时前正常退出。"
                     + "项目在子目录时务必用 subdir 参数指定。")
     public String inspectRunSmoke(
-            @ToolParam(name = "command",
+            @ToolParam(
                     description = "完整运行命令，例如 'java -jar target/app.jar'、'node dist/index.js'、'python main.py --help'") String command,
-            @ToolParam(name = "subdir",
+            @ToolParam(
                     description = "可选：相对工作目录的子目录路径作为命令的 cwd。"
                             + "留空 / null 表示直接在工作目录根跑。") String subdir) {
         return execWithinWorkDir("inspect_run_smoke", command, subdir, RUN_WHITELIST, RUN_SMOKE_TIMEOUT_SECONDS);

@@ -3,10 +3,9 @@ package com.javaclaw.workflow.runtime;
 import com.javaclaw.workflow.model.GraphState;
 import com.javaclaw.workflow.model.NodeDefinition;
 
-import java.util.Map;
 import java.util.Objects;
 
-/** 节点运行期上下文。services 只存在内存中，不进入 GraphState/checkpoint。 */
+/** 节点运行期上下文。显式端口只存在内存中，不进入 GraphState/checkpoint。 */
 public final class NodeExecutionContext {
     private final String runId;
     private final String threadId;
@@ -14,18 +13,18 @@ public final class NodeExecutionContext {
     private final GraphState state;
     private final CancellationToken cancellation;
     private final GraphListener listener;
-    private final Map<Class<?>, Object> services;
+    private final WorkflowExecutionServices services;
 
     public NodeExecutionContext(String runId, String threadId, NodeDefinition node,
                                 GraphState state, CancellationToken cancellation,
-                                GraphListener listener, Map<Class<?>, Object> services) {
+                                GraphListener listener, WorkflowExecutionServices services) {
         this.runId = runId;
         this.threadId = threadId;
         this.node = Objects.requireNonNull(node);
         this.state = Objects.requireNonNull(state);
         this.cancellation = Objects.requireNonNull(cancellation);
         this.listener = listener == null ? GraphListener.NOOP : listener;
-        this.services = services == null ? Map.of() : Map.copyOf(services);
+        this.services = services == null ? WorkflowExecutionServices.EMPTY : services;
     }
 
     public String runId() { return runId; }
@@ -35,14 +34,14 @@ public final class NodeExecutionContext {
     public CancellationToken cancellation() { return cancellation; }
     public GraphListener listener() { return listener; }
 
-    public <T> T require(Class<T> type) {
-        Object service = services.get(type);
-        if (service == null) throw new IllegalStateException("节点缺少运行期服务: " + type.getName());
-        return type.cast(service);
+    public com.javaclaw.api.conversation.ConversationCallbacks callbacks() {
+        return services.callbacks();
     }
 
-    public <T> T optional(Class<T> type) {
-        Object service = services.get(type);
-        return service == null ? null : type.cast(service);
+    public com.javaclaw.workflow.service.SystemPipeline requireSystemPipeline() {
+        if (services.systemPipeline() == null) {
+            throw new IllegalStateException("节点缺少 SystemPipeline 端口");
+        }
+        return services.systemPipeline();
     }
 }

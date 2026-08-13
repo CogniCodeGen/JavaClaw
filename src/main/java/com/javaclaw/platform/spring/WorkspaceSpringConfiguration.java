@@ -1,7 +1,5 @@
 package com.javaclaw.platform.spring;
 
-import com.javaclaw.agent.AgentRuntime;
-import com.javaclaw.agent.expert.CustomAgentConfig;
 import com.javaclaw.application.agent.AgentDefinitionPort;
 import com.javaclaw.application.agent.AgentManagementApplicationService;
 import com.javaclaw.application.agent.AgentManagementUseCase;
@@ -39,7 +37,7 @@ import com.javaclaw.application.task.SddTaskUseCase;
 import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.config.DatabaseAccess;
 import com.javaclaw.infrastructure.agent.AgentPromptOptimizerAdapter;
-import com.javaclaw.infrastructure.agent.CustomAgentDefinitionAdapter;
+import com.javaclaw.infrastructure.agent.StudioAgentDefinitionAdapter;
 import com.javaclaw.infrastructure.site.SiteCredentialManagerAdapter;
 import com.javaclaw.infrastructure.mcp.McpClientManagerAdapter;
 import com.javaclaw.infrastructure.mcp.McpConfigManagerAdapter;
@@ -129,8 +127,28 @@ import org.springframework.transaction.PlatformTransactionManager;
 public class WorkspaceSpringConfiguration {
 
     @Bean(destroyMethod = "close")
-    com.javaclaw.agent.model.ModelFactory modelFactory(com.javaclaw.config.AgentConfig settings) {
-        return new com.javaclaw.agent.model.ModelFactory(settings);
+    com.javaclaw.framework.springai.SpringAiModelFactory springAiModelFactory(
+            com.javaclaw.config.AgentConfig settings,
+            io.micrometer.observation.ObservationRegistry observations) {
+        return new com.javaclaw.framework.springai.SpringAiModelFactory(settings, observations);
+    }
+
+    @Bean
+    com.javaclaw.framework.api.ModelPolicyRefs springAiModelPolicies(
+            WorkspaceContext workspace,
+            com.javaclaw.framework.springai.SpringAiModelFactory factory,
+            com.javaclaw.framework.springai.SpringAiModelRegistry registry) {
+        return factory.install(workspace.workspaceId(), registry);
+    }
+
+    @Bean(destroyMethod = "close")
+    com.javaclaw.framework.builtin.BuiltinDefinitionRegistry.Registration builtinAgentDefinitions(
+            WorkspaceContext workspace,
+            com.javaclaw.framework.store.JdbcAgentDefinitionStore definitions,
+            com.javaclaw.framework.api.ModelPolicyRefs models,
+            com.javaclaw.framework.extension.ExtensionManager extensions,
+            com.javaclaw.framework.builtin.BuiltinDefinitionRegistry builtins) {
+        return builtins.register(workspace.workspaceId(), definitions, models, extensions);
     }
 
     @Bean
@@ -141,16 +159,26 @@ public class WorkspaceSpringConfiguration {
         return new com.javaclaw.agent.TokenTracker(workspace.workspaceId(), jdbc, settings);
     }
 
+    @Bean(destroyMethod = "close")
+    com.javaclaw.infrastructure.agent.WorkspaceUsageRegistry.Registration tokenUsageProjection(
+            WorkspaceContext workspace,
+            com.javaclaw.agent.TokenTracker tokens,
+            com.javaclaw.infrastructure.agent.WorkspaceUsageRegistry usageObservers) {
+        return usageObservers.register(workspace.workspaceId(),
+                (runId, scope, inputTokens, outputTokens, cost) ->
+                        tokens.recordModelUsage("agent-run:" + runId.value(),
+                                inputTokens, outputTokens));
+    }
+
     @Bean
-    com.javaclaw.agent.memory.MemoryManager memoryManager(
-            com.javaclaw.agent.model.ModelFactory models,
-            com.javaclaw.config.AgentConfig settings) {
-        return new com.javaclaw.agent.memory.MemoryManager(models, settings);
+    com.javaclaw.framework.spi.EmbeddingModelProvider embeddingModelProvider(
+            com.javaclaw.framework.springai.SpringAiModelFactory models) {
+        return models.createEmbeddingProvider();
     }
 
     @Bean
     com.javaclaw.memory.embed.EmbeddingGateway embeddingGateway(
-            com.javaclaw.agent.model.ModelFactory models,
+            com.javaclaw.framework.spi.EmbeddingModelProvider models,
             @Qualifier("workspaceTaskScope") TaskScope tasks,
             com.javaclaw.config.AgentConfig settings) {
         return new com.javaclaw.memory.embed.EmbeddingGateway(models, tasks, settings);
@@ -166,46 +194,45 @@ public class WorkspaceSpringConfiguration {
         return executor.openScope("schedule-" + workspace.workspaceId(), 1);
     }
 
-    @Bean(destroyMethod = "shutdown")
-    AgentRuntime agentRuntime(
+    @Bean(destroyMethod = "close")
+    com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry.Registration workspaceTools(
             WorkspaceRuntimeOptions options,
-            com.javaclaw.agent.model.ModelFactory models,
-            com.javaclaw.agent.TokenTracker tokens,
-            com.javaclaw.agent.memory.MemoryManager memories,
-            com.javaclaw.memory.embed.EmbeddingGateway embeddings,
-            CustomAgentConfig customAgents,
+            WorkspaceContext workspace,
             SiteCredentialManager siteCredentials,
-            McpConfigManager mcpConfigurations,
-            McpClientManager mcpClients,
-            @Qualifier("workspaceTaskScope") TaskScope workspaceTaskScope,
-            ScheduleApplicationService schedules,
-            SkillRuntimeServices skills,
-            ObjectProvider<SddTaskApplicationService> sddTasks,
-            com.javaclaw.system.JShellRunner jshellRunner,
-            com.javaclaw.platform.process.ProcessRunner processRunner,
-            com.javaclaw.desktop.DesktopToolFactory desktopTools,
-            com.javaclaw.diagnostics.TraceRecorder traceRecorder,
             com.javaclaw.config.AgentConfig settings,
             com.javaclaw.config.EmailConfig emailSettings,
             com.javaclaw.config.NotificationConfig notificationSettings,
             com.javaclaw.system.CommandToolFactory commandTools,
+            com.javaclaw.desktop.DesktopToolFactory desktopTools,
+            com.javaclaw.platform.process.ProcessRunner processes,
+            com.javaclaw.agent.expert.KnowledgeExpert knowledge,
+            McpConfigManager mcpConfigurations,
+            McpClientManager mcpClients,
             com.javaclaw.application.plugin.PluginToolGateway pluginTools,
-            WorkspaceContext workspace,
-            KnowledgeDocumentPreferencePort knowledgePreferences,
-            JsonCodec json) {
-        return new AgentRuntime(options.browserManager(), models, tokens, memories, embeddings,
-                customAgents, siteCredentials,
-                mcpConfigurations, mcpClients, workspaceTaskScope, schedules, skills,
-                sddTasks::getObject, jshellRunner, processRunner, desktopTools, traceRecorder, settings,
-                emailSettings, notificationSettings, commandTools, pluginTools, workspace,
-                knowledgePreferences, json);
+            SkillRuntimeServices skills,
+            com.javaclaw.system.JShellRunner jshell,
+            ObjectProvider<SddTaskApplicationService> sddTasks,
+            ScheduleApplicationService schedules,
+            JsonCodec json,
+            com.javaclaw.framework.spi.ModelTaskGateway modelTasks,
+            com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry registry) {
+        com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry.validateContracts(
+                hostToolContractTypes());
+        var objects = new com.javaclaw.application.agent.WorkspaceToolObjects(
+                options.browserManager(), siteCredentials, workspace, settings,
+                emailSettings, notificationSettings, commandTools, desktopTools, processes,
+                knowledge, mcpConfigurations, mcpClients, pluginTools, skills, jshell,
+                sddTasks::getObject, schedules, json, modelTasks,
+                com.javaclaw.framework.builtin.ClarifyTools::new);
+        return registry.register(workspace.workspaceId(), objects::create);
     }
 
-    @Bean
-    CustomAgentConfig customAgentConfig(
-            WorkspaceContext workspace,
-            JdbcTemplate jdbc) {
-        return new CustomAgentConfig(workspace.workspaceId(), jdbc);
+    /** Complete production host-tool inventory, including framework-owned built-ins. */
+    public static java.util.List<Class<?>> hostToolContractTypes() {
+        java.util.ArrayList<Class<?>> result = new java.util.ArrayList<>(
+                com.javaclaw.application.agent.WorkspaceToolObjects.toolContractTypes());
+        result.add(com.javaclaw.framework.builtin.ClarifyTools.class);
+        return java.util.List.copyOf(result);
     }
 
     @Bean
@@ -219,14 +246,29 @@ public class WorkspaceSpringConfiguration {
 
     @Bean
     AgentDefinitionPort agentDefinitionPort(
-            CustomAgentConfig customAgents,
-            com.javaclaw.config.AgentConfig settings) {
-        return new CustomAgentDefinitionAdapter(customAgents, settings);
+            WorkspaceContext workspace,
+            com.javaclaw.framework.api.AgentStudioClient studio,
+            com.fasterxml.jackson.databind.ObjectMapper json,
+            com.javaclaw.infrastructure.agent.LegacyCustomAgentDraftMigrator migration) {
+        return new StudioAgentDefinitionAdapter(studio, workspace.workspaceId(), json);
     }
 
     @Bean
-    AgentPromptOptimizationPort agentPromptOptimizationPort(AgentRuntime runtime) {
-        return new AgentPromptOptimizerAdapter(runtime);
+    com.javaclaw.infrastructure.agent.LegacyCustomAgentDraftMigrator legacyCustomAgentDraftMigrator(
+            WorkspaceContext workspace,
+            JdbcTemplate jdbc,
+            com.javaclaw.framework.api.AgentStudioClient studio,
+            com.fasterxml.jackson.databind.ObjectMapper json,
+            com.javaclaw.framework.builtin.BuiltinDefinitionRegistry.Registration bootstrap) {
+        return new com.javaclaw.infrastructure.agent.LegacyCustomAgentDraftMigrator(
+                workspace.workspaceId(), jdbc, studio, json);
+    }
+
+    @Bean
+    AgentPromptOptimizationPort agentPromptOptimizationPort(
+            com.javaclaw.framework.api.AgentClient agents,
+            WorkspaceContext workspace) {
+        return new AgentPromptOptimizerAdapter(agents, workspace);
     }
 
     @Bean
@@ -375,8 +417,9 @@ public class WorkspaceSpringConfiguration {
     }
 
     @Bean
-    EmbeddingRuntimeProbePort embeddingRuntimeProbePort(AgentRuntime runtime) {
-        return new EmbeddingGatewayRuntimeProbeAdapter(runtime.getEmbeddingGateway());
+    EmbeddingRuntimeProbePort embeddingRuntimeProbePort(
+            com.javaclaw.memory.embed.EmbeddingGateway embeddings) {
+        return new EmbeddingGatewayRuntimeProbeAdapter(embeddings);
     }
 
     @Bean
@@ -554,8 +597,12 @@ public class WorkspaceSpringConfiguration {
     }
 
     @Bean
-    NodeExecutorRegistry nodeExecutorRegistry(AgentRuntime runtime) {
-        return PublicNodeCatalog.createRegistry(runtime);
+    NodeExecutorRegistry nodeExecutorRegistry(
+            com.javaclaw.framework.api.AgentClient agents,
+            com.javaclaw.framework.api.ToolClient tools,
+            WorkspaceContext workspace,
+            com.javaclaw.workflow.runtime.WorkflowExtensionPlanProvider extensions) {
+        return PublicNodeCatalog.createRegistry(agents, tools, workspace, extensions);
     }
 
     @Bean
@@ -584,15 +631,17 @@ public class WorkspaceSpringConfiguration {
     @Bean(destroyMethod = "close")
     WorkflowService workflowService(
             WorkspaceContext workspace,
-            AgentRuntime runtime,
+            WorkspaceRuntimeOptions options,
+            SiteCredentialManager siteCredentials,
             NodeExecutorRegistry nodes,
             WorkflowDefinitionStore definitions,
             GraphCheckpointStore checkpoints,
             SystemGraphRegistry systemGraphs,
             UserInteractionPort interaction,
-            @Qualifier("workspaceTaskScope") TaskScope tasks) {
-        return new WorkflowService(workspace.workspaceId(), runtime, nodes,
-                definitions, checkpoints, systemGraphs, interaction, tasks);
+            @Qualifier("workspaceTaskScope") TaskScope tasks,
+            com.javaclaw.workflow.runtime.WorkflowExtensionPlanProvider extensionPlans) {
+        return new WorkflowService(workspace.workspaceId(), options.browserManager(), siteCredentials, nodes,
+                definitions, checkpoints, systemGraphs, interaction, tasks, extensionPlans);
     }
 
     @Bean
@@ -616,7 +665,8 @@ public class WorkspaceSpringConfiguration {
 
     @Bean(destroyMethod = "close")
     SddTaskManager sddTaskManager(
-            AgentRuntime runtime,
+            com.javaclaw.framework.api.AgentClient agents,
+            com.javaclaw.framework.spi.ModelTaskGateway modelTasks,
             SkillRuntimeServices skills,
             SkillCurator skillCurator,
             com.javaclaw.config.AgentConfig settings,
@@ -628,8 +678,8 @@ public class WorkspaceSpringConfiguration {
             com.javaclaw.platform.process.ProcessRunner processes,
             WorkspaceContext workspace,
             SddTaskStore store) {
-        return new SddTaskManager(runtime, skills, skillCurator, settings, tasks, interaction,
-                workflows, jdbc, json, processes, workspace.workspaceId(), store);
+        return new SddTaskManager(agents, modelTasks, workspace, skills, skillCurator, settings,
+                tasks, interaction, workflows, jdbc, json, processes, workspace.workspaceId(), store);
     }
 
     @Bean

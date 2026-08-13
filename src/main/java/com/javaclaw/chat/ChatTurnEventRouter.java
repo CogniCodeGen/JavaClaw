@@ -62,18 +62,18 @@ final class ChatTurnEventRouter {
                     value.stageId(), value.stageLabel(),
                     value.status() == null ? "running" : value.status().name(), value.detail());
             case ConversationEvent.Custom value -> routeCustom(value);
+            default -> log.debug("忽略未注册的 UI 事件投影: {}", event.getClass().getName());
         }
     }
 
     private void routeCustom(ConversationEvent.Custom event) {
-        if ("plan_final".equals(event.kind()) && event.payload() instanceof String draft) {
-            renderer.setFinalPlanDraft(draft);
-        } else if ("clarify_request".equals(event.kind())
-                && event.payload() instanceof ClarifyPayload value) {
-            clarification.accept(value);
-        } else if (LoopConstants.EVENT_STATUS_KIND.equals(event.kind())
-                && event.payload() instanceof LoopStatus value) {
-            renderer.updateLoopStatus(value, backgroundStream.getAsBoolean(), host::suspendStreamNode);
+        if ("plan_final".equals(event.kind()) && event.payload().isTextual()) {
+            renderer.setFinalPlanDraft(event.payload().asText());
+        } else if ("clarify_request".equals(event.kind())) {
+            ClarifyPayload.fromJson(event.payload()).ifPresent(clarification);
+        } else if (LoopConstants.EVENT_STATUS_KIND.equals(event.kind())) {
+            LoopStatus.fromJson(event.payload()).ifPresent(value -> renderer.updateLoopStatus(
+                    value, backgroundStream.getAsBoolean(), host::suspendStreamNode));
         } else {
             log.debug("收到自定义事件 [{}] {}", event.kind(), event.payload());
         }

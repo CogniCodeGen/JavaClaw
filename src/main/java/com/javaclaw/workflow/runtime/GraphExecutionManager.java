@@ -14,7 +14,6 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -30,51 +29,81 @@ public final class GraphExecutionManager implements AutoCloseable {
     public static final String RESUME_NODE_STATE_KEY = "_workflow.resumeNode";
     private final NodeExecutorRegistry registry;
     private final GraphCheckpointStore store;
-    private final GraphEngine engine;
     private final TaskSubmitter tasks;
+    private final WorkflowExtensionPlanProvider extensionPlans;
     private final ConcurrentHashMap<String, CancellationToken> active = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, TaskHandle<Void>> handles = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, WorkflowExtensionPlan> retainedPlans =
+            new ConcurrentHashMap<>();
     /** 同一 thread 同时只允许一个运行，避免共享 thread state 被并发覆盖。 */
     private final ConcurrentHashMap<String, String> activeThreads = new ConcurrentHashMap<>();
     private final AtomicBoolean accepting = new AtomicBoolean(true);
 
     public GraphExecutionManager(NodeExecutorRegistry registry, GraphCheckpointStore store,
                                  TaskSubmitter tasks) {
+        this(registry, store, tasks, WorkflowExtensionPlanProvider.NONE);
+    }
+
+    public GraphExecutionManager(NodeExecutorRegistry registry, GraphCheckpointStore store,
+                                 TaskSubmitter tasks,
+                                 WorkflowExtensionPlanProvider extensionPlans) {
         this.registry = Objects.requireNonNull(registry);
         this.store = Objects.requireNonNull(store);
         this.tasks = Objects.requireNonNull(tasks);
-        this.engine = new GraphEngine(this.registry, store);
+        this.extensionPlans = Objects.requireNonNull(extensionPlans);
         store.markRunningAsRecoveryRequired();
+        restoreNonTerminalPlanLeases();
     }
 
     public GraphRun start(GraphDefinition definition, String threadId, GraphState initialState,
-                          GraphListener listener, Map<Class<?>, Object> services) {
-        GraphValidator.requireValid(definition, registry);
-        GraphRun run = new GraphRun(definition, threadId, initialState);
-        run.status(RunStatus.RUNNING);
-        CancellationToken token = reserve(run);
+                          GraphListener listener, WorkflowExecutionServices services) {
+        WorkflowExtensionPlan plan = extensionPlans.compile(definition);
+        NodeExecutorRegistry exactRegistry = registry.fixedOverlay(plan::find);
+        GraphRun run = null;
+        CancellationToken token = null;
         boolean persisted = false;
         try {
+            GraphValidator.requireValid(definition, exactRegistry);
+            run = new GraphRun(definition, threadId, initialState, plan.locks());
+            retainPlan(run.id(), plan);
+            run.status(RunStatus.RUNNING);
+            token = reserve(run);
             store.createRunningRun(run);
             persisted = true;
-            schedule(run, token, listener, services);
+            schedule(run, token, listener, services, exactRegistry);
             return run;
         } catch (RuntimeException | Error failure) {
-            release(run, token);
-            if (persisted) markSchedulingFailure(run, failure);
+            if (run != null && token != null) release(run, token);
+            if (run != null && persisted) markSchedulingFailure(run, failure);
+            if (run != null) releasePlan(run.id());
+            else plan.close();
             throw failure;
         }
     }
 
     public GraphRun resume(String runId, String humanResponse, boolean unsafeRetryConfirmed,
-                           GraphListener listener, Map<Class<?>, Object> services) {
+                           GraphListener listener, WorkflowExecutionServices services) {
         GraphRun run = store.loadRun(runId);
         if (run == null) throw new IllegalArgumentException("运行记录不存在: " + runId);
         if (run.status().terminal()) throw new IllegalStateException("终态运行不可恢复: " + run.status());
+        WorkflowExtensionPlan plan = retainedPlans.get(runId);
+        if (plan == null) {
+            plan = extensionPlans.restore(run.extensionLocks()).orElse(null);
+            if (plan == null) {
+                run.status(RunStatus.RECOVERY_BLOCKED_MISSING_EXTENSION);
+                run.error("恢复被阻塞：缺少运行锁定的扩展版本");
+                store.updateRun(run);
+                throw new IllegalStateException(run.error());
+            }
+            retainPlan(runId, plan);
+        }
+        NodeExecutorRegistry exactRegistry = registry.fixedOverlay(plan::find);
+        GraphValidator.requireValid(run.definition(), exactRegistry);
         RunStatus expectedStatus = run.status();
         if (expectedStatus == RunStatus.WAITING_INPUT) {
             if (humanResponse == null) throw new IllegalArgumentException("恢复待输入工作流必须提供响应");
-        } else if (expectedStatus == RunStatus.RECOVERY_REQUIRED) {
+        } else if (expectedStatus == RunStatus.RECOVERY_REQUIRED
+                || expectedStatus == RunStatus.RECOVERY_BLOCKED_MISSING_EXTENSION) {
             var node = run.definition().nodes().stream()
                     .filter(n -> n.id().equals(run.currentNodeId())).findFirst().orElse(null);
             if (node != null && node.resumeSafety() == ResumeSafety.CONFIRM_RETRY && !unsafeRetryConfirmed) {
@@ -92,14 +121,15 @@ public final class GraphExecutionManager implements AutoCloseable {
                         .build()));
                 run.nextNodeId(run.currentNodeId());
                 run.interrupt(null);
-            } else if (expectedStatus == RunStatus.RECOVERY_REQUIRED
+            } else if ((expectedStatus == RunStatus.RECOVERY_REQUIRED
+                    || expectedStatus == RunStatus.RECOVERY_BLOCKED_MISSING_EXTENSION)
                     && run.nextNodeId() == null) {
                 run.nextNodeId(run.currentNodeId());
             }
             run.status(RunStatus.RUNNING);
             store.activateExistingRun(run, expectedStatus);
             activated = true;
-            schedule(run, token, listener, services);
+            schedule(run, token, listener, services, exactRegistry);
             return run;
         } catch (RuntimeException | Error failure) {
             release(run, token);
@@ -115,6 +145,7 @@ public final class GraphExecutionManager implements AutoCloseable {
         if (run == null || run.status().terminal()) return false;
         run.status(RunStatus.CANCELLED);
         store.updateRun(run);
+        releasePlan(runId);
         return true;
     }
 
@@ -145,7 +176,8 @@ public final class GraphExecutionManager implements AutoCloseable {
     }
 
     private void schedule(GraphRun run, CancellationToken token,
-                          GraphListener listener, Map<Class<?>, Object> services) {
+                          GraphListener listener, WorkflowExecutionServices services,
+                          NodeExecutorRegistry exactRegistry) {
         TaskHandle<Void> handle = tasks.submit(TaskSpec.io("workflow-run-" + run.id()), context -> {
             context.cancellation().throwIfCancellationRequested();
             AtomicReference<GraphEvent.RunFinished> terminal = new AtomicReference<>();
@@ -154,11 +186,13 @@ public final class GraphExecutionManager implements AutoCloseable {
                 else if (listener != null) listener.onEvent(event);
             };
             try {
-                engine.execute(run, token, lifecycleListener, services);
+                new GraphEngine(exactRegistry, store)
+                        .execute(run, token, lifecycleListener, services);
             } finally {
                 // 终态回调可能立刻为同一 thread 启动下一条排队运行；必须先释放两级占用，
                 // 否则旧 run 会覆盖新 run 的映射，或让回调误判 thread 仍忙。
                 release(run, token);
+                if (run.status().terminal()) releasePlan(run.id());
                 GraphEvent.RunFinished finished = terminal.get();
                 if (finished != null && listener != null) {
                     try {
@@ -191,6 +225,32 @@ public final class GraphExecutionManager implements AutoCloseable {
         } catch (Throwable persistFailure) {
             failure.addSuppressed(persistFailure);
         }
+        releasePlan(run.id());
+    }
+
+    private void retainPlan(String runId, WorkflowExtensionPlan plan) {
+        if (plan.locks().isEmpty()) return;
+        WorkflowExtensionPlan previous = retainedPlans.putIfAbsent(runId, plan);
+        if (previous != null && previous != plan) plan.close();
+    }
+
+    private void restoreNonTerminalPlanLeases() {
+        for (GraphRun run : store.listNonTerminalRuns()) {
+            if (run.extensionLocks().isEmpty()) continue;
+            WorkflowExtensionPlan plan = extensionPlans.restore(run.extensionLocks()).orElse(null);
+            if (plan != null) {
+                retainPlan(run.id(), plan);
+                continue;
+            }
+            run.status(RunStatus.RECOVERY_BLOCKED_MISSING_EXTENSION);
+            run.error("恢复被阻塞：缺少运行锁定的扩展版本");
+            store.updateRun(run);
+        }
+    }
+
+    private void releasePlan(String runId) {
+        WorkflowExtensionPlan plan = retainedPlans.remove(runId);
+        if (plan != null) plan.close();
     }
 
     @Override
@@ -205,6 +265,13 @@ public final class GraphExecutionManager implements AutoCloseable {
         active.clear();
         activeThreads.clear();
         handles.clear();
+        retainedPlans.values().forEach(plan -> {
+            try { plan.close(); }
+            catch (RuntimeException failure) {
+                log.debug("工作流扩展计划释放失败", failure);
+            }
+        });
+        retainedPlans.clear();
     }
 
     private static void awaitGracefulCompletion(

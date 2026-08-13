@@ -118,7 +118,7 @@ class MemoryStoreBehaviorTest {
         }
         assertFalse(store.isOpen());
         assertThrows(IllegalStateException.class,
-                () -> store.checkpoint("closed", "[]"));
+                () -> store.setPersona("closed", "test"));
     }
 
     @Test
@@ -205,12 +205,6 @@ class MemoryStoreBehaviorTest {
                     "other.md", "GLOBAL", "content", vector(1, 0, 0, 0)), "test");
             store.clearKnowledge("test");
             assertTrue(store.allKnowledge().isEmpty());
-
-            store.checkpoint("session", "[1]");
-            assertEquals("[1]", store.loadCheckpoint("session").messagesJson);
-            store.removeCheckpoint("missing");
-            store.removeCheckpoint("session");
-            assertNull(store.loadCheckpoint("session"));
 
             assertNull(store.getPersona());
             store.setPersona("first persona", "user");

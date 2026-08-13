@@ -2,8 +2,6 @@ package com.javaclaw.skill;
 
 import com.javaclaw.util.PathGuard;
 import com.javaclaw.util.SensitiveDataRedactor;
-import io.agentscope.core.skill.util.MarkdownSkillParser;
-import io.agentscope.core.skill.util.SkillFileSystemHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -76,8 +74,8 @@ final class SkillFileRepository {
 
     Skill parse(Path directory) throws IOException {
         String raw = Files.readString(directory.resolve(Skill.SKILL_FILE), StandardCharsets.UTF_8);
-        MarkdownSkillParser.ParsedMarkdown parsed = MarkdownSkillParser.parse(raw);
-        Map<String, Object> metadata = parsed.getMetadata();
+        ParsedMarkdown parsed = parseDocument(raw);
+        Map<String, Object> metadata = parsed.metadata();
 
         Skill skill = new Skill();
         skill.setId(directory.getFileName().toString());
@@ -85,7 +83,7 @@ final class SkillFileRepository {
         skill.setName(stringValue(metadata, "name", skill.getId()));
         skill.setDescription(stringValue(metadata, "description", ""));
         skill.setEnabled(Boolean.parseBoolean(stringValue(metadata, "enabled", "true")));
-        skill.setContent(parsed.getContent());
+        skill.setContent(parsed.content());
         skill.setVersion(stringValue(metadata, "version", "1.0.0"));
         skill.setCategory(stringValue(metadata, "category", ""));
         skill.setTags(listValue(metadata, "tags"));
@@ -114,7 +112,7 @@ final class SkillFileRepository {
         try {
             Files.createDirectories(directory);
             String content = generateDocument(skill);
-            MarkdownSkillParser.parse(content);
+            parseDocument(content);
 
             Path document = directory.resolve(Skill.SKILL_FILE);
             temporary = Files.createTempFile(directory, ".SKILL-", ".tmp");
@@ -168,7 +166,17 @@ final class SkillFileRepository {
 
     void delete(String id) {
         try {
-            SkillFileSystemHelper.deleteDirectory(root.resolve(id));
+            Path directory = root.resolve(id).toAbsolutePath().normalize();
+            if (!directory.startsWith(root) || directory.equals(root)) {
+                throw new IOException("技能目录越界");
+            }
+            if (Files.exists(directory)) {
+                try (var paths = Files.walk(directory)) {
+                    for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
+                        Files.deleteIfExists(path);
+                    }
+                }
+            }
             log.info("已删除技能: {}", id);
         } catch (IOException failure) {
             log.error("删除技能目录失败: {}", id, failure);
@@ -298,8 +306,131 @@ final class SkillFileRepository {
         putIfNotEmpty(metadata, "platforms", skill.getPlatforms());
         putIfNotEmpty(metadata, "requires_toolsets", skill.getRequiresToolGroups());
         putIfNotEmpty(metadata, "fallback_for_toolsets", skill.getFallbackForToolGroups());
-        return MarkdownSkillParser.generate(metadata, Objects.requireNonNullElse(skill.getContent(), ""));
+        return generateDocument(metadata, Objects.requireNonNullElse(skill.getContent(), ""));
     }
+
+    /** Minimal, deterministic YAML-front-matter parser for the public SKILL.md contract. */
+    private static ParsedMarkdown parseDocument(String raw) {
+        String source = Objects.requireNonNullElse(raw, "").replace("\r\n", "\n")
+                .replace('\r', '\n');
+        if (!source.startsWith("---\n")) return new ParsedMarkdown(Map.of(), source);
+        int closing = source.indexOf("\n---\n", 4);
+        if (closing < 0) throw new IllegalArgumentException("SKILL.md front matter 未闭合");
+        String header = source.substring(4, closing);
+        String content = source.substring(closing + 5);
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        String activeList = null;
+        for (String rawLine : header.lines().toList()) {
+            String line = rawLine.stripTrailing();
+            if (line.isBlank() || line.stripLeading().startsWith("#")) continue;
+            String stripped = line.stripLeading();
+            if (stripped.startsWith("- ")) {
+                if (activeList == null) throw new IllegalArgumentException("孤立的 YAML 列表项");
+                @SuppressWarnings("unchecked")
+                List<String> values = (List<String>) metadata.get(activeList);
+                String value = unquote(stripped.substring(2).strip());
+                if (!value.isBlank()) values.add(value);
+                continue;
+            }
+            int colon = line.indexOf(':');
+            if (colon <= 0) throw new IllegalArgumentException("非法 YAML 字段: " + line);
+            String key = line.substring(0, colon).strip();
+            String value = stripInlineComment(line.substring(colon + 1).strip());
+            if (value.isEmpty()) {
+                List<String> values = new ArrayList<>();
+                metadata.put(key, values);
+                activeList = key;
+            } else if (value.startsWith("[") && value.endsWith("]")) {
+                metadata.put(key, parseInlineList(value.substring(1, value.length() - 1)));
+                activeList = null;
+            } else {
+                metadata.put(key, unquote(value));
+                activeList = null;
+            }
+        }
+        return new ParsedMarkdown(Map.copyOf(metadata), content);
+    }
+
+    private static String generateDocument(Map<String, Object> metadata, String body) {
+        StringBuilder result = new StringBuilder("---\n");
+        for (var entry : metadata.entrySet()) {
+            Object value = entry.getValue();
+            if (value instanceof Collection<?> collection) {
+                result.append(entry.getKey()).append(": [");
+                boolean first = true;
+                for (Object item : collection) {
+                    if (!first) result.append(", ");
+                    result.append(quote(Objects.toString(item, "")));
+                    first = false;
+                }
+                result.append("]\n");
+            } else {
+                result.append(entry.getKey()).append(": ")
+                        .append(quote(Objects.toString(value, ""))).append('\n');
+            }
+        }
+        return result.append("---\n").append(body).toString();
+    }
+
+    private static List<String> parseInlineList(String text) {
+        List<String> values = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean quoted = false;
+        char quote = 0;
+        for (int index = 0; index < text.length(); index++) {
+            char character = text.charAt(index);
+            if ((character == '\'' || character == '"')
+                    && (index == 0 || text.charAt(index - 1) != '\\')) {
+                if (!quoted) { quoted = true; quote = character; }
+                else if (quote == character) quoted = false;
+                current.append(character);
+            } else if (character == ',' && !quoted) {
+                String value = unquote(current.toString().strip());
+                if (!value.isBlank()) values.add(value);
+                current.setLength(0);
+            } else current.append(character);
+        }
+        String value = unquote(current.toString().strip());
+        if (!value.isBlank()) values.add(value);
+        return values;
+    }
+
+    private static String stripInlineComment(String value) {
+        boolean quoted = false;
+        char quote = 0;
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            if ((character == '\'' || character == '"')
+                    && (index == 0 || value.charAt(index - 1) != '\\')) {
+                if (!quoted) { quoted = true; quote = character; }
+                else if (quote == character) quoted = false;
+            } else if (character == '#' && !quoted
+                    && (index == 0 || Character.isWhitespace(value.charAt(index - 1)))) {
+                return value.substring(0, index).stripTrailing();
+            }
+        }
+        return value;
+    }
+
+    private static String unquote(String value) {
+        if (value.length() >= 2) {
+            char first = value.charAt(0);
+            char last = value.charAt(value.length() - 1);
+            if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
+                String content = value.substring(1, value.length() - 1);
+                return first == '"' ? content.replace("\\\"", "\"").replace("\\\\", "\\")
+                        : content.replace("''", "'");
+            }
+        }
+        return value;
+    }
+
+    private static String quote(String value) {
+        if (value.matches("[A-Za-z0-9_.-]+") && !value.equalsIgnoreCase("null")) return value;
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
+    private record ParsedMarkdown(Map<String, Object> metadata, String content) {}
 
     private static void putIfNotBlank(Map<String, Object> metadata, String key, String value) {
         if (value != null && !value.isBlank()) {

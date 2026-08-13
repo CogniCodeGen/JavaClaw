@@ -164,6 +164,7 @@ public class MemoryStore implements AutoCloseable {
         if (root.pendingFacts == null) { root.pendingFacts = GigaMap.New(); changed = true; }
         if (root.pendingEpisodes == null) { root.pendingEpisodes = GigaMap.New(); changed = true; }
         if (root.corrections == null) { root.corrections = GigaMap.New(); changed = true; }
+        if (root.working == null) { root.working = new java.util.HashMap<>(); changed = true; }
         if (root.stats == null) {
             root.stats = new com.javaclaw.memory.model.MemoryStats();
             changed = true;
@@ -172,6 +173,29 @@ public class MemoryStore implements AutoCloseable {
             mgr.store(root);
             log.info("[{}] 已补建新增记忆字段（schema 补齐）", label);
         }
+    }
+
+    // ==================== working-memory checkpoints ====================
+
+    public void checkpoint(String key, String messagesJson) {
+        write(() -> {
+            root.working.put(key, new AgentCheckpoint(key, messagesJson));
+            mgr.store(root.working);
+        });
+    }
+
+    public AgentCheckpoint loadCheckpoint(String key) {
+        requireOpen();
+        return root.working.get(key);
+    }
+
+    public void removeCheckpoint(String key) {
+        write(() -> {
+            if (root.working.remove(key) != null) {
+                mgr.store(root.working);
+                logInternal("REMOVE", "Checkpoint", key, "user", "");
+            }
+        });
     }
 
     private void cleanupFailedOpen(EmbeddedStorageManager started, Throwable failure) {
@@ -751,28 +775,6 @@ public class MemoryStore implements AutoCloseable {
             root.knowledge.update(c, mutator::accept);
             root.knowledge.store();
             logInternal("UPDATE", "KnowledgeChunk", c.id, actor, trunc(c.docName));
-        });
-    }
-
-    // ==================== 工作记忆检查点 ====================
-
-    public void checkpoint(String key, String messagesJson) {
-        write(() -> {
-            root.working.put(key, new AgentCheckpoint(key, messagesJson));
-            mgr.store(root.working);
-        });
-    }
-
-    public AgentCheckpoint loadCheckpoint(String key) {
-        return root.working.get(key);
-    }
-
-    public void removeCheckpoint(String key) {
-        write(() -> {
-            if (root.working.remove(key) != null) {
-                mgr.store(root.working);
-                logInternal("REMOVE", "Checkpoint", key, "user", "");
-            }
         });
     }
 

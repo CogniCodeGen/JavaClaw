@@ -1,6 +1,5 @@
 package com.javaclaw.chat;
 
-import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.agent.TokenTracker;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.platform.fx.FxDispatcher;
@@ -37,7 +36,6 @@ final class ChatStatusController implements AutoCloseable {
     private final SidebarController sidebar;
     private final Supplier<ChatSession> currentSession;
 
-    private AgentRuntime runtime;
     private AgentConfig settings;
     private TokenTracker tracker;
     private AutoCloseable embeddingSubscription;
@@ -69,15 +67,14 @@ final class ChatStatusController implements AutoCloseable {
     void bind(WorkspaceRuntime workspace) {
         Objects.requireNonNull(workspace, "workspace");
         releaseWorkspaceListeners();
-        runtime = workspace.agentRuntime();
         settings = workspace.agentConfig();
-        tracker = runtime.getTokenTracker();
+        tracker = workspace.tokenTracker();
         tracker.setOnTokensChanged(() -> fx.dispatch(() -> {
             if (!closed) {
                 refresh();
             }
         }));
-        embeddingSubscription = runtime.getEmbeddingGateway().addHealthListener(snapshot ->
+        embeddingSubscription = workspace.embeddingGateway().addHealthListener(snapshot ->
                 fx.dispatch(() -> {
                     if (!closed) {
                         header.showEmbedding(snapshot);
@@ -138,7 +135,6 @@ final class ChatStatusController implements AutoCloseable {
             refreshClock = null;
         }
         releaseWorkspaceListeners();
-        runtime = null;
         settings = null;
     }
 

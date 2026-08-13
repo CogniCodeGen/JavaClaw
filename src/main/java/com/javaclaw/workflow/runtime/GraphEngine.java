@@ -29,7 +29,7 @@ public final class GraphEngine {
     }
 
     public GraphRun execute(GraphRun run, CancellationToken cancellation,
-                            GraphListener listener, Map<Class<?>, Object> services) {
+                            GraphListener listener, WorkflowExecutionServices services) {
         GraphListener sink = listener == null ? GraphListener.NOOP : listener;
         GraphDefinition graph = run.definition();
         try {
@@ -124,7 +124,7 @@ public final class GraphEngine {
 
     private NodeResult executeWithRetry(GraphRun run, NodeDefinition node,
                                         CancellationToken cancellation, GraphListener listener,
-                                        Map<Class<?>, Object> services) throws Exception {
+                                        WorkflowExecutionServices services) throws Exception {
         NodeExecutor executor = registry.require(node.executorType());
         Exception last = null;
         for (int attempt = 1; attempt <= node.retryPolicy().maxAttempts(); attempt++) {

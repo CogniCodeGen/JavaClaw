@@ -11,7 +11,7 @@
     <packaging>jar</packaging>
 
     <name>JavaClaw</name>
-    <description>基于 JavaFX 和 AgentScope 的智能体桌面聊天应用</description>
+    <description>基于 JavaFX、Spring AI 2.0 和统一 Agent Framework 的智能体桌面应用</description>
 
     <properties>
         <!-- 编码与 JDK 版本（JDK 25 LTS：虚拟线程无 pinning、Scoped Values 正式版） -->
@@ -20,11 +20,14 @@
         <maven.compiler.target>25</maven.compiler.target>
 
         <!-- 依赖版本管理 -->
-        <!-- JavaFX 24：兼容 JDK 25，原生库支持 macOS aarch64 -->
+        <!-- JavaFX 25：与 JDK 25 对齐，原生库支持 macOS aarch64 -->
         <javafx.version>25</javafx.version>
-        <agentscope.version>1.0.12</agentscope.version>
+        <spring-ai.version>2.0.0</spring-ai.version>
+        <jackson3.version>3.1.4</jackson3.version>
+        <quartz.version>2.5.2</quartz.version>
         <logback.version>1.4.14</logback.version>
         <angus.mail.version>2.0.3</angus.mail.version>
+        <greenmail.version>2.1.11</greenmail.version>
         <pdfbox.version>3.0.4</pdfbox.version>
         <richtextfx.version>0.11.7</richtextfx.version>
         <commonmark.version>0.30.0</commonmark.version>
@@ -34,6 +37,7 @@
         <h2.version>2.3.232</h2.version>
         <spring.version>7.0.8</spring.version>
         <archunit.version>1.4.2</archunit.version>
+        <json-schema-validator.version>1.5.7</json-schema-validator.version>
         <jacoco.version>0.8.14</jacoco.version>
         <coverage.overall.line>0.55</coverage.overall.line>
         <coverage.overall.branch>0.45</coverage.overall.branch>
@@ -49,16 +53,25 @@
         <javaclaw.fx.tests>false</javaclaw.fx.tests>
     </properties>
 
-    <!--
-        AgentScope BOM：统一管理 agentscope-* 全部子模块版本。
-        引入 BOM 后，下面声明的 agentscope-* 依赖都无需写 version。
-    -->
     <dependencyManagement>
         <dependencies>
+            <!-- 新 Agent Framework 的唯一模型/Advisor/工具调用底座。 -->
             <dependency>
-                <groupId>io.agentscope</groupId>
-                <artifactId>agentscope-bom</artifactId>
-                <version>${agentscope.version}</version>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>${spring-ai.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!--
+                Spring AI 2.0 uses Jackson 3.1 while victools also brings Jackson 3.0.
+                Keep core/databind/dataformats and the still-2.x annotations artifact on one
+                Jackson 3.1 generation to prevent runtime linkage errors.
+            -->
+            <dependency>
+                <groupId>tools.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>${jackson3.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -67,24 +80,51 @@
 
     <dependencies>
         <!--
-            AgentScope 全功能包
-            包含: OkHttp、Jackson、SLF4J API、Reactor Core 等
-            无需单独声明这些传递依赖；版本由 agentscope-bom 统一管理
+            Spring AI 2.0：ChatClient、递归 Advisor、Tool Calling、RAG/VectorStore
+            以及 JavaClaw 当前支持的四类模型 Provider。所有模型构造集中在
+            framework.springai，产品功能只能通过框架网关调用。
         -->
         <dependency>
-            <groupId>io.agentscope</groupId>
-            <artifactId>agentscope</artifactId>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-client-chat</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-openai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-anthropic</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-google-genai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-ollama</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-rag</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-vector-store</artifactId>
         </dependency>
 
-        <!--
-            Quartz 调度器（通过 AgentScope scheduler-quartz 扩展引入 quartz 2.5.2）
-            JavaClaw 直接使用底层 org.quartz.Scheduler 接管定时任务调度，
-            不使用扩展提供的 QuartzAgentScheduler 封装（其内部建独立 Agent，
-            会绕过 JavaClaw 自己的 ChatService 编排栈）。
-        -->
+        <!-- Agent Studio、工具参数与扩展事件统一按 JSON Schema Draft 2020-12 校验。 -->
         <dependency>
-            <groupId>io.agentscope</groupId>
-            <artifactId>agentscope-extensions-scheduler-quartz</artifactId>
+            <groupId>com.networknt</groupId>
+            <artifactId>json-schema-validator</artifactId>
+            <version>${json-schema-validator.version}</version>
+        </dependency>
+
+        <!-- 调度是产品基础设施，显式依赖 Quartz。 -->
+        <dependency>
+            <groupId>org.quartz-scheduler</groupId>
+            <artifactId>quartz</artifactId>
+            <version>${quartz.version}</version>
         </dependency>
 
         <!-- JavaFX 控件库（UI 组件：Button、TextField、ScrollPane 等） -->
@@ -134,36 +174,6 @@
         </dependency>
 
         <!--
-            OpenAI Java SDK（嵌入模型）
-            AgentScope 的 OpenAITextEmbedding 依赖此 SDK，需单独引入
-        -->
-        <dependency>
-            <groupId>com.openai</groupId>
-            <artifactId>openai-java</artifactId>
-            <version>4.28.0</version>
-        </dependency>
-
-        <!--
-            Anthropic Java SDK（Claude 系列模型）
-            AgentScope 的 AnthropicChatModel 依赖此 SDK，需单独引入
-        -->
-        <dependency>
-            <groupId>com.anthropic</groupId>
-            <artifactId>anthropic-java-client-okhttp</artifactId>
-            <version>2.14.0</version>
-        </dependency>
-
-        <!--
-            Google GenAI SDK（Gemini 系列模型）
-            AgentScope 的 GeminiChatModel 依赖此 SDK，需单独引入
-        -->
-        <dependency>
-            <groupId>com.google.genai</groupId>
-            <artifactId>google-genai</artifactId>
-            <version>1.28.0</version>
-        </dependency>
-
-        <!--
             RichTextFX（富文本编辑/展示）
             提供原生文本选中复制、多行输入、样式化文本等能力
         -->
@@ -205,10 +215,7 @@
             </exclusions>
         </dependency>
 
-        <!--
-            Logback 日志实现
-            SLF4J API 已由 AgentScope 传递引入，这里只需要实现层
-        -->
+        <!-- Logback 日志实现 -->
         <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
@@ -274,6 +281,13 @@
             <version>5.11.4</version>
             <scope>test</scope>
         </dependency>
+        <!-- 本地 SMTP/IMAP 验收夹具；测试不会连接或发送到外部邮件服务。 -->
+        <dependency>
+            <groupId>com.icegreen</groupId>
+            <artifactId>greenmail</artifactId>
+            <version>${greenmail.version}</version>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>com.tngtech.archunit</groupId>
             <artifactId>archunit-junit5</artifactId>
@@ -291,6 +305,8 @@
                 <version>3.13.0</version>
                 <configuration>
                     <release>25</release>
+                    <!-- Spring AI derives annotated tool schema names from Java parameters. -->
+                    <parameters>true</parameters>
                     <!-- JVector 使用孵化中的向量 API（JDK 25 仍为 incubator），编译期需放行该模块 -->
                     <compilerArgs>
                         <arg>--add-modules</arg>
@@ -502,6 +518,64 @@
                 <javaclaw.launch.ui.test>true</javaclaw.launch.ui.test>
                 <javaclaw.fx.tests>true</javaclaw.fx.tests>
             </properties>
+        </profile>
+        <!--
+            Release CI supplies -Dframework.compatibility.baseline=<released-version>.
+            Only the supported Framework API/SPI surface is compared; a binary break therefore
+            requires intentionally moving to a new Framework API major version/baseline.
+        -->
+        <profile>
+            <id>framework-api-compatibility</id>
+            <activation>
+                <property>
+                    <name>framework.compatibility.baseline</name>
+                </property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>com.github.siom79.japicmp</groupId>
+                        <artifactId>japicmp-maven-plugin</artifactId>
+                        <version>0.26.1</version>
+                        <configuration>
+                            <oldVersion>
+                                <dependency>
+                                    <groupId>${project.groupId}</groupId>
+                                    <artifactId>${project.artifactId}</artifactId>
+                                    <version>${framework.compatibility.baseline}</version>
+                                    <type>jar</type>
+                                </dependency>
+                            </oldVersion>
+                            <newVersion>
+                                <file>
+                                    <path>${project.build.directory}/${project.build.finalName}.jar</path>
+                                </file>
+                            </newVersion>
+                            <parameter>
+                                <onlyModified>true</onlyModified>
+                                <accessModifier>public</accessModifier>
+                                <includes>
+                                    <include>com.javaclaw.framework.api</include>
+                                    <include>com.javaclaw.framework.spi</include>
+                                </includes>
+                                <includeExclusively>false</includeExclusively>
+                                <breakBuildOnBinaryIncompatibleModifications>true</breakBuildOnBinaryIncompatibleModifications>
+                            </parameter>
+                            <skipHtmlReport>true</skipHtmlReport>
+                            <skipMarkdownReport>true</skipMarkdownReport>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>check-framework-api-spi-compatibility</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>cmp</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
     </profiles>
 </project>

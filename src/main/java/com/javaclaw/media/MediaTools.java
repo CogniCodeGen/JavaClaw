@@ -7,8 +7,8 @@ import com.javaclaw.api.interaction.UserInteractionPort;
 import com.javaclaw.chat.ChatMessage;
 import com.javaclaw.util.ProjectAccessPolicy;
 import com.javaclaw.util.SensitiveDataRedactor;
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.rendering.PDFRenderer;
@@ -31,6 +31,7 @@ import java.io.File;
  *
  * @author JavaClaw
  */
+@com.javaclaw.framework.spi.ToolContract(group = "media", permissions = {"tool.execute"}, idempotent = false)
 public class MediaTools {
 
     private static final Logger log = LoggerFactory.getLogger(MediaTools.class);
@@ -58,7 +59,7 @@ public class MediaTools {
     @Tool(name = "view_image", description = "在桌面弹窗中打开一张图片供用户查看，支持鼠标滚轮/触摸板缩放与拖拽平移。"
             + "当你生成、下载或定位到一张图片，需要直观展示给用户时使用。支持 png/jpg/jpeg/gif/bmp/webp。")
     public String viewImage(
-            @ToolParam(name = "path", description = "图片文件的绝对路径") String path) {
+            @ToolParam( description = "图片文件的绝对路径") String path) {
         log.debug("工具调用: view_image('{}')", path);
         try {
             if (path == null || path.isBlank()) {
@@ -86,10 +87,11 @@ public class MediaTools {
 
     // ==================== OCR 文字识别 ====================
 
+    @com.javaclaw.framework.spi.ToolContract(group = "media", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "ocr_recognize", description = "对图片或 PDF 文件进行 OCR 文字识别，提取其中的文字内容并返回。"
             + "支持 png/jpg/jpeg/gif/bmp/webp 图片与 PDF（含扫描件）。需要读取图片/PDF 中的文字时使用。")
     public String ocrRecognize(
-            @ToolParam(name = "path", description = "图片或 PDF 文件的绝对路径") String path) {
+            @ToolParam( description = "图片或 PDF 文件的绝对路径") String path) {
         log.debug("工具调用: ocr_recognize('{}')", path);
         try {
             if (path == null || path.isBlank()) {

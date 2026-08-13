@@ -1,6 +1,5 @@
 package com.javaclaw.plugin;
 
-import com.javaclaw.agent.AgentRuntime;
 import com.javaclaw.plugin.api.Capability;
 import com.javaclaw.plugin.api.JavaClawPlugin;
 import com.javaclaw.plugin.api.PluginContext;
@@ -58,7 +57,9 @@ final class PluginRuntime {
 
     private final PluginDescriptor descriptor;
     private final Path jarPath;
-    private final AgentRuntime agentRuntime;
+    private final PluginWorkspaceServices workspaceServices;
+    private final com.javaclaw.framework.api.AgentClient agentClient;
+    private final java.util.concurrent.Executor agentCallbacksExecutor;
     private final ClassLoader appClassLoader;
     private final ManagedTaskExecutor taskExecutor;
     private final ScheduleApplicationService schedules;
@@ -83,18 +84,32 @@ final class PluginRuntime {
     // 插件对技能系统贡献的技能（仅留名称/描述用于展示）
     private final List<com.javaclaw.plugin.api.PluginSkill> providedSkills = new ArrayList<>();
 
-    PluginRuntime(PluginDescriptor descriptor, Path jarPath, AgentRuntime agentRuntime,
+    PluginRuntime(PluginDescriptor descriptor, Path jarPath,
+                  PluginWorkspaceServices workspaceServices,
+                  com.javaclaw.framework.api.AgentClient agentClient,
+                  java.util.concurrent.Executor agentCallbacksExecutor,
                   ClassLoader appClassLoader, String workspaceId,
                   ManagedTaskExecutor taskExecutor, ScheduleApplicationService schedules,
                   PluginStorageFactory storageFactory) {
         this.descriptor = descriptor;
         this.jarPath = jarPath;
-        this.agentRuntime = agentRuntime;
+        this.workspaceServices = workspaceServices;
+        this.agentClient = agentClient;
+        this.agentCallbacksExecutor = agentCallbacksExecutor;
         this.appClassLoader = appClassLoader;
         this.workspaceId = java.util.Objects.requireNonNull(workspaceId, "workspaceId");
         this.taskExecutor = java.util.Objects.requireNonNull(taskExecutor, "taskExecutor");
         this.schedules = schedules;
         this.storageFactory = java.util.Objects.requireNonNull(storageFactory, "storageFactory");
+    }
+
+    /** Test-only compatibility constructor for plugins that do not request CHAT. */
+    PluginRuntime(PluginDescriptor descriptor, Path jarPath,
+                  ClassLoader appClassLoader, String workspaceId,
+                  ManagedTaskExecutor taskExecutor, ScheduleApplicationService schedules,
+                  PluginStorageFactory storageFactory) {
+        this(descriptor, jarPath, null, null, Runnable::run, appClassLoader,
+                workspaceId, taskExecutor, schedules, storageFactory);
     }
 
     // ==================== 生命周期 ====================
@@ -152,7 +167,10 @@ final class PluginRuntime {
             // 仅装配已授权能力的句柄；未授权能力在网关里为 null → 调用即抛未授权
             ChatAccess chat = null;
             if (granted.contains(Capability.CHAT)) {
-                chatImpl = new ChatAccessImpl(descriptor.id(), agentRuntime);
+                chatImpl = new ChatAccessImpl(descriptor.id(),
+                        java.util.Objects.requireNonNull(agentClient, "agentClient"),
+                        java.util.Objects.requireNonNull(workspaceServices, "workspaceServices")
+                                .workspace(), agentCallbacksExecutor);
                 chat = chatImpl;
             }
             ScheduleAccess schedule = null;
@@ -162,7 +180,9 @@ final class PluginRuntime {
                 schedule = scheduleImpl;
             }
             MemoryAccess memory = granted.contains(Capability.MEMORY)
-                    ? new MemoryAccessImpl(descriptor.id(), agentRuntime.getMemoryManager()) : null;
+                    ? new MemoryAccessImpl(descriptor.id(),
+                    java.util.Objects.requireNonNull(workspaceServices, "workspaceServices").memory())
+                    : null;
             StorageAccess storage = granted.contains(Capability.STORAGE)
                     ? storageFactory.create(descriptor.id(), workspaceId) : null;
 
@@ -197,7 +217,8 @@ final class PluginRuntime {
             if (instance instanceof SkillProvider provider) {
                 List<com.javaclaw.plugin.api.PluginSkill> ps = provider.skills();
                 if (ps != null && !ps.isEmpty()) {
-                    SkillManager sm = agentRuntime.getSkillRuntime().manager();
+                    SkillManager sm = java.util.Objects.requireNonNull(
+                            workspaceServices, "workspaceServices").skills();
                     List<com.javaclaw.skill.Skill> dyn = new ArrayList<>();
                     for (var s : ps) {
                         if (s != null && s.name() != null && !s.name().isBlank()) {
@@ -385,9 +406,9 @@ final class PluginRuntime {
         }
         providedTools.clear();
         providedSkills.clear();
-        if (agentRuntime != null) {
+        if (workspaceServices != null) {
             try {
-                agentRuntime.getSkillRuntime().manager().unregisterDynamicSkills(descriptor.id());
+                workspaceServices.skills().unregisterDynamicSkills(descriptor.id());
             } catch (RuntimeException e) {
                 log.warn("插件[{}]注销动态技能失败（继续回收）：{}", descriptor.id(), e.toString());
             }

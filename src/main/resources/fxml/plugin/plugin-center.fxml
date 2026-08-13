@@ -40,6 +40,11 @@
                                               HBox.hgrow="ALWAYS" toggleGroup="$tabGroup"
                                               styleClass="toggle-button, seg-btn"
                                               onAction="#marketTabRequested"/>
+                                <ToggleButton fx:id="agentExtensionsTab" text="Agent 扩展"
+                                              maxWidth="Infinity" HBox.hgrow="ALWAYS"
+                                              toggleGroup="$tabGroup"
+                                              styleClass="toggle-button, seg-btn"
+                                              onAction="#agentExtensionsTabRequested"/>
                             </children>
                         </HBox>
                     </children>
@@ -106,6 +111,37 @@
                                         </VBox>
                                     </children>
                                 </StackPane>
+                            </children>
+                        </VBox>
+                        <VBox fx:id="agentExtensionView" visible="false" managed="false"
+                              spacing="12.0">
+                            <padding><Insets top="18.0" right="22.0" bottom="18.0" left="22.0"/></padding>
+                            <children>
+                                <HBox alignment="CENTER_LEFT" spacing="12.0">
+                                    <children>
+                                        <VBox spacing="4.0" HBox.hgrow="ALWAYS">
+                                            <children>
+                                                <Label text="Agent 扩展" styleClass="sec-title"/>
+                                                <Label text="外部 JAR 以内容哈希缓存；停用只影响新 Run，已锁定 Run 继续使用原 artifact。"
+                                                       wrapText="true" styleClass="sec-hint"/>
+                                            </children>
+                                        </VBox>
+                                        <Label fx:id="agentExtensionCount" styleClass="sec-hint"/>
+                                        <Button fx:id="installAgentExtensionButton"
+                                                text="从 JAR 安装…"
+                                                styleClass="button, jc-btn, jc-btn-primary, jc-btn-sm"
+                                                onAction="#installAgentExtensionRequested"/>
+                                    </children>
+                                </HBox>
+                                <ScrollPane fitToWidth="true" hbarPolicy="NEVER"
+                                            styleClass="scroll-pane, settings-scroll-pane"
+                                            VBox.vgrow="ALWAYS">
+                                    <content>
+                                        <VBox fx:id="agentExtensionList" spacing="10.0">
+                                            <padding><Insets top="8.0" right="4.0" bottom="12.0" left="4.0"/></padding>
+                                        </VBox>
+                                    </content>
+                                </ScrollPane>
                             </children>
                         </VBox>
                         <fx:include fx:id="detailPanel" source="plugin-detail.fxml"/>

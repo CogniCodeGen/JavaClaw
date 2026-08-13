@@ -34,18 +34,14 @@ final class BrowserTargetResolver {
         }
 
         // 2. CSS 选择器
-        if (target.startsWith("#")
-                || target.startsWith(".")
-                || target.startsWith("[")
-                || target.startsWith(">")
-                || target.contains("::")
-                || target.startsWith("//")
-                || target.matches("^[a-z]+[\\[.#>~+ ].*")) {
-            // XPath
+        if (looksLikeSelector(target)) {
+            Locator selectorLocator;
             if (target.startsWith("//")) {
-                return page.locator("xpath=" + target);
+                selectorLocator = snapshots.resolveSelector(page, "xpath=" + target);
+            } else {
+                selectorLocator = snapshots.resolveSelector(page, target);
             }
-            return snapshots.resolveSelector(page, target);
+            if (selectorLocator != null) return selectorLocator;
         }
 
         // 3. 文本内容匹配
@@ -74,5 +70,16 @@ final class BrowserTargetResolver {
 
         log.warn("无法定位目标元素: {}", target);
         return null;
+    }
+
+    static boolean looksLikeSelector(String target) {
+        return target.startsWith("#")
+                || target.startsWith(".")
+                || target.startsWith("[")
+                || target.startsWith(">")
+                || target.contains("::")
+                || target.startsWith("//")
+                || target.matches("^[A-Za-z][A-Za-z0-9_-]*$")
+                || target.matches("^[a-z]+[\\[.#>~+ ].*");
     }
 }

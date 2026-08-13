@@ -5,8 +5,8 @@ import com.javaclaw.agent.ToolConfirmationManager;
 import com.javaclaw.agent.model.ToolResponse;
 import com.javaclaw.api.interaction.SecretRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
-import io.agentscope.core.tool.Tool;
-import io.agentscope.core.tool.ToolParam;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.javaclaw.util.ProjectAccessPolicy;
@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /** 通过对话直接创建、更新、启停和删除 MCP Server 配置。 */
+@com.javaclaw.framework.spi.ToolContract(group = "mcp", permissions = {"tool.execute"}, idempotent = false)
 public final class McpManageTools {
 
     private static final Logger log = LoggerFactory.getLogger(McpManageTools.class);
@@ -62,6 +63,7 @@ public final class McpManageTools {
         this.importer = Objects.requireNonNull(importer, "importer");
     }
 
+    @com.javaclaw.framework.spi.ToolContract(group = "mcp", permissions = {"tool.read"}, idempotent = true)
     @Tool(name = "mcp_server_list",
             description = "列出当前工作区配置的全部 MCP Server、传输方式、启用/运行状态和工具数量。不会返回环境变量或 Header 的值。")
     public String listServers() {
@@ -100,9 +102,9 @@ public final class McpManageTools {
                     + "{\"command\":\"npx\",\"args\":[\"-y\",\"@pkg/server\"]}。"
                     + "服务器名称已存在时不会覆盖，请改用 mcp_server_update。配置可能启动本地程序或连接外部服务，需用户确认。")
     public String addServer(
-            @ToolParam(name = "name", description = "服务器唯一名称") String name,
-            @ToolParam(name = "config_json", description = "单个 MCP Server 的 JSON 配置，支持 command/args/env 或 url/headers") String configJson,
-            @ToolParam(name = "enabled", description = "是否启用；省略时采用 JSON 值，JSON 也未设置时默认 true", required = false) Boolean enabled) {
+            @ToolParam( description = "服务器唯一名称") String name,
+            @ToolParam( description = "单个 MCP Server 的 JSON 配置，支持 command/args/env 或 url/headers") String configJson,
+            @ToolParam( description = "是否启用；省略时采用 JSON 值，JSON 也未设置时默认 true", required = false) Boolean enabled) {
         String serverName = strip(name);
         if (serverName.isEmpty()) {
             return ToolResponse.error("mcp_server_add", "name 不能为空。");
@@ -118,9 +120,9 @@ public final class McpManageTools {
             description = "更新已有 MCP Server 配置并持久化；启用时热重启使配置立即生效。"
                     + "config_json 形态与 mcp_server_add 相同且不得包含 Header 值。不会静默创建不存在的服务器。")
     public String updateServer(
-            @ToolParam(name = "name", description = "已有服务器名称") String name,
-            @ToolParam(name = "config_json", description = "完整的新 JSON 配置，支持 command/args/env 或 url/headers") String configJson,
-            @ToolParam(name = "enabled", description = "是否启用；省略时采用 JSON 值", required = false) Boolean enabled) {
+            @ToolParam( description = "已有服务器名称") String name,
+            @ToolParam( description = "完整的新 JSON 配置，支持 command/args/env 或 url/headers") String configJson,
+            @ToolParam( description = "是否启用；省略时采用 JSON 值", required = false) Boolean enabled) {
         String serverName = strip(name);
         if (store.get(serverName) == null) {
             return ToolResponse.error("mcp_server_update", "未找到 MCP Server: " + serverName);
@@ -131,8 +133,8 @@ public final class McpManageTools {
     @Tool(name = "mcp_server_set_enabled",
             description = "启用或停用一个已配置的 MCP Server。启用会立即启动/发现工具，停用会停止当前连接。")
     public String setEnabled(
-            @ToolParam(name = "name", description = "服务器名称") String name,
-            @ToolParam(name = "enabled", description = "true=启用并启动，false=停用并停止") boolean enabled) {
+            @ToolParam( description = "服务器名称") String name,
+            @ToolParam( description = "true=启用并启动，false=停用并停止") boolean enabled) {
         String serverName = strip(name);
         McpServerConfig existing = store.get(serverName);
         if (existing == null) {
@@ -171,8 +173,8 @@ public final class McpManageTools {
             description = "为已有 HTTP MCP Server 设置一个 Header。系统弹出本地安全输入框读取 Header 值；"
                     + "值不会进入模型消息、工具参数、日志或回复，并只加密保存到项目配置数据库。")
     public String setHeaderSecure(
-            @ToolParam(name = "name", description = "已有 HTTP MCP Server 名称") String name,
-            @ToolParam(name = "header_name", description = "Header 名称，例如 Authorization 或 X-API-Key")
+            @ToolParam( description = "已有 HTTP MCP Server 名称") String name,
+            @ToolParam( description = "Header 名称，例如 Authorization 或 X-API-Key")
             String headerName) {
         String serverName = strip(name);
         String safeHeaderName = strip(headerName);
@@ -228,7 +230,7 @@ public final class McpManageTools {
     @Tool(name = "mcp_server_delete",
             description = "删除一个 MCP Server 配置并停止当前连接。配置删除后不可自动恢复，需用户确认。")
     public String deleteServer(
-            @ToolParam(name = "name", description = "服务器名称") String name) {
+            @ToolParam( description = "服务器名称") String name) {
         String serverName = strip(name);
         if (store.get(serverName) == null) {
             return ToolResponse.error("mcp_server_delete", "未找到 MCP Server: " + serverName);

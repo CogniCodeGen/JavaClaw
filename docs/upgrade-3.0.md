@@ -10,6 +10,7 @@ JavaClaw 3.0 是一次集中架构升级。主要界面布局、CSS、快捷键�
 | 项目版本 | `3.0.0-SNAPSHOT` |
 | 运行环境 | JDK 25、JavaFX 25 |
 | 对象管理 | Spring Framework 7.0.8，不使用 Spring Boot/WebMVC |
+| Agent 底座 | Spring AI 2.0.0 + JavaClaw Agent Framework API 2.0 |
 | 默认数据目录 | `data/`，格式标记 `.javaclaw-format` 的内容为 `3` |
 | Plugin API | 3.0，`plugin.json.apiVersion` 必填 |
 | UI 架构 | FXML + Controller + ViewModel |
@@ -28,6 +29,10 @@ JavaClaw 3.0 是一次集中架构升级。主要界面布局、CSS、快捷键�
 
 ### 业务能力
 
+- Chat、Plan、Schedule、Plugin、Loop、SDD、Workflow 和 SubAgent 统一提交 `RunRequest`；
+- 全系统只保留一个 `AgentEngine`，ReAct、工具调用、暂停恢复、预算、权限和事件存储不再按功能复制；
+- Memory、GEPA、Knowledge、Skill、Plan 和 SubAgent 改为内置系统扩展，辅助模型调用统一经过 `ModelTaskGateway`；
+- Agent/Profile 通过 Schema 驱动的 Agent Studio 编辑、校验和发布，扩展能力安装后自动出现配置面板；
 - Chat、Workspace、Settings、Memory、Knowledge、Skill、MCP、Schedule、Workflow、Plugin 等入口
   统一为 Application Service/UseCase；
 - JavaFX、Shell、Agent Tool 和定时任务共享同一业务入口，不再各自调用 Manager；
@@ -77,7 +82,10 @@ flowchart LR
     V["FXML / Controller / ViewModel"] --> A["Application Service / UseCase"]
     A --> D["Domain / Port"]
     I["Infrastructure Adapter"] --> D
-    S["Shell / Agent Tool / Schedule"] --> A
+    S["Chat / Plan / Schedule / Plugin"] --> C["AgentClient / RunRequest"]
+    C --> K["ExecutionKernel / AgentEngine"]
+    WFE["WorkflowEngine"] -->|"AGENT_RUN"| C
+    K --> SA["Spring AI 2.0 / Tool Gateway"]
     R["Spring Root Context"] --> W["Workspace Child Context"]
     R -. "装配" .-> I
     W -. "装配" .-> V
@@ -94,6 +102,7 @@ flowchart LR
 | Controller 直接切换 FX 线程 | FxDispatcher + UiAsyncAction | 页面状态与迟到回调行为一致 |
 | 各工具自行授权和格式化 | ToolInvocationPipeline | 风险、审计和结果格式统一 |
 | 对话流程集中在大型服务 | TurnPipeline + TurnStage | 阶段可组合、替换和测试 |
+| 多套 Agent/Task Runtime | 唯一 AgentEngine + 两级 Workflow 编排 | 新能力只增加扩展、Schema 和测试 |
 
 启动流程也调整为明确的所有权顺序：
 
@@ -112,7 +121,7 @@ flowchart LR
 | UI | JavaFX 25 + FXML | 从 Java 布局集中切换为声明式 MVC |
 | 依赖管理 | Spring Framework 7.0.8 | 引入 `spring-context`，不引入 Spring Boot |
 | 数据访问 | Spring JDBC/Tx + H2 2.3.232 | 从分散 JDBC 转为共享模板与事务边界 |
-| 智能体 | AgentScope Java 1.0.12 | 保留多模型与 ReAct 编排，在外层增加应用边界 |
+| Agent | Spring AI 2.0.0 + JavaClaw Agent Framework 2.0 | 统一 ReAct、Advisor、Tool Gateway、Run 事件和扩展快照 |
 | 并发 | Virtual Threads + 有界平台线程池 | 按 IO、CPU、Browser、Process 分类限流 |
 | UI 异步 | FxDispatcher + UiAsyncAction | 替代 Controller 内的直接线程和 FX 调度 |
 | 插件 | Plugin API 3.0 | 描述符强校验、统一任务句柄和取消协议 |
@@ -125,7 +134,7 @@ flowchart LR
 
 1. 完全退出 JavaClaw；
 2. 将旧 `data/` 和外部 `plugins/` 完整备份到项目目录之外；
-3. 将旧 `data/` 移出默认路径，3.0 不会自动迁移旧数据库、知识库、记忆或插件；
+3. 将旧 `data/` 移出默认路径；旧框架 Checkpoint 和专用 Runtime 资产不迁移，现有自定义 Agent 只会转为 Agent Studio 草稿，需重新校验发布；
 4. 切换到 3.0 并运行 `mvn clean -Pui-test verify`；
 5. 运行 `mvn javafx:run`，让应用创建新的格式 3 数据目录；
 6. 重新配置模型、工作区、知识、记忆和 Plugin API 3.0 插件。
@@ -169,4 +178,3 @@ flowchart LR
 ```bash
 mvn clean -Pui-test verify
 ```
-

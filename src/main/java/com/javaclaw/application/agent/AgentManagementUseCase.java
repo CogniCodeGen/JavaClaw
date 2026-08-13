@@ -26,7 +26,7 @@ public final class AgentManagementUseCase implements AgentManagementApplicationS
     @Override
     public Catalog catalog() {
         // 适配器定义稳定的内置智能体展示顺序；应用层不能按名称重排并改变既有 UI 语义。
-        return new Catalog(definitions.list());
+        return new Catalog(definitions.list(), definitions.capabilityForms());
     }
 
     @Override
@@ -61,7 +61,8 @@ public final class AgentManagementUseCase implements AgentManagementApplicationS
         }
         definitions.update(new Agent(
                 existing.id(), name, toolName, command.description(), command.systemPrompt(),
-                command.maxIters(), command.enabled(), false));
+                command.maxIters(), command.enabled(), false,
+                command.capabilityBindings()));
         return catalog();
     }
 
