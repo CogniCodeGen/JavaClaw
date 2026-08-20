@@ -100,6 +100,8 @@ import com.javaclaw.ui.javafx.task.SddDetailCellFactory;
 import com.javaclaw.ui.javafx.task.SddTaskCellFactory;
 import com.javaclaw.ui.javafx.task.SddTaskViewFactory;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
+import com.javaclaw.platform.build.ApplicationBuildIdentity;
+import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.platform.http.HttpGateway;
 import com.javaclaw.platform.json.JsonCodec;
 import com.javaclaw.workflow.node.PublicNodeCatalog;
@@ -129,8 +131,14 @@ public class WorkspaceSpringConfiguration {
     @Bean(destroyMethod = "close")
     com.javaclaw.framework.springai.SpringAiModelFactory springAiModelFactory(
             com.javaclaw.config.AgentConfig settings,
-            io.micrometer.observation.ObservationRegistry observations) {
-        return new com.javaclaw.framework.springai.SpringAiModelFactory(settings, observations);
+            io.micrometer.observation.ObservationRegistry observations,
+            com.javaclaw.application.inference.InferenceCatalogPort inferenceCatalog,
+            com.javaclaw.inference.api.LocalInferenceGateway inferenceGateway,
+            com.fasterxml.jackson.databind.ObjectMapper json,
+            WorkspaceContext workspace) {
+        return new com.javaclaw.framework.springai.SpringAiModelFactory(
+                settings, observations, inferenceCatalog, inferenceGateway,
+                json, workspace.workspaceId());
     }
 
     @Bean
@@ -281,8 +289,10 @@ public class WorkspaceSpringConfiguration {
     /** 子 Context 自有加载器，确保工作区 Controller 使用工作区 Bean 并随 Context 失效。 */
     @Bean
     @Primary
-    SpringFxmlLoader workspaceFxmlLoader(AutowireCapableBeanFactory beanFactory) {
-        return new SpringFxmlLoader(beanFactory);
+    SpringFxmlLoader workspaceFxmlLoader(
+            AutowireCapableBeanFactory beanFactory,
+            ApplicationBuildIdentity buildIdentity) {
+        return new SpringFxmlLoader(beanFactory, buildIdentity);
     }
 
     @Bean
@@ -412,8 +422,13 @@ public class WorkspaceSpringConfiguration {
     }
 
     @Bean
-    ModelSettingsPort modelSettingsPort(com.javaclaw.config.AgentConfig config) {
-        return new AgentConfigModelSettingsAdapter(config);
+    ModelSettingsPort modelSettingsPort(
+            com.javaclaw.config.AgentConfig config,
+            com.javaclaw.application.inference.InferenceCatalogPort inference,
+            WorkspaceContext workspace,
+            PlatformTransactionManager transactionManager) {
+        return new AgentConfigModelSettingsAdapter(
+                config, inference, workspace.workspaceId(), transactionManager);
     }
 
     @Bean
@@ -426,8 +441,9 @@ public class WorkspaceSpringConfiguration {
     ModelSettingsProbePort modelSettingsProbePort(
             HttpGateway http,
             JsonCodec json,
-            EmbeddingRuntimeProbePort runtimeEmbedding) {
-        return new HttpModelSettingsProbeAdapter(http, json, runtimeEmbedding);
+            EmbeddingRuntimeProbePort runtimeEmbedding,
+            com.javaclaw.inference.api.LocalInferenceGateway inference) {
+        return new HttpModelSettingsProbeAdapter(http, json, runtimeEmbedding, inference);
     }
 
     @Bean
@@ -518,8 +534,9 @@ public class WorkspaceSpringConfiguration {
 
     @Bean
     SettingsViewFactory settingsViewFactory(
-            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader) {
-        return new SettingsViewFactory(loader);
+            @Qualifier("workspaceFxmlLoader") SpringFxmlLoader loader,
+            FxDispatcher fx) {
+        return new SettingsViewFactory(loader, fx);
     }
 
     @Bean

@@ -74,7 +74,8 @@ class CommunicationSettingsFxmlLoadTest {
         prepareContext();
         var email = add(callFx(() -> context.getBean(CommunicationSettingsSectionFactory.class)
                 .createEmail(ignored -> { })));
-        runFx(() -> render(email));
+        runFx(() -> { render(email); email.controller().reload(); });
+        awaitFx(() -> "smtp.qq.com".equals(text(email, "smtpHostField").getText()));
 
         assertEquals("smtp.qq.com", callFx(() -> text(email, "smtpHostField").getText()));
         PasswordField secret = callFx(() ->
@@ -97,7 +98,8 @@ class CommunicationSettingsFxmlLoadTest {
         AtomicInteger applied = new AtomicInteger();
         var email = add(callFx(() -> context.getBean(CommunicationSettingsSectionFactory.class)
                 .createEmail(ignored -> applied.incrementAndGet())));
-        runFx(() -> render(email));
+        runFx(() -> { render(email); email.controller().reload(); });
+        awaitFx(() -> !text(email, "smtpHostField").getText().isBlank());
         AtomicReference<EmailProbeResult> probe = new AtomicReference<>();
 
         runFx(() -> {
@@ -118,7 +120,8 @@ class CommunicationSettingsFxmlLoadTest {
         var notifications = add(callFx(() ->
                 context.getBean(CommunicationSettingsSectionFactory.class)
                         .createNotifications(ignored -> { })));
-        runFx(() -> render(notifications));
+        runFx(() -> { render(notifications); notifications.controller().reload(); });
+        awaitFx(() -> !text(notifications, "wechatWebhookField").getText().isBlank());
 
         assertFalse(callFx(() -> text(notifications, "wechatWebhookField").isDisabled()));
         assertTrue(callFx(() -> text(notifications, "customWebhookField").isDisabled()));

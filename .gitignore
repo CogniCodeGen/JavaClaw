@@ -26,6 +26,7 @@ replay_pid*
 /workspaces/
 /data/
 /target/
+/sample-plugins/deliverance/target/
 /logs/
 /plugins/
 /.idea/

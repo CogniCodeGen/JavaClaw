@@ -30,6 +30,7 @@ public final class GepaSettingsController implements AutoCloseable {
     private final BehaviorSettingsApplicationService useCases;
     private final GepaSettingsViewModel viewModel = new GepaSettingsViewModel();
     private final UiAsyncAction<SaveResult> mutation;
+    private final UiAsyncAction<GepaSettings> refresh;
     private Consumer<SaveResult> onApplied = ignored -> { };
 
     public GepaSettingsController(
@@ -38,6 +39,7 @@ public final class GepaSettingsController implements AutoCloseable {
             FxDispatcher fx) {
         this.useCases = Objects.requireNonNull(useCases, "useCases");
         mutation = new UiAsyncAction<>(tasks, fx);
+        refresh = new UiAsyncAction<>(tasks, fx);
     }
 
     @FXML
@@ -54,11 +56,10 @@ public final class GepaSettingsController implements AutoCloseable {
                 viewModel.feedbackMaxRoundsProperty());
         feedbackMaxRoundsField.disableProperty().bind(
                 viewModel.adaptivePlanningEnabledProperty().not());
-        viewModel.busyProperty().bind(mutation.busyProperty());
+        viewModel.busyProperty().bind(mutation.busyProperty().or(refresh.busyProperty()));
         SettingsFieldSupport.validateInteger(evaluationIntervalField, 1, 20);
         SettingsFieldSupport.validateDecimal(evaluationThresholdField, 1, 5);
         SettingsFieldSupport.validateInteger(feedbackMaxRoundsField, 0, 10);
-        reload();
     }
 
     public void configure(Consumer<SaveResult> callback) {
@@ -70,8 +71,11 @@ public final class GepaSettingsController implements AutoCloseable {
     }
 
     public void reload() {
-        SettingsFieldSupport.loading(root,
-                () -> viewModel.load(useCases.snapshot().gepa()));
+        refresh.execute(TaskSpec.io("settings-gepa-load"),
+                context -> useCases.snapshot().gepa(),
+                value -> SettingsFieldSupport.loading(root, () -> viewModel.load(value)),
+                failure -> viewModel.errorProperty().set(
+                        SettingsFieldSupport.failureMessage(failure)));
     }
 
     public void save(Consumer<SaveResult> success, Consumer<Throwable> failure) {
@@ -119,9 +123,12 @@ public final class GepaSettingsController implements AutoCloseable {
         return false;
     }
 
+    void deactivate() { refresh.cancel(); }
+
     @Override
     public void close() {
         mutation.close();
+        refresh.close();
         viewModel.busyProperty().unbind();
         feedbackMaxRoundsField.disableProperty().unbind();
         goalDecompositionCheck.selectedProperty().unbindBidirectional(

@@ -54,7 +54,6 @@ public final class FontSettingsController implements AutoCloseable {
         densityButtons = List.of(compactDensityButton, cozyDensityButton,
                 relaxedDensityButton);
         fonts.revisionProperty().addListener(revisionListener);
-        reload();
     }
 
     public FontSettingsViewModel viewModel() {

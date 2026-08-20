@@ -82,8 +82,15 @@ public final class AgentSettingsController implements AutoCloseable {
         editorPanelController.configure(
                 this::saveSelected, this::optimizePrompt, this::deleteSelected);
         editorPanelController.bind(viewModel);
+    }
+
+    /** 面板首次可见后再读取目录，FXML 构造阶段不触发数据访问。 */
+    public void activate() {
+        if (closed.get()) return;
         requestCatalog();
     }
+
+    public void deactivate() { loadAction.cancel(); }
 
     void configure(Runnable configChanged) {
         onConfigChanged = Objects.requireNonNull(configChanged, "configChanged");

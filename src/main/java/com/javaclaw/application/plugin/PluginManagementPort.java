@@ -16,7 +16,11 @@ public interface PluginManagementPort {
 
     void setEnabled(String pluginId, boolean enabled);
 
+    boolean approveServicePlugin(String pluginId);
+
     String install(Path jar);
+
+    default boolean isServicePlugin(String pluginId) { return false; }
 
     boolean uninstall(String pluginId);
 

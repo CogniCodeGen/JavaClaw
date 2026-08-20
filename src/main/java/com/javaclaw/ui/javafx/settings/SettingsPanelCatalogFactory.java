@@ -1,10 +1,7 @@
 package com.javaclaw.ui.javafx.settings;
 
-import com.javaclaw.ui.javafx.agent.AgentSettingsPanel;
 import com.javaclaw.ui.javafx.agent.AgentSettingsPanelFactory;
-import com.javaclaw.ui.javafx.mcp.McpCenterView;
 import com.javaclaw.ui.javafx.mcp.McpCenterViewFactory;
-import com.javaclaw.ui.javafx.site.SiteCredentialPanel;
 import com.javaclaw.ui.javafx.site.SiteCredentialPanelFactory;
 import javafx.scene.Node;
 import javafx.scene.control.ScrollPane;
@@ -13,8 +10,9 @@ import javafx.scene.layout.Region;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Supplier;
 
-/** 创建设置窗口的完整分区目录，集中封装具体 FXML Controller 的适配。 */
+/** 只注册设置分区工厂；FXML 和 Controller 在对应导航首次访问时创建。 */
 public final class SettingsPanelCatalogFactory {
 
     interface Callbacks {
@@ -54,170 +52,189 @@ public final class SettingsPanelCatalogFactory {
 
     SettingsPanelCatalog create(Callbacks callbacks) {
         Objects.requireNonNull(callbacks, "callbacks");
-        List<SettingsPanelCatalog.Panel> panels = new ArrayList<>();
-        List<AutoCloseable> resources = new ArrayList<>();
-        try {
-            addModelPanels(panels, resources, callbacks);
-            addBehaviorPanels(panels, resources, callbacks);
-            addIntegrationPanels(panels, resources, callbacks);
-            addAppearancePanels(panels, resources);
-            addMaintenancePanel(panels, resources);
-            addCommunicationPanels(panels, resources, callbacks);
-            panels.forEach(panel -> constrainContent(panel.category(), panel.root()));
-            return new SettingsPanelCatalog(panels, resources);
-        } catch (RuntimeException | Error failure) {
-            closeCreated(resources, failure);
-            throw failure;
-        }
+        List<SettingsPanelCatalog.Definition> definitions = new ArrayList<>();
+        addModelPanels(definitions, callbacks);
+        addBehaviorPanels(definitions, callbacks);
+        addIntegrationPanels(definitions, callbacks);
+        addAppearancePanels(definitions);
+        addMaintenancePanel(definitions);
+        addCommunicationPanels(definitions, callbacks);
+        return new SettingsPanelCatalog(definitions);
     }
 
-    private void addModelPanels(List<SettingsPanelCatalog.Panel> panels,
-                                List<AutoCloseable> resources, Callbacks callbacks) {
-        var model = track(resources, models.createModel(result -> callbacks.applied(
-                SettingsCategory.MODEL, result.message(), result.runtimeRefreshRequired())));
-        panels.add(panel(SettingsCategory.MODEL, model.root(),
-                SettingsPanelActions.asyncSaveAndTest(
-                        (success, failure) -> model.controller().save(ignored -> success.run(), failure),
-                        callbacks::modelSavedTip,
-                        () -> model.controller().probe(
-                                result -> callbacks.testFinished(SettingsCategory.MODEL,
-                                        result.message(), result.succeeded()),
-                                failure -> callbacks.testFinished(SettingsCategory.MODEL,
-                                        "连接失败: " + SettingsFieldSupport.failureMessage(failure), false)),
-                        "测试连接"), model.controller()::reload));
-
-        var tiers = track(resources, models.createTiers(result -> callbacks.applied(
-                SettingsCategory.TIERED_MODEL, result.message(), result.runtimeRefreshRequired())));
-        panels.add(panel(SettingsCategory.TIERED_MODEL, tiers.root(),
-                SettingsPanelActions.asyncSave(
-                        (success, failure) -> tiers.controller().save(ignored -> success.run(), failure),
-                        callbacks::modelSavedTip), tiers.controller()::reload));
-
-        var embedding = track(resources, models.createEmbedding(result -> callbacks.applied(
-                SettingsCategory.EMBEDDING, result.message(), result.runtimeRefreshRequired())));
-        panels.add(panel(SettingsCategory.EMBEDDING, embedding.root(),
-                SettingsPanelActions.asyncSaveAndTest(
-                        (success, failure) -> embedding.controller().save(
-                                ignored -> success.run(), failure),
-                        callbacks::modelSavedTip,
-                        () -> embedding.controller().probe(
-                                result -> callbacks.testFinished(SettingsCategory.EMBEDDING,
-                                        result.message(), result.succeeded()),
-                                failure -> callbacks.testFinished(SettingsCategory.EMBEDDING,
-                                        "嵌入测试失败: "
-                                                + SettingsFieldSupport.failureMessage(failure), false)),
-                        "测试嵌入"), embedding.controller()::reload));
-
-        AgentSettingsPanel agent = track(resources,
-                agents.create(callbacks::runtimeConfigurationChanged));
-        panels.add(panel(SettingsCategory.AGENT, agent.root(),
-                SettingsPanelActions.none(), null));
+    private void addModelPanels(
+            List<SettingsPanelCatalog.Definition> values, Callbacks callbacks) {
+        values.add(definition(SettingsCategory.MODEL, () -> {
+            var view = models.createModel(result -> callbacks.applied(
+                    SettingsCategory.MODEL, result.message(), result.runtimeRefreshRequired()),
+                    callbacks::runtimeConfigurationChanged);
+            return panel(SettingsCategory.MODEL, view.root(),
+                    SettingsPanelActions.asyncSaveAndTest(
+                            (success, failure) -> view.controller().save(ignored -> success.run(), failure),
+                            callbacks::modelSavedTip,
+                            () -> view.controller().probe(
+                                    result -> callbacks.testFinished(SettingsCategory.MODEL,
+                                            result.message(), result.succeeded()),
+                                    failure -> callbacks.testFinished(SettingsCategory.MODEL,
+                                            "连接失败: " + SettingsFieldSupport.failureMessage(failure), false)),
+                            "测试连接"), view.controller()::reload,
+                    view.controller()::deactivate, view);
+        }));
+        values.add(definition(SettingsCategory.TIERED_MODEL, () -> {
+            var view = models.createTiers(result -> callbacks.applied(
+                    SettingsCategory.TIERED_MODEL, result.message(), result.runtimeRefreshRequired()),
+                    callbacks::runtimeConfigurationChanged);
+            return panel(SettingsCategory.TIERED_MODEL, view.root(),
+                    SettingsPanelActions.asyncSave(
+                            (success, failure) -> view.controller().save(ignored -> success.run(), failure),
+                            callbacks::modelSavedTip), view.controller()::reload,
+                    view.controller()::deactivate, view);
+        }));
+        values.add(definition(SettingsCategory.EMBEDDING, () -> {
+            var view = models.createEmbedding(result -> callbacks.applied(
+                    SettingsCategory.EMBEDDING, result.message(), result.runtimeRefreshRequired()),
+                    callbacks::runtimeConfigurationChanged);
+            return panel(SettingsCategory.EMBEDDING, view.root(),
+                    SettingsPanelActions.asyncSaveAndTest(
+                            (success, failure) -> view.controller().save(ignored -> success.run(), failure),
+                            callbacks::modelSavedTip,
+                            () -> view.controller().probe(
+                                    result -> callbacks.testFinished(SettingsCategory.EMBEDDING,
+                                            result.message(), result.succeeded()),
+                                    failure -> callbacks.testFinished(SettingsCategory.EMBEDDING,
+                                            "嵌入测试失败: "
+                                                    + SettingsFieldSupport.failureMessage(failure), false)),
+                            "测试嵌入"), view.controller()::reload,
+                    view.controller()::deactivate, view);
+        }));
+        values.add(definition(SettingsCategory.AGENT, () -> {
+            var view = agents.create(callbacks::runtimeConfigurationChanged);
+            return panel(SettingsCategory.AGENT, view.root(), SettingsPanelActions.none(),
+                    view::activate, view::deactivate, view);
+        }));
     }
 
-    private void addBehaviorPanels(List<SettingsPanelCatalog.Panel> panels,
-                                   List<AutoCloseable> resources, Callbacks callbacks) {
-        var gepa = track(resources, behavior.createGepa(result -> callbacks.applied(
-                SettingsCategory.GEPA, result.message(), result.runtimeRefreshRequired())));
-        panels.add(panel(SettingsCategory.GEPA, gepa.root(),
-                SettingsPanelActions.asyncSave(
-                        (success, failure) -> gepa.controller().save(ignored -> success.run(), failure),
-                        callbacks::modelSavedTip), gepa.controller()::reload));
-
-        var evolution = track(resources, behavior.createSkillEvolution(result -> callbacks.applied(
-                SettingsCategory.SKILL_EVOLUTION, result.message(),
-                result.runtimeRefreshRequired())));
-        panels.add(panel(SettingsCategory.SKILL_EVOLUTION, evolution.root(),
-                SettingsPanelActions.asyncSave(
-                        (success, failure) -> evolution.controller().save(
-                                ignored -> success.run(), failure),
-                        () -> "✓ 已保存，下一轮对话生效"), evolution.controller()::reload));
-
-        var general = track(resources, behavior.createGeneral(result -> callbacks.applied(
-                SettingsCategory.GENERAL, result.message(), result.runtimeRefreshRequired())));
-        panels.add(panel(SettingsCategory.GENERAL, general.root(),
-                SettingsPanelActions.asyncSave(
-                        (success, failure) -> general.controller().save(
-                                ignored -> success.run(), failure),
-                        () -> "✓ 已保存"), general.controller()::reload));
+    private void addBehaviorPanels(
+            List<SettingsPanelCatalog.Definition> values, Callbacks callbacks) {
+        values.add(definition(SettingsCategory.GEPA, () -> {
+            var view = behavior.createGepa(result -> callbacks.applied(
+                    SettingsCategory.GEPA, result.message(), result.runtimeRefreshRequired()));
+            return panel(SettingsCategory.GEPA, view.root(), SettingsPanelActions.asyncSave(
+                    (success, failure) -> view.controller().save(ignored -> success.run(), failure),
+                    callbacks::modelSavedTip), view.controller()::reload,
+                    view.controller()::deactivate, view);
+        }));
+        values.add(definition(SettingsCategory.SKILL_EVOLUTION, () -> {
+            var view = behavior.createSkillEvolution(result -> callbacks.applied(
+                    SettingsCategory.SKILL_EVOLUTION, result.message(), result.runtimeRefreshRequired()));
+            return panel(SettingsCategory.SKILL_EVOLUTION, view.root(), SettingsPanelActions.asyncSave(
+                    (success, failure) -> view.controller().save(ignored -> success.run(), failure),
+                    () -> "✓ 已保存，下一轮对话生效"), view.controller()::reload,
+                    view.controller()::deactivate, view);
+        }));
+        values.add(definition(SettingsCategory.GENERAL, () -> {
+            var view = behavior.createGeneral(result -> callbacks.applied(
+                    SettingsCategory.GENERAL, result.message(), result.runtimeRefreshRequired()));
+            return panel(SettingsCategory.GENERAL, view.root(), SettingsPanelActions.asyncSave(
+                    (success, failure) -> view.controller().save(ignored -> success.run(), failure),
+                    () -> "✓ 已保存"), view.controller()::reload,
+                    view.controller()::deactivate, view);
+        }));
     }
 
-    private void addIntegrationPanels(List<SettingsPanelCatalog.Panel> panels,
-                                      List<AutoCloseable> resources, Callbacks callbacks) {
-        McpCenterView mcpPanel = track(resources,
-                mcp.createPanel(callbacks::runtimeConfigurationChanged));
-        panels.add(panel(SettingsCategory.MCP, mcpPanel.root(), SettingsPanelActions.none(), null));
-
-        SiteCredentialPanel sitePanel = track(resources, sites.create());
-        panels.add(panel(SettingsCategory.SITE, sitePanel.root(), SettingsPanelActions.none(), null));
+    private void addIntegrationPanels(
+            List<SettingsPanelCatalog.Definition> values, Callbacks callbacks) {
+        values.add(definition(SettingsCategory.MCP, () -> {
+            var view = mcp.createPanel(callbacks::runtimeConfigurationChanged);
+            return panel(SettingsCategory.MCP, view.root(), SettingsPanelActions.none(),
+                    view::activate, view::deactivate, view);
+        }));
+        values.add(definition(SettingsCategory.SITE, () -> {
+            var view = sites.create();
+            return panel(SettingsCategory.SITE, view.root(), SettingsPanelActions.none(),
+                    view::activate, view::deactivate, view);
+        }));
     }
 
-    private void addAppearancePanels(List<SettingsPanelCatalog.Panel> panels,
-                                     List<AutoCloseable> resources) {
-        var themes = track(resources, appearance.createAppearance());
-        panels.add(panel(SettingsCategory.APPEARANCE, themes.root(),
-                SettingsPanelActions.none(), themes.controller()::reload));
-
-        var fonts = track(resources, appearance.createFonts());
-        panels.add(panel(SettingsCategory.FONT, fonts.root(),
-                SettingsPanelActions.none(), fonts.controller()::reload));
+    private void addAppearancePanels(List<SettingsPanelCatalog.Definition> values) {
+        values.add(definition(SettingsCategory.APPEARANCE, () -> {
+            var view = appearance.createAppearance();
+            return panel(SettingsCategory.APPEARANCE, view.root(), SettingsPanelActions.none(),
+                    view.controller()::reload, view);
+        }));
+        values.add(definition(SettingsCategory.FONT, () -> {
+            var view = appearance.createFonts();
+            return panel(SettingsCategory.FONT, view.root(), SettingsPanelActions.none(),
+                    view.controller()::reload, view);
+        }));
     }
 
-    private void addMaintenancePanel(List<SettingsPanelCatalog.Panel> panels,
-                                     List<AutoCloseable> resources) {
-        var data = track(resources, maintenance.createTestDataMaintenance());
-        panels.add(panel(SettingsCategory.TEST_DATA, data.root(), SettingsPanelActions.none(), null));
+    private void addMaintenancePanel(List<SettingsPanelCatalog.Definition> values) {
+        values.add(definition(SettingsCategory.TEST_DATA, () -> {
+            var view = maintenance.createTestDataMaintenance();
+            return panel(SettingsCategory.TEST_DATA, view.root(), SettingsPanelActions.none(), null, view);
+        }));
     }
 
-    private void addCommunicationPanels(List<SettingsPanelCatalog.Panel> panels,
-                                        List<AutoCloseable> resources, Callbacks callbacks) {
-        var email = track(resources, communication.createEmail(result -> callbacks.applied(
-                SettingsCategory.EMAIL, result.message(), false)));
-        panels.add(panel(SettingsCategory.EMAIL, email.root(),
-                SettingsPanelActions.asyncSaveAndTest(
-                        (success, failure) -> email.controller().save(ignored -> success.run(), failure),
-                        () -> "✓ 已保存",
-                        () -> email.controller().probe(
-                                result -> callbacks.testFinished(SettingsCategory.EMAIL,
-                                        result.message(), result.succeeded()),
-                                failure -> callbacks.testFinished(SettingsCategory.EMAIL,
-                                        "邮件测试失败: "
-                                                + SettingsFieldSupport.failureMessage(failure), false)),
-                        "测试收发"), email.controller()::reload));
+    private void addCommunicationPanels(
+            List<SettingsPanelCatalog.Definition> values, Callbacks callbacks) {
+        values.add(definition(SettingsCategory.EMAIL, () -> {
+            var view = communication.createEmail(result -> callbacks.applied(
+                    SettingsCategory.EMAIL, result.message(), false));
+            return panel(SettingsCategory.EMAIL, view.root(), SettingsPanelActions.asyncSaveAndTest(
+                    (success, failure) -> view.controller().save(ignored -> success.run(), failure),
+                    () -> "✓ 已保存",
+                    () -> view.controller().probe(
+                            result -> callbacks.testFinished(SettingsCategory.EMAIL,
+                                    result.message(), result.succeeded()),
+                            failure -> callbacks.testFinished(SettingsCategory.EMAIL,
+                                    "邮件测试失败: " + SettingsFieldSupport.failureMessage(failure), false)),
+                    "测试收发"), view.controller()::reload,
+                    view.controller()::deactivate, view);
+        }));
+        values.add(definition(SettingsCategory.NOTIFICATION, () -> {
+            var view = communication.createNotifications(result -> callbacks.applied(
+                    SettingsCategory.NOTIFICATION, result.message(), false));
+            return panel(SettingsCategory.NOTIFICATION, view.root(), SettingsPanelActions.asyncSave(
+                    (success, failure) -> view.controller().save(ignored -> success.run(), failure),
+                    () -> "✓ 已保存"), view.controller()::reload,
+                    view.controller()::deactivate, view);
+        }));
+    }
 
-        var notifications = track(resources, communication.createNotifications(
-                result -> callbacks.applied(SettingsCategory.NOTIFICATION,
-                        result.message(), false)));
-        panels.add(panel(SettingsCategory.NOTIFICATION, notifications.root(),
-                SettingsPanelActions.asyncSave(
-                        (success, failure) -> notifications.controller().save(
-                                ignored -> success.run(), failure),
-                        () -> "✓ 已保存"), notifications.controller()::reload));
+    private static SettingsPanelCatalog.Definition definition(
+            SettingsCategory category, Supplier<SettingsPanelCatalog.Panel> factory) {
+        return new SettingsPanelCatalog.Definition(category, () -> {
+            SettingsPanelCatalog.Panel panel = factory.get();
+            constrainContent(panel.category(), panel.root());
+            return panel;
+        });
     }
 
     private static SettingsPanelCatalog.Panel panel(
-            SettingsCategory category, Node root, SettingsPanelActions actions, Runnable reload) {
-        return new SettingsPanelCatalog.Panel(category, root, actions, reload);
+            SettingsCategory category,
+            Node root,
+            SettingsPanelActions actions,
+            Runnable reload,
+            AutoCloseable resource) {
+        return new SettingsPanelCatalog.Panel(category, root, actions, reload, resource);
     }
 
-    private static <T extends AutoCloseable> T track(List<AutoCloseable> resources, T resource) {
-        resources.add(resource);
-        return resource;
+    private static SettingsPanelCatalog.Panel panel(
+            SettingsCategory category,
+            Node root,
+            SettingsPanelActions actions,
+            Runnable reload,
+            Runnable deactivate,
+            AutoCloseable resource) {
+        return new SettingsPanelCatalog.Panel(
+                category, root, actions, reload, deactivate, resource);
     }
 
     private static void constrainContent(SettingsCategory category, Node panel) {
         if (category == SettingsCategory.AGENT) return;
         if (panel instanceof ScrollPane scrollPane && scrollPane.getContent() instanceof Region content) {
             content.setMaxWidth(760);
-        }
-    }
-
-    private static void closeCreated(List<AutoCloseable> resources, Throwable failure) {
-        for (int i = resources.size() - 1; i >= 0; i--) {
-            try {
-                resources.get(i).close();
-            } catch (Throwable closeFailure) {
-                failure.addSuppressed(closeFailure);
-            }
         }
     }
 }

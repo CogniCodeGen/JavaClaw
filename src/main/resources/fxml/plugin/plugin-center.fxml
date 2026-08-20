@@ -22,42 +22,47 @@
         <ToggleGroup fx:id="tabGroup"/>
     </fx:define>
     <children>
-        <VBox prefWidth="210.0" minWidth="180.0" styleClass="modal-left-pane">
+        <VBox prefWidth="228.0" minWidth="210.0" styleClass="modal-left-pane">
             <children>
-                <Label text="插件中心" styleClass="modal-left-title">
-                    <padding><Insets top="18.0" right="16.0" bottom="10.0" left="16.0"/></padding>
-                </Label>
-                <VBox>
+                <VBox spacing="4.0" styleClass="plugin-nav-heading">
+                    <padding><Insets top="20.0" right="18.0" bottom="14.0" left="18.0"/></padding>
+                    <children>
+                        <Label text="插件中心" styleClass="modal-left-title"/>
+                        <Label text="扩展 JavaClaw 的能力" styleClass="sec-hint"/>
+                    </children>
+                </VBox>
+                <VBox spacing="3.0" styleClass="plugin-nav-list">
                     <padding><Insets right="12.0" bottom="12.0" left="12.0"/></padding>
                     <children>
-                        <HBox spacing="3.0" styleClass="seg-container">
-                            <children>
-                                <ToggleButton fx:id="installedTab" text="已安装" selected="true"
-                                              maxWidth="Infinity" HBox.hgrow="ALWAYS"
-                                              toggleGroup="$tabGroup" styleClass="toggle-button, seg-btn"
-                                              onAction="#installedTabRequested"/>
-                                <ToggleButton fx:id="marketTab" text="市场" maxWidth="Infinity"
-                                              HBox.hgrow="ALWAYS" toggleGroup="$tabGroup"
-                                              styleClass="toggle-button, seg-btn"
-                                              onAction="#marketTabRequested"/>
-                                <ToggleButton fx:id="agentExtensionsTab" text="Agent 扩展"
-                                              maxWidth="Infinity" HBox.hgrow="ALWAYS"
-                                              toggleGroup="$tabGroup"
-                                              styleClass="toggle-button, seg-btn"
-                                              onAction="#agentExtensionsTabRequested"/>
-                            </children>
-                        </HBox>
+                        <Label text="插件" styleClass="modal-nav-group"/>
+                        <ToggleButton fx:id="installedTab" text="已安装插件" selected="true"
+                                      maxWidth="Infinity" toggleGroup="$tabGroup"
+                                      styleClass="toggle-button, modal-nav-btn"
+                                      onAction="#installedTabRequested"/>
+                        <ToggleButton fx:id="marketTab" text="插件市场" maxWidth="Infinity"
+                                      toggleGroup="$tabGroup"
+                                      styleClass="toggle-button, modal-nav-btn"
+                                      onAction="#marketTabRequested"/>
+                        <Label text="扩展能力" styleClass="modal-nav-group"/>
+                        <ToggleButton fx:id="agentExtensionsTab" text="Agent 扩展"
+                                      maxWidth="Infinity" toggleGroup="$tabGroup"
+                                      styleClass="toggle-button, modal-nav-btn"
+                                      onAction="#agentExtensionsTabRequested"/>
+                        <ToggleButton fx:id="servicePluginsTab" text="服务插件"
+                                      maxWidth="Infinity" toggleGroup="$tabGroup"
+                                      styleClass="toggle-button, modal-nav-btn"
+                                      onAction="#servicePluginsTabRequested"/>
                     </children>
                 </VBox>
                 <Region VBox.vgrow="ALWAYS"/>
                 <VBox spacing="6.0" styleClass="plugin-nav-bottom">
                     <padding><Insets top="10.0" right="12.0" bottom="12.0" left="12.0"/></padding>
                     <children>
-                        <Button fx:id="installButton" text="从文件安装…" maxWidth="Infinity"
+                        <Button fx:id="installButton" text="＋ 从文件安装…" maxWidth="Infinity"
                                 accessibleText="从 jar 文件安装插件"
                                 styleClass="button, jc-btn, jc-btn-soft, jc-btn-sm"
                                 onAction="#installRequested"/>
-                        <Button fx:id="refreshButton" text="⟳ 刷新目录" maxWidth="Infinity"
+                        <Button fx:id="refreshButton" text="刷新当前页面" maxWidth="Infinity"
                                 accessibleText="刷新插件目录"
                                 styleClass="button, jc-btn, jc-btn-ghost, jc-btn-sm"
                                 onAction="#refreshRequested"/>
@@ -69,18 +74,30 @@
             <children>
                 <StackPane styleClass="modal-content-area" VBox.vgrow="ALWAYS">
                     <children>
-                        <VBox fx:id="listView">
+                        <VBox fx:id="listView" spacing="12.0">
                             <children>
-                                <HBox alignment="CENTER_LEFT" spacing="12.0">
-                                    <padding><Insets top="14.0" right="22.0" bottom="6.0" left="22.0"/></padding>
+                                <VBox spacing="12.0" styleClass="plugin-page-header">
+                                    <padding><Insets top="22.0" right="24.0" bottom="0.0" left="24.0"/></padding>
                                     <children>
-                                        <TextField fx:id="searchField" promptText="⌕  搜索插件…"
+                                        <HBox alignment="CENTER_LEFT" spacing="12.0">
+                                            <children>
+                                                <VBox spacing="3.0" HBox.hgrow="ALWAYS">
+                                                    <children>
+                                                        <Label text="已安装插件" styleClass="plugin-page-title"/>
+                                                        <Label text="管理进程内插件、权限和工作区启用状态"
+                                                               styleClass="sec-hint"/>
+                                                    </children>
+                                                </VBox>
+                                                <Label fx:id="countLabel"
+                                                       styleClass="jc-badge, jc-badge-soft"/>
+                                            </children>
+                                        </HBox>
+                                        <TextField fx:id="searchField" promptText="搜索插件名称或描述"
                                                    accessibleText="搜索已安装插件"
-                                                   styleClass="text-input, text-field, settings-field"
-                                                   HBox.hgrow="ALWAYS"/>
-                                        <Label fx:id="countLabel" styleClass="sec-hint"/>
+                                                   maxWidth="520.0"
+                                                   styleClass="text-input, text-field, settings-field"/>
                                     </children>
-                                </HBox>
+                                </VBox>
                                 <StackPane VBox.vgrow="ALWAYS">
                                     <children>
                                         <ScrollPane fx:id="cardScroll" fitToWidth="true"
@@ -114,19 +131,20 @@
                             </children>
                         </VBox>
                         <VBox fx:id="agentExtensionView" visible="false" managed="false"
-                              spacing="12.0">
-                            <padding><Insets top="18.0" right="22.0" bottom="18.0" left="22.0"/></padding>
+                              spacing="16.0">
+                            <padding><Insets top="22.0" right="24.0" bottom="20.0" left="24.0"/></padding>
                             <children>
                                 <HBox alignment="CENTER_LEFT" spacing="12.0">
                                     <children>
                                         <VBox spacing="4.0" HBox.hgrow="ALWAYS">
                                             <children>
-                                                <Label text="Agent 扩展" styleClass="sec-title"/>
+                                                <Label text="Agent 扩展" styleClass="plugin-page-title"/>
                                                 <Label text="外部 JAR 以内容哈希缓存；停用只影响新 Run，已锁定 Run 继续使用原 artifact。"
                                                        wrapText="true" styleClass="sec-hint"/>
                                             </children>
                                         </VBox>
-                                        <Label fx:id="agentExtensionCount" styleClass="sec-hint"/>
+                                        <Label fx:id="agentExtensionCount"
+                                               styleClass="jc-badge, jc-badge-soft"/>
                                         <Button fx:id="installAgentExtensionButton"
                                                 text="从 JAR 安装…"
                                                 styleClass="button, jc-btn, jc-btn-primary, jc-btn-sm"
@@ -144,6 +162,37 @@
                                 </ScrollPane>
                             </children>
                         </VBox>
+                        <VBox fx:id="servicePluginView" visible="false" managed="false"
+                              spacing="16.0">
+                            <padding><Insets top="22.0" right="24.0" bottom="20.0" left="24.0"/></padding>
+                            <children>
+                                <HBox alignment="CENTER_LEFT" spacing="12.0">
+                                    <children>
+                                        <VBox spacing="4.0" HBox.hgrow="ALWAYS">
+                                            <children>
+                                                <Label text="服务插件" styleClass="plugin-page-title"/>
+                                                <Label text="重型能力在独立 JVM 中运行，与 Desktop 通过鉴权 Socket 通信"
+                                                       wrapText="true" styleClass="sec-hint"/>
+                                            </children>
+                                        </VBox>
+                                        <Label fx:id="servicePluginCount"
+                                               styleClass="jc-badge, jc-badge-soft"/>
+                                    </children>
+                                </HBox>
+                                <ScrollPane fitToWidth="true" fitToHeight="true" hbarPolicy="NEVER"
+                                            styleClass="scroll-pane, settings-scroll-pane"
+                                            VBox.vgrow="ALWAYS">
+                                    <content>
+                                        <VBox fx:id="servicePluginList" spacing="12.0"
+                                              styleClass="service-plugin-list">
+                                            <padding><Insets top="8.0" right="4.0" bottom="16.0" left="4.0"/></padding>
+                                        </VBox>
+                                    </content>
+                                </ScrollPane>
+                            </children>
+                        </VBox>
+                        <fx:include fx:id="servicePluginConfiguration"
+                                    source="service-plugin-configuration.fxml"/>
                         <fx:include fx:id="detailPanel" source="plugin-detail.fxml"/>
                         <StackPane fx:id="loadingOverlay" visible="false" managed="false"
                                    styleClass="loading-overlay" accessibleText="插件操作进行中">
@@ -153,7 +202,8 @@
                 </StackPane>
                 <HBox alignment="CENTER_LEFT" spacing="10.0" styleClass="modal-foot">
                     <children>
-                        <Label fx:id="directoryLabel" styleClass="sec-hint"/>
+                        <Label fx:id="directoryLabel" maxWidth="560.0" textOverrun="CENTER_ELLIPSIS"
+                               styleClass="sec-hint, plugin-directory-label"/>
                         <Label fx:id="statusLabel" visible="false" managed="false"
                                styleClass="sec-hint"/>
                         <Region HBox.hgrow="ALWAYS"/>

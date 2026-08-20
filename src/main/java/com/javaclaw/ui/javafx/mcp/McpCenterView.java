@@ -21,15 +21,21 @@ public final class McpCenterView implements AutoCloseable {
 
     public HBox root() { return handle.root(); }
 
+    public void activate() { controller().activate(); }
+
+    public void deactivate() { controller().deactivate(); }
+
     public void show() {
         if (stage == null) throw new IllegalStateException("嵌入式 MCP 面板不能作为窗口显示");
         ensureOpen();
+        activate();
         stage.show();
     }
 
     public void showAndWait() {
         if (stage == null) throw new IllegalStateException("嵌入式 MCP 面板不能作为窗口显示");
         ensureOpen();
+        activate();
         stage.showAndWait();
     }
 

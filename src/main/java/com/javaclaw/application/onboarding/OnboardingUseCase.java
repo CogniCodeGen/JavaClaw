@@ -13,31 +13,31 @@ import java.net.URI;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CancellationException;
+import com.javaclaw.application.settings.DefaultModelProviderCatalog;
+import com.javaclaw.application.settings.ModelProviderCatalog;
 
 /** 首次向导校验、保存与连接探测用例。 */
 public final class OnboardingUseCase implements OnboardingApplicationService {
 
-    private static final List<Provider> PROVIDERS = List.of(
-            new Provider("DashScope", "阿里通义千问", "阿里云 DashScope，中文场景推荐",
-                    "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus", false, true),
-            new Provider("OpenAI", "OpenAI / 兼容 API",
-                    "GPT、DeepSeek、GLM、LMStudio 等 OpenAI 兼容接口",
-                    "https://api.openai.com/v1", "gpt-4o-mini", false, false),
-            new Provider("Anthropic", "Anthropic Claude", "Claude 4 系列，推理与长上下文强",
-                    "https://api.anthropic.com", "claude-sonnet-4-6", false, false),
-            new Provider("Gemini", "Google Gemini", "Gemini 2.x 系列，多模态",
-                    "https://generativelanguage.googleapis.com", "gemini-2.0-flash", false, false),
-            new Provider("Ollama", "Ollama（本地）", "本地模型，隐私敏感场景推荐，无需 API Key",
-                    "http://localhost:11434/v1", "qwen2.5:7b", true, true));
-
     private final OnboardingSettingsPort settings;
     private final ConnectionProbePort connection;
+    private final ModelProviderCatalog catalog;
+    private final List<Provider> providers;
 
     public OnboardingUseCase(
             OnboardingSettingsPort settings,
             ConnectionProbePort connection) {
+        this(settings, connection, new DefaultModelProviderCatalog());
+    }
+
+    public OnboardingUseCase(OnboardingSettingsPort settings, ConnectionProbePort connection,
+                             ModelProviderCatalog catalog) {
         this.settings = Objects.requireNonNull(settings, "settings");
         this.connection = Objects.requireNonNull(connection, "connection");
+        this.catalog = Objects.requireNonNull(catalog, "catalog");
+        this.providers = this.catalog.providers().stream()
+                .filter(provider -> provider.capabilities().contains(ModelProviderCatalog.Capability.CHAT))
+                .map(this::onboardingProvider).toList();
     }
 
     @Override
@@ -47,19 +47,30 @@ public final class OnboardingUseCase implements OnboardingApplicationService {
 
     @Override
     public List<Provider> providers() {
-        return PROVIDERS;
+        return providers;
     }
 
     @Override
     public ProviderSetup save(ProviderSetupCommand command) {
         Objects.requireNonNull(command, "command");
         Provider provider = requireProvider(command.providerId());
-        String baseUrl = required(command.baseUrl(), "Base URL 不能为空");
-        validateHttpUri(baseUrl);
-        String model = required(command.modelName(), "模型名称不能为空");
-        String apiKey = provider.local()
-                ? "not-needed" : required(command.apiKey(), "云端模型需要填写 API Key");
-        ProviderSetup setup = new ProviderSetup(provider, baseUrl, model);
+        String managedProfile = command.managedProfileId() == null ? "" : command.managedProfileId().strip();
+        String baseUrl;
+        String model;
+        String apiKey;
+        if (provider.managed()) {
+            managedProfile = required(managedProfile, "请先准备并选择通过验证的本地模型档案");
+            baseUrl = "";
+            model = managedProfile;
+            apiKey = "not-needed";
+        } else {
+            baseUrl = required(command.baseUrl(), "Base URL 不能为空");
+            validateHttpUri(baseUrl);
+            model = required(command.modelName(), "模型名称不能为空");
+            apiKey = provider.local() ? "not-needed"
+                    : required(command.apiKey(), "云端模型需要填写 API Key");
+        }
+        ProviderSetup setup = new ProviderSetup(provider, baseUrl, model, managedProfile);
         settings.save(setup, apiKey);
         return setup;
     }
@@ -68,6 +79,9 @@ public final class OnboardingUseCase implements OnboardingApplicationService {
     public ProbeResult probe(ProbeCommand command) {
         Objects.requireNonNull(command, "command");
         Provider provider = requireProvider(command.providerId());
+        if (provider.managed()) {
+            throw new ValidationException("Deliverance 档案必须通过实际加载探测，不能使用 HTTP 连接测试");
+        }
         String baseUrl = required(command.baseUrl(), "请先填写 Base URL");
         URI probeUri = probeUri(provider, baseUrl);
         try {
@@ -107,11 +121,22 @@ public final class OnboardingUseCase implements OnboardingApplicationService {
         }
     }
 
-    private static Provider requireProvider(String id) {
-        return PROVIDERS.stream()
-                .filter(provider -> provider.id().equals(id))
+    private Provider requireProvider(String id) {
+        String normalized = catalog.normalizeId(id);
+        return providers.stream()
+                .filter(provider -> catalog.normalizeId(provider.id()).equals(normalized))
                 .findFirst()
                 .orElseThrow(() -> new ValidationException("请选择模型提供商"));
+    }
+
+    private Provider onboardingProvider(ModelProviderCatalog.Provider provider) {
+        boolean managed = provider.localManaged();
+        boolean local = managed || "ollama".equals(provider.id());
+        boolean recommended = managed || "dashscope".equals(provider.id());
+        // 首启向导的 Provider.id 是历史公开契约；目录和持久化层仍统一使用稳定小写 ID。
+        String compatibilityId = provider.localManaged() ? provider.id() : provider.displayName();
+        return new Provider(compatibilityId, provider.displayName(), provider.description(),
+                provider.defaultBaseUrl(), provider.defaultChatModel(), local, managed, recommended);
     }
 
     private static String required(String value, String message) {

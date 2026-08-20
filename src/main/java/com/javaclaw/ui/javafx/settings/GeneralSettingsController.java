@@ -33,6 +33,7 @@ public final class GeneralSettingsController implements AutoCloseable {
     private final ThemeSelectionService themes;
     private final GeneralSettingsViewModel viewModel = new GeneralSettingsViewModel();
     private final UiAsyncAction<SaveResult> mutation;
+    private final UiAsyncAction<GeneralSettings> refresh;
     private final ChangeListener<String> currentThemeListener =
             (ignored, previous, current) -> selectCurrentTheme(current);
     private Consumer<SaveResult> onApplied = ignored -> { };
@@ -45,6 +46,7 @@ public final class GeneralSettingsController implements AutoCloseable {
         this.useCases = Objects.requireNonNull(useCases, "useCases");
         this.themes = Objects.requireNonNull(themes, "themes");
         mutation = new UiAsyncAction<>(tasks, fx);
+        refresh = new UiAsyncAction<>(tasks, fx);
     }
 
     @FXML
@@ -62,9 +64,8 @@ public final class GeneralSettingsController implements AutoCloseable {
                 viewModel.minimizeToTrayOnCloseProperty());
         taskRiskAutoApproveCheck.selectedProperty().bindBidirectional(
                 viewModel.taskRiskAutoApproveEnabledProperty());
-        viewModel.busyProperty().bind(mutation.busyProperty());
+        viewModel.busyProperty().bind(mutation.busyProperty().or(refresh.busyProperty()));
         themes.currentThemeProperty().addListener(currentThemeListener);
-        reload();
     }
 
     public void configure(Consumer<SaveResult> callback) {
@@ -76,8 +77,12 @@ public final class GeneralSettingsController implements AutoCloseable {
     }
 
     public void reload() {
-        SettingsFieldSupport.loading(root, () -> viewModel.load(
-                useCases.snapshot().general(), themes.availableThemes(), themes.currentTheme()));
+        refresh.execute(TaskSpec.io("settings-general-load"),
+                context -> useCases.snapshot().general(),
+                value -> SettingsFieldSupport.loading(root, () -> viewModel.load(
+                        value, themes.availableThemes(), themes.currentTheme())),
+                failure -> viewModel.errorProperty().set(
+                        SettingsFieldSupport.failureMessage(failure)));
     }
 
     public void save(Consumer<SaveResult> success, Consumer<Throwable> failure) {
@@ -138,9 +143,12 @@ public final class GeneralSettingsController implements AutoCloseable {
         return false;
     }
 
+    void deactivate() { refresh.cancel(); }
+
     @Override
     public void close() {
         mutation.close();
+        refresh.close();
         themes.currentThemeProperty().removeListener(currentThemeListener);
         viewModel.busyProperty().unbind();
         themeCombo.valueProperty().unbindBidirectional(viewModel.selectedThemeProperty());

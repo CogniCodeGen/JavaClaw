@@ -7,6 +7,9 @@ import com.javaclaw.application.settings.ModelSettingsApplicationService;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.SaveResult;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.Tier;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.TierSettings;
+import com.javaclaw.application.settings.ModelProviderCatalog;
+import com.javaclaw.application.inference.InferenceManagementApplicationService;
+import com.javaclaw.inference.api.InferenceModelProfile;
 import com.javaclaw.platform.dialog.DialogService;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskSpec;
@@ -14,6 +17,8 @@ import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.platform.fx.UiAsyncAction;
 import com.javaclaw.ui.javafx.control.SecretFieldController;
 import com.javaclaw.ui.javafx.control.ToggleSwitch;
+import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
+import com.javaclaw.runtime.WorkspaceContext;
 import javafx.fxml.FXML;
 import javafx.scene.Node;
 import javafx.scene.control.ComboBox;
@@ -23,17 +28,20 @@ import javafx.scene.control.TextField;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
+import java.util.UUID;
 
 /** 分级模型设置 Controller。 */
 public final class TieredModelSettingsController
         implements ModelSettingsSectionFactory.AppliedSettingsController, AutoCloseable {
 
-    private static final List<String> PROVIDERS =
-            List.of("OpenAI", "DashScope", "Anthropic", "Gemini", "Ollama");
-
     @FXML private ScrollPane root;
     @FXML private ToggleSwitch normalEnabledCheck;
     @FXML private ComboBox<String> normalProviderCombo;
+    @FXML private Node normalBaseUrlRow;
+    @FXML private Node normalModelNameRow;
+    @FXML private Node normalApiKeyRow;
+    @FXML private Node normalManagedProfileRow;
+    @FXML private ComboBox<InferenceSettingsChoice<UUID>> normalManagedProfileCombo;
     @FXML private TextField normalBaseUrlField;
     @FXML private TextField normalModelNameField;
     @FXML private Node normalApiKeyField;
@@ -41,6 +49,11 @@ public final class TieredModelSettingsController
     @FXML private ToggleSwitch normalThinkingCheck;
     @FXML private ToggleSwitch lightEnabledCheck;
     @FXML private ComboBox<String> lightProviderCombo;
+    @FXML private Node lightBaseUrlRow;
+    @FXML private Node lightModelNameRow;
+    @FXML private Node lightApiKeyRow;
+    @FXML private Node lightManagedProfileRow;
+    @FXML private ComboBox<InferenceSettingsChoice<UUID>> lightManagedProfileCombo;
     @FXML private TextField lightBaseUrlField;
     @FXML private TextField lightModelNameField;
     @FXML private Node lightApiKeyField;
@@ -49,38 +62,70 @@ public final class TieredModelSettingsController
 
     private final ModelSettingsApplicationService useCases;
     private final DialogService dialogs;
+    private final ModelProviderCatalog providers;
+    private final InferenceManagementApplicationService inference;
+    private final PluginCenterViewFactory plugins;
     private final UiAsyncAction<SaveResult> mutation;
+    private final UiAsyncAction<ViewData> refresh;
+    private final UiAsyncAction<List<InferenceSettingsChoice<UUID>>> profileRefresh;
     private Consumer<SaveResult> onApplied = ignored -> { };
+    private Runnable onRuntimeConfigurationChanged = () -> { };
 
     public TieredModelSettingsController(
             ModelSettingsApplicationService useCases,
+            ModelProviderCatalog providers,
+            InferenceManagementApplicationService inference,
+            PluginCenterViewFactory plugins,
+            WorkspaceContext workspace,
             DialogService dialogs,
             ManagedTaskExecutor tasks,
             FxDispatcher fx) {
         this.useCases = Objects.requireNonNull(useCases, "useCases");
+        this.providers = Objects.requireNonNull(providers, "providers");
+        this.inference = Objects.requireNonNull(inference, "inference");
+        this.plugins = Objects.requireNonNull(plugins, "plugins");
+        Objects.requireNonNull(workspace, "workspace");
         this.dialogs = Objects.requireNonNull(dialogs, "dialogs");
         mutation = new UiAsyncAction<>(tasks, fx);
+        refresh = new UiAsyncAction<>(tasks, fx);
+        profileRefresh = new UiAsyncAction<>(tasks, fx);
     }
 
     @FXML
     private void initialize() {
-        normalProviderCombo.getItems().setAll(PROVIDERS);
-        lightProviderCombo.getItems().setAll(PROVIDERS);
+        List<String> chatProviders = providers.providers().stream()
+                .filter(provider -> provider.capabilities().contains(ModelProviderCatalog.Capability.CHAT))
+                .map(ModelProviderCatalog.Provider::displayName).toList();
+        normalProviderCombo.getItems().setAll(chatProviders);
+        lightProviderCombo.getItems().setAll(chatProviders);
         normalEnabledCheck.selectedProperty().addListener(
                 (ignored, previous, enabled) -> enableNormal(enabled));
         lightEnabledCheck.selectedProperty().addListener(
                 (ignored, previous, enabled) -> enableLight(enabled));
-        reload();
     }
 
     @Override
-    public void configure(Consumer<SaveResult> callback) {
+    public void configure(
+            Consumer<SaveResult> callback, Runnable runtimeConfigurationChanged) {
         onApplied = Objects.requireNonNull(callback, "callback");
+        onRuntimeConfigurationChanged = Objects.requireNonNull(
+                runtimeConfigurationChanged, "runtimeConfigurationChanged");
     }
 
     public void reload() {
-        TierSettings value = useCases.snapshot().tiers();
+        refresh.execute(TaskSpec.io("settings-tiered-model-load"), context -> {
+            TierSettings value = useCases.snapshot().tiers();
+            boolean local = localProvider(value.normal().provider())
+                    || localProvider(value.light().provider());
+            return new ViewData(value, local ? generationProfiles() : List.of());
+        }, this::applySnapshot, ignored -> { });
+    }
+
+    private void applySnapshot(ViewData data) {
+        TierSettings value = data.settings();
         SettingsFieldSupport.loading(root, () -> {
+            normalManagedProfileCombo.getItems().setAll(data.profiles());
+            lightManagedProfileCombo.getItems().setAll(data.profiles());
             apply(value.normal(), false);
             apply(value.light(), true);
         });
@@ -97,11 +142,20 @@ public final class TieredModelSettingsController
     }
 
     @FXML private void normalProviderChanged() {
-        applyPreset(normalProviderCombo.getValue(), normalBaseUrlField, normalModelNameField);
+        if (SettingsFieldSupport.isLoading(root)) return;
+        updateProvider(false, true);
+        if (selectedLocal(normalProviderCombo)) loadManagedProfiles();
     }
 
     @FXML private void lightProviderChanged() {
-        applyPreset(lightProviderCombo.getValue(), lightBaseUrlField, lightModelNameField);
+        if (SettingsFieldSupport.isLoading(root)) return;
+        updateProvider(true, true);
+        if (selectedLocal(lightProviderCombo)) loadManagedProfiles();
+    }
+
+    @FXML private void manageLocalModelsRequested() {
+        plugins.createServicePluginConfiguration(root.getScene().getWindow(),
+                "builtin-deliverance", "models", onRuntimeConfigurationChanged).showAndWait();
     }
 
     @FXML
@@ -128,11 +182,16 @@ public final class TieredModelSettingsController
                 ? lightApiKeyFieldController : normalApiKeyFieldController;
         ToggleSwitch thinking = light ? lightThinkingCheck : normalThinkingCheck;
         enabled.setSelected(value.enabled());
-        provider.setValue(value.provider());
+        provider.setValue(providers.find(value.provider()).map(ModelProviderCatalog.Provider::displayName)
+                .orElse(value.provider()));
         baseUrl.setText(value.baseUrl());
         model.setText(value.modelName());
         secret.setText(value.apiKey());
         thinking.setSelected(value.thinkingEnabled());
+        ComboBox<InferenceSettingsChoice<UUID>> managed = light
+                ? lightManagedProfileCombo : normalManagedProfileCombo;
+        selectManaged(managed, value.managedProfileId());
+        updateProvider(light, false);
         if (light) enableLight(value.enabled()); else enableNormal(value.enabled());
     }
 
@@ -144,42 +203,94 @@ public final class TieredModelSettingsController
         SecretFieldController secret = light
                 ? lightApiKeyFieldController : normalApiKeyFieldController;
         ToggleSwitch thinking = light ? lightThinkingCheck : normalThinkingCheck;
-        return new Tier(enabled, provider.getValue(), SettingsFieldSupport.text(baseUrl),
-                SettingsFieldSupport.text(model), secret.text(), thinking.isSelected());
+        ModelProviderCatalog.Provider selected = providers.find(provider.getValue()).orElseThrow(
+                () -> new IllegalArgumentException("请选择模型提供商"));
+        ComboBox<InferenceSettingsChoice<UUID>> managed = light
+                ? lightManagedProfileCombo : normalManagedProfileCombo;
+        String managedId = managed.getValue() == null ? "" : managed.getValue().value().toString();
+        return new Tier(enabled, selected.id(), SettingsFieldSupport.text(baseUrl),
+                SettingsFieldSupport.text(model), secret.text(), thinking.isSelected(), managedId);
     }
 
     private void enableNormal(boolean enabled) {
         setDisabled(!enabled, normalProviderCombo, normalBaseUrlField, normalModelNameField,
-                normalApiKeyField, normalThinkingCheck);
+                normalApiKeyField, normalManagedProfileCombo, normalThinkingCheck);
     }
 
     private void enableLight(boolean enabled) {
         setDisabled(!enabled, lightProviderCombo, lightBaseUrlField, lightModelNameField,
-                lightApiKeyField, lightThinkingCheck);
+                lightApiKeyField, lightManagedProfileCombo, lightThinkingCheck);
     }
 
     private static void setDisabled(boolean disabled, Node... nodes) {
         for (Node node : nodes) node.setDisable(disabled);
     }
 
-    private static void applyPreset(
-            String provider, TextField baseUrl, TextField modelName) {
+    private void updateProvider(boolean light, boolean applyDefaults) {
+        ComboBox<String> providerBox = light ? lightProviderCombo : normalProviderCombo;
+        ModelProviderCatalog.Provider provider = providers.find(providerBox.getValue()).orElse(null);
         if (provider == null) return;
-        String[] preset = switch (provider) {
-            case "OpenAI" -> new String[]{"https://api.openai.com/v1", "gpt-4o-mini"};
-            case "DashScope" -> new String[]{
-                    "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-turbo"};
-            case "Anthropic" -> new String[]{"https://api.anthropic.com", "claude-haiku-4-5-20251001"};
-            case "Gemini" -> new String[]{"", "gemini-2.5-flash"};
-            case "Ollama" -> new String[]{"http://localhost:11434", "qwen3:8b"};
-            default -> new String[]{"", ""};
-        };
-        if (baseUrl.getText().isBlank() && !preset[0].isBlank()) baseUrl.setText(preset[0]);
-        if (modelName.getText().isBlank()) modelName.setText(preset[1]);
+        visible(light ? lightBaseUrlRow : normalBaseUrlRow, !provider.localManaged());
+        visible(light ? lightModelNameRow : normalModelNameRow, !provider.localManaged());
+        visible(light ? lightApiKeyRow : normalApiKeyRow, !provider.localManaged());
+        visible(light ? lightManagedProfileRow : normalManagedProfileRow, provider.localManaged());
+        if (applyDefaults && !provider.localManaged()) {
+            (light ? lightBaseUrlField : normalBaseUrlField).setText(provider.defaultBaseUrl());
+            (light ? lightModelNameField : normalModelNameField).setText(provider.defaultChatModel());
+        }
+    }
+
+    private void loadManagedProfiles() {
+        profileRefresh.execute(TaskSpec.io("settings-tiered-local-profiles"),
+                context -> generationProfiles(), values -> SettingsFieldSupport.loading(root, () -> {
+                    normalManagedProfileCombo.getItems().setAll(values);
+                    lightManagedProfileCombo.getItems().setAll(values);
+                }), ignored -> { });
+    }
+
+    private List<InferenceSettingsChoice<UUID>> generationProfiles() {
+        return inference.readyProfiles(InferenceModelProfile.Kind.GENERATION).stream()
+                .map(profile -> new InferenceSettingsChoice<>(
+                        profile.name(), profile.id()))
+                .toList();
+    }
+
+    private boolean localProvider(String value) {
+        return providers.find(value).map(ModelProviderCatalog.Provider::localManaged).orElse(false);
+    }
+
+    private boolean selectedLocal(ComboBox<String> box) {
+        return providers.find(box.getValue()).map(ModelProviderCatalog.Provider::localManaged)
+                .orElse(false);
+    }
+
+    private static void selectManaged(
+            ComboBox<InferenceSettingsChoice<UUID>> box, String id) {
+        if (id == null || id.isBlank()) { box.setValue(null); return; }
+        box.getItems().stream().filter(choice -> choice.value().toString().equals(id))
+                .findFirst().ifPresent(box::setValue);
+    }
+
+    private static void visible(Node node, boolean value) {
+        node.setVisible(value);
+        node.setManaged(value);
+    }
+
+    void deactivate() {
+        refresh.cancel();
+        profileRefresh.cancel();
     }
 
     @Override
     public void close() {
+        onApplied = ignored -> { };
+        onRuntimeConfigurationChanged = () -> { };
         mutation.close();
+        refresh.close();
+        profileRefresh.close();
     }
+
+    private record ViewData(
+            TierSettings settings,
+            List<InferenceSettingsChoice<UUID>> profiles) { }
 }

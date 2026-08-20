@@ -101,7 +101,8 @@ public final class FontManager implements FontProfile, AutoCloseable {
         ".msg-header-model", ".msg-header-time", ".msg-header-meta", ".msg-citation-chip",
         ".tp-elapsed", ".tp-metric-value", ".tp-tool-name", ".tp-tool-input", ".tp-tool-status",
         ".tp-pipeline-status", ".sidebar-nav-shortcut", ".kbd-chip",
-        ".mc-log-time", ".mc-persona-json"
+        ".mc-log-time", ".mc-persona-json", ".service-plugin-log",
+        ".service-plugin-code", ".service-plugin-secret"
     };
 
     /** 打包字体资源路径（放在 src/main/resources/fonts/ 下）。 */

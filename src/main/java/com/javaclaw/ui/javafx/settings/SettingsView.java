@@ -1,6 +1,7 @@
 package com.javaclaw.ui.javafx.settings;
 
 import com.javaclaw.platform.fxml.ViewHandle;
+import com.javaclaw.platform.fx.FxDispatcher;
 import javafx.stage.Stage;
 
 import java.util.Objects;
@@ -15,10 +16,12 @@ public final class SettingsView implements AutoCloseable {
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private boolean closing;
 
-    SettingsView(Stage stage, ViewHandle<?> handle, SettingsViewController controller) {
+    SettingsView(Stage stage, ViewHandle<?> handle, SettingsViewController controller,
+                 FxDispatcher fx) {
         this.stage = Objects.requireNonNull(stage, "stage");
         this.handle = Objects.requireNonNull(handle, "handle");
         this.controller = Objects.requireNonNull(controller, "controller");
+        Objects.requireNonNull(fx, "fx");
         controller.configure(this::closeWindow, null);
         stage.setOnCloseRequest(event -> {
             if (!closing) {
@@ -26,6 +29,7 @@ public final class SettingsView implements AutoCloseable {
                 controller.requestClose();
             }
         });
+        stage.setOnShown(event -> fx.dispatchLater(controller::activate));
         stage.setOnHidden(event -> close());
     }
 
@@ -38,6 +42,8 @@ public final class SettingsView implements AutoCloseable {
     public void show() {
         show(null);
     }
+
+    int loadedPanelCount() { return controller.loadedPanelCount(); }
 
     /** 显示窗口并按中文分类名直达；未知分类回落到模型配置。 */
     public void show(String categoryName) {
@@ -60,6 +66,7 @@ public final class SettingsView implements AutoCloseable {
     public void close() {
         if (!closed.compareAndSet(false, true)) return;
         stage.setOnCloseRequest(null);
+        stage.setOnShown(null);
         stage.setOnHidden(null);
         if (stage.isShowing()) {
             closing = true;

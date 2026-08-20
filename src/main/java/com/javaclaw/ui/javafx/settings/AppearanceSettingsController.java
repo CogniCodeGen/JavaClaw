@@ -47,7 +47,6 @@ public final class AppearanceSettingsController implements AutoCloseable {
                 honeyCard, "honey",
                 graphiteCard, "graphite");
         themes.currentThemeProperty().addListener(themeListener);
-        reload();
     }
 
     public AppearanceSettingsViewModel viewModel() {

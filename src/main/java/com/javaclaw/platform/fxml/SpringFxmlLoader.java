@@ -1,5 +1,6 @@
 package com.javaclaw.platform.fxml;
 
+import com.javaclaw.platform.build.ApplicationBuildIdentity;
 import javafx.fxml.FXMLLoader;
 import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 
@@ -19,9 +20,16 @@ import java.util.Objects;
 public final class SpringFxmlLoader {
 
     private final AutowireCapableBeanFactory beanFactory;
+    private final ApplicationBuildIdentity buildIdentity;
 
     public SpringFxmlLoader(AutowireCapableBeanFactory beanFactory) {
+        this(beanFactory, null);
+    }
+
+    public SpringFxmlLoader(AutowireCapableBeanFactory beanFactory,
+                            ApplicationBuildIdentity buildIdentity) {
         this.beanFactory = Objects.requireNonNull(beanFactory, "beanFactory");
+        this.buildIdentity = buildIdentity;
     }
 
     public <T> ViewHandle<T> load(URL resource) throws IOException {
@@ -36,7 +44,13 @@ public final class SpringFxmlLoader {
         try {
             T root = loader.load();
             return new ViewHandle<>(root, loader.getController(), controllers, beanFactory);
-        } catch (IOException | RuntimeException | Error failure) {
+        } catch (IOException | RuntimeException failure) {
+            ViewHandle.destroyControllers(controllers, beanFactory, failure);
+            if (buildIdentity != null && buildIdentity.hasChanged()) {
+                throw new StaleApplicationBuildException(failure);
+            }
+            throw failure;
+        } catch (Error failure) {
             ViewHandle.destroyControllers(controllers, beanFactory, failure);
             throw failure;
         }

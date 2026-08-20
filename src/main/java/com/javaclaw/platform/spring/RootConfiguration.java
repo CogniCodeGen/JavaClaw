@@ -39,6 +39,7 @@ import com.javaclaw.config.CredentialEncryptor;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.data.DataSourceDatabaseAccess;
 import com.javaclaw.platform.data.H2DataSource;
+import com.javaclaw.platform.build.ApplicationBuildIdentity;
 import com.javaclaw.platform.data.SchemaInitializer;
 import com.javaclaw.platform.dialog.DialogService;
 import com.javaclaw.platform.desktop.ExternalDirectoryOpener;
@@ -66,6 +67,7 @@ import com.javaclaw.infrastructure.diagnostics.TraceExporterDiagnosticsArchive;
 import com.javaclaw.diagnostics.TraceExporter;
 import com.javaclaw.diagnostics.TraceRecorder;
 import com.javaclaw.infrastructure.plugin.PluginManagerManagementAdapter;
+import com.javaclaw.infrastructure.serviceplugin.ServicePluginProcessManager;
 import com.javaclaw.infrastructure.plugin.FrameworkAgentExtensionManagementAdapter;
 import com.javaclaw.infrastructure.onboarding.AgentConfigOnboardingSettings;
 import com.javaclaw.infrastructure.onboarding.HttpConnectionProbeAdapter;
@@ -88,6 +90,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.context.annotation.Import;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -100,6 +103,7 @@ import java.time.Duration;
 
 /** 进程级基础设施的显式 Spring 装配。 */
 @Configuration(proxyBeanMethods = false)
+@Import(InferenceRootConfiguration.class)
 public class RootConfiguration {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory
             .getLogger(RootConfiguration.class);
@@ -169,6 +173,11 @@ public class RootConfiguration {
     }
 
     @Bean
+    com.javaclaw.application.settings.ModelProviderCatalog modelProviderCatalog() {
+        return new com.javaclaw.application.settings.DefaultModelProviderCatalog();
+    }
+
+    @Bean
     SqlPropertyStore sqlPropertyStore(
             JdbcTemplate jdbc,
             PlatformTransactionManager transactionManager,
@@ -219,6 +228,26 @@ public class RootConfiguration {
     @Bean(destroyMethod = "close")
     ManagedTaskExecutor managedTaskExecutor() {
         return new ManagedTaskExecutor();
+    }
+
+    /** 唯一的服务插件进程宿主；其依赖关系保证在执行器、H2 和密钥服务之前关闭。 */
+    @Bean
+    com.javaclaw.infrastructure.serviceplugin.ServicePluginHostServiceRegistry
+    servicePluginHostServiceRegistry() {
+        return new com.javaclaw.infrastructure.serviceplugin.ServicePluginHostServiceRegistry();
+    }
+
+    @Bean(initMethod = "init", destroyMethod = "close")
+    ServicePluginProcessManager servicePluginProcessManager(
+            DataRoot dataRoot,
+            ManagedTaskExecutor tasks,
+            ObjectMapper json,
+            JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager,
+            CredentialCipher credentials,
+            com.javaclaw.infrastructure.serviceplugin.ServicePluginHostServiceRegistry hostServices) {
+        return new ServicePluginProcessManager(
+                dataRoot, tasks, json, jdbc, transactionManager, credentials, hostServices);
     }
 
     /** Shared kernel executor adapter; extensions never create their own thread pools. */
@@ -659,10 +688,12 @@ public class RootConfiguration {
             PluginStorageFactory storage,
             UserInteractionPort interaction,
             CredentialCipher credentials,
-            ObjectMapper json) {
+            ObjectMapper json,
+            ServicePluginProcessManager servicePlugins,
+            com.javaclaw.infrastructure.inference.DeliveranceRuntimeManager inferencePlugins) {
         return new PluginManager(
                 store, executor, agents, agentCallbacksExecutor, tools, storage,
-                interaction, credentials, json);
+                interaction, credentials, json, servicePlugins, inferencePlugins);
     }
 
     @Bean(destroyMethod = "close")
@@ -716,8 +747,13 @@ public class RootConfiguration {
     }
 
     @Bean
-    OnboardingSettingsPort onboardingSettingsPort(AgentConfig config) {
-        return new AgentConfigOnboardingSettings(() -> config);
+    OnboardingSettingsPort onboardingSettingsPort(
+            AgentConfig config,
+            com.javaclaw.application.inference.InferenceCatalogPort inference,
+            WorkspaceManager workspaces,
+            PlatformTransactionManager transactions) {
+        return new AgentConfigOnboardingSettings(() -> config, inference,
+                workspaces::getCurrentWorkspaceId, transactions);
     }
 
     @Bean
@@ -728,8 +764,9 @@ public class RootConfiguration {
     @Bean
     OnboardingApplicationService onboardingApplicationService(
             OnboardingSettingsPort settings,
-            ConnectionProbePort connection) {
-        return new OnboardingUseCase(settings, connection);
+            ConnectionProbePort connection,
+            com.javaclaw.application.settings.ModelProviderCatalog providers) {
+        return new OnboardingUseCase(settings, connection, providers);
     }
 
     @Bean
@@ -790,8 +827,15 @@ public class RootConfiguration {
     }
 
     @Bean
-    SpringFxmlLoader springFxmlLoader(AutowireCapableBeanFactory beanFactory) {
-        return new SpringFxmlLoader(beanFactory);
+    ApplicationBuildIdentity applicationBuildIdentity() {
+        return ApplicationBuildIdentity.launchedOrCapture(RootConfiguration.class);
+    }
+
+    @Bean
+    SpringFxmlLoader springFxmlLoader(
+            AutowireCapableBeanFactory beanFactory,
+            ApplicationBuildIdentity buildIdentity) {
+        return new SpringFxmlLoader(beanFactory, buildIdentity);
     }
 
     @Bean

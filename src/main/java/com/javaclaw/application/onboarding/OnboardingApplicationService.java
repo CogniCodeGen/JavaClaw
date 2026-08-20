@@ -28,14 +28,24 @@ public interface OnboardingApplicationService {
             String baseUrl,
             String defaultModel,
             boolean local,
+            boolean managed,
             boolean recommended) {
 
         public Provider {
             id = requiredText(id, "provider id");
             displayName = requiredText(displayName, "provider displayName");
             description = text(description);
-            baseUrl = requiredText(baseUrl, "provider baseUrl");
-            defaultModel = requiredText(defaultModel, "provider defaultModel");
+            baseUrl = text(baseUrl);
+            defaultModel = text(defaultModel);
+            if (!managed) {
+                baseUrl = requiredText(baseUrl, "provider baseUrl");
+                defaultModel = requiredText(defaultModel, "provider defaultModel");
+            }
+        }
+
+        public Provider(String id, String displayName, String description, String baseUrl,
+                        String defaultModel, boolean local, boolean recommended) {
+            this(id, displayName, description, baseUrl, defaultModel, local, false, recommended);
         }
     }
 
@@ -43,14 +53,26 @@ public interface OnboardingApplicationService {
             String providerId,
             String baseUrl,
             String modelName,
-            String apiKey) {}
+            String apiKey,
+            String managedProfileId) {
+        public ProviderSetupCommand(String providerId, String baseUrl, String modelName, String apiKey) {
+            this(providerId, baseUrl, modelName, apiKey, "");
+        }
+    }
 
     record ProviderSetup(
             Provider provider,
             String baseUrl,
-            String modelName) {}
+            String modelName,
+            String managedProfileId) {
+        public ProviderSetup(Provider provider, String baseUrl, String modelName) {
+            this(provider, baseUrl, modelName, "");
+        }
+    }
 
-    record ProbeCommand(String providerId, String baseUrl) {}
+    record ProbeCommand(String providerId, String baseUrl, String managedProfileId) {
+        public ProbeCommand(String providerId, String baseUrl) { this(providerId, baseUrl, ""); }
+    }
 
     record ProbeResult(int statusCode) {
         public ProbeResult {

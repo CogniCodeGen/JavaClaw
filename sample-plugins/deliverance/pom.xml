@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.javaclaw.plugins</groupId>
+    <artifactId>javaclaw-deliverance-plugin</artifactId>
+    <version>0.0.12-7</version>
+    <name>JavaClaw Deliverance Service Plugin</name>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.release>25</maven.compiler.release>
+        <deliverance.version>0.0.12</deliverance.version>
+        <!-- Match Deliverance/Jinjava's Jackson line; mixed minors in one shaded JVM can fail
+             with NoSuchMethodError before the plugin handshake completes. -->
+        <jackson.version>2.20.1</jackson.version>
+    </properties>
+
+    <!-- 独立示例插件：主应用 POM 与依赖树不得出现任何 Deliverance 坐标。 -->
+    <repositories>
+        <repository>
+            <id>maven-central</id>
+            <url>https://repo1.maven.org/maven2</url>
+        </repository>
+    </repositories>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw</artifactId>
+            <version>3.0.0-SNAPSHOT</version>
+            <classifier>service-plugin-api</classifier>
+            <scope>provided</scope>
+            <exclusions>
+                <!-- An attached classifier shares the Host POM; exclude every Host transitive
+                     dependency so the sample compiles against the narrow API JAR only. -->
+                <exclusion><groupId>*</groupId><artifactId>*</artifactId></exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.teknek.deliverance</groupId>
+            <artifactId>core</artifactId>
+            <version>${deliverance.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jdk8</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>2.0.16</version>
+        </dependency>
+        <!-- Deliverance SIMD 不可用时的独立纯 Java 向量回退。 -->
+        <dependency>
+            <groupId>io.github.jbellis</groupId>
+            <artifactId>jvector</artifactId>
+            <version>4.0.0-rc.8</version>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.11.4</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>deliverance</finalName>
+        <extensions>
+            <extension>
+                <groupId>kr.motd.maven</groupId>
+                <artifactId>os-maven-plugin</artifactId>
+                <version>1.7.1</version>
+            </extension>
+        </extensions>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <release>25</release>
+                    <compilerArgs>
+                        <arg>--add-modules</arg>
+                        <arg>jdk.incubator.vector,jdk.httpserver</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.2</version>
+                <configuration>
+                    <argLine>--add-modules jdk.incubator.vector,jdk.httpserver --enable-native-access=ALL-UNNAMED</argLine>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals><goal>shade</goal></goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/jpms.args</exclude>
+                                        <exclude>com/javaclaw/service/api/**</exclude>
+                                        <exclude>com/javaclaw/service/runner/**</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- Shade preserves the pre-shade artifact as original-deliverance.jar. It is not a
+                 distributable plugin and is removed so a normal build exposes one JAR only. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>remove-unshaded-intermediate</id>
+                        <phase>package</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <delete file="${project.build.directory}/original-deliverance.jar"/>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <!-- 0.0.12 在 Central 仅发布 linux-x86_64 原生分类器；其他平台使用 manifest
+         明确允许的 SIMD/JVector 纯 Java 回退，不伪造不存在的原生坐标。 -->
+    <profiles>
+        <profile>
+            <id>deliverance-native-linux-x64</id>
+            <activation>
+                <os><name>linux</name><arch>amd64</arch></os>
+            </activation>
+            <dependencies>
+                <dependency>
+                    <groupId>io.teknek.deliverance</groupId>
+                    <artifactId>native</artifactId>
+                    <version>${deliverance.version}</version>
+                    <classifier>linux-x86_64</classifier>
+                    <scope>runtime</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+        <!--
+            Opt-in real-model gate. CI or a release operator must supply content-addressed
+            generation and embedding fixtures; absent fixtures are a hard failure, never a skip.
+        -->
+        <profile>
+            <id>deliverance-it</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>require-real-model-fixtures</id>
+                                <phase>pre-integration-test</phase>
+                                <goals><goal>run</goal></goals>
+                                <configuration>
+                                    <target>
+                                        <condition property="deliverance.it.fixtures.present">
+                                            <and>
+                                                <isset property="deliverance.it.generation-model"/>
+                                                <isset property="deliverance.it.generation-sha256"/>
+                                                <isset property="deliverance.it.embedding-model"/>
+                                                <isset property="deliverance.it.embedding-sha256"/>
+                                                <isset property="deliverance.it.embedding-dimensions"/>
+                                            </and>
+                                        </condition>
+                                        <fail unless="deliverance.it.fixtures.present"
+                                              message="-Pdeliverance-it requires generation-model/generation-sha256/embedding-model/embedding-sha256/embedding-dimensions properties"/>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-failsafe-plugin</artifactId>
+                        <version>3.5.2</version>
+                        <configuration>
+                            <argLine>--add-modules jdk.incubator.vector,jdk.httpserver --enable-native-access=ALL-UNNAMED</argLine>
+                            <systemPropertyVariables>
+                                <deliverance.it.generation-model>${deliverance.it.generation-model}</deliverance.it.generation-model>
+                                <deliverance.it.generation-sha256>${deliverance.it.generation-sha256}</deliverance.it.generation-sha256>
+                                <deliverance.it.embedding-model>${deliverance.it.embedding-model}</deliverance.it.embedding-model>
+                                <deliverance.it.embedding-sha256>${deliverance.it.embedding-sha256}</deliverance.it.embedding-sha256>
+                                <deliverance.it.embedding-dimensions>${deliverance.it.embedding-dimensions}</deliverance.it.embedding-dimensions>
+                            </systemPropertyVariables>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <goals>
+                                    <goal>integration-test</goal>
+                                    <goal>verify</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>

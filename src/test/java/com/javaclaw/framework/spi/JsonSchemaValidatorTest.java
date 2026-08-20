@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JsonSchemaValidatorTest {
@@ -35,5 +36,13 @@ class JsonSchemaValidatorTest {
 
         var unknown = valid.deepCopy().put("legacy", true);
         assertFalse(validator.validate(schema, unknown, "/configuration").isEmpty());
+    }
+
+    @Test
+    void rejectsSchemaThatDoesNotConformToDraft202012MetaSchema() throws Exception {
+        var invalid = json.readTree("{\"type\":\"unknown\"}");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> validator.requireValidSchema(invalid, "test schema"));
     }
 }

@@ -37,6 +37,9 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
     private static final String LOCK_FILE = "javaclaw.instance.lock";
     private static final String ENDPOINT_FILE = "javaclaw.instance.endpoint";
     private static final String SHOW_COMMAND = "SHOW";
+    private static final String BUILD_MISMATCH_COMMAND = "BUILD_MISMATCH";
+    private static final String OK_RESPONSE = "OK";
+    private static final String RESTART_REQUIRED_RESPONSE = "RESTART_REQUIRED";
     private static final AtomicReference<SingleInstanceCoordinator> CURRENT = new AtomicReference<>();
 
     private final Path endpointFile;
@@ -44,19 +47,24 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
     private final FileLock lock;
     private final ServerSocket server;
     private final String token;
+    private final String buildFingerprint;
     private final AtomicReference<Runnable> showHandler = new AtomicReference<>();
+    private final AtomicReference<Runnable> buildMismatchHandler = new AtomicReference<>();
     private final AtomicBoolean pendingShow = new AtomicBoolean(false);
+    private final AtomicBoolean pendingBuildMismatch = new AtomicBoolean(false);
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final Thread listenerThread;
 
     private SingleInstanceCoordinator(Path endpointFile, FileChannel lockChannel,
-                                      FileLock lock, ServerSocket server, String token)
+                                      FileLock lock, ServerSocket server, String token,
+                                      String buildFingerprint)
             throws IOException {
         this.endpointFile = endpointFile;
         this.lockChannel = lockChannel;
         this.lock = lock;
         this.server = server;
         this.token = token;
+        this.buildFingerprint = normalizeFingerprint(buildFingerprint);
         try {
             writeEndpoint();
         } catch (IOException failure) {
@@ -76,7 +84,18 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
      * 获取主实例资格。返回 {@code null} 表示已通知现有实例，调用进程应立即退出。
      */
     public static SingleInstanceCoordinator acquire(Path dataDirectory) throws IOException {
+        return acquire(dataDirectory, "");
+    }
+
+    /**
+     * Acquires the primary-instance role for one data directory and publishes the running build.
+     * A secondary process with a different non-empty fingerprint asks the primary to show a
+     * restart-required notice instead of silently treating the old JVM as the new build.
+     */
+    public static SingleInstanceCoordinator acquire(Path dataDirectory, String buildFingerprint)
+            throws IOException {
         Path dataDir = dataDirectory.toAbsolutePath().normalize();
+        String normalizedFingerprint = normalizeFingerprint(buildFingerprint);
         Files.createDirectories(dataDir);
         Path lockFile = dataDir.resolve(LOCK_FILE);
         Path endpointFile = dataDir.resolve(ENDPOINT_FILE);
@@ -91,8 +110,14 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
             }
             if (acquired == null) {
                 channel.close();
-                boolean notified = notifyExisting(endpointFile);
-                if (!notified) log.warn("已有 JavaClaw 实例，但主窗口通知未获得回应");
+                NotifyResult notified = notifyExisting(endpointFile, normalizedFingerprint);
+                if (notified == NotifyResult.FAILED) {
+                    log.warn("已有 JavaClaw 实例，但主窗口通知未获得回应");
+                } else if (notified == NotifyResult.RESTART_REQUIRED) {
+                    log.warn("已有 JavaClaw 实例运行不同构建，已提示完整退出后重新启动");
+                } else if (notified == NotifyResult.LEGACY_SHOWN) {
+                    log.warn("已有 JavaClaw 实例未提供构建指纹；已唤起旧窗口，请完整退出后重新启动一次");
+                }
                 return null;
             }
 
@@ -109,7 +134,7 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
             }
             String token = UUID.randomUUID().toString();
             SingleInstanceCoordinator coordinator = new SingleInstanceCoordinator(
-                    endpointFile, channel, acquired, server, token);
+                    endpointFile, channel, acquired, server, token, normalizedFingerprint);
             if (!CURRENT.compareAndSet(null, coordinator)) {
                 coordinator.close();
                 throw new IOException("当前 JVM 已存在单实例协调器");
@@ -150,6 +175,14 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
         if (handler != null && pendingShow.compareAndSet(true, false)) invokeHandler(handler);
     }
 
+    /** Registers the UI action shown when another process was launched from a different build. */
+    public void setBuildMismatchHandler(Runnable handler) {
+        buildMismatchHandler.set(handler);
+        if (handler != null && pendingBuildMismatch.compareAndSet(true, false)) {
+            invokeHandler(handler);
+        }
+    }
+
     private void listen() {
         while (!closed.get()) {
             try (Socket socket = server.accept();
@@ -162,7 +195,11 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
                 String command = reader.readLine();
                 if (token.equals(suppliedToken) && SHOW_COMMAND.equals(command)) {
                     dispatchShow();
-                    writer.write("OK\n");
+                    writer.write(OK_RESPONSE + "\n");
+                } else if (token.equals(suppliedToken)
+                        && BUILD_MISMATCH_COMMAND.equals(command)) {
+                    dispatchBuildMismatch();
+                    writer.write(RESTART_REQUIRED_RESPONSE + "\n");
                 } else {
                     writer.write("DENIED\n");
                 }
@@ -185,6 +222,19 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
         if (handler != null && pendingShow.compareAndSet(true, false)) invokeHandler(handler);
     }
 
+    private void dispatchBuildMismatch() {
+        Runnable handler = buildMismatchHandler.get();
+        if (handler != null) {
+            invokeHandler(handler);
+            return;
+        }
+        pendingBuildMismatch.set(true);
+        handler = buildMismatchHandler.get();
+        if (handler != null && pendingBuildMismatch.compareAndSet(true, false)) {
+            invokeHandler(handler);
+        }
+    }
+
     private static void invokeHandler(Runnable handler) {
         try {
             handler.run();
@@ -195,7 +245,9 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
 
     private void writeEndpoint() throws IOException {
         Path temp = endpointFile.resolveSibling(endpointFile.getFileName() + ".tmp-" + token);
-        Files.writeString(temp, token + "\n" + server.getLocalPort() + "\n", StandardCharsets.UTF_8,
+        String endpoint = token + "\n" + server.getLocalPort() + "\n"
+                + buildFingerprint + "\n";
+        Files.writeString(temp, endpoint, StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
         try {
             Files.move(temp, endpointFile, StandardCopyOption.ATOMIC_MOVE,
@@ -205,14 +257,19 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
         }
     }
 
-    private static boolean notifyExisting(Path endpointFile) {
+    private static NotifyResult notifyExisting(Path endpointFile, String localFingerprint) {
         for (int attempt = 0; attempt < 20; attempt++) {
             try {
                 List<String> lines = Files.readAllLines(endpointFile, StandardCharsets.UTF_8);
                 if (lines.size() < 2) throw new IOException("端点文件不完整");
                 String token = lines.get(0).trim();
                 int port = Integer.parseInt(lines.get(1).trim());
+                String remoteFingerprint = lines.size() >= 3 ? lines.get(2).trim() : "";
                 if (token.isBlank() || port < 1 || port > 65535) throw new IOException("端点数据无效");
+                boolean mismatch = !localFingerprint.isBlank()
+                        && !remoteFingerprint.isBlank()
+                        && !localFingerprint.equals(remoteFingerprint);
+                boolean legacy = !localFingerprint.isBlank() && remoteFingerprint.isBlank();
                 try (Socket socket = new Socket()) {
                     socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 300);
                     socket.setSoTimeout(1000);
@@ -222,22 +279,33 @@ public final class SingleInstanceCoordinator implements AutoCloseable {
                             socket.getInputStream(), StandardCharsets.UTF_8));
                     writer.write(token);
                     writer.write('\n');
-                    writer.write(SHOW_COMMAND);
+                    writer.write(mismatch ? BUILD_MISMATCH_COMMAND : SHOW_COMMAND);
                     writer.write('\n');
                     writer.flush();
-                    return "OK".equals(reader.readLine());
+                    String response = reader.readLine();
+                    if (mismatch && RESTART_REQUIRED_RESPONSE.equals(response)) {
+                        return NotifyResult.RESTART_REQUIRED;
+                    }
+                    if (!OK_RESPONSE.equals(response)) return NotifyResult.FAILED;
+                    return legacy ? NotifyResult.LEGACY_SHOWN : NotifyResult.SHOWN;
                 }
             } catch (IOException | NumberFormatException notReady) {
                 try {
                     Thread.sleep(100);
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
-                    return false;
+                    return NotifyResult.FAILED;
                 }
             }
         }
-        return false;
+        return NotifyResult.FAILED;
     }
+
+    private static String normalizeFingerprint(String fingerprint) {
+        return fingerprint == null ? "" : fingerprint.strip();
+    }
+
+    private enum NotifyResult { SHOWN, LEGACY_SHOWN, RESTART_REQUIRED, FAILED }
 
     @Override
     public void close() {

@@ -23,6 +23,8 @@ public interface PluginManagementApplicationService {
 
     Catalog setEnabled(String pluginId, boolean enabled);
 
+    ApprovalResult approveServicePlugin(String pluginId);
+
     InstallResult install(Path jar);
 
     Catalog uninstall(String pluginId);
@@ -37,6 +39,7 @@ public interface PluginManagementApplicationService {
 
     enum State {
         DISCOVERED,
+        PENDING_APPROVAL,
         LOADED,
         ACTIVE,
         STOPPED,
@@ -112,9 +115,20 @@ public interface PluginManagementApplicationService {
         }
     }
 
-    record InstallResult(String pluginId, Catalog catalog) {
+    record InstallResult(String pluginId, Catalog catalog, boolean servicePlugin) {
+        public InstallResult(String pluginId, Catalog catalog) {
+            this(pluginId, catalog, false);
+        }
+
         public InstallResult {
             pluginId = required(pluginId, "安装后的插件 id");
+            catalog = java.util.Objects.requireNonNull(catalog, "catalog");
+        }
+    }
+
+    /** 服务插件显式审批结果；拒绝或取消属于正常结果，不伪装成系统失败。 */
+    record ApprovalResult(Catalog catalog, boolean approved) {
+        public ApprovalResult {
             catalog = java.util.Objects.requireNonNull(catalog, "catalog");
         }
     }

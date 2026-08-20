@@ -8,12 +8,19 @@ import com.javaclaw.application.settings.ModelSettingsProbePort;
 import com.javaclaw.platform.http.HttpGateway;
 import com.javaclaw.platform.http.HttpRetryPolicy;
 import com.javaclaw.platform.json.JsonCodec;
+import com.javaclaw.application.settings.DefaultModelProviderCatalog;
+import com.javaclaw.inference.api.InferenceChatRequest;
+import com.javaclaw.inference.api.InferenceEmbeddingRequest;
+import com.javaclaw.inference.api.InferenceMessage;
+import com.javaclaw.inference.api.LocalInferenceGateway;
 
 import java.net.URI;
 import java.net.http.HttpRequest;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
+import java.util.List;
+import java.util.UUID;
 
 /** 通过共享 HTTP 网关或当前工作区 EmbeddingGateway 探测模型连接。 */
 public final class HttpModelSettingsProbeAdapter implements ModelSettingsProbePort {
@@ -21,16 +28,37 @@ public final class HttpModelSettingsProbeAdapter implements ModelSettingsProbePo
     private final HttpGateway http;
     private final JsonCodec json;
     private final EmbeddingRuntimeProbePort runtimeEmbedding;
+    private final LocalInferenceGateway localInference;
 
     public HttpModelSettingsProbeAdapter(
             HttpGateway http, JsonCodec json, EmbeddingRuntimeProbePort runtimeEmbedding) {
+        this(http, json, runtimeEmbedding, null);
+    }
+
+    public HttpModelSettingsProbeAdapter(
+            HttpGateway http, JsonCodec json, EmbeddingRuntimeProbePort runtimeEmbedding,
+            LocalInferenceGateway localInference) {
         this.http = Objects.requireNonNull(http, "http");
         this.json = Objects.requireNonNull(json, "json");
         this.runtimeEmbedding = Objects.requireNonNull(runtimeEmbedding, "runtimeEmbedding");
+        this.localInference = localInference;
     }
 
     @Override
     public ProbeResult probeModel(ModelSettings settings) throws Exception {
+        if (managed(settings.provider())) {
+            requireLocal();
+            long started = System.nanoTime();
+            var response = localInference.chat(new InferenceChatRequest(UUID.randomUUID().toString(),
+                    UUID.fromString(settings.managedProfileId()),
+                    List.of(new InferenceMessage(InferenceMessage.Role.USER,
+                            "只回复 OK", "", "", List.of())), List.of(),
+                    Map.of("maxTokens", 4, "temperature", 0),
+                    Duration.ofSeconds(settings.readTimeoutSeconds())));
+            return new ProbeResult(true, "✓ 本地推理正常 · " + response.model()
+                    + " · " + elapsedMillis(started) + "ms · "
+                    + response.usage().totalTokens() + " tokens");
+        }
         long started = System.nanoTime();
         URI endpoint = endpoint(settings.baseUrl(), "models");
         var response = http.sendAndWait("settings-model-probe", () -> {
@@ -52,6 +80,14 @@ public final class HttpModelSettingsProbeAdapter implements ModelSettingsProbePo
     @Override
     public ProbeResult probeEmbedding(
             EmbeddingSettings form, EmbeddingSettings persisted) throws Exception {
+        if (managed(form.provider())) {
+            requireLocal();
+            long started = System.nanoTime();
+            var response = localInference.embeddings(new InferenceEmbeddingRequest(
+                    UUID.randomUUID().toString(), UUID.fromString(form.managedProfileId()),
+                    List.of("嵌入连通性测试"), Duration.ofMinutes(5)));
+            return dimensions(form, response.dimensions(), elapsedMillis(started), !form.equals(persisted));
+        }
         if (form.equals(persisted) && runtimeEmbedding.isReady()) {
             long started = System.nanoTime();
             var health = runtimeEmbedding.probe();
@@ -105,5 +141,13 @@ public final class HttpModelSettingsProbeAdapter implements ModelSettingsProbePo
 
     private static long elapsedMillis(long started) {
         return (System.nanoTime() - started) / 1_000_000L;
+    }
+
+    private void requireLocal() {
+        if (localInference == null) throw new IllegalStateException("本地推理网关未装配");
+    }
+
+    private static boolean managed(String provider) {
+        return DefaultModelProviderCatalog.DELIVERANCE.equalsIgnoreCase(provider);
     }
 }

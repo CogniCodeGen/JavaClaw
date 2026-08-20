@@ -16,6 +16,10 @@ public final class AgentSettingsPanel implements AutoCloseable {
 
     public HBox root() { return handle.root(); }
 
+    public void activate() { controller().activate(); }
+
+    public void deactivate() { controller().deactivate(); }
+
     AgentSettingsController controller() {
         return handle.controller(AgentSettingsController.class);
     }

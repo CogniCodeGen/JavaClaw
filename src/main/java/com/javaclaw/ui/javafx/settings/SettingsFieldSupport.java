@@ -42,6 +42,18 @@ public final class SettingsFieldSupport {
         }
     }
 
+    static long longInteger(TextField field, long min, long max, String label) {
+        clear(field);
+        try {
+            long value = Long.parseLong(text(field));
+            if (value < min || value > max) throw new NumberFormatException();
+            return value;
+        } catch (NumberFormatException failure) {
+            error(field, "请输入 " + min + " ~ " + max + " 之间的整数");
+            throw new ValidationException(label + "格式不正确");
+        }
+    }
+
     static void validateInteger(TextField field, int min, int max) {
         Runnable validate = () -> {
             if (field.isDisabled()) {
@@ -96,15 +108,16 @@ public final class SettingsFieldSupport {
     }
 
     static String failureMessage(Throwable failure) {
-        Throwable current = failure;
-        while ((current instanceof java.util.concurrent.CompletionException
-                || current instanceof java.util.concurrent.ExecutionException)
-                && current.getCause() != null) {
-            current = current.getCause();
+        String detail = null;
+        java.util.Set<Throwable> visited = java.util.Collections.newSetFromMap(
+                new java.util.IdentityHashMap<>());
+        for (Throwable current = failure; current != null && visited.add(current);
+             current = current.getCause()) {
+            if (current.getMessage() != null && !current.getMessage().isBlank()) {
+                detail = current.getMessage();
+            }
         }
-        String message = current.getMessage();
-        return message == null || message.isBlank()
-                ? current.getClass().getSimpleName() : message;
+        return detail == null ? failure.getClass().getSimpleName() : detail;
     }
 
     static String text(TextField field) {

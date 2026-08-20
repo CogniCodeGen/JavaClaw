@@ -31,6 +31,11 @@ public final class PluginCenterViewFactory {
 
     /** 必须在 FX 线程调用；创建失败时立即销毁已创建的 Controller。 */
     public PluginCenterView create(Window owner) {
+        return create(owner, () -> { });
+    }
+
+    /** 创建插件中心，并在当前工作区模型绑定改变时通知宿主重建运行时。 */
+    public PluginCenterView create(Window owner, Runnable runtimeConfigurationChanged) {
         ViewHandle<HBox> handle;
         try {
             handle = loader.load(VIEW);
@@ -49,6 +54,8 @@ public final class PluginCenterViewFactory {
                 if (css != null) scene.getStylesheets().add(css.toExternalForm());
             }
             stage.setScene(scene);
+            handle.controller(PluginCenterController.class).configure(
+                    runtimeConfigurationChanged == null ? () -> { } : runtimeConfigurationChanged);
             return new PluginCenterView(stage, handle);
         } catch (RuntimeException | Error failure) {
             try {
@@ -58,5 +65,16 @@ public final class PluginCenterViewFactory {
             }
             throw failure;
         }
+    }
+
+    public PluginCenterView createServicePluginConfiguration(
+            Window owner, String pluginId, String pageId) {
+        return createServicePluginConfiguration(owner, pluginId, pageId, () -> { });
+    }
+
+    public PluginCenterView createServicePluginConfiguration(
+            Window owner, String pluginId, String pageId, Runnable runtimeConfigurationChanged) {
+        return create(owner, runtimeConfigurationChanged)
+                .openServicePluginConfiguration(pluginId, pageId);
     }
 }

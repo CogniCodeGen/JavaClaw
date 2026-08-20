@@ -86,6 +86,7 @@ class McpFxmlLoadTest {
             new Scene(center.root(), 800, 620);
             center.root().applyCss();
             center.root().layout();
+            center.activate();
         });
 
         awaitFx(() -> serverList().getChildren().size() == 1);
@@ -314,6 +315,7 @@ class McpFxmlLoadTest {
             new Scene(center.root(), 900, 700);
             center.root().applyCss();
             center.root().layout();
+            center.activate();
         });
         awaitFx(() -> serverList().getChildren().size() == 1);
 

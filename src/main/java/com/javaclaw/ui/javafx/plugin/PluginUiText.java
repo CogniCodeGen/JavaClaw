@@ -20,6 +20,7 @@ final class PluginUiText {
             case STOPPED -> "已停用";
             case LOADED -> "已加载";
             case DISCOVERED -> "已发现";
+            case PENDING_APPROVAL -> "待批准";
         };
     }
 

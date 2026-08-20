@@ -43,7 +43,8 @@ public class WorkspaceManager {
             "scheduled_tasks", "custom_agents", "plugin_state", "plugin_storage",
             "command_whitelist", "chat_messages", "chat_sessions", "token_usage_daily",
             "skill_usage", "skill_proposals", "sdd_tasks", "sdd_spec_docs",
-            "sdd_verify_cache", "knowledge_doc_prefs", "browser_state");
+            "sdd_verify_cache", "knowledge_doc_prefs", "browser_state",
+            "inference_workspace_bindings");
 
     private final List<Workspace> workspaces = new CopyOnWriteArrayList<>();
     private final Path globalDataPath;

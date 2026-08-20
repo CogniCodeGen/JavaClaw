@@ -56,13 +56,29 @@ public interface ModelSettingsApplicationService {
             int maxRepeatedToolCalls,
             double loopSimilarityThreshold,
             double evaluatorPassThreshold,
-            int evaluatorMaxRetries) {
+            int evaluatorMaxRetries,
+            String managedProfileId) {
         public ModelSettings {
             provider = normalize(provider);
             baseUrl = normalize(baseUrl);
             modelName = normalize(modelName);
             apiKey = normalize(apiKey);
             httpVersion = normalize(httpVersion);
+            managedProfileId = normalize(managedProfileId);
+        }
+
+        public ModelSettings(String provider, String baseUrl, String modelName, String apiKey,
+                             boolean thinkingEnabled, int thinkingBudget, String httpVersion,
+                             int connectTimeoutSeconds, int readTimeoutSeconds, int writeTimeoutSeconds,
+                             int orchestratorMaxIterations, int webAgentMaxIterations,
+                             int emailAgentMaxIterations, int maxRepeatedToolCalls,
+                             double loopSimilarityThreshold, double evaluatorPassThreshold,
+                             int evaluatorMaxRetries) {
+            this(provider, baseUrl, modelName, apiKey, thinkingEnabled, thinkingBudget, httpVersion,
+                    connectTimeoutSeconds, readTimeoutSeconds, writeTimeoutSeconds,
+                    orchestratorMaxIterations, webAgentMaxIterations, emailAgentMaxIterations,
+                    maxRepeatedToolCalls, loopSimilarityThreshold, evaluatorPassThreshold,
+                    evaluatorMaxRetries, "");
         }
     }
 
@@ -79,12 +95,19 @@ public interface ModelSettingsApplicationService {
             String baseUrl,
             String modelName,
             String apiKey,
-            boolean thinkingEnabled) {
+            boolean thinkingEnabled,
+            String managedProfileId) {
         public Tier {
             provider = normalize(provider);
             baseUrl = normalize(baseUrl);
             modelName = normalize(modelName);
             apiKey = normalize(apiKey);
+            managedProfileId = normalize(managedProfileId);
+        }
+
+        public Tier(boolean enabled, String provider, String baseUrl, String modelName,
+                    String apiKey, boolean thinkingEnabled) {
+            this(enabled, provider, baseUrl, modelName, apiKey, thinkingEnabled, "");
         }
     }
 
@@ -96,12 +119,21 @@ public interface ModelSettingsApplicationService {
             String modelName,
             int dimensions,
             int retrieveLimit,
-            double scoreThreshold) {
+            double scoreThreshold,
+            String managedProfileId) {
         public EmbeddingSettings {
             provider = normalize(provider);
             baseUrl = normalize(baseUrl);
             apiKey = normalize(apiKey);
             modelName = normalize(modelName);
+            managedProfileId = normalize(managedProfileId);
+        }
+
+        public EmbeddingSettings(boolean enabled, String provider, String baseUrl, String apiKey,
+                                 String modelName, int dimensions, int retrieveLimit,
+                                 double scoreThreshold) {
+            this(enabled, provider, baseUrl, apiKey, modelName, dimensions, retrieveLimit,
+                    scoreThreshold, "");
         }
     }
 

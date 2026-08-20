@@ -4,6 +4,7 @@
 <?import javafx.geometry.Insets?>
 <?import javafx.scene.control.Button?>
 <?import javafx.scene.control.ComboBox?>
+<?import javafx.scene.control.Hyperlink?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.control.ScrollPane?>
 <?import javafx.scene.control.Separator?>
@@ -48,7 +49,7 @@
                                           onAction="#normalProviderChanged"/>
                             </children>
                         </HBox>
-                        <HBox alignment="CENTER_LEFT" spacing="10.0">
+                        <HBox fx:id="normalBaseUrlRow" alignment="CENTER_LEFT" spacing="10.0">
                             <children>
                                 <Label text="API 地址：" minWidth="70.0" styleClass="settings-label"/>
                                 <TextField fx:id="normalBaseUrlField" prefWidth="350.0"
@@ -56,19 +57,26 @@
                                            styleClass="text-input, text-field, settings-field"/>
                             </children>
                         </HBox>
-                        <HBox alignment="CENTER_LEFT" spacing="10.0">
+                        <HBox fx:id="normalModelNameRow" alignment="CENTER_LEFT" spacing="10.0">
                             <children>
                                 <Label text="模型名称：" minWidth="70.0" styleClass="settings-label"/>
                                 <TextField fx:id="normalModelNameField" prefWidth="350.0"
                                            styleClass="text-input, text-field, settings-field"/>
                             </children>
                         </HBox>
-                        <HBox alignment="CENTER_LEFT" spacing="10.0">
+                        <HBox fx:id="normalApiKeyRow" alignment="CENTER_LEFT" spacing="10.0">
                             <children>
                                 <Label text="API 密钥：" minWidth="70.0" styleClass="settings-label"/>
                                 <fx:include fx:id="normalApiKeyField" source="../control/secret-field.fxml"/>
                             </children>
                         </HBox>
+                        <HBox fx:id="normalManagedProfileRow" alignment="CENTER_LEFT" spacing="10.0"
+                              visible="false" managed="false"><children>
+                            <Label text="本地档案：" minWidth="70.0" styleClass="settings-label"/>
+                            <ComboBox fx:id="normalManagedProfileCombo" prefWidth="350.0"
+                                      promptText="请选择 READY 本地档案"/>
+                            <Hyperlink text="管理本地模型" onAction="#manageLocalModelsRequested"/>
+                        </children></HBox>
                         <HBox alignment="CENTER_LEFT" spacing="12.0" styleClass="row-toggle">
                             <children>
                                 <Label text="思考模式" styleClass="rt-main" HBox.hgrow="ALWAYS"/>
@@ -102,7 +110,7 @@
                                           onAction="#lightProviderChanged"/>
                             </children>
                         </HBox>
-                        <HBox alignment="CENTER_LEFT" spacing="10.0">
+                        <HBox fx:id="lightBaseUrlRow" alignment="CENTER_LEFT" spacing="10.0">
                             <children>
                                 <Label text="API 地址：" minWidth="70.0" styleClass="settings-label"/>
                                 <TextField fx:id="lightBaseUrlField" prefWidth="350.0"
@@ -110,19 +118,26 @@
                                            styleClass="text-input, text-field, settings-field"/>
                             </children>
                         </HBox>
-                        <HBox alignment="CENTER_LEFT" spacing="10.0">
+                        <HBox fx:id="lightModelNameRow" alignment="CENTER_LEFT" spacing="10.0">
                             <children>
                                 <Label text="模型名称：" minWidth="70.0" styleClass="settings-label"/>
                                 <TextField fx:id="lightModelNameField" prefWidth="350.0"
                                            styleClass="text-input, text-field, settings-field"/>
                             </children>
                         </HBox>
-                        <HBox alignment="CENTER_LEFT" spacing="10.0">
+                        <HBox fx:id="lightApiKeyRow" alignment="CENTER_LEFT" spacing="10.0">
                             <children>
                                 <Label text="API 密钥：" minWidth="70.0" styleClass="settings-label"/>
                                 <fx:include fx:id="lightApiKeyField" source="../control/secret-field.fxml"/>
                             </children>
                         </HBox>
+                        <HBox fx:id="lightManagedProfileRow" alignment="CENTER_LEFT" spacing="10.0"
+                              visible="false" managed="false"><children>
+                            <Label text="本地档案：" minWidth="70.0" styleClass="settings-label"/>
+                            <ComboBox fx:id="lightManagedProfileCombo" prefWidth="350.0"
+                                      promptText="请选择 READY 本地档案"/>
+                            <Hyperlink text="管理本地模型" onAction="#manageLocalModelsRequested"/>
+                        </children></HBox>
                         <HBox alignment="CENTER_LEFT" spacing="12.0" styleClass="row-toggle">
                             <children>
                                 <VBox spacing="1.0" HBox.hgrow="ALWAYS">

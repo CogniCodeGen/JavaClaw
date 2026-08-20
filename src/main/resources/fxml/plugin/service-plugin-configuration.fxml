@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox fx:id="root" visible="false" managed="false" spacing="12.0"
+      styleClass="service-plugin-configuration-page"
+      xmlns="http://javafx.com/javafx/25"
+      xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.javaclaw.ui.javafx.plugin.ServicePluginConfigurationController">
+    <padding><Insets top="18.0" right="20.0" bottom="16.0" left="20.0"/></padding>
+    <children>
+        <HBox alignment="CENTER_LEFT" spacing="10.0" styleClass="service-plugin-config-header">
+            <children>
+                <Button fx:id="servicePluginConfigBack" text="← 返回"
+                        styleClass="jc-btn, jc-btn-ghost, jc-btn-sm"
+                        onAction="#backRequested"/>
+                <VBox spacing="3.0" HBox.hgrow="ALWAYS">
+                    <children>
+                        <Label fx:id="pluginNameLabel" text="服务插件"
+                               styleClass="service-plugin-page-title"/>
+                        <Label fx:id="pluginMetadataLabel" styleClass="settings-hint"/>
+                    </children>
+                </VBox>
+                <Label fx:id="pluginStateLabel" text="已停止"
+                       styleClass="jc-badge, jc-badge-stopped"/>
+                <Button fx:id="servicePluginConfigRefresh" text="刷新"
+                        styleClass="jc-btn, jc-btn-soft, jc-btn-sm"
+                        onAction="#refreshRequested"/>
+            </children>
+        </HBox>
+        <HBox fx:id="pageTabs" spacing="6.0" styleClass="service-plugin-page-tabs"/>
+        <VBox spacing="3.0">
+            <children>
+                <Label fx:id="pageTitleLabel" styleClass="settings-section-title"/>
+                <Label fx:id="pageDescriptionLabel" wrapText="true" styleClass="settings-hint"/>
+            </children>
+        </VBox>
+        <ScrollPane fx:id="servicePluginPageScroll" fitToWidth="true" hbarPolicy="NEVER"
+                    styleClass="settings-scroll-pane"
+                    VBox.vgrow="ALWAYS">
+            <content>
+                <VBox fx:id="pageContent" spacing="12.0"
+                      styleClass="service-plugin-page-content">
+                    <padding><Insets top="2.0" right="0.0" bottom="16.0" left="0.0"/></padding>
+                </VBox>
+            </content>
+        </ScrollPane>
+    </children>
+</VBox>

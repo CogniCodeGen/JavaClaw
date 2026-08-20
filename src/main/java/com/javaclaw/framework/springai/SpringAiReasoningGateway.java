@@ -94,7 +94,9 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             AtomicInteger responseIndex = new AtomicInteger();
             ChatModel rawModel = models.require(request.plan().descriptor().modelPolicyRef());
             ChatModel model = new MeteredChatModel(rawModel, response -> meter(
-                    request, response, currentAttempt.get(), responseIndex.incrementAndGet()));
+                    request, response, currentAttempt.get(), responseIndex.incrementAndGet()),
+                    failure -> meterFailure(request, failure, currentAttempt.get(),
+                            responseIndex.incrementAndGet()));
             List<Advisor> customAdvisors = advisorRegistry.create(
                     request.plan().descriptor().advisors(), request.plan().advisorFactories(),
                     new com.javaclaw.framework.spi.AdvisorRuntimeContext(
@@ -273,6 +275,26 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
         String modelName = response.getMetadata() == null || response.getMetadata().getModel() == null
                 ? request.plan().descriptor().modelPolicyRef()
                 : response.getMetadata().getModel();
+        meter(request, modelName, inputTokens, outputTokens, attempt, responseIndex, false);
+    }
+
+    private void meterFailure(
+            ReasoningRequest request,
+            ManagedInferenceChatModel.ManagedInferenceModelException failure,
+            int attempt,
+            int responseIndex) {
+        meter(request, failure.model(), failure.usage().promptTokens(),
+                failure.usage().completionTokens(), attempt, responseIndex, true);
+    }
+
+    private void meter(
+            ReasoningRequest request,
+            String modelName,
+            long inputTokens,
+            long outputTokens,
+            int attempt,
+            int responseIndex,
+            boolean failed) {
         BigDecimal estimatedCost = BigDecimal.valueOf(
                 com.javaclaw.agent.PricingTable.estimateCostCny(
                         modelName, inputTokens, outputTokens));
@@ -290,6 +312,7 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             usage.put("inputTokens", inputTokens);
             usage.put("outputTokens", outputTokens);
             usage.put("estimatedCostCny", estimatedCost);
+            usage.put("failed", failed);
             request.events().emit("core.model.usage", 1, "framework.springai", usage);
         } catch (RuntimeException eventFailure) {
             if (ledgerFailure == null) throw eventFailure;
@@ -562,19 +585,34 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
     private static final class MeteredChatModel implements ChatModel {
         private final ChatModel delegate;
         private final java.util.function.Consumer<ChatResponse> meter;
+        private final java.util.function.Consumer<ManagedInferenceChatModel.ManagedInferenceModelException>
+                failureMeter;
 
         private MeteredChatModel(
                 ChatModel delegate,
-                java.util.function.Consumer<ChatResponse> meter) {
+                java.util.function.Consumer<ChatResponse> meter,
+                java.util.function.Consumer<ManagedInferenceChatModel.ManagedInferenceModelException>
+                        failureMeter) {
             this.delegate = Objects.requireNonNull(delegate, "delegate");
             this.meter = Objects.requireNonNull(meter, "meter");
+            this.failureMeter = Objects.requireNonNull(failureMeter, "failureMeter");
         }
 
         @Override
         public ChatResponse call(Prompt prompt) {
-            ChatResponse response = delegate.call(prompt);
-            meter.accept(response);
-            return response;
+            try {
+                ChatResponse response = delegate.call(prompt);
+                meter.accept(response);
+                return response;
+            } catch (ManagedInferenceChatModel.ManagedInferenceModelException failure) {
+                try {
+                    failureMeter.accept(failure);
+                } catch (RuntimeException meteringFailure) {
+                    meteringFailure.addSuppressed(failure);
+                    throw meteringFailure;
+                }
+                throw failure;
+            }
         }
 
         @Override

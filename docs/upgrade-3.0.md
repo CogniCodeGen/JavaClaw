@@ -165,10 +165,69 @@ flowchart LR
 仓库不提供 Plugin API 2.x 适配器。缺少 `apiVersion` 或主版本不是 3 的插件会在创建类加载器前
 被拒绝。
 
+### 服务插件声明式配置界面
+
+服务插件可以在 `plugin.json` 中声明由 JavaClaw 渲染的配置页。当前只支持
+`configurationUi.schemaVersion = 1`，最多 8 个页面、合计 24 个区块：
+
+```json
+{
+  "configurationUi": {
+    "schemaVersion": 1,
+    "pages": [
+      {
+        "id": "models",
+        "title": "模型",
+        "description": "模型配置",
+        "sections": [
+          {
+            "id": "catalog",
+            "type": "INFERENCE_CATALOG"
+          }
+        ]
+      },
+      {
+        "id": "service",
+        "title": "服务",
+        "sections": [
+          {"id": "runtime", "type": "SERVICE_RUNTIME"},
+          {"id": "console", "type": "INFERENCE_SERVICE"}
+        ]
+      }
+    ]
+  }
+}
+```
+
+标准区块类型如下：
+
+| 类型 | 用途 | 前置声明 |
+|---|---|---|
+| `INFO` | 显示标题和说明文本 | 无 |
+| `SCHEMA_FORM` | 编辑 `configurationSchema` 中列出的字段 | `configurationSchema.properties` |
+| `EXTERNAL_ENDPOINTS` | 编辑宿主管理的监听、TLS、密钥和限额 | `service.externalEndpoints` |
+| `INFERENCE_MODELS` | 模型导入、档案参数、探测、加载和工作区档位 | `inference` |
+| `INFERENCE_API` | OpenAI 路由、别名、TLS、API Key、白名单和限额 | `inference` 与外部端点 |
+| `INFERENCE_CATALOG` | Hugging Face 在线目录和插件内本地模型资产 | `inference` |
+| `INFERENCE_SERVICE` | 模型加载、发布、OpenAI 接口、示例及合并日志 | `inference` 与外部端点 |
+| `SERVICE_RUNTIME` | 子进程状态、启停及折叠的资源预算 | `service` |
+
+`x-javaclaw-hidden` 和 `x-javaclaw-host-managed` 字段不能出现在 `SCHEMA_FORM.fields`
+中，后端也拒绝修改。未声明 `configurationUi` 时，宿主根据 Schema、端点和推理能力生成通用页。
+声明式界面未包含 `SERVICE_RUNTIME` 时，宿主仍追加兼容的“运行与日志”页；一旦插件声明该区块，
+进程状态和资源设置就嵌入插件指定页面，不再生成独立标签。整个界面最多声明一个
+`SERVICE_RUNTIME` 区块。
+
+配置界面契约是严格白名单：不得声明 Controller 类、FXML、CSS、字体、颜色、内联样式、脚本、
+图片 URL 或外部页面；未知版本、区块或字段会在注册前拒绝。插件 JAR 不得包含宿主 UI 类，Desktop
+也不会加载服务插件类来渲染界面。所有控件只使用 JavaClaw 标准样式类和 `-jc-*` 设计令牌，自动
+继承当前主题、UI 字体与等宽字体，并在运行时切换后立即更新。
+
 ## 兼容性与验证
 
 保持不变：主窗口默认 1200×700、现有布局和 CSS class、主要文案、快捷键、主题、托盘和窗口
-行为。H2 `AUTO_SERVER` 不可用时仍回退 embedded，并保留 macOS 托盘退出 watchdog。
+行为。H2 固定使用与数据目录单实例协调器配套的 embedded 文件模式；诊断工具只在 JavaClaw
+停止后访问数据库。macOS 托盘退出 watchdog 保持不变。
 
 不兼容：2.x 数据自动迁移、Plugin API 2.x、静态 Manager 单例、生产 Controller 中的 Java 布局、
 直接线程创建和直接 FX 调度。

@@ -45,6 +45,11 @@
                                 <HBox alignment="CENTER_RIGHT" spacing="8.0">
                                     <children>
                                         <Label fx:id="stateTextLabel" styleClass="sec-hint"/>
+                                        <Button fx:id="approvalButton" text="批准并注册"
+                                                visible="false" managed="false"
+                                                accessibleText="批准并注册当前服务插件"
+                                                styleClass="button, jc-btn, jc-btn-soft, jc-btn-sm"
+                                                onAction="#approveRequested"/>
                                         <ToggleSwitch fx:id="enabledToggle"
                                                       accessibleText="启用或停用当前插件"/>
                                     </children>

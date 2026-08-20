@@ -21,8 +21,10 @@ import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -68,7 +70,7 @@ class SettingsWindowFxmlLoadTest {
     }
 
     @Test
-    void completeWindowLoadsAllSectionsFromWorkspaceContextAndClosesCleanly() throws Exception {
+    void windowShellLoadsWithoutCreatingAnySettingsSectionAndClosesCleanly() throws Exception {
         previousDataDirectory = System.getProperty(DataRoot.DATA_DIR_PROPERTY);
         System.setProperty(DataRoot.DATA_DIR_PROPERTY, tempDirectory.resolve("data").toString());
         root = ApplicationContexts.createRoot(DataRoot.resolve());
@@ -83,7 +85,18 @@ class SettingsWindowFxmlLoadTest {
 
         assertNotNull(view);
         assertNotNull(workspace.bean(SettingsPanelCatalogFactory.class));
-        runFx(view::close);
+        assertTrue(callFx(() -> view.loadedPanelCount() == 0),
+                "构造设置窗口时不得预先创建任何设置分区");
+        AtomicInteger loadedAfterFirstPulse = new AtomicInteger(-1);
+        runFx(() -> {
+            Platform.runLater(() -> Platform.runLater(() -> {
+                loadedAfterFirstPulse.set(view.loadedPanelCount());
+                view.close();
+            }));
+            view.show("模型配置");
+        });
+        assertEquals(1, loadedAfterFirstPulse.get(),
+                "只应在窗口显示后的 pulse 创建请求分区");
         view = null;
     }
 

@@ -1,5 +1,6 @@
 package com.javaclaw.ui.javafx.settings;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.api.interaction.ConfirmRequest;
 import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.api.interaction.UserInteractionPort;
@@ -13,12 +14,22 @@ import com.javaclaw.application.settings.ModelSettingsApplicationService.TierSet
 import com.javaclaw.application.settings.ModelSettingsPort;
 import com.javaclaw.application.settings.ModelSettingsProbePort;
 import com.javaclaw.application.settings.ModelSettingsUseCase;
+import com.javaclaw.application.settings.DefaultModelProviderCatalog;
+import com.javaclaw.application.settings.ModelProviderCatalog;
 import com.javaclaw.platform.dialog.DialogService;
+import com.javaclaw.platform.desktop.ExternalDirectoryOpener;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
+import com.javaclaw.platform.fxml.ViewHandle;
 import com.javaclaw.platform.fx.FxDispatcher;
+import com.javaclaw.runtime.WorkspaceContext;
+import com.javaclaw.application.workspace.WorkspaceApplicationService;
+import com.javaclaw.testsupport.EmptyInferenceManagementService;
+import com.javaclaw.application.inference.InferenceManagementApplicationService;
+import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
 import javafx.application.Platform;
 import javafx.scene.Scene;
+import javafx.scene.Parent;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextField;
 import org.junit.jupiter.api.AfterEach;
@@ -29,6 +40,7 @@ import org.springframework.context.annotation.AnnotationConfigApplicationContext
 
 import java.util.ArrayList;
 import java.util.List;
+import java.nio.file.Path;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -46,6 +58,7 @@ class SettingsCoreFxmlLoadTest {
     private static final long TIMEOUT_SECONDS = 5;
 
     private final List<SettingsSectionView<?>> views = new ArrayList<>();
+    private final List<ViewHandle<Parent>> inferenceViews = new ArrayList<>();
     private AnnotationConfigApplicationContext context;
     private FakeSettingsPort settings;
 
@@ -66,6 +79,10 @@ class SettingsCoreFxmlLoadTest {
     @AfterEach
     void tearDown() throws Exception {
         runFx(() -> {
+            for (int index = inferenceViews.size() - 1; index >= 0; index--) {
+                inferenceViews.get(index).close();
+            }
+            inferenceViews.clear();
             for (int index = views.size() - 1; index >= 0; index--) views.get(index).close();
             views.clear();
         });
@@ -84,8 +101,14 @@ class SettingsCoreFxmlLoadTest {
             render(model);
             render(tiers);
             render(embedding);
+            model.controller().reload();
+            tiers.controller().reload();
+            embedding.controller().reload();
         });
 
+        awaitFx(() -> "chat-model".equals(text(model, "modelNameField").getText())
+                && "normal-model".equals(text(tiers, "normalModelNameField").getText())
+                && "embedding-model".equals(text(embedding, "modelNameField").getText()));
         assertEquals("chat-model", callFx(() -> text(model, "modelNameField").getText()));
         assertEquals("normal-model", callFx(() -> text(tiers, "normalModelNameField").getText()));
         assertEquals("embedding-model", callFx(() -> text(embedding, "modelNameField").getText()));
@@ -106,7 +129,8 @@ class SettingsCoreFxmlLoadTest {
         AtomicInteger applied = new AtomicInteger();
         var model = add(callFx(() -> context.getBean(ModelSettingsSectionFactory.class)
                 .createModel(ignored -> applied.incrementAndGet())));
-        runFx(() -> render(model));
+        runFx(() -> { render(model); model.controller().reload(); });
+        awaitFx(() -> "chat-model".equals(text(model, "modelNameField").getText()));
         AtomicReference<Throwable> failure = new AtomicReference<>();
 
         runFx(() -> {
@@ -125,10 +149,47 @@ class SettingsCoreFxmlLoadTest {
         assertEquals("updated-model", settings.snapshot.model().modelName());
     }
 
+    @Test
+    void deliveranceModelAndServiceConsoleFxmlLoadsThroughSpringControllers() throws Exception {
+        prepareContext();
+        SpringFxmlLoader loader = context.getBean(SpringFxmlLoader.class);
+        for (String resource : List.of(
+                "/fxml/settings/local-inference-assets.fxml",
+                "/fxml/settings/local-inference-profiles.fxml",
+                "/fxml/settings/local-inference-api.fxml")) {
+            ViewHandle<Parent> handle = callFx(() -> loader.load(
+                    SettingsCoreFxmlLoadTest.class.getResource(resource)));
+            inferenceViews.add(handle);
+            runFx(() -> render(handle.root()));
+            assertNotNull(callFx(handle::primaryController));
+        }
+        assertNotNull(callFx(() -> inferenceViews.get(0).root().lookup("#onlineModelList")));
+        assertNotNull(callFx(() -> inferenceViews.get(0).root().lookup("#modelSourceTabs")));
+        assertNotNull(callFx(() -> inferenceViews.get(0).root().lookup("#onlineModelTitleLabel")));
+        assertNotNull(callFx(() -> inferenceViews.get(1).root().lookup("#parametersPanel")));
+        assertNotNull(callFx(() -> inferenceViews.get(2).root().lookup("#ejectServiceModelButton")));
+        assertNotNull(callFx(() -> inferenceViews.get(2).root().lookup("#serviceModelIdentifierField")));
+        assertNotNull(callFx(() -> inferenceViews.get(2).root().lookup("#routesArea")));
+        assertEquals(330.0, callFx(() -> ((javafx.scene.layout.Region) inferenceViews.get(2)
+                .root().lookup(".service-plugin-service-split")).getMaxHeight()));
+        assertNotNull(callFx(() -> ((javafx.scene.control.ListView<?>) inferenceViews.get(2)
+                .root().lookup("#serviceModelList")).getCellFactory()));
+    }
+
     private void prepareContext() {
         context = new AnnotationConfigApplicationContext();
         settings = new FakeSettingsPort(snapshot());
         context.registerBean(ModelSettingsPort.class, () -> settings);
+        context.registerBean(ModelProviderCatalog.class, DefaultModelProviderCatalog::new);
+        context.registerBean(InferenceManagementApplicationService.class,
+                EmptyInferenceManagementService::new);
+        context.registerBean(ObjectMapper.class,
+                () -> new ObjectMapper().findAndRegisterModules());
+        context.registerBean(WorkspaceApplicationService.class, EmptyWorkspaces::new);
+        Path root = Path.of("target", "settings-core-fxml").toAbsolutePath();
+        context.registerBean(WorkspaceContext.class, () -> new WorkspaceContext(
+                "test", root, root, root.resolve("browser"), root.resolve("screens"),
+                root.resolve("logs")));
         context.registerBean(ModelSettingsProbePort.class, FakeProbePort::new);
         context.registerBean(ModelSettingsApplicationService.class, () -> new ModelSettingsUseCase(
                 context.getBean(ModelSettingsPort.class),
@@ -138,11 +199,15 @@ class SettingsCoreFxmlLoadTest {
                 () -> new DialogService(context.getBean(UserInteractionPort.class)));
         context.registerBean(ManagedTaskExecutor.class, () -> new ManagedTaskExecutor(),
                 definition -> definition.setDestroyMethodName("close"));
+        context.registerBean(ExternalDirectoryOpener.class,
+                () -> new ExternalDirectoryOpener(context.getBean(ManagedTaskExecutor.class)));
         context.registerBean(FxDispatcher.class, FxDispatcher::new);
         context.registerBean(SpringFxmlLoader.class,
                 () -> new SpringFxmlLoader(context.getBeanFactory()));
         context.registerBean(ModelSettingsSectionFactory.class,
                 () -> new ModelSettingsSectionFactory(context.getBean(SpringFxmlLoader.class)));
+        context.registerBean(PluginCenterViewFactory.class,
+                () -> new PluginCenterViewFactory(context.getBean(SpringFxmlLoader.class)));
         context.refresh();
     }
 
@@ -155,6 +220,12 @@ class SettingsCoreFxmlLoadTest {
         new Scene((javafx.scene.Parent) view.root(), 800, 620);
         view.root().applyCss();
         view.root().autosize();
+    }
+
+    private static void render(Parent root) {
+        new Scene(root, 900, 700);
+        root.applyCss();
+        root.autosize();
     }
 
     private static TextField text(SettingsSectionView<?> view, String id) {
@@ -221,6 +292,15 @@ class SettingsCoreFxmlLoadTest {
             snapshot = new Snapshot(snapshot.model(), snapshot.tiers(), value,
                     snapshot.storageDescription());
         }
+    }
+
+    private static final class EmptyWorkspaces implements WorkspaceApplicationService {
+        @Override public List<WorkspaceSummary> list() { return List.of(); }
+        @Override public String currentWorkspaceId() { return "test"; }
+        @Override public WorkspaceSummary create(String name) {
+            return new WorkspaceSummary("test", name, "");
+        }
+        @Override public boolean delete(String workspaceId) { return false; }
     }
 
     private static final class FakeProbePort implements ModelSettingsProbePort {

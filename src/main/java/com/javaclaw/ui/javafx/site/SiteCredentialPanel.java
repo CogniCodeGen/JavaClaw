@@ -16,6 +16,10 @@ public final class SiteCredentialPanel implements AutoCloseable {
 
     public ScrollPane root() { return handle.root(); }
 
+    public void activate() { controller().activate(); }
+
+    public void deactivate() { controller().deactivate(); }
+
     SiteCredentialController controller() {
         return handle.controller(SiteCredentialController.class);
     }

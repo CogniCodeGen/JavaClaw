@@ -39,7 +39,15 @@ public final class PluginManagerManagementAdapter implements PluginManagementPor
     }
 
     @Override
+    public boolean approveServicePlugin(String pluginId) {
+        return manager.approveServicePlugin(pluginId);
+    }
+
+    @Override
     public String install(Path jar) { return manager.installFromFile(jar); }
+
+    @Override
+    public boolean isServicePlugin(String pluginId) { return manager.isServicePlugin(pluginId); }
 
     @Override
     public boolean uninstall(String pluginId) { return manager.uninstall(pluginId); }

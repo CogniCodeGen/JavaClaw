@@ -5,6 +5,7 @@ import com.javaclaw.framework.api.DefinitionValidationIssue;
 import com.networknt.schema.JsonNodePath;
 import com.networknt.schema.JsonSchema;
 import com.networknt.schema.JsonSchemaFactory;
+import com.networknt.schema.SchemaLocation;
 import com.networknt.schema.SpecVersion;
 import com.networknt.schema.ValidationMessage;
 
@@ -24,6 +25,8 @@ import java.util.concurrent.ConcurrentMap;
 public final class JsonSchemaValidator {
     private static final JsonSchemaFactory FACTORY = JsonSchemaFactory.getInstance(
             SpecVersion.VersionFlag.V202012);
+    private static final JsonSchema META_SCHEMA = FACTORY.getSchema(
+            SchemaLocation.of("https://json-schema.org/draft/2020-12/schema"));
 
     private final ConcurrentMap<String, JsonSchema> compiled = new ConcurrentHashMap<>();
 
@@ -55,7 +58,18 @@ public final class JsonSchemaValidator {
     public void requireValidSchema(JsonNode schema, String description) {
         Objects.requireNonNull(schema, "schema");
         try {
+            var metaIssues = META_SCHEMA.validate(schema);
+            if (!metaIssues.isEmpty()) {
+                ValidationMessage first = metaIssues.stream()
+                        .sorted(Comparator.comparing(ValidationMessage::getMessage))
+                        .findFirst()
+                        .orElseThrow();
+                throw new IllegalArgumentException("invalid JSON Schema for " + description
+                        + ": " + first.getMessage());
+            }
             compiled.computeIfAbsent(schema.toString(), ignored -> FACTORY.getSchema(schema));
+        } catch (IllegalArgumentException invalidSchema) {
+            throw invalidSchema;
         } catch (RuntimeException invalidSchema) {
             throw new IllegalArgumentException("invalid JSON Schema for " + description,
                     invalidSchema);

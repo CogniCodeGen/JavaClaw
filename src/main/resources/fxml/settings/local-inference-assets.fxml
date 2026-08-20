@@ -1,0 +1,300 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ListView?>
+<?import javafx.scene.control.ProgressBar?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.control.Separator?>
+<?import javafx.scene.control.SplitPane?>
+<?import javafx.scene.control.Tab?>
+<?import javafx.scene.control.TabPane?>
+<?import javafx.scene.control.TextArea?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox fx:id="root" spacing="10.0" styleClass="service-plugin-model-assets"
+      xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.javaclaw.ui.javafx.settings.InferenceAssetSettingsController">
+    <padding><Insets top="2.0" right="2.0" bottom="6.0" left="2.0"/></padding>
+    <children>
+        <HBox spacing="10.0" alignment="CENTER_LEFT" styleClass="service-plugin-workbench-heading">
+            <children>
+                <VBox spacing="2.0" HBox.hgrow="ALWAYS">
+                    <children>
+                        <Label fx:id="modelPurposeLabel" text="推理模型"
+                               styleClass="settings-section-title"/>
+                        <Label text="只显示 Deliverance 当前可加载的量化仓库；下载资产统一保存在插件 data/models。"
+                               wrapText="true" styleClass="settings-hint"/>
+                    </children>
+                </VBox>
+                <Label text="HF · 匿名访问" styleClass="jc-badge, service-plugin-source-badge"/>
+            </children>
+        </HBox>
+
+        <TabPane fx:id="modelSourceTabs" tabClosingPolicy="UNAVAILABLE" styleClass="service-plugin-model-tabs"
+                 VBox.vgrow="ALWAYS">
+            <tabs>
+                <Tab fx:id="onlineModelsTab" text="在线模型">
+                    <content>
+                        <SplitPane fx:id="onlineCatalogSplit" dividerPositions="0.38" minHeight="430.0" prefHeight="520.0"
+                                   styleClass="service-plugin-catalog-split">
+                            <items>
+                                <VBox spacing="9.0" minWidth="270.0" prefWidth="340.0"
+                                      styleClass="service-plugin-catalog-rail">
+                                    <padding><Insets top="12.0" right="12.0" bottom="10.0" left="12.0"/></padding>
+                                    <children>
+                                        <HBox spacing="7.0" alignment="CENTER_LEFT"
+                                              styleClass="service-plugin-search-box">
+                                            <children>
+                                                <Label text="⌕" styleClass="service-plugin-search-glyph"/>
+                                                <TextField fx:id="onlineSearchField"
+                                                           promptText="在 Hugging Face 上搜索兼容模型…"
+                                                           maxWidth="Infinity" HBox.hgrow="ALWAYS"
+                                                           onAction="#searchOnlineRequested"
+                                                           styleClass="service-plugin-search-field"/>
+                                                <Button text="搜索" onAction="#searchOnlineRequested"
+                                                        styleClass="jc-btn, jc-btn-primary, jc-btn-sm"/>
+                                            </children>
+                                        </HBox>
+                                        <HBox spacing="7.0" alignment="CENTER_LEFT">
+                                            <children>
+                                                <Label text="兼容模型" styleClass="settings-group-title"/>
+                                                <Region HBox.hgrow="ALWAYS"/>
+                                                <Button text="↻ 刷新" onAction="#refreshOnlineRequested"
+                                                        styleClass="jc-btn, jc-btn-ghost, jc-btn-sm"/>
+                                            </children>
+                                        </HBox>
+                                        <VBox spacing="5.0" styleClass="service-plugin-catalog-status">
+                                            <children>
+                                                <HBox spacing="7.0" alignment="CENTER_LEFT">
+                                                    <children>
+                                                        <Label fx:id="onlineCatalogStateLabel"
+                                                               text="准备读取 Hugging Face 兼容目录"
+                                                               wrapText="true" maxWidth="Infinity"
+                                                               HBox.hgrow="ALWAYS" styleClass="settings-hint"/>
+                                                        <Button fx:id="onlineRetryButton" text="重试"
+                                                                visible="false" managed="false"
+                                                                onAction="#retryOnlineRequested"
+                                                                styleClass="jc-btn, jc-btn-soft, jc-btn-sm"/>
+                                                    </children>
+                                                </HBox>
+                                                <ProgressBar fx:id="onlineCatalogProgress"
+                                                             progress="-1.0" maxWidth="Infinity"
+                                                             visible="false" managed="false"
+                                                             styleClass="service-plugin-progress"/>
+                                                <Label fx:id="onlineUpdatedLabel"
+                                                       text="匿名访问 · 严格兼容验证"
+                                                       styleClass="settings-hint, service-plugin-catalog-updated"/>
+                                            </children>
+                                        </VBox>
+                                        <ListView fx:id="onlineModelList" VBox.vgrow="ALWAYS"
+                                                  minHeight="300.0"
+                                                  styleClass="service-plugin-model-list, service-plugin-catalog-list">
+                                            <placeholder>
+                                                <Label text="正在读取兼容模型，或输入模型名称搜索"
+                                                       wrapText="true" styleClass="settings-hint"/>
+                                            </placeholder>
+                                        </ListView>
+                                        <HBox spacing="8.0" alignment="CENTER_LEFT"
+                                              styleClass="service-plugin-pagination">
+                                            <children>
+                                                <Label fx:id="onlinePageLabel" text="第 1 页"
+                                                       maxWidth="Infinity" HBox.hgrow="ALWAYS"
+                                                       styleClass="settings-hint"/>
+                                                <Button fx:id="onlineNextButton" text="下一页 →"
+                                                        disable="true" onAction="#nextOnlineRequested"
+                                                        styleClass="jc-btn, jc-btn-soft, jc-btn-sm"/>
+                                            </children>
+                                        </HBox>
+                                    </children>
+                                </VBox>
+
+                                <ScrollPane fitToWidth="true" hbarPolicy="NEVER"
+                                            styleClass="service-plugin-detail-scroll">
+                                    <content>
+                                        <VBox spacing="12.0" minWidth="340.0"
+                                              styleClass="service-plugin-catalog-detail">
+                                            <padding><Insets top="16.0" right="18.0" bottom="16.0" left="18.0"/></padding>
+                                            <children>
+                                                <HBox spacing="10.0" alignment="CENTER_LEFT">
+                                                    <children>
+                                                        <VBox spacing="3.0" HBox.hgrow="ALWAYS">
+                                                            <children>
+                                                                <Label fx:id="onlineModelTitleLabel"
+                                                                       text="选择一个兼容模型"
+                                                                       styleClass="service-plugin-detail-title"/>
+                                                                <Label fx:id="onlineModelMetaLabel"
+                                                                       text="查看仓库、固定 commit、量化大小与用途"
+                                                                       wrapText="true" styleClass="settings-hint"/>
+                                                            </children>
+                                                        </VBox>
+                                                        <Label text="已验证清单"
+                                                               styleClass="jc-badge, service-plugin-verified-badge"/>
+                                                    </children>
+                                                </HBox>
+                                                <Separator/>
+                                                <VBox spacing="6.0" styleClass="service-plugin-copy-grid">
+                                                    <children>
+                                                        <HBox spacing="6.0" alignment="CENTER_LEFT">
+                                                            <children>
+                                                                <Label text="仓库" minWidth="52.0" styleClass="settings-hint"/>
+                                                                <TextField fx:id="onlineRepositoryField" editable="false"
+                                                                           HBox.hgrow="ALWAYS"
+                                                                           styleClass="service-plugin-code, service-plugin-copy-field"/>
+                                                                <Button text="复制" onAction="#copyOnlineRepositoryRequested"
+                                                                        styleClass="jc-btn, jc-btn-ghost, jc-btn-sm"/>
+                                                            </children>
+                                                        </HBox>
+                                                        <HBox spacing="6.0" alignment="CENTER_LEFT">
+                                                            <children>
+                                                                <Label text="Commit" minWidth="52.0" styleClass="settings-hint"/>
+                                                                <TextField fx:id="onlineCommitField" editable="false"
+                                                                           HBox.hgrow="ALWAYS"
+                                                                           styleClass="service-plugin-code, service-plugin-copy-field"/>
+                                                                <Button text="复制" onAction="#copyOnlineCommitRequested"
+                                                                        styleClass="jc-btn, jc-btn-ghost, jc-btn-sm"/>
+                                                            </children>
+                                                        </HBox>
+                                                    </children>
+                                                </VBox>
+                                                <VBox spacing="7.0" styleClass="jc-card, service-plugin-detail-card">
+                                                    <padding><Insets top="12.0" right="14.0" bottom="12.0" left="14.0"/></padding>
+                                                    <children>
+                                                        <Label text="模型信息" styleClass="settings-group-title"/>
+                                                        <TextArea fx:id="onlineModelDetailArea" editable="false"
+                                                                  wrapText="true" prefRowCount="12"
+                                                                  text="选择左侧仓库查看详情和实际量化大小。"
+                                                                  styleClass="service-plugin-code, service-plugin-detail-text"/>
+                                                    </children>
+                                                </VBox>
+                                                <VBox spacing="7.0" styleClass="service-plugin-download-panel">
+                                                    <children>
+                                                        <Label text="下载选项" styleClass="settings-group-title"/>
+                                                        <Label text="下载固定到详情返回的 commit，并在完成后重新校验大小、SHA 与兼容性。"
+                                                               wrapText="true" styleClass="settings-hint"/>
+                                                        <Button fx:id="onlineDownloadButton"
+                                                                text="下载到插件目录" disable="true"
+                                                                onAction="#downloadSelectedOnlineRequested"
+                                                                maxWidth="Infinity"
+                                                                styleClass="jc-btn, jc-btn-primary"/>
+                                                    </children>
+                                                </VBox>
+                                            </children>
+                                        </VBox>
+                                    </content>
+                                </ScrollPane>
+                            </items>
+                        </SplitPane>
+                    </content>
+                </Tab>
+
+                <Tab fx:id="localModelsTab" text="本地模型">
+                    <content>
+                        <SplitPane fx:id="localCatalogSplit" dividerPositions="0.42" minHeight="430.0" prefHeight="500.0"
+                                   styleClass="service-plugin-catalog-split">
+                            <items>
+                                <VBox spacing="9.0" minWidth="270.0" prefWidth="360.0"
+                                      styleClass="service-plugin-catalog-rail">
+                                    <padding><Insets top="12.0" right="12.0" bottom="10.0" left="12.0"/></padding>
+                                    <children>
+                                        <HBox spacing="8.0" alignment="CENTER_LEFT">
+                                            <children>
+                                                <VBox spacing="2.0" HBox.hgrow="ALWAYS">
+                                                    <children>
+                                                        <Label text="插件内模型" styleClass="settings-group-title"/>
+                                                        <Label text="重启恢复列表；加载统一在“服务”页操作"
+                                                               styleClass="settings-hint"/>
+                                                    </children>
+                                                </VBox>
+                                                <Button fx:id="importLocalButton" text="＋ 添加目录" onAction="#importLocalRequested"
+                                                        styleClass="jc-btn, jc-btn-soft, jc-btn-sm"/>
+                                            </children>
+                                        </HBox>
+                                        <TextField fx:id="localSearchField" promptText="搜索本地模型、来源或路径…"
+                                                   maxWidth="Infinity" styleClass="service-plugin-search-field"/>
+                                        <ListView fx:id="assetList" VBox.vgrow="ALWAYS"
+                                                  minHeight="320.0"
+                                                  styleClass="service-plugin-model-list, service-plugin-catalog-list">
+                                            <placeholder>
+                                                <VBox alignment="CENTER" spacing="8.0">
+                                                    <children>
+                                                        <Label text="本地还没有模型，请先从模型目录下载或导入"
+                                                               wrapText="true" styleClass="settings-hint"/>
+                                                        <Button fx:id="emptyLocalCatalogButton" text="前往模型目录"
+                                                                visible="false" managed="false"
+                                                                onAction="#openCatalogRequested"
+                                                                styleClass="jc-btn, jc-btn-soft, jc-btn-sm"/>
+                                                    </children>
+                                                </VBox>
+                                            </placeholder>
+                                        </ListView>
+                                    </children>
+                                </VBox>
+
+                                <ScrollPane fitToWidth="true" hbarPolicy="NEVER"
+                                            styleClass="service-plugin-detail-scroll">
+                                    <content>
+                                        <VBox spacing="12.0" minWidth="340.0"
+                                              styleClass="service-plugin-catalog-detail">
+                                            <padding><Insets top="16.0" right="18.0" bottom="16.0" left="18.0"/></padding>
+                                            <children>
+                                                <VBox spacing="3.0">
+                                                    <children>
+                                                        <Label fx:id="localModelTitleLabel" text="选择本地模型"
+                                                               styleClass="service-plugin-detail-title"/>
+                                                        <Label fx:id="localModelMetaLabel"
+                                                               text="查看插件内路径、来源、用途与加载状态"
+                                                               wrapText="true" styleClass="settings-hint"/>
+                                                    </children>
+                                                </VBox>
+                                                <VBox spacing="7.0" styleClass="jc-card, service-plugin-detail-card">
+                                                    <padding><Insets top="12.0" right="14.0" bottom="12.0" left="14.0"/></padding>
+                                                    <children>
+                                                        <Label text="模型信息" styleClass="settings-group-title"/>
+                                                        <TextArea fx:id="localModelDetailArea" editable="false"
+                                                                  wrapText="true" prefRowCount="12"
+                                                                  promptText="选择本地模型查看详情"
+                                                                  styleClass="service-plugin-code, service-plugin-detail-text"/>
+                                                    </children>
+                                                </VBox>
+                                                <HBox spacing="8.0" alignment="CENTER_LEFT"
+                                                      styleClass="service-plugin-form-actions">
+                                                    <children>
+                                                        <Button fx:id="loadSelectedAssetButton" text="加载…"
+                                                                disable="true" onAction="#loadSelectedAssetRequested"
+                                                                styleClass="jc-btn, jc-btn-primary, jc-btn-sm"/>
+                                                        <Button fx:id="unloadSelectedAssetButton" text="卸载"
+                                                                disable="true" onAction="#unloadSelectedAssetRequested"
+                                                                styleClass="jc-btn, jc-btn-soft, jc-btn-sm"/>
+                                                        <Button fx:id="openAssetDirectoryButton" text="打开目录"
+                                                                disable="true" onAction="#openAssetDirectoryRequested"
+                                                                styleClass="jc-btn, jc-btn-soft, jc-btn-sm"/>
+                                                        <Region HBox.hgrow="ALWAYS"/>
+                                                        <Button fx:id="deleteAssetButton" text="删除"
+                                                                disable="true" onAction="#deleteAssetRequested"
+                                                                styleClass="jc-btn, jc-btn-ghost, jc-btn-sm"/>
+                                                    </children>
+                                                </HBox>
+                                            </children>
+                                        </VBox>
+                                    </content>
+                                </ScrollPane>
+                            </items>
+                        </SplitPane>
+                    </content>
+                </Tab>
+            </tabs>
+        </TabPane>
+
+        <ProgressBar fx:id="assetProgress" progress="0.0" maxWidth="Infinity"
+                     visible="false" managed="false" styleClass="service-plugin-progress"/>
+        <Label fx:id="assetProgressLabel" text="等待导入或下载" wrapText="true"
+               visible="false" managed="false" styleClass="settings-hint"/>
+        <Label fx:id="statusLabel" text="模型目录已就绪" wrapText="true"
+               styleClass="settings-hint, service-plugin-operation-status"/>
+    </children>
+</VBox>

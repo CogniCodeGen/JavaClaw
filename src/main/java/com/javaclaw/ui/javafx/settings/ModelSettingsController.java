@@ -7,6 +7,10 @@ import com.javaclaw.application.settings.ModelSettingsApplicationService;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.ModelSettings;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.ProbeResult;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.SaveResult;
+import com.javaclaw.application.settings.ModelSettingsApplicationService.Snapshot;
+import com.javaclaw.application.settings.ModelProviderCatalog;
+import com.javaclaw.application.inference.InferenceManagementApplicationService;
+import com.javaclaw.inference.api.InferenceModelProfile;
 import com.javaclaw.platform.dialog.DialogService;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskSpec;
@@ -14,8 +18,11 @@ import com.javaclaw.platform.fx.FxDispatcher;
 import com.javaclaw.platform.fx.UiAsyncAction;
 import com.javaclaw.ui.javafx.control.SecretFieldController;
 import com.javaclaw.ui.javafx.control.ToggleSwitch;
+import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
+import com.javaclaw.runtime.WorkspaceContext;
 import javafx.fxml.FXML;
 import javafx.scene.control.Button;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.ScrollPane;
@@ -23,7 +30,9 @@ import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.layout.VBox;
 
+import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.function.Consumer;
 
 /** 模型配置分区 Controller；只协调表单、应用用例与异步动作。 */
@@ -35,6 +44,13 @@ public final class ModelSettingsController
     @FXML private ToggleButton advancedTab;
     @FXML private VBox basicPanel;
     @FXML private VBox advancedPanel;
+    @FXML private ComboBox<String> providerCombo;
+    @FXML private javafx.scene.Node cloudConnectionLabel;
+    @FXML private javafx.scene.Node baseUrlRow;
+    @FXML private javafx.scene.Node modelNameRow;
+    @FXML private javafx.scene.Node apiKeyRow;
+    @FXML private javafx.scene.Node managedProfileRow;
+    @FXML private ComboBox<InferenceSettingsChoice<UUID>> managedProfileCombo;
     @FXML private TextField baseUrlField;
     @FXML private TextField modelNameField;
     @FXML private SecretFieldController apiKeyFieldController;
@@ -57,23 +73,42 @@ public final class ModelSettingsController
 
     private final ModelSettingsApplicationService useCases;
     private final DialogService dialogs;
+    private final ModelProviderCatalog providers;
+    private final InferenceManagementApplicationService inference;
+    private final PluginCenterViewFactory plugins;
     private final UiAsyncAction<SaveResult> mutation;
     private final UiAsyncAction<ProbeResult> probe;
+    private final UiAsyncAction<ViewData> refresh;
+    private final UiAsyncAction<List<InferenceSettingsChoice<UUID>>> profileRefresh;
     private Consumer<SaveResult> onApplied = ignored -> { };
+    private Runnable onRuntimeConfigurationChanged = () -> { };
 
     public ModelSettingsController(
             ModelSettingsApplicationService useCases,
+            ModelProviderCatalog providers,
+            InferenceManagementApplicationService inference,
+            PluginCenterViewFactory plugins,
+            WorkspaceContext workspace,
             DialogService dialogs,
             ManagedTaskExecutor tasks,
             FxDispatcher fx) {
         this.useCases = Objects.requireNonNull(useCases, "useCases");
+        this.providers = Objects.requireNonNull(providers, "providers");
+        this.inference = Objects.requireNonNull(inference, "inference");
+        this.plugins = Objects.requireNonNull(plugins, "plugins");
+        Objects.requireNonNull(workspace, "workspace");
         this.dialogs = Objects.requireNonNull(dialogs, "dialogs");
         mutation = new UiAsyncAction<>(tasks, fx);
         probe = new UiAsyncAction<>(tasks, fx);
+        refresh = new UiAsyncAction<>(tasks, fx);
+        profileRefresh = new UiAsyncAction<>(tasks, fx);
     }
 
     @FXML
     private void initialize() {
+        providerCombo.getItems().setAll(providers.providers().stream()
+                .filter(provider -> provider.capabilities().contains(ModelProviderCatalog.Capability.CHAT))
+                .map(ModelProviderCatalog.Provider::displayName).toList());
         thinkingEnabledCheck.selectedProperty().addListener((ignored, previous, enabled) ->
                 thinkingBudgetField.setDisable(!enabled));
         SettingsFieldSupport.validateInteger(thinkingBudgetField, 1024, 65536);
@@ -87,16 +122,27 @@ public final class ModelSettingsController
         SettingsFieldSupport.validateDecimal(loopThresholdField, 0, 1);
         SettingsFieldSupport.validateDecimal(evaluatorThresholdField, 1, 5);
         SettingsFieldSupport.validateInteger(evaluatorMaxRetriesField, 0, 10);
-        reload();
     }
 
     @Override
-    public void configure(Consumer<SaveResult> callback) {
+    public void configure(
+            Consumer<SaveResult> callback, Runnable runtimeConfigurationChanged) {
         onApplied = Objects.requireNonNull(callback, "callback");
+        onRuntimeConfigurationChanged = Objects.requireNonNull(
+                runtimeConfigurationChanged, "runtimeConfigurationChanged");
     }
 
     public void reload() {
-        var snapshot = useCases.snapshot();
+        refresh.execute(TaskSpec.io("settings-model-load"), context -> {
+            Snapshot snapshot = useCases.snapshot();
+            boolean local = providers.find(snapshot.model().provider())
+                    .map(ModelProviderCatalog.Provider::localManaged).orElse(false);
+            return new ViewData(snapshot, local ? generationProfiles() : List.of());
+        }, this::applySnapshot, ignored -> { });
+    }
+
+    private void applySnapshot(ViewData data) {
+        Snapshot snapshot = data.snapshot();
         ModelSettings value = snapshot.model();
         SettingsFieldSupport.loading(root, () -> {
             baseUrlField.setText(value.baseUrl());
@@ -118,6 +164,11 @@ public final class ModelSettingsController
             evaluatorThresholdField.setText(Double.toString(value.evaluatorPassThreshold()));
             evaluatorMaxRetriesField.setText(Integer.toString(value.evaluatorMaxRetries()));
             storageLabel.setText("配置文件: " + snapshot.storageDescription());
+            providerCombo.setValue(providers.find(value.provider()).map(ModelProviderCatalog.Provider::displayName)
+                    .orElse(value.provider()));
+            managedProfileCombo.getItems().setAll(data.profiles());
+            selectManaged(value.managedProfileId());
+            updateProvider(false);
         });
     }
 
@@ -139,6 +190,15 @@ public final class ModelSettingsController
 
     @FXML private void basicRequested() { showBasic(true); }
     @FXML private void advancedRequested() { showBasic(false); }
+    @FXML private void providerChanged() {
+        if (SettingsFieldSupport.isLoading(root)) return;
+        updateProvider(true);
+        if (selectedProvider().localManaged()) loadManagedProfiles();
+    }
+    @FXML private void manageLocalModelsRequested() {
+        plugins.createServicePluginConfiguration(root.getScene().getWindow(),
+                "builtin-deliverance", "models", onRuntimeConfigurationChanged).showAndWait();
+    }
 
     private void showBasic(boolean basic) {
         basicTab.setSelected(basic);
@@ -164,7 +224,10 @@ public final class ModelSettingsController
     }
 
     private ModelSettings form() {
-        return new ModelSettings("OpenAI", SettingsFieldSupport.text(baseUrlField),
+        ModelProviderCatalog.Provider provider = selectedProvider();
+        String managedId = managedProfileCombo.getValue() == null ? ""
+                : managedProfileCombo.getValue().value().toString();
+        return new ModelSettings(provider.id(), SettingsFieldSupport.text(baseUrlField),
                 SettingsFieldSupport.text(modelNameField), apiKeyFieldController.text(),
                 thinkingEnabledCheck.isSelected(),
                 SettingsFieldSupport.integer(thinkingBudgetField, 1024, 65536, "思考预算"),
@@ -178,12 +241,71 @@ public final class ModelSettingsController
                 SettingsFieldSupport.integer(maxRepeatedCallsField, 1, 50, "最大重复次数"),
                 SettingsFieldSupport.decimal(loopThresholdField, 0, 1, "相似度阈值"),
                 SettingsFieldSupport.decimal(evaluatorThresholdField, 1, 5, "评估通过阈值"),
-                SettingsFieldSupport.integer(evaluatorMaxRetriesField, 0, 10, "评估重试次数"));
+                SettingsFieldSupport.integer(evaluatorMaxRetriesField, 0, 10, "评估重试次数"), managedId);
+    }
+
+    private void updateProvider(boolean applyDefaults) {
+        ModelProviderCatalog.Provider provider = selectedProvider();
+        boolean managed = provider.localManaged();
+        visible(cloudConnectionLabel, !managed);
+        visible(baseUrlRow, !managed);
+        visible(modelNameRow, !managed);
+        visible(apiKeyRow, !managed);
+        visible(managedProfileRow, managed);
+        if (applyDefaults && !managed) {
+            baseUrlField.setText(provider.defaultBaseUrl());
+            modelNameField.setText(provider.defaultChatModel());
+        }
+    }
+
+    private void loadManagedProfiles() {
+        profileRefresh.execute(TaskSpec.io("settings-model-local-profiles"),
+                context -> generationProfiles(), values -> {
+                    if (!selectedProvider().localManaged()) return;
+                    SettingsFieldSupport.loading(root,
+                            () -> managedProfileCombo.getItems().setAll(values));
+                }, ignored -> { });
+    }
+
+    private List<InferenceSettingsChoice<UUID>> generationProfiles() {
+        return inference.readyProfiles(InferenceModelProfile.Kind.GENERATION).stream()
+                .map(profile -> new InferenceSettingsChoice<>(
+                        profile.name(), profile.id()))
+                .toList();
+    }
+
+    private ModelProviderCatalog.Provider selectedProvider() {
+        return providers.find(providerCombo.getValue()).orElseThrow(
+                () -> new IllegalArgumentException("请选择模型提供商"));
+    }
+
+    private void selectManaged(String id) {
+        if (id == null || id.isBlank()) { managedProfileCombo.setValue(null); return; }
+        managedProfileCombo.getItems().stream().filter(choice -> choice.value().toString().equals(id))
+                .findFirst().ifPresent(managedProfileCombo::setValue);
+    }
+
+    void deactivate() {
+        refresh.cancel();
+        profileRefresh.cancel();
+    }
+
+    private static void visible(javafx.scene.Node node, boolean value) {
+        node.setVisible(value);
+        node.setManaged(value);
     }
 
     @Override
     public void close() {
+        onApplied = ignored -> { };
+        onRuntimeConfigurationChanged = () -> { };
         mutation.close();
         probe.close();
+        refresh.close();
+        profileRefresh.close();
     }
+
+    private record ViewData(
+            Snapshot snapshot,
+            List<InferenceSettingsChoice<UUID>> profiles) { }
 }

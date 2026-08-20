@@ -43,6 +43,8 @@
         <coverage.overall.branch>0.45</coverage.overall.branch>
         <coverage.core.line>0.80</coverage.core.line>
         <coverage.core.branch>0.70</coverage.core.branch>
+        <coverage.service.runner.line>0.65</coverage.service.runner.line>
+        <coverage.service.runner.branch>0.45</coverage.service.runner.branch>
         <coverage.controller.line>0.70</coverage.controller.line>
         <coverage.controller.branch>0.60</coverage.controller.branch>
         <!-- JaCoCo prepare-agent 会在测试前覆盖该属性；空值保证直接运行 Surefire 也合法。 -->
@@ -51,6 +53,8 @@
         <javaclaw.launch.data.dir>${project.basedir}/data</javaclaw.launch.data.dir>
         <javaclaw.launch.ui.test>false</javaclaw.launch.ui.test>
         <javaclaw.fx.tests>false</javaclaw.fx.tests>
+        <!-- 仅传给源码树中的 javafx:run。发行包不读取这些 Maven 属性，仍只接受签名运行时。 -->
+        <javaclaw.launch.allow.unsigned.service.plugin>true</javaclaw.launch.allow.unsigned.service.plugin>
     </properties>
 
     <dependencyManagement>
@@ -310,11 +314,30 @@
                     <!-- JVector 使用孵化中的向量 API（JDK 25 仍为 incubator），编译期需放行该模块 -->
                     <compilerArgs>
                         <arg>--add-modules</arg>
-                        <arg>jdk.incubator.vector</arg>
+                        <arg>jdk.incubator.vector,jdk.httpserver</arg>
                     </compilerArgs>
                 </configuration>
             </plugin>
 
+            <!-- 服务插件只依赖窄 API classifier；Runner 入口由 JavaClaw 主工件提供。 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.2</version>
+                <executions>
+                    <execution>
+                        <id>service-plugin-api-artifact</id>
+                        <phase>package</phase>
+                        <goals><goal>jar</goal></goals>
+                        <configuration>
+                            <classifier>service-plugin-api</classifier>
+                            <includes>
+                                <include>com/javaclaw/service/api/**</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <!--
                 JavaFX Maven 插件：用于运行 JavaFX 应用
                 使用 Launcher 类作为入口，避免非模块化 JavaFX 的启动问题
@@ -327,7 +350,7 @@
                 <version>3.5.2</version>
                 <configuration>
                     <!-- Late evaluation is required because JaCoCo populates this property during initialize. -->
-                    <argLine>@{jacocoArgLine} --add-modules jdk.incubator.vector --enable-native-access=ALL-UNNAMED</argLine>
+                    <argLine>@{jacocoArgLine} --add-modules jdk.incubator.vector,jdk.httpserver --enable-native-access=ALL-UNNAMED</argLine>
                     <systemPropertyVariables>
                         <javaclaw.data.dir>${project.build.directory}/test-data</javaclaw.data.dir>
                         <javaclaw.fx.tests>${javaclaw.fx.tests}</javaclaw.fx.tests>
@@ -348,6 +371,8 @@
                         </goals>
                         <configuration>
                             <propertyName>jacocoArgLine</propertyName>
+                            <!-- 每次测试运行独立采集，避免不同 profile/依赖图的旧类 ID 混入报告。 -->
+                            <append>false</append>
                         </configuration>
                     </execution>
                     <execution>
@@ -393,7 +418,6 @@
                             <includes>
                                 <include>com/javaclaw/application/**</include>
                                 <include>com/javaclaw/platform/execution/**</include>
-                                <include>com/javaclaw/runtime/**</include>
                             </includes>
                             <rules>
                                 <rule>
@@ -408,6 +432,45 @@
                                             <counter>BRANCH</counter>
                                             <value>COVEREDRATIO</value>
                                             <minimum>${coverage.core.branch}</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>check-built-in-service-plugin-runtime-coverage</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <!--
+                                The built-in Runner still executes across a separate JVM boundary.
+                                Its process main is exercised by subprocess
+                                integration tests and therefore cannot contribute to the Desktop
+                                JaCoCo agent data; the remaining Runner implementation keeps its
+                                own non-regressing gate.
+                            -->
+                            <includes>
+                                <include>com/javaclaw/service/runner/**</include>
+                            </includes>
+                            <excludes>
+                                <exclude>com/javaclaw/service/runner/ServicePluginProcessMain.class</exclude>
+                            </excludes>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>${coverage.service.runner.line}</minimum>
+                                        </limit>
+                                        <limit>
+                                            <counter>BRANCH</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>${coverage.service.runner.branch}</minimum>
                                         </limit>
                                     </limits>
                                 </rule>
@@ -461,8 +524,9 @@
                     <options>
                         <option>-Djavaclaw.data.dir=${javaclaw.launch.data.dir}</option>
                         <option>-Djavaclaw.ui.test=${javaclaw.launch.ui.test}</option>
+                        <option>-Djavaclaw.service-plugin.allow-unsigned-development=${javaclaw.launch.allow.unsigned.service.plugin}</option>
                         <option>--add-modules</option>
-                        <option>jdk.incubator.vector</option>
+                        <option>jdk.incubator.vector,jdk.httpserver</option>
                         <option>--enable-native-access=ALL-UNNAMED</option>
                         <option>--add-exports</option>
                         <option>javafx.base/com.sun.javafx=ALL-UNNAMED</option>
@@ -518,6 +582,156 @@
                 <javaclaw.launch.ui.test>true</javaclaw.launch.ui.test>
                 <javaclaw.fx.tests>true</javaclaw.fx.tests>
             </properties>
+        </profile>
+        <!--
+            Explicit, networked end-to-end gate for the real Deliverance business path.
+            The sample plugin must be built first; model data is pinned and retained only in the
+            caller-selected cache, never in the user's JavaClaw data or plugin directories.
+        -->
+        <profile>
+            <id>deliverance-business-it</id>
+            <properties>
+                <deliverance.it.plugin-jar>${project.basedir}/sample-plugins/deliverance/target/deliverance.jar</deliverance.it.plugin-jar>
+                <deliverance.it.generation-repository>Qwen/Qwen3-0.6B</deliverance.it.generation-repository>
+                <deliverance.it.generation-revision>c1899de289a04d12100db370d81485cdf75e47ca</deliverance.it.generation-revision>
+                <deliverance.it.embedding-repository>Qwen/Qwen3-Embedding-0.6B</deliverance.it.embedding-repository>
+                <deliverance.it.embedding-revision>97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3</deliverance.it.embedding-revision>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>require-deliverance-business-fixtures</id>
+                                <phase>pre-integration-test</phase>
+                                <goals><goal>run</goal></goals>
+                                <configuration>
+                                    <target>
+                                        <condition property="deliverance.it.cache.present">
+                                            <and>
+                                                <isset property="deliverance.it.cache-dir"/>
+                                                <not><equals arg1="${deliverance.it.cache-dir}" arg2=""/></not>
+                                            </and>
+                                        </condition>
+                                        <fail unless="deliverance.it.cache.present"
+                                              message="-Pdeliverance-business-it requires -Ddeliverance.it.cache-dir=&lt;absolute-path&gt;"/>
+                                        <available file="${deliverance.it.plugin-jar}"
+                                                   property="deliverance.it.plugin.present"/>
+                                        <fail unless="deliverance.it.plugin.present"
+                                              message="Build sample-plugins/deliverance first; deliverance.jar is missing"/>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>build-helper-maven-plugin</artifactId>
+                        <version>3.6.1</version>
+                        <executions>
+                            <execution>
+                                <id>add-deliverance-business-test-source</id>
+                                <phase>generate-test-sources</phase>
+                                <goals><goal>add-test-source</goal></goals>
+                                <configuration>
+                                    <sources>
+                                        <source>src/deliverance-business-it/java</source>
+                                    </sources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-failsafe-plugin</artifactId>
+                        <version>3.5.2</version>
+                        <configuration>
+                            <argLine>--add-modules jdk.incubator.vector,jdk.httpserver --enable-native-access=ALL-UNNAMED</argLine>
+                            <includes>
+                                <include>**/DeliveranceBusinessIT.java</include>
+                            </includes>
+                            <systemPropertyVariables>
+                                <deliverance.it.cache-dir>${deliverance.it.cache-dir}</deliverance.it.cache-dir>
+                                <deliverance.it.plugin-jar>${deliverance.it.plugin-jar}</deliverance.it.plugin-jar>
+                                <deliverance.it.generation-repository>${deliverance.it.generation-repository}</deliverance.it.generation-repository>
+                                <deliverance.it.generation-revision>${deliverance.it.generation-revision}</deliverance.it.generation-revision>
+                                <deliverance.it.embedding-repository>${deliverance.it.embedding-repository}</deliverance.it.embedding-repository>
+                                <deliverance.it.embedding-revision>${deliverance.it.embedding-revision}</deliverance.it.embedding-revision>
+                                <!-- The opt-in gate exercises the same explicitly-approved unsigned
+                                     development artifact path as a local source-tree launch. -->
+                                <javaclaw.service-plugin.allow-unsigned-development>true</javaclaw.service-plugin.allow-unsigned-development>
+                            </systemPropertyVariables>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <goals>
+                                    <goal>integration-test</goal>
+                                    <goal>verify</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <!-- Release-only assembly: the plugin is already signed by CI; this profile verifies it,
+             pins its signer in the Host JAR and stages the canonical one-plugin directory. -->
+        <profile>
+            <id>bundle-deliverance-plugin</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>verify-signed-deliverance-plugin</id>
+                                <phase>validate</phase>
+                                <goals><goal>run</goal></goals>
+                                <configuration>
+                                    <target>
+                                        <available file="${deliverance.plugin.jar}"
+                                                   property="deliverance.plugin.present"/>
+                                        <fail unless="deliverance.plugin.present"
+                                              message="Missing -Ddeliverance.plugin.jar signed Deliverance JAR"/>
+                                        <condition property="deliverance.signer.valid">
+                                            <matches string="${deliverance.plugin.signer.sha256}"
+                                                     pattern="^[0-9a-fA-F]{64}$"/>
+                                        </condition>
+                                        <fail unless="deliverance.signer.valid"
+                                              message="Missing or invalid -Ddeliverance.plugin.signer.sha256"/>
+                                        <exec executable="${java.home}/bin/jarsigner" failonerror="true">
+                                            <arg value="-verify"/>
+                                            <arg value="-strict"/>
+                                            <arg value="${deliverance.plugin.jar}"/>
+                                        </exec>
+                                    </target>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>stage-signed-deliverance-plugin</id>
+                                <phase>process-resources</phase>
+                                <goals><goal>run</goal></goals>
+                                <configuration>
+                                    <target>
+                                        <mkdir dir="${project.build.outputDirectory}/service-plugin"/>
+                                        <echo file="${project.build.outputDirectory}/service-plugin/trusted-builtin-signers.txt"
+                                              message="${deliverance.plugin.signer.sha256}${line.separator}"/>
+                                        <mkdir dir="${project.build.directory}/distribution/plugins/builtin-deliverance"/>
+                                        <copy file="${deliverance.plugin.jar}"
+                                              tofile="${project.build.directory}/distribution/plugins/builtin-deliverance/deliverance.jar"
+                                              overwrite="true"/>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
         <!--
             Release CI supplies -Dframework.compatibility.baseline=<released-version>.

@@ -76,6 +76,7 @@ public final class McpCenterController implements AutoCloseable {
     private AutoCloseable runtimeSubscription;
     private Runnable onConfigurationChanged = () -> { };
     private boolean standalone;
+    private boolean activated;
 
     public McpCenterController(
             McpManagementApplicationService useCases,
@@ -110,9 +111,19 @@ public final class McpCenterController implements AutoCloseable {
                 viewModel.loadingProperty(), viewModel.mutatingProperty()));
         loadingOverlay.managedProperty().bind(loadingOverlay.visibleProperty());
         searchField.textProperty().addListener((ignored, previous, value) -> render());
-        runtimeSubscription = useCases.observeRuntime(() -> fx.dispatch(this::requestSnapshot));
+    }
+
+    /** 视图可见后再订阅运行时并读取快照。 */
+    public void activate() {
+        if (closed.get()) return;
+        if (!activated) {
+            activated = true;
+            runtimeSubscription = useCases.observeRuntime(() -> fx.dispatch(this::requestSnapshot));
+        }
         requestSnapshot();
     }
+
+    public void deactivate() { loadAction.cancel(); }
 
     void configure(boolean standalone, Runnable onConfigurationChanged) {
         this.standalone = standalone;

@@ -97,25 +97,30 @@ class SourceHygieneTest {
     }
 
     @Test
-    void objectMapperIsCreatedOnlyByTheRootCompositionContext() throws IOException {
-        String factory = "com/javaclaw/platform/spring/RootConfiguration.java";
+    void objectMapperIsCreatedOnlyByProcessCompositionRoots() throws IOException {
+        Map<String, Integer> factories = Map.of(
+                "com/javaclaw/platform/spring/RootConfiguration.java", 1,
+                "com/javaclaw/service/runner/ServicePluginProcessMain.java", 1);
         List<String> violations = new ArrayList<>();
-        int factoryOccurrences = 0;
+        Map<String, Integer> occurrencesByFactory = new java.util.HashMap<>();
         for (Path file : files(JAVA_ROOT, ".java")) {
             String source = Files.readString(file);
             int count = occurrences(NEW_OBJECT_MAPPER, source);
             if (count == 0) continue;
             String sourcePath = JAVA_ROOT.relativize(file).toString().replace('\\', '/');
-            if (!sourcePath.equals(factory)) {
+            if (!factories.containsKey(sourcePath)) {
                 violations.add(relative(file) + " creates a private ObjectMapper");
             } else {
-                factoryOccurrences += count;
+                occurrencesByFactory.merge(sourcePath, count, Integer::sum);
             }
         }
-        if (factoryOccurrences != 1) {
-            violations.add(factory + " must create exactly one shared ObjectMapper (found "
-                    + factoryOccurrences + ")");
-        }
+        factories.forEach((factory, expected) -> {
+            int actual = occurrencesByFactory.getOrDefault(factory, 0);
+            if (actual != expected) {
+                violations.add(factory + " must create exactly " + expected
+                        + " process-scoped ObjectMapper (found " + actual + ")");
+            }
+        });
         assertNoViolations("shared JSON configuration", violations);
     }
 

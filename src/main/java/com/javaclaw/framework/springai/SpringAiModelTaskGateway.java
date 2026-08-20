@@ -116,10 +116,25 @@ public final class SpringAiModelTaskGateway implements ModelTaskGateway {
                 The response must conform to this JSON Schema:
                 """ + request.outputSchema();
         UserMessage user = buildUserMessage(request);
-        ChatResponse response = (workspaceId == null
-                ? models.require(request.tier())
-                : models.require(workspaceId, request.tier())).call(new Prompt(List.of(
-                new SystemMessage(system), user)));
+        ChatResponse response;
+        try {
+            response = (workspaceId == null
+                    ? models.require(request.tier())
+                    : models.require(workspaceId, request.tier())).call(new Prompt(List.of(
+                    new SystemMessage(system), user)));
+        } catch (ManagedInferenceChatModel.ManagedInferenceModelException failure) {
+            BigDecimal estimatedCost = BigDecimal.valueOf(
+                    com.javaclaw.agent.PricingTable.estimateCostCny(failure.model(),
+                            failure.usage().promptTokens(), failure.usage().completionTokens()));
+            try {
+                recordUsage(request, failure.model(), attempt, failure.usage().promptTokens(),
+                        failure.usage().completionTokens(), estimatedCost);
+            } catch (RuntimeException meteringFailure) {
+                meteringFailure.addSuppressed(failure);
+                throw meteringFailure;
+            }
+            throw failure;
+        }
         if (response == null) {
             throw new IllegalStateException("model task returned no result");
         }

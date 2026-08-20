@@ -2,6 +2,7 @@
 
 <?import com.javaclaw.ui.javafx.control.ToggleSwitch?>
 <?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.layout.HBox?>
 <?import javafx.scene.layout.Region?>
@@ -40,6 +41,11 @@
                 <Label fx:id="failureBadge" text="启用失败" visible="false" managed="false"
                        styleClass="jc-badge, jc-badge-failed"
                        style="-fx-font-size:10px; -fx-padding:1 8 1 8;"/>
+                <Button fx:id="approvalButton" text="批准并注册"
+                        visible="false" managed="false"
+                        accessibleText="批准并注册服务插件"
+                        styleClass="button, jc-btn, jc-btn-soft, jc-btn-sm"
+                        onAction="#approvalRequested"/>
                 <ToggleSwitch fx:id="enabledToggle" accessibleText="启用或停用插件"/>
             </children>
         </HBox>

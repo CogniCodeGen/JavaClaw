@@ -69,7 +69,7 @@ class AppearanceSettingsFxmlLoadTest {
         prepareContext();
         var appearance = add(callFx(() -> context.getBean(AppearanceSettingsSectionFactory.class)
                 .createAppearance()));
-        runFx(() -> render(appearance));
+        runFx(() -> { render(appearance); appearance.controller().reload(); });
 
         ThemeCard midnight = callFx(() ->
                 (ThemeCard) appearance.root().lookup("#midnightCard"));
@@ -88,7 +88,7 @@ class AppearanceSettingsFxmlLoadTest {
         prepareContext();
         var fontView = add(callFx(() -> context.getBean(AppearanceSettingsSectionFactory.class)
                 .createFonts()));
-        runFx(() -> render(fontView));
+        runFx(() -> { render(fontView); fontView.controller().reload(); });
 
         assertFalse(callFx(() -> fontView.root().lookup("#interFontCard").isVisible()));
         FontCard system = callFx(() ->

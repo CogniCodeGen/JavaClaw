@@ -118,7 +118,7 @@ class FunctionalAcceptanceInventoryTest {
 
         Path fxmlRoot = Path.of(System.getProperty("user.dir"), "src/main/resources/fxml");
         try (var files = Files.walk(fxmlRoot)) {
-            assertEquals(142, files.filter(Files::isRegularFile)
+            assertEquals(147, files.filter(Files::isRegularFile)
                     .filter(path -> path.toString().endsWith(".fxml")).count());
         }
     }

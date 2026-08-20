@@ -5,6 +5,7 @@
 <?import javafx.scene.control.Hyperlink?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.control.PasswordField?>
+<?import javafx.scene.control.ComboBox?>
 <?import javafx.scene.control.TextField?>
 <?import javafx.scene.layout.BorderPane?>
 <?import javafx.scene.layout.GridPane?>
@@ -39,7 +40,7 @@
                 <VBox fx:id="stepOnePane" spacing="12.0">
                     <children>
                         <Label text="选择你的模型提供商" styleClass="onboarding-step-title"/>
-                        <Label text="推荐：中文场景选择通义千问，隐私场景选择 Ollama（本地）"
+                        <Label text="推荐：中文场景选择通义千问；完全托管的本地推理选择 Deliverance"
                                styleClass="onboarding-hint"/>
                         <GridPane fx:id="providerGrid" hgap="12.0" vgap="12.0">
                             <padding><Insets top="16.0"/></padding>
@@ -51,7 +52,7 @@
                         <Label fx:id="providerTitleLabel" styleClass="onboarding-step-title"/>
                         <Label fx:id="providerHintLabel" wrapText="true"
                                styleClass="onboarding-hint"/>
-                        <GridPane hgap="12.0" vgap="10.0">
+                        <GridPane fx:id="cloudProviderForm" hgap="12.0" vgap="10.0">
                             <children>
                                 <Label text="Base URL" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
                                 <TextField fx:id="baseUrlField" prefWidth="460.0"
@@ -67,6 +68,16 @@
                                                GridPane.rowIndex="2" GridPane.columnIndex="1"/>
                             </children>
                         </GridPane>
+                        <VBox fx:id="localInferencePanel" spacing="10.0" visible="false" managed="false">
+                            <children>
+                                <Label text="Deliverance 本地档案" styleClass="onboarding-step-title"/>
+                                <ComboBox fx:id="localProfileCombo" prefWidth="460.0"
+                                          promptText="选择已通过探测的本地档案"/>
+                                <Button text="导入本地模型目录并验证…" onAction="#importLocalModelRequested"/>
+                                <Label fx:id="localPreparationStatus" text="模型文件会复制到 JavaClaw 内容寻址缓存"
+                                       wrapText="true" styleClass="onboarding-hint"/>
+                            </children>
+                        </VBox>
                         <HBox alignment="CENTER_LEFT" spacing="10.0">
                             <padding><Insets top="8.0"/></padding>
                             <children>

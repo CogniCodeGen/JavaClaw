@@ -1,6 +1,7 @@
 package com.javaclaw.app;
 
 import com.javaclaw.platform.data.DataRoot;
+import com.javaclaw.platform.build.ApplicationBuildIdentity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,13 +36,20 @@ public class Launcher {
 
         // 数据格式验证和单实例资格都必须先于 JavaFX、H2、Quartz 与托盘初始化。
         try {
+            ApplicationBuildIdentity buildIdentity =
+                    ApplicationBuildIdentity.launch(Launcher.class);
+            log.info("应用构建指纹: {}", buildIdentity.shortFingerprint());
             DataRoot dataRoot = DataRoot.resolve().prepare();
             try (SingleInstanceCoordinator coordinator =
-                         SingleInstanceCoordinator.acquire(dataRoot.path())) {
+                         SingleInstanceCoordinator.acquire(
+                                 dataRoot.path(), buildIdentity.fingerprint())) {
                 if (coordinator == null) {
                     log.info("已唤起正在运行的 JavaClaw 实例，本进程退出");
                     return;
                 }
+                // macOS 必须先让 AWT 加入原生 AppKit，再启动 JavaFX；否则 SystemTray
+                // 可能只在 Java 集合中有图标，却没有真正创建可见的菜单栏状态项。
+                DesktopToolkitBootstrap.prepareForJavaFxLaunch();
                 JavaClawApp.main(args);
             }
         } catch (java.io.IOException e) {

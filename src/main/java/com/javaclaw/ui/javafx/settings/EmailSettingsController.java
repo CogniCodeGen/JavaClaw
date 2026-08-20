@@ -4,6 +4,7 @@ import com.javaclaw.application.settings.CommunicationSettingsApplicationService
 import com.javaclaw.application.settings.CommunicationSettingsApplicationService.EmailProbeResult;
 import com.javaclaw.application.settings.CommunicationSettingsApplicationService.EmailSettings;
 import com.javaclaw.application.settings.CommunicationSettingsApplicationService.SaveResult;
+import com.javaclaw.application.settings.CommunicationSettingsApplicationService.Snapshot;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.platform.fx.FxDispatcher;
@@ -38,6 +39,7 @@ public final class EmailSettingsController implements AutoCloseable {
     private final EmailSettingsViewModel viewModel = new EmailSettingsViewModel();
     private final UiAsyncAction<SaveResult> mutation;
     private final UiAsyncAction<EmailProbeResult> probe;
+    private final UiAsyncAction<Snapshot> refresh;
     private Consumer<SaveResult> onApplied = ignored -> { };
 
     public EmailSettingsController(
@@ -47,6 +49,7 @@ public final class EmailSettingsController implements AutoCloseable {
         this.useCases = Objects.requireNonNull(useCases, "useCases");
         mutation = new UiAsyncAction<>(tasks, fx);
         probe = new UiAsyncAction<>(tasks, fx);
+        refresh = new UiAsyncAction<>(tasks, fx);
     }
 
     @FXML
@@ -58,8 +61,7 @@ public final class EmailSettingsController implements AutoCloseable {
         SettingsFieldSupport.validateInteger(smtpPortField, 1, 65535);
         SettingsFieldSupport.validateInteger(imapPortField, 1, 65535);
         viewModel.busyProperty().bind(
-                mutation.busyProperty().or(probe.busyProperty()));
-        reload();
+                mutation.busyProperty().or(probe.busyProperty()).or(refresh.busyProperty()));
     }
 
     public void configure(Consumer<SaveResult> callback) {
@@ -71,9 +73,11 @@ public final class EmailSettingsController implements AutoCloseable {
     }
 
     public void reload() {
-        var snapshot = useCases.snapshot();
-        SettingsFieldSupport.loading(root,
-                () -> viewModel.load(snapshot.email(), snapshot.storageDescription()));
+        refresh.execute(TaskSpec.io("settings-email-load"), context -> useCases.snapshot(),
+                snapshot -> SettingsFieldSupport.loading(root,
+                        () -> viewModel.load(snapshot.email(), snapshot.storageDescription())),
+                failure -> viewModel.errorProperty().set(
+                        SettingsFieldSupport.failureMessage(failure)));
     }
 
     public void save(Consumer<SaveResult> success, Consumer<Throwable> failure) {
@@ -130,10 +134,13 @@ public final class EmailSettingsController implements AutoCloseable {
         failure.accept(thrown);
     }
 
+    void deactivate() { refresh.cancel(); }
+
     @Override
     public void close() {
         mutation.close();
         probe.close();
+        refresh.close();
         viewModel.busyProperty().unbind();
         presetCombo.valueProperty().unbindBidirectional(viewModel.presetProperty());
         smtpHostField.textProperty().unbindBidirectional(viewModel.smtpHostProperty());

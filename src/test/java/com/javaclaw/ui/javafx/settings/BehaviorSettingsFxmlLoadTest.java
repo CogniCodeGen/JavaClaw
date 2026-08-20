@@ -84,7 +84,12 @@ class BehaviorSettingsFxmlLoadTest {
             render(gepa);
             render(skill);
             render(general);
+            gepa.controller().reload();
+            skill.controller().reload();
+            general.controller().reload();
         });
+        awaitFx(() -> combo(general, "themeCombo").getValue() != null
+                && "2".equals(text(gepa, "feedbackMaxRoundsField").getText()));
 
         TextField rounds = callFx(() -> text(gepa, "feedbackMaxRoundsField"));
         assertFalse(callFx(rounds::isDisabled));
@@ -98,7 +103,8 @@ class BehaviorSettingsFxmlLoadTest {
         prepareContext();
         var skill = add(callFx(() -> context.getBean(BehaviorSettingsSectionFactory.class)
                 .createSkillEvolution(ignored -> { })));
-        runFx(() -> render(skill));
+        runFx(() -> { render(skill); skill.controller().reload(); });
+        awaitFx(() -> !text(skill, "minimumToolCallsField").getText().isBlank());
 
         runFx(() -> ((ToggleButton) skill.root().lookup("#autoModeButton")).fire());
         assertTrue(callFx(() -> ((Label) skill.root().lookup("#modeHintLabel"))
@@ -120,7 +126,8 @@ class BehaviorSettingsFxmlLoadTest {
         prepareContext();
         var general = add(callFx(() -> context.getBean(BehaviorSettingsSectionFactory.class)
                 .createGeneral(ignored -> { })));
-        runFx(() -> render(general));
+        runFx(() -> { render(general); general.controller().reload(); });
+        awaitFx(() -> combo(general, "themeCombo").getValue() != null);
 
         runFx(() -> combo(general, "themeCombo").setValue(themes.options.get(1)));
         assertEquals("midnight", themes.currentThemeId());

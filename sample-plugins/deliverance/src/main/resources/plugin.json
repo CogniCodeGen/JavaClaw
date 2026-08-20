@@ -1,0 +1,187 @@
+{
+  "id": "builtin-deliverance",
+  "name": "Deliverance 本地推理",
+  "version": "0.0.12-7",
+  "description": "在独立 JVM 中提供本地对话、流式输出、推理内容、工具调用和嵌入服务。",
+  "pluginType": "SERVICE_PLUGIN",
+  "configurationSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "maxGenerationResident": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 8,
+        "default": 1,
+        "title": "最多驻留推理模型（已弃用）",
+        "description": "仅兼容旧配置；运行时忽略该字段。",
+        "deprecated": true,
+        "x-javaclaw-hidden": true
+      },
+      "maxEmbeddingResident": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 8,
+        "default": 1,
+        "title": "最多驻留向量化模型（已弃用）",
+        "description": "仅兼容旧配置；运行时忽略该字段。",
+        "deprecated": true,
+        "x-javaclaw-hidden": true
+      },
+      "external.enabled": {
+        "type": "boolean",
+        "default": false,
+        "x-javaclaw-host-managed": true,
+        "title": "启用 OpenAI 兼容接口"
+      },
+      "external.tls": {
+        "type": "boolean",
+        "default": false,
+        "x-javaclaw-host-managed": true,
+        "title": "外部接口启用 TLS"
+      },
+      "external.apiKeyPolicies": {
+        "type": "string",
+        "default": "[]",
+        "x-javaclaw-hidden": true,
+        "x-javaclaw-host-managed": true,
+        "title": "宿主鉴权策略"
+      },
+      "inference.publishedCatalog": {
+        "type": "string",
+        "default": "{\"profiles\":[],\"aliases\":{}}",
+        "x-javaclaw-hidden": true,
+        "x-javaclaw-host-managed": true,
+        "title": "宿主模型目录"
+      },
+      "logging.invocations": {
+        "type": "boolean",
+        "default": false,
+        "x-javaclaw-hidden": true,
+        "x-javaclaw-host-managed": true,
+        "title": "记录模型调用元数据"
+      }
+    },
+    "additionalProperties": false
+  },
+  "configurationUi": {
+    "schemaVersion": 1,
+    "pages": [
+      {
+        "id": "models",
+        "title": "模型",
+        "description": "搜索 Hugging Face 兼容模型并管理插件内的本地模型资产。",
+        "sections": [
+          {
+            "id": "model-catalog",
+            "type": "INFERENCE_CATALOG",
+            "title": "在线与本地模型",
+            "description": "仅展示 Deliverance 可验证加载的量化模型；下载资产统一保存在插件 data/models。"
+          }
+        ]
+      },
+      {
+        "id": "service",
+        "title": "服务",
+        "description": "加载模型并集中管理进程、OpenAI 兼容接口、调用示例、资源和日志。",
+        "sections": [
+          {
+            "id": "service-runtime",
+            "type": "SERVICE_RUNTIME",
+            "title": "进程与资源",
+            "description": "进程启停、错误状态与资源预算由 JavaClaw 宿主管理。"
+          },
+          {
+            "id": "model-service",
+            "type": "INFERENCE_SERVICE",
+            "title": "模型服务",
+            "description": "模型加载、发布、接口与日志集中管理。"
+          }
+        ]
+      }
+    ]
+  },
+  "inference": {
+    "engine": "deliverance",
+    "engineVersion": "0.0.12",
+    "adapterVersion": "2",
+    "protocol": {"major": 1, "minor": 2},
+    "capabilities": [
+      "chat", "streaming", "reasoning", "tools", "embeddings", "exact_usage",
+      "terminal_usage", "cancellation", "simd", "jvector", "service_plugin",
+      "model-type:generation:llama", "model-type:generation:qwen2",
+      "model-type:generation:qwen3", "model-type:generation:qwen3_moe",
+      "model-type:generation:gemma2", "model-type:generation:gemma3_text",
+      "model-type:generation:gemma4", "model-type:generation:mistral",
+      "model-type:generation:mixtral", "model-type:generation:gpt2",
+      "model-type:generation:granitemoehybrid", "model-type:embedding:bert",
+      "model-type:embedding:qwen3"
+    ],
+    "parameterSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "load": {
+          "type": "object",
+          "properties": {
+            "jvmHeapMiB": {"type": "integer", "minimum": 512, "maximum": 262144, "default": 4096, "title": "旧版单模型 JVM 内存", "deprecated": true, "x-javaclaw-hidden": true},
+            "workerThreads": {"type": "integer", "minimum": 1, "maximum": 1024, "default": 4, "title": "推理线程"},
+            "tensorBackend": {"type": "string", "enum": ["auto", "simd", "jvector"], "default": "auto", "title": "计算后端"},
+            "workingMemoryType": {"type": "string", "enum": ["F32", "BF16", "F16"], "default": "F32", "title": "工作内存精度"},
+            "workingQuantType": {"type": "string", "enum": ["I8", "Q4", "F32"], "default": "I8", "title": "工作量化精度"},
+            "outputHeadQuantization": {"type": "string", "enum": ["I8", "Q4", "F32"], "title": "输出头量化"},
+            "maxBatchSize": {"type": "integer", "minimum": 1, "maximum": 64, "default": 1, "title": "最大批量"},
+            "pooling": {"type": "string", "enum": ["AUTO", "LAST", "AVG", "MAX", "SUM", "MODEL"], "default": "AUTO", "title": "嵌入池化"},
+            "kvCacheMaxEntries": {"type": "integer", "minimum": 0, "maximum": 100000, "default": 10000, "title": "KV Cache 条目上限"}
+          },
+          "additionalProperties": false
+        },
+        "generation": {
+          "type": "object",
+          "properties": {
+            "temperature": {"type": "number", "minimum": 0, "maximum": 2, "default": 0},
+            "maxTokens": {"type": "integer", "minimum": 1, "maximum": 131072, "default": 1024},
+            "seed": {"type": "integer", "default": 42},
+            "stop": {"type": "array", "items": {"type": "string"}, "maxItems": 16},
+            "includeStopString": {"type": "boolean", "default": false},
+            "guidedChoice": {"type": "array", "items": {"type": "string"}},
+            "guidedRegex": {"type": "string"},
+            "guidedJson": {"type": "string"},
+            "logprobs": {"type": "boolean", "default": false},
+            "topLogprobs": {"type": "integer", "minimum": 0, "maximum": 20},
+            "xtcThreshold": {"type": "number", "minimum": 0, "maximum": 1},
+            "xtcProbability": {"type": "number", "minimum": 0, "maximum": 1},
+            "topK": {"type": "number", "minimum": 0},
+            "topP": {"type": "number", "minimum": 0, "maximum": 1},
+            "uniformTopP": {"type": "number", "minimum": 0, "maximum": 1},
+            "cacheSalt": {"type": "string", "maxLength": 256},
+            "enableThinking": {"type": "boolean", "default": true}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "service": {
+    "mainClass": "com.javaclaw.plugins.deliverance.DeliveranceServicePlugin",
+    "apiVersion": "1.0",
+    "startupPolicy": "MANUAL",
+    "desktopServices": ["inference.api-usage"],
+    "resourceHints": {
+      "heapMiB": 4096,
+      "nativeMemoryMiB": 4096,
+      "computeThreads": 6,
+      "ioConcurrency": 64,
+      "fileDescriptors": 256,
+      "usesNativeCode": true
+    },
+    "externalEndpoints": [
+      {
+        "id": "openai",
+        "protocol": "HTTP",
+        "capabilities": ["models", "chat", "embeddings", "sse"]
+      }
+    ]
+  }
+}

@@ -71,8 +71,15 @@ public final class SiteCredentialController implements AutoCloseable {
         loadingOverlay.managedProperty().bind(loadingOverlay.visibleProperty());
         addButton.disableProperty().bind(viewModel.mutatingProperty());
         statusLabel.textProperty().bind(viewModel.statusProperty());
+    }
+
+    /** 面板可见后再读取凭据目录。 */
+    public void activate() {
+        if (closed.get()) return;
         requestSnapshot();
     }
+
+    public void deactivate() { loadAction.cancel(); }
 
     @FXML
     private void addRequested() {

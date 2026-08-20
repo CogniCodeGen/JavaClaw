@@ -10,6 +10,7 @@ import com.javaclaw.plugin.api.PluginTool;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskHandle;
 import com.javaclaw.platform.execution.TaskSpec;
+import com.javaclaw.infrastructure.serviceplugin.ServicePluginProcessManager;
 import com.javaclaw.application.tool.ToolInvocation;
 import com.javaclaw.application.tool.ToolInvocationPipeline;
 import com.javaclaw.application.schedule.ScheduleApplicationService;
@@ -53,7 +54,6 @@ public final class PluginManager implements PluginToolGateway {
 
     /** id → 容器，按发现顺序保序 */
     private final Map<String, PluginRuntime> plugins = new LinkedHashMap<>();
-
     /** 启用态 + 授权持久化（工作区维度） */
     private final PluginStore store;
     private final ManagedTaskExecutor taskExecutor;
@@ -65,10 +65,13 @@ public final class PluginManager implements PluginToolGateway {
     private final CredentialCipher credentials;
     private final ClassLoader appClassLoader;
     private final PluginDescriptorLoader descriptors;
+    private final PluginDirectoryScanner directoryScanner;
+    private final ServicePluginCatalog servicePluginCatalog;
 
     private volatile PluginWorkspaceServices workspaceServices;
     private ScheduleApplicationService schedules;
     private TaskHandle<Void> autoEnableTask;
+    private TaskHandle<Void> discoveryTask;
 
     /** 目录热感知 */
     private PluginWatcher watcher;
@@ -95,6 +98,57 @@ public final class PluginManager implements PluginToolGateway {
                 storageFactory, interactionPort, credentials, json);
     }
 
+    public PluginManager(
+            PluginStore store,
+            ManagedTaskExecutor taskExecutor,
+            com.javaclaw.framework.api.AgentClient agentClient,
+            java.util.concurrent.Executor agentCallbacksExecutor,
+            ToolInvocationPipeline toolPipeline,
+            PluginStorageFactory storageFactory,
+            UserInteractionPort interactionPort,
+            CredentialCipher credentials,
+            com.fasterxml.jackson.databind.ObjectMapper json,
+            ServicePluginProcessManager servicePlugins) {
+        this(store, taskExecutor, agentClient, agentCallbacksExecutor, toolPipeline,
+                storageFactory, interactionPort, credentials, json, servicePlugins,
+                ServicePluginContributionRegistry.NOOP);
+    }
+
+    public PluginManager(
+            PluginStore store,
+            ManagedTaskExecutor taskExecutor,
+            com.javaclaw.framework.api.AgentClient agentClient,
+            java.util.concurrent.Executor agentCallbacksExecutor,
+            ToolInvocationPipeline toolPipeline,
+            PluginStorageFactory storageFactory,
+            UserInteractionPort interactionPort,
+            CredentialCipher credentials,
+            com.fasterxml.jackson.databind.ObjectMapper json,
+            ServicePluginProcessManager servicePlugins,
+            ServicePluginContributionRegistry serviceContributions) {
+        this(ProjectAccessPolicy.requireProjectFilePath(
+                        ProjectAccessPolicy.projectRoot().resolve("plugins")),
+                store, taskExecutor, agentClient, agentCallbacksExecutor, toolPipeline,
+                storageFactory, interactionPort, credentials, json,
+                servicePlugins, serviceContributions);
+    }
+
+    PluginManager(
+            Path pluginsDir,
+            PluginStore store,
+            ManagedTaskExecutor taskExecutor,
+            com.javaclaw.framework.api.AgentClient agentClient,
+            java.util.concurrent.Executor agentCallbacksExecutor,
+            ToolInvocationPipeline toolPipeline,
+            PluginStorageFactory storageFactory,
+            UserInteractionPort interactionPort,
+                  CredentialCipher credentials,
+                  com.fasterxml.jackson.databind.ObjectMapper json) {
+        this(pluginsDir, store, taskExecutor, agentClient, agentCallbacksExecutor,
+                toolPipeline, storageFactory, interactionPort, credentials, json,
+                null, ServicePluginContributionRegistry.NOOP);
+    }
+
     PluginManager(
             Path pluginsDir,
             PluginStore store,
@@ -105,7 +159,9 @@ public final class PluginManager implements PluginToolGateway {
             PluginStorageFactory storageFactory,
             UserInteractionPort interactionPort,
             CredentialCipher credentials,
-            com.fasterxml.jackson.databind.ObjectMapper json) {
+            com.fasterxml.jackson.databind.ObjectMapper json,
+            ServicePluginProcessManager servicePlugins,
+            ServicePluginContributionRegistry serviceContributions) {
         this.pluginsDir = Objects.requireNonNull(pluginsDir, "pluginsDir")
                 .toAbsolutePath().normalize();
         this.store = Objects.requireNonNull(store, "store");
@@ -118,6 +174,15 @@ public final class PluginManager implements PluginToolGateway {
         this.interactionPort = Objects.requireNonNull(interactionPort, "interactionPort");
         this.credentials = Objects.requireNonNull(credentials, "credentials");
         this.descriptors = new PluginDescriptorLoader(json);
+        this.directoryScanner = new PluginDirectoryScanner(this.pluginsDir, descriptors);
+        com.fasterxml.jackson.databind.ObjectMapper objectMapper =
+                java.util.Objects.requireNonNull(json, "json");
+        ServicePluginRegistrar serviceRegistrar = new ServicePluginRegistrar(
+                this.pluginsDir, servicePlugins,
+                interactionPort, descriptors, objectMapper,
+                java.util.Objects.requireNonNull(serviceContributions, "serviceContributions"));
+        servicePluginCatalog = new ServicePluginCatalog(
+                this.pluginsDir, descriptors, serviceRegistrar);
         this.appClassLoader = PluginManager.class.getClassLoader();
     }
 
@@ -130,15 +195,15 @@ public final class PluginManager implements PluginToolGateway {
      */
     public synchronized void init(PluginWorkspaceServices services) {
         lifecycleGeneration++;
+        cancelDiscovery();
         cancelAutoEnable();
         this.workspaceServices = Objects.requireNonNull(services, "services");
         this.schedules = services.schedules();
         ensureDir();
         store.bind(services.workspace().workspaceId());
-        discover();
-        log.info("插件系统已初始化：目录 {}，发现 {} 个插件", pluginsDir.toAbsolutePath(), plugins.size());
         startWatcher();
-        autoEnablePersistedAsync();
+        scheduleDiscovery(lifecycleGeneration, "plugin-initial-discovery");
+        log.info("插件系统已初始化：目录 {}，插件目录正在后台扫描", pluginsDir);
     }
 
     /**
@@ -149,14 +214,14 @@ public final class PluginManager implements PluginToolGateway {
     public synchronized void reload(PluginWorkspaceServices services) {
         log.info("插件系统随工作区切换重载...");
         lifecycleGeneration++;
+        cancelDiscovery();
         cancelAutoEnable();
         unloadAll();
         this.workspaceServices = java.util.Objects.requireNonNull(services, "services");
         this.schedules = services.schedules();
         store.bind(services.workspace().workspaceId());
-        discover();
-        log.info("插件系统重载完成，发现 {} 个插件", plugins.size());
-        autoEnablePersistedAsync();
+        scheduleDiscovery(lifecycleGeneration, "plugin-workspace-discovery");
+        log.info("插件系统重载完成，插件目录正在后台扫描");
     }
 
     /**
@@ -165,6 +230,7 @@ public final class PluginManager implements PluginToolGateway {
      */
     public synchronized void suspendForRuntimeTransition() {
         lifecycleGeneration++;
+        cancelDiscovery();
         cancelAutoEnable();
         unloadAll();
         workspaceServices = null;
@@ -176,6 +242,7 @@ public final class PluginManager implements PluginToolGateway {
     public synchronized void shutdown() {
         log.info("插件系统关闭中...");
         lifecycleGeneration++;
+        cancelDiscovery();
         cancelAutoEnable();
         if (watcher != null) {
             watcher.stop();
@@ -209,8 +276,12 @@ public final class PluginManager implements PluginToolGateway {
 
     /** 重扫插件目录：发现新放入的 jar，并剔除已删除 jar 对应的非运行插件。 */
     public synchronized void refresh() {
+        lifecycleGeneration++;
+        cancelDiscovery();
+        cancelAutoEnable();
         discover();
         pruneMissing();
+        autoEnablePersistedAsync();
     }
 
     /**
@@ -287,7 +358,23 @@ public final class PluginManager implements PluginToolGateway {
      * @return 全部插件的只读信息快照（按发现顺序）
      */
     public synchronized List<PluginInfo> list() {
-        return plugins.values().stream().map(PluginRuntime::toInfo).toList();
+        List<PluginInfo> result = new java.util.ArrayList<>(
+                plugins.values().stream().map(PluginRuntime::toInfo).toList());
+        result.addAll(servicePluginCatalog.pendingPlugins());
+        return List.copyOf(result);
+    }
+
+    public synchronized boolean isServicePlugin(String id) {
+        return servicePluginCatalog.contains(id);
+    }
+
+    /**
+     * 显式批准并注册被动目录扫描发现的服务工件。点击时重新读取工件，审批绝不依赖旧扫描元数据。
+     */
+    public synchronized boolean approveServicePlugin(String id) {
+        boolean approved = servicePluginCatalog.approve(id);
+        if (approved) fireChange();
+        return approved;
     }
 
     /** @return 插件根目录（全局 {user.dir}/plugins），供 UI「打开插件目录 / 从文件安装」使用。 */
@@ -317,7 +404,7 @@ public final class PluginManager implements PluginToolGateway {
         }
         try {
             PluginDescriptor d = descriptors.load(jar);
-            if (!isApiCompatible(d.apiVersion())) {
+            if (!PluginApiCompatibility.isCompatible(d)) {
                 log.warn("从文件安装失败：插件[{}]apiVersion={} 与宿主 {} 不兼容；"
                                 + "请使用 JavaClaw Plugin API 3.x 重新编译",
                         d.id(), d.apiVersion(), PluginDescriptor.HOST_API_VERSION);
@@ -328,11 +415,16 @@ public final class PluginManager implements PluginToolGateway {
                 log.warn("从文件安装失败：插件 id 导致目标目录越界：{}", d.id());
                 return null;
             }
-            Files.createDirectories(destDir);
-            Files.copy(jar, destDir.resolve(jar.getFileName()),
-                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            if (d.pluginType() == PluginDescriptor.PluginType.SERVICE_PLUGIN) {
+                Path installed = servicePluginCatalog.install(jar, d, destDir);
+                if (installed == null) return null;
+            } else {
+                Files.createDirectories(destDir);
+                Files.copy(jar, destDir.resolve(jar.getFileName()),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                refresh();
+            }
             log.info("已从文件安装插件[{}]到 {}", d.id(), destDir);
-            refresh();
             return d.id();
         } catch (Exception e) {
             log.error("从文件安装插件失败：{}", e.toString(), e);
@@ -341,12 +433,16 @@ public final class PluginManager implements PluginToolGateway {
     }
 
     /**
-     * 卸载插件：先停用回收资源，再删除其在 {@code plugins/} 下的子目录（含 jar 与 lib/）。
+     * 卸载插件：先停用回收资源，再删除其在 {@code plugins/} 下的子目录。
      *
      * @param id 插件 id
      * @return 是否成功删除
      */
     public synchronized boolean uninstall(String id) {
+        ServicePluginCatalog.UninstallResult serviceResult = servicePluginCatalog.uninstall(id);
+        if (serviceResult != ServicePluginCatalog.UninstallResult.NOT_SERVICE) {
+            return serviceResult == ServicePluginCatalog.UninstallResult.SUCCEEDED;
+        }
         PluginRuntime rt = plugins.get(id);
         if (rt == null) return false;
         disable(id);
@@ -513,39 +609,18 @@ public final class PluginManager implements PluginToolGateway {
      * 逐子目录解析描述符，为新插件建立容器（DISCOVERED）。
      */
     private void discover() {
-        if (!Files.isDirectory(pluginsDir)) {
-            return;
-        }
-        try (Stream<Path> stream = Files.list(pluginsDir)) {
-            List<Path> subdirs = stream
-                    .filter(Files::isDirectory)
-                    .filter(path -> {
-                        boolean safe = PathGuard.isInside(pluginsDir, path);
-                        if (!safe) log.warn("跳过指向插件根外部的目录：{}", path);
-                        return safe;
-                    })
-                    .sorted()
-                    .toList();
-            for (Path dir : subdirs) {
-                discoverOne(dir);
-            }
-        } catch (IOException e) {
-            log.error("扫描插件目录失败：{}", e.toString());
-        }
+        directoryScanner.scan().forEach(this::discoverOne);
     }
 
-    private void discoverOne(Path pluginDir) {
-        Path jar = findPluginJar(pluginDir);
-        if (jar == null) {
-            log.debug("插件子目录无 jar，跳过：{}", pluginDir.getFileName());
-            return;
-        }
+    private void discoverOne(PluginDirectoryScanner.Candidate candidate) {
+        Path pluginDir = candidate.directory();
+        Path jar = candidate.jar();
         try {
-            PluginDescriptor d = descriptors.load(jar);
-            if (plugins.containsKey(d.id())) {
+            PluginDescriptor d = candidate.descriptor();
+            if (plugins.containsKey(d.id()) || servicePluginCatalog.contains(d.id())) {
                 return;   // 已发现/已启用，跳过
             }
-            if (!isApiCompatible(d.apiVersion())) {
+            if (!PluginApiCompatibility.isCompatible(d)) {
                 log.warn("插件[{}]apiVersion={} 与宿主 {} 不兼容，已拒绝加载；"
                                 + "请使用 JavaClaw Plugin API 3.x 重新编译",
                         d.id(), d.apiVersion(), PluginDescriptor.HOST_API_VERSION);
@@ -559,6 +634,10 @@ public final class PluginManager implements PluginToolGateway {
                 }
                 return;
             }
+            if (d.pluginType() == PluginDescriptor.PluginType.SERVICE_PLUGIN) {
+                servicePluginCatalog.discoverPassive(d, jar, pluginDir);
+                return;
+            }
             plugins.put(d.id(), new PluginRuntime(
                     d, jar, workspaceServices, agentClient, agentCallbacksExecutor, appClassLoader,
                     workspaceServices.workspace().workspaceId(), taskExecutor, schedules,
@@ -566,20 +645,6 @@ public final class PluginManager implements PluginToolGateway {
             log.info("发现插件：{}（{}），目录 {}", d.name(), d.id(), pluginDir.getFileName());
         } catch (Exception e) {
             log.warn("解析插件失败，跳过 {}：{}", pluginDir.getFileName(), e.toString());
-        }
-    }
-
-    /** 取插件子目录下顶层的第一个 jar 作为插件 jar（lib/ 内的依赖 jar 不计）。 */
-    private Path findPluginJar(Path pluginDir) {
-        try (Stream<Path> s = Files.list(pluginDir)) {
-            return s.filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName().toString().toLowerCase().endsWith(".jar"))
-                    .sorted()
-                    .findFirst()
-                    .orElse(null);
-        } catch (IOException e) {
-            log.warn("读取插件子目录失败 {}：{}", pluginDir.getFileName(), e.toString());
-            return null;
         }
     }
 
@@ -641,17 +706,33 @@ public final class PluginManager implements PluginToolGateway {
         }
     }
 
-    /** api 主版本一致即视为兼容。 */
-    static boolean isApiCompatible(String pluginApiVersion) {
-        return major(PluginDescriptor.HOST_API_VERSION).equals(major(pluginApiVersion));
+    private void scheduleDiscovery(long generation, String taskName) {
+        discoveryTask = taskExecutor.submit(TaskSpec.io(taskName), context -> {
+            context.cancellation().throwIfCancellationRequested();
+            synchronized (PluginManager.this) {
+                if (generation != lifecycleGeneration || workspaceServices == null) return null;
+                discover();
+                pruneMissing();
+                if (generation != lifecycleGeneration) return null;
+                log.info("插件目录后台扫描完成：发现 {} 个进程内插件、{} 个服务插件、{} 个待批准插件",
+                        plugins.size(), servicePluginCatalog.registeredCount(),
+                        servicePluginCatalog.pendingCount());
+                autoEnablePersistedAsync();
+            }
+            fireChange();
+            return null;
+        });
     }
 
-    private static String major(String version) {
-        if (version == null || version.isBlank()) {
-            return "";
-        }
-        int dot = version.indexOf('.');
-        return dot < 0 ? version.strip() : version.substring(0, dot).strip();
+    private void cancelDiscovery() {
+        TaskHandle<Void> current = discoveryTask;
+        discoveryTask = null;
+        if (current != null) current.cancel();
+    }
+
+    /** api 主版本一致即视为兼容。 */
+    static boolean isApiCompatible(String pluginApiVersion) {
+        return PluginApiCompatibility.isInProcessCompatible(pluginApiVersion);
     }
 
     /** 读取注入给插件的配置（secret 项已解密）。 */
@@ -694,6 +775,7 @@ public final class PluginManager implements PluginToolGateway {
             }
             return gone;
         });
+        servicePluginCatalog.pruneMissing();
     }
 
     private void unloadAll() {
@@ -706,4 +788,5 @@ public final class PluginManager implements PluginToolGateway {
         }
         plugins.clear();
     }
+
 }

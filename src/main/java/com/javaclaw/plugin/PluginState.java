@@ -16,6 +16,9 @@ public enum PluginState {
     /** 已在 plugins/ 目录发现 jar 并读到描述符，尚未建类加载器 */
     DISCOVERED("已发现"),
 
+    /** 服务插件工件已静态验证，但尚未获得用户运行批准。 */
+    PENDING_APPROVAL("待批准"),
+
     /** 已建类加载器并实例化入口类，未启用 */
     LOADED("已加载"),
 

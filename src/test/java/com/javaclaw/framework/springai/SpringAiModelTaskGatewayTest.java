@@ -76,6 +76,34 @@ class SpringAiModelTaskGatewayTest {
         assertEquals(7, fixture.ledger.snapshot(fixture.runId).inputTokens());
     }
 
+    @Test
+    void failedManagedInferenceAttemptsAreMeteredBeforeRetryAndBudgetStopsFurtherAttempts() {
+        AtomicInteger calls = new AtomicInteger();
+        ChatModel alwaysFails = prompt -> {
+            calls.incrementAndGet();
+            throw new ManagedInferenceChatModel.ManagedInferenceModelException(
+                    "inference_error", "failed", true,
+                    new com.javaclaw.inference.api.InferenceUsage(4, 1),
+                    "deliverance:test", null);
+        };
+        Fixture retrying = fixture(alwaysFails, RunBudget.UNBOUNDED);
+        assertThrows(ExecutionException.class, () -> retrying.gateway.execute(
+                request(retrying.runId, 1)).toCompletableFuture().get());
+        assertEquals(2, calls.get());
+        assertEquals(8, retrying.ledger.snapshot(retrying.runId).inputTokens());
+        assertEquals(2, retrying.ledger.snapshot(retrying.runId).outputTokens());
+        assertEquals(2, retrying.audit.usageCalls.get());
+
+        calls.set(0);
+        Fixture budgeted = fixture(alwaysFails, new RunBudget(
+                Duration.ofMinutes(1), 3, 100, 1, BigDecimal.TEN));
+        ExecutionException failure = assertThrows(ExecutionException.class, () ->
+                budgeted.gateway.execute(request(budgeted.runId, 3)).toCompletableFuture().get());
+        assertInstanceOf(BudgetExceededException.class, failure.getCause());
+        assertEquals(1, calls.get());
+        assertEquals(4, budgeted.ledger.snapshot(budgeted.runId).inputTokens());
+    }
+
     private static Fixture fixture(ChatModel model, RunBudget budget) {
         SpringAiModelRegistry registry = new SpringAiModelRegistry();
         registry.register("test:model", model);

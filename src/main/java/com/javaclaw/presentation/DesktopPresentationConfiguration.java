@@ -34,6 +34,7 @@ import com.javaclaw.app.UIHelper;
 import com.javaclaw.ui.javafx.theme.FontSelectionService;
 import com.javaclaw.ui.javafx.plugin.JavaFxPluginJarPicker;
 import com.javaclaw.ui.javafx.plugin.PluginCenterViewFactory;
+import com.javaclaw.ui.javafx.settings.InferencePluginConfigurationFactory;
 import com.javaclaw.ui.javafx.plugin.PluginComponentFactory;
 import com.javaclaw.ui.javafx.plugin.PluginJarPicker;
 import org.springframework.context.annotation.Bean;
@@ -112,6 +113,16 @@ public class DesktopPresentationConfiguration {
     @Bean
     PluginCenterViewFactory pluginCenterViewFactory(SpringFxmlLoader loader) {
         return new PluginCenterViewFactory(loader);
+    }
+
+    @Bean
+    InferencePluginConfigurationFactory inferencePluginConfigurationFactory(
+            com.javaclaw.application.inference.InferenceManagementApplicationService inference,
+            com.javaclaw.application.workspace.WorkspaceApplicationService workspaces,
+            SpringFxmlLoader loader,
+            ManagedTaskExecutor tasks,
+            FxDispatcher fx) {
+        return new InferencePluginConfigurationFactory(inference, workspaces, loader, tasks, fx);
     }
 
     @Bean

@@ -80,6 +80,7 @@ class AgentSettingsFxmlLoadTest {
             new Scene(panel.root(), 840, 640);
             panel.root().applyCss();
             controller = panel.controller();
+            panel.activate();
         });
 
         awaitFx(() -> box("builtInRows").getChildren().size() == 1

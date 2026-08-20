@@ -1,6 +1,7 @@
 package com.javaclaw.app;
 
 import com.javaclaw.agent.ToolConfirmationManager;
+import com.javaclaw.api.interaction.ToastRequest;
 import com.javaclaw.browser.PlaywrightBrowserManager;
 import com.javaclaw.chat.ChatViewController;
 import com.javaclaw.config.AgentConfig;
@@ -25,6 +26,10 @@ import javafx.stage.Stage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * JavaClaw 主应用类
@@ -71,13 +76,15 @@ public class JavaClawApp extends Application {
     /** 是否已弹出过"最小化到托盘"提示气泡（每次运行只提示一次） */
     private boolean trayHintShown;
 
+    /** 关闭事件异步确认托盘可达，失败时执行完整退出。 */
+    private TrayCloseCoordinator trayCloseCoordinator;
+
     /** 退出只触发一次（托盘退出与窗口关闭可能并发） */
     private final java.util.concurrent.atomic.AtomicBoolean exitInitiated =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
-    /** 资源清理只执行一次（worker 路径与 JavaFX stop() 路径共用） */
-    private final java.util.concurrent.atomic.AtomicBoolean resourcesReleased =
-            new java.util.concurrent.atomic.AtomicBoolean(false);
+    /** 分离并排序 JavaFX 与后台资源清理；worker 和 stop() 共用幂等状态。 */
+    private ApplicationShutdownCoordinator shutdownCoordinator;
 
     /** 在 JavaFX 场景创建前建立数据、Spring 与工作区基础设施。 */
     @Override
@@ -87,6 +94,8 @@ public class JavaClawApp extends Application {
         try {
             ApplicationContexts.registerDesktopInfrastructure(springContext);
             fxDispatcher = springContext.getBean(FxDispatcher.class);
+            shutdownCoordinator = new ApplicationShutdownCoordinator(fxDispatcher);
+            trayCloseCoordinator = new TrayCloseCoordinator(fxDispatcher);
         } catch (Exception | Error failure) {
             springContext.close();
             springContext = null;
@@ -192,26 +201,29 @@ public class JavaClawApp extends Application {
             primaryStage.setScene(scene);
 
             // 窗口创建完成后才接管第二进程的唤起请求；早到请求由协调器缓存。
-            SingleInstanceCoordinator.current().ifPresent(coordinator ->
-                    coordinator.setShowHandler(() -> fxDispatcher.dispatch(this::showMainWindow)));
+            SingleInstanceCoordinator.current().ifPresent(coordinator -> {
+                coordinator.setShowHandler(() -> fxDispatcher.dispatch(this::showMainWindow));
+                coordinator.setBuildMismatchHandler(() ->
+                        fxDispatcher.dispatch(this::showBuildMismatchNotice));
+            });
 
             // 6.5 安装系统托盘（后台常驻）：安装成功则关闭窗口最小化到托盘，
             //     应用继续在后台运行（定时任务/托管任务不中断），仅托盘"退出"才真正关闭。
             //     平台不支持或安装失败时回退为"关闭即退出"。
             if (Boolean.getBoolean(OnboardingViewFactory.UI_TEST_PROPERTY)) {
                 log.info("UI 测试模式：不安装系统托盘");
+            } else if (isMac() && !DesktopToolkitBootstrap.isPreparedForJavaFx()) {
+                log.warn("macOS AWT 未在 JavaFX 前完成初始化，禁用关闭到托盘以避免窗口失联");
             } else {
+                // 安装过程异步执行；关闭事件会等待实际注册结果后再决定隐藏或退出。
+                Platform.setImplicitExit(false);
                 setupSystemTray();
             }
-            boolean trayReady = trayManager != null && trayManager.isInstalled();
-            if (trayReady) {
-                // 隐藏所有窗口后 JavaFX 运行时不自动退出，保证后台常驻
-                Platform.setImplicitExit(false);
-            }
             primaryStage.setOnCloseRequest(event -> {
-                if (trayReady && springContext.getBean(AgentConfig.class).isTrayMinimizeOnClose()) {
+                if (trayManager != null
+                        && springContext.getBean(AgentConfig.class).isTrayMinimizeOnClose()) {
                     event.consume();
-                    hideToTray();
+                    minimizeToTrayOrExit();
                 } else {
                     requestFullExit();
                 }
@@ -293,13 +305,18 @@ public class JavaClawApp extends Application {
                     () -> { showMainWindow(); if (chatView != null) chatView.openSettings(); },
                     this::requestFullExit,
                     fxDispatcher);
-            if (!trayManager.install()) {
-                trayManager = null;
-            }
+            trayManager.ensureInstalled().thenAccept(installed -> {
+                if (!installed) log.warn("系统托盘首次安装失败，关闭窗口时将重试或完整退出");
+            });
         } catch (Throwable t) {
             log.warn("系统托盘初始化异常，将使用关闭即退出模式: {}", t.getMessage());
             trayManager = null;
         }
+    }
+
+    private static boolean isMac() {
+        return System.getProperty("os.name", "")
+                .toLowerCase(java.util.Locale.ROOT).contains("mac");
     }
 
     /** 从托盘恢复主窗口：显示、取消最小化并置顶。 */
@@ -309,13 +326,53 @@ public class JavaClawApp extends Application {
         if (primaryStage.isIconified()) primaryStage.setIconified(false);
         primaryStage.toFront();
         primaryStage.requestFocus();
+        SystemTrayManager tray = trayManager;
+        if (tray != null && !exitInitiated.get()) {
+            tray.ensureInstalled().thenAccept(installed -> {
+                if (!installed) log.warn("显示主窗口时未能恢复系统托盘");
+            });
+        }
+    }
+
+    /** 不同构建的第二实例只提示手动重启，绝不自动中断当前运行任务。 */
+    private void showBuildMismatchNotice() {
+        showMainWindow();
+        try {
+            springContext.getBean(JfxUserInteractionPort.class).notify(new ToastRequest(
+                    "需要重启",
+                    "应用文件已更新，当前窗口仍在运行旧代码。请完整退出 JavaClaw 后重新启动。"));
+        } catch (RuntimeException failure) {
+            log.warn("显示构建更新提示失败: {}", failure.getMessage(), failure);
+        }
+    }
+
+    /** 先异步确认托盘可达；失败或超时按照关闭意图完整退出。 */
+    private void minimizeToTrayOrExit() {
+        SystemTrayManager tray = trayManager;
+        if (tray == null) {
+            requestFullExit();
+            return;
+        }
+        trayCloseCoordinator.request(
+                tray::ensureInstalled,
+                () -> !exitInitiated.get() && tray == trayManager && tray.isInstalled(),
+                this::hideToTray,
+                this::requestFullExit,
+                failure -> log.warn("关闭窗口前无法确认系统托盘（{}），将完整退出应用",
+                        failure.getMessage()));
     }
 
     /** 隐藏主窗口到托盘后台常驻，首次提示一次气泡。 */
     private void hideToTray() {
+        SystemTrayManager tray = trayManager;
+        if (tray == null || !tray.isInstalled()) {
+            log.warn("系统托盘在隐藏窗口前失效，将完整退出应用");
+            requestFullExit();
+            return;
+        }
         if (primaryStage != null) primaryStage.hide();
-        if (trayManager != null && !trayHintShown) {
-            trayManager.displayInfo("JavaClaw 仍在后台运行",
+        if (!trayHintShown) {
+            tray.displayInfo("JavaClaw 仍在后台运行",
                     "已最小化到系统托盘，可从托盘菜单恢复窗口或退出应用");
             trayHintShown = true;
         }
@@ -339,13 +396,12 @@ public class JavaClawApp extends Application {
         log.info("收到退出请求，开始关闭应用...");
 
         SystemTrayManager tray = trayManager;
-        boolean awtActive = tray != null;   // 托盘已安装即说明 AWT 子系统已初始化
+        boolean awtActive = tray != null && tray.wasEverInstalled();
         trayManager = null;
         if (tray != null) {
-            // 在 AWT 事件线程上非阻塞地移除托盘图标（AWT 调用应在 EDT 执行；invokeLater 不阻塞）。
-            // 即使来不及执行，后续 halt 也会随进程结束清掉图标。
             try {
-                java.awt.EventQueue.invokeLater(tray::remove);
+                // remove() 自身排入 AWT EDT，并先禁止可用性监听器触发重装。
+                tray.remove();
             } catch (Throwable trayFailure) {
                 log.debug("提交托盘移除任务失败，退出看门狗将负责终止进程", trayFailure);
             }
@@ -354,11 +410,18 @@ public class JavaClawApp extends Application {
         // 看门狗兜底：无论哪条路径卡住，宽限期后强制终止 JVM。
         startExitWatchdog(5000);
 
+        // 视图句柄会销毁 ContextMenu 等 JavaFX 控件，必须在启动后台 worker 之前
+        // 于 FX Application Thread 完成。非 FX 调用方会被有界地切回 FX 线程。
+        if (!shutdownUiResources()) {
+            log.warn("JavaFX 视图未能在宽限时间内清理，等待退出看门狗终止进程");
+            return;
+        }
+
         if (awtActive) {
             // 托盘(AWT)已激活：后台线程清理后直接 halt，规避 macOS 上 AWT 与 JavaFX
             // 同时关闭争用原生主线程导致的死锁，并跳过可能阻塞的 JVM 关闭钩子。
             Thread worker = new Thread(() -> {
-                shutdownResources();
+                shutdownBackendResources();
                 log.info("资源清理完成，退出进程");
                 Runtime.getRuntime().halt(0);
             }, "exit-worker");
@@ -396,24 +459,62 @@ public class JavaClawApp extends Application {
      */
     @Override
     public void stop() {
-        shutdownResources();
+        SystemTrayManager tray = trayManager;
+        trayManager = null;
+        if (tray != null) tray.remove();
+        if (shutdownUiResources()) shutdownBackendResources();
     }
 
     /**
-     * 释放所有资源（幂等）。各步骤独立 try/catch + 计时，任一步骤卡住或抛错都不影响其余步骤；
-     * 单步耗时超过 200ms 会打日志，便于定位退出慢的根因。
+     * 在 FX Application Thread 释放所有视图（幂等）。非 FX 调用会有界等待调度完成，
+     * 超时后不再启动后台清理，交由退出看门狗处理，避免两阶段并发销毁同一对象图。
      */
-    private void shutdownResources() {
-        if (!resourcesReleased.compareAndSet(false, true)) return;
-        log.info("JavaClaw 应用正在关闭...");
+    private boolean shutdownUiResources() {
+        ApplicationShutdownCoordinator coordinator = shutdownCoordinator;
+        if (coordinator == null) return false;
+        try {
+            coordinator.closeUi(this::releaseUiResources).get(2000, TimeUnit.MILLISECONDS);
+            return true;
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            log.warn("等待 JavaFX 视图清理时被中断");
+        } catch (ExecutionException | TimeoutException failure) {
+            log.warn("JavaFX 视图清理失败: {}", failure.getMessage(), failure);
+        }
+        return false;
+    }
 
-        // 工作区 Context 按依赖反序关闭；持久化器会在任务作用域之前 flush。
-        if (chatViewHandle != null) safeShutdown("主界面", chatViewHandle::close);
-        if (applicationKernel != null) safeShutdown("应用内核", applicationKernel::close);
-        if (springContext != null) safeShutdown("Spring 根 Context", springContext::close);
-        safeShutdown("单实例协调器", SingleInstanceCoordinator::closeCurrent);
+    private void releaseUiResources() {
+        log.info("正在关闭 JavaFX 视图...");
+        WorkflowView workflow = workflowCenterView;
+        workflowCenterView = null;
+        if (workflow != null) safeShutdown("工作流中心", workflow::close);
 
-        log.info("JavaClaw 应用已关闭");
+        ViewHandle<BorderPane> mainView = chatViewHandle;
+        chatViewHandle = null;
+        chatView = null;
+        if (mainView != null) safeShutdown("主界面", mainView::close);
+    }
+
+    /** 在 UI 清理完成后释放后台基础设施（幂等）。 */
+    private void shutdownBackendResources() {
+        ApplicationShutdownCoordinator coordinator = shutdownCoordinator;
+        if (coordinator == null) return;
+        coordinator.closeBackend(() -> {
+            log.info("JavaClaw 应用正在关闭后台资源...");
+
+            // 工作区 Context 按依赖反序关闭；持久化器会在任务作用域之前 flush。
+            ApplicationKernel kernel = applicationKernel;
+            applicationKernel = null;
+            if (kernel != null) safeShutdown("应用内核", kernel::close);
+
+            AnnotationConfigApplicationContext rootContext = springContext;
+            springContext = null;
+            if (rootContext != null) safeShutdown("Spring 根 Context", rootContext::close);
+            safeShutdown("单实例协调器", SingleInstanceCoordinator::closeCurrent);
+
+            log.info("JavaClaw 应用已关闭");
+        });
     }
 
     /** 执行单个清理步骤：吞异常 + 计时，单步 >200ms 记日志（定位退出慢的步骤）。 */

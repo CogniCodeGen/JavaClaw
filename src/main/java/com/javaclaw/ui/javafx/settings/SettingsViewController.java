@@ -14,6 +14,7 @@ import javafx.scene.Node;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
 import javafx.util.Duration;
 
 import java.util.EnumMap;
@@ -25,6 +26,8 @@ public final class SettingsViewController
         implements SettingsPanelCatalogFactory.Callbacks, AutoCloseable {
 
     @FXML private StackPane contentArea;
+    @FXML private VBox loadingPane;
+    @FXML private Label loadingLabel;
     @FXML private Label crumbCurrentLabel;
     @FXML private SettingsNavigationController navigationController;
     @FXML private SettingsFooterController footerController;
@@ -33,6 +36,7 @@ public final class SettingsViewController
     private final DialogService dialogs;
     private final SettingsViewModel viewModel = new SettingsViewModel();
     private final SettingsDirtyTracker dirtyTracker = new SettingsDirtyTracker();
+    private final FxDispatcher fx;
     private final UiAsyncAction<ConfirmDecision> closeConfirmation;
     private final Map<SettingsCategory, SettingsPanelCatalog.Panel> panels =
             new EnumMap<>(SettingsCategory.class);
@@ -41,6 +45,9 @@ public final class SettingsViewController
     private Runnable closeWindow = () -> { };
     private Runnable onRuntimeConfigurationChanged = () -> { };
     private boolean runtimeCallbackConfigured;
+    private boolean activated;
+    private boolean closed;
+    private long loadGeneration;
 
     public SettingsViewController(
             SettingsPanelCatalogFactory catalogs,
@@ -49,6 +56,7 @@ public final class SettingsViewController
             FxDispatcher fx) {
         this.catalogs = Objects.requireNonNull(catalogs, "catalogs");
         this.dialogs = Objects.requireNonNull(dialogs, "dialogs");
+        this.fx = Objects.requireNonNull(fx, "fx");
         closeConfirmation = new UiAsyncAction<>(tasks, fx);
     }
 
@@ -58,22 +66,17 @@ public final class SettingsViewController
         footerController.configure(this::saveCurrentPanel,
                 this::testCurrentPanel, this::requestClose);
         catalog = catalogs.create(this);
-        for (SettingsPanelCatalog.Panel panel : catalog.orderedPanels()) {
-            panels.put(panel.category(), panel);
-            contentArea.getChildren().add(panel.root());
-            visible(panel.root(), panel.category() == SettingsCategory.MODEL);
-            if (panel.actions().save() != null) {
-                dirtyTracker.watch(panel.root(), () -> markDirty(panel.category()));
-            }
-        }
         crumbCurrentLabel.textProperty().bind(viewModel.selectedCategoryProperty()
                 .map(SettingsCategory::displayName));
+        showLoading(SettingsCategory.MODEL);
         navigationController.select(SettingsCategory.MODEL);
     }
 
     public SettingsViewModel viewModel() {
         return viewModel;
     }
+
+    int loadedPanelCount() { return catalog == null ? 0 : catalog.loadedCount(); }
 
     public void configure(Runnable closeAction, Runnable runtimeConfigurationChanged) {
         closeWindow = Objects.requireNonNull(closeAction, "closeAction");
@@ -83,21 +86,25 @@ public final class SettingsViewController
     }
 
     public void prepare(String categoryName) {
-        viewModel.loading(true);
-        try {
-            catalog.reloadAll();
-        } finally {
-            viewModel.loading(false);
-        }
         viewModel.clearDirty();
         navigationController.showDirty(viewModel.dirtyCategories());
         SettingsCategory requested = SettingsCategory.named(categoryName);
         navigationController.select(requested == null ? SettingsCategory.MODEL : requested);
     }
 
+    /** 在 Stage 已显示后的下一次 pulse 创建目标面板，保证设置窗口骨架优先呈现。 */
+    public void activate() {
+        if (closed || activated) return;
+        activated = true;
+        SettingsCategory target = viewModel.selectedCategory();
+        if (panel(target) == null) loadPanel(target);
+    }
+
     public void saveCurrentPanel() {
         SettingsCategory category = viewModel.selectedCategory();
-        SettingsPanelActions actions = panel(category).actions();
+        SettingsPanelCatalog.Panel current = panel(category);
+        if (current == null) return;
+        SettingsPanelActions actions = current.actions();
         if (actions.save() == null || !viewModel.isDirty(category)) return;
         footerController.showInfo("正在保存…");
         refreshCapabilities();
@@ -111,7 +118,9 @@ public final class SettingsViewController
 
     public void testCurrentPanel() {
         SettingsCategory category = viewModel.selectedCategory();
-        SettingsPanelActions actions = panel(category).actions();
+        SettingsPanelCatalog.Panel current = panel(category);
+        if (current == null) return;
+        SettingsPanelActions actions = current.actions();
         if (actions.test() == null || viewModel.testing()) return;
         viewModel.testing(true);
         footerController.clearStatus();
@@ -145,12 +154,81 @@ public final class SettingsViewController
 
     private void showPanel(SettingsCategory category) {
         SettingsCategory previous = viewModel.selectedCategory();
+        SettingsPanelCatalog.Panel previousPanel = panel(previous);
+        if (category != previous && previousPanel != null) previousPanel.deactivate().run();
         for (SettingsPanelCatalog.Panel panel : panels.values()) {
             visible(panel.root(), panel.category() == category);
         }
         viewModel.select(category);
-        if (category != previous) animate(panel(category).root());
+        SettingsPanelCatalog.Panel selected = panel(category);
+        if (selected == null) {
+            showLoading(category);
+            if (activated) schedulePanelLoad(category);
+        } else {
+            visible(loadingPane, false);
+            visible(selected.root(), true);
+            if (category != previous) {
+                animate(selected.root());
+                if (!viewModel.isDirty(category)) {
+                    fx.dispatchLater(() -> reloadPanel(category, selected));
+                }
+            }
+        }
         refreshFooter(true);
+    }
+
+    private void schedulePanelLoad(SettingsCategory category) {
+        if (closed || panel(category) != null) return;
+        long requested = ++loadGeneration;
+        showLoading(category);
+        fx.dispatchLater(() -> {
+            if (closed || requested != loadGeneration
+                    || category != viewModel.selectedCategory()) return;
+            loadPanel(category);
+        });
+    }
+
+    private void loadPanel(SettingsCategory category) {
+        if (closed) return;
+        viewModel.loading(true);
+        try {
+            SettingsPanelCatalog.Panel loaded = catalog.load(category);
+            panels.put(category, loaded);
+            contentArea.getChildren().add(loaded.root());
+            visible(loaded.root(), category == viewModel.selectedCategory());
+            if (loaded.actions().save() != null) {
+                dirtyTracker.watch(loaded.root(), () -> markDirty(category));
+            }
+            if (category == viewModel.selectedCategory()) {
+                visible(loadingPane, false);
+                animate(loaded.root());
+                refreshFooter(true);
+            }
+            fx.dispatchLater(() -> reloadPanel(category, loaded));
+        } catch (Throwable failure) {
+            loadingLabel.setText("无法打开“" + category.displayName() + "”："
+                    + SettingsFieldSupport.failureMessage(failure));
+            footerController.showResult("页面加载失败", false);
+        } finally {
+            viewModel.loading(false);
+        }
+    }
+
+    private void reloadPanel(SettingsCategory category, SettingsPanelCatalog.Panel loaded) {
+        if (closed || panel(category) != loaded) return;
+        try {
+            loaded.reload().run();
+        } catch (Throwable failure) {
+            if (category == viewModel.selectedCategory()) {
+                footerController.showResult("读取设置失败: "
+                        + SettingsFieldSupport.failureMessage(failure), false);
+            }
+        }
+    }
+
+    private void showLoading(SettingsCategory category) {
+        loadingLabel.setText("正在打开“" + category.displayName() + "”…");
+        visible(loadingPane, true);
     }
 
     private void markDirty(SettingsCategory category) {
@@ -189,14 +267,19 @@ public final class SettingsViewController
     }
 
     private void refreshCapabilities() {
-        SettingsPanelActions actions = panel(viewModel.selectedCategory()).actions();
+        SettingsPanelCatalog.Panel selected = panel(viewModel.selectedCategory());
+        if (selected == null) {
+            footerController.capabilities(false, false, false, false, "测试连接");
+            return;
+        }
+        SettingsPanelActions actions = selected.actions();
         footerController.capabilities(actions.save() != null,
                 viewModel.isDirty(viewModel.selectedCategory()), actions.test() != null,
                 viewModel.testing(), actions.testLabel());
     }
 
     private SettingsPanelCatalog.Panel panel(SettingsCategory category) {
-        return Objects.requireNonNull(panels.get(category), "缺少设置分区: " + category);
+        return panels.get(category);
     }
 
     private static void animate(Node target) {
@@ -250,6 +333,9 @@ public final class SettingsViewController
 
     @Override
     public void close() {
+        if (closed) return;
+        closed = true;
+        loadGeneration++;
         crumbCurrentLabel.textProperty().unbind();
         closeConfirmation.close();
         dirtyTracker.close();

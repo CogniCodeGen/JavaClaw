@@ -72,6 +72,7 @@ class SiteCredentialFxmlLoadTest {
             new Scene(panel.root(), 760, 600);
             panel.root().applyCss();
             controller = panel.controller();
+            panel.activate();
         });
 
         awaitFx(() -> list().getChildren().size() == 1);

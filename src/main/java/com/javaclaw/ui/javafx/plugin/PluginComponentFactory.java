@@ -33,9 +33,11 @@ public final class PluginComponentFactory {
     PluginChildView<VBox> card(
             Plugin plugin,
             Consumer<String> onDetails,
+            Consumer<String> onApproval,
             BiConsumer<String, Boolean> onToggle) {
         ViewHandle<VBox> handle = load(CARD, "插件卡片");
-        handle.controller(PluginCardController.class).configure(plugin, onDetails, onToggle);
+        handle.controller(PluginCardController.class).configure(
+                plugin, onDetails, onApproval, onToggle);
         return new PluginChildView<>(handle);
     }
 

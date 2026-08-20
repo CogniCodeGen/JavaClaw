@@ -1,10 +1,15 @@
 package com.javaclaw.ui.javafx.onboarding;
 
 import com.javaclaw.application.error.ValidationException;
+import com.javaclaw.application.inference.InferenceManagementApplicationService;
+import com.javaclaw.application.inference.InferenceAssetPreparationPort;
+import com.javaclaw.application.inference.LocalInferenceQuickSetupApplicationService;
 import com.javaclaw.application.onboarding.OnboardingApplicationService;
+import com.javaclaw.application.workspace.WorkspaceApplicationService;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fx.FxDispatcher;
+import com.javaclaw.testsupport.EmptyInferenceManagementService;
 import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
@@ -20,11 +25,15 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import java.util.List;
+import java.nio.file.Path;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -103,6 +112,11 @@ class OnboardingFxmlLoadTest {
         context = new AnnotationConfigApplicationContext();
         FakeService service = new FakeService();
         context.registerBean(OnboardingApplicationService.class, () -> service);
+        context.registerBean(InferenceManagementApplicationService.class,
+                EmptyInferenceManagementService::new);
+        context.registerBean(LocalInferenceQuickSetupApplicationService.class,
+                EmptyQuickInference::new);
+        context.registerBean(WorkspaceApplicationService.class, EmptyWorkspaceService::new);
         context.registerBean(ManagedTaskExecutor.class, () -> new ManagedTaskExecutor(),
                 definition -> definition.setDestroyMethodName("close"));
         context.registerBean(FxDispatcher.class, FxDispatcher::new);
@@ -189,6 +203,35 @@ class OnboardingFxmlLoadTest {
         private static Provider provider(String id) {
             return new Provider(id, id, "描述", "https://example.com/v1",
                     "model", false, false);
+        }
+    }
+
+    private static final class EmptyWorkspaceService implements WorkspaceApplicationService {
+        @Override public List<WorkspaceSummary> list() { return List.of(); }
+        @Override public String currentWorkspaceId() { return "test"; }
+        @Override public WorkspaceSummary create(String name) {
+            throw new UnsupportedOperationException("UI load test");
+        }
+        @Override public boolean delete(String workspaceId) { return false; }
+    }
+
+    private static final class EmptyQuickInference
+            implements LocalInferenceQuickSetupApplicationService {
+        @Override public QuickSnapshot quickSnapshot() {
+            return new QuickSnapshot(List.of(), null, DEFAULT_ALIAS, "",
+                    false, false, false, List.of());
+        }
+        @Override public com.javaclaw.inference.api.InferenceModelAsset importLocalModel(
+                Path source, Consumer<InferenceAssetPreparationPort.Progress> progress,
+                BooleanSupplier cancelled) {
+            throw new UnsupportedOperationException("UI load test");
+        }
+        @Override public InferenceManagementApplicationService.ProfileDraft defaultDraft(UUID assetId) {
+            throw new UnsupportedOperationException("UI load test");
+        }
+        @Override public LoadResult loadAndPublish(
+                LoadCommand command, Consumer<Progress> progress, BooleanSupplier cancelled) {
+            throw new UnsupportedOperationException("UI load test");
         }
     }
 }

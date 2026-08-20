@@ -2,6 +2,7 @@ package com.javaclaw.ui.javafx.settings;
 
 import com.javaclaw.platform.fxml.SpringFxmlLoader;
 import com.javaclaw.platform.fxml.ViewHandle;
+import com.javaclaw.platform.fx.FxDispatcher;
 import javafx.scene.Scene;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCodeCombination;
@@ -26,9 +27,11 @@ public final class SettingsViewFactory {
     private static final List<String> STYLES = List.of("/css/chat.css", "/css/controls.css");
 
     private final SpringFxmlLoader loader;
+    private final FxDispatcher fx;
 
-    public SettingsViewFactory(SpringFxmlLoader loader) {
+    public SettingsViewFactory(SpringFxmlLoader loader, FxDispatcher fx) {
         this.loader = Objects.requireNonNull(loader, "loader");
+        this.fx = Objects.requireNonNull(fx, "fx");
     }
 
     public SettingsView create(Window owner) {
@@ -50,7 +53,7 @@ public final class SettingsViewFactory {
                             KeyCombination.SHORTCUT_DOWN),
                     controller::saveCurrentPanel);
             stage.setScene(scene);
-            return new SettingsView(stage, handle, controller);
+            return new SettingsView(stage, handle, controller, fx);
         } catch (RuntimeException | Error failure) {
             handle.close();
             throw failure;

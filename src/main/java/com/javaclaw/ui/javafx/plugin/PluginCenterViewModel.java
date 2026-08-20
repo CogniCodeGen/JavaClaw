@@ -17,7 +17,7 @@ import java.util.Locale;
 /** 插件中心页面状态，不持有插件服务、文件系统或窗口对象。 */
 final class PluginCenterViewModel {
 
-    enum Tab { INSTALLED, MARKET, AGENT_EXTENSIONS }
+    enum Tab { INSTALLED, MARKET, AGENT_EXTENSIONS, SERVICE_PLUGINS }
 
     private final ObservableList<Plugin> plugins = FXCollections.observableArrayList();
     private final ObjectProperty<Tab> tab = new SimpleObjectProperty<>(Tab.INSTALLED);
@@ -68,8 +68,7 @@ final class PluginCenterViewModel {
     }
 
     void showFailure(String prefix, Throwable failure) {
-        String detail = failure == null || failure.getMessage() == null
-                || failure.getMessage().isBlank() ? "未知错误" : failure.getMessage();
+        String detail = PluginCenterCleanup.failureMessage(failure);
         error.set(detail);
         status.set(prefix + "：" + detail);
     }

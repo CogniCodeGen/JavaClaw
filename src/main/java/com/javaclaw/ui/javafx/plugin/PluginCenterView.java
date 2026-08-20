@@ -35,6 +35,12 @@ public final class PluginCenterView implements AutoCloseable {
         stage.showAndWait();
     }
 
+    public PluginCenterView openServicePluginConfiguration(String pluginId, String pageId) {
+        ensureOpen();
+        controller().openServicePluginConfiguration(pluginId, pageId);
+        return this;
+    }
+
     public Stage stage() { return stage; }
 
     PluginCenterController controller() {

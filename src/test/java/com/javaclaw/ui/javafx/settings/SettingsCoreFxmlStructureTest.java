@@ -46,6 +46,23 @@ class SettingsCoreFxmlStructureTest {
         }
     }
 
+    @Test
+    void embeddingVisibilityRowsMatchTheFieldsTheyControl() throws Exception {
+        Document document = load("/fxml/settings/embedding-settings.fxml");
+        assertEquals("API 地址：", firstLabelText(elementById(document, "baseUrlRow")));
+        assertEquals("API 密钥：", firstLabelText(elementById(document, "apiKeyRow")));
+        assertEquals("模型名称：", firstLabelText(elementById(document, "modelNameRow")));
+        assertEquals("本地档案：", firstLabelText(elementById(document, "managedProfileRow")));
+    }
+
+    @Test
+    void inferenceProfileEditReusesTheExistingParametersAction() throws Exception {
+        Document document = load("/fxml/settings/local-inference-profiles.fxml");
+        assertEquals("#parametersRequested",
+                elementById(document, "editProfileButton").getAttribute("onAction"));
+        assertFalse(attributes(document, "onAction").contains("#editProfileRequested"));
+    }
+
     private void assertContract(String resource, Class<?> controller) throws Exception {
         Document document = load(resource);
         assertEquals(controller.getName(), document.getDocumentElement()
@@ -92,6 +109,21 @@ class SettingsCoreFxmlStructureTest {
         return values;
     }
 
+    private static Element elementById(Document document, String id) {
+        NodeList nodes = document.getElementsByTagName("*");
+        for (int index = 0; index < nodes.getLength(); index++) {
+            Element element = (Element) nodes.item(index);
+            if (id.equals(element.getAttribute("fx:id"))) return element;
+        }
+        throw new AssertionError("缺少 fx:id=" + id);
+    }
+
+    private static String firstLabelText(Element parent) {
+        NodeList labels = parent.getElementsByTagName("Label");
+        if (labels.getLength() == 0) throw new AssertionError("分区缺少 Label");
+        return ((Element) labels.item(0)).getAttribute("text");
+    }
+
     private static Map<String, Class<?>> resources() {
         Map<String, Class<?>> values = new LinkedHashMap<>();
         values.put("/fxml/control/secret-field.fxml", SecretFieldController.class);
@@ -99,6 +131,14 @@ class SettingsCoreFxmlStructureTest {
         values.put("/fxml/settings/tiered-model-settings.fxml",
                 TieredModelSettingsController.class);
         values.put("/fxml/settings/embedding-settings.fxml", EmbeddingSettingsController.class);
+        values.put("/fxml/settings/local-inference-assets.fxml",
+                InferenceAssetSettingsController.class);
+        values.put("/fxml/settings/local-inference-profiles.fxml",
+                InferenceProfileSettingsController.class);
+        values.put("/fxml/settings/local-inference-runtime.fxml",
+                InferenceRuntimeSettingsController.class);
+        values.put("/fxml/settings/local-inference-api.fxml",
+                InferenceApiSettingsController.class);
         values.put("/fxml/settings/email-settings.fxml", EmailSettingsController.class);
         values.put("/fxml/settings/notification-settings.fxml",
                 NotificationSettingsController.class);

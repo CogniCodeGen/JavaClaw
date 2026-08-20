@@ -22,28 +22,48 @@ public final class ModelSettingsSectionFactory {
 
     public SettingsSectionView<ModelSettingsController> createModel(
             Consumer<SaveResult> onApplied) {
-        return load("model-settings.fxml", ModelSettingsController.class, onApplied);
+        return createModel(onApplied, () -> { });
+    }
+
+    public SettingsSectionView<ModelSettingsController> createModel(
+            Consumer<SaveResult> onApplied, Runnable runtimeConfigurationChanged) {
+        return load("model-settings.fxml", ModelSettingsController.class,
+                onApplied, runtimeConfigurationChanged);
     }
 
     public SettingsSectionView<TieredModelSettingsController> createTiers(
             Consumer<SaveResult> onApplied) {
-        return load("tiered-model-settings.fxml", TieredModelSettingsController.class, onApplied);
+        return createTiers(onApplied, () -> { });
+    }
+
+    public SettingsSectionView<TieredModelSettingsController> createTiers(
+            Consumer<SaveResult> onApplied, Runnable runtimeConfigurationChanged) {
+        return load("tiered-model-settings.fxml", TieredModelSettingsController.class,
+                onApplied, runtimeConfigurationChanged);
     }
 
     public SettingsSectionView<EmbeddingSettingsController> createEmbedding(
             Consumer<SaveResult> onApplied) {
-        return load("embedding-settings.fxml", EmbeddingSettingsController.class, onApplied);
+        return createEmbedding(onApplied, () -> { });
+    }
+
+    public SettingsSectionView<EmbeddingSettingsController> createEmbedding(
+            Consumer<SaveResult> onApplied, Runnable runtimeConfigurationChanged) {
+        return load("embedding-settings.fxml", EmbeddingSettingsController.class,
+                onApplied, runtimeConfigurationChanged);
     }
 
     private <C extends AppliedSettingsController> SettingsSectionView<C> load(
-            String file, Class<C> type, Consumer<SaveResult> onApplied) {
+            String file, Class<C> type, Consumer<SaveResult> onApplied,
+            Runnable runtimeConfigurationChanged) {
         URL resource = Objects.requireNonNull(
                 ModelSettingsSectionFactory.class.getResource("/fxml/settings/" + file),
                 "缺少设置 FXML: " + file);
         try {
             ViewHandle<Node> handle = loader.load(resource);
             C controller = handle.controller(type);
-            controller.configure(onApplied == null ? ignored -> { } : onApplied);
+            controller.configure(onApplied == null ? ignored -> { } : onApplied,
+                    runtimeConfigurationChanged == null ? () -> { } : runtimeConfigurationChanged);
             return new SettingsSectionView<>(handle, controller);
         } catch (IOException failure) {
             throw new UncheckedIOException("加载设置分区失败: " + file, failure);
@@ -51,6 +71,6 @@ public final class ModelSettingsSectionFactory {
     }
 
     interface AppliedSettingsController {
-        void configure(Consumer<SaveResult> onApplied);
+        void configure(Consumer<SaveResult> onApplied, Runnable runtimeConfigurationChanged);
     }
 }

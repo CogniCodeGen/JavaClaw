@@ -6,7 +6,13 @@ import com.tngtech.archunit.core.importer.ImportOption;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ArchitectureRulesTest {
 
@@ -165,5 +171,32 @@ class ArchitectureRulesTest {
                 .resideInAPackage("io." + "agent" + "scope..")
                 .because("Spring AI 2.0 is the only model and agent substrate")
                 .check(productionClasses);
+    }
+
+    @Test
+    void deliveranceNeverEntersTheHostApplicationClasspath() {
+        noClasses()
+                .should()
+                .dependOnClassesThat()
+                .resideInAPackage("io.teknek." + "deliverance..")
+                .because("Deliverance and native inference must remain in its isolated service-plugin JVM")
+                .check(productionClasses);
+    }
+
+    @Test
+    void servicePluginSourcesUseTheSingleHostAndSamplePluginLayout() throws Exception {
+        assertFalse(Files.exists(Path.of("runtime")),
+                "runtime/ source aggregator must not return");
+        assertFalse(Files.exists(Path.of("service-plugins")),
+                "service-plugins/ must not duplicate sample plugin sources");
+        Path sample = Path.of("sample-plugins/deliverance");
+        assertTrue(Files.isRegularFile(sample.resolve("pom.xml")));
+        try (var descriptors = Files.walk(sample.resolve("src"))) {
+            assertEquals(1, descriptors.filter(path -> path.getFileName().toString()
+                    .equals("plugin.json")).count());
+        }
+        assertTrue(Files.isDirectory(Path.of("src/main/java/com/javaclaw/service/api")));
+        assertTrue(Files.isDirectory(Path.of("src/main/java/com/javaclaw/service/runner")));
+        assertTrue(Files.isRegularFile(Path.of("src/main/resources/protocol/service-plugin.yaml")));
     }
 }

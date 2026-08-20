@@ -6,6 +6,7 @@ import com.javaclaw.application.plugin.PluginManagementApplicationService;
 import com.javaclaw.application.plugin.PluginManagementApplicationService.Catalog;
 import com.javaclaw.application.plugin.PluginManagementApplicationService.InstallResult;
 import com.javaclaw.application.plugin.PluginManagementApplicationService.Plugin;
+import com.javaclaw.application.serviceplugin.ServicePluginManagementApplicationService;
 import com.javaclaw.platform.dialog.DialogService;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskSpec;
@@ -35,28 +36,21 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class PluginCenterController implements AutoCloseable {
 
     @FXML private HBox root;
-    @FXML private ToggleButton installedTab;
-    @FXML private ToggleButton marketTab;
-    @FXML private ToggleButton agentExtensionsTab;
-    @FXML private Button refreshButton;
-    @FXML private Button installButton;
+    @FXML private ToggleButton installedTab, marketTab, agentExtensionsTab, servicePluginsTab;
+    @FXML private Button refreshButton, installButton, installAgentExtensionButton;
     @FXML private VBox listView;
     @FXML private TextField searchField;
-    @FXML private Label countLabel;
-    @FXML private ScrollPane cardScroll;
+    @FXML private Label countLabel, emptyMessage, directoryLabel, statusLabel;
+    @FXML private ScrollPane cardScroll, detailPanel;
     @FXML private FlowPane cardGrid;
-    @FXML private VBox marketPlaceholder;
-    @FXML private VBox emptyPlaceholder;
-    @FXML private Label emptyMessage;
+    @FXML private VBox marketPlaceholder, emptyPlaceholder;
     @FXML private StackPane loadingOverlay;
-    @FXML private ScrollPane detailPanel;
     @FXML private PluginDetailController detailPanelController;
-    @FXML private Label directoryLabel;
-    @FXML private Label statusLabel;
-    @FXML private VBox agentExtensionView;
-    @FXML private VBox agentExtensionList;
+    @FXML private VBox agentExtensionView, agentExtensionList;
     @FXML private Label agentExtensionCount;
-    @FXML private Button installAgentExtensionButton;
+    @FXML private VBox servicePluginView, servicePluginList;
+    @FXML private Label servicePluginCount;
+    @FXML private ServicePluginConfigurationController servicePluginConfigurationController;
 
     private final PluginManagementApplicationService useCases;
     private final PluginJarPicker jarPicker;
@@ -65,14 +59,18 @@ public final class PluginCenterController implements AutoCloseable {
     private final FxDispatcher fx;
     private final PluginComponentFactory components;
     private final AgentExtensionManagementApplicationService agentExtensions;
+    private final ServicePluginManagementApplicationService servicePlugins;
     private final UiAsyncAction<Catalog> refreshAction;
     private final UiAsyncAction<Catalog> toggleAction;
+    private final ServicePluginApprovalAction approvalAction;
     private final UiAsyncAction<InstallResult> installAction;
     private final PluginCenterViewModel viewModel = new PluginCenterViewModel();
     private final List<PluginChildView<VBox>> cardViews = new ArrayList<>();
     private final AtomicBoolean closed = new AtomicBoolean();
     private AutoCloseable catalogSubscription;
     private AgentExtensionPanel agentExtensionPanel;
+    private ServicePluginWorkspace servicePluginWorkspace;
+    private Runnable runtimeConfigurationChanged = () -> { };
 
     public PluginCenterController(
             PluginManagementApplicationService useCases,
@@ -81,7 +79,8 @@ public final class PluginCenterController implements AutoCloseable {
             ManagedTaskExecutor tasks,
             FxDispatcher fx,
             PluginComponentFactory components,
-            AgentExtensionManagementApplicationService agentExtensions) {
+            AgentExtensionManagementApplicationService agentExtensions,
+            ServicePluginManagementApplicationService servicePlugins) {
         this.useCases = Objects.requireNonNull(useCases, "useCases");
         this.jarPicker = Objects.requireNonNull(jarPicker, "jarPicker");
         this.dialogs = Objects.requireNonNull(dialogs, "dialogs");
@@ -89,8 +88,12 @@ public final class PluginCenterController implements AutoCloseable {
         this.fx = Objects.requireNonNull(fx, "fx");
         this.components = Objects.requireNonNull(components, "components");
         this.agentExtensions = Objects.requireNonNull(agentExtensions, "agentExtensions");
+        this.servicePlugins = Objects.requireNonNull(servicePlugins, "servicePlugins");
         refreshAction = new UiAsyncAction<>(tasks, fx);
         toggleAction = new UiAsyncAction<>(tasks, fx);
+        approvalAction = new ServicePluginApprovalAction(useCases, dialogs, tasks, fx,
+                this::applyCatalog, this::servicePluginsTabRequested, viewModel::showStatus,
+                this::showFailure, this::requestRefresh);
         installAction = new UiAsyncAction<>(tasks, fx);
     }
 
@@ -100,14 +103,23 @@ public final class PluginCenterController implements AutoCloseable {
                 agentExtensions, dialogs, tasks, fx,
                 agentExtensionView, agentExtensionList, agentExtensionCount,
                 installAgentExtensionButton, viewModel::showStatus, this::showFailure);
-        directoryLabel.setText(useCases.pluginsDirectory().toString());
+        servicePluginWorkspace = new ServicePluginWorkspace(servicePlugins, tasks, fx,
+                servicePluginView, servicePluginList, servicePluginCount,
+                servicePluginConfigurationController, viewModel::showStatus,
+                this::showFailure, () -> { installedTabRequested();
+                    viewModel.showStatus("请先批准并注册 Deliverance 服务插件"); });
+        servicePluginWorkspace.setOnRuntimeConfigurationChanged(runtimeConfigurationChanged);
+        String pluginsDirectory = useCases.pluginsDirectory().toString();
+        directoryLabel.setText("插件目录  ·  " + pluginsDirectory);
+        directoryLabel.setTooltip(new javafx.scene.control.Tooltip(pluginsDirectory));
         searchField.textProperty().bindBidirectional(viewModel.queryProperty());
         statusLabel.textProperty().bind(viewModel.statusProperty());
         statusLabel.visibleProperty().bind(viewModel.statusProperty().isNotEmpty());
         statusLabel.managedProperty().bind(statusLabel.visibleProperty());
         viewModel.loadingProperty().bind(refreshAction.busyProperty());
         viewModel.mutatingProperty().bind(Bindings.or(
-                Bindings.or(toggleAction.busyProperty(), installAction.busyProperty()),
+                Bindings.or(Bindings.or(toggleAction.busyProperty(), approvalAction.busyProperty()),
+                        Bindings.or(installAction.busyProperty(), servicePluginWorkspace.busyProperty())),
                 agentExtensionPanel.busyProperty()));
         loadingOverlay.visibleProperty().bind(Bindings.or(
                 viewModel.loadingProperty(), viewModel.mutatingProperty()));
@@ -115,7 +127,8 @@ public final class PluginCenterController implements AutoCloseable {
         refreshButton.disableProperty().bind(viewModel.loadingProperty());
         installButton.disableProperty().bind(viewModel.mutatingProperty());
         searchField.textProperty().addListener((ignored, oldValue, newValue) -> renderCards());
-        detailPanelController.configure(this::showList, this::applyCatalog);
+        detailPanelController.configure(
+                this::showList, this::applyCatalog, approvalAction::execute);
         catalogSubscription = useCases.onCatalogChanged(
                 () -> fx.dispatch(this::requestRefresh));
         requestRefresh();
@@ -142,15 +155,30 @@ public final class PluginCenterController implements AutoCloseable {
         viewModel.tabProperty().set(PluginCenterViewModel.Tab.AGENT_EXTENSIONS);
         viewModel.selectedIdProperty().set(null);
         detailPanelController.hide();
+        servicePluginWorkspace.hide();
         listView.setVisible(false);
         listView.setManaged(false);
         agentExtensionPanel.show();
     }
 
     @FXML
+    private void servicePluginsTabRequested() {
+        servicePluginsTab.setSelected(true);
+        viewModel.tabProperty().set(PluginCenterViewModel.Tab.SERVICE_PLUGINS);
+        viewModel.selectedIdProperty().set(null);
+        detailPanelController.hide();
+        agentExtensionPanel.hide();
+        listView.setVisible(false);
+        listView.setManaged(false);
+        servicePluginWorkspace.showList();
+    }
+
+    @FXML
     private void refreshRequested() {
         if (viewModel.tabProperty().get() == PluginCenterViewModel.Tab.AGENT_EXTENSIONS) {
             agentExtensionPanel.refresh();
+        } else if (viewModel.tabProperty().get() == PluginCenterViewModel.Tab.SERVICE_PLUGINS) {
+            servicePluginWorkspace.refresh();
         } else {
             requestRefresh();
         }
@@ -186,14 +214,20 @@ public final class PluginCenterController implements AutoCloseable {
                 TaskSpec.io("plugin-install"),
                 context -> useCases.install(jar),
                 result -> {
-                    viewModel.select(result.pluginId());
                     applyCatalog(result.catalog());
-                    showDetail(result.pluginId());
-                    viewModel.showStatus("插件已安装");
+                    if (result.servicePlugin()) {
+                        servicePluginsTabRequested();
+                        viewModel.showStatus("服务插件已安装，默认保持手动启动");
+                    } else {
+                        viewModel.select(result.pluginId());
+                        showDetail(result.pluginId());
+                        viewModel.showStatus("插件已安装");
+                    }
                 },
                 failure -> {
                     showFailure("安装失败", failure);
-                    dialogs.notify(new ToastRequest("安装失败", failureMessage(failure)));
+                    dialogs.notify(new ToastRequest("安装失败",
+                            PluginCenterCleanup.failureMessage(failure)));
                 });
     }
 
@@ -216,6 +250,10 @@ public final class PluginCenterController implements AutoCloseable {
         viewModel.apply(catalog);
         countLabel.setText(viewModel.plugins().size() + " 个已安装");
         renderCards();
+        if (viewModel.tabProperty().get() == PluginCenterViewModel.Tab.AGENT_EXTENSIONS
+                || viewModel.tabProperty().get() == PluginCenterViewModel.Tab.SERVICE_PLUGINS) {
+            return;
+        }
         String selected = viewModel.selectedIdProperty().get();
         if (selected != null && detailPanelController.isShowing()) {
             showDetail(selected);
@@ -232,6 +270,7 @@ public final class PluginCenterController implements AutoCloseable {
         listView.setVisible(true);
         listView.setManaged(true);
         agentExtensionPanel.hide();
+        servicePluginWorkspace.hide();
         renderCards();
     }
 
@@ -242,11 +281,23 @@ public final class PluginCenterController implements AutoCloseable {
         detailPanelController.showPlugin(pluginId);
     }
 
+    void openServicePluginConfiguration(String pluginId, String pageId) {
+        servicePluginsTabRequested(); servicePluginWorkspace.open(pluginId, pageId); }
+
+    void configure(Runnable runtimeConfigurationChanged) {
+        this.runtimeConfigurationChanged = Objects.requireNonNull(
+                runtimeConfigurationChanged, "runtimeConfigurationChanged");
+        if (servicePluginWorkspace != null) {
+            servicePluginWorkspace.setOnRuntimeConfigurationChanged(runtimeConfigurationChanged);
+        }
+    }
+
     private void renderCards() {
         if (cardGrid == null || closed.get()) return;
         closeCards();
         PluginCenterViewModel.Tab tab = viewModel.tabProperty().get();
-        if (tab == PluginCenterViewModel.Tab.AGENT_EXTENSIONS) {
+        if (tab == PluginCenterViewModel.Tab.AGENT_EXTENSIONS
+                || tab == PluginCenterViewModel.Tab.SERVICE_PLUGINS) {
             return;
         }
         boolean market = tab == PluginCenterViewModel.Tab.MARKET;
@@ -268,7 +319,7 @@ public final class PluginCenterController implements AutoCloseable {
         if (empty) return;
         for (Plugin plugin : visible) {
             PluginChildView<VBox> card = components.card(
-                    plugin, this::showDetail, this::togglePlugin);
+                    plugin, this::showDetail, approvalAction::execute, this::togglePlugin);
             cardViews.add(card);
             cardGrid.getChildren().add(card.root());
         }
@@ -278,47 +329,37 @@ public final class PluginCenterController implements AutoCloseable {
         viewModel.showFailure(prefix, failure);
     }
 
-    private static String failureMessage(Throwable failure) {
-        return failure == null || failure.getMessage() == null
-                ? "未知错误" : failure.getMessage();
-    }
-
     private Window owner() {
         Scene scene = root == null ? null : root.getScene();
         return scene == null ? null : scene.getWindow();
     }
 
     private void closeCards() {
-        RuntimeException failure = null;
-        for (int i = cardViews.size() - 1; i >= 0; i--) {
-            try {
-                cardViews.get(i).close();
-            } catch (RuntimeException closeFailure) {
-                if (failure == null) failure = closeFailure;
-                else failure.addSuppressed(closeFailure);
-            }
-        }
-        cardViews.clear();
-        if (cardGrid != null) cardGrid.getChildren().clear();
-        if (failure != null) throw failure;
+        PluginCenterCleanup.closeCards(cardViews, cardGrid);
     }
 
     @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) return;
+        runtimeConfigurationChanged = () -> { };
         RuntimeException failure = null;
-        failure = closeStep(failure, refreshAction::close);
-        failure = closeStep(failure, toggleAction::close);
-        failure = closeStep(failure, installAction::close);
+        failure = PluginCenterCleanup.closeStep(failure, refreshAction::close);
+        failure = PluginCenterCleanup.closeStep(failure, toggleAction::close);
+        failure = PluginCenterCleanup.closeStep(failure, approvalAction::close);
+        failure = PluginCenterCleanup.closeStep(failure, installAction::close);
+        if (servicePluginWorkspace != null) {
+            failure = PluginCenterCleanup.closeStep(failure, servicePluginWorkspace::close);
+        }
         if (agentExtensionPanel != null) {
-            failure = closeStep(failure, agentExtensionPanel::close);
+            failure = PluginCenterCleanup.closeStep(failure, agentExtensionPanel::close);
         }
         if (detailPanelController != null) {
-            failure = closeStep(failure, detailPanelController::close);
+            failure = PluginCenterCleanup.closeStep(failure, detailPanelController::close);
         }
-        failure = closeStep(failure, this::closeSubscription);
-        failure = closeStep(failure, this::closeCards);
-        failure = closeStep(failure, this::unbindViewState);
+        failure = PluginCenterCleanup.closeStep(failure, this::closeSubscription);
+        failure = PluginCenterCleanup.closeStep(failure, this::closeCards);
+        failure = PluginCenterCleanup.closeStep(failure, () -> PluginCenterCleanup.unbindViewState(
+                searchField, statusLabel, viewModel, loadingOverlay, refreshButton, installButton));
         if (failure != null) throw failure;
     }
 
@@ -330,31 +371,6 @@ public final class PluginCenterController implements AutoCloseable {
             throw new IllegalStateException("关闭插件目录订阅失败", failure);
         } finally {
             catalogSubscription = null;
-        }
-    }
-
-    private void unbindViewState() {
-        if (searchField == null) return;
-        searchField.textProperty().unbindBidirectional(viewModel.queryProperty());
-        statusLabel.textProperty().unbind();
-        statusLabel.visibleProperty().unbind();
-        statusLabel.managedProperty().unbind();
-        viewModel.loadingProperty().unbind();
-        viewModel.mutatingProperty().unbind();
-        loadingOverlay.visibleProperty().unbind();
-        loadingOverlay.managedProperty().unbind();
-        refreshButton.disableProperty().unbind();
-        installButton.disableProperty().unbind();
-    }
-
-    private static RuntimeException closeStep(RuntimeException current, Runnable step) {
-        try {
-            step.run();
-            return current;
-        } catch (RuntimeException failure) {
-            if (current == null) return failure;
-            current.addSuppressed(failure);
-            return current;
         }
     }
 

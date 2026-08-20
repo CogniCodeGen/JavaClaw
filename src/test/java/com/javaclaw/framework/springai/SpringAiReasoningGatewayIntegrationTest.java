@@ -151,6 +151,31 @@ class SpringAiReasoningGatewayIntegrationTest {
         }
     }
 
+    @Test
+    void failedManagedInferenceUsageIsRecordedBeforeTheRunFails() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        ChatModel model = prompt -> {
+            calls.incrementAndGet();
+            throw new ManagedInferenceChatModel.ManagedInferenceModelException(
+                    "inference_error", "failed", false,
+                    new com.javaclaw.inference.api.InferenceUsage(6, 2),
+                    "deliverance:test", null);
+        };
+
+        try (Fixture fixture = new Fixture(model, RunBudget.UNBOUNDED, new AtomicInteger())) {
+            var handle = fixture.engine.start(fixture.request());
+            RunOutcome outcome = handle.completion().toCompletableFuture().get();
+
+            assertEquals(RunState.FAILED, outcome.state());
+            assertEquals(1, calls.get());
+            assertEquals(6, fixture.ledger.snapshot(handle.id()).inputTokens());
+            assertEquals(2, fixture.ledger.snapshot(handle.id()).outputTokens());
+            assertEquals(1, fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .filter(event -> event.type().equals("core.model.usage")
+                            && event.payload().path("failed").asBoolean()).count());
+        }
+    }
+
     private static ChatResponse toolCallResponse(int inputTokens, int outputTokens) {
         return namedToolCallResponse(
                 "test_mutate", "{\"value\":1}", inputTokens, outputTokens);

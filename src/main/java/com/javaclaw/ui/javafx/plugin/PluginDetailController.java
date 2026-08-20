@@ -41,6 +41,7 @@ public final class PluginDetailController implements AutoCloseable {
     @FXML private Label stateBadge;
     @FXML private Label metadataLabel;
     @FXML private Label stateTextLabel;
+    @FXML private Button approvalButton;
     @FXML private ToggleSwitch enabledToggle;
     @FXML private Label descriptionLabel;
     @FXML private VBox permissionsBox;
@@ -72,6 +73,7 @@ public final class PluginDetailController implements AutoCloseable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private Runnable onBack = () -> {};
     private Consumer<Catalog> onCatalogChanged = ignored -> {};
+    private Consumer<String> onApproval = ignored -> {};
     private String pluginId;
     private Plugin plugin;
     private boolean configuringToggle;
@@ -103,9 +105,11 @@ public final class PluginDetailController implements AutoCloseable {
         saveConfigButton.disableProperty().bind(configAction.busyProperty());
     }
 
-    void configure(Runnable back, Consumer<Catalog> catalogChanged) {
+    void configure(
+            Runnable back, Consumer<Catalog> catalogChanged, Consumer<String> approval) {
         onBack = Objects.requireNonNull(back, "back");
         onCatalogChanged = Objects.requireNonNull(catalogChanged, "catalogChanged");
+        onApproval = Objects.requireNonNull(approval, "approval");
     }
 
     void showPlugin(String id) {
@@ -129,6 +133,11 @@ public final class PluginDetailController implements AutoCloseable {
 
     @FXML
     private void backRequested() { onBack.run(); }
+
+    @FXML
+    private void approveRequested() {
+        if (pluginId != null) onApproval.accept(pluginId);
+    }
 
     @FXML
     private void saveConfigRequested() {
@@ -214,6 +223,12 @@ public final class PluginDetailController implements AutoCloseable {
         descriptionLabel.setText(plugin.description().isBlank() ? "（无描述）" : plugin.description());
         configureStateBadge();
         configureToggle(plugin.active());
+        boolean pending = plugin.state()
+                == PluginManagementApplicationService.State.PENDING_APPROVAL;
+        enabledToggle.setVisible(!pending);
+        enabledToggle.setManaged(!pending);
+        approvalButton.setVisible(pending);
+        approvalButton.setManaged(pending);
         failureLabel.setText("失败原因：" + plugin.error());
         boolean failed = plugin.state()
                 == PluginManagementApplicationService.State.FAILED && !plugin.error().isBlank();
@@ -248,11 +263,14 @@ public final class PluginDetailController implements AutoCloseable {
         });
         renderNamedItems(plugin.skills(), skillsSection, skillsTitle, skillsItems, "提供的技能");
         renderNamedItems(plugin.tools(), toolsSection, toolsTitle, toolsItems, "提供的工具");
+        boolean pending = plugin.state()
+                == PluginManagementApplicationService.State.PENDING_APPROVAL;
         boolean noExposed = plugin.skills().isEmpty() && plugin.tools().isEmpty();
-        exposureHint.setVisible(noExposed);
-        exposureHint.setManaged(noExposed);
-        exposureHint.setText(plugin.active()
-                ? "该插件未对外暴露技能或工具。"
+        exposureHint.setVisible(pending || noExposed);
+        exposureHint.setManaged(exposureHint.isVisible());
+        exposureHint.setText(pending
+                ? "该服务插件尚未注册。批准后将移入“服务插件”页，并保持手动停止。"
+                : plugin.active() ? "该插件未对外暴露技能或工具。"
                 : "启用后此处显示插件对外暴露的技能与工具。");
         renderConfig(details.configValues());
     }

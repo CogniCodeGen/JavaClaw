@@ -1,0 +1,122 @@
+openapi: 3.1.0
+info:
+  title: JavaClaw Service Plugin Socket Protocol
+  version: 1.0.0
+  description: |
+    Canonical protocol source for the authenticated, length-prefixed JSON connection
+    between JavaClaw Desktop and one isolated service-plugin process. The four-byte
+    length prefix is unsigned network byte order and is not part of the JSON document.
+x-javaclaw-transport:
+  bind: loopback-only
+  framing: uint32-be-length-prefixed-json
+  maxFrameBytes: 8388608
+  maxRequestBytes: 33554432
+  maxBufferedFramesPerStream: 64
+  maxBufferedBytesPerStream: 1048576
+  maxBufferedBytesPerConnection: 16777216
+  heartbeatSeconds: 3
+  rejectNewRequestsAfterSeconds: 10
+  exitAfterSeconds: 15
+  forcedHaltAfterSeconds: 5
+  bidirectionalRequests:
+    desktopToPlugin: REQUEST/EVENT/RESPONSE/ERROR/CANCEL
+    pluginToDesktop: REQUEST/EVENT/RESPONSE/ERROR/CANCEL
+    reverseRequestIdPrefix: 'plugin:'
+    authorization: desktop-service-registry-and-declared-plugin-permission
+  dataPayloadEncoding: base64-json-string
+components:
+  schemas:
+    Frame:
+      type: object
+      additionalProperties: false
+      required:
+        - protocolMajor
+        - protocolMinor
+        - type
+        - requestId
+        - desktopGeneration
+        - pluginId
+        - pluginVersion
+        - serviceId
+        - operation
+        - sequence
+        - deadlineEpochMilli
+        - contentType
+        - payload
+        - terminal
+      properties:
+        protocolMajor: { type: integer, const: 1 }
+        protocolMinor: { type: integer, minimum: 0 }
+        type:
+          type: string
+          enum:
+            - HELLO
+            - HELLO_ACK
+            - CONFIGURE
+            - HOT_CONFIGURE
+            - HOT_CONFIGURE_ACK
+            - SERVICE_CATALOG
+            - REQUEST
+            - EVENT
+            - RESPONSE
+            - ERROR
+            - CANCEL
+            - HEALTH
+            - PING
+            - PONG
+            - DRAIN
+            - SHUTDOWN
+        requestId: { type: string, maxLength: 128 }
+        desktopGeneration: { type: integer, format: int64, minimum: 0 }
+        pluginId: { type: string, maxLength: 64 }
+        pluginVersion: { type: string, maxLength: 64 }
+        serviceId: { type: string, maxLength: 128 }
+        operation: { type: string, maxLength: 128 }
+        sequence: { type: integer, format: int64, minimum: 0 }
+        deadlineEpochMilli: { type: integer, format: int64, minimum: 0 }
+        contentType: { type: string, maxLength: 128 }
+        payload: {}
+        terminal: { type: boolean }
+        errorCode: { type: string, maxLength: 128 }
+        errorMessage: { type: string, maxLength: 4096 }
+    HelloPayload:
+      type: object
+      required: [token, pid, processStartEpochMilli, artifactSha256, apiVersion]
+      properties:
+        token: { type: string, minLength: 32 }
+        pid: { type: integer, format: int64, minimum: 1 }
+        processStartEpochMilli: { type: integer, format: int64, minimum: 1 }
+        artifactSha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        apiVersion: { type: string }
+    ConfigurePayload:
+      type: object
+      required: [mainClass, permissions, config, resources, endpoints]
+      properties:
+        mainClass: { type: string }
+        permissions: { type: array, items: { type: string } }
+        config: { type: object, additionalProperties: { type: string } }
+        resources: { type: object }
+        endpoints:
+          type: array
+          items:
+            type: object
+            properties:
+              requestTimeoutSeconds:
+                type: integer
+                minimum: 1
+                maximum: 3600
+                default: 120
+    HotConfigurePayload:
+      type: object
+      required: [config, endpoints]
+      properties:
+        config: { type: object, additionalProperties: { type: string } }
+        endpoints:
+          type: array
+          items: { type: object }
+    HotConfigureResult:
+      type: object
+      required: [success, message]
+      properties:
+        success: { type: boolean }
+        message: { type: string, maxLength: 4096 }

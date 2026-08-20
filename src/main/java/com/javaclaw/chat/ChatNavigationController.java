@@ -74,7 +74,7 @@ public final class ChatNavigationController {
 
     void openPlugins() {
         log.info("打开插件中心");
-        plugins.create(owner.get()).showAndWait();
+        plugins.create(owner.get(), rebuildRuntime).showAndWait();
     }
 
     void openMcp() {

@@ -6,6 +6,10 @@ import com.javaclaw.config.AgentConfig;
 import com.javaclaw.framework.spi.ModelTier;
 import com.javaclaw.framework.api.ModelPolicyRefs;
 import com.javaclaw.framework.spi.EmbeddingModelProvider;
+import com.javaclaw.application.inference.InferenceCatalogPort;
+import com.javaclaw.application.settings.DefaultModelProviderCatalog;
+import com.javaclaw.inference.api.LocalInferenceGateway;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.observation.ObservationRegistry;
 import org.springframework.ai.anthropic.AnthropicChatModel;
 import org.springframework.ai.anthropic.AnthropicChatOptions;
@@ -30,20 +34,40 @@ import java.util.Locale;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 
 /** The only workspace adapter allowed to construct provider ChatModel instances. */
 public final class SpringAiModelFactory implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(SpringAiModelFactory.class);
+    private static final DefaultModelProviderCatalog PROVIDERS = new DefaultModelProviderCatalog();
     private final AgentConfig config;
     private final ObservationRegistry observations;
+    private final InferenceCatalogPort inferenceCatalog;
+    private final LocalInferenceGateway inferenceGateway;
+    private final ObjectMapper json;
+    private final String workspaceId;
     private final List<AutoCloseable> resources = new ArrayList<>();
     private SpringAiModelRegistry installedRegistry;
     private final Map<String, ChatModel> installedModels = new LinkedHashMap<>();
     private SpringAiModelRegistry.Registration installedRegistration;
 
     public SpringAiModelFactory(AgentConfig config, ObservationRegistry observations) {
+        this(config, observations, null, null, null, null);
+    }
+
+    public SpringAiModelFactory(
+            AgentConfig config,
+            ObservationRegistry observations,
+            InferenceCatalogPort inferenceCatalog,
+            LocalInferenceGateway inferenceGateway,
+            ObjectMapper json,
+            String workspaceId) {
         this.config = Objects.requireNonNull(config, "config");
         this.observations = Objects.requireNonNull(observations, "observations");
+        this.inferenceCatalog = inferenceCatalog;
+        this.inferenceGateway = inferenceGateway;
+        this.json = json;
+        this.workspaceId = workspaceId;
     }
 
     public ModelPolicyRefs install(String workspaceId, SpringAiModelRegistry registry) {
@@ -55,16 +79,21 @@ public final class SpringAiModelFactory implements AutoCloseable {
         ModelPolicyRefs refs = new ModelPolicyRefs(
                 prefix + "high", prefix + "normal", prefix + "light");
         try {
+            Map<InferenceCatalogPort.ModelTier, UUID> bindings = inferenceCatalog == null
+                    || workspaceId == null ? Map.of() : inferenceCatalog.bindings(workspaceId);
             ChatModel high = create(new TierSpec(
                     config.getProviderType(), config.getBaseUrl(), config.getModelName(),
-                    config.getApiKey(), config.isThinkingEnabled()));
+                    config.getApiKey(), config.isThinkingEnabled(),
+                    bindings.get(InferenceCatalogPort.ModelTier.HIGH)));
             ChatModel normal = create(new TierSpec(
                     config.getNormalProviderType(), config.getNormalBaseUrl(),
                     config.getNormalModelName(), config.getNormalApiKey(),
-                    config.isNormalThinkingEnabled()));
+                    config.isNormalThinkingEnabled(), binding(bindings,
+                    InferenceCatalogPort.ModelTier.NORMAL)));
             ChatModel light = create(new TierSpec(
                     config.getLightProviderType(), config.getLightBaseUrl(),
-                    config.getLightModelName(), config.getLightApiKey(), false));
+                    config.getLightModelName(), config.getLightApiKey(), false,
+                    binding(bindings, InferenceCatalogPort.ModelTier.LIGHT)));
             Map<String, ChatModel> generation = Map.of(
                     refs.high(), high, refs.normal(), normal, refs.light(), light);
             SpringAiModelRegistry.Registration registration = registry.installWorkspace(
@@ -88,6 +117,23 @@ public final class SpringAiModelFactory implements AutoCloseable {
             return embeddingProvider(false, null, null);
         }
         try {
+            if (DefaultModelProviderCatalog.DELIVERANCE.equals(
+                    PROVIDERS.normalizeId(config.getRagEmbeddingProvider()))) {
+                requireManagedInfrastructure();
+                UUID profileId = inferenceCatalog.bindings(workspaceId)
+                        .get(InferenceCatalogPort.ModelTier.EMBEDDING);
+                if (profileId == null) throw new IllegalStateException("工作区没有绑定本地嵌入档案");
+                var profile = inferenceCatalog.profile(profileId)
+                        .orElseThrow(() -> new IllegalStateException("本地嵌入档案不存在"));
+                if (profile.kind() != com.javaclaw.inference.api.InferenceModelProfile.Kind.EMBEDDING
+                        || profile.state() != com.javaclaw.inference.api.InferenceModelProfile.State.READY) {
+                    throw new IllegalStateException("本地嵌入档案类型错误或尚未通过加载探测");
+                }
+                EmbeddingModel model = new ManagedInferenceEmbeddingModel(inferenceGateway, profileId,
+                        profile.embeddingDimensions(),
+                        Duration.ofSeconds(config.getModelRequestTimeoutSeconds()));
+                return embeddingProvider(true, model, null);
+            }
             OpenAiEmbeddingOptions options = OpenAiEmbeddingOptions.builder()
                     .model(config.getRagEmbeddingModelName())
                     .dimensions(config.getRagEmbeddingDimensions())
@@ -107,15 +153,43 @@ public final class SpringAiModelFactory implements AutoCloseable {
     }
 
     private ChatModel create(TierSpec spec) {
-        String provider = spec.provider() == null ? "openai"
-                : spec.provider().trim().toLowerCase(Locale.ROOT);
+        String provider = PROVIDERS.normalizeId(spec.provider());
+        if (provider.isBlank()) provider = "openai";
         return switch (provider) {
+            case DefaultModelProviderCatalog.DELIVERANCE -> managed(spec);
             case "anthropic" -> anthropic(spec);
             case "gemini", "google", "google-genai" -> google(spec);
             case "ollama" -> ollama(spec);
             case "dashscope", "openai" -> openAi(spec);
             default -> openAi(spec);
         };
+    }
+
+    private ChatModel managed(TierSpec spec) {
+        requireManagedInfrastructure();
+        if (spec.profileId() == null) {
+            throw new IllegalStateException("工作区没有绑定本地生成模型档案");
+        }
+        var profile = inferenceCatalog.profile(spec.profileId())
+                .orElseThrow(() -> new IllegalStateException("本地生成模型档案不存在"));
+        if (profile.kind() != com.javaclaw.inference.api.InferenceModelProfile.Kind.GENERATION
+                || profile.state() != com.javaclaw.inference.api.InferenceModelProfile.State.READY) {
+            throw new IllegalStateException("本地生成模型档案类型错误或尚未通过加载探测");
+        }
+        return new ManagedInferenceChatModel(inferenceGateway, spec.profileId(), spec.thinking(),
+                Duration.ofSeconds(config.getModelRequestTimeoutSeconds()), json);
+    }
+
+    private void requireManagedInfrastructure() {
+        if (inferenceCatalog == null || inferenceGateway == null || json == null || workspaceId == null) {
+            throw new IllegalStateException("本地推理基础设施未装配");
+        }
+    }
+
+    private static UUID binding(
+            Map<InferenceCatalogPort.ModelTier, UUID> bindings,
+            InferenceCatalogPort.ModelTier tier) {
+        return bindings.getOrDefault(tier, bindings.get(InferenceCatalogPort.ModelTier.HIGH));
     }
 
     private ChatModel openAi(TierSpec spec) {
@@ -216,7 +290,8 @@ public final class SpringAiModelFactory implements AutoCloseable {
     }
 
     private record TierSpec(
-            String provider, String baseUrl, String model, String apiKey, boolean thinking) {}
+            String provider, String baseUrl, String model, String apiKey,
+            boolean thinking, UUID profileId) {}
 
     private static EmbeddingModelProvider embeddingProvider(
             boolean configured, EmbeddingModel model, String error) {

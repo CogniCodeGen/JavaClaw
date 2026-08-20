@@ -102,6 +102,30 @@ class PluginManagementUseCaseTest {
     }
 
     @Test
+    void onlyPendingServicePluginsCanBeExplicitlyApproved() {
+        FakePort port = new FakePort();
+        port.plugins.clear();
+        port.plugins.add(plugin("service", State.PENDING_APPROVAL));
+        PluginManagementUseCase useCase = new PluginManagementUseCase(port);
+
+        port.approvalAllowed = false;
+        var rejected = useCase.approveServicePlugin("service");
+        assertFalse(rejected.approved());
+        assertEquals(State.PENDING_APPROVAL,
+                rejected.catalog().require("service").state());
+
+        port.approvalAllowed = true;
+        var approved = useCase.approveServicePlugin("service");
+        assertTrue(approved.approved());
+        assertTrue(approved.catalog().plugins().isEmpty());
+        assertEquals(2, port.approvalCalls);
+
+        port.plugins.add(plugin("plain", State.STOPPED));
+        assertThrows(ConflictException.class,
+                () -> useCase.approveServicePlugin("plain"));
+    }
+
+    @Test
     void successfulUninstallNullConfigAndDirectoriesRemainDefensive() {
         FakePort port = new FakePort();
         PluginManagementUseCase useCase = new PluginManagementUseCase(port);
@@ -148,6 +172,8 @@ class PluginManagementUseCaseTest {
         private Runnable listener;
         private boolean subscriptionClosed;
         private boolean ignoreTransitions;
+        private boolean approvalAllowed = true;
+        private int approvalCalls;
         private String transitionError = "";
 
         @Override public List<Plugin> list() { return List.copyOf(plugins); }
@@ -160,6 +186,15 @@ class PluginManagementUseCaseTest {
                     old.permissions(), old.config(), old.skills(), old.tools(),
                     ignoreTransitions ? old.state() : enabled ? State.ACTIVE : State.STOPPED,
                     transitionError));
+        }
+
+        @Override
+        public boolean approveServicePlugin(String pluginId) {
+            approvalCalls++;
+            if (approvalAllowed) {
+                plugins.removeIf(plugin -> plugin.id().equals(pluginId));
+            }
+            return approvalAllowed;
         }
 
         @Override

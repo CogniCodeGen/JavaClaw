@@ -48,6 +48,20 @@ public final class PluginManagementUseCase
     }
 
     @Override
+    public ApprovalResult approveServicePlugin(String pluginId) {
+        Plugin before = snapshot().require(pluginId);
+        if (before.state() != State.PENDING_APPROVAL) {
+            throw new ConflictException("插件不处于待批准状态：" + pluginId);
+        }
+        boolean approved = plugins.approveServicePlugin(pluginId);
+        Catalog result = snapshot();
+        if (approved && result.plugins().stream().anyMatch(plugin -> plugin.id().equals(pluginId))) {
+            throw new RejectedException("服务插件批准后仍未完成注册：" + pluginId);
+        }
+        return new ApprovalResult(result, approved);
+    }
+
+    @Override
     public InstallResult install(Path jar) {
         Objects.requireNonNull(jar, "jar");
         String id = plugins.install(jar.toAbsolutePath().normalize());
@@ -57,8 +71,9 @@ public final class PluginManagementUseCase
                             + "当前宿主要求 Plugin API 3.x；旧插件请重新编译后再安装。");
         }
         Catalog catalog = snapshot();
-        catalog.require(id);
-        return new InstallResult(id, catalog);
+        boolean servicePlugin = plugins.isServicePlugin(id);
+        if (!servicePlugin) catalog.require(id);
+        return new InstallResult(id, catalog, servicePlugin);
     }
 
     @Override

@@ -75,8 +75,11 @@ public final class ModelSettingsUseCase implements ModelSettingsApplicationServi
     private static ModelSettings validateModel(ModelSettings value) {
         Objects.requireNonNull(value, "settings");
         required(value.provider(), "模型提供商");
-        httpUri(value.baseUrl(), "API 地址");
-        required(value.modelName(), "模型名称");
+        if (managed(value.provider())) required(value.managedProfileId(), "本地模型档案");
+        else {
+            httpUri(value.baseUrl(), "API 地址");
+            required(value.modelName(), "模型名称");
+        }
         range(value.thinkingBudget(), 1024, 65536, "思考预算");
         if (!("HTTP_1_1".equals(value.httpVersion()) || "HTTP_2".equals(value.httpVersion()))) {
             throw new ValidationException("HTTP 版本无效");
@@ -96,18 +99,24 @@ public final class ModelSettingsUseCase implements ModelSettingsApplicationServi
 
     private static Tier validateTier(Tier value, String label) {
         Objects.requireNonNull(value, label);
-        if (!value.enabled()) return new Tier(false, "", "", "", "", false);
+        if (!value.enabled()) return new Tier(false, "", "", "", "", false, "");
         required(value.provider(), label + "提供商");
-        if (!value.baseUrl().isBlank()) httpUri(value.baseUrl(), label + " API 地址");
-        required(value.modelName(), label + "名称");
+        if (managed(value.provider())) required(value.managedProfileId(), label + "本地模型档案");
+        else {
+            if (!value.baseUrl().isBlank()) httpUri(value.baseUrl(), label + " API 地址");
+            required(value.modelName(), label + "名称");
+        }
         return value;
     }
 
     private static EmbeddingSettings validateEmbedding(EmbeddingSettings value) {
         Objects.requireNonNull(value, "settings");
         required(value.provider(), "嵌入模型提供商");
-        httpUri(value.baseUrl(), "嵌入 API 地址");
-        required(value.modelName(), "嵌入模型名称");
+        if (managed(value.provider())) required(value.managedProfileId(), "本地嵌入档案");
+        else {
+            httpUri(value.baseUrl(), "嵌入 API 地址");
+            required(value.modelName(), "嵌入模型名称");
+        }
         range(value.dimensions(), 1, Integer.MAX_VALUE, "向量维度");
         range(value.retrieveLimit(), 1, Integer.MAX_VALUE, "检索返回数量");
         range(value.scoreThreshold(), 0, 1, "检索分数阈值");
@@ -117,6 +126,11 @@ public final class ModelSettingsUseCase implements ModelSettingsApplicationServi
     private static String required(String value, String label) {
         if (value == null || value.isBlank()) throw new ValidationException(label + "不能为空");
         return value.strip();
+    }
+
+    private static boolean managed(String provider) {
+        return DefaultModelProviderCatalog.DELIVERANCE.equalsIgnoreCase(provider)
+                || "Deliverance（本地托管）".equalsIgnoreCase(provider);
     }
 
     private static URI httpUri(String value, String label) {

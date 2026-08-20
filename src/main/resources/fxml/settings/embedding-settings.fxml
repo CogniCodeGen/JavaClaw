@@ -3,6 +3,7 @@
 <?import com.javaclaw.ui.javafx.control.ToggleSwitch?>
 <?import javafx.geometry.Insets?>
 <?import javafx.scene.control.ComboBox?>
+<?import javafx.scene.control.Hyperlink?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.control.ScrollPane?>
 <?import javafx.scene.control.Separator?>
@@ -42,20 +43,29 @@
                     </children>
                 </HBox>
                 <Label text="嵌入模型可使用与聊天模型不同的提供商" styleClass="settings-hint"/>
-                <HBox alignment="CENTER_LEFT" spacing="10.0">
+                <HBox fx:id="baseUrlRow" alignment="CENTER_LEFT" spacing="10.0">
                     <children>
                         <Label text="API 地址：" minWidth="70.0" styleClass="settings-label"/>
                         <TextField fx:id="baseUrlField" prefWidth="350.0"
                                    styleClass="text-input, text-field, settings-field"/>
                     </children>
                 </HBox>
-                <HBox alignment="CENTER_LEFT" spacing="10.0">
+                <HBox fx:id="apiKeyRow" alignment="CENTER_LEFT" spacing="10.0">
                     <children>
                         <Label text="API 密钥：" minWidth="70.0" styleClass="settings-label"/>
                         <fx:include fx:id="apiKeyField" source="../control/secret-field.fxml"/>
                     </children>
                 </HBox>
-                <HBox alignment="CENTER_LEFT" spacing="10.0">
+                <HBox fx:id="managedProfileRow" alignment="CENTER_LEFT" spacing="10.0"
+                      visible="false" managed="false">
+                    <children>
+                        <Label text="本地档案：" minWidth="70.0" styleClass="settings-label"/>
+                        <ComboBox fx:id="managedProfileCombo" prefWidth="350.0"
+                                  promptText="请选择 READY 嵌入档案" styleClass="combo-box, settings-combo"/>
+                        <Hyperlink text="管理本地模型" onAction="#manageLocalModelsRequested"/>
+                    </children>
+                </HBox>
+                <HBox fx:id="modelNameRow" alignment="CENTER_LEFT" spacing="10.0">
                     <children>
                         <Label text="模型名称：" minWidth="70.0" styleClass="settings-label"/>
                         <TextField fx:id="modelNameField" prefWidth="350.0"

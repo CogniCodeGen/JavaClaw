@@ -2,6 +2,7 @@ package com.javaclaw.ui.javafx.settings;
 
 import com.javaclaw.application.settings.CommunicationSettingsApplicationService;
 import com.javaclaw.application.settings.CommunicationSettingsApplicationService.SaveResult;
+import com.javaclaw.application.settings.CommunicationSettingsApplicationService.Snapshot;
 import com.javaclaw.platform.execution.ManagedTaskExecutor;
 import com.javaclaw.platform.execution.TaskSpec;
 import com.javaclaw.platform.fx.FxDispatcher;
@@ -41,6 +42,7 @@ public final class NotificationSettingsController implements AutoCloseable {
     private final CommunicationSettingsApplicationService useCases;
     private final NotificationSettingsViewModel viewModel = new NotificationSettingsViewModel();
     private final UiAsyncAction<SaveResult> mutation;
+    private final UiAsyncAction<Snapshot> refresh;
     private Consumer<SaveResult> onApplied = ignored -> { };
 
     public NotificationSettingsController(
@@ -49,6 +51,7 @@ public final class NotificationSettingsController implements AutoCloseable {
             FxDispatcher fx) {
         this.useCases = Objects.requireNonNull(useCases, "useCases");
         mutation = new UiAsyncAction<>(tasks, fx);
+        refresh = new UiAsyncAction<>(tasks, fx);
     }
 
     @FXML
@@ -64,8 +67,7 @@ public final class NotificationSettingsController implements AutoCloseable {
                 (ignored, previous, enabled) -> emailRecipientField.setDisable(!enabled));
         customEnabledCheck.selectedProperty().addListener(
                 (ignored, previous, enabled) -> enableCustom(enabled));
-        viewModel.busyProperty().bind(mutation.busyProperty());
-        reload();
+        viewModel.busyProperty().bind(mutation.busyProperty().or(refresh.busyProperty()));
     }
 
     public void configure(Consumer<SaveResult> callback) {
@@ -77,11 +79,12 @@ public final class NotificationSettingsController implements AutoCloseable {
     }
 
     public void reload() {
-        var snapshot = useCases.snapshot();
-        SettingsFieldSupport.loading(root, () -> {
+        refresh.execute(TaskSpec.io("settings-notifications-load"), context -> useCases.snapshot(),
+                snapshot -> SettingsFieldSupport.loading(root, () -> {
             viewModel.load(snapshot.notifications(), snapshot.storageDescription());
             applyEnabledState();
-        });
+        }), failure -> viewModel.errorProperty().set(
+                SettingsFieldSupport.failureMessage(failure)));
     }
 
     public void save(Consumer<SaveResult> success, Consumer<Throwable> failure) {
@@ -141,9 +144,12 @@ public final class NotificationSettingsController implements AutoCloseable {
         storageLabel.textProperty().bind(viewModel.storageDescriptionProperty());
     }
 
+    void deactivate() { refresh.cancel(); }
+
     @Override
     public void close() {
         mutation.close();
+        refresh.close();
         viewModel.busyProperty().unbind();
         dingtalkEnabledCheck.selectedProperty().unbindBidirectional(
                 viewModel.dingtalkEnabledProperty());

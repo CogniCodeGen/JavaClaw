@@ -39,6 +39,7 @@ public final class SkillEvolutionSettingsController implements AutoCloseable {
     private final SkillEvolutionSettingsViewModel viewModel =
             new SkillEvolutionSettingsViewModel();
     private final UiAsyncAction<SaveResult> mutation;
+    private final UiAsyncAction<SkillEvolutionSettings> refresh;
     private Consumer<SaveResult> onApplied = ignored -> { };
 
     public SkillEvolutionSettingsController(
@@ -47,6 +48,7 @@ public final class SkillEvolutionSettingsController implements AutoCloseable {
             FxDispatcher fx) {
         this.useCases = Objects.requireNonNull(useCases, "useCases");
         mutation = new UiAsyncAction<>(tasks, fx);
+        refresh = new UiAsyncAction<>(tasks, fx);
     }
 
     @FXML
@@ -58,10 +60,9 @@ public final class SkillEvolutionSettingsController implements AutoCloseable {
         nudgeEnabledCheck.selectedProperty().bindBidirectional(viewModel.nudgeEnabledProperty());
         bundlesEnabledCheck.selectedProperty().bindBidirectional(viewModel.bundlesEnabledProperty());
         modeHintLabel.textProperty().bind(viewModel.modeHintProperty());
-        viewModel.busyProperty().bind(mutation.busyProperty());
+        viewModel.busyProperty().bind(mutation.busyProperty().or(refresh.busyProperty()));
         SettingsFieldSupport.validateInteger(minimumToolCallsField, 1, 50);
         SettingsFieldSupport.validateDecimal(successThresholdField, 0, 1);
-        reload();
     }
 
     public void configure(Consumer<SaveResult> callback) {
@@ -73,10 +74,13 @@ public final class SkillEvolutionSettingsController implements AutoCloseable {
     }
 
     public void reload() {
-        SettingsFieldSupport.loading(root, () -> {
-            viewModel.load(useCases.snapshot().skillEvolution());
+        refresh.execute(TaskSpec.io("settings-skill-evolution-load"),
+                context -> useCases.snapshot().skillEvolution(), value ->
+                SettingsFieldSupport.loading(root, () -> {
+            viewModel.load(value);
             selectMode(viewModel.modeProperty().get());
-        });
+        }), failure -> viewModel.errorProperty().set(
+                SettingsFieldSupport.failureMessage(failure)));
     }
 
     public void save(Consumer<SaveResult> success, Consumer<Throwable> failure) {
@@ -144,9 +148,12 @@ public final class SkillEvolutionSettingsController implements AutoCloseable {
         return false;
     }
 
+    void deactivate() { refresh.cancel(); }
+
     @Override
     public void close() {
         mutation.close();
+        refresh.close();
         viewModel.busyProperty().unbind();
         minimumToolCallsField.textProperty().unbindBidirectional(
                 viewModel.minimumToolCallsProperty());
