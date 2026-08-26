@@ -44,6 +44,7 @@ public final class ChatService {
             AgentClient agents,
             com.javaclaw.memory.MemoryService memoryService,
             WorkspaceContext workspace,
+            com.javaclaw.config.AgentConfig settings,
             Executor executor) {
         this.browsers = Objects.requireNonNull(browsers, "browsers");
         this.workflows = Objects.requireNonNull(workflows, "workflows");
@@ -51,7 +52,8 @@ public final class ChatService {
         Objects.requireNonNull(skillCurator, "skillCurator");
         Objects.requireNonNull(taskScope, "taskScope");
         this.runs = new AgentConversationRunner(agents, executor);
-        this.requests = new RunRequestFactory(workspace);
+        this.requests = new RunRequestFactory(workspace,
+                new com.javaclaw.application.agent.ToolIntentRouter(settings));
 
         this.memoryService = Objects.requireNonNull(memoryService, "memoryService");
         log.info("Chat 入口已接入统一 AgentEngine，profile=chat");

@@ -101,6 +101,10 @@ public final class SkillManageTools {
         String secretError = rejectCredentialContent("skill_create", content);
         if (secretError != null) return secretError;
         String skillName = name.strip();
+        if (!SkillManager.isSupportedNewSkillName(skillName)) {
+            return ToolResponse.error("skill_create",
+                    "技能名称必须是单行文本、不能为 *，且最多 80 个 Unicode 字符。");
+        }
         if (skills.getSkillByName(skillName) != null) {
             return ToolResponse.error("skill_create",
                     "技能「" + skillName + "」已存在，请改用 skill_patch 定向修补或 skill_edit 整篇重写。");
@@ -156,6 +160,10 @@ public final class SkillManageTools {
         String skillName = strip(name);
         if (skillName.isEmpty() || content == null || content.isBlank()) {
             return ToolResponse.error("skill_create_direct", "name 与 content 不能为空。");
+        }
+        if (!SkillManager.isSupportedNewSkillName(skillName)) {
+            return ToolResponse.error("skill_create_direct",
+                    "技能名称必须是单行文本、不能为 *，且最多 80 个 Unicode 字符。");
         }
         String secretError = rejectCredentialContent("skill_create_direct", content);
         if (secretError != null) return secretError;

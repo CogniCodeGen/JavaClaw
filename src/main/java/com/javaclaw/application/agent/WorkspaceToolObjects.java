@@ -13,6 +13,8 @@ import com.javaclaw.config.NotificationConfig;
 import com.javaclaw.desktop.DesktopToolFactory;
 import com.javaclaw.email.EmailTools;
 import com.javaclaw.framework.spi.ToolContext;
+import com.javaclaw.framework.spi.RunResourceRegistry;
+import com.javaclaw.framework.api.ToolAccessPolicy;
 import com.javaclaw.framework.spi.ModelTaskGateway;
 import com.javaclaw.framework.spi.ToolObjectBundle;
 import com.javaclaw.mcp.McpClientManager;
@@ -40,6 +42,11 @@ import java.util.function.Supplier;
 
 /** Creates a fresh, permission-scoped host tool set for each framework Run. */
 public final class WorkspaceToolObjects {
+    private static final Set<String> SKILL_MANAGEMENT_TOOLS = Set.of(
+            "skill_create", "skill_create_direct", "skill_patch", "skill_edit",
+            "skill_delete", "skill_write_file", "skill_remove_file");
+    private static final Set<String> JSHELL_TOOLS = Set.of(
+            "jshell_exec", "jshell_run_script");
     private final PlaywrightBrowserManager browsers;
     private final SiteCredentialManager siteCredentials;
     private final WorkspaceContext workspace;
@@ -60,6 +67,7 @@ public final class WorkspaceToolObjects {
     private final JsonCodec json;
     private final ModelTaskGateway modelTasks;
     private final Supplier<Object> clarificationTools;
+    private final RunResourceRegistry runResources;
 
     public WorkspaceToolObjects(
             PlaywrightBrowserManager browsers,
@@ -81,7 +89,8 @@ public final class WorkspaceToolObjects {
             ScheduleApplicationService schedules,
             JsonCodec json,
             ModelTaskGateway modelTasks,
-            Supplier<Object> clarificationTools) {
+            Supplier<Object> clarificationTools,
+            RunResourceRegistry runResources) {
         this.browsers = Objects.requireNonNull(browsers, "browsers");
         this.siteCredentials = Objects.requireNonNull(siteCredentials, "siteCredentials");
         this.workspace = Objects.requireNonNull(workspace, "workspace");
@@ -103,45 +112,70 @@ public final class WorkspaceToolObjects {
         this.modelTasks = Objects.requireNonNull(modelTasks, "modelTasks");
         this.clarificationTools = Objects.requireNonNull(
                 clarificationTools, "clarificationTools");
+        this.runResources = Objects.requireNonNull(runResources, "runResources");
     }
 
     public ToolObjectBundle create(ToolContext context) {
         ToolCallOrigin origin = origin(context);
-        Map<String, Object> capabilityTools = createCapabilityTools(origin);
+        ToolAccessPolicy access = ToolAccessPolicy.from(context.request());
+        Map<String, Object> capabilityTools = createCapabilityTools(origin, access);
         List<Object> objects = new ArrayList<>(capabilityTools.values());
-        if (context.request().source().kind().equals("chat")
-                || context.request().source().kind().equals("plan")) {
+        if ((context.request().source().kind().equals("chat")
+                || context.request().source().kind().equals("plan"))
+                && access.allowsTool("ask_user_clarification")) {
             objects.add(Objects.requireNonNull(
                     clarificationTools.get(), "clarification tool"));
         }
-        objects.add(new com.javaclaw.code.CodeTools(origin, processes));
-        objects.add(knowledge);
-        objects.add(new com.javaclaw.mcp.McpTools(mcpClients, json));
-        objects.add(new com.javaclaw.mcp.McpManageTools(
-                mcpConfigurations, mcpClients, origin, new com.javaclaw.mcp.McpJsonImporter(json)));
-        objects.add(new com.javaclaw.site.SiteCredentialTools(origin, siteCredentials));
-        if (!ProjectAccessPolicy.strictIsolationEnabled()) {
+        if (access.allowsGroup("coding")) {
+            objects.add(new com.javaclaw.code.CodeTools(origin, processes));
+        }
+        if (access.allowsGroup("knowledge")) objects.add(knowledge);
+        if (access.allowsGroup("mcp")) {
+            objects.add(new com.javaclaw.mcp.McpTools(mcpClients, json));
+            objects.add(new com.javaclaw.mcp.McpManageTools(
+                    mcpConfigurations, mcpClients, origin,
+                    new com.javaclaw.mcp.McpJsonImporter(json)));
+        }
+        if (access.allowsGroup("web")) {
+            objects.add(new com.javaclaw.site.SiteCredentialTools(origin, siteCredentials));
+        }
+        if (access.allowsGroup("plugins") && !ProjectAccessPolicy.strictIsolationEnabled()) {
             objects.add(new com.javaclaw.plugin.PluginTools(pluginTools));
         }
-        objects.add(new com.javaclaw.skill.SkillTools(skills.manager(), skills.usage()));
-        objects.add(new com.javaclaw.skill.SkillManageTools(
-                origin, skills.manager(), settings, skills.proposals()));
-        if (!ProjectAccessPolicy.strictIsolationEnabled()) {
+        if (access.allowsGroup("skill") && access.allowsTool("skill_read")) {
+            objects.add(new com.javaclaw.skill.SkillTools(
+                    skills.manager(), skills.usage(), access.configuredGroupsOrNull(),
+                    context.runId(), runResources.forRun(context.runId())));
+        }
+        if (access.allowsGroup("skill") && access.allowsAnyTool(SKILL_MANAGEMENT_TOOLS)) {
+            objects.add(new com.javaclaw.skill.SkillManageTools(
+                    origin, skills.manager(), settings, skills.proposals()));
+        }
+        if (access.allowsGroup("coding") && access.allowsAnyTool(JSHELL_TOOLS)
+                && !ProjectAccessPolicy.strictIsolationEnabled()) {
             objects.add(new com.javaclaw.system.JShellTools(origin, skills.manager(), jshell, settings));
         }
-        objects.add(new com.javaclaw.task.sdd.run.SddTaskManageTools(
-                origin, Objects.requireNonNull(sddTasks.get(), "SDD task service")));
-        if (context.request().source().kind().equals("sdd")) {
+        if (access.allowsGroup("task_manage")) {
+            objects.add(new com.javaclaw.task.sdd.run.SddTaskManageTools(
+                    origin, Objects.requireNonNull(sddTasks.get(), "SDD task service")));
+        }
+        if (access.allowsGroup("task_manage")
+                && context.request().source().kind().equals("sdd")) {
             String workDir = context.request().attributes().containsKey("workDir")
                     ? context.request().attributes().get("workDir").asText(null) : null;
             objects.add(new com.javaclaw.task.ValidationInspectionTools(workDir, processes));
         }
-        objects.add(new com.javaclaw.media.MediaTools(
-                new com.javaclaw.agent.vision.VisionPreprocessor(modelTasks, context.runId())));
-        if (context.request().source().kind().equals("loop")) {
+        if (access.allowsGroup("media")) {
+            objects.add(new com.javaclaw.media.MediaTools(
+                    new com.javaclaw.agent.vision.VisionPreprocessor(modelTasks, context.runId())));
+        }
+        if (access.allowsGroup("dynamic_task")
+                && context.request().source().kind().equals("loop")) {
             objects.add(new com.javaclaw.loop.agent.LoopReportTool());
         }
-        if (schedules != null) objects.add(new com.javaclaw.schedule.ScheduleTools(origin, schedules));
+        if (access.allowsGroup("schedule") && schedules != null) {
+            objects.add(new com.javaclaw.schedule.ScheduleTools(origin, schedules));
+        }
         return new ToolObjectBundle(objects, () -> closeOwned(capabilityTools.values()));
     }
 
@@ -171,27 +205,34 @@ public final class WorkspaceToolObjects {
         return List.copyOf(result);
     }
 
-    private Map<String, Object> createCapabilityTools(ToolCallOrigin origin) {
+    private Map<String, Object> createCapabilityTools(
+            ToolCallOrigin origin, ToolAccessPolicy access) {
         Map<String, Object> result = new LinkedHashMap<>();
-        if (origin.kind() == ToolCallOrigin.Kind.INTERACTIVE) {
+        if (access.allowsGroup("web") && origin.kind() == ToolCallOrigin.Kind.INTERACTIVE) {
             // ChatService/WorkflowService already select the conversation scope on this manager.
             // Keep the shared manager alive across approval pauses and subsequent chat turns;
             // closing a per-reasoning tool bundle must not replace the page with about:blank.
             result.put("web", new PlaywrightBrowserTools(
                     browsers, siteCredentials, origin, json, false));
-        } else {
+        } else if (access.allowsGroup("web")) {
             PlaywrightBrowserManager isolated = browsers.createIsolated(origin.browserScopeId());
             result.put("web", new PlaywrightBrowserTools(
                     isolated, siteCredentials, origin, json, true));
         }
-        result.put("email", new EmailTools(origin, emailSettings));
-        result.put("system", new SystemTools(origin, workspace.screenshotsDir()));
-        if (!ProjectAccessPolicy.strictIsolationEnabled()) {
+        if (access.allowsGroup("email")) {
+            result.put("email", new EmailTools(origin, emailSettings));
+        }
+        if (access.allowsGroup("system")) {
+            result.put("system", new SystemTools(origin, workspace.screenshotsDir()));
+        }
+        if (access.allowsGroup("desktop") && !ProjectAccessPolicy.strictIsolationEnabled()) {
             result.put("desktop", desktopTools.create(origin, workspace.screenshotsDir()));
         }
-        result.put("notification", new NotificationTools(
-                origin, notificationSettings, emailSettings));
-        if (!ProjectAccessPolicy.strictIsolationEnabled()) {
+        if (access.allowsGroup("notification")) {
+            result.put("notification", new NotificationTools(
+                    origin, notificationSettings, emailSettings));
+        }
+        if (access.allowsGroup("command") && !ProjectAccessPolicy.strictIsolationEnabled()) {
             result.put("command", commandTools.create(origin));
         }
         return result;

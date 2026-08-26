@@ -6,6 +6,10 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.javaclaw.framework.api.InputBlock;
 import com.javaclaw.framework.api.BudgetExceededException;
+import com.javaclaw.framework.api.ModelTokenUsage;
+import com.javaclaw.framework.api.ToolGroupAccess;
+import com.javaclaw.framework.api.ToolNameAccess;
+import com.javaclaw.framework.api.ToolAccessPolicy;
 import com.javaclaw.framework.core.*;
 import com.javaclaw.framework.spi.ExtensionStateStore;
 import com.javaclaw.framework.spi.CancellableTaskExecutor;
@@ -19,6 +23,7 @@ import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.MessageType;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.model.ChatModel;
@@ -27,13 +32,17 @@ import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.content.Media;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.util.MimeTypeUtils;
 import reactor.core.publisher.Flux;
 
 import java.math.BigDecimal;
 import java.net.URI;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -52,6 +61,7 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
     private final ObjectMapper json;
     private final CancellableTaskExecutor executor;
     private final ObservationRegistry observations;
+    private final Clock clock;
 
     public SpringAiReasoningGateway(
             SpringAiModelRegistry models,
@@ -64,6 +74,22 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             ObjectMapper json,
             CancellableTaskExecutor executor,
             ObservationRegistry observations) {
+        this(models, advisorRegistry, tools, extensionState, usageLedger, modelTasks,
+                runStore, json, executor, observations, Clock.systemUTC());
+    }
+
+    public SpringAiReasoningGateway(
+            SpringAiModelRegistry models,
+            SpringAiAdvisorRegistry advisorRegistry,
+            ToolInvocationGateway tools,
+            ExtensionStateStore extensionState,
+            RunUsageLedger usageLedger,
+            ModelTaskGateway modelTasks,
+            RunStore runStore,
+            ObjectMapper json,
+            CancellableTaskExecutor executor,
+            ObservationRegistry observations,
+            Clock clock) {
         this.models = Objects.requireNonNull(models, "models");
         this.advisorRegistry = Objects.requireNonNull(advisorRegistry, "advisorRegistry");
         this.tools = Objects.requireNonNull(tools, "tools");
@@ -74,6 +100,7 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
         this.json = Objects.requireNonNull(json, "json");
         this.executor = Objects.requireNonNull(executor, "executor");
         this.observations = Objects.requireNonNull(observations, "observations");
+        this.clock = Objects.requireNonNull(clock, "clock");
     }
 
     @Override
@@ -92,16 +119,22 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             request.control().throwIfCancelled();
             AtomicInteger currentAttempt = new AtomicInteger(1);
             AtomicInteger responseIndex = new AtomicInteger();
+            AtomicInteger promptIndex = new AtomicInteger();
+            String reasoningInvocationId = java.util.UUID.randomUUID().toString();
             ChatModel rawModel = models.require(request.plan().descriptor().modelPolicyRef());
             ChatModel model = new MeteredChatModel(rawModel, response -> meter(
-                    request, response, currentAttempt.get(), responseIndex.incrementAndGet()),
-                    failure -> meterFailure(request, failure, currentAttempt.get(),
-                            responseIndex.incrementAndGet()));
+                    request, reasoningInvocationId, response,
+                    currentAttempt.get(), responseIndex.incrementAndGet()),
+                    failure -> meterFailure(request, reasoningInvocationId,
+                            failure, currentAttempt.get(),
+                            responseIndex.incrementAndGet()),
+                    prompt -> emitPromptBudget(request, prompt, promptIndex.incrementAndGet()));
             List<Advisor> customAdvisors = advisorRegistry.create(
                     request.plan().descriptor().advisors(), request.plan().advisorFactories(),
                     new com.javaclaw.framework.spi.AdvisorRuntimeContext(
                             request.runId(), request.runRequest(),
-                            extensionState.view(request.runId()), modelTasks, request.control()));
+                            extensionState.view(request.runId()), modelTasks, request.control(),
+                            request.events()));
 
             // ChatClient 2.0 installs its recursive ToolCallingAdvisor. We never add another one.
             ChatClient client = ChatClient.builder(model, observations, null, null)
@@ -112,6 +145,13 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             String systemPrompt = buildSystemPrompt(request);
             List<Message> messages = new ArrayList<>(buildMessages(request));
 
+            JsonNode routing = request.runRequest().attributes().get("framework.toolRouting");
+            if (routing != null && routing.isObject()) {
+                ObjectNode routed = ((ObjectNode) routing).deepCopy();
+                routed.put("actualToolCount", callbacks.size());
+                request.events().emit("core.tool.routing.completed", 1,
+                        "framework.springai", routed);
+            }
             ObjectNode started = JsonNodeFactory.instance.objectNode();
             started.put("modelPolicy", request.plan().descriptor().modelPolicyRef());
             started.put("toolCount", callbacks.size());
@@ -155,7 +195,11 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             long outputTokens = primaryUsage.outputTokens();
             ObjectNode usage = output.putObject("usage");
             usage.put("inputTokens", inputTokens);
+            usage.put("cacheReadInputTokens", primaryUsage.cacheReadInputTokens());
+            usage.put("cacheWriteInputTokens", primaryUsage.cacheWriteInputTokens());
             usage.put("outputTokens", outputTokens);
+            usage.put("reasoningTokens", primaryUsage.reasoningTokens());
+            usage.put("modelCalls", primaryUsage.modelCalls());
             usage.put("estimatedCostCny", primaryUsage.estimatedCostCny());
 
             JsonNode guarded = output;
@@ -187,7 +231,11 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             ObjectNode completed = JsonNodeFactory.instance.objectNode();
             completed.put("model", modelName == null ? "" : modelName);
             completed.put("inputTokens", inputTokens);
+            completed.put("cacheReadInputTokens", primaryUsage.cacheReadInputTokens());
+            completed.put("cacheWriteInputTokens", primaryUsage.cacheWriteInputTokens());
             completed.put("outputTokens", outputTokens);
+            completed.put("reasoningTokens", primaryUsage.reasoningTokens());
+            completed.put("modelCalls", primaryUsage.modelCalls());
             completed.put("estimatedCostCny", primaryUsage.estimatedCostCny());
             request.events().emit("core.model.completed", 1, "framework.springai", completed);
             return ReasoningResult.completed(guarded);
@@ -229,8 +277,10 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                 if (cause instanceof ToolApprovalRequiredException
                         || cause instanceof ToolInputRequiredException
                         || cause instanceof BudgetExceededException
+                        || cause instanceof com.javaclaw.framework.spi.ModelUsageCommitException
+                        || containsToolOutcomeCommitFailure(failure)
                         || cause instanceof com.javaclaw.framework.spi.RunCancelledException
-                        || attempt >= 8) throw failure;
+                        || attempt >= 2) throw failure;
                 com.javaclaw.framework.spi.RetryDirective directive = null;
                 String policyId = null;
                 var context = new com.javaclaw.framework.spi.RetryContext(
@@ -264,80 +314,111 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
 
     private void meter(
             ReasoningRequest request,
+            String reasoningInvocationId,
             ChatResponse response,
             int attempt,
             int responseIndex) {
         if (response == null) return;
         Usage responseUsage = response.getMetadata() == null
                 ? null : response.getMetadata().getUsage();
-        long inputTokens = token(responseUsage == null ? null : responseUsage.getPromptTokens());
-        long outputTokens = token(responseUsage == null ? null : responseUsage.getCompletionTokens());
+        ExtractedModelUsage extracted = ModelTokenUsageExtractor.extractDetailed(responseUsage, json);
         String modelName = response.getMetadata() == null || response.getMetadata().getModel() == null
                 ? request.plan().descriptor().modelPolicyRef()
                 : response.getMetadata().getModel();
-        meter(request, modelName, inputTokens, outputTokens, attempt, responseIndex, false);
+        meter(request, reasoningInvocationId, modelName, extracted.usage(),
+                extracted.pricingInputTokens(),
+                attempt, responseIndex, false);
     }
 
     private void meterFailure(
-            ReasoningRequest request,
-            ManagedInferenceChatModel.ManagedInferenceModelException failure,
-            int attempt,
-            int responseIndex) {
-        meter(request, failure.model(), failure.usage().promptTokens(),
-                failure.usage().completionTokens(), attempt, responseIndex, true);
+            ReasoningRequest request, String reasoningInvocationId,
+            RuntimeException failure,
+            int attempt, int responseIndex) {
+        if (failure instanceof ManagedInferenceChatModel.ManagedInferenceModelException managed) {
+            meter(request, reasoningInvocationId, managed.model(), new ModelTokenUsage(
+                            managed.usage().promptTokens(), 0, 0,
+                            managed.usage().completionTokens(), 0, 1),
+                    managed.usage().promptTokens(),
+                    attempt, responseIndex, true);
+            return;
+        }
+        meter(request, reasoningInvocationId,
+                request.plan().descriptor().modelPolicyRef(),
+                new ModelTokenUsage(0, 0, 0, 0, 0, 1),
+                0,
+                attempt, responseIndex, true);
     }
 
     private void meter(
             ReasoningRequest request,
+            String reasoningInvocationId,
             String modelName,
-            long inputTokens,
-            long outputTokens,
+            ModelTokenUsage tokenUsage,
+            long pricingInputTokens,
             int attempt,
             int responseIndex,
             boolean failed) {
         BigDecimal estimatedCost = BigDecimal.valueOf(
                 com.javaclaw.agent.PricingTable.estimateCostCny(
-                        modelName, inputTokens, outputTokens));
-        RuntimeException ledgerFailure = null;
-        try {
-            usageLedger.record(request.runId(), inputTokens, outputTokens, estimatedCost);
-        } catch (RuntimeException failure) {
-            ledgerFailure = failure;
-        }
+                        modelName, pricingInputTokens, tokenUsage.outputTokens()));
+        Instant occurredAt = clock.instant();
+        String modelCallId = "primary:" + request.runId().value()
+                + ":" + reasoningInvocationId + ":" + attempt + ":" + responseIndex;
         try {
             ObjectNode usage = JsonNodeFactory.instance.objectNode();
+            usage.put("modelCallId", modelCallId);
             usage.put("model", modelName);
             usage.put("attempt", attempt);
             usage.put("responseIndex", responseIndex);
-            usage.put("inputTokens", inputTokens);
-            usage.put("outputTokens", outputTokens);
+            usage.put("occurredAtEpochMillis", occurredAt.toEpochMilli());
+            usage.put("inputTokens", tokenUsage.inputTokens());
+            usage.put("pricingInputTokens", Math.max(0, pricingInputTokens));
+            usage.put("cacheReadInputTokens", tokenUsage.cacheReadInputTokens());
+            usage.put("cacheWriteInputTokens", tokenUsage.cacheWriteInputTokens());
+            usage.put("outputTokens", tokenUsage.outputTokens());
+            usage.put("reasoningTokens", tokenUsage.reasoningTokens());
+            usage.put("modelCalls", tokenUsage.modelCalls());
             usage.put("estimatedCostCny", estimatedCost);
             usage.put("failed", failed);
-            request.events().emit("core.model.usage", 1, "framework.springai", usage);
+            request.events().emit("core.model.usage", 3, "framework.springai", usage);
         } catch (RuntimeException eventFailure) {
-            if (ledgerFailure == null) throw eventFailure;
-            ledgerFailure.addSuppressed(eventFailure);
+            throw new com.javaclaw.framework.spi.ModelUsageCommitException(
+                    "could not commit primary model usage for " + modelCallId, eventFailure);
         }
-        if (ledgerFailure != null) throw ledgerFailure;
+        usageLedger.recordOnce(request.runId(), modelCallId, occurredAt,
+                tokenUsage, pricingInputTokens, estimatedCost);
     }
 
     private PrimaryUsage primaryUsage(ReasoningRequest request) {
         long inputTokens = 0;
+        long cacheReadInputTokens = 0;
+        long cacheWriteInputTokens = 0;
         long outputTokens = 0;
+        long reasoningTokens = 0;
+        long modelCalls = 0;
         BigDecimal estimatedCost = BigDecimal.ZERO;
         for (var event : runStore.eventsAfter(request.runId(), 0)) {
             if (!event.type().equals("core.model.usage")) continue;
             inputTokens = Math.addExact(inputTokens,
                     Math.max(0, event.payload().path("inputTokens").asLong()));
+            cacheReadInputTokens = Math.addExact(cacheReadInputTokens,
+                    Math.max(0, event.payload().path("cacheReadInputTokens").asLong()));
+            cacheWriteInputTokens = Math.addExact(cacheWriteInputTokens,
+                    Math.max(0, event.payload().path("cacheWriteInputTokens").asLong()));
             outputTokens = Math.addExact(outputTokens,
                     Math.max(0, event.payload().path("outputTokens").asLong()));
+            reasoningTokens = Math.addExact(reasoningTokens,
+                    Math.max(0, event.payload().path("reasoningTokens").asLong()));
+            modelCalls = Math.addExact(modelCalls,
+                    Math.max(0, event.payload().path("modelCalls").asLong(1)));
             JsonNode cost = event.payload().get("estimatedCostCny");
             if (cost != null && cost.isNumber()) {
                 estimatedCost = estimatedCost.add(
                         cost.decimalValue().max(BigDecimal.ZERO));
             }
         }
-        return new PrimaryUsage(inputTokens, outputTokens, estimatedCost);
+        return new PrimaryUsage(inputTokens, cacheReadInputTokens, cacheWriteInputTokens,
+                outputTokens, reasoningTokens, modelCalls, estimatedCost);
     }
 
     private static void awaitRetry(
@@ -364,6 +445,7 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                 request.plan().descriptor().permissions(), request.control(),
                 request.control().deadline(), request.runRequest());
         List<FrameworkTool> runTools = new ArrayList<>();
+        ToolAccessPolicy access = ToolAccessPolicy.from(request.runRequest());
         try {
             for (var factory : request.plan().toolFactories()) {
                 runTools.add(Objects.requireNonNull(factory.create(context), "framework tool"));
@@ -375,11 +457,11 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             }
             for (int index = runTools.size() - 1; index >= 0; index--) {
                 FrameworkTool tool = runTools.get(index);
-                boolean groupAllowed = ToolGroupAccess.allows(
-                        request.runRequest(), tool.descriptor().group());
+                boolean groupAllowed = access.allowsGroup(tool.descriptor().group());
+                boolean nameAllowed = access.allowsTool(tool.descriptor().name());
                 boolean permissionAllowed = request.plan().descriptor().permissions()
                         .containsAll(tool.descriptor().requiredPermissions());
-                if (groupAllowed && permissionAllowed) continue;
+                if (groupAllowed && nameAllowed && permissionAllowed) continue;
                 runTools.remove(index);
                 try {
                     tool.close();
@@ -515,10 +597,19 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
             if (!block.type().equals("core.message")) continue;
             String text = block.data().path("text").asText("");
             if (text.isBlank()) continue;
+            String messageId = block.data()
+                    .path(InputBlock.CONVERSATION_MESSAGE_ID_FIELD).asText("");
+            Map<String, Object> metadata = messageId.isBlank()
+                    ? Map.of()
+                    : Map.of(InputBlock.CONVERSATION_MESSAGE_ID_METADATA, messageId);
             if (block.data().path("role").asText("").equals("assistant")) {
-                messages.add(new AssistantMessage(text));
+                messages.add(metadata.isEmpty()
+                        ? new AssistantMessage(text)
+                        : AssistantMessage.builder().content(text).properties(metadata).build());
             } else {
-                messages.add(new UserMessage(text));
+                messages.add(metadata.isEmpty()
+                        ? new UserMessage(text)
+                        : UserMessage.builder().text(text).metadata(metadata).build());
             }
         }
         messages.add(buildCurrentUserMessage(request));
@@ -562,6 +653,25 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                 .collect(java.util.stream.Collectors.joining("\n"));
     }
 
+    private static void emitPromptBudget(
+            ReasoningRequest request, Prompt prompt, int modelCallIndex) {
+        PromptTokenEstimator.Breakdown estimate = PromptTokenEstimator.estimate(prompt);
+        ObjectNode payload = JsonNodeFactory.instance.objectNode();
+        payload.put("modelCallIndex", modelCallIndex);
+        payload.put("systemPromptTokensEstimated", estimate.systemPromptTokens());
+        payload.put("skillCatalogTokensEstimated", estimate.skillCatalogTokens());
+        payload.put("systemWithoutSkillTokensEstimated", estimate.systemWithoutSkillTokens());
+        payload.put("historyTokensEstimated", estimate.historyTokens());
+        payload.put("contextSummaryTokensEstimated", estimate.contextSummaryTokens());
+        payload.put("currentInputTokensEstimated", estimate.currentInputTokens());
+        payload.put("toolResultTokensEstimated", estimate.toolResultTokens());
+        payload.put("continuationTokensEstimated", estimate.continuationTokens());
+        payload.put("toolSchemaTokensEstimated", estimate.toolSchemaTokens());
+        payload.put("totalInputTokensEstimated", estimate.totalInputTokens());
+        payload.put("toolCount", estimate.toolCount());
+        request.events().emit("core.prompt.budget", 2, "framework.springai", payload);
+    }
+
     private static long token(Integer value) {
         return value == null ? 0L : Math.max(0, value.longValue());
     }
@@ -576,35 +686,51 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
         return current;
     }
 
+    private static boolean containsToolOutcomeCommitFailure(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            if (current instanceof com.javaclaw.framework.spi.ToolOutcomeCommitException) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
     private record PrimaryUsage(
             long inputTokens,
+            long cacheReadInputTokens,
+            long cacheWriteInputTokens,
             long outputTokens,
+            long reasoningTokens,
+            long modelCalls,
             BigDecimal estimatedCostCny) { }
 
     /** Captures every provider response before advisors can execute tools or retry. */
     private static final class MeteredChatModel implements ChatModel {
         private final ChatModel delegate;
         private final java.util.function.Consumer<ChatResponse> meter;
-        private final java.util.function.Consumer<ManagedInferenceChatModel.ManagedInferenceModelException>
-                failureMeter;
+        private final java.util.function.Consumer<RuntimeException> failureMeter;
+        private final java.util.function.Consumer<Prompt> promptMeter;
 
         private MeteredChatModel(
                 ChatModel delegate,
                 java.util.function.Consumer<ChatResponse> meter,
-                java.util.function.Consumer<ManagedInferenceChatModel.ManagedInferenceModelException>
-                        failureMeter) {
+                java.util.function.Consumer<RuntimeException> failureMeter,
+                java.util.function.Consumer<Prompt> promptMeter) {
             this.delegate = Objects.requireNonNull(delegate, "delegate");
             this.meter = Objects.requireNonNull(meter, "meter");
             this.failureMeter = Objects.requireNonNull(failureMeter, "failureMeter");
+            this.promptMeter = Objects.requireNonNull(promptMeter, "promptMeter");
         }
 
         @Override
         public ChatResponse call(Prompt prompt) {
+            promptMeter.accept(prompt);
+            ChatResponse response;
             try {
-                ChatResponse response = delegate.call(prompt);
-                meter.accept(response);
-                return response;
-            } catch (ManagedInferenceChatModel.ManagedInferenceModelException failure) {
+                response = delegate.call(prompt);
+            } catch (RuntimeException failure) {
                 try {
                     failureMeter.accept(failure);
                 } catch (RuntimeException meteringFailure) {
@@ -613,6 +739,8 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
                 }
                 throw failure;
             }
+            meter.accept(response);
+            return response;
         }
 
         @Override
@@ -622,7 +750,8 @@ public final class SpringAiReasoningGateway implements ReasoningGateway {
 
         @Override
         public Flux<ChatResponse> stream(Prompt prompt) {
-            return delegate.stream(prompt);
+            promptMeter.accept(prompt);
+            return delegate.stream(prompt).doOnNext(meter);
         }
     }
 }

@@ -15,6 +15,7 @@ import com.javaclaw.framework.spi.ModelTaskAuditSink;
 import com.javaclaw.framework.spi.ModelTaskRequest;
 import com.javaclaw.framework.spi.ModelTaskResult;
 import com.javaclaw.framework.spi.ModelTier;
+import com.javaclaw.framework.spi.ModelUsageCommitException;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
@@ -27,10 +28,13 @@ import org.springframework.ai.chat.prompt.Prompt;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -104,6 +108,80 @@ class SpringAiModelTaskGatewayTest {
         assertEquals(4, budgeted.ledger.snapshot(budgeted.runId).inputTokens());
     }
 
+    @Test
+    void genericProviderFailuresCountCallsWithoutInventingTokens() {
+        AtomicInteger calls = new AtomicInteger();
+        ChatModel alwaysFails = prompt -> {
+            calls.incrementAndGet();
+            throw new IllegalStateException("provider unavailable");
+        };
+        Fixture fixture = fixture(alwaysFails, RunBudget.UNBOUNDED);
+
+        assertThrows(ExecutionException.class, () -> fixture.gateway.execute(
+                request(fixture.runId, 1)).toCompletableFuture().get());
+        assertEquals(2, calls.get());
+        assertEquals(2, fixture.audit.usageCalls.get());
+        assertEquals(0, fixture.ledger.snapshot(fixture.runId).inputTokens());
+        assertEquals(0, fixture.ledger.snapshot(fixture.runId).outputTokens());
+        assertEquals(2, fixture.ledger.snapshot(fixture.runId).modelCalls());
+    }
+
+    @Test
+    void anthropicUsesNormalizedInputForBudgetsButRawInputForExistingPricing() throws Exception {
+        ChatModel model = prompt -> new ChatResponse(
+                List.of(new Generation(new AssistantMessage("{\"ok\":true}"))),
+                ChatResponseMetadata.builder().model("qwen-plus")
+                        .usage(new DefaultUsage(100, 40, 190,
+                                Map.of("cache_read_input_tokens", 30,
+                                        "cache_creation_input_tokens", 20),
+                                30L, 20L))
+                        .build());
+        Fixture fixture = fixture(model, RunBudget.UNBOUNDED);
+
+        ModelTaskResult result = fixture.gateway.execute(request(fixture.runId, 0))
+                .toCompletableFuture().get();
+
+        BigDecimal expectedCost = BigDecimal.valueOf(
+                com.javaclaw.agent.PricingTable.estimateCostCny("qwen-plus", 100, 40));
+        assertEquals(150, result.inputTokens());
+        assertEquals(150, fixture.ledger.snapshot(fixture.runId).inputTokens());
+        assertEquals(100, fixture.audit.pricingInput.get());
+        assertEquals(0, expectedCost.compareTo(fixture.audit.estimatedCost.get()));
+        assertEquals(0, expectedCost.compareTo(fixture.ledger.snapshot(fixture.runId).cost()));
+    }
+
+    @Test
+    void usageCommitFailureDoesNotIssueASecondProviderCall() {
+        AtomicInteger calls = new AtomicInteger();
+        ChatModel model = prompt -> {
+            calls.incrementAndGet();
+            return response("{\"ok\":true}", 7, 3);
+        };
+        SpringAiModelRegistry registry = new SpringAiModelRegistry();
+        registry.register("test:model", model);
+        registry.route(ModelTier.LIGHT, "test:model");
+        RunId runId = new RunId("model-task-commit-failure");
+        RunUsageLedger ledger = new RunUsageLedger();
+        ledger.open(runId, RunBudget.UNBOUNDED, new RunScope("workspace", "user", "session"));
+        ModelTaskAuditSink rejecting = new RecordingAudit() {
+            @Override public boolean commitUsage(
+                    ModelTaskRequest request, String modelCallId, String model, int attempt,
+                    com.javaclaw.framework.api.ModelTokenUsage usage,
+                    BigDecimal estimatedCostCny) {
+                return false;
+            }
+        };
+        SpringAiModelTaskGateway gateway = new SpringAiModelTaskGateway(
+                registry, ledger, rejecting, new ObjectMapper(), new DirectExecutor());
+
+        ExecutionException failure = assertThrows(ExecutionException.class, () ->
+                gateway.execute(request(runId, 3)).toCompletableFuture().get());
+
+        assertInstanceOf(ModelUsageCommitException.class, failure.getCause());
+        assertEquals(1, calls.get());
+        assertEquals(0, ledger.snapshot(runId).modelCalls());
+    }
+
     private static Fixture fixture(ChatModel model, RunBudget budget) {
         SpringAiModelRegistry registry = new SpringAiModelRegistry();
         registry.register("test:model", model);
@@ -140,13 +218,26 @@ class SpringAiModelTaskGatewayTest {
             RecordingAudit audit,
             RunId runId) { }
 
-    private static final class RecordingAudit implements ModelTaskAuditSink {
+    private static class RecordingAudit implements ModelTaskAuditSink {
         private final AtomicInteger usageCalls = new AtomicInteger();
+        private final AtomicLong pricingInput = new AtomicLong();
+        private final AtomicReference<BigDecimal> estimatedCost =
+                new AtomicReference<>(BigDecimal.ZERO);
         @Override public void started(ModelTaskRequest request) { }
         @Override public void usage(ModelTaskRequest request, String model, int attempt,
                                     long inputTokens, long outputTokens,
                                     BigDecimal estimatedCostCny) {
             usageCalls.incrementAndGet();
+        }
+        @Override public boolean commitUsage(
+                ModelTaskRequest request, String modelCallId, String model, int attempt,
+                java.time.Instant occurredAt,
+                com.javaclaw.framework.api.ModelTokenUsage usage,
+                long pricingInputTokens, BigDecimal estimatedCostCny) {
+            pricingInput.set(pricingInputTokens);
+            estimatedCost.set(estimatedCostCny);
+            return commitUsage(
+                    request, modelCallId, model, attempt, usage, estimatedCostCny);
         }
         @Override public void completed(ModelTaskRequest request, ModelTaskResult result) { }
         @Override public void failed(ModelTaskRequest request, Throwable failure) { }

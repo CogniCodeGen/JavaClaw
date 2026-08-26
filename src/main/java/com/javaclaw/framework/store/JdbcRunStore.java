@@ -149,6 +149,35 @@ public final class JdbcRunStore implements RunStore {
         }));
     }
 
+    @Override
+    public Optional<RunEventEnvelope> appendEvent(RunId id, RunEventDraft event) {
+        Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(event, "event");
+        return Optional.ofNullable(transactions.execute(status -> {
+            List<LockedRun> rows = jdbc.query("""
+                    SELECT state, last_sequence, version
+                    FROM agent_runs WHERE run_id = ? FOR UPDATE
+                    """, (row, index) -> new LockedRun(
+                    RunState.valueOf(row.getString("state")),
+                    row.getLong("last_sequence"), row.getLong("version")), id.value());
+            if (rows.isEmpty()) return null;
+            LockedRun current = rows.getFirst();
+            long nextSequence = current.lastSequence() + 1;
+            long now = clock.millis();
+            int changed = jdbc.update("""
+                    UPDATE agent_runs
+                    SET last_sequence = ?, version = version + 1, updated_at = ?
+                    WHERE run_id = ? AND version = ?
+                    """, nextSequence, now, id.value(), current.version());
+            if (changed != 1) {
+                throw new IllegalStateException("concurrent run mutation: " + id);
+            }
+            RunEventEnvelope envelope = envelope(id, nextSequence, now, event);
+            insertEventAndOutbox(envelope);
+            return envelope;
+        }));
+    }
+
     private void insertEventAndOutbox(RunEventEnvelope envelope) {
         jdbc.update("""
                 INSERT INTO agent_run_events(

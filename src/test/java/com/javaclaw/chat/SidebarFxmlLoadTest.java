@@ -96,7 +96,7 @@ class SidebarFxmlLoadTest {
                 controller.appendThinking("分析中");
                 controller.recordPipelineProgress(
                         "route", "路由", "done", "已选择普通对话");
-                controller.updateMetrics(12, 4, "¥0.01");
+                controller.updateMetrics(12, 4, "缓存 3 · 写入 1 · 推理 2");
                 controller.endStream();
                 return null;
             });

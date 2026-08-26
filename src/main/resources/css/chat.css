@@ -844,7 +844,7 @@
 .tp-stage-pill-executing .tp-stage-pill-text { -fx-text-fill: #2FA17C; }
 .tp-stage-pill-replying .tp-stage-pill-text { -fx-text-fill: #4B87A8; }
 
-/* 指标三联（TOKENS IN / TOKENS OUT / 费用） */
+/* 指标三联（TOKENS IN / TOKENS OUT / 缓存与推理 token） */
 .tp-metrics {
     -fx-border-color: -jc-neutral-200 transparent transparent transparent;
     -fx-border-style: dashed;

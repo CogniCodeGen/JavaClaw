@@ -2,12 +2,17 @@ package com.javaclaw.agent;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.framework.api.ModelTokenUsage;
+import com.javaclaw.framework.api.ModelUsageFact;
+import com.javaclaw.infrastructure.agent.JdbcTokenUsageProjector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.LocalDate;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -30,11 +35,16 @@ public class TokenTracker {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class DailyUsage {
         public long input;
+        /** Raw provider input retained solely for the legacy background price estimate. */
+        public long pricingInput;
         public long output;
-        /** 传输层观测到的全部 prompt token（缓存命中率分母；与 input 来源不同，勿混算） */
+        /** 提供商 usage 中的全部 prompt token（缓存命中率分母；数值与 input 同源但不重复计总量） */
         public long meteredInput;
-        /** 其中命中提供商上下文缓存的部分（按折扣计费，评估真实成本的关键） */
+        /** 其中命中提供商上下文缓存的部分；是 input 的子集 */
         public long cachedInput;
+        public long cacheWriteInput;
+        public long reasoning;
+        public long modelCalls;
 
         public DailyUsage() {}
 
@@ -78,11 +88,21 @@ public class TokenTracker {
     private final String workspaceId;
     private final JdbcTemplate jdbc;
     private final AgentConfig settings;
+    private final JdbcTokenUsageProjector projector;
 
     public TokenTracker(String workspaceId, JdbcTemplate jdbc, AgentConfig settings) {
+        this(workspaceId, jdbc, settings, null);
+    }
+
+    public TokenTracker(
+            String workspaceId,
+            JdbcTemplate jdbc,
+            AgentConfig settings,
+            JdbcTokenUsageProjector projector) {
         this.workspaceId = java.util.Objects.requireNonNull(workspaceId, "workspaceId");
         this.jdbc = java.util.Objects.requireNonNull(jdbc, "jdbc");
         this.settings = java.util.Objects.requireNonNull(settings, "settings");
+        this.projector = projector;
         load();
     }
 
@@ -175,18 +195,12 @@ public class TokenTracker {
             return;
         }
 
-        final long finalInput = inputTokens;
-        final long finalOutput = outputTokens;
-        String today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
-        dailyUsage.compute(today, (k, prev) -> {
-            if (prev == null) return new DailyUsage(finalInput, finalOutput);
-            prev.input += finalInput;
-            prev.output += finalOutput;
-            return prev;
-        });
+        Instant occurredAt = Instant.now();
+        ModelTokenUsage delta = new ModelTokenUsage(inputTokens, outputTokens);
+        persistUnidentified(occurredAt, delta, inputTokens);
+        addDailyInMemory(usageDate(occurredAt), delta, inputTokens);
 
         fireChanged();
-        save();
     }
 
     /**
@@ -208,20 +222,33 @@ public class TokenTracker {
         recordTaskUsage(in, out);
     }
 
+    /** The sole detailed daily-accounting entry point used by RunUsageLedger. */
+    public void recordModelUsage(String source, ModelTokenUsage usage) {
+        ModelTokenUsage value = usage == null ? ModelTokenUsage.ZERO : usage;
+        if (value.totalTokens() == 0 && value.modelCalls() == 0) return;
+        if (log.isDebugEnabled()) {
+            log.debug("[{}] 记录模型用量: input={}, output={}, cacheRead={}, cacheWrite={}, reasoning={}, calls={}",
+                    source == null ? "model" : source, value.inputTokens(), value.outputTokens(),
+                    value.cacheReadInputTokens(), value.cacheWriteInputTokens(),
+                    value.reasoningTokens(), value.modelCalls());
+        }
+        recordTaskUsage(value);
+    }
+
     /**
-     * 记录一次 Spring AI Observation 观测到的 prompt/缓存命中 token。
+     * 兼容旧版 Spring AI Observation 的 prompt/缓存命中入口。
      *
-     * <p>与 {@link #recordModelUsage} 是两套口径：本方法覆盖<b>所有</b>经共享传输层的模型调用
-     * （聊天、SDD 各阶段、路由器、评估器……），用于计算当日缓存命中率
-     * {@code cachedInput / meteredInput}——这是判断「百万级输入到底按几折计费」的依据。
-     * 不触碰 sessionTokens / input / output，避免与既有记账重复。</p>
+     * <p>新代码必须通过 {@link #recordModelUsage(String, ModelTokenUsage)} 一次写入完整 usage；
+     * 同一次模型调用不得再调用本方法，否则会重复累计缓存分母。保留本入口只为旧适配器兼容。</p>
      *
-     * <p>落盘节流：缓存观测每次模型调用都会触发，跟随下一次常规 {@code save()} 顺带落盘即可，
-     * 此处只更新内存（进程异常退出最多丢当日命中率统计，可接受）。</p>
+     * <p>该兼容入口也采用增量落盘，避免覆盖统一 usage 投影。</p>
      */
+    @Deprecated(forRemoval = false)
     public void recordCachedObservation(long promptTokens, long cachedTokens) {
         if (promptTokens <= 0) return;
-        String today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
+        Instant occurredAt = Instant.now();
+        persistCacheObservation(occurredAt, promptTokens, cachedTokens);
+        String today = usageDate(occurredAt);
         dailyUsage.compute(today, (k, prev) -> {
             DailyUsage d = prev == null ? new DailyUsage(0, 0) : prev;
             d.meteredInput += promptTokens;
@@ -249,21 +276,39 @@ public class TokenTracker {
         long in = Math.max(0, inputTokens);
         long out = Math.max(0, outputTokens);
         if (in == 0 && out == 0) return;
-
+        Instant occurredAt = Instant.now();
+        ModelTokenUsage usage = new ModelTokenUsage(in, out);
+        persistUnidentified(occurredAt, usage, in);
         sessionTokens.addAndGet(in + out);
-
-        final long finalInput = in;
-        final long finalOutput = out;
-        String today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
-        dailyUsage.compute(today, (k, prev) -> {
-            if (prev == null) return new DailyUsage(finalInput, finalOutput);
-            prev.input += finalInput;
-            prev.output += finalOutput;
-            return prev;
-        });
-
+        addDailyInMemory(usageDate(occurredAt), usage, in);
         fireChanged();
-        save();
+    }
+
+    public void recordTaskUsage(ModelTokenUsage usage) {
+        ModelTokenUsage value = usage == null ? ModelTokenUsage.ZERO : usage;
+        long in = value.inputTokens();
+        long out = value.outputTokens();
+        if (in == 0 && out == 0 && value.modelCalls() == 0) return;
+        Instant occurredAt = Instant.now();
+        persistUnidentified(occurredAt, value, in);
+        sessionTokens.addAndGet(in + out);
+        addDailyInMemory(usageDate(occurredAt), value, in);
+        fireChanged();
+    }
+
+    /** Updates the live read model after the durable projector committed a new receipt. */
+    public void applyProjectedUsage(ModelUsageFact fact) {
+        ModelUsageFact value = java.util.Objects.requireNonNull(fact, "fact");
+        sessionTokens.addAndGet(value.usage().totalTokens());
+        addDailyInMemory(usageDate(value.occurredAt()),
+                value.usage(), value.pricingInputTokens());
+        fireChanged();
+    }
+
+    /** Reloads durable daily totals after a startup or retry reconciliation. */
+    public void reloadPersistedUsage() {
+        load();
+        fireChanged();
     }
 
     /** 获取今日累计 token 总数 */
@@ -275,7 +320,7 @@ public class TokenTracker {
     /** 获取今日输入/输出 token 明细 */
     public DailyUsage getTodayUsage() {
         DailyUsage u = dailyUsage.get(LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE));
-        return u == null ? new DailyUsage(0, 0) : new DailyUsage(u.input, u.output);
+        return u == null ? new DailyUsage(0, 0) : copy(u);
     }
 
     /** 获取本月累计 token 总数 */
@@ -295,7 +340,13 @@ public class TokenTracker {
         for (var e : dailyUsage.entrySet()) {
             if (e.getKey().startsWith(prefix)) {
                 agg.input += e.getValue().input;
+                agg.pricingInput += e.getValue().pricingInput;
                 agg.output += e.getValue().output;
+                agg.meteredInput += e.getValue().meteredInput;
+                agg.cachedInput += e.getValue().cachedInput;
+                agg.cacheWriteInput += e.getValue().cacheWriteInput;
+                agg.reasoning += e.getValue().reasoning;
+                agg.modelCalls += e.getValue().modelCalls;
             }
         }
         return agg;
@@ -307,7 +358,7 @@ public class TokenTracker {
     public double getMonthlyCostCny() {
         DailyUsage u = aggregateMonth();
         String model = settings.getModelName();
-        return PricingTable.estimateCostCny(model, u.input, u.output);
+        return PricingTable.estimateCostCny(model, u.pricingInput, u.output);
     }
 
     /**
@@ -373,35 +424,85 @@ public class TokenTracker {
 
     // ==================== 持久化 ====================
 
-    private void save() {
-        String sql = """
-                MERGE INTO token_usage_daily(
-                    workspace_id, usage_date, input_tokens, output_tokens, metered_input, cached_input, updated_at
-                )
-                KEY(workspace_id, usage_date)
-                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """;
-        List<Map.Entry<String, DailyUsage>> snapshot = List.copyOf(dailyUsage.entrySet());
-        if (snapshot.isEmpty()) return;
+    private void persistUnidentified(
+            Instant occurredAt, ModelTokenUsage usage, long pricingInputTokens) {
         try {
-            jdbc.batchUpdate(sql, snapshot, snapshot.size(), (statement, entry) -> {
-                DailyUsage usage = entry.getValue();
-                statement.setString(1, workspaceId);
-                statement.setString(2, entry.getKey());
-                statement.setLong(3, usage.input);
-                statement.setLong(4, usage.output);
-                statement.setLong(5, usage.meteredInput);
-                statement.setLong(6, usage.cachedInput);
-            });
+            if (projector != null) {
+                projector.addUnidentified(occurredAt, usage, pricingInputTokens);
+                return;
+            }
+            addFallbackDelta(usageDate(occurredAt), usage, pricingInputTokens);
         } catch (DataAccessException failure) {
             log.warn("保存 token 用量数据失败: {}", failure.getMessage());
         }
     }
 
+    private void persistCacheObservation(
+            Instant occurredAt, long promptTokens, long cachedTokens) {
+        try {
+            if (projector != null) {
+                projector.addCacheObservation(occurredAt, promptTokens, cachedTokens);
+                return;
+            }
+            long cached = Math.min(Math.max(0, cachedTokens), promptTokens);
+            String date = usageDate(occurredAt);
+            int updated = jdbc.update("""
+                    UPDATE token_usage_daily
+                    SET metered_input = metered_input + ?, cached_input = cached_input + ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE workspace_id = ? AND usage_date = ?
+                    """, promptTokens, cached, workspaceId, date);
+            if (updated == 0) {
+                jdbc.update("""
+                        INSERT INTO token_usage_daily(
+                            workspace_id, usage_date, input_tokens, pricing_input_tokens,
+                            output_tokens, metered_input, cached_input, cache_write_input,
+                            reasoning_tokens, model_calls, updated_at)
+                        VALUES (?, ?, 0, 0, 0, ?, ?, 0, 0, 0, CURRENT_TIMESTAMP)
+                        """, workspaceId, date, promptTokens, cached);
+            }
+        } catch (DataAccessException failure) {
+            log.warn("保存缓存 token 观测失败: {}", failure.getMessage());
+        }
+    }
+
+    private void addFallbackDelta(
+            String date, ModelTokenUsage usage, long pricingInputTokens) {
+        int updated = jdbc.update("""
+                UPDATE token_usage_daily
+                SET input_tokens = input_tokens + ?,
+                    pricing_input_tokens = pricing_input_tokens + ?,
+                    output_tokens = output_tokens + ?,
+                    metered_input = metered_input + ?,
+                    cached_input = cached_input + ?,
+                    cache_write_input = cache_write_input + ?,
+                    reasoning_tokens = reasoning_tokens + ?,
+                    model_calls = model_calls + ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE workspace_id = ? AND usage_date = ?
+                """, usage.inputTokens(), Math.max(0, pricingInputTokens),
+                usage.outputTokens(), usage.inputTokens(), usage.cacheReadInputTokens(),
+                usage.cacheWriteInputTokens(), usage.reasoningTokens(), usage.modelCalls(),
+                workspaceId, date);
+        if (updated != 0) return;
+        jdbc.update("""
+                INSERT INTO token_usage_daily(
+                    workspace_id, usage_date, input_tokens, pricing_input_tokens,
+                    output_tokens, metered_input, cached_input, cache_write_input,
+                    reasoning_tokens, model_calls, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, workspaceId, date, usage.inputTokens(), Math.max(0, pricingInputTokens),
+                usage.outputTokens(), usage.inputTokens(), usage.cacheReadInputTokens(),
+                usage.cacheWriteInputTokens(), usage.reasoningTokens(), usage.modelCalls());
+    }
+
     private void load() {
         try {
+            dailyUsage.clear();
             String sql = """
-                    SELECT usage_date, input_tokens, output_tokens, metered_input, cached_input
+                    SELECT usage_date, input_tokens, pricing_input_tokens, output_tokens,
+                           metered_input, cached_input, cache_write_input,
+                           reasoning_tokens, model_calls
                     FROM token_usage_daily
                     WHERE workspace_id = ?
                     ORDER BY usage_date
@@ -409,9 +510,13 @@ public class TokenTracker {
             jdbc.query(sql, result -> {
                 DailyUsage usage = new DailyUsage();
                 usage.input = result.getLong("input_tokens");
+                usage.pricingInput = result.getLong("pricing_input_tokens");
                 usage.output = result.getLong("output_tokens");
                 usage.meteredInput = result.getLong("metered_input");
                 usage.cachedInput = result.getLong("cached_input");
+                usage.cacheWriteInput = result.getLong("cache_write_input");
+                usage.reasoning = result.getLong("reasoning_tokens");
+                usage.modelCalls = result.getLong("model_calls");
                 dailyUsage.put(result.getString("usage_date"), usage);
             }, workspaceId);
             log.info("已从 H2 加载 token 用量数据: {} 天记录", dailyUsage.size());
@@ -419,5 +524,39 @@ public class TokenTracker {
             // 带堆栈输出便于定位数据库或 schema 不兼容的根因
             log.warn("加载 token 用量数据失败", e);
         }
+    }
+
+    private static DailyUsage copy(DailyUsage source) {
+        DailyUsage target = new DailyUsage(source.input, source.output);
+        target.pricingInput = source.pricingInput;
+        target.meteredInput = source.meteredInput;
+        target.cachedInput = source.cachedInput;
+        target.cacheWriteInput = source.cacheWriteInput;
+        target.reasoning = source.reasoning;
+        target.modelCalls = source.modelCalls;
+        return target;
+    }
+
+    private void addDailyInMemory(
+            String date, ModelTokenUsage usage, long pricingInputTokens) {
+        dailyUsage.compute(date, (key, previous) -> {
+            DailyUsage current = previous == null ? new DailyUsage() : previous;
+            current.input += usage.inputTokens();
+            current.pricingInput += Math.max(0, pricingInputTokens);
+            current.output += usage.outputTokens();
+            current.meteredInput += usage.inputTokens();
+            current.cachedInput += usage.cacheReadInputTokens();
+            current.cacheWriteInput += usage.cacheWriteInputTokens();
+            current.reasoning += usage.reasoningTokens();
+            current.modelCalls += usage.modelCalls();
+            return current;
+        });
+    }
+
+    private String usageDate(Instant occurredAt) {
+        return projector == null
+                ? occurredAt.atZone(ZoneId.systemDefault()).toLocalDate()
+                        .format(DateTimeFormatter.ISO_LOCAL_DATE)
+                : projector.usageDate(occurredAt);
     }
 }

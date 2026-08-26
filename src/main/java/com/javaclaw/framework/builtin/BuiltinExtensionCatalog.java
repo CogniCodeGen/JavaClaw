@@ -25,12 +25,26 @@ public final class BuiltinExtensionCatalog {
             MemoryMutationGateway memoryMutations,
             RetrieverContribution knowledgeRetriever,
             PromptContributor skillContributor,
-            ToolProviderFactory hostTools) {
+            ToolProviderFactory hostTools,
+            com.javaclaw.framework.builtin.context.ContextCompactionAdvisorFactory contextCompaction) {
+        return create(memoryRecall, memoryMutations, knowledgeRetriever, skillContributor,
+                hostTools, contextCompaction, null);
+    }
+
+    public static List<ExtensionArtifact> create(
+            MemoryRecallGateway memoryRecall,
+            MemoryMutationGateway memoryMutations,
+            RetrieverContribution knowledgeRetriever,
+            PromptContributor skillContributor,
+            ToolProviderFactory hostTools,
+            com.javaclaw.framework.builtin.context.ContextCompactionAdvisorFactory contextCompaction,
+            RunStore runStore) {
         Objects.requireNonNull(memoryRecall, "memoryRecall");
         Objects.requireNonNull(memoryMutations, "memoryMutations");
         Objects.requireNonNull(knowledgeRetriever, "knowledgeRetriever");
         Objects.requireNonNull(skillContributor, "skillContributor");
         Objects.requireNonNull(hostTools, "hostTools");
+        Objects.requireNonNull(contextCompaction, "contextCompaction");
         List<AgentFrameworkExtension> extensions = new ArrayList<>();
 
         extensions.add(declarative("memory.graph", "Memory Graph",
@@ -93,7 +107,8 @@ public final class BuiltinExtensionCatalog {
 
         extensions.add(declarative("knowledge.rag", "Knowledge / RAG",
                 "Spring AI Retriever and RAG Advisor over workspace knowledge",
-                topKSchema(), 10, List.of(), registrar -> registrar.retriever(knowledgeRetriever)));
+                topKSchema(), 10, List.of(), registrar -> registrar.retriever((query, request) ->
+                        boundedKnowledgeContext(knowledgeRetriever, query, request))));
         extensions.add(declarative("skill.runtime", "Skills",
                 "Reusable prompt, tool and curation workflow contributions",
                 schema(true), 20, List.of(), registrar -> registrar.promptContributor(skillContributor)));
@@ -110,25 +125,12 @@ public final class BuiltinExtensionCatalog {
                 schema(true), 40, List.of(), registrar -> {}));
         extensions.add(declarative("context.compaction", "Context Compaction",
                 "Advisor-driven context compaction with audited summary tasks",
-                schema(true), 50, List.of(), registrar -> {}));
+                schema(true), 50, List.of(), registrar -> registrar.advisor(contextCompaction)));
         extensions.add(declarative("tool.result-eviction", "Tool Result Eviction",
                 "Size-aware tool-result post-processing without losing durable events",
-                resultEvictionSchema(), 60, List.of(), registrar ->
-                        registrar.toolResultPostProcessor((current, tool, context, request) -> {
-                            String rendered = current.isTextual()
-                                    ? current.asText() : current.toString();
-                            int limit = com.javaclaw.framework.api.CapabilityRuntime.configuration(
-                                    request, "tool.result-eviction")
-                                    .path("maxCharacters").asInt(16_000);
-                            if (rendered.length() <= limit) return current;
-                            ObjectNode bounded = JsonNodeFactory.instance.objectNode();
-                            bounded.put("truncated", true);
-                            bounded.put("tool", tool.name());
-                            bounded.put("originalCharacters", rendered.length());
-                            bounded.put("preview", rendered.substring(0, limit));
-                            bounded.put("note", "Full output is retained in core.tool.completed");
-                            return bounded;
-                        })));
+                resultEvictionSchema(), 60, List.of(), registrar -> registrar
+                        .toolResultPostProcessor(new com.javaclaw.framework.builtin.context
+                                .BoundedToolResultProcessor(runStore))));
         extensions.add(declarative("sandbox.execution", "Sandbox",
                 "ToolExecution provider for process/container isolation",
                 schema(false), 70, List.of(), registrar -> {}));
@@ -161,7 +163,8 @@ public final class BuiltinExtensionCatalog {
 
     private static ObjectNode topKSchema() {
         ObjectNode schema = schema(true);
-        return BuiltinSchemas.integerProperty(schema, "topK", 8, 1, 50);
+        BuiltinSchemas.integerProperty(schema, "topK", 3, 1, 50);
+        return BuiltinSchemas.authoringMaximum(schema, "topK", 3);
     }
 
     private static ObjectNode intervalSchema() {
@@ -171,8 +174,10 @@ public final class BuiltinExtensionCatalog {
 
     private static ObjectNode resultEvictionSchema() {
         ObjectNode schema = schema(true);
+        BuiltinSchemas.integerProperty(schema, "maxCharacters", 4_000, 1_000, 200_000);
+        BuiltinSchemas.authoringMaximum(schema, "maxCharacters", 8_000);
         return BuiltinSchemas.integerProperty(
-                schema, "maxCharacters", 16_000, 1_000, 200_000);
+                schema, "largeMaxCharacters", 8_000, 1_000, 8_000);
     }
 
     private static ObjectNode gepaAssessmentSchema() {
@@ -204,5 +209,49 @@ public final class BuiltinExtensionCatalog {
         String value = permission.toLowerCase(Locale.ROOT);
         return !(value.contains("write") || value.contains("delete") || value.contains("execute")
                 || value.contains("send") || value.contains("mutate") || value.contains("admin"));
+    }
+
+    static List<JsonNode> boundedKnowledgeContext(
+            RetrieverContribution retriever, String query,
+            com.javaclaw.framework.api.RunRequest request) {
+        JsonNode enabled = request.attributes().get("framework.enableKnowledgeContext");
+        // This attribute is an interactive-routing override. Its absence must retain the
+        // pre-routing behavior used by schedule/workflow/plugin and other legacy entry points.
+        if (enabled != null && !enabled.asBoolean(false)) return List.of();
+        List<JsonNode> raw = retriever.retrieve(query, request);
+        List<JsonNode> bounded = new ArrayList<>();
+        int remaining = 1_500;
+        for (JsonNode document : raw.stream().limit(3).toList()) {
+            String rendered = document.toString();
+            int tokens = com.javaclaw.util.TokenEstimator.estimate(rendered);
+            if (tokens <= remaining) {
+                bounded.add(document);
+                remaining -= tokens;
+            } else if (remaining > 0) {
+                JsonNode truncated = textNodeWithinTokenBudget(rendered, remaining);
+                if (truncated != null) bounded.add(truncated);
+                break;
+            }
+        }
+        return List.copyOf(bounded);
+    }
+
+    private static JsonNode textNodeWithinTokenBudget(String value, int tokenBudget) {
+        int low = 0;
+        int high = tokenBudget;
+        JsonNode best = null;
+        while (low <= high) {
+            int middle = (low + high) >>> 1;
+            JsonNode candidate = JsonNodeFactory.instance.textNode(
+                    com.javaclaw.util.TokenEstimator.truncateToTokens(value, middle));
+            int tokens = com.javaclaw.util.TokenEstimator.estimate(candidate.toString());
+            if (tokens <= tokenBudget) {
+                best = candidate;
+                low = middle + 1;
+            } else {
+                high = middle - 1;
+            }
+        }
+        return best;
     }
 }

@@ -87,8 +87,24 @@ class SpringAiReasoningGatewayIntegrationTest {
             assertEquals(assistant.getToolCalls().getFirst().id(),
                     response.getResponses().getFirst().id());
 
-            assertEquals(2, fixture.runs.eventsAfter(handle.id(), 0).stream()
-                    .filter(event -> event.type().equals("core.model.usage")).count());
+            List<RunEventEnvelope> modelUsages = fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .filter(event -> event.type().equals("core.model.usage")).toList();
+            assertEquals(2, modelUsages.size());
+            assertTrue(modelUsages.stream().allMatch(event -> event.schemaVersion() == 3));
+            assertTrue(modelUsages.stream().allMatch(event ->
+                    event.payload().has("occurredAtEpochMillis")
+                            && event.payload().has("pricingInputTokens")));
+            assertEquals(2, modelUsages.stream()
+                    .map(event -> event.payload().path("modelCallId").asText())
+                    .distinct().count(),
+                    "approval resume is a new paid provider response and must not be deduplicated");
+            List<RunEventEnvelope> promptBudgets = fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .filter(event -> event.type().equals("core.prompt.budget")).toList();
+            assertEquals(2, promptBudgets.size());
+            assertTrue(promptBudgets.stream().allMatch(event -> event.schemaVersion() == 2));
+            assertTrue(promptBudgets.getLast().payload()
+                    .path("toolResultTokensEstimated").asInt() > 0,
+                    () -> promptBudgets.toString());
             assertEquals(12, outcome.output().path("usage").path("inputTokens").asLong());
             assertEquals(5, outcome.output().path("usage").path("outputTokens").asLong());
             assertEquals(12, fixture.ledger.snapshot(handle.id()).inputTokens());
@@ -176,6 +192,59 @@ class SpringAiReasoningGatewayIntegrationTest {
         }
     }
 
+    @Test
+    void interactiveRetryPolicyCanNeverExceedTwoProviderAttempts() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        ChatModel model = prompt -> {
+            calls.incrementAndGet();
+            throw new IllegalStateException("transient provider failure");
+        };
+
+        try (Fixture fixture = new Fixture(
+                model, RunBudget.UNBOUNDED, new AtomicInteger(), false, true)) {
+            RunOutcome outcome = fixture.engine.start(fixture.request()).completion()
+                    .toCompletableFuture().get();
+
+            assertEquals(RunState.FAILED, outcome.state());
+            assertEquals(2, calls.get());
+            assertEquals(1, fixture.runs.eventsAfter(outcome.runId(), 0).stream()
+                    .filter(event -> event.type().equals("core.model.retrying")).count());
+            assertEquals(2, fixture.runs.eventsAfter(outcome.runId(), 0).stream()
+                    .filter(event -> event.type().equals("core.model.usage")
+                            && event.payload().path("failed").asBoolean()).count());
+            assertEquals(2, fixture.ledger.snapshot(outcome.runId()).modelCalls());
+        }
+    }
+
+    @Test
+    void toolOutcomeCommitFailureIsNeverRetriedByTheModelPolicy() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        ChatModel model = prompt -> {
+            calls.incrementAndGet();
+            throw new com.javaclaw.framework.spi.ToolOutcomeCommitException(
+                    "email_send", "send-call", "outcome store unavailable",
+                    new IllegalStateException("database unavailable"));
+        };
+
+        try (Fixture fixture = new Fixture(
+                model, RunBudget.UNBOUNDED, new AtomicInteger(), false, true)) {
+            RunOutcome outcome = fixture.engine.start(fixture.request()).completion()
+                    .toCompletableFuture().get();
+
+            assertEquals(RunState.FAILED, outcome.state());
+            assertEquals(1, calls.get());
+            assertEquals(0, fixture.runs.eventsAfter(outcome.runId(), 0).stream()
+                    .filter(event -> event.type().equals("core.model.retrying")).count());
+            var failed = fixture.runs.eventsAfter(outcome.runId(), 0).stream()
+                    .filter(event -> event.type().equals("core.run.failed"))
+                    .findFirst().orElseThrow();
+            assertEquals("TOOL_OUTCOME_COMMIT_FAILED",
+                    failed.payload().path("code").asText());
+            assertEquals("email_send", failed.payload().path("tool").asText());
+            assertEquals("send-call", failed.payload().path("invocationId").asText());
+        }
+    }
+
     private static ChatResponse toolCallResponse(int inputTokens, int outputTokens) {
         return namedToolCallResponse(
                 "test_mutate", "{\"value\":1}", inputTokens, outputTokens);
@@ -219,6 +288,15 @@ class SpringAiReasoningGatewayIntegrationTest {
                 RunBudget budget,
                 AtomicInteger toolCalls,
                 boolean clarificationTool) {
+            this(model, budget, toolCalls, clarificationTool, clarificationTool);
+        }
+
+        private Fixture(
+                ChatModel model,
+                RunBudget budget,
+                AtomicInteger toolCalls,
+                boolean clarificationTool,
+                boolean retryEveryFailure) {
             DriverManagerDataSource dataSource = new DriverManagerDataSource(
                     "jdbc:h2:mem:spring-reasoning-" + UUID.randomUUID()
                             + ";DB_CLOSE_DELAY=-1", "sa", "");
@@ -250,7 +328,7 @@ class SpringAiReasoningGatewayIntegrationTest {
                     request -> CompletableFuture.failedFuture(
                             new AssertionError("model task not expected"))));
             extensions.publish(List.of(ExtensionArtifact.builtin(
-                    new ToolExtension(toolCalls, clarificationTool))));
+                    new ToolExtension(toolCalls, clarificationTool, retryEveryFailure))));
 
             SpringAiModelRegistry models = new SpringAiModelRegistry();
             models.register("test:model", toolCapable(model));
@@ -266,7 +344,8 @@ class SpringAiReasoningGatewayIntegrationTest {
                             new AssertionError("model task not expected")),
                     runs, json, executor, ObservationRegistry.NOOP);
             engine = new AgentEngine(new AgentCompiler(definitions, extensions, json),
-                    runs, plans, reasoning, Runnable::run, json, clock, ledger);
+                    runs, plans, reasoning, Runnable::run, json, clock, ledger,
+                    new com.javaclaw.framework.core.RunEventRelay());
         }
 
         private static ChatModel toolCapable(ChatModel delegate) {
@@ -305,21 +384,24 @@ class SpringAiReasoningGatewayIntegrationTest {
     private static final class ToolExtension implements AgentFrameworkExtension {
         private final AtomicInteger calls;
         private final boolean clarificationTool;
+        private final boolean retryEveryFailure;
         private final ExtensionDescriptor descriptor = new ExtensionDescriptor(
                 "test.tool", SemanticVersion.parse("1.0.0"), ">=2.0.0 <3.0.0",
                 ">=2.0.0 <3.0.0", List.of(), Set.of(), ExtensionScope.PLAN_SCOPED,
                 HotUpdateCompatibility.PLAN_ISOLATED, 1, Map.of());
 
-        private ToolExtension(AtomicInteger calls, boolean clarificationTool) {
+        private ToolExtension(
+                AtomicInteger calls, boolean clarificationTool, boolean retryEveryFailure) {
             this.calls = calls;
             this.clarificationTool = clarificationTool;
+            this.retryEveryFailure = retryEveryFailure;
         }
 
         @Override public ExtensionDescriptor descriptor() { return descriptor; }
 
         @Override
         public void register(ExtensionRegistrar registrar) {
-            if (clarificationTool) {
+            if (retryEveryFailure) {
                 registrar.retryPolicy(new RetryPolicy() {
                     @Override public String id() { return "retry-every-failure"; }
                     @Override public int order() { return 0; }

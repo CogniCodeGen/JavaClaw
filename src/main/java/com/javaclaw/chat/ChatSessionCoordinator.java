@@ -495,7 +495,9 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
     private static MessageSnapshot messageSnapshot(ChatMessage message) {
         TurnMetrics metrics = message.getMetrics();
         TurnUsage usage = metrics == null ? null : new TurnUsage(
-                metrics.inputTokens(), metrics.outputTokens(), metrics.durationMs());
+                metrics.inputTokens(), metrics.cacheReadInputTokens(),
+                metrics.cacheWriteInputTokens(), metrics.outputTokens(),
+                metrics.reasoningTokens(), metrics.modelCalls(), metrics.durationMs());
         DeliveryStatus delivery = message.getDeliveryState() == null
                 ? null : DeliveryStatus.valueOf(message.getDeliveryState().name());
         return new MessageSnapshot(
@@ -505,7 +507,8 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
                 message.getImagePaths(),
                 message.isAdopted(),
                 delivery,
-                usage);
+                usage,
+                message.getMessageId());
     }
 
     private static ChatMessage messageFrom(MessageSnapshot snapshot) {
@@ -513,8 +516,11 @@ final class ChatSessionCoordinator implements ChatTurnController.Host, AutoClose
                 ? null : DeliveryState.valueOf(snapshot.deliveryStatus().name());
         TurnUsage usage = snapshot.usage();
         TurnMetrics metrics = usage == null ? null : new TurnMetrics(
-                usage.inputTokens(), usage.outputTokens(), usage.durationMs());
+                usage.inputTokens(), usage.cacheReadInputTokens(),
+                usage.cacheWriteInputTokens(), usage.outputTokens(),
+                usage.reasoningTokens(), usage.modelCalls(), usage.durationMs());
         ChatMessage message = new ChatMessage(
+                snapshot.messageId(),
                 ChatMessage.Role.valueOf(snapshot.role().name()),
                 snapshot.content(),
                 snapshot.timestamp(),

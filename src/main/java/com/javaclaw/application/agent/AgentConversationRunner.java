@@ -140,6 +140,19 @@ public final class AgentConversationRunner implements AutoCloseable {
         switch (event.type()) {
             case "core.model.started" -> callbacks.onEvent(
                     new ConversationEvent.Hint("模型正在推理…"));
+            case "core.model.usage", "core.model_task.usage" -> {
+                boolean background = event.type().equals("core.model_task.usage")
+                        && payload.path("attribution").asText("INLINE").equals("BACKGROUND");
+                if (!background) {
+                    callbacks.onEvent(new ConversationEvent.Usage(
+                            payload.path("inputTokens").asLong(),
+                            payload.path("cacheReadInputTokens").asLong(),
+                            payload.path("cacheWriteInputTokens").asLong(),
+                            payload.path("outputTokens").asLong(),
+                            payload.path("reasoningTokens").asLong(),
+                            payload.path("modelCalls").asLong(1)));
+                }
+            }
             case "core.tool.started" -> callbacks.onEvent(new ConversationEvent.Hint(
                     "正在执行工具：" + payload.path("tool").asText("unknown")));
             case "core.tool.completed" -> {

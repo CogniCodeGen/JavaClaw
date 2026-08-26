@@ -137,6 +137,13 @@ public class RootConfiguration {
         return new DataSourceTransactionManager(dataSource);
     }
 
+    @Bean
+    com.javaclaw.platform.data.UsageHistoryReset usageHistoryReset(JdbcTemplate jdbc, PlatformTransactionManager transactionManager) {
+        var reset = new com.javaclaw.platform.data.UsageHistoryReset(jdbc, transactionManager);
+        reset.resetOnce();
+        return reset;
+    }
+
     @Bean(initMethod = "warmUp")
     CredentialCipher credentialCipher(JdbcTemplate jdbc) {
         return new CredentialEncryptor(jdbc);
@@ -267,20 +274,23 @@ public class RootConfiguration {
             JdbcTemplate jdbc,
             PlatformTransactionManager transactionManager,
             ObjectMapper json,
-            Clock frameworkClock) {
+            Clock frameworkClock,
+            com.javaclaw.platform.data.UsageHistoryReset usageHistoryReset) {
         return new com.javaclaw.framework.store.JdbcRunStore(
                 jdbc, transactionManager, json, frameworkClock);
     }
 
     @Bean
     com.javaclaw.framework.store.JdbcExecutionPlanStore frameworkExecutionPlanStore(
-            JdbcTemplate jdbc, ObjectMapper json, Clock frameworkClock) {
+            JdbcTemplate jdbc, ObjectMapper json, Clock frameworkClock,
+            com.javaclaw.platform.data.UsageHistoryReset usageHistoryReset) {
         return new com.javaclaw.framework.store.JdbcExecutionPlanStore(jdbc, json, frameworkClock);
     }
 
     @Bean
     com.javaclaw.framework.store.JdbcExtensionStateStore frameworkExtensionStateStore(
-            JdbcTemplate jdbc, ObjectMapper json, Clock frameworkClock) {
+            JdbcTemplate jdbc, ObjectMapper json, Clock frameworkClock,
+            com.javaclaw.platform.data.UsageHistoryReset usageHistoryReset) {
         return new com.javaclaw.framework.store.JdbcExtensionStateStore(jdbc, json, frameworkClock);
     }
 
@@ -324,6 +334,15 @@ public class RootConfiguration {
     }
 
     @Bean
+    com.javaclaw.framework.core.RunUsageAccountRestorer runUsageAccountRestorer(
+            com.javaclaw.framework.store.JdbcRunStore runs,
+            com.javaclaw.framework.store.JdbcExecutionPlanStore plans,
+            com.javaclaw.framework.core.RunUsageLedger usage,
+            ObjectMapper json) {
+        return new com.javaclaw.framework.core.RunUsageAccountRestorer(runs, plans, usage, json);
+    }
+
+    @Bean
     com.javaclaw.framework.springai.SpringAiModelRegistry springAiModelRegistry() {
         return new com.javaclaw.framework.springai.SpringAiModelRegistry();
     }
@@ -350,9 +369,15 @@ public class RootConfiguration {
     }
 
     @Bean
+    com.javaclaw.framework.core.RunEventRelay runEventRelay() {
+        return new com.javaclaw.framework.core.RunEventRelay();
+    }
+
+    @Bean
     com.javaclaw.framework.core.RunEventModelTaskAuditSink modelTaskAuditSink(
-            com.javaclaw.framework.store.JdbcRunStore runs) {
-        return new com.javaclaw.framework.core.RunEventModelTaskAuditSink(runs);
+            com.javaclaw.framework.store.JdbcRunStore runs,
+            com.javaclaw.framework.core.RunEventRelay events) {
+        return new com.javaclaw.framework.core.RunEventModelTaskAuditSink(runs, events);
     }
 
     @Bean
@@ -361,11 +386,13 @@ public class RootConfiguration {
             com.javaclaw.framework.core.RunUsageLedger usage,
             com.javaclaw.framework.core.RunEventModelTaskAuditSink audit,
             com.javaclaw.framework.store.JdbcRunStore runs,
+            com.javaclaw.framework.core.RunUsageAccountRestorer usageAccounts,
             ObjectMapper json,
+            Clock frameworkClock,
             @org.springframework.beans.factory.annotation.Qualifier("agentKernelExecutor")
             com.javaclaw.framework.spi.CancellableTaskExecutor executor) {
         return new com.javaclaw.framework.springai.SpringAiModelTaskGateway(
-                models, usage, audit, json, executor, runs);
+                models, usage, audit, json, executor, runs, usageAccounts, frameworkClock);
     }
 
     @Bean(destroyMethod = "close")
@@ -377,6 +404,8 @@ public class RootConfiguration {
             com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry hostTools,
             com.javaclaw.framework.builtin.WorkspaceCapabilityRegistry capabilities,
             com.javaclaw.framework.store.JdbcExtensionStateStore extensionState,
+            com.javaclaw.framework.store.JdbcRunStore runs,
+            JdbcTemplate jdbc,
             ManagedTaskExecutor managedTasks,
             com.javaclaw.framework.extension.TrustedExtensionInstaller installer) {
         var manager = new com.javaclaw.framework.extension.ExtensionManager(
@@ -385,7 +414,12 @@ public class RootConfiguration {
                 new com.javaclaw.infrastructure.agent.ManagedBackgroundJobScheduler(managedTasks));
         var artifacts = new java.util.ArrayList<com.javaclaw.framework.extension.ExtensionArtifact>(
                 com.javaclaw.framework.builtin.BuiltinExtensionCatalog.create(
-                        capabilities, capabilities, capabilities, capabilities, hostTools));
+                        capabilities, capabilities, capabilities, capabilities, hostTools,
+                        new com.javaclaw.framework.builtin.context.ContextCompactionAdvisorFactory(
+                                new com.javaclaw.framework.builtin.context.JdbcConversationContextSummaryStore(jdbc),
+                                new com.javaclaw.infrastructure.chat.JdbcConversationHistorySource(jdbc),
+                                frameworkClock),
+                        runs));
         var restored = installer.loadAuthorized();
         artifacts.addAll(restored.artifacts());
         restored.failures().forEach(failure ->
@@ -543,10 +577,16 @@ public class RootConfiguration {
             ObjectMapper json,
             @org.springframework.beans.factory.annotation.Qualifier("agentKernelExecutor")
             com.javaclaw.framework.spi.CancellableTaskExecutor executor,
-            io.micrometer.observation.ObservationRegistry observations) {
+            io.micrometer.observation.ObservationRegistry observations,
+            Clock frameworkClock) {
         return new com.javaclaw.framework.springai.SpringAiReasoningGateway(
                 models, advisors, tools, extensionState, usage, modelTasks, runs, json, executor,
-                observations);
+                observations, frameworkClock);
+    }
+
+    @Bean(destroyMethod = "close")
+    com.javaclaw.framework.core.DefaultRunResourceRegistry runResourceRegistry() {
+        return new com.javaclaw.framework.core.DefaultRunResourceRegistry();
     }
 
     @Bean(destroyMethod = "close")
@@ -559,9 +599,11 @@ public class RootConfiguration {
             java.util.concurrent.Executor executor,
             ObjectMapper json,
             Clock frameworkClock,
-            com.javaclaw.framework.core.RunUsageLedger usage) {
-        return new com.javaclaw.framework.core.AgentEngine(
-                compiler, runs, plans, reasoning, executor, json, frameworkClock, usage);
+            com.javaclaw.framework.core.RunUsageLedger usage,
+            com.javaclaw.framework.core.RunEventRelay events,
+            com.javaclaw.framework.spi.RunResourceRegistry runResources) {
+        return new com.javaclaw.framework.core.AgentEngine(compiler, runs, plans, reasoning,
+                executor, json, frameworkClock, usage, events, runResources);
     }
 
     @Bean

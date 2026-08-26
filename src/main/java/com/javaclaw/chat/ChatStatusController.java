@@ -81,14 +81,12 @@ final class ChatStatusController implements AutoCloseable {
                     }
                 }));
         refresh();
-        refreshTitle();
     }
 
     void resetSession() {
         if (tracker != null) {
             tracker.resetSession();
             refresh();
-            refreshTitle();
         }
     }
 
@@ -112,8 +110,9 @@ final class ChatStatusController implements AutoCloseable {
         String createdAt = session.getCreatedAt() == null
                 ? "—" : session.getCreatedAt().format(TIME_FORMAT);
         String model = modelName();
+        String profileInputLimit = "plan".equals(modeBar.selectedModeId()) ? "80k" : "120k";
         String metadata = session.getMessages().size() + " 条消息 · 创建于 " + createdAt
-                + " · ctx " + context + " / 200k"
+                + " · ctx " + context + " / " + profileInputLimit
                 + (model.isBlank() ? "" : " · " + model);
         header.showTitle(session.getTitle(), metadata);
     }
@@ -122,6 +121,7 @@ final class ChatStatusController implements AutoCloseable {
         refreshLocalMode();
         refreshTokenSummary();
         refreshNavigationBadges();
+        refreshTitle();
     }
 
     @Override
@@ -151,19 +151,26 @@ final class ChatStatusController implements AutoCloseable {
             long sessionTokens = tracker.getSessionTokens();
             long todayTokens = tracker.getTodayTokens();
             long monthlyTokens = tracker.getMonthlyTokens();
-            String monthlyCost = TokenTracker.formatCostCny(tracker.getMonthlyCostCny());
             TokenTracker.DailyUsage today = tracker.getTodayUsage();
             TokenTracker.DailyUsage month = tracker.getMonthlyUsage();
+            String hitRate = today.meteredInput <= 0 ? "—"
+                    : String.format("%.1f%%", 100.0 * today.cachedInput / today.meteredInput);
             String summary = "今日 " + TokenTracker.formatTokens(todayTokens)
                     + " · 会话 " + TokenTracker.formatTokens(sessionTokens)
-                    + " · " + monthlyCost;
+                    + " · 缓存命中 " + hitRate;
             String details = "今日累计：" + TokenTracker.formatTokens(todayTokens) + " tokens"
                     + "（输入 " + TokenTracker.formatTokens(today.input)
-                    + " / 输出 " + TokenTracker.formatTokens(today.output) + "）\n"
+                    + " / 输出 " + TokenTracker.formatTokens(today.output)
+                    + " / 缓存读 " + TokenTracker.formatTokens(today.cachedInput)
+                    + " / 缓存写 " + TokenTracker.formatTokens(today.cacheWriteInput)
+                    + " / 推理 " + reasoning(today.reasoning) + "）\n"
                     + "本月累计：" + TokenTracker.formatTokens(monthlyTokens) + " tokens"
                     + "（输入 " + TokenTracker.formatTokens(month.input)
-                    + " / 输出 " + TokenTracker.formatTokens(month.output) + "）\n"
-                    + "本月成本：" + monthlyCost + "（估算，仅供参考）\n"
+                    + " / 输出 " + TokenTracker.formatTokens(month.output)
+                    + " / 缓存读 " + TokenTracker.formatTokens(month.cachedInput)
+                    + " / 缓存写 " + TokenTracker.formatTokens(month.cacheWriteInput)
+                    + " / 推理 " + reasoning(month.reasoning) + "）\n"
+                    + "今日缓存命中率：" + hitRate + "\n"
                     + "本次会话：" + TokenTracker.formatTokens(sessionTokens) + " tokens · 耗时 "
                     + TokenTracker.formatDuration(tracker.getSessionDurationSeconds()) + "\n"
                     + "点击可重置本次会话计数";
@@ -171,6 +178,10 @@ final class ChatStatusController implements AutoCloseable {
         } catch (RuntimeException failure) {
             log.debug("刷新 Token 徽标失败", failure);
         }
+    }
+
+    private static String reasoning(long tokens) {
+        return tokens <= 0 ? "—" : TokenTracker.formatTokens(tokens);
     }
 
     private void refreshNavigationBadges() {

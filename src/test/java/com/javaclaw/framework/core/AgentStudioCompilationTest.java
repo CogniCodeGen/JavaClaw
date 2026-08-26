@@ -80,6 +80,12 @@ class AgentStudioCompilationTest {
             assertThrows(IllegalArgumentException.class,
                     () -> studio.publishAgent("workspace", invalid.id()));
 
+            ObjectNode legacyButNoLongerAuthorable = JsonNodeFactory.instance.objectNode()
+                    .put("threshold", 8);
+            assertTrue(studio.validateAgent("workspace",
+                    agentDraft(capability, legacyButNoLongerAuthorable)).issues().stream()
+                    .anyMatch(issue -> issue.code().equals("configuration.authoring_maximum")));
+
             ObjectNode inlineSecret = JsonNodeFactory.instance.objectNode()
                     .put("threshold", 3).put("credential", "actual-api-key");
             assertTrue(studio.validateAgent("workspace",
@@ -132,6 +138,26 @@ class AgentStudioCompilationTest {
                         .descriptor().name());
                 assertEquals("1.0.0", plan.descriptor().extensionLocks().getFirst()
                         .version().toString());
+            }
+
+            // Simulates a definition published before the stricter authoring bound existed. The
+            // standard schema still accepts it and the compiler must preserve it for runtime clamp.
+            AgentDefinitionDraft legacyPublished = agentDraft(
+                    capability, legacyButNoLongerAuthorable);
+            definitions.saveAgentDraft("workspace", legacyPublished, false);
+            var legacyVersion = definitions.publishAgent("workspace", legacyPublished.id());
+            RunRequest legacyRequest = RunRequest.builder()
+                    .agent(new AgentDefinitionRef(legacyVersion.id(), legacyVersion.version()))
+                    .profile(new RunProfileRef(publishedProfile.id(), publishedProfile.version()))
+                    .source(InvocationSource.chat())
+                    .scope(new RunScope("workspace", "user", "legacy-session"))
+                    .input(InputBlock.text("compile legacy configuration"))
+                    .permissionCeiling(PermissionSet.of("tool.read"))
+                    .budget(RunBudget.UNBOUNDED)
+                    .build();
+            try (ExecutionPlan plan = compiler.compile(legacyRequest)) {
+                assertEquals(8, plan.descriptor().compiledCapabilities()
+                        .get(capability).path("normalizedThreshold").asInt());
             }
 
             AgentCompiler systemRestricted = new AgentCompiler(
@@ -200,6 +226,7 @@ class AgentStudioCompilationTest {
             threshold.put("type", "integer");
             threshold.put("minimum", 1);
             threshold.put("maximum", 10);
+            threshold.put(com.javaclaw.framework.spi.AgentStudioUiSchema.AUTHORING_MAXIMUM, 3);
             schema.withObject("/properties").putObject("enabled").put("type", "boolean");
             schema.withObject("/properties").putObject("credential")
                     .put("type", "string").put("format", "secret-ref");

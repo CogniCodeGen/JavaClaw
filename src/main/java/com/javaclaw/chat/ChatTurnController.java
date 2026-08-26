@@ -1,7 +1,5 @@
 package com.javaclaw.chat;
 
-import com.javaclaw.agent.PricingTable;
-import com.javaclaw.agent.TokenTracker;
 import com.javaclaw.api.conversation.CancellationReason;
 import com.javaclaw.api.conversation.ConversationCallbacks;
 import com.javaclaw.api.conversation.ConversationEvent;
@@ -365,11 +363,12 @@ final class ChatTurnController {
         ChatActiveTurn turn = activeTurn;
         if (turn == null) return;
         turn.inputTokens += Math.max(0, usage.inputTokens());
+        turn.cacheReadInputTokens += Math.max(0, usage.cacheReadInputTokens());
+        turn.cacheWriteInputTokens += Math.max(0, usage.cacheWriteInputTokens());
         turn.outputTokens += Math.max(0, usage.outputTokens());
-        double cost = PricingTable.estimateCostCny(
-                status.modelName(), turn.inputTokens, turn.outputTokens);
-        thinking.updateMetrics(turn.inputTokens, turn.outputTokens,
-                TokenTracker.formatCostCny(cost));
+        turn.reasoningTokens += Math.max(0, usage.reasoningTokens());
+        turn.modelCalls += Math.max(0, usage.modelCalls());
+        thinking.updateMetrics(turn.metrics());
     }
 
     private String conversationTargetId(boolean forcePlan) {

@@ -6,6 +6,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * 聊天消息模型类
@@ -16,6 +17,9 @@ import java.util.List;
  * @author JavaClaw
  */
 public class ChatMessage {
+
+    /** Stable identity used by persistent context-summary cursors. */
+    private final String messageId;
 
     /** 时间格式化器：显示"时:分" */
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
@@ -114,6 +118,14 @@ public class ChatMessage {
     public ChatMessage(Role role, String content, LocalDateTime timestamp,
                        List<File> attachments, List<String> imagePaths,
                        DeliveryState deliveryState, TurnMetrics metrics) {
+        this(null, role, content, timestamp, attachments, imagePaths, deliveryState, metrics);
+    }
+
+    /** Full constructor used when restoring a persisted message with its stable identity. */
+    public ChatMessage(String messageId, Role role, String content, LocalDateTime timestamp,
+                       List<File> attachments, List<String> imagePaths,
+                       DeliveryState deliveryState, TurnMetrics metrics) {
+        this.messageId = normalizeMessageId(messageId);
         this.role = role;
         this.content = content;
         this.timestamp = timestamp;
@@ -121,6 +133,10 @@ public class ChatMessage {
         this.imagePaths = imagePaths != null ? new ArrayList<>(imagePaths) : new ArrayList<>();
         this.deliveryState = deliveryState;
         this.metrics = metrics;
+    }
+
+    public String getMessageId() {
+        return messageId;
     }
 
     public Role getRole() {
@@ -217,5 +233,9 @@ public class ChatMessage {
         String name = file.getName();
         int lastDot = name.lastIndexOf('.');
         return lastDot > 0 ? name.substring(lastDot + 1) : "";
+    }
+
+    private static String normalizeMessageId(String value) {
+        return value == null || value.isBlank() ? UUID.randomUUID().toString() : value.strip();
     }
 }

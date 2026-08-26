@@ -13,12 +13,17 @@ import com.javaclaw.framework.api.RunLinkage;
 import com.javaclaw.framework.api.RunProfileRef;
 import com.javaclaw.framework.api.RunRequest;
 import com.javaclaw.framework.api.RunScope;
+import com.javaclaw.framework.api.ToolGroupAccess;
+import com.javaclaw.framework.api.ToolNameAccess;
+import com.javaclaw.framework.api.ToolAccessPolicy;
 import com.javaclaw.runtime.WorkspaceContext;
 
 import java.io.File;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 
 /** Canonical product-side builder for requests entering the one AgentEngine. */
@@ -27,9 +32,15 @@ public final class RunRequestFactory {
     private static final String LOCAL_USER = "local-user";
 
     private final WorkspaceContext workspace;
+    private final ToolIntentRouter toolRouter;
 
     public RunRequestFactory(WorkspaceContext workspace) {
+        this(workspace, null);
+    }
+
+    public RunRequestFactory(WorkspaceContext workspace, ToolIntentRouter toolRouter) {
         this.workspace = Objects.requireNonNull(workspace, "workspace");
+        this.toolRouter = toolRouter;
     }
 
     public RunRequest conversation(
@@ -42,7 +53,7 @@ public final class RunRequestFactory {
         List<InputBlock> inputs = new ArrayList<>();
         request.priorMessages().stream()
                 .map(message -> InputBlock.message(
-                        message.role().name().toLowerCase(), message.content()))
+                        message.messageId(), message.role().name().toLowerCase(), message.content()))
                 .forEach(inputs::add);
         inputs.add(InputBlock.text(request.userInput()));
         request.attachments().stream().map(RunRequestFactory::attachment).forEach(inputs::add);
@@ -55,19 +66,34 @@ public final class RunRequestFactory {
                 .linkage(RunLinkage.root(null))
                 .permissionCeiling(permissions)
                 .budget(RunBudget.UNBOUNDED);
+        Map<String, com.fasterxml.jackson.databind.JsonNode> attributes = new LinkedHashMap<>();
         for (int index = request.priorMessages().size() - 1; index >= 0; index--) {
             ConversationMessage message = request.priorMessages().get(index);
             if (message.role() == ConversationMessage.Role.ASSISTANT) {
-                ObjectNode previous = JsonNodeFactory.instance.objectNode();
-                previous.put("previousAssistantReply", message.content());
-                java.util.Map<String, com.fasterxml.jackson.databind.JsonNode> attributes =
-                        new java.util.LinkedHashMap<>();
-                previous.fields().forEachRemaining(entry ->
-                        attributes.put(entry.getKey(), entry.getValue()));
-                builder.attributes(attributes);
+                attributes.put("previousAssistantReply",
+                        JsonNodeFactory.instance.textNode(message.content()));
                 break;
             }
         }
+        if (toolRouter != null) {
+            ToolExposureDecision decision = toolRouter.route(request);
+            if (!decision.legacyAll()) {
+                ToolAccessPolicy.restricted(
+                        decision.allowedGroups(), decision.allowedTools())
+                        .writeAttributes(attributes);
+                boolean knowledgeContext = decision.bundleIds().contains("knowledge.read");
+                attributes.put("framework.enableKnowledgeContext",
+                        JsonNodeFactory.instance.booleanNode(knowledgeContext));
+            }
+            ObjectNode routing = JsonNodeFactory.instance.objectNode();
+            routing.put("legacyAll", decision.legacyAll());
+            routing.put("reason", decision.reason());
+            var bundles = routing.putArray("bundles");
+            decision.bundleIds().stream().sorted().forEach(bundles::add);
+            routing.put("toolCount", decision.allowedTools().size());
+            attributes.put("framework.toolRouting", routing);
+        }
+        if (!attributes.isEmpty()) builder.attributes(attributes);
         return builder.build();
     }
 

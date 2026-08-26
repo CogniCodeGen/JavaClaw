@@ -130,13 +130,16 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
             List<MessageSnapshot> messages =
                     jdbc.query(
                             """
-                            SELECT role, content, timestamp, image_paths_json, adopted,
-                                   delivery_state, input_tokens, output_tokens, duration_ms
+                            SELECT position, message_id, role, content, timestamp,
+                                   image_paths_json, adopted,
+                                   delivery_state, input_tokens, cache_read_input_tokens,
+                                   cache_write_input_tokens, output_tokens, reasoning_tokens,
+                                   model_calls, duration_ms
                             FROM chat_messages
                             WHERE workspace_id = ? AND session_id = ?
                             ORDER BY position
                             """,
-                            (row, index) -> readMessage(row),
+                            (row, index) -> readMessage(row, workspace, checkedSessionId),
                             workspace,
                             checkedSessionId);
             log.info("会话消息已从 H2 加载: {} {} 条消息", checkedSessionId, messages.size());
@@ -238,18 +241,38 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
         }
     }
 
-    private MessageSnapshot readMessage(ResultSet row) throws SQLException {
+    private MessageSnapshot readMessage(
+            ResultSet row, String workspace, String sessionId) throws SQLException {
         String state = row.getString("delivery_state");
         Long input = nullableLong(row, "input_tokens");
+        Long cacheRead = nullableLong(row, "cache_read_input_tokens");
+        Long cacheWrite = nullableLong(row, "cache_write_input_tokens");
         Long output = nullableLong(row, "output_tokens");
+        Long reasoning = nullableLong(row, "reasoning_tokens");
+        Long calls = nullableLong(row, "model_calls");
         Long duration = nullableLong(row, "duration_ms");
         TurnUsage usage =
-                input == null && output == null && duration == null
+                input == null && cacheRead == null && cacheWrite == null && output == null
+                        && reasoning == null && calls == null && duration == null
                         ? null
                         : new TurnUsage(
                                 input == null ? 0 : input,
+                                cacheRead == null ? 0 : cacheRead,
+                                cacheWrite == null ? 0 : cacheWrite,
                                 output == null ? 0 : output,
+                                reasoning == null ? 0 : reasoning,
+                                calls == null ? 0 : calls,
                                 duration == null ? 0 : duration);
+        String messageId = row.getString("message_id");
+        if (messageId == null || messageId.isBlank()) {
+            messageId = LegacyChatMessageIds.derive(
+                    workspace,
+                    sessionId,
+                    row.getInt("position"),
+                    row.getString("role"),
+                    row.getString("content"),
+                    row.getString("timestamp"));
+        }
         return new MessageSnapshot(
                 MessageRole.valueOf(row.getString("role")),
                 row.getString("content"),
@@ -257,7 +280,8 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
                 readStringList(row.getString("image_paths_json")),
                 row.getBoolean("adopted"),
                 state == null || state.isBlank() ? null : DeliveryStatus.valueOf(state),
-                usage);
+                usage,
+                messageId);
     }
 
     private List<PersistedMessage> snapshotMessages(List<MessageSnapshot> messages) {
@@ -283,10 +307,11 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
         jdbc.batchUpdate(
                 """
                 INSERT INTO chat_messages(
-                    workspace_id, session_id, position, role, content, timestamp,
+                    workspace_id, session_id, position, message_id, role, content, timestamp,
                     image_paths_json, adopted, delivery_state,
-                    input_tokens, output_tokens, duration_ms)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    input_tokens, cache_read_input_tokens, cache_write_input_tokens,
+                    output_tokens, reasoning_tokens, model_calls, duration_ms)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 messages,
                 messages.size(),
@@ -295,21 +320,26 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
                     statement.setString(1, workspace);
                     statement.setString(2, sessionId);
                     statement.setInt(3, persisted.position());
-                    statement.setString(4, message.role().name());
-                    statement.setString(5, message.content());
-                    statement.setString(6, message.timestamp().format(TIMESTAMP_FORMATTER));
-                    statement.setString(7, persisted.imagePathsJson());
-                    statement.setBoolean(8, message.adopted());
+                    statement.setString(4, message.messageId());
+                    statement.setString(5, message.role().name());
+                    statement.setString(6, message.content());
+                    statement.setString(7, message.timestamp().format(TIMESTAMP_FORMATTER));
+                    statement.setString(8, persisted.imagePathsJson());
+                    statement.setBoolean(9, message.adopted());
                     setNullableString(
                             statement,
-                            9,
+                            10,
                             message.deliveryStatus() == null
                                     ? null
                                     : message.deliveryStatus().name());
                     TurnUsage usage = message.usage();
-                    setNullableLong(statement, 10, usage == null ? null : usage.inputTokens());
-                    setNullableLong(statement, 11, usage == null ? null : usage.outputTokens());
-                    setNullableLong(statement, 12, usage == null ? null : usage.durationMs());
+                    setNullableLong(statement, 11, usage == null ? null : usage.inputTokens());
+                    setNullableLong(statement, 12, usage == null ? null : usage.cacheReadInputTokens());
+                    setNullableLong(statement, 13, usage == null ? null : usage.cacheWriteInputTokens());
+                    setNullableLong(statement, 14, usage == null ? null : usage.outputTokens());
+                    setNullableLong(statement, 15, usage == null ? null : usage.reasoningTokens());
+                    setNullableLong(statement, 16, usage == null ? null : usage.modelCalls());
+                    setNullableLong(statement, 17, usage == null ? null : usage.durationMs());
                 });
     }
 
@@ -328,6 +358,17 @@ public final class JdbcChatHistoryStore implements ChatHistoryPort {
 
     private void deleteSessions(String workspace, List<String> sessionIds) {
         if (sessionIds.isEmpty()) return;
+        jdbc.batchUpdate(
+                """
+                DELETE FROM conversation_context_summary
+                WHERE workspace_id = ? AND session_id = ?
+                """,
+                sessionIds,
+                sessionIds.size(),
+                (statement, id) -> {
+                    statement.setString(1, workspace);
+                    statement.setString(2, id);
+                });
         jdbc.batchUpdate(
                 """
                 DELETE FROM chat_messages

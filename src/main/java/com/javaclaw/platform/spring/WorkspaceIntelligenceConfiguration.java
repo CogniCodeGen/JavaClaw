@@ -82,8 +82,10 @@ class WorkspaceIntelligenceConfiguration {
     SkillManager skillManager(
             WorkspaceContext workspace,
             ObjectMapper json,
-            com.javaclaw.config.AgentConfig settings) {
-        return new SkillManager(workspace.globalDataRoot().resolve("skills"), json, settings);
+            com.javaclaw.config.AgentConfig settings,
+            com.javaclaw.framework.spi.ExtensionStateStore extensionState) {
+        return new SkillManager(
+                workspace.globalDataRoot().resolve("skills"), json, settings, extensionState);
     }
 
     @Bean(destroyMethod = "close")
@@ -196,10 +198,11 @@ class WorkspaceIntelligenceConfiguration {
             com.javaclaw.framework.api.AgentClient agents,
             com.javaclaw.memory.MemoryService memory,
             com.javaclaw.runtime.WorkspaceContext workspace,
+            com.javaclaw.config.AgentConfig settings,
             @Qualifier("agentKernelExecutor") java.util.concurrent.Executor executor) {
         return new ChatService(options.browserManager(), workflows, siteCredentials,
                 skillCurator, taskScope,
-                agents, memory, workspace, executor);
+                agents, memory, workspace, settings, executor);
     }
 
     @Bean(destroyMethod = "close")
@@ -251,15 +254,20 @@ class WorkspaceIntelligenceConfiguration {
             com.javaclaw.framework.builtin.WorkspaceCapabilityRegistry registry,
             com.javaclaw.infrastructure.memory.EclipseStoreMemoryExtensionAdapter memory,
             KnowledgeExpert knowledge,
-            SkillRuntimeServices skills) {
+            SkillRuntimeServices skills,
+            com.javaclaw.framework.spi.RunResourceRegistry runResources) {
         com.javaclaw.framework.spi.RetrieverContribution retriever = (query, request) -> {
             String context = knowledge.retrieveContext(query, knowledge.getEnabledDocs());
             return context == null || context.isBlank() ? java.util.List.of()
                     : java.util.List.of(
                     com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.textNode(context));
         };
-        com.javaclaw.framework.spi.PromptContributor skillContributor = (request, state) ->
-                skills.manager().buildSkillCatalogPrompt(null);
+        com.javaclaw.framework.spi.PromptContributor skillContributor = (request, state) -> {
+            java.util.Set<String> groups = com.javaclaw.framework.api.ToolGroupAccess
+                    .configuredGroups(request);
+            return skills.manager().buildSkillCatalogPrompt(
+                    state.runId(), runResources.forRun(state.runId()), groups);
+        };
         return registry.register(workspace.workspaceId(), memory, memory,
                 retriever, skillContributor);
     }
@@ -360,8 +368,9 @@ class WorkspaceIntelligenceConfiguration {
     PlanModeService planModeService(
             com.javaclaw.framework.api.AgentClient agents,
             com.javaclaw.runtime.WorkspaceContext workspace,
+            com.javaclaw.config.AgentConfig settings,
             @Qualifier("agentKernelExecutor") java.util.concurrent.Executor executor) {
-        return new PlanModeService(agents, workspace, executor);
+        return new PlanModeService(agents, workspace, settings, executor);
     }
 
     @Bean(destroyMethod = "shutdown")

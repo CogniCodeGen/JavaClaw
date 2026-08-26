@@ -64,6 +64,12 @@ class AgentConversationRunnerTest {
         assertTrue(runner.isRunning());
 
         run.emit("core.model.started", object());
+        run.emit("core.model.usage", object()
+                .put("inputTokens", 100).put("cacheReadInputTokens", 40)
+                .put("cacheWriteInputTokens", 5).put("outputTokens", 20)
+                .put("reasoningTokens", 7).put("modelCalls", 1));
+        run.emit("core.model_task.usage", object()
+                .put("inputTokens", 10).put("outputTokens", 3).put("modelCalls", 1));
         run.emit("core.tool.started", object().put("tool", "sys_file_read"));
         run.emit("core.tool.completed", object()
                 .put("tool", "text-tool").put("output", "plain"));
@@ -112,6 +118,12 @@ class AgentConversationRunnerTest {
                         && reply.chunk().equals("fallback reply")));
         assertEquals(2, callbacks.events.stream()
                 .filter(ConversationEvent.Custom.class::isInstance).count());
+        List<ConversationEvent.Usage> usage = callbacks.events.stream()
+                .filter(ConversationEvent.Usage.class::isInstance)
+                .map(ConversationEvent.Usage.class::cast).toList();
+        assertEquals(2, usage.size());
+        assertEquals(40, usage.getFirst().cacheReadInputTokens());
+        assertEquals(7, usage.getFirst().reasoningTokens());
     }
 
     @Test

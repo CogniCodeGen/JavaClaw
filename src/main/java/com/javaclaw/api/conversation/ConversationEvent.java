@@ -67,7 +67,28 @@ public interface ConversationEvent {
      * @param inputTokens  输入 token 数
      * @param outputTokens 输出 token 数
      */
-    record Usage(long inputTokens, long outputTokens) implements ConversationEvent {}
+    record Usage(
+            long inputTokens,
+            long cacheReadInputTokens,
+            long cacheWriteInputTokens,
+            long outputTokens,
+            long reasoningTokens,
+            long modelCalls) implements ConversationEvent {
+        public Usage {
+            inputTokens = Math.max(0, inputTokens);
+            cacheReadInputTokens = Math.min(inputTokens, Math.max(0, cacheReadInputTokens));
+            cacheWriteInputTokens = Math.min(
+                    inputTokens - cacheReadInputTokens, Math.max(0, cacheWriteInputTokens));
+            outputTokens = Math.max(0, outputTokens);
+            reasoningTokens = Math.min(outputTokens, Math.max(0, reasoningTokens));
+            modelCalls = Math.max(0, modelCalls);
+        }
+
+        public Usage(long inputTokens, long outputTokens) {
+            this(inputTokens, 0, 0, outputTokens, 0,
+                    inputTokens > 0 || outputTokens > 0 ? 1 : 0);
+        }
+    }
 
     /** GEPA 过程评估结果 */
     record Evaluation(EvaluationResult result) implements ConversationEvent {}

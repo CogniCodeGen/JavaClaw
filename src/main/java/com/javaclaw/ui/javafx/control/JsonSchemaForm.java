@@ -106,7 +106,11 @@ public final class JsonSchemaForm {
             }
             case "integer" -> {
                 int minimum = schema.path("minimum").asInt(Integer.MIN_VALUE / 2);
-                int maximum = schema.path("maximum").asInt(Integer.MAX_VALUE / 2);
+                JsonNode authoringMaximum = schema.get(
+                        com.javaclaw.framework.spi.AgentStudioUiSchema.AUTHORING_MAXIMUM);
+                int maximum = authoringMaximum != null && authoringMaximum.isIntegralNumber()
+                        ? authoringMaximum.asInt()
+                        : schema.path("maximum").asInt(Integer.MAX_VALUE / 2);
                 int value = initial == null ? Math.max(0, minimum) : initial.asInt();
                 Spinner<Integer> spinner = new Spinner<>();
                 spinner.setEditable(true);

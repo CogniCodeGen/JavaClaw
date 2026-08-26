@@ -52,7 +52,11 @@ public final class BuiltinDefinitionBootstrap {
     }
 
     private void install(ExtensionRegistrySnapshot snapshot) {
-        RunBudget interactiveBudget = new RunBudget(
+        RunBudget chatBudget = new RunBudget(
+                Duration.ofMinutes(30), 120_000, 32_000, 16, new BigDecimal("100"));
+        RunBudget planBudget = new RunBudget(
+                Duration.ofMinutes(30), 80_000, 24_000, 8, new BigDecimal("100"));
+        RunBudget legacyInteractiveBudget = new RunBudget(
                 Duration.ofMinutes(30), 250_000, 80_000, 120, new BigDecimal("100"));
         RunBudget unattendedBudget = new RunBudget(
                 Duration.ofHours(4), 1_000_000, 300_000, 500, new BigDecimal("500"));
@@ -60,16 +64,16 @@ public final class BuiltinDefinitionBootstrap {
         List<RunProfileDraft> profiles = new ArrayList<>();
         profiles.add(new RunProfileDraft(
                 "chat", "Interactive Chat", PermissionSet.UNRESTRICTED,
-                interactiveBudget, Map.of(), object()));
+                chatBudget, Map.of(), object()));
         profiles.add(new RunProfileDraft(
                 "plan", "Read-only Plan", PermissionSet.UNRESTRICTED,
-                interactiveBudget, Map.of(new CapabilityId("plan.readonly"), enabled()), object()));
+                planBudget, Map.of(new CapabilityId("plan.readonly"), enabled()), object()));
         profiles.add(new RunProfileDraft(
                 "schedule", "Unattended Schedule", PermissionSet.UNRESTRICTED,
                 unattendedBudget, Map.of(), object()));
         profiles.add(new RunProfileDraft(
                 "plugin", "Plugin Invocation", PermissionSet.UNRESTRICTED,
-                interactiveBudget, Map.of(), object()));
+                legacyInteractiveBudget, Map.of(), object()));
         profiles.add(new RunProfileDraft(
                 "loop", "Loop Workflow Agent", PermissionSet.UNRESTRICTED,
                 unattendedBudget, Map.of(), object()));
@@ -78,7 +82,7 @@ public final class BuiltinDefinitionBootstrap {
                 unattendedBudget, Map.of(), object()));
         profiles.add(new RunProfileDraft(
                 "subagent", "Child Agent", PermissionSet.UNRESTRICTED,
-                interactiveBudget, Map.of(new CapabilityId("subagent.run"), enabled()), object()));
+                legacyInteractiveBudget, Map.of(new CapabilityId("subagent.run"), enabled()), object()));
 
         snapshot.contributions().runProfiles().forEach(owned -> {
             RunProfileDraft contributed = owned.value().profile();
@@ -117,7 +121,7 @@ public final class BuiltinDefinitionBootstrap {
                         "identity", "You are JavaClaw, a capable workspace assistant.",
                         "execution", "Use tools only when needed. Keep every action within the run permissions and budget.",
                         "framework", "You run inside one durable AgentEngine. Do not invent another runtime or hidden plan state."),
-                capabilities, object(), object(), interactiveBudget, object(), ranges);
+                capabilities, object(), object(), legacyInteractiveBudget, object(), ranges);
         definitions.installBuiltinDefinitions(workspaceId, profiles, agent);
     }
 

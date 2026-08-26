@@ -214,6 +214,7 @@ final class JavaClawSchema {
                         workspace_id VARCHAR(128) NOT NULL,
                         session_id VARCHAR(128) NOT NULL,
                         position INT NOT NULL,
+                        message_id VARCHAR(96),
                         role VARCHAR(32) NOT NULL,
                         content CLOB,
                         timestamp VARCHAR(64) NOT NULL,
@@ -221,28 +222,77 @@ final class JavaClawSchema {
                         adopted BOOLEAN NOT NULL,
                         delivery_state VARCHAR(32),
                         input_tokens BIGINT,
+                        cache_read_input_tokens BIGINT,
+                        cache_write_input_tokens BIGINT,
                         output_tokens BIGINT,
+                        reasoning_tokens BIGINT,
+                        model_calls BIGINT,
                         duration_ms BIGINT,
                         PRIMARY KEY (workspace_id, session_id, position)
                     )
                     """);
             st.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS delivery_state VARCHAR(32)");
+            st.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS message_id VARCHAR(96)");
             st.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS input_tokens BIGINT");
+            st.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS cache_read_input_tokens BIGINT");
+            st.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS cache_write_input_tokens BIGINT");
             st.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS output_tokens BIGINT");
+            st.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS reasoning_tokens BIGINT");
+            st.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS model_calls BIGINT");
             st.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS duration_ms BIGINT");
+            st.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_messages_message_id "
+                    + "ON chat_messages(workspace_id, session_id, message_id)");
+
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS conversation_context_summary (
+                        workspace_id VARCHAR(128) NOT NULL,
+                        session_id VARCHAR(128) NOT NULL,
+                        summarized_messages INT NOT NULL,
+                        cursor_message_id VARCHAR(96),
+                        source_hash VARCHAR(128) NOT NULL,
+                        summary_json CLOB NOT NULL,
+                        rendered_summary CLOB NOT NULL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (workspace_id, session_id)
+                    )
+                    """);
+            st.execute("ALTER TABLE conversation_context_summary "
+                    + "ADD COLUMN IF NOT EXISTS cursor_message_id VARCHAR(96)");
 
             st.execute("""
                     CREATE TABLE IF NOT EXISTS token_usage_daily (
                         workspace_id VARCHAR(128) NOT NULL,
                         usage_date VARCHAR(32) NOT NULL,
                         input_tokens BIGINT NOT NULL,
+                        pricing_input_tokens BIGINT NOT NULL DEFAULT 0,
                         output_tokens BIGINT NOT NULL,
                         metered_input BIGINT NOT NULL,
                         cached_input BIGINT NOT NULL,
+                        cache_write_input BIGINT NOT NULL DEFAULT 0,
+                        reasoning_tokens BIGINT NOT NULL DEFAULT 0,
+                        model_calls BIGINT NOT NULL DEFAULT 0,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         PRIMARY KEY (workspace_id, usage_date)
                     )
                     """);
+            st.execute("ALTER TABLE token_usage_daily ADD COLUMN IF NOT EXISTS "
+                    + "pricing_input_tokens BIGINT NOT NULL DEFAULT 0");
+            st.execute("ALTER TABLE token_usage_daily ADD COLUMN IF NOT EXISTS cache_write_input BIGINT NOT NULL DEFAULT 0");
+            st.execute("ALTER TABLE token_usage_daily ADD COLUMN IF NOT EXISTS reasoning_tokens BIGINT NOT NULL DEFAULT 0");
+            st.execute("ALTER TABLE token_usage_daily ADD COLUMN IF NOT EXISTS model_calls BIGINT NOT NULL DEFAULT 0");
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS token_usage_projection_receipts (
+                        workspace_id VARCHAR(128) NOT NULL,
+                        model_call_id VARCHAR(512) NOT NULL,
+                        run_id VARCHAR(128) NOT NULL,
+                        event_timestamp_ms BIGINT NOT NULL,
+                        usage_date VARCHAR(32) NOT NULL,
+                        projected_at BIGINT NOT NULL,
+                        PRIMARY KEY (workspace_id, model_call_id)
+                    )
+                    """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_token_usage_receipts_run "
+                    + "ON token_usage_projection_receipts(run_id)");
 
             st.execute("""
                     CREATE TABLE IF NOT EXISTS skill_usage (

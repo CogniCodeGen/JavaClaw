@@ -2,6 +2,8 @@ package com.javaclaw.infrastructure.agent;
 
 import com.javaclaw.framework.api.RunId;
 import com.javaclaw.framework.api.RunScope;
+import com.javaclaw.framework.api.ModelTokenUsage;
+import com.javaclaw.framework.api.ModelUsageFact;
 import com.javaclaw.framework.spi.RunUsageObserver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,6 +42,32 @@ public final class WorkspaceUsageRegistry implements RunUsageObserver {
             } catch (RuntimeException failure) {
                 log.warn("工作区用量投影失败: workspace={}, run={}",
                         scope.workspaceId(), runId, failure);
+            }
+        }
+    }
+
+    @Override
+    public void recorded(RunId runId, RunScope scope, ModelTokenUsage usage, BigDecimal cost) {
+        for (RunUsageObserver observer : observers.getOrDefault(
+                scope.workspaceId(), new CopyOnWriteArrayList<>())) {
+            try {
+                observer.recorded(runId, scope, usage, cost);
+            } catch (RuntimeException failure) {
+                log.warn("工作区用量投影失败: workspace={}, run={}",
+                        scope.workspaceId(), runId, failure);
+            }
+        }
+    }
+
+    @Override
+    public void recorded(ModelUsageFact fact) {
+        for (RunUsageObserver observer : observers.getOrDefault(
+                fact.scope().workspaceId(), new CopyOnWriteArrayList<>())) {
+            try {
+                observer.recorded(fact);
+            } catch (RuntimeException failure) {
+                log.warn("工作区用量投影失败: workspace={}, run={}",
+                        fact.scope().workspaceId(), fact.runId(), failure);
             }
         }
     }

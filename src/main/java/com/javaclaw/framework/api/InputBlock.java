@@ -9,6 +9,8 @@ import java.util.Base64;
 
 /** Extensible multimodal input. The type is namespaced and the body stays schema driven. */
 public record InputBlock(String type, JsonNode data) {
+    public static final String CONVERSATION_MESSAGE_ID_FIELD = "messageId";
+    public static final String CONVERSATION_MESSAGE_ID_METADATA = "javaclaw.messageId";
     public InputBlock {
         type = Objects.requireNonNull(type, "type").trim();
         data = Objects.requireNonNull(data, "data").deepCopy();
@@ -25,11 +27,19 @@ public record InputBlock(String type, JsonNode data) {
 
     /** Ordered prior conversation message; the current turn continues to use {@link #text}. */
     public static InputBlock message(String role, String text) {
+        return message(null, role, text);
+    }
+
+    /** Ordered prior conversation message carrying a stable durable identity when available. */
+    public static InputBlock message(String messageId, String role, String text) {
         String checkedRole = Objects.requireNonNull(role, "role").trim().toLowerCase();
         if (!checkedRole.equals("user") && !checkedRole.equals("assistant")) {
             throw new IllegalArgumentException("conversation message role must be user or assistant");
         }
         ObjectNode data = JsonNodeFactory.instance.objectNode();
+        if (messageId != null && !messageId.isBlank()) {
+            data.put(CONVERSATION_MESSAGE_ID_FIELD, messageId.strip());
+        }
         data.put("role", checkedRole);
         data.put("text", Objects.requireNonNull(text, "text"));
         return new InputBlock("core.message", data);

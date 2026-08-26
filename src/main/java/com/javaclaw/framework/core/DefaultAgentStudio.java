@@ -226,6 +226,8 @@ public final class DefaultAgentStudio implements AgentStudioClient {
         }
         issues.addAll(schemas.validate(
                 registration.descriptor().configurationSchema(), configuration, path));
+        issues.addAll(AgentStudioAuthoringConstraints.validate(
+                registration.descriptor().configurationSchema(), configuration, path));
         validateSecretReferences(
                 registration.descriptor().configurationSchema(),
                 registration.descriptor().uiSchema(), configuration, path, issues);

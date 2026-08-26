@@ -3,6 +3,7 @@ package com.javaclaw.skill;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.util.PathGuard;
 import com.javaclaw.util.SensitiveDataRedactor;
+import com.javaclaw.util.TokenEstimator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -13,7 +14,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -27,6 +27,7 @@ final class SkillPromptRenderer {
 
     private static final Logger log = LoggerFactory.getLogger(SkillPromptRenderer.class);
     private static final int MAX_REFERENCE_CHARS = 10_000;
+    private static final int MAX_CATALOG_TOKENS = 1_200;
 
     interface Source {
         List<Skill> getEnabledSkills();
@@ -41,94 +42,152 @@ final class SkillPromptRenderer {
     }
 
     private final Source source;
-    private final AgentConfig settings;
+    private final SkillCatalogSnapshotFactory snapshots;
 
     SkillPromptRenderer(Source source, AgentConfig settings) {
         this.source = java.util.Objects.requireNonNull(source, "source");
-        this.settings = java.util.Objects.requireNonNull(settings, "settings");
+        this.snapshots = new SkillCatalogSnapshotFactory(
+                source, java.util.Objects.requireNonNull(settings, "settings"));
     }
 
     String buildCatalog(Set<String> availableGroups) {
-        List<Skill> active = source.getActiveSkills(availableGroups).stream()
-                .filter(skill -> !hasSensitiveName(skill))
-                .toList();
-        StringBuilder prompt = new StringBuilder();
-        appendSkillCatalog(prompt, active);
-        appendBundleCatalog(prompt);
-        appendEvolutionNudge(prompt);
-        return prompt.toString();
+        return buildCatalog(snapshot(availableGroups));
     }
 
-    private void appendSkillCatalog(StringBuilder prompt, List<Skill> active) {
+    String buildCatalog(CatalogSnapshot snapshot) {
+        java.util.Objects.requireNonNull(snapshot, "snapshot");
+        if (snapshot.skills().isEmpty()) return "";
+        StringBuilder prompt = new StringBuilder();
+        appendSkillCatalog(prompt, snapshot.skills());
+        appendBundleCatalog(prompt, snapshot.bundles());
+        String catalog = prompt.toString();
+        if (TokenEstimator.estimate(catalog) <= MAX_CATALOG_TOKENS) {
+            return catalog;
+        }
+        String compressed = buildCompressedCatalog(snapshot);
+        if (TokenEstimator.estimate(compressed) <= MAX_CATALOG_TOKENS) {
+            return compressed;
+        }
+        SkillCatalogPage first = readCatalogPage(snapshot, 0, MAX_CATALOG_TOKENS);
+        return first == null ? "" : first.content();
+    }
+
+    CatalogSnapshot snapshot(Set<String> availableGroups) {
+        return snapshot(availableGroups, false);
+    }
+
+    CatalogSnapshot readableSnapshot(Set<String> availableGroups) {
+        return snapshot(availableGroups, true);
+    }
+
+    private CatalogSnapshot snapshot(Set<String> availableGroups, boolean captureReadableContent) {
+        return snapshots.capture(availableGroups, captureReadableContent);
+    }
+
+    private void appendSkillCatalog(StringBuilder prompt, List<CatalogSkill> active) {
         if (active.isEmpty()) {
             return;
         }
-        prompt.append("\n\n## 可用技能目录\n")
-                .append("以下是当前已配置的技能清单（仅名称与用途）。当任务与某技能相关时，请遵循对应技能的指令完成工作；\n")
-                .append("若清单中列出某技能、但下方未提供其详细指令，且该技能与当前任务相关，\n")
-                .append("请调用 skill_read 工具（参数 skill_name 填技能名称）按需拉取其完整指令后再执行；\n")
-                .append("技能若列出参考文档，可再用 skill_read 的 path 参数单独拉取某个文档；\n")
-                .append("严格项目隔离模式下不执行技能脚本；技能仅提供可审查的流程与参考资料。\n");
-        for (Skill skill : active) {
+        prompt.append("\n\n## 可用技能（L0）\n")
+                .append("仅列元数据。相关时先调用 skill_read(skill_name) 读取正文，再按需用 path 读取单份参考资料。\n");
+        for (CatalogSkill skill : active) {
             appendCatalogEntry(prompt, skill);
         }
     }
 
-    private void appendCatalogEntry(StringBuilder prompt, Skill skill) {
-        prompt.append("- 【").append(skill.getName()).append("】");
-        if (!skill.getCategory().isBlank()) {
-            prompt.append("[").append(skill.getCategory()).append("] ");
+    private void appendCatalogEntry(StringBuilder prompt, CatalogSkill skill) {
+        prompt.append("- ").append(catalogReference(skill));
+        if (!skill.category().isBlank()) {
+            prompt.append("[").append(skill.category()).append("] ");
         }
-        if (!skill.getTags().isEmpty()) {
-            prompt.append("(").append(String.join("/", skill.getTags())).append(") ");
-        }
-        String description = skill.getDescription();
-        if (description != null && !description.isBlank()) {
-            prompt.append(SensitiveDataRedactor.containsLikelyCredential(description)
-                    ? "[描述包含疑似凭据，已隐藏]" : description.strip());
-        }
-        List<String> references = listReferenceFiles(skill);
-        if (!references.isEmpty()) {
-            prompt.append("；参考文档：").append(String.join("、", references));
-        }
-        List<String> scripts = listScriptFiles(skill);
-        if (!scripts.isEmpty()) {
-            prompt.append("；脚本：").append(String.join("、", scripts))
-                    .append("（严格隔离下不可执行）");
+        if (!skill.description().isBlank()) {
+            if (skill.category().isBlank()) prompt.append(" ");
+            prompt.append(skill.description());
         }
         prompt.append("\n");
     }
 
-    private void appendBundleCatalog(StringBuilder prompt) {
-        if (!settings.isSkillBundlesEnabled()) {
-            return;
-        }
-        List<SkillBundle> bundles = source.getEnabledBundles().stream()
-                .filter(bundle -> !SensitiveDataRedactor.containsLikelyCredential(bundle.name))
-                .toList();
+    private void appendBundleCatalog(StringBuilder prompt, List<CatalogBundle> bundles) {
         if (bundles.isEmpty()) {
             return;
         }
-        prompt.append("\n## 可用技能包\n")
-                .append("技能包是一组配合使用的技能；任务匹配某包描述时，包内技能将成组注入。\n");
-        for (SkillBundle bundle : bundles) {
-            prompt.append("- 【").append(bundle.name).append("】")
-                    .append(redactDescription(bundle.description))
-                    .append("（含：").append(bundle.skills.stream()
-                            .map(SkillPromptRenderer::redactCatalogValue)
-                            .collect(Collectors.joining("、")))
+        prompt.append("\n## 可用技能包（仅索引）\n")
+                .append("技能包不会自动注入正文；按需分别调用 skill_read。\n");
+        for (CatalogBundle bundle : bundles) {
+            prompt.append("- 【").append(bundle.name()).append("】")
+                    .append(bundle.description())
+                    .append("（含：").append(String.join("、", bundle.members()))
                     .append("）\n");
         }
     }
 
-    private void appendEvolutionNudge(StringBuilder prompt) {
-        if (!settings.isSkillNudgeEnabled()
-                || "off".equals(settings.getSkillEvolutionMode())) {
-            return;
+    private String buildCompressedCatalog(CatalogSnapshot snapshot) {
+        StringBuilder compact = new StringBuilder("\n\n## 可用技能（L0 压缩索引）\n")
+                .append("需要时调用 skill_read；名称：");
+        compact.append(snapshot.skills().stream()
+                .map(SkillPromptRenderer::catalogReference)
+                .collect(Collectors.joining("、")));
+        if (!snapshot.bundles().isEmpty()) {
+            compact.append("\n技能包：");
+            for (int i = 0; i < snapshot.bundles().size(); i++) {
+                if (i > 0) compact.append("；");
+                CatalogBundle bundle = snapshot.bundles().get(i);
+                compact.append(bundle.name()).append("(")
+                        .append(String.join("、", bundle.members()))
+                        .append(")");
+            }
         }
-        prompt.append("\n## 经验沉淀\n")
-                .append("若本次完成了非平凡的多步骤工作流、踩坑后找到了可行路径、或被用户纠正了做法，\n")
-                .append("请考虑调用 skill_create 把经验沉淀为新技能，或用 skill_patch 把新认知合入相关既有技能（小修优先 patch）。\n");
+        compact.append("\n");
+        return compact.toString();
+    }
+
+    SkillCatalogPage readCatalogPage(CatalogSnapshot snapshot, int cursor, int maxTokens) {
+        if (snapshot == null || cursor < 0 || maxTokens <= 0) return null;
+        List<String> entries = catalogPageEntries(snapshot);
+        if (cursor > entries.size()) return null;
+        String header = "## 可用技能（L0 分页索引）\n"
+                + "读取正文请用 skill_read(skill_name)；继续目录请用 skill_read(\"*\", cursor)。\n";
+        StringBuilder body = new StringBuilder();
+        int next = cursor;
+        while (next < entries.size()) {
+            String line = entries.get(next) + "\n";
+            String footer = catalogCursorFooter(next + 1, next + 1 < entries.size());
+            if (TokenEstimator.estimate(header + body + line + footer) > maxTokens) break;
+            body.append(line);
+            next++;
+        }
+        if (next == cursor && next < entries.size()) {
+            String footer = catalogCursorFooter(next + 1, next + 1 < entries.size());
+            int remaining = maxTokens - TokenEstimator.estimate(header + footer);
+            if (remaining <= 0) return null;
+            body.append(TokenEstimator.truncateToTokens(entries.get(next), remaining)).append("\n");
+            next++;
+        }
+        boolean more = next < entries.size();
+        String content = header + body + catalogCursorFooter(next, more);
+        if (TokenEstimator.estimate(content) > maxTokens) {
+            throw new IllegalStateException("skill catalog page exceeded token budget");
+        }
+        return new SkillCatalogPage(content, next, more);
+    }
+
+    private static List<String> catalogPageEntries(CatalogSnapshot snapshot) {
+        List<String> entries = new ArrayList<>();
+        for (CatalogSkill skill : snapshot.skills()) {
+            entries.add("- 技能 " + catalogReference(skill));
+        }
+        for (CatalogBundle bundle : snapshot.bundles()) {
+            entries.add("- 技能包【" + bundle.name() + "】");
+            bundle.members().forEach(member -> entries.add("  - 成员 " + member));
+        }
+        return List.copyOf(entries);
+    }
+
+    private static String catalogCursorFooter(int nextCursor, boolean hasMore) {
+        return hasMore
+                ? "[next_cursor=" + nextCursor
+                + "；继续调用 skill_read(\"*\", cursor=" + nextCursor + ")]"
+                : "[next_cursor=END]";
     }
 
     String buildEnabledPrompt() {
@@ -216,11 +275,130 @@ final class SkillPromptRenderer {
         }
     }
 
-    private static Path resolveReference(Path references, String relativePath) {
+    SkillContentPage readProgressivePage(String name, String relativePath,
+                                         int cursor, int maxCharacters) {
+        return readProgressivePage(name, relativePath, cursor, maxCharacters, null);
+    }
+
+    SkillContentPage readProgressivePage(
+            String name, String relativePath, int cursor, int maxCharacters,
+            Set<String> allowedSkillNames) {
+        if (name == null || name.isBlank() || cursor < 0 || maxCharacters <= 0) {
+            return null;
+        }
+        String targetName = name.strip();
+        if (allowedSkillNames != null && !allowedSkillNames.contains(targetName)) return null;
+        Skill skill = source.getEnabledSkills().stream()
+                .filter(candidate -> candidate.getName().equals(targetName))
+                .findFirst()
+                .orElse(null);
+        if (skill == null || hasSensitiveName(skill)) {
+            return null;
+        }
+        return readProgressivePage(
+                snapshots.captureSkill(skill, true), relativePath, cursor, maxCharacters);
+    }
+
+    SkillContentPage readProgressivePage(
+            CatalogSnapshot snapshot, String lookup, String relativePath,
+            int cursor, int maxCharacters) {
+        return readProgressivePage(
+                snapshot, lookup, relativePath, cursor, null, maxCharacters);
+    }
+
+    SkillContentPage readProgressivePage(
+            CatalogSnapshot snapshot, String lookup, String relativePath,
+            int cursor, Integer line, int maxCharacters) {
+        return readProgressivePage(
+                snapshot, lookup, relativePath, cursor, line, maxCharacters, null);
+    }
+
+    SkillContentPage readProgressivePage(
+            CatalogSnapshot snapshot, String lookup, String relativePath,
+            int cursor, Integer line, int maxCharacters,
+            SkillReferenceReadSession referenceReads) {
+        if (snapshot == null || lookup == null || lookup.isBlank()) return null;
+        CatalogSkill skill = snapshot.resolveSkill(lookup);
+        return skill == null ? null
+                : readProgressivePage(
+                        skill, relativePath, cursor, line, maxCharacters, referenceReads);
+    }
+
+    SkillReferenceSearchResult searchReferences(
+            CatalogSnapshot snapshot, String lookup, String relativePath,
+            String query, int maxCharacters) {
+        return searchReferences(
+                snapshot, lookup, relativePath, query, maxCharacters, null);
+    }
+
+    SkillReferenceSearchResult searchReferences(
+            CatalogSnapshot snapshot, String lookup, String relativePath,
+            String query, int maxCharacters, SkillReferenceReadSession referenceReads) {
+        if (snapshot == null || lookup == null || lookup.isBlank()) return null;
+        CatalogSkill skill = snapshot.resolveSkill(lookup);
+        return skill == null ? null : SkillReferenceAccess.search(
+                skill, relativePath, query, maxCharacters, referenceReads);
+    }
+
+    private static SkillContentPage readProgressivePage(
+            CatalogSkill skill, String relativePath, int cursor, int maxCharacters) {
+        return readProgressivePage(skill, relativePath, cursor, null, maxCharacters);
+    }
+
+    private static SkillContentPage readProgressivePage(
+            CatalogSkill skill, String relativePath, int cursor,
+            Integer line, int maxCharacters) {
+        return readProgressivePage(skill, relativePath, cursor, line, maxCharacters, null);
+    }
+
+    private static SkillContentPage readProgressivePage(
+            CatalogSkill skill, String relativePath, int cursor,
+            Integer line, int maxCharacters, SkillReferenceReadSession referenceReads) {
+        if (cursor < 0 || maxCharacters <= 0) return null;
+        if (relativePath == null || relativePath.isBlank()) {
+            String body = skill.content();
+            if (SensitiveDataRedactor.containsLikelyCredential(body)) {
+                body = "[技能正文包含疑似凭据，系统已阻止载入]";
+            }
+            String full = "【" + skill.name() + " / SKILL.md】\n" + body
+                    + (skill.referenceFiles().isEmpty() ? ""
+                    : "\n\n[可按 path 单独读取的参考文件]\n- "
+                    + String.join("\n- ", skill.referenceFiles()));
+            if (cursor > full.length() || splitsSurrogatePair(full, cursor)) return null;
+            int end = Math.min(full.length(), cursor + maxCharacters);
+            if (splitsSurrogatePair(full, end)) {
+                if (end - 1 > cursor) end--;
+                else end++;
+            }
+            return new SkillContentPage(full.substring(cursor, end), end, end < full.length());
+        }
+        return SkillReferenceAccess.readPage(
+                skill, relativePath, cursor, line, maxCharacters, referenceReads);
+    }
+
+    static String normalizeReferenceName(String relativePath) {
+        if (relativePath == null || relativePath.isBlank()) return null;
         String cleaned = relativePath.strip().replace('\\', '/');
         if (cleaned.startsWith(Skill.REFERENCES_DIR + "/")) {
             cleaned = cleaned.substring(Skill.REFERENCES_DIR.length() + 1);
         }
+        if (cleaned.isBlank() || cleaned.contains("/")
+                || SensitiveDataRedactor.containsLikelyCredential(cleaned)) return null;
+        return cleaned;
+    }
+
+    private static boolean splitsSurrogatePair(String value, int index) {
+        return index > 0 && index < value.length()
+                && Character.isHighSurrogate(value.charAt(index - 1))
+                && Character.isLowSurrogate(value.charAt(index));
+    }
+
+    static Path resolveReference(Path references, String relativePath) {
+        String cleaned = relativePath.strip().replace('\\', '/');
+        if (cleaned.startsWith(Skill.REFERENCES_DIR + "/")) {
+            cleaned = cleaned.substring(Skill.REFERENCES_DIR.length() + 1);
+        }
+        if (SensitiveDataRedactor.containsLikelyCredential(cleaned)) return null;
         Path target = references.resolve(cleaned).normalize();
         if (!target.startsWith(references) || !Files.isRegularFile(target)
                 || !SkillFileRepository.isTextFile(target)
@@ -297,45 +475,6 @@ final class SkillPromptRenderer {
         return content.toString();
     }
 
-    private static List<String> listScriptFiles(Skill skill) {
-        if (!skill.hasScripts()) {
-            return List.of();
-        }
-        List<String> names = new ArrayList<>();
-        Path scripts = skill.getDirectory().resolve(Skill.SCRIPTS_DIR);
-        try (DirectoryStream<Path> files = Files.newDirectoryStream(scripts)) {
-            for (Path file : files) {
-                String lower = file.getFileName().toString().toLowerCase(Locale.ROOT);
-                if (Files.isRegularFile(file)
-                        && (lower.endsWith(".jsh") || lower.endsWith(".java"))) {
-                    names.add(file.getFileName().toString());
-                }
-            }
-        } catch (IOException e) {
-            log.debug("列出技能脚本失败: {}", scripts);
-        }
-        return names;
-    }
-
-    private static List<String> listReferenceFiles(Skill skill) {
-        if (!skill.hasReferences()) {
-            return List.of();
-        }
-        List<String> names = new ArrayList<>();
-        Path references = skill.getDirectory().resolve(Skill.REFERENCES_DIR);
-        try (DirectoryStream<Path> files = Files.newDirectoryStream(references)) {
-            for (Path file : files) {
-                if (Files.isRegularFile(file) && SkillFileRepository.isTextFile(file)
-                        && PathGuard.isInside(references, file)) {
-                    names.add(file.getFileName().toString());
-                }
-            }
-        } catch (IOException e) {
-            log.debug("列出参考文档失败: {}", references);
-        }
-        return names;
-    }
-
     private static String truncateReference(String text) {
         return text.length() > MAX_REFERENCE_CHARS
                 ? text.substring(0, MAX_REFERENCE_CHARS) + "\n...(内容已截断)"
@@ -346,18 +485,73 @@ final class SkillPromptRenderer {
         return SensitiveDataRedactor.containsLikelyCredential(skill.getName());
     }
 
-    private static String redactCatalogValue(String value) {
-        if (value == null) {
-            return "";
-        }
-        return SensitiveDataRedactor.containsLikelyCredential(value) ? "[已隐藏]" : value;
+    static String catalogReference(CatalogSkill skill) {
+        String reference = "【" + skill.displayName() + "】";
+        return skill.lookupKey().equals(skill.name())
+                ? reference : reference + "（读取键：" + skill.lookupKey() + "）";
     }
 
-    private static String redactDescription(String description) {
-        if (description == null) {
-            return "";
+    record CatalogSkill(
+            String name,
+            String lookupKey,
+            String displayName,
+            String category,
+            String description,
+            String content,
+            Path directory,
+            List<CatalogReference> references) {
+        CatalogSkill {
+            content = content == null ? "" : content;
+            directory = directory == null ? null : directory.toAbsolutePath().normalize();
+            references = List.copyOf(references == null ? List.of() : references);
         }
-        return SensitiveDataRedactor.containsLikelyCredential(description)
-                ? "[描述包含疑似凭据，已隐藏]" : description.strip();
+
+        List<String> referenceFiles() {
+            return references.stream().map(CatalogReference::name).toList();
+        }
+
+        CatalogReference reference(String name) {
+            return references.stream()
+                    .filter(reference -> reference.name().equals(name))
+                    .findFirst().orElse(null);
+        }
+    }
+
+    record CatalogReference(String name, long capturedSize) {
+        CatalogReference {
+            name = java.util.Objects.requireNonNull(name, "name");
+            capturedSize = Math.max(0, capturedSize);
+        }
+    }
+
+    record CatalogBundle(String name, String description, List<String> members) {
+        CatalogBundle {
+            members = List.copyOf(members == null ? List.of() : members);
+        }
+    }
+
+    record CatalogSnapshot(List<CatalogSkill> skills, List<CatalogBundle> bundles) {
+        CatalogSnapshot {
+            skills = List.copyOf(skills == null ? List.of() : skills);
+            bundles = List.copyOf(bundles == null ? List.of() : bundles);
+        }
+
+        String resolveLookup(String lookup) {
+            CatalogSkill skill = resolveSkill(lookup);
+            return skill == null ? null : skill.name();
+        }
+
+        CatalogSkill resolveSkill(String lookup) {
+            if (lookup == null || lookup.isBlank() || lookup.strip().equals("*")) return null;
+            String target = lookup.strip();
+            return skills.stream()
+                    .filter(skill -> skill.lookupKey().equals(target) || skill.name().equals(target))
+                    .findFirst().orElse(null);
+        }
+
+        Set<String> activeNames() {
+            return skills.stream().map(CatalogSkill::name)
+                    .collect(Collectors.toUnmodifiableSet());
+        }
     }
 }

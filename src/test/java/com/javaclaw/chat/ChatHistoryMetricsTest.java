@@ -53,7 +53,7 @@ class ChatHistoryMetricsTest {
         String sessionId = "metrics-" + UUID.randomUUID();
         MessageSnapshot completed = new MessageSnapshot(
                 MessageRole.ASSISTANT, "done", LocalDateTime.now(), List.of(), false,
-                DeliveryStatus.COMPLETE, new TurnUsage(12, 7, 345));
+                DeliveryStatus.COMPLETE, new TurnUsage(120, 40, 10, 70, 20, 3, 345));
         MessageSnapshot legacy = new MessageSnapshot(
                 MessageRole.ASSISTANT, "legacy", LocalDateTime.now(), List.of(), false,
                 null, null);
@@ -65,11 +65,42 @@ class ChatHistoryMetricsTest {
         List<MessageSnapshot> loaded = history.messages(workspaceId, sessionId);
 
         assertEquals(2, loaded.size());
+        assertEquals(completed.messageId(), loaded.getFirst().messageId());
+        assertEquals(legacy.messageId(), loaded.get(1).messageId());
         assertEquals(DeliveryStatus.COMPLETE, loaded.getFirst().deliveryStatus());
-        assertEquals(new TurnUsage(12, 7, 345), loaded.getFirst().usage());
+        assertEquals(new TurnUsage(120, 40, 10, 70, 20, 3, 345),
+                loaded.getFirst().usage());
         assertNull(loaded.get(1).deliveryStatus());
         assertNull(loaded.get(1).usage());
+
+        org.springframework.jdbc.core.JdbcTemplate jdbc =
+                root.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        jdbc.update("""
+                UPDATE chat_messages SET message_id = NULL
+                WHERE workspace_id = ? AND session_id = ? AND position = 1
+                """, workspaceId, sessionId);
+        String derivedFirst = history.messages(workspaceId, sessionId).get(1).messageId();
+        String derivedSecond = history.messages(workspaceId, sessionId).get(1).messageId();
+        assertEquals(derivedFirst, derivedSecond);
+        assertTrue(derivedFirst.startsWith("legacy-"));
+        List<MessageSnapshot> legacyLoaded = history.messages(workspaceId, sessionId);
+        history.saveMessages(workspaceId, sessionId, legacyLoaded);
+        assertEquals(derivedFirst, jdbc.queryForObject("""
+                SELECT message_id FROM chat_messages
+                WHERE workspace_id = ? AND session_id = ? AND position = 1
+                """, String.class, workspaceId, sessionId));
+
+        jdbc.update("""
+                INSERT INTO conversation_context_summary(
+                    workspace_id, session_id, summarized_messages, cursor_message_id,
+                    source_hash, summary_json, rendered_summary)
+                VALUES (?, ?, 1, ?, 'hash', '{}', 'summary')
+                """, workspaceId, sessionId, derivedFirst);
         history.delete(workspaceId, sessionId);
+        assertEquals(0, jdbc.queryForObject("""
+                SELECT COUNT(*) FROM conversation_context_summary
+                WHERE workspace_id = ? AND session_id = ?
+                """, Integer.class, workspaceId, sessionId));
     }
 
     @Test

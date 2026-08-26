@@ -120,7 +120,9 @@ public class CodeTools {
 
     // ==================== 读取（按行区间） ====================
 
-    @com.javaclaw.framework.spi.ToolContract(group = "coding", permissions = {"tool.read"}, idempotent = true)
+    @com.javaclaw.framework.spi.ToolContract(
+            group = "coding", permissions = {"tool.read"}, idempotent = true,
+            resultClass = com.javaclaw.framework.spi.ToolResultClass.LARGE)
     @Tool(name = "code_read",
             description = "读取文本文件，可指定行区间（from_line/to_line，1 起、含端点；不传则整读）。"
                     + "输出带行号，便于后续用 code_edit 定位。大文件请用行区间分段读，避免一次拉满上下文。")
@@ -180,7 +182,9 @@ public class CodeTools {
 
     // ==================== 内容检索（grep） ====================
 
-    @com.javaclaw.framework.spi.ToolContract(group = "coding", permissions = {"tool.read"}, idempotent = true)
+    @com.javaclaw.framework.spi.ToolContract(
+            group = "coding", permissions = {"tool.read"}, idempotent = true,
+            resultClass = com.javaclaw.framework.spi.ToolResultClass.LARGE)
     @Tool(name = "code_grep",
             description = "在目录下按正则表达式检索文件内容，返回 文件:行号: 匹配行。跳过 .git/node_modules/target "
                     + "等构建与依赖目录及二进制/超大文件。用 glob 限定文件类型（如 **/*.java）。只读、可并行、免确认。")
@@ -596,7 +600,9 @@ public class CodeTools {
         return runGit("git_status", List.of("git", "status", "--short", "--branch"));
     }
 
-    @com.javaclaw.framework.spi.ToolContract(group = "coding", permissions = {"tool.read"}, idempotent = true)
+    @com.javaclaw.framework.spi.ToolContract(
+            group = "coding", permissions = {"tool.read"}, idempotent = true,
+            resultClass = com.javaclaw.framework.spi.ToolResultClass.LARGE)
     @Tool(name = "git_diff",
             description = "显示 git 差异。staged=true 看已暂存(--staged)，否则看工作区未暂存改动；可用 path 限定文件/目录。只读。")
     public String gitDiff(

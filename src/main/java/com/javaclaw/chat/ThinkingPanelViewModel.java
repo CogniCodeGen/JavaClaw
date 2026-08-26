@@ -20,7 +20,8 @@ public final class ThinkingPanelViewModel {
     private final StringProperty elapsed = new SimpleStringProperty("0.0s");
     private final LongProperty tokensIn = new SimpleLongProperty();
     private final LongProperty tokensOut = new SimpleLongProperty();
-    private final StringProperty cost = new SimpleStringProperty("¥0.00");
+    private final StringProperty tokenDetails =
+            new SimpleStringProperty("缓存 0 · 写入 0 · 推理 —");
     private final BooleanProperty empty = new SimpleBooleanProperty(true);
 
     StringProperty statusTypeProperty() {
@@ -43,8 +44,8 @@ public final class ThinkingPanelViewModel {
         return tokensOut;
     }
 
-    StringProperty costProperty() {
-        return cost;
+    StringProperty tokenDetailsProperty() {
+        return tokenDetails;
     }
 
     BooleanProperty emptyProperty() {
@@ -60,11 +61,11 @@ public final class ThinkingPanelViewModel {
         elapsed.set(value);
     }
 
-    void setMetrics(long input, long output, String costText) {
+    void setMetrics(long input, long output, String detailsText) {
         tokensIn.set(input);
         tokensOut.set(output);
-        if (costText != null) {
-            cost.set(costText);
+        if (detailsText != null) {
+            tokenDetails.set(detailsText);
         }
     }
 

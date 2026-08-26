@@ -10,6 +10,12 @@ import com.javaclaw.framework.spi.ToolPolicyDecision;
 import com.javaclaw.framework.spi.CancellableTaskExecutor;
 import com.javaclaw.framework.api.ToolApprovalGrant;
 import com.javaclaw.framework.api.ToolApprovalScope;
+import com.javaclaw.framework.api.ToolGroupAccess;
+import com.javaclaw.framework.api.ToolNameAccess;
+import com.javaclaw.framework.api.ToolAccessPolicy;
+import com.javaclaw.framework.spi.ToolOutcomeCommitException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -22,6 +28,10 @@ import java.util.concurrent.CompletionStage;
 
 /** Validation, permission/HITL, loop detection, timeout, normalization and events for every tool. */
 public final class DefaultToolInvocationGateway implements ToolInvocationGateway {
+    private static final Logger log = LoggerFactory.getLogger(DefaultToolInvocationGateway.class);
+    private static final String UNAVAILABLE_MODEL_RESULT =
+            "[tool result unavailable: post-processing failed]";
+    private static final long[] OUTCOME_RETRY_DELAYS_MILLIS = {50L, 100L};
     private final ToolApprovalPolicy approvalPolicy;
     private final CancellableTaskExecutor executor;
     private final Clock clock;
@@ -39,9 +49,14 @@ public final class DefaultToolInvocationGateway implements ToolInvocationGateway
     @Override
     public CompletionStage<ToolInvocationResult> invoke(ToolInvocationRequest request) {
         var descriptor = request.tool().descriptor();
-        if (!ToolGroupAccess.allows(request.runRequest(), descriptor.group())) {
+        ToolAccessPolicy access = ToolAccessPolicy.from(request.runRequest());
+        if (!access.allowsGroup(descriptor.group())) {
             return CompletableFuture.failedFuture(new ToolPermissionDeniedException(
                     "tool group is not allowed: " + descriptor.group()));
+        }
+        if (!access.allowsTool(descriptor.name())) {
+            return CompletableFuture.failedFuture(new ToolPermissionDeniedException(
+                    "tool is not allowed: " + descriptor.name()));
         }
         List<com.javaclaw.framework.api.DefinitionValidationIssue> validation = schemas.validate(
                 descriptor.inputSchema(), request.arguments(), "/arguments");
@@ -116,69 +131,77 @@ public final class DefaultToolInvocationGateway implements ToolInvocationGateway
                         ? executeTool(request)
                         : ToolApprovalScope.call(scopedApproval, () -> executeTool(request));
                 JsonNode modelOutput = rawOutput.deepCopy();
+                ObjectNode budgetObservation = JsonNodeFactory.instance.objectNode();
                 for (var processor : request.resultPostProcessors()) {
-                    modelOutput = Objects.requireNonNull(processor.process(
-                            modelOutput, descriptor, request.context(), request.runRequest()),
-                            "tool result post-processor output").deepCopy();
+                    try {
+                        modelOutput = Objects.requireNonNull(processor.process(
+                                modelOutput, descriptor, request.context(), request.runRequest()),
+                                "tool result post-processor output").deepCopy();
+                    } catch (RuntimeException processingFailure) {
+                        budgetObservation.put("postProcessingFailed", true);
+                        budgetObservation.put("postProcessor",
+                                processor.getClass().getName());
+                        budgetObservation.put("postProcessingErrorType",
+                                processingFailure.getClass().getName());
+                        modelOutput = JsonNodeFactory.instance.textNode(UNAVAILABLE_MODEL_RESULT);
+                        break;
+                    }
+                    try {
+                        JsonNode observation = Objects.requireNonNull(
+                                processor.budgetObservation(
+                                        descriptor, request.context(), request.runRequest()),
+                                "tool result budget observation");
+                        if (observation.isObject()) {
+                            budgetObservation.setAll((ObjectNode) observation);
+                        }
+                    } catch (RuntimeException observationFailure) {
+                        budgetObservation.put("budgetObservationFailed", true);
+                        budgetObservation.put("budgetObservationErrorType",
+                                observationFailure.getClass().getName());
+                    }
                 }
                 Duration duration = Duration.between(startedAt, clock.instant());
-                return new ExecutedTool(modelOutput, duration, rawOutput);
+                return new ExecutedTool(modelOutput, duration, rawOutput, budgetObservation);
             });
         } catch (Throwable submissionFailure) {
-            try {
-                if (terminalEvent.compareAndSet(false, true)) {
-                    emitFailure(request, descriptor.name(), submissionFailure);
-                }
-            } catch (Throwable eventFailure) {
-                submissionFailure.addSuppressed(eventFailure);
+            if (terminalEvent.compareAndSet(false, true)) {
+                emitFailureSafely(request, descriptor.name(), submissionFailure);
             }
             return CompletableFuture.failedFuture(submissionFailure);
         }
         CompletableFuture<ToolInvocationResult> published = new CompletableFuture<>();
         execution.whenComplete((value, failure) -> {
             Throwable cause = failure == null ? null : CancellableTaskStages.unwrap(failure);
-            if (cause == null && request.context().cancellation().cancelled()) {
-                cause = new com.javaclaw.framework.spi.RunCancelledException();
-            }
-            try {
-                if (cause == null) {
+            if (cause == null) {
+                try {
                     if (terminalEvent.compareAndSet(false, true)) {
-                        ObjectNode completed = JsonNodeFactory.instance.objectNode();
-                        completed.put("tool", descriptor.name());
-                        completed.put("invocationId", request.context().invocationId());
-                        completed.put("durationMillis", value.duration().toMillis());
-                        completed.set("output", value.rawOutput());
-                        completed.put("modelViewChanged", !value.rawOutput().equals(value.output()));
-                        request.events().emit("core.tool.completed", 1, "framework.core", completed);
+                        emitSuccess(request, descriptor.name(), value);
                     }
+                } catch (RuntimeException outcomeFailure) {
+                    published.completeExceptionally(outcomeFailure);
+                    return;
+                }
+                if (request.context().cancellation().cancelled()) {
+                    published.completeExceptionally(
+                            new com.javaclaw.framework.spi.RunCancelledException());
+                } else {
                     published.complete(new ToolInvocationResult(value.output(), value.duration()));
-                } else if (cause instanceof ToolInputRequiredException input) {
+                }
+            } else if (cause instanceof ToolInputRequiredException input) {
+                try {
                     if (terminalEvent.compareAndSet(false, true)) {
-                        ObjectNode completed = JsonNodeFactory.instance.objectNode();
-                        completed.put("tool", descriptor.name());
-                        completed.put("invocationId", request.context().invocationId());
-                        completed.put("durationMillis",
-                                Duration.between(startedAt, clock.instant()).toMillis());
-                        completed.put("waitingInput", true);
-                        completed.set("output", input.context());
-                        completed.put("modelViewChanged", false);
-                        request.events().emit(
-                                "core.tool.completed", 1, "framework.core", completed);
+                        emitWaitingInput(
+                                request, descriptor.name(), startedAt, clock.instant(), input);
                     }
                     published.completeExceptionally(input);
-                } else {
-                    if (terminalEvent.compareAndSet(false, true)) {
-                        emitFailure(request, descriptor.name(), cause);
-                    }
-                    published.completeExceptionally(cause);
+                } catch (RuntimeException outcomeFailure) {
+                    published.completeExceptionally(outcomeFailure);
                 }
-            } catch (Throwable eventFailure) {
-                if (cause != null) {
-                    cause.addSuppressed(eventFailure);
-                    published.completeExceptionally(cause);
-                } else {
-                    published.completeExceptionally(eventFailure);
+            } else {
+                if (terminalEvent.compareAndSet(false, true)) {
+                    emitFailureSafely(request, descriptor.name(), cause);
                 }
+                published.completeExceptionally(cause);
             }
         });
         return published;
@@ -200,5 +223,126 @@ public final class DefaultToolInvocationGateway implements ToolInvocationGateway
         request.events().emit("core.tool.failed", 1, "framework.core", payload);
     }
 
-    private record ExecutedTool(JsonNode output, Duration duration, JsonNode rawOutput) { }
+    private static void emitSuccess(
+            ToolInvocationRequest request, String toolName, ExecutedTool value) {
+        ObjectNode resultBudget = JsonNodeFactory.instance.objectNode();
+        resultBudget.put("tool", toolName);
+        resultBudget.put("invocationId", request.context().invocationId());
+        resultBudget.put("rawCharacters", renderedCharacters(value.rawOutput()));
+        resultBudget.put("modelCharacters", renderedCharacters(value.output()));
+        resultBudget.put("truncated", !value.rawOutput().equals(value.output()));
+        resultBudget.setAll(value.budgetObservation());
+
+        ObjectNode completed = JsonNodeFactory.instance.objectNode();
+        completed.put("tool", toolName);
+        completed.put("invocationId", request.context().invocationId());
+        completed.put("durationMillis", value.duration().toMillis());
+        completed.set("output", value.rawOutput());
+        completed.put("modelViewChanged", !value.rawOutput().equals(value.output()));
+        completed.put("rawOutputCharacters", renderedCharacters(value.rawOutput()));
+        completed.put("modelOutputCharacters", renderedCharacters(value.output()));
+        completed.set("resultBudget", resultBudget.deepCopy());
+        emitRequiredOutcome(request, toolName, 2, completed);
+        emitSafely(request, "core.tool.result.budget", 2, resultBudget);
+
+        if (toolName.equals("skill_read")) {
+            ObjectNode skillRead = JsonNodeFactory.instance.objectNode();
+            skillRead.put("skillName", request.arguments().path("skillName")
+                    .asText(request.arguments().path("skill_name").asText("")));
+            skillRead.put("path", request.arguments().path("path").asText(""));
+            skillRead.put("cursor", request.arguments().path("cursor").asInt(0));
+            skillRead.put("query", request.arguments().path("query").asText(""));
+            skillRead.put("line", request.arguments().path("line").asInt(0));
+            skillRead.put("returnedCharacters", renderedCharacters(value.output()));
+            emitSafely(request, "core.skill.read.completed", skillRead);
+        }
+    }
+
+    private static void emitWaitingInput(
+            ToolInvocationRequest request, String toolName, Instant startedAt, Instant completedAt,
+            ToolInputRequiredException input) {
+        ObjectNode completed = JsonNodeFactory.instance.objectNode();
+        completed.put("tool", toolName);
+        completed.put("invocationId", request.context().invocationId());
+        completed.put("durationMillis", Duration.between(startedAt, completedAt).toMillis());
+        completed.put("waitingInput", true);
+        completed.set("output", input.context());
+        completed.put("modelViewChanged", false);
+        emitRequiredOutcome(request, toolName, 1, completed);
+    }
+
+    private static void emitRequiredOutcome(
+            ToolInvocationRequest request, String toolName, int version, ObjectNode payload) {
+        RuntimeException lastFailure = null;
+        int attempts = OUTCOME_RETRY_DELAYS_MILLIS.length + 1;
+        for (int attempt = 0; attempt < attempts; attempt++) {
+            try {
+                request.events().emit(
+                        "core.tool.completed", version, "framework.core", payload);
+                return;
+            } catch (RuntimeException eventFailure) {
+                lastFailure = eventFailure;
+                if (attempt >= OUTCOME_RETRY_DELAYS_MILLIS.length) break;
+                awaitOutcomeRetry(OUTCOME_RETRY_DELAYS_MILLIS[attempt]);
+            }
+        }
+        String invocationId = request.context().invocationId();
+        throw new ToolOutcomeCommitException(toolName, invocationId,
+                "could not commit completed outcome for tool " + toolName
+                        + " invocation " + invocationId + " after " + attempts + " attempts",
+                lastFailure);
+    }
+
+    private static void awaitOutcomeRetry(long delayMillis) {
+        boolean interrupted = false;
+        long remainingNanos = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(delayMillis);
+        long deadline = System.nanoTime() + remainingNanos;
+        while (remainingNanos > 0) {
+            try {
+                java.util.concurrent.TimeUnit.NANOSECONDS.sleep(remainingNanos);
+                break;
+            } catch (InterruptedException ignored) {
+                // Cancellation must not skip committing a fact for an already-finished tool.
+                interrupted = true;
+                remainingNanos = deadline - System.nanoTime();
+            }
+        }
+        if (interrupted) Thread.currentThread().interrupt();
+    }
+
+    private static void emitFailureSafely(
+            ToolInvocationRequest request, String toolName, Throwable failure) {
+        try {
+            emitFailure(request, toolName, failure);
+        } catch (RuntimeException eventFailure) {
+            log.warn("Could not publish failed event for tool {} invocation {}: {}",
+                    toolName, request.context().invocationId(), eventFailure.toString());
+            log.debug("Tool failure event publication failure", eventFailure);
+        }
+    }
+
+    private static void emitSafely(
+            ToolInvocationRequest request, String type, ObjectNode payload) {
+        emitSafely(request, type, 1, payload);
+    }
+
+    private static void emitSafely(
+            ToolInvocationRequest request, String type, int version, ObjectNode payload) {
+        try {
+            request.events().emit(type, version, "framework.core", payload);
+        } catch (RuntimeException eventFailure) {
+            log.warn("Could not publish {} for tool invocation {}: {}",
+                    type, request.context().invocationId(), eventFailure.toString());
+            log.debug("Tool event publication failure", eventFailure);
+        }
+    }
+
+    private static int renderedCharacters(JsonNode value) {
+        if (value == null) return 0;
+        return value.isTextual() ? value.asText().length() : value.toString().length();
+    }
+
+    private record ExecutedTool(
+            JsonNode output, Duration duration, JsonNode rawOutput,
+            ObjectNode budgetObservation) { }
 }

@@ -33,6 +33,15 @@ public final class BuiltinSchemas {
         return schema;
     }
 
+    public static ObjectNode authoringMaximum(ObjectNode schema, String name, int maximum) {
+        JsonNode property = schema.path("properties").path(name);
+        if (!(property instanceof ObjectNode object)) {
+            throw new IllegalArgumentException("unknown integer property: " + name);
+        }
+        object.put(com.javaclaw.framework.spi.AgentStudioUiSchema.AUTHORING_MAXIMUM, maximum);
+        return schema;
+    }
+
     public static JsonNode ui(String group, int order) {
         ObjectNode ui = JsonNodeFactory.instance.objectNode();
         ui.put("group", group);

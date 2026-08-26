@@ -160,22 +160,44 @@ public class WorkspaceSpringConfiguration {
     }
 
     @Bean
+    com.javaclaw.infrastructure.agent.JdbcTokenUsageProjector tokenUsageProjector(
+            WorkspaceContext workspace,
+            JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager,
+            com.fasterxml.jackson.databind.ObjectMapper json,
+            java.time.Clock frameworkClock) {
+        return new com.javaclaw.infrastructure.agent.JdbcTokenUsageProjector(
+                workspace.workspaceId(), jdbc, transactionManager, json,
+                frameworkClock, java.time.ZoneId.systemDefault());
+    }
+
+    @Bean
     com.javaclaw.agent.TokenTracker tokenTracker(
             WorkspaceContext workspace,
             JdbcTemplate jdbc,
-            com.javaclaw.config.AgentConfig settings) {
-        return new com.javaclaw.agent.TokenTracker(workspace.workspaceId(), jdbc, settings);
+            com.javaclaw.config.AgentConfig settings,
+            com.javaclaw.infrastructure.agent.JdbcTokenUsageProjector projector) {
+        return new com.javaclaw.agent.TokenTracker(
+                workspace.workspaceId(), jdbc, settings, projector);
+    }
+
+    @Bean(destroyMethod = "close")
+    com.javaclaw.infrastructure.agent.TokenUsageProjectionCoordinator
+            tokenUsageProjectionCoordinator(
+                    com.javaclaw.infrastructure.agent.JdbcTokenUsageProjector projector,
+                    com.javaclaw.agent.TokenTracker tokens,
+                    ManagedTaskExecutor tasks,
+                    @Qualifier("workspaceTaskScope") TaskScope scope) {
+        return new com.javaclaw.infrastructure.agent.TokenUsageProjectionCoordinator(
+                projector, tokens, tasks, scope);
     }
 
     @Bean(destroyMethod = "close")
     com.javaclaw.infrastructure.agent.WorkspaceUsageRegistry.Registration tokenUsageProjection(
             WorkspaceContext workspace,
-            com.javaclaw.agent.TokenTracker tokens,
+            com.javaclaw.infrastructure.agent.TokenUsageProjectionCoordinator coordinator,
             com.javaclaw.infrastructure.agent.WorkspaceUsageRegistry usageObservers) {
-        return usageObservers.register(workspace.workspaceId(),
-                (runId, scope, inputTokens, outputTokens, cost) ->
-                        tokens.recordModelUsage("agent-run:" + runId.value(),
-                                inputTokens, outputTokens));
+        return usageObservers.register(workspace.workspaceId(), coordinator);
     }
 
     @Bean
@@ -223,15 +245,19 @@ public class WorkspaceSpringConfiguration {
             ScheduleApplicationService schedules,
             JsonCodec json,
             com.javaclaw.framework.spi.ModelTaskGateway modelTasks,
-            com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry registry) {
-        com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry.validateContracts(
-                hostToolContractTypes());
+            com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry registry,
+            com.javaclaw.framework.spi.RunResourceRegistry runResources) {
+        java.util.List<Class<?>> toolTypes = hostToolContractTypes();
+        com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry.validateContracts(toolTypes);
+        com.javaclaw.application.agent.ToolBundleCatalog.validateAgainst(
+                com.javaclaw.framework.springai.SpringAiAnnotatedToolRegistry
+                        .declaredToolNames(toolTypes));
         var objects = new com.javaclaw.application.agent.WorkspaceToolObjects(
                 options.browserManager(), siteCredentials, workspace, settings,
                 emailSettings, notificationSettings, commandTools, desktopTools, processes,
                 knowledge, mcpConfigurations, mcpClients, pluginTools, skills, jshell,
                 sddTasks::getObject, schedules, json, modelTasks,
-                com.javaclaw.framework.builtin.ClarifyTools::new);
+                com.javaclaw.framework.builtin.ClarifyTools::new, runResources);
         return registry.register(workspace.workspaceId(), objects::create);
     }
 

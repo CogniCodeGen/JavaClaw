@@ -198,7 +198,7 @@ public final class SpringAiModelFactory implements AutoCloseable {
                 .apiKey(apiKey(spec.apiKey()))
                 .baseUrl(spec.baseUrl())
                 .timeout(Duration.ofSeconds(config.getModelRequestTimeoutSeconds()))
-                .maxRetries(3)
+                .maxRetries(0)
                 .streamUsage(true);
         if (spec.thinking()) {
             builder.reasoningEffort("medium");
@@ -215,7 +215,7 @@ public final class SpringAiModelFactory implements AutoCloseable {
                 .apiKey(apiKey(spec.apiKey()))
                 .baseUrl(spec.baseUrl())
                 .timeout(Duration.ofSeconds(config.getModelRequestTimeoutSeconds()))
-                .maxRetries(3);
+                .maxRetries(0);
         if (spec.thinking()) builder.thinkingEnabled(config.getThinkingBudget());
         else builder.thinkingDisabled();
         return AnthropicChatModel.builder().options(builder.build())

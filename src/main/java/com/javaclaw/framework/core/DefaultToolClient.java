@@ -1,5 +1,7 @@
 package com.javaclaw.framework.core;
 
+import com.javaclaw.framework.api.ToolGroupAccess;
+
 import com.javaclaw.framework.api.AgentDefinitionRef;
 import com.javaclaw.framework.api.InputBlock;
 import com.javaclaw.framework.api.RunId;

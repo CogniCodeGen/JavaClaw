@@ -307,6 +307,14 @@ final class ChatStreamRenderer {
                 : metrics.durationMs() + "ms";
         StringBuilder text = new StringBuilder(duration)
                 .append(" · ").append(String.format("%,d tok", metrics.totalTokens()));
+        if (metrics.cacheReadInputTokens() > 0 || metrics.cacheWriteInputTokens() > 0) {
+            text.append(" · 缓存读/写 ")
+                    .append(metrics.cacheReadInputTokens()).append('/')
+                    .append(metrics.cacheWriteInputTokens());
+        }
+        if (metrics.reasoningTokens() > 0) {
+            text.append(" · 推理 ").append(metrics.reasoningTokens());
+        }
         if (state == DeliveryState.CANCELLED) {
             text.append(" · 已取消");
         } else if (state == DeliveryState.FAILED) {

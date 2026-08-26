@@ -39,6 +39,9 @@ final class BrowserReadTools {
         this.targets = new BrowserTargetResolver(snapshotManager);
     }
 
+    @com.javaclaw.framework.spi.ToolContract(
+            group = "web", permissions = {"tool.read"}, idempotent = true,
+            resultClass = com.javaclaw.framework.spi.ToolResultClass.LARGE)
     @Tool(
             name = "web_snapshot",
             description =

@@ -45,7 +45,7 @@
         </HBox>
         <Label text="本次对话" styleClass="composer-hint-label"/>
         <Label text="·" styleClass="composer-hint-sep"/>
-        <Label fx:id="tokenLabel" text="今日 0 · 会话 0 · ¥0.00"
+        <Label fx:id="tokenLabel" text="今日 0 · 会话 0"
                accessibleText="Token 使用摘要"
                styleClass="token-counter-label">
             <tooltip><Tooltip fx:id="tokenSummaryTooltip"/></tooltip>

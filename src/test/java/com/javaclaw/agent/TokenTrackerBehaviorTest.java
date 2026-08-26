@@ -1,6 +1,7 @@
 package com.javaclaw.agent;
 
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.framework.api.ModelTokenUsage;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.spring.ApplicationContexts;
 import org.junit.jupiter.api.AfterEach;
@@ -104,14 +105,41 @@ class TokenTrackerBehaviorTest {
         tracker.recordCachedObservation(-1, 0);
         tracker.recordCachedObservation(100, -3);
         tracker.recordCachedObservation(50, 100);
-        assertEquals(1.0 / 3.0, tracker.getTodayCacheHitRate(), 0.0001);
+        assertEquals(2.0 / 7.0, tracker.getTodayCacheHitRate(), 0.0001);
         tracker.recordTaskUsage(1, 0);
         assertEquals(30, tracker.getRecentDailyUsage().size());
         assertEquals(38L, tracker.getRecentDailyUsage().get(LocalDate.now().toString()));
 
         TokenTracker reloaded = new TokenTracker("token-test", jdbc, settings);
         assertEquals(38, reloaded.getTodayTokens());
-        assertEquals(1.0 / 3.0, reloaded.getTodayCacheHitRate(), 0.0001);
+        assertEquals(50.0 / 176.0, reloaded.getTodayCacheHitRate(), 0.0001);
+    }
+
+    @Test
+    void detailedUsagePersistsAllSubsetsAndCountsOnlyInputPlusOutput() {
+        tracker.recordModelUsage("detailed",
+                new ModelTokenUsage(1_000, 300, 75, 400, 125, 2));
+
+        TokenTracker.DailyUsage today = tracker.getTodayUsage();
+        assertEquals(1_000, today.input);
+        assertEquals(400, today.output);
+        assertEquals(1_400, today.total());
+        assertEquals(1_000, today.meteredInput);
+        assertEquals(300, today.cachedInput);
+        assertEquals(75, today.cacheWriteInput);
+        assertEquals(125, today.reasoning);
+        assertEquals(2, today.modelCalls);
+        assertEquals(0.3, tracker.getTodayCacheHitRate(), 0.0001);
+
+        TokenTracker reloaded = new TokenTracker("token-test", jdbc, settings);
+        TokenTracker.DailyUsage persisted = reloaded.getTodayUsage();
+        assertEquals(today.input, persisted.input);
+        assertEquals(today.output, persisted.output);
+        assertEquals(today.meteredInput, persisted.meteredInput);
+        assertEquals(today.cachedInput, persisted.cachedInput);
+        assertEquals(today.cacheWriteInput, persisted.cacheWriteInput);
+        assertEquals(today.reasoning, persisted.reasoning);
+        assertEquals(today.modelCalls, persisted.modelCalls);
     }
 
     @Test

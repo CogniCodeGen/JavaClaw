@@ -29,4 +29,10 @@ public interface RunStore {
             RunEventDraft event,
             JsonNode output,
             String error);
+
+    /**
+     * Appends a fact without changing Run state. Unlike a transition, this may be used for an
+     * explicitly background audit event after the owning Run reached a terminal state.
+     */
+    Optional<RunEventEnvelope> appendEvent(RunId id, RunEventDraft event);
 }

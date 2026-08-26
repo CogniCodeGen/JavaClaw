@@ -8,6 +8,7 @@ import com.javaclaw.config.AgentConfig;
 import com.javaclaw.framework.api.RunId;
 import com.javaclaw.framework.spi.CancellationToken;
 import com.javaclaw.framework.spi.ModelTaskGateway;
+import com.javaclaw.framework.spi.ModelTaskAttribution;
 import com.javaclaw.framework.spi.ModelTaskRequest;
 import com.javaclaw.framework.spi.ModelTier;
 import com.javaclaw.memory.correction.CorrectionGuard;
@@ -207,7 +208,8 @@ public final class Distiller {
         CancellationToken cancellation = () -> Thread.currentThread().isInterrupted();
         return modelTasks.execute(new ModelTaskRequest(
                         purpose, ModelTier.LIGHT, input, schema, ownerRunId,
-                        "memory", timeout, retries, cancellation, false))
+                        "memory", timeout, retries, cancellation, false,
+                        ModelTaskAttribution.BACKGROUND))
                 .toCompletableFuture().join().output();
     }
 

@@ -2,6 +2,9 @@ package com.javaclaw.skill;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.config.AgentConfig;
+import com.javaclaw.framework.api.RunId;
+import com.javaclaw.framework.spi.ExtensionStateStore;
+import com.javaclaw.framework.spi.RunResourceScope;
 import com.javaclaw.util.SensitiveDataRedactor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,11 +25,14 @@ import java.util.Set;
 public class SkillManager implements SkillPromptRenderer.Source {
 
     private static final Logger log = LoggerFactory.getLogger(SkillManager.class);
+    static final int MAX_SKILL_NAME_CODE_POINTS = 80;
+    private static final String RUN_CATALOG_RESOURCE = "skills.readable-catalog";
 
     private final Path skillsDir;
     private final SkillFileRepository files;
     private final SkillBundleStore bundleStore;
     private final SkillPromptRenderer prompts;
+    private final SkillRunCatalogStore runCatalogs;
     private final List<Skill> skills;
 
     /**
@@ -42,11 +48,20 @@ public class SkillManager implements SkillPromptRenderer.Source {
      * 实例不共享全局状态；切换工作区时由 Spring 整体替换。</p>
      */
     public SkillManager(Path skillsDir, ObjectMapper mapper, AgentConfig settings) {
+        this(skillsDir, mapper, settings, null);
+    }
+
+    /** Creates a workspace skill repository with durable per-Run catalog snapshots. */
+    public SkillManager(
+            Path skillsDir, ObjectMapper mapper, AgentConfig settings,
+            ExtensionStateStore runState) {
         this.files = new SkillFileRepository(skillsDir);
         this.skillsDir = files.root();
         this.bundleStore = new SkillBundleStore(this.skillsDir, mapper);
         this.skills = new ArrayList<>();
         this.prompts = new SkillPromptRenderer(this, settings);
+        this.runCatalogs = runState == null ? null
+                : new SkillRunCatalogStore(this.skillsDir, mapper, runState);
         loadAll();
     }
 
@@ -129,6 +144,7 @@ public class SkillManager implements SkillPromptRenderer.Source {
         }
         List<Skill> safeSkills = skills.stream()
                 .filter(java.util.Objects::nonNull)
+                .filter(s -> isSupportedNewSkillName(s.getName()))
                 .filter(s -> !SensitiveDataRedactor.containsLikelyCredential(s.getName()))
                 .filter(s -> !SensitiveDataRedactor.containsLikelyCredential(s.getDescription()))
                 .filter(s -> !SensitiveDataRedactor.containsLikelyCredential(s.getContent()))
@@ -478,6 +494,11 @@ public class SkillManager implements SkillPromptRenderer.Source {
         if (name == null || name.isBlank()) {
             throw new IllegalArgumentException("技能名称不能为空");
         }
+        if (!isSupportedNewSkillName(name)) {
+            throw new IllegalArgumentException(
+                    "技能名称必须是单行文本、不能为 *，且最多 "
+                            + MAX_SKILL_NAME_CODE_POINTS + " 个 Unicode 字符");
+        }
         requireCredentialFree(name);
         requireCredentialFree(description);
         requireCredentialFree(content);
@@ -497,7 +518,7 @@ public class SkillManager implements SkillPromptRenderer.Source {
     /**
      * 构建技能目录（L0 元数据层，始终常驻系统提示词）。
      *
-     * <p>仅包含激活技能的「名称 + 分类/标签 + 描述 + references 文件清单」，不含正文，体量极小。
+     * <p>仅包含激活技能的「名称 + 分类 + 单行用途」，不含正文、参考文件、脚本或经验沉淀提示。
      * 这是渐进式暴露的最上层：让模型在任何路由场景下都知道有哪些技能存在，
      * 即使本轮路由未预载某技能的正文，也不会因路由漏判而让它对模型完全"消失"。
      * 三级加载：L0 本目录 → L1 {@code skill_read(skill_name)} 拉全文 →
@@ -505,13 +526,67 @@ public class SkillManager implements SkillPromptRenderer.Source {
      *
      * <p>条件激活：按 {@link Skill#isActiveFor} 过滤（platforms 按当前 OS；
      * requires/fallback_for_toolsets 按本轮可用工具组）。
-     * 末尾按配置追加「经验沉淀」nudge（借鉴 hermes-agent periodic nudges）。</p>
+     * 目录整体受 1,200 估算 Token 预算约束，超限时压缩为名称索引。</p>
      *
      * @param availableGroups 本轮可用的工具组名集合，传 null 时跳过工具组判定
      * @return 技能目录提示词，无激活技能时返回空字符串
      */
     public String buildSkillCatalogPrompt(Set<String> availableGroups) {
         return prompts.buildCatalog(availableGroups);
+    }
+
+    public String buildSkillCatalogPrompt(
+            RunResourceScope runResources, Set<String> availableGroups) {
+        return prompts.buildCatalog(readableCatalogSnapshot(runResources, availableGroups));
+    }
+
+    public String buildSkillCatalogPrompt(
+            RunId runId, RunResourceScope runResources, Set<String> availableGroups) {
+        return prompts.buildCatalog(
+                readableCatalogSnapshot(runId, runResources, availableGroups));
+    }
+
+    SkillPromptRenderer.CatalogSnapshot catalogSnapshot(Set<String> availableGroups) {
+        return prompts.snapshot(availableGroups);
+    }
+
+    SkillPromptRenderer.CatalogSnapshot readableCatalogSnapshot(Set<String> availableGroups) {
+        return prompts.readableSnapshot(availableGroups);
+    }
+
+    SkillPromptRenderer.CatalogSnapshot readableCatalogSnapshot(
+            RunResourceScope runResources, Set<String> availableGroups) {
+        return readableCatalogSnapshot(null, runResources, availableGroups);
+    }
+
+    SkillPromptRenderer.CatalogSnapshot readableCatalogSnapshot(
+            RunId runId, RunResourceScope runResources, Set<String> availableGroups) {
+        java.util.Objects.requireNonNull(runResources, "runResources");
+        SkillRunCatalogSnapshot snapshot = runResources.getOrCreate(
+                RUN_CATALOG_RESOURCE, SkillRunCatalogSnapshot.class,
+                () -> captureOrRestoreRunCatalog(runId, availableGroups));
+        AvailableGroups requested = AvailableGroups.capture(availableGroups);
+        if (snapshot.groupsConstrained() != requested.constrained()
+                || !snapshot.groups().equals(requested.values())) {
+            throw new IllegalStateException(
+                    "tool groups changed within one Run while resolving the skill catalog");
+        }
+        return snapshot.catalog();
+    }
+
+    private SkillRunCatalogSnapshot captureOrRestoreRunCatalog(
+            RunId runId, Set<String> availableGroups) {
+        AvailableGroups groups = AvailableGroups.capture(availableGroups);
+        java.util.function.Supplier<SkillRunCatalogSnapshot> capture = () ->
+                new SkillRunCatalogSnapshot(groups.constrained(), groups.values(),
+                        prompts.readableSnapshot(availableGroups));
+        if (runId == null || runCatalogs == null) return capture.get();
+        return runCatalogs.loadOrCapture(runId, capture);
+    }
+
+    SkillCatalogPage readCatalogPage(
+            SkillPromptRenderer.CatalogSnapshot snapshot, int cursor, int maxTokens) {
+        return prompts.readCatalogPage(snapshot, cursor, maxTokens);
     }
 
     /**
@@ -538,12 +613,12 @@ public class SkillManager implements SkillPromptRenderer.Source {
     }
 
     /**
-     * 构建单个技能的详细指令（L2 正文 + references），供 {@code skill_read} 工具按需拉取。
+     * 构建单个技能的完整旧式投影（正文 + references），仅供保留旧行为的内部流程使用。
      *
-     * <p>渐进式暴露的 L2 拉取入口：L1 目录（{@link #buildSkillCatalogPrompt()}）只告知技能存在，
-     * 模型判断相关后调用本方法获取完整内容，避免一次性把所有技能正文塞进上下文。</p>
+     * <p>交互式 chat/plan 的 {@code skill_read} 不调用本方法，而使用
+     * {@link #readProgressivePage(String, String, int, int)}，避免自动展开 references。</p>
      *
-     * @param name 技能名称（须与 L1 目录中展示的名称一致）
+     * @param name 技能名称
      * @return 该技能的正文 + 参考文档；技能不存在或未启用时返回 {@code null}
      */
     public String buildSkillDetail(String name) {
@@ -562,6 +637,63 @@ public class SkillManager implements SkillPromptRenderer.Source {
      */
     public String buildReferenceDetail(String name, String relPath) {
         return prompts.buildReferenceDetail(name, relPath);
+    }
+
+    /**
+     * Reads one bounded L1/L2 page without implicitly loading any other reference file.
+     * A blank path returns SKILL.md plus the reference filename index; a non-blank path
+     * returns only that single reference document.
+     */
+    public SkillContentPage readProgressivePage(String name, String relPath,
+                                                int cursor, int maxCharacters) {
+        return prompts.readProgressivePage(name, relPath, cursor, maxCharacters);
+    }
+
+    SkillContentPage readProgressivePage(
+            String name, String relPath, int cursor, int maxCharacters,
+            Set<String> allowedSkillNames) {
+        return prompts.readProgressivePage(
+                name, relPath, cursor, maxCharacters, allowedSkillNames);
+    }
+
+    SkillContentPage readProgressivePage(
+            SkillPromptRenderer.CatalogSnapshot snapshot, String lookup, String relPath,
+            int cursor, int maxCharacters) {
+        return prompts.readProgressivePage(snapshot, lookup, relPath, cursor, maxCharacters);
+    }
+
+    SkillContentPage readProgressivePage(
+            SkillPromptRenderer.CatalogSnapshot snapshot, String lookup, String relPath,
+            int cursor, Integer line, int maxCharacters) {
+        return prompts.readProgressivePage(
+                snapshot, lookup, relPath, cursor, line, maxCharacters);
+    }
+
+    SkillContentPage readProgressivePage(
+            SkillPromptRenderer.CatalogSnapshot snapshot, String lookup, String relPath,
+            int cursor, Integer line, int maxCharacters,
+            SkillReferenceReadSession referenceReads) {
+        return prompts.readProgressivePage(
+                snapshot, lookup, relPath, cursor, line, maxCharacters, referenceReads);
+    }
+
+    SkillReferenceSearchResult searchReferences(
+            SkillPromptRenderer.CatalogSnapshot snapshot, String lookup, String relPath,
+            String query, int maxCharacters) {
+        return prompts.searchReferences(snapshot, lookup, relPath, query, maxCharacters);
+    }
+
+    SkillReferenceSearchResult searchReferences(
+            SkillPromptRenderer.CatalogSnapshot snapshot, String lookup, String relPath,
+            String query, int maxCharacters, SkillReferenceReadSession referenceReads) {
+        return prompts.searchReferences(
+                snapshot, lookup, relPath, query, maxCharacters, referenceReads);
+    }
+
+    static boolean isSupportedNewSkillName(String name) {
+        if (name == null || name.isBlank() || name.strip().equals("*")) return false;
+        if (name.codePointCount(0, name.length()) > MAX_SKILL_NAME_CODE_POINTS) return false;
+        return name.codePoints().noneMatch(Character::isISOControl);
     }
 
     // ==================== 辅助方法 ====================
@@ -595,6 +727,14 @@ public class SkillManager implements SkillPromptRenderer.Source {
     /** 覆盖保存技能包配置（UI 管理用） */
     public void saveBundles(List<SkillBundle> newBundles) {
         bundleStore.save(newBundles);
+    }
+
+    private record AvailableGroups(boolean constrained, Set<String> values) {
+        private static AvailableGroups capture(Set<String> groups) {
+            return groups == null
+                    ? new AvailableGroups(false, Set.of())
+                    : new AvailableGroups(true, Set.copyOf(groups));
+        }
     }
 
     /**

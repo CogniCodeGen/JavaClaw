@@ -11,7 +11,8 @@ public record ToolDescriptor(
         JsonNode inputSchema,
         String group,
         PermissionSet requiredPermissions,
-        boolean idempotent) {
+        boolean idempotent,
+        ToolResultClass resultClass) {
     private static final JsonSchemaValidator SCHEMAS = new JsonSchemaValidator();
 
     public ToolDescriptor {
@@ -20,6 +21,7 @@ public record ToolDescriptor(
         inputSchema = Objects.requireNonNull(inputSchema, "inputSchema").deepCopy();
         group = Objects.requireNonNull(group, "group").trim();
         requiredPermissions = requiredPermissions == null ? PermissionSet.NONE : requiredPermissions;
+        resultClass = resultClass == null ? ToolResultClass.DEFAULT : resultClass;
         if (name.isEmpty()) throw new IllegalArgumentException("tool name must not be blank");
         if (group.isEmpty()) throw new IllegalArgumentException("tool group must not be blank");
         SCHEMAS.requireValidSchema(inputSchema, "tool " + name);
@@ -27,8 +29,16 @@ public record ToolDescriptor(
 
     /** Source-compatible constructor for extension tools compiled against the initial 3.0 API. */
     public ToolDescriptor(String name, String description, JsonNode inputSchema,
+                          String group, PermissionSet requiredPermissions, boolean idempotent) {
+        this(name, description, inputSchema, group, requiredPermissions, idempotent,
+                ToolResultClass.DEFAULT);
+    }
+
+    /** Source-compatible constructor for extension tools compiled against the initial 3.0 API. */
+    public ToolDescriptor(String name, String description, JsonNode inputSchema,
                           PermissionSet requiredPermissions, boolean idempotent) {
-        this(name, description, inputSchema, "extension", requiredPermissions, idempotent);
+        this(name, description, inputSchema, "extension", requiredPermissions, idempotent,
+                ToolResultClass.DEFAULT);
     }
 
     @Override public JsonNode inputSchema() { return inputSchema.deepCopy(); }

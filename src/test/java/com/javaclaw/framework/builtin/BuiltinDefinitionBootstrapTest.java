@@ -7,6 +7,7 @@ import com.javaclaw.framework.api.ModelPolicyRefs;
 import com.javaclaw.framework.api.PermissionSet;
 import com.javaclaw.framework.api.RunBudget;
 import com.javaclaw.framework.api.RunProfileDraft;
+import com.javaclaw.framework.api.RunProfileRef;
 import com.javaclaw.framework.extension.ExtensionManager;
 import com.javaclaw.framework.spi.ExtensionContext;
 import com.javaclaw.framework.store.JdbcAgentDefinitionStore;
@@ -40,6 +41,31 @@ class BuiltinDefinitionBootstrapTest {
                             .map(draft -> draft.id()).collect(java.util.stream.Collectors.toSet()));
             fixture.definitions.resolveAgent(
                     "workspace", AgentDefinitionRef.latest("system.default"));
+            RunBudget global = fixture.definitions.resolveAgent(
+                    "workspace", AgentDefinitionRef.latest("system.default")).budgetPolicy();
+            assertBudget(global, 250_000, 80_000, 120);
+            RunBudget chat = fixture.definitions.resolveProfile(
+                    "workspace", RunProfileRef.latest("chat")).budget();
+            assertEquals(120_000, chat.maxInputTokens());
+            assertEquals(32_000, chat.maxOutputTokens());
+            assertEquals(16, chat.maxToolCalls());
+            RunBudget plan = fixture.definitions.resolveProfile(
+                    "workspace", RunProfileRef.latest("plan")).budget();
+            assertEquals(80_000, plan.maxInputTokens());
+            assertEquals(24_000, plan.maxOutputTokens());
+            assertEquals(8, plan.maxToolCalls());
+            for (String profileId : List.of("plugin", "subagent")) {
+                assertBudget(fixture.definitions.resolveProfile(
+                        "workspace", RunProfileRef.latest(profileId)).budget()
+                        .restrictWith(global), 250_000, 80_000, 120);
+            }
+            for (String profileId : List.of("schedule", "loop", "sdd")) {
+                assertBudget(fixture.definitions.resolveProfile(
+                        "workspace", RunProfileRef.latest(profileId)).budget()
+                        .restrictWith(global), 250_000, 80_000, 120);
+            }
+            assertBudget(chat.restrictWith(global), 120_000, 32_000, 16);
+            assertBudget(plan.restrictWith(global), 80_000, 24_000, 8);
 
             fixture.jdbc.update("""
                     DELETE FROM agent_definition_versions
@@ -143,5 +169,12 @@ class BuiltinDefinitionBootstrapTest {
                     request -> CompletableFuture.failedFuture(
                             new AssertionError("model task not expected"))));
         }
+    }
+
+    private static void assertBudget(
+            RunBudget budget, long input, long output, int toolCalls) {
+        assertEquals(input, budget.maxInputTokens());
+        assertEquals(output, budget.maxOutputTokens());
+        assertEquals(toolCalls, budget.maxToolCalls());
     }
 }

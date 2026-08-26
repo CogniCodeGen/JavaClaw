@@ -14,4 +14,5 @@ public @interface ToolContract {
     String group();
     String[] permissions();
     boolean idempotent();
+    ToolResultClass resultClass() default ToolResultClass.DEFAULT;
 }

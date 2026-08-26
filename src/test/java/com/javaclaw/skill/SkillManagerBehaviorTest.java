@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.platform.data.DataRoot;
 import com.javaclaw.platform.spring.ApplicationContexts;
+import com.javaclaw.util.TokenEstimator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
@@ -12,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -125,14 +127,13 @@ class SkillManagerBehaviorTest {
                     "关闭技能", "不会展示", "关闭正文", false);
 
             String catalog = manager.buildSkillCatalogPrompt(Set.of());
-            assertTrue(catalog.contains("【文档技能】[knowledge] (docs/qa) 查询产品手册"));
-            assertTrue(catalog.contains("参考文档："));
-            assertTrue(catalog.contains("guide.md"));
-            assertTrue(catalog.contains("脚本："));
-            assertTrue(catalog.contains("check.jsh"));
-            assertTrue(catalog.contains("Helper.JAVA"));
-            assertTrue(catalog.contains("严格隔离下不可执行"));
-            assertTrue(catalog.contains("[描述包含疑似凭据，已隐藏]"));
+            assertTrue(catalog.contains("【文档技能】[knowledge] 查询产品手册"));
+            assertFalse(catalog.contains("参考文档："));
+            assertFalse(catalog.contains("guide.md"));
+            assertFalse(catalog.contains("脚本："));
+            assertFalse(catalog.contains("check.jsh"));
+            assertFalse(catalog.contains("Helper.JAVA"));
+            assertTrue(catalog.contains("[描述已隐藏]"));
             assertFalse(catalog.contains("RealSecret-2026"));
             assertFalse(catalog.contains("关闭技能"));
             assertFalse(catalog.contains("待隐藏名称"));
@@ -142,7 +143,7 @@ class SkillManagerBehaviorTest {
             settings.setSkillEvolutionMode("off");
             assertFalse(manager.buildSkillCatalogPrompt().contains("经验沉淀"));
             settings.setSkillEvolutionMode("suggest");
-            assertTrue(manager.buildSkillCatalogPrompt().contains("经验沉淀"));
+            assertFalse(manager.buildSkillCatalogPrompt().contains("经验沉淀"));
             settings.setSkillNudgeEnabled(false);
 
             String allEnabled = manager.buildEnabledSkillsPrompt();
@@ -214,6 +215,190 @@ class SkillManagerBehaviorTest {
             Skill dynamic = manager.buildDynamicSkill("owner", "动态无目录", "描述", "正文");
             manager.registerDynamicSkills("owner", List.of(dynamic));
             assertNull(manager.buildReferenceDetail(dynamic.getName(), "safe.md"));
+        }
+    }
+
+    @Test
+    void progressiveReadSeparatesCatalogBodyAndSinglePagedReference() throws Exception {
+        try (Fixture fixture = fixture("progressive")) {
+            SkillManager manager = fixture.manager();
+            Skill skill = manager.createSkill(
+                    "渐进技能", "验证三级披露", "正文指令-" + "甲".repeat(8_200), true);
+            Path refs = Files.createDirectories(skill.getDirectory().resolve(Skill.REFERENCES_DIR));
+            Files.writeString(refs.resolve("first.md"), "FIRST-UNIQUE-" + "乙".repeat(8_100));
+            Files.writeString(refs.resolve("second.md"), "SECOND-UNIQUE");
+
+            String catalog = manager.buildSkillCatalogPrompt();
+            assertTrue(catalog.contains("渐进技能"));
+            assertFalse(catalog.contains("正文指令"));
+            assertFalse(catalog.contains("first.md"));
+            assertTrue(TokenEstimator.estimate(catalog) <= 1_200);
+
+            SkillContentPage body = manager.readProgressivePage("渐进技能", null, 0, 8_000);
+            assertNotNull(body);
+            assertTrue(body.content().contains("正文指令"));
+            assertFalse(body.content().contains("FIRST-UNIQUE"));
+            assertTrue(body.hasMore());
+            SkillContentPage bodyTail = manager.readProgressivePage(
+                    "渐进技能", null, body.nextCursor(), 8_000);
+            assertTrue(bodyTail.content().contains("first.md"));
+            assertTrue(bodyTail.content().contains("second.md"));
+
+            SkillContentPage first = manager.readProgressivePage(
+                    "渐进技能", "first.md", 0, 8_000);
+            assertTrue(first.content().contains("FIRST-UNIQUE"));
+            assertFalse(first.content().contains("SECOND-UNIQUE"));
+            assertTrue(first.hasMore());
+            SkillContentPage firstTail = manager.readProgressivePage(
+                    "渐进技能", "first.md", first.nextCursor(), 8_000);
+            assertFalse(firstTail.hasMore());
+            assertNull(manager.readProgressivePage("渐进技能", "../SKILL.md", 0, 8_000));
+        }
+    }
+
+    @Test
+    void oversizedCatalogKeepsEveryNameAndDropsDescriptionsWithinBudget() throws Exception {
+        try (Fixture fixture = fixture("catalog-budget")) {
+            List<Skill> many = new ArrayList<>();
+            for (int index = 0; index < 100; index++) {
+                many.add(dynamic("catalog-" + index, "skill-" + index,
+                        "很长的用途说明".repeat(14), "正文不应进入目录"));
+            }
+            fixture.manager().registerDynamicSkills("catalog-budget", many);
+
+            String catalog = fixture.manager().buildSkillCatalogPrompt(Set.of());
+
+            assertTrue(TokenEstimator.estimate(catalog) <= 1_200);
+            for (int index = 0; index < 100; index++) {
+                assertTrue(catalog.contains("skill-" + index));
+            }
+            assertFalse(catalog.contains("正文不应进入目录"));
+            assertFalse(catalog.contains("很长的用途说明"));
+        }
+    }
+
+    @Test
+    void veryLargeCatalogUsesCompleteBoundedIndexPages() {
+        try (Fixture fixture = fixture("catalog-pages")) {
+            List<Skill> many = new ArrayList<>();
+            for (int index = 0; index < 500; index++) {
+                many.add(dynamic("paged-" + index, "paged-skill-" + index,
+                        "目录分页用途说明", "正文-" + index));
+            }
+            fixture.manager().registerDynamicSkills("catalog-pages", many);
+
+            String firstPromptPage = fixture.manager().buildSkillCatalogPrompt(Set.of());
+            assertTrue(TokenEstimator.estimate(firstPromptPage) <= 1_200);
+            assertTrue(firstPromptPage.contains("next_cursor="));
+            assertFalse(firstPromptPage.contains("next_cursor=END"));
+
+            SkillPromptRenderer.CatalogSnapshot snapshot =
+                    fixture.manager().catalogSnapshot(Set.of());
+            Set<String> found = new HashSet<>();
+            int cursor = 0;
+            int pageCount = 0;
+            while (true) {
+                SkillCatalogPage page = fixture.manager().readCatalogPage(snapshot, cursor, 1_200);
+                assertNotNull(page);
+                assertTrue(TokenEstimator.estimate(page.content()) <= 1_200);
+                for (int index = 0; index < 500; index++) {
+                    String name = "paged-skill-" + index;
+                    if (page.content().contains("【" + name + "】")) found.add(name);
+                }
+                pageCount++;
+                if (!page.hasMore()) break;
+                assertTrue(page.nextCursor() > cursor);
+                cursor = page.nextCursor();
+                assertTrue(pageCount < 100);
+            }
+            assertEquals(500, found.size());
+            assertTrue(pageCount > 1);
+        }
+    }
+
+    @Test
+    void activationSnapshotStaysStableForCatalogAndBodyReads() {
+        try (Fixture fixture = fixture("catalog-snapshot")) {
+            Skill stable = dynamic("stable", "运行快照技能", "描述", "SNAPSHOT-BODY");
+            stable.setRequiresToolGroups(List.of("browser", "network"));
+            fixture.manager().registerDynamicSkills("stable-owner", List.of(stable));
+
+            assertNull(fixture.manager().catalogSnapshot(Set.of("network"))
+                    .resolveLookup(stable.getName()));
+            SkillPromptRenderer.CatalogSnapshot metadata = fixture.manager()
+                    .catalogSnapshot(Set.of("browser", "network"));
+            assertTrue(metadata.skills().getFirst().content().isEmpty());
+            assertTrue(metadata.skills().getFirst().references().isEmpty());
+            SkillPromptRenderer.CatalogSnapshot snapshot = fixture.manager()
+                    .readableCatalogSnapshot(Set.of("browser", "network"));
+            assertEquals(stable.getName(), snapshot.resolveLookup(stable.getName()));
+
+            fixture.manager().unregisterDynamicSkills("stable-owner");
+            fixture.manager().registerDynamicSkills("late-owner", List.of(
+                    dynamic("late", "晚注册技能", "描述", "LATE-BODY")));
+
+            assertNull(snapshot.resolveLookup("晚注册技能"));
+            assertFalse(fixture.manager().readCatalogPage(snapshot, 0, 1_200)
+                    .content().contains("晚注册技能"));
+            SkillContentPage body = fixture.manager().readProgressivePage(
+                    snapshot, stable.getName(), null, 0, 7_900);
+            assertNotNull(body);
+            assertTrue(body.content().contains("SNAPSHOT-BODY"));
+        }
+    }
+
+    @Test
+    void legacyLongNameUsesStableAliasAndNewNamesAreValidatedByCodePoint() {
+        try (Fixture fixture = fixture("legacy-name")) {
+            String longName = "旧".repeat(81);
+            Skill legacy = dynamic("legacy-id", "temporary", "描述", "LEGACY-BODY");
+            fixture.manager().registerDynamicSkills("legacy-owner", List.of(legacy));
+            // Simulates a pre-validation skill loaded from an existing installation.
+            legacy.setName(longName);
+
+            SkillPromptRenderer.CatalogSnapshot snapshot =
+                    fixture.manager().readableCatalogSnapshot(Set.of());
+            SkillPromptRenderer.CatalogSkill catalogSkill = snapshot.skills().getFirst();
+            assertTrue(catalogSkill.lookupKey().startsWith("skill:"));
+            assertEquals(longName, snapshot.resolveLookup(catalogSkill.lookupKey()));
+            assertEquals(longName, snapshot.resolveLookup(longName));
+            String catalog = fixture.manager().buildSkillCatalogPrompt(Set.of());
+            assertTrue(TokenEstimator.estimate(catalog) <= 1_200);
+            assertTrue(catalog.contains(catalogSkill.lookupKey()));
+            assertFalse(catalog.contains(longName));
+            assertTrue(fixture.manager().readProgressivePage(
+                    snapshot, catalogSkill.lookupKey(), null, 0, 7_900)
+                    .content().contains("LEGACY-BODY"));
+
+            assertThrows(IllegalArgumentException.class, () -> fixture.manager()
+                    .buildDynamicSkill("owner", "新".repeat(81), "描述", "正文"));
+            assertThrows(IllegalArgumentException.class, () -> fixture.manager()
+                    .buildDynamicSkill("owner", "*", "描述", "正文"));
+            assertThrows(IllegalArgumentException.class, () -> fixture.manager()
+                    .buildDynamicSkill("owner", "两行\n名称", "描述", "正文"));
+            assertNotNull(fixture.manager().buildDynamicSkill(
+                    "owner", "😀".repeat(80), "描述", "正文"));
+        }
+    }
+
+    @Test
+    void progressivePagesNeverSplitEmojiSurrogatePairs() {
+        try (Fixture fixture = fixture("emoji-page")) {
+            fixture.manager().createSkill("emoji", "描述", "A😀B", true);
+            String prefix = "【emoji / SKILL.md】\n";
+            SkillContentPage first = fixture.manager().readProgressivePage(
+                    "emoji", null, 0, prefix.length() + 2);
+            assertNotNull(first);
+            assertEquals(prefix + "A", first.content());
+            assertFalse(hasUnpairedSurrogate(first.content()));
+
+            SkillContentPage emoji = fixture.manager().readProgressivePage(
+                    "emoji", null, first.nextCursor(), 1);
+            assertNotNull(emoji);
+            assertEquals("😀", emoji.content());
+            assertFalse(hasUnpairedSurrogate(emoji.content()));
+            assertNull(fixture.manager().readProgressivePage(
+                    "emoji", null, first.nextCursor() + 1, 10));
         }
     }
 
@@ -360,6 +545,19 @@ class SkillManagerBehaviorTest {
     private static Set<String> names(List<Skill> skills) {
         return skills.stream().map(Skill::getName)
                 .collect(java.util.stream.Collectors.toSet());
+    }
+
+    private static boolean hasUnpairedSurrogate(String value) {
+        for (int index = 0; index < value.length(); index++) {
+            char current = value.charAt(index);
+            if (Character.isHighSurrogate(current)) {
+                if (index + 1 >= value.length()
+                        || !Character.isLowSurrogate(value.charAt(++index))) return true;
+            } else if (Character.isLowSurrogate(current)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private record Fixture(

@@ -8,9 +8,10 @@ import com.javaclaw.framework.api.RunEventEnvelope;
 import com.javaclaw.framework.spi.*;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 
-/** Rule assessment for every run, escalating only abnormal/tool/long runs to a LIGHT model. */
+/** Rule assessment for every run, escalating only failed, abnormal, or long runs. */
 public final class AdaptiveGepaEvaluationPolicy implements EvaluationPolicy {
     @Override
     public String id() {
@@ -20,10 +21,11 @@ public final class AdaptiveGepaEvaluationPolicy implements EvaluationPolicy {
     @Override
     public JsonNode evaluate(
             List<RunEventEnvelope> events, JsonNode output, ModelTaskGateway models) {
-        boolean hasTools = events.stream().anyMatch(event -> event.type().startsWith("core.tool."));
         boolean abnormal = events.stream().anyMatch(event -> event.type().endsWith(".failed"));
-        boolean longRun = events.size() > 20 || output.toString().length() > 2_000;
-        if (!hasTools && !abnormal && !longRun) {
+        boolean longRun = events.size() > 80
+                || output.toString().length() > 12_000
+                || elapsed(events).compareTo(Duration.ofMinutes(5)) > 0;
+        if (!abnormal && !longRun) {
             ObjectNode assessment = JsonNodeFactory.instance.objectNode();
             assessment.put("mode", "rules");
             assessment.put("score", output.isNull() ? 0.0 : 1.0);
@@ -42,10 +44,19 @@ public final class AdaptiveGepaEvaluationPolicy implements EvaluationPolicy {
         ModelTaskResult result = models.execute(new ModelTaskRequest(
                 "gepa.evaluate", ModelTier.LIGHT,
                 JsonNodeFactory.instance.objectNode().set("output", output), schema,
-                owner, "gepa", Duration.ofSeconds(30), 1, () -> false, false))
+                owner, "gepa", Duration.ofSeconds(30), 0, () -> false, false))
                 .toCompletableFuture().join();
         ObjectNode assessment = result.output().deepCopy();
         assessment.put("mode", "model");
         return assessment;
+    }
+
+    private static Duration elapsed(List<RunEventEnvelope> events) {
+        if (events.size() < 2) return Duration.ZERO;
+        Instant first = events.stream().map(RunEventEnvelope::timestamp)
+                .min(Instant::compareTo).orElse(Instant.EPOCH);
+        Instant last = events.stream().map(RunEventEnvelope::timestamp)
+                .max(Instant::compareTo).orElse(first);
+        return Duration.between(first, last);
     }
 }

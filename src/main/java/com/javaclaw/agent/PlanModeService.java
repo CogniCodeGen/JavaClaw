@@ -27,10 +27,12 @@ public final class PlanModeService {
     public PlanModeService(
             AgentClient agents,
             WorkspaceContext workspace,
+            com.javaclaw.config.AgentConfig settings,
             Executor executor) {
         this.runs = new AgentConversationRunner(
                 Objects.requireNonNull(agents, "agents"), executor);
-        this.requests = new RunRequestFactory(workspace);
+        this.requests = new RunRequestFactory(workspace,
+                new com.javaclaw.application.agent.ToolIntentRouter(settings));
         log.info("Plan 入口已接入统一 AgentEngine，profile=plan");
     }
 

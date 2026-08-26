@@ -11,4 +11,12 @@ public interface ToolResultPostProcessor {
             ToolDescriptor tool,
             ToolExecutionContext context,
             RunRequest request);
+
+    /** Optional structured details appended to {@code core.tool.result.budget}. */
+    default JsonNode budgetObservation(
+            ToolDescriptor tool,
+            ToolExecutionContext context,
+            RunRequest request) {
+        return com.fasterxml.jackson.databind.node.MissingNode.getInstance();
+    }
 }

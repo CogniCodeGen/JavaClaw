@@ -108,7 +108,7 @@ public final class AgentNodeExecutor implements NodeExecutor {
         var allowedToolGroups = JsonNodeFactory.instance.arrayNode();
         WorkflowToolGroupPolicy.read(config.path("toolGroups"))
                 .forEach(allowedToolGroups::add);
-        attributes.put(com.javaclaw.framework.core.ToolGroupAccess.ATTRIBUTE,
+        attributes.put(com.javaclaw.framework.api.ToolGroupAccess.ATTRIBUTE,
                 allowedToolGroups);
         JsonNode workDir = context.state().get("workDir");
         if (!workDir.isMissingNode() && !workDir.isNull()) attributes.put("workDir", workDir);

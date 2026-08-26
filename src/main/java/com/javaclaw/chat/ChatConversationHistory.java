@@ -1,6 +1,7 @@
 package com.javaclaw.chat;
 
 import com.javaclaw.api.conversation.ConversationMessage;
+import com.javaclaw.util.UnicodeText;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -8,8 +9,10 @@ import java.util.List;
 
 /** Produces the bounded, successful user/assistant history supplied to a new conversation Run. */
 final class ChatConversationHistory {
-    static final int MAX_MESSAGES = 40;
-    static final int MAX_CHARACTERS = 48_000;
+    // The context-compaction Advisor, not this persistence projection, owns model visibility.
+    // Keep enough source here to validate summary hashes and rebuild after old-message edits.
+    static final int MAX_MESSAGES = 200;
+    static final int MAX_CHARACTERS = 240_000;
 
     private ChatConversationHistory() { }
 
@@ -33,10 +36,12 @@ final class ChatConversationHistory {
                 if (selected.isEmpty()) return List.of();
                 ConversationMessage newest = selected.getFirst();
                 if (newest.content().isEmpty()) return List.of();
+                String shortened = UnicodeText.dropFirstCodePoint(newest.content());
+                int removed = newest.content().length() - shortened.length();
                 selected.set(0, new ConversationMessage(
-                        newest.role(), newest.content().substring(1)));
-                characters--;
-                remaining = 1;
+                        newest.role(), shortened, newest.messageId()));
+                characters -= removed;
+                remaining = removed;
             }
             String content = message.content();
             if (content.length() > remaining) {
@@ -46,9 +51,9 @@ final class ChatConversationHistory {
                         && message.role() == ConversationMessage.Role.ASSISTANT ? 1 : 0;
                 int retained = remaining - reservedForUser;
                 if (retained <= 0) continue;
-                content = content.substring(content.length() - retained);
+                content = UnicodeText.suffix(content, retained);
             }
-            selected.add(new ConversationMessage(message.role(), content));
+            selected.add(new ConversationMessage(message.role(), content, message.messageId()));
             characters += content.length();
         }
         Collections.reverse(selected);
@@ -72,6 +77,7 @@ final class ChatConversationHistory {
             return null;
         }
         String content = message.getContent() == null ? "" : message.getContent();
-        return content.isBlank() ? null : new ConversationMessage(role, content);
+        return content.isBlank() ? null
+                : new ConversationMessage(role, content, message.getMessageId());
     }
 }

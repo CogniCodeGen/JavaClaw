@@ -63,6 +63,25 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
         }
     }
 
+    /** Names declared by the same reflection path used to build runtime callbacks. */
+    public static Set<String> declaredToolNames(Iterable<Class<?>> toolTypes) {
+        Objects.requireNonNull(toolTypes, "toolTypes");
+        java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>();
+        for (Class<?> toolType : toolTypes) {
+            Class<?> checked = Objects.requireNonNull(toolType, "tool type");
+            for (Method method : checked.getDeclaredMethods()) {
+                var tool = org.springframework.core.annotation.AnnotationUtils.findAnnotation(
+                        method, org.springframework.ai.tool.annotation.Tool.class);
+                if (tool == null) continue;
+                String name = tool.name().isBlank() ? method.getName() : tool.name();
+                if (!names.add(name)) {
+                    throw new IllegalStateException("duplicate declared host tool: " + name);
+                }
+            }
+        }
+        return Set.copyOf(names);
+    }
+
     @Override
     public List<FrameworkTool> create(ToolContext context) {
         ToolObjectFactory factory = workspaces.get(context.scope().workspaceId());
@@ -256,7 +275,7 @@ public final class SpringAiAnnotatedToolRegistry implements ToolProviderFactory 
             }
             descriptor = new ToolDescriptor(definition.name(), definition.description(), schema,
                     contract.group(), PermissionSet.of(contract.permissions()),
-                    contract.idempotent());
+                    contract.idempotent(), contract.resultClass());
         }
 
         @Override

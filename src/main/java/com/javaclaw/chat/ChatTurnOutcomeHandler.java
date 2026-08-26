@@ -245,10 +245,8 @@ final class ChatTurnOutcomeHandler {
                     + tokenLimitDetail(budget) + "。请缩小任务范围，或在新一轮中继续。";
             case MODEL_OUTPUT_TOKENS -> "本轮模型累计输出已达到安全上限"
                     + tokenLimitDetail(budget) + "。请缩小任务范围，或在新一轮中继续。";
-            case MODEL_COST -> "本轮模型估算成本已达到安全上限"
-                    + costLimitDetail(budget) + "。请缩小任务范围，或在新一轮中继续。";
-            case TOOL_CALLS -> "本轮工具调用次数已达到安全上限"
-                    + integerLimitDetail(budget, " 次") + "。请缩小任务范围后重试。";
+            case MODEL_COST -> "本轮模型成本预算已达到安全上限。请缩小任务范围，或在新一轮中继续。";
+            case TOOL_CALLS -> "本轮工具调用预算已达到安全上限。请缩小任务范围后重试。";
             case REPEATED_TOOL_CALLS -> "检测到重复工具调用循环，为避免继续消耗已中止本轮。";
             case UNKNOWN -> "本轮模型累计用量已达到安全上限。请缩小任务范围，或在新一轮中继续。";
         };
@@ -265,18 +263,6 @@ final class ChatTurnOutcomeHandler {
             NumberFormat format = NumberFormat.getIntegerInstance(Locale.CHINA);
             return "（已用 " + format.format(Long.parseLong(budget.actual()))
                     + " / 上限 " + format.format(Long.parseLong(budget.limit())) + unit + "）";
-        } catch (NumberFormatException ignored) {
-            return "";
-        }
-    }
-
-    private static String costLimitDetail(BudgetExceededException budget) {
-        if (budget.actual().isBlank() || budget.limit().isBlank()) return "";
-        try {
-            java.math.BigDecimal actual = new java.math.BigDecimal(budget.actual());
-            java.math.BigDecimal limit = new java.math.BigDecimal(budget.limit());
-            return "（已用 ¥" + actual.stripTrailingZeros().toPlainString()
-                    + " / 上限 ¥" + limit.stripTrailingZeros().toPlainString() + "）";
         } catch (NumberFormatException ignored) {
             return "";
         }

@@ -398,7 +398,9 @@ public class SystemTools {
         }
     }
 
-    @com.javaclaw.framework.spi.ToolContract(group = "system", permissions = {"tool.read"}, idempotent = true)
+    @com.javaclaw.framework.spi.ToolContract(
+            group = "system", permissions = {"tool.read"}, idempotent = true,
+            resultClass = com.javaclaw.framework.spi.ToolResultClass.LARGE)
     @Tool(name = "sys_file_read", description = "读取文本文件的内容。适用于文本文件，返回文件的全部内容。")
     public String fileRead(
             @ToolParam( description = "文件路径") String path) {

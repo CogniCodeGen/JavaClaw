@@ -5,6 +5,8 @@ import com.javaclaw.framework.api.DefinitionValidationIssue;
 import com.networknt.schema.JsonNodePath;
 import com.networknt.schema.JsonSchema;
 import com.networknt.schema.JsonSchemaFactory;
+import com.networknt.schema.JsonMetaSchema;
+import com.networknt.schema.NonValidationKeyword;
 import com.networknt.schema.SchemaLocation;
 import com.networknt.schema.SpecVersion;
 import com.networknt.schema.ValidationMessage;
@@ -23,8 +25,13 @@ import java.util.concurrent.ConcurrentMap;
  * deterministic.</p>
  */
 public final class JsonSchemaValidator {
+    private static final JsonMetaSchema JAVACLAW_META_SCHEMA = JsonMetaSchema.builder(
+                    JsonMetaSchema.getV202012())
+            .keyword(new NonValidationKeyword(AgentStudioUiSchema.AUTHORING_MAXIMUM))
+            .build();
     private static final JsonSchemaFactory FACTORY = JsonSchemaFactory.getInstance(
-            SpecVersion.VersionFlag.V202012);
+            SpecVersion.VersionFlag.V202012,
+            builder -> builder.metaSchema(JAVACLAW_META_SCHEMA));
     private static final JsonSchema META_SCHEMA = FACTORY.getSchema(
             SchemaLocation.of("https://json-schema.org/draft/2020-12/schema"));
 

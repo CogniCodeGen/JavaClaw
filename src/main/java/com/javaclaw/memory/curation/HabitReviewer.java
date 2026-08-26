@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.framework.api.RunId;
 import com.javaclaw.framework.spi.ModelTaskGateway;
+import com.javaclaw.framework.spi.ModelTaskAttribution;
 import com.javaclaw.framework.spi.ModelTaskRequest;
 import com.javaclaw.framework.spi.ModelTier;
 import com.javaclaw.memory.correction.CorrectionGuard;
@@ -100,7 +101,8 @@ public final class HabitReviewer {
         JsonNode output = modelTasks.execute(new ModelTaskRequest(
                         "memory.habit.review", ModelTier.LIGHT, input, habitSchema(episodes.size()),
                         ownerRunId, "memory", Duration.ofSeconds(45), 1,
-                        () -> Thread.currentThread().isInterrupted(), false))
+                        () -> Thread.currentThread().isInterrupted(), false,
+                        ModelTaskAttribution.BACKGROUND))
                 .toCompletableFuture().join().output();
 
         double dedup = settings.getMemoryDistillDedupThreshold();

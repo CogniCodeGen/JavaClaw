@@ -96,8 +96,8 @@
                                         </VBox>
                                         <VBox alignment="CENTER_LEFT" spacing="2.0" GridPane.columnIndex="2">
                                             <children>
-                                                <Label text="费用" styleClass="tp-metric-label"/>
-                                                <Label fx:id="costValue" text="¥0.00" styleClass="tp-metric-value"/>
+                                                <Label text="缓存 / 推理" styleClass="tp-metric-label"/>
+                                                <Label fx:id="tokenDetailsValue" text="缓存 0 · 写入 0 · 推理 —" styleClass="tp-metric-value"/>
                                             </children>
                                         </VBox>
                                     </children>

@@ -13,6 +13,7 @@ import com.javaclaw.framework.api.InvocationSource;
 import com.javaclaw.framework.api.PermissionSet;
 import com.javaclaw.framework.api.ResumeCommand;
 import com.javaclaw.framework.api.RunBudget;
+import com.javaclaw.framework.api.RunEventEnvelope;
 import com.javaclaw.framework.api.RunProfileDraft;
 import com.javaclaw.framework.api.RunProfileRef;
 import com.javaclaw.framework.api.RunRequest;
@@ -92,6 +93,123 @@ class AgentEngineIntegrationTest {
                     "SELECT COUNT(*) FROM agent_run_outbox WHERE run_id = ?",
                     Integer.class, first.id().value()));
             assertFalse(engine.cancel(first.id(), new CancelReason("LATE", "already terminal")));
+        }
+    }
+
+    @Test
+    void auxiliaryModelTaskEventsAppendedAfterSubscriptionReachTheLiveRunStream()
+            throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        RunEventRelay relay = new RunEventRelay();
+        java.util.concurrent.CountDownLatch releaseModelTask =
+                new java.util.concurrent.CountDownLatch(1);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        var audit = new RunEventModelTaskAuditSink(fixture.runs, relay);
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.engine(extensions, request -> {
+                 try {
+                     if (!releaseModelTask.await(2, TimeUnit.SECONDS)) {
+                         return CompletableFuture.failedFuture(
+                                 new AssertionError("model task release timed out"));
+                     }
+                 } catch (InterruptedException interrupted) {
+                     Thread.currentThread().interrupt();
+                     return CompletableFuture.failedFuture(interrupted);
+                 }
+                 var task = new com.javaclaw.framework.spi.ModelTaskRequest(
+                         "context.compaction", com.javaclaw.framework.spi.ModelTier.LIGHT,
+                         JsonNodeFactory.instance.objectNode(),
+                         JsonNodeFactory.instance.objectNode(), request.runId(), "summary",
+                         java.time.Duration.ofSeconds(2), 0, () -> false, false);
+                 audit.started(task);
+                 audit.usage(task, "test-light", 1,
+                         new com.javaclaw.framework.api.ModelTokenUsage(
+                                 10, 4, 1, 3, 2, 1), java.math.BigDecimal.ZERO);
+                 audit.completed(task, new com.javaclaw.framework.spi.ModelTaskResult(
+                         JsonNodeFactory.instance.objectNode().put("summary", "ok"),
+                         "test-light", 10, 3, false, Map.of()));
+                 audit.failed(task, new IllegalStateException("synthetic audit failure"));
+                 return CompletableFuture.completedFuture(ReasoningResult.completed(
+                         JsonNodeFactory.instance.objectNode().put("text", "done")));
+             }, executor, relay)) {
+            var handle = engine.start(fixture.request(null));
+            var observed = handle.events(0).collectList().toFuture();
+            releaseModelTask.countDown();
+
+            assertEquals(RunState.COMPLETED,
+                    handle.completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
+            List<RunEventEnvelope> live = observed.get(2, TimeUnit.SECONDS);
+            executor.submit(() -> { }).get(2, TimeUnit.SECONDS);
+
+            List<String> auxiliaryTypes = live.stream().map(RunEventEnvelope::type)
+                    .filter(type -> type.startsWith("core.model_task.")).toList();
+            assertEquals(List.of(
+                    "core.model_task.started", "core.model_task.usage",
+                    "core.model_task.completed", "core.model_task.failed"), auxiliaryTypes);
+            assertEquals(live.size(), live.stream().map(RunEventEnvelope::sequence).distinct().count());
+            assertEquals(live.stream().map(RunEventEnvelope::sequence).sorted().toList(),
+                    live.stream().map(RunEventEnvelope::sequence).toList());
+            assertEquals(auxiliaryTypes, fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .map(RunEventEnvelope::type)
+                    .filter(type -> type.startsWith("core.model_task.")).toList());
+            assertEquals(0, relay.activeRunCount());
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void explicitlyBackgroundModelUsageCanBeAuditedAfterOwnerRunCompletion() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        RunEventRelay relay = new RunEventRelay();
+        var audit = new RunEventModelTaskAuditSink(fixture.runs, relay);
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.engine(extensions, request ->
+                     CompletableFuture.completedFuture(ReasoningResult.completed(
+                             JsonNodeFactory.instance.objectNode().put("text", "done"))),
+                     Runnable::run, relay)) {
+            var handle = engine.start(fixture.request(null));
+            assertEquals(RunState.COMPLETED,
+                    handle.completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
+            var background = new com.javaclaw.framework.spi.ModelTaskRequest(
+                    "memory.distillation.extract", com.javaclaw.framework.spi.ModelTier.LIGHT,
+                    JsonNodeFactory.instance.objectNode(), JsonNodeFactory.instance.objectNode(),
+                    handle.id(), "memory", java.time.Duration.ofSeconds(2), 0,
+                    () -> false, false,
+                    com.javaclaw.framework.spi.ModelTaskAttribution.BACKGROUND);
+
+            audit.started(background);
+            assertTrue(audit.commitUsage(background, "background-call-1", "test-light", 0,
+                    new com.javaclaw.framework.api.ModelTokenUsage(10, 0, 0, 3, 0, 1),
+                    java.math.BigDecimal.ZERO));
+            audit.completed(background, new com.javaclaw.framework.spi.ModelTaskResult(
+                    JsonNodeFactory.instance.objectNode().put("ok", true),
+                    "test-light", 10, 3, false, Map.of()));
+
+            assertEquals(RunState.COMPLETED, fixture.runs.find(handle.id())
+                    .orElseThrow().snapshot().state());
+            List<RunEventEnvelope> events = fixture.runs.eventsAfter(handle.id(), 0);
+            assertEquals(List.of("core.model_task.started", "core.model_task.usage",
+                            "core.model_task.completed"),
+                    events.stream().map(RunEventEnvelope::type)
+                            .filter(type -> type.startsWith("core.model_task.")).toList());
+            assertEquals("BACKGROUND", events.stream()
+                    .filter(event -> event.type().equals("core.model_task.usage"))
+                    .findFirst().orElseThrow().payload().path("attribution").asText());
+            assertEquals(events.size(), fixture.jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM agent_run_outbox WHERE run_id = ?",
+                    Integer.class, handle.id().value()));
+
+            var inline = new com.javaclaw.framework.spi.ModelTaskRequest(
+                    "late.inline", com.javaclaw.framework.spi.ModelTier.LIGHT,
+                    JsonNodeFactory.instance.objectNode(), JsonNodeFactory.instance.objectNode(),
+                    handle.id(), "test", java.time.Duration.ofSeconds(2), 0,
+                    () -> false, false);
+            assertTrue(audit.commitUsage(inline, "late-inline", "test-light", 0,
+                    new com.javaclaw.framework.api.ModelTokenUsage(1, 1),
+                    java.math.BigDecimal.ZERO));
         }
     }
 
@@ -210,6 +328,11 @@ class AgentEngineIntegrationTest {
                 started.put("invocationId", "used-call");
                 started.set("arguments", challenge.arguments());
                 request.events().emit("core.tool.started", 1, "test", started);
+                ObjectNode completed = JsonNodeFactory.instance.objectNode();
+                completed.put("tool", challenge.tool());
+                completed.put("invocationId", "used-call");
+                completed.set("output", JsonNodeFactory.instance.objectNode().put("sent", true));
+                request.events().emit("core.tool.completed", 1, "test", completed);
                 return CompletableFuture.completedFuture(ReasoningResult.waitingForInput(
                         JsonNodeFactory.instance.objectNode().put("question", "next?"), "input"));
             }
@@ -235,6 +358,83 @@ class AgentEngineIntegrationTest {
                 assertEquals(RunState.COMPLETED,
                         resumed.completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
             }
+        }
+    }
+
+    @Test
+    void recoveryFailsRunWithAnUnclosedToolInvocation() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        ReasoningGateway reasoning = request -> {
+            ObjectNode started = JsonNodeFactory.instance.objectNode();
+            started.put("tool", "email_send");
+            started.put("fingerprint", "uncertain-fingerprint");
+            started.put("invocationId", "uncertain-call");
+            started.set("arguments", JsonNodeFactory.instance.objectNode());
+            request.events().emit("core.tool.started", 1, "test", started);
+            return CompletableFuture.completedFuture(ReasoningResult.waitingForInput(
+                    JsonNodeFactory.instance.objectNode().put("question", "next?"), "input"));
+        };
+
+        try (ExtensionManager extensions = fixture.extensionManager()) {
+            AgentEngine first = fixture.engine(extensions, reasoning);
+            var handle = first.start(fixture.request(null));
+            assertEquals(RunState.WAITING_INPUT, first.get(handle.id()).state());
+            first.close();
+
+            try (AgentEngine restored = fixture.engine(extensions, reasoning)) {
+                assertEquals(RunState.FAILED, restored.get(handle.id()).state());
+                RunEventEnvelope failed = fixture.runs.eventsAfter(handle.id(), 0).stream()
+                        .filter(event -> event.type().equals("core.run.failed"))
+                        .findFirst().orElseThrow();
+                assertEquals("UNCERTAIN_TOOL_OUTCOME",
+                        failed.payload().path("code").asText());
+                assertEquals("email_send", failed.payload().path("tool").asText());
+                assertEquals("uncertain-call",
+                        failed.payload().path("invocationId").asText());
+                assertTrue(failed.payload().path("sideEffectMayHaveOccurred").asBoolean());
+            }
+        }
+    }
+
+    @Test
+    void committedToolOutcomeIsNotDuplicatedWhenCommitAcknowledgementFails() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        AmbiguousCompletionRunStore ambiguous =
+                new AmbiguousCompletionRunStore(fixture.runs);
+        ReasoningGateway reasoning = request -> {
+            ObjectNode started = JsonNodeFactory.instance.objectNode();
+            started.put("tool", "email_send");
+            started.put("fingerprint", "ambiguous-fingerprint");
+            started.put("invocationId", "ambiguous-call");
+            started.set("arguments", JsonNodeFactory.instance.objectNode());
+            request.events().emit("core.tool.started", 1, "test", started);
+            ObjectNode completed = JsonNodeFactory.instance.objectNode();
+            completed.put("tool", "email_send");
+            completed.put("invocationId", "ambiguous-call");
+            completed.set("output", JsonNodeFactory.instance.objectNode().put("sent", true));
+            request.events().emit("core.tool.completed", 1, "test", completed);
+            return CompletableFuture.completedFuture(ReasoningResult.completed(
+                    JsonNodeFactory.instance.objectNode().put("text", "done")));
+        };
+
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = new AgentEngine(
+                     new AgentCompiler(fixture.definitions, extensions, fixture.json),
+                     ambiguous, fixture.plans, reasoning, Runnable::run,
+                     fixture.json, fixture.clock, new RunUsageLedger(),
+                     new RunEventRelay())) {
+            var handle = engine.start(fixture.request(null));
+
+            assertEquals(RunState.COMPLETED,
+                    handle.completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
+            assertEquals(1, fixture.runs.eventsAfter(handle.id(), 0).stream()
+                    .filter(event -> event.type().equals("core.tool.completed")
+                            && event.payload().path("invocationId").asText()
+                            .equals("ambiguous-call"))
+                    .count());
+            assertEquals(1, ambiguous.completionAppends.get());
         }
     }
 
@@ -360,14 +560,66 @@ class AgentEngineIntegrationTest {
                 assertTrue(engine.cancel(handle.id(),
                         new CancelReason("USER_CANCELLED", "stop")));
                 assertEquals(RunState.CANCELLED,
-                        handle.completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
+                        fixture.runs.find(handle.id()).orElseThrow().snapshot().state());
+                assertFalse(handle.completion().toCompletableFuture().isDone(),
+                        "terminal delivery waits for in-flight reasoning and its metering");
                 assertEquals(0, v1Stops.get(),
                         "cancel must not unload code that is still on the execution stack");
 
                 pending.complete(ReasoningResult.completed(
                         JsonNodeFactory.instance.objectNode().put("text", "late")));
+                assertEquals(RunState.CANCELLED,
+                        handle.completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
                 assertEquals(1, v1Stops.get(),
                         "the retired generation is released after reasoning unwinds");
+            }
+        }
+    }
+
+    @Test
+    void cancellationKeepsUsageFactDeliveryOpenUntilInFlightReasoningExits() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.publishDefinition(Map.of());
+        java.util.concurrent.atomic.AtomicReference<ReasoningRequest> captured =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        CompletableFuture<ReasoningResult> pending = new CompletableFuture<>();
+        try (ExtensionManager extensions = fixture.extensionManager();
+             AgentEngine engine = fixture.engine(extensions, request -> {
+                 captured.set(request);
+                 return pending;
+             })) {
+            var handle = engine.start(fixture.request(null));
+            List<RunEventEnvelope> live = new java.util.concurrent.CopyOnWriteArrayList<>();
+            var subscription = handle.events(0).subscribe(live::add);
+            try {
+                assertTrue(engine.cancel(handle.id(),
+                        new CancelReason("USER_CANCELLED", "stop")));
+                assertFalse(handle.completion().toCompletableFuture().isDone());
+
+                ObjectNode usage = JsonNodeFactory.instance.objectNode();
+                usage.put("modelCallId", "cancelled-call");
+                usage.put("inputTokens", 12);
+                usage.put("outputTokens", 3);
+                usage.put("modelCalls", 1);
+                captured.get().events().emit(
+                        "core.model.usage", 2, "framework.springai", usage);
+                pending.complete(ReasoningResult.completed(
+                        JsonNodeFactory.instance.objectNode().put("text", "ignored")));
+
+                assertEquals(RunState.CANCELLED,
+                        handle.completion().toCompletableFuture().get(2, TimeUnit.SECONDS).state());
+                List<RunEventEnvelope> durable = fixture.runs.eventsAfter(handle.id(), 0);
+                long cancelledSequence = durable.stream()
+                        .filter(event -> event.type().equals("core.run.cancelled"))
+                        .findFirst().orElseThrow().sequence();
+                RunEventEnvelope metered = durable.stream()
+                        .filter(event -> event.type().equals("core.model.usage"))
+                        .findFirst().orElseThrow();
+                assertTrue(metered.sequence() > cancelledSequence);
+                assertEquals(1, live.stream()
+                        .filter(event -> event.type().equals("core.model.usage")).count());
+            } finally {
+                subscription.dispose();
             }
         }
     }
@@ -529,8 +781,74 @@ class AgentEngineIntegrationTest {
 
         private AgentEngine engine(
                 ExtensionManager extensions, ReasoningGateway reasoning, Executor executor) {
+            return engine(extensions, reasoning, executor, new RunEventRelay());
+        }
+
+        private AgentEngine engine(
+                ExtensionManager extensions, ReasoningGateway reasoning, Executor executor,
+                RunEventRelay events) {
             return new AgentEngine(new AgentCompiler(definitions, extensions, json), runs, plans,
-                    reasoning, executor, json, clock, new RunUsageLedger());
+                    reasoning, executor, json, clock, new RunUsageLedger(), events);
+        }
+    }
+
+    private static final class AmbiguousCompletionRunStore
+            implements com.javaclaw.framework.spi.RunStore {
+        private final com.javaclaw.framework.spi.RunStore delegate;
+        private final AtomicInteger completionAppends = new AtomicInteger();
+
+        private AmbiguousCompletionRunStore(com.javaclaw.framework.spi.RunStore delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public com.javaclaw.framework.spi.CreateRunResult create(
+                com.javaclaw.framework.api.RunId id, RunRequest request,
+                String executionPlanId, com.javaclaw.framework.spi.RunEventDraft createdEvent) {
+            return delegate.create(id, request, executionPlanId, createdEvent);
+        }
+
+        @Override
+        public java.util.Optional<com.javaclaw.framework.spi.StoredRun> find(
+                com.javaclaw.framework.api.RunId id) {
+            return delegate.find(id);
+        }
+
+        @Override
+        public java.util.Optional<com.javaclaw.framework.spi.StoredRun> findByIdempotencyKey(
+                String workspaceId, String idempotencyKey) {
+            return delegate.findByIdempotencyKey(workspaceId, idempotencyKey);
+        }
+
+        @Override
+        public List<com.javaclaw.framework.spi.StoredRun> nonTerminalRuns() {
+            return delegate.nonTerminalRuns();
+        }
+
+        @Override
+        public List<RunEventEnvelope> eventsAfter(
+                com.javaclaw.framework.api.RunId id, long afterSequence) {
+            return delegate.eventsAfter(id, afterSequence);
+        }
+
+        @Override
+        public java.util.Optional<RunEventEnvelope> append(
+                com.javaclaw.framework.api.RunId id, Set<RunState> expectedStates,
+                RunState nextState, com.javaclaw.framework.spi.RunEventDraft event,
+                JsonNode output, String error) {
+            return delegate.append(id, expectedStates, nextState, event, output, error);
+        }
+
+        @Override
+        public java.util.Optional<RunEventEnvelope> appendEvent(
+                com.javaclaw.framework.api.RunId id,
+                com.javaclaw.framework.spi.RunEventDraft event) {
+            java.util.Optional<RunEventEnvelope> committed = delegate.appendEvent(id, event);
+            if (event.type().equals("core.tool.completed")
+                    && completionAppends.incrementAndGet() == 1) {
+                throw new IllegalStateException("commit acknowledgement unavailable");
+            }
+            return committed;
         }
     }
 

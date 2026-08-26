@@ -41,10 +41,12 @@ public class WorkspaceManager {
             "workflow_definitions", "app_properties", "mcp_servers",
             "site_account_bindings", "site_sessions", "site_credentials",
             "scheduled_tasks", "custom_agents", "plugin_state", "plugin_storage",
-            "command_whitelist", "chat_messages", "chat_sessions", "token_usage_daily",
+            "command_whitelist", "conversation_context_summary", "chat_messages", "chat_sessions",
+            "token_usage_projection_receipts", "token_usage_daily",
             "skill_usage", "skill_proposals", "sdd_tasks", "sdd_spec_docs",
             "sdd_verify_cache", "knowledge_doc_prefs", "browser_state",
-            "inference_workspace_bindings");
+            "inference_workspace_bindings", "agent_definition_versions",
+            "agent_definitions", "run_profile_versions", "run_profiles");
 
     private final List<Workspace> workspaces = new CopyOnWriteArrayList<>();
     private final Path globalDataPath;
@@ -306,6 +308,7 @@ public class WorkspaceManager {
     private boolean deleteWorkspaceData(String workspaceId) {
         try {
             transactions.executeWithoutResult(status -> {
+                deleteAgentFrameworkData(workspaceId);
                 for (String table : WORKSPACE_TABLES) {
                     jdbc.update("DELETE FROM " + table + " WHERE workspace_id = ?", workspaceId);
                 }
@@ -323,6 +326,37 @@ public class WorkspaceManager {
             log.warn("删除工作区数据失败: workspaceId={}, error={}",
                     workspaceId, failure.getMessage(), failure);
             return false;
+        }
+    }
+
+    private void deleteAgentFrameworkData(String workspaceId) {
+        Integer activeRuns = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM agent_runs
+                WHERE workspace_id = ?
+                  AND state NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+                """, Integer.class, workspaceId);
+        if (activeRuns != null && activeRuns > 0) {
+            throw new IllegalStateException(
+                    "工作区仍有未终止 Agent Run，不能删除: " + activeRuns);
+        }
+
+        List<String> executionPlanIds = jdbc.queryForList("""
+                SELECT DISTINCT execution_plan_id FROM agent_runs
+                WHERE workspace_id = ?
+                """, String.class, workspaceId);
+        for (String table : List.of(
+                "agent_extension_state", "agent_run_outbox", "agent_run_events")) {
+            jdbc.update("DELETE FROM " + table + " WHERE run_id IN ("
+                    + "SELECT run_id FROM agent_runs WHERE workspace_id = ?)", workspaceId);
+        }
+        jdbc.update("DELETE FROM agent_runs WHERE workspace_id = ?", workspaceId);
+        for (String planId : executionPlanIds) {
+            jdbc.update("""
+                    DELETE FROM compiled_execution_plans
+                    WHERE plan_id = ?
+                      AND NOT EXISTS (
+                          SELECT 1 FROM agent_runs WHERE execution_plan_id = ?)
+                    """, planId, planId);
         }
     }
 

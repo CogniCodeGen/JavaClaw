@@ -6,6 +6,8 @@ import com.javaclaw.api.conversation.ConversationRequest;
 import com.javaclaw.framework.api.InvocationSource;
 import com.javaclaw.framework.api.PermissionSet;
 import com.javaclaw.framework.api.RunRequest;
+import com.javaclaw.framework.api.ToolGroupAccess;
+import com.javaclaw.framework.api.ToolNameAccess;
 import com.javaclaw.runtime.WorkspaceContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,15 +26,17 @@ class RunRequestFactoryTest {
 
     private Path fixtures;
     private RunRequestFactory factory;
+    private WorkspaceContext workspace;
 
     @BeforeEach
     void setUp() throws Exception {
         fixtures = Path.of("target", "run-request-factory-test").toAbsolutePath();
         Files.createDirectories(fixtures);
         Path root = fixtures.resolve("workspace");
-        factory = new RunRequestFactory(new WorkspaceContext(
+        workspace = new WorkspaceContext(
                 "workspace-a", "Workspace A", fixtures, root,
-                root.resolve("browser"), root.resolve("screenshots"), root.resolve("logs")));
+                root.resolve("browser"), root.resolve("screenshots"), root.resolve("logs"));
+        factory = new RunRequestFactory(workspace);
     }
 
     @AfterEach
@@ -73,6 +77,10 @@ class RunRequestFactoryTest {
                 run.inputs().stream().map(input -> input.type()).toList());
         assertEquals("user", run.inputs().getFirst().data().path("role").asText());
         assertEquals("first question", run.inputs().getFirst().data().path("text").asText());
+        assertEquals(request.priorMessages().getFirst().messageId(),
+                run.inputs().getFirst().data()
+                        .path(com.javaclaw.framework.api.InputBlock.CONVERSATION_MESSAGE_ID_FIELD)
+                        .asText());
         assertEquals("latest answer",
                 run.attributes().get("previousAssistantReply").asText());
         assertEquals("image/png", run.inputs().get(5).data().path("mediaType").asText());
@@ -118,5 +126,39 @@ class RunRequestFactoryTest {
         assertEquals("session-explicit", explicit.scope().sessionId());
         assertEquals("idempotent", explicit.idempotencyKey());
         assertFalse(explicit.inputs().isEmpty());
+    }
+
+    @Test
+    void routedConversationPersistsExactAllowlistAndKnowledgeGate() {
+        RunRequestFactory routed = new RunRequestFactory(workspace, new ToolIntentRouter(true));
+        RunRequest ordinary = routed.conversation(
+                ConversationRequest.ofText("解释一下 CAP"), "chat",
+                InvocationSource.chat(), PermissionSet.UNRESTRICTED);
+        assertEquals(List.of("ask_user_clarification", "skill_read"),
+                java.util.stream.StreamSupport.stream(
+                        ordinary.attributes().get(ToolNameAccess.ATTRIBUTE).spliterator(), false)
+                        .map(com.fasterxml.jackson.databind.JsonNode::asText).sorted().toList());
+        assertFalse(ordinary.attributes().get("framework.enableKnowledgeContext").asBoolean());
+
+        RunRequest knowledge = routed.conversation(
+                ConversationRequest.ofText("查询知识库中的项目文档"), "plan",
+                new InvocationSource("plan", "desktop"), PermissionSet.UNRESTRICTED);
+        assertTrue(knowledge.attributes().get("framework.enableKnowledgeContext").asBoolean());
+        assertTrue(knowledge.attributes().get(ToolGroupAccess.ATTRIBUTE).toString()
+                .contains("knowledge"));
+        assertTrue(knowledge.attributes().get(ToolNameAccess.ATTRIBUTE).toString()
+                .contains("knowledge_search"));
+
+        RunRequest knowledgeWrite = routed.conversation(
+                ConversationRequest.ofText("导入知识库"), "chat",
+                InvocationSource.chat(), PermissionSet.UNRESTRICTED);
+        assertFalse(knowledgeWrite.attributes().get("framework.enableKnowledgeContext").asBoolean());
+
+        RunRequest legacy = new RunRequestFactory(workspace, new ToolIntentRouter(false))
+                .conversation(ConversationRequest.ofText("解释一下 CAP"), "chat",
+                        InvocationSource.chat(), PermissionSet.UNRESTRICTED);
+        assertFalse(legacy.attributes().containsKey(ToolGroupAccess.ATTRIBUTE));
+        assertFalse(legacy.attributes().containsKey(ToolNameAccess.ATTRIBUTE));
+        assertFalse(legacy.attributes().containsKey("framework.enableKnowledgeContext"));
     }
 }

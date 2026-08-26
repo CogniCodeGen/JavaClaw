@@ -17,16 +17,19 @@ public final class MemoryRecallExtension extends BuiltinCapabilityExtension {
                             .filter(block -> block.type().equals("core.text"))
                             .map(block -> block.data().path("text").asText())
                             .collect(java.util.stream.Collectors.joining("\n"));
-                    int topK = com.javaclaw.framework.api.CapabilityRuntime.configuration(
-                            request, "memory.recall").path("topK").asInt(8);
-                    return Objects.requireNonNull(recall, "recall").recall(request, query, topK);
+                    int topK = Math.max(1, Math.min(3,
+                            com.javaclaw.framework.api.CapabilityRuntime.configuration(
+                                    request, "memory.recall").path("topK").asInt(3)));
+                    String result = Objects.requireNonNull(recall, "recall").recall(request, query, topK);
+                    return com.javaclaw.util.TokenEstimator.truncateToTokens(result, 1_200);
                 }));
     }
 
     private static ObjectNode schema() {
         ObjectNode schema = com.javaclaw.framework.builtin.BuiltinSchemas.objectSchema();
         com.javaclaw.framework.builtin.BuiltinSchemas.booleanProperty(schema, "enabled", true);
-        com.javaclaw.framework.builtin.BuiltinSchemas.integerProperty(schema, "topK", 8, 1, 50);
+        com.javaclaw.framework.builtin.BuiltinSchemas.integerProperty(schema, "topK", 3, 1, 50);
+        com.javaclaw.framework.builtin.BuiltinSchemas.authoringMaximum(schema, "topK", 3);
         return schema;
     }
 }

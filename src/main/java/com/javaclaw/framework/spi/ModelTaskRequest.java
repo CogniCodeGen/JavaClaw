@@ -20,7 +20,8 @@ public record ModelTaskRequest(
         Duration timeout,
         int maxRetries,
         CancellationToken cancellation,
-        boolean cacheAllowed) {
+        boolean cacheAllowed,
+        ModelTaskAttribution attribution) {
 
     public ModelTaskRequest {
         purpose = Objects.requireNonNull(purpose, "purpose").trim();
@@ -32,10 +33,28 @@ public record ModelTaskRequest(
         budgetAccount = Objects.requireNonNull(budgetAccount, "budgetAccount").trim();
         timeout = Objects.requireNonNull(timeout, "timeout");
         cancellation = Objects.requireNonNull(cancellation, "cancellation");
+        attribution = Objects.requireNonNull(attribution, "attribution");
         if (purpose.isEmpty() || budgetAccount.isEmpty() || timeout.isNegative()
                 || timeout.isZero() || maxRetries < 0) {
             throw new IllegalArgumentException("invalid model task request");
         }
+    }
+
+    /** Source-compatible constructor for text-only helper tasks. */
+    public ModelTaskRequest(
+            String purpose,
+            ModelTier tier,
+            JsonNode input,
+            List<InputBlock> mediaInputs,
+            JsonNode outputSchema,
+            RunId ownerRunId,
+            String budgetAccount,
+            Duration timeout,
+            int maxRetries,
+            CancellationToken cancellation,
+            boolean cacheAllowed) {
+        this(purpose, tier, input, mediaInputs, outputSchema, ownerRunId, budgetAccount,
+                timeout, maxRetries, cancellation, cacheAllowed, ModelTaskAttribution.INLINE);
     }
 
     /** Source-compatible constructor for text-only helper tasks. */
@@ -51,7 +70,23 @@ public record ModelTaskRequest(
             CancellationToken cancellation,
             boolean cacheAllowed) {
         this(purpose, tier, input, List.of(), outputSchema, ownerRunId, budgetAccount,
-                timeout, maxRetries, cancellation, cacheAllowed);
+                timeout, maxRetries, cancellation, cacheAllowed, ModelTaskAttribution.INLINE);
+    }
+
+    public ModelTaskRequest(
+            String purpose,
+            ModelTier tier,
+            JsonNode input,
+            JsonNode outputSchema,
+            RunId ownerRunId,
+            String budgetAccount,
+            Duration timeout,
+            int maxRetries,
+            CancellationToken cancellation,
+            boolean cacheAllowed,
+            ModelTaskAttribution attribution) {
+        this(purpose, tier, input, List.of(), outputSchema, ownerRunId, budgetAccount,
+                timeout, maxRetries, cancellation, cacheAllowed, attribution);
     }
     @Override public JsonNode input() { return input.deepCopy(); }
     @Override public JsonNode outputSchema() { return outputSchema.deepCopy(); }

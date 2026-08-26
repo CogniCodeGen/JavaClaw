@@ -33,7 +33,7 @@ public final class ThinkingPanelController implements AutoCloseable {
     @FXML private Label elapsedLabel;
     @FXML private Label tokensInValue;
     @FXML private Label tokensOutValue;
-    @FXML private Label costValue;
+    @FXML private Label tokenDetailsValue;
     @FXML private Label emptyHint;
     @FXML private VBox dynamicSectionsHost;
 
@@ -61,7 +61,7 @@ public final class ThinkingPanelController implements AutoCloseable {
         elapsedLabel.textProperty().bind(viewModel.elapsedProperty());
         tokensInValue.textProperty().bind(viewModel.tokensInProperty().asString());
         tokensOutValue.textProperty().bind(viewModel.tokensOutProperty().asString());
-        costValue.textProperty().bind(viewModel.costProperty());
+        tokenDetailsValue.textProperty().bind(viewModel.tokenDetailsProperty());
         emptyHint.visibleProperty().bind(viewModel.emptyProperty());
         emptyHint.managedProperty().bind(viewModel.emptyProperty());
         viewModel.statusTypeProperty().addListener(statusTypeListener);
@@ -80,7 +80,7 @@ public final class ThinkingPanelController implements AutoCloseable {
         renderer.clear();
         viewModel.setEmpty(false);
         setStatus("thinking", "思考中...");
-        updateMetrics(0, 0, "¥0.00");
+        updateMetrics(TurnMetrics.ZERO);
         streamStartMillis = System.currentTimeMillis();
         startElapsedTicker();
     }
@@ -111,7 +111,7 @@ public final class ThinkingPanelController implements AutoCloseable {
         renderer.clear();
         viewModel.setEmpty(true);
         viewModel.setElapsed("0.0s");
-        viewModel.setMetrics(0, 0, "¥0.00");
+        viewModel.setMetrics(0, 0, "缓存 0 · 写入 0 · 推理 —");
         viewModel.setStatus("idle", "等待中");
     }
 
@@ -153,9 +153,20 @@ public final class ThinkingPanelController implements AutoCloseable {
         setStatus("replying", "回复中...");
     }
 
-    public void updateMetrics(long tokensIn, long tokensOut, String costText) {
+    public void updateMetrics(long tokensIn, long tokensOut, String tokenDetailsText) {
         if (closed.get()) return;
-        viewModel.setMetrics(tokensIn, tokensOut, costText);
+        viewModel.setMetrics(tokensIn, tokensOut, tokenDetailsText);
+    }
+
+    public void updateMetrics(TurnMetrics metrics) {
+        if (closed.get()) return;
+        TurnMetrics value = metrics == null ? TurnMetrics.ZERO : metrics;
+        String reasoning = value.reasoningTokens() == 0
+                ? "—" : Long.toString(value.reasoningTokens());
+        viewModel.setMetrics(value.inputTokens(), value.outputTokens(),
+                "缓存 " + value.cacheReadInputTokens()
+                        + " · 写入 " + value.cacheWriteInputTokens()
+                        + " · 推理 " + reasoning);
     }
 
     public void appendToolCall(String name, String input, String status) {

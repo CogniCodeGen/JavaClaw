@@ -35,7 +35,9 @@ import java.util.concurrent.ThreadLocalRandom;
  *
  * @author JavaClaw
  */
-@com.javaclaw.framework.spi.ToolContract(group = "command", permissions = {"tool.execute"}, idempotent = false)
+@com.javaclaw.framework.spi.ToolContract(
+        group = "command", permissions = {"tool.execute"}, idempotent = false,
+        resultClass = com.javaclaw.framework.spi.ToolResultClass.LARGE)
 public class CommandLineTools {
 
     private static final Logger log = LoggerFactory.getLogger(CommandLineTools.class);
@@ -132,7 +134,9 @@ public class CommandLineTools {
         return doExecute(trimmedCmd, effectiveWorkDir, timeout);
     }
 
-    @com.javaclaw.framework.spi.ToolContract(group = "command", permissions = {"tool.read"}, idempotent = true)
+    @com.javaclaw.framework.spi.ToolContract(
+            group = "command", permissions = {"tool.read"}, idempotent = true,
+            resultClass = com.javaclaw.framework.spi.ToolResultClass.LARGE)
     @Tool(name = "cmd_whitelist_list",
             description = "列出命令白名单中所有已批准的高风险命令条目。")
     public String listWhitelist() {
@@ -400,7 +404,9 @@ public class CommandLineTools {
                 "session_id: " + sessionId + "\n" + collected.stripTrailing());
     }
 
-    @com.javaclaw.framework.spi.ToolContract(group = "command", permissions = {"tool.read"}, idempotent = true)
+    @com.javaclaw.framework.spi.ToolContract(
+            group = "command", permissions = {"tool.read"}, idempotent = true,
+            resultClass = com.javaclaw.framework.spi.ToolResultClass.LARGE)
     @Tool(name = "cmd_session_read",
             description = "读取会话当前累积的输出而不发送任何输入。" +
                     "用于 cmd_session_input 之后命令仍在打字、或需要继续读取分批到来的输出。" +
@@ -451,7 +457,9 @@ public class CommandLineTools {
                 : ToolResponse.error("cmd_session_close", "未找到会话: " + sessionId);
     }
 
-    @com.javaclaw.framework.spi.ToolContract(group = "command", permissions = {"tool.read"}, idempotent = true)
+    @com.javaclaw.framework.spi.ToolContract(
+            group = "command", permissions = {"tool.read"}, idempotent = true,
+            resultClass = com.javaclaw.framework.spi.ToolResultClass.LARGE)
     @Tool(name = "cmd_session_list",
             description = "列出当前所有命令行会话的元数据（ID、工作目录、存活状态、缓冲大小、活跃时间）。")
     public String listSessions() {

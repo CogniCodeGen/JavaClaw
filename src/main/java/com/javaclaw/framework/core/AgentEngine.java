@@ -10,7 +10,9 @@ import com.javaclaw.framework.spi.CreateRunResult;
 import com.javaclaw.framework.spi.RunCancelledException;
 import com.javaclaw.framework.spi.RunEventDraft;
 import com.javaclaw.framework.spi.RunStore;
+import com.javaclaw.framework.spi.RunResourceRegistry;
 import com.javaclaw.framework.spi.StoredRun;
+import com.javaclaw.framework.spi.ToolOutcomeCommitException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 
@@ -44,6 +46,10 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
     private final ObjectMapper json;
     private final Clock clock;
     private final RunUsageLedger usage;
+    private final RunEventRelay events;
+    private final CommittedRunEventWriter committedEvents;
+    private final ToolOutcomeCommitter toolOutcomes;
+    private final RunResourceRegistry resources;
     private final ConcurrentHashMap<RunId, ActiveRun> activeRuns = new ConcurrentHashMap<>();
     private final AtomicBoolean closed = new AtomicBoolean();
 
@@ -55,7 +61,23 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
             Executor executor,
             ObjectMapper json,
             Clock clock,
-            RunUsageLedger usage) {
+            RunUsageLedger usage,
+            RunEventRelay events) {
+        this(compiler, runs, plans, reasoning, executor, json, clock, usage, events,
+                new DefaultRunResourceRegistry());
+    }
+
+    public AgentEngine(
+            AgentCompiler compiler,
+            RunStore runs,
+            ExecutionPlanStore plans,
+            ReasoningGateway reasoning,
+            Executor executor,
+            ObjectMapper json,
+            Clock clock,
+            RunUsageLedger usage,
+            RunEventRelay events,
+            RunResourceRegistry resources) {
         this.compiler = Objects.requireNonNull(compiler, "compiler");
         this.runs = Objects.requireNonNull(runs, "runs");
         this.plans = Objects.requireNonNull(plans, "plans");
@@ -64,6 +86,10 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
         this.json = Objects.requireNonNull(json, "json");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.usage = Objects.requireNonNull(usage, "usage");
+        this.events = Objects.requireNonNull(events, "events");
+        this.committedEvents = new CommittedRunEventWriter(runs, events);
+        this.toolOutcomes = new ToolOutcomeCommitter(runs, committedEvents, events);
+        this.resources = Objects.requireNonNull(resources, "resources");
         recoverPersistedRuns();
     }
 
@@ -79,6 +105,7 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
         ExecutionPlan plan = compiler.compile(request);
         RunRequest effectiveRequest = plan.annotate(request);
         RunId openedAccount = null;
+        ActiveRun openedRun = null;
         boolean durableCreated = false;
         try {
             plans.save(plan.descriptor().id(), plan.descriptor().extensionGeneration(),
@@ -86,10 +113,12 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
             RunId id = RunId.random();
             ActiveRun active = new ActiveRun(id, effectiveRequest, plan,
                     new RunControl(plan.descriptor().budget(), clock));
+            openedRun = active;
             usage.open(id, plan.descriptor().budget(), effectiveRequest.scope());
             openedAccount = id;
             ActiveRun collision = activeRuns.putIfAbsent(id, active);
             if (collision != null) throw new IllegalStateException("run id collision: " + id);
+            events.attach(id, active.sink);
 
             ObjectNode payload = JsonNodeFactory.instance.objectNode();
             payload.put("executionPlanId", plan.descriptor().id());
@@ -98,7 +127,9 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
                     event(effectiveRequest, "core.run.created", "framework.core", payload, null));
             if (!created.created()) {
                 activeRuns.remove(id, active);
+                events.detach(id, active.sink);
                 usage.close(id);
+                resources.release(id);
                 plan.close();
                 return handle(created.run().snapshot().id());
             }
@@ -111,12 +142,17 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
                 if (durableCreated) {
                     ObjectNode payload = JsonNodeFactory.instance.objectNode();
                     describeFailure(payload, failure);
-                    runs.append(openedAccount, Set.of(RunState.CREATED), RunState.FAILED,
+                    committedEvents.transition(
+                            openedAccount, Set.of(RunState.CREATED), RunState.FAILED,
                             event(effectiveRequest, "core.run.failed", "framework.core", payload, null),
                             null, failure.toString());
                 }
-                activeRuns.remove(openedAccount);
+                if (openedRun != null) {
+                    activeRuns.remove(openedAccount, openedRun);
+                    events.detach(openedAccount, openedRun.sink);
+                }
                 usage.close(openedAccount);
+                resources.release(openedAccount);
             }
             plan.close();
             throw failure;
@@ -165,7 +201,7 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
         ObjectNode payload = JsonNodeFactory.instance.objectNode();
         payload.put("commandType", command.type());
         payload.set("command", command.payload());
-        var event = runs.append(runId,
+        var event = committedEvents.transition(runId,
                 Set.of(RunState.WAITING_INPUT, RunState.WAITING_APPROVAL, RunState.PAUSED),
                 RunState.RUNNING,
                 event(active.request, "core.run.resumed", "framework.core", payload, null),
@@ -178,7 +214,6 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
             active.control.approveToolCall(approvedInvocation.grant());
         }
         active.pendingApproval = null;
-        active.sink.tryEmitNext(event.get());
         launch(active, command, approvedInvocation, Set.of(RunState.RUNNING));
         return new EngineRunHandle(active);
     }
@@ -192,12 +227,11 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
         ObjectNode payload = JsonNodeFactory.instance.objectNode();
         payload.put("code", reason.code());
         payload.put("detail", reason.detail());
-        var event = runs.append(runId, CANCELLABLE, RunState.CANCELLED,
+        var event = committedEvents.transition(runId, CANCELLABLE, RunState.CANCELLED,
                 event(stored.request(), "core.run.cancelled", "framework.core", payload, null),
                 null, reason.detail());
         event.ifPresent(value -> {
             if (active != null) {
-                active.sink.tryEmitNext(value);
                 terminate(active, new RunOutcome(runId, RunState.CANCELLED, null, reason.detail()));
             }
         });
@@ -239,14 +273,14 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
                 if (startStates.contains(RunState.CREATED)) {
                     ObjectNode payload = JsonNodeFactory.instance.objectNode();
                     payload.put("executionPlanId", active.plan.descriptor().id());
-                    var started = runs.append(active.id, Set.of(RunState.CREATED), RunState.RUNNING,
+                    var started = committedEvents.transition(
+                            active.id, Set.of(RunState.CREATED), RunState.RUNNING,
                             event(active.request, "core.run.started", "framework.core", payload, null),
                             null, null);
                     if (started.isEmpty()) {
                         finishExecutionTurn(active);
                         return;
                     }
-                    active.sink.tryEmitNext(started.get());
                 }
                 active.control.throwIfCancelled();
                 ReasoningRequest request = new ReasoningRequest(
@@ -297,15 +331,30 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
                 if (!active.terminated.get() && !active.detached.get()) fail(active, failure);
             }
         }
+        completeTerminalIfReady(active);
         cleanupIfReady(active);
     }
 
     private void appendReasoningEvent(
             ActiveRun active, String type, int version, String producer, JsonNode payload) {
-        active.control.throwIfCancelled();
         JsonNode encoded = active.plan.encodeEvent(type, version, payload);
-        var event = runs.append(active.id, Set.of(RunState.RUNNING), RunState.RUNNING,
-                event(active.request, type, producer, encoded, null), null, null);
+        String invocationId = type.equals("core.tool.completed")
+                ? requiredInvocationId(payload) : null;
+        var draft = event(active.request, type, version, producer, encoded, invocationId);
+        // Usage describes an already-issued provider response. It remains a valid fact after a
+        // concurrent cancellation has moved the Run to a terminal state. The same is true for a
+        // tool outcome whose external side effect has already returned.
+        var event = type.equals("core.tool.completed")
+                ? toolOutcomes.append(
+                        active.id, draft, invocationId,
+                        active.committedToolOutcomes, active.uncertainToolOutcomeCommits)
+                : type.equals("core.model.usage")
+                    ? committedEvents.append(active.id, draft)
+                    : appendRunningEvent(active, draft);
+        if (event.isEmpty()) {
+            throw new IllegalStateException(
+                    "could not commit reasoning event " + type + " for " + active.id);
+        }
         event.ifPresent(value -> {
             if (type.equals("core.tool.started")) {
                 String fingerprint = payload.path("fingerprint").asText("");
@@ -315,8 +364,23 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
                     active.pendingApprovedInvocation = null;
                 }
             }
-            active.sink.tryEmitNext(value);
         });
+    }
+
+    private static String requiredInvocationId(JsonNode payload) {
+        String invocationId = payload.path("invocationId").asText("").strip();
+        if (invocationId.isEmpty()) {
+            throw new IllegalArgumentException("tool completion requires invocationId");
+        }
+        return invocationId;
+    }
+
+    private java.util.Optional<RunEventEnvelope> appendRunningEvent(
+            ActiveRun active, RunEventDraft draft) {
+        active.control.throwIfCancelled();
+        return committedEvents.transition(
+                active.id, Set.of(RunState.RUNNING), RunState.RUNNING,
+                draft, null, null);
     }
 
     private void finishTurn(ActiveRun active, ReasoningResult result) {
@@ -346,11 +410,10 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
             active.pendingApprovedInvocation = null;
         }
         if (!result.reason().isBlank()) payload.put("reason", result.reason());
-        var event = runs.append(active.id, Set.of(RunState.RUNNING), next,
+        var event = committedEvents.transition(active.id, Set.of(RunState.RUNNING), next,
                 event(active.request, eventType, "framework.core", payload, null),
                 result.output(), null);
         if (event.isEmpty()) return;
-        active.sink.tryEmitNext(event.get());
         if (next.terminal()) {
             terminate(active, new RunOutcome(active.id, next, result.output(), null));
         }
@@ -358,17 +421,19 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
 
     private void fail(ActiveRun active, Throwable failure) {
         if (active.detached.get()) return;
-        if (failure instanceof RunCancelledException || active.control.cancelled()) {
+        ToolOutcomeCommitException toolOutcome = findToolOutcomeCommitFailure(failure);
+        if (toolOutcome == null
+                && (failure instanceof RunCancelledException || active.control.cancelled())) {
             cancel(active.id, new CancelReason("CANCELLED_DURING_EXECUTION", failure.getMessage()));
             return;
         }
         ObjectNode payload = JsonNodeFactory.instance.objectNode();
         describeFailure(payload, failure);
-        var event = runs.append(active.id, Set.of(RunState.RUNNING, RunState.CREATED), RunState.FAILED,
+        var event = committedEvents.transition(
+                active.id, Set.of(RunState.RUNNING, RunState.CREATED), RunState.FAILED,
                 event(active.request, "core.run.failed", "framework.core", payload, null),
                 null, failure.toString());
         if (event.isPresent()) {
-            active.sink.tryEmitNext(event.get());
             terminate(active, new RunOutcome(active.id, RunState.FAILED, null, failure.toString()));
         }
     }
@@ -376,6 +441,13 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
     private static void describeFailure(ObjectNode payload, Throwable failure) {
         payload.put("errorType", failure.getClass().getName());
         payload.put("message", failure.getMessage() == null ? "" : failure.getMessage());
+        ToolOutcomeCommitException toolOutcome = findToolOutcomeCommitFailure(failure);
+        if (toolOutcome != null) {
+            payload.put("code", "TOOL_OUTCOME_COMMIT_FAILED");
+            payload.put("tool", toolOutcome.tool());
+            payload.put("invocationId", toolOutcome.invocationId());
+            payload.put("sideEffectMayHaveOccurred", toolOutcome.sideEffectMayHaveOccurred());
+        }
         BudgetExceededException budget = findBudgetFailure(failure);
         if (budget == null) return;
         payload.put("budgetKind", budget.kind().name());
@@ -392,12 +464,30 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
         return null;
     }
 
-    private void terminate(ActiveRun active, RunOutcome outcome) {
-        if (active.terminated.compareAndSet(false, true)) {
-            active.completion.complete(outcome);
-            active.sink.tryEmitComplete();
-            cleanupIfReady(active);
+    private static ToolOutcomeCommitException findToolOutcomeCommitFailure(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            if (current instanceof ToolOutcomeCommitException outcome) return outcome;
+            current = current.getCause();
         }
+        return null;
+    }
+
+    private void terminate(ActiveRun active, RunOutcome outcome) {
+        if (active.terminalOutcome.compareAndSet(null, outcome)) {
+            active.terminated.set(true);
+            completeTerminalIfReady(active);
+        }
+    }
+
+    private void completeTerminalIfReady(ActiveRun active) {
+        if (!active.terminated.get() || active.executing.get()) return;
+        if (!active.terminalDelivered.compareAndSet(false, true)) return;
+        RunOutcome outcome = Objects.requireNonNull(
+                active.terminalOutcome.get(), "terminal outcome");
+        active.completion.complete(outcome);
+        events.complete(active.id, active.sink);
+        cleanupIfReady(active);
     }
 
     /**
@@ -405,10 +495,13 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
      * extension generation leased until that execution stack has actually exited.
      */
     private void cleanupIfReady(ActiveRun active) {
-        if (active.executing.get() || (!active.terminated.get() && !active.detached.get())) return;
+        if (active.executing.get()
+                || (!active.terminalDelivered.get() && !active.detached.get())) return;
         if (!active.cleaned.compareAndSet(false, true)) return;
         activeRuns.remove(active.id, active);
+        events.detach(active.id, active.sink);
         usage.close(active.id);
+        resources.release(active.id);
         active.plan.close();
     }
 
@@ -437,6 +530,17 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
     private void recoverPersistedRuns() {
         for (StoredRun stored : runs.nonTerminalRuns()) {
             RunId id = stored.snapshot().id();
+            ToolOutcomeCommitter.UncertainToolOutcome uncertain;
+            try {
+                uncertain = toolOutcomes.findUnclosed(id);
+            } catch (RuntimeException failure) {
+                markRecoveryBlocked(stored, "RECOVERY_EVENT_REPLAY_FAILED", failure.getMessage());
+                continue;
+            }
+            if (uncertain != null) {
+                failUncertainToolOutcome(stored, uncertain);
+                continue;
+            }
             ExecutionPlanDescriptor descriptor;
             try {
                 JsonNode persisted = plans.find(stored.snapshot().executionPlanId())
@@ -455,32 +559,65 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
                 markRecoveryBlocked(stored, "MISSING_LOCKED_EXTENSION", locks);
                 continue;
             }
+            ActiveRun recovered = null;
             try {
                 usage.open(id, descriptor.budget(), stored.request().scope());
                 ActiveRun active = new ActiveRun(id, stored.request(), plan,
                         new RunControl(descriptor.budget(), clock,
                                 stored.snapshot().createdAt().plus(descriptor.budget().timeout())));
+                recovered = active;
                 restoreBudgetState(active);
                 if (activeRuns.putIfAbsent(id, active) != null) {
                     throw new IllegalStateException("duplicate recovered run: " + id);
                 }
+                events.attach(id, active.sink);
                 replayPersisted(active);
                 RunState state = stored.snapshot().state();
                 if (state == RunState.CREATED || state == RunState.RUNNING
                         || state == RunState.RECOVERY_BLOCKED_MISSING_EXTENSION) {
                     ObjectNode payload = JsonNodeFactory.instance.objectNode();
                     payload.put("reason", "PROCESS_RESTART_REQUIRES_RESUME");
-                    runs.append(id, Set.of(state), RunState.PAUSED,
+                    committedEvents.transition(id, Set.of(state), RunState.PAUSED,
                             event(stored.request(), "core.run.recovered_paused",
-                                    "framework.core", payload, null), null, null)
-                            .ifPresent(active.sink::tryEmitNext);
+                                    "framework.core", payload, null), null, null);
                 }
             } catch (RuntimeException failure) {
-                activeRuns.remove(id);
+                if (recovered != null) {
+                    activeRuns.remove(id, recovered);
+                    events.detach(id, recovered.sink);
+                }
                 usage.close(id);
+                resources.release(id);
                 plan.close();
                 markRecoveryBlocked(stored, "RECOVERY_ATTACH_FAILED", failure.getMessage());
             }
+        }
+    }
+
+    private void failUncertainToolOutcome(
+            StoredRun stored, ToolOutcomeCommitter.UncertainToolOutcome uncertain) {
+        ObjectNode payload = JsonNodeFactory.instance.objectNode();
+        payload.put("code", "UNCERTAIN_TOOL_OUTCOME");
+        payload.put("errorType", ToolOutcomeCommitException.class.getName());
+        payload.put("message", "tool outcome was not durably closed before restart");
+        payload.put("tool", uncertain.tool());
+        payload.put("invocationId", uncertain.invocationId());
+        payload.put("sideEffectMayHaveOccurred", true);
+        try {
+            var failed = committedEvents.transition(
+                    stored.snapshot().id(), Set.of(stored.snapshot().state()), RunState.FAILED,
+                    event(stored.request(), "core.run.failed", "framework.core",
+                            payload, uncertain.invocationId()),
+                    null, "UNCERTAIN_TOOL_OUTCOME: " + uncertain.tool()
+                            + " invocation " + uncertain.invocationId());
+            if (failed.isEmpty()) {
+                throw new IllegalStateException(
+                        "could not fail Run with an uncertain tool outcome: "
+                                + stored.snapshot().id());
+            }
+        } catch (RuntimeException failure) {
+            markRecoveryBlocked(
+                    stored, "UNCERTAIN_TOOL_OUTCOME_COMMIT_FAILED", failure.getMessage());
         }
     }
 
@@ -491,7 +628,7 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
         ObjectNode payload = JsonNodeFactory.instance.objectNode();
         payload.put("code", code);
         payload.put("detail", detail == null ? "" : detail);
-        runs.append(stored.snapshot().id(), Set.of(current),
+        committedEvents.transition(stored.snapshot().id(), Set.of(current),
                 RunState.RECOVERY_BLOCKED_MISSING_EXTENSION,
                 event(stored.request(), "core.run.recovery_blocked",
                         "framework.core", payload, null), null, detail);
@@ -502,33 +639,11 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
     }
 
     private void restoreBudgetState(ActiveRun active) {
-        long inputTokens = 0;
-        long outputTokens = 0;
-        java.math.BigDecimal cost = java.math.BigDecimal.ZERO;
         List<RunEventEnvelope> events = runs.eventsAfter(active.id, 0);
-        boolean hasPrimaryUsage = events.stream()
-                .anyMatch(event -> event.type().equals("core.model.usage"));
-        boolean hasTaskUsage = events.stream()
-                .anyMatch(event -> event.type().equals("core.model_task.usage"));
+        DurableUsageHistory.Snapshot usageHistory = DurableUsageHistory.from(events);
         ToolApprovalChallenge pendingApproval = null;
         ApprovedToolInvocation pendingApprovedInvocation = null;
         for (RunEventEnvelope event : events) {
-            boolean primaryUsage = hasPrimaryUsage
-                    ? event.type().equals("core.model.usage")
-                    : event.type().equals("core.model.completed");
-            boolean taskUsage = hasTaskUsage
-                    ? event.type().equals("core.model_task.usage")
-                    : event.type().equals("core.model_task.completed");
-            if (primaryUsage || taskUsage) {
-                inputTokens = Math.addExact(inputTokens,
-                        Math.max(0, event.payload().path("inputTokens").asLong()));
-                outputTokens = Math.addExact(outputTokens,
-                        Math.max(0, event.payload().path("outputTokens").asLong()));
-                JsonNode costNode = event.payload().get("estimatedCostCny");
-                if (costNode != null && costNode.isNumber()) {
-                    cost = cost.add(costNode.decimalValue().max(java.math.BigDecimal.ZERO));
-                }
-            }
             if (event.type().equals("core.tool.started")) {
                 String fingerprint = event.payload().path("fingerprint").asText("");
                 if (fingerprint.isBlank()) fingerprint = "recovered-tool-event:" + event.sequence();
@@ -570,9 +685,8 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
         }
         active.pendingApproval = pendingApproval;
         active.pendingApprovedInvocation = pendingApprovedInvocation;
-        if (inputTokens > 0 || outputTokens > 0 || cost.signum() > 0) {
-            usage.restore(active.id, inputTokens, outputTokens, cost);
-        }
+        usage.restore(active.id, usageHistory.usage(), usageHistory.cost(),
+                usageHistory.modelCallIds());
     }
 
     private static boolean clearsApprovalState(RunEventEnvelope event) {
@@ -587,7 +701,13 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
 
     private RunEventDraft event(
             RunRequest request, String type, String producer, JsonNode payload, String causationId) {
-        return new RunEventDraft(type, 1, producer,
+        return event(request, type, 1, producer, payload, causationId);
+    }
+
+    private RunEventDraft event(
+            RunRequest request, String type, int schemaVersion,
+            String producer, JsonNode payload, String causationId) {
+        return new RunEventDraft(type, schemaVersion, producer,
                 request.linkage().correlationId(), causationId, payload);
     }
 
@@ -617,13 +737,14 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
         if (stored != null && !stored.snapshot().state().terminal()) {
             ObjectNode payload = JsonNodeFactory.instance.objectNode();
             payload.put("reason", "KERNEL_SHUTDOWN");
-            runs.append(active.id, Set.of(stored.snapshot().state()), RunState.PAUSED,
+            committedEvents.transition(
+                    active.id, Set.of(stored.snapshot().state()), RunState.PAUSED,
                     event(active.request, "core.run.paused", "framework.core", payload, null),
-                    null, null).ifPresent(active.sink::tryEmitNext);
+                    null, null);
         }
         active.completion.completeExceptionally(new IllegalStateException(
                 "run detached during kernel shutdown and remains resumable: " + active.id));
-        active.sink.tryEmitComplete();
+        events.complete(active.id, active.sink);
         cleanupIfReady(active);
     }
 
@@ -656,8 +777,13 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
         private final Object launchLock = new Object();
         private final AtomicBoolean executing = new AtomicBoolean();
         private final AtomicBoolean terminated = new AtomicBoolean();
+        private final AtomicBoolean terminalDelivered = new AtomicBoolean();
         private final AtomicBoolean detached = new AtomicBoolean();
         private final AtomicBoolean cleaned = new AtomicBoolean();
+        private final Set<String> committedToolOutcomes = ConcurrentHashMap.newKeySet();
+        private final Set<String> uncertainToolOutcomeCommits = ConcurrentHashMap.newKeySet();
+        private final java.util.concurrent.atomic.AtomicReference<RunOutcome> terminalOutcome =
+                new java.util.concurrent.atomic.AtomicReference<>();
         private volatile ToolApprovalChallenge pendingApproval;
         private volatile ApprovedToolInvocation pendingApprovedInvocation;
         private PendingLaunch pendingLaunch;
@@ -674,4 +800,5 @@ public final class AgentEngine implements AgentClient, AutoCloseable {
             ResumeCommand resume,
             ApprovedToolInvocation approvedInvocation,
             Set<RunState> startStates) { }
+
 }

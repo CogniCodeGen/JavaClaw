@@ -2,6 +2,7 @@ package com.javaclaw.framework.core;
 
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.javaclaw.framework.api.*;
+import com.javaclaw.framework.builtin.context.BoundedToolResultProcessor;
 import com.javaclaw.framework.spi.*;
 import org.junit.jupiter.api.Test;
 
@@ -75,6 +76,190 @@ class DefaultToolInvocationGatewayTest {
     }
 
     @Test
+    void resultBudgetEventIncludesConfiguredAndActualLimits() throws Exception {
+        var events = new CopyOnWriteArrayList<com.fasterxml.jackson.databind.JsonNode>();
+        FrameworkTool tool = tool(new AtomicBoolean());
+        ToolInvocationRequest base = request(tool, List.of(),
+                List.of(new BoundedToolResultProcessor()),
+                (type, version, producer, payload) -> {
+                    if (type.equals("core.tool.result.budget")) events.add(payload.deepCopy());
+                });
+        var configuration = JsonNodeFactory.instance.objectNode()
+                .put("maxCharacters", 2_000)
+                .put("largeMaxCharacters", 6_000);
+        var capabilities = JsonNodeFactory.instance.objectNode()
+                .set("tool.result-eviction", configuration);
+        RunRequest configured = base.runRequest().withAttribute(
+                "framework.compiledCapabilities", capabilities);
+        ToolInvocationRequest request = new ToolInvocationRequest(
+                base.tool(), base.arguments(), base.context(), configured,
+                base.effectivePermissions(), base.toolPolicyConfiguration(),
+                base.toolPolicies(), base.resultPostProcessors(), base.control(), base.events());
+
+        gateway().invoke(request).toCompletableFuture().get();
+
+        assertEquals(1, events.size());
+        assertEquals("default", events.getFirst().path("resultClass").asText());
+        assertEquals(2_000, events.getFirst().path("defaultLimitCharacters").asInt());
+        assertEquals(6_000, events.getFirst().path("largeLimitCharacters").asInt());
+        assertEquals(2_000, events.getFirst().path("actualLimitCharacters").asInt());
+        assertEquals(events.getFirst().path("modelCharacters").asInt(),
+                events.getFirst().path("runConsumedCharacters").asInt());
+    }
+
+    @Test
+    void completedOutcomeRetriesTwiceWithoutRepeatingTheTool() throws Exception {
+        AtomicInteger executions = new AtomicInteger();
+        AtomicInteger completionAttempts = new AtomicInteger();
+        FrameworkTool tool = new FrameworkTool() {
+            @Override public ToolDescriptor descriptor() {
+                return new ToolDescriptor("send_once", "", schema(), "extension",
+                        PermissionSet.NONE, false);
+            }
+
+            @Override public com.fasterxml.jackson.databind.JsonNode execute(
+                    com.fasterxml.jackson.databind.JsonNode arguments,
+                    ToolExecutionContext context) {
+                executions.incrementAndGet();
+                return JsonNodeFactory.instance.objectNode().put("sent", true);
+            }
+        };
+        ToolInvocationRequest request = request(tool, List.of(), List.of(),
+                (type, version, producer, payload) -> {
+                    if (type.equals("core.tool.completed")
+                            && completionAttempts.incrementAndGet() < 3) {
+                        throw new IllegalStateException("transient event store failure");
+                    }
+                });
+
+        ToolInvocationResult result = gateway().invoke(request).toCompletableFuture().get();
+
+        assertTrue(result.output().path("sent").asBoolean());
+        assertEquals(1, executions.get());
+        assertEquals(3, completionAttempts.get());
+    }
+
+    @Test
+    void exhaustedOutcomeCommitFailsWithoutRepeatingTheTool() {
+        AtomicInteger executions = new AtomicInteger();
+        AtomicInteger completionAttempts = new AtomicInteger();
+        FrameworkTool tool = new FrameworkTool() {
+            @Override public ToolDescriptor descriptor() {
+                return new ToolDescriptor("send_once", "", schema(), "extension",
+                        PermissionSet.NONE, false);
+            }
+
+            @Override public com.fasterxml.jackson.databind.JsonNode execute(
+                    com.fasterxml.jackson.databind.JsonNode arguments,
+                    ToolExecutionContext context) {
+                executions.incrementAndGet();
+                return JsonNodeFactory.instance.objectNode().put("sent", true);
+            }
+        };
+        ToolInvocationRequest request = request(tool, List.of(), List.of(),
+                (type, version, producer, payload) -> {
+                    if (type.equals("core.tool.completed")) {
+                        completionAttempts.incrementAndGet();
+                        throw new IllegalStateException("event store unavailable");
+                    }
+                });
+
+        var failure = assertThrows(java.util.concurrent.ExecutionException.class,
+                () -> gateway().invoke(request).toCompletableFuture().get());
+
+        ToolOutcomeCommitException outcome = assertInstanceOf(
+                ToolOutcomeCommitException.class, failure.getCause());
+        assertEquals("send_once", outcome.tool());
+        assertEquals("invocation", outcome.invocationId());
+        assertEquals(1, executions.get());
+        assertEquals(3, completionAttempts.get());
+    }
+
+    @Test
+    void cancellationAfterExecutionStillCommitsTheActualOutcomeFirst() {
+        AtomicInteger executions = new AtomicInteger();
+        AtomicInteger completions = new AtomicInteger();
+        java.util.concurrent.atomic.AtomicReference<RunControl> control =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        FrameworkTool tool = new FrameworkTool() {
+            @Override public ToolDescriptor descriptor() {
+                return new ToolDescriptor("send_once", "", schema(), "extension",
+                        PermissionSet.NONE, false);
+            }
+
+            @Override public com.fasterxml.jackson.databind.JsonNode execute(
+                    com.fasterxml.jackson.databind.JsonNode arguments,
+                    ToolExecutionContext context) {
+                executions.incrementAndGet();
+                control.get().cancel();
+                return JsonNodeFactory.instance.objectNode().put("sent", true);
+            }
+        };
+        ToolInvocationRequest request = request(tool, List.of(), List.of(),
+                (type, version, producer, payload) -> {
+                    if (type.equals("core.tool.completed")) {
+                        completions.incrementAndGet();
+                        assertTrue(payload.path("output").path("sent").asBoolean());
+                    }
+                });
+        control.set(request.control());
+
+        var failure = assertThrows(java.util.concurrent.ExecutionException.class,
+                () -> gateway().invoke(request).toCompletableFuture().get());
+
+        assertInstanceOf(RunCancelledException.class, failure.getCause());
+        assertEquals(1, executions.get());
+        assertEquals(1, completions.get());
+    }
+
+    @Test
+    void waitingInputOutcomeUsesTheSameMandatoryCommitRetries() {
+        AtomicInteger completionAttempts = new AtomicInteger();
+        FrameworkTool tool = new FrameworkTool() {
+            @Override public ToolDescriptor descriptor() {
+                return new ToolDescriptor("clarify", "", schema(), "agents",
+                        PermissionSet.NONE, false);
+            }
+
+            @Override public com.fasterxml.jackson.databind.JsonNode execute(
+                    com.fasterxml.jackson.databind.JsonNode arguments,
+                    ToolExecutionContext context) {
+                throw new ToolInputRequiredException(
+                        JsonNodeFactory.instance.objectNode().put("kind", "clarify_request"),
+                        "need answer");
+            }
+        };
+        ToolInvocationRequest request = request(tool, List.of(), List.of(),
+                (type, version, producer, payload) -> {
+                    if (type.equals("core.tool.completed")
+                            && completionAttempts.incrementAndGet() < 3) {
+                        throw new IllegalStateException("transient event store failure");
+                    }
+                });
+
+        var failure = assertThrows(java.util.concurrent.ExecutionException.class,
+                () -> gateway().invoke(request).toCompletableFuture().get());
+
+        assertInstanceOf(ToolInputRequiredException.class, failure.getCause());
+        assertEquals(3, completionAttempts.get());
+    }
+
+    @Test
+    void failedResultPostProcessingReturnsASafeViewWithoutRepeatingTheTool() throws Exception {
+        AtomicBoolean executed = new AtomicBoolean();
+        ToolInvocationRequest request = request(tool(executed), List.of(),
+                List.of((current, descriptor, context, run) -> {
+                    throw new IllegalStateException("processor unavailable");
+                }), (type, version, producer, payload) -> { });
+
+        ToolInvocationResult result = gateway().invoke(request).toCompletableFuture().get();
+
+        assertTrue(executed.get());
+        assertEquals("[tool result unavailable: post-processing failed]",
+                result.output().asText());
+    }
+
+    @Test
     void toolPolicyDenialPrecedesExecutionAndCannotBeBypassedByPermission() {
         AtomicBoolean executed = new AtomicBoolean();
         FrameworkTool tool = tool(executed);
@@ -108,6 +293,37 @@ class DefaultToolInvocationGatewayTest {
 
         assertInstanceOf(ToolPermissionDeniedException.class, failure.getCause());
         assertFalse(executed.get());
+    }
+
+    @Test
+    void exactToolNameAndGroupMustBothBeAllowed() {
+        AtomicBoolean executed = new AtomicBoolean();
+        FrameworkTool tool = tool(executed);
+        ToolInvocationRequest base = request(tool, List.of(), List.of(),
+                (type, version, producer, payload) -> { });
+        RunRequest wrongName = base.runRequest()
+                .withAttribute(ToolGroupAccess.ATTRIBUTE,
+                        JsonNodeFactory.instance.arrayNode().add("extension"))
+                .withAttribute(ToolNameAccess.ATTRIBUTE,
+                        JsonNodeFactory.instance.arrayNode().add("another_tool"));
+        ToolInvocationRequest denied = new ToolInvocationRequest(
+                base.tool(), base.arguments(), base.context(), wrongName,
+                base.effectivePermissions(), base.toolPolicyConfiguration(),
+                base.toolPolicies(), base.resultPostProcessors(), base.control(), base.events());
+
+        var failure = assertThrows(java.util.concurrent.ExecutionException.class,
+                () -> gateway().invoke(denied).toCompletableFuture().get());
+        assertInstanceOf(ToolPermissionDeniedException.class, failure.getCause());
+        assertFalse(executed.get());
+
+        RunRequest allowed = wrongName.withAttribute(ToolNameAccess.ATTRIBUTE,
+                JsonNodeFactory.instance.arrayNode().add("contract_tool"));
+        ToolInvocationRequest accepted = new ToolInvocationRequest(
+                base.tool(), base.arguments(), base.context(), allowed,
+                base.effectivePermissions(), base.toolPolicyConfiguration(),
+                base.toolPolicies(), base.resultPostProcessors(), base.control(), base.events());
+        assertDoesNotThrow(() -> gateway().invoke(accepted).toCompletableFuture().get());
+        assertTrue(executed.get());
     }
 
     @Test

@@ -9,7 +9,11 @@ final class ChatActiveTurn {
     final String modeId;
     final long startedAtNanos = System.nanoTime();
     long inputTokens;
+    long cacheReadInputTokens;
+    long cacheWriteInputTokens;
     long outputTokens;
+    long reasoningTokens;
+    long modelCalls;
     DeliveryState deliveryState = DeliveryState.COMPLETE;
     volatile ConversationHandle handle;
 
@@ -20,6 +24,7 @@ final class ChatActiveTurn {
 
     TurnMetrics metrics() {
         long duration = Math.max(0, (System.nanoTime() - startedAtNanos) / 1_000_000L);
-        return new TurnMetrics(inputTokens, outputTokens, duration);
+        return new TurnMetrics(inputTokens, cacheReadInputTokens, cacheWriteInputTokens,
+                outputTokens, reasoningTokens, modelCalls, duration);
     }
 }

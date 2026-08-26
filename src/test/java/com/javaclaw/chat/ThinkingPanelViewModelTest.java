@@ -18,7 +18,7 @@ class ThinkingPanelViewModelTest {
         model.setEmpty(false);
         model.setStatus("executing", "知识专家 思考中...");
         model.setElapsed("1.2s");
-        model.setMetrics(120, 48, "¥0.03");
+        model.setMetrics(120, 48, "缓存 32 · 写入 8 · 推理 12");
 
         assertFalse(model.emptyProperty().get());
         assertEquals("executing", model.statusTypeProperty().get());
@@ -26,6 +26,6 @@ class ThinkingPanelViewModelTest {
         assertEquals("1.2s", model.elapsedProperty().get());
         assertEquals(120, model.tokensInProperty().get());
         assertEquals(48, model.tokensOutProperty().get());
-        assertEquals("¥0.03", model.costProperty().get());
+        assertEquals("缓存 32 · 写入 8 · 推理 12", model.tokenDetailsProperty().get());
     }
 }
