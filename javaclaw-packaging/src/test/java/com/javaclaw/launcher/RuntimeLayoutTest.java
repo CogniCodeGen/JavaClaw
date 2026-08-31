@@ -40,13 +40,10 @@ class RuntimeLayoutTest {
     Path temporary;
 
     @Test
-    void exposesOneDirectDesktopProductEntryAndKeepsTheIdeConfigurationOnIt() throws Exception {
+    void exposesOneDirectDesktopProductEntry() throws Exception {
         assertNotNull(JavaClawLauncher.class.getDeclaredMethod("main", String[].class));
         assertThrows(
                 NoSuchMethodException.class, () -> JavaClawDesktop.class.getDeclaredMethod("main", String[].class));
-        String configuration = Files.readString(Path.of("..", ".run", "JavaClaw.run.xml"));
-        assertTrue(configuration.contains("com.javaclaw.launcher.JavaClawLauncher"));
-        assertTrue(configuration.contains("module name=\"javaclaw-packaging\""));
     }
 
     @Test

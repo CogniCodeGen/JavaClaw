@@ -2,6 +2,8 @@
 *.java text eol=lf
 pom.xml text eol=lf
 *.fxml text eol=lf
+# 官方 Schema 的末尾空行属于上游逐字节快照，必须保留以满足固定 SHA-256。
+/javaclaw-app-server/src/main/resources/com/javaclaw/server/extension/mcp/schema-2026-07-28.json whitespace=-blank-at-eof
 /.editorconfig text eol=lf
 /AGENTS.md text eol=lf
 /README.md text eol=lf

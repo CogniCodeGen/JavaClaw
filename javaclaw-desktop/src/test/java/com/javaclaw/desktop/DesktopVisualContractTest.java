@@ -56,6 +56,7 @@ class DesktopVisualContractTest {
             assertFalse(fxml.contains("<HBox spacing=\"2\">"), "功能入口不得退化为描边网格");
             assertEquals(1, fxml.split("sidebar-nav-button,sidebar-settings-menu", -1).length - 1);
             assertEquals(12, fxml.split("styleClass=\"sidebar-settings-menu-item\"", -1).length - 1);
+            assertEquals(2, fxml.split("styleClass=\"sidebar-settings-menu-separator\"", -1).length - 1);
             assertTrue(fxml.contains("popupSide=\"TOP\""));
             for (String action : List.of(
                     "openProviders",
@@ -157,6 +158,8 @@ class DesktopVisualContractTest {
             assertTrue(css.contains(".sidebar-navigation .sidebar-nav-button"));
             assertTrue(css.contains(".sidebar-navigation .sidebar-settings-menu:showing"));
             assertTrue(css.contains(".context-menu .menu-item.sidebar-settings-menu-item"));
+            assertTrue(css.contains("-fx-max-height: 25;"));
+            assertTrue(css.contains(".context-menu .menu-item.sidebar-settings-menu-separator"));
             assertTrue(css.contains(".management-page-settings .management-rail.settings-left-pane"));
             assertTrue(css.contains(".settings-navigation-list .list-cell:filled:selected"));
         }

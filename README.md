@@ -199,6 +199,7 @@ macOS/Linux 的 `JAVACLAW_APP_SERVER_SOCKET` 和 Windows 的
 
 ## 文档
 
+- [仓库目录、模块职责与本机数据边界](docs/repository-layout.md)
 - [代码格式、中文注释与开发检查清单](docs/coding-style.md)
 - [本次格式与注释规范化验收记录](docs/coding-style-verification.md)
 - [统一启动入口与各平台验收记录](docs/launcher-verification.md)

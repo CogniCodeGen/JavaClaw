@@ -591,7 +591,18 @@
 
 .context-menu .menu-item.sidebar-settings-menu-item {
     -fx-min-width: 210;
-    -fx-padding: 7 16 7 16;
+    -fx-min-height: 25;
+    -fx-pref-height: 25;
+    -fx-max-height: 25;
+    -fx-padding: 3 14 3 14;
+}
+
+.context-menu .menu-item.sidebar-settings-menu-separator {
+    -fx-padding: 2 8 2 8;
+}
+
+.context-menu .menu-item.sidebar-settings-menu-separator .separator:horizontal {
+    -fx-padding: 0;
 }
 
 .shell-toggle-button,

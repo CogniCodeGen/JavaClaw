@@ -92,7 +92,7 @@
                     <items>
                         <MenuItem text="⚙  设置" onAction="#openProviders"
                             styleClass="sidebar-settings-menu-item" />
-                        <SeparatorMenuItem />
+                        <SeparatorMenuItem styleClass="sidebar-settings-menu-separator" />
                         <MenuItem text="📚  知识" onAction="#openKnowledge"
                             styleClass="sidebar-settings-menu-item" />
                         <MenuItem text="🧠  记忆" onAction="#openMemory" styleClass="sidebar-settings-menu-item" />
@@ -103,7 +103,7 @@
                             styleClass="sidebar-settings-menu-item" />
                         <MenuItem text="🧩  插件" onAction="#openPlugins" styleClass="sidebar-settings-menu-item" />
                         <MenuItem text="🔌  MCP" onAction="#openMcp" styleClass="sidebar-settings-menu-item" />
-                        <SeparatorMenuItem />
+                        <SeparatorMenuItem styleClass="sidebar-settings-menu-separator" />
                         <MenuItem text="Agent Studio" onAction="#openProfiles"
                             styleClass="sidebar-settings-menu-item" />
                         <MenuItem text="站点管理" onAction="#openSites" styleClass="sidebar-settings-menu-item" />

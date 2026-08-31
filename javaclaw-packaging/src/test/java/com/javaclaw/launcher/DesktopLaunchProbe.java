@@ -671,11 +671,33 @@ public final class DesktopLaunchProbe {
         if (!menu.isShowing()) {
             throw new IllegalStateException("设置浮层菜单未能打开");
         }
+        validateManagementMenuBounds(menu);
         capturePopup(menu, "-state-settings-menu");
         menu.hide();
         managementMenuVerified = true;
         System.out.println("JAVACLAW_DESKTOP_SETTINGS_MENU_OK");
         return true;
+    }
+
+    private static void validateManagementMenuBounds(MenuButton menu) {
+        var popup = menu.getItems().getFirst().getParentPopup();
+        var anchorBounds = menu.localToScreen(menu.getBoundsInLocal());
+        var root = menu.getScene().getRoot();
+        var rootBounds = root.localToScreen(root.getBoundsInLocal());
+        if (popup == null || popup.getScene() == null || anchorBounds == null || rootBounds == null) {
+            throw new IllegalStateException("设置浮层缺少可校验的屏幕坐标");
+        }
+        var popupRoot = popup.getScene().getRoot();
+        var popupBounds = popupRoot.localToScreen(popupRoot.getLayoutBounds());
+        if (popupBounds == null
+                || popupBounds.getMinY() < rootBounds.getMinY() - 2
+                // ContextMenu 的 6px 内边距贴在锚点边缘，不属于菜单项越界。
+                || popupBounds.getMaxY() > anchorBounds.getMinY() + 8
+                || popupBounds.getMinX() < rootBounds.getMinX() - 2
+                || popupBounds.getMaxX() > rootBounds.getMaxX() + 2) {
+            throw new IllegalStateException(
+                    "设置浮层超出可视区域或越过锚点：popup=" + popupBounds + " anchor=" + anchorBounds + " root=" + rootBounds);
+        }
     }
 
     private static void verifyComposerStructure(Parent root, ComboBox<?> profiles) {
