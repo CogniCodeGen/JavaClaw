@@ -1,6 +1,10 @@
 # Java / Maven 可再生输出
 *.class
 **/target/
+# UI 视觉测试的当前截图、差异图和候选基准；固定 Golden 仍位于 src/test/resources。
+/javaclaw-packaging/target/visual/
+# 所有模块的测试资源目录；确需提交的新夹具必须显式强制添加。
+**/src/test/resources/
 /build/
 /out/
 /dist/
@@ -61,3 +65,4 @@ desktop.ini
 *.bak
 *.orig
 *~
+/javaclaw-packaging/src/test/resources/

@@ -1155,8 +1155,15 @@ public final class MainController {
         reasoningTokens.setText(token(usage.available(), usage.reasoningTokens()));
     }
 
-    private static String token(boolean available, long value) {
-        return available ? String.format(java.util.Locale.ROOT, "%,d", value) : "—";
+    static String token(boolean available, long value) {
+        if (!available) {
+            return "—";
+        }
+        long wholeKilounits = value / 1_000;
+        if (value % 1_000 >= 500) {
+            wholeKilounits++;
+        }
+        return wholeKilounits + "k";
     }
 
     private ListCell<DesktopProgressSnapshot.Entry> progressCell() {
@@ -1950,7 +1957,7 @@ public final class MainController {
 
     /** 输入区只展示可选运行模式；Provider 与模型仍由对应 Profile 在提交 Turn 时决定。 */
     static String profileModeLabel(ProfileInfo profile) {
-        return DesktopPresentationMapper.text(profile.name(), DesktopPresentationMapper.profileKind(profile.kind()));
+        return DesktopPresentationMapper.profileKind(profile.kind());
     }
 
     enum ShellMode {

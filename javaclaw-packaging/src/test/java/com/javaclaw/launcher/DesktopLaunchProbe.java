@@ -699,14 +699,27 @@ public final class DesktopLaunchProbe {
         if (!profiles.getStyleClass().contains("composer-profile-select")) {
             throw new IllegalStateException("运行模式选择没有使用输入卡片内的紧凑样式");
         }
+        if (profiles.getPrefWidth() > 120 || profiles.getMaxWidth() > 120) {
+            throw new IllegalStateException("运行模式选择宽度没有保持紧凑：" + profiles.getPrefWidth());
+        }
         if (profiles.getValue() instanceof com.javaclaw.sdk.model.ProfileInfo selectedProfile) {
             String visibleMode = profiles.getButtonCell() == null
                     ? null
                     : profiles.getButtonCell().getText();
-            if (!selectedProfile.name().equals(visibleMode) || visibleMode.contains(selectedProfile.model())) {
-                throw new IllegalStateException("输入区运行模式不应显示模型名称：" + visibleMode);
+            String expectedMode = profileMode(selectedProfile);
+            if (!expectedMode.equals(visibleMode) || visibleMode.contains(selectedProfile.model())) {
+                throw new IllegalStateException("输入区应显示中文模式且不显示模型名称：" + visibleMode);
             }
         }
+    }
+
+    /** 将输入区支持的 Profile 类型转换为稳定的中文模式名称。 */
+    private static String profileMode(com.javaclaw.sdk.model.ProfileInfo profile) {
+        return switch (profile.kind()) {
+            case "CHAT" -> "对话";
+            case "PLAN" -> "规划";
+            default -> throw new IllegalStateException("输入区出现不支持的运行模式：" + profile.kind());
+        };
     }
 
     /** 通过真实可见控件完成模型配置校验、保存和凭据写入；每一步都等待 SDK 主链结束后再继续。 */
@@ -761,7 +774,8 @@ public final class DesktopLaunchProbe {
                 return false;
             }
             if (profiles.getButtonCell() == null
-                    || !selectedProfile.name().equals(profiles.getButtonCell().getText())) {
+                    || !profileMode(selectedProfile)
+                            .equals(profiles.getButtonCell().getText())) {
                 throw new IllegalStateException("Provider 模型同步后，输入区应继续只显示运行模式");
             }
             secret.setText(UI_PROVIDER_SECRET);

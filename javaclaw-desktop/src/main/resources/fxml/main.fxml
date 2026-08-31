@@ -198,8 +198,8 @@
                                 <Button fx:id="attachButton" text="＋" onAction="#attach" accessibleText="添加附件"
                                     styleClass="attach-button" />
                                 <Region HBox.hgrow="ALWAYS" />
-                                <ComboBox fx:id="profileBox" promptText="选择运行模式" accessibleText="选择运行模式"
-                                    minWidth="150" prefWidth="210" maxWidth="240"
+                                <ComboBox fx:id="profileBox" promptText="选择模式" accessibleText="选择运行模式"
+                                    minWidth="104" prefWidth="112" maxWidth="120"
                                     styleClass="composer-select,composer-profile-select" />
                                 <Button fx:id="interruptButton" text="停止" onAction="#interrupt"
                                     accessibleText="停止当前任务" styleClass="sidebar-manage-btn,composer-interrupt-button" />

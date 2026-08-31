@@ -23,7 +23,7 @@ final class VisualRegressionGate {
         if (update && System.getenv("CI") != null) {
             throw new IllegalStateException("CI 不允许更新视觉基准");
         }
-        Path baseline = baselineRoot();
+        Path baseline = baselineRoot(update);
         List<Path> current = screenshots(screenshot);
         if (current.isEmpty()) {
             throw new IllegalStateException("没有生成可用于视觉回归的截图：" + screenshot);
@@ -45,16 +45,23 @@ final class VisualRegressionGate {
         }
     }
 
-    private static Path baselineRoot() {
+    static Path baselineRoot(boolean update) {
         String override = System.getProperty("javaclaw.visual.baseline");
         if (override != null && !override.isBlank()) {
             return Path.of(override);
         }
+        if (update && !Boolean.getBoolean("javaclaw.visual.promote")) {
+            return modulePath("target/visual/baseline-candidate/macos");
+        }
+        return modulePath("src/test/resources/visual/macos");
+    }
+
+    private static Path modulePath(String relative) {
         Path moduleSource = Path.of("src/test/java/com/javaclaw/launcher");
         if (Files.isDirectory(moduleSource)) {
-            return Path.of("src/test/resources/visual/macos");
+            return Path.of(relative);
         }
-        return Path.of("javaclaw-packaging/src/test/resources/visual/macos");
+        return Path.of("javaclaw-packaging").resolve(relative);
     }
 
     private static List<Path> screenshots(Path screenshot) throws IOException {

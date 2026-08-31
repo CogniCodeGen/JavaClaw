@@ -8,7 +8,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class VisualRegressionGateTest {
     @TempDir
@@ -31,6 +33,25 @@ class VisualRegressionGateTest {
             assertDoesNotThrow(() -> VisualRegressionGate.verify(current, false));
         } finally {
             restore("javaclaw.visual.baseline", previous);
+        }
+    }
+
+    @Test
+    void updateDefaultsToIgnoredCandidateAndRequiresExplicitPromotion() {
+        String previousBaseline = System.getProperty("javaclaw.visual.baseline");
+        String previousPromotion = System.getProperty("javaclaw.visual.promote");
+        System.clearProperty("javaclaw.visual.baseline");
+        System.clearProperty("javaclaw.visual.promote");
+        try {
+            assertTrue(VisualRegressionGate.baselineRoot(true)
+                    .endsWith(Path.of("target", "visual", "baseline-candidate", "macos")));
+            Path committed = VisualRegressionGate.baselineRoot(false);
+            assertTrue(committed.endsWith(Path.of("src", "test", "resources", "visual", "macos")));
+            System.setProperty("javaclaw.visual.promote", "true");
+            assertEquals(committed, VisualRegressionGate.baselineRoot(true));
+        } finally {
+            restore("javaclaw.visual.baseline", previousBaseline);
+            restore("javaclaw.visual.promote", previousPromotion);
         }
     }
 

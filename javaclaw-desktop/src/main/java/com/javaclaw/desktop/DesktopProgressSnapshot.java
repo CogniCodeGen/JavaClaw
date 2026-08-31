@@ -55,7 +55,7 @@ record DesktopProgressSnapshot(String phase, String status, List<Entry> entries,
     }
 
     /**
-     * 服务端累计 Token；费用没有可靠价格来源，因此界面始终单独显示“—”。
+     * 服务端累计的 Provider usage；预算预留和文本估算不得进入此投影。费用没有可靠价格来源，因此界面始终单独显示“—”。
      *
      * @param available 服务端是否已报告 usage/updated
      * @param inputTokens 输入 Token

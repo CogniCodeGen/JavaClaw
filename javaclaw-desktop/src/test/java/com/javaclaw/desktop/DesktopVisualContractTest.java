@@ -189,10 +189,14 @@ class DesktopVisualContractTest {
                     .getNodeValue()
                     .contains("composer-select"));
             assertEquals(
-                    "选择运行模式", profile.getAttributes().getNamedItem("promptText").getNodeValue());
+                    "选择模式", profile.getAttributes().getNamedItem("promptText").getNodeValue());
             assertEquals(
                     "选择运行模式",
                     profile.getAttributes().getNamedItem("accessibleText").getNodeValue());
+            assertEquals("104", profile.getAttributes().getNamedItem("minWidth").getNodeValue());
+            assertEquals(
+                    "112", profile.getAttributes().getNamedItem("prefWidth").getNodeValue());
+            assertEquals("120", profile.getAttributes().getNamedItem("maxWidth").getNodeValue());
         }
         try (var input = getClass().getResourceAsStream("/fxml/main.fxml")) {
             assertNotNull(input);

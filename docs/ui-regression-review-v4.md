@@ -125,8 +125,10 @@ macOS 的 PNG 是 Scene snapshot，因此在按 Stage 设置窗口目标后，�
 App Server 可能在“保存中”帧内重建的三个 Provider 值文本使用局部遮罩；字段结构、反馈和其余正文仍参与比较，
 不放宽全局面积或连续区域阈值。
 
-本地更新基准必须显式设置 `-Djavaclaw.visual.update=true`；检测到 `CI` 环境时更新会直接失败。正常审查
-使用 `-Djavaclaw.visual.gate=true`，不允许边比较边改基准。
+本地生成候选基准必须显式设置 `-Djavaclaw.visual.update=true`；候选图默认写入已被 Git 忽略的
+`javaclaw-packaging/target/visual/baseline-candidate/macos/`，不会改写固定 Golden。只有审查确认后额外设置
+`-Djavaclaw.visual.promote=true`，或通过 `-Djavaclaw.visual.baseline=...` 明确指定目标目录，才会更新固定基准；
+检测到 `CI` 环境时更新仍会直接失败。正常审查使用 `-Djavaclaw.visual.gate=true`，不允许边比较边改基准。
 
 ## 9. 验证记录
 
