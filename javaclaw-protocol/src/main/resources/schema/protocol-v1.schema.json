@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javaclaw.local/schema/protocol-v1.schema.json",
+  "title": "JavaClaw App Server Protocol v1",
+  "protocolVersion": 1,
+  "$defs": {
+    "requestId": {"oneOf": [{"type": "string"}, {"type": "integer"}]},
+    "jsonRpcRequest": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "method"],
+      "properties": {
+        "jsonrpc": {"const": "2.0"},
+        "id": {"$ref": "#/$defs/requestId"},
+        "method": {"type": "string", "minLength": 1},
+        "params": {"type": ["object", "array", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "jsonRpcNotification": {
+      "type": "object",
+      "required": ["jsonrpc", "method"],
+      "properties": {
+        "jsonrpc": {"const": "2.0"},
+        "method": {"type": "string", "minLength": 1},
+        "params": {"type": ["object", "array", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "jsonRpcResponse": {
+      "type": "object",
+      "required": ["jsonrpc", "id"],
+      "properties": {
+        "jsonrpc": {"const": "2.0"},
+        "id": {"oneOf": [{"$ref": "#/$defs/requestId"}, {"type": "null"}]},
+        "result": {},
+        "error": {
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": {
+            "code": {"type": "integer"},
+            "message": {"type": "string"},
+            "data": {}
+          },
+          "additionalProperties": false
+        }
+      },
+      "oneOf": [
+        {"required": ["result"], "not": {"required": ["error"]}},
+        {"required": ["error"], "not": {"required": ["result"]}}
+      ],
+      "additionalProperties": false
+    },
+    "thread": {
+      "type": "object",
+      "required": ["id", "workspaceId", "title", "cwd", "status", "baseSequence", "lastSequence", "revision", "createdAt", "updatedAt"],
+      "properties": {
+        "id": {"type": "string"},
+        "workspaceId": {"type": "string"},
+        "parentThreadId": {"type": ["string", "null"]},
+        "forkedFromTurnId": {"type": ["string", "null"]},
+        "title": {"type": "string"},
+        "cwd": {"type": "string"},
+        "status": {"enum": ["ACTIVE", "ARCHIVED"]},
+        "baseSequence": {"type": "integer", "minimum": 0},
+        "lastSequence": {"type": "integer", "minimum": 0},
+        "revision": {"type": "integer", "minimum": 1},
+        "createdAt": {"type": "string", "format": "date-time"},
+        "updatedAt": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "workspace": {
+      "type": "object",
+      "required": ["id", "name", "root", "revision", "locked", "lockReason", "createdAt", "updatedAt"],
+      "properties": {
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        "root": {"type": "string"},
+        "revision": {"type": "integer", "minimum": 1},
+        "locked": {"type": "boolean"},
+        "lockReason": {"type": "string"},
+        "createdAt": {"type": "string", "format": "date-time"},
+        "updatedAt": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "turn": {
+      "type": "object",
+      "required": ["id", "threadId", "status", "attemptId", "input", "config", "startedAt"],
+      "properties": {
+        "id": {"type": "string"},
+        "threadId": {"type": "string"},
+        "status": {"enum": ["QUEUED", "IN_PROGRESS", "WAITING_FOR_APPROVAL", "WAITING_FOR_INPUT", "COMPLETED", "FAILED", "INTERRUPTED"]},
+        "attemptId": {"type": "string"},
+        "input": {"type": "array", "items": {}},
+        "config": {"type": "object"},
+        "error": {"type": ["string", "null"]},
+        "startedAt": {"type": "string", "format": "date-time"},
+        "completedAt": {"type": ["string", "null"], "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "item": {
+      "description": "kind is intentionally open so v1 clients preserve future item kinds",
+      "type": "object",
+      "required": ["id", "threadId", "turnId", "ordinal", "state", "kind", "payload", "createdAt", "updatedAt"],
+      "properties": {
+        "id": {"type": "string"},
+        "threadId": {"type": "string"},
+        "turnId": {"type": "string"},
+        "ordinal": {"type": "integer", "minimum": 1},
+        "state": {"type": "string"},
+        "kind": {"type": "string", "minLength": 1},
+        "payload": {},
+        "createdAt": {"type": "string", "format": "date-time"},
+        "updatedAt": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "event": {
+      "type": "object",
+      "required": ["eventId", "threadId", "sequence", "type", "schemaVersion", "payload", "timestamp"],
+      "properties": {
+        "eventId": {"type": "string"},
+        "threadId": {"type": "string"},
+        "turnId": {"type": ["string", "null"]},
+        "sequence": {"type": "integer", "minimum": 1},
+        "type": {"type": "string"},
+        "schemaVersion": {"type": "integer", "minimum": 1},
+        "correlationId": {"type": ["string", "null"]},
+        "causationId": {"type": ["string", "null"]},
+        "payload": {},
+        "timestamp": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

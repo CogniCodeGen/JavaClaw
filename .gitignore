@@ -1,16 +1,16 @@
-# Compiled class file
+# Java / Maven 可再生输出
 *.class
+**/target/
+/build/
+/out/
+/dist/
+dependency-reduced-pom.xml
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+release.properties
+.flattened-pom.xml
 
-# Log file
-*.log
-
-# BlueJ files
-*.ctxt
-
-# Mobile Tools for Java (J2ME)
-.mtj.tmp/
-
-# Package Files #
+# 本地打包产物
 *.jar
 *.war
 *.nar
@@ -19,20 +19,45 @@
 *.tar.gz
 *.rar
 
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
+# Java 与应用运行时文件
+*.log
+*.ctxt
+.mtj.tmp/
 hs_err_pid*
 replay_pid*
-/CLAUDE.md
-/workspaces/
+/.javaclaw/
 /data/
-/target/
-/sample-plugins/deliverance/target/
 /logs/
 /plugins/
-/.idea/
-/AGENTS.md
+/workspaces/
 /html/
 
-# macOS 目录元数据
-.DS_Store
+# 仅属于当前开发者的配置与凭据
+/CLAUDE.md
+/.claude/settings.local.json
+.env
+.env.*
+!.env.example
+!.env.template
+
+# IDE 与本机工具状态
+/.idea/
+/.vscode/
+/.run/
 /.qoder/
+/.cache/
+*.iml
+.classpath
+.project
+.settings/
+
+# 操作系统与编辑器临时文件
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*.tmp
+*.bak
+*.orig
+*~

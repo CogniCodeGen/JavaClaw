@@ -1,0 +1,9 @@
+V001__v4_baseline.sql
+V002__worktree_lifecycle.sql
+V003__execution_records.sql
+V004__memory_history_and_knowledge_generations.sql
+V005__skill_versions_and_learning.sql
+V006__browser_sites_and_network_grants.sql
+V007__prompt_versions_and_instructions.sql
+V008__knowledge_maintenance.sql
+V009__conversation_windows_and_agents_md.sql

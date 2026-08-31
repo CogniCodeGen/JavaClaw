@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE module PUBLIC "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+        "https://checkstyle.org/dtds/configuration_1_3.dtd">
+<module name="Checker">
+    <property name="charset" value="UTF-8" />
+    <property name="severity" value="error" />
+
+    <!-- 测试依靠场景名称表达意图，仅豁免 Javadoc 存在性；格式规则仍然生效。 -->
+    <module name="SuppressionFilter">
+        <property name="file" value="${checkstyle.suppressions.file}" />
+    </module>
+    <module name="TreeWalker">
+        <module name="AvoidStarImport" />
+        <module name="OneStatementPerLine" />
+        <module name="NeedBraces">
+            <property name="allowSingleLineStatement" value="false" />
+        </module>
+        <module name="EmptyLineSeparator">
+            <property name="tokens" value="METHOD_DEF,CTOR_DEF,COMPACT_CTOR_DEF,STATIC_INIT,INSTANCE_INIT" />
+        </module>
+        <module name="MissingJavadocType">
+            <property name="scope" value="protected" />
+            <property name="skipAnnotations" value="" />
+        </module>
+        <module name="JavadocType">
+            <property name="scope" value="protected" />
+            <property name="allowMissingParamTags" value="false" />
+            <property name="allowedAnnotations" value="" />
+        </module>
+        <module name="MissingJavadocMethod">
+            <property name="scope" value="protected" />
+            <property name="allowedAnnotations" value="Override" />
+            <property name="allowMissingPropertyJavadoc" value="false" />
+        </module>
+    </module>
+</module>

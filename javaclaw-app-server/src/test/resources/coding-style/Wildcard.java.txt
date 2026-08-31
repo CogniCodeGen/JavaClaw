@@ -1,0 +1,4 @@
+import java.util.*;
+
+/** 反例只验证 import，不依靠其他错误触发构建失败。 */
+public class Wildcard {}

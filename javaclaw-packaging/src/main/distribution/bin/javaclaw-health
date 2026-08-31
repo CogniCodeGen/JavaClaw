@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+APP_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+HEALTH_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/javaclaw-health.XXXXXX")
+cleanup() {
+    if [ -n "${HEALTH_ROOT:-}" ] && [ -d "$HEALTH_ROOT" ]; then
+        rm -rf -- "$HEALTH_ROOT"
+    fi
+}
+trap cleanup EXIT HUP INT TERM
+"$APP_ROOT/bin/javaclaw-cli" --json --data-dir "$HEALTH_ROOT/data" \
+    --config-dir "$HEALTH_ROOT/config" --cache-dir "$HEALTH_ROOT/cache" \
+    server-capabilities

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!--
+        stdout 永远保留给 JSON-RPC。文件 appender 使用有界异步队列，慢磁盘不能反压 Turn；
+        超限时允许丢弃低等级诊断，但错误仍通过 stderr 暴露给进程监督器。
+    -->
+    <property name="LOG_DIR" value="${javaclaw.log.dir:-${user.dir}/.javaclaw/config-v4/logs}" />
+    <property name="PROCESS" value="${javaclaw.log.process:-process}" />
+    <shutdownHook class="ch.qos.logback.core.hook.DefaultShutdownHook" />
+
+    <appender name="ROLLING_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/${PROCESS}.log</file>
+        <append>true</append>
+        <encoder>
+            <pattern>%date{ISO8601} %-5level [%thread] %logger{36} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/${PROCESS}.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>5MB</maxFileSize>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>30MB</totalSizeCap>
+        </rollingPolicy>
+    </appender>
+
+    <appender name="ASYNC_FILE" class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>1024</queueSize>
+        <discardingThreshold>20</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <appender-ref ref="ROLLING_FILE" />
+    </appender>
+
+    <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.err</target>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>WARN</level>
+        </filter>
+        <encoder>
+            <pattern>JavaClaw %-5level - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <logger name="org.quartz" level="WARN" />
+    <logger name="org.springframework" level="WARN" />
+    <root level="INFO">
+        <appender-ref ref="ASYNC_FILE" />
+        <appender-ref ref="STDERR" />
+    </root>
+</configuration>

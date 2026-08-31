@@ -1,65 +1,144 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
-         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.javaclaw</groupId>
-    <artifactId>javaclaw</artifactId>
-    <version>3.0.0-SNAPSHOT</version>
-    <packaging>jar</packaging>
+    <artifactId>javaclaw-parent</artifactId>
+    <version>4.0.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
 
-    <name>JavaClaw</name>
-    <description>基于 JavaFX、Spring AI 2.0 和统一 Agent Framework 的智能体桌面应用</description>
+    <name>JavaClaw 4.0</name>
+    <description>Protocol-first local agent runtime, app server and clients</description>
+
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/license/mit</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
 
     <properties>
-        <!-- 编码与 JDK 版本（JDK 25 LTS：虚拟线程无 pinning、Scoped Values 正式版） -->
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.source>25</maven.compiler.source>
-        <maven.compiler.target>25</maven.compiler.target>
-
-        <!-- 依赖版本管理 -->
-        <!-- JavaFX 25：与 JDK 25 对齐，原生库支持 macOS aarch64 -->
-        <javafx.version>25</javafx.version>
-        <spring-ai.version>2.0.0</spring-ai.version>
+        <maven.compiler.release>25</maven.compiler.release>
+        <jackson2.version>2.18.3</jackson2.version>
         <jackson3.version>3.1.4</jackson3.version>
-        <quartz.version>2.5.2</quartz.version>
-        <logback.version>1.4.14</logback.version>
-        <angus.mail.version>2.0.3</angus.mail.version>
-        <greenmail.version>2.1.11</greenmail.version>
-        <pdfbox.version>3.0.4</pdfbox.version>
-        <richtextfx.version>0.11.7</richtextfx.version>
-        <commonmark.version>0.30.0</commonmark.version>
-        <!-- 0.30.0 的 autolink 扩展尚未同步到项目 Maven 镜像；0.29.0 与 0.30 core API 兼容。 -->
-        <commonmark.autolink.version>0.29.0</commonmark.autolink.version>
-        <eclipsestore.version>4.1.0</eclipsestore.version>
         <h2.version>2.3.232</h2.version>
-        <spring.version>7.0.8</spring.version>
-        <archunit.version>1.4.2</archunit.version>
-        <json-schema-validator.version>1.5.7</json-schema-validator.version>
-        <jacoco.version>0.8.14</jacoco.version>
-        <coverage.overall.line>0.55</coverage.overall.line>
-        <coverage.overall.branch>0.45</coverage.overall.branch>
-        <coverage.core.line>0.80</coverage.core.line>
-        <coverage.core.branch>0.70</coverage.core.branch>
-        <coverage.service.runner.line>0.65</coverage.service.runner.line>
-        <coverage.service.runner.branch>0.45</coverage.service.runner.branch>
-        <coverage.controller.line>0.70</coverage.controller.line>
-        <coverage.controller.branch>0.60</coverage.controller.branch>
-        <!-- JaCoCo prepare-agent 会在测试前覆盖该属性；空值保证直接运行 Surefire 也合法。 -->
-        <jacocoArgLine></jacocoArgLine>
-        <!-- mvn javafx:run 的默认数据目录；ui-test profile 会覆盖为 target 隔离目录。 -->
-        <javaclaw.launch.data.dir>${project.basedir}/data</javaclaw.launch.data.dir>
-        <javaclaw.launch.ui.test>false</javaclaw.launch.ui.test>
-        <javaclaw.fx.tests>false</javaclaw.fx.tests>
-        <!-- 仅传给源码树中的 javafx:run。发行包不读取这些 Maven 属性，仍只接受签名运行时。 -->
-        <javaclaw.launch.allow.unsigned.service.plugin>true</javaclaw.launch.allow.unsigned.service.plugin>
+        <junit.version>5.11.4</junit.version>
+        <logback.version>1.5.16</logback.version>
+        <log4j.version>2.24.3</log4j.version>
+        <slf4j.version>2.0.16</slf4j.version>
+        <spring-ai.version>2.0.0</spring-ai.version>
+        <quartz.version>2.5.2</quartz.version>
+        <pdfbox.version>3.0.4</pdfbox.version>
+        <poi.version>5.4.1</poi.version>
+        <spotless.version>3.10.0</spotless.version>
+        <palantir-java-format.version>2.97.0</palantir-java-format.version>
+        <eclipse-wtp.version>4.21.0</eclipse-wtp.version>
+        <checkstyle-maven.version>3.6.0</checkstyle-maven.version>
+        <checkstyle.version>14.0.0</checkstyle.version>
     </properties>
+
+    <modules>
+        <module>javaclaw-api</module>
+        <module>javaclaw-protocol</module>
+        <module>javaclaw-agent-runtime</module>
+        <module>javaclaw-app-server</module>
+        <module>javaclaw-native-hosts</module>
+        <module>javaclaw-browser-service</module>
+        <module>javaclaw-client</module>
+        <module>javaclaw-desktop</module>
+        <module>javaclaw-packaging</module>
+    </modules>
 
     <dependencyManagement>
         <dependencies>
-            <!-- 新 Agent Framework 的唯一模型/Advisor/工具调用底座。 -->
+            <dependency>
+                <groupId>com.javaclaw</groupId>
+                <artifactId>javaclaw-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.javaclaw</groupId>
+                <artifactId>javaclaw-protocol</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.javaclaw</groupId>
+                <artifactId>javaclaw-agent-runtime</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.javaclaw</groupId>
+                <artifactId>javaclaw-browser-service</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.javaclaw</groupId>
+                <artifactId>javaclaw-app-server</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.javaclaw</groupId>
+                <artifactId>javaclaw-native-hosts</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.javaclaw</groupId>
+                <artifactId>javaclaw-client</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>${jackson2.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.datatype</groupId>
+                <artifactId>jackson-datatype-jdk8</artifactId>
+                <version>${jackson2.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.datatype</groupId>
+                <artifactId>jackson-datatype-jsr310</artifactId>
+                <version>${jackson2.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.h2database</groupId>
+                <artifactId>h2</artifactId>
+                <version>${h2.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ch.qos.logback</groupId>
+                <artifactId>logback-classic</artifactId>
+                <version>${logback.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.logging.log4j</groupId>
+                <artifactId>log4j-to-slf4j</artifactId>
+                <version>${log4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-api</artifactId>
+                <version>${slf4j.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Spring AI 2 使用 Jackson 3；以同一 BOM 对齐 core/databind 及共用的 2.x annotations。 Wire/H2 仍显式固定 Jackson 2，避免启动时缺少
+                    JsonSerializeAs 或出现二进制方法不匹配。 -->
+                <groupId>tools.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>${jackson3.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <dependency>
                 <groupId>org.springframework.ai</groupId>
                 <artifactId>spring-ai-bom</artifactId>
@@ -67,729 +146,169 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-            <!--
-                Spring AI 2.0 uses Jackson 3.1 while victools also brings Jackson 3.0.
-                Keep core/databind/dataformats and the still-2.x annotations artifact on one
-                Jackson 3.1 generation to prevent runtime linkage errors.
-            -->
-            <dependency>
-                <groupId>tools.jackson</groupId>
-                <artifactId>jackson-bom</artifactId>
-                <version>${jackson3.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
         </dependencies>
     </dependencyManagement>
 
-    <dependencies>
-        <!--
-            Spring AI 2.0：ChatClient、递归 Advisor、Tool Calling、RAG/VectorStore
-            以及 JavaClaw 当前支持的四类模型 Provider。所有模型构造集中在
-            framework.springai，产品功能只能通过框架网关调用。
-        -->
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-client-chat</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-openai</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-anthropic</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-google-genai</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-ollama</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-rag</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-vector-store</artifactId>
-        </dependency>
-
-        <!-- Agent Studio、工具参数与扩展事件统一按 JSON Schema Draft 2020-12 校验。 -->
-        <dependency>
-            <groupId>com.networknt</groupId>
-            <artifactId>json-schema-validator</artifactId>
-            <version>${json-schema-validator.version}</version>
-        </dependency>
-
-        <!-- 调度是产品基础设施，显式依赖 Quartz。 -->
-        <dependency>
-            <groupId>org.quartz-scheduler</groupId>
-            <artifactId>quartz</artifactId>
-            <version>${quartz.version}</version>
-        </dependency>
-
-        <!-- JavaFX 控件库（UI 组件：Button、TextField、ScrollPane 等） -->
-        <dependency>
-            <groupId>org.openjfx</groupId>
-            <artifactId>javafx-controls</artifactId>
-            <version>${javafx.version}</version>
-        </dependency>
-
-        <!-- FXML：3.0 所有生产页面与复用控件的静态视图结构。 -->
-        <dependency>
-            <groupId>org.openjfx</groupId>
-            <artifactId>javafx-fxml</artifactId>
-            <version>${javafx.version}</version>
-        </dependency>
-
-        <!--
-            JavaFX 孵化富文本控件（RichTextArea/CodeArea）
-            用于聊天气泡的原生 Markdown 渲染。
-            classpath（Launcher）模式下无需额外 JVM 参数；mvn javafx:run（module path）
-            需要 add-modules jfx.incubator.richtext（见 javafx-maven-plugin options）。
-        -->
-        <dependency>
-            <groupId>org.openjfx</groupId>
-            <artifactId>jfx-incubator-richtext</artifactId>
-            <version>${javafx.version}</version>
-        </dependency>
-
-        <!--
-            Jakarta Mail（邮件收发）
-            提供 SMTP 发送和 IMAP 接收能力
-        -->
-        <dependency>
-            <groupId>org.eclipse.angus</groupId>
-            <artifactId>angus-mail</artifactId>
-            <version>${angus.mail.version}</version>
-        </dependency>
-
-        <!--
-            Apache PDFBox（PDF 文本提取）
-            用于从 PDF 文档中提取文本内容发送给模型
-        -->
-        <dependency>
-            <groupId>org.apache.pdfbox</groupId>
-            <artifactId>pdfbox</artifactId>
-            <version>${pdfbox.version}</version>
-        </dependency>
-
-        <!--
-            RichTextFX（富文本编辑/展示）
-            提供原生文本选中复制、多行输入、样式化文本等能力
-        -->
-        <dependency>
-            <groupId>org.fxmisc.richtext</groupId>
-            <artifactId>richtextfx</artifactId>
-            <version>${richtextfx.version}</version>
-        </dependency>
-
-        <!--
-            CommonMark（Markdown 解析与 HTML 渲染）
-            用于聊天气泡中 Markdown 格式内容的渲染展示
-        -->
-        <dependency>
-            <groupId>org.commonmark</groupId>
-            <artifactId>commonmark</artifactId>
-            <version>${commonmark.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.commonmark</groupId>
-            <artifactId>commonmark-ext-gfm-tables</artifactId>
-            <version>${commonmark.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.commonmark</groupId>
-            <artifactId>commonmark-ext-gfm-strikethrough</artifactId>
-            <version>${commonmark.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.commonmark</groupId>
-            <artifactId>commonmark-ext-autolink</artifactId>
-            <version>${commonmark.autolink.version}</version>
-            <exclusions>
-                <!-- 核心统一使用上面的 0.30.0，避免扩展传递回 0.29.0。 -->
-                <exclusion>
-                    <groupId>org.commonmark</groupId>
-                    <artifactId>commonmark</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
-        <!-- Logback 日志实现 -->
-        <dependency>
-            <groupId>ch.qos.logback</groupId>
-            <artifactId>logback-classic</artifactId>
-            <version>${logback.version}</version>
-        </dependency>
-
-        <!--
-            Playwright Java（原生浏览器自动化）
-            替代 JavaFX WebView，提供完整的浏览器交互能力：
-            无障碍树快照、元素引用、截图标注、Tab管理、Cookie 持久化等
-        -->
-        <dependency>
-            <groupId>com.microsoft.playwright</groupId>
-            <artifactId>playwright</artifactId>
-            <version>1.52.0</version>
-        </dependency>
-
-        <!--
-            EclipseStore（Java 原生对象图持久化）+ GigaMap JVector 向量索引
-            作为重构后记忆/知识子系统的统一存储基座：对象图持久化 + ANN 语义检索
-            注意：JVector 走 jdk.incubator.vector（JDK 25 仍为孵化模块），
-            运行需在 JVM 参数加 add-modules jdk.incubator.vector（见 javafx-maven-plugin options）
-        -->
-        <dependency>
-            <groupId>org.eclipse.store</groupId>
-            <artifactId>storage-embedded</artifactId>
-            <version>${eclipsestore.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.store</groupId>
-            <artifactId>gigamap-jvector</artifactId>
-            <version>${eclipsestore.version}</version>
-        </dependency>
-
-        <!-- H2：工作区本地结构化配置数据库（data/javaclaw.mv.db） -->
-        <dependency>
-            <groupId>com.h2database</groupId>
-            <artifactId>h2</artifactId>
-            <version>${h2.version}</version>
-        </dependency>
-
-        <!-- Spring 只负责显式对象装配、事务与 JDBC；桌面应用不引入 Boot 或 WebMVC。 -->
-        <dependency>
-            <groupId>org.springframework</groupId>
-            <artifactId>spring-context</artifactId>
-            <version>${spring.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework</groupId>
-            <artifactId>spring-jdbc</artifactId>
-            <version>${spring.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework</groupId>
-            <artifactId>spring-tx</artifactId>
-            <version>${spring.version}</version>
-        </dependency>
-
-        <!-- JUnit 5（单元测试；运行 mvn test） -->
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <version>5.11.4</version>
-            <scope>test</scope>
-        </dependency>
-        <!-- 本地 SMTP/IMAP 验收夹具；测试不会连接或发送到外部邮件服务。 -->
-        <dependency>
-            <groupId>com.icegreen</groupId>
-            <artifactId>greenmail</artifactId>
-            <version>${greenmail.version}</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>com.tngtech.archunit</groupId>
-            <artifactId>archunit-junit5</artifactId>
-            <version>${archunit.version}</version>
-            <scope>test</scope>
-        </dependency>
-    </dependencies>
-
     <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.13.0</version>
+                    <configuration>
+                        <release>25</release>
+                        <parameters>true</parameters>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.5.2</version>
+                    <configuration>
+                        <useModulePath>true</useModulePath>
+                        <!-- 测试日志只能落到当前模块 target，不能污染开发者的产品配置目录。 -->
+                        <systemPropertyVariables>
+                            <javaclaw.log.dir>${project.build.directory}/test-logs</javaclaw.log.dir>
+                            <javaclaw.log.process>tests</javaclaw.log.process>
+                        </systemPropertyVariables>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
         <plugins>
-            <!-- Maven 编译插件：指定 JDK 25 -->
+            <!-- 质量工具只参与构建，不进入 Runtime、SDK 或发行物的生产依赖。 -->
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>${spotless.version}</version>
+                <configuration>
+                    <encoding>UTF-8</encoding>
+                    <lineEndings>UNIX</lineEndings>
+                    <java>
+                        <includes>
+                            <include>src/main/java/**/*.java</include>
+                            <include>src/test/java/**/*.java</include>
+                        </includes>
+                        <palantirJavaFormat>
+                            <version>${palantir-java-format.version}</version>
+                            <style>PALANTIR</style>
+                            <formatJavadoc>true</formatJavadoc>
+                        </palantirJavaFormat>
+                        <removeUnusedImports />
+                        <importOrder>
+                            <!-- 点边界避免把 javafx 误归入 JDK；static import 统一置于末组。 -->
+                            <order>java.|javax.|jdk.|com.sun.source.|org.w3c.dom.|org.xml.sax.,,com.javaclaw.,\#</order>
+                        </importOrder>
+                        <forbidWildcardImports />
+                        <endWithNewline />
+                    </java>
+                    <formats>
+                        <format>
+                            <includes>
+                                <include>pom.xml</include>
+                                <include>src/main/resources/**/*.fxml</include>
+                                <include>config/checkstyle/*.xml</include>
+                            </includes>
+                            <!-- WTP 只整理 XML 排版，不重排 Maven 执行顺序或 FXML 节点。 -->
+                            <eclipseWtp>
+                                <type>XML</type>
+                                <version>${eclipse-wtp.version}</version>
+                                <files>
+                                    <file>${maven.multiModuleProjectDirectory}/config/formatting/xml.prefs</file>
+                                </files>
+                            </eclipseWtp>
+                            <trimTrailingWhitespace />
+                            <endWithNewline />
+                        </format>
+                        <format>
+                            <includes>
+                                <include>.editorconfig</include>
+                                <include>.gitattributes</include>
+                                <include>AGENTS.md</include>
+                                <include>docs/coding-style.md</include>
+                                <include>config/formatting/*.prefs</include>
+                            </includes>
+                            <trimTrailingWhitespace />
+                            <endWithNewline />
+                        </format>
+                    </formats>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>verify-source-format</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-checkstyle-plugin</artifactId>
+                <version>${checkstyle-maven.version}</version>
+                <dependencies>
+                    <dependency>
+                        <groupId>com.puppycrawl.tools</groupId>
+                        <artifactId>checkstyle</artifactId>
+                        <version>${checkstyle.version}</version>
+                    </dependency>
+                </dependencies>
+                <configuration>
+                    <configLocation>${maven.multiModuleProjectDirectory}/config/checkstyle/checkstyle.xml</configLocation>
+                    <suppressionsLocation>${maven.multiModuleProjectDirectory}/config/checkstyle/suppressions.xml</suppressionsLocation>
+                    <includeTestSourceDirectory>true</includeTestSourceDirectory>
+                    <includeResources>false</includeResources>
+                    <includeTestResources>false</includeTestResources>
+                    <consoleOutput>true</consoleOutput>
+                    <failOnViolation>true</failOnViolation>
+                    <linkXRef>false</linkXRef>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>verify-source-contracts</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.13.0</version>
-                <configuration>
-                    <release>25</release>
-                    <!-- Spring AI derives annotated tool schema names from Java parameters. -->
-                    <parameters>true</parameters>
-                    <!-- JVector 使用孵化中的向量 API（JDK 25 仍为 incubator），编译期需放行该模块 -->
-                    <compilerArgs>
-                        <arg>--add-modules</arg>
-                        <arg>jdk.incubator.vector,jdk.httpserver</arg>
-                    </compilerArgs>
-                </configuration>
             </plugin>
-
-            <!-- 服务插件只依赖窄 API classifier；Runner 入口由 JavaClaw 主工件提供。 -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-jar-plugin</artifactId>
-                <version>3.4.2</version>
-                <executions>
-                    <execution>
-                        <id>service-plugin-api-artifact</id>
-                        <phase>package</phase>
-                        <goals><goal>jar</goal></goals>
-                        <configuration>
-                            <classifier>service-plugin-api</classifier>
-                            <includes>
-                                <include>com/javaclaw/service/api/**</include>
-                            </includes>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-            <!--
-                JavaFX Maven 插件：用于运行 JavaFX 应用
-                使用 Launcher 类作为入口，避免非模块化 JavaFX 的启动问题
-                运行命令：mvn javafx:run
-            -->
-            <!-- Surefire：跑 JUnit 5 测试；argLine 与编译参数对齐（JVector 孵化向量 API） -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.5.2</version>
-                <configuration>
-                    <!-- Late evaluation is required because JaCoCo populates this property during initialize. -->
-                    <argLine>@{jacocoArgLine} --add-modules jdk.incubator.vector,jdk.httpserver --enable-native-access=ALL-UNNAMED</argLine>
-                    <systemPropertyVariables>
-                        <javaclaw.data.dir>${project.build.directory}/test-data</javaclaw.data.dir>
-                        <javaclaw.fx.tests>${javaclaw.fx.tests}</javaclaw.fx.tests>
-                    </systemPropertyVariables>
-                </configuration>
             </plugin>
-
-            <!-- 覆盖率报告与三组聚合门禁：全项目、核心执行层、所有顶层 Controller。 -->
             <plugin>
-                <groupId>org.jacoco</groupId>
-                <artifactId>jacoco-maven-plugin</artifactId>
-                <version>${jacoco.version}</version>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.5.0</version>
                 <executions>
                     <execution>
-                        <id>prepare-agent</id>
+                        <id>ban-java-owned-native-bridges</id>
+                        <phase>validate</phase>
                         <goals>
-                            <goal>prepare-agent</goal>
-                        </goals>
-                        <configuration>
-                            <propertyName>jacocoArgLine</propertyName>
-                            <!-- 每次测试运行独立采集，避免不同 profile/依赖图的旧类 ID 混入报告。 -->
-                            <append>false</append>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>report</id>
-                        <phase>verify</phase>
-                        <goals>
-                            <goal>report</goal>
-                        </goals>
-                    </execution>
-                    <execution>
-                        <id>check-overall-coverage</id>
-                        <phase>verify</phase>
-                        <goals>
-                            <goal>check</goal>
+                            <goal>enforce</goal>
                         </goals>
                         <configuration>
                             <rules>
-                                <rule>
-                                    <element>BUNDLE</element>
-                                    <limits>
-                                        <limit>
-                                            <counter>LINE</counter>
-                                            <value>COVEREDRATIO</value>
-                                            <minimum>${coverage.overall.line}</minimum>
-                                        </limit>
-                                        <limit>
-                                            <counter>BRANCH</counter>
-                                            <value>COVEREDRATIO</value>
-                                            <minimum>${coverage.overall.branch}</minimum>
-                                        </limit>
-                                    </limits>
-                                </rule>
-                            </rules>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>check-core-coverage</id>
-                        <phase>verify</phase>
-                        <goals>
-                            <goal>check</goal>
-                        </goals>
-                        <configuration>
-                            <includes>
-                                <include>com/javaclaw/application/**</include>
-                                <include>com/javaclaw/platform/execution/**</include>
-                            </includes>
-                            <rules>
-                                <rule>
-                                    <element>BUNDLE</element>
-                                    <limits>
-                                        <limit>
-                                            <counter>LINE</counter>
-                                            <value>COVEREDRATIO</value>
-                                            <minimum>${coverage.core.line}</minimum>
-                                        </limit>
-                                        <limit>
-                                            <counter>BRANCH</counter>
-                                            <value>COVEREDRATIO</value>
-                                            <minimum>${coverage.core.branch}</minimum>
-                                        </limit>
-                                    </limits>
-                                </rule>
-                            </rules>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>check-built-in-service-plugin-runtime-coverage</id>
-                        <phase>verify</phase>
-                        <goals>
-                            <goal>check</goal>
-                        </goals>
-                        <configuration>
-                            <!--
-                                The built-in Runner still executes across a separate JVM boundary.
-                                Its process main is exercised by subprocess
-                                integration tests and therefore cannot contribute to the Desktop
-                                JaCoCo agent data; the remaining Runner implementation keeps its
-                                own non-regressing gate.
-                            -->
-                            <includes>
-                                <include>com/javaclaw/service/runner/**</include>
-                            </includes>
-                            <excludes>
-                                <exclude>com/javaclaw/service/runner/ServicePluginProcessMain.class</exclude>
-                            </excludes>
-                            <rules>
-                                <rule>
-                                    <element>BUNDLE</element>
-                                    <limits>
-                                        <limit>
-                                            <counter>LINE</counter>
-                                            <value>COVEREDRATIO</value>
-                                            <minimum>${coverage.service.runner.line}</minimum>
-                                        </limit>
-                                        <limit>
-                                            <counter>BRANCH</counter>
-                                            <value>COVEREDRATIO</value>
-                                            <minimum>${coverage.service.runner.branch}</minimum>
-                                        </limit>
-                                    </limits>
-                                </rule>
-                            </rules>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>check-controller-coverage</id>
-                        <phase>verify</phase>
-                        <goals>
-                            <goal>check</goal>
-                        </goals>
-                        <configuration>
-                            <includes>
-                                <include>**/*Controller.class</include>
-                            </includes>
-                            <rules>
-                                <rule>
-                                    <element>BUNDLE</element>
-                                    <limits>
-                                        <limit>
-                                            <counter>LINE</counter>
-                                            <value>COVEREDRATIO</value>
-                                            <minimum>${coverage.controller.line}</minimum>
-                                        </limit>
-                                        <limit>
-                                            <counter>BRANCH</counter>
-                                            <value>COVEREDRATIO</value>
-                                            <minimum>${coverage.controller.branch}</minimum>
-                                        </limit>
-                                    </limits>
-                                </rule>
+                                <bannedDependencies>
+                                    <searchTransitive>true</searchTransitive>
+                                    <excludes>
+                                        <exclude>net.java.dev.jna:*</exclude>
+                                        <exclude>com.sun.jna:*</exclude>
+                                    </excludes>
+                                    <message>JavaClaw 4.0 forbids JNA/JNI bridges; use the named JDK FFM module.</message>
+                                </bannedDependencies>
                             </rules>
                         </configuration>
                     </execution>
                 </executions>
             </plugin>
-
-            <plugin>
-                <groupId>org.openjfx</groupId>
-                <artifactId>javafx-maven-plugin</artifactId>
-                <version>0.0.8</version>
-                <configuration>
-                    <mainClass>com.javaclaw.app.Launcher</mainClass>
-                    <!-- 运行期放行 JVector 的孵化向量 API + EclipseStore/JVector 的 FFM 原生访问（FFM 在 JDK 25 已 GA，无需 enable-preview）。
-                         三条 add-exports 服务于 Markdown 气泡（chat.markdown）依赖的 JavaFX 孵化富文本控件：
-                         本插件只把 javafx-* 前缀构件放 module path，jfx-incubator-richtext 落在 classpath
-                        （unnamed module），而 JavaFX 核心对 com.sun 内部包只做了面向 jfx.incubator.richtext
-                         命名模块的定向导出，故需显式向 ALL-UNNAMED 开放（清单由 jdeps 对两个孵化 jar 实测得出）。
-                         IDE 直跑（JavaFX 全在 classpath）不需要这三条参数。 -->
-                    <options>
-                        <option>-Djavaclaw.data.dir=${javaclaw.launch.data.dir}</option>
-                        <option>-Djavaclaw.ui.test=${javaclaw.launch.ui.test}</option>
-                        <option>-Djavaclaw.service-plugin.allow-unsigned-development=${javaclaw.launch.allow.unsigned.service.plugin}</option>
-                        <option>--add-modules</option>
-                        <option>jdk.incubator.vector,jdk.httpserver</option>
-                        <option>--enable-native-access=ALL-UNNAMED</option>
-                        <option>--add-exports</option>
-                        <option>javafx.base/com.sun.javafx=ALL-UNNAMED</option>
-                        <option>--add-exports</option>
-                        <option>javafx.graphics/com.sun.javafx.util=ALL-UNNAMED</option>
-                        <option>--add-exports</option>
-                        <option>javafx.graphics/com.sun.javafx.scene.text=ALL-UNNAMED</option>
-                    </options>
-                </configuration>
-            </plugin>
         </plugins>
     </build>
-
-    <profiles>
-        <profile>
-            <id>devtools</id>
-            <dependencies>
-                <!-- 截图驱动将 JavaFX Image 转换为 ImageIO 可写的 BufferedImage。 -->
-                <dependency>
-                    <groupId>org.openjfx</groupId>
-                    <artifactId>javafx-swing</artifactId>
-                    <version>${javafx.version}</version>
-                </dependency>
-            </dependencies>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.codehaus.mojo</groupId>
-                        <artifactId>build-helper-maven-plugin</artifactId>
-                        <version>3.6.1</version>
-                        <executions>
-                            <execution>
-                                <id>add-devtools-source</id>
-                                <phase>generate-sources</phase>
-                                <goals>
-                                    <goal>add-source</goal>
-                                </goals>
-                                <configuration>
-                                    <sources>
-                                        <source>src/devtools/java</source>
-                                    </sources>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-        <profile>
-            <id>ui-test</id>
-            <properties>
-                <javaclaw.launch.data.dir>${project.build.directory}/ui-test-data</javaclaw.launch.data.dir>
-                <javaclaw.launch.ui.test>true</javaclaw.launch.ui.test>
-                <javaclaw.fx.tests>true</javaclaw.fx.tests>
-            </properties>
-        </profile>
-        <!--
-            Explicit, networked end-to-end gate for the real Deliverance business path.
-            The sample plugin must be built first; model data is pinned and retained only in the
-            caller-selected cache, never in the user's JavaClaw data or plugin directories.
-        -->
-        <profile>
-            <id>deliverance-business-it</id>
-            <properties>
-                <deliverance.it.plugin-jar>${project.basedir}/sample-plugins/deliverance/target/deliverance.jar</deliverance.it.plugin-jar>
-                <deliverance.it.generation-repository>Qwen/Qwen3-0.6B</deliverance.it.generation-repository>
-                <deliverance.it.generation-revision>c1899de289a04d12100db370d81485cdf75e47ca</deliverance.it.generation-revision>
-                <deliverance.it.embedding-repository>Qwen/Qwen3-Embedding-0.6B</deliverance.it.embedding-repository>
-                <deliverance.it.embedding-revision>97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3</deliverance.it.embedding-revision>
-            </properties>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-antrun-plugin</artifactId>
-                        <version>3.1.0</version>
-                        <executions>
-                            <execution>
-                                <id>require-deliverance-business-fixtures</id>
-                                <phase>pre-integration-test</phase>
-                                <goals><goal>run</goal></goals>
-                                <configuration>
-                                    <target>
-                                        <condition property="deliverance.it.cache.present">
-                                            <and>
-                                                <isset property="deliverance.it.cache-dir"/>
-                                                <not><equals arg1="${deliverance.it.cache-dir}" arg2=""/></not>
-                                            </and>
-                                        </condition>
-                                        <fail unless="deliverance.it.cache.present"
-                                              message="-Pdeliverance-business-it requires -Ddeliverance.it.cache-dir=&lt;absolute-path&gt;"/>
-                                        <available file="${deliverance.it.plugin-jar}"
-                                                   property="deliverance.it.plugin.present"/>
-                                        <fail unless="deliverance.it.plugin.present"
-                                              message="Build sample-plugins/deliverance first; deliverance.jar is missing"/>
-                                    </target>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.codehaus.mojo</groupId>
-                        <artifactId>build-helper-maven-plugin</artifactId>
-                        <version>3.6.1</version>
-                        <executions>
-                            <execution>
-                                <id>add-deliverance-business-test-source</id>
-                                <phase>generate-test-sources</phase>
-                                <goals><goal>add-test-source</goal></goals>
-                                <configuration>
-                                    <sources>
-                                        <source>src/deliverance-business-it/java</source>
-                                    </sources>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-failsafe-plugin</artifactId>
-                        <version>3.5.2</version>
-                        <configuration>
-                            <argLine>--add-modules jdk.incubator.vector,jdk.httpserver --enable-native-access=ALL-UNNAMED</argLine>
-                            <includes>
-                                <include>**/DeliveranceBusinessIT.java</include>
-                            </includes>
-                            <systemPropertyVariables>
-                                <deliverance.it.cache-dir>${deliverance.it.cache-dir}</deliverance.it.cache-dir>
-                                <deliverance.it.plugin-jar>${deliverance.it.plugin-jar}</deliverance.it.plugin-jar>
-                                <deliverance.it.generation-repository>${deliverance.it.generation-repository}</deliverance.it.generation-repository>
-                                <deliverance.it.generation-revision>${deliverance.it.generation-revision}</deliverance.it.generation-revision>
-                                <deliverance.it.embedding-repository>${deliverance.it.embedding-repository}</deliverance.it.embedding-repository>
-                                <deliverance.it.embedding-revision>${deliverance.it.embedding-revision}</deliverance.it.embedding-revision>
-                                <!-- The opt-in gate exercises the same explicitly-approved unsigned
-                                     development artifact path as a local source-tree launch. -->
-                                <javaclaw.service-plugin.allow-unsigned-development>true</javaclaw.service-plugin.allow-unsigned-development>
-                            </systemPropertyVariables>
-                        </configuration>
-                        <executions>
-                            <execution>
-                                <goals>
-                                    <goal>integration-test</goal>
-                                    <goal>verify</goal>
-                                </goals>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-        <!-- Release-only assembly: the plugin is already signed by CI; this profile verifies it,
-             pins its signer in the Host JAR and stages the canonical one-plugin directory. -->
-        <profile>
-            <id>bundle-deliverance-plugin</id>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-antrun-plugin</artifactId>
-                        <version>3.1.0</version>
-                        <executions>
-                            <execution>
-                                <id>verify-signed-deliverance-plugin</id>
-                                <phase>validate</phase>
-                                <goals><goal>run</goal></goals>
-                                <configuration>
-                                    <target>
-                                        <available file="${deliverance.plugin.jar}"
-                                                   property="deliverance.plugin.present"/>
-                                        <fail unless="deliverance.plugin.present"
-                                              message="Missing -Ddeliverance.plugin.jar signed Deliverance JAR"/>
-                                        <condition property="deliverance.signer.valid">
-                                            <matches string="${deliverance.plugin.signer.sha256}"
-                                                     pattern="^[0-9a-fA-F]{64}$"/>
-                                        </condition>
-                                        <fail unless="deliverance.signer.valid"
-                                              message="Missing or invalid -Ddeliverance.plugin.signer.sha256"/>
-                                        <exec executable="${java.home}/bin/jarsigner" failonerror="true">
-                                            <arg value="-verify"/>
-                                            <arg value="-strict"/>
-                                            <arg value="${deliverance.plugin.jar}"/>
-                                        </exec>
-                                    </target>
-                                </configuration>
-                            </execution>
-                            <execution>
-                                <id>stage-signed-deliverance-plugin</id>
-                                <phase>process-resources</phase>
-                                <goals><goal>run</goal></goals>
-                                <configuration>
-                                    <target>
-                                        <mkdir dir="${project.build.outputDirectory}/service-plugin"/>
-                                        <echo file="${project.build.outputDirectory}/service-plugin/trusted-builtin-signers.txt"
-                                              message="${deliverance.plugin.signer.sha256}${line.separator}"/>
-                                        <mkdir dir="${project.build.directory}/distribution/plugins/builtin-deliverance"/>
-                                        <copy file="${deliverance.plugin.jar}"
-                                              tofile="${project.build.directory}/distribution/plugins/builtin-deliverance/deliverance.jar"
-                                              overwrite="true"/>
-                                    </target>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-        <!--
-            Release CI supplies -Dframework.compatibility.baseline=<released-version>.
-            Only the supported Framework API/SPI surface is compared; a binary break therefore
-            requires intentionally moving to a new Framework API major version/baseline.
-        -->
-        <profile>
-            <id>framework-api-compatibility</id>
-            <activation>
-                <property>
-                    <name>framework.compatibility.baseline</name>
-                </property>
-            </activation>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>com.github.siom79.japicmp</groupId>
-                        <artifactId>japicmp-maven-plugin</artifactId>
-                        <version>0.26.1</version>
-                        <configuration>
-                            <oldVersion>
-                                <dependency>
-                                    <groupId>${project.groupId}</groupId>
-                                    <artifactId>${project.artifactId}</artifactId>
-                                    <version>${framework.compatibility.baseline}</version>
-                                    <type>jar</type>
-                                </dependency>
-                            </oldVersion>
-                            <newVersion>
-                                <file>
-                                    <path>${project.build.directory}/${project.build.finalName}.jar</path>
-                                </file>
-                            </newVersion>
-                            <parameter>
-                                <onlyModified>true</onlyModified>
-                                <accessModifier>public</accessModifier>
-                                <includes>
-                                    <include>com.javaclaw.framework.api</include>
-                                    <include>com.javaclaw.framework.spi</include>
-                                </includes>
-                                <includeExclusively>false</includeExclusively>
-                                <breakBuildOnBinaryIncompatibleModifications>true</breakBuildOnBinaryIncompatibleModifications>
-                            </parameter>
-                            <skipHtmlReport>true</skipHtmlReport>
-                            <skipMarkdownReport>true</skipMarkdownReport>
-                        </configuration>
-                        <executions>
-                            <execution>
-                                <id>check-framework-api-spi-compatibility</id>
-                                <phase>verify</phase>
-                                <goals>
-                                    <goal>cmp</goal>
-                                </goals>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-    </profiles>
 </project>

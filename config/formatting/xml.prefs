@@ -1,0 +1,8 @@
+# 仅调整排版，不重排元素、属性或解析外部 Schema。
+eclipse.preferences.version=1
+indentationChar=space
+indentationSize=4
+lineWidth=120
+splitMultiAttrs=false
+preserveCDATAContent=true
+resolveExternalURI=false

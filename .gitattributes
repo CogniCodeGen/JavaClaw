@@ -1,0 +1,15 @@
+# 只约束维护中的源码与质量配置；不归一化 migration、官方 Schema 或 golden fixture。
+*.java text eol=lf
+pom.xml text eol=lf
+*.fxml text eol=lf
+/.editorconfig text eol=lf
+/AGENTS.md text eol=lf
+/README.md text eol=lf
+/docs/coding-style.md text eol=lf
+/config/checkstyle/*.xml text eol=lf
+/config/formatting/*.prefs text eol=lf
+/.github/workflows/*.yml text eol=lf
+/.run/*.xml text eol=lf
+/run.sh text eol=lf
+/run.cmd text eol=lf
+/javaclaw-packaging/src/main/distribution/bin/* text eol=lf
