@@ -1,0 +1,194 @@
+/* JavaClaw 5 设置与管理中心；只使用 509f197 设计令牌。 */
+
+.management-center {
+    -fx-background-color: -jc-surface-page;
+}
+
+.management-navigation-content {
+    -fx-padding: 0 12 14 12;
+}
+
+.management-navigation-list {
+    -fx-min-height: 420;
+}
+
+.platform-section-hint {
+    -fx-text-fill: -jc-text-muted;
+}
+
+.platform-form-section {
+    -fx-max-width: 760;
+}
+
+.platform-detail-pane {
+    -fx-background-color: -jc-surface-page;
+    -fx-padding: 0 0 0 14;
+}
+
+.platform-list-detail {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+
+.platform-list-detail > .split-pane-divider {
+    -fx-background-color: -jc-border;
+    -fx-padding: 0 1 0 0;
+}
+
+.platform-action-status {
+    -fx-font-size: 12px;
+    -fx-text-fill: -jc-text-muted;
+}
+
+.platform-action-dirty {
+    -fx-text-fill: -jc-warning;
+}
+
+.platform-action-success {
+    -fx-text-fill: -jc-success;
+}
+
+.platform-action-error {
+    -fx-text-fill: -jc-danger;
+}
+
+.platform-revision-conflict {
+    -fx-spacing: 8;
+    -fx-padding: 12 14;
+    -fx-background-color: -jc-warning-bg;
+    -fx-border-color: -jc-warning;
+    -fx-border-width: 1;
+    -fx-border-radius: 10;
+    -fx-background-radius: 10;
+}
+
+.platform-conflict-title {
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-title;
+}
+
+.platform-conflict-detail {
+    -fx-text-fill: -jc-text-body;
+}
+
+.platform-secret-field {
+    -fx-spacing: 8;
+}
+
+.platform-secret-status {
+    -fx-padding: 5 10;
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 8;
+    -fx-text-fill: -jc-text-muted;
+}
+
+.platform-danger-zone {
+    -fx-spacing: 9;
+    -fx-padding: 14;
+    -fx-background-color: -jc-tint-terra-soft;
+    -fx-border-color: -jc-tint-terra-line;
+    -fx-border-width: 1;
+    -fx-border-radius: 10;
+    -fx-background-radius: 10;
+}
+
+.platform-danger-title {
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-tint-terra-fg;
+}
+
+.platform-danger-detail {
+    -fx-text-fill: -jc-tint-terra-muted;
+}
+
+.platform-segmented {
+    -fx-padding: 3;
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 9;
+}
+
+.platform-segment-button {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-background-radius: 7;
+    -fx-border-radius: 7;
+    -fx-padding: 6 11;
+    -fx-text-fill: -jc-text-muted;
+    -fx-cursor: hand;
+}
+
+.platform-segment-button:hover {
+    -fx-background-color: -jc-neutral-200;
+    -fx-text-fill: -jc-text-title;
+}
+
+.platform-segment-button:selected {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-text-fill: -jc-primary-600;
+    -fx-font-weight: 600;
+}
+
+.theme-card {
+    -fx-min-width: 180;
+    -fx-pref-width: 190;
+    -fx-min-height: 70;
+    -fx-padding: 0;
+    -fx-alignment: center-left;
+}
+
+.theme-card:selected {
+    -fx-border-color: -jc-primary-500;
+    -fx-border-width: 2;
+    -fx-effect: dropshadow(gaussian, -jc-focus-ring, 6, 0, 0, 0);
+}
+
+/* 根字号由继承机制传递给未声明字号的控件；标题等设计层级仍保持稳定。 */
+.font-scale-90 {
+    -fx-font-size: 11.7px;
+}
+
+.font-scale-100 {
+    -fx-font-size: 13px;
+}
+
+.font-scale-110 {
+    -fx-font-size: 14.3px;
+}
+
+.font-scale-120 {
+    -fx-font-size: 15.6px;
+}
+
+.density-compact .platform-page {
+    -fx-spacing: 10;
+    -fx-padding: 16 18 18 18;
+}
+
+.density-compact .platform-section-card {
+    -fx-spacing: 7;
+    -fx-padding: 12;
+}
+
+.density-compact .platform-detail-cell {
+    -fx-padding: 5 8;
+}
+
+.density-spacious .platform-page {
+    -fx-spacing: 18;
+    -fx-padding: 28 30 30 30;
+}
+
+.density-spacious .platform-section-card {
+    -fx-spacing: 14;
+    -fx-padding: 20;
+}
+
+.density-spacious .platform-detail-cell {
+    -fx-padding: 11 13;
+}
+
+.settings-scroll-pane .platform-page {
+    -fx-min-width: 620;
+}

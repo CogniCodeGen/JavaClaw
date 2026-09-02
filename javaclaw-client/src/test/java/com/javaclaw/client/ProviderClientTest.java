@@ -1,0 +1,211 @@
+package com.javaclaw.client;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
+
+import org.junit.jupiter.api.Test;
+
+import com.javaclaw.api.CredentialClearReceipt;
+import com.javaclaw.api.CredentialMetadata;
+import com.javaclaw.api.CredentialRef;
+import com.javaclaw.api.ProviderAdapter;
+import com.javaclaw.api.ProviderCapabilities;
+import com.javaclaw.api.ProviderCredentialBinding;
+import com.javaclaw.api.ProviderCredentialClearResult;
+import com.javaclaw.api.ProviderEndpoint;
+import com.javaclaw.api.ProviderEndpointSpec;
+import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.ProviderRef;
+import com.javaclaw.api.ProviderRole;
+import com.javaclaw.api.ProviderVerificationResult;
+import com.javaclaw.api.ProviderVerificationState;
+import com.javaclaw.api.ProviderVerificationUsage;
+import com.javaclaw.client.facade.CredentialClient;
+import com.javaclaw.client.facade.ProviderClient;
+import com.javaclaw.client.testkit.ScriptedRpcConnection;
+import com.javaclaw.protocol.CanonicalJson;
+import com.javaclaw.protocol.JsonRpcRequest;
+import com.javaclaw.protocol.JsonRpcResponse;
+import com.javaclaw.protocol.ProviderCredentialRpcContracts;
+import com.javaclaw.protocol.ProviderVerificationRpcContracts;
+import com.javaclaw.protocol.SessionSecretChannel;
+import com.javaclaw.protocol.WriteCommand;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+class ProviderClientTest {
+    private static final CanonicalJson JSON = new CanonicalJson();
+    private static final Instant NOW = Instant.parse("2026-09-01T08:00:00Z");
+
+    @Test
+    void SDK密封Secret并分别携带Provider和CredentialRevision() {
+        CredentialRef reference = new CredentialRef("provider", "credential-1");
+        ProviderCredentialBinding binding = new ProviderCredentialBinding(
+                provider(2, Optional.of(reference)), new CredentialMetadata(reference, 1, NOW));
+        ProviderCredentialClearResult cleared = new ProviderCredentialClearResult(
+                provider(3, Optional.empty()), new CredentialClearReceipt(reference, 1, NOW));
+        AtomicReference<String> unsealed = new AtomicReference<>();
+        try (SessionSecretChannel secrets = SessionSecretChannel.open()) {
+            ProviderClient client = client(secrets, request -> response(request, secrets, binding, cleared, unsealed));
+
+            assertEquals(
+                    binding,
+                    client.setCredential(
+                            "provider-main",
+                            1,
+                            0,
+                            "provider-secret".toCharArray(),
+                            new CommandOptions("set-provider-secret", 1)));
+            assertEquals("provider-secret", unsealed.get());
+            assertEquals(
+                    cleared,
+                    client.clearCredential(
+                            "provider-main", 2, reference, 1, new CommandOptions("clear-provider-secret", 2)));
+        }
+    }
+
+    @Test
+    void SDK在发送前拒绝不一致的ProviderExpectedRevision() {
+        AtomicInteger requests = new AtomicInteger();
+        try (SessionSecretChannel secrets = SessionSecretChannel.open()) {
+            Function<JsonRpcRequest, JsonRpcResponse> rejected = request -> {
+                requests.incrementAndGet();
+                throw new AssertionError("revision 不一致时不得发送 RPC");
+            };
+            ProviderClient client = client(secrets, rejected);
+            CredentialClient generic = new CredentialClient(
+                    new RpcClientConnection(new ScriptedRpcConnection(rejected), JSON, ignored -> {}),
+                    secrets.publicKey());
+
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> client.setCredential(
+                            "provider-main", 2, 0, "secret".toCharArray(), new CommandOptions("mismatch", 1)));
+            CredentialRef providerSecret = new CredentialRef("provider", "credential-1");
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> generic.create("provider", "secret".toCharArray(), new CommandOptions("create", 0)));
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> generic.rotate(providerSecret, "secret".toCharArray(), new CommandOptions("rotate", 1)));
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> generic.clear(providerSecret, new CommandOptions("clear", 1)));
+            assertEquals(0, requests.get());
+        }
+    }
+
+    @Test
+    void SDK只发送精确Provider和双重计费确认() {
+        ProviderRef provider = new ProviderRef("provider-main", 2, "test-model");
+        ProviderVerificationResult expected = new ProviderVerificationResult(
+                provider,
+                ProviderVerificationState.SUCCEEDED,
+                9,
+                Optional.of(new ProviderVerificationUsage(2, 1, 0, 0)),
+                new ProviderCapabilities(Set.of(ProviderRole.CHAT), true, true, true, false, false, false, false),
+                Optional.empty(),
+                NOW);
+        AtomicInteger requests = new AtomicInteger();
+        try (SessionSecretChannel secrets = SessionSecretChannel.open()) {
+            ProviderClient client = client(secrets, request -> {
+                requests.incrementAndGet();
+                WriteCommand command = JSON.decode(request.params(), WriteCommand.class);
+                var payload = JSON.decode(command.payload(), ProviderVerificationRpcContracts.VerifyPayload.class);
+                assertEquals(ProviderVerificationRpcContracts.METHOD, request.method());
+                assertEquals(2, command.expectedRevision());
+                assertEquals(provider, payload.provider());
+                return JsonRpcResponse.success(request.id(), JSON.encode(expected));
+            });
+
+            assertEquals(
+                    expected,
+                    client.verifyRoundTrip(
+                            provider,
+                            true,
+                            ProviderVerificationRpcContracts.BILLING_CONFIRMATION,
+                            new CommandOptions("verify", 2)));
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> client.verifyRoundTrip(
+                            provider,
+                            false,
+                            ProviderVerificationRpcContracts.BILLING_CONFIRMATION,
+                            new CommandOptions("unconfirmed", 2)));
+            assertEquals(1, requests.get());
+        }
+    }
+
+    private static JsonRpcResponse response(
+            JsonRpcRequest request,
+            SessionSecretChannel secrets,
+            ProviderCredentialBinding binding,
+            ProviderCredentialClearResult cleared,
+            AtomicReference<String> unsealed) {
+        WriteCommand command = JSON.decode(request.params(), WriteCommand.class);
+        return switch (request.method()) {
+            case "provider/credential/set" -> setResponse(request, command, secrets, binding, unsealed);
+            case "provider/credential/clear" -> clearResponse(request, command, cleared);
+            default -> throw new AssertionError("unexpected method " + request.method());
+        };
+    }
+
+    private static JsonRpcResponse setResponse(
+            JsonRpcRequest request,
+            WriteCommand command,
+            SessionSecretChannel secrets,
+            ProviderCredentialBinding binding,
+            AtomicReference<String> unsealed) {
+        var payload = JSON.decode(command.payload(), ProviderCredentialRpcContracts.SetPayload.class);
+        assertEquals(1, command.expectedRevision());
+        assertEquals(1, payload.providerExpectedRevision());
+        assertEquals(0, payload.credentialExpectedRevision());
+        byte[] plaintext = secrets.unseal(payload.secret(), ProviderCredentialRpcContracts.SET_PURPOSE);
+        try {
+            unsealed.set(new String(plaintext, java.nio.charset.StandardCharsets.UTF_8));
+        } finally {
+            Arrays.fill(plaintext, (byte) 0);
+        }
+        return JsonRpcResponse.success(request.id(), JSON.encode(binding));
+    }
+
+    private static JsonRpcResponse clearResponse(
+            JsonRpcRequest request, WriteCommand command, ProviderCredentialClearResult cleared) {
+        var payload = JSON.decode(command.payload(), ProviderCredentialRpcContracts.ClearPayload.class);
+        assertEquals(2, command.expectedRevision());
+        assertEquals(2, payload.providerExpectedRevision());
+        assertEquals(1, payload.credentialExpectedRevision());
+        assertEquals(cleared.receipt().reference(), payload.credential());
+        return JsonRpcResponse.success(request.id(), JSON.encode(cleared));
+    }
+
+    private static ProviderClient client(
+            SessionSecretChannel secrets, Function<JsonRpcRequest, JsonRpcResponse> responses) {
+        RpcClientConnection connection =
+                new RpcClientConnection(new ScriptedRpcConnection(responses), JSON, ignored -> {});
+        return new ProviderClient(connection, secrets.publicKey());
+    }
+
+    private static ProviderEndpoint provider(long revision, Optional<CredentialRef> credential) {
+        ProviderEndpointSpec spec = new ProviderEndpointSpec(
+                "Provider",
+                ProviderAdapter.OPENAI_COMPATIBLE,
+                Optional.empty(),
+                Set.of(ProviderRole.CHAT),
+                List.of("test-model"),
+                credential,
+                Duration.ofSeconds(30),
+                0,
+                Map.of());
+        return new ProviderEndpoint("provider-main", revision, ProviderLifecycle.ACTIVE, spec, NOW, NOW);
+    }
+}

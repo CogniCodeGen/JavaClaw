@@ -1,0 +1,63 @@
+schema=javaclaw-ui-golden-v1
+platform=macos-reference
+themes=9
+densities=3
+font-scale=100
+viewports=minimum:880x620,standard:1040x720
+scene=production-management-center
+management-entries=29
+images=54
+settings-center--theme-emerald--density-compact--viewport-minimum.png sha256=9cada1716380e65e1ca7bd3b6fee898c94a87a107b0190c8c399cbe1c61d1d8e bytes=75296
+settings-center--theme-emerald--density-compact--viewport-standard.png sha256=ec4f3e8ff5699fc1ca736e57b1ab71f3a55b590db9c95399027169125cc8a53c bytes=93414
+settings-center--theme-emerald--density-standard--viewport-minimum.png sha256=476bc715154f50a7d9ad6b5f1ae5d2e1dfa0f83012eb35341564ad0975b72336 bytes=70458
+settings-center--theme-emerald--density-standard--viewport-standard.png sha256=7a6a89a2371336c74d8f9f4c13b0686ed4a60ce2698a56acb18f2afd6f3a03e6 bytes=91965
+settings-center--theme-emerald--density-spacious--viewport-minimum.png sha256=22765fb07d53b980b9525a001b9220c28477873ae961fba48729997b4c6f1615 bytes=66307
+settings-center--theme-emerald--density-spacious--viewport-standard.png sha256=d64eff2516dd11e874e1a59aea9ee267be25fe6c5f661ed54dad0cf3757ea60a bytes=89110
+settings-center--theme-midnight--density-compact--viewport-minimum.png sha256=b6670455345d0e9ce2dba9d096c72b3d47493a69bd819e0e0d73393f9653a4c3 bytes=73944
+settings-center--theme-midnight--density-compact--viewport-standard.png sha256=447619aa67156ee920aaf0a54f47ced4cdaa10a4d78fef59d214d19e1259c102 bytes=91346
+settings-center--theme-midnight--density-standard--viewport-minimum.png sha256=4ea083c4d89010edc3cc30a19e61b238a665c96192aa1a098a07679f3b4275cd bytes=68684
+settings-center--theme-midnight--density-standard--viewport-standard.png sha256=60d92fbcb19d53b9fd371cacde9ad4105e5190f414491e53dbdc18c00b3abe0d bytes=89992
+settings-center--theme-midnight--density-spacious--viewport-minimum.png sha256=13e853ee4e84f6c4beae080f763c46e6bea1b1aa974215727f108d4c55b84fe7 bytes=65082
+settings-center--theme-midnight--density-spacious--viewport-standard.png sha256=043f14e563086d5bb9fa5ff6fb5d394a92fccfd7c6ba136f8ebe067e9c2392eb bytes=87235
+settings-center--theme-sapphire--density-compact--viewport-minimum.png sha256=10c6d6c781e6ce43b4d175c002da9f038e5a18a9c6b13df790b2413d11b9d90c bytes=76186
+settings-center--theme-sapphire--density-compact--viewport-standard.png sha256=fcb4f142edad987b33ac1720296491159e3e41660706a633852c3e42f911a267 bytes=93729
+settings-center--theme-sapphire--density-standard--viewport-minimum.png sha256=c50f99416c6095fbcca1438c6b7020fa4100443faf29a955496fed4d6f642f4e bytes=71400
+settings-center--theme-sapphire--density-standard--viewport-standard.png sha256=9101c3cc13246855727b2c0b3b86acf67bd06e5f35dde8d5515e2e2462565c31 bytes=92529
+settings-center--theme-sapphire--density-spacious--viewport-minimum.png sha256=bea486ddad97ef347ac3cca40691930527580afdefde8c10aa7d93b6b45104a4 bytes=66920
+settings-center--theme-sapphire--density-spacious--viewport-standard.png sha256=c70bf1c5b4abd7cf624038adc0b943fb7423ef117dcc4994bca7c80479ca1b9a bytes=89623
+settings-center--theme-graphite--density-compact--viewport-minimum.png sha256=3e096800a43f7d8207b154b06a94f84855df29f625d88bc4c0101afaddc54ec5 bytes=76629
+settings-center--theme-graphite--density-compact--viewport-standard.png sha256=ff0e831ac7c74f472448c5abf916085302f85f225611e18e3df8dd8923e50c41 bytes=94538
+settings-center--theme-graphite--density-standard--viewport-minimum.png sha256=0fd4f4af31dbb7d3265bdd9256f4ae81ac6a212084395938ebb0b3079403021e bytes=71484
+settings-center--theme-graphite--density-standard--viewport-standard.png sha256=7c31dbb2427aad9925c6560117a44db29deeb3e60c7658c229873565c9acf04d bytes=93376
+settings-center--theme-graphite--density-spacious--viewport-minimum.png sha256=52d3e68c86df9fdea90122f3e5c1652f88c59cae48f8c7d1eb3803f17ba04ee9 bytes=67205
+settings-center--theme-graphite--density-spacious--viewport-standard.png sha256=e5a1141eb361a392ae568b5f5010dddf67d5d00640ee22493b61a03b7f51f84d bytes=90489
+settings-center--theme-terracotta--density-compact--viewport-minimum.png sha256=0945a72b6fff0f6faf2b950d9297d3f0d1f16fe6af65dcc696b92f091817bcd6 bytes=76060
+settings-center--theme-terracotta--density-compact--viewport-standard.png sha256=11e0464c994e9dcc91ab982d016704e4c4111b153e432dc05d3220b6de76eb0d bytes=95364
+settings-center--theme-terracotta--density-standard--viewport-minimum.png sha256=2f7306f8b4a13ff166b311071f9ef05b01a506a0abe8799e013eb3545c914bc6 bytes=70593
+settings-center--theme-terracotta--density-standard--viewport-standard.png sha256=7021326a6692167ba69b36bae1faebc53ef40eacaf5383573e139211edf232ef bytes=94216
+settings-center--theme-terracotta--density-spacious--viewport-minimum.png sha256=d1864c2783aee8b07d32b5083e65ee723590bb92e7550e419e1474d17c3e66b7 bytes=66142
+settings-center--theme-terracotta--density-spacious--viewport-standard.png sha256=c8ed55cd2b781cda81ce81db2cd22af936a321915dcc119a3909765496954d9e bytes=91209
+settings-center--theme-carbon--density-compact--viewport-minimum.png sha256=cd5ee991a1e5f25e30f75bafae53d0527c49d26668c7c22f2b0adc22f3d21d57 bytes=74140
+settings-center--theme-carbon--density-compact--viewport-standard.png sha256=eee5a5ff6df13898b23292e139ec217a960c246c05c73875c668c6f8a9b2b52e bytes=93034
+settings-center--theme-carbon--density-standard--viewport-minimum.png sha256=23d4d1896f75a24df5228cd6a92e28c26072d49f4224710f00b1f51ed0126199 bytes=68301
+settings-center--theme-carbon--density-standard--viewport-standard.png sha256=28a8e311dd70bf3cb26a43eb35f626460ebf515d1ad6ace69d9fb3908e2bba96 bytes=91381
+settings-center--theme-carbon--density-spacious--viewport-minimum.png sha256=16e289add8d056cfdb0beebc1b1827358841c021aac7ff63df04d3648e4b1c33 bytes=63764
+settings-center--theme-carbon--density-spacious--viewport-standard.png sha256=d42f5d0f8adf791853ce5144a0f5dc7e3aafa4609489231233b93284d123bb95 bytes=89753
+settings-center--theme-ocean--density-compact--viewport-minimum.png sha256=3a921a97071ab3623bed5a8e975d490057aa49eaa1b3ad126f1a7bb243bb998b bytes=75079
+settings-center--theme-ocean--density-compact--viewport-standard.png sha256=eb387e94ee883d22fac2b6b235d759321b5bae711d1366f99af17c66b151eb54 bytes=94270
+settings-center--theme-ocean--density-standard--viewport-minimum.png sha256=e7c53737d981f31f22e4e67f2c1cc8e1f77c070466d8b88bd73364d94edb9439 bytes=69946
+settings-center--theme-ocean--density-standard--viewport-standard.png sha256=891105f596194295337a7feaec7f11aaab900fe58d36b7ff415cd612321c72dd bytes=93075
+settings-center--theme-ocean--density-spacious--viewport-minimum.png sha256=48ec7742c5eb4d00816d023b8541da5870b1b697bc71a788ac584f8245e8b9a8 bytes=65724
+settings-center--theme-ocean--density-spacious--viewport-standard.png sha256=6de444acbdd5582d240ec337ad45ad5924308e1d2a6e8108177906b22c5b7670 bytes=90018
+settings-center--theme-plum--density-compact--viewport-minimum.png sha256=61d87f3d2557d0e6c4ca87004579d76df2eb6e3f7abcf180b3a8091f68d28115 bytes=74971
+settings-center--theme-plum--density-compact--viewport-standard.png sha256=afe0b54aa7c0dab847a2d0f21799ec8b33b452a8b6d3420b57fc377a869f7b3c bytes=94200
+settings-center--theme-plum--density-standard--viewport-minimum.png sha256=c1746b367b377733a653816f432075fa1a2b488a967be635d995b62bf95fd90a bytes=69827
+settings-center--theme-plum--density-standard--viewport-standard.png sha256=b3ffd44f70520434cc382ed93700dcbf6e59cf09d9d4d1a9f7311f02c69d819c bytes=92953
+settings-center--theme-plum--density-spacious--viewport-minimum.png sha256=b218fcd5ea491414a17c28ea22a53e4423c5d4819a6a18f1da6448025d1636ac bytes=65580
+settings-center--theme-plum--density-spacious--viewport-standard.png sha256=56080c0fffe07628c7e159fd1697d3da6309e4df09ef39f7d669d2ead9826045 bytes=89919
+settings-center--theme-honey--density-compact--viewport-minimum.png sha256=c572fe6bf379c4ca2e039e1d93adb799571d644070c51b4dc0241a605a3043f3 bytes=76589
+settings-center--theme-honey--density-compact--viewport-standard.png sha256=ca6365971c4c0ffa411f9f8436b8da176f4691637eca3e86c4873ca84ddfc44d bytes=96030
+settings-center--theme-honey--density-standard--viewport-minimum.png sha256=4c063a463bdff0b2341a031872f3ec4491f830cfe703ba73b3908f5aea865fed bytes=71283
+settings-center--theme-honey--density-standard--viewport-standard.png sha256=4e7e39018306c740819aee934a4563bf58fa69713159463f1c678c1cd9c68236 bytes=94797
+settings-center--theme-honey--density-spacious--viewport-minimum.png sha256=5a75681b2b6123c06f21fcf885eb9d9d87c3915a742b77b3f7e8aab9efc56bd7 bytes=66912
+settings-center--theme-honey--density-spacious--viewport-standard.png sha256=e88f281047f36e2228632396577093fa02ac3481544d984225c693f98dbeca6d bytes=91675

@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javaclaw.local/schema/permission-profile-v2.schema.json",
+  "title": "JavaClaw Protocol v2 PermissionProfile methods",
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,239}$"},
+    "positiveRevision": {"type": "integer", "minimum": 1},
+    "empty": {"type": "object", "additionalProperties": false},
+    "workspaceId": {"type": "string", "format": "uuid"},
+    "permissionProfileRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "version": {"$ref": "#/$defs/positiveRevision"}
+      }
+    },
+    "filePermission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["readRoots", "writeRoots", "allowDelete", "followSymbolicLinks"],
+      "properties": {
+        "readRoots": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "writeRoots": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "allowDelete": {"type": "boolean"},
+        "followSymbolicLinks": {"type": "boolean"}
+      }
+    },
+    "networkPermission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hosts", "ports", "tlsOnly"],
+      "properties": {
+        "hosts": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "not": {"const": "*"}}
+        },
+        "ports": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "integer", "minimum": 1, "maximum": 65535}
+        },
+        "tlsOnly": {"type": "boolean"}
+      }
+    },
+    "processPermission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["executables", "allowPty", "maxRunTime"],
+      "properties": {
+        "executables": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "not": {"const": "*"}}
+        },
+        "allowPty": {"type": "boolean"},
+        "maxRunTime": {"type": "string", "format": "duration"}
+      }
+    },
+    "toolPermission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowedTools", "maximumRisk", "approvalRequirement"],
+      "properties": {
+        "allowedTools": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "not": {"const": "*"}}
+        },
+        "maximumRisk": {"enum": ["READ_ONLY", "WORKSPACE_WRITE", "NETWORK", "PROCESS", "EXTERNAL_EFFECT"]},
+        "approvalRequirement": {"enum": ["NONE", "RISKY", "EVERY_CALL"]}
+      }
+    },
+    "resourceLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memoryBytes", "outputBytes", "childProcesses", "openFiles"],
+      "properties": {
+        "memoryBytes": {"type": "integer", "minimum": 1},
+        "outputBytes": {"type": "integer", "minimum": 1},
+        "childProcesses": {"type": "integer", "minimum": 1},
+        "openFiles": {"type": "integer", "minimum": 1}
+      }
+    },
+    "permissionProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "files", "network", "processes", "tools", "resources"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "version": {"$ref": "#/$defs/positiveRevision"},
+        "files": {"$ref": "#/$defs/filePermission"},
+        "network": {"$ref": "#/$defs/networkPermission"},
+        "processes": {"$ref": "#/$defs/processPermission"},
+        "tools": {"$ref": "#/$defs/toolPermission"},
+        "resources": {"$ref": "#/$defs/resourceLimits"}
+      }
+    },
+    "listResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profiles"],
+      "properties": {"profiles": {"type": "array", "items": {"$ref": "#/$defs/permissionProfile"}}}
+    },
+    "historyResult": {"$ref": "#/$defs/listResult"},
+    "readPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reference"],
+      "properties": {"reference": {"$ref": "#/$defs/permissionProfileRef"}}
+    },
+    "historyPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {"id": {"$ref": "#/$defs/identifier"}}
+    },
+    "writeCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotencyKey", "expectedRevision", "payload"],
+      "properties": {
+        "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 200},
+        "expectedRevision": {"type": "integer", "minimum": 0},
+        "payload": {"type": "object"}
+      }
+    },
+    "clonePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "newId"],
+      "properties": {
+        "source": {"$ref": "#/$defs/permissionProfileRef"},
+        "newId": {"$ref": "#/$defs/identifier", "not": {"const": "standard"}}
+      }
+    },
+    "cloneCommand": {
+      "allOf": [
+        {"$ref": "#/$defs/writeCommand"},
+        {"properties": {
+          "expectedRevision": {"const": 0},
+          "payload": {"$ref": "#/$defs/clonePayload"}
+        }}
+      ]
+    },
+    "updatePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile"],
+      "properties": {"profile": {"$ref": "#/$defs/permissionProfile"}}
+    },
+    "updateCommand": {
+      "allOf": [
+        {"$ref": "#/$defs/writeCommand"},
+        {"properties": {
+          "expectedRevision": {"$ref": "#/$defs/positiveRevision"},
+          "payload": {"$ref": "#/$defs/updatePayload"}
+        }}
+      ]
+    },
+    "diffPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "beforeVersion", "afterVersion"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "beforeVersion": {"$ref": "#/$defs/positiveRevision"},
+        "afterVersion": {"$ref": "#/$defs/positiveRevision"}
+      }
+    },
+    "permissionProfileDiff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["before", "after", "changedSections"],
+      "properties": {
+        "before": {"$ref": "#/$defs/permissionProfile"},
+        "after": {"$ref": "#/$defs/permissionProfile"},
+        "changedSections": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["FILE", "NETWORK", "PROCESS", "TOOL", "RESOURCE"]}
+        }
+      }
+    },
+    "effectivePreviewPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspaceId", "profile", "turnGrant", "toolDeclaration"],
+      "properties": {
+        "workspaceId": {"$ref": "#/$defs/workspaceId"},
+        "profile": {"$ref": "#/$defs/permissionProfileRef"},
+        "turnGrant": {"anyOf": [{"$ref": "#/$defs/permissionProfile"}, {"type": "null"}]},
+        "toolDeclaration": {"anyOf": [{"$ref": "#/$defs/permissionProfile"}, {"type": "null"}]}
+      }
+    },
+    "permissionLayerResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layer", "source", "applied", "effectiveAfterLayer", "denialReasons"],
+      "properties": {
+        "layer": {"enum": ["SYSTEM_CEILING", "WORKSPACE", "PROFILE", "TURN_GRANT", "TOOL_DECLARATION"]},
+        "source": {"anyOf": [{"$ref": "#/$defs/permissionProfileRef"}, {"type": "null"}]},
+        "applied": {"type": "boolean"},
+        "effectiveAfterLayer": {"$ref": "#/$defs/permissionProfile"},
+        "denialReasons": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 500}}
+      }
+    },
+    "effectivePermissionPreview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["effective", "layers", "denialReasons"],
+      "properties": {
+        "effective": {"$ref": "#/$defs/permissionProfile"},
+        "layers": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {"$ref": "#/$defs/permissionLayerResult"}
+        },
+        "denialReasons": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 600}}
+      }
+    }
+  }
+}

@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javaclaw.local/schema/prompt-preview-v2.schema.json",
+  "title": "JavaClaw Prompt provenance preview v2",
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "profileRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "revision"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "revision": {"type": "integer", "minimum": 1}
+      }
+    },
+    "providerRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["endpointId", "endpointRevision", "model"],
+      "properties": {
+        "endpointId": {"$ref": "#/$defs/identifier"},
+        "endpointRevision": {"type": "integer", "minimum": 1},
+        "model": {"$ref": "#/$defs/identifier"}
+      }
+    },
+    "permissionProfileRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "version": {"type": "integer", "minimum": 1}
+      }
+    },
+    "previewParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspaceId", "profile"],
+      "properties": {
+        "workspaceId": {"type": "string", "format": "uuid"},
+        "profile": {"$ref": "#/$defs/profileRef"}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "sourceId", "revision", "digest", "includedBytes", "warnings"],
+      "properties": {
+        "kind": {"enum": ["CORE_TEMPLATE", "AGENT_PROFILE", "PROJECT_INSTRUCTION", "SKILL", "CONTEXT"]},
+        "sourceId": {"$ref": "#/$defs/identifier"},
+        "revision": {"type": ["string", "null"]},
+        "digest": {
+          "anyOf": [
+            {"$ref": "#/$defs/digest"},
+            {"type": "null"}
+          ]
+        },
+        "includedBytes": {"type": "integer", "minimum": 0},
+        "warnings": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/identifier"}
+        }
+      }
+    },
+    "preview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "provider",
+        "permissionProfile",
+        "sources",
+        "manifestDigest",
+        "estimatedInputTokens",
+        "tokenEstimator",
+        "coreTemplate",
+        "profileInstruction"
+      ],
+      "properties": {
+        "profile": {"$ref": "#/$defs/profileRef"},
+        "provider": {"$ref": "#/$defs/providerRef"},
+        "permissionProfile": {"$ref": "#/$defs/permissionProfileRef"},
+        "sources": {"type": "array", "items": {"$ref": "#/$defs/source"}},
+        "manifestDigest": {"$ref": "#/$defs/digest"},
+        "estimatedInputTokens": {"type": "integer", "minimum": 1},
+        "tokenEstimator": {"$ref": "#/$defs/identifier"},
+        "coreTemplate": {"type": "string", "minLength": 1},
+        "profileInstruction": {"type": "string"}
+      }
+    }
+  }
+}

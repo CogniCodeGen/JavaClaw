@@ -1,0 +1,493 @@
+/* ==================== 聊天区域顶部栏 ==================== */
+
+.chat-top-bar {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-neutral-200;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 16 24 16 24;
+}
+
+.chat-top-title {
+    -fx-text-fill: -jc-neutral-900;
+    -fx-font-size: 14px;
+    -fx-font-weight: 600;
+}
+
+/* 顶部标题前的状态点（与设计稿一致） */
+.chat-top-status-dot {
+    -fx-font-size: 12px;
+    -fx-padding: 0 0 1 0;
+}
+
+.chat-top-status-dot.status-idle {
+    -fx-text-fill: -jc-neutral-400;
+}
+
+.chat-top-status-dot.status-executing {
+    -fx-text-fill: #2FA17C;
+}
+
+.chat-top-status-dot.status-thinking {
+    -fx-text-fill: #6B7CC7;
+}
+
+.chat-top-status-dot.status-planning {
+    -fx-text-fill: #D49A47;
+}
+
+.chat-top-status-dot.status-replying {
+    -fx-text-fill: #4B87A8;
+}
+
+/* 顶部副 meta 行（消息数 · 创建时间 · ctx） */
+.chat-top-meta {
+    -fx-text-fill: -jc-neutral-500;
+    -fx-font-size: 11.5px;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+}
+
+.chat-top-help-btn {
+    -fx-background-color: -jc-neutral-100;
+    -fx-text-fill: -jc-neutral-500;
+    -fx-background-radius: 16;
+    -fx-min-width: 28;
+    -fx-min-height: 28;
+    -fx-max-width: 28;
+    -fx-max-height: 28;
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+    -fx-padding: 0;
+    -fx-cursor: hand;
+    -fx-border-color: -jc-neutral-200;
+    -fx-border-radius: 16;
+    -fx-border-width: 1;
+}
+
+.chat-top-help-btn:hover {
+    -fx-background-color: -jc-neutral-200;
+    -fx-text-fill: -jc-neutral-700;
+}
+
+/* ==================== 标题栏 ==================== */
+
+.title-bar {
+    -fx-background-color: #15130E;
+    -fx-padding: 12 18 12 18;
+}
+
+.title-label {
+    -fx-text-fill: white;
+    -fx-font-size: 18px;
+    -fx-font-weight: bold;
+}
+
+.subtitle-label {
+    -fx-text-fill: #706B5F;
+    -fx-font-size: 11px;
+}
+
+.settings-button {
+    -fx-background-color: -jc-primary-50;
+    -fx-text-fill: -jc-primary-500;
+    -fx-background-radius: 8;
+    -fx-padding: 6 16 6 16;
+    -fx-cursor: hand;
+    -fx-font-size: 13px;
+    -fx-font-weight: 500;
+    -fx-border-color: -jc-primary-200;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+}
+
+.settings-button:hover {
+    -fx-background-color: -jc-primary-100;
+    -fx-text-fill: -jc-primary-600;
+}
+
+.clear-button {
+    -fx-background-color: -jc-neutral-100;
+    -fx-text-fill: -jc-neutral-500;
+    -fx-background-radius: 8;
+    -fx-padding: 6 16 6 16;
+    -fx-cursor: hand;
+    -fx-font-size: 13px;
+    -fx-font-weight: 500;
+    -fx-border-color: -jc-neutral-200;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+}
+
+.clear-button:hover {
+    -fx-background-color: #FEE2E2;
+    -fx-text-fill: #DC2626;
+    -fx-border-color: #FECACA;
+}
+
+/* ==================== 消息区域 ==================== */
+
+.message-scroll {
+    -fx-background: -jc-surface-page;
+    -fx-background-color: -jc-surface-page;
+    -fx-border-color: transparent;
+}
+
+.message-scroll > .viewport {
+    -fx-background-color: -jc-surface-page;
+}
+
+.message-list {
+    -fx-background-color: -jc-surface-page;
+}
+
+/* ==================== 消息气泡通用样式 ==================== */
+
+.message-bubble {
+    -fx-background-radius: 16;
+    -fx-padding: 12 16 12 16;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.04), 8, 0, 0, 2);
+}
+
+/* 用户消息：柔和翡翠薄底 + 深色正文（JavaClaw Studio —— 减轻视觉压迫） */
+.message-user {
+    -fx-background-color: -jc-primary-50;
+    -fx-background-radius: 14 14 4 14;
+    -fx-border-color: -jc-primary-100;
+    -fx-border-width: 1;
+    -fx-border-radius: 14 14 4 14;
+    -fx-effect: dropshadow(gaussian, -jc-focus-ring, 8, 0, 0, 1);
+}
+
+/* 用户消息气泡内文字使用深色正文 */
+.message-user .bubble-text-area,
+.message-user .bubble-text-area .text,
+.message-user .bubble-text-area .paragraph-text .text {
+    -fx-text-fill: -jc-neutral-800;
+    -fx-fill: -jc-neutral-800;
+}
+
+.message-user > .label {
+    -fx-text-fill: -jc-neutral-800;
+}
+
+/* 助手消息：纯白卡片 + 精致细边 */
+.message-assistant {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-neutral-200;
+    -fx-border-width: 1;
+    -fx-border-radius: 14;
+    -fx-background-radius: 14 14 14 4;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.04), 10, 0, 0, 2);
+}
+
+/* 系统消息：Amber 提示 */
+.message-system {
+    -fx-background-color: #FFFBEB;
+    -fx-border-color: #FDE68A;
+    -fx-border-width: 1;
+    -fx-border-radius: 16;
+}
+
+/* ==================== RichTextFX 气泡文本区域 ==================== */
+
+/* 气泡内文本区域：透明背景，无边框，无滚动条，黑色字体 */
+.bubble-text-area {
+    -fx-background-color: transparent;
+    -fx-border-width: 0;
+    -fx-padding: 0;
+    -fx-font-size: 14px;
+    -fx-text-fill: -jc-text-title;
+    -fx-line-spacing: 4;
+}
+
+.bubble-text-area .text {
+    -fx-fill: -jc-text-title;
+}
+
+.bubble-text-area .paragraph-text .text {
+    -fx-fill: -jc-text-title;
+}
+
+.bubble-text-area .content {
+    -fx-background-color: transparent;
+}
+
+.bubble-text-area .scroll-bar {
+    -fx-pref-width: 0;
+    -fx-pref-height: 0;
+    -fx-opacity: 0;
+}
+
+/* 输入框占位提示 */
+.input-placeholder {
+    -fx-text-fill: -jc-neutral-400;
+    -fx-font-size: 14px;
+}
+
+/* ==================== 智能体名称标签 ==================== */
+
+.agent-name-main {
+    -fx-text-fill: -jc-neutral-700;
+    -fx-font-size: 12px;
+    -fx-font-weight: 600;
+    -fx-padding: 0 0 3 6;
+}
+
+.agent-name-sub {
+    -fx-text-fill: -jc-primary-500;
+    -fx-font-size: 11px;
+    -fx-font-weight: 600;
+    -fx-padding: 0 0 3 6;
+}
+
+.expandable-result-title {
+    -fx-text-fill: -jc-primary-500;
+    -fx-font-size: 11px;
+    -fx-font-weight: 600;
+    -fx-padding: 0 0 3 6;
+}
+
+.expandable-markdown-block:plan-agent .expandable-result-title {
+    -fx-text-fill: -jc-accent-600;
+    -fx-font-size: 12px;
+    -fx-font-weight: 700;
+}
+
+/* 时间戳 */
+.time-label {
+    -fx-text-fill: -jc-neutral-400;
+    -fx-font-size: 10px;
+    -fx-padding: 2 6 0 6;
+}
+
+/* ==================== 输入区域 ==================== */
+
+.input-bar {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-neutral-200;
+    -fx-border-width: 1 0 0 0;
+    -fx-padding: 16 24 16 24;
+}
+
+.input-field {
+    -fx-background-color: -jc-neutral-100;
+    -fx-background-radius: 16;
+    -fx-padding: 12 20 12 20;
+    -fx-font-size: 14px;
+    -fx-text-fill: -jc-text-title;
+    -fx-border-color: -jc-neutral-200;
+    -fx-border-radius: 16;
+    -fx-border-width: 1.5;
+    -fx-prompt-text-fill: -jc-neutral-400;
+}
+
+.input-field .text {
+    -fx-fill: -jc-text-title;
+}
+
+.input-field:focused {
+    -fx-border-color: -jc-primary-500;
+    -fx-background-color: -jc-surface-card;
+    -fx-effect: dropshadow(gaussian, -jc-focus-ring, 12, 0, 0, 0);
+}
+
+.send-button {
+    -fx-background-color: linear-gradient(to bottom right, -jc-accent-400, -jc-primary-400);
+    -fx-text-fill: white;
+    -fx-background-radius: 24;
+    /* 实心填充按钮不要继承基线 .button 的 1px 描边（否则会在圆角后露出一圈外框） */
+    -fx-border-width: 0;
+    -fx-border-color: transparent;
+    -fx-padding: 12 28 12 28;
+    -fx-font-size: 14px;
+    -fx-font-weight: 600;
+    -fx-cursor: hand;
+    -fx-effect: dropshadow(gaussian, -jc-shadow-brand, 8, 0, 0, 2);
+}
+
+.send-button:hover {
+    -fx-background-color: linear-gradient(to bottom right, -jc-accent-500, -jc-primary-500);
+    -fx-effect: dropshadow(gaussian, -jc-shadow-brand-strong, 12, 0, 0, 3);
+}
+
+.send-button:pressed {
+    -fx-background-color: -jc-primary-500;
+    -fx-effect: dropshadow(gaussian, -jc-focus-ring, 4, 0, 0, 1);
+}
+
+.send-button:disabled {
+    -fx-background-color: -jc-neutral-200;
+    -fx-text-fill: -jc-neutral-400;
+    -fx-effect: none;
+    -fx-cursor: default;
+}
+
+/* ==================== 澄清请求卡片（模型主动中断本轮请用户澄清） ==================== */
+
+.clarify-card {
+    -fx-background-color: linear-gradient(to bottom, #FFF5DB, #FFEBC0);
+    -fx-background-radius: 12;
+    -fx-border-color: #E5B85C;
+    -fx-border-width: 1;
+    -fx-border-radius: 12;
+    -fx-effect: dropshadow(gaussian, rgba(190,140,40,0.18), 8, 0, 0, 2);
+}
+
+.clarify-card-title {
+    -fx-text-fill: #7A5B14;
+    -fx-font-size: 14px;
+    -fx-font-weight: 700;
+}
+
+.clarify-card-label {
+    -fx-text-fill: #8A6B1F;
+    -fx-font-size: 12px;
+    -fx-font-weight: 600;
+}
+
+/* 流式期间：发送按钮变为"停止"按钮（红色），点击中断生成 */
+.stop-button {
+    -fx-background-color: linear-gradient(to bottom right, #E07A6B, #C75A4A);
+    -fx-text-fill: white;
+    -fx-background-radius: 24;
+    -fx-border-width: 0;
+    -fx-border-color: transparent;
+    -fx-padding: 12 28 12 28;
+    -fx-font-size: 14px;
+    -fx-font-weight: 600;
+    -fx-cursor: hand;
+    -fx-effect: dropshadow(gaussian, rgba(199,90,74,0.22), 8, 0, 0, 2);
+}
+
+.stop-button:hover {
+    -fx-background-color: linear-gradient(to bottom right, #D26859, #B84A3B);
+    -fx-effect: dropshadow(gaussian, rgba(199,90,74,0.32), 12, 0, 0, 3);
+}
+
+.stop-button:pressed {
+    -fx-background-color: #B84A3B;
+    -fx-effect: dropshadow(gaussian, rgba(199,90,74,0.18), 4, 0, 0, 1);
+}
+
+/* ==================== 思考过程区域 ==================== */
+
+.thinking-inline-section {
+    -fx-background-color: -jc-thinking-bg;
+    -fx-background-radius: 12;
+    -fx-padding: 10 12 10 12;
+    -fx-border-color: -jc-primary-100;
+    -fx-border-width: 1;
+    -fx-border-radius: 12;
+}
+
+.thinking-inline-header {
+    -fx-text-fill: -jc-accent-600;
+    -fx-font-size: 11px;
+    -fx-font-weight: 700;
+    -fx-padding: 0 0 4 0;
+}
+
+.thinking-inline-text {
+    -fx-fill: -jc-primary-700;
+    -fx-font-size: 12px;
+}
+
+.thinking-reply-separator {
+    -fx-min-height: 1;
+    -fx-max-height: 1;
+    -fx-background-color: -jc-neutral-200;
+}
+
+/* ==================== 规划展示区域 ==================== */
+
+.plan-box {
+    -fx-padding: 0 0 8 0;
+}
+
+.plan-header {
+    -fx-text-fill: -jc-primary-500;
+    -fx-font-size: 12px;
+    -fx-font-weight: 700;
+    -fx-padding: 0 0 4 4;
+}
+
+.message-plan {
+    -fx-background-color: -jc-primary-50;
+    -fx-border-color: -jc-primary-200;
+    -fx-border-radius: 12;
+    -fx-border-width: 1;
+    -fx-background-radius: 12;
+}
+
+.message-plan .text, .message-plan .bubble-text-area {
+    -fx-fill: -jc-neutral-800;
+    -fx-font-size: 12px;
+}
+
+/* ==================== 工具调用结果区域 ==================== */
+
+.tool-results-box {
+    -fx-padding: 0 0 8 0;
+}
+
+.message-tool-result {
+    -fx-background-color: -jc-neutral-50;
+    -fx-background-radius: 12;
+}
+
+.message-tool-result .text, .message-tool-result .bubble-text-area {
+    -fx-fill: -jc-neutral-800;
+    -fx-font-size: 12px;
+}
+
+/* ==================== 子智能体思考区域 ==================== */
+
+.sub-thinking-section {
+    -fx-background-color: #FFFBEB;
+    -fx-background-radius: 12;
+    -fx-padding: 10 12 10 12;
+    -fx-border-color: #FDE68A;
+    -fx-border-width: 1;
+    -fx-border-radius: 12;
+}
+
+.sub-thinking-header {
+    -fx-text-fill: #D97706;
+    -fx-font-size: 11px;
+    -fx-font-weight: 700;
+    -fx-padding: 0 0 4 0;
+}
+
+.sub-thinking-text {
+    -fx-fill: #92400E;
+    -fx-font-size: 12px;
+}
+
+/* ==================== 底部状态提示 ==================== */
+
+.thinking-label {
+    -fx-text-fill: -jc-neutral-500;
+    -fx-font-size: 13px;
+    -fx-font-style: italic;
+    -fx-padding: 6 24 0 24;
+}
+
+/* ==================== 浏览器面板 ==================== */
+
+.browser-toggle-button {
+    -fx-background-color: -jc-neutral-100;
+    -fx-text-fill: -jc-neutral-700;
+    -fx-background-radius: 8;
+    -fx-padding: 6 16 6 16;
+    -fx-cursor: hand;
+    -fx-font-size: 13px;
+    -fx-font-weight: 500;
+    -fx-border-color: -jc-neutral-200;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+}
+
+.browser-toggle-button:hover {
+    -fx-background-color: -jc-neutral-200;
+    -fx-text-fill: -jc-neutral-900;
+}
+

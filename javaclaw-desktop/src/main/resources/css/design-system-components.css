@@ -1,0 +1,489 @@
+/* =====================================================================
+   通用现代弹窗骨架（设计稿 modal shell：左导航 + 内容区 + 页脚）
+   供 设置 / 技能中心 / MCP / 托管任务 四个弹窗复用
+   ===================================================================== */
+
+.modal-left-pane {
+    -fx-background-color: -jc-surface-panel;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 0 1 0 0;
+}
+
+.modal-left-title {
+    -fx-font-size: 15px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-title;
+}
+
+/* 左导航分组标题 */
+.modal-nav-group {
+    -fx-font-size: 11px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-hint;
+    -fx-padding: 9 8 5 8;
+}
+
+/* 分组下带左侧细线的缩进容器 */
+.modal-nav-children {
+    -fx-border-color: transparent transparent transparent -jc-border;
+    -fx-border-width: 0 0 0 1;
+    -fx-border-insets: 2 0 4 9;
+    -fx-padding: 0 0 4 14;
+}
+
+/* 左导航条目 */
+.modal-nav-btn {
+    -fx-background-color: transparent;
+    -fx-text-fill: -jc-text-body;
+    -fx-font-size: 12.5px;
+    -fx-font-weight: 500;
+    -fx-padding: 7 11 7 11;
+    -fx-background-radius: 8;
+    -fx-cursor: hand;
+    -fx-alignment: CENTER_LEFT;
+    -fx-border-color: transparent;
+}
+
+.modal-nav-btn:hover {
+    -fx-background-color: -jc-neutral-200;
+    -fx-text-fill: -jc-text-title;
+}
+
+.modal-nav-btn:selected,
+.modal-nav-btn-selected {
+    -fx-background-color: -jc-primary-50;
+    -fx-text-fill: -jc-primary-600;
+    -fx-font-weight: 600;
+}
+
+/* 导航项 / 分组标题的未保存脏标记点（琥珀，6px 圆） */
+.nav-dirty-dot {
+    -fx-background-color: -jc-warning;
+    -fx-background-radius: 999;
+    -fx-min-width: 6;
+    -fx-min-height: 6;
+    -fx-max-width: 6;
+    -fx-max-height: 6;
+}
+
+/* 内容区与页脚 */
+.modal-content-area {
+    -fx-background-color: -jc-surface-page;
+}
+
+.modal-foot {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+    -fx-padding: 12 22 12 22;
+}
+
+/* 分区标题 / 提示（设计稿 sec-title / sec-hint / grp-title） */
+.sec-title {
+    -fx-font-size: 18px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-title;
+}
+
+.sec-hint {
+    -fx-font-size: 12px;
+    -fx-text-fill: -jc-text-hint;
+    -fx-wrap-text: true;
+}
+
+.grp-title {
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-muted;
+    -fx-padding: 12 0 4 0;
+}
+
+/* =====================================================================
+   通用按钮体系（设计稿 btn-primary / soft / ghost / save / danger）
+   ===================================================================== */
+
+.jc-btn {
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+    -fx-background-radius: 10;
+    -fx-border-radius: 10;
+    -fx-border-width: 1;
+    -fx-border-color: transparent;
+    -fx-padding: 9 20 9 20;
+    -fx-cursor: hand;
+}
+
+.jc-btn-primary {
+    -fx-background-color: linear-gradient(to bottom right, -jc-accent-400, -jc-primary-400);
+    -fx-text-fill: white;
+    -fx-effect: dropshadow(gaussian, -jc-shadow-brand, 8, 0, 0, 2);
+}
+
+.jc-btn-primary:hover {
+    -fx-background-color: linear-gradient(to bottom right, -jc-accent-500, -jc-primary-500);
+}
+
+.jc-btn-soft {
+    -fx-background-color: -jc-primary-50;
+    -fx-text-fill: -jc-primary-600;
+    -fx-border-color: -jc-primary-200;
+}
+
+.jc-btn-soft:hover {
+    -fx-background-color: -jc-primary-100;
+    -fx-text-fill: -jc-primary-700;
+}
+
+.jc-btn-ghost {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-text-fill: -jc-text-muted;
+}
+
+.jc-btn-ghost:hover {
+    -fx-background-color: -jc-neutral-200;
+    -fx-text-fill: -jc-text-title;
+}
+
+.jc-btn-save {
+    -fx-background-color: #ECFDF5;
+    -fx-text-fill: #10B981;
+    -fx-border-color: #A7F3D0;
+}
+
+.jc-btn-save:hover {
+    -fx-background-color: #D1FAE5;
+    -fx-text-fill: #059669;
+}
+
+.jc-btn-danger {
+    -fx-background-color: #FEF2F2;
+    -fx-text-fill: #EF4444;
+    -fx-border-color: #FECACA;
+}
+
+.jc-btn-danger:hover {
+    -fx-background-color: #EF4444;
+    -fx-text-fill: white;
+    -fx-border-color: #EF4444;
+}
+
+.jc-btn-sm {
+    -fx-padding: 5 12 5 12;
+    -fx-font-size: 12px;
+    -fx-background-radius: 8;
+    -fx-border-radius: 8;
+}
+
+/* =====================================================================
+   分段控件（设计稿 seg：沉陷容器 + 选中浮起白片）
+   ===================================================================== */
+
+.seg-container {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 9;
+    -fx-border-radius: 9;
+    -fx-padding: 3;
+}
+
+.seg-btn {
+    -fx-background-color: transparent;
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 12.5px;
+    -fx-font-weight: 500;
+    -fx-padding: 6 14 6 14;
+    -fx-background-radius: 7;
+    -fx-cursor: hand;
+    -fx-border-color: transparent;
+}
+
+.seg-btn:hover {
+    -fx-text-fill: -jc-text-title;
+}
+
+.seg-btn:selected {
+    -fx-background-color: -jc-surface-card;
+    -fx-text-fill: -jc-primary-600;
+    -fx-font-weight: 600;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.04), 8, 0, 0, 2);
+}
+
+/* =====================================================================
+   状态徽标（设计稿 badge 体系）
+   ===================================================================== */
+
+.jc-badge {
+    -fx-font-size: 11.5px;
+    -fx-font-weight: 600;
+    -fx-padding: 3 10 3 10;
+    -fx-background-radius: 999;
+    -fx-border-radius: 999;
+}
+
+.jc-badge-running   { -fx-background-color: #EDF7F1; -fx-text-fill: #2FA17C; }
+.jc-badge-starting  { -fx-background-color: #FDF2E1; -fx-text-fill: #D49A47; }
+.jc-badge-failed    { -fx-background-color: #FEF2F2; -fx-text-fill: #EF4444; }
+.jc-badge-stopped   { -fx-background-color: -jc-surface-sunken; -fx-text-fill: -jc-text-muted; }
+.jc-badge-soft      { -fx-background-color: -jc-primary-50; -fx-text-fill: -jc-primary-600; }
+.jc-badge-amber     { -fx-background-color: #FFFBEB; -fx-text-fill: #B45309; }
+.jc-badge-indigo    { -fx-background-color: #EEF0FA; -fx-text-fill: #6B7CC7; }
+.jc-badge-ok        { -fx-background-color: #EDF7F1; -fx-text-fill: #2FA17C; }
+.jc-badge-fail      { -fx-background-color: #FEF2F2; -fx-text-fill: #EF4444; }
+
+/* =====================================================================
+   通用卡片 / 统计 / 芯片（设计稿 card / Stat / chip）
+   ===================================================================== */
+
+/* 面板卡片：surface 底 + 边框 + 圆角，用于头部状态卡、插件卡 */
+.jc-card {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 12;
+    -fx-border-radius: 12;
+}
+
+.jc-card-sunken {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 9;
+    -fx-border-radius: 9;
+}
+
+/* Stat：小标签 + 值（+可选徽标/子行） */
+.jc-stat-label {
+    -fx-font-size: 10px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-hint;
+}
+
+.jc-stat-value {
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-title;
+}
+
+.jc-stat-sub {
+    -fx-font-size: 10.5px;
+    -fx-font-weight: 500;
+    -fx-text-fill: -jc-primary-600;
+}
+
+/* 芯片：可点的小标签（cron 预设 / 工具名） */
+.jc-chip {
+    -fx-font-size: 11px;
+    -fx-text-fill: -jc-text-muted;
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+    -fx-padding: 3 9 3 9;
+    -fx-cursor: hand;
+}
+
+.jc-chip:hover {
+    -fx-background-color: -jc-primary-50;
+    -fx-text-fill: -jc-primary-600;
+}
+
+/* 简易表格（运行历史）：表头 + 行 */
+.jc-table-head {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-padding: 8 13 8 13;
+}
+
+.jc-table-head-cell {
+    -fx-font-size: 11px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-hint;
+}
+
+.jc-table-row {
+    -fx-padding: 8 13 8 13;
+    -fx-border-color: -jc-border transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+}
+
+.jc-table-cell {
+    -fx-font-size: 11.5px;
+    -fx-text-fill: -jc-text-body;
+}
+
+.jc-table-cell-muted {
+    -fx-font-size: 11.5px;
+    -fx-text-fill: -jc-text-muted;
+}
+
+/* =====================================================================
+   主题选择 UI（顶栏「风格」菜单 + 设置「界面风格」面板）
+   ===================================================================== */
+
+/* 顶栏「风格」菜单按钮 */
+.theme-menu-btn {
+    -fx-background-color: -jc-surface-card;
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 12.5px;
+    -fx-font-weight: 500;
+    -fx-background-radius: 8;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+    -fx-padding: 5 11 5 11;
+    -fx-cursor: hand;
+}
+
+.theme-menu-btn:hover {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-text-fill: -jc-text-title;
+}
+
+/* 主题卡片（设置 → 界面风格，双列网格） */
+.theme-card {
+    -fx-background-color: -jc-surface-card;
+    -fx-background-radius: 12;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 12;
+    -fx-border-width: 1;
+    -fx-cursor: hand;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.04), 8, 0, 0, 2);
+}
+
+.theme-card:hover {
+    -fx-border-color: -jc-border-strong;
+}
+
+.theme-card-selected {
+    -fx-border-color: -jc-primary-500;
+    -fx-border-width: 2;
+    -fx-effect: dropshadow(gaussian, -jc-focus-ring, 6, 0, 0, 0);
+}
+
+.theme-card-name {
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-title;
+}
+
+.theme-card-sub {
+    -fx-font-size: 11px;
+    -fx-text-fill: -jc-text-hint;
+}
+
+.theme-card-check {
+    -fx-font-size: 15px;
+    -fx-text-fill: -jc-primary-500;
+}
+
+/* =====================================================================
+   设置对话框交互升级（设计稿 modal_settings.jsx）
+   行式开关 / 面包屑头部 / 密钥吸附按钮 / 未保存提示 / 导航搜索高亮
+   ===================================================================== */
+
+/* 行式开关（RowToggle：主文案 + 副说明 + 滑块开关） */
+.row-toggle {
+    -fx-padding: 9 0 9 0;
+}
+
+/* 整行可点的开关行：整行热区，hover 给底色反馈（设计稿 row-toggle.clickable） */
+.row-toggle.clickable {
+    -fx-padding: 10 8 10 8;
+    -fx-background-insets: 0 -8 0 -8;
+    -fx-background-radius: 8;
+    -fx-cursor: hand;
+}
+
+.row-toggle.clickable:hover {
+    -fx-background-color: -jc-surface-sunken;
+}
+
+/* 禁用态开关行：整行降透明度，不可点（设计稿 row-toggle.disabled） */
+.row-toggle.disabled {
+    -fx-opacity: 0.55;
+}
+
+.rt-main {
+    -fx-font-size: 13px;
+    -fx-font-weight: 500;
+    -fx-text-fill: -jc-text-body;
+}
+
+.rt-sub {
+    -fx-font-size: 11px;
+    -fx-text-fill: -jc-text-hint;
+}
+
+/* 右侧内容区顶部面包屑（设置 › 当前分区） */
+.settings-crumb {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: transparent transparent -jc-border transparent;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 11 24 11 24;
+}
+
+.settings-crumb-root,
+.settings-crumb-sep {
+    -fx-font-size: 13px;
+    -fx-text-fill: -jc-text-hint;
+}
+
+.settings-crumb-cur {
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-title;
+}
+
+/* 密钥输入框右侧吸附小按钮（显示/隐藏 + 复制） */
+.field-adorn {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 11px;
+    -fx-font-weight: 500;
+    -fx-padding: 3 9 3 9;
+    -fx-cursor: hand;
+}
+
+.field-adorn:hover {
+    -fx-text-fill: -jc-text-title;
+}
+
+/* 复制成功后的瞬时高亮 */
+.field-adorn-active {
+    -fx-text-fill: -jc-primary-600;
+}
+
+/* 页脚未保存提示（琥珀点 + 文字） */
+.status-warn {
+    -fx-text-fill: -jc-warning;
+    -fx-font-size: 12px;
+    -fx-font-weight: 500;
+}
+
+.status-warn-dot {
+    -fx-background-color: -jc-warning;
+    -fx-background-radius: 999;
+    -fx-min-width: 7;
+    -fx-min-height: 7;
+    -fx-max-width: 7;
+    -fx-max-height: 7;
+}
+
+/* 左导航搜索命中高亮（按钮 graphic 内的分段 Label） */
+.modal-nav-plain {
+    -fx-font-size: 12.5px;
+    -fx-font-weight: 500;
+    -fx-text-fill: -jc-text-body;
+    -fx-padding: 0;
+}
+
+.modal-nav-hl {
+    -fx-font-size: 12.5px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-primary-600;
+    -fx-background-color: -jc-primary-50;
+    -fx-background-radius: 3;
+    -fx-padding: 0 1 0 1;
+}
+

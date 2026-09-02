@@ -1,0 +1,249 @@
+package com.javaclaw.desktop.settings;
+
+import java.util.Objects;
+
+import javafx.scene.Node;
+import javafx.scene.control.Alert;
+import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.ComboBox;
+import javafx.scene.control.Label;
+import javafx.scene.control.TextField;
+import javafx.scene.layout.VBox;
+
+import com.javaclaw.api.AgentProfile;
+import com.javaclaw.api.Workspace;
+import com.javaclaw.api.WorkspaceLifecycle;
+import com.javaclaw.desktop.component.AsyncActionBar;
+import com.javaclaw.desktop.component.AsyncActionBar.ActionState;
+import com.javaclaw.desktop.component.FormSection;
+import com.javaclaw.desktop.component.ListDetailPane;
+import com.javaclaw.desktop.component.PlatformComponentFactory;
+import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
+import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
+import com.javaclaw.desktop.component.PlatformComponentFactory.FeedbackKind;
+
+/** Workspace 重命名、归档和默认 Agent Profile 管理页面。 */
+public final class WorkspaceSettingsPage extends VBox implements ManagedSettingsPage {
+    private final PlatformComponentFactory components = new PlatformComponentFactory();
+    private final WorkspaceSettingsPresenter presenter;
+    private final ListDetailPane<Workspace> masterDetail = new ListDetailPane<>();
+    private final TextField name = new TextField();
+    private final ComboBox<AgentProfile> profile = new ComboBox<>();
+    private final Label rootPath = value();
+    private final Label lifecycle = value();
+    private final Label revision = value();
+    private final Button saveName;
+    private final Button saveProfile;
+    private final Button archive;
+    private final AsyncActionBar actions;
+    private WorkspaceSettingsState state = WorkspaceSettingsState.initial();
+    private Node editor;
+    private boolean rendering;
+
+    /**
+     * 创建 Workspace 设置页。
+     *
+     * @param gateway 强类型 SDK 设置边界
+     */
+    public WorkspaceSettingsPage(CoreSettingsGateway gateway) {
+        presenter = new WorkspaceSettingsPresenter(gateway);
+        saveName = components.action("保存名称", ActionStyle.SOFT, ActionSize.NORMAL);
+        saveName.setOnAction(event -> presenter.saveName());
+        saveProfile = components.action("保存默认 Profile", ActionStyle.PRIMARY, ActionSize.NORMAL);
+        saveProfile.setOnAction(event -> presenter.saveProfile());
+        archive = components.action("归档登记", ActionStyle.DANGER, ActionSize.NORMAL);
+        archive.setOnAction(event -> archive());
+        actions = new AsyncActionBar(saveName, saveProfile, archive);
+        configurePage();
+        presenter.subscribe(this::render);
+    }
+
+    @Override
+    public Node content() {
+        return this;
+    }
+
+    @Override
+    public void activate() {
+        presenter.reload();
+    }
+
+    @Override
+    public boolean dirty() {
+        return state.dirty();
+    }
+
+    @Override
+    public void warnUnsavedChanges() {
+        actions.show(ActionState.DIRTY, "请先保存或丢弃 Workspace 草稿，再离开此页");
+    }
+
+    @Override
+    public void discardDraft() {
+        presenter.discardDraft();
+    }
+
+    private void configurePage() {
+        Label title = new Label("Workspace");
+        title.getStyleClass().addAll("sec-title", "platform-page-title");
+        Label hint = new Label("Workspace 根目录在创建后不可修改。归档只移除 JavaClaw 登记，永远不会删除用户目录。");
+        hint.setWrapText(true);
+        hint.getStyleClass().add("sec-hint");
+        configureCatalog();
+        getChildren().addAll(title, hint, masterDetail);
+        getStyleClass().add("platform-page");
+    }
+
+    private void configureCatalog() {
+        masterDetail
+                .list()
+                .setCellFactory(ignored -> components.detailCell(
+                        Workspace::name, workspace -> workspace.lifecycle() + " · revision " + workspace.revision()));
+        masterDetail
+                .list()
+                .getSelectionModel()
+                .selectedItemProperty()
+                .addListener((observable, previous, selected) -> select(selected));
+        masterDetail
+                .list()
+                .setPlaceholder(components.feedback(FeedbackKind.EMPTY, "暂无 Workspace", "请先在主窗口创建 Workspace。"));
+        masterDetail.showDetail(components.feedback(FeedbackKind.EMPTY, "选择 Workspace", "选择左侧项目后可管理名称与默认 Profile。"));
+    }
+
+    private Node detail() {
+        FormSection identity = new FormSection("登记信息", "根目录只读；名称与生命周期使用各自的权威 revision。");
+        name.setAccessibleText("Workspace 名称");
+        name.setPromptText("Workspace 名称");
+        name.getStyleClass().add("settings-field");
+        name.textProperty().addListener((observable, previous, value) -> editName(value));
+        identity.addField("名称", name);
+        identity.addField("根目录", rootPath);
+        identity.addField("状态", lifecycle);
+        identity.addField("Revision", revision);
+
+        FormSection defaults = new FormSection("Turn 默认配置", "绑定精确 Agent Profile revision；变更只影响之后启动的 Turn。");
+        profile.setMaxWidth(Double.MAX_VALUE);
+        profile.setAccessibleText("Workspace 默认 Agent Profile");
+        profile.setCellFactory(ignored -> components.detailCell(
+                candidate -> candidate.spec().displayName(),
+                candidate -> candidate.id() + " · revision " + candidate.revision()));
+        profile.setButtonCell(components.textCell(
+                candidate -> candidate.spec().displayName() + " · revision " + candidate.revision()));
+        profile.valueProperty().addListener((observable, previous, selected) -> chooseProfile(selected));
+        defaults.addField("默认 Profile", profile);
+        Label rule = new Label("Thread 可以选择自己的 Profile；活动 Turn 始终继续使用启动时冻结的快照。");
+        rule.setWrapText(true);
+        rule.getStyleClass().add("sec-hint");
+        defaults.addFullWidth(rule);
+
+        VBox detail = new VBox(12, identity, defaults, actions);
+        detail.getStyleClass().add("platform-page");
+        return detail;
+    }
+
+    private void select(Workspace selected) {
+        if (rendering || selected == null || selected.equals(state.selected().orElse(null))) {
+            return;
+        }
+        if (dirty()) {
+            warnUnsavedChanges();
+            restoreSelection();
+            return;
+        }
+        presenter.select(selected);
+    }
+
+    private void editName(String value) {
+        if (!rendering) {
+            presenter.editName(value);
+        }
+    }
+
+    private void chooseProfile(AgentProfile selected) {
+        if (!rendering && selected != null) {
+            presenter.chooseProfile(selected);
+        }
+    }
+
+    private void render(WorkspaceSettingsState snapshot) {
+        state = Objects.requireNonNull(snapshot, "snapshot");
+        rendering = true;
+        try {
+            masterDetail.list().getItems().setAll(snapshot.workspaces());
+            masterDetail.list().getSelectionModel().select(snapshot.selected().orElse(null));
+            if (snapshot.selected().isPresent()) {
+                renderSelected(snapshot);
+            } else {
+                masterDetail.showDetail(components.feedback(FeedbackKind.EMPTY, "暂无 Workspace", "请先在主窗口创建 Workspace。"));
+            }
+        } finally {
+            rendering = false;
+        }
+    }
+
+    private void renderSelected(WorkspaceSettingsState snapshot) {
+        Workspace selected = snapshot.selected().orElseThrow();
+        if (editor == null) {
+            editor = detail();
+        }
+        masterDetail.showDetail(editor);
+        name.setText(snapshot.draftName());
+        rootPath.setText(selected.root().toString());
+        lifecycle.setText(selected.lifecycle().name());
+        revision.setText(Long.toString(selected.revision()));
+        profile.getItems().setAll(snapshot.profiles());
+        profile.setValue(snapshot.draftProfile().orElse(null));
+        boolean pending = snapshot.phase() == SettingsLoadState.LOADING;
+        boolean active = selected.lifecycle() == WorkspaceLifecycle.ACTIVE;
+        saveName.setDisable(pending || !active || !snapshot.nameDirty());
+        saveProfile.setDisable(pending || !active || !snapshot.profileDirty());
+        archive.setDisable(pending || !active);
+        showStatus(snapshot);
+    }
+
+    private void showStatus(WorkspaceSettingsState snapshot) {
+        if (snapshot.phase() == SettingsLoadState.LOADING) {
+            actions.show(ActionState.PENDING, snapshot.message());
+        } else if (snapshot.phase() == SettingsLoadState.ERROR) {
+            actions.show(ActionState.ERROR, snapshot.message());
+        } else if (snapshot.dirty()) {
+            actions.show(ActionState.DIRTY, "Workspace 草稿尚未保存");
+        } else {
+            actions.show(snapshot.message().isBlank() ? ActionState.IDLE : ActionState.SUCCESS, snapshot.message());
+        }
+    }
+
+    private void restoreSelection() {
+        rendering = true;
+        try {
+            masterDetail.list().getSelectionModel().select(state.selected().orElse(null));
+        } finally {
+            rendering = false;
+        }
+    }
+
+    private void archive() {
+        Workspace selected = state.selected().orElseThrow();
+        Alert alert = new Alert(
+                Alert.AlertType.CONFIRMATION,
+                "只归档 JavaClaw 中的 Workspace 登记，不会删除目录：" + selected.root(),
+                ButtonType.CANCEL,
+                ButtonType.OK);
+        if (getScene() != null && getScene().getWindow() != null) {
+            alert.initOwner(getScene().getWindow());
+        }
+        alert.setTitle("归档 Workspace 登记");
+        alert.setHeaderText("确认归档 “" + selected.name() + "”？");
+        if (alert.showAndWait().filter(ButtonType.OK::equals).isPresent()) {
+            presenter.archive();
+        }
+    }
+
+    private static Label value() {
+        Label label = new Label("—");
+        label.setWrapText(true);
+        label.getStyleClass().add("platform-detail-text");
+        return label;
+    }
+}

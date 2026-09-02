@@ -1,0 +1,568 @@
+/* =====================================================================
+   主题覆盖块 —— 仅重新指向语义令牌，组件规则零改动
+   ThemeManager 给 Scene 根节点追加 theme-{id} style class 即生效。
+   新增主题：复制一个块并改名/换值。
+   ===================================================================== */
+
+/* ---- 午夜 Midnight（深色） ---- */
+.theme-midnight {
+    -jc-primary-50:  rgba(61,165,116,0.14);
+    -jc-primary-100: rgba(61,165,116,0.30);
+    -jc-primary-200: rgba(61,165,116,0.45);
+    -jc-primary-300: #2E7D57;
+    -jc-primary-400: #36996B;
+    -jc-primary-500: #3DA574;
+    -jc-primary-600: #2E9A6A;
+    -jc-primary-700: #21855A;
+
+    -jc-accent-300: #6ABD92;
+    -jc-accent-400: #4FB385;
+    -jc-accent-500: #3DA574;
+    -jc-accent-600: #2E9A6A;
+
+    /* 中性梯（相对背景的明度梯：50 贴近底色，900 贴近前景） */
+    -jc-neutral-50:  #211F19;
+    -jc-neutral-100: #27251F;
+    -jc-neutral-200: #34312A;
+    -jc-neutral-300: #46423A;
+    -jc-neutral-400: #706B5F;
+    -jc-neutral-500: #A19A8A;
+    -jc-neutral-600: #C7C0B2;
+    -jc-neutral-700: #D3CDBF;
+    -jc-neutral-800: #F3F1EB;
+    -jc-neutral-900: #FAF9F4;
+
+    -jc-text-title: #F3F1EB;
+    -jc-text-body:  #D3CDBF;
+    -jc-text-muted: #A19A8A;
+    -jc-text-hint:  #706B5F;
+
+    -jc-surface-page:   #15130E;
+    -jc-surface-card:   #1E1C16;
+    -jc-surface-panel:  #27251F;
+    -jc-surface-sunken: #211F19;
+
+    -jc-border:        #34312A;
+    -jc-border-strong: #46423A;
+
+    -jc-brand-hover: rgba(61,165,116,0.10);
+    -jc-focus-ring: rgba(61,165,116,0.22);
+    -jc-shadow-brand: rgba(0,0,0,0.35);
+    -jc-shadow-brand-strong: rgba(0,0,0,0.50);
+    -jc-overlay: rgba(0,0,0,0.62);
+    -jc-thinking-bg: rgba(61,165,116,0.10);
+    -jc-on-brand: #0B0E0C;
+}
+
+/* ---- 蓝宝石 Sapphire（冷蓝强调） ---- */
+.theme-sapphire {
+    -jc-primary-50:  #EAF1FC;
+    -jc-primary-100: #CADDF7;
+    -jc-primary-200: #A9C8F1;
+    -jc-primary-300: #7FABE8;
+    -jc-primary-400: #5B95EC;
+    -jc-primary-500: #2A6FDB;
+    -jc-primary-600: #1F57B0;
+    -jc-primary-700: #17418A;
+
+    -jc-accent-300: #8FB8F0;
+    -jc-accent-400: #6FA3EE;
+    -jc-accent-500: #4A86E4;
+    -jc-accent-600: #2A6FDB;
+
+    -jc-neutral-50:  #F4F7FB;
+    -jc-neutral-100: #EDF1F8;
+    -jc-neutral-200: #E1E7F0;
+    -jc-neutral-300: #C9D2DF;
+    -jc-neutral-400: #9AA3B2;
+    -jc-neutral-500: #677183;
+    -jc-neutral-600: #4D5666;
+    -jc-neutral-700: #3C4654;
+    -jc-neutral-800: #16202E;
+    -jc-neutral-900: #0C1320;
+
+    -jc-text-title: #16202E;
+    -jc-text-body:  #3C4654;
+    -jc-text-muted: #677183;
+    -jc-text-hint:  #9AA3B2;
+
+    -jc-surface-page:   #F8FAFD;
+    -jc-surface-card:   white;
+    -jc-surface-panel:  #EFF3F9;
+    -jc-surface-sunken: #EDF1F8;
+
+    -jc-border:        #E1E7F0;
+    -jc-border-strong: #C9D2DF;
+
+    -jc-brand-hover: rgba(42,111,219,0.06);
+    -jc-focus-ring: rgba(42,111,219,0.14);
+    -jc-shadow-brand: rgba(91,149,236,0.20);
+    -jc-shadow-brand-strong: rgba(42,111,219,0.30);
+    -jc-overlay: rgba(18,28,46,0.42);
+    -jc-thinking-bg: #EDF4FD;
+    -jc-on-brand: white;
+}
+
+/* ---- 石墨 Graphite（中性极简，品牌降饱和为板岩） ---- */
+.theme-graphite {
+    -jc-primary-50:  #EFEDE7;
+    -jc-primary-100: #DDD8CE;
+    -jc-primary-200: #C9C2B4;
+    -jc-primary-300: #A39C8C;
+    -jc-primary-400: #6E695D;
+    -jc-primary-500: #3F3B33;
+    -jc-primary-600: #2E2B25;
+    -jc-primary-700: #1F1D18;
+
+    -jc-accent-300: #A39C8C;
+    -jc-accent-400: #6E695D;
+    -jc-accent-500: #555046;
+    -jc-accent-600: #3F3B33;
+
+    -jc-neutral-50:  #FAF9F5;
+    -jc-neutral-100: #F1EFE9;
+    -jc-neutral-200: #E6E2D8;
+    -jc-neutral-300: #D0CABB;
+    -jc-neutral-400: #A39C8C;
+    -jc-neutral-500: #6E695D;
+    -jc-neutral-600: #565147;
+    -jc-neutral-700: #46423A;
+    -jc-neutral-800: #1F1D18;
+    -jc-neutral-900: #141210;
+
+    -jc-text-title: #1F1D18;
+    -jc-text-body:  #46423A;
+    -jc-text-muted: #6E695D;
+    -jc-text-hint:  #A39C8C;
+
+    -jc-surface-page:   #FAF9F5;
+    -jc-surface-card:   white;
+    -jc-surface-panel:  #F1EFE9;
+    -jc-surface-sunken: #EEEBE3;
+
+    -jc-border:        #E6E2D8;
+    -jc-border-strong: #D0CABB;
+
+    -jc-brand-hover: rgba(63,59,51,0.06);
+    -jc-focus-ring: rgba(63,59,51,0.12);
+    -jc-shadow-brand: rgba(63,59,51,0.18);
+    -jc-shadow-brand-strong: rgba(63,59,51,0.28);
+    -jc-overlay: rgba(21,19,14,0.42);
+    -jc-thinking-bg: #F1EFE9;
+    -jc-on-brand: #FAF9F4;
+}
+
+/* ---- 陶土 Terracotta（暖陶强调） ---- */
+.theme-terracotta {
+    -jc-primary-50:  #FBEEE7;
+    -jc-primary-100: #F2D6C7;
+    -jc-primary-200: #E8BDA6;
+    -jc-primary-300: #DC9D7D;
+    -jc-primary-400: #D27E55;
+    -jc-primary-500: #C9613B;
+    -jc-primary-600: #A84B2A;
+    -jc-primary-700: #87391E;
+
+    -jc-accent-300: #ECB394;
+    -jc-accent-400: #E0825C;
+    -jc-accent-500: #D06F45;
+    -jc-accent-600: #C9613B;
+
+    -jc-neutral-50:  #FAF6F1;
+    -jc-neutral-100: #F3EBE2;
+    -jc-neutral-200: #EDE2D6;
+    -jc-neutral-300: #D9C8B7;
+    -jc-neutral-400: #AE9B89;
+    -jc-neutral-500: #7A6857;
+    -jc-neutral-600: #5F4F40;
+    -jc-neutral-700: #4F4034;
+    -jc-neutral-800: #2A1D14;
+    -jc-neutral-900: #1A110B;
+
+    -jc-text-title: #2A1D14;
+    -jc-text-body:  #4F4034;
+    -jc-text-muted: #7A6857;
+    -jc-text-hint:  #AE9B89;
+
+    -jc-surface-page:   #FCF8F4;
+    -jc-surface-card:   white;
+    -jc-surface-panel:  #F6EFE8;
+    -jc-surface-sunken: #F3EBE2;
+
+    -jc-border:        #EDE2D6;
+    -jc-border-strong: #D9C8B7;
+
+    -jc-brand-hover: rgba(201,97,59,0.06);
+    -jc-focus-ring: rgba(201,97,59,0.14);
+    -jc-shadow-brand: rgba(224,130,92,0.20);
+    -jc-shadow-brand-strong: rgba(201,97,59,0.30);
+    -jc-overlay: rgba(46,28,18,0.42);
+    -jc-thinking-bg: #FBEFE8;
+    -jc-on-brand: white;
+}
+
+/* ---- 碳黑 Carbon（冷色深色模式，蓝灰板岩底 + 冷蓝强调） ---- */
+.theme-carbon {
+    -jc-primary-50:  rgba(79,157,240,0.14);
+    -jc-primary-100: rgba(79,157,240,0.30);
+    -jc-primary-200: rgba(79,157,240,0.45);
+    -jc-primary-300: #2F6FB8;
+    -jc-primary-400: #4692E3;
+    -jc-primary-500: #4F9DF0;
+    -jc-primary-600: #3D86D6;
+    -jc-primary-700: #2F6FB8;
+
+    -jc-accent-300: #7FB6F4;
+    -jc-accent-400: #5FA9F3;
+    -jc-accent-500: #4F9DF0;
+    -jc-accent-600: #3D86D6;
+
+    /* 中性梯（相对背景的明度梯：50 贴近底色，900 贴近前景） */
+    -jc-neutral-50:  #1A212A;
+    -jc-neutral-100: #1E252F;
+    -jc-neutral-200: #2A323D;
+    -jc-neutral-300: #3A4450;
+    -jc-neutral-400: #5E6A78;
+    -jc-neutral-500: #8B98A8;
+    -jc-neutral-600: #AEB9C6;
+    -jc-neutral-700: #C2CCD8;
+    -jc-neutral-800: #EAEFF5;
+    -jc-neutral-900: #F5F8FB;
+
+    -jc-text-title: #EAEFF5;
+    -jc-text-body:  #C2CCD8;
+    -jc-text-muted: #8B98A8;
+    -jc-text-hint:  #5E6A78;
+
+    -jc-surface-page:   #0F141A;
+    -jc-surface-card:   #171D25;
+    -jc-surface-panel:  #1E252F;
+    -jc-surface-sunken: #1A212A;
+
+    -jc-border:        #2A323D;
+    -jc-border-strong: #3A4450;
+
+    -jc-brand-hover: rgba(79,157,240,0.10);
+    -jc-focus-ring: rgba(79,157,240,0.22);
+    -jc-shadow-brand: rgba(0,0,0,0.35);
+    -jc-shadow-brand-strong: rgba(0,0,0,0.50);
+    -jc-overlay: rgba(0,0,0,0.62);
+    -jc-thinking-bg: rgba(79,157,240,0.10);
+    -jc-on-brand: #07121F;
+}
+
+/* ---- 海洋 Ocean（青绿强调，浅色） ---- */
+.theme-ocean {
+    -jc-primary-50:  #E6F4F4;
+    -jc-primary-100: #C2E4E4;
+    -jc-primary-200: #9DD3D3;
+    -jc-primary-300: #6DBCBA;
+    -jc-primary-400: #3AB3B0;
+    -jc-primary-500: #0E8C8C;
+    -jc-primary-600: #0A6E70;
+    -jc-primary-700: #085759;
+
+    -jc-accent-300: #7AC4C2;
+    -jc-accent-400: #4FB5B2;
+    -jc-accent-500: #2BA09E;
+    -jc-accent-600: #0E8C8C;
+
+    -jc-neutral-50:  #F2F7F7;
+    -jc-neutral-100: #E9F2F2;
+    -jc-neutral-200: #DEEAEA;
+    -jc-neutral-300: #C2D4D4;
+    -jc-neutral-400: #93A6AA;
+    -jc-neutral-500: #5C7176;
+    -jc-neutral-600: #46595E;
+    -jc-neutral-700: #324549;
+    -jc-neutral-800: #11272A;
+    -jc-neutral-900: #0A1A1C;
+
+    -jc-text-title: #11272A;
+    -jc-text-body:  #324549;
+    -jc-text-muted: #5C7176;
+    -jc-text-hint:  #93A6AA;
+
+    -jc-surface-page:   #F6FAFA;
+    -jc-surface-card:   white;
+    -jc-surface-panel:  #ECF4F4;
+    -jc-surface-sunken: #E9F2F2;
+
+    -jc-border:        #DEEAEA;
+    -jc-border-strong: #C2D4D4;
+
+    -jc-brand-hover: rgba(14,140,140,0.06);
+    -jc-focus-ring: rgba(14,140,140,0.14);
+    -jc-shadow-brand: rgba(58,179,176,0.20);
+    -jc-shadow-brand-strong: rgba(14,140,140,0.30);
+    -jc-overlay: rgba(8,32,34,0.42);
+    -jc-thinking-bg: #EAF5F5;
+    -jc-on-brand: white;
+}
+
+/* ---- 梅紫 Plum（柔紫强调，浅色） ---- */
+.theme-plum {
+    -jc-primary-50:  #F1ECF9;
+    -jc-primary-100: #DCD0EE;
+    -jc-primary-200: #C7B4E3;
+    -jc-primary-300: #AC92D6;
+    -jc-primary-400: #9B7AD6;
+    -jc-primary-500: #7E57C2;
+    -jc-primary-600: #5E3FA0;
+    -jc-primary-700: #4A3180;
+
+    -jc-accent-300: #B59CDE;
+    -jc-accent-400: #9B7AD6;
+    -jc-accent-500: #8B68CC;
+    -jc-accent-600: #7E57C2;
+
+    -jc-neutral-50:  #F7F4FA;
+    -jc-neutral-100: #EFEAF6;
+    -jc-neutral-200: #E9E2F0;
+    -jc-neutral-300: #D2C7DF;
+    -jc-neutral-400: #A095AE;
+    -jc-neutral-500: #6C617A;
+    -jc-neutral-600: #574D64;
+    -jc-neutral-700: #443A52;
+    -jc-neutral-800: #221A2E;
+    -jc-neutral-900: #170F22;
+
+    -jc-text-title: #221A2E;
+    -jc-text-body:  #443A52;
+    -jc-text-muted: #6C617A;
+    -jc-text-hint:  #A095AE;
+
+    -jc-surface-page:   #FAF8FC;
+    -jc-surface-card:   white;
+    -jc-surface-panel:  #F2EEF8;
+    -jc-surface-sunken: #EFEAF6;
+
+    -jc-border:        #E9E2F0;
+    -jc-border-strong: #D2C7DF;
+
+    -jc-brand-hover: rgba(126,87,194,0.06);
+    -jc-focus-ring: rgba(126,87,194,0.14);
+    -jc-shadow-brand: rgba(155,122,214,0.20);
+    -jc-shadow-brand-strong: rgba(126,87,194,0.30);
+    -jc-overlay: rgba(28,18,46,0.42);
+    -jc-thinking-bg: #F1ECF9;
+    -jc-on-brand: white;
+}
+
+/* ---- 蜂蜜 Honey（琥珀金强调，浅色） ---- */
+.theme-honey {
+    -jc-primary-50:  #FBF1DC;
+    -jc-primary-100: #F0DFB8;
+    -jc-primary-200: #E8CF94;
+    -jc-primary-300: #E0BC6B;
+    -jc-primary-400: #E0AC44;
+    -jc-primary-500: #C68A1E;
+    -jc-primary-600: #A06E12;
+    -jc-primary-700: #7E560C;
+
+    -jc-accent-300: #E8C679;
+    -jc-accent-400: #E0AC44;
+    -jc-accent-500: #D49A2E;
+    -jc-accent-600: #C68A1E;
+
+    -jc-neutral-50:  #F9F5EC;
+    -jc-neutral-100: #F3EEE1;
+    -jc-neutral-200: #ECE4D2;
+    -jc-neutral-300: #D8CCB2;
+    -jc-neutral-400: #AEA277;
+    -jc-neutral-500: #7A6E48;
+    -jc-neutral-600: #635937;
+    -jc-neutral-700: #4E4424;
+    -jc-neutral-800: #2A2208;
+    -jc-neutral-900: #1C1605;
+
+    -jc-text-title: #2A2208;
+    -jc-text-body:  #4E4424;
+    -jc-text-muted: #7A6E48;
+    -jc-text-hint:  #AEA277;
+
+    -jc-surface-page:   #FCFAF4;
+    -jc-surface-card:   white;
+    -jc-surface-panel:  #F6F1E5;
+    -jc-surface-sunken: #F3EEE1;
+
+    -jc-border:        #ECE4D2;
+    -jc-border-strong: #D8CCB2;
+
+    -jc-brand-hover: rgba(198,138,30,0.06);
+    -jc-focus-ring: rgba(198,138,30,0.16);
+    -jc-shadow-brand: rgba(224,172,68,0.20);
+    -jc-shadow-brand-strong: rgba(198,138,30,0.30);
+    -jc-overlay: rgba(40,30,10,0.42);
+    -jc-thinking-bg: #FBF3E0;
+    -jc-on-brand: white;
+}
+
+/* =====================================================================
+   侧边栏设计稿对齐补充（品牌头 / 新建对话 / 分组计数 / 会话时间）
+   ===================================================================== */
+
+/* 品牌头：✦ 渐变方标 + 字标 + 版本号 */
+.sb-brand-mark {
+    -fx-background-color: linear-gradient(to bottom right, -jc-accent-500, -jc-primary-500);
+    -fx-text-fill: white;
+    -fx-font-size: 15px;
+    -fx-min-width: 30;
+    -fx-min-height: 30;
+    -fx-max-width: 30;
+    -fx-max-height: 30;
+    -fx-background-radius: 9;
+    -fx-alignment: center;
+}
+
+.sb-brand-name {
+    -fx-font-size: 16px;
+    -fx-font-weight: 700;
+    -fx-text-fill: -jc-text-title;
+}
+
+.sb-brand-ver {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 10px;
+    -fx-font-weight: 500;
+    -fx-text-fill: -jc-text-hint;
+}
+
+/* 「＋ 新建对话」全宽渐变主按钮 */
+.sb-new-btn {
+    -fx-background-color: linear-gradient(to bottom right, -jc-accent-400, -jc-primary-400);
+    -fx-text-fill: white;
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+    -fx-background-radius: 9;
+    -fx-border-width: 0;
+    -fx-border-color: transparent;
+    -fx-padding: 9 12 9 12;
+    -fx-cursor: hand;
+    -fx-effect: dropshadow(gaussian, -jc-shadow-brand, 8, 0, 0, 2);
+}
+
+.sb-new-btn:hover {
+    -fx-background-color: linear-gradient(to bottom right, -jc-accent-500, -jc-primary-500);
+}
+
+/* 会话时间分组标题文本（标题挂在 HBox 容器上时由本类承载文字样式） */
+.sidebar-group-header-text {
+    -fx-text-fill: -jc-text-hint;
+    -fx-font-size: 11px;
+    -fx-font-weight: 700;
+}
+
+/* 会话行右侧时间（mono 小字） */
+.sidebar-conv-time {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 10px;
+    -fx-font-weight: 500;
+    -fx-text-fill: -jc-text-hint;
+}
+
+/* 侧边栏搜索框内嵌放大镜图标 */
+.sidebar-search-icon {
+    -fx-text-fill: -jc-text-hint;
+    -fx-font-size: 13px;
+}
+
+/* =====================================================================
+   顶栏方形图标按钮（设计稿 top-icon：32×32 圆角 8 描边）
+   ===================================================================== */
+
+.top-icon-btn {
+    -fx-background-color: -jc-surface-card;
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 15px;
+    -fx-min-width: 32;
+    -fx-min-height: 32;
+    -fx-max-width: 32;
+    -fx-max-height: 32;
+    -fx-padding: 0;
+    -fx-background-radius: 8;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+    -fx-cursor: hand;
+    -fx-alignment: center;
+}
+
+.top-icon-btn:hover {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-text-fill: -jc-text-title;
+}
+
+/* =====================================================================
+   输入区模式 chips（设计稿 mode-chip：沉陷底；激活 = 品牌深底白字）
+   ===================================================================== */
+
+.jc-mode-chip {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-text-fill: -jc-text-body;
+    -fx-font-size: 13px;
+    -fx-font-weight: 500;
+    -fx-padding: 6 13 6 13;
+    -fx-background-radius: 8;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+    -fx-cursor: hand;
+}
+
+.jc-mode-chip:hover {
+    -fx-background-color: -jc-primary-50;
+    -fx-text-fill: -jc-primary-600;
+}
+
+.jc-mode-chip:selected {
+    -fx-background-color: -jc-primary-600;
+    -fx-text-fill: white;
+    -fx-border-color: -jc-primary-600;
+    -fx-font-weight: 600;
+}
+
+.jc-mode-chip:selected:hover {
+    -fx-background-color: -jc-primary-700;
+    -fx-text-fill: white;
+}
+
+/* Composer 内并列的会话模式 / 工具审核下拉框共用同一视觉基线。 */
+.composer-select {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 8;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+    -fx-cursor: hand;
+}
+
+.composer-select:hover {
+    -fx-background-color: -jc-primary-50;
+    -fx-border-color: -jc-border-strong;
+}
+
+.composer-select:focused,
+.composer-select:showing {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-primary-200;
+    -fx-effect: dropshadow(gaussian, -jc-focus-ring, 6, 0, 0, 0);
+}
+
+.composer-select > .list-cell,
+.composer-select > .label {
+    -fx-background-color: transparent;
+    -fx-text-fill: -jc-text-body;
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+    -fx-padding: 5 4 5 10;
+}
+
+.composer-select > .arrow-button {
+    -fx-padding: 0 8 0 2;
+}
+
+.composer-select > .arrow-button > .arrow {
+    -fx-background-color: -jc-text-muted;
+}
+

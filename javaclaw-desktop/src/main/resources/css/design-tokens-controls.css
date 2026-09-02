@@ -1,0 +1,554 @@
+/*
+ * JavaClaw 现代化界面样式表 —— “JavaClaw Studio” 设计系统
+ *
+ * 方向：现代极简 × 专业冷静。暖灰中性 + 克制翡翠绿品牌色。
+ * 来源：claude.ai/design handoff · emerald palette · 2026-04-21
+ *
+ * 全局设计令牌（Design Tokens）
+ * ──────────────────────────────────────────────
+ * 主色（Primary / Emerald）
+ *   50:  #EDF7F1    100: #D7EBDE   200: #AFD9BF
+ *  300:  #86C59F    400: #55AD7D   500: #2E9A6A
+ *  600:  #1F7E54    700: #166342
+ *
+ * 强调色（Accent / Brighter Emerald）
+ *  300: #9CD5B3    400: #6ABD92   500: #3DA574   600: #21855A
+ *
+ * 中性色（Neutral / Warm Sand，在白/黑中带 +amber 偏移）
+ *   50:  #FAF9F4   100: #F3F1EB   200: #E8E4DB   300: #D3CDBF
+ *  400:  #A19A8A   500: #706B5F   600: #555046   700: #3B382F
+ *  800:  #27251F   900: #15130E
+ *
+ * 语义色
+ *   成功 #10B981 · 危险 #EF4444 · 警告 #F59E0B
+ *
+ * 背景
+ *   页面: #FBFAF6   卡片: white   面板: #F4F2EC   沉陷: #F3F1EB
+ *
+ * 圆角系统
+ *   xs: 6px   sm: 8px   md: 10px   lg: 14px   xl: 18px   pill: 999px
+ *
+ * 字体
+ *   UI:   "Inter", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif
+ *   Mono: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace
+ *
+ * 阴影
+ *   轻: dropshadow(gaussian, rgba(0,0,0,0.04), 8, 0, 0, 2)
+ *   中: dropshadow(gaussian, rgba(0,0,0,0.06), 12, 0, 0, 3)
+ *   重: dropshadow(gaussian, rgba(0,0,0,0.18), 24, 0, 0, 8)
+ *
+ * 按钮风格
+ *   实心主色: 渐变 brand→brandStrong，hover 加深
+ *   柔和主色: bg primary-50 / text primary-600 / border primary-200
+ *   次要: bg neutral-100 / text neutral-500 / border transparent
+ *   幽灵: bg transparent / text neutral-500 / hover bg neutral-100
+ *   危险: bg #FEF2F2 / text #EF4444 / border #FECACA
+ */
+
+/* ==================== 设计令牌（Looked-up Colors） ==================== */
+/*
+ * 使用方式：在子样式中引用
+ *   -fx-background-color: -jc-primary-500;
+ *   -fx-text-fill: -jc-text-body;
+ *
+ * 注意：JavaFX CSS 仅支持颜色变量，时长/圆角/数值仍需硬编码。
+ *
+ * 主题系统：令牌定义挂在 .root（每个 Scene 根节点自动持有该 style class），
+ * 因此所有窗口/对话框/弹出层均可解析；ThemeManager 给根节点追加
+ * theme-{id} class 后，文件末尾的主题覆盖块会重新指向全部令牌，
+ * 组件规则无需任何改动即可整体换肤。默认（无 theme class）= 翡翠 emerald。
+ */
+
+.root {
+    /* —— 主色（Emerald，JavaClaw Studio 品牌） —— */
+    -jc-primary-50:  #EDF7F1;
+    -jc-primary-100: #D7EBDE;
+    -jc-primary-200: #AFD9BF;
+    -jc-primary-300: #86C59F;
+    -jc-primary-400: #55AD7D;
+    -jc-primary-500: #2E9A6A;
+    -jc-primary-600: #1F7E54;
+    -jc-primary-700: #166342;
+
+    /* —— 强调色（亮一档的翡翠） —— */
+    -jc-accent-300: #9CD5B3;
+    -jc-accent-400: #6ABD92;
+    -jc-accent-500: #3DA574;
+    -jc-accent-600: #21855A;
+
+    /* —— 中性色（暖灰 · 偏 amber） —— */
+    -jc-neutral-50:  #FAF9F4;
+    -jc-neutral-100: #F3F1EB;
+    -jc-neutral-200: #E8E4DB;
+    -jc-neutral-300: #D3CDBF;
+    -jc-neutral-400: #A19A8A;
+    -jc-neutral-500: #706B5F;
+    -jc-neutral-600: #555046;
+    -jc-neutral-700: #3B382F;
+    -jc-neutral-800: #27251F;
+    -jc-neutral-900: #15130E;
+
+    /* —— 语义色（跨主题保持一致，与设计稿一致） —— */
+    -jc-success:    #10B981;
+    -jc-success-bg: #ECFDF5;
+    -jc-danger:     #EF4444;
+    -jc-danger-bg:  #FEF2F2;
+    -jc-warning:    #F59E0B;
+    -jc-warning-bg: #FFFBEB;
+
+    /* —— 装饰性文件类型 / 柔和危险色（跨主题固定，与设计稿一致；
+          区别于上面用于错误/警告语义的鲜亮 danger/warning） —— */
+    -jc-tint-terra-fg:     #B45046;   /* 陶土：PDF 徽标、危险区标题、删除文字 */
+    -jc-tint-terra-bg:     #F6E7E4;   /* PDF 徽标底 */
+    -jc-tint-terra-soft:   #FCF7F5;   /* 危险区底 */
+    -jc-tint-terra-line:   #EAD9D5;   /* 危险区/删除按钮描边 */
+    -jc-tint-terra-hover:  #FBF2F0;   /* 危险按钮悬停底 */
+    -jc-tint-terra-muted:  #A88E88;   /* 危险区描述文字 */
+    -jc-tint-gold-fg:      #9A6B1F;   /* 金：CSV 徽标、全局作用域标签 */
+    -jc-tint-gold-bg:      #F3EBDA;
+
+    /* —— 处理阶段状态色（思考/规划/执行/回复） —— */
+    -jc-stage-thinking:  #6B7CC7;
+    -jc-stage-planning:  #D49A47;
+    -jc-stage-executing: #2FA17C;
+    -jc-stage-replying:  #4B87A8;
+
+    /* —— 文字色阶 —— */
+    -jc-text-title: #27251F;
+    -jc-text-body:  #4F4B40;
+    -jc-text-muted: #706B5F;
+    -jc-text-hint:  #A19A8A;
+
+    /* —— 表面 —— */
+    -jc-surface-page:    #FBFAF6;
+    -jc-surface-card:    white;
+    -jc-surface-panel:   #F4F2EC;
+    -jc-surface-sunken:  #F3F1EB;
+
+    /* —— 边框 —— */
+    -jc-border:        #E8E4DB;
+    -jc-border-strong: #D3CDBF;
+
+    /* —— 品牌透明态 / 阴影 / 遮罩（主题切换时一并重指向） —— */
+    -jc-brand-hover: rgba(46,154,106,0.06);
+    -jc-focus-ring: rgba(46,154,106,0.15);
+    -jc-shadow-brand: rgba(85,173,125,0.20);
+    -jc-shadow-brand-strong: rgba(46,154,106,0.30);
+    -jc-overlay: rgba(21,19,14,0.5);
+    -jc-thinking-bg: #F0F9F3;
+    -jc-on-brand: white;
+
+    /* —— 基准字体（全局唯一来源，所有窗口/弹窗/气泡继承） ——
+       系统原生优先：macOS→SF Pro+PingFang，Windows→Segoe UI+YaHei；
+       Inter / Noto Sans SC 为打包回退，保证缺字体的机器也一致渲染。
+       注意：JavaFX -fx-font-family 按字形逐一回退，拉丁字体在前、CJK 在后即可。
+       FontManager 在用户自定义时会在此之上叠加一张 data: 用户样式表覆盖。 */
+    -fx-font-family: "SF Pro Text", "Segoe UI", "Inter", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    -fx-font-size: 13px;
+}
+/* ==== TOKEN-DEFS-END（脚本替换标记，勿删） ==== */
+
+.chat-root {
+    /* 字体由 .root 基准栈全局继承（单一来源），此处不再单独声明 -fx-font-family。 */
+    -fx-background-color: -jc-surface-page;
+}
+
+.diagnostics-result-list {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 11px;
+}
+
+/* ==================== 首次启动向导 ==================== */
+.onboarding-root {
+    -fx-background-color: -jc-surface-page;
+}
+.onboarding-title {
+    -fx-text-fill: -jc-text-title;
+    -fx-font-size: 20px;
+    -fx-font-weight: bold;
+}
+.onboarding-step-indicator,
+.onboarding-connection-status {
+    -fx-text-fill: -jc-text-hint;
+    -fx-font-size: 12px;
+}
+.onboarding-step-title {
+    -fx-text-fill: -jc-text-title;
+    -fx-font-size: 16px;
+    -fx-font-weight: 600;
+}
+.onboarding-hint,
+.onboarding-provider-description {
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 12px;
+}
+.onboarding-provider-description {
+    -fx-font-size: 11px;
+}
+.onboarding-provider-card {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 8;
+    -fx-background-radius: 8;
+    -fx-cursor: hand;
+}
+.onboarding-provider-card:hover {
+    -fx-border-color: -jc-primary-300;
+}
+.onboarding-provider-card-selected {
+    -fx-background-color: -jc-primary-50;
+    -fx-border-color: -jc-primary-500;
+    -fx-border-width: 2;
+}
+.onboarding-provider-name {
+    -fx-text-fill: -jc-text-title;
+    -fx-font-size: 14px;
+    -fx-font-weight: 600;
+}
+.onboarding-provider-tag {
+    -fx-text-fill: white;
+    -fx-padding: 2 8;
+    -fx-background-radius: 4;
+    -fx-font-size: 10px;
+}
+.onboarding-provider-tag-recommended { -fx-background-color: -jc-success; }
+.onboarding-provider-tag-local { -fx-background-color: -jc-primary-500; }
+.onboarding-status-info { -fx-text-fill: -jc-text-hint; }
+.onboarding-status-success { -fx-text-fill: -jc-success; }
+.onboarding-status-error { -fx-text-fill: -jc-danger; }
+.onboarding-complete-title {
+    -fx-text-fill: -jc-success;
+    -fx-font-size: 18px;
+    -fx-font-weight: 600;
+}
+.onboarding-summary {
+    -fx-text-fill: -jc-text-body;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 12px;
+}
+
+/* ==================== 现代化滚动条 ==================== */
+
+.scroll-bar {
+    -fx-background-color: transparent;
+    -fx-pref-width: 6;
+}
+
+.scroll-bar .thumb {
+    -fx-background-color: -jc-neutral-300;
+    -fx-background-radius: 3;
+    -fx-background-insets: 1;
+}
+
+.scroll-bar .thumb:hover {
+    -fx-background-color: -jc-neutral-400;
+}
+
+.scroll-bar .increment-button,
+.scroll-bar .decrement-button {
+    -fx-pref-height: 0;
+    -fx-opacity: 0;
+}
+
+/* ==================== 分隔线 ==================== */
+
+.separator .line {
+    -fx-border-color: -jc-neutral-100 transparent transparent transparent;
+    -fx-border-width: 1;
+}
+
+/* ==================== 原生控件基线（设计系统兜底） ====================
+ *
+ * 把 JavaFX modena 默认外观整体替换为 JavaClaw Studio 令牌风格：
+ * 任何未挂专属样式类的原生控件（TitledPane / ComboBox / TextField /
+ * TextArea / Button / ListView / Spinner …）都自动获得设计系统外观，
+ * 并随主题换肤。本节刻意放在文件前部 —— 后续的专属类（settings-combo、
+ * jc-btn-* 等）按文档顺序覆盖基线，互不冲突。
+ */
+
+/* 普通标签：默认正文色（深色主题下避免 modena 近黑文字不可读） */
+.label {
+    -fx-text-fill: -jc-text-body;
+}
+
+/* 普通按钮：幽灵风兜底 */
+.button {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 13px;
+    -fx-background-radius: 8;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+    -fx-padding: 6 14 6 14;
+    -fx-cursor: hand;
+    -fx-effect: none;
+}
+
+.button:hover {
+    -fx-background-color: -jc-neutral-200;
+    -fx-text-fill: -jc-text-title;
+}
+
+.button:focused {
+    -fx-border-color: -jc-primary-200;
+}
+
+.toggle-button {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 13px;
+    -fx-background-radius: 8;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+    -fx-padding: 6 14 6 14;
+    -fx-cursor: hand;
+    -fx-effect: none;
+}
+
+.toggle-button:hover {
+    -fx-background-color: -jc-neutral-200;
+    -fx-text-fill: -jc-text-title;
+}
+
+.toggle-button:selected {
+    -fx-background-color: -jc-primary-50;
+    -fx-text-fill: -jc-primary-600;
+    -fx-border-color: -jc-primary-200;
+}
+
+/* 菜单按钮兜底（弹出面板沿用全局 context-menu 样式） */
+.menu-button {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 13px;
+    -fx-background-radius: 8;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+    -fx-cursor: hand;
+}
+
+.menu-button:hover {
+    -fx-background-color: -jc-neutral-200;
+}
+
+.menu-button > .label {
+    -fx-text-fill: -jc-text-muted;
+}
+
+.menu-button > .arrow-button > .arrow {
+    -fx-background-color: -jc-text-muted;
+}
+
+/* 单行输入：沉陷圆角 + 品牌聚焦 */
+.text-field {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 10;
+    -fx-border-color: transparent;
+    -fx-border-radius: 10;
+    -fx-border-width: 1;
+    -fx-padding: 8 12 8 12;
+    -fx-font-size: 13px;
+    -fx-text-fill: -jc-text-body;
+    -fx-prompt-text-fill: -jc-text-hint;
+    -fx-highlight-fill: -jc-primary-100;
+    -fx-effect: none;
+}
+
+.text-field:focused {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-primary-200;
+    -fx-effect: dropshadow(gaussian, -jc-focus-ring, 6, 0, 0, 0);
+}
+
+/* 多行输入 */
+.text-area {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 10;
+    -fx-border-color: transparent;
+    -fx-border-radius: 10;
+    -fx-border-width: 1;
+    -fx-font-size: 13px;
+    -fx-text-fill: -jc-text-body;
+    -fx-prompt-text-fill: -jc-text-hint;
+    -fx-highlight-fill: -jc-primary-100;
+    -fx-effect: none;
+}
+
+.text-area .content {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 10;
+}
+
+.text-area:focused {
+    -fx-border-color: -jc-primary-200;
+    -fx-effect: dropshadow(gaussian, -jc-focus-ring, 6, 0, 0, 0);
+}
+
+.text-area:focused .content {
+    -fx-background-color: -jc-surface-card;
+}
+
+/* 下拉框本体（ComboBox / DatePicker 等 ComboBoxBase 家族） */
+.combo-box-base {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 10;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 10;
+    -fx-border-width: 1;
+    -fx-cursor: hand;
+    -fx-effect: none;
+}
+
+.combo-box-base:hover {
+    -fx-border-color: -jc-border-strong;
+}
+
+.combo-box-base:focused,
+.combo-box-base:showing {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-primary-200;
+    -fx-effect: dropshadow(gaussian, -jc-focus-ring, 6, 0, 0, 0);
+}
+
+.combo-box-base > .arrow-button {
+    -fx-background-color: transparent;
+    -fx-padding: 0 8 0 4;
+}
+
+.combo-box-base > .arrow-button > .arrow {
+    -fx-background-color: -jc-text-muted;
+}
+
+/* 下拉框按钮区文字 */
+.combo-box > .list-cell {
+    -fx-text-fill: -jc-text-body;
+    -fx-background-color: transparent;
+    -fx-font-size: 13px;
+    -fx-padding: 6 4 6 10;
+}
+
+/* 折叠面板（TitledPane）：扁平沉陷标题条 + 令牌箭头 + 透明内容区 */
+.titled-pane {
+    -fx-text-fill: -jc-text-title;
+}
+
+.titled-pane > .title {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 8;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+    -fx-padding: 8 12 8 12;
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+}
+
+.titled-pane > .title:hover {
+    -fx-background-color: -jc-neutral-200;
+}
+
+.titled-pane:focused > .title {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-border-color: -jc-primary-200;
+}
+
+.titled-pane > .title > .arrow-button > .arrow {
+    -fx-background-color: -jc-text-muted;
+}
+
+.titled-pane:focused > .title > .arrow-button > .arrow {
+    -fx-background-color: -jc-primary-500;
+}
+
+.titled-pane > .content {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 8 0 0 0;
+}
+
+/* 列表视图 */
+.list-view {
+    -fx-background-color: transparent;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 10;
+    -fx-background-radius: 10;
+    -fx-padding: 4;
+}
+
+.list-view .list-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: -jc-text-body;
+    -fx-font-size: 13px;
+    -fx-padding: 6 10 6 10;
+    -fx-background-radius: 8;
+}
+
+.list-view .list-cell:filled:hover {
+    -fx-background-color: -jc-neutral-100;
+}
+
+.list-view .list-cell:filled:selected {
+    -fx-background-color: -jc-primary-50;
+    -fx-text-fill: -jc-primary-600;
+}
+
+/* 数字步进器 */
+.spinner {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 10;
+    -fx-border-color: -jc-border;
+    -fx-border-radius: 10;
+    -fx-border-width: 1;
+}
+
+.spinner > .text-field {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-effect: none;
+}
+
+.spinner .increment-arrow-button,
+.spinner .decrement-arrow-button {
+    -fx-background-color: transparent;
+    -fx-cursor: hand;
+}
+
+.spinner .increment-arrow-button:hover,
+.spinner .decrement-arrow-button:hover {
+    -fx-background-color: -jc-neutral-200;
+}
+
+.spinner .increment-arrow,
+.spinner .decrement-arrow {
+    -fx-background-color: -jc-text-muted;
+}
+
+/* 进度条 / 加载圈：品牌色 */
+.progress-bar > .track {
+    -fx-background-color: -jc-neutral-200;
+    -fx-background-radius: 4;
+}
+
+.progress-bar > .bar {
+    -fx-background-color: linear-gradient(to right, -jc-primary-400, -jc-primary-500);
+    -fx-background-radius: 4;
+    -fx-background-insets: 0;
+}
+
+.progress-indicator {
+    -fx-progress-color: -jc-primary-500;
+}
+
+/* 滚动容器默认透明（避免 modena 灰底渗出） */
+.scroll-pane {
+    -fx-background-color: transparent;
+    -fx-background: transparent;
+}
+
+.scroll-pane > .viewport {
+    -fx-background-color: transparent;
+}
+

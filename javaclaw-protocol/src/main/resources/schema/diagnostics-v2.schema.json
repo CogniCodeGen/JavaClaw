@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javaclaw.local/schema/diagnostics-v2.schema.json",
+  "title": "JavaClaw Protocol v2 Diagnostics",
+  "$defs": {
+    "readParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 0
+    },
+    "repairPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 0
+    },
+    "repairCommand": {
+      "type": "object",
+      "required": ["idempotencyKey", "expectedRevision", "payload"],
+      "additionalProperties": false,
+      "properties": {
+        "idempotencyKey": {"type": "string", "minLength": 1},
+        "expectedRevision": {"const": 0},
+        "payload": {"$ref": "#/$defs/repairPayload"}
+      }
+    },
+    "launcherStatusParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 0
+    },
+    "launcherStatus": {
+      "type": "object",
+      "required": ["launcherConfigured", "trayActive", "serverControlAvailable"],
+      "additionalProperties": false,
+      "properties": {
+        "launcherConfigured": {"type": "boolean"},
+        "trayActive": {"type": "boolean"},
+        "serverControlAvailable": {"type": "boolean"},
+        "unavailableReason": {"type": "string", "minLength": 1}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"serverControlAvailable": {"const": true}}},
+          "then": {
+            "properties": {
+              "launcherConfigured": {"const": true},
+              "trayActive": {"const": true}
+            },
+            "not": {"required": ["unavailableReason"]}
+          },
+          "else": {"required": ["unavailableReason"]}
+        },
+        {
+          "if": {"properties": {"trayActive": {"const": true}}},
+          "then": {"properties": {"launcherConfigured": {"const": true}}}
+        }
+      ]
+    },
+    "serverStopPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 0
+    },
+    "serverStopCommand": {
+      "type": "object",
+      "required": ["idempotencyKey", "expectedRevision", "payload"],
+      "additionalProperties": false,
+      "properties": {
+        "idempotencyKey": {"type": "string", "minLength": 1},
+        "expectedRevision": {"const": 0},
+        "payload": {"$ref": "#/$defs/serverStopPayload"}
+      }
+    },
+    "serverStopResult": {
+      "type": "object",
+      "required": ["accepted", "connectedClients", "activeLeases"],
+      "additionalProperties": false,
+      "properties": {
+        "accepted": {"type": "boolean"},
+        "connectedClients": {"type": "integer", "minimum": 0},
+        "activeLeases": {"type": "integer", "minimum": 0},
+        "reason": {"type": "string", "minLength": 1}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"accepted": {"const": true}}},
+          "then": {
+            "properties": {
+              "connectedClients": {"const": 1},
+              "activeLeases": {"const": 0}
+            },
+            "not": {"required": ["reason"]}
+          },
+          "else": {"required": ["reason"]}
+        }
+      ]
+    },
+    "build": {
+      "type": "object",
+      "required": ["applicationVersion", "protocolVersion", "dataSchemaVersion"],
+      "additionalProperties": false,
+      "properties": {
+        "applicationVersion": {"type": "string", "minLength": 1},
+        "protocolVersion": {"type": "integer", "minimum": 1},
+        "dataSchemaVersion": {"type": "integer", "minimum": 1}
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": [
+        "databaseHealthy",
+        "workspaceCount",
+        "extensionCount",
+        "connectedClients",
+        "activeLeases",
+        "operatingSystem",
+        "javaVersion"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "databaseHealthy": {"type": "boolean"},
+        "workspaceCount": {"type": "integer", "minimum": 0},
+        "extensionCount": {"type": "integer", "minimum": 0},
+        "connectedClients": {"type": "integer", "minimum": 0},
+        "activeLeases": {"type": "integer", "minimum": 0},
+        "operatingSystem": {"type": "string", "minLength": 1},
+        "javaVersion": {"type": "string", "minLength": 1}
+      }
+    },
+    "providerVault": {
+      "type": "object",
+      "required": ["configuredProviders", "activeProviders", "vaultState", "credentialCount"],
+      "additionalProperties": false,
+      "properties": {
+        "configuredProviders": {"type": "integer", "minimum": 0},
+        "activeProviders": {"type": "integer", "minimum": 0},
+        "vaultState": {"enum": ["READY", "LOCKED"]},
+        "credentialCount": {"type": "integer", "minimum": 0}
+      }
+    },
+    "extensions": {
+      "type": "object",
+      "required": ["registered", "enabled", "disabled", "quarantined", "thirdParty"],
+      "additionalProperties": false,
+      "properties": {
+        "registered": {"type": "integer", "minimum": 0},
+        "enabled": {"type": "integer", "minimum": 0},
+        "disabled": {"type": "integer", "minimum": 0},
+        "quarantined": {"type": "integer", "minimum": 0},
+        "thirdParty": {"type": "integer", "minimum": 0}
+      }
+    },
+    "integrations": {
+      "type": "object",
+      "required": [
+        "configuredMcpEndpoints",
+        "enabledMcpEndpoints",
+        "unhealthyMcpEndpoints",
+        "browserWorkerAvailable",
+        "knowledgeWorkerAvailable",
+        "skillExecutionAvailable"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "configuredMcpEndpoints": {"type": "integer", "minimum": 0},
+        "enabledMcpEndpoints": {"type": "integer", "minimum": 0},
+        "unhealthyMcpEndpoints": {"type": "integer", "minimum": 0},
+        "browserWorkerAvailable": {"type": "boolean"},
+        "knowledgeWorkerAvailable": {"type": "boolean"},
+        "skillExecutionAvailable": {"type": "boolean"}
+      }
+    },
+    "jobs": {
+      "type": "object",
+      "required": ["queued", "running", "waiting", "paused"],
+      "additionalProperties": false,
+      "properties": {
+        "queued": {"type": "integer", "minimum": 0},
+        "running": {"type": "integer", "minimum": 0},
+        "waiting": {"type": "integer", "minimum": 0},
+        "paused": {"type": "integer", "minimum": 0}
+      }
+    },
+    "schedule": {
+      "type": "object",
+      "required": [
+        "loginStartupRequired",
+        "leaseHeld",
+        "synchronizedWorkspaces",
+        "repairAvailable",
+        "loginStartupInstalled"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "loginStartupRequired": {"type": "boolean"},
+        "leaseHeld": {"type": "boolean"},
+        "synchronizedWorkspaces": {"type": "integer", "minimum": 0},
+        "repairAvailable": {"type": "boolean"},
+        "loginStartupInstalled": {"type": "boolean"},
+        "unavailableReason": {"type": "string", "minLength": 1}
+      }
+    },
+    "launcher": {
+      "type": "object",
+      "required": ["launcherConfigured", "trayActive", "serverControlAvailable"],
+      "additionalProperties": false,
+      "properties": {
+        "launcherConfigured": {"type": "boolean"},
+        "trayActive": {"type": "boolean"},
+        "serverControlAvailable": {"type": "boolean"},
+        "unavailableReason": {"type": "string", "minLength": 1}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"serverControlAvailable": {"const": true}}},
+          "then": {
+            "properties": {
+              "launcherConfigured": {"const": true},
+              "trayActive": {"const": true}
+            },
+            "not": {"required": ["unavailableReason"]}
+          },
+          "else": {"required": ["unavailableReason"]}
+        },
+        {
+          "if": {"properties": {"trayActive": {"const": true}}},
+          "then": {"properties": {"launcherConfigured": {"const": true}}}
+        }
+      ]
+    },
+    "subsystems": {
+      "type": "object",
+      "required": ["providers", "extensions", "integrations", "jobs", "schedule", "launcher"],
+      "additionalProperties": false,
+      "properties": {
+        "providers": {"$ref": "#/$defs/providerVault"},
+        "extensions": {"$ref": "#/$defs/extensions"},
+        "integrations": {"$ref": "#/$defs/integrations"},
+        "jobs": {"$ref": "#/$defs/jobs"},
+        "schedule": {"$ref": "#/$defs/schedule"},
+        "launcher": {"$ref": "#/$defs/launcher"}
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "required": ["build", "health", "subsystems", "startedAt", "observedAt"],
+      "additionalProperties": false,
+      "properties": {
+        "build": {"$ref": "#/$defs/build"},
+        "health": {"$ref": "#/$defs/runtime"},
+        "subsystems": {"$ref": "#/$defs/subsystems"},
+        "startedAt": {"type": "string", "format": "date-time"},
+        "observedAt": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

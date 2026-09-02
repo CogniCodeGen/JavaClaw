@@ -1,0 +1,509 @@
+/* ==================== 右侧思考进度面板 ==================== */
+
+.thinking-panel-root {
+    -fx-background-color: -jc-surface-page;
+    -fx-border-color: -jc-neutral-100;
+    -fx-border-width: 0 0 0 1;
+}
+
+.thinking-panel-title {
+    -fx-text-fill: -jc-neutral-500;
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+}
+
+.thinking-panel-scroll {
+    -fx-background: transparent;
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+
+.thinking-panel-scroll > .viewport {
+    -fx-background-color: transparent;
+}
+
+.thinking-panel-scroll .scroll-bar .thumb {
+    -fx-background-color: -jc-primary-200;
+}
+
+.thinking-panel-scroll .scroll-bar .thumb:hover {
+    -fx-background-color: -jc-primary-300;
+}
+
+/* 状态指示条 */
+.thinking-panel-status-bar {
+    -fx-background-color: -jc-surface-card;
+    -fx-background-radius: 12;
+    -fx-padding: 8 12 8 12;
+    -fx-border-color: -jc-neutral-200;
+    -fx-border-radius: 12;
+    -fx-border-width: 1;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.03), 4, 0, 0, 1);
+}
+
+.thinking-panel-status-dot {
+    -fx-font-size: 8px;
+}
+
+.thinking-panel-status-text {
+    -fx-text-fill: -jc-neutral-500;
+    -fx-font-size: 12px;
+    -fx-font-weight: 500;
+}
+
+/* 状态颜色 */
+.status-thinking {
+    -fx-text-fill: -jc-accent-500;
+}
+
+.status-planning {
+    -fx-text-fill: -jc-primary-500;
+}
+
+.status-executing {
+    -fx-text-fill: #F59E0B;
+}
+
+.status-replying {
+    -fx-text-fill: #10B981;
+}
+
+.status-idle {
+    -fx-text-fill: -jc-neutral-300;
+}
+
+/* 状态图例 */
+.tp-status-legend {
+    -fx-padding: 2 10 6 10;
+}
+
+.tp-legend-dot {
+    -fx-font-size: 8px;
+}
+
+.tp-legend-text {
+    -fx-text-fill: -jc-neutral-400;
+    -fx-font-size: 10px;
+}
+
+/* 可折叠 section 头部 */
+.tp-collapsible-header {
+    -fx-padding: 2 0 2 0;
+}
+
+.tp-collapsible-header:hover {
+    -fx-opacity: 0.8;
+}
+
+.tp-collapse-arrow {
+    -fx-text-fill: -jc-neutral-400;
+    -fx-font-size: 10px;
+}
+
+/* 空状态提示 */
+.thinking-panel-empty-hint {
+    -fx-text-fill: -jc-neutral-400;
+    -fx-font-size: 12px;
+    -fx-padding: 20 10 20 10;
+    -fx-alignment: center;
+    -fx-text-alignment: center;
+}
+
+/* 通用分区标题 */
+.tp-section-header {
+    -fx-text-fill: -jc-neutral-600;
+    -fx-font-size: 11px;
+    -fx-font-weight: 700;
+    -fx-padding: 0 0 2 0;
+}
+
+/* 思考区域 */
+.tp-thinking-section {
+    -fx-background-color: -jc-thinking-bg;
+    -fx-background-radius: 12;
+    -fx-border-color: -jc-primary-100;
+    -fx-border-radius: 12;
+    -fx-border-width: 1;
+}
+
+.tp-thinking-text {
+    -fx-fill: -jc-primary-700;
+    -fx-font-size: 11px;
+}
+
+/* 规划区域 */
+.tp-plan-section {
+    -fx-background-color: -jc-primary-50;
+    -fx-background-radius: 12;
+    -fx-border-color: -jc-primary-200;
+    -fx-border-radius: 12;
+    -fx-border-width: 1;
+}
+
+.tp-plan-text {
+    -fx-fill: -jc-neutral-800;
+    -fx-font-size: 11px;
+}
+
+/* 智能体执行区域 */
+.tp-agents-section {
+    -fx-background-color: -jc-surface-card;
+    -fx-background-radius: 12;
+    -fx-border-color: -jc-neutral-200;
+    -fx-border-radius: 12;
+    -fx-border-width: 1;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.03), 4, 0, 0, 1);
+}
+
+/* 子智能体卡片 */
+.tp-agent-card {
+    -fx-background-color: -jc-neutral-50;
+    -fx-background-radius: 8;
+    -fx-border-color: -jc-neutral-100;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+}
+
+.tp-agent-name {
+    -fx-text-fill: -jc-neutral-700;
+    -fx-font-size: 11px;
+    -fx-font-weight: 600;
+}
+
+.tp-agent-status {
+    -fx-font-size: 10px;
+    -fx-font-weight: 500;
+}
+
+.agent-status-thinking {
+    -fx-text-fill: #F59E0B;
+}
+
+.agent-status-done {
+    -fx-text-fill: #10B981;
+}
+
+.tp-agent-thinking-text {
+    -fx-fill: -jc-neutral-500;
+    -fx-font-size: 10px;
+}
+
+.tp-agent-result-brief {
+    -fx-text-fill: -jc-neutral-400;
+    -fx-font-size: 10px;
+    -fx-padding: 2 0 0 0;
+}
+
+/* ==================== 统一弹窗样式 ==================== */
+
+.dialog-pane {
+    -fx-background-color: -jc-surface-card;
+    -fx-background-radius: 14;
+    -fx-padding: 24 28 20 28;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.12), 20, 0, 0, 6);
+}
+
+/* UIHelper 为全部 DialogPane 追加该类：窗口尺寸由代码按屏幕约束，正文独立滚动。 */
+.dialog-pane.jc-dialog-pane {
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 14;
+}
+
+.dialog-pane > .button-bar {
+    -fx-padding: 16 0 0 0;
+}
+
+.dialog-pane > .button-bar > .container {
+    -fx-spacing: 10;
+}
+
+/* 所有弹窗按钮的基础样式 */
+.dialog-pane > .button-bar .button {
+    -fx-background-color: -jc-neutral-100;
+    -fx-text-fill: -jc-neutral-500;
+    -fx-background-radius: 10;
+    -fx-border-radius: 10;
+    -fx-border-color: transparent;
+    -fx-border-width: 1;
+    -fx-padding: 8 24 8 24;
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+    -fx-cursor: hand;
+}
+
+.dialog-pane > .button-bar .button:hover {
+    -fx-background-color: -jc-neutral-200;
+    -fx-text-fill: -jc-neutral-600;
+}
+
+/* 确认/默认按钮（OK） */
+.dialog-pane > .button-bar .button:default {
+    -fx-background-color: -jc-primary-50;
+    -fx-text-fill: -jc-primary-500;
+    -fx-border-color: -jc-primary-200;
+}
+
+.dialog-pane > .button-bar .button:default:hover {
+    -fx-background-color: -jc-primary-100;
+    -fx-text-fill: -jc-primary-600;
+    -fx-border-color: -jc-primary-300;
+}
+
+.dialog-pane > .button-bar .button:default:pressed {
+    -fx-background-color: -jc-primary-200;
+    -fx-text-fill: -jc-primary-700;
+}
+
+/* 取消按钮 */
+.dialog-pane > .button-bar .button:cancel {
+    -fx-background-color: -jc-neutral-100;
+    -fx-text-fill: -jc-neutral-500;
+    -fx-border-color: transparent;
+}
+
+.dialog-pane > .button-bar .button:cancel:hover {
+    -fx-background-color: -jc-neutral-200;
+    -fx-text-fill: -jc-neutral-600;
+}
+
+/* 弹窗内容文本 */
+.dialog-pane > .content.label {
+    -fx-text-fill: -jc-neutral-600;
+    -fx-font-size: 14px;
+    -fx-line-spacing: 3;
+    -fx-padding: 4 0 8 0;
+    -fx-wrap-text: true;
+    -fx-max-width: 560;
+}
+
+/* 弹窗标题 */
+.dialog-pane > .header-panel {
+    -fx-background-color: transparent;
+    -fx-padding: 0 0 8 0;
+}
+
+.dialog-pane > .header-panel > .label {
+    -fx-text-fill: -jc-neutral-800;
+    -fx-font-size: 16px;
+    -fx-font-weight: 600;
+    -fx-wrap-text: true;
+    -fx-max-width: 560;
+}
+
+/* 弹窗图标区域（已在 UIHelper 中移除默认图标） */
+.dialog-pane > .graphic-container {
+    -fx-padding: 0;
+}
+
+/* TextInputDialog 输入框 */
+.dialog-pane .text-field {
+    -fx-background-color: -jc-neutral-100;
+    -fx-background-radius: 10;
+    -fx-border-color: transparent;
+    -fx-border-radius: 10;
+    -fx-border-width: 1;
+    -fx-padding: 9 14 9 14;
+    -fx-font-size: 13px;
+}
+
+.dialog-pane .text-field:focused {
+    -fx-border-color: -jc-primary-200;
+    -fx-background-color: -jc-surface-card;
+    -fx-effect: dropshadow(gaussian, -jc-focus-ring, 6, 0, 0, 0);
+}
+
+/* 弹窗长正文 / 自定义表单滚动区：透明无套娃边框，页脚按钮保持固定。 */
+.dialog-message-scroll,
+.dialog-body-scroll {
+    -fx-background-color: transparent;
+    -fx-background: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 0;
+}
+
+.dialog-message-scroll > .viewport,
+.dialog-body-scroll > .viewport {
+    -fx-background-color: transparent;
+}
+
+.dialog-message-scroll .corner,
+.dialog-body-scroll .corner {
+    -fx-background-color: transparent;
+}
+
+.dialog-message {
+    -fx-text-fill: -jc-neutral-600;
+    -fx-font-size: 14px;
+    -fx-line-spacing: 3;
+    -fx-padding: 4 10 8 0;
+}
+
+/* ==================== 统一右键菜单样式 ==================== */
+
+.context-menu {
+    -fx-background-color: -jc-surface-card;
+    -fx-background-radius: 12;
+    -fx-border-radius: 12;
+    -fx-border-color: -jc-neutral-200;
+    -fx-border-width: 1;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.15), 20, 0, 0, 6);
+    -fx-padding: 6 0 6 0;
+}
+
+.context-menu .menu-item {
+    -fx-padding: 8 20 8 20;
+    -fx-background-radius: 6;
+    -fx-background-insets: 0 4 0 4;
+    -fx-cursor: hand;
+}
+
+.context-menu .menu-item .label {
+    -fx-text-fill: -jc-neutral-700;
+    -fx-font-size: 13px;
+}
+
+.context-menu .menu-item:focused {
+    -fx-background-color: -jc-neutral-100;
+}
+
+.context-menu .menu-item:focused .label {
+    -fx-text-fill: -jc-neutral-800;
+}
+
+/* 危险操作菜单项（删除） */
+.context-menu .menu-item-danger .label {
+    -fx-text-fill: #DC2626;
+}
+
+.context-menu .menu-item-danger:focused {
+    -fx-background-color: #FEF2F2;
+}
+
+.context-menu .menu-item-danger:focused .label {
+    -fx-text-fill: #B91C1C;
+}
+
+/* 右键菜单分隔线 */
+.context-menu .separator:horizontal .line {
+    -fx-border-color: -jc-neutral-100 transparent transparent transparent;
+    -fx-border-width: 1;
+    -fx-padding: 0 8 0 8;
+}
+
+/* ==================== 统一 Tooltip 样式 ==================== */
+
+.tooltip {
+    -fx-background-color: -jc-surface-card;
+    -fx-text-fill: -jc-neutral-600;
+    -fx-background-radius: 8;
+    -fx-padding: 6 12 6 12;
+    -fx-font-size: 12px;
+    -fx-border-color: -jc-neutral-200;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.08), 8, 0, 0, 2);
+}
+
+/* ==================== 通用辅助样式 ==================== */
+
+/* 空状态图标（技能中心、定时任务等） */
+.empty-state-icon {
+    -fx-font-size: 48px;
+    -fx-text-fill: -jc-neutral-300;
+}
+
+.empty-state-text {
+    -fx-font-size: 15px;
+    -fx-text-fill: -jc-neutral-400;
+    -fx-font-weight: 500;
+}
+
+.empty-state-hint {
+    -fx-text-alignment: center;
+    -fx-line-spacing: 3;
+}
+
+/* 状态指示点 */
+.status-dot-enabled {
+    -fx-text-fill: #10B981;
+    -fx-font-size: 10px;
+}
+
+.status-dot-disabled {
+    -fx-text-fill: -jc-neutral-300;
+    -fx-font-size: 10px;
+}
+
+/* 运行中状态点（区别于普通启用绿点，用主题主色） */
+.status-dot-running {
+    -fx-text-fill: -jc-primary-500;
+    -fx-font-size: 10px;
+}
+
+/* 列表行尾「运行中」徽标 */
+.schedule-running-tag {
+    -fx-font-size: 10px;
+    -fx-text-fill: -jc-primary-500;
+    -fx-background-color: -jc-primary-50;
+    -fx-background-radius: 8;
+    -fx-padding: 1 7 1 7;
+    -fx-font-weight: 600;
+}
+
+/* 危险按钮（删除/清空） */
+.danger-btn {
+    -fx-background-color: #FEE2E2;
+    -fx-text-fill: #DC2626;
+    -fx-background-radius: 12;
+    -fx-padding: 8 20 8 20;
+    -fx-cursor: hand;
+    -fx-font-size: 13px;
+    -fx-font-weight: 500;
+    -fx-border-color: #FECACA;
+    -fx-border-radius: 12;
+    -fx-border-width: 1;
+}
+
+.danger-btn:hover {
+    -fx-background-color: #DC2626;
+    -fx-text-fill: white;
+    -fx-border-color: #DC2626;
+}
+
+.danger-btn-critical {
+    -fx-background-color: #FEE2E2;
+    -fx-text-fill: #DC2626;
+    -fx-background-radius: 10;
+    -fx-padding: 8 20 8 20;
+    -fx-cursor: hand;
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+    -fx-border-color: #FECACA;
+    -fx-border-radius: 10;
+    -fx-border-width: 1;
+}
+
+.danger-btn-critical:hover {
+    -fx-background-color: #FCA5A5;
+    -fx-text-fill: #B91C1C;
+    -fx-border-color: #F87171;
+}
+
+/* 状态文本颜色 */
+.status-success {
+    -fx-text-fill: #10B981;
+}
+
+.status-error {
+    -fx-text-fill: #DC2626;
+}
+
+.status-info {
+    -fx-text-fill: -jc-primary-500;
+}
+
+.status-warning {
+    -fx-text-fill: #F59E0B;
+}
+

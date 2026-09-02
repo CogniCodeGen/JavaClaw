@@ -1,0 +1,302 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javaclaw.local/schema/core-interaction-v2.schema.json",
+  "title": "JavaClaw Protocol v2 Turn, Item, Approval and Rollout methods",
+  "$defs": {
+    "uuid": {"type": "string", "format": "uuid"},
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+    },
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "profileRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "revision"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "revision": {"type": "integer", "minimum": 1}
+      }
+    },
+    "providerRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["endpointId", "endpointRevision", "model"],
+      "properties": {
+        "endpointId": {"$ref": "#/$defs/identifier"},
+        "endpointRevision": {"type": "integer", "minimum": 1},
+        "model": {"type": "string", "minLength": 1, "maxLength": 1000}
+      }
+    },
+    "permissionProfileRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "version": {"type": "integer", "minimum": 1}
+      }
+    },
+    "turnBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inputTokens", "outputTokens", "toolCalls", "childThreads", "wallTime"],
+      "properties": {
+        "inputTokens": {"type": "integer", "minimum": 1},
+        "outputTokens": {"type": "integer", "minimum": 1},
+        "toolCalls": {"type": "integer", "minimum": 1},
+        "childThreads": {"type": "integer", "minimum": 0, "maximum": 4},
+        "wallTime": {"type": "string", "minLength": 3, "maxLength": 40}
+      }
+    },
+    "turn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "threadId", "status", "revision", "budget", "profile", "provider",
+        "permissionProfile", "executionRoot", "promptManifestDigest", "toolCatalogDigest",
+        "errorCode", "createdAt", "updatedAt"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/uuid"},
+        "threadId": {"$ref": "#/$defs/uuid"},
+        "status": {"enum": ["QUEUED", "RUNNING", "WAITING", "COMPLETED", "CANCELLED", "FAILED"]},
+        "revision": {"type": "integer", "minimum": 1},
+        "budget": {"$ref": "#/$defs/turnBudget"},
+        "profile": {"$ref": "#/$defs/profileRef"},
+        "provider": {"$ref": "#/$defs/providerRef"},
+        "permissionProfile": {"$ref": "#/$defs/permissionProfileRef"},
+        "executionRoot": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "promptManifestDigest": {"$ref": "#/$defs/digest"},
+        "toolCatalogDigest": {"$ref": "#/$defs/digest"},
+        "errorCode": {
+          "oneOf": [
+            {"type": "string", "minLength": 1, "maxLength": 200},
+            {"type": "null"}
+          ]
+        },
+        "createdAt": {"type": "string", "format": "date-time"},
+        "updatedAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "turnStartCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotencyKey", "expectedRevision", "payload"],
+      "properties": {
+        "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 200},
+        "expectedRevision": {"type": "integer", "minimum": 1},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["threadId", "profile", "message"],
+          "properties": {
+            "threadId": {"$ref": "#/$defs/uuid"},
+            "profile": {
+              "oneOf": [
+                {"$ref": "#/$defs/profileRef"},
+                {"type": "null"}
+              ]
+            },
+            "message": {"type": "string", "maxLength": 1048576}
+          }
+        }
+      }
+    },
+    "turnReadParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["turnId"],
+      "properties": {"turnId": {"$ref": "#/$defs/uuid"}}
+    },
+    "turnCancelCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotencyKey", "expectedRevision", "payload"],
+      "properties": {
+        "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 200},
+        "expectedRevision": {"type": "integer", "minimum": 1},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["turnId", "reason"],
+          "properties": {
+            "turnId": {"$ref": "#/$defs/uuid"},
+            "reason": {"type": "string", "minLength": 1, "maxLength": 500}
+          }
+        }
+      }
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "turnId", "sequence", "kind", "schemaId", "producerId", "status",
+        "payload", "createdAt", "completedAt"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/uuid"},
+        "turnId": {"$ref": "#/$defs/uuid"},
+        "sequence": {"type": "integer", "minimum": 1},
+        "kind": {"type": "string", "minLength": 1, "maxLength": 200},
+        "schemaId": {"type": "string", "minLength": 1, "maxLength": 500},
+        "producerId": {"type": "string", "minLength": 1, "maxLength": 240},
+        "status": {"enum": ["IN_PROGRESS", "COMPLETED", "CANCELLED", "FAILED"]},
+        "payload": {
+          "type": "object",
+          "description": "由 schemaId 指定并保持规范化的 Item payload"
+        },
+        "createdAt": {"type": "string", "format": "date-time"},
+        "completedAt": {
+          "oneOf": [
+            {"type": "string", "format": "date-time"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "itemListParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["threadId", "afterSequence", "limit"],
+      "properties": {
+        "threadId": {"$ref": "#/$defs/uuid"},
+        "afterSequence": {"type": "integer", "minimum": 0},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 1000}
+      }
+    },
+    "itemListResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "nextSequence"],
+      "properties": {
+        "items": {"type": "array", "maxItems": 1000, "items": {"$ref": "#/$defs/item"}},
+        "nextSequence": {"type": "integer", "minimum": 0}
+      }
+    },
+    "toolIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["producerId", "name", "revision"],
+      "properties": {
+        "producerId": {"type": "string", "minLength": 1, "maxLength": 240},
+        "name": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"},
+        "revision": {"type": "integer", "minimum": 1}
+      }
+    },
+    "approvalRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "turnId", "callId", "tool", "risk", "explanation", "requestDigest",
+        "createdAt", "expiresAt"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 240},
+        "turnId": {"$ref": "#/$defs/uuid"},
+        "callId": {"type": "string", "minLength": 1, "maxLength": 240},
+        "tool": {"$ref": "#/$defs/toolIdentity"},
+        "risk": {"enum": ["READ_ONLY", "WORKSPACE_WRITE", "NETWORK", "PROCESS", "EXTERNAL_EFFECT"]},
+        "explanation": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "requestDigest": {"$ref": "#/$defs/digest"},
+        "createdAt": {"type": "string", "format": "date-time"},
+        "expiresAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request", "state", "revision", "resolutionReason", "updatedAt"],
+      "properties": {
+        "request": {"$ref": "#/$defs/approvalRequest"},
+        "state": {"enum": ["PENDING", "APPROVED", "DENIED", "EXPIRED", "REVOKED", "CANCELLED"]},
+        "revision": {"type": "integer", "minimum": 1},
+        "resolutionReason": {
+          "oneOf": [
+            {"type": "string", "minLength": 1, "maxLength": 500},
+            {"type": "null"}
+          ]
+        },
+        "updatedAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "approvalListParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["turnId", "includeResolved"],
+      "properties": {
+        "turnId": {
+          "oneOf": [
+            {"$ref": "#/$defs/uuid"},
+            {"type": "null"}
+          ]
+        },
+        "includeResolved": {"type": "boolean"}
+      }
+    },
+    "approvalListResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approvals"],
+      "properties": {
+        "approvals": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/approval"}}
+      }
+    },
+    "approvalResolveCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotencyKey", "expectedRevision", "payload"],
+      "properties": {
+        "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 200},
+        "expectedRevision": {"type": "integer", "minimum": 1},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["approvalId", "decision", "reason"],
+          "properties": {
+            "approvalId": {"type": "string", "minLength": 1, "maxLength": 240},
+            "decision": {"enum": ["APPROVED", "DENIED"]},
+            "reason": {"type": "string", "minLength": 1, "maxLength": 500}
+          }
+        }
+      }
+    },
+    "rolloutExportCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotencyKey", "expectedRevision", "payload"],
+      "properties": {
+        "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 200},
+        "expectedRevision": {"type": "integer", "minimum": 1},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["threadId", "outputFile"],
+          "properties": {
+            "threadId": {"$ref": "#/$defs/uuid"},
+            "outputFile": {"type": "string", "minLength": 1, "maxLength": 4096}
+          }
+        }
+      }
+    },
+    "rolloutManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "threadId", "sourceRevision", "itemCount", "lastSequence", "finalChainHash",
+        "totalSha256", "exportedAt"
+      ],
+      "properties": {
+        "threadId": {"$ref": "#/$defs/uuid"},
+        "sourceRevision": {"type": "integer", "minimum": 1},
+        "itemCount": {"type": "integer", "minimum": 0},
+        "lastSequence": {"type": "integer", "minimum": 0},
+        "finalChainHash": {"$ref": "#/$defs/digest"},
+        "totalSha256": {"$ref": "#/$defs/digest"},
+        "exportedAt": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

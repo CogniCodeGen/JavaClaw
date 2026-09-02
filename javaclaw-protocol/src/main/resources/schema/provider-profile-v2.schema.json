@@ -1,0 +1,412 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javaclaw.local/schema/provider-profile-v2.schema.json",
+  "title": "JavaClaw Protocol v2 Provider and Agent Profile methods",
+  "$defs": {
+    "empty": {"type": "object", "additionalProperties": false, "maxProperties": 0},
+    "uuid": {"type": "string", "format": "uuid"},
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,239}$"
+    },
+    "credentialRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["namespace", "id"],
+      "properties": {
+        "namespace": {"$ref": "#/$defs/identifier"},
+        "id": {"$ref": "#/$defs/identifier"}
+      }
+    },
+    "providerRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["endpointId", "endpointRevision", "model"],
+      "properties": {
+        "endpointId": {"$ref": "#/$defs/identifier"},
+        "endpointRevision": {"type": "integer", "minimum": 1},
+        "model": {"type": "string", "minLength": 1, "maxLength": 1000}
+      }
+    },
+    "profileRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "revision"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "revision": {"type": "integer", "minimum": 1}
+      }
+    },
+    "permissionProfileRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "version": {"type": "integer", "minimum": 1}
+      }
+    },
+    "providerSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "displayName", "adapter", "baseUri", "roles", "models", "credential", "timeout",
+        "maximumRetries", "options"
+      ],
+      "properties": {
+        "displayName": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "adapter": {"enum": ["OPENAI_COMPATIBLE", "ANTHROPIC", "GOOGLE_GENAI", "OPENAI_RESPONSES"]},
+        "baseUri": {
+          "oneOf": [
+            {"type": "string", "format": "uri", "maxLength": 4096},
+            {"type": "null"}
+          ]
+        },
+        "roles": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {"enum": ["CHAT", "EMBEDDING"]}
+        },
+        "models": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1000,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 1000}
+        },
+        "credential": {
+          "oneOf": [
+            {"$ref": "#/$defs/credentialRef"},
+            {"type": "null"}
+          ]
+        },
+        "timeout": {"type": "string", "minLength": 3, "maxLength": 40},
+        "maximumRetries": {"type": "integer", "minimum": 0, "maximum": 10},
+        "options": {
+          "type": "object",
+          "maxProperties": 100,
+          "propertyNames": {"$ref": "#/$defs/identifier"},
+          "additionalProperties": {"type": "string", "maxLength": 4000}
+        }
+      }
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "revision", "lifecycle", "spec", "createdAt", "updatedAt"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "revision": {"type": "integer", "minimum": 1},
+        "lifecycle": {"enum": ["ACTIVE", "DISABLED", "ARCHIVED"]},
+        "spec": {"$ref": "#/$defs/providerSpec"},
+        "createdAt": {"type": "string", "format": "date-time"},
+        "updatedAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "providerReadParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "revision"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "revision": {"type": "integer", "minimum": 1}
+      }
+    },
+    "providerCreateCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotencyKey", "expectedRevision", "payload"],
+      "properties": {
+        "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 200},
+        "expectedRevision": {"const": 0},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "spec"],
+          "properties": {
+            "id": {"$ref": "#/$defs/identifier"},
+            "spec": {"$ref": "#/$defs/providerSpec"}
+          }
+        }
+      }
+    },
+    "providerUpdateCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotencyKey", "expectedRevision", "payload"],
+      "properties": {
+        "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 200},
+        "expectedRevision": {"type": "integer", "minimum": 1},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "spec", "lifecycle"],
+          "properties": {
+            "id": {"$ref": "#/$defs/identifier"},
+            "spec": {"$ref": "#/$defs/providerSpec"},
+            "lifecycle": {"enum": ["ACTIVE", "DISABLED"]}
+          }
+        }
+      }
+    },
+    "providerArchiveCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotencyKey", "expectedRevision", "payload"],
+      "properties": {
+        "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 200},
+        "expectedRevision": {"type": "integer", "minimum": 1},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id"],
+          "properties": {"id": {"$ref": "#/$defs/identifier"}}
+        }
+      }
+    },
+    "providerListResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["providers"],
+      "properties": {
+        "providers": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/provider"}}
+      }
+    },
+    "providerProbeParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider"],
+      "properties": {"provider": {"$ref": "#/$defs/providerRef"}}
+    },
+    "providerCapabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "roles", "streaming", "toolCalls", "structuredOutput", "images", "reasoningSummary",
+        "opaqueState", "nativeCompaction"
+      ],
+      "properties": {
+        "roles": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {"enum": ["CHAT", "EMBEDDING"]}
+        },
+        "streaming": {"type": "boolean"},
+        "toolCalls": {"type": "boolean"},
+        "structuredOutput": {"type": "boolean"},
+        "images": {"type": "boolean"},
+        "reasoningSummary": {"type": "boolean"},
+        "opaqueState": {"type": "boolean"},
+        "nativeCompaction": {"type": "boolean"}
+      }
+    },
+    "providerStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "readiness", "capabilities", "detail", "checkedAt"],
+      "properties": {
+        "provider": {"$ref": "#/$defs/providerRef"},
+        "readiness": {
+          "enum": [
+            "READY", "CREDENTIAL_UNVERIFIED", "CREDENTIAL_REQUIRED", "CREDENTIAL_UNAVAILABLE",
+            "DISABLED", "ARCHIVED", "INVALID_CONFIGURATION"
+          ]
+        },
+        "capabilities": {"$ref": "#/$defs/providerCapabilities"},
+        "detail": {
+          "oneOf": [
+            {"type": "string", "minLength": 1, "maxLength": 1000},
+            {"type": "null"}
+          ]
+        },
+        "checkedAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "turnBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inputTokens", "outputTokens", "toolCalls", "childThreads", "wallTime"],
+      "properties": {
+        "inputTokens": {"type": "integer", "minimum": 1},
+        "outputTokens": {"type": "integer", "minimum": 1},
+        "toolCalls": {"type": "integer", "minimum": 1},
+        "childThreads": {"type": "integer", "minimum": 0, "maximum": 4},
+        "wallTime": {"type": "string", "minLength": 3, "maxLength": 40}
+      }
+    },
+    "profileSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "displayName", "systemInstruction", "provider", "permissionProfile", "visibleTools", "budget"
+      ],
+      "properties": {
+        "displayName": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "systemInstruction": {"type": "string", "maxLength": 1048576},
+        "provider": {"$ref": "#/$defs/providerRef"},
+        "permissionProfile": {"$ref": "#/$defs/permissionProfileRef"},
+        "visibleTools": {
+          "type": "array",
+          "maxItems": 10000,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 240}
+        },
+        "budget": {"$ref": "#/$defs/turnBudget"}
+      }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "revision", "lifecycle", "spec", "createdAt", "updatedAt"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "revision": {"type": "integer", "minimum": 1},
+        "lifecycle": {"enum": ["ACTIVE", "DISABLED", "ARCHIVED"]},
+        "spec": {"$ref": "#/$defs/profileSpec"},
+        "createdAt": {"type": "string", "format": "date-time"},
+        "updatedAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "profileReadParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "revision"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "revision": {"type": "integer", "minimum": 1}
+      }
+    },
+    "profileCreateCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotencyKey", "expectedRevision", "payload"],
+      "properties": {
+        "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 200},
+        "expectedRevision": {"const": 0},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "spec"],
+          "properties": {
+            "id": {"$ref": "#/$defs/identifier"},
+            "spec": {"$ref": "#/$defs/profileSpec"}
+          }
+        }
+      }
+    },
+    "profileUpdateCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotencyKey", "expectedRevision", "payload"],
+      "properties": {
+        "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 200},
+        "expectedRevision": {"type": "integer", "minimum": 1},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "spec", "lifecycle"],
+          "properties": {
+            "id": {"$ref": "#/$defs/identifier"},
+            "spec": {"$ref": "#/$defs/profileSpec"},
+            "lifecycle": {"enum": ["ACTIVE", "DISABLED"]}
+          }
+        }
+      }
+    },
+    "profileArchiveCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotencyKey", "expectedRevision", "payload"],
+      "properties": {
+        "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 200},
+        "expectedRevision": {"type": "integer", "minimum": 1},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id"],
+          "properties": {"id": {"$ref": "#/$defs/identifier"}}
+        }
+      }
+    },
+    "profileListResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profiles"],
+      "properties": {
+        "profiles": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/profile"}}
+      }
+    },
+    "bindingReadParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspaceId", "threadId"],
+      "properties": {
+        "workspaceId": {"$ref": "#/$defs/uuid"},
+        "threadId": {
+          "oneOf": [
+            {"$ref": "#/$defs/uuid"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspaceId", "threadId", "profile", "revision", "updatedAt"],
+      "properties": {
+        "workspaceId": {"$ref": "#/$defs/uuid"},
+        "threadId": {
+          "oneOf": [
+            {"$ref": "#/$defs/uuid"},
+            {"type": "null"}
+          ]
+        },
+        "profile": {"$ref": "#/$defs/profileRef"},
+        "revision": {"type": "integer", "minimum": 1},
+        "updatedAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "bindingReadResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["binding"],
+      "properties": {
+        "binding": {
+          "oneOf": [
+            {"$ref": "#/$defs/binding"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "bindingUpdateCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotencyKey", "expectedRevision", "payload"],
+      "properties": {
+        "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 200},
+        "expectedRevision": {"type": "integer", "minimum": 0},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["workspaceId", "threadId", "profile"],
+          "properties": {
+            "workspaceId": {"$ref": "#/$defs/uuid"},
+            "threadId": {
+              "oneOf": [
+                {"$ref": "#/$defs/uuid"},
+                {"type": "null"}
+              ]
+            },
+            "profile": {"$ref": "#/$defs/profileRef"}
+          }
+        }
+      }
+    }
+  }
+}

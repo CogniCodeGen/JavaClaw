@@ -1,0 +1,581 @@
+/* ==================== 侧边栏导航行（设计稿风格） ==================== */
+
+/* 导航行文字与图标 */
+.sidebar-nav-row {
+    -fx-background-radius: 8;
+    -fx-cursor: hand;
+}
+
+.sidebar-nav-row:hover {
+    -fx-background-color: -jc-neutral-100;
+}
+
+.sidebar-nav-row-active {
+    -fx-background-color: -jc-primary-50;
+}
+
+.sidebar-nav-icon {
+    -fx-text-fill: -jc-neutral-500;
+    -fx-font-size: 14px;
+    -fx-min-width: 18;
+    -fx-alignment: center;
+}
+
+.sidebar-nav-row-active .sidebar-nav-icon {
+    -fx-text-fill: -jc-primary-600;
+}
+
+.sidebar-nav-row:hover .sidebar-nav-icon {
+    -fx-text-fill: -jc-primary-500;
+}
+
+.sidebar-nav-text {
+    -fx-text-fill: -jc-neutral-700;
+    -fx-font-size: 13px;
+    -fx-font-weight: 500;
+}
+
+.sidebar-nav-row-active .sidebar-nav-text {
+    -fx-text-fill: -jc-primary-600;
+    -fx-font-weight: 600;
+}
+
+.sidebar-nav-shortcut {
+    -fx-text-fill: -jc-neutral-400;
+    -fx-font-size: 11px;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+}
+
+.sidebar-nav-badge {
+    -fx-background-color: -jc-neutral-200;
+    -fx-text-fill: -jc-neutral-500;
+    -fx-font-size: 11px;
+    -fx-font-weight: 600;
+    -fx-padding: 1 7 1 7;
+    -fx-background-radius: 999;
+    -fx-min-width: 20;
+    -fx-alignment: center;
+}
+
+/* 点击底部个人框向上弹出菜单，功能入口不再单独占一行。 */
+.sidebar-profile-menu-button {
+    -fx-background-color: -jc-neutral-100;
+    -fx-border-color: transparent;
+    -fx-background-radius: 11;
+    -fx-border-radius: 11;
+    -fx-padding: 6 7 6 8;
+    -fx-min-height: 50;
+    -fx-cursor: hand;
+}
+
+.sidebar-profile-menu-button:hover {
+    -fx-background-color: -jc-neutral-200;
+}
+
+.sidebar-profile-menu-button-open {
+    -fx-background-color: -jc-primary-50;
+    -fx-border-color: -jc-primary-200;
+    -fx-border-width: 1;
+}
+
+.sidebar-profile-menu-button > .label {
+    -fx-padding: 0;
+}
+
+.sidebar-profile-menu-chevron {
+    -fx-text-fill: -jc-text-hint;
+    -fx-font-size: 13px;
+    -fx-font-weight: 700;
+    -fx-padding: 0 3 0 1;
+}
+
+.sidebar-profile-menu-button-open .sidebar-profile-menu-chevron {
+    -fx-text-fill: -jc-primary-500;
+}
+
+.sidebar-profile-menu-badge {
+    -fx-background-color: -jc-primary-500;
+    -fx-background-radius: 999;
+    -fx-text-fill: white;
+    -fx-font-size: 10px;
+    -fx-font-weight: 700;
+    -fx-padding: 1 6 1 6;
+    -fx-min-width: 20;
+    -fx-alignment: center;
+}
+
+/* 弹层顶部展示当前个人身份，保持和触发框一致。 */
+.context-menu .menu-item.sidebar-profile-header-item {
+    -fx-padding: 8 12 8 12;
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-cursor: default;
+}
+
+.context-menu .menu-item.sidebar-profile-header-item:focused {
+    -fx-background-color: transparent;
+}
+
+.context-menu .menu-item.sidebar-profile-header-item .sidebar-profile-popup-header {
+    -fx-min-width: 176;
+}
+
+.context-menu .menu-item.sidebar-profile-header-item .sidebar-avatar {
+    -fx-text-fill: white;
+    -fx-font-size: 12px;
+}
+
+.context-menu .menu-item.sidebar-profile-header-item .sidebar-user-name {
+    -fx-text-fill: -jc-neutral-800;
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+}
+
+.context-menu .menu-item.sidebar-profile-header-item .sidebar-user-team {
+    -fx-text-fill: -jc-neutral-400;
+    -fx-font-size: 11px;
+}
+
+/* CustomMenuItem 保留原有图标、快捷键和徽章排版。 */
+.context-menu .menu-item.sidebar-profile-menu-item {
+    -fx-padding: 0;
+    -fx-background-insets: 0 4 0 4;
+    -fx-background-radius: 8;
+}
+
+.context-menu .menu-item.sidebar-profile-menu-item .sidebar-nav-row {
+    -fx-background-color: transparent;
+    -fx-min-height: 34;
+}
+
+.context-menu .menu-item.sidebar-profile-menu-item .sidebar-nav-icon {
+    -fx-text-fill: -jc-neutral-500;
+    -fx-font-size: 14px;
+}
+
+.context-menu .menu-item.sidebar-profile-menu-item .sidebar-nav-text {
+    -fx-text-fill: -jc-neutral-700;
+    -fx-font-size: 13px;
+    -fx-font-weight: 500;
+}
+
+.context-menu .menu-item.sidebar-profile-menu-item .sidebar-nav-shortcut {
+    -fx-text-fill: -jc-neutral-400;
+    -fx-font-size: 11px;
+}
+
+.context-menu .menu-item.sidebar-profile-menu-item .sidebar-nav-badge {
+    -fx-text-fill: -jc-neutral-500;
+    -fx-font-size: 11px;
+}
+
+.context-menu .menu-item.sidebar-profile-menu-item:focused {
+    -fx-background-color: -jc-neutral-100;
+}
+
+.context-menu .menu-item.sidebar-profile-menu-item:focused .sidebar-nav-icon {
+    -fx-text-fill: -jc-primary-500;
+}
+
+.context-menu .menu-item.sidebar-profile-menu-item:focused .sidebar-nav-text {
+    -fx-text-fill: -jc-text-title;
+    -fx-font-weight: 600;
+}
+
+/* 键位提示胶囊（如搜索框旁的 ⌘K） */
+.kbd-chip {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: -jc-neutral-200;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+    -fx-padding: 1 6 1 6;
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 10px;
+    -fx-text-fill: -jc-neutral-500;
+}
+
+/* 会话分区"共 N 条"计数 */
+.sidebar-section-count {
+    -fx-text-fill: -jc-neutral-400;
+    -fx-font-size: 10px;
+    -fx-font-weight: 500;
+}
+
+/* 底部主题切换（太阳/月亮） */
+.sidebar-theme-toggle {
+    -fx-background-color: transparent;
+    -fx-text-fill: -jc-neutral-500;
+    -fx-font-size: 13px;
+    -fx-padding: 4 8 4 8;
+    -fx-cursor: hand;
+    -fx-background-radius: 6;
+}
+
+.sidebar-theme-toggle:hover {
+    -fx-background-color: -jc-neutral-100;
+    -fx-text-fill: -jc-primary-500;
+}
+
+/* ==================== 左侧侧边栏（浅色渐变主题） ==================== */
+
+.sidebar-root {
+    -fx-background-color: -jc-surface-page;
+    -fx-border-color: -jc-neutral-200;
+    -fx-border-width: 0 1 0 0;
+}
+
+/* 侧边栏内分隔线 */
+.sidebar-root .separator .line {
+    -fx-border-color: -jc-neutral-200 transparent transparent transparent;
+    -fx-border-width: 1;
+}
+
+/* 功能按钮行 */
+.sidebar-action-row {
+    -fx-padding: 8 16 8 16;
+    -fx-background-radius: 12;
+    -fx-cursor: hand;
+}
+
+.sidebar-action-row:hover {
+    -fx-background-color: -jc-brand-hover;
+}
+
+/* 工作区选择器 */
+.sidebar-workspace-combo {
+    -fx-font-size: 12px;
+    -fx-background-radius: 8;
+    -fx-border-radius: 8;
+    -fx-border-color: -jc-neutral-200;
+    -fx-border-width: 1;
+    -fx-background-color: -jc-neutral-100;
+}
+
+.sidebar-workspace-combo:hover {
+    -fx-border-color: -jc-primary-200;
+    -fx-background-color: -jc-primary-50;
+}
+
+.sidebar-workspace-combo:showing {
+    -fx-border-color: -jc-primary-200;
+    -fx-background-color: -jc-surface-card;
+}
+
+.sidebar-ws-btn {
+    -fx-background-color: -jc-surface-card;
+    -fx-text-fill: -jc-neutral-600;
+    -fx-background-radius: 8;
+    -fx-padding: 4 8 4 8;
+    -fx-cursor: hand;
+    -fx-font-size: 12px;
+    -fx-font-weight: 600;
+    -fx-border-color: -jc-neutral-300;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+    -fx-min-width: 28;
+    -fx-min-height: 28;
+}
+
+.sidebar-ws-btn:hover {
+    -fx-background-color: -jc-neutral-100;
+    -fx-text-fill: -jc-primary-500;
+    -fx-border-color: -jc-primary-300;
+}
+
+.sidebar-action-btn {
+    -fx-background-color: transparent;
+    -fx-text-fill: -jc-neutral-700;
+    -fx-font-size: 13px;
+    -fx-padding: 0;
+    -fx-cursor: hand;
+}
+
+.sidebar-action-icon {
+    -fx-text-fill: -jc-primary-500;
+    -fx-font-size: 14px;
+}
+
+/* 分区标题 */
+.sidebar-section-title {
+    -fx-text-fill: -jc-neutral-400;
+    -fx-font-size: 11px;
+    -fx-font-weight: 600;
+}
+
+/* 会话列表时间分组标题（今天 / 昨天 / 本周 / 更早） */
+.sidebar-group-header {
+    -fx-text-fill: -jc-text-hint;
+    -fx-font-size: 11px;
+    -fx-font-weight: 700;
+    -fx-padding: 11 8 4 8;
+    -fx-background-color: transparent;
+}
+
+.sidebar-group-count {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 999;
+    -fx-text-fill: -jc-text-hint;
+    -fx-font-size: 9.5px;
+    -fx-font-weight: 600;
+    -fx-padding: 1 6 1 6;
+}
+
+.sidebar-manage-icon {
+    -fx-text-fill: -jc-neutral-300;
+    -fx-font-size: 13px;
+    -fx-cursor: hand;
+}
+
+.sidebar-manage-icon:hover {
+    -fx-text-fill: -jc-primary-500;
+}
+
+.sidebar-manage-label {
+    -fx-text-fill: -jc-neutral-400;
+    -fx-font-size: 12px;
+    -fx-cursor: hand;
+}
+
+.sidebar-manage-label:hover {
+    -fx-text-fill: -jc-primary-500;
+}
+
+/* 会话管理按钮 */
+.sidebar-manage-btn {
+    -fx-background-color: transparent;
+    -fx-text-fill: -jc-text-muted;
+    -fx-background-radius: 7;
+    -fx-padding: 3 8 3 8;
+    -fx-font-size: 11px;
+    -fx-font-weight: 600;
+    -fx-cursor: hand;
+    -fx-border-color: transparent;
+    -fx-border-radius: 7;
+    -fx-border-width: 0;
+}
+
+.sidebar-manage-btn:hover {
+    -fx-background-color: -jc-neutral-100;
+    -fx-text-fill: -jc-primary-600;
+}
+
+.sidebar-batch-select-all-btn {
+    -fx-background-color: -jc-primary-50;
+    -fx-text-fill: -jc-primary-500;
+    -fx-background-radius: 8;
+    -fx-padding: 8 16 8 16;
+    -fx-cursor: hand;
+    -fx-font-size: 12px;
+}
+
+.sidebar-batch-select-all-btn:hover {
+    -fx-background-color: -jc-primary-500;
+    -fx-text-fill: white;
+}
+
+.sidebar-batch-delete-btn {
+    -fx-background-color: #FEE2E2;
+    -fx-text-fill: #DC2626;
+    -fx-background-radius: 8;
+    -fx-padding: 8 16 8 16;
+    -fx-cursor: hand;
+    -fx-font-size: 12px;
+}
+
+.sidebar-batch-delete-btn:hover {
+    -fx-background-color: #DC2626;
+    -fx-text-fill: white;
+}
+
+.sidebar-batch-delete-btn:disabled {
+    -fx-background-color: -jc-neutral-100;
+    -fx-text-fill: -jc-neutral-300;
+    -fx-cursor: default;
+}
+
+.sidebar-separator {
+    -fx-padding: 0 12 0 12;
+}
+
+/* 会话列表滚动区域 */
+.sidebar-list-scroll {
+    -fx-background: transparent;
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 2 8 8 8;
+}
+
+.sidebar-list-scroll > .viewport {
+    -fx-background-color: transparent;
+}
+
+.sidebar-list-scroll .list-cell {
+    -fx-background-color: transparent;
+    -fx-padding: 0 0 3 0;
+}
+
+.sidebar-list-scroll .virtual-flow,
+.sidebar-list-scroll .clipped-container,
+.sidebar-list-scroll .sheet {
+    -fx-background-color: transparent;
+}
+
+.sidebar-list-layer {
+    -fx-background-color: transparent;
+}
+
+.sidebar-empty-state {
+    -fx-padding: 24 20 24 20;
+    -fx-max-width: 210;
+}
+
+.sidebar-empty-icon {
+    -fx-text-fill: -jc-neutral-300;
+    -fx-font-size: 20px;
+}
+
+.sidebar-empty-title {
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 12.5px;
+    -fx-font-weight: 600;
+}
+
+.sidebar-empty-hint {
+    -fx-text-fill: -jc-text-hint;
+    -fx-font-size: 11px;
+    -fx-text-alignment: center;
+}
+
+/* 侧边栏滚动条 */
+.sidebar-list-scroll .scroll-bar .thumb {
+    -fx-background-color: -jc-neutral-300;
+}
+
+.sidebar-list-scroll .scroll-bar .thumb:hover {
+    -fx-background-color: -jc-neutral-400;
+}
+
+/* 会话列表项 */
+.sidebar-conv-row {
+    -fx-background-color: transparent;
+    -fx-background-radius: 9;
+    -fx-border-color: transparent;
+    -fx-border-width: 1;
+    -fx-border-radius: 9;
+    -fx-cursor: hand;
+    -fx-padding: 7 9 7 9;
+    -fx-min-height: 34;
+}
+
+.sidebar-conv-row:hover {
+    -fx-background-color: -jc-neutral-100;
+}
+
+.sidebar-conv-selected {
+    -fx-background-color: -jc-primary-50;
+    -fx-border-color: -jc-primary-200;
+    -fx-border-width: 1;
+    -fx-border-radius: 9;
+    -fx-background-radius: 9;
+}
+
+.sidebar-conv-selected:hover {
+    -fx-background-color: -jc-primary-100;
+}
+
+.sidebar-conv-row:focused {
+    -fx-border-color: -jc-primary-300;
+}
+
+/* ==================== 侧边栏搜索框 ==================== */
+
+.sidebar-search-field {
+    -fx-background-color: -jc-neutral-100;
+    -fx-background-radius: 8;
+    -fx-border-color: -jc-neutral-200;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+    -fx-padding: 8 12 8 12;
+    -fx-font-size: 13px;
+    -fx-prompt-text-fill: -jc-neutral-400;
+}
+
+.sidebar-search-field:focused {
+    -fx-border-color: -jc-primary-500;
+    -fx-background-color: -jc-surface-card;
+}
+
+.sidebar-conv-indicator {
+    -fx-background-color: -jc-neutral-300;
+    -fx-background-radius: 999;
+    -fx-min-width: 6;
+    -fx-min-height: 6;
+    -fx-max-width: 6;
+    -fx-max-height: 6;
+}
+
+.sidebar-conv-selected .sidebar-conv-indicator {
+    -fx-background-color: -jc-primary-500;
+}
+
+.sidebar-conv-title {
+    -fx-text-fill: -jc-text-body;
+    -fx-font-size: 12.5px;
+}
+
+.sidebar-conv-selected .sidebar-conv-title {
+    -fx-text-fill: -jc-text-title;
+    -fx-font-weight: 600;
+}
+
+/* 底部用户信息栏 */
+.sidebar-bottom-bar {
+    -fx-background-color: -jc-surface-panel;
+    -fx-border-color: -jc-neutral-200;
+    -fx-border-width: 1 0 0 0;
+}
+
+.sidebar-avatar {
+    -fx-background-color: linear-gradient(to bottom right, -jc-primary-500, -jc-accent-500);
+    -fx-text-fill: white;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-background-radius: 12;
+    -fx-min-width: 32;
+    -fx-min-height: 32;
+    -fx-max-width: 32;
+    -fx-max-height: 32;
+    -fx-alignment: center;
+}
+
+.sidebar-user-name {
+    -fx-text-fill: -jc-neutral-800;
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+}
+
+.sidebar-user-team {
+    -fx-text-fill: -jc-neutral-400;
+    -fx-font-size: 11px;
+}
+
+.sidebar-settings-btn {
+    -fx-background-color: -jc-neutral-100;
+    -fx-text-fill: -jc-neutral-500;
+    -fx-background-radius: 8;
+    -fx-padding: 6 16 6 16;
+    -fx-cursor: hand;
+    -fx-font-size: 12px;
+    -fx-font-weight: 500;
+    -fx-border-color: transparent;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+}
+
+.sidebar-settings-btn:hover {
+    -fx-background-color: -jc-primary-50;
+    -fx-text-fill: -jc-primary-500;
+    -fx-border-color: transparent;
+}
+

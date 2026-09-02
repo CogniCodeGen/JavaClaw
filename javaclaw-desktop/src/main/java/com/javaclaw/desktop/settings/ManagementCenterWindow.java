@@ -1,0 +1,393 @@
+package com.javaclaw.desktop.settings;
+
+import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
+
+import javafx.collections.FXCollections;
+import javafx.collections.ObservableList;
+import javafx.scene.Scene;
+import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
+import javafx.scene.control.ListView;
+import javafx.scene.control.ScrollPane;
+import javafx.scene.control.TextField;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyCodeCombination;
+import javafx.scene.input.KeyCombination;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.VBox;
+import javafx.stage.Modality;
+import javafx.stage.Screen;
+import javafx.stage.Stage;
+import javafx.stage.Window;
+
+import com.javaclaw.desktop.DesktopStylesheets;
+import com.javaclaw.desktop.appearance.DesktopAppearanceManager;
+import com.javaclaw.desktop.component.ManagementPageShell;
+
+/** 单实例、非阻塞的 JavaClaw 5 设置与管理中心窗口。 */
+public final class ManagementCenterWindow {
+    static final double MINIMUM_WIDTH = 880;
+    static final double MINIMUM_HEIGHT = 620;
+    private static final KeyCodeCombination SHORTCUT =
+            new KeyCodeCombination(KeyCode.COMMA, KeyCombination.SHORTCUT_DOWN);
+    private static final List<Destination> DESTINATIONS = destinations();
+
+    private final DesktopAppearanceManager appearance;
+    private final ManagementSettingsGateways gateways;
+    private final ManagementWindowPreferenceStore preferences;
+    private final ObservableList<Destination> filtered = FXCollections.observableArrayList();
+    private Stage stage;
+    private ManagementPageShell shell;
+    private SettingsPageRegistry pages;
+    private ListView<Destination> navigation;
+    private Destination selected;
+    private ManagedSettingsPage activePage;
+    private boolean activePageActivated;
+    private boolean restoringSelection;
+
+    /**
+     * 创建设置与管理中心协调器；窗口在第一次打开时才创建。
+     *
+     * @param appearance 跨 Scene 外观协调器
+     * @param gateways 强类型 Java SDK 管理边界集合
+     */
+    public ManagementCenterWindow(DesktopAppearanceManager appearance, ManagementSettingsGateways gateways) {
+        this(appearance, gateways, new JavaPreferencesManagementWindowStore());
+    }
+
+    ManagementCenterWindow(
+            DesktopAppearanceManager appearance,
+            ManagementSettingsGateways gateways,
+            ManagementWindowPreferenceStore preferences) {
+        this.appearance = Objects.requireNonNull(appearance, "appearance");
+        this.gateways = Objects.requireNonNull(gateways, "gateways");
+        this.preferences = Objects.requireNonNull(preferences, "preferences");
+    }
+
+    /**
+     * 为主 Scene 安装平台快捷键 Ctrl/Cmd+,。
+     *
+     * @param scene 接收快捷键的 Scene
+     */
+    public void installShortcut(Scene scene) {
+        Scene checked = Objects.requireNonNull(scene, "scene");
+        checked.getAccelerators().put(SHORTCUT, () -> show(checked.getWindow()));
+    }
+
+    /**
+     * 打开或聚焦设置中心；不会等待 App Server 连接。
+     *
+     * @param owner 主窗口
+     */
+    public void show(Window owner) {
+        show(owner, null);
+    }
+
+    /**
+     * 打开或聚焦设置中心并导航到指定页面。
+     *
+     * <p>若当前页面存在未保存草稿，统一离页保护优先，导航请求不会丢弃草稿。
+     *
+     * @param owner 主窗口
+     * @param pageKey {@link #destinations()} 中的平台页面 key
+     */
+    public void show(Window owner, String pageKey) {
+        if (stage == null) {
+            createStage(Objects.requireNonNull(owner, "owner"));
+        }
+        if (pageKey != null) {
+            select(destination(pageKey));
+        }
+        if (stage.isShowing()) {
+            stage.toFront();
+            stage.requestFocus();
+            return;
+        }
+        activatePage();
+        stage.show();
+        stage.toFront();
+    }
+
+    private static Destination destination(String pageKey) {
+        String checked = Objects.requireNonNull(pageKey, "pageKey").strip();
+        return DESTINATIONS.stream()
+                .filter(candidate -> candidate.key().equals(checked))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("未知设置页面: " + checked));
+    }
+
+    /**
+     * 返回窗口是否正在显示。
+     *
+     * @return 显示状态
+     */
+    public boolean isShowing() {
+        return stage != null && stage.isShowing();
+    }
+
+    /** 关闭窗口；存在未保存草稿时保留窗口并显示统一离页提示。 */
+    public void close() {
+        if (activePage != null && activePage.dirty()) {
+            activePage.warnUnsavedChanges();
+            return;
+        }
+        if (stage != null) {
+            stage.hide();
+        }
+    }
+
+    /** 释放页面订阅并销毁窗口；仅由 Desktop 进程关闭调用。 */
+    public void dispose() {
+        deactivatePage();
+        if (pages != null) {
+            pages.dispose();
+        }
+        if (stage != null) {
+            stage.hide();
+        }
+        activePage = null;
+    }
+
+    private void createStage(Window owner) {
+        stage = new Stage();
+        stage.initOwner(owner);
+        stage.initModality(Modality.NONE);
+        stage.setTitle("JavaClaw 设置与管理中心");
+        stage.setMinWidth(MINIMUM_WIDTH);
+        stage.setMinHeight(MINIMUM_HEIGHT);
+        shell = new ManagementPageShell("设置与管理");
+        shell.setNavigationContent(createNavigation());
+        pages = new SettingsPageRegistry(appearance, gateways, this::close);
+        Scene scene = new Scene(shell, 1_040, 720);
+        DesktopStylesheets.apply(scene);
+        appearance.register(scene);
+        installShortcut(scene);
+        stage.setScene(scene);
+        ManagementWindowPreferences restored = preferences.load();
+        restoreBounds(restored.bounds());
+        stage.setOnCloseRequest(event -> {
+            if (activePage != null && activePage.dirty()) {
+                event.consume();
+                activePage.warnUnsavedChanges();
+            }
+        });
+        stage.setOnHidden(event -> {
+            deactivatePage();
+            savePreferences();
+        });
+        select(restoreDestination(restored.lastPageKey()));
+    }
+
+    private VBox createNavigation() {
+        TextField search = new TextField();
+        search.setPromptText("搜索设置与管理功能");
+        search.setAccessibleText("搜索设置与管理功能");
+        search.getStyleClass().add("settings-search-field");
+        navigation = new ListView<>(filtered);
+        navigation.setAccessibleText("设置与管理页面");
+        navigation.setCellFactory(ignored -> new DestinationCell());
+        navigation.getStyleClass().addAll("platform-navigation-list", "management-navigation-list");
+        navigation
+                .getSelectionModel()
+                .selectedItemProperty()
+                .addListener((observable, previous, value) -> select(value));
+        search.textProperty().addListener((observable, previous, value) -> filter(value));
+        VBox box = new VBox(10, search, navigation);
+        VBox.setVgrow(navigation, Priority.ALWAYS);
+        box.getStyleClass().add("management-navigation-content");
+        filter("");
+        return box;
+    }
+
+    private void filter(String query) {
+        String normalized = Objects.requireNonNullElse(query, "").strip().toLowerCase(Locale.ROOT);
+        filtered.setAll(DESTINATIONS.stream()
+                .filter(destination -> destination.searchText().contains(normalized))
+                .toList());
+        if (pages != null
+                && !filtered.isEmpty()
+                && !filtered.contains(selected)
+                && (activePage == null || !activePage.dirty())) {
+            navigation.getSelectionModel().selectFirst();
+        }
+    }
+
+    private void select(Destination destination) {
+        if (restoringSelection || destination == null || destination.equals(selected)) {
+            return;
+        }
+        if (activePage != null && activePage.dirty()) {
+            activePage.warnUnsavedChanges();
+            restoreSelection();
+            return;
+        }
+        deactivatePage();
+        selected = destination;
+        navigation.getSelectionModel().select(destination);
+        activePage = pages.resolve(destination.key());
+        shell.showPage(destination.title(), scroll(activePage.content()));
+        if (stage.isShowing()) {
+            activatePage();
+        }
+    }
+
+    private void activatePage() {
+        if (activePage == null || activePageActivated) {
+            return;
+        }
+        activePageActivated = true;
+        try {
+            activePage.activate();
+        } catch (RuntimeException | Error failure) {
+            activePageActivated = false;
+            throw failure;
+        }
+    }
+
+    private void deactivatePage() {
+        if (activePage == null || !activePageActivated) {
+            return;
+        }
+        activePage.deactivate();
+        activePageActivated = false;
+    }
+
+    private Destination restoreDestination(String pageKey) {
+        return DESTINATIONS.stream()
+                .filter(candidate -> candidate.key().equals(pageKey))
+                .findFirst()
+                .orElse(DESTINATIONS.getFirst());
+    }
+
+    private void restoreBounds(java.util.Optional<ManagementWindowPreferences.WindowBounds> savedBounds) {
+        if (savedBounds.isEmpty() || !intersectsVisibleScreen(savedBounds.orElseThrow())) {
+            stage.setWidth(1_040);
+            stage.setHeight(720);
+            stage.centerOnScreen();
+            return;
+        }
+        ManagementWindowPreferences.WindowBounds bounds = savedBounds.orElseThrow();
+        stage.setX(bounds.x());
+        stage.setY(bounds.y());
+        stage.setWidth(bounds.width());
+        stage.setHeight(bounds.height());
+    }
+
+    private static boolean intersectsVisibleScreen(ManagementWindowPreferences.WindowBounds bounds) {
+        return Screen.getScreens().stream()
+                .map(Screen::getVisualBounds)
+                .anyMatch(screen -> bounds.x() + bounds.width() > screen.getMinX()
+                        && bounds.y() + bounds.height() > screen.getMinY()
+                        && bounds.x() < screen.getMaxX()
+                        && bounds.y() < screen.getMaxY());
+    }
+
+    private void savePreferences() {
+        Destination current = selected == null ? DESTINATIONS.getFirst() : selected;
+        preferences.save(new ManagementWindowPreferences(
+                current.key(),
+                java.util.Optional.of(new ManagementWindowPreferences.WindowBounds(
+                        stage.getX(), stage.getY(), stage.getWidth(), stage.getHeight()))));
+    }
+
+    private void restoreSelection() {
+        restoringSelection = true;
+        try {
+            navigation.getSelectionModel().select(selected);
+        } finally {
+            restoringSelection = false;
+        }
+    }
+
+    private static ScrollPane scroll(javafx.scene.Node page) {
+        ScrollPane scroll = new ScrollPane(page);
+        scroll.setFitToWidth(true);
+        scroll.getStyleClass().addAll("settings-scroll-pane", "platform-content-scroll");
+        return scroll;
+    }
+
+    private static List<Destination> destinations() {
+        return List.of(
+                new Destination("appearance", "常规", "外观", "主题、字号与界面密度"),
+                new Destination("providers", "模型与智能体", "Provider", "模型端点、凭据与能力状态"),
+                new Destination("profiles", "模型与智能体", "Agent Profile", "Prompt、模型、工具与预算默认值"),
+                new Destination("learning", "模型与智能体", "学习策略", "Memory 学习与 Skill 提案策略"),
+                new Destination("permissions", "安全与连接", "PermissionProfile", "权限边界、审批和资源限制"),
+                new Destination("vault", "安全与连接", "Secret Vault", "主密钥、锁定状态与凭据元数据"),
+                new Destination("unattended-grants", "安全与连接", "无人值守授权", "Schedule 专用的限额 Tool Grant"),
+                new Destination("network-grants", "安全与连接", "私网授权", "临时、精确且可撤销的 Origin 授权"),
+                new Destination("mcp", "安全与连接", "MCP", "连接、OAuth、工具目录与健康状态"),
+                new Destination("site", "安全与连接", "Site", "受控站点、会话和凭据"),
+                new Destination("builtins", "扩展", "内置扩展", "可选内置能力与运行状态"),
+                new Destination("bundles", "扩展", "第三方 Bundle", "安装、升级、健康、隔离和启停"),
+                new Destination("trust", "扩展", "信任公钥", "签名公钥、指纹和撤销"),
+                new Destination("trash", "扩展", "Trash", "恢复或永久清除已卸载 Bundle"),
+                new Destination("workspace", "工作区", "Workspace", "默认 Profile、项目约定与归档"),
+                new Destination("instructions", "工作区", "项目约定", "AGENTS 层级、摘要与冻结状态"),
+                new Destination("worktrees", "工作区", "Worktree 恢复", "隔离工作树、Patch、备份和清理"),
+                new Destination("jobs", "功能管理", "执行任务", "全局 Job、工作单元、checkpoint 与恢复动作"),
+                new Destination("plan", "功能管理", "Plan", "结构化计划、决策与执行"),
+                new Destination("loop", "功能管理", "Loop", "迭代目标、验证和停止条件"),
+                new Destination("workflow", "功能管理", "Workflow", "安全 Graph 与持久执行"),
+                new Destination("sdd", "功能管理", "SDD", "规格、审批、实现与验收"),
+                new Destination("schedule", "功能管理", "Schedule", "触发规则、Occurrence 与恢复"),
+                new Destination("memory", "功能管理", "Memory", "记忆、来源、历史与提案"),
+                new Destination("knowledge", "功能管理", "Knowledge", "资料、索引 Generation 与检索"),
+                new Destination("skill", "功能管理", "Skill", "Draft、发布、目录和资源"),
+                new Destination("connection", "系统", "连接", "App Server 连接、重试和启动能力"),
+                new Destination("lifecycle", "系统", "生命周期", "Lease、启动项和托盘状态"),
+                new Destination("diagnostics", "系统", "诊断", "脱敏状态、复制与导出"));
+    }
+
+    private record Destination(String key, String group, String title, String description) {
+        private Destination {
+            Objects.requireNonNull(key, "key");
+            Objects.requireNonNull(group, "group");
+            Objects.requireNonNull(title, "title");
+            Objects.requireNonNull(description, "description");
+        }
+
+        private String searchText() {
+            return (group + " " + title + " " + description).toLowerCase(Locale.ROOT);
+        }
+    }
+
+    private final class DestinationCell extends ListCell<Destination> {
+        private final Label group = new Label();
+        private final Label title = new Label();
+        private final Label detail = new Label();
+        private final VBox item = new VBox(3, title, detail);
+        private final VBox content = new VBox(3, group, item);
+
+        private DestinationCell() {
+            group.getStyleClass().add("modal-nav-group");
+            title.getStyleClass().add("platform-detail-title");
+            detail.setWrapText(true);
+            detail.getStyleClass().add("platform-detail-text");
+            item.getStyleClass().add("platform-detail-cell");
+        }
+
+        @Override
+        protected void updateItem(Destination destination, boolean empty) {
+            super.updateItem(destination, empty);
+            if (empty || destination == null) {
+                setGraphic(null);
+                setAccessibleText(null);
+                return;
+            }
+            group.setText(destination.group());
+            int index = getIndex();
+            boolean firstInGroup = index <= 0
+                    || index >= navigation.getItems().size()
+                    || !navigation.getItems().get(index - 1).group().equals(destination.group());
+            group.setVisible(firstInGroup);
+            group.setManaged(firstInGroup);
+            title.setText(destination.title());
+            detail.setText(destination.description());
+            setGraphic(content);
+            setAccessibleText(destination.group() + "，" + destination.title() + "。" + destination.description());
+        }
+    }
+}

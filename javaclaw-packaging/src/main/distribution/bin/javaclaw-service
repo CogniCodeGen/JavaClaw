@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+APP_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+STATE_ROOT=${JAVACLAW_STATE_ROOT:-"$HOME/.javaclaw"}
+DATA_ROOT=${JAVACLAW_DATA_ROOT:-"$STATE_ROOT/data-v5"}
+LOG_ROOT="$DATA_ROOT/logs"
+mkdir -p "$STATE_ROOT/run" "$LOG_ROOT"
+exec "$APP_ROOT/runtime/bin/java" \
+    --enable-native-access=ALL-UNNAMED \
+    -Djavaclaw.data.root="$DATA_ROOT" \
+    -Djavaclaw.log.dir="$LOG_ROOT" \
+    -Djavaclaw.program.dir="$APP_ROOT" \
+    -cp "$APP_ROOT/lib/*" com.javaclaw.launcher.AppServerLauncher \
+    --socket "$STATE_ROOT/run/app-server-v5.sock"
