@@ -4,7 +4,7 @@
         stdout 永远保留给 JSON-RPC。文件 appender 使用有界异步队列，慢磁盘不能反压 Turn；
         超限时允许丢弃低等级诊断，但错误仍通过 stderr 暴露给进程监督器。
     -->
-    <property name="LOG_DIR" value="${javaclaw.log.dir:-${user.dir}/.javaclaw/config-v4/logs}" />
+    <property name="LOG_DIR" value="${javaclaw.log.dir:-${user.home}/.javaclaw/data-v5/logs}" />
     <property name="PROCESS" value="${javaclaw.log.process:-process}" />
     <shutdownHook class="ch.qos.logback.core.hook.DefaultShutdownHook" />
 

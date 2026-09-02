@@ -1,224 +1,138 @@
-<div align="center">
+# JavaClaw 5
 
-# JavaClaw 4.0
+JavaClaw 是本地优先的 Java Agent 平台。5.0 以 Thread / Turn / Item 为核心，用 Thin Turn Harness
+掌握模型调用、工具审批、预算、取消、背压和副作用恢复；Plan、Workflow、Schedule、Memory 等产品能力均由扩展提供。
 
-**Codex 风格、本机优先、协议驱动的 Java Agent Runtime**
+5.0 是破坏性基线：只读取 Protocol v2 与 `data-v5`，不导入旧数据库、不解析旧协议，也不提供兼容 Adapter。
+本版不包含远程/多租户部署、Rust/Codex 后端或 Plugin 兼容层，也不恢复 Ollama、本地模型、邮件/Webhook、宿主输入
+控制、Raw Cookie 导出或 `HOST_FULL_ACCESS`；完整范围见[明确排除](docs/architecture/full-design.md#12-明确排除)。
 
-![Java](https://img.shields.io/badge/Java-25-orange)
-![Protocol](https://img.shields.io/badge/JSON--RPC-2.0-blue)
-![Storage](https://img.shields.io/badge/Store-H2-004088)
-![License](https://img.shields.io/badge/License-MIT-yellow)
+## 架构
 
-</div>
+```mermaid
+flowchart LR
+    UI[JavaFX / CLI] --> SDK[Java SDK]
+    SDK -->|JSON-RPC 2.0 / Protocol v2| SERVER[App Server]
+    SERVER --> CORE[Workspace / Thread / Turn / Item]
+    SERVER --> HARNESS[Thin Turn Harness]
+    SERVER --> EXT[Extension Host]
+    SERVER --> DB[(H2 data-v5)]
+    HARNESS --> MODEL[Model Gateway]
+    MODEL --> SPRING[Spring AI Adapters]
+    MODEL --> RESPONSES[OpenAI Responses Extension]
+    HARNESS --> TOOLS[Frozen Tool Catalog]
+    TOOLS --> SECURITY[Permission / Approval / Sandbox]
+    EXT --> BUILTIN[Built-in Extensions]
+    BUILTIN --> WORKERS[Browser / Knowledge Workers]
+```
 
-JavaClaw 4.0 是一个由本机 App Server 承载的 Agent Runtime。JavaFX Desktop、CLI 和第三方
-本机应用都通过 Java SDK 使用同一套 JSON-RPC v1；产品状态统一表示为
-`Thread → Turn → Item`。项目吸收 Codex 的核心/客户端分离、事件恢复、审批与沙箱分离等原则，
-但保留 Java 25、JavaFX、Spring AI、H2 和多云 Provider，不兼容 Codex 私有协议。
+详细边界见 [架构总览](docs/architecture/README.md) 与 [仓库目录](docs/repository-layout.md)。
 
-## 当前 4.0 架构与能力边界
+## 环境与构建
 
-当前提供 4.0 预发布测试版：保留原桌面设计体系，已接入 Loop/Workflow/SDD、Memory/Skill 版本与学习、
-隔离文件/文档/OCR、Browser/站点、有限通信授权和工作树恢复，全部复用同一新内核。
-正式跨平台发布仍要求原生 Runner 与签名凭据；本机验证不等于所有平台通过。
-逐项实现、证据与外部验收条件见 [能力矩阵](docs/architecture/upgrade-acceptance.md)。
-
-| 领域 | 实现 |
-|---|---|
-| Runtime | 单 Thread 单活动 Turn、Routing Agent Kernel、steer/interrupt、配置快照、崩溃恢复 |
-| 存储 | H2 v4、编号 migration、事务内投影/事件/Outbox、附件、Secret、Feature 与诊断表 |
-| 协议 | 严格 JSON-RPC 2.0 v1、stdio/UDS/Windows Named Pipe、游标恢复、未知 Item 前向兼容 |
-| 流式 | Item start/delta/complete/fail；delta 不消耗持久 sequence；慢客户端 resync |
-| 客户端 | 八领域 typed SDK、重连与进程监督、CLI 人类/JSON 输出、原风格 SDK-only JavaFX；Markdown、附件及领域管理页面 |
-| 模型 | OpenAI、Anthropic、Google 流式对话；OpenAI/Google Embedding |
-| Feature | Plan 显式采用、模型压缩；有限 Loop、八节点 Workflow、SDD/OpenSpec、Schedule；Memory/Knowledge/Skill 版本、确认与学习 |
-| Prompt | 版本化中文模板、可信度分层、逐调用快照、Codex 层级 AGENTS.md、原生/摘要上下文压缩 |
-| 工具 | Schema → Policy → Hook → Approval → Sandbox → 限流/脱敏 → Journal |
-| 扩展 | Plugin Manifest 4.0、Ed25519、ZIP 安装、进程外常驻 MCP/Hook/Service、隔离健康状态 |
-| 协作 | 父子共享预算/配额、Git 合成基线、三方合并、备份与恢复页；清理阻止活动执行，非 Git 单写者 |
-| 安全 | JDK FFM、Seatbelt+PTY、bubblewrap+seccomp+PTY、Windows AppContainer/Job+ConPTY、Network Broker |
-| 发行 | jlink/jpackage、SBOM、许可、SHA-256 与正式签名门禁；各平台包必须由对应 Runner 实际验收，不等同于已发布 |
-
-4.0 不包含 Ollama、Deliverance、本地模型资产、TCP/WebSocket、远程访问、多租户，也不迁移
-任何 3.x 数据或 Plugin API。根 `src`、旧 Session/Conversation/Run 主模型、Callback、
-Spring 工作区 Context、可信 JAR 扩展和 Plugin 3 示例已经从 4.0 源树删除。
-
-## Reactor
-
-| 功能领域 | 模块 | 内部边界 |
-|---|---|
-| 公共契约 | `javaclaw-api`、`javaclaw-protocol` | Core/Sandbox API 与 JSON-RPC Wire Schema |
-| Agent | `javaclaw-agent-runtime` | Kernel、Turn Runtime、Tool、Conversation、Automation、Knowledge |
-| 服务端 | `javaclaw-app-server` | Transport、H2、Cloud Model、Plugin/MCP、进程级装配 |
-| 原生辅助进程 | `javaclaw-native-hosts` | FFM、三平台 Sandbox Launcher、Windows Named Pipe Host |
-| 浏览器 | `javaclaw-browser-service` | 进程外 Playwright |
-| 客户端 | `javaclaw-client`、`javaclaw-desktop` | Java SDK/CLI 与 SDK-only JavaFX UI |
-| 启动与发行 | `javaclaw-packaging` | 统一 Launcher、jlink/jpackage、SBOM、签名与发布 |
-
-Reactor 精确包含 9 个领域模块。架构测试在包级强制 Kernel/Runtime 无
-Spring/JavaFX/JDBC/JSON/Store，Desktop 只依赖 Client，原始 FFM 只在
-`javaclaw-native-hosts` 的未导出包中，进程创建点只允许出现在 Launcher、SDK Supervisor 与
-Windows Transport Host。
-
-## 构建与验证
-
-要求 JDK 25、Maven 3.9+：
+- JDK 25
+- Maven 3.9+
+- macOS 原生隔离使用 Seatbelt；Linux 使用 bubblewrap
 
 ```bash
-# 每次开发后统一格式，并检查公共契约注释；常规构建在 validate 阶段只检查、不改写
-mvn spotless:apply
 mvn spotless:check checkstyle:check
-
-# 干净的完整发布前门禁：协议、UDS 对端凭据、原生沙箱、性能与全部模块
-# 首次在该平台构建/测试 Browser 时，先显式准备匹配的 Chromium 与许可证
-mvn -pl javaclaw-browser-service -am -DskipTests -Djavaclaw.browser.install verify
-# Linux 若缺系统图形依赖，为上条增加 -Djavaclaw.browser.with-deps；GUI 测试使用原生桌面或 xvfb-run
-mvn clean -Djavaclaw.require.native.sandbox=true \
-  -Djavaclaw.performance.gate=true verify
-
-# 单独调试当前平台原生沙箱；不能用 assumption/skip 掩盖失败
-mvn -Djavaclaw.require.native.sandbox=true \
-  -pl javaclaw-native-hosts -am test
-
-# direct runtime 与 SDK/App Server p50/p95 协议开销门禁
-mvn -Djavaclaw.performance.gate=true -pl javaclaw-client -am test
-
-# jlink/ZIP/SBOM/许可/健康脚本
-mvn -Djavaclaw.distribution -pl javaclaw-packaging -am verify
-javaclaw-packaging/target/distribution/bin/javaclaw-health
-
-# 当前平台未签名测试安装包
-mvn -DskipTests -Djavaclaw.distribution -Djavaclaw.native.package \
-  -pl javaclaw-packaging -am verify
+mvn clean verify
 ```
 
-正式发行还必须增加 `-Djavaclaw.release`。缺少 Apple 签名与公证、Linux GPG 或 Windows
-Authenticode/时间戳凭据时，构建在 `validate` 阶段失败。GitHub Actions 已配置 macOS arm64/x64、
-Linux arm64/x64、Windows x64 原生 Runner 的同版本协议、沙箱、安装包和健康门禁；
-不代表这些平台已经全部验证通过，本机实际结果见 [验证记录](docs/architecture/upgrade-verification.md)。
+开发调试使用下文的 IDEA 共享运行配置；已打包产物使用发行目录中的 `bin/javaclaw`
+（Windows 为 `bin\javaclaw.cmd`）。发行运行数据默认位于 `$HOME/.javaclaw/data-v5`；开发服务进程可通过
+`-Djavaclaw.data.root=<absolute-data-v5>` 使用独立数据根，日志写入该根下的 `logs`。Provider 凭据不得直接写入
+配置 payload，只能保存 Vault `CredentialRef`。
 
-## 运行
+### IntelliJ IDEA 一键调试
 
-### 开发调试：直接运行代码入口（推荐）
+使用 JDK 25 从根 `pom.xml` 导入 Maven Reactor 后，在运行配置下拉框选择 `JavaClaw Local Debug`，点击
+Debug 即可同时调试 App Server 与 JavaFX Desktop；两个进程中的断点都会生效。Compound 配置会并行启动进程，
+Desktop 最多等待 App Server 15 秒，不依赖人工控制启动顺序。
 
-1. 将根 `pom.xml` 作为 Maven 项目导入，项目 SDK 和 Maven 使用 **JDK 25**，等待依赖同步完成。
-2. 选择仓库提供的 **JavaClaw** Application 运行配置，点击 Run/Debug；它直接调用唯一产品入口
-   [`JavaClawLauncher.main()`](javaclaw-packaging/src/main/java/com/javaclaw/launcher/JavaClawLauncher.java)。
-3. 手动创建 Application 配置时，Main class 填 `com.javaclaw.launcher.JavaClawLauncher`，
-   classpath 选择 **javaclaw-packaging** 模块，运行前保留 Build；IDE 自动编译依赖模块。
+共享配置只使用 macOS / Linux 的 Unix Domain Socket，开发数据和日志隔离在项目内的
+`.javaclaw/idea/data-v5`。`JavaClaw App Server` 与 `JavaClaw Desktop` 可用于分别调试单个进程。Provider 与凭据
+必须通过设置与管理中心写入 H2 和 Secret Vault；生产链不会读取环境变量或 JVM property 作为模型配置，也不要把
+API key 写入或提交到 `.run` 配置。
 
-这是普通 Java `main`，可以直接设置断点和调试 UI/SDK 启动流程；不执行 `run.sh`/`run.cmd`，
-不需要预先生成发行包，不需要另外启动 App Server，也不需要手工设置 JavaFX `--module-path`。
-App Server 按新架构由 SDK 启动为独立子进程；需要调试服务端时应对该子进程单独附加调试器，
-而不是把 Server 类重新嵌入 Desktop JVM。
-共享 IDEA 配置使用 Java argfile 缩短 classpath；manifest classpath 的本地依赖也能被启动器识别。
-`JavaClawDesktop` 是由产品入口调用的 JavaFX 生命周期类，不再暴露第二个 `main`；不要使用单文件运行模式。
+三份共享运行配置已纳入自动架构测试，持续校验模块入口、主类、Unix Domain Socket 和隔离 `data-v5` 参数，防止
+IDEA 一键调试链随模块重构失效。
 
-### 终端便捷脚本（非开发必需）
+IDEA 直接调试没有发行启动器 supervisor，因此“修复登录启动项”会明确显示不可用原因，不会伪造成功。
 
-下面的脚本只负责在终端中构建/定位 classpath，并最终调用同一个 JavaClawLauncher；
-它不是开发调试入口，也不包含另一套启动逻辑。
+## 本地协议
 
-```bash
-# macOS / Linux：构建当前源码的发行目录，然后启动桌面
-./run.sh
+- 严格 JSON-RPC 2.0，`appProtocolVersion=2`
+- 连接必须先调用 `initialize/session` 完成 stable / experimental capability 协商
+- 支持 stdio、Unix Domain Socket 与仅当前用户可访问的 Windows Named Pipe；TCP、WebSocket 不在范围内
+- 写命令统一携带 idempotency key 与 expected revision
+- 扩展业务统一使用 `extension/query`、`extension/command`、`extension/schema/read`、`extension/view/list`
+- 扩展写入通过无正文的 `extension/event` 通知失效，SDK 持续接收后重新读取权威状态
+- 当前 catalog 共 138 个方法；每个方法都有独立且严格的 params/result JSON Schema
+- Core ID 使用标量字符串，时间与 Duration 使用 ISO-8601 文本，不接受第二种 wire 表示
+- 未知 Item schema 保留规范 JSON payload，供 5.x 前向演进
 
-# 显式复用已有发行目录；修改源码后应使用不带该参数的启动命令
-./run.sh --no-build
+Schema 位于
+[protocol-v2.schema.json](javaclaw-protocol/src/main/resources/schema/protocol-v2.schema.json) 与
+[methods-v2.json](javaclaw-protocol/src/main/resources/schema/methods-v2.json)。
 
-# 查看帮助，不构建、不打开窗口
-./run.sh --help
-```
+## 模型配置
 
-Windows 使用 `run.cmd`，也支持 `--no-build` 和 `--help`。脚本可从其他工作目录调用，并支持
-项目路径中的空格和中文；默认构建需要 Maven 3.9+，`--no-build` 使用发行目录自带的 Java。
+App Server 从 H2 中的版本化 Provider 配置建立热更新 registry，CredentialRef 只在调用边界从 Secret Vault 解封。
+通用语义由 Spring AI Adapter 统一，OpenAI Responses 的 reasoning summary、opaque state 与原生 compaction 使用
+专用 Adapter。JavaClaw 不使用 Spring AI 的自动工具循环；审批、Sandbox、预算和 EffectReceipt 始终由 Harness
+控制。
 
-默认构建执行 `mvn -B -DskipTests -Djavaclaw.distribution -pl javaclaw-packaging -am package`，
-保留 Spotless、Checkstyle 与依赖门禁，不生成 DMG/MSI 等安装包。任何构建失败都会停止启动，
-不会自动运行旧产物；`--no-build` 遇到发行目录缺失或不完整时也会明确报错。
+Provider 配置与凭据通过服务端复合命令原子提交，候选 Adapter 验证失败不会替换活动 registry。非计费配置探测和
+可能计费的模型 round-trip 分开呈现，后者必须由用户显式确认。Prompt 优化通过正常、受预算的 Harness Turn 生成
+Draft；只有用户显式采纳且 revision 仍匹配时才会更新 Profile。
 
-首次打包前按上面的 `javaclaw.browser.install` 命令准备浏览器；这是显式下载，可能需要数百 MiB。
-发行物会包含与锁定 Playwright driver 一致的 Chromium/headless shell/ffmpeg、许可证和哈希。
-缺少精确资源时构建拒绝继续，不会在用户启动应用时静默下载。
-可用 `JAVACLAW_BROWSER_ASSET_DIR` 指定构建资源目录；不要将用户浏览器登录配置作为发行资源。
+没有有效 Provider 配置或 Vault 处于锁定状态时，App Server 仍可启动并提供管理能力，但依赖模型或 Secret 的操作
+会 fail closed，不会回退到环境变量或假模型。
 
-### 发行目录与配置
+## Desktop
 
-```bash
-# 与 IDE 共用同一个 Launcher；安装包中的 JavaClaw 图标也指向该入口
-javaclaw-packaging/target/distribution/bin/javaclaw
+Desktop 是纯 SDK 客户端，不连接 H2，也不读取 App Server 内部 Service。布局、CSS token 与交互语言沿用
+`509f197` 的设计基线；扩展页面只能通过受限 ViewSchema 渲染，不能注入 FXML、CSS、Controller、JavaScript
+或本地 URL。详见 [UI 设计系统](docs/ui-design-system.md)。
 
-# CLI 使用领域命令，不提供绕过 SDK 的 raw rpc 入口
-javaclaw-packaging/target/distribution/bin/javaclaw-cli --help
-```
+齿轮入口和 `Ctrl/Cmd+,` 打开单实例、非阻塞的设置与管理中心。外观、Provider、Agent Profile、Prompt 预览/优化、
+PermissionProfile、Vault、授权、MCP、Bundle、Workspace、项目约定、Worktree、生命周期与诊断使用强类型 SDK 页面；
+Plan、Loop、Workflow、SDD、Schedule、Memory、Knowledge、Skill 与 Site 使用受限 ViewSchema v2。连接失败时仍可使用本机
+外观与连接页面，底层 `Connection refused` 不直接显示给用户。
 
-Desktop 通过 SDK 管理自己的 App Server，关闭窗口会清理本次创建的后台进程。Native Host 和
-Browser Service 仍然按需运行，启动器不会绕过沙箱，也不会为打开主界面调用云模型或自动下载浏览器。
-未配置模型凭据时可以打开界面；实际对话仍需先配置 Provider。
+当前设置与管理中心的 29 个生产导航入口均已接入强类型 SDK 或 ViewSchema v2 权威数据源。扩展写入后的
+`extension/event` 只触发按 revision 重新读取；快速通知会合并，dirty 草稿遇到冲突时不会被后台刷新覆盖。
+macOS 参考集包含九主题、三密度、两种窗口共 54 张生产 Scene，并在独立 JVM 中执行逐字节回归。
 
-OpenAI 兼容端点必须实现 Responses API。Provider 页可填写 `http(s)://host:port` 或已经包含
-`/v1` 的地址；裸主机地址会自动补为 `/v1`。显式自定义端点可不保存 API Key，适用于默认免鉴权的
-LM Studio 等本地服务；需要鉴权的服务仍应保存凭据。兼容端点默认使用摘要压缩，只有确认服务实现
-`POST /v1/responses/compact` 后才应启用 `nativeCompaction`。
+## 恢复语义
 
-Provider 的“对话模型”是端点默认值，不会静默覆盖已经版本化的 Profile。实际 Turn 始终使用所选
-Profile 中的 Provider 和模型标识；更换兼容模型后，应在“智能体”页同步检查 Chat、Plan、Loop、
-Workflow、SDD、Schedule 和 Subagent。只实现 Chat Completions、但没有 `POST /v1/responses` 与
-Responses SSE/tool calling 的端点，不能满足当前 Agent Runtime。
+Turn 和 Extension Job 在外部模型或工具调用前持久化意图、冻结目录、已消费预算和执行阶段，成功结果与 checkpoint
+在同一事务推进。App Server 重启后恢复输入与审批等待；已有 EffectReceipt 的工作不会重放，无法确认结果的在途
+副作用进入 `UNKNOWN_OUTCOME` 并停止自动重试。
 
-默认情况下，数据、凭据主密钥、日志和缓存全部位于程序目录下：
+## 发布边界
 
-```text
-<program>/.javaclaw/data-v4
-<program>/.javaclaw/config-v4
-<program>/.javaclaw/cache-v4
-```
+当前源码可在 macOS 上完成真实 Seatbelt、PTY、Git Worktree 与 Protocol v2 测试。Windows Named Pipe、
+AppContainer、Restricted Token、Job Object 和 ConPTY 已实现，但 Windows 专属行为以及 Linux bubblewrap 仍必须由
+对应原生 Runner 给出证据。Windows Job Object 不提供打开文件数硬限制，这一平台差异不会被宿主侧观测伪装成强制。
 
-不会回退到用户主目录或系统缓存目录。可用 `JAVACLAW_PROGRAM_DIR` 整体指定程序本地根，也可使用
-`JAVACLAW_DATA_DIR`、`JAVACLAW_CONFIG_DIR` 和 `JAVACLAW_CACHE_DIR` 分别覆盖。
-程序或安装目录必须允许当前用户写入；只读目录会在启动阶段明确失败，不会悄悄改存到其他位置。
-高级接入继续支持 `JAVACLAW_APP_SERVER_COMMAND_JSON`、`JAVACLAW_APP_SERVER_CLASSPATH`、
-macOS/Linux 的 `JAVACLAW_APP_SERVER_SOCKET` 和 Windows 的
-`JAVACLAW_WINDOWS_TRANSPORT_COMMAND_JSON` / `JAVACLAW_WINDOWS_PIPE`。
-显式命令优先于显式 classpath，再优先于自动定位；连接外部服务时，关闭桌面只断开连接。
-`JAVACLAW_SANDBOX_MODULE_PATH` 兼容原有单目录，也支持平台路径分隔符连接的多个目录或 JAR；
-默认值由启动器按 Native Host 的模块依赖自动计算，不需要手动填写。
+第三方 Extension Bundle 的 digest staging、签名与信任审阅、原子升级、进程外监督、限额存储、隔离和可恢复 Trash
+已经形成管理纵切。API、Extension SPI、Protocol、Runtime、Model Adapter、Builtin、Native Host、Client、Knowledge
+Worker 与 Browser Service 已分别通过当前模块质量门禁；2026-09-02 的本机 macOS aarch64 完整 `mvn clean verify`
+已通过全部 15 个 Reactor 模块。发行包内置 CycloneDX SBOM、许可白名单清单和 SHA-256 文件清单；本机 macOS jlink
+发行目录已通过隔离 `data-v5` 的 Protocol v2 健康检查。正式标签仍必须通过五个原生 Runner、真实
+Chromium Sandbox/OAuth、三平台签名、macOS 公证以及 GitHub provenance/SBOM attestation。任何缺失证据都会阻止发布。
 
-默认数据根为 `<program>/.javaclaw/data-v4`。它必须为空或带 v4 格式标记；旧的
-`~/.javaclaw`、3.x 或未标记非空目录不会被读取、迁移或删除。凭据以 AES-256-GCM 存入 H2，主密钥位于数据库外并要求当前
-用户独占权限；查询、日志、事件和诊断包永不返回明文凭据。
-
-### 常见启动失败
-
-| 现象 | 处理方式 |
-|---|---|
-| JavaFX runtime components / module not found | 使用普通 `JavaClawLauncher` 入口和 packaging 模块 classpath，重新同步 Maven；移除旧运行配置里手写的 JavaFX 模块参数 |
-| 缺少 App Server / Native Host | 确认 IDE 已编译 packaging 的依赖模块；终端重新执行不带 `--no-build` 的脚本 |
-| Spotless、Checkstyle 或依赖门禁失败 | 修复实际构建错误，不关闭检查，不回退到旧产物 |
-| 握手失败、数据目录被拒绝 | 查看同一控制台的 App Server 日志；保留原目录，可用 `JAVACLAW_DATA_DIR` 指向新的空目录 |
+发布验收见 [验收矩阵](docs/architecture/acceptance-matrix.md)。项目使用 [MIT License](LICENSE)。
 
 ## 文档
 
-- [仓库目录、模块职责与本机数据边界](docs/repository-layout.md)
-- [代码格式、中文注释与开发检查清单](docs/coding-style.md)
-- [本次格式与注释规范化验收记录](docs/coding-style-verification.md)
-- [统一启动入口与各平台验收记录](docs/launcher-verification.md)
-- [仓库协作约定](AGENTS.md)
-- [总体架构](docs/architecture/README.md)
-- [509f197 UI 设计基线与回归审查规范](docs/ui-design-regression-baseline.md)
-- [JavaClaw v4 UI 回归审查报告与固定视觉证据](docs/ui-regression-review-v4.md)
-- [JavaClaw v4 交互差异矩阵与回归审查](docs/ui-interaction-regression-v4.md)
-- [完整升级设计：原 UI、旧能力与提示词](docs/architecture/full-upgrade-design.md)
-- [旧能力与原 UI 验收矩阵](docs/architecture/upgrade-acceptance.md)
-- [Codex 提示词来源、版本与适配记录](docs/architecture/prompt-provenance.md)
-- [本轮升级验证记录](docs/architecture/upgrade-verification.md)
-- [迁移与原生验证状态](docs/architecture/migration-status.md)
-- [安全威胁模型](docs/architecture/threat-model.md)
-- [协议 v1 Schema](javaclaw-protocol/src/main/resources/schema/protocol-v1.schema.json)
-- [ADR](docs/architecture/adr)
-
-## 许可证
-
-本项目基于 [MIT License](LICENSE) 开源。
-
-Copyright (c) 2026 CogniCodeGen
+- [代码规范](docs/coding-style.md)
+- [仓库与模块边界](docs/repository-layout.md)
+- [完整架构设计](docs/architecture/full-design.md)
+- [实施清单](docs/architecture/implementation-checklist.md)
+- [威胁模型](docs/architecture/threat-model.md)
+- [Prompt 来源与边界](docs/architecture/prompt-provenance.md)
+- [发布与供应链](docs/release.md)
+- [现行 ADR](docs/architecture/adr/)

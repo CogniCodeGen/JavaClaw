@@ -5,49 +5,108 @@
     <parent>
         <groupId>com.javaclaw</groupId>
         <artifactId>javaclaw-parent</artifactId>
-        <version>4.0.0-SNAPSHOT</version>
+        <version>5.0.0-SNAPSHOT</version>
     </parent>
     <artifactId>javaclaw-desktop</artifactId>
     <name>JavaClaw JavaFX SDK Client</name>
-    <properties>
-        <javafx.version>25</javafx.version>
-    </properties>
     <dependencies>
-        <!-- The sole JavaClaw production dependency is the public Java SDK. -->
+        <dependency>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-protocol</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.javaclaw</groupId>
             <artifactId>javaclaw-client</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-builtin-contracts</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-extension-spi</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-native-hosts</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-base</artifactId>
+            <version>${javafx.version}</version>
+            <classifier>${javafx.platform}</classifier>
+        </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-graphics</artifactId>
+            <version>${javafx.version}</version>
+            <classifier>${javafx.platform}</classifier>
+        </dependency>
+        <dependency>
             <groupId>org.openjfx</groupId>
             <artifactId>javafx-controls</artifactId>
             <version>${javafx.version}</version>
+            <classifier>${javafx.platform}</classifier>
         </dependency>
         <dependency>
             <groupId>org.openjfx</groupId>
             <artifactId>javafx-fxml</artifactId>
             <version>${javafx.version}</version>
-        </dependency>
-        <!-- 沿用旧 UI 的 CommonMark 语义；解析器不执行 HTML，也不请求图片或链接。 -->
-        <dependency>
-            <groupId>org.commonmark</groupId>
-            <artifactId>commonmark</artifactId>
-            <version>0.30.0</version>
-        </dependency>
-        <dependency>
-            <groupId>org.commonmark</groupId>
-            <artifactId>commonmark-ext-gfm-tables</artifactId>
-            <version>0.30.0</version>
-        </dependency>
-        <dependency>
-            <groupId>org.commonmark</groupId>
-            <artifactId>commonmark-ext-gfm-strikethrough</artifactId>
-            <version>0.30.0</version>
+            <classifier>${javafx.platform}</classifier>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.2</version>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>com.javaclaw.desktop.shell.JavaClawDesktop</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+            <!-- JavaFX 的进程级字形缓存会受先前窗口测试影响，Golden 必须在独立 JVM 中生成可重复证据。 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>3.5.2</version>
+                <configuration>
+                    <useModulePath>false</useModulePath>
+                    <failIfNoTests>true</failIfNoTests>
+                    <argLine>--enable-native-access=ALL-UNNAMED</argLine>
+                    <systemPropertyVariables>
+                        <javaclaw.log.dir>${project.build.directory}/test-logs</javaclaw.log.dir>
+                        <javaclaw.log.process>golden-tests</javaclaw.log.process>
+                    </systemPropertyVariables>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>verify-ui-golden</id>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

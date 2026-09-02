@@ -5,27 +5,40 @@
     <parent>
         <groupId>com.javaclaw</groupId>
         <artifactId>javaclaw-parent</artifactId>
-        <version>4.0.0-SNAPSHOT</version>
+        <version>5.0.0-SNAPSHOT</version>
     </parent>
     <artifactId>javaclaw-browser-service</artifactId>
-    <name>JavaClaw Sandboxed Browser Service</name>
+    <name>JavaClaw Isolated Browser Worker</name>
     <dependencies>
+        <dependency>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-api</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.javaclaw</groupId>
             <artifactId>javaclaw-protocol</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-builtin-contracts</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-native-hosts</artifactId>
         </dependency>
         <dependency>
             <groupId>com.microsoft.playwright</groupId>
             <artifactId>playwright</artifactId>
-            <version>1.52.0</version>
+            <version>${playwright.version}</version>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -38,64 +51,11 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>com.javaclaw.browser.BrowserServiceMain</mainClass>
+                            <mainClass>com.javaclaw.browser.worker.BrowserWorkerMain</mainClass>
                         </manifest>
                     </archive>
                 </configuration>
             </plugin>
         </plugins>
     </build>
-    <profiles>
-        <!-- 仅显式的开发/CI 准备步骤下载匹配版本；普通构建与产品启动绝不下载浏览器。 -->
-        <profile>
-            <id>provision-browser-assets</id>
-            <activation>
-                <property>
-                    <name>javaclaw.browser.install</name>
-                </property>
-            </activation>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-antrun-plugin</artifactId>
-                        <version>3.1.0</version>
-                        <executions>
-                            <execution>
-                                <id>install-matching-chromium-and-notices</id>
-                                <phase>verify</phase>
-                                <goals>
-                                    <goal>run</goal>
-                                </goals>
-                                <configuration>
-                                    <target>
-                                        <condition property="browser.dependency.flag" value="--with-deps"
-                                            else="">
-                                            <isset property="javaclaw.browser.with-deps" />
-                                        </condition>
-                                        <java classname="com.microsoft.playwright.CLI" fork="true"
-                                            failonerror="true" timeout="600000">
-                                            <classpath refid="maven.runtime.classpath" />
-                                            <env key="PLAYWRIGHT_SKIP_BROWSER_GC" value="1" />
-                                            <env key="PLAYWRIGHT_BROWSERS_PATH"
-                                                value="${maven.multiModuleProjectDirectory}/.javaclaw/cache-v4/ms-playwright" />
-                                            <arg value="install" />
-                                            <arg line="${browser.dependency.flag}" />
-                                            <arg value="chromium" />
-                                        </java>
-                                        <java classname="com.javaclaw.browser.BrowserDistributionCredits"
-                                            fork="true" failonerror="true" timeout="60000">
-                                            <classpath refid="maven.runtime.classpath" />
-                                            <env key="PLAYWRIGHT_BROWSERS_PATH"
-                                                value="${maven.multiModuleProjectDirectory}/.javaclaw/cache-v4/ms-playwright" />
-                                        </java>
-                                    </target>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-    </profiles>
 </project>

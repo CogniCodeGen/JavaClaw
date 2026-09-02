@@ -5,11 +5,20 @@
     <property name="charset" value="UTF-8" />
     <property name="severity" value="error" />
 
+    <!-- 文件规模是职责边界门禁；生成代码和外部 Schema 不进入 Checkstyle 输入。 -->
+    <module name="FileLength">
+        <property name="max" value="600" />
+    </module>
     <!-- 测试依靠场景名称表达意图，仅豁免 Javadoc 存在性；格式规则仍然生效。 -->
     <module name="SuppressionFilter">
         <property name="file" value="${checkstyle.suppressions.file}" />
     </module>
     <module name="TreeWalker">
+        <module name="RegexpSinglelineJava">
+            <property name="format" value="\b(TODO|FIXME)\b" />
+            <property name="maximum" value="0" />
+            <property name="message" value="生产与测试源码不得保留无验收条件的 TODO/FIXME。" />
+        </module>
         <module name="AvoidStarImport" />
         <module name="OneStatementPerLine" />
         <module name="NeedBraces">
@@ -17,6 +26,26 @@
         </module>
         <module name="EmptyLineSeparator">
             <property name="tokens" value="METHOD_DEF,CTOR_DEF,COMPACT_CTOR_DEF,STATIC_INIT,INSTANCE_INIT" />
+        </module>
+        <module name="MethodLength">
+            <property name="max" value="60" />
+            <property name="countEmpty" value="false" />
+        </module>
+        <module name="CyclomaticComplexity">
+            <property name="max" value="12" />
+        </module>
+        <module name="NestedIfDepth">
+            <property name="max" value="4" />
+        </module>
+        <module name="NestedForDepth">
+            <property name="max" value="4" />
+        </module>
+        <module name="NestedTryDepth">
+            <property name="max" value="4" />
+        </module>
+        <module name="ParameterNumber">
+            <property name="max" value="7" />
+            <property name="ignoreOverriddenMethods" value="true" />
         </module>
         <module name="MissingJavadocType">
             <property name="scope" value="protected" />

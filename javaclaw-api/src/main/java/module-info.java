@@ -1,4 +1,4 @@
+/** JavaClaw 5 的不可变公共契约。 */
 module com.javaclaw.api {
-    exports com.javaclaw.core.api;
-    exports com.javaclaw.sandbox.api;
+    exports com.javaclaw.api;
 }

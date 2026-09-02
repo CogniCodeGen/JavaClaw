@@ -1,7 +1,7 @@
 # Java / Maven 可再生输出
 *.class
 **/target/
-# UI 视觉测试的当前截图、差异图和候选基准；固定 Golden 仍位于 src/test/resources。
+# UI 视觉测试的当前截图、差异图和候选基准；固定 Golden 位于 docs/images/screenshots。
 /javaclaw-packaging/target/visual/
 # 所有模块的测试资源目录；确需提交的新夹具必须显式强制添加。
 **/src/test/resources/
@@ -47,7 +47,10 @@ replay_pid*
 # IDE 与本机工具状态
 /.idea/
 /.vscode/
-/.run/
+/.run/*
+!/.run/JavaClaw_App_Server.run.xml
+!/.run/JavaClaw_Desktop.run.xml
+!/.run/JavaClaw_Local_Debug.run.xml
 /.qoder/
 /.cache/
 *.iml

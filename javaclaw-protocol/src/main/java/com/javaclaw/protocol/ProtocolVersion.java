@@ -1,14 +1,12 @@
 package com.javaclaw.protocol;
 
-/** JavaClaw 自有协议版本支持表；不随外部 Codex 私有协议变化。 */
+/** App Protocol 版本常量。 */
 public final class ProtocolVersion {
-    public static final int CURRENT = 1;
-    public static final int MINIMUM = 1;
+    /** JavaClaw 5.x 唯一支持的协议版本。 */
+    public static final int CURRENT = 2;
+
+    /** JSON-RPC 固定版本。 */
+    public static final String JSON_RPC = "2.0";
 
     private ProtocolVersion() {}
-
-    /** 判断给定版本是否由当前服务端支持；不自动降级。 */
-    public static boolean supported(int value) {
-        return value >= MINIMUM && value <= CURRENT;
-    }
 }

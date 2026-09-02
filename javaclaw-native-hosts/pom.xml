@@ -5,7 +5,7 @@
     <parent>
         <groupId>com.javaclaw</groupId>
         <artifactId>javaclaw-parent</artifactId>
-        <version>4.0.0-SNAPSHOT</version>
+        <version>5.0.0-SNAPSHOT</version>
     </parent>
     <artifactId>javaclaw-native-hosts</artifactId>
     <name>JavaClaw Native Hosts</name>
@@ -19,33 +19,76 @@
             <artifactId>javaclaw-protocol</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.fasterxml.jackson.datatype</groupId>
-            <artifactId>jackson-datatype-jsr310</artifactId>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-extension-spi</artifactId>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-jar-plugin</artifactId>
-                <version>3.4.2</version>
-                <configuration>
-                    <archive>
-                        <manifest>
-                            <mainClass>com.javaclaw.nativehost.sandbox.SandboxLauncherMain</mainClass>
-                        </manifest>
-                    </archive>
-                </configuration>
-            </plugin>
-        </plugins>
-    </build>
+    <profiles>
+        <profile>
+            <id>native-hosts-unix-coverage</id>
+            <activation>
+                <os>
+                    <family>unix</family>
+                </os>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>verify-coverage</id>
+                                <configuration>
+                                    <excludes>
+                                        <exclude>com/javaclaw/nativehost/ffm/Windows*</exclude>
+                                        <exclude>com/javaclaw/nativehost/sandbox/Windows*</exclude>
+                                        <exclude>com/javaclaw/nativehost/transport/Windows*</exclude>
+                                    </excludes>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>native-hosts-windows-coverage</id>
+            <activation>
+                <os>
+                    <family>Windows</family>
+                </os>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>verify-coverage</id>
+                                <configuration>
+                                    <excludes>
+                                        <exclude>com/javaclaw/nativehost/ffm/Posix*</exclude>
+                                        <exclude>com/javaclaw/nativehost/sandbox/Linux*</exclude>
+                                        <exclude>com/javaclaw/nativehost/sandbox/Mac*</exclude>
+                                    </excludes>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

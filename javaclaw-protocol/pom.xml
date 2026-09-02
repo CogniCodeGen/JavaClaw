@@ -5,11 +5,27 @@
     <parent>
         <groupId>com.javaclaw</groupId>
         <artifactId>javaclaw-parent</artifactId>
-        <version>4.0.0-SNAPSHOT</version>
+        <version>5.0.0-SNAPSHOT</version>
     </parent>
     <artifactId>javaclaw-protocol</artifactId>
-    <name>JavaClaw App Protocol</name>
+    <name>JavaClaw App Protocol v2</name>
+    <properties>
+        <jacoco.line.ratio>0.90</jacoco.line.ratio>
+        <jacoco.branch.ratio>0.80</jacoco.branch.ratio>
+    </properties>
     <dependencies>
+        <dependency>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-extension-spi</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
@@ -24,7 +40,12 @@
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

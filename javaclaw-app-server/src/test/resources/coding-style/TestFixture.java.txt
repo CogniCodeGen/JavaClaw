@@ -1,7 +1,0 @@
-import java.util.*;
-
-public class TestFixture {
-    public void scenario() {
-        int first = 1; first++;
-    }
-}

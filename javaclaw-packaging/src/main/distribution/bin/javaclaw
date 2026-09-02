@@ -1,6 +1,15 @@
 #!/bin/sh
 set -eu
 APP_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-JAVACLAW_PROGRAM_DIR=${JAVACLAW_PROGRAM_DIR:-$APP_ROOT}
-export JAVACLAW_PROGRAM_DIR
-exec "$APP_ROOT/runtime/bin/java" -cp "$APP_ROOT/lib/*" com.javaclaw.launcher.JavaClawLauncher "$@"
+case "$(uname -s)" in
+Darwin)
+    exec "$APP_ROOT/runtime/bin/java" -XstartOnFirstThread \
+        -Djavaclaw.tray.launcher=true -Djavaclaw.program.dir="$APP_ROOT" \
+        -cp "$APP_ROOT/lib/*" com.javaclaw.launcher.JavaClawLauncher "$@"
+    ;;
+*)
+    exec "$APP_ROOT/runtime/bin/java" -Djavaclaw.tray.launcher=true \
+        -Djavaclaw.program.dir="$APP_ROOT" -cp "$APP_ROOT/lib/*" \
+        com.javaclaw.launcher.JavaClawLauncher "$@"
+    ;;
+esac

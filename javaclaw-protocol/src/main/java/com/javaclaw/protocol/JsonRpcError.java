@@ -1,31 +1,24 @@
 package com.javaclaw.protocol;
 
 import java.util.Objects;
+import java.util.Optional;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.databind.JsonNode;
+import com.javaclaw.api.CanonicalPayload;
 
 /**
- * JSON-RPC 错误对象；message/data 必须在构造前完成敏感信息过滤。
+ * JSON-RPC 错误对象。
  *
- * @param code JSON-RPC 标准或应用错误代码
- * @param message 非空错误说明
- * @param data 可选结构化错误详情；可为 null
+ * @param code 稳定错误码
+ * @param message 简短错误说明
+ * @param data 可选结构化详情
  */
-@JsonInclude(JsonInclude.Include.NON_NULL)
-public record JsonRpcError(int code, String message, JsonNode data) {
-    /** 要求错误说明非空；不对敏感数据进行自动脱敏。 */
+public record JsonRpcError(int code, String message, Optional<CanonicalPayload> data) {
+    /** 校验错误信息。 */
     public JsonRpcError {
-        message = Objects.requireNonNull(message, "message");
+        message = Objects.requireNonNull(message, "message").strip();
+        if (message.isEmpty()) {
+            throw new IllegalArgumentException("message must not be blank");
+        }
+        data = Objects.requireNonNull(data, "data");
     }
-
-    public static final int PARSE_ERROR = -32700;
-    public static final int INVALID_REQUEST = -32600;
-    public static final int METHOD_NOT_FOUND = -32601;
-    public static final int INVALID_PARAMS = -32602;
-    public static final int INTERNAL_ERROR = -32603;
-    public static final int NOT_INITIALIZED = -32001;
-    public static final int CONFLICT = -32009;
-    public static final int NOT_FOUND = -32044;
-    public static final int UNSUPPORTED_VERSION = -32060;
 }

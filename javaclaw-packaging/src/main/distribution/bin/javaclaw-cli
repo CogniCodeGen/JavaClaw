@@ -1,10 +1,8 @@
 #!/bin/sh
 set -eu
 APP_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-JAVACLAW_PROGRAM_DIR=${JAVACLAW_PROGRAM_DIR:-$APP_ROOT}
-export JAVACLAW_PROGRAM_DIR
-export JAVACLAW_APP_SERVER_CLASSPATH="$APP_ROOT/lib/*"
-export JAVACLAW_SANDBOX_MODULE_PATH="$APP_ROOT/native-module-path"
-export JAVACLAW_BROWSER_SERVICE_LIB="$APP_ROOT/lib"
-export JAVACLAW_BROWSER_ASSET_DIR="$APP_ROOT/lib/ms-playwright"
-exec "$APP_ROOT/runtime/bin/java" -cp "$APP_ROOT/lib/*" com.javaclaw.cli.JavaClawCli "$@"
+exec "$APP_ROOT/runtime/bin/java" -cp "$APP_ROOT/lib/*" com.javaclaw.client.cli.JavaClawCli \
+    "$@" -- "$APP_ROOT/runtime/bin/java" \
+    --enable-native-access=ALL-UNNAMED \
+    -Djavaclaw.program.dir="$APP_ROOT" \
+    -cp "$APP_ROOT/lib/*" com.javaclaw.launcher.AppServerLauncher --stdio

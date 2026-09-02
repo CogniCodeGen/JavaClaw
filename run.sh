@@ -32,9 +32,6 @@ case "${1:-}" in
 esac
 
 JAVACLAW_PROJECT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-# 开发发行目录会在每次构建时重建；程序本地数据固定放在仓库根，避免被 target 清理。
-JAVACLAW_PROGRAM_DIR=${JAVACLAW_PROGRAM_DIR:-$JAVACLAW_PROJECT_ROOT}
-export JAVACLAW_PROGRAM_DIR
 cd "$JAVACLAW_PROJECT_ROOT"
 if [ "$JAVACLAW_BUILD" = true ]; then
     if ! command -v mvn >/dev/null 2>&1; then

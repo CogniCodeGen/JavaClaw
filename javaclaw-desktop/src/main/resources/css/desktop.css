@@ -1,28 +1,26 @@
 /*
- * v4 SDK 控件适配层。颜色、字体、圆角与交互语义全部复用原版 chat.css 的设计令牌；
- * 本文件只补充新 Item、设置页和管理页所需的结构样式。
+ * JavaClaw 5 Desktop 适配层。
+ * 颜色、字体、圆角和交互状态全部复用 design-tokens-controls.css 的 509f197 设计令牌。
  */
+
 .error-banner {
     -fx-text-fill: -jc-danger;
-    -fx-background-color: -jc-surface-panel;
-    -fx-padding: 8 24;
+    -fx-background-color: -jc-danger-bg;
+    -fx-border-color: -jc-tint-terra-line;
+    -fx-border-width: 1;
+    -fx-border-radius: 10;
+    -fx-background-radius: 10;
+    -fx-padding: 10 14;
+    -fx-font-weight: 500;
 }
 
-.sidebar-search {
-    -fx-background-radius: 8;
-}
-
-/* v4 的 ListView 只负责虚拟化；会话行继续使用 509f197 的独立 hover/selected 表面。 */
+/* ListView 只负责虚拟化，内容卡片自行表达状态。 */
 .sidebar-list-scroll .list-cell,
 .sidebar-list-scroll .list-cell:filled:hover,
 .sidebar-list-scroll .list-cell:filled:selected,
 .sidebar-list-scroll .list-cell:filled:selected:focused {
     -fx-background-color: transparent;
     -fx-padding: 0 0 3 0;
-}
-
-.sidebar-list-scroll .list-cell:focused .sidebar-conv-row {
-    -fx-border-color: -jc-primary-300;
 }
 
 .transcript-list {
@@ -39,7 +37,8 @@
     -fx-padding: 8 0;
 }
 
-.transcript-list .label {
+.transcript-list .label,
+.transcript-list .message-assistant .label {
     -fx-text-fill: -jc-text-body;
 }
 
@@ -47,35 +46,29 @@
     -fx-text-fill: -jc-text-title;
 }
 
-.transcript-list .message-assistant .label {
-    -fx-text-fill: -jc-text-body;
+.transcript-execution-block,
+.transcript-interaction-block,
+.transcript-error-block {
+    -fx-padding: 12;
+    -fx-border-width: 1;
+    -fx-border-radius: 10;
+    -fx-background-radius: 10;
+    -fx-effect: none;
 }
 
 .transcript-execution-block {
     -fx-background-color: -jc-surface-panel;
     -fx-border-color: -jc-border;
-    -fx-border-width: 1;
-    -fx-border-radius: 10;
-    -fx-background-radius: 10;
-    -fx-effect: none;
 }
 
 .transcript-interaction-block {
     -fx-background-color: -jc-warning-bg;
     -fx-border-color: -jc-warning;
-    -fx-border-width: 1;
-    -fx-border-radius: 10;
-    -fx-background-radius: 10;
-    -fx-effect: none;
 }
 
 .transcript-error-block {
     -fx-background-color: -jc-danger-bg;
     -fx-border-color: -jc-danger;
-    -fx-border-width: 1;
-    -fx-border-radius: 10;
-    -fx-background-radius: 10;
-    -fx-effect: none;
 }
 
 .message-role {
@@ -95,328 +88,210 @@
     -fx-text-fill: -jc-primary-500;
 }
 
-.streaming-text {
-    -fx-text-fill: -jc-text-body;
-    -fx-padding: 12 24;
-    -fx-background-color: -jc-thinking-bg;
-}
-
-.management-root {
-    -fx-background-color: -jc-surface-page;
-    -fx-padding: 20;
-}
-
-.management-heading {
-    -fx-font-size: 20px;
-    -fx-font-weight: bold;
-    -fx-text-fill: -jc-text-title;
-}
-
-.management-detail {
-    -fx-text-fill: -jc-text-muted;
-}
-
-.management-empty-state {
-    -fx-padding: 36 24;
-    -fx-background-color: -jc-surface-card;
-    -fx-border-color: -jc-border;
-    -fx-border-radius: 12;
-    -fx-background-radius: 12;
-}
-
-.management-empty-state .empty-state-text {
-    -fx-text-fill: -jc-text-title;
-}
-
-.management-empty-state .empty-state-hint {
-    -fx-text-fill: -jc-text-muted;
-}
-
-.management-section {
-    -fx-padding: 16;
-    -fx-background-color: -jc-surface-card;
-    -fx-border-color: -jc-border;
-    -fx-border-radius: 12;
-    -fx-background-radius: 12;
-}
-
-.management-section-title {
-    -fx-font-size: 14px;
-    -fx-font-weight: 600;
-    -fx-text-fill: -jc-text-title;
-}
-
-.management-action-bar {
-    -fx-alignment: CENTER_LEFT;
-    -fx-background-color: transparent;
-}
-
-/* 长表单仅滚动内容，关键操作沿用原 modal-foot 语言固定在可达区域。 */
-.management-fixed-actions {
-    -fx-background-color: -jc-surface-card;
-    -fx-border-color: -jc-border transparent transparent transparent;
-    -fx-border-width: 1 0 0 0;
-    -fx-padding: 12 24 12 24;
-}
-
-.management-selection-summary,
-.management-status-badge {
-    -fx-text-fill: -jc-primary-700;
-    -fx-background-color: -jc-primary-50;
-    -fx-border-color: -jc-primary-200;
-    -fx-border-radius: 999;
-    -fx-background-radius: 999;
-    -fx-padding: 5 10;
-    -fx-font-weight: 600;
-}
-
-.domain-window,
-.domain-form {
+/* 新增页面只组合这些平台组件，并继续复用 509f197 的 modal、card、button 和 field 语义。 */
+.platform-window,
+.platform-page {
     -fx-background-color: -jc-surface-page;
 }
 
-/* 原版 hint 色用于装饰文字；管理表单的辅助说明需满足普通字号对比度。 */
-.domain-window .sec-hint {
-    -fx-text-fill: -jc-text-muted;
-}
-
-.domain-form .form-label {
-    -fx-text-fill: -jc-text-title;
-    -fx-font-weight: bold;
-}
-
-.domain-form .text-input,
-.domain-form .list-view {
-    -fx-background-color: -jc-surface-card;
-}
-
-.domain-form .text-input,
-.domain-form .list-cell {
-    -fx-text-fill: -jc-text-body;
-}
-
-.domain-form .list-cell:filled:selected {
-    -fx-background-color: -jc-primary-100;
-}
-
-/* ==================== v4 管理页布局与样式隔离 ==================== */
-
-.management-page {
-    -fx-background-color: -jc-surface-page;
-}
-
-/* mc-header 原属于记忆页；v4 管理壳复用其视觉语言，但不再依赖记忆页样式被全局加载。 */
-.domain-window > .mc-header,
-.mc-header {
-    -fx-background-color: -jc-surface-page;
-    -fx-border-color: transparent transparent -jc-border transparent;
-    -fx-border-width: 0 0 1 0;
-    -fx-padding: 0 22 0 22;
-    -fx-min-height: 56;
-    -fx-pref-height: 56;
-    -fx-alignment: center-left;
-    -fx-spacing: 14;
-}
-
-.mc-header-tag {
-    -fx-font-size: 12px;
-    -fx-text-fill: -jc-text-body;
-    -fx-background-color: -jc-surface-sunken;
-    -fx-border-color: -jc-border;
-    -fx-border-width: 1;
-    -fx-background-radius: 6;
-    -fx-border-radius: 6;
-    -fx-padding: 3 8 3 8;
-}
-
-.management-rail {
-    -fx-padding: 14 12 14 12;
-    -fx-spacing: 10;
-    -fx-background-color: -jc-surface-card;
-    -fx-border-color: transparent -jc-border transparent transparent;
-    -fx-border-width: 0 1 0 0;
-}
-
-.management-list {
-    -fx-background-color: transparent;
-    -fx-border-color: transparent;
-    -fx-padding: 2;
-}
-
-.management-list .list-cell {
-    -fx-background-color: transparent;
-    -fx-background-radius: 8;
-    -fx-border-radius: 8;
-    -fx-padding: 9 10 9 10;
-    -fx-text-fill: -jc-text-body;
-}
-
-.management-list .list-cell:filled:hover {
-    -fx-background-color: -jc-surface-sunken;
-}
-
-.management-list .list-cell:filled:selected,
-.management-list .list-cell:filled:selected:focused {
-    -fx-background-color: -jc-primary-100;
-    -fx-border-color: -jc-primary-300;
-    -fx-border-width: 1;
-}
-
-/* 设置页沿用旧版分组导航，不继承管理对象列表的大卡片密度。 */
-.management-page-settings .management-rail.settings-left-pane {
+.platform-navigation {
     -fx-min-width: 210;
-    -fx-pref-width: 210;
-    -fx-max-width: 210;
-    -fx-padding: 0;
-    -fx-spacing: 0;
-    -fx-background-color: -jc-neutral-100;
+    -fx-pref-width: 228;
+    -fx-max-width: 260;
 }
 
-.settings-navigation {
-    -fx-padding: 10 8 12 8;
+.platform-navigation-heading {
+    -fx-padding: 20 18 14 18;
 }
 
-.settings-navigation-children {
-    -fx-padding: 0 0 4 14;
-}
-
-.settings-navigation-list {
+.platform-navigation-list {
     -fx-background-color: transparent;
     -fx-border-color: transparent;
-    -fx-background-radius: 0;
-    -fx-border-radius: 0;
-    -fx-padding: 0;
+    -fx-padding: 0 10 12 10;
 }
 
-.settings-navigation-list > .virtual-flow,
-.settings-navigation-list > .virtual-flow > .clipped-container,
-.settings-navigation-list > .virtual-flow > .clipped-container > .sheet {
+.platform-navigation-list .list-cell,
+.platform-navigation-list .list-cell:filled:hover,
+.platform-navigation-list .list-cell:filled:selected,
+.platform-navigation-list .list-cell:filled:selected:focused {
     -fx-background-color: transparent;
+    -fx-padding: 2 0;
 }
 
-.settings-navigation-list .list-cell,
-.settings-navigation-list .list-cell:filled {
-    -fx-background-color: transparent;
-    -fx-border-color: transparent;
-    -fx-border-width: 0;
-    -fx-background-radius: 8;
-    -fx-border-radius: 8;
-    -fx-padding: 7 11 7 11;
-}
-
-.settings-navigation-list .list-cell:filled:hover {
+.platform-navigation-list .list-cell:filled:hover .platform-detail-cell {
     -fx-background-color: -jc-neutral-200;
 }
 
-.settings-navigation-list .list-cell:filled:selected,
-.settings-navigation-list .list-cell:filled:selected:focused {
+.platform-navigation-list .list-cell:filled:selected .platform-detail-cell {
     -fx-background-color: -jc-primary-50;
-    -fx-border-color: transparent;
-    -fx-border-width: 0;
 }
 
-.settings-navigation-list .list-cell:filled:selected .settings-navigation-title {
+.platform-navigation-list .list-cell:filled:selected .platform-detail-title {
     -fx-text-fill: -jc-primary-600;
-    -fx-font-weight: 600;
 }
 
-.management-form {
+.platform-content-scroll,
+.platform-content-scroll > .viewport {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+
+.platform-page {
     -fx-spacing: 14;
+    -fx-padding: 22 24 24 24;
 }
 
-.management-form > .management-section {
-    -fx-max-width: 872;
+.platform-page-title {
+    -fx-padding: 0 0 2 0;
 }
 
-.management-read-only-document {
-    -fx-padding: 14;
+.platform-section-card {
+    -fx-spacing: 10;
+    -fx-padding: 16;
+}
+
+.platform-section-title {
+    -fx-padding: 0;
+}
+
+.platform-form-grid {
+    -fx-hgap: 14;
+    -fx-vgap: 12;
+}
+
+.platform-field-label {
+    -fx-min-width: 120;
+    -fx-padding: 8 0 0 0;
+}
+
+.platform-action-bar {
+    -fx-spacing: 8;
+    -fx-padding: 4 0 0 0;
+}
+
+.platform-body-text,
+.markdown-view {
+    -fx-text-fill: -jc-text-body;
+}
+
+.platform-data-list,
+.platform-data-table {
     -fx-background-color: -jc-surface-card;
     -fx-border-color: -jc-border;
     -fx-border-width: 1;
-    -fx-border-radius: 10;
-    -fx-background-radius: 10;
+    -fx-border-radius: 9;
+    -fx-background-radius: 9;
 }
 
-.management-field-medium,
-.management-field-multiline {
-    -fx-pref-width: 620;
+.platform-data-list .list-cell,
+.platform-data-list .list-cell:filled:hover,
+.platform-data-list .list-cell:filled:selected,
+.platform-data-list .list-cell:filled:selected:focused {
+    -fx-background-color: transparent;
+    -fx-padding: 2 4;
 }
 
-.management-field-number {
-    -fx-pref-width: 180;
+.platform-data-list .list-cell:filled:hover .platform-detail-cell,
+.platform-data-list .list-cell:filled:selected .platform-detail-cell {
+    -fx-background-color: -jc-primary-50;
 }
 
-.management-feedback {
+.platform-data-table .column-header-background,
+.platform-data-table .column-header,
+.platform-data-table .filler {
+    -fx-background-color: -jc-surface-sunken;
+}
+
+.platform-data-table .table-row-cell {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: transparent transparent -jc-border transparent;
+}
+
+.platform-data-table .table-row-cell:selected {
+    -fx-background-color: -jc-primary-50;
+}
+
+.platform-detail-cell {
+    -fx-padding: 8 10;
+    -fx-background-radius: 8;
+}
+
+.platform-detail-title {
+    -fx-font-size: 12.5px;
     -fx-font-weight: 600;
-    -fx-text-fill: -jc-text-body;
+    -fx-text-fill: -jc-text-title;
 }
 
-.management-feedback-running {
-    -fx-text-fill: -jc-primary-700;
+.platform-detail-text,
+.platform-timeline-time {
+    -fx-font-size: 11.5px;
+    -fx-text-fill: -jc-text-muted;
 }
 
-.management-feedback-success {
-    -fx-text-fill: -jc-success;
+.platform-progress .progress-bar > .bar {
+    -fx-background-color: -jc-primary-500;
 }
 
-.management-feedback-validation_error {
-    -fx-text-fill: -jc-tint-gold-fg;
+.platform-timeline-entry {
+    -fx-padding: 7 0;
 }
 
-.management-feedback-server_error {
+.platform-timeline-marker {
+    -fx-font-size: 9px;
+    -fx-text-fill: -jc-primary-500;
+    -fx-padding: 2 0 0 0;
+}
+
+.platform-timeline-time {
+    -fx-font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace;
+}
+
+.platform-artifact {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-background-radius: 8;
+    -fx-padding: 10 12;
+}
+
+.platform-feedback {
+    -fx-padding: 28 20;
+    -fx-max-width: 420;
+}
+
+.platform-feedback-loading .empty-state-icon {
+    -fx-text-fill: -jc-primary-500;
+}
+
+.platform-feedback-error .empty-state-icon,
+.platform-feedback-error .empty-state-text {
     -fx-text-fill: -jc-danger;
 }
 
-/* 说明文字属于正文信息，不使用仅适合装饰标签的低对比 hint 色。 */
-.domain-window .sec-hint,
-.management-page .sec-hint,
-.management-page .empty-state-hint,
-.management-page .management-detail {
+.platform-navigation .platform-feedback {
+    -fx-padding: 18 8;
+}
+
+.platform-navigation .platform-feedback .empty-state-icon {
+    -fx-font-size: 28px;
+}
+
+.code-view {
+    -fx-font-family: monospace;
+    -fx-background-color: -jc-surface-sunken;
     -fx-text-fill: -jc-text-body;
 }
 
-/* 页脚反馈始终保持正文对比度，并以边线、文案和 busy 指示器共同表达严重级别。 */
-.domain-window .management-feedback-running,
-.domain-window .management-feedback-success,
-.domain-window .management-feedback-validation_error,
-.domain-window .management-feedback-server_error {
-    -fx-text-fill: -jc-text-body;
-    -fx-padding: 2 8 2 8;
-    -fx-border-width: 0 0 0 3;
-}
-
-.domain-window .management-feedback-running {
-    -fx-border-color: transparent transparent transparent -jc-primary-500;
-}
-
-.domain-window .management-feedback-success {
-    -fx-border-color: transparent transparent transparent -jc-primary-700;
-}
-
-.domain-window .management-feedback-validation_error {
-    -fx-border-color: transparent transparent transparent -jc-tint-gold-fg;
-}
-
-.domain-window .management-feedback-server_error {
-    -fx-border-color: transparent transparent transparent -jc-tint-terra-fg;
-}
-
-.theme-honey .domain-window .management-feedback-running {
-    -fx-border-color: transparent transparent transparent -jc-primary-700;
-}
-
-.management-page .text-input:focused,
-.management-page .combo-box:focused,
-.management-page .spinner:focused,
 .chat-root .text-input:focused,
 .chat-root .combo-box:focused,
-.chat-root .button:focused {
+.chat-root .button:focused,
+.platform-page .text-input:focused,
+.platform-page .combo-box:focused,
+.platform-page .button:focused {
     -fx-border-color: -jc-primary-500;
     -fx-border-width: 2;
     -fx-border-insets: -1;
 }
 
-/* 蜂蜜主题的品牌金色与白字对比不足；v4 只覆盖前景与焦点，不改历史主题文件。 */
+/* 蜂蜜主题使用深色品牌前景，保证普通字号对比度。 */
 .theme-honey {
     -jc-on-brand: -jc-neutral-900;
 }
@@ -427,109 +302,26 @@
     -fx-text-fill: -jc-on-brand;
 }
 
-/* 历史 danger 红用于强调图形；正文按钮改用更深的陶土前景以满足普通字号对比度。 */
-.jc-btn-danger,
-.dialog-pane > .button-bar .button.jc-btn-danger,
-.dialog-pane > .button-bar .button.jc-btn-danger:default {
+.jc-btn-danger {
     -fx-background-color: -jc-tint-terra-soft;
     -fx-text-fill: -jc-tint-terra-fg;
     -fx-border-color: -jc-tint-terra-line;
 }
 
-.jc-btn-danger:hover,
-.dialog-pane > .button-bar .button.jc-btn-danger:hover,
-.dialog-pane > .button-bar .button.jc-btn-danger:default:hover {
+.jc-btn-danger:hover {
     -fx-background-color: -jc-tint-terra-hover;
     -fx-text-fill: -jc-tint-terra-fg;
     -fx-border-color: -jc-tint-terra-fg;
 }
 
-.theme-honey .management-page .text-input:focused,
-.theme-honey .management-page .combo-box:focused,
-.theme-honey .management-page .spinner:focused,
 .theme-honey.chat-root .text-input:focused,
 .theme-honey.chat-root .combo-box:focused,
 .theme-honey.chat-root .button:focused {
     -fx-border-color: -jc-primary-700;
 }
 
-/* ==================== v4 主窗口响应式壳 ==================== */
-
 .desktop-shell-stack {
     -fx-background-color: -jc-surface-page;
-}
-
-.desktop-drawer {
-    -fx-effect: dropshadow(gaussian, -jc-shadow-brand, 18, 0.16, 0, 4);
-}
-
-.desktop-drawer-scrim {
-    -fx-background-color: -jc-overlay;
-}
-
-.window-toast {
-    -fx-padding: 9 14 9 14;
-    -fx-max-width: 520;
-    -fx-background-color: -jc-surface-card;
-    -fx-text-fill: -jc-text-title;
-    -fx-border-color: -jc-border;
-    -fx-border-width: 1;
-    -fx-border-radius: 9;
-    -fx-background-radius: 9;
-    -fx-effect: dropshadow(gaussian, -jc-shadow-brand, 14, 0.12, 0, 3);
-    -fx-font-weight: 600;
-}
-
-.window-toast-info {
-    -fx-border-color: -jc-primary-500;
-}
-
-.window-toast-success {
-    -fx-border-color: -jc-success;
-}
-
-.window-toast-error {
-    -fx-border-color: -jc-danger;
-}
-
-.sidebar-batch-bar {
-    -fx-padding: 4 10 8 10;
-    -fx-background-color: -jc-surface-card;
-    -fx-border-color: transparent transparent -jc-border transparent;
-    -fx-border-width: 0 0 1 0;
-}
-
-.message-metadata {
-    -fx-font-size: 10px;
-    -fx-text-fill: -jc-text-muted;
-}
-
-.message-actions {
-    -fx-alignment: center-left;
-}
-
-.message-actions .button {
-    -fx-font-size: 10px;
-    -fx-padding: 4 7 4 7;
-}
-
-.inline-interaction-actions {
-    -fx-padding: 8 0 2 0;
-}
-
-.inline-interaction-risk {
-    -fx-font-weight: 600;
-    -fx-text-fill: -jc-tint-gold-fg;
-}
-
-#attachmentPreview .attachment-item {
-    -fx-min-width: 132;
-    -fx-max-width: 188;
-    -fx-min-height: 62;
-}
-
-#attachmentChips {
-    -fx-pref-wrap-length: 720;
 }
 
 .sidebar-navigation {
@@ -546,7 +338,7 @@
     -fx-text-fill: -jc-text-body;
     -fx-background-radius: 8;
     -fx-border-radius: 8;
-    -fx-padding: 5 10 5 10;
+    -fx-padding: 5 10;
     -fx-min-height: 30;
     -fx-pref-height: 30;
     -fx-max-height: 30;
@@ -557,7 +349,6 @@
 
 .sidebar-navigation .sidebar-nav-button:hover {
     -fx-background-color: -jc-neutral-100;
-    -fx-text-fill: -jc-text-body;
 }
 
 .sidebar-navigation .sidebar-nav-button:focused {
@@ -567,88 +358,21 @@
     -fx-border-width: 1;
 }
 
-.sidebar-navigation .menu-button.sidebar-nav-button > .label {
-    -fx-alignment: center-left;
-    -fx-text-fill: -jc-text-body;
-    -fx-padding: 0;
-}
-
-.sidebar-navigation .menu-button.sidebar-nav-button:hover > .label,
-.sidebar-navigation .menu-button.sidebar-nav-button:focused > .label {
-    -fx-text-fill: inherit;
-}
-
-.sidebar-navigation .sidebar-settings-menu:showing {
-    -fx-background-color: -jc-primary-50;
-    -fx-border-color: -jc-primary-300;
-    -fx-border-width: 1;
-    -fx-text-fill: -jc-primary-700;
-}
-
-.sidebar-navigation .sidebar-settings-menu:showing > .label {
-    -fx-text-fill: -jc-primary-700;
-}
-
-.context-menu .menu-item.sidebar-settings-menu-item {
-    -fx-min-width: 210;
-    -fx-min-height: 25;
-    -fx-pref-height: 25;
-    -fx-max-height: 25;
-    -fx-padding: 3 14 3 14;
-}
-
-.context-menu .menu-item.sidebar-settings-menu-separator {
-    -fx-padding: 2 8 2 8;
-}
-
-.context-menu .menu-item.sidebar-settings-menu-separator .separator:horizontal {
-    -fx-padding: 0;
-}
-
-.shell-toggle-button,
-.shortcut-help-button,
-.thread-action-button {
+.shell-toggle-button {
     -fx-background-color: transparent;
     -fx-text-fill: -jc-text-body;
     -fx-border-color: -jc-border;
     -fx-border-width: 1;
     -fx-border-radius: 8;
     -fx-background-radius: 8;
-    -fx-padding: 6 9 6 9;
+    -fx-padding: 6 9;
     -fx-cursor: hand;
 }
 
-#sidebarToggleButton {
-    -fx-min-width: 40;
-    -fx-pref-width: 40;
-    -fx-max-width: 40;
-}
-
-#progressToggleButton {
-    -fx-min-width: 54;
-}
-
-#shortcutHelpButton {
-    -fx-min-width: 36;
-    -fx-pref-width: 36;
-}
-
-.thread-action-button {
-    -fx-min-width: 60;
-}
-
-.shell-toggle-button:hover,
-.shortcut-help-button:hover,
-.thread-action-button:hover {
+.shell-toggle-button:hover {
     -fx-background-color: -jc-primary-50;
     -fx-border-color: -jc-primary-300;
 }
-
-.assistant-readable-width {
-    -fx-max-width: 820;
-}
-
-/* ==================== 一体化输入卡片 ==================== */
 
 .input-bar {
     -fx-padding: 12 24 16 24;
@@ -665,11 +389,6 @@
 
 .composer-card:hover {
     -fx-border-color: -jc-border-strong;
-}
-
-.composer-card:focus-within {
-    -fx-border-color: -jc-primary-400;
-    -fx-effect: dropshadow(gaussian, -jc-focus-ring, 8, 0, 0, 0);
 }
 
 .composer-card .composer-input,
@@ -692,106 +411,62 @@
     -fx-prompt-text-fill: -jc-text-muted;
 }
 
-.composer-card .composer-input .content {
-    -fx-padding: 0;
-}
-
 .composer-toolbar {
     -fx-min-height: 48;
     -fx-padding: 4 10 10 10;
     -fx-background-color: transparent;
 }
 
-.composer-card .attachment-preview-pane {
-    -fx-background-color: transparent;
-    -fx-border-color: -jc-border transparent transparent transparent;
-    -fx-border-width: 1 0 0 0;
-    -fx-padding: 9 12 7 12;
-}
-
-.composer-card .attach-button {
-    -fx-background-color: transparent;
-    -fx-text-fill: -jc-text-body;
-    -fx-border-color: transparent;
-    -fx-background-radius: 18;
-    -fx-border-radius: 18;
-    -fx-min-width: 36;
-    -fx-min-height: 36;
-    -fx-max-width: 36;
-    -fx-max-height: 36;
-    -fx-font-size: 20px;
-}
-
-.composer-card .attach-button:hover {
-    -fx-background-color: -jc-surface-sunken;
-    -fx-text-fill: -jc-primary-600;
-    -fx-border-color: transparent;
-}
-
-.composer-card .composer-profile-select {
-    -fx-background-color: transparent;
-    -fx-border-color: transparent;
-    -fx-background-radius: 9;
-    -fx-border-radius: 9;
-    -fx-effect: none;
-}
-
-.composer-card .composer-profile-select:hover {
-    -fx-background-color: -jc-surface-sunken;
-    -fx-border-color: transparent;
-}
-
-.composer-card .composer-profile-select:focused,
-.composer-card .composer-profile-select:showing {
-    -fx-background-color: -jc-surface-sunken;
-    -fx-border-color: -jc-primary-200;
-    -fx-effect: none;
-}
-
-.composer-card .composer-profile-select > .list-cell {
-    -fx-padding: 6 3 6 10;
-}
-
 .composer-card .composer-interrupt-button {
     -fx-min-height: 36;
-    -fx-padding: 7 11 7 11;
+    -fx-padding: 7 11;
 }
 
 .composer-card .composer-send-button {
     -fx-min-width: 82;
     -fx-pref-width: -1;
     -fx-min-height: 38;
-    -fx-padding: 9 16 9 16;
+    -fx-padding: 9 16;
     -fx-effect: none;
 }
-
-.composer-card .composer-send-button:hover,
-.composer-card .composer-send-button:pressed {
-    -fx-effect: none;
-}
-
-/* ==================== 处理进度投影 ==================== */
 
 .desktop-progress-panel {
-    -fx-pref-width: 280;
-    -fx-min-width: 240;
-    -fx-max-width: 320;
+    -fx-pref-width: 340;
+    -fx-min-width: 300;
+    -fx-max-width: 380;
 }
 
-.progress-summary {
-    -fx-padding: 12 14 12 14;
-    -fx-spacing: 8;
+.input-request-host {
+    -fx-padding: 2 14 12 14;
 }
 
-.progress-phase {
+.input-request-panel {
+    -fx-spacing: 9;
+}
+
+.input-request-list {
+    -fx-pref-height: 112;
+    -fx-max-height: 140;
+}
+
+.input-request-scroll,
+.input-request-scroll > .viewport {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+
+.input-request-card {
+    -fx-spacing: 10;
+    -fx-padding: 14;
+}
+
+.input-request-prompt {
+    -fx-padding: 0;
     -fx-text-fill: -jc-text-title;
-    -fx-font-size: 13px;
-    -fx-font-weight: 700;
 }
 
-.progress-status {
-    -fx-text-fill: -jc-text-body;
-    -fx-font-size: 12px;
+.approval-section-title {
+    -fx-padding: 12 14 4 14;
 }
 
 .progress-list {
@@ -801,29 +476,7 @@
 
 .progress-list .list-cell {
     -fx-background-color: transparent;
-    -fx-padding: 6 10 6 10;
-}
-
-.progress-entry {
-    -fx-padding: 9 10 9 10;
-    -fx-spacing: 3;
-    -fx-background-color: -jc-surface-card;
-    -fx-border-color: -jc-border;
-    -fx-border-radius: 8;
-    -fx-background-radius: 8;
-}
-
-.progress-entry-title {
-    -fx-text-fill: -jc-text-title;
-    -fx-font-size: 12px;
-    -fx-font-weight: 600;
-}
-
-.progress-entry-detail,
-.progress-entry-state,
-.progress-metric-label {
-    -fx-text-fill: -jc-text-body;
-    -fx-font-size: 11px;
+    -fx-padding: 6 10;
 }
 
 .progress-metrics {
@@ -833,94 +486,8 @@
     -fx-border-width: 1 0 0 0;
 }
 
-.progress-metric-value {
-    -fx-text-fill: -jc-text-title;
-    -fx-font-weight: 700;
-}
-
 .progress-empty {
     -fx-text-fill: -jc-text-body;
-    -fx-padding: 24 16 24 16;
+    -fx-padding: 24 16;
     -fx-text-alignment: center;
-}
-
-.management-conflict-banner {
-    -fx-padding: 10 14 10 14;
-    -fx-background-color: -jc-warning-bg;
-    -fx-border-color: transparent transparent -jc-warning transparent;
-    -fx-border-width: 0 0 1 0;
-}
-
-.management-conflict-message {
-    -fx-text-fill: -jc-text-body;
-    -fx-font-weight: 600;
-}
-
-.management-loading-overlay {
-    -fx-background-color: -jc-surface-page;
-    -fx-opacity: 0.96;
-}
-
-.management-dirty-indicator {
-    -fx-text-fill: -jc-warning;
-    -fx-font-size: 11px;
-    -fx-font-weight: 600;
-}
-
-.workflow-graph-editor {
-    -fx-min-height: 360;
-    -fx-background-color: -jc-surface-card;
-    -fx-border-color: -jc-border;
-    -fx-border-radius: 10;
-    -fx-background-radius: 10;
-    -fx-padding: 12;
-}
-
-.workflow-canvas {
-    -fx-background-color: -jc-surface-sunken;
-}
-
-.workflow-inspector {
-    -fx-background-color: -jc-surface-card;
-    -fx-border-color: transparent transparent transparent -jc-border;
-    -fx-border-width: 0 0 0 1;
-}
-
-.workflow-node-card {
-    -fx-padding: 10 12 10 12;
-    -fx-background-color: -jc-surface-card;
-    -fx-border-color: -jc-border;
-    -fx-border-radius: 8;
-    -fx-background-radius: 8;
-    -fx-cursor: hand;
-}
-
-.workflow-node-card:hover,
-.workflow-node-selected {
-    -fx-border-color: -jc-primary-500;
-    -fx-background-color: -jc-primary-50;
-}
-
-.workflow-node-title {
-    -fx-text-fill: -jc-text-title;
-    -fx-font-weight: 700;
-}
-
-.workflow-node-summary,
-.workflow-edge,
-.workflow-inspector-value,
-.workflow-validation {
-    -fx-text-fill: -jc-text-body;
-}
-
-.workflow-edge {
-    -fx-padding: 0 0 0 28;
-}
-
-.workflow-validation-ok {
-    -fx-text-fill: -jc-success;
-}
-
-.workflow-validation-error {
-    -fx-text-fill: -jc-danger;
 }

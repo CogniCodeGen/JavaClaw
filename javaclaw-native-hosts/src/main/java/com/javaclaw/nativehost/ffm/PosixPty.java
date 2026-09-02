@@ -12,6 +12,8 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import com.javaclaw.api.ResourceLimits;
+
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
@@ -167,7 +169,7 @@ public final class PosixPty implements AutoCloseable {
         write(new byte[] {4});
     }
 
-    /** 更新终端字符尺寸并通知当前前台进程组；columns 为 20–1000、rows 为 5–1000，初始尚无前台进程时仅完成尺寸更新。 */
+    /** 更新终端字符尺寸；columns 为 20–1000、rows 为 5–1000，内核会向已接管终端的前台进程组发送 SIGWINCH。 */
     public void resize(int columns, int rows) {
         Platform platform = requirePlatform();
         requireOpen();
@@ -182,13 +184,6 @@ public final class PosixPty implements AutoCloseable {
             } finally {
                 CLOSE.invoke(slaveDescriptor);
             }
-            signalForeground(28);
-        } catch (IllegalStateException noForegroundProcessYet) {
-            // Initial sizing occurs before a slave process owns the terminal. TIOCSWINSZ has
-            // already succeeded; only the optional SIGWINCH delivery can be unavailable.
-            if (!noForegroundProcessYet.getMessage().contains("foreground process")) {
-                throw noForegroundProcessYet;
-            }
         } catch (RuntimeException failure) {
             throw failure;
         } catch (Throwable failure) {
@@ -196,34 +191,16 @@ public final class PosixPty implements AutoCloseable {
         }
     }
 
-    /** 查询当前 slave 的前台进程组后发送 POSIX signal；无有效前台组时失败，不对未经确认的进程组发信号。 */
-    public void signalForeground(int signal) {
-        Platform platform = requirePlatform();
-        requireOpen();
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment group = arena.allocate(JAVA_INT);
-            int slaveDescriptor = openSlave(arena, platform);
-            try {
-                if ((int) IOCTL_POINTER.invoke(slaveDescriptor, platform.getForegroundGroup(), group) != 0) {
-                    throw new IllegalStateException("cannot read PTY foreground process group");
-                }
-            } finally {
-                CLOSE.invoke(slaveDescriptor);
-            }
-            int processGroup = group.get(JAVA_INT, 0);
-            if (processGroup < 1) {
-                throw new IllegalStateException("PTY has no foreground process group");
-            }
-            NativeResourceLimits.signalProcessGroup(processGroup, signal);
-        } catch (RuntimeException failure) {
-            throw failure;
-        } catch (Throwable failure) {
-            throw new IllegalStateException("cannot signal POSIX PTY", failure);
-        }
-    }
-
-    /** Called by the sandboxed helper after its standard descriptors refer to the slave PTY. */
-    public static void attachControllingTerminalAndExec(List<String> target, int columns, int rows) {
+    /**
+     * 在 helper 的标准描述符已连接 slave 后建立 controlling terminal，并在 exec 前施加地址空间限制。
+     *
+     * @param target OS Sandbox backend argv
+     * @param columns 初始列数
+     * @param rows 初始行数
+     * @param limits 目标资源上限
+     */
+    public static void attachControllingTerminalAndExec(
+            List<String> target, int columns, int rows, ResourceLimits limits) {
         Platform platform = requirePlatform();
         if (!isSupported()) {
             throw new UnsupportedOperationException("POSIX pseudo-terminals are unavailable");
@@ -247,7 +224,7 @@ public final class PosixPty implements AutoCloseable {
             if (processGroup < 1 || (int) TCSETPGRP.invoke(0, processGroup) != 0) {
                 throw new IllegalStateException("tcsetpgrp failed");
             }
-            NativeResourceLimits.exec(target);
+            NativeResourceLimits.applyAddressSpaceLimitAndExec(target, limits);
         } catch (RuntimeException failure) {
             throw failure;
         } catch (Throwable failure) {
@@ -357,22 +334,16 @@ public final class PosixPty implements AutoCloseable {
     }
 
     private enum Platform {
-        MACOS(0x00020000, 0x80087467L, 0x40047477L, 0x20007461L),
-        LINUX(0x00000100, 0x00005414L, 0x0000540fL, 0x0000540eL);
+        MACOS(0x00020000, 0x80087467L, 0x20007461L),
+        LINUX(0x00000100, 0x00005414L, 0x0000540eL);
 
         private final int noControllingTerminalFlag;
         private final long setWindowSize;
-        private final long getForegroundGroup;
         private final long setControllingTerminal;
 
-        Platform(
-                int noControllingTerminalFlag,
-                long setWindowSize,
-                long getForegroundGroup,
-                long setControllingTerminal) {
+        Platform(int noControllingTerminalFlag, long setWindowSize, long setControllingTerminal) {
             this.noControllingTerminalFlag = noControllingTerminalFlag;
             this.setWindowSize = setWindowSize;
-            this.getForegroundGroup = getForegroundGroup;
             this.setControllingTerminal = setControllingTerminal;
         }
 
@@ -382,10 +353,6 @@ public final class PosixPty implements AutoCloseable {
 
         long setWindowSize() {
             return setWindowSize;
-        }
-
-        long getForegroundGroup() {
-            return getForegroundGroup;
         }
 
         long setControllingTerminal() {

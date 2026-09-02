@@ -5,11 +5,11 @@
 
     <groupId>com.javaclaw</groupId>
     <artifactId>javaclaw-parent</artifactId>
-    <version>4.0.0-SNAPSHOT</version>
+    <version>5.0.0-SNAPSHOT</version>
     <packaging>pom</packaging>
 
-    <name>JavaClaw 4.0</name>
-    <description>Protocol-first local agent runtime, app server and clients</description>
+    <name>JavaClaw 5</name>
+    <description>Local-first agent platform with a thin Turn harness and capability-oriented extensions</description>
 
     <licenses>
         <license>
@@ -21,32 +21,60 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.build.outputTimestamp>2026-09-01T00:00:00Z</project.build.outputTimestamp>
         <maven.compiler.release>25</maven.compiler.release>
-        <jackson2.version>2.18.3</jackson2.version>
+        <jackson.version>2.18.3</jackson.version>
+        <jackson.annotations.version>2.21</jackson.annotations.version>
         <jackson3.version>3.1.4</jackson3.version>
         <h2.version>2.3.232</h2.version>
-        <junit.version>5.11.4</junit.version>
-        <logback.version>1.5.16</logback.version>
-        <log4j.version>2.24.3</log4j.version>
-        <slf4j.version>2.0.16</slf4j.version>
-        <spring-ai.version>2.0.0</spring-ai.version>
         <quartz.version>2.5.2</quartz.version>
+        <junit.version>5.11.4</junit.version>
+        <slf4j.version>2.0.16</slf4j.version>
+        <logback.version>1.5.16</logback.version>
+        <spring-ai.version>2.0.0</spring-ai.version>
+        <openai-java.version>4.39.1</openai-java.version>
+        <anthropic-java.version>2.40.1</anthropic-java.version>
+        <google-genai.version>1.58.0</google-genai.version>
         <pdfbox.version>3.0.4</pdfbox.version>
         <poi.version>5.4.1</poi.version>
+        <commons-io.version>2.18.0</commons-io.version>
+        <commons-codec.version>1.18.0</commons-codec.version>
+        <commons-logging.version>1.3.5</commons-logging.version>
+        <javafx.version>25</javafx.version>
+        <playwright.version>1.52.0</playwright.version>
+        <kotlin.version>1.9.10</kotlin.version>
+        <victools.version>5.0.0</victools.version>
+        <error-prone.version>2.36.0</error-prone.version>
+        <guava.version>33.4.0-jre</guava.version>
+        <gson.version>2.12.1</gson.version>
+        <grpc.version>1.70.0</grpc.version>
+        <micrometer.version>1.17.0</micrometer.version>
+        <reactor.version>3.8.6</reactor.version>
         <spotless.version>3.10.0</spotless.version>
         <palantir-java-format.version>2.97.0</palantir-java-format.version>
         <eclipse-wtp.version>4.21.0</eclipse-wtp.version>
         <checkstyle-maven.version>3.6.0</checkstyle-maven.version>
         <checkstyle.version>14.0.0</checkstyle.version>
+        <jacoco.version>0.8.13</jacoco.version>
+        <cyclonedx-maven.version>2.9.3</cyclonedx-maven.version>
+        <license-maven.version>2.7.1</license-maven.version>
+        <exec-maven.version>3.5.0</exec-maven.version>
+        <jacoco.line.ratio>0.80</jacoco.line.ratio>
+        <jacoco.branch.ratio>0.70</jacoco.branch.ratio>
     </properties>
 
     <modules>
         <module>javaclaw-api</module>
         <module>javaclaw-protocol</module>
+        <module>javaclaw-extension-spi</module>
         <module>javaclaw-agent-runtime</module>
+        <module>javaclaw-model-adapters</module>
+        <module>javaclaw-builtin-contracts</module>
+        <module>javaclaw-builtin-extensions</module>
         <module>javaclaw-app-server</module>
         <module>javaclaw-native-hosts</module>
         <module>javaclaw-browser-service</module>
+        <module>javaclaw-knowledge-worker</module>
         <module>javaclaw-client</module>
         <module>javaclaw-desktop</module>
         <module>javaclaw-packaging</module>
@@ -66,12 +94,27 @@
             </dependency>
             <dependency>
                 <groupId>com.javaclaw</groupId>
+                <artifactId>javaclaw-extension-spi</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.javaclaw</groupId>
                 <artifactId>javaclaw-agent-runtime</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.javaclaw</groupId>
-                <artifactId>javaclaw-browser-service</artifactId>
+                <artifactId>javaclaw-model-adapters</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.javaclaw</groupId>
+                <artifactId>javaclaw-builtin-contracts</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.javaclaw</groupId>
+                <artifactId>javaclaw-builtin-extensions</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -86,23 +129,58 @@
             </dependency>
             <dependency>
                 <groupId>com.javaclaw</groupId>
+                <artifactId>javaclaw-browser-service</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.javaclaw</groupId>
+                <artifactId>javaclaw-knowledge-worker</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.javaclaw</groupId>
                 <artifactId>javaclaw-client</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
+                <groupId>com.javaclaw</groupId>
+                <artifactId>javaclaw-desktop</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>tools.jackson.core</groupId>
+                <artifactId>jackson-core</artifactId>
+                <version>${jackson3.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>tools.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>${jackson3.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-annotations</artifactId>
+                <version>${jackson.annotations.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-core</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>com.fasterxml.jackson.core</groupId>
                 <artifactId>jackson-databind</artifactId>
-                <version>${jackson2.version}</version>
+                <version>${jackson.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.fasterxml.jackson.datatype</groupId>
                 <artifactId>jackson-datatype-jdk8</artifactId>
-                <version>${jackson2.version}</version>
+                <version>${jackson.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.fasterxml.jackson.datatype</groupId>
                 <artifactId>jackson-datatype-jsr310</artifactId>
-                <version>${jackson2.version}</version>
+                <version>${jackson.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.h2database</groupId>
@@ -110,20 +188,34 @@
                 <version>${h2.version}</version>
             </dependency>
             <dependency>
-                <groupId>ch.qos.logback</groupId>
-                <artifactId>logback-classic</artifactId>
-                <version>${logback.version}</version>
+                <groupId>org.quartz-scheduler</groupId>
+                <artifactId>quartz</artifactId>
+                <version>${quartz.version}</version>
             </dependency>
             <dependency>
-                <groupId>org.apache.logging.log4j</groupId>
-                <artifactId>log4j-to-slf4j</artifactId>
-                <version>${log4j.version}</version>
+                <groupId>org.apache.pdfbox</groupId>
+                <artifactId>pdfbox</artifactId>
+                <version>${pdfbox.version}</version>
             </dependency>
             <dependency>
-                <groupId>org.junit.jupiter</groupId>
-                <artifactId>junit-jupiter</artifactId>
-                <version>${junit.version}</version>
-                <scope>test</scope>
+                <groupId>org.apache.poi</groupId>
+                <artifactId>poi-ooxml</artifactId>
+                <version>${poi.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>commons-io</groupId>
+                <artifactId>commons-io</artifactId>
+                <version>${commons-io.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>commons-codec</groupId>
+                <artifactId>commons-codec</artifactId>
+                <version>${commons-codec.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>commons-logging</groupId>
+                <artifactId>commons-logging</artifactId>
+                <version>${commons-logging.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.slf4j</groupId>
@@ -131,13 +223,21 @@
                 <version>${slf4j.version}</version>
             </dependency>
             <dependency>
-                <!-- Spring AI 2 使用 Jackson 3；以同一 BOM 对齐 core/databind 及共用的 2.x annotations。 Wire/H2 仍显式固定 Jackson 2，避免启动时缺少
-                    JsonSerializeAs 或出现二进制方法不匹配。 -->
-                <groupId>tools.jackson</groupId>
-                <artifactId>jackson-bom</artifactId>
-                <version>${jackson3.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
+                <groupId>ch.qos.logback</groupId>
+                <artifactId>logback-classic</artifactId>
+                <version>${logback.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter-api</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter-engine</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
             </dependency>
             <dependency>
                 <groupId>org.springframework.ai</groupId>
@@ -145,6 +245,101 @@
                 <version>${spring-ai.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.openai</groupId>
+                <artifactId>openai-java-core</artifactId>
+                <version>${openai-java.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.openai</groupId>
+                <artifactId>openai-java-client-okhttp</artifactId>
+                <version>${openai-java.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.anthropic</groupId>
+                <artifactId>anthropic-java-client-okhttp</artifactId>
+                <version>${anthropic-java.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.anthropic</groupId>
+                <artifactId>anthropic-java-core</artifactId>
+                <version>${anthropic-java.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.genai</groupId>
+                <artifactId>google-genai</artifactId>
+                <version>${google-genai.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.projectreactor</groupId>
+                <artifactId>reactor-core</artifactId>
+                <version>${reactor.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jetbrains.kotlin</groupId>
+                <artifactId>kotlin-stdlib</artifactId>
+                <version>${kotlin.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jetbrains.kotlin</groupId>
+                <artifactId>kotlin-stdlib-common</artifactId>
+                <version>${kotlin.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jetbrains.kotlin</groupId>
+                <artifactId>kotlin-stdlib-jdk7</artifactId>
+                <version>${kotlin.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jetbrains.kotlin</groupId>
+                <artifactId>kotlin-stdlib-jdk8</artifactId>
+                <version>${kotlin.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jetbrains.kotlin</groupId>
+                <artifactId>kotlin-reflect</artifactId>
+                <version>${kotlin.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.victools</groupId>
+                <artifactId>jsonschema-generator</artifactId>
+                <version>${victools.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.victools</groupId>
+                <artifactId>jsonschema-module-jackson</artifactId>
+                <version>${victools.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.victools</groupId>
+                <artifactId>jsonschema-module-swagger-2</artifactId>
+                <version>${victools.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.errorprone</groupId>
+                <artifactId>error_prone_annotations</artifactId>
+                <version>${error-prone.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.guava</groupId>
+                <artifactId>guava</artifactId>
+                <version>${guava.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.code.gson</groupId>
+                <artifactId>gson</artifactId>
+                <version>${gson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.grpc</groupId>
+                <artifactId>grpc-context</artifactId>
+                <version>${grpc.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.micrometer</groupId>
+                <artifactId>micrometer-observation</artifactId>
+                <version>${micrometer.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
@@ -155,9 +350,9 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-compiler-plugin</artifactId>
-                    <version>3.13.0</version>
+                    <version>3.15.0</version>
                     <configuration>
-                        <release>25</release>
+                        <release>${maven.compiler.release}</release>
                         <parameters>true</parameters>
                     </configuration>
                 </plugin>
@@ -166,8 +361,9 @@
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>3.5.2</version>
                     <configuration>
-                        <useModulePath>true</useModulePath>
-                        <!-- 测试日志只能落到当前模块 target，不能污染开发者的产品配置目录。 -->
+                        <useModulePath>false</useModulePath>
+                        <failIfNoTests>true</failIfNoTests>
+                        <argLine>@{argLine} --enable-native-access=ALL-UNNAMED</argLine>
                         <systemPropertyVariables>
                             <javaclaw.log.dir>${project.build.directory}/test-logs</javaclaw.log.dir>
                             <javaclaw.log.process>tests</javaclaw.log.process>
@@ -177,7 +373,6 @@
             </plugins>
         </pluginManagement>
         <plugins>
-            <!-- 质量工具只参与构建，不进入 Runtime、SDK 或发行物的生产依赖。 -->
             <plugin>
                 <groupId>com.diffplug.spotless</groupId>
                 <artifactId>spotless-maven-plugin</artifactId>
@@ -197,7 +392,6 @@
                         </palantirJavaFormat>
                         <removeUnusedImports />
                         <importOrder>
-                            <!-- 点边界避免把 javafx 误归入 JDK；static import 统一置于末组。 -->
                             <order>java.|javax.|jdk.|com.sun.source.|org.w3c.dom.|org.xml.sax.,,com.javaclaw.,\#</order>
                         </importOrder>
                         <forbidWildcardImports />
@@ -210,7 +404,6 @@
                                 <include>src/main/resources/**/*.fxml</include>
                                 <include>config/checkstyle/*.xml</include>
                             </includes>
-                            <!-- WTP 只整理 XML 排版，不重排 Maven 执行顺序或 FXML 节点。 -->
                             <eclipseWtp>
                                 <type>XML</type>
                                 <version>${eclipse-wtp.version}</version>
@@ -226,7 +419,8 @@
                                 <include>.editorconfig</include>
                                 <include>.gitattributes</include>
                                 <include>AGENTS.md</include>
-                                <include>docs/coding-style.md</include>
+                                <include>README.md</include>
+                                <include>docs/**/*.md</include>
                                 <include>config/formatting/*.prefs</include>
                             </includes>
                             <trimTrailingWhitespace />
@@ -289,21 +483,80 @@
                 <version>3.5.0</version>
                 <executions>
                     <execution>
-                        <id>ban-java-owned-native-bridges</id>
+                        <id>verify-dependency-graph</id>
                         <phase>validate</phase>
                         <goals>
                             <goal>enforce</goal>
                         </goals>
                         <configuration>
                             <rules>
+                                <dependencyConvergence />
                                 <bannedDependencies>
                                     <searchTransitive>true</searchTransitive>
                                     <excludes>
                                         <exclude>net.java.dev.jna:*</exclude>
                                         <exclude>com.sun.jna:*</exclude>
                                     </excludes>
-                                    <message>JavaClaw 4.0 forbids JNA/JNI bridges; use the named JDK FFM module.</message>
+                                    <message>JavaClaw 禁止 JNA/JNI；原生能力只能使用已审计的 JDK FFM Host。</message>
                                 </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.11.0</version>
+                <executions>
+                    <execution>
+                        <id>verify-declared-dependencies</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>analyze-only</goal>
+                        </goals>
+                        <configuration>
+                            <failOnWarning>true</failOnWarning>
+                            <ignoreNonCompile>true</ignoreNonCompile>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <executions>
+                    <execution>
+                        <id>prepare-coverage-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>verify-coverage</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>report</goal>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>${jacoco.line.ratio}</minimum>
+                                        </limit>
+                                        <limit>
+                                            <counter>BRANCH</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>${jacoco.branch.ratio}</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
                             </rules>
                         </configuration>
                     </execution>
@@ -311,4 +564,78 @@
             </plugin>
         </plugins>
     </build>
+    <profiles>
+        <profile>
+            <id>javafx-macos-aarch64</id>
+            <activation>
+                <os>
+                    <family>mac</family>
+                    <arch>aarch64</arch>
+                </os>
+            </activation>
+            <properties>
+                <javafx.platform>mac-aarch64</javafx.platform>
+            </properties>
+        </profile>
+        <profile>
+            <id>javafx-macos-amd64</id>
+            <activation>
+                <os>
+                    <family>mac</family>
+                    <arch>x86_64</arch>
+                </os>
+            </activation>
+            <properties>
+                <javafx.platform>mac</javafx.platform>
+            </properties>
+        </profile>
+        <profile>
+            <id>javafx-linux-aarch64</id>
+            <activation>
+                <os>
+                    <name>Linux</name>
+                    <arch>aarch64</arch>
+                </os>
+            </activation>
+            <properties>
+                <javafx.platform>linux-aarch64</javafx.platform>
+            </properties>
+        </profile>
+        <profile>
+            <id>javafx-linux-amd64</id>
+            <activation>
+                <os>
+                    <name>Linux</name>
+                    <arch>amd64</arch>
+                </os>
+            </activation>
+            <properties>
+                <javafx.platform>linux</javafx.platform>
+            </properties>
+        </profile>
+        <profile>
+            <id>javafx-windows-aarch64</id>
+            <activation>
+                <os>
+                    <family>windows</family>
+                    <arch>aarch64</arch>
+                </os>
+            </activation>
+            <properties>
+                <javafx.platform>win-aarch64</javafx.platform>
+            </properties>
+        </profile>
+        <profile>
+            <id>javafx-windows-amd64</id>
+            <activation>
+                <os>
+                    <family>windows</family>
+                    <arch>amd64</arch>
+                </os>
+            </activation>
+            <properties>
+                <javafx.platform>win</javafx.platform>
+            </properties>
+        </profile>
+    </profiles>
 </project>

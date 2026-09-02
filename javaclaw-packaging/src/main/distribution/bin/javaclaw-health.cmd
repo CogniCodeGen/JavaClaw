@@ -4,7 +4,17 @@ set "APP_ROOT=%~dp0.."
 set "HEALTH_ROOT=%TEMP%\javaclaw-health-%RANDOM%-%RANDOM%"
 if exist "%HEALTH_ROOT%" exit /b 6
 mkdir "%HEALTH_ROOT%" || exit /b 6
-call "%APP_ROOT%\bin\javaclaw-cli.cmd" --json --data-dir "%HEALTH_ROOT%\data" --config-dir "%HEALTH_ROOT%\config" --cache-dir "%HEALTH_ROOT%\cache" server-capabilities
+"%APP_ROOT%\runtime\bin\java.exe" ^
+    -cp "%APP_ROOT%\lib\*" ^
+    com.javaclaw.client.cli.JavaClawCli workspace-list -- ^
+    "%APP_ROOT%\runtime\bin\java.exe" ^
+    --enable-native-access=ALL-UNNAMED ^
+    "-Djavaclaw.program.dir=%APP_ROOT%" ^
+    "-Djavaclaw.data.root=%HEALTH_ROOT%\data-v5" ^
+    "-Djavaclaw.log.dir=%HEALTH_ROOT%\data-v5\logs" ^
+    -Djavaclaw.log.process=health-server ^
+    -cp "%APP_ROOT%\lib\*" ^
+    com.javaclaw.launcher.AppServerLauncher --health-check
 set "RESULT=%ERRORLEVEL%"
 rmdir /s /q "%HEALTH_ROOT%"
 exit /b %RESULT%

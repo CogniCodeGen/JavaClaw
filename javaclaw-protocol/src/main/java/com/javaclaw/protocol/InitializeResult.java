@@ -1,24 +1,38 @@
 package com.javaclaw.protocol;
 
-import java.util.Map;
+import java.util.Objects;
 
 /**
- * 握手结果与能力协商快照；客户端收到后仍需发送 initialized。
+ * initialize 成功结果。
  *
- * @param protocolVersion 协商后的 JavaClaw 协议版本，不是 JSON-RPC 的 2.0 字段
+ * @param appProtocolVersion 服务端协议版本
  * @param serverName 服务端名称
- * @param serverVersion 服务端发行版本
- * @param capabilities 能力开关快照；null 归一为空 Map
- * @param connectionId 当前本地连接标识，用于路由和诊断
+ * @param serverVersion 服务端版本
+ * @param capabilities 已协商能力
+ * @param secretKey 当前连接用于 SealedSecret 的 X25519 公钥
  */
 public record InitializeResult(
-        int protocolVersion,
+        int appProtocolVersion,
         String serverName,
         String serverVersion,
-        Map<String, Boolean> capabilities,
-        String connectionId) {
-    /** 复制协商能力 Map，避免连接建立后被调用方改变能力视图。 */
+        NegotiatedCapabilities capabilities,
+        SessionKeyInfo secretKey) {
+    /** 校验服务端信息。 */
     public InitializeResult {
-        capabilities = capabilities == null ? Map.of() : Map.copyOf(capabilities);
+        if (appProtocolVersion != ProtocolVersion.CURRENT) {
+            throw new IllegalArgumentException("server protocol version must be current");
+        }
+        serverName = text(serverName, "serverName");
+        serverVersion = text(serverVersion, "serverVersion");
+        Objects.requireNonNull(capabilities, "capabilities");
+        Objects.requireNonNull(secretKey, "secretKey");
+    }
+
+    private static String text(String value, String name) {
+        String normalized = Objects.requireNonNull(value, name).strip();
+        if (normalized.isEmpty()) {
+            throw new IllegalArgumentException(name + " must not be blank");
+        }
+        return normalized;
     }
 }

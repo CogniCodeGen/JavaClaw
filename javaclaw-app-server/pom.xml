@@ -5,10 +5,14 @@
     <parent>
         <groupId>com.javaclaw</groupId>
         <artifactId>javaclaw-parent</artifactId>
-        <version>4.0.0-SNAPSHOT</version>
+        <version>5.0.0-SNAPSHOT</version>
     </parent>
     <artifactId>javaclaw-app-server</artifactId>
     <name>JavaClaw App Server</name>
+    <properties>
+        <jacoco.line.ratio>0.90</jacoco.line.ratio>
+        <jacoco.branch.ratio>0.80</jacoco.branch.ratio>
+    </properties>
     <dependencies>
         <dependency>
             <groupId>com.javaclaw</groupId>
@@ -20,58 +24,53 @@
         </dependency>
         <dependency>
             <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-extension-spi</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.javaclaw</groupId>
             <artifactId>javaclaw-agent-runtime</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-model-adapters</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.fasterxml.jackson.datatype</groupId>
-            <artifactId>jackson-datatype-jsr310</artifactId>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-builtin-contracts</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-builtin-extensions</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-native-hosts</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-browser-service</artifactId>
         </dependency>
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-openai</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-anthropic</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-google-genai</artifactId>
-        </dependency>
-        <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
         </dependency>
         <dependency>
-            <!-- App Server 的 SLF4J Provider；只参与运行，不进入 Runtime/API 边界。 -->
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
             <scope>runtime</scope>
         </dependency>
         <dependency>
-            <!-- POI 使用 Log4j API；统一桥接到产品 Logback，避免启动时出现无 Provider 警告。 -->
-            <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-to-slf4j</artifactId>
-            <scope>runtime</scope>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <!-- 用真实规则校验正反样例；Checkstyle 不进入服务端运行依赖或发行物。 -->
-        <dependency>
-            <groupId>com.puppycrawl.tools</groupId>
-            <artifactId>checkstyle</artifactId>
-            <version>${checkstyle.version}</version>
+            <artifactId>junit-jupiter-engine</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -84,11 +83,65 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>com.javaclaw.server.bootstrap.AppServerMain</mainClass>
+                            <mainClass>com.javaclaw.server.AppServerMain</mainClass>
                         </manifest>
                     </archive>
                 </configuration>
             </plugin>
         </plugins>
     </build>
+    <profiles>
+        <profile>
+            <id>app-server-unix-coverage</id>
+            <activation>
+                <os>
+                    <family>unix</family>
+                </os>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>verify-coverage</id>
+                                <configuration>
+                                    <excludes>
+                                        <exclude>com/javaclaw/server/transport/WindowsNamedPipeSessionServer*</exclude>
+                                    </excludes>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>app-server-windows-coverage</id>
+            <activation>
+                <os>
+                    <family>Windows</family>
+                </os>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>verify-coverage</id>
+                                <configuration>
+                                    <excludes>
+                                        <exclude>com/javaclaw/server/transport/UnixDomainSocketRpcServer*</exclude>
+                                    </excludes>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

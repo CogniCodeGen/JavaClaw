@@ -1,21 +1,19 @@
 package com.javaclaw.protocol;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import java.util.Objects;
+
+import com.javaclaw.api.CanonicalPayload;
 
 /**
- * 无需响应的 JSON-RPC 通知；没有请求 id。
+ * 不要求响应的 JSON-RPC notification。
  *
- * @param jsonrpc 固定字符串 2.0，不能省略
- * @param method 非空白 JSON-RPC 方法名
- * @param params 对象、数组或 JSON null 节点；Java 引用不可为 null
+ * @param method Protocol v2 方法名
+ * @param params 对象参数
  */
-public record JsonRpcNotification(String jsonrpc, String method, JsonNode params) implements JsonRpcFrame {
-    /** 校验 JSON-RPC 版本、方法名和参数形状；请求 id 额外遵守请求关联约束。 */
+public record JsonRpcNotification(String method, CanonicalPayload params) implements JsonRpcMessage {
+    /** 校验 notification。 */
     public JsonRpcNotification {
-        if (!"2.0".equals(jsonrpc)) {
-            throw new IllegalArgumentException("jsonrpc must be 2.0");
-        }
-        method = JsonRpcRequest.requireMethod(method);
-        params = JsonRpcRequest.requireParams(params);
+        method = RpcNames.require(method);
+        Objects.requireNonNull(params, "params");
     }
 }

@@ -1,6 +1,5 @@
 @echo off
 setlocal DisableDelayedExpansion
-if not defined JAVACLAW_PROGRAM_DIR set "JAVACLAW_PROGRAM_DIR=%~dp0"
 if not "%~2"=="" goto invalid
 if /i "%~1"=="--help" goto help
 if /i "%~1"=="-h" goto help

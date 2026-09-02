@@ -4,23 +4,18 @@
 <?import javafx.scene.control.ComboBox?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.control.ListView?>
-<?import javafx.scene.control.MenuButton?>
-<?import javafx.scene.control.MenuItem?>
 <?import javafx.scene.control.Separator?>
-<?import javafx.scene.control.SeparatorMenuItem?>
 <?import javafx.scene.control.TextArea?>
-<?import javafx.scene.control.TextField?>
 <?import javafx.scene.layout.BorderPane?>
-<?import javafx.scene.layout.FlowPane?>
 <?import javafx.scene.layout.HBox?>
 <?import javafx.scene.layout.Region?>
 <?import javafx.scene.layout.StackPane?>
 <?import javafx.scene.layout.VBox?>
-<!-- 509f197 视觉语言的 v4 响应式壳；Desktop 仍只通过 SDK 读取和修改服务端状态。 -->
+<!-- v5 JavaFX 壳沿用 509f197 的布局比例、CSS 令牌和交互语言；所有数据只来自 SDK。 -->
 <BorderPane fx:id="root" styleClass="chat-root" xmlns:fx="http://javafx.com/fxml/1"
-    fx:controller="com.javaclaw.desktop.MainController">
+    fx:controller="com.javaclaw.desktop.shell.DesktopShellController">
     <left>
-        <VBox fx:id="sidebar" prefWidth="240" minWidth="200" maxWidth="280" accessibleText="会话与功能导航"
+        <VBox fx:id="sidebar" prefWidth="240" minWidth="200" maxWidth="280" accessibleText="Workspace 与 Thread 导航"
             styleClass="sidebar-root">
             <HBox alignment="CENTER_LEFT" spacing="8">
                 <padding>
@@ -29,7 +24,7 @@
                 <Label text="✦" styleClass="sb-brand-mark" />
                 <Label text="JavaClaw" styleClass="sb-brand-name" />
                 <Region HBox.hgrow="ALWAYS" />
-                <Label text="4.0" styleClass="sb-brand-ver" />
+                <Label text="5.0" styleClass="sb-brand-ver" />
             </HBox>
             <VBox spacing="10">
                 <padding>
@@ -38,46 +33,16 @@
                 <HBox spacing="6" alignment="CENTER_LEFT">
                     <ComboBox fx:id="workspaceBox" promptText="选择工作区" accessibleText="选择工作区"
                         maxWidth="Infinity" styleClass="sidebar-workspace-combo" HBox.hgrow="ALWAYS" />
-                    <Button fx:id="newWorkspaceButton" text="＋" onAction="#newWorkspace" accessibleText="新建工作区"
-                        styleClass="sidebar-ws-btn" />
-                    <MenuButton fx:id="workspaceActionMenu" text="⋯" accessibleText="当前工作区操作"
-                        styleClass="sidebar-ws-btn">
-                        <items>
-                            <MenuItem text="重命名工作区…" onAction="#renameCurrentWorkspace" />
-                            <MenuItem text="删除工作区登记…" onAction="#deleteCurrentWorkspace" />
-                        </items>
-                    </MenuButton>
+                    <Button text="＋" onAction="#newWorkspace" accessibleText="新建工作区" styleClass="sidebar-ws-btn" />
                 </HBox>
-                <Button fx:id="newThreadButton" text="＋ 新建对话" onAction="#newThread" accessibleText="新建对话"
-                    maxWidth="Infinity" styleClass="sb-new-btn" />
-                <TextField fx:id="searchField" promptText="搜索当前工作区对话" accessibleText="搜索当前工作区对话"
-                    styleClass="sidebar-search" />
-                <HBox spacing="8" alignment="CENTER_LEFT">
-                    <ComboBox fx:id="threadScopeBox" accessibleText="筛选活跃或已归档对话" maxWidth="Infinity"
-                        HBox.hgrow="ALWAYS" />
-                    <Label fx:id="threadResultCount" text="0 条" styleClass="sidebar-section-count" />
-                </HBox>
+                <Button text="＋ 新建对话" onAction="#newThread" accessibleText="新建对话" maxWidth="Infinity"
+                    styleClass="sb-new-btn" />
             </VBox>
             <HBox alignment="CENTER_LEFT" spacing="8" styleClass="sidebar-section-title">
                 <padding>
                     <Insets top="3" right="16" bottom="6" left="16" />
                 </padding>
                 <Label text="对话" styleClass="sidebar-section-title" />
-                <Region HBox.hgrow="ALWAYS" />
-                <Button fx:id="threadManageButton" text="选择管理" onAction="#toggleThreadManagement"
-                    accessibleText="进入或退出对话批量管理" styleClass="sidebar-manage-btn" />
-            </HBox>
-            <HBox fx:id="threadBatchBar" spacing="6" alignment="CENTER_LEFT" styleClass="sidebar-batch-bar">
-                <Button text="全选" onAction="#selectAllThreads" accessibleText="选择当前筛选结果的全部对话"
-                    styleClass="sidebar-manage-btn" />
-                <Button text="归档" onAction="#batchArchiveThreads" accessibleText="批量归档所选对话"
-                    styleClass="sidebar-manage-btn" />
-                <Button text="恢复" onAction="#batchRestoreThreads" accessibleText="批量恢复所选对话"
-                    styleClass="sidebar-manage-btn" />
-                <Button text="删除" onAction="#batchDeleteThreads" accessibleText="批量删除所选对话"
-                    styleClass="sidebar-batch-delete-btn,jc-btn,jc-btn-sm,jc-btn-danger" />
-                <Region HBox.hgrow="ALWAYS" />
-                <Label fx:id="threadBatchCount" text="0" styleClass="sidebar-section-count" />
             </HBox>
             <ListView fx:id="threadList" accessibleText="当前工作区的对话列表" styleClass="sidebar-list-scroll"
                 VBox.vgrow="ALWAYS">
@@ -86,121 +51,78 @@
                 </placeholder>
             </ListView>
             <Separator />
-            <VBox styleClass="sidebar-navigation">
-                <MenuButton fx:id="managementMenu" text="⚙  设置" accessibleText="打开设置与管理菜单" popupSide="TOP"
-                    maxWidth="Infinity" styleClass="sidebar-nav-button,sidebar-settings-menu">
-                    <items>
-                        <MenuItem text="⚙  设置" onAction="#openProviders"
-                            styleClass="sidebar-settings-menu-item" />
-                        <SeparatorMenuItem styleClass="sidebar-settings-menu-separator" />
-                        <MenuItem text="📚  知识" onAction="#openKnowledge"
-                            styleClass="sidebar-settings-menu-item" />
-                        <MenuItem text="🧠  记忆" onAction="#openMemory" styleClass="sidebar-settings-menu-item" />
-                        <MenuItem text="⚙  技能" onAction="#openSkills" styleClass="sidebar-settings-menu-item" />
-                        <MenuItem text="⎇  自动化" onAction="#openAutomation"
-                            styleClass="sidebar-settings-menu-item" />
-                        <MenuItem text="⏰  定时任务" onAction="#openSchedules"
-                            styleClass="sidebar-settings-menu-item" />
-                        <MenuItem text="🧩  插件" onAction="#openPlugins" styleClass="sidebar-settings-menu-item" />
-                        <MenuItem text="🔌  MCP" onAction="#openMcp" styleClass="sidebar-settings-menu-item" />
-                        <SeparatorMenuItem styleClass="sidebar-settings-menu-separator" />
-                        <MenuItem text="Agent Studio" onAction="#openProfiles"
-                            styleClass="sidebar-settings-menu-item" />
-                        <MenuItem text="站点管理" onAction="#openSites" styleClass="sidebar-settings-menu-item" />
-                        <MenuItem text="项目约定" onAction="#openInstructions"
-                            styleClass="sidebar-settings-menu-item" />
-                        <MenuItem text="协作与工作树恢复" onAction="#openWorktrees"
-                            styleClass="sidebar-settings-menu-item" />
-                    </items>
-                </MenuButton>
-                <Label fx:id="connectionLabel" accessibleText="App Server 连接状态" styleClass="chat-top-meta"
-                    wrapText="true" />
+            <VBox spacing="8" styleClass="sidebar-navigation">
+                <Button fx:id="settingsButton" text="⚙  设置与管理" onAction="#openSettings"
+                    accessibleText="打开设置与管理中心，快捷键 Ctrl 或 Command 加逗号" maxWidth="Infinity"
+                    styleClass="sidebar-nav-button" />
+                <Label fx:id="connectionLabel" text="尚未连接 App Server" accessibleText="App Server 连接状态"
+                    wrapText="true" styleClass="chat-top-meta" />
             </VBox>
         </VBox>
     </left>
     <center>
-        <StackPane fx:id="shellStack" styleClass="desktop-shell-stack">
-            <BorderPane fx:id="chatPane" styleClass="chat-root">
+        <StackPane styleClass="desktop-shell-stack">
+            <BorderPane styleClass="chat-root">
                 <top>
                     <VBox>
                         <HBox alignment="CENTER_LEFT" spacing="8" styleClass="chat-top-bar">
-                            <Button fx:id="sidebarToggleButton" text="☰" onAction="#toggleSidebar"
-                                accessibleText="显示或隐藏会话侧栏" styleClass="shell-toggle-button" />
+                            <Button text="☰" onAction="#toggleSidebar" accessibleText="显示或隐藏会话侧栏"
+                                styleClass="shell-toggle-button" />
                             <Label text="●" styleClass="chat-top-status-dot,status-idle" />
-                            <VBox fx:id="threadHeaderText" spacing="4">
+                            <VBox spacing="4">
                                 <Label fx:id="threadTitle" text="新对话" styleClass="chat-top-title" />
                                 <Label fx:id="threadMeta" text="选择工作区，开始你的任务" styleClass="chat-top-meta" />
                             </VBox>
                             <Region HBox.hgrow="ALWAYS" />
-                            <Button fx:id="progressToggleButton" text="进度" onAction="#toggleProgress"
-                                accessibleText="显示或隐藏处理进度" styleClass="shell-toggle-button" />
-                            <MenuButton fx:id="threadActionMenu" text="会话" accessibleText="当前会话操作"
-                                styleClass="thread-action-button">
-                                <items>
-                                    <MenuItem text="压缩上下文…" onAction="#compactThread" />
-                                    <MenuItem text="重命名…" onAction="#renameCurrentThread" />
-                                    <MenuItem text="创建分支" onAction="#forkCurrentThread" />
-                                    <MenuItem text="归档或恢复" onAction="#archiveCurrentThread" />
-                                    <MenuItem text="删除对话…" onAction="#deleteCurrentThread" />
-                                </items>
-                            </MenuButton>
-                            <MenuButton fx:id="themeMenu" text="◐  主题" accessibleText="选择界面主题"
-                                styleClass="theme-menu-btn" />
-                            <Button fx:id="shortcutHelpButton" text="?" onAction="#showShortcutHelp"
-                                accessibleText="显示快捷键帮助" styleClass="shortcut-help-button" />
-                            <Button fx:id="settingsButton" text="⚙" onAction="#openProviders"
-                                accessibleText="打开设置" styleClass="settings-button" />
+                            <Button text="审批" onAction="#toggleProgress" accessibleText="显示或隐藏审批面板"
+                                styleClass="shell-toggle-button" />
                         </HBox>
-                        <Label fx:id="errorLabel" wrapText="true" maxWidth="Infinity" styleClass="error-banner" />
+                        <Label fx:id="errorLabel" visible="false" managed="false" wrapText="true"
+                            maxWidth="Infinity" styleClass="error-banner" />
+                        <VBox fx:id="connectionErrorCard" visible="false" managed="false" spacing="10"
+                            accessibleText="App Server 连接失败恢复操作"
+                            styleClass="jc-card,platform-section-card,connection-error-card">
+                            <padding>
+                                <Insets top="12" right="16" bottom="12" left="16" />
+                            </padding>
+                            <Label text="无法连接到 App Server" styleClass="grp-title,platform-action-error" />
+                            <Label fx:id="connectionErrorDetail" wrapText="true" styleClass="sec-hint" />
+                            <HBox spacing="8" alignment="CENTER_LEFT">
+                                <Button text="重新连接" onAction="#retryConnection" accessibleText="重新连接 App Server"
+                                    styleClass="jc-btn,jc-btn-primary" />
+                                <Button text="打开诊断" onAction="#openDiagnostics" accessibleText="打开脱敏诊断页面"
+                                    styleClass="jc-btn,jc-btn-soft" />
+                                <Button fx:id="connectionStartButton" text="启动 App Server"
+                                    styleClass="jc-btn,jc-btn-ghost" />
+                            </HBox>
+                        </VBox>
                     </VBox>
                 </top>
                 <center>
-                    <StackPane>
-                        <ListView fx:id="transcriptList" accessibleText="当前对话内容"
-                            styleClass="message-scroll,transcript-list">
-                            <placeholder>
-                                <VBox alignment="CENTER" spacing="12" styleClass="welcome-panel">
-                                    <Label text="✦" styleClass="welcome-mark" />
-                                    <Label text="有什么我可以帮你的？" styleClass="welcome-title" />
-                                    <Label text="对话、规划与执行，都从这里开始。" styleClass="chat-top-meta" />
-                                </VBox>
-                            </placeholder>
-                        </ListView>
-                        <Button fx:id="newMessagesButton" text="↓ 新消息" onAction="#followNewMessages"
-                            accessibleText="跳到最新消息并恢复自动跟随" styleClass="new-messages-pill"
-                            StackPane.alignment="BOTTOM_CENTER">
-                            <StackPane.margin>
-                                <Insets bottom="18" />
-                            </StackPane.margin>
-                        </Button>
-                    </StackPane>
+                    <ListView fx:id="transcriptList" accessibleText="当前对话内容"
+                        styleClass="message-scroll,transcript-list">
+                        <placeholder>
+                            <VBox alignment="CENTER" spacing="12" styleClass="welcome-panel">
+                                <Label text="✦" styleClass="welcome-mark" />
+                                <Label text="有什么我可以帮你的？" styleClass="welcome-title" />
+                                <Label text="对话、规划与执行，都从这里开始。" styleClass="chat-top-meta" />
+                            </VBox>
+                        </placeholder>
+                    </ListView>
                 </center>
                 <bottom>
                     <VBox styleClass="input-bar">
-                        <VBox fx:id="composerCard" accessibleText="消息输入与运行模式" styleClass="composer-card">
-                            <TextArea fx:id="composer" promptText="输入消息… Enter 发送，Shift+Enter 换行"
-                                accessibleText="消息输入框" prefRowCount="2" wrapText="true" minHeight="56" maxHeight="240"
+                        <VBox accessibleText="消息输入与运行配置" styleClass="composer-card">
+                            <TextArea fx:id="composer" promptText="输入消息…" accessibleText="消息输入框"
+                                prefRowCount="2" wrapText="true" minHeight="56" maxHeight="240"
                                 styleClass="input-field,composer-input" />
-                            <VBox fx:id="attachmentPreview" spacing="8" styleClass="attachment-preview-pane">
-                                <FlowPane fx:id="attachmentChips" hgap="8" vgap="8" accessibleText="待发送附件" />
-                                <HBox spacing="8" alignment="CENTER_LEFT">
-                                    <Label fx:id="composerStatus" wrapText="true" styleClass="chat-top-meta" />
-                                    <Region HBox.hgrow="ALWAYS" />
-                                    <Button fx:id="removeAttachmentButton" text="清除全部"
-                                        onAction="#removeAllAttachments" accessibleText="移除全部待发送附件"
-                                        styleClass="sidebar-manage-btn,jc-btn,jc-btn-sm,jc-btn-danger" />
-                                    <Button fx:id="cancelUploadButton" text="取消上传" onAction="#cancelUpload"
-                                        accessibleText="取消尚未提交的附件上传" styleClass="sidebar-manage-btn" />
-                                </HBox>
-                            </VBox>
-                            <HBox fx:id="composerToolbar" spacing="8" alignment="CENTER_LEFT"
-                                accessibleText="输入工具栏" styleClass="composer-toolbar">
-                                <Button fx:id="attachButton" text="＋" onAction="#attach" accessibleText="添加附件"
-                                    styleClass="attach-button" />
+                            <HBox spacing="8" alignment="CENTER_LEFT" styleClass="composer-toolbar">
+                                <ComboBox fx:id="profileBox" promptText="使用工作区默认 Agent Profile"
+                                    accessibleText="选择 Agent Profile；不选择时使用工作区默认配置" prefWidth="300"
+                                    styleClass="composer-select" />
+                                <Button text="默认" onAction="#useDefaultProfile"
+                                    accessibleText="恢复使用工作区默认 Agent Profile" styleClass="sidebar-manage-btn" />
                                 <Region HBox.hgrow="ALWAYS" />
-                                <ComboBox fx:id="profileBox" promptText="选择模式" accessibleText="选择运行模式"
-                                    minWidth="104" prefWidth="112" maxWidth="120"
-                                    styleClass="composer-select,composer-profile-select" />
                                 <Button fx:id="interruptButton" text="停止" onAction="#interrupt"
                                     accessibleText="停止当前任务" styleClass="sidebar-manage-btn,composer-interrupt-button" />
                                 <Button fx:id="sendButton" text="发送 ↑" onAction="#send" accessibleText="发送消息"
@@ -210,61 +132,35 @@
                     </VBox>
                 </bottom>
             </BorderPane>
-            <Region fx:id="drawerScrim" visible="false" managed="false" onMouseClicked="#closeDrawers"
-                accessibleText="关闭侧栏抽屉" styleClass="desktop-drawer-scrim" />
-            <Label fx:id="windowToast" visible="false" managed="false" mouseTransparent="true"
-                accessibleText="窗口提示" styleClass="window-toast" StackPane.alignment="TOP_CENTER">
-                <StackPane.margin>
-                    <Insets top="68" />
-                </StackPane.margin>
-            </Label>
         </StackPane>
     </center>
     <right>
-        <VBox fx:id="progressPanel" accessibleText="当前会话处理进度"
+        <VBox fx:id="progressPanel" prefWidth="340" accessibleText="等待用户输入与审批"
             styleClass="thinking-panel-root,desktop-progress-panel">
             <HBox alignment="CENTER_LEFT" spacing="8">
                 <padding>
                     <Insets top="14" right="14" bottom="12" left="14" />
                 </padding>
-                <Label text="处理进度" styleClass="thinking-panel-title" />
+                <Label text="待处理事项" styleClass="thinking-panel-title" />
                 <Region HBox.hgrow="ALWAYS" />
-                <Button text="×" onAction="#toggleProgress" accessibleText="关闭处理进度"
+                <Button text="×" onAction="#toggleProgress" accessibleText="关闭审批面板"
                     styleClass="sidebar-manage-btn" />
             </HBox>
-            <VBox styleClass="progress-summary">
-                <Label fx:id="progressPhase" text="等待任务" styleClass="progress-phase" />
-                <Label fx:id="progressStatus" text="选择会话后显示处理阶段" wrapText="true" styleClass="progress-status" />
-            </VBox>
+            <VBox fx:id="inputRequestHost" spacing="8" accessibleText="等待用户输入" styleClass="input-request-host" />
             <Separator />
-            <ListView fx:id="progressList" accessibleText="工具、文件、MCP 和子任务摘要" styleClass="progress-list"
+            <Label text="工具审批" styleClass="thinking-panel-title,approval-section-title" />
+            <ListView fx:id="approvalList" accessibleText="等待决策的工具调用" styleClass="progress-list"
                 VBox.vgrow="ALWAYS">
                 <placeholder>
-                    <Label text="开始任务后，这里会显示可审查的阶段与执行摘要。" wrapText="true" styleClass="progress-empty" />
+                    <Label text="当前没有等待审批的工具调用。" wrapText="true" styleClass="progress-empty" />
                 </placeholder>
             </ListView>
-            <VBox styleClass="progress-metrics">
-                <HBox>
-                    <Label text="输入 Token" styleClass="progress-metric-label" />
-                    <Region HBox.hgrow="ALWAYS" />
-                    <Label fx:id="inputTokens" text="—" styleClass="progress-metric-value" />
-                </HBox>
-                <HBox>
-                    <Label text="输出 Token" styleClass="progress-metric-label" />
-                    <Region HBox.hgrow="ALWAYS" />
-                    <Label fx:id="outputTokens" text="—" styleClass="progress-metric-value" />
-                </HBox>
-                <HBox>
-                    <Label text="推理 Token" styleClass="progress-metric-label" />
-                    <Region HBox.hgrow="ALWAYS" />
-                    <Label fx:id="reasoningTokens" text="—" styleClass="progress-metric-value" />
-                </HBox>
-                <HBox>
-                    <Label text="费用" styleClass="progress-metric-label" />
-                    <Region HBox.hgrow="ALWAYS" />
-                    <Label text="—" accessibleText="费用未知" styleClass="progress-metric-value" />
-                </HBox>
-            </VBox>
+            <HBox spacing="8" alignment="CENTER_RIGHT" styleClass="progress-metrics">
+                <Button fx:id="denyButton" text="拒绝" onAction="#deny" accessibleText="拒绝选中调用"
+                    styleClass="jc-btn,jc-btn-danger" />
+                <Button fx:id="approveButton" text="批准" onAction="#approve" accessibleText="批准选中调用"
+                    styleClass="jc-btn,jc-btn-primary" />
+            </HBox>
         </VBox>
     </right>
 </BorderPane>

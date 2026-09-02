@@ -1,78 +1,69 @@
-# JavaClaw 仓库目录说明
+# JavaClaw 5 仓库与进程边界
 
-本文说明仓库根目录、九个 Maven 模块和模块内标准目录的归属。目录数量不等同于业务模块数量：
-源码边界、构建配置、测试夹具、可再生输出和本机运行数据具有不同的生命周期。
+仓库只保留能表达编译边界、稳定契约或独立进程的模块。业务领域不得重新进入 Turn Harness。
 
-## 1. 目录分类
+## Maven Reactor
 
-| 目录 | 分类 | 用途 | Git 策略 |
-|---|---|---|---|
-| `.git/` | 版本控制 | Git 对象、索引和分支历史 | Git 自身管理 |
-| `.github/` | 工程配置 | GitHub Actions CI 工作流 | 提交 |
-| `.claude/` | 本机配置 | 当前开发者的 Claude 设置 | 忽略 |
-| `.idea/` | 本机配置 | IntelliJ 工作区、运行状态和数据源设置 | 忽略 |
-| `.javaclaw/` | 敏感运行数据 | v4 H2、凭据主密钥、日志和缓存 | 严格忽略 |
-| `config/` | 工程配置 | Checkstyle 规则和 Spotless XML 格式化参数 | 提交 |
-| `docs/` | 文档 | 架构 ADR、升级、开发规范和 UI 回归资料 | 提交 |
-| `skills/` | 项目协作资料 | 开发与审查工作流使用的 Skill | 提交 |
-| `javaclaw-*/` | 产品源码 | 九个 Maven 功能领域模块 | 提交 |
-| `target/`、`*/target/` | 可再生输出 | 编译、测试、发行包和视觉测试结果 | 忽略 |
-
-`config/` 不是 JavaClaw 业务配置。它只被根 `pom.xml` 的 Spotless 和 Checkstyle 插件读取，
-不保存 Provider、MCP、数据库连接或用户凭据。业务运行配置统一位于 `.javaclaw/config-v4/`，
-并且不得加入版本控制。
-
-旧版可能在仓库根生成 `data/`、`logs/` 和 `plugins/`。v4 不读取或迁移这些目录；确认应用退出后，
-应先归档到仓库外再清理。当前 v4 的 `.javaclaw/` 不属于旧数据，不能一并删除。
-
-## 2. Maven 模块
-
-Reactor 已由 23 个技术模块收敛为九个功能领域模块。依赖方向由根 POM 和架构测试共同约束：
-
-| 模块 | 职责 | JavaClaw 模块依赖 |
+| 模块 | 唯一职责 | 允许的关键依赖 |
 |---|---|---|
-| `javaclaw-api` | 核心领域对象与 Sandbox 公共 API | 无 |
-| `javaclaw-protocol` | JSON-RPC 消息、Schema 和编解码 | 无 |
-| `javaclaw-agent-runtime` | Agent 内核、上下文、工具、知识与自动化 | `api` |
-| `javaclaw-app-server` | RPC、H2、Provider、MCP、Plugin、安全与装配 | `api`、`protocol`、`agent-runtime` |
-| `javaclaw-native-hosts` | FFM、Sandbox Launcher 与 Windows Transport Host | `api`、`protocol` |
-| `javaclaw-browser-service` | 隔离的浏览器渲染服务 | `protocol` |
-| `javaclaw-client` | Typed SDK、Protocol Mapper 与 CLI | `protocol` |
-| `javaclaw-desktop` | JavaFX Desktop UI | `client` |
-| `javaclaw-packaging` | Launcher、发行组装、签名和平台门禁 | 其余产品模块 |
+| `javaclaw-api` | 不可变 Core、安全与 Sandbox 契约 | JDK |
+| `javaclaw-protocol` | JSON-RPC 2.0、Protocol v2、Schema、framing、共享 codec | `api`、`extension-spi`、Jackson |
+| `javaclaw-extension-spi` | Bundle、贡献点、编排、定时、ViewSchema 契约 | `api` |
+| `javaclaw-agent-runtime` | 单 Turn Thin Harness | `api`、日志门面 |
+| `javaclaw-model-adapters` | Spring AI 与 Provider 原生扩展 | `api`、`agent-runtime`、`extension-spi`、Provider SDK |
+| `javaclaw-builtin-contracts` | 内置扩展公开 DTO 与 schema | `api` |
+| `javaclaw-builtin-extensions` | Plan、Loop、Workflow、SDD、Schedule、Memory、Knowledge、Skill、Site | contracts、SPI、隔离依赖 |
+| `javaclaw-app-server` | 唯一组合根、H2、RPC、安全、Extension Host、生命周期 | 平台实现模块 |
+| `javaclaw-native-hosts` | FFM、Sandbox、PTY、登录启动与本地传输原语 | `api`、`protocol`、SPI |
+| `javaclaw-browser-service` | 进程外 Browser Worker | Worker 所需契约与 Playwright |
+| `javaclaw-knowledge-worker` | 进程外文档解析 Worker | contracts、PDFBox、POI |
+| `javaclaw-client` | SDK、CLI、连接恢复、扩展 typed facade | `api`、`protocol`、`extension-spi`、contracts |
+| `javaclaw-desktop` | JavaFX 壳、SDK ViewModel、ViewSchema renderer | `client`、共享契约、`native-hosts`、JavaFX |
+| `javaclaw-packaging` | jlink、发行组装和启动监督 | 产品运行时模块 |
 
-这些模块对应公共契约、独立进程、安全边界或产品入口，不应仅为减少目录数量继续合并。
-详细决策见 [ADR-0011](architecture/adr/0011-domain-module-consolidation.md)。
+`agent-runtime` 禁止依赖 Jackson、Spring AI、H2、Quartz、PDFBox、POI 和 JavaFX。`app-server` 不直接依赖
+Spring AI；Provider 类型不得越过 `model-adapters`。内置扩展只通过 SPI port 访问平台能力。
 
-## 3. 模块内目录
+`javaclaw-builtin-extensions` 中的复杂领域使用显式资源、Repository、状态机和 ViewSchema 组件组合；Plan、Loop、
+Workflow、SDD、Schedule、Memory、Knowledge、Skill 与 Site 不共享通用文档或自动化抽象基类。可恢复执行统一通过
+Extension Job port 取得 intent/checkpoint 能力，但领域状态和校验仍由各扩展拥有。
 
-每个模块沿用 Maven 标准结构：
+`javaclaw-client` 的连接层持续接收服务端通知，只把强类型 `ServerNotification` 交给上层；Desktop 的通知协调器对
+`extension/event` 合并失效并重新读取权威状态。Desktop 页面不得从通知 payload 推导业务状态，也不得访问 Server
+实现包。Desktop 在编译期可直接复用 `api`、`protocol`、`builtin-contracts` 与 `extension-spi` 的不可变契约，并为
+Windows 本地传输依赖 `native-hosts`；这些依赖不能用于绕过 SDK 与 App Server 通信。
 
-- `pom.xml`：模块依赖、插件和构建元数据。
-- `src/main/java/`：正式 Java 源码。
-- `src/main/resources/`：运行时 CSS、FXML、Prompt、Schema 或数据库 Migration。
-- `src/test/java/`：单元、架构、场景和集成测试。
-- `src/test/resources/`：固定测试夹具与视觉 Golden；测试运行不得在这里写入临时截图。
-- `target/`：全部可再生的编译和测试输出，可用 `mvn clean` 清除。
+## 进程
 
-测试当前截图、候选 Golden 和差异图统一生成到 `javaclaw-packaging/target/visual/`。所有
-`src/test/resources/` 目录默认忽略新增文件；确需新增或更新固定夹具时，必须显式强制添加并单独审查。
+```mermaid
+flowchart TB
+    CLIENT[Desktop / CLI] --> SERVER[App Server]
+    SERVER --> DB[(data-v5)]
+    SERVER --> BROWSER[Browser Worker]
+    SERVER --> KNOWLEDGE[Knowledge Worker]
+    SERVER -. supervised .-> THIRD[Third-party Extension Process]
+```
 
-## 4. 根文件
+App Server 是唯一 H2 owner。Browser、Knowledge Worker 与第三方扩展不得获得 JDBC、App Server classpath 或 JavaFX。
+Browser Worker 无 HOME、Workspace 与原始网络权限，Chromium 的请求只能通过 App Server Broker 回调得到响应；
+Service Worker、WSS 与下载均拒绝。Knowledge Worker 无网络，只通过有界二进制 framing 接收 Attachment 内容并
+返回解析结果；PDFBox 与 POI 不进入 App Server、内置扩展或 Turn Runtime 的 module path。
+第三方扩展只允许使用 namespaced document/blob API；虚线表示它始终位于进程与 Sandbox 信任边界之外。
 
-- `pom.xml`：九模块 Reactor、依赖版本和工程门禁。
-- `README.md`：构建、运行、配置和文档入口。
-- `AGENTS.md`：仓库开发与交付约定。
-- `.editorconfig`、`.gitattributes`：编码、换行和 Git 文件行为。
-- `.gitignore`：构建输出、本机配置与敏感运行数据的排除策略。
-- `run.sh`、`run.cmd`：macOS/Linux 和 Windows 的统一启动脚本。
-- `LICENSE`：MIT License。
-- `CLAUDE.md`：开发者本机文件，默认忽略。
+## 根目录
 
-## 5. 清理与安全规则
+- `config/`：Checkstyle 与格式化规则，不放业务配置。
+- `docs/`：只描述 5.0 当前目标、事实、威胁与验收，不保存旧版本叙事。
+- `.run/`：共享 IDEA App Server、Desktop 与 Compound 调试配置；不保存凭据。
+- `.javaclaw/data-v5/`：本机数据库、Blob、Worktree 和日志；始终忽略。
+- `.javaclaw/idea/data-v5/`：共享 IDEA Compound 配置使用的隔离开发数据根；与发行数据互不读取。
+- `docs/images/screenshots/settings-center/macos-reference/`：54 张设置中心生产 Scene 参考图及哈希清单。
+- `target/`、`*/target/`：可再生构建输出。
+- `.github/workflows/javaclaw-v5.yml`：唯一 CI / release workflow。
 
-1. 清理前停止 Desktop 和 App Server，避免复制活动 H2 或未完成日志。
-2. 仅用 `mvn clean` 清除构建输出，不手工删除源码或固定测试夹具。
-3. 旧 `data/`、`logs/`、`plugins/` 先在仓库外归档并核对 SHA-256，再从工作区移除。
-4. `.javaclaw/`、IDE 数据源、环境文件、日志、数据库和凭据文件不得提交。
-5. 提交前检查暂存区和忽略状态；测试生成图片不得出现在 `git status` 中。
+`javaclaw-packaging/target/distribution` 是展开后的本地发行目录；其中主应用位于 `runtime/` 与 `lib/`，Browser、
+Knowledge、Skill 的隔离 image 位于 `workers/`。`target/release-evidence` 保存 SBOM 与许可证清单，`target/release`
+只保存可发布 ZIP、原生安装包、签名和外层哈希清单。这些目录均可由源码重新生成。
+
+模块使用 Maven 标准 `src/main/java`、`src/main/resources`、`src/test/java`。固定 schema 与 prompt 属于源码，
+不得由格式化或测试重写。测试临时文件只能进入 JUnit 临时目录或 `target/`。

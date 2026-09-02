@@ -5,460 +5,468 @@
     <parent>
         <groupId>com.javaclaw</groupId>
         <artifactId>javaclaw-parent</artifactId>
-        <version>4.0.0-SNAPSHOT</version>
+        <version>5.0.0-SNAPSHOT</version>
     </parent>
     <artifactId>javaclaw-packaging</artifactId>
-    <packaging>jar</packaging>
-    <name>JavaClaw Distribution Packaging</name>
-    <properties>
-        <javaclaw.product.version>4.0.0</javaclaw.product.version>
-        <javaclaw.distribution.root>${project.build.directory}/distribution</javaclaw.distribution.root>
-        <javaclaw.platform>unknown-${os.arch}</javaclaw.platform>
-    </properties>
+    <name>JavaClaw Packaging</name>
     <dependencies>
         <dependency>
             <groupId>com.javaclaw</groupId>
-            <artifactId>javaclaw-desktop</artifactId>
-            <version>${project.version}</version>
+            <artifactId>javaclaw-app-server</artifactId>
+            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>com.javaclaw</groupId>
             <artifactId>javaclaw-client</artifactId>
-            <version>${project.version}</version>
         </dependency>
         <dependency>
             <groupId>com.javaclaw</groupId>
-            <artifactId>javaclaw-app-server</artifactId>
-            <version>${project.version}</version>
+            <artifactId>javaclaw-desktop</artifactId>
+            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>com.javaclaw</groupId>
             <artifactId>javaclaw-native-hosts</artifactId>
-            <version>${project.version}</version>
         </dependency>
         <dependency>
             <groupId>com.javaclaw</groupId>
             <artifactId>javaclaw-browser-service</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-        <dependency>
-            <!-- 产品入口只依赖日志门面；具体 Provider 作为发行运行时依赖。 -->
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>ch.qos.logback</groupId>
-            <artifactId>logback-classic</artifactId>
             <scope>runtime</scope>
         </dependency>
         <dependency>
-            <!-- IDE 入口与打包运行时共用同一日志链，不让 Log4j API 退化为 stderr 告警。 -->
-            <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-to-slf4j</artifactId>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-knowledge-worker</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-protocol</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-api</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-builtin-contracts</artifactId>
             <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
-
     <build>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
                 <version>3.4.2</version>
+                <executions>
+                    <execution>
+                        <id>default-jar</id>
+                        <phase>process-test-resources</phase>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
                 <configuration>
-                    <archive>
-                        <manifest>
-                            <mainClass>com.javaclaw.launcher.JavaClawLauncher</mainClass>
-                        </manifest>
-                    </archive>
+                    <!-- 本模块的非测试依赖均是发行镜像输入，不是启动器的编译依赖。 -->
+                    <ignoreNonCompile>true</ignoreNonCompile>
                 </configuration>
+                <executions>
+                    <execution>
+                        <id>copy-main-runtime-dependencies</id>
+                        <phase>process-test-resources</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <includeScope>runtime</includeScope>
+                            <excludeArtifactIds>javaclaw-knowledge-worker,playwright,driver,driver-bundle,pdfbox,pdfbox-io,fontbox,poi,poi-ooxml,poi-ooxml-lite,xmlbeans,SparseBitSet,commons-math3,commons-compress,commons-lang3,commons-io,curvesapi,log4j-api,commons-collections4,opentest4j</excludeArtifactIds>
+                            <outputDirectory>${project.build.directory}/distribution/lib</outputDirectory>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>copy-browser-worker-dependencies</id>
+                        <phase>process-test-resources</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <includeScope>runtime</includeScope>
+                            <includeArtifactIds>javaclaw-browser-service,javaclaw-api,javaclaw-protocol,javaclaw-extension-spi,javaclaw-builtin-contracts,jackson-core,jackson-databind,jackson-annotations,jackson-datatype-jdk8,jackson-datatype-jsr310,playwright,gson,error_prone_annotations,opentest4j,driver,driver-bundle</includeArtifactIds>
+                            <excludeGroupIds>tools.jackson.core</excludeGroupIds>
+                            <outputDirectory>${project.build.directory}/distribution/workers/browser/app</outputDirectory>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>copy-knowledge-worker-dependencies</id>
+                        <phase>process-test-resources</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <includeScope>runtime</includeScope>
+                            <includeArtifactIds>javaclaw-knowledge-worker,javaclaw-api,javaclaw-protocol,javaclaw-extension-spi,javaclaw-builtin-contracts,jackson-core,jackson-databind,jackson-annotations,jackson-datatype-jdk8,jackson-datatype-jsr310,pdfbox,pdfbox-io,fontbox,commons-logging,poi-ooxml,poi,commons-codec,commons-math3,SparseBitSet,poi-ooxml-lite,xmlbeans,commons-compress,commons-lang3,commons-io,curvesapi,log4j-api,commons-collections4</includeArtifactIds>
+                            <excludeGroupIds>tools.jackson.core</excludeGroupIds>
+                            <outputDirectory>${project.build.directory}/distribution/workers/knowledge/app</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.cyclonedx</groupId>
+                <artifactId>cyclonedx-maven-plugin</artifactId>
+                <version>${cyclonedx-maven.version}</version>
+                <executions>
+                    <execution>
+                        <id>create-runtime-sbom</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>makeBom</goal>
+                        </goals>
+                        <configuration>
+                            <projectType>application</projectType>
+                            <schemaVersion>1.6</schemaVersion>
+                            <includeBomSerialNumber>false</includeBomSerialNumber>
+                            <includeCompileScope>true</includeCompileScope>
+                            <includeProvidedScope>false</includeProvidedScope>
+                            <includeRuntimeScope>true</includeRuntimeScope>
+                            <includeSystemScope>false</includeSystemScope>
+                            <includeTestScope>false</includeTestScope>
+                            <outputDirectory>${project.build.directory}/release-evidence</outputDirectory>
+                            <outputFormat>json</outputFormat>
+                            <outputName>bom</outputName>
+                            <skipAttach>true</skipAttach>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>license-maven-plugin</artifactId>
+                <version>${license-maven.version}</version>
+                <executions>
+                    <execution>
+                        <id>verify-runtime-licenses</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>add-third-party</goal>
+                        </goals>
+                        <configuration>
+                            <includedScopes>compile,runtime</includedScopes>
+                            <includeOptional>false</includeOptional>
+                            <includeTransitiveDependencies>true</includeTransitiveDependencies>
+                            <excludedGroups>com\.javaclaw</excludedGroups>
+                            <failOnMissing>true</failOnMissing>
+                            <failOnBlacklist>true</failOnBlacklist>
+                            <force>true</force>
+                            <sortArtifactByName>false</sortArtifactByName>
+                            <useRepositoryMissingFiles>false</useRepositoryMissingFiles>
+                            <licenseMerges>
+                                <licenseMerge>Apache-2.0|Apache 2.0|Apache License 2.0|Apache License, Version 2.0</licenseMerge>
+                                <licenseMerge>Apache-2.0|The Apache License, Version 2.0</licenseMerge>
+                                <licenseMerge>Apache-2.0|The Apache Software License, Version 2.0</licenseMerge>
+                                <licenseMerge>MIT|MIT License|The MIT License</licenseMerge>
+                                <licenseMerge>BSD-3-Clause|BSD New license|The BSD License|BSD licence</licenseMerge>
+                                <licenseMerge>BSD-3-Clause|BSD License</licenseMerge>
+                                <licenseMerge>EPL-1.0|EPL 1.0|Eclipse Public License - v 1.0</licenseMerge>
+                                <licenseMerge>EDL-1.0|EDL 1.0|Eclipse Distribution License - v 1.0</licenseMerge>
+                                <licenseMerge>GPL-2.0-with-classpath-exception|GPLv2+CE</licenseMerge>
+                            </licenseMerges>
+                            <includedLicenses>
+                                <includedLicense>Apache-2.0</includedLicense>
+                                <includedLicense>BSD-2-Clause</includedLicense>
+                                <includedLicense>BSD-3-Clause</includedLicense>
+                                <includedLicense>CDDL + GPLv2 with classpath exception</includedLicense>
+                                <includedLicense>EDL-1.0</includedLicense>
+                                <includedLicense>EPL-1.0</includedLicense>
+                                <includedLicense>GNU Lesser General Public License</includedLicense>
+                                <includedLicense>GPL-2.0-with-classpath-exception</includedLicense>
+                                <includedLicense>MIT</includedLicense>
+                                <includedLicense>MIT-0</includedLicense>
+                                <includedLicense>MPL 2.0</includedLicense>
+                                <includedLicense>Public Domain, per Creative Commons CC0</includedLicense>
+                            </includedLicenses>
+                            <outputDirectory>${project.build.directory}/release-evidence</outputDirectory>
+                            <thirdPartyFilename>THIRD-PARTY.txt</thirdPartyFilename>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>reset-package-output</id>
+                        <phase>initialize</phase>
+                        <configuration>
+                            <target>
+                                <delete dir="${project.build.directory}/distribution" />
+                                <delete dir="${project.build.directory}/release" />
+                                <delete dir="${project.build.directory}/release-evidence" />
+                            </target>
+                        </configuration>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>build-isolated-runtime-images</id>
+                        <phase>process-resources</phase>
+                        <configuration>
+                            <target>
+                                <exec executable="${java.home}/bin/jlink" failonerror="true">
+                                    <arg value="--add-modules" />
+                                    <arg
+                                        value="java.base,java.datatransfer,java.desktop,java.instrument,java.logging,java.management,java.naming,java.net.http,java.prefs,java.rmi,java.security.jgss,java.security.sasl,java.sql,java.transaction.xa,java.xml,jdk.charsets,jdk.crypto.ec,jdk.management,jdk.naming.dns,jdk.net,jdk.unsupported,jdk.unsupported.desktop,jdk.zipfs" />
+                                    <arg value="--strip-debug" />
+                                    <arg value="--no-header-files" />
+                                    <arg value="--no-man-pages" />
+                                    <arg value="--output" />
+                                    <arg value="${project.build.directory}/distribution/runtime" />
+                                </exec>
+                                <exec executable="${java.home}/bin/jlink" failonerror="true">
+                                    <arg value="--add-modules" />
+                                    <arg
+                                        value="java.base,java.logging,java.management,java.net.http,java.xml,jdk.charsets,jdk.crypto.ec,jdk.net,jdk.unsupported,jdk.zipfs" />
+                                    <arg value="--strip-debug" />
+                                    <arg value="--no-header-files" />
+                                    <arg value="--no-man-pages" />
+                                    <arg value="--output" />
+                                    <arg value="${project.build.directory}/distribution/workers/browser" />
+                                </exec>
+                                <exec executable="${java.home}/bin/jlink" failonerror="true">
+                                    <arg value="--add-modules" />
+                                    <arg
+                                        value="java.base,java.desktop,java.logging,java.management,java.naming,java.xml,jdk.charsets,jdk.crypto.ec,jdk.unsupported,jdk.zipfs" />
+                                    <arg value="--strip-debug" />
+                                    <arg value="--no-header-files" />
+                                    <arg value="--no-man-pages" />
+                                    <arg value="--output" />
+                                    <arg value="${project.build.directory}/distribution/workers/knowledge" />
+                                </exec>
+                                <exec executable="${java.home}/bin/jlink" failonerror="true">
+                                    <arg value="--add-modules" />
+                                    <arg
+                                        value="java.base,java.compiler,java.logging,java.prefs,jdk.compiler,jdk.jshell" />
+                                    <arg value="--strip-debug" />
+                                    <arg value="--no-header-files" />
+                                    <arg value="--no-man-pages" />
+                                    <arg value="--output" />
+                                    <arg value="${project.build.directory}/distribution/workers/skill" />
+                                </exec>
+                                <mkdir dir="${project.build.directory}/distribution/workers/browser/app" />
+                                <mkdir dir="${project.build.directory}/distribution/workers/browser/browser" />
+                                <mkdir dir="${project.build.directory}/distribution/workers/knowledge/app" />
+                                <copy todir="${project.build.directory}/distribution">
+                                    <fileset dir="${project.basedir}/src/main/distribution" />
+                                </copy>
+                                <chmod dir="${project.build.directory}/distribution/bin" perm="755"
+                                    includes="javaclaw,javaclaw-cli,javaclaw-health,javaclaw-service" osfamily="unix" />
+                                <mkdir dir="${project.build.directory}/distribution/legal" />
+                                <copy file="${maven.multiModuleProjectDirectory}/LICENSE"
+                                    tofile="${project.build.directory}/distribution/legal/LICENSE.txt" />
+                            </target>
+                        </configuration>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>copy-launcher-artifact</id>
+                        <phase>process-test-resources</phase>
+                        <configuration>
+                            <target>
+                                <copy file="${project.build.directory}/${project.build.finalName}.jar"
+                                    todir="${project.build.directory}/distribution/lib" />
+                            </target>
+                        </configuration>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>copy-release-evidence</id>
+                        <phase>prepare-package</phase>
+                        <configuration>
+                            <target>
+                                <mkdir dir="${project.build.directory}/distribution/evidence" />
+                                <copy todir="${project.build.directory}/distribution/evidence">
+                                    <fileset dir="${project.build.directory}/release-evidence" />
+                                </copy>
+                            </target>
+                        </configuration>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>${exec-maven.version}</version>
+                <executions>
+                    <execution>
+                        <id>mark-knowledge-worker-image</id>
+                        <phase>process-test-resources</phase>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>com.javaclaw.release.WorkerImageAssemblerMain</mainClass>
+                            <arguments>
+                                <argument>mark</argument>
+                                <argument>${project.build.directory}/distribution/workers/knowledge</argument>
+                                <argument>knowledge</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>mark-skill-worker-image</id>
+                        <phase>process-test-resources</phase>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>com.javaclaw.release.WorkerImageAssemblerMain</mainClass>
+                            <arguments>
+                                <argument>mark</argument>
+                                <argument>${project.build.directory}/distribution/workers/skill</argument>
+                                <argument>skill</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>create-distribution-manifest</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>com.javaclaw.release.ReleaseManifestMain</mainClass>
+                            <arguments>
+                                <argument>create</argument>
+                                <argument>${project.build.directory}/distribution</argument>
+                                <argument>${project.build.directory}/distribution/MANIFEST.json</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>verify-distribution-manifest</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>com.javaclaw.release.ReleaseManifestMain</mainClass>
+                            <arguments>
+                                <argument>verify</argument>
+                                <argument>${project.build.directory}/distribution</argument>
+                                <argument>${project.build.directory}/distribution/MANIFEST.json</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>create-release-manifest</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>com.javaclaw.release.ReleaseManifestMain</mainClass>
+                            <arguments>
+                                <argument>create</argument>
+                                <argument>${project.build.directory}/release</argument>
+                                <argument>${project.build.directory}/release/RELEASE-MANIFEST.json</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>verify-release-manifest</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>com.javaclaw.release.ReleaseManifestMain</mainClass>
+                            <arguments>
+                                <argument>verify</argument>
+                                <argument>${project.build.directory}/release</argument>
+                                <argument>${project.build.directory}/release/RELEASE-MANIFEST.json</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.7.1</version>
+                <executions>
+                    <execution>
+                        <id>assemble-local-distribution</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <descriptors>
+                                <descriptor>src/assembly/distribution.xml</descriptor>
+                            </descriptors>
+                            <finalName>javaclaw-${project.version}-${javafx.platform}</finalName>
+                            <outputDirectory>${project.build.directory}/release</outputDirectory>
+                            <appendAssemblyId>false</appendAssemblyId>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>
-
     <profiles>
         <profile>
-            <id>host-macos</id>
-            <activation>
-                <os>
-                    <family>mac</family>
-                </os>
-            </activation>
-            <properties>
-                <javaclaw.platform>macos-${os.arch}</javaclaw.platform>
-            </properties>
-        </profile>
-        <profile>
-            <id>host-linux</id>
-            <activation>
-                <os>
-                    <family>unix</family>
-                    <name>Linux</name>
-                </os>
-            </activation>
-            <properties>
-                <javaclaw.platform>linux-${os.arch}</javaclaw.platform>
-            </properties>
-        </profile>
-        <profile>
-            <id>host-windows</id>
-            <activation>
-                <os>
-                    <family>Windows</family>
-                </os>
-            </activation>
-            <properties>
-                <javaclaw.platform>windows-${os.arch}</javaclaw.platform>
-            </properties>
-        </profile>
-        <!-- Build a reviewable unsigned app image, SBOM, licenses and checksums on any host. -->
-        <profile>
-            <id>distribution</id>
+            <id>bundle-verified-playwright-browser</id>
             <activation>
                 <property>
-                    <name>javaclaw.distribution</name>
+                    <name>javaclaw.playwright.browsers.path</name>
                 </property>
             </activation>
             <build>
                 <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-dependency-plugin</artifactId>
-                        <version>3.8.1</version>
-                        <executions>
-                            <execution>
-                                <id>stage-runtime</id>
-                                <phase>prepare-package</phase>
-                                <goals>
-                                    <goal>copy-dependencies</goal>
-                                </goals>
-                                <configuration>
-                                    <outputDirectory>${javaclaw.distribution.root}/lib</outputDirectory>
-                                    <includeScope>runtime</includeScope>
-                                    <stripVersion>true</stripVersion>
-                                    <prependGroupId>true</prependGroupId>
-                                    <excludeTransitive>false</excludeTransitive>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-resources-plugin</artifactId>
-                        <version>3.3.1</version>
-                        <executions>
-                            <execution>
-                                <id>stage-launchers</id>
-                                <phase>prepare-package</phase>
-                                <goals>
-                                    <goal>copy-resources</goal>
-                                </goals>
-                                <configuration>
-                                    <outputDirectory>${javaclaw.distribution.root}</outputDirectory>
-                                    <resources>
-                                        <resource>
-                                            <directory>src/main/distribution</directory>
-                                            <filtering>false</filtering>
-                                        </resource>
-                                    </resources>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-antrun-plugin</artifactId>
-                        <version>3.1.0</version>
-                        <executions>
-                            <execution>
-                                <id>clean-distribution-stage</id>
-                                <phase>initialize</phase>
-                                <goals>
-                                    <goal>run</goal>
-                                </goals>
-                                <configuration>
-                                    <target>
-                                        <delete dir="${javaclaw.distribution.root}" />
-                                        <delete dir="${project.build.directory}/native" />
-                                        <delete dir="${project.build.directory}/macos-app-image" />
-                                        <delete dir="${project.build.directory}/windows-app-image" />
-                                        <delete dir="${project.build.directory}/release-metadata" />
-                                        <delete dir="${project.build.directory}/publish" />
-                                        <delete>
-                                            <fileset dir="${project.build.directory}"
-                                                includes="javaclaw-*.zip,javaclaw-*.zip.sha256" />
-                                        </delete>
-                                    </target>
-                                </configuration>
-                            </execution>
-                            <execution>
-                                <id>stage-native-module-path</id>
-                                <phase>prepare-package</phase>
-                                <goals>
-                                    <goal>run</goal>
-                                </goals>
-                                <configuration>
-                                    <target>
-                                        <mkdir dir="${javaclaw.distribution.root}/native-module-path" />
-                                        <copy
-                                            file="${javaclaw.distribution.root}/lib/com.javaclaw.javaclaw-api.jar"
-                                            todir="${javaclaw.distribution.root}/native-module-path" />
-                                        <copy
-                                            file="${javaclaw.distribution.root}/lib/com.javaclaw.javaclaw-protocol.jar"
-                                            todir="${javaclaw.distribution.root}/native-module-path" />
-                                        <copy
-                                            file="${javaclaw.distribution.root}/lib/com.javaclaw.javaclaw-native-hosts.jar"
-                                            todir="${javaclaw.distribution.root}/native-module-path" />
-                                        <copy
-                                            file="${javaclaw.distribution.root}/lib/com.fasterxml.jackson.core.jackson-annotations.jar"
-                                            todir="${javaclaw.distribution.root}/native-module-path" />
-                                        <copy
-                                            file="${javaclaw.distribution.root}/lib/com.fasterxml.jackson.core.jackson-core.jar"
-                                            todir="${javaclaw.distribution.root}/native-module-path" />
-                                        <copy
-                                            file="${javaclaw.distribution.root}/lib/com.fasterxml.jackson.core.jackson-databind.jar"
-                                            todir="${javaclaw.distribution.root}/native-module-path" />
-                                        <copy
-                                            file="${javaclaw.distribution.root}/lib/com.fasterxml.jackson.datatype.jackson-datatype-jdk8.jar"
-                                            todir="${javaclaw.distribution.root}/native-module-path" />
-                                        <copy
-                                            file="${javaclaw.distribution.root}/lib/com.fasterxml.jackson.datatype.jackson-datatype-jsr310.jar"
-                                            todir="${javaclaw.distribution.root}/native-module-path" />
-                                        <!-- jpackage only copies its input directory. Keep the same minimal module path
-                                            inside that input so installed Desktop applications can launch Native Hosts without treating the complete dependency set
-                                            as a JPMS module path. -->
-                                        <mkdir dir="${javaclaw.distribution.root}/lib/native-module-path" />
-                                        <copy todir="${javaclaw.distribution.root}/lib/native-module-path">
-                                            <fileset dir="${javaclaw.distribution.root}/native-module-path"
-                                                includes="*.jar" />
-                                        </copy>
-                                    </target>
-                                </configuration>
-                            </execution>
-                            <execution>
-                                <id>stage-product-launcher</id>
-                                <phase>package</phase>
-                                <goals>
-                                    <goal>run</goal>
-                                </goals>
-                                <configuration>
-                                    <target>
-                                        <!-- 自身 JAR 不在 copy-dependencies 中，必须在默认 jar 目标完成后单独纳入发行物。 -->
-                                        <copy file="${project.build.directory}/${project.build.finalName}.jar"
-                                            tofile="${javaclaw.distribution.root}/lib/com.javaclaw.javaclaw-packaging.jar" />
-                                        <java classname="com.javaclaw.launcher.BrowserBundleStager" fork="true"
-                                            failonerror="true" timeout="300000">
-                                            <classpath refid="maven.runtime.classpath" />
-                                            <sysproperty key="javaclaw.program.dir"
-                                                value="${maven.multiModuleProjectDirectory}" />
-                                            <arg value="stage" />
-                                            <arg value="${javaclaw.distribution.root}/lib" />
-                                        </java>
-                                    </target>
-                                </configuration>
-                            </execution>
-                            <execution>
-                                <id>jlink-runtime</id>
-                                <phase>package</phase>
-                                <goals>
-                                    <goal>run</goal>
-                                </goals>
-                                <configuration>
-                                    <target>
-                                        <delete dir="${javaclaw.distribution.root}/runtime" />
-                                        <exec executable="${java.home}/bin/jlink" failonerror="true">
-                                            <arg value="--add-modules" />
-                                            <arg
-                                                value="java.base,java.compiler,java.desktop,java.instrument,java.logging,java.management,java.naming,java.net.http,java.prefs,java.rmi,java.scripting,java.security.jgss,java.sql,java.xml.crypto,jdk.compiler,jdk.jshell,jdk.crypto.ec,jdk.jfr,jdk.management,jdk.net,jdk.unsupported" />
-                                            <arg value="--strip-debug" />
-                                            <arg value="--no-header-files" />
-                                            <arg value="--no-man-pages" />
-                                            <arg value="--output" />
-                                            <arg value="${javaclaw.distribution.root}/runtime" />
-                                        </exec>
-                                        <chmod dir="${javaclaw.distribution.root}/bin" includes="*" perm="755"
-                                            osfamily="unix" />
-                                    </target>
-                                </configuration>
-                            </execution>
-                            <execution>
-                                <id>validate-native-module-path</id>
-                                <phase>verify</phase>
-                                <goals>
-                                    <goal>run</goal>
-                                </goals>
-                                <configuration>
-                                    <target>
-                                        <java classname="com.javaclaw.launcher.BrowserBundleStager" fork="true"
-                                            failonerror="true">
-                                            <classpath refid="maven.runtime.classpath" />
-                                            <arg value="sbom" />
-                                            <arg value="${javaclaw.distribution.root}" />
-                                        </java>
-                                        <exec executable="${javaclaw.distribution.root}/runtime/bin/java"
-                                            failonerror="true">
-                                            <arg value="--module-path" />
-                                            <arg value="${javaclaw.distribution.root}/native-module-path" />
-                                            <arg value="--add-modules" />
-                                            <arg value="com.javaclaw.nativehosts" />
-                                            <arg value="--validate-modules" />
-                                        </exec>
-                                    </target>
-                                </configuration>
-                            </execution>
-                            <execution>
-                                <id>distribution-archive</id>
-                                <phase>verify</phase>
-                                <goals>
-                                    <goal>run</goal>
-                                </goals>
-                                <configuration>
-                                    <target>
-                                        <java classname="com.javaclaw.launcher.DistributionArchive" fork="true"
-                                            failonerror="true" timeout="600000">
-                                            <classpath refid="maven.runtime.classpath" />
-                                            <arg value="${javaclaw.distribution.root}" />
-                                            <arg
-                                                value="${project.build.directory}/javaclaw-${project.version}-${javaclaw.platform}.zip" />
-                                        </java>
-                                    </target>
-                                </configuration>
-                            </execution>
-                            <execution>
-                                <id>distribution-checksums</id>
-                                <phase>verify</phase>
-                                <goals>
-                                    <goal>run</goal>
-                                </goals>
-                                <configuration>
-                                    <target>
-                                        <checksum algorithm="SHA-256" fileext=".sha256" format="MD5SUM">
-                                            <fileset dir="${project.build.directory}"
-                                                includes="javaclaw-*.zip,native/*.dmg,native/*.pkg,native/*.deb,native/*.rpm,native/*.msi,native/*.exe,native/*.asc" />
-                                            <fileset dir="${javaclaw.distribution.root}"
-                                                includes="sbom.json,THIRD-PARTY.txt" />
-                                        </checksum>
-                                    </target>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.cyclonedx</groupId>
-                        <artifactId>cyclonedx-maven-plugin</artifactId>
-                        <version>2.9.1</version>
-                        <executions>
-                            <execution>
-                                <id>sbom</id>
-                                <phase>package</phase>
-                                <goals>
-                                    <goal>makeAggregateBom</goal>
-                                </goals>
-                                <configuration>
-                                    <outputDirectory>${javaclaw.distribution.root}</outputDirectory>
-                                    <outputName>sbom</outputName>
-                                    <outputFormat>json</outputFormat>
-                                    <includeBomSerialNumber>true</includeBomSerialNumber>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
                     <plugin>
                         <groupId>org.codehaus.mojo</groupId>
-                        <artifactId>license-maven-plugin</artifactId>
-                        <version>2.5.0</version>
+                        <artifactId>exec-maven-plugin</artifactId>
                         <executions>
                             <execution>
-                                <id>dependency-licenses</id>
-                                <phase>generate-resources</phase>
+                                <id>bundle-playwright-browser</id>
+                                <phase>process-test-resources</phase>
                                 <goals>
-                                    <goal>add-third-party</goal>
+                                    <goal>java</goal>
                                 </goals>
                                 <configuration>
-                                    <outputDirectory>${javaclaw.distribution.root}</outputDirectory>
-                                    <thirdPartyFilename>THIRD-PARTY.txt</thirdPartyFilename>
-                                    <acceptPomPackaging>true</acceptPomPackaging>
-                                    <includeTransitiveDependencies>true</includeTransitiveDependencies>
-                                    <sortArtifactByName>true</sortArtifactByName>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-
-        <profile>
-            <id>native-macos</id>
-            <activation>
-                <os>
-                    <family>mac</family>
-                </os>
-                <property>
-                    <name>javaclaw.native.package</name>
-                </property>
-            </activation>
-            <properties>
-                <javaclaw.platform>macos-${os.arch}</javaclaw.platform>
-            </properties>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-antrun-plugin</artifactId>
-                        <version>3.1.0</version>
-                        <executions>
-                            <execution>
-                                <id>macos-dmg</id>
-                                <phase>package</phase>
-                                <goals>
-                                    <goal>run</goal>
-                                </goals>
-                                <configuration>
-                                    <target>
-                                        <mkdir dir="${project.build.directory}/native" />
-                                        <exec executable="/bin/sh" failonerror="true">
-                                            <arg value="${project.basedir}/src/main/packaging/package-macos.sh" />
-                                            <arg value="${java.home}/bin/jpackage" />
-                                            <arg value="dmg" />
-                                            <arg value="${project.build.directory}/native" />
-                                            <arg value="${javaclaw.distribution.root}/lib" />
-                                            <arg value="${javaclaw.distribution.root}/runtime" />
-                                            <arg value="com.javaclaw.javaclaw-packaging.jar" />
-                                            <arg value="com.javaclaw.launcher.JavaClawLauncher" />
-                                            <arg value="${javaclaw.product.version}" />
-                                            <arg value="${project.build.directory}/macos-app-image" />
-                                        </exec>
-                                    </target>
-                                </configuration>
-                            </execution>
-                            <execution>
-                                <id>macos-pkg</id>
-                                <phase>package</phase>
-                                <goals>
-                                    <goal>run</goal>
-                                </goals>
-                                <configuration>
-                                    <target>
-                                        <mkdir dir="${project.build.directory}/native" />
-                                        <exec executable="/bin/sh" failonerror="true">
-                                            <arg value="${project.basedir}/src/main/packaging/package-macos.sh" />
-                                            <arg value="${java.home}/bin/jpackage" />
-                                            <arg value="pkg" />
-                                            <arg value="${project.build.directory}/native" />
-                                            <arg value="${javaclaw.distribution.root}/lib" />
-                                            <arg value="${javaclaw.distribution.root}/runtime" />
-                                            <arg value="com.javaclaw.javaclaw-packaging.jar" />
-                                            <arg value="com.javaclaw.launcher.JavaClawLauncher" />
-                                            <arg value="${javaclaw.product.version}" />
-                                            <arg value="${project.build.directory}/macos-app-image" />
-                                        </exec>
-                                    </target>
+                                    <mainClass>com.javaclaw.release.WorkerImageAssemblerMain</mainClass>
+                                    <arguments>
+                                        <argument>browser</argument>
+                                        <argument>${javaclaw.playwright.browsers.path}</argument>
+                                        <argument>${project.build.directory}/distribution/workers/browser</argument>
+                                        <argument>${playwright.version}</argument>
+                                    </arguments>
                                 </configuration>
                             </execution>
                         </executions>
@@ -467,92 +475,24 @@
             </build>
         </profile>
         <profile>
-            <id>native-linux</id>
+            <id>packaging-unix-coverage</id>
             <activation>
                 <os>
                     <family>unix</family>
-                    <name>Linux</name>
                 </os>
-                <property>
-                    <name>javaclaw.native.package</name>
-                </property>
             </activation>
-            <properties>
-                <javaclaw.platform>linux-${os.arch}</javaclaw.platform>
-            </properties>
             <build>
                 <plugins>
                     <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-antrun-plugin</artifactId>
-                        <version>3.1.0</version>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
                         <executions>
                             <execution>
-                                <id>linux-deb</id>
-                                <phase>package</phase>
-                                <goals>
-                                    <goal>run</goal>
-                                </goals>
+                                <id>verify-coverage</id>
                                 <configuration>
-                                    <target>
-                                        <mkdir dir="${project.build.directory}/native" />
-                                        <exec executable="${java.home}/bin/jpackage" failonerror="true">
-                                            <arg value="--type" />
-                                            <arg value="deb" />
-                                            <arg value="--name" />
-                                            <arg value="javaclaw" />
-                                            <arg value="--app-version" />
-                                            <arg value="${javaclaw.product.version}" />
-                                            <arg value="--vendor" />
-                                            <arg value="JavaClaw" />
-                                            <arg value="--input" />
-                                            <arg value="${javaclaw.distribution.root}/lib" />
-                                            <arg value="--runtime-image" />
-                                            <arg value="${javaclaw.distribution.root}/runtime" />
-                                            <arg value="--main-jar" />
-                                            <arg value="com.javaclaw.javaclaw-packaging.jar" />
-                                            <arg value="--main-class" />
-                                            <arg value="com.javaclaw.launcher.JavaClawLauncher" />
-                                            <arg value="--java-options" />
-                                            <arg value="-Djavaclaw.program.dir=$APPDIR" />
-                                            <arg value="--dest" />
-                                            <arg value="${project.build.directory}/native" />
-                                        </exec>
-                                    </target>
-                                </configuration>
-                            </execution>
-                            <execution>
-                                <id>linux-rpm</id>
-                                <phase>package</phase>
-                                <goals>
-                                    <goal>run</goal>
-                                </goals>
-                                <configuration>
-                                    <target>
-                                        <mkdir dir="${project.build.directory}/native" />
-                                        <exec executable="${java.home}/bin/jpackage" failonerror="true">
-                                            <arg value="--type" />
-                                            <arg value="rpm" />
-                                            <arg value="--name" />
-                                            <arg value="javaclaw" />
-                                            <arg value="--app-version" />
-                                            <arg value="${javaclaw.product.version}" />
-                                            <arg value="--vendor" />
-                                            <arg value="JavaClaw" />
-                                            <arg value="--input" />
-                                            <arg value="${javaclaw.distribution.root}/lib" />
-                                            <arg value="--runtime-image" />
-                                            <arg value="${javaclaw.distribution.root}/runtime" />
-                                            <arg value="--main-jar" />
-                                            <arg value="com.javaclaw.javaclaw-packaging.jar" />
-                                            <arg value="--main-class" />
-                                            <arg value="com.javaclaw.launcher.JavaClawLauncher" />
-                                            <arg value="--java-options" />
-                                            <arg value="-Djavaclaw.program.dir=$APPDIR" />
-                                            <arg value="--dest" />
-                                            <arg value="${project.build.directory}/native" />
-                                        </exec>
-                                    </target>
+                                    <excludes>
+                                        <exclude>com/javaclaw/launcher/WindowsServerSupervisor*</exclude>
+                                    </excludes>
                                 </configuration>
                             </execution>
                         </executions>
@@ -561,303 +501,24 @@
             </build>
         </profile>
         <profile>
-            <id>native-windows</id>
+            <id>packaging-windows-coverage</id>
             <activation>
                 <os>
                     <family>Windows</family>
                 </os>
-                <property>
-                    <name>javaclaw.native.package</name>
-                </property>
-            </activation>
-            <properties>
-                <javaclaw.platform>windows-${os.arch}</javaclaw.platform>
-            </properties>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-antrun-plugin</artifactId>
-                        <version>3.1.0</version>
-                        <executions>
-                            <execution>
-                                <id>windows-app-image</id>
-                                <phase>package</phase>
-                                <goals>
-                                    <goal>run</goal>
-                                </goals>
-                                <configuration>
-                                    <target>
-                                        <mkdir dir="${project.build.directory}/native" />
-                                        <exec executable="powershell.exe" failonerror="true">
-                                            <arg value="-NoProfile" />
-                                            <arg value="-NonInteractive" />
-                                            <arg value="-ExecutionPolicy" />
-                                            <arg value="Bypass" />
-                                            <arg value="-File" />
-                                            <arg value="${project.basedir}/src/main/packaging/package-windows.ps1" />
-                                            <arg value="-JPackage" />
-                                            <arg value="${java.home}/bin/jpackage.exe" />
-                                            <arg value="-Destination" />
-                                            <arg value="${project.build.directory}/native" />
-                                            <arg value="-AppImageRoot" />
-                                            <arg value="${project.build.directory}/windows-app-image" />
-                                            <arg value="-InputDirectory" />
-                                            <arg value="${javaclaw.distribution.root}/lib" />
-                                            <arg value="-RuntimeImage" />
-                                            <arg value="${javaclaw.distribution.root}/runtime" />
-                                            <arg value="-MainJar" />
-                                            <arg value="com.javaclaw.javaclaw-packaging.jar" />
-                                            <arg value="-MainClass" />
-                                            <arg value="com.javaclaw.launcher.JavaClawLauncher" />
-                                            <arg value="-Version" />
-                                            <arg value="${javaclaw.product.version}" />
-                                        </exec>
-                                    </target>
-                                </configuration>
-                            </execution>
-                            <execution>
-                                <id>windows-msi</id>
-                                <phase>package</phase>
-                                <goals>
-                                    <goal>run</goal>
-                                </goals>
-                                <configuration>
-                                    <target>
-                                        <mkdir dir="${project.build.directory}/native" />
-                                        <exec executable="${java.home}/bin/jpackage.exe" failonerror="true">
-                                            <arg value="--type" />
-                                            <arg value="msi" />
-                                            <arg value="--name" />
-                                            <arg value="JavaClaw" />
-                                            <arg value="--app-image" />
-                                            <arg value="${project.build.directory}/windows-app-image/JavaClaw" />
-                                            <arg value="--dest" />
-                                            <arg value="${project.build.directory}/native" />
-                                        </exec>
-                                    </target>
-                                </configuration>
-                            </execution>
-                            <execution>
-                                <id>windows-exe</id>
-                                <phase>package</phase>
-                                <goals>
-                                    <goal>run</goal>
-                                </goals>
-                                <configuration>
-                                    <target>
-                                        <mkdir dir="${project.build.directory}/native" />
-                                        <exec executable="${java.home}/bin/jpackage.exe" failonerror="true">
-                                            <arg value="--type" />
-                                            <arg value="exe" />
-                                            <arg value="--name" />
-                                            <arg value="JavaClaw" />
-                                            <arg value="--app-image" />
-                                            <arg value="${project.build.directory}/windows-app-image/JavaClaw" />
-                                            <arg value="--dest" />
-                                            <arg value="${project.build.directory}/native" />
-                                        </exec>
-                                    </target>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-
-        <!-- Formal releases fail before packaging unless platform signing credentials exist. -->
-        <profile>
-            <id>release-macos-signing-gate</id>
-            <activation>
-                <os>
-                    <family>mac</family>
-                </os>
-                <property>
-                    <name>javaclaw.release</name>
-                </property>
             </activation>
             <build>
                 <plugins>
                     <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-enforcer-plugin</artifactId>
-                        <version>3.5.0</version>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
                         <executions>
                             <execution>
-                                <id>apple-signing-required</id>
-                                <phase>validate</phase>
-                                <goals>
-                                    <goal>enforce</goal>
-                                </goals>
+                                <id>verify-coverage</id>
                                 <configuration>
-                                    <rules>
-                                        <requireEnvironmentVariable>
-                                            <variableName>JAVACLAW_APPLE_SIGN_IDENTITY</variableName>
-                                        </requireEnvironmentVariable>
-                                        <requireEnvironmentVariable>
-                                            <variableName>JAVACLAW_APPLE_NOTARY_PROFILE</variableName>
-                                        </requireEnvironmentVariable>
-                                    </rules>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-antrun-plugin</artifactId>
-                        <version>3.1.0</version>
-                        <executions>
-                            <execution>
-                                <id>sign-and-notarize-macos</id>
-                                <phase>integration-test</phase>
-                                <goals>
-                                    <goal>run</goal>
-                                </goals>
-                                <configuration>
-                                    <target>
-                                        <exec executable="/bin/sh" failonerror="true">
-                                            <arg value="${project.basedir}/src/main/signing/sign-macos.sh" />
-                                            <arg value="${project.build.directory}/native" />
-                                            <arg value="${env.JAVACLAW_APPLE_SIGN_IDENTITY}" />
-                                            <arg value="${env.JAVACLAW_APPLE_NOTARY_PROFILE}" />
-                                        </exec>
-                                    </target>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-        <profile>
-            <id>release-linux-signing-gate</id>
-            <activation>
-                <os>
-                    <family>unix</family>
-                    <name>Linux</name>
-                </os>
-                <property>
-                    <name>javaclaw.release</name>
-                </property>
-            </activation>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-enforcer-plugin</artifactId>
-                        <version>3.5.0</version>
-                        <executions>
-                            <execution>
-                                <id>linux-signing-required</id>
-                                <phase>validate</phase>
-                                <goals>
-                                    <goal>enforce</goal>
-                                </goals>
-                                <configuration>
-                                    <rules>
-                                        <requireEnvironmentVariable>
-                                            <variableName>JAVACLAW_LINUX_SIGNING_KEY</variableName>
-                                        </requireEnvironmentVariable>
-                                        <requireEnvironmentVariable>
-                                            <variableName>JAVACLAW_LINUX_SIGNING_PASSPHRASE</variableName>
-                                        </requireEnvironmentVariable>
-                                    </rules>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-antrun-plugin</artifactId>
-                        <version>3.1.0</version>
-                        <executions>
-                            <execution>
-                                <id>sign-linux-packages</id>
-                                <phase>integration-test</phase>
-                                <goals>
-                                    <goal>run</goal>
-                                </goals>
-                                <configuration>
-                                    <target>
-                                        <exec executable="/bin/sh" failonerror="true">
-                                            <arg value="${project.basedir}/src/main/signing/sign-linux.sh" />
-                                            <arg value="${project.build.directory}/native" />
-                                            <arg value="${env.JAVACLAW_LINUX_SIGNING_KEY}" />
-                                            <arg value="${env.JAVACLAW_LINUX_SIGNING_PASSPHRASE}" />
-                                        </exec>
-                                    </target>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-        <profile>
-            <id>release-windows-signing-gate</id>
-            <activation>
-                <os>
-                    <family>Windows</family>
-                </os>
-                <property>
-                    <name>javaclaw.release</name>
-                </property>
-            </activation>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-enforcer-plugin</artifactId>
-                        <version>3.5.0</version>
-                        <executions>
-                            <execution>
-                                <id>windows-signing-required</id>
-                                <phase>validate</phase>
-                                <goals>
-                                    <goal>enforce</goal>
-                                </goals>
-                                <configuration>
-                                    <rules>
-                                        <requireEnvironmentVariable>
-                                            <variableName>JAVACLAW_WINDOWS_CERTIFICATE</variableName>
-                                        </requireEnvironmentVariable>
-                                        <requireEnvironmentVariable>
-                                            <variableName>JAVACLAW_WINDOWS_TIMESTAMP_URL</variableName>
-                                        </requireEnvironmentVariable>
-                                    </rules>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-antrun-plugin</artifactId>
-                        <version>3.1.0</version>
-                        <executions>
-                            <execution>
-                                <id>sign-windows-installers</id>
-                                <phase>integration-test</phase>
-                                <goals>
-                                    <goal>run</goal>
-                                </goals>
-                                <configuration>
-                                    <target>
-                                        <exec executable="powershell.exe" failonerror="true">
-                                            <arg value="-NoProfile" />
-                                            <arg value="-NonInteractive" />
-                                            <arg value="-ExecutionPolicy" />
-                                            <arg value="Bypass" />
-                                            <arg value="-File" />
-                                            <arg value="${project.basedir}/src/main/signing/sign-windows.ps1" />
-                                            <arg value="-ArtifactDirectory" />
-                                            <arg value="${project.build.directory}/native" />
-                                            <arg value="-CertificateThumbprint" />
-                                            <arg value="${env.JAVACLAW_WINDOWS_CERTIFICATE}" />
-                                            <arg value="-TimestampUrl" />
-                                            <arg value="${env.JAVACLAW_WINDOWS_TIMESTAMP_URL}" />
-                                        </exec>
-                                    </target>
+                                    <excludes>
+                                        <exclude>com/javaclaw/launcher/UnixServerSupervisor*</exclude>
+                                    </excludes>
                                 </configuration>
                             </execution>
                         </executions>

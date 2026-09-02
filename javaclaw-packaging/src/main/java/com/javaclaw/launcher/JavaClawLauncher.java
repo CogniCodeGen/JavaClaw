@@ -1,46 +1,134 @@
 package com.javaclaw.launcher;
 
-import com.javaclaw.desktop.JavaClawDesktop;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
 
-/**
- * JavaClaw 唯一的桌面产品入口，IDE 可直接运行并设置断点，不依赖启动脚本或预生成发行目录。
- *
- * <p>入口只解析当前 IDE/classpath 或安装包布局，再把进程配置交给 SDK 和 Desktop；App Server 仍由 SDK 以独立进程管理，从而保持客户端与运行时的架构边界。此类不能继承 JavaFX
- * Application，否则 JDK 会在 classpath 启动阶段错误地要求模块化 JavaFX runtime。
- */
+import com.javaclaw.launcher.tray.AwtSystemTrayView;
+import com.javaclaw.launcher.tray.ProtocolTrayServerControl;
+import com.javaclaw.launcher.tray.TrayApplicationController;
+import com.javaclaw.launcher.tray.TrayCommand;
+import com.javaclaw.launcher.tray.TrayServerProcess;
+import com.javaclaw.nativehost.transport.WindowsPipeName;
+import com.javaclaw.nativehost.tray.SystemTrayFeature;
+import com.javaclaw.nativehost.tray.TrayPresenceLease;
+
+/** JavaClaw 发行包的薄启动器；不持有领域状态，也不访问数据库。 */
 public final class JavaClawLauncher {
+    private static final String SUPERVISED_PROPERTY = "javaclaw.launcher.supervised";
+    private static final String TRAY_ACTIVE_PROPERTY = "javaclaw.launcher.tray-active";
+
     private JavaClawLauncher() {}
 
     /**
-     * 自动定位运行依赖后启动桌面，直到窗口退出；--help 仅打印用法，不启动 JavaFX 或后台服务。
+     * 确保本机 App Server 可用后启动 SDK-only JavaFX Desktop。
      *
-     * @param args 非空参数数组，除 --help 外原样交给 JavaFX
-     * @throws Exception 依赖定位或启动失败；详细原因保留在异常链，进程以失败状态退出
+     * @param arguments 透传给 JavaFX Application 的参数
+     * @throws Exception 本地服务或 Desktop 启动失败
      */
-    public static void main(String[] args) throws Exception {
-        if (args.length == 1 && ("--help".equals(args[0]) || "-h".equals(args[0]))) {
-            System.out.println("""
-                    JavaClaw 4.0
-                    Development: run com.javaclaw.launcher.JavaClawLauncher directly with the
-                                 javaclaw-packaging module classpath (JDK 25); no script or distribution required.
-                    Terminal helper: ./run.sh or run.cmd; --no-build reuses an existing distribution.
-                    Default storage: <program>/.javaclaw/{data-v4,config-v4,cache-v4}.
-                    Overrides: JAVACLAW_PROGRAM_DIR, JAVACLAW_DATA_DIR, JAVACLAW_CONFIG_DIR,
-                               JAVACLAW_CACHE_DIR.
-                    """);
+    public static void main(String[] arguments) throws Exception {
+        RuntimeLayout layout = RuntimeLayout.fromSystemProperties();
+        SystemTrayFeature.Status tray = SystemTrayFeature.detect();
+        if (!tray.available()) {
+            launchDesktopOnce(layout, arguments);
             return;
         }
-        var layout = RuntimeLayout.discover();
-        var logger = DesktopProductLogging.initialize(layout.infrastructureEnvironment());
-        try {
-            JavaClawDesktop.launch(layout, args);
-            logger.info("Desktop 正常停止");
-        } catch (Exception | LinkageError failure) {
-            logger.error("Desktop 启动或运行失败：{}", DesktopProductLogging.summarize(failure));
-            System.err.println("JavaClaw 启动失败：" + failure.getMessage());
-            System.err.println("开发调试请直接运行 com.javaclaw.launcher.JavaClawLauncher，并选择 JDK 25 和 "
-                    + "javaclaw-packaging 模块 classpath；脚本仅是终端便捷入口。详细原因见异常链和服务端日志。");
-            throw failure;
+        launchWithTray(layout, arguments, tray);
+    }
+
+    private static void launchDesktopOnce(RuntimeLayout layout, String[] arguments) throws Exception {
+        String transportProperty;
+        if (RuntimeLayout.isWindows()) {
+            WindowsPipeName pipe = new WindowsServerSupervisor(layout).ensureRunning();
+            transportProperty = "-Djavaclaw.server.pipe=" + pipe.value();
+        } else {
+            Path socket = new UnixServerSupervisor(layout).ensureRunning();
+            transportProperty = "-Djavaclaw.server.socket=" + socket;
+        }
+        Process desktop = new ProcessBuilder(desktopCommand(layout, transportProperty, arguments, false))
+                .inheritIO()
+                .start();
+        int exitCode = desktop.waitFor();
+        if (exitCode != 0) {
+            throw new IllegalStateException("JavaClaw Desktop exited with " + exitCode);
         }
     }
+
+    private static void launchWithTray(RuntimeLayout layout, String[] arguments, SystemTrayFeature.Status trayFeature)
+            throws Exception {
+        try (TrayPresenceLease presence = TrayPresenceLease.acquireCurrentUser()) {
+            LaunchTarget target = launchTarget(layout);
+            AwtSystemTrayView view = new AwtSystemTrayView(trayFeature);
+            DesktopProcessSupervisor desktop =
+                    new DesktopProcessSupervisor(layout, target.transportProperty(), arguments);
+            try (TrayApplicationController controller =
+                    new TrayApplicationController(new ProtocolTrayServerControl(target.process()), desktop, view)) {
+                awaitTrayShutdown(controller, presence);
+            } catch (Exception failure) {
+                view.close();
+                throw failure;
+            }
+        }
+    }
+
+    private static LaunchTarget launchTarget(RuntimeLayout layout) throws Exception {
+        if (RuntimeLayout.isWindows()) {
+            WindowsServerSupervisor supervisor = new WindowsServerSupervisor(layout);
+            WindowsPipeName pipe = supervisor.ensureRunning();
+            return new LaunchTarget(supervisor, "-Djavaclaw.server.pipe=" + pipe.value());
+        }
+        UnixServerSupervisor supervisor = new UnixServerSupervisor(layout);
+        Path socket = supervisor.ensureRunning();
+        return new LaunchTarget(supervisor, "-Djavaclaw.server.socket=" + socket);
+    }
+
+    private static void awaitTrayShutdown(TrayApplicationController controller, TrayPresenceLease presence)
+            throws InterruptedException {
+        CountDownLatch shutdown = new CountDownLatch(1);
+        Thread hook = Thread.ofPlatform().name("javaclaw-tray-shutdown").unstarted(() -> {
+            closeQuietly(controller);
+            closeQuietly(presence);
+            shutdown.countDown();
+        });
+        Runtime.getRuntime().addShutdownHook(hook);
+        try {
+            controller.start();
+            controller.submit(TrayCommand.OPEN_MAIN);
+            shutdown.await();
+        } finally {
+            try {
+                Runtime.getRuntime().removeShutdownHook(hook);
+            } catch (IllegalStateException ignored) {
+                // JVM 已开始执行 shutdown hook。
+            }
+        }
+    }
+
+    private static void closeQuietly(AutoCloseable resource) {
+        try {
+            resource.close();
+        } catch (Exception ignored) {
+            // JVM 退出阶段只能尽力删除图标和心跳；App Server 生命周期不由此处改变。
+        }
+    }
+
+    static List<String> desktopCommand(
+            RuntimeLayout layout, String transportProperty, String[] arguments, boolean trayActive) {
+        ArrayList<String> command = new ArrayList<>();
+        command.add(layout.javaExecutable().toString());
+        if (RuntimeLayout.isWindows()) {
+            command.add("--enable-native-access=ALL-UNNAMED");
+        }
+        command.add(transportProperty);
+        command.add("-D" + SUPERVISED_PROPERTY + "=true");
+        command.add("-D" + TRAY_ACTIVE_PROPERTY + "=" + trayActive);
+        command.add("-cp");
+        command.add(layout.classpath());
+        command.add("com.javaclaw.desktop.shell.JavaClawDesktop");
+        command.addAll(List.of(arguments));
+        return List.copyOf(command);
+    }
+
+    private record LaunchTarget(TrayServerProcess process, String transportProperty) {}
 }
