@@ -320,7 +320,7 @@ public final class ProviderSettingsPresenter {
                     epoch));
             return;
         }
-        ProviderDraft draft = selected.map(ProviderDraft::from).orElseGet(ProviderDraft::empty);
+        ProviderDraft draft = selected.map(ProviderDraft::from).orElseGet(this::emptyCatalogDraft);
         publish(new ProviderSettingsState(
                 SettingsLoadState.READY,
                 catalog,
@@ -349,6 +349,12 @@ public final class ProviderSettingsPresenter {
             }
         }
         return catalog.stream().findFirst();
+    }
+
+    private ProviderDraft emptyCatalogDraft() {
+        String currentId = state.draft().id().strip();
+        String stableId = currentId.isEmpty() ? requireId(providerIds.get()) : requireId(currentId);
+        return ProviderDraft.forNew(stableId);
     }
 
     private boolean hasIdentityCollision(Optional<ProviderEndpoint> selected) {

@@ -127,7 +127,7 @@
 }
 
 .platform-navigation-list .list-cell:filled:selected .platform-detail-title {
-    -fx-text-fill: -jc-primary-600;
+    -fx-text-fill: -jc-text-title;
 }
 
 .platform-content-scroll,
@@ -248,8 +248,17 @@
     -fx-border-color: transparent transparent -jc-border transparent;
 }
 
-.platform-data-table .table-row-cell:selected {
+.platform-data-table .table-cell {
+    -fx-text-fill: -jc-text-body;
+}
+
+.platform-data-table .table-row-cell:filled:selected {
+    -fx-background: -jc-primary-50;
     -fx-background-color: -jc-primary-50;
+}
+
+.platform-data-table .table-row-cell:filled:selected > .table-cell {
+    -fx-text-fill: -jc-text-title;
 }
 
 .platform-detail-cell {
@@ -394,7 +403,7 @@
 
 .sidebar-navigation .sidebar-nav-button:focused {
     -fx-background-color: -jc-primary-50;
-    -fx-text-fill: -jc-primary-700;
+    -fx-text-fill: -jc-text-title;
     -fx-border-color: -jc-primary-300;
     -fx-border-width: 1;
 }

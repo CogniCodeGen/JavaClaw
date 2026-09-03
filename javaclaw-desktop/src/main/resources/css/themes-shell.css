@@ -512,12 +512,12 @@
 
 .jc-mode-chip:hover {
     -fx-background-color: -jc-primary-50;
-    -fx-text-fill: -jc-primary-600;
+    -fx-text-fill: -jc-text-title;
 }
 
 .jc-mode-chip:selected {
     -fx-background-color: -jc-primary-600;
-    -fx-text-fill: white;
+    -fx-text-fill: -jc-on-brand;
     -fx-border-color: -jc-primary-600;
     -fx-font-weight: 600;
 }
@@ -525,6 +525,18 @@
 .jc-mode-chip:selected:hover {
     -fx-background-color: -jc-primary-700;
     -fx-text-fill: white;
+}
+
+.theme-honey .jc-mode-chip:selected {
+    -fx-background-color: -jc-primary-500;
+    -fx-border-color: -jc-primary-500;
+    -fx-text-fill: -jc-on-brand;
+}
+
+.theme-honey .jc-mode-chip:selected:hover {
+    -fx-background-color: -jc-primary-400;
+    -fx-border-color: -jc-primary-400;
+    -fx-text-fill: -jc-on-brand;
 }
 
 /* Composer 内并列的会话模式 / 工具审核下拉框共用同一视觉基线。 */
@@ -565,4 +577,3 @@
 .composer-select > .arrow-button > .arrow {
     -fx-background-color: -jc-text-muted;
 }
-

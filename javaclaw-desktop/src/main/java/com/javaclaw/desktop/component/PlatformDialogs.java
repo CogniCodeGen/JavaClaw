@@ -26,8 +26,6 @@ import javafx.stage.Screen;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 
-import com.javaclaw.desktop.DesktopStylesheets;
-
 /** 为 JavaClaw Desktop 拥有的 JavaFX Dialog 统一视觉、尺寸和文本输入交互。 */
 public final class PlatformDialogs {
     private static final double DIALOG_MAX_WIDTH = 720;
@@ -101,7 +99,7 @@ public final class PlatformDialogs {
     }
 
     /**
-     * 创建逐字确认 Dialog；确认按钮只在输入与预期文本完全一致时可用。
+     * 创建精确文本确认 Dialog；确认语句可选择复制，确认按钮只在输入与预期文本完全一致时可用。
      *
      * @param ownerNode 所属页面节点
      * @param title 窗口标题
@@ -135,7 +133,7 @@ public final class PlatformDialogs {
         DialogPane pane = checked.getDialogPane();
         addStyleClass(pane, "root");
         addStyleClass(pane, STYLE_MARKER);
-        DesktopStylesheets.applyTo(pane);
+        PlatformStylesheets.applyTo(pane);
         inheritOwnerAppearance(pane, ownerScene);
         checked.setGraphic(null);
         prepareContent(checked);
@@ -168,13 +166,15 @@ public final class PlatformDialogs {
     private static void configureExactTextBody(TextInputDialog dialog, String expected, String actionLabel) {
         TextField editor = dialog.getEditor();
         detach(editor);
+        editor.getStyleClass().add("dialog-confirmation-editor");
         editor.setPromptText("在此逐字输入上方确认语句");
         editor.setAccessibleText("精确确认输入；必须与上方确认语句逐字一致");
-        Label instruction = message("请在下方输入框中逐字输入确认语句。完全一致后“" + actionLabel + "”按钮才会启用。", "dialog-message");
+        Label instruction =
+                message("可选中上方确认语句并复制，再粘贴到下方输入框；也可以逐字输入。完全一致后“" + actionLabel + "”按钮才会启用。", "dialog-message");
         instruction.setLabelFor(editor);
-        Label confirmation = message(expected, "platform-detail-title");
-        confirmation.setAccessibleText("需要输入的确认语句：" + expected);
-        Label hint = message("请保留大小写、空格和标点。", "sec-hint");
+        TextField confirmation = new CopyableTextField(expected, "需要输入的确认语句，可选择并复制：" + expected);
+        confirmation.getStyleClass().add("dialog-confirmation-text");
+        Label hint = message("支持右键菜单和系统复制、粘贴快捷键；请保留大小写、空格和标点。", "sec-hint");
         VBox body = new VBox(8, instruction, confirmation, editor, hint);
         configureInputBody(dialog, body);
     }

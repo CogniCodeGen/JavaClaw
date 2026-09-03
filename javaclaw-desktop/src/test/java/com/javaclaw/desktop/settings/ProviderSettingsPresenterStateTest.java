@@ -16,6 +16,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProviderSettingsPresenterStateTest {
     @Test
+    void 空目录直接填写时使用自动标识完成首次保存() {
+        TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
+        gateway.providers.clear();
+        ProviderSettingsPresenter presenter = new ProviderSettingsPresenter(gateway, () -> "provider-empty-catalog");
+        presenter.reload();
+        ProviderDraft template = ProviderDraft.from(TestCoreSettingsFixtures.provider(
+                1, TestCoreSettingsFixtures.providerSpec(Optional.empty()), ProviderLifecycle.ACTIVE));
+        presenter.updateDraft(copyWithId(template, presenter.state().draft().id()));
+
+        presenter.save();
+
+        assertEquals(
+                "provider-empty-catalog",
+                presenter.state().selected().orElseThrow().id());
+        assertEquals(0, gateway.lastProviderCreateOptions.expectedRevision());
+        assertEquals(ProviderLifecycle.DISABLED, gateway.lastProviderCreateLifecycle);
+    }
+
+    @Test
     void 脏草稿阻止刷新切换新建归档和凭据变更() {
         TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
         ProviderEndpoint selected = gateway.providers.getFirst();
@@ -67,9 +86,10 @@ class ProviderSettingsPresenterStateTest {
     void 空目录归档与凭据失败都形成明确状态() {
         TestCoreSettingsGateway emptyGateway = new TestCoreSettingsGateway();
         emptyGateway.providers.clear();
-        ProviderSettingsPresenter empty = new ProviderSettingsPresenter(emptyGateway);
+        ProviderSettingsPresenter empty = new ProviderSettingsPresenter(emptyGateway, () -> "provider-empty-catalog");
         empty.reload();
         assertTrue(empty.state().selected().isEmpty());
+        assertEquals("provider-empty-catalog", empty.state().draft().id());
         assertEquals("尚未配置模型服务", empty.state().message());
 
         TestCoreSettingsGateway archiveGateway = new TestCoreSettingsGateway();
@@ -146,6 +166,24 @@ class ProviderSettingsPresenterStateTest {
         return new ProviderDraft(
                 draft.id(),
                 displayName,
+                draft.adapter(),
+                draft.baseUri(),
+                draft.authentication(),
+                draft.models(),
+                draft.credential(),
+                draft.timeoutSeconds(),
+                draft.maximumRetries(),
+                draft.organization(),
+                draft.project(),
+                draft.apiVersion(),
+                draft.reasoningSummary(),
+                draft.lifecycle());
+    }
+
+    private static ProviderDraft copyWithId(ProviderDraft draft, String id) {
+        return new ProviderDraft(
+                id,
+                draft.displayName(),
                 draft.adapter(),
                 draft.baseUri(),
                 draft.authentication(),

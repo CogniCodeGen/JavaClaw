@@ -152,7 +152,7 @@
 .platform-segment-button:selected {
     -fx-background-color: -jc-surface-card;
     -fx-border-color: -jc-border;
-    -fx-text-fill: -jc-primary-600;
+    -fx-text-fill: -jc-text-title;
     -fx-font-weight: 600;
 }
 

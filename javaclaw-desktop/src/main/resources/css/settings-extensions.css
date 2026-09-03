@@ -41,7 +41,7 @@
 
 .settings-category-btn:selected {
     -fx-background-color: -jc-primary-50;
-    -fx-text-fill: -jc-primary-500;
+    -fx-text-fill: -jc-text-title;
     -fx-font-weight: 600;
 }
 

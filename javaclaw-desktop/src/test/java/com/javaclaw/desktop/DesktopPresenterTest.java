@@ -76,6 +76,7 @@ class DesktopPresenterTest {
             await(() -> server.workspaceCreates.get() == 1);
             presenter.createThread("新 Thread");
             await(() -> server.threadCreates.get() == 1);
+            assertEquals(0, server.lastThreadCreateExpectedRevision);
 
             presenter.selectProfile(server.profile());
             assertEquals(
@@ -88,6 +89,7 @@ class DesktopPresenterTest {
             presenter.send("  执行升级  ");
             await(() ->
                     server.turnStarts.get() == 1 && !latest.get().interaction().busy());
+            assertEquals(0, server.lastTurnStartExpectedRevision);
             assertEquals(
                     server.profile().id(),
                     server.lastTurnStart.profile().orElseThrow().id());

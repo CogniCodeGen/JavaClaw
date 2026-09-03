@@ -14,6 +14,7 @@ import javafx.scene.control.Dialog;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.TextField;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.layout.VBox;
 import org.junit.jupiter.api.Test;
@@ -33,7 +34,7 @@ class PlatformDialogsTest {
             Pattern.compile("new\\s+(?:Alert|TextInputDialog)\\s*\\(|new\\s+Dialog\\s*<|extends\\s+Dialog\\s*<");
 
     @Test
-    void 精确确认说明输入用途并只在逐字匹配后允许操作() {
+    void 精确确认语句可选择复制并只在逐字匹配后允许操作() {
         FxTestSupport.run(() -> {
             VBox owner = owner();
             TextInputDialog dialog =
@@ -46,11 +47,25 @@ class PlatformDialogsTest {
                     .map(Label.class::cast)
                     .map(Label::getText)
                     .toList();
+            TextField confirmation = body.getChildren().stream()
+                    .filter(TextField.class::isInstance)
+                    .map(TextField.class::cast)
+                    .filter(field -> field != dialog.getEditor())
+                    .findFirst()
+                    .orElseThrow();
             Button action = (Button) pane.lookupButton(ButtonType.OK);
 
-            assertTrue(messages.stream().anyMatch(value -> value.contains("逐字输入")));
-            assertTrue(messages.contains(EXPECTED));
-            assertTrue(messages.stream().anyMatch(value -> value.contains("大小写、空格和标点")));
+            assertTrue(messages.stream().anyMatch(value -> value.contains("选中上方确认语句并复制")));
+            assertTrue(messages.stream().anyMatch(value -> value.contains("复制、粘贴快捷键")));
+            assertFalse(confirmation.isEditable());
+            assertEquals(EXPECTED, confirmation.getText());
+            assertTrue(confirmation.getAccessibleText().contains("可选择并复制"));
+            assertTrue(confirmation
+                    .getStyleClass()
+                    .containsAll(List.of("copyable-text-field", "dialog-confirmation-text")));
+            confirmation.selectAll();
+            assertEquals(EXPECTED, confirmation.getSelectedText());
+            assertTrue(dialog.getEditor().getStyleClass().contains("dialog-confirmation-editor"));
             assertEquals("在此逐字输入上方确认语句", dialog.getEditor().getPromptText());
             assertEquals("验证对话模型", action.getText());
             assertTrue(action.isDisable());

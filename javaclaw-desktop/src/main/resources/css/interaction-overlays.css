@@ -313,6 +313,15 @@
     -fx-effect: dropshadow(gaussian, -jc-focus-ring, 6, 0, 0, 0);
 }
 
+/* Dialog 聚焦时保持可复制确认语句的只读表面，不伪装成可编辑输入。 */
+.dialog-pane .dialog-confirmation-text {
+    -fx-background-color: -jc-surface-sunken;
+}
+
+.dialog-pane .dialog-confirmation-text:focused {
+    -fx-background-color: -jc-surface-sunken;
+}
+
 /* 弹窗长正文 / 自定义表单滚动区：透明无套娃边框，页脚按钮保持固定。 */
 .dialog-message-scroll,
 .dialog-body-scroll {

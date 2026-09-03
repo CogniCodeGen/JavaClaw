@@ -69,8 +69,9 @@ import com.javaclaw.runtime.TurnRecoverySnapshot;
  * <p>并发不变量：每次执行只公开空工具目录和拒绝型工具端口；超时或外部取消会先发布协作式 token，再中断所拥有的虚拟线程。Prompt、响应正文、流事件和 opaque state 仅存在于调用栈内，全部丢弃。
  */
 final class ProviderVerificationHarness implements AutoCloseable {
-    static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(15);
+    static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(60);
     private static final Duration POLL_INTERVAL = Duration.ofMillis(25);
+    private static final long MAXIMUM_OUTPUT_TOKENS = 512;
     private static final String SYSTEM_INSTRUCTION = "这是连通性验证。不得调用工具，只返回 OK。";
     private static final String USER_MESSAGE = "返回 OK";
     private static final PermissionProfile NO_PERMISSIONS = noPermissions();
@@ -264,7 +265,7 @@ final class ProviderVerificationHarness implements AutoCloseable {
                 ThreadId.random(),
                 TurnStatus.QUEUED,
                 1,
-                new TurnBudget(64, 8, 1, 0, timeout),
+                new TurnBudget(64, MAXIMUM_OUTPUT_TOKENS, 1, 0, timeout),
                 new AgentProfileRef("provider-verification", 1),
                 provider,
                 new PermissionProfileRef(NO_PERMISSIONS.id(), NO_PERMISSIONS.version()),

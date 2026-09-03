@@ -92,6 +92,8 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
     volatile CanonicalPayload viewSchema = new CanonicalPayload("{\"schemaVersion\":2}");
     volatile boolean profileBound = true;
     volatile ToolRpcContracts.CatalogQuery lastToolCatalog;
+    volatile long lastThreadCreateExpectedRevision = -1;
+    volatile long lastTurnStartExpectedRevision = -1;
 
     JavaClawClient client(Consumer<ServerNotification> notifications) throws IOException {
         return JavaClawClient.connect(this, new ClientInfo("desktop-test", "5.0"), Set.of(), notifications);
@@ -244,6 +246,7 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
 
     private ConversationThread createdThread(JsonRpcRequest request) {
         WriteCommand command = json.decode(request.params(), WriteCommand.class);
+        lastThreadCreateExpectedRevision = command.expectedRevision();
         CoreRpcContracts.ThreadCreatePayload payload =
                 json.decode(command.payload(), CoreRpcContracts.ThreadCreatePayload.class);
         if (!payload.workspaceId().equals(workspace.id())) {
@@ -266,6 +269,7 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
 
     private AgentTurn startedTurn(JsonRpcRequest request) {
         WriteCommand command = json.decode(request.params(), WriteCommand.class);
+        lastTurnStartExpectedRevision = command.expectedRevision();
         lastTurnStart = json.decode(command.payload(), CoreRpcContracts.TurnStartPayload.class);
         cancelRequested = false;
         turnStarts.incrementAndGet();

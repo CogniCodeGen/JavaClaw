@@ -25,7 +25,7 @@ public final class TurnClient {
      * 启动一个 Turn。
      *
      * @param payload 冻结模型、预算、权限和用户输入
-     * @param options 幂等键与 Thread expected revision
+     * @param options 幂等键；创建命令 expected revision 必须为 0
      * @return 已持久化 Turn
      */
     public AgentTurn start(CoreRpcContracts.TurnStartPayload payload, CommandOptions options) {

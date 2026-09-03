@@ -45,7 +45,7 @@ public final class ThreadClient {
      *
      * @param workspaceId Workspace
      * @param title 标题
-     * @param options 幂等键与 Workspace expected revision
+     * @param options 幂等键；创建命令 expected revision 必须为 0
      * @return 新 Thread
      */
     public ConversationThread create(WorkspaceId workspaceId, String title, CommandOptions options) {
@@ -59,7 +59,7 @@ public final class ThreadClient {
      * @param parentThreadId 父 Thread；根 Thread 为空
      * @param executionIntent 服务端可验证的执行隔离意图
      * @param title 标题
-     * @param options 幂等键与 Workspace expected revision
+     * @param options 幂等键；创建命令 expected revision 必须为 0
      * @return 新 Thread
      */
     public ConversationThread create(

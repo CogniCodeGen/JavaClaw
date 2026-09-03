@@ -191,9 +191,8 @@ public final class DesktopPresenter implements AutoCloseable {
     public void createThread(String title) {
         Workspace workspace = store.state().threads().selectedWorkspace().orElseThrow();
         workers.submit(() -> runGuarded(() -> {
-            ConversationThread created = requireClient()
-                    .threads()
-                    .create(workspace.id(), title, CommandOptions.create(workspace.revision()));
+            ConversationThread created =
+                    requireClient().threads().create(workspace.id(), title, CommandOptions.create(0));
             List<ConversationThread> threads = requireClient().threads().list(workspace.id());
             publishThreads(workspace, threads, Optional.of(created));
         }));
@@ -444,7 +443,7 @@ public final class DesktopPresenter implements AutoCloseable {
             throws InterruptedException {
         CoreRpcContracts.TurnStartPayload payload =
                 new CoreRpcContracts.TurnStartPayload(thread.id(), profile, message);
-        AgentTurn turn = requireClient().turns().start(payload, CommandOptions.create(thread.revision()));
+        AgentTurn turn = requireClient().turns().start(payload, CommandOptions.create(0));
         publishActiveTurn(turn);
         long cursor = store.state().transcript().nextSequence();
         while (!DesktopStateProjection.terminal(turn.status()) && !closed) {

@@ -9,6 +9,7 @@ import javafx.scene.layout.VBox;
 
 import com.javaclaw.api.VaultState;
 import com.javaclaw.api.VaultStatus;
+import com.javaclaw.desktop.component.CopyableTextField;
 import com.javaclaw.desktop.component.DangerZone;
 import com.javaclaw.desktop.component.FormSection;
 import com.javaclaw.desktop.component.PlatformComponentFactory;
@@ -17,6 +18,8 @@ import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 
 /** 密钥库脱敏状态与主密钥契约可用性页面。 */
 public final class VaultSettingsPage implements ManagedSettingsPage {
+    private static final String RESET_CONFIRMATION = "RESET VAULT";
+
     private final PlatformComponentFactory components = new PlatformComponentFactory();
     private final VaultSettingsPresenter presenter;
     private final VBox content = components.page("密钥库");
@@ -29,6 +32,7 @@ public final class VaultSettingsPage implements ManagedSettingsPage {
     private final Label error = new Label();
     private final Button refresh;
     private final Button rotate;
+    private final TextField resetExpected = new CopyableTextField(RESET_CONFIRMATION, "密钥库重置确认语句，可选择并复制");
     private final TextField resetConfirmation = new TextField();
     private final DangerZone resetZone;
     private VaultSettingsState latest = VaultSettingsState.initial();
@@ -46,9 +50,9 @@ public final class VaultSettingsPage implements ManagedSettingsPage {
         rotate.setOnAction(event -> presenter.rotateMasterKey());
         resetZone = new DangerZone(
                 "永久重置密钥库",
-                "永久清除所有密钥，并使旧凭据引用失效。输入 RESET VAULT 后才可执行。",
+                "永久清除所有密钥，并使旧凭据引用失效。复制或输入确认语句后才可执行。",
                 "永久重置密钥库",
-                ignored -> "RESET VAULT".equals(resetConfirmation.getText()),
+                ignored -> RESET_CONFIRMATION.equals(resetConfirmation.getText()),
                 this::resetVault);
         buildLayout();
         resetConfirmation.textProperty().addListener((ignored, previous, value) -> updateActionAvailability(latest));
@@ -93,9 +97,10 @@ public final class VaultSettingsPage implements ManagedSettingsPage {
         rotationHint.getStyleClass().add("sec-hint");
         masterKey.addFullWidth(new HBox(8, rotate));
         masterKey.addFullWidth(rotationHint);
-        resetConfirmation.setPromptText("精确输入 RESET VAULT");
+        resetConfirmation.setPromptText("粘贴或逐字输入上方确认语句");
         resetConfirmation.setAccessibleText("密钥库重置危险确认");
-        FormSection reset = new FormSection("危险确认", "确认文本不可本地化或模糊匹配，避免误触导致全部密钥失效。");
+        FormSection reset = new FormSection("危险确认", "上方确认语句可选中复制；系统仍会精确匹配大小写、空格和标点，避免误触导致全部密钥失效。");
+        reset.addField("需要输入", resetExpected);
         reset.addField("确认文本", resetConfirmation);
         reset.addFullWidth(resetZone);
         error.setWrapText(true);
@@ -138,7 +143,7 @@ public final class VaultSettingsPage implements ManagedSettingsPage {
         boolean pending = snapshot.phase() == SettingsLoadState.LOADING || snapshot.phase() == SettingsLoadState.SAVING;
         boolean ready = snapshot.status().map(VaultStatus::state).orElse(VaultState.LOCKED) == VaultState.READY;
         rotate.setDisable(pending || !ready);
-        resetZone.setActionDisabled(pending || !resetConfirmation.getText().equals("RESET VAULT"));
+        resetZone.setActionDisabled(pending || !resetConfirmation.getText().equals(RESET_CONFIRMATION));
     }
 
     private void resetVault() {

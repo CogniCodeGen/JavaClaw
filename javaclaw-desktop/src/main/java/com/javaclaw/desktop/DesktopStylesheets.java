@@ -1,26 +1,15 @@
 package com.javaclaw.desktop;
 
-import java.net.URL;
 import java.util.List;
-import java.util.Objects;
 
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 
-import com.javaclaw.desktop.appearance.DesktopAppearanceManager;
-import com.javaclaw.desktop.appearance.JavaPreferencesAppearanceStore;
+import com.javaclaw.desktop.component.PlatformStylesheets;
 
 /** 按固定级联顺序加载 509f197 视觉基线与 v5 Desktop 壳样式。 */
 public final class DesktopStylesheets {
-    static final List<String> BASELINE_RESOURCES = List.of(
-            "/css/design-tokens-controls.css",
-            "/css/navigation.css",
-            "/css/chat-surface.css",
-            "/css/settings-extensions.css",
-            "/css/interaction-overlays.css",
-            "/css/design-system-components.css",
-            "/css/themes-shell.css");
-    private static final List<String> RESOURCES = appendShellStylesheet(BASELINE_RESOURCES);
+    static final List<String> BASELINE_RESOURCES = PlatformStylesheets.baselineResources();
 
     private DesktopStylesheets() {}
 
@@ -30,9 +19,7 @@ public final class DesktopStylesheets {
      * @param scene 接收样式的 Scene
      */
     public static void apply(Scene scene) {
-        Objects.requireNonNull(scene, "scene");
-        addStylesheets(scene.getStylesheets());
-        DesktopAppearanceManager.apply(scene, new JavaPreferencesAppearanceStore().load());
+        PlatformStylesheets.apply(scene);
     }
 
     /**
@@ -41,32 +28,6 @@ public final class DesktopStylesheets {
      * @param root 接收样式和已保存外观的根节点
      */
     public static void applyTo(Parent root) {
-        Objects.requireNonNull(root, "root");
-        addStylesheets(root.getStylesheets());
-        DesktopAppearanceManager.applyTo(root, new JavaPreferencesAppearanceStore().load());
-    }
-
-    private static void addStylesheets(List<String> stylesheets) {
-        for (String resource : RESOURCES) {
-            String stylesheet = requireResource(resource).toExternalForm();
-            if (!stylesheets.contains(stylesheet)) {
-                stylesheets.add(stylesheet);
-            }
-        }
-    }
-
-    private static List<String> appendShellStylesheet(List<String> baseline) {
-        java.util.ArrayList<String> resources = new java.util.ArrayList<>(baseline);
-        resources.add("/css/management-center.css");
-        resources.add("/css/desktop.css");
-        return List.copyOf(resources);
-    }
-
-    private static URL requireResource(String path) {
-        URL resource = DesktopStylesheets.class.getResource(path);
-        if (resource == null) {
-            throw new IllegalStateException("Desktop 样式资源不存在：" + path);
-        }
-        return resource;
+        PlatformStylesheets.applyTo(root);
     }
 }

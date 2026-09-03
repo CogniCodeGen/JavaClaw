@@ -57,7 +57,7 @@ class ProtocolMethodSchemaSamplesTest {
     void turn审批与Rollout写信封匹配逐方法Schema() throws Exception {
         assertCommand(
                 new CoreRpcContracts.TurnStartPayload(THREAD_ID, Optional.of(new AgentProfileRef("coding", 2)), "修复测试"),
-                4,
+                0,
                 "core-interaction-v2.schema.json",
                 "/$defs/turnStartCommand");
         assertCommand(

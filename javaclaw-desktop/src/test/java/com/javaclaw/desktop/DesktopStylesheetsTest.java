@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DesktopStylesheetsTest {
-    private static final String BASELINE_SHA256 = "0fbb07cbe860b39188a20936bdb0d13290a79b856c43e1875a4d91663cb5eb85";
+    private static final String BASELINE_SHA256 = "6b34838c5bc9401637da32c0ae143128dabc4ba069f5dacb98ee5d883a41fac9";
 
     @Test
     void 可达视觉基线保持固定字节和级联顺序() throws Exception {

@@ -118,4 +118,18 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <configuration>
+                    <!-- OkHttp 的 Java 签名暴露 Kotlin 集合标记；javac 需要该类，但字节码分析无法识别这种 ABI 依赖。 -->
+                    <usedDependencies>
+                        <usedDependency>org.jetbrains.kotlin:kotlin-stdlib</usedDependency>
+                    </usedDependencies>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>

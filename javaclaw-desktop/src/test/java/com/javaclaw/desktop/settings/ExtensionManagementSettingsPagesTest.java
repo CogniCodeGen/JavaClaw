@@ -233,7 +233,7 @@ class ExtensionManagementSettingsPagesTest {
                 .map(DialogPane.class::cast)
                 .findFirst()
                 .ifPresent(dialog -> {
-                    Node editor = dialog.lookup(".text-field");
+                    Node editor = dialog.lookup(".dialog-confirmation-editor");
                     if (editor instanceof TextField field) {
                         field.setText(confirmation);
                     }

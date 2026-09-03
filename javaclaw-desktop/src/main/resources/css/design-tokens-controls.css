@@ -314,7 +314,7 @@
 
 .toggle-button:selected {
     -fx-background-color: -jc-primary-50;
-    -fx-text-fill: -jc-primary-600;
+    -fx-text-fill: -jc-text-title;
     -fx-border-color: -jc-primary-200;
 }
 
@@ -530,7 +530,7 @@
 
 .list-view .list-cell:filled:selected {
     -fx-background-color: -jc-primary-50;
-    -fx-text-fill: -jc-primary-600;
+    -fx-text-fill: -jc-text-title;
 }
 
 /* 数字步进器 */

@@ -87,7 +87,7 @@
       "required": ["idempotencyKey", "expectedRevision", "payload"],
       "properties": {
         "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 200},
-        "expectedRevision": {"type": "integer", "minimum": 1},
+        "expectedRevision": {"const": 0},
         "payload": {
           "type": "object",
           "additionalProperties": false,

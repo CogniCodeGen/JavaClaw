@@ -50,6 +50,7 @@ import com.javaclaw.api.VaultState;
 import com.javaclaw.api.VaultStatus;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.builtin.contracts.ScheduleContracts;
+import com.javaclaw.builtin.contracts.SiteContracts;
 import com.javaclaw.client.CommandOptions;
 import com.javaclaw.desktop.DesktopTestFixtures;
 import com.javaclaw.desktop.FxTestSupport;
@@ -330,12 +331,46 @@ class CoreSettingsPagesTest {
             assertTrue(labels(root).contains("已锁定"));
             Button reset = button(root, "永久重置密钥库");
             assertTrue(reset.isDisabled());
+            TextField expected = fieldByAccessibleText(root, "密钥库重置确认语句，可选择并复制");
+            assertFalse(expected.isEditable());
+            expected.selectAll();
+            assertEquals("RESET VAULT", expected.getSelectedText());
             fieldByAccessibleText(root, "密钥库重置危险确认").setText("RESET VAULT");
             assertFalse(reset.isDisabled());
             reset.fire();
 
             assertTrue(labels(root).contains("可以使用"));
             assertTrue(labels(root).stream().anyMatch(value -> value.contains("已重置密钥库")));
+        });
+    }
+
+    @Test
+    void site永久清除确认语句可选择复制且仍要求精确匹配() {
+        FxTestSupport.run(() -> {
+            TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
+            gateway.createCredential(
+                            SiteContracts.SITE_CREDENTIAL_NAMESPACE,
+                            "temporary-site-secret".toCharArray(),
+                            CommandOptions.create(0))
+                    .toCompletableFuture()
+                    .join();
+            SiteCredentialSettingsSection section = new SiteCredentialSettingsSection(gateway, () -> {});
+            BorderPane root = new BorderPane(section.content());
+            new Scene(root, 1_040, 720);
+            section.activate();
+            root.applyCss();
+
+            TextField expected = fieldByAccessibleText(root, "网站凭据永久清除确认语句，可选择并复制");
+            assertFalse(expected.isEditable());
+            expected.selectAll();
+            assertEquals("CLEAR SITE SECRET", expected.getSelectedText());
+            Button clear = button(root, "永久清除");
+            assertTrue(clear.isDisabled());
+            TextField confirmation = fieldByAccessibleText(root, "网站密钥永久清除确认");
+            confirmation.setText("CLEAR SITE SECRET ");
+            assertTrue(clear.isDisabled());
+            confirmation.setText("CLEAR SITE SECRET");
+            assertFalse(clear.isDisabled());
         });
     }
 

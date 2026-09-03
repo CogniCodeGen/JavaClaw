@@ -56,7 +56,7 @@ class ProviderVerificationHarnessTest {
             assertEquals(ProviderVerificationState.SUCCEEDED, result.state());
             assertEquals(1, gateway.calls.get());
             assertTrue(gateway.invocation.get().tools().isEmpty());
-            assertEquals(8, gateway.invocation.get().maximumOutputTokens());
+            assertEquals(512, gateway.invocation.get().maximumOutputTokens());
             assertEquals(2, result.usage().orElseThrow().inputTokens());
             assertFalse(result.toString().contains("SENSITIVE MODEL RESPONSE"));
         }

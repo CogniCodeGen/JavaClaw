@@ -14,6 +14,7 @@ import javafx.scene.layout.VBox;
 import com.javaclaw.api.CredentialMetadata;
 import com.javaclaw.desktop.component.AsyncActionBar;
 import com.javaclaw.desktop.component.AsyncActionBar.ActionState;
+import com.javaclaw.desktop.component.CopyableTextField;
 import com.javaclaw.desktop.component.DangerZone;
 import com.javaclaw.desktop.component.FormSection;
 import com.javaclaw.desktop.component.PlatformComponentFactory;
@@ -32,6 +33,7 @@ final class SiteCredentialSettingsSection {
     private final Label revision = value();
     private final Label updatedAt = value();
     private final PasswordField secret = new PasswordField();
+    private final TextField clearExpected = new CopyableTextField(CLEAR_CONFIRMATION, "网站凭据永久清除确认语句，可选择并复制");
     private final TextField clearConfirmation = new TextField();
     private final Button refresh;
     private final Button create;
@@ -87,7 +89,7 @@ final class SiteCredentialSettingsSection {
         configureCredentialChoice();
         secret.setPromptText("输入新密钥；提交后立即清空");
         secret.setAccessibleText("网站密钥临时输入");
-        clearConfirmation.setPromptText("精确输入 " + CLEAR_CONFIRMATION);
+        clearConfirmation.setPromptText("粘贴或逐字输入上方确认语句");
         clearConfirmation.setAccessibleText("网站密钥永久清除确认");
         secret.textProperty().addListener((ignored, previous, value) -> updateActions());
         clearConfirmation.textProperty().addListener((ignored, previous, value) -> updateActions());
@@ -100,7 +102,8 @@ final class SiteCredentialSettingsSection {
         catalog.addField("新密钥", secret);
         catalog.addFullWidth(actions);
 
-        FormSection danger = new FormSection("危险操作", "永久清除时会校验当前脱敏版本，随后重新读取服务端状态。");
+        FormSection danger = new FormSection("危险操作", "上方确认语句可选中复制；永久清除时会精确匹配文本、校验当前脱敏版本，再重新读取服务端状态。");
+        danger.addField("需要输入", clearExpected);
         danger.addField("确认文本", clearConfirmation);
         danger.addFullWidth(clearZone);
         root.getChildren().addAll(catalog, danger);
