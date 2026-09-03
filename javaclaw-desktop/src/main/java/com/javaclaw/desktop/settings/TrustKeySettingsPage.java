@@ -10,7 +10,6 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
-import javafx.scene.control.TextInputDialog;
 import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 
@@ -23,10 +22,12 @@ import com.javaclaw.desktop.component.PlatformComponentFactory;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 import com.javaclaw.desktop.component.PlatformComponentFactory.FeedbackKind;
+import com.javaclaw.desktop.component.PlatformDialogs;
 import com.javaclaw.desktop.component.RevisionConflictPane;
+import com.javaclaw.desktop.component.TypedTextDangerConfirmationPolicy;
 import com.javaclaw.protocol.BundleRpcContracts;
 
-/** Ed25519 Trust Key 的 Attachment 导入、指纹确认和实时撤销页面。 */
+/** Ed25519 信任公钥的附件导入、指纹确认和实时撤销页面。 */
 public final class TrustKeySettingsPage extends VBox implements ManagedSettingsPage {
     private final PlatformComponentFactory components = new PlatformComponentFactory();
     private final TrustKeySettingsPresenter presenter;
@@ -58,7 +59,11 @@ public final class TrustKeySettingsPage extends VBox implements ManagedSettingsP
         discard = action("丢弃草稿", ActionStyle.GHOST, presenter::discardDraft);
         actions = new AsyncActionBar(choose, confirmImport, discard);
         revoke = new DangerZone(
-                "撤销 Trust Key", "撤销后该密钥不能继续验签，所有由其签名的第三方 Bundle 会被服务端实时禁用。", "撤销并禁用关联 Bundle", this::confirmRevoke);
+                "撤销信任公钥",
+                "撤销后该公钥不能继续验证签名，由其签名的所有第三方扩展包会被服务端立即停用。",
+                "撤销并停用关联扩展包",
+                new TypedTextDangerConfirmationPolicy(this, this::revokeConfirmation),
+                presenter::revoke);
         conflict = new RevisionConflictPane(this::reloadAfterConflict, this::describeConflict);
         configurePage();
         presenter.subscribe(this::render);
@@ -67,6 +72,11 @@ public final class TrustKeySettingsPage extends VBox implements ManagedSettingsP
     @Override
     public Node content() {
         return this;
+    }
+
+    @Override
+    public Optional<Node> actionContent() {
+        return Optional.of(actions);
     }
 
     @Override
@@ -92,14 +102,14 @@ public final class TrustKeySettingsPage extends VBox implements ManagedSettingsP
     private void configurePage() {
         Label title = new Label("信任公钥");
         title.getStyleClass().addAll("sec-title", "platform-page-title");
-        Label hint = new Label("公钥从 Core Attachment 导入；页面只展示不可逆指纹和元数据，不返回公钥文件路径或私钥内容。");
+        Label hint = new Label("公钥会先作为 JavaClaw 服务附件上传；页面只显示不可逆指纹和基本信息，不显示公钥文件路径或任何私钥内容。");
         hint.setWrapText(true);
         hint.getStyleClass().add("sec-hint");
         masterDetail
                 .list()
                 .setCellFactory(ignored -> components.detailCell(
-                        value -> value.id() + " · " + value.state(),
-                        value -> "revision " + value.revision() + " · " + shortFingerprint(value.fingerprint())));
+                        value -> value.id() + " · " + SettingsLabels.trustState(value.state()),
+                        value -> "版本 " + value.revision() + " · " + shortFingerprint(value.fingerprint())));
         masterDetail
                 .list()
                 .getSelectionModel()
@@ -107,8 +117,7 @@ public final class TrustKeySettingsPage extends VBox implements ManagedSettingsP
                 .addListener((observable, previous, selected) -> select(selected));
         masterDetail
                 .list()
-                .setPlaceholder(
-                        components.feedback(FeedbackKind.EMPTY, "暂无 Trust Key", "导入 Ed25519 公钥并核对完整 SHA-256 指纹。"));
+                .setPlaceholder(components.feedback(FeedbackKind.EMPTY, "暂无信任公钥", "导入 Ed25519 公钥并核对完整 SHA-256 指纹。"));
         masterDetail.showDetail(detail());
         keyId.textProperty().addListener((observable, previous, value) -> updateKeyId(value));
         getChildren().addAll(title, hint, masterDetail);
@@ -116,21 +125,21 @@ public final class TrustKeySettingsPage extends VBox implements ManagedSettingsP
     }
 
     private Node detail() {
-        FormSection current = new FormSection("密钥状态", "撤销是实时 kill switch；活动或后续 Bundle 调用不能绕过此状态。");
-        current.addField("Key ID", selectedId);
+        FormSection current = new FormSection("公钥状态", "撤销会立即生效；正在运行或之后启动的扩展包调用都不能绕过此状态。");
+        current.addField("公钥标识", selectedId);
         current.addField("状态", selectedState);
         current.addField("完整指纹", selectedFingerprint);
-        current.addField("来源 Attachment", selectedAttachment);
-        current.addField("Revision", selectedRevision);
+        current.addField("来源附件", selectedAttachment);
+        current.addField("版本", selectedRevision);
         current.addField("更新时间", selectedUpdated);
         FormSection draft = new FormSection("导入草稿", "先上传，再核对规范 DER 的完整 SHA-256；导入按钮会再次显示确认内容。");
-        keyId.setPromptText("manifest signingKeyId");
-        keyId.setAccessibleText("Trust Key 标识");
-        draft.addField("Key ID", keyId);
+        keyId.setPromptText("与扩展包清单中的签名公钥标识一致");
+        keyId.setAccessibleText("信任公钥标识");
+        draft.addField("公钥标识", keyId);
         draft.addField("文件名", draftFile);
-        draft.addField("Attachment", draftAttachment);
+        draft.addField("附件", draftAttachment);
         draft.addField("完整指纹", draftFingerprint);
-        VBox content = new VBox(12, current, draft, conflict, actions, revoke);
+        VBox content = new VBox(12, current, draft, conflict, revoke);
         content.getStyleClass().add("platform-page");
         return content;
     }
@@ -164,7 +173,8 @@ public final class TrustKeySettingsPage extends VBox implements ManagedSettingsP
 
     private void renderSelected(Optional<BundleRpcContracts.TrustKey> selected) {
         selectedId.setText(selected.map(BundleRpcContracts.TrustKey::id).orElse("—"));
-        selectedState.setText(selected.map(value -> value.state().name()).orElse("—"));
+        selectedState.setText(
+                selected.map(value -> SettingsLabels.trustState(value.state())).orElse("—"));
         selectedFingerprint.setText(
                 selected.map(BundleRpcContracts.TrustKey::fingerprint).orElse("—"));
         selectedAttachment.setText(
@@ -219,7 +229,7 @@ public final class TrustKeySettingsPage extends VBox implements ManagedSettingsP
         chooser.setTitle("选择 Ed25519 公钥");
         chooser.getExtensionFilters()
                 .addAll(
-                        new FileChooser.ExtensionFilter("Ed25519 public key", "*.pub", "*.der", "*.txt"),
+                        new FileChooser.ExtensionFilter("Ed25519 公钥", "*.pub", "*.der", "*.txt"),
                         new FileChooser.ExtensionFilter("所有文件", "*.*"));
         File selected =
                 chooser.showOpenDialog(getScene() == null ? null : getScene().getWindow());
@@ -231,25 +241,18 @@ public final class TrustKeySettingsPage extends VBox implements ManagedSettingsP
     private void confirmImport() {
         TrustKeyImportDraft draft = state.draft().orElseThrow();
         Alert dialog = new Alert(Alert.AlertType.CONFIRMATION);
-        own(dialog);
-        dialog.setTitle("确认 Trust Key 指纹");
-        dialog.setHeaderText("Key ID: " + state.keyId().strip());
-        dialog.setContentText("请与发布者提供的指纹逐字核对：\n" + draft.fingerprint() + "\n\n来源 Attachment: "
+        dialog.setTitle("确认信任公钥指纹");
+        dialog.setHeaderText("公钥标识：" + state.keyId().strip());
+        dialog.setContentText("请与发布者提供的指纹逐字核对：\n" + draft.fingerprint() + "\n\n来源附件："
                 + draft.attachment().digest());
+        PlatformDialogs.style(dialog, this);
         if (dialog.showAndWait().filter(ButtonType.OK::equals).isPresent()) {
             presenter.importPrepared();
         }
     }
 
-    private void confirmRevoke() {
-        BundleRpcContracts.TrustKey key = state.selected().orElseThrow();
-        String expected = "REVOKE " + key.id();
-        TextInputDialog dialog = new TextInputDialog();
-        own(dialog);
-        dialog.setTitle("撤销 Trust Key");
-        dialog.setHeaderText("关联 Bundle 会被实时禁用");
-        dialog.setContentText("输入 " + expected + "：");
-        dialog.showAndWait().filter(expected::equals).ifPresent(ignored -> presenter.revoke());
+    private String revokeConfirmation() {
+        return state.selected().map(key -> "REVOKE " + key.id()).orElse("");
     }
 
     private void reloadAfterConflict() {
@@ -258,19 +261,13 @@ public final class TrustKeySettingsPage extends VBox implements ManagedSettingsP
     }
 
     private void describeConflict() {
-        actions.show(ActionState.ERROR, "服务端 Trust Key revision 已改变；草稿保留，可丢弃后重新读取");
+        actions.show(ActionState.ERROR, "服务端信任公钥版本已改变；草稿已保留，可丢弃后重新读取");
     }
 
     private Button action(String text, ActionStyle style, Runnable action) {
         Button button = components.action(text, style, ActionSize.NORMAL);
         button.setOnAction(event -> action.run());
         return button;
-    }
-
-    private void own(javafx.scene.control.Dialog<?> dialog) {
-        if (getScene() != null && getScene().getWindow() != null) {
-            dialog.initOwner(getScene().getWindow());
-        }
     }
 
     private static String shortFingerprint(String value) {

@@ -32,12 +32,12 @@ class BundleSettingsPresentersTest {
         assertEquals("com.example.new", latest.get().staging().orElseThrow().extensionId());
 
         presenter.select(gateway.bundles.getFirst());
-        assertTrue(latest.get().message().contains("staging"));
+        assertTrue(latest.get().message().contains("待安装文件"));
         presenter.install();
 
         assertFalse(latest.get().dirty());
         assertEquals("com.example.new", latest.get().selected().orElseThrow().id());
-        assertEquals("Bundle 已安装", latest.get().message());
+        assertEquals("扩展包已安装", latest.get().message());
     }
 
     @Test
@@ -76,7 +76,7 @@ class BundleSettingsPresentersTest {
         AtomicReference<TrustKeySettingsState> latest = new AtomicReference<>();
         presenter.subscribe(latest::set);
         presenter.reload();
-        assertEquals("暂无 Trust Key", latest.get().message());
+        assertEquals("暂无信任公钥", latest.get().message());
 
         presenter.updateKeyId("bad key id");
         presenter.prepare(Path.of("release.pub"));
@@ -90,12 +90,12 @@ class BundleSettingsPresentersTest {
         presenter.updateKeyId("release-key");
         presenter.importPrepared();
         assertFalse(latest.get().dirty());
-        assertEquals("Trust Key 已导入", latest.get().message());
+        assertEquals("信任公钥已导入", latest.get().message());
         presenter.revoke();
         assertEquals(
                 BundleRpcContracts.TrustState.REVOKED,
                 latest.get().selected().orElseThrow().state());
-        assertEquals("Trust Key 已撤销", latest.get().message());
+        assertEquals("信任公钥已撤销", latest.get().message());
     }
 
     @Test
@@ -142,7 +142,7 @@ class BundleSettingsPresentersTest {
         assertEquals(
                 BundleRpcContracts.TrashState.RESTORED,
                 latest.get().selected().orElseThrow().state());
-        assertEquals("Bundle 已恢复为 revision 2", latest.get().message());
+        assertEquals("扩展包已恢复为版本 2", latest.get().message());
 
         BundleRpcContracts.Bundle second =
                 TestBundleSettingsGateway.bundle("com.example.purge", "1.0.0", 1, "DISABLED");
@@ -156,7 +156,7 @@ class BundleSettingsPresentersTest {
         assertEquals(
                 BundleRpcContracts.TrashState.PURGED,
                 latest.get().selected().orElseThrow().state());
-        assertEquals("Trash 文件已永久清除", latest.get().message());
+        assertEquals("回收站文件已永久清除", latest.get().message());
     }
 
     private static RemoteRpcException revisionConflict() {

@@ -73,6 +73,12 @@ public final class OpenAiResponsesModelAdapter
         return new OpenAiResponsesModelAdapter(config, new OfficialOpenAiResponsesTransport(client));
     }
 
+    static OpenAiResponsesModelAdapter create(OpenAiResponsesEndpointConfig config, OpenAIClient client) {
+        return new OpenAiResponsesModelAdapter(
+                Objects.requireNonNull(config, "config"),
+                new OfficialOpenAiResponsesTransport(Objects.requireNonNull(client, "client")));
+    }
+
     @Override
     public ModelCapabilities capabilities(String modelId) {
         requireEndpoint(modelId);

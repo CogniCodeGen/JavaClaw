@@ -14,6 +14,8 @@ import com.javaclaw.extension.spi.ViewCommandBinding;
 import com.javaclaw.extension.spi.ViewDataSource;
 import com.javaclaw.extension.spi.ViewField;
 import com.javaclaw.extension.spi.ViewFormField;
+import com.javaclaw.extension.spi.ViewOptionSource;
+import com.javaclaw.extension.spi.ViewPlatformDataSource;
 import com.javaclaw.extension.spi.ViewSchema;
 import com.javaclaw.extension.spi.ViewSelectionMode;
 import com.javaclaw.extension.spi.ViewStructuredItemField;
@@ -39,9 +41,6 @@ public final class ViewSchemaPolicy {
      */
     public static ViewSchema requireSupported(ViewSchema schema) {
         Objects.requireNonNull(schema, "schema");
-        if (schema.schemaVersion() != ViewSchema.CURRENT_VERSION) {
-            throw new IllegalArgumentException("不支持的 ViewSchema 版本: " + schema.schemaVersion());
-        }
         requireMaximum(schema.dataSources().size(), "数据源");
         if (schema.nodes().size() > MAX_NODES) {
             throw new IllegalArgumentException("顶层节点过多");
@@ -65,12 +64,29 @@ public final class ViewSchemaPolicy {
             requireIdentifier(source.id(), "数据源 ID");
             requireOperation(source.query());
             validateArgumentBindings(source, sources);
+            validatePlatformSource(source);
             if (!sources.add(source.id())) {
                 throw new IllegalArgumentException("ViewSchema 数据源 ID 重复: " + source.id());
             }
             validateArguments(source.arguments(), "数据源参数");
         }
         return Set.copyOf(sources);
+    }
+
+    private static void validatePlatformSource(ViewDataSource source) {
+        if (!ViewPlatformDataSource.claimsNamespace(source.query())) {
+            return;
+        }
+        if (!ViewPlatformDataSource.supports(source.query())) {
+            throw new IllegalArgumentException("ViewSchema 引用了未知平台数据源: " + source.query());
+        }
+        if (!source.arguments().isEmpty() || !source.argumentBindings().isEmpty()) {
+            throw new IllegalArgumentException("平台数据源不能携带扩展参数或动态绑定");
+        }
+        int maximum = ViewPlatformDataSource.TOOL_CATALOG.equals(source.query()) ? 100 : 200;
+        if (source.pageSize() > maximum) {
+            throw new IllegalArgumentException("平台数据源页大小超出限制");
+        }
     }
 
     private static void validateArgumentBindings(ViewDataSource source, Set<String> precedingSources) {
@@ -163,17 +179,23 @@ public final class ViewSchemaPolicy {
     private static void validateForm(ViewSchema.Form form, Set<String> sources) {
         requireMaximum(form.fields().size(), "表单字段");
         Set<String> names = new HashSet<>();
+        Set<String> scalarNames = new HashSet<>();
         Set<ViewBinding> bindings = new HashSet<>();
         for (ViewFormField field : form.fields()) {
             requireField(field.name());
             if (!names.add(field.name()) || !bindings.add(field.binding())) {
                 throw new IllegalArgumentException("表单字段名或绑定重复: " + field.name());
             }
+            if (field instanceof ViewField) {
+                scalarNames.add(field.name());
+            }
+        }
+        for (ViewFormField field : form.fields()) {
             requireBinding(field.binding(), sources);
             field.visibleWhen().ifPresent(condition -> requireBinding(condition.binding(), sources));
             switch (field) {
-                case ViewField scalar -> validateScalarField(scalar, sources);
-                case ViewStructuredListField structured -> validateStructuredField(structured);
+                case ViewField scalar -> validateScalarField(scalar, sources, scalarNames);
+                case ViewStructuredListField structured -> validateStructuredField(structured, sources);
             }
         }
         validateAction(form.submit(), sources, false);
@@ -184,14 +206,11 @@ public final class ViewSchemaPolicy {
                 .ifPresent(argument -> {
                     throw new IllegalArgumentException("表单字段不能覆盖权威操作参数: " + argument);
                 });
-        if (!form.submit().rowArguments().isEmpty()) {
-            throw new IllegalArgumentException("表单操作不能声明行参数");
-        }
     }
 
-    private static void validateScalarField(ViewField field, Set<String> sources) {
+    private static void validateScalarField(ViewField field, Set<String> sources, Set<String> formFields) {
         requireText(field.label());
-        field.optionSource().ifPresent(option -> requireSource(option.sourceId(), sources));
+        field.optionSource().ifPresent(option -> validateOptionSource(option, sources, formFields));
         requireMaximum(field.options().size(), "表单选项");
         field.options().forEach(option -> {
             requireText(option.value());
@@ -202,33 +221,21 @@ public final class ViewSchemaPolicy {
                 .ifPresent(policy -> requireMaximum(policy.acceptedMediaTypes().size(), "Attachment 媒体类型"));
     }
 
-    private static void validateStructuredField(ViewStructuredListField field) {
+    private static void validateStructuredField(ViewStructuredListField field, Set<String> sources) {
         requireText(field.label());
         requireField(field.itemKey());
-        if (field.minRows() < 0
-                || field.maxRows() > ViewStructuredListField.MAX_ROWS
-                || field.minRows() > field.maxRows()) {
-            throw new IllegalArgumentException("结构化列表行数限制无效");
-        }
-        if (field.itemFields().size() > ViewStructuredListField.MAX_ITEM_FIELDS) {
-            throw new IllegalArgumentException("结构化列表字段过多");
-        }
-        if ((long) field.itemFields().size() * field.maxRows() > ViewStructuredListField.MAX_RENDERED_INPUTS) {
-            throw new IllegalArgumentException("结构化列表渲染节点过多");
-        }
-        Set<String> names = new HashSet<>();
-        names.add(field.itemKey());
+        Set<String> rowFields = new HashSet<>();
+        field.itemFields().forEach(item -> rowFields.add(item.name()));
         for (ViewStructuredItemField item : field.itemFields()) {
-            validateStructuredItem(item, names);
+            validateStructuredItem(item, sources, rowFields);
         }
     }
 
-    private static void validateStructuredItem(ViewStructuredItemField field, Set<String> names) {
+    private static void validateStructuredItem(
+            ViewStructuredItemField field, Set<String> sources, Set<String> rowFields) {
         requireField(field.name());
         requireText(field.label());
-        if (!names.add(field.name())) {
-            throw new IllegalArgumentException("结构化列表字段重复: " + field.name());
-        }
+        field.optionSource().ifPresent(option -> validateOptionSource(option, sources, rowFields));
         requireMaximum(field.options().size(), "结构化列表选项");
         field.options().forEach(option -> {
             requireText(option.value());
@@ -236,6 +243,20 @@ public final class ViewSchemaPolicy {
         });
         field.initialValue().ifPresent(ViewSchemaPolicy::requireText);
         field.initialTextList().forEach(ViewSchemaPolicy::requireText);
+    }
+
+    private static void validateOptionSource(
+            ViewOptionSource option, Set<String> sources, Set<String> availableInputFields) {
+        requireSource(option.sourceId(), sources);
+        requireField(option.valueField());
+        requireField(option.labelField());
+        option.filter().ifPresent(filter -> {
+            requireField(filter.sourceField());
+            requireField(filter.inputField());
+            if (!availableInputFields.contains(filter.inputField())) {
+                throw new IllegalArgumentException("动态选项依赖了未声明的输入字段: " + filter.inputField());
+            }
+        });
     }
 
     private static void validateActions(java.util.List<ViewAction> actions, Set<String> sources, boolean allowRows) {

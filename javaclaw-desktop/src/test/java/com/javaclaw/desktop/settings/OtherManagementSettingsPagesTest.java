@@ -20,6 +20,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
+import javafx.scene.layout.BorderPane;
 import javafx.stage.Window;
 import org.junit.jupiter.api.Test;
 
@@ -31,7 +32,6 @@ import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.api.WorkspaceInstructionSettings;
 import com.javaclaw.api.WorktreeId;
-import com.javaclaw.builtin.contracts.MemoryContracts;
 import com.javaclaw.client.CommandOptions;
 import com.javaclaw.desktop.DesktopTestFixtures;
 import com.javaclaw.desktop.FxTestSupport;
@@ -67,41 +67,17 @@ class OtherManagementSettingsPagesTest {
                     .getSelectionModel()
                     .select(gateway.statuses.getFirst());
             button(root, "启用").fire();
-            assertTrue(texts(root).contains("ENABLED"));
+            assertTrue(texts(root).contains("已启用"));
             confirmNextDialog();
             button(root, "停用").fire();
-            assertTrue(texts(root).contains("DISABLED"));
+            assertTrue(texts(root).contains("已停用"));
 
             list(root, BuiltinExtensionRpcContracts.Status.class)
                     .getSelectionModel()
                     .select(gateway.statuses.get(1));
             assertTrue(texts(root).contains("必需，只读"));
-            assertTrue(texts(root).contains("App Server 平台 Host"));
+            assertTrue(texts(root).contains("JavaClaw 服务平台能力"));
             assertTrue(button(root, "停用").isDisabled());
-            button(root, "刷新").fire();
-            assertFalse(page.dirty());
-        });
-    }
-
-    @Test
-    void 学习策略页保存低风险自动学习并可丢弃未保存改动() {
-        FxTestSupport.run(() -> {
-            LearningGateway gateway = new LearningGateway();
-            LearningSettingsPage page = new LearningSettingsPage(gateway);
-            Parent root = attach(page);
-            page.activate();
-            ComboBox<MemoryContracts.LearningPolicy> policy = combo(root, MemoryContracts.LearningPolicy.class);
-
-            policy.setValue(MemoryContracts.LearningPolicy.AUTO_LOW_RISK);
-            assertTrue(page.dirty());
-            page.warnUnsavedChanges();
-            button(root, "保存").fire();
-            assertEquals(MemoryContracts.LearningPolicy.AUTO_LOW_RISK, gateway.policy);
-            assertTrue(texts(root).stream().anyMatch(value -> value.contains("低风险 FACT")));
-
-            policy.setValue(MemoryContracts.LearningPolicy.OFF);
-            button(root, "丢弃").fire();
-            assertEquals(MemoryContracts.LearningPolicy.AUTO_LOW_RISK, policy.getValue());
             button(root, "刷新").fire();
             assertFalse(page.dirty());
         });
@@ -112,6 +88,7 @@ class OtherManagementSettingsPagesTest {
         FxTestSupport.run(() -> {
             InstructionGateway gateway = new InstructionGateway();
             InstructionSettingsPage page = new InstructionSettingsPage(gateway);
+            page.workspaceChanged(Optional.of(DesktopTestFixtures.workspace()));
             Parent root = attach(page);
             page.activate();
 
@@ -124,19 +101,22 @@ class OtherManagementSettingsPagesTest {
             button(root, "保存备用文件名").fire();
             assertEquals(Optional.of("TEAM.md"), gateway.settings.fallbackBasename());
 
-            ComboBox<?> executionRoot = comboByAccessibleText(root, "项目约定 execution root");
+            ComboBox<?> executionRoot = comboByAccessibleText(root, "项目约定解析起点");
             executionRoot.getSelectionModel().selectLast();
             assertTrue(list(root, InstructionSourceResolution.class).getItems().stream()
                     .anyMatch(value -> value.relativePath().equals("module/AGENTS.md")));
             fallback.setText("../unsafe.md");
             button(root, "保存备用文件名").fire();
-            assertTrue(texts(root).stream().anyMatch(value -> value.contains("basename")));
+            assertTrue(texts(root).contains("备用文件名只能使用字母、数字、点、下划线和连字符"));
             page.discardDraft();
             button(root, "重新解析").fire();
         });
     }
 
-    private static Parent attach(Parent root) {
+    private static Parent attach(ManagedSettingsPage page) {
+        BorderPane root = new BorderPane();
+        root.setCenter(page.content());
+        page.actionContent().ifPresent(root::setBottom);
         new Scene(root, 1_080, 760);
         root.applyCss();
         return root;
@@ -267,31 +247,6 @@ class OtherManagementSettingsPagesTest {
                     current.updatedAt().plusSeconds(1));
             statuses.set(statuses.indexOf(current), updated);
             return CompletableFuture.completedFuture(updated);
-        }
-    }
-
-    private static final class LearningGateway implements LearningSettingsGateway {
-        private final Workspace workspace = DesktopTestFixtures.workspace();
-        private MemoryContracts.LearningPolicy policy = MemoryContracts.LearningPolicy.SUGGEST;
-        private long revision = 1;
-
-        @Override
-        public CompletionStage<List<Workspace>> workspaces() {
-            return CompletableFuture.completedFuture(List.of(workspace));
-        }
-
-        @Override
-        public CompletionStage<MemoryContracts.LearningSettings> read(WorkspaceId workspaceId) {
-            return CompletableFuture.completedFuture(
-                    new MemoryContracts.LearningSettings(revision, policy, DesktopTestFixtures.NOW));
-        }
-
-        @Override
-        public CompletionStage<MemoryContracts.LearningSettings> update(
-                WorkspaceId workspaceId, MemoryContracts.LearningPolicy next, CommandOptions options) {
-            policy = next;
-            revision++;
-            return read(workspaceId);
         }
     }
 

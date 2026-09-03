@@ -31,8 +31,8 @@ import com.javaclaw.api.PermissionProfile;
 import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderEndpointSpec;
+import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.SandboxExecutor;
 import com.javaclaw.api.ThreadExecutionIntent;
 import com.javaclaw.api.ToolCatalogSnapshot;
@@ -58,6 +58,7 @@ import com.javaclaw.server.persistence.PermissionProfileService;
 import com.javaclaw.server.persistence.ProviderService;
 import com.javaclaw.server.persistence.TurnStartRequest;
 
+import static com.javaclaw.server.ProviderEndpointTestFixtures.chat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -86,8 +87,12 @@ class ServerTurnOrchestrationPortTest {
         PermissionProfileService permissions = new PermissionProfileService(database, json, clock);
         permissions.installStandardProfile();
         PermissionProfile standard = permissions.require(PermissionProfileService.STANDARD_PROFILE_ID, 1);
-        ProviderService providers = new ProviderService(database, json, clock);
-        providers.create(identity("provider/create", "provider", Map.of()), "provider", providerSpec());
+        ProviderService providers = new ProviderService(database, reference -> true, json, clock);
+        providers.create(
+                identity("provider/create", "provider", Map.of()),
+                "provider",
+                providerSpec(),
+                ProviderLifecycle.ACTIVE);
         AgentProfileService profiles = new AgentProfileService(database, providers, permissions, json, clock);
         AgentProfile profile =
                 profiles.create(identity("profile/create", "profile", Map.of()), "profile", profileSpec(standard));
@@ -158,7 +163,7 @@ class ServerTurnOrchestrationPortTest {
         ManagedWorktreeService worktrees =
                 new ManagedWorktreeService(database, attachments, json, clock, unavailableSandbox());
         PermissionProfileService permissions = new PermissionProfileService(database, json, clock);
-        ProviderService providers = new ProviderService(database, json, clock);
+        ProviderService providers = new ProviderService(database, reference -> true, json, clock);
         AgentProfileService profiles = new AgentProfileService(database, providers, permissions, json, clock);
         return new ServerTurnOrchestrationPort(core, profiles, worktrees, dispatcher, json);
     }
@@ -197,16 +202,7 @@ class ServerTurnOrchestrationPortTest {
     }
 
     private static ProviderEndpointSpec providerSpec() {
-        return new ProviderEndpointSpec(
-                "Provider",
-                ProviderAdapter.OPENAI_COMPATIBLE,
-                Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of("test-model"),
-                Optional.empty(),
-                Duration.ofSeconds(30),
-                0,
-                Map.of());
+        return chat("Provider", ProviderAdapter.OPENAI_COMPATIBLE, "test-model");
     }
 
     private static TurnBudget budget() {

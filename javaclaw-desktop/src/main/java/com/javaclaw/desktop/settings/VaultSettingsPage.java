@@ -15,11 +15,11 @@ import com.javaclaw.desktop.component.PlatformComponentFactory;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 
-/** Secret Vault 脱敏状态与主密钥契约可用性页面。 */
+/** 密钥库脱敏状态与主密钥契约可用性页面。 */
 public final class VaultSettingsPage implements ManagedSettingsPage {
     private final PlatformComponentFactory components = new PlatformComponentFactory();
     private final VaultSettingsPresenter presenter;
-    private final VBox content = components.page("Secret Vault");
+    private final VBox content = components.page("密钥库");
     private final Label state = value();
     private final Label reason = value();
     private final Label credentialCount = value();
@@ -34,7 +34,7 @@ public final class VaultSettingsPage implements ManagedSettingsPage {
     private VaultSettingsState latest = VaultSettingsState.initial();
 
     /**
-     * 创建 Vault 状态页。
+     * 创建密钥库状态页。
      *
      * @param gateway SDK 异步边界
      */
@@ -45,9 +45,10 @@ public final class VaultSettingsPage implements ManagedSettingsPage {
         rotate = components.action("轮换主密钥", ActionStyle.PRIMARY, ActionSize.NORMAL);
         rotate.setOnAction(event -> presenter.rotateMasterKey());
         resetZone = new DangerZone(
-                "永久 Reset Vault",
-                "永久清除所有 Secret 并使旧 CredentialRef 失效。输入 RESET VAULT 后才可执行。",
-                "永久 Reset Vault",
+                "永久重置密钥库",
+                "永久清除所有密钥，并使旧凭据引用失效。输入 RESET VAULT 后才可执行。",
+                "永久重置密钥库",
+                ignored -> "RESET VAULT".equals(resetConfirmation.getText()),
                 this::resetVault);
         buildLayout();
         resetConfirmation.textProperty().addListener((ignored, previous, value) -> updateActionAvailability(latest));
@@ -76,26 +77,25 @@ public final class VaultSettingsPage implements ManagedSettingsPage {
     public void discardDraft() {}
 
     private void buildLayout() {
-        Label hint = new Label("Secret 只能写入、轮换、清除和查看“已配置”元数据；任何页面都不能读取、复制或导出明文。");
+        Label hint = new Label("密钥只能写入、轮换、清除和查看“已配置”元数据；任何页面都不能读取、复制或导出明文。");
         hint.setWrapText(true);
         hint.getStyleClass().add("sec-hint");
-        FormSection status =
-                new FormSection("运行状态", "VAULT_LOCKED 时管理中心仍可打开，但 Provider、MCP、Site 和 Schedule 必须 fail closed。");
+        FormSection status = new FormSection("运行状态", "密钥库锁定时，管理中心仍可打开；模型服务、MCP、网站和定时任务会拒绝运行。");
         status.addField("状态", state);
         status.addField("锁定原因", reason);
         status.addField("凭据数量", credentialCount);
         status.addField("旧主密钥清理", cleanup);
         status.addField("检查时间", checkedAt);
         status.addField("最近管理动作", receipt);
-        FormSection masterKey = new FormSection("主密钥管理", "轮换和 reset 必须由 App Server 完成原子提交与危险确认，Desktop 不直接访问系统凭据设施。");
-        Label rotationHint = new Label("轮换会重新加密全部记录，但不会改变 CredentialRef 或业务 revision。");
+        FormSection masterKey = new FormSection("主密钥管理", "轮换和重置必须由 JavaClaw 服务完成安全提交和危险确认，桌面端不直接访问系统凭据。");
+        Label rotationHint = new Label("轮换会重新加密全部记录，但不会改变凭据引用或业务版本。");
         rotationHint.setWrapText(true);
         rotationHint.getStyleClass().add("sec-hint");
         masterKey.addFullWidth(new HBox(8, rotate));
         masterKey.addFullWidth(rotationHint);
         resetConfirmation.setPromptText("精确输入 RESET VAULT");
-        resetConfirmation.setAccessibleText("Vault reset 危险确认");
-        FormSection reset = new FormSection("危险确认", "确认文本不可本地化或模糊匹配，避免误触导致全部 Secret 失效。");
+        resetConfirmation.setAccessibleText("密钥库重置危险确认");
+        FormSection reset = new FormSection("危险确认", "确认文本不可本地化或模糊匹配，避免误触导致全部密钥失效。");
         reset.addField("确认文本", resetConfirmation);
         reset.addFullWidth(resetZone);
         error.setWrapText(true);
@@ -112,14 +112,15 @@ public final class VaultSettingsPage implements ManagedSettingsPage {
         error.setManaged(error.isVisible());
         snapshot.status().ifPresentOrElse(this::renderStatus, this::clearStatus);
         receipt.setText(snapshot.receipt()
-                .map(value -> value.action() + " · " + value.affectedCredentialCount() + " 条 · " + value.completedAt())
+                .map(value -> SettingsLabels.vaultManagementAction(value.action()) + " · "
+                        + value.affectedCredentialCount() + " 条 · " + value.completedAt())
                 .orElse("—"));
         updateActionAvailability(snapshot);
     }
 
     private void renderStatus(VaultStatus status) {
-        state.setText(status.state() == VaultState.READY ? "READY" : "VAULT_LOCKED");
-        reason.setText(status.reason().name());
+        state.setText(SettingsLabels.vaultState(status.state()));
+        reason.setText(SettingsLabels.vaultLockReason(status.reason()));
         credentialCount.setText(Long.toString(status.credentialCount()));
         cleanup.setText(status.oldKeyCleanupPending() ? "待完成" : "无需处理");
         checkedAt.setText(status.checkedAt().toString());

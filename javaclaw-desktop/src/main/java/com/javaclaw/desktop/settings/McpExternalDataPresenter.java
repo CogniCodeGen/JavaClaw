@@ -15,7 +15,7 @@ import com.javaclaw.api.McpResourceDescriptor;
 import com.javaclaw.api.McpResourcePage;
 import com.javaclaw.api.McpResourceReadResult;
 
-/** MCP Resource 与 Prompt 的显式读取状态机；外部内容不写入 Turn 或 Prompt。 */
+/** MCP 资源与提示词的显式读取状态机；外部内容不写入任务或提示词。 */
 final class McpExternalDataPresenter {
     private final McpSettingsGateway gateway;
     private Consumer<McpExternalDataState> listener = ignored -> {};
@@ -48,21 +48,21 @@ final class McpExternalDataPresenter {
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),
-                checked.isPresent() ? "可显式读取外部 Resource 或 Prompt" : "请选择已启用的 HTTPS Endpoint",
+                checked.isPresent() ? "可显式读取外部资源或提示词" : "请选择已启用的 HTTPS 连接",
                 state.epoch() + 1));
     }
 
     void loadResources(boolean nextPage) {
         McpEndpoint endpoint = requireEndpoint();
         Optional<String> cursor = nextPage ? state.resourceCursor() : Optional.empty();
-        long epoch = begin("正在读取外部 Resource…");
+        long epoch = begin("正在读取外部资源…");
         gateway.mcpResources(endpoint.id(), cursor)
                 .whenComplete((page, failure) -> completeResources(epoch, page, failure, nextPage));
     }
 
     void readResource(McpResourceDescriptor resource) {
         McpEndpoint endpoint = requireEndpoint();
-        long epoch = begin("正在显式读取 Resource…");
+        long epoch = begin("正在显式读取资源…");
         gateway.readMcpResource(
                         endpoint.id(),
                         Objects.requireNonNull(resource, "resource").uri())
@@ -72,14 +72,14 @@ final class McpExternalDataPresenter {
     void loadPrompts(boolean nextPage) {
         McpEndpoint endpoint = requireEndpoint();
         Optional<String> cursor = nextPage ? state.promptCursor() : Optional.empty();
-        long epoch = begin("正在读取外部 Prompt…");
+        long epoch = begin("正在读取外部提示词…");
         gateway.mcpPrompts(endpoint.id(), cursor)
                 .whenComplete((page, failure) -> completePrompts(epoch, page, failure, nextPage));
     }
 
     void getPrompt(McpPromptDescriptor prompt, Map<String, String> arguments) {
         McpEndpoint endpoint = requireEndpoint();
-        long epoch = begin("正在显式展开 Prompt…");
+        long epoch = begin("正在显式展开提示词…");
         gateway.getMcpPrompt(
                         endpoint.id(), Objects.requireNonNull(prompt, "prompt").name(), arguments)
                 .whenComplete((result, failure) -> completePrompt(epoch, result, failure));
@@ -92,7 +92,7 @@ final class McpExternalDataPresenter {
         List<McpResourceDescriptor> resources = append ? append(state.resources(), page.resources()) : page.resources();
         Data data = new Data(
                 resources, page.nextCursor(), state.prompts(), state.promptCursor(), Optional.empty(), state.prompt());
-        publish(copy(SettingsLoadState.READY, data, "Resource 已按外部数据读取"));
+        publish(copy(SettingsLoadState.READY, data, "资源已作为外部数据读取"));
     }
 
     private void completeResource(long epoch, McpResourceReadResult result, Throwable failure) {
@@ -106,7 +106,7 @@ final class McpExternalDataPresenter {
                 state.promptCursor(),
                 Optional.of(result),
                 Optional.empty());
-        publish(copy(SettingsLoadState.READY, data, "Resource 内容仅显示在当前管理页"));
+        publish(copy(SettingsLoadState.READY, data, "资源内容仅显示在当前管理页"));
     }
 
     private void completePrompts(long epoch, McpPromptPage page, Throwable failure, boolean append) {
@@ -121,7 +121,7 @@ final class McpExternalDataPresenter {
                 page.nextCursor(),
                 state.resource(),
                 Optional.empty());
-        publish(copy(SettingsLoadState.READY, data, "Prompt 模板已按外部数据读取"));
+        publish(copy(SettingsLoadState.READY, data, "提示词模板已按外部数据读取"));
     }
 
     private void completePrompt(long epoch, McpPromptResult result, Throwable failure) {
@@ -135,7 +135,7 @@ final class McpExternalDataPresenter {
                 state.promptCursor(),
                 Optional.empty(),
                 Optional.of(result));
-        publish(copy(SettingsLoadState.READY, data, "Prompt 消息未进入 system context"));
+        publish(copy(SettingsLoadState.READY, data, "提示词消息未进入系统上下文"));
     }
 
     private long begin(String message) {
@@ -153,7 +153,7 @@ final class McpExternalDataPresenter {
     }
 
     private McpEndpoint requireEndpoint() {
-        return state.endpoint().orElseThrow(() -> new IllegalStateException("请选择 MCP Endpoint"));
+        return state.endpoint().orElseThrow(() -> new IllegalStateException("请选择 MCP 连接"));
     }
 
     private boolean stale(long epoch) {

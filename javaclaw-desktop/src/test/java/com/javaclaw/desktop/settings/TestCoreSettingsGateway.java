@@ -3,9 +3,9 @@ package com.javaclaw.desktop.settings;
 import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -14,12 +14,15 @@ import java.util.concurrent.CompletionStage;
 import com.javaclaw.api.AgentProfile;
 import com.javaclaw.api.AgentProfileRef;
 import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.CancellationToken;
 import com.javaclaw.api.ConversationThread;
+import com.javaclaw.api.CoreTools;
 import com.javaclaw.api.CredentialClearReceipt;
 import com.javaclaw.api.CredentialMetadata;
 import com.javaclaw.api.CredentialRef;
 import com.javaclaw.api.DiagnosticsSnapshot;
 import com.javaclaw.api.EffectivePermissionPreview;
+import com.javaclaw.api.EmbeddingBinding;
 import com.javaclaw.api.ManagedWorktree;
 import com.javaclaw.api.ManagedWorktreeArtifact;
 import com.javaclaw.api.PermissionDecisionTrace;
@@ -31,22 +34,22 @@ import com.javaclaw.api.PrivateNetworkGrantPreview;
 import com.javaclaw.api.PrivateNetworkPurpose;
 import com.javaclaw.api.ProfileBinding;
 import com.javaclaw.api.ProfileLifecycle;
-import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderCapabilities;
 import com.javaclaw.api.ProviderCredentialBinding;
 import com.javaclaw.api.ProviderCredentialClearResult;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.ProviderModelDiscoveryResult;
+import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.api.ProviderReadiness;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.ProviderStatus;
 import com.javaclaw.api.ProviderVerificationResult;
-import com.javaclaw.api.ProviderVerificationState;
-import com.javaclaw.api.ProviderVerificationUsage;
 import com.javaclaw.api.SecurityGrantKind;
 import com.javaclaw.api.ThreadId;
+import com.javaclaw.api.ToolCatalogQueryResult;
+import com.javaclaw.api.ToolDescriptor;
 import com.javaclaw.api.UnattendedToolGrant;
 import com.javaclaw.api.UnattendedToolGrantDraft;
 import com.javaclaw.api.UnattendedToolGrantStatus;
@@ -57,9 +60,7 @@ import com.javaclaw.api.VaultState;
 import com.javaclaw.api.VaultStatus;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceId;
-import com.javaclaw.api.WorkspaceLifecycle;
 import com.javaclaw.client.CommandOptions;
-import com.javaclaw.desktop.DesktopTestFixtures;
 import com.javaclaw.protocol.DiagnosticsRpcContracts;
 
 /** 管理中心 Presenter 测试共享的纯内存 SDK 边界。 */
@@ -67,25 +68,31 @@ final class TestCoreSettingsGateway implements CoreSettingsGateway {
     private static final Instant NOW = Instant.parse("2026-09-01T01:00:00Z");
 
     final List<ProviderEndpoint> providers = new ArrayList<>();
+    final java.util.ArrayDeque<CompletableFuture<ProviderModelDiscoveryResult>> discoveryResponses = new ArrayDeque<>();
+    final List<CancellationToken> discoveryCancellations = new ArrayList<>();
     final List<AgentProfile> profiles = new ArrayList<>();
     private final TestPermissionSettings permissionSettings = new TestPermissionSettings();
     final List<PermissionProfile> permissions = permissionSettings.profiles;
+    final TestWorkspaceSettings workspaceSettings = new TestWorkspaceSettings();
     final List<PrivateNetworkGrant> privateNetworkGrants = permissionSettings.privateNetworkGrants;
     final List<UnattendedToolGrantStatus> unattendedToolGrants = permissionSettings.unattendedToolGrants;
     private Optional<CredentialMetadata> credential = Optional.empty();
-    private Optional<ProfileBinding> workspaceBinding = Optional.empty();
+    private Optional<EmbeddingBinding> embeddingBinding = Optional.empty();
     private final TestManagedWorktreeSettings worktreeSettings = new TestManagedWorktreeSettings();
     int providerCredentialSetCalls;
     int providerCredentialClearCalls;
     int providerVerificationCalls;
+    CommandOptions lastProviderCreateOptions;
+    CommandOptions lastProviderUpdateOptions;
+    CommandOptions lastProviderCredentialOptions;
+    ProviderLifecycle lastProviderCreateLifecycle;
+    RuntimeException nextProviderCreateResponseFailure;
     char[] lastProviderSecret;
-    String lastWorkspaceName = "";
-    AgentProfileRef lastWorkspaceProfile;
-    boolean workspaceArchived;
     RuntimeException nextFailure;
 
     TestCoreSettingsGateway() {
-        providers.add(provider(1, providerSpec(Optional.empty()), ProviderLifecycle.ACTIVE));
+        providers.add(TestCoreSettingsFixtures.provider(
+                1, TestCoreSettingsFixtures.providerSpec(Optional.empty()), ProviderLifecycle.ACTIVE));
     }
 
     @Override
@@ -95,15 +102,50 @@ final class TestCoreSettingsGateway implements CoreSettingsGateway {
 
     @Override
     public CompletionStage<ProviderEndpoint> createProvider(
-            String id, ProviderEndpointSpec spec, CommandOptions options) {
-        ProviderEndpoint created = new ProviderEndpoint(id, 1, ProviderLifecycle.ACTIVE, spec, NOW, NOW);
+            String id, ProviderEndpointSpec spec, ProviderLifecycle lifecycle, CommandOptions options) {
+        lastProviderCreateOptions = options;
+        lastProviderCreateLifecycle = lifecycle;
+        ProviderEndpoint created = new ProviderEndpoint(id, 1, lifecycle, spec, NOW, NOW);
         providers.add(created);
+        if (nextProviderCreateResponseFailure != null) {
+            RuntimeException failure = nextProviderCreateResponseFailure;
+            nextProviderCreateResponseFailure = null;
+            return failed(failure);
+        }
         return completed(created);
+    }
+
+    @Override
+    public CompletionStage<ProviderModelDiscoveryResult> discoverProviderModels(
+            String id, long revision, CancellationToken cancellation) {
+        cancellation.throwIfCancelled();
+        discoveryCancellations.add(cancellation);
+        if (!discoveryResponses.isEmpty()) {
+            return discoveryResponses.removeFirst();
+        }
+        ProviderEndpoint endpoint = providers.stream()
+                .filter(candidate -> candidate.id().equals(id) && candidate.revision() == revision)
+                .findFirst()
+                .orElseThrow();
+        return completed(new ProviderModelDiscoveryResult(id, revision, List.of(), false, endpoint.updatedAt()));
+    }
+
+    @Override
+    public CompletionStage<Optional<EmbeddingBinding>> embeddingBinding() {
+        return completed(embeddingBinding);
+    }
+
+    @Override
+    public CompletionStage<EmbeddingBinding> bindEmbedding(ProviderRef provider, CommandOptions options) {
+        EmbeddingBinding updated = new EmbeddingBinding(provider, options.expectedRevision() + 1, NOW);
+        embeddingBinding = Optional.of(updated);
+        return completed(updated);
     }
 
     @Override
     public CompletionStage<ProviderEndpoint> updateProvider(
             String id, ProviderEndpointSpec spec, ProviderLifecycle lifecycle, CommandOptions options) {
+        lastProviderUpdateOptions = options;
         RuntimeException failure = takeFailure();
         if (failure != null) {
             return failed(failure);
@@ -140,33 +182,32 @@ final class TestCoreSettingsGateway implements CoreSettingsGateway {
         return completed(new ProviderStatus(
                 provider,
                 readiness,
-                new ProviderCapabilities(Set.of(ProviderRole.CHAT), true, true, true, false, false, false, false),
+                new ProviderCapabilities(
+                        Set.of(ProviderModelPurpose.CHAT), true, true, true, false, false, false, false),
                 Optional.empty(),
                 NOW));
     }
 
     @Override
     public CompletionStage<ProviderVerificationResult> verifyProviderRoundTrip(
-            ProviderRef provider, boolean billingConfirmed, String confirmation, CommandOptions options) {
+            ProviderRef provider,
+            ProviderModelPurpose purpose,
+            boolean billingConfirmed,
+            String confirmation,
+            CommandOptions options) {
         providerVerificationCalls++;
         RuntimeException failure = takeFailure();
         if (failure != null) {
             return failed(failure);
         }
-        return completed(new ProviderVerificationResult(
-                provider,
-                ProviderVerificationState.SUCCEEDED,
-                12,
-                Optional.of(new ProviderVerificationUsage(2, 1, 0, 0)),
-                new ProviderCapabilities(Set.of(ProviderRole.CHAT), true, true, true, false, false, false, false),
-                Optional.empty(),
-                NOW));
+        return completed(TestCoreSettingsFixtures.verification(provider, purpose, NOW));
     }
 
     @Override
     public CompletionStage<ProviderCredentialBinding> setProviderCredential(
             ProviderEndpoint provider, long credentialExpectedRevision, char[] secret, CommandOptions options) {
         providerCredentialSetCalls++;
+        lastProviderCredentialOptions = options;
         lastProviderSecret = secret;
         RuntimeException failure = takeFailure();
         if (failure != null) {
@@ -175,7 +216,17 @@ final class TestCoreSettingsGateway implements CoreSettingsGateway {
         CredentialRef reference =
                 provider.spec().credential().orElseGet(() -> new CredentialRef("provider", "credential-1"));
         CredentialMetadata metadata = new CredentialMetadata(reference, credentialExpectedRevision + 1, NOW);
-        ProviderEndpointSpec spec = providerSpec(Optional.of(reference));
+        ProviderEndpointSpec current = provider.spec();
+        ProviderEndpointSpec spec = new ProviderEndpointSpec(
+                current.displayName(),
+                current.adapter(),
+                current.baseUri(),
+                current.authentication(),
+                current.models(),
+                Optional.of(reference),
+                current.timeout(),
+                current.maximumRetries(),
+                current.options());
         ProviderEndpoint updated =
                 new ProviderEndpoint(provider.id(), provider.revision() + 1, provider.lifecycle(), spec, NOW, NOW);
         providers.remove(provider);
@@ -193,7 +244,12 @@ final class TestCoreSettingsGateway implements CoreSettingsGateway {
             return failed(failure);
         }
         ProviderEndpoint updated = new ProviderEndpoint(
-                provider.id(), provider.revision() + 1, provider.lifecycle(), providerSpec(Optional.empty()), NOW, NOW);
+                provider.id(),
+                provider.revision() + 1,
+                provider.lifecycle(),
+                TestCoreSettingsFixtures.providerSpec(Optional.empty()),
+                NOW,
+                NOW);
         providers.remove(provider);
         providers.add(updated);
         credential = Optional.empty();
@@ -204,6 +260,15 @@ final class TestCoreSettingsGateway implements CoreSettingsGateway {
     @Override
     public CompletionStage<List<AgentProfile>> profiles() {
         return completed(List.copyOf(profiles));
+    }
+
+    @Override
+    public CompletionStage<AgentProfile> profile(AgentProfileRef reference) {
+        return completed(profiles.stream()
+                .filter(candidate ->
+                        candidate.id().equals(reference.id()) && candidate.revision() == reference.revision())
+                .findFirst()
+                .orElseThrow());
     }
 
     @Override
@@ -241,6 +306,30 @@ final class TestCoreSettingsGateway implements CoreSettingsGateway {
     }
 
     @Override
+    public CompletionStage<PermissionProfile> permissionProfile(PermissionProfileRef reference) {
+        return completed(permissionSettings.history(reference.id()).stream()
+                .filter(candidate -> candidate.version() == reference.version())
+                .findFirst()
+                .orElseThrow());
+    }
+
+    @Override
+    public CompletionStage<ToolCatalogQueryResult> toolCatalog(
+            WorkspaceId workspaceId,
+            PermissionProfileRef permissionProfile,
+            Optional<AgentProfileRef> agentProfile,
+            String query,
+            int limit) {
+        ToolDescriptor descriptor = CoreTools.search();
+        List<ToolDescriptor> matches = descriptor.identity().name().contains(query)
+                        || descriptor.description().contains(query)
+                ? List.of(descriptor)
+                : List.of();
+        return completed(
+                new ToolCatalogQueryResult(11, matches.stream().limit(limit).toList()));
+    }
+
+    @Override
     public CompletionStage<List<PermissionProfile>> permissionProfileHistory(String id) {
         return completed(permissionSettings.history(id));
     }
@@ -253,48 +342,28 @@ final class TestCoreSettingsGateway implements CoreSettingsGateway {
 
     @Override
     public CompletionStage<List<Workspace>> workspaces() {
-        return completed(List.of(DesktopTestFixtures.workspace()));
+        return workspaceSettings.list();
     }
 
     @Override
     public CompletionStage<Workspace> renameWorkspace(Workspace workspace, String name, CommandOptions options) {
-        lastWorkspaceName = name;
-        return completed(new Workspace(
-                workspace.id(),
-                name,
-                workspace.root(),
-                workspace.lifecycle(),
-                workspace.revision() + 1,
-                workspace.createdAt(),
-                NOW));
+        return completed(workspaceSettings.rename(workspace, name));
     }
 
     @Override
     public CompletionStage<Workspace> archiveWorkspace(Workspace workspace, CommandOptions options) {
-        workspaceArchived = true;
-        return completed(new Workspace(
-                workspace.id(),
-                workspace.name(),
-                workspace.root(),
-                WorkspaceLifecycle.ARCHIVED,
-                workspace.revision() + 1,
-                workspace.createdAt(),
-                NOW));
+        return completed(workspaceSettings.archive(workspace));
     }
 
     @Override
     public CompletionStage<Optional<ProfileBinding>> workspaceProfileBinding(WorkspaceId workspaceId) {
-        return completed(workspaceBinding);
+        return completed(workspaceSettings.binding);
     }
 
     @Override
     public CompletionStage<ProfileBinding> bindWorkspaceProfile(
             WorkspaceId workspaceId, AgentProfileRef profile, CommandOptions options) {
-        lastWorkspaceProfile = profile;
-        ProfileBinding binding =
-                new ProfileBinding(workspaceId, Optional.empty(), profile, options.expectedRevision() + 1, NOW);
-        workspaceBinding = Optional.of(binding);
-        return completed(binding);
+        return completed(workspaceSettings.bind(workspaceId, profile, options));
     }
 
     @Override
@@ -469,8 +538,7 @@ final class TestCoreSettingsGateway implements CoreSettingsGateway {
 
     @Override
     public CompletionStage<ConnectionSummary> connection() {
-        return completed(new ConnectionSummary(
-                "javaclaw-app-server", "5.0.0-SNAPSHOT", 2, Set.of("core.item-envelope"), Set.of()));
+        return completed(TestCoreSettingsFixtures.connection());
     }
 
     @Override
@@ -480,24 +548,12 @@ final class TestCoreSettingsGateway implements CoreSettingsGateway {
 
     @Override
     public CompletionStage<DiagnosticsSnapshot> diagnostics() {
-        DiagnosticsSnapshot.BuildIdentity build = new DiagnosticsSnapshot.BuildIdentity("5.0.0-SNAPSHOT", 2, 1);
-        DiagnosticsSnapshot.RuntimeHealth health =
-                new DiagnosticsSnapshot.RuntimeHealth(true, 1, 9, 1, 0, "test", "25");
-        DiagnosticsSnapshot.SubsystemHealth subsystems = new DiagnosticsSnapshot.SubsystemHealth(
-                new DiagnosticsSnapshot.ProviderVaultHealth(1, 1, com.javaclaw.api.VaultState.READY, 0),
-                new DiagnosticsSnapshot.ExtensionHealth(9, 9, 0, 0, 0),
-                new DiagnosticsSnapshot.IntegrationHealth(0, 0, 0, false, false, false),
-                new DiagnosticsSnapshot.JobHealth(0, 0, 0, 0),
-                new DiagnosticsSnapshot.ScheduleHealth(false, false, 1, true, false, Optional.empty()),
-                new DiagnosticsSnapshot.LauncherHealth(
-                        false, false, false, Optional.of("IDEA 调试未配置 launcher supervisor")));
-        return completed(new DiagnosticsSnapshot(build, health, subsystems, NOW, NOW));
+        return completed(TestCoreSettingsFixtures.diagnostics(NOW));
     }
 
     @Override
     public CompletionStage<DiagnosticsRpcContracts.LauncherStatus> launcherStatus() {
-        return completed(new DiagnosticsRpcContracts.LauncherStatus(
-                false, false, false, Optional.of("IDEA 调试未配置 launcher supervisor")));
+        return completed(TestCoreSettingsFixtures.launcherStatus());
     }
 
     @Override
@@ -511,35 +567,8 @@ final class TestCoreSettingsGateway implements CoreSettingsGateway {
         return diagnostics();
     }
 
-    private static ProviderEndpoint provider(long revision, ProviderEndpointSpec spec, ProviderLifecycle lifecycle) {
-        return new ProviderEndpoint("provider-main", revision, lifecycle, spec, NOW, NOW);
-    }
-
-    private static ProviderEndpointSpec providerSpec(Optional<CredentialRef> credential) {
-        return new ProviderEndpointSpec(
-                "Local fake",
-                ProviderAdapter.OPENAI_COMPATIBLE,
-                Optional.of(URI.create("https://models.example.test/v1")),
-                Set.of(ProviderRole.CHAT),
-                List.of("fake-model"),
-                credential,
-                Duration.ofSeconds(30),
-                0,
-                Map.of());
-    }
-
     static AgentProfileSpec profileSpec() {
-        ProviderEndpoint provider = provider(1, providerSpec(Optional.empty()), ProviderLifecycle.ACTIVE);
-        return new AgentProfileSpec(
-                "Workspace Profile",
-                "使用 Workspace 默认配置。",
-                new ProviderRef(
-                        provider.id(),
-                        provider.revision(),
-                        provider.spec().models().getFirst()),
-                new PermissionProfileRef("standard", 1),
-                Set.of("core/tool/search"),
-                new com.javaclaw.api.TurnBudget(8_000, 2_000, 6, 1, Duration.ofSeconds(120)));
+        return TestCoreSettingsFixtures.profileSpec();
     }
 
     private RuntimeException takeFailure() {

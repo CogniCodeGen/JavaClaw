@@ -17,8 +17,10 @@ Desktop 沿用提交 `509f197` 的布局比例、CSS token 与交互语言。该
 
 | 资源 | 职责 |
 |---|---|
-| `design-tokens-controls.css` | 全局 token 与原生控件基线 |
+| `design-tokens-controls.css` | 全局 token 与 TextField、Choice/ComboBox、CheckBox 等原生控件基线 |
 | `navigation.css`、`chat-surface.css`、`interaction-overlays.css` | 当前主壳实际使用的 509f197 会话视觉 |
+| `settings-extensions.css`、`design-system-components.css` | 设置页通用字段、卡片、开关行与反馈组件 |
+| `themes-shell.css`、`management-center.css` | 九主题壳和设置中心布局，不包含领域专属规则 |
 | `desktop.css` | SDK 壳、Transcript、导航、审批区与 ViewSchema 通用控件 |
 | `main.fxml` | Desktop 壳的静态节点结构，不承载业务对象 |
 | `PlatformComponentFactory` | 动态页面共享的页面、卡片、动作、反馈与虚拟化列表行组件 |
@@ -41,6 +43,10 @@ renderer 和同一组通用视觉语义，只有平台控件确实出现新的�
 - 组件只持有展示状态和 JavaFX 事件，不访问 SDK、Repository 或 App Server；页面 Presenter 负责把用户意图转成 SDK 调用。
 - 按钮只能选择 Primary、Soft、Ghost、Danger 四种强调级别以及 Normal、Compact 两种尺寸。危险动作不得复用主按钮样式。
 - 加载、空数据和失败使用统一 Feedback 组件，说明必须简短、可行动，不直接显示堆栈或底层传输细节。
+- `ComboBox` 选项由独立 `PopupWindow` 承载；弹层必须使用不透明 `-jc-surface-card`，不得继承普通虚拟列表的
+  透明表面，否则会让宿主页面控件穿透显示。该规则统一放在 `interaction-overlays.css`，页面不得各自覆盖。
+- `CheckBox` 的 box、check、文字、focus、hover 与 disabled 状态由全局控件基线统一提供；带说明的布尔设置复用
+  `.row-toggle`、`.rt-main` 与 `.rt-sub`，页面不得以局部 CSS 重新实现。
 
 ## ViewSchema
 
@@ -95,11 +101,12 @@ PNG 与仓库参考图，同时校验文件名、数量、尺寸和清单摘要�
 | revision conflict / 保留草稿 | Provider、Bundle、内置扩展和 ViewSchema 页面测试 |
 | 断线 / 重试 / 打开诊断 | 真实 `main.fxml` 的 `DesktopShellControllerTest` |
 | 九主题 / 三密度 / 最小与标准窗口 | 54 张生产设置中心 Golden |
+| 下拉弹层 / 宿主页面遮挡 / 选项行边界 | `ComboBoxPopupStyleTest` 的九主题、四字号、三密度与四类真实 PopupWindow 测试 |
 
 只有在 macOS 有可用图形会话时，才允许显式更新仓库参考图：
 
 ```bash
-mvn -pl javaclaw-desktop -am -Djavaclaw.update.ui.golden=true test
+mvn -pl javaclaw-desktop -am -Djavaclaw.update.ui.golden=true verify
 ```
 
 更新后必须检查 54 张图和 `manifest.txt` 的实际 diff，再提交资源。未设置

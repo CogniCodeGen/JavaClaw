@@ -94,7 +94,8 @@ public final class ProviderCredentialService {
             ProviderEndpoint candidate = candidate(
                     current,
                     withCredential(
-                            current.spec(), Optional.of(prepared.metadata().reference())));
+                            current.spec(), Optional.of(prepared.metadata().reference())),
+                    current.lifecycle());
             ProviderCredentialMutationPort.Prepared owned = prepared;
             return vault.expose(
                     owned,
@@ -107,6 +108,8 @@ public final class ProviderCredentialService {
 
     /**
      * 原子解除 Provider 引用并永久清除对应 Vault Secret。
+     *
+     * <p>解除凭据会把 Provider 新版本一并切换为 DISABLED，保证 API_KEY 端点不会留下表面启用但必然无法调用的状态。
      *
      * @param identity 复合写命令身份，expected revision 为 Provider revision
      * @param providerId Provider 标识
@@ -142,7 +145,8 @@ public final class ProviderCredentialService {
         requireBound(current, reference);
         try (ProviderCredentialMutationPort.Prepared prepared =
                 vault.prepareClear(reference, credentialExpectedRevision)) {
-            ProviderEndpoint candidate = candidate(current, withCredential(current.spec(), Optional.empty()));
+            ProviderEndpoint candidate =
+                    candidate(current, withCredential(current.spec(), Optional.empty()), ProviderLifecycle.DISABLED);
             return providers.coordinatePreparedMutation(
                     candidate, providerExpectedRevision, () -> commitClear(identity, current, candidate, prepared));
         }
@@ -202,15 +206,11 @@ public final class ProviderCredentialService {
         return current;
     }
 
-    private ProviderEndpoint candidate(ProviderEndpoint current, ProviderEndpointSpec spec) {
+    private ProviderEndpoint candidate(
+            ProviderEndpoint current, ProviderEndpointSpec spec, ProviderLifecycle lifecycle) {
         Instant now = clock.instant();
         return new ProviderEndpoint(
-                current.id(),
-                Math.addExact(current.revision(), 1),
-                current.lifecycle(),
-                spec,
-                current.createdAt(),
-                now);
+                current.id(), Math.addExact(current.revision(), 1), lifecycle, spec, current.createdAt(), now);
     }
 
     private static void requireSameCredentialState(
@@ -244,7 +244,7 @@ public final class ProviderCredentialService {
                 source.displayName(),
                 source.adapter(),
                 source.baseUri(),
-                source.roles(),
+                source.authentication(),
                 source.models(),
                 credential,
                 source.timeout(),

@@ -2,6 +2,7 @@ package com.javaclaw.desktop.settings;
 
 import java.util.ArrayDeque;
 import java.util.List;
+import java.util.Optional;
 import java.util.Queue;
 
 import javafx.scene.Node;
@@ -14,6 +15,7 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
+import javafx.scene.layout.VBox;
 import org.junit.jupiter.api.Test;
 
 import com.javaclaw.api.McpAuthType;
@@ -22,6 +24,7 @@ import com.javaclaw.api.McpEndpointState;
 import com.javaclaw.api.McpPromptDescriptor;
 import com.javaclaw.api.McpResourceDescriptor;
 import com.javaclaw.api.McpTransport;
+import com.javaclaw.desktop.DesktopTestFixtures;
 import com.javaclaw.desktop.FxTestSupport;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -42,8 +45,8 @@ class McpSettingsPageTest {
             button(page, "启用").fire();
             assertEquals(McpEndpointState.ENABLED, endpoint(gateway, "docs-mcp").state());
             button(page, "健康检查").fire();
-            button(page, "刷新 Catalog").fire();
-            assertTrue(texts(page).stream().anyMatch(value -> value.contains("HEALTHY")));
+            button(page, "刷新目录").fire();
+            assertTrue(texts(page).stream().anyMatch(value -> value.contains("正常")));
 
             assertExternalData(page);
             configureApiKey(page);
@@ -74,15 +77,18 @@ class McpSettingsPageTest {
             assertTrue(field(signedPage, "展示名称").isDisabled());
             assertTrue(button(signedPage, "保存").isDisabled());
             assertFalse(button(signedPage, "健康检查").isDisabled());
-            assertTrue(button(signedPage, "读取 Resource").isDisabled());
+            assertTrue(button(signedPage, "读取资源").isDisabled());
         });
     }
 
     private static McpSettingsPage page(TestMcpSettingsGateway gateway) {
         McpSettingsPage page = new McpSettingsPage(gateway);
-        new Scene(page, 1_040, 720);
+        page.workspaceChanged(Optional.of(DesktopTestFixtures.workspace()));
+        VBox root = new VBox(page);
+        page.actionContent().ifPresent(root.getChildren()::add);
+        new Scene(root, 1_040, 720);
         page.activate();
-        page.applyCss();
+        root.applyCss();
         return page;
     }
 
@@ -93,8 +99,8 @@ class McpSettingsPageTest {
     }
 
     private static void fillNewEndpoint(McpSettingsPage page) {
-        button(page, "新建 HTTPS Endpoint").fire();
-        field(page, "MCP Endpoint 标识").setText("docs-mcp");
+        button(page, "新建 HTTPS 连接").fire();
+        field(page, "MCP 连接标识").setText("docs-mcp");
         field(page, "展示名称").setText("Docs MCP");
         field(page, "https://example.com/mcp").setText("https://mcp.example.test/rpc");
         combo(page, "MCP 认证方式").setValue(McpAuthType.NONE);
@@ -102,27 +108,27 @@ class McpSettingsPageTest {
     }
 
     private static void assertExternalData(McpSettingsPage page) {
-        button(page, "读取 Resource").fire();
+        button(page, "读取资源").fire();
         ListView<McpResourceDescriptor> resources = typedList(page, McpResourceDescriptor.class);
         resources.getSelectionModel().selectFirst();
         button(page, "读取所选内容").fire();
         assertTrue(textArea(page, "MCP 外部数据预览").getText().contains("hello"));
 
-        button(page, "读取 Prompt").fire();
+        button(page, "读取提示词").fire();
         ListView<McpPromptDescriptor> prompts = typedList(page, McpPromptDescriptor.class);
         prompts.getSelectionModel().selectFirst();
-        textArea(page, "MCP Prompt 参数").setText("topic=v5");
-        button(page, "展开所选 Prompt").fire();
+        textArea(page, "MCP 提示词参数").setText("topic=v5");
+        button(page, "展开所选提示词").fire();
         assertTrue(textArea(page, "MCP 外部数据预览").getText().contains("review"));
-        textArea(page, "MCP Prompt 参数").setText("invalid");
-        button(page, "展开所选 Prompt").fire();
+        textArea(page, "MCP 提示词参数").setText("invalid");
+        button(page, "展开所选提示词").fire();
         assertTrue(texts(page).stream().anyMatch(value -> value.contains("name=value")));
     }
 
     private static void configureApiKey(McpSettingsPage page) {
         combo(page, "MCP 认证方式").setValue(McpAuthType.API_KEY);
         field(page, "X-Api-Key").setText("X-Docs-Key");
-        password(page, "MCP Secret").setText("sealed-only");
+        password(page, "MCP 密钥").setText("sealed-only");
         button(page, "保存").fire();
         assertTrue(texts(page).contains("已配置（不可读取）"));
     }
@@ -131,13 +137,13 @@ class McpSettingsPageTest {
         combo(page, "MCP 认证方式").setValue(McpAuthType.OAUTH_2_1_PKCE);
         button(page, "保存").fire();
         button(page, "启动 OAuth").fire();
-        assertTrue(texts(page).contains("PENDING"));
+        assertTrue(texts(page).contains("等待授权"));
         button(page, "取消授权").fire();
-        assertTrue(texts(page).contains("CANCELLED"));
+        assertTrue(texts(page).contains("已取消"));
         button(page, "重新授权").fire();
         gateway.authorizeOAuth();
         button(page, "刷新授权状态").fire();
-        assertTrue(texts(page).contains("AUTHORIZED"));
+        assertTrue(texts(page).contains("已授权"));
     }
 
     private static McpEndpoint endpoint(TestMcpSettingsGateway gateway, String id) {
@@ -154,7 +160,8 @@ class McpSettingsPageTest {
     }
 
     private static Button button(Parent root, String text) {
-        return nodes(root, Button.class).stream()
+        Parent searchRoot = root.getScene() == null ? root : root.getScene().getRoot();
+        return nodes(searchRoot, Button.class).stream()
                 .filter(value -> text.equals(value.getText()))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("缺少按钮: " + text));
@@ -199,7 +206,8 @@ class McpSettingsPageTest {
     }
 
     private static List<String> texts(Parent root) {
-        return nodes(root, Label.class).stream().map(Label::getText).toList();
+        Parent searchRoot = root.getScene() == null ? root : root.getScene().getRoot();
+        return nodes(searchRoot, Label.class).stream().map(Label::getText).toList();
     }
 
     private static <T extends Node> List<T> nodes(Parent root, Class<T> type) {

@@ -25,7 +25,6 @@ import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.ThreadExecutionIntent;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.TurnBudget;
@@ -55,6 +54,7 @@ import com.javaclaw.runtime.ModelInvocation;
 import com.javaclaw.runtime.ModelInvocationResult;
 import com.javaclaw.runtime.ModelUsage;
 import com.javaclaw.server.AppServerBootstrap;
+import com.javaclaw.server.ProviderEndpointTestFixtures;
 import com.javaclaw.server.persistence.PermissionProfileService;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -127,7 +127,8 @@ class CoreRpcHandlersCoverageTest {
                 "provider/create",
                 "create-provider",
                 0,
-                new ProviderProfileRpcContracts.ProviderCreatePayload("provider", providerSpec),
+                new ProviderProfileRpcContracts.ProviderCreatePayload(
+                        "provider", providerSpec, ProviderLifecycle.ACTIVE),
                 ProviderEndpoint.class);
         AgentProfileSpec profileSpec = profileSpec("Profile v1", provider);
         AgentProfile profile = write(
@@ -246,16 +247,7 @@ class CoreRpcHandlersCoverageTest {
     }
 
     private ProviderEndpointSpec providerSpec(String displayName) {
-        return new ProviderEndpointSpec(
-                displayName,
-                ProviderAdapter.OPENAI_COMPATIBLE,
-                Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of("test-model"),
-                Optional.empty(),
-                Duration.ofSeconds(30),
-                0,
-                Map.of());
+        return ProviderEndpointTestFixtures.chat(displayName, ProviderAdapter.OPENAI_COMPATIBLE, "test-model");
     }
 
     private AgentProfileSpec profileSpec(String displayName, ProviderEndpoint provider) {

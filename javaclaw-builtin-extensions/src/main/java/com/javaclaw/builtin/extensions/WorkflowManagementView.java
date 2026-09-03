@@ -18,6 +18,8 @@ import com.javaclaw.extension.spi.ViewFieldType;
 import com.javaclaw.extension.spi.ViewFieldValidation;
 import com.javaclaw.extension.spi.ViewFormField;
 import com.javaclaw.extension.spi.ViewOption;
+import com.javaclaw.extension.spi.ViewOptionSource;
+import com.javaclaw.extension.spi.ViewPlatformDataSource;
 import com.javaclaw.extension.spi.ViewSchema;
 import com.javaclaw.extension.spi.ViewSelectionMode;
 import com.javaclaw.extension.spi.ViewStructuredItemField;
@@ -29,6 +31,7 @@ import com.javaclaw.extension.spi.ViewStructuredListField;
 final class WorkflowManagementView {
     private static final String NEW_SOURCE = "newDefinition";
     private static final String EDITOR_SOURCE = "definitionEditor";
+    private static final String TOOLS_SOURCE = "platformTools";
 
     private final String viewId;
 
@@ -43,6 +46,7 @@ final class WorkflowManagementView {
                 "工作流定义",
                 List.of(
                         new ViewDataSource("documents", "view.list", Map.of(), List.of(), 100),
+                        new ViewDataSource(TOOLS_SOURCE, ViewPlatformDataSource.TOOL_CATALOG, Map.of(), List.of(), 100),
                         new ViewDataSource(NEW_SOURCE, WorkflowManagement.VIEW_NEW, Map.of(), List.of(), 1),
                         new ViewDataSource(
                                 EDITOR_SOURCE,
@@ -121,7 +125,7 @@ final class WorkflowManagementView {
                 choice("kind", "类别", enumOptions(WorkflowContracts.NodeKind.values()), "TURN", true),
                 item("name", "名称", ViewStructuredItemType.TEXT, true),
                 item("instruction", "TURN 指令", ViewStructuredItemType.MULTILINE, false),
-                item("toolName", "Tool 名称", ViewStructuredItemType.TEXT, false),
+                toolChoice(),
                 item("resultField", "Tool 结果字段", ViewStructuredItemType.TEXT, false),
                 item("conditionField", "条件字段", ViewStructuredItemType.TEXT, false),
                 choice(
@@ -254,7 +258,24 @@ final class WorkflowManagementView {
                 Optional.empty(),
                 List.of(),
                 ViewStructuredItemValidation.required(required),
-                List.of());
+                List.of(),
+                Optional.empty());
+    }
+
+    private static ViewStructuredItemField toolChoice() {
+        return new ViewStructuredItemField(
+                "toolName",
+                "Tool",
+                ViewStructuredItemType.CHOICE,
+                Optional.empty(),
+                List.of(),
+                ViewStructuredItemValidation.required(false),
+                List.of(),
+                Optional.of(new ViewOptionSource(
+                        TOOLS_SOURCE,
+                        ViewPlatformDataSource.TOOL_NAME_FIELD,
+                        ViewPlatformDataSource.TOOL_LABEL_FIELD,
+                        Optional.empty())));
     }
 
     private static ViewStructuredItemField itemBoolean(String name, String label, boolean initial) {
@@ -265,7 +286,8 @@ final class WorkflowManagementView {
                 Optional.of(Boolean.toString(initial)),
                 List.of(),
                 ViewStructuredItemValidation.required(true),
-                List.of());
+                List.of(),
+                Optional.empty());
     }
 
     private static ViewStructuredItemField itemNumber(
@@ -279,7 +301,14 @@ final class WorkflowManagementView {
                 Optional.empty(),
                 Optional.empty());
         return new ViewStructuredItemField(
-                name, label, ViewStructuredItemType.NUMBER, Optional.of(initial), List.of(), validation, List.of());
+                name,
+                label,
+                ViewStructuredItemType.NUMBER,
+                Optional.of(initial),
+                List.of(),
+                validation,
+                List.of(),
+                Optional.empty());
     }
 
     private static ViewStructuredItemField choice(
@@ -291,7 +320,8 @@ final class WorkflowManagementView {
                 initial.isEmpty() ? Optional.empty() : Optional.of(initial),
                 List.of(),
                 ViewStructuredItemValidation.required(required),
-                options);
+                options,
+                Optional.empty());
     }
 
     private static List<ViewOption> enumOptions(Enum<?>[] values) {

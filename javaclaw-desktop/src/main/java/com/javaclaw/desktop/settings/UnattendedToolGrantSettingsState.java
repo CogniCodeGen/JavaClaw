@@ -16,6 +16,7 @@ import com.javaclaw.api.Workspace;
  * @param workspace 当前 Workspace
  * @param grants 授权及独立使用余额
  * @param selected 当前授权
+ * @param binding 新授权的权威目录绑定
  * @param draft 新授权草稿
  * @param decisions 脱敏权限决策
  * @param message 状态说明
@@ -27,6 +28,7 @@ public record UnattendedToolGrantSettingsState(
         Optional<Workspace> workspace,
         List<UnattendedToolGrantStatus> grants,
         Optional<UnattendedToolGrantStatus> selected,
+        UnattendedGrantBindingState binding,
         UnattendedToolGrantForm draft,
         List<PermissionDecisionTrace> decisions,
         String message,
@@ -38,6 +40,7 @@ public record UnattendedToolGrantSettingsState(
         workspace = Objects.requireNonNull(workspace, "workspace");
         grants = List.copyOf(Objects.requireNonNull(grants, "grants"));
         selected = Objects.requireNonNull(selected, "selected");
+        binding = Objects.requireNonNull(binding, "binding");
         draft = Objects.requireNonNull(draft, "draft");
         decisions = List.copyOf(Objects.requireNonNull(decisions, "decisions"));
         message = Objects.requireNonNullElse(message, "");
@@ -54,6 +57,7 @@ public record UnattendedToolGrantSettingsState(
                 Optional.empty(),
                 List.of(),
                 Optional.empty(),
+                UnattendedGrantBindingState.empty(),
                 UnattendedToolGrantForm.empty(),
                 List.of(),
                 "",

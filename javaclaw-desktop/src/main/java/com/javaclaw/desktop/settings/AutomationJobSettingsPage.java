@@ -31,18 +31,18 @@ import com.javaclaw.desktop.component.PlatformComponentFactory;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 import com.javaclaw.desktop.component.PlatformComponentFactory.FeedbackKind;
+import com.javaclaw.desktop.component.PlatformDialogs;
 import com.javaclaw.desktop.component.RevisionConflictPane;
 import com.javaclaw.extension.spi.ExtensionExecutionReceipt;
 import com.javaclaw.extension.spi.ExtensionJobUnitState;
 import com.javaclaw.protocol.InputJobRpcContracts;
 
-/** 全局可恢复 Extension Job 的过滤、分页、checkpoint 和生命周期管理页。 */
+/** 全局可恢复后台任务的过滤、分页、检查点和生命周期管理页。 */
 public final class AutomationJobSettingsPage extends VBox implements ManagedSettingsPage {
     private static final List<StateChoice> STATE_CHOICES = stateChoices();
 
     private final PlatformComponentFactory components = new PlatformComponentFactory();
     private final AutomationJobSettingsPresenter presenter;
-    private final ComboBox<WorkspaceChoice> workspace = new ComboBox<>();
     private final TextField extension = new TextField();
     private final ComboBox<StateChoice> status = new ComboBox<>();
     private final ListDetailPane<ExtensionExecutionReceipt> jobs = new ListDetailPane<>();
@@ -68,10 +68,11 @@ public final class AutomationJobSettingsPage extends VBox implements ManagedSett
     private final RevisionConflictPane conflict;
     private AutomationJobSettingsState state = AutomationJobSettingsState.initial();
     private Node detail;
+    private Optional<Workspace> scopedWorkspace = Optional.empty();
     private boolean rendering;
 
     /**
-     * 创建 Job 管理页。
+     * 创建后台任务管理页。
      *
      * @param gateway 只通过 Java SDK 的异步边界
      */
@@ -81,7 +82,7 @@ public final class AutomationJobSettingsPage extends VBox implements ManagedSett
         next = action("下一页", ActionStyle.GHOST, presenter::nextPage);
         pause = action("暂停", ActionStyle.SOFT, presenter::pause);
         resume = action("恢复", ActionStyle.PRIMARY, presenter::resume);
-        cancel = action("取消 Job", ActionStyle.DANGER, this::confirmCancel);
+        cancel = action("取消后台任务", ActionStyle.DANGER, this::confirmCancel);
         previous.setId("automationJobPreviousButton");
         next.setId("automationJobNextButton");
         pause.setId("automationJobPauseButton");
@@ -99,8 +100,15 @@ public final class AutomationJobSettingsPage extends VBox implements ManagedSett
     }
 
     @Override
+    public Optional<Node> actionContent() {
+        return Optional.of(actions);
+    }
+
+    @Override
     public void activate() {
-        presenter.reload();
+        if (scopedWorkspace.isPresent()) {
+            presenter.reload();
+        }
     }
 
     @Override
@@ -114,16 +122,35 @@ public final class AutomationJobSettingsPage extends VBox implements ManagedSett
     }
 
     @Override
+    public boolean pending() {
+        return state.feedback().phase() == SettingsLoadState.LOADING
+                || state.feedback().phase() == SettingsLoadState.SAVING;
+    }
+
+    @Override
+    public void workspaceChanged(Optional<Workspace> workspace) {
+        Optional<Workspace> checked = Objects.requireNonNull(workspace, "workspace");
+        if (scopedWorkspace.equals(checked)) {
+            return;
+        }
+        scopedWorkspace = checked;
+        if (checked.isPresent()) {
+            applyFilter();
+        } else {
+            presenter.deactivate();
+        }
+    }
+
+    @Override
     public void warnUnsavedChanges() {}
 
     @Override
     public void discardDraft() {}
 
     private void configurePage() {
-        Label title = new Label("执行任务");
+        Label title = new Label("后台任务");
         title.getStyleClass().addAll("sec-title", "platform-page-title");
-        Label hint =
-                new Label("统一查看 Plan、Loop、Workflow、SDD、Schedule 与索引任务。详情只展示脱敏工作单元和 checkpoint 提交状态，不返回恢复 payload。 ");
+        Label hint = new Label("统一查看计划、循环任务、工作流、规格驱动开发（SDD）、定时任务和索引任务。详情只显示脱敏工作单元和检查点提交状态，不显示恢复数据正文。");
         hint.setWrapText(true);
         hint.getStyleClass().add("sec-hint");
         configureFilters();
@@ -134,20 +161,14 @@ public final class AutomationJobSettingsPage extends VBox implements ManagedSett
     }
 
     private void configureFilters() {
-        workspace.setPromptText("全部 Workspace");
-        workspace.setId("automationJobWorkspaceFilter");
-        workspace.setAccessibleText("按 Workspace 过滤 Job");
-        workspace.setCellFactory(ignored -> components.detailCell(WorkspaceChoice::title, WorkspaceChoice::detail));
-        workspace.setButtonCell(components.textCell(WorkspaceChoice::title));
-        workspace.valueProperty().addListener((observable, previousValue, selected) -> applyFilter());
-        extension.setPromptText("精确 Extension ID，可留空");
+        extension.setPromptText("精确扩展标识，可留空");
         extension.setId("automationJobExtensionFilter");
-        extension.setAccessibleText("按 Extension ID 过滤 Job");
+        extension.setAccessibleText("按扩展标识过滤后台任务");
         extension.setOnAction(event -> applyFilter());
         status.setItems(FXCollections.observableArrayList(STATE_CHOICES));
         status.setId("automationJobStateFilter");
         status.setValue(STATE_CHOICES.getFirst());
-        status.setAccessibleText("按执行状态过滤 Job");
+        status.setAccessibleText("按执行状态过滤后台任务");
         status.setCellFactory(ignored -> components.textCell(StateChoice::title));
         status.setButtonCell(components.textCell(StateChoice::title));
         status.valueProperty().addListener((observable, previousValue, selected) -> applyFilter());
@@ -157,24 +178,28 @@ public final class AutomationJobSettingsPage extends VBox implements ManagedSett
         jobs.list().setId("automationJobList");
         jobs.list()
                 .setCellFactory(ignored -> components.detailCell(
-                        job -> job.definitionId() + " · " + job.state(),
-                        job -> job.extensionId().value() + " · " + job.jobType() + " · v" + job.revision()));
+                        job -> job.definitionId() + " · " + SettingsLabels.executionState(job.state()),
+                        job -> job.extensionId().value() + " · "
+                                + SettingsLabels.automationJobType(job.jobType()) + " · 版本 "
+                                + job.revision()));
         jobs.list().getSelectionModel().selectedItemProperty().addListener((observable, previousValue, selected) -> {
             if (!rendering && selected != null) {
                 presenter.select(selected);
             }
         });
-        jobs.showDetail(components.feedback(FeedbackKind.EMPTY, "选择 Job", "选择左侧执行查看工作单元、checkpoint 与恢复动作。"));
+        jobs.showDetail(components.feedback(FeedbackKind.EMPTY, "选择后台任务", "选择左侧任务查看工作单元、检查点和恢复操作。"));
     }
 
     private HBox filters() {
         Button apply = action("应用过滤", ActionStyle.SOFT, this::applyFilter);
-        Button reload = action("刷新", ActionStyle.GHOST, presenter::reload);
-        workspace.setMaxWidth(Double.MAX_VALUE);
+        Button reload = action("刷新", ActionStyle.GHOST, () -> {
+            if (scopedWorkspace.isPresent()) {
+                presenter.reload();
+            }
+        });
         extension.setMaxWidth(Double.MAX_VALUE);
-        HBox.setHgrow(workspace, Priority.ALWAYS);
         HBox.setHgrow(extension, Priority.ALWAYS);
-        HBox row = new HBox(8, workspace, extension, status, apply, reload);
+        HBox row = new HBox(8, extension, status, apply, reload);
         row.getStyleClass().add("platform-action-bar");
         return row;
     }
@@ -187,32 +212,31 @@ public final class AutomationJobSettingsPage extends VBox implements ManagedSett
     }
 
     private Node detail() {
-        FormSection identity = new FormSection("执行快照", "Definition revision 和 Job revision 均来自服务端权威摘要。 ");
-        identity.addField("Job ID", jobId);
-        identity.addField("Extension", owner);
-        identity.addField("Workspace", workspaceId);
-        identity.addField("Job 类型", jobType);
-        identity.addField("Definition", definition);
+        FormSection identity = new FormSection("执行快照", "任务定义版本和后台任务版本都来自服务端权威摘要。");
+        identity.addField("后台任务标识", jobId);
+        identity.addField("所属扩展", owner);
+        identity.addField("工作区", workspaceId);
+        identity.addField("后台任务类型", jobType);
+        identity.addField("任务定义", definition);
         identity.addField("状态", executionState);
-        identity.addField("Revision", revision);
+        identity.addField("版本", revision);
         identity.addField("创建时间", createdAt);
         identity.addField("更新时间", updatedAt);
-        FormSection recovery = new FormSection("恢复与错误", "COMPLETED 单元表示结果和 checkpoint 已原子提交；页面不读取 checkpoint 正文。 ");
-        recovery.addField("恢复 Checkpoint", checkpoint);
+        FormSection recovery = new FormSection("恢复与错误", "已完成的工作单元表示结果和检查点已安全提交；页面不读取检查点正文。");
+        recovery.addField("恢复检查点", checkpoint);
         recovery.addField("错误摘要", error);
-        FormSection units = new FormSection("工作单元", "时间线只展示状态、Turn、EffectReceipt 键和脱敏错误码。 ");
+        FormSection units = new FormSection("工作单元", "时间线只显示状态、关联任务、副作用凭据键和脱敏错误码。");
         units.addFullWidth(timeline);
-        VBox box = new VBox(12, identity, recovery, units, conflict, actions);
+        VBox box = new VBox(12, identity, recovery, units, conflict);
         box.getStyleClass().add("platform-page");
         return box;
     }
 
     private void applyFilter() {
-        if (rendering) {
+        if (rendering || scopedWorkspace.isEmpty()) {
             return;
         }
-        Optional<WorkspaceId> selectedWorkspace =
-                Optional.ofNullable(workspace.getValue()).flatMap(WorkspaceChoice::id);
+        Optional<WorkspaceId> selectedWorkspace = scopedWorkspace.map(Workspace::id);
         Optional<String> extensionId = Optional.of(extension.getText());
         Set<ExecutionState> states = Optional.ofNullable(status.getValue())
                 .flatMap(StateChoice::state)
@@ -238,15 +262,6 @@ public final class AutomationJobSettingsPage extends VBox implements ManagedSett
     }
 
     private void renderFilters(AutomationJobSettingsState snapshot) {
-        List<WorkspaceChoice> choices = new ArrayList<>();
-        choices.add(WorkspaceChoice.all());
-        snapshot.workspaces().stream().map(WorkspaceChoice::workspace).forEach(choices::add);
-        workspace.getItems().setAll(choices);
-        WorkspaceChoice selected = choices.stream()
-                .filter(choice -> choice.id().equals(snapshot.filter().workspaceId()))
-                .findFirst()
-                .orElse(choices.getFirst());
-        workspace.setValue(selected);
         extension.setText(snapshot.filter().extensionId().orElse(""));
         status.setValue(STATE_CHOICES.stream()
                 .filter(choice -> choice.matches(snapshot.filter().states()))
@@ -258,19 +273,19 @@ public final class AutomationJobSettingsPage extends VBox implements ManagedSett
         Node placeholder;
         if (snapshot.feedback().phase() == SettingsLoadState.LOADING) {
             placeholder = components.feedback(
-                    FeedbackKind.LOADING, "正在读取 Job", snapshot.feedback().message());
+                    FeedbackKind.LOADING, "正在读取后台任务", snapshot.feedback().message());
         } else if (snapshot.feedback().phase() == SettingsLoadState.ERROR) {
             placeholder = components.feedback(
-                    FeedbackKind.ERROR, "Job 读取失败", snapshot.feedback().message());
+                    FeedbackKind.ERROR, "后台任务读取失败", snapshot.feedback().message());
         } else {
-            placeholder = components.feedback(FeedbackKind.EMPTY, "暂无 Job", "调整 Workspace、Extension 或状态过滤后重试。 ");
+            placeholder = components.feedback(FeedbackKind.EMPTY, "暂无后台任务", "调整工作区、扩展标识或状态筛选后重试。");
         }
         jobs.list().setPlaceholder(placeholder);
     }
 
     private void renderDetail(AutomationJobSettingsState snapshot) {
         if (snapshot.page().selected().isEmpty()) {
-            jobs.showDetail(components.feedback(FeedbackKind.EMPTY, "选择 Job", "选择左侧执行查看工作单元、checkpoint 与恢复动作。"));
+            jobs.showDetail(components.feedback(FeedbackKind.EMPTY, "选择后台任务", "选择左侧任务查看工作单元、检查点和恢复操作。"));
             return;
         }
         if (detail == null) {
@@ -293,9 +308,9 @@ public final class AutomationJobSettingsPage extends VBox implements ManagedSett
         jobId.setText(receipt.id());
         owner.setText(receipt.extensionId().value());
         workspaceId.setText(receipt.workspaceId().toString());
-        jobType.setText(receipt.jobType());
-        definition.setText(receipt.definitionId() + " · v" + receipt.definitionRevision());
-        executionState.setText(receipt.state().name());
+        jobType.setText(SettingsLabels.automationJobType(receipt.jobType()));
+        definition.setText(receipt.definitionId() + " · 版本 " + receipt.definitionRevision());
+        executionState.setText(SettingsLabels.executionState(receipt.state()));
         revision.setText(Long.toString(receipt.revision()));
         createdAt.setText(receipt.createdAt().toString());
         updatedAt.setText(receipt.updatedAt().toString());
@@ -307,22 +322,24 @@ public final class AutomationJobSettingsPage extends VBox implements ManagedSett
         List<ExecutionTimeline.Entry> entries = new ArrayList<>();
         entries.add(new ExecutionTimeline.Entry(
                 result.job().createdAt(),
-                "Job 已创建",
-                result.job().extensionId().value() + " · " + result.job().jobType()));
+                "后台任务已创建",
+                result.job().extensionId().value() + " · "
+                        + SettingsLabels.automationJobType(result.job().jobType())));
         result.units().stream()
                 .sorted(Comparator.comparingLong(InputJobRpcContracts.JobUnitSummary::sequence))
                 .map(AutomationJobSettingsPage::timelineEntry)
                 .forEach(entries::add);
         entries.add(new ExecutionTimeline.Entry(
                 result.job().updatedAt(),
-                "当前状态 " + result.job().state(),
-                "Job revision " + result.job().revision()));
+                "当前状态 " + SettingsLabels.executionState(result.job().state()),
+                "后台任务版本 " + result.job().revision()));
         timeline.setEntries(entries);
     }
 
     private void renderActions(AutomationJobSettingsState snapshot) {
         boolean pending = snapshot.feedback().phase() == SettingsLoadState.LOADING
-                || snapshot.feedback().phase() == SettingsLoadState.SAVING;
+                || snapshot.feedback().phase() == SettingsLoadState.SAVING
+                || scopedWorkspace.isEmpty();
         ExtensionExecutionReceipt selected = snapshot.detail()
                 .value()
                 .map(InputJobRpcContracts.JobReadResult::job)
@@ -330,7 +347,6 @@ public final class AutomationJobSettingsPage extends VBox implements ManagedSett
                 .orElse(null);
         previous.setDisable(pending || snapshot.page().index() == 0);
         next.setDisable(pending || snapshot.page().nextCursor().isEmpty());
-        workspace.setDisable(pending);
         extension.setDisable(pending);
         status.setDisable(pending);
         pause.setDisable(pending || selected == null || !pausable(selected.state()));
@@ -338,7 +354,7 @@ public final class AutomationJobSettingsPage extends VBox implements ManagedSett
         cancel.setDisable(pending || selected == null || selected.state().terminal());
         showFeedback(snapshot, pending);
         if (snapshot.detail().revisionConflict()) {
-            conflict.showMessage("提交所依据的 Job revision 已变化；未执行覆盖写。请读取权威详情后重新决定。 ");
+            conflict.showMessage("提交所依据的后台任务版本已变化；没有覆盖服务端数据。请刷新详情后重新决定。");
         } else {
             conflict.hide();
         }
@@ -358,17 +374,15 @@ public final class AutomationJobSettingsPage extends VBox implements ManagedSett
     private void confirmCancel() {
         ExtensionExecutionReceipt selected = state.page().selected().orElseThrow();
         Alert dialog = new Alert(Alert.AlertType.CONFIRMATION);
-        if (getScene() != null && getScene().getWindow() != null) {
-            dialog.initOwner(getScene().getWindow());
-        }
-        dialog.setTitle("取消可恢复 Job");
+        dialog.setTitle("取消可恢复后台任务");
         dialog.setHeaderText("取消后不会启动新的工作单元");
-        dialog.setContentText(selected.id() + " · 当前 revision " + selected.revision());
+        dialog.setContentText(selected.id() + " · 当前版本 " + selected.revision());
+        PlatformDialogs.style(dialog, this);
         dialog.showAndWait().filter(ButtonType.OK::equals).ifPresent(ignored -> presenter.cancel());
     }
 
     private void describeConflict() {
-        actions.show(ActionState.ERROR, "当前列表摘要与服务端 revision 不一致；刷新详情不会重放已完成工作单元。 ");
+        actions.show(ActionState.ERROR, "当前列表摘要与服务端版本不一致；刷新详情不会重复执行已完成的工作单元。");
     }
 
     private Button action(String text, ActionStyle style, Runnable action) {
@@ -380,15 +394,15 @@ public final class AutomationJobSettingsPage extends VBox implements ManagedSett
     private static ExecutionTimeline.Entry timelineEntry(InputJobRpcContracts.JobUnitSummary unit) {
         StringBuilder detail = new StringBuilder(
                 unit.state() == ExtensionJobUnitState.COMPLETED
-                        ? "结果与 checkpoint 已原子提交"
+                        ? "结果与检查点已安全提交"
                         : unit.state() == ExtensionJobUnitState.INTENT_RECORDED ? "确定性意图已持久化，等待结果提交" : "工作单元失败");
-        unit.turnId().ifPresent(value -> detail.append(" · Turn ").append(value));
-        unit.effectReceiptKey()
-                .ifPresent(value -> detail.append(" · EffectReceipt ").append(value));
+        unit.turnId().ifPresent(value -> detail.append(" · 任务 ").append(value));
+        unit.effectReceiptKey().ifPresent(value -> detail.append(" · 副作用凭据 ").append(value));
         unit.errorCode().ifPresent(value -> detail.append(" · 错误 ").append(value));
         return new ExecutionTimeline.Entry(
                 unit.completedAt().orElse(unit.createdAt()),
-                "#" + unit.sequence() + " " + unit.unitId() + " · " + unit.state(),
+                "#" + unit.sequence() + " " + unit.unitId() + " · "
+                        + SettingsLabels.extensionJobUnitState(unit.state()),
                 detail.toString());
     }
 
@@ -401,7 +415,7 @@ public final class AutomationJobSettingsPage extends VBox implements ManagedSett
                 .max(Comparator.comparingLong(InputJobRpcContracts.JobUnitSummary::sequence));
         String stable = committed
                 .map(unit -> "已提交至 #" + unit.sequence() + " " + unit.unitId())
-                .orElse("尚无已提交 checkpoint");
+                .orElse("尚无已提交的检查点");
         return active.map(unit -> stable + "；活动单元 #" + unit.sequence() + " 意图已持久化")
                 .orElse(stable);
     }
@@ -439,26 +453,9 @@ public final class AutomationJobSettingsPage extends VBox implements ManagedSett
         List<StateChoice> choices = new ArrayList<>();
         choices.add(new StateChoice(Optional.empty(), "全部状态"));
         for (ExecutionState state : ExecutionState.values()) {
-            choices.add(new StateChoice(Optional.of(state), state.name()));
+            choices.add(new StateChoice(Optional.of(state), SettingsLabels.executionState(state)));
         }
         return List.copyOf(choices);
-    }
-
-    private record WorkspaceChoice(Optional<WorkspaceId> id, String title, String detail) {
-        private WorkspaceChoice {
-            id = Objects.requireNonNull(id, "id");
-            title = Objects.requireNonNull(title, "title");
-            detail = Objects.requireNonNull(detail, "detail");
-        }
-
-        private static WorkspaceChoice all() {
-            return new WorkspaceChoice(Optional.empty(), "全部 Workspace", "不限制作用域");
-        }
-
-        private static WorkspaceChoice workspace(Workspace value) {
-            return new WorkspaceChoice(
-                    Optional.of(value.id()), value.name(), value.id().toString());
-        }
     }
 
     private record StateChoice(Optional<ExecutionState> state, String title) {

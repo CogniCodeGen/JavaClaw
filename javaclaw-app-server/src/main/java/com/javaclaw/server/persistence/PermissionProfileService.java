@@ -35,6 +35,7 @@ public final class PermissionProfileService {
 
     private static final String UPDATE_METHOD = "permissionProfile/update";
     private static final String CLONE_METHOD = "permissionProfile/clone";
+    private static final String PRESET_INSTANTIATE_METHOD = "permissionProfile/preset/instantiate";
 
     private final H2Transactions transactions;
     private final PermissionProfileRepository profiles = new PermissionProfileRepository();
@@ -118,6 +119,28 @@ public final class PermissionProfileService {
         }
         synchronized (CommandLocks.forKey(identity.idempotencyKey())) {
             return execute(connection -> cloneProfile(connection, identity, source, destination.id()));
+        }
+    }
+
+    /**
+     * 持久化经平台 {@code PermissionPresetCatalog} 为固定 Workspace 构造的首个版本。
+     *
+     * <p>该边界不接受客户端自由构造的创建方法；RPC handler 必须先通过只读预设目录重建完整配置。
+     *
+     * @param identity 幂等身份，expected revision 必须为 0
+     * @param profile 由内置预设生成的 revision 1 配置
+     * @return 已持久化的普通 PermissionProfile
+     */
+    public PermissionProfile instantiatePreset(CommandIdentity identity, PermissionProfile profile) {
+        Objects.requireNonNull(identity, "identity");
+        Objects.requireNonNull(profile, "profile");
+        requireCommand(identity, PRESET_INSTANTIATE_METHOD, 0);
+        if (profile.version() != 1) {
+            throw PersistenceException.invalidRequest("Permission preset 只能创建 revision 1");
+        }
+        validateUserProfile(profile);
+        synchronized (CommandLocks.forKey(identity.idempotencyKey())) {
+            return execute(connection -> instantiatePreset(connection, identity, profile));
         }
     }
 
@@ -247,6 +270,19 @@ public final class PermissionProfileService {
             return recover(identity, stored.orElseThrow());
         }
         requireLatest(connection, profile.id(), identity.expectedRevision());
+        persist(connection, identity, profile);
+        return profile;
+    }
+
+    private PermissionProfile instantiatePreset(
+            Connection connection, CommandIdentity identity, PermissionProfile profile) throws SQLException {
+        Optional<IdempotencyRepository.StoredCommand> stored = idempotency.find(connection, identity.idempotencyKey());
+        if (stored.isPresent()) {
+            return recover(identity, stored.orElseThrow());
+        }
+        if (profiles.latest(connection, profile.id()).isPresent()) {
+            throw PersistenceException.revisionConflict("PermissionProfile 标识已存在");
+        }
         persist(connection, identity, profile);
         return profile;
     }

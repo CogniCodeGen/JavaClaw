@@ -30,12 +30,12 @@ public record AutomationJobPage(
         nextCursor = Objects.requireNonNull(nextCursor, "nextCursor");
         selected = Objects.requireNonNull(selected, "selected");
         if (starts.isEmpty() || starts.getFirst().isPresent() || index < 0 || index >= starts.size()) {
-            throw new IllegalArgumentException("Job page history is invalid");
+            throw new IllegalArgumentException("后台任务 page history is invalid");
         }
         if (selected.filter(
                         value -> copiedJobs.stream().noneMatch(job -> job.id().equals(value.id())))
                 .isPresent()) {
-            throw new IllegalArgumentException("selected Job is not in current page");
+            throw new IllegalArgumentException("selected 后台任务 is not in current page");
         }
     }
 

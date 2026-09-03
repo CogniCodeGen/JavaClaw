@@ -12,6 +12,7 @@ import com.javaclaw.api.AgentProfileRef;
 import com.javaclaw.api.ProfileBinding;
 import com.javaclaw.api.ProfileLifecycle;
 import com.javaclaw.api.Workspace;
+import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.client.CommandOptions;
 
 /** 协调 Workspace 目录、名称草稿和默认 Agent Profile 绑定。 */
@@ -19,6 +20,7 @@ public final class WorkspaceSettingsPresenter {
     private final CoreSettingsGateway gateway;
     private Consumer<WorkspaceSettingsState> listener = ignored -> {};
     private WorkspaceSettingsState state = WorkspaceSettingsState.initial();
+    private Optional<WorkspaceId> scope = Optional.empty();
 
     /**
      * 创建 Presenter。
@@ -42,10 +44,34 @@ public final class WorkspaceSettingsPresenter {
     /** 重新读取 Workspace 与活动 Profile 目录。 */
     public void reload() {
         long epoch = state.epoch() + 1;
-        publish(copy(SettingsLoadState.LOADING, "正在读取 Workspace…", epoch));
+        publish(copy(SettingsLoadState.LOADING, "正在读取工作区…", epoch));
         gateway.workspaces()
                 .thenCombine(gateway.profiles(), Catalog::new)
                 .whenComplete((catalog, failure) -> applyCatalog(epoch, catalog, failure));
+    }
+
+    /**
+     * 固定此 Presenter 的设置中心 Workspace 作用域。
+     *
+     * @param workspace 当前作用域；不可用时为空
+     */
+    public void bindWorkspace(Optional<Workspace> workspace) {
+        Optional<Workspace> checked = Objects.requireNonNull(workspace, "workspace");
+        scope = checked.map(Workspace::id);
+        if (checked.isPresent()) {
+            select(checked.orElseThrow());
+            return;
+        }
+        publish(new WorkspaceSettingsState(
+                SettingsLoadState.READY,
+                List.of(),
+                state.profiles(),
+                Optional.empty(),
+                Optional.empty(),
+                "",
+                Optional.empty(),
+                "当前没有可用工作区",
+                state.epoch() + 1));
     }
 
     /**
@@ -64,7 +90,7 @@ public final class WorkspaceSettingsPresenter {
                 Optional.empty(),
                 checked.name(),
                 Optional.empty(),
-                "正在读取默认 Profile…",
+                "正在读取默认智能体方案…",
                 epoch));
         gateway.workspaceProfileBinding(checked.id())
                 .whenComplete((binding, failure) -> applyBinding(epoch, checked, binding, failure));
@@ -103,10 +129,10 @@ public final class WorkspaceSettingsPresenter {
         Workspace current = state.selected().orElseThrow();
         String name = state.draftName().strip();
         if (name.isEmpty()) {
-            publish(copy(SettingsLoadState.ERROR, "Workspace 名称不能为空", state.epoch()));
+            publish(copy(SettingsLoadState.ERROR, "工作区名称不能为空", state.epoch()));
             return;
         }
-        execute(gateway.renameWorkspace(current, name, CommandOptions.create(current.revision())), "Workspace 已重命名");
+        execute(gateway.renameWorkspace(current, name, CommandOptions.create(current.revision())), "工作区已重命名");
     }
 
     /** 保存 Workspace 默认 Agent Profile 的精确版本。 */
@@ -117,13 +143,13 @@ public final class WorkspaceSettingsPresenter {
         AgentProfileRef reference = new AgentProfileRef(profile.id(), profile.revision());
         execute(
                 gateway.bindWorkspaceProfile(workspace.id(), reference, CommandOptions.create(expectedRevision)),
-                "默认 Agent Profile 已保存");
+                "默认智能体方案已保存");
     }
 
     /** 归档 Workspace 登记；不会删除根目录。 */
     public void archive() {
         Workspace current = state.selected().orElseThrow();
-        execute(gateway.archiveWorkspace(current, CommandOptions.create(current.revision())), "Workspace 已归档");
+        execute(gateway.archiveWorkspace(current, CommandOptions.create(current.revision())), "工作区已归档");
     }
 
     /** 丢弃草稿并恢复最近一次权威值。 */
@@ -150,6 +176,7 @@ public final class WorkspaceSettingsPresenter {
             return;
         }
         List<Workspace> workspaces = catalog.workspaces().stream()
+                .filter(workspace -> scope.map(workspace.id()::equals).orElse(true))
                 .sorted(Comparator.comparing(Workspace::name))
                 .toList();
         List<AgentProfile> profiles = catalog.profiles().stream()
@@ -208,6 +235,11 @@ public final class WorkspaceSettingsPresenter {
     }
 
     private Optional<Workspace> selectAfterReload(List<Workspace> workspaces) {
+        if (scope.isPresent()) {
+            return workspaces.stream()
+                    .filter(workspace -> workspace.id().equals(scope.orElseThrow()))
+                    .findFirst();
+        }
         Optional<com.javaclaw.api.WorkspaceId> current = state.selected().map(Workspace::id);
         return current.flatMap(id -> workspaces.stream()
                         .filter(workspace -> workspace.id().equals(id))

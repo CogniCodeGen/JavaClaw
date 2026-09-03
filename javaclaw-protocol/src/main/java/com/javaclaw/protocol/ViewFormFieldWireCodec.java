@@ -50,12 +50,15 @@ final class ViewFormFieldWireCodec {
 
     ViewFormField decode(CanonicalPayload payload) {
         try {
+            Map<?, ?> wireShape = json.decode(payload, Map.class);
             String type =
                     json.textField(payload, "type").orElseThrow(() -> invalid("view form field type is required"));
             ViewFormField field;
             if (STRUCTURED_LIST.equals(type)) {
+                requireStructuredOptionSources(wireShape);
                 field = structured(json.decode(payload, WireStructuredList.class));
             } else if (SCALAR_TYPES.contains(type)) {
+                requireOptionSource(wireShape);
                 field = json.decode(payload, ViewField.class);
             } else {
                 throw invalid("unknown view form field type: " + type);
@@ -66,6 +69,32 @@ final class ViewFormFieldWireCodec {
             throw failure;
         } catch (IllegalArgumentException failure) {
             throw invalid("view form field violates the bounded contract");
+        }
+    }
+
+    private static void requireStructuredOptionSources(Map<?, ?> wire) {
+        Object itemFields = wire.get("itemFields");
+        if (!(itemFields instanceof List<?> items)) {
+            throw invalid("structured itemFields are required");
+        }
+        for (Object item : items) {
+            if (!(item instanceof Map<?, ?> itemField)) {
+                throw invalid("structured item field must be an object");
+            }
+            requireOptionSource(itemField);
+        }
+    }
+
+    private static void requireOptionSource(Map<?, ?> field) {
+        if (!field.containsKey("optionSource")) {
+            throw invalid("view choice optionSource presence is required");
+        }
+        Object rawSource = field.get("optionSource");
+        if (rawSource == null) {
+            return;
+        }
+        if (!(rawSource instanceof Map<?, ?> source) || !source.containsKey("filter")) {
+            throw invalid("view optionSource filter presence is required");
         }
     }
 

@@ -57,7 +57,7 @@ public final class McpOAuthSettingsPresenter {
                     SettingsLoadState.READY,
                     selected.map(McpEndpoint::id),
                     Optional.empty(),
-                    selected.isEmpty() ? "请选择 OAuth Endpoint" : "当前 Endpoint 未使用 OAuth 2.1 + PKCE",
+                    selected.isEmpty() ? "请选择 OAuth 连接" : "当前连接未使用 OAuth 2.1 + PKCE",
                     epoch));
             return;
         }
@@ -71,11 +71,11 @@ public final class McpOAuthSettingsPresenter {
     public void start() {
         McpEndpoint selected = requireEndpoint();
         if (selected.spec().authType() != McpAuthType.OAUTH_2_1_PKCE) {
-            failLocal("当前 Endpoint 未选择 OAuth 2.1 + PKCE");
+            failLocal("当前连接未选择 OAuth 2.1 + PKCE");
             return;
         }
         if (selected.state() != McpEndpointState.ENABLED) {
-            failLocal("请先启用 MCP Endpoint");
+            failLocal("请先启用 MCP 连接");
             return;
         }
         long epoch = nextEpoch();
@@ -155,7 +155,7 @@ public final class McpOAuthSettingsPresenter {
             return;
         }
         endpoint = Optional.of(result.endpoint());
-        publish(ready(state.authorization(), "OAuth 已完成，Endpoint 凭据与健康状态已刷新", epoch));
+        publish(ready(state.authorization(), "OAuth 已完成，连接凭据与健康状态已刷新", epoch));
         authorized.accept(result.endpoint(), result.health());
     }
 
@@ -184,7 +184,7 @@ public final class McpOAuthSettingsPresenter {
     }
 
     private McpEndpoint requireEndpoint() {
-        return endpoint.orElseThrow(() -> new IllegalStateException("请先选择 MCP Endpoint"));
+        return endpoint.orElseThrow(() -> new IllegalStateException("请先选择 MCP 连接"));
     }
 
     private long nextEpoch() {

@@ -31,10 +31,10 @@ public record PromptOptimizationSelection(
         drafts = List.copyOf(drafts);
         selected = Objects.requireNonNull(selected, "selected");
         if (workspace.filter(workspaces::contains).isEmpty() && workspace.isPresent()) {
-            throw new IllegalArgumentException("selected Workspace must be in catalog");
+            throw new IllegalArgumentException("selected 工作区 must be in catalog");
         }
         if (selected.filter(drafts::contains).isEmpty() && selected.isPresent()) {
-            throw new IllegalArgumentException("selected Prompt draft must be in catalog");
+            throw new IllegalArgumentException("selected 提示词 draft must be in catalog");
         }
     }
 

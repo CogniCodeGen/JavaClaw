@@ -23,6 +23,8 @@
 
 `agent-runtime` 禁止依赖 Jackson、Spring AI、H2、Quartz、PDFBox、POI 和 JavaFX。`app-server` 不直接依赖
 Spring AI；Provider 类型不得越过 `model-adapters`。内置扩展只通过 SPI port 访问平台能力。
+在 App Server 内，Provider Registry 与持久化验证共用 `server.model.EmbeddingAdapterFactory` 窄端口；
+`config` 与 `persistence` 不得因 Adapter 创建反向依赖形成包环。
 
 `javaclaw-builtin-extensions` 中的复杂领域使用显式资源、Repository、状态机和 ViewSchema 组件组合；Plan、Loop、
 Workflow、SDD、Schedule、Memory、Knowledge、Skill 与 Site 不共享通用文档或自动化抽象基类。可恢复执行统一通过
@@ -32,6 +34,14 @@ Extension Job port 取得 intent/checkpoint 能力，但领域状态和校验仍
 `extension/event` 合并失效并重新读取权威状态。Desktop 页面不得从通知 payload 推导业务状态，也不得访问 Server
 实现包。Desktop 在编译期可直接复用 `api`、`protocol`、`builtin-contracts` 与 `extension-spi` 的不可变契约，并为
 Windows 本地传输依赖 `native-hosts`；这些依赖不能用于绕过 SDK 与 App Server 通信。
+
+设置功能沿用 `api → protocol → client → Desktop Gateway → Presenter/不可变 State → JavaFX Page` 和
+`RPC Handler → App Server Service/Repository → H2/model-adapters` 的现有纵切。厂商模型目录、Spring AI 和 Provider
+SDK 只能出现在 `javaclaw-model-adapters`；App Server 仍是唯一组合根。设置中心 Workspace 由独立 Desktop session
+冻结并显式传给 Gateway，不能在异步回调中读取主窗口当前选择。session 分开维护用于保留页面/草稿的 frozen selection
+与允许写入的 available selection；目录失败或目标失效时保留前者并清空后者，dirty/pending 时拒绝重载或切换，旧请求
+epoch 的响应一律丢弃。Profile/Provider/Permission 更新只产生新 revision，
+既有精确引用不自动跟随 latest；资源最新 lifecycle 仍作为新绑定、新 Turn 和后续模型调用的实时阻断条件。
 
 ## 进程
 

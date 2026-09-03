@@ -5,14 +5,15 @@ Prompt 是模型上下文，不是权限系统、工具注册表或业务状态�
 
 ## 来源顺序
 
-从稳定到动态依次为：
+system instruction 的已实现拼装顺序固定为：
 
 1. 随发行版审阅、版本化并带 hash 的内置平台 prompt。
-2. 当前 Workspace 已确认的项目指令与 Profile。
-3. 当前 Turn 明确启用、经冻结目录定位的 Skill/Extension context。
-4. Thread 摘要和最近 Item。
-5. 用户本轮输入与 Attachment 提取文本。
-6. Tool、MCP、网页、文档、模型和子智能体返回的外部内容。
+2. 当前 Turn 冻结的 Agent Profile system instruction。
+3. 当前 Workspace 与 execution root 解析出的项目约定。
+
+也就是 `CORE_TEMPLATE → AGENT_PROFILE → PROJECT_INSTRUCTION`。Skill/Extension context、Thread 摘要与最近 Item、
+用户输入和 Attachment，以及 Tool、MCP、网页、文档、模型或子智能体返回值属于后续 Turn 上下文，不得插入或覆盖上述
+system instruction 顺序。
 
 后出现不表示更高权限。冲突时，低信任来源只能作为数据引用；不能改写平台边界、用户确认指令或当前 Turn 的
 capability snapshot。
@@ -24,8 +25,9 @@ capability snapshot。
 
 ## 编译与记录
 
-Harness 在 Turn 开始时生成 prompt manifest，记录模板 ID、版本/hash、Profile revision、启用 Skill/Context revision、
-压缩摘要 hash 与 token 预算。secret、完整凭据和不可公开 Provider state 不进入 manifest。
+Harness 在 Turn 开始时生成 prompt manifest，当前记录 Core 模板、Agent Profile 和项目约定的 ID、revision/hash、
+截断警告与 token 估算。Skill/Context 与压缩摘要不伪装成已经进入当前 system prompt manifest；它们进入后续上下文时
+必须由各自冻结目录和 Item 证据记录。secret、完整凭据和不可公开 Provider state 不进入 manifest。
 
 设置中心的 Prompt 预览读取该 manifest 的来源、revision/hash 和 token 估算。Prompt 优化通过正常 Harness Turn 执行，
 使用独立预算并在发起前要求显式计费确认；结果只形成不可执行 Draft。用户显式采纳且目标 revision 仍匹配时才提交，

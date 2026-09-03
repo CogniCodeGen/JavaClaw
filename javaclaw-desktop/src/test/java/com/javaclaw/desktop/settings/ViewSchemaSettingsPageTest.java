@@ -26,9 +26,11 @@ import org.junit.jupiter.api.Test;
 
 import com.javaclaw.api.AttachmentRef;
 import com.javaclaw.api.CanonicalPayload;
+import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.client.RemoteRpcException;
 import com.javaclaw.desktop.DesktopNotificationSubscription;
+import com.javaclaw.desktop.DesktopTestFixtures;
 import com.javaclaw.desktop.FxTestSupport;
 import com.javaclaw.desktop.view.ViewAttachmentUploadRequest;
 import com.javaclaw.desktop.view.ViewCommandInvocation;
@@ -54,7 +56,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ViewSchemaSettingsPageTest {
-    private static final WorkspaceId WORKSPACE = WorkspaceId.parse("27eb1eea-c007-4de6-b0cc-9bf28feb23d7");
+    private static final Workspace WORKSPACE_VALUE = DesktopTestFixtures.workspace();
+    private static final WorkspaceId WORKSPACE = WORKSPACE_VALUE.id();
 
     @Test
     void 服务端事件保留Dirty草稿并在显式丢弃后读取权威状态() {
@@ -289,7 +292,9 @@ class ViewSchemaSettingsPageTest {
     }
 
     private static ViewSchemaSettingsPage page(FakeGateway gateway) {
-        return new ViewSchemaSettingsPage("plan", "计划", "测试页面", gateway);
+        ViewSchemaSettingsPage page = new ViewSchemaSettingsPage("plan", "计划", "测试页面", gateway);
+        page.workspaceChanged(Optional.of(WORKSPACE_VALUE));
+        return page;
     }
 
     private static ExtensionRpcContracts.ExtensionEvent event(long revision) {
@@ -478,7 +483,11 @@ class ViewSchemaSettingsPageTest {
 
         @Override
         public CompletableFuture<ViewData> load(
-                ExtensionRpcContracts.ViewDocument document, ViewSchema viewSchema, ViewLoadRequest request) {
+                WorkspaceId workspaceId,
+                ExtensionRpcContracts.ViewDocument document,
+                ViewSchema viewSchema,
+                ViewLoadRequest request) {
+            assertEquals(WORKSPACE, workspaceId);
             loads++;
             loadRequests.add(request);
             if (!loadsToReturn.isEmpty()) {
@@ -489,19 +498,24 @@ class ViewSchemaSettingsPageTest {
 
         @Override
         public CompletableFuture<ExtensionRpcContracts.CallResult> execute(
-                String extensionId, ViewCommandInvocation invocation) {
+                WorkspaceId workspaceId, String extensionId, ViewCommandInvocation invocation) {
+            assertEquals(WORKSPACE, workspaceId);
             executions++;
             return command;
         }
 
         @Override
-        public CompletableFuture<AttachmentRef> upload(ViewAttachmentUploadRequest request) {
+        public CompletableFuture<AttachmentRef> upload(WorkspaceId workspaceId, ViewAttachmentUploadRequest request) {
+            assertEquals(WORKSPACE, workspaceId);
             return CompletableFuture.failedFuture(new AssertionError("本测试不上传 Attachment"));
         }
 
         @Override
         public DesktopNotificationSubscription subscribe(
-                String extensionId, Consumer<ExtensionRpcContracts.ExtensionEvent> eventListener) {
+                WorkspaceId workspaceId,
+                String extensionId,
+                Consumer<ExtensionRpcContracts.ExtensionEvent> eventListener) {
+            assertEquals(WORKSPACE, workspaceId);
             listener = eventListener;
             return () -> subscriptionClosed.set(true);
         }

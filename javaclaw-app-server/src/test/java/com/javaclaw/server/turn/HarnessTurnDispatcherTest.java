@@ -8,7 +8,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -33,8 +32,8 @@ import com.javaclaw.api.PermissionProfile;
 import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderEndpointSpec;
+import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.ToolCatalogSnapshot;
 import com.javaclaw.api.ToolDescriptor;
 import com.javaclaw.api.TurnBudget;
@@ -72,6 +71,7 @@ import com.javaclaw.server.persistence.ProfileBindingService;
 import com.javaclaw.server.persistence.ProviderService;
 import com.javaclaw.server.persistence.TurnStartRequest;
 
+import static com.javaclaw.server.ProviderEndpointTestFixtures.chat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -115,24 +115,17 @@ class HarnessTurnDispatcherTest {
     }
 
     private void initializeProviderAndProfile() {
-        ProviderService providers = new ProviderService(database, json, clock);
-        ProviderEndpointSpec providerSpec = new ProviderEndpointSpec(
-                "Test Provider",
-                ProviderAdapter.OPENAI_COMPATIBLE,
-                Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of("test-model"),
-                Optional.empty(),
-                Duration.ofSeconds(30),
-                0,
-                Map.of());
+        ProviderService providers = new ProviderService(database, reference -> true, json, clock);
+        ProviderEndpointSpec providerSpec = chat("Test Provider", ProviderAdapter.OPENAI_COMPATIBLE, "test-model");
         providers.create(
                 identity(
                         "provider/create",
                         "test-provider",
-                        new ProviderProfileRpcContracts.ProviderCreatePayload("test-provider", providerSpec)),
+                        new ProviderProfileRpcContracts.ProviderCreatePayload(
+                                "test-provider", providerSpec, ProviderLifecycle.ACTIVE)),
                 "test-provider",
-                providerSpec);
+                providerSpec,
+                ProviderLifecycle.ACTIVE);
         provider = new ProviderRef("test-provider", 1, "test-model");
         agentProfiles = new AgentProfileService(database, providers, profiles, json, clock);
         AgentProfileSpec profileSpec = new AgentProfileSpec(

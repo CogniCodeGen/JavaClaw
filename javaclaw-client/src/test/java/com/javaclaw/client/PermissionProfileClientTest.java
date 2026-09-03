@@ -15,6 +15,10 @@ import com.javaclaw.api.FilePermission;
 import com.javaclaw.api.NetworkPermission;
 import com.javaclaw.api.PermissionLayerKind;
 import com.javaclaw.api.PermissionLayerResult;
+import com.javaclaw.api.PermissionPresetDescriptor;
+import com.javaclaw.api.PermissionPresetInstantiationRequest;
+import com.javaclaw.api.PermissionPresetInstantiationResult;
+import com.javaclaw.api.PermissionPresetPreview;
 import com.javaclaw.api.PermissionProfile;
 import com.javaclaw.api.PermissionProfileDiff;
 import com.javaclaw.api.PermissionProfileRef;
@@ -65,6 +69,35 @@ class PermissionProfileClientTest {
                 client.effectivePreview(
                         WORKSPACE, new PermissionProfileRef("developer", 2), Optional.empty(), Optional.empty()));
         assertEquals(7, called.size());
+    }
+
+    @Test
+    void facade以固定Workspace预览并实例化权限预设() {
+        PermissionPresetDescriptor preset =
+                new PermissionPresetDescriptor("workspace-review", 1, "只读审查", "只读 Workspace", false);
+        PermissionPresetInstantiationRequest request = new PermissionPresetInstantiationRequest(
+                preset.id(), preset.revision(), WORKSPACE, "review-profile", Set.of("read"), Set.of());
+        PermissionProfile profile = profile(request.profileId(), 1, Set.of("read"));
+        PermissionPresetPreview preview = new PermissionPresetPreview(preset, WORKSPACE, profile, List.of());
+        PermissionPresetInstantiationResult result =
+                new PermissionPresetInstantiationResult(preset, WORKSPACE, profile);
+        ScriptedRpcConnection rpc = new ScriptedRpcConnection(rpcRequest -> switch (rpcRequest.method()) {
+            case "permissionProfile/preset/list" ->
+                JsonRpcResponse.success(
+                        rpcRequest.id(),
+                        JSON.encode(new PermissionProfileRpcContracts.PresetListResult(List.of(preset))));
+            case "permissionProfile/preset/preview" -> JsonRpcResponse.success(rpcRequest.id(), JSON.encode(preview));
+            case "permissionProfile/preset/instantiate" -> {
+                assertCommand(rpcRequest, "instantiate", 0);
+                yield JsonRpcResponse.success(rpcRequest.id(), JSON.encode(result));
+            }
+            default -> throw new AssertionError("unexpected method " + rpcRequest.method());
+        });
+        PermissionProfileClient client = new PermissionProfileClient(new RpcClientConnection(rpc, JSON, ignored -> {}));
+
+        assertEquals(List.of(preset), client.presets());
+        assertEquals(preview, client.previewPreset(request));
+        assertEquals(result, client.instantiatePreset(request, new CommandOptions("instantiate", 0)));
     }
 
     private static JsonRpcResponse response(

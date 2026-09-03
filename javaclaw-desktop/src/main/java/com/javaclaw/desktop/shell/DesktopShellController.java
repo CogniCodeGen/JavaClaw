@@ -29,6 +29,7 @@ import com.javaclaw.desktop.appearance.DesktopAppearanceManager;
 import com.javaclaw.desktop.appearance.JavaPreferencesAppearanceStore;
 import com.javaclaw.desktop.component.InputRequestPanel;
 import com.javaclaw.desktop.component.PlatformComponentFactory;
+import com.javaclaw.desktop.component.PlatformDialogs;
 import com.javaclaw.desktop.settings.ManagementCenterWindow;
 import com.javaclaw.desktop.settings.SdkManagementSettingsGateways;
 import com.javaclaw.desktop.state.ConnectionState;
@@ -185,8 +186,14 @@ public final class DesktopShellController {
     /** 创建 Workspace。 */
     @FXML
     public void newWorkspace() {
-        TextInputDialog nameDialog = new TextInputDialog("新工作区");
-        nameDialog.setHeaderText("输入 Workspace 名称");
+        TextInputDialog nameDialog = PlatformDialogs.requiredText(
+                root,
+                "创建 Workspace",
+                "设置 Workspace 名称",
+                "该名称用于在 JavaClaw 中识别工作区；下一步将选择对应的本地根目录。",
+                "例如：JavaClaw 开发",
+                "新工作区",
+                "继续");
         Optional<String> name = nameDialog.showAndWait().map(String::strip).filter(value -> !value.isEmpty());
         if (name.isEmpty()) {
             return;
@@ -203,8 +210,8 @@ public final class DesktopShellController {
     /** 创建当前 Workspace 的 Thread。 */
     @FXML
     public void newThread() {
-        TextInputDialog dialog = new TextInputDialog("新对话");
-        dialog.setHeaderText("输入 Thread 标题");
+        TextInputDialog dialog = PlatformDialogs.requiredText(
+                root, "创建对话", "设置对话标题", "标题用于在当前 Workspace 的对话列表中识别本次任务。", "例如：排查模型连接", "新对话", "创建对话");
         dialog.showAndWait()
                 .map(String::strip)
                 .filter(value -> !value.isEmpty())

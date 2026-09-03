@@ -224,6 +224,7 @@ public record ViewStructuredListField(
     private static String choice(Object value, ViewStructuredItemField field) {
         String selected = text(value, field);
         if (!selected.isEmpty()
+                && field.optionSource().isEmpty()
                 && field.options().stream().noneMatch(option -> option.value().equals(selected))) {
             throw new IllegalArgumentException(field.name() + " is not a declared choice");
         }

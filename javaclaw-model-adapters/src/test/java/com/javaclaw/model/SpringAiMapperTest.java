@@ -16,6 +16,7 @@ import org.springframework.ai.chat.prompt.ChatOptions;
 
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.MessageRole;
+import com.javaclaw.api.ProviderAuthentication;
 import com.javaclaw.api.ToolDescriptor;
 import com.javaclaw.api.ToolIdentity;
 import com.javaclaw.api.ToolRisk;
@@ -147,6 +148,10 @@ class SpringAiMapperTest {
                 SpringAiProvider.OPENAI_COMPATIBLE,
                 " model ",
                 Optional.of(URI.create("https://example.invalid")),
+                ProviderAuthentication.API_KEY,
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
                 Duration.ofSeconds(5),
                 10);
         assertEquals("endpoint", config.endpointId());
@@ -179,7 +184,16 @@ class SpringAiMapperTest {
 
     private static SpringAiEndpointConfig config(String endpoint, String model, Duration timeout, int retries) {
         return new SpringAiEndpointConfig(
-                endpoint, SpringAiProvider.ANTHROPIC, model, Optional.empty(), timeout, retries);
+                endpoint,
+                SpringAiProvider.ANTHROPIC,
+                model,
+                Optional.empty(),
+                ProviderAuthentication.API_KEY,
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                timeout,
+                retries);
     }
 
     private static com.javaclaw.runtime.ModelCapabilities capabilities() {

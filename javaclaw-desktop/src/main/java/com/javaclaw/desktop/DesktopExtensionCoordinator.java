@@ -10,7 +10,7 @@ import java.util.Set;
 import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.ConversationThread;
-import com.javaclaw.api.Workspace;
+import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.client.CommandOptions;
 import com.javaclaw.client.sdk.JavaClawClient;
 import com.javaclaw.desktop.state.DesktopState;
@@ -35,30 +35,38 @@ final class DesktopExtensionCoordinator {
 
     ViewData load(
             JavaClawClient client,
+            WorkspaceId workspaceId,
             ExtensionRpcContracts.ViewDocument document,
             ViewSchema schema,
             DesktopState snapshot,
             ViewLoadRequest loadRequest) {
-        Workspace workspace = snapshot.threads().selectedWorkspace().orElseThrow();
+        WorkspaceId checkedWorkspace = Objects.requireNonNull(workspaceId, "workspaceId");
         LinkedHashMap<String, ViewData.Source> sources = new LinkedHashMap<>();
         Map<String, String> keyFields = selectionKeyFields(schema);
         Set<String> masterSources = masterSources(schema);
         LoadScope scope = new LoadScope(
-                client, document.extensionId(), workspace, snapshot, loadRequest, keyFields, masterSources);
+                client, document.extensionId(), checkedWorkspace, snapshot, loadRequest, keyFields, masterSources);
+        PlatformViewDataSourceResolver platform = new PlatformViewDataSourceResolver(client, checkedWorkspace);
         for (ViewDataSource source : schema.dataSources()) {
-            sources.put(source.id(), querySource(scope, source, sources));
+            ViewData.Source loaded = platform.resolve(source).orElseGet(() -> querySource(scope, source, sources));
+            sources.put(source.id(), loaded);
         }
         return new ViewData(sources);
     }
 
     ExtensionRpcContracts.CallResult execute(
-            JavaClawClient client, String extensionId, ViewCommandInvocation invocation, DesktopState snapshot) {
-        Workspace workspace = snapshot.threads().selectedWorkspace().orElseThrow();
+            JavaClawClient client,
+            WorkspaceId workspaceId,
+            String extensionId,
+            ViewCommandInvocation invocation,
+            DesktopState snapshot) {
+        WorkspaceId checkedWorkspace = Objects.requireNonNull(workspaceId, "workspaceId");
+        Optional<ConversationThread> selectedThread = selectedThread(snapshot, checkedWorkspace);
         ExtensionRpcContracts.CallPayload call = new ExtensionRpcContracts.CallPayload(
                 extensionId,
-                workspace.id(),
-                snapshot.threads().selectedThread().map(ConversationThread::id),
-                snapshot.threads().activeTurn().map(AgentTurn::id),
+                checkedWorkspace,
+                selectedThread.map(ConversationThread::id),
+                selectedTurn(snapshot, selectedThread).map(AgentTurn::id),
                 invocation.operation(),
                 json.encode(invocation.arguments()));
         return client.extensions().command(call, CommandOptions.create(invocation.expectedRevision()));
@@ -77,9 +85,10 @@ final class DesktopExtensionCoordinator {
                 scope.request().selectedKey(source.id()));
         ExtensionRpcContracts.CallPayload call = new ExtensionRpcContracts.CallPayload(
                 scope.extensionId(),
-                scope.workspace().id(),
-                scope.snapshot().threads().selectedThread().map(ConversationThread::id),
-                scope.snapshot().threads().activeTurn().map(AgentTurn::id),
+                scope.workspaceId(),
+                selectedThread(scope.snapshot(), scope.workspaceId()).map(ConversationThread::id),
+                selectedTurn(scope.snapshot(), selectedThread(scope.snapshot(), scope.workspaceId()))
+                        .map(AgentTurn::id),
                 source.query(),
                 json.encode(query));
         ViewQueryResult result = scope.client().extensions().viewQuery(call);
@@ -180,10 +189,23 @@ final class DesktopExtensionCoordinator {
         return Map.copyOf(normalized);
     }
 
+    private static Optional<ConversationThread> selectedThread(DesktopState snapshot, WorkspaceId workspaceId) {
+        return snapshot.threads().selectedThread().filter(thread -> workspaceId.equals(thread.workspaceId()));
+    }
+
+    private static Optional<AgentTurn> selectedTurn(
+            DesktopState snapshot, Optional<ConversationThread> selectedThread) {
+        return snapshot.threads()
+                .activeTurn()
+                .filter(turn -> selectedThread
+                        .map(thread -> thread.id().equals(turn.threadId()))
+                        .orElse(false));
+    }
+
     private record LoadScope(
             JavaClawClient client,
             String extensionId,
-            Workspace workspace,
+            WorkspaceId workspaceId,
             DesktopState snapshot,
             ViewLoadRequest request,
             Map<String, String> keyFields,

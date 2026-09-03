@@ -14,8 +14,8 @@ import java.util.concurrent.locks.ReentrantLock;
 import com.javaclaw.api.CancellationToken;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.TurnId;
 import com.javaclaw.runtime.ModelCapabilities;
 import com.javaclaw.runtime.ModelEventSink;
@@ -28,30 +28,36 @@ import com.javaclaw.runtime.NativeCompactionSupport;
 import com.javaclaw.runtime.NativeConversationSupport;
 import com.javaclaw.runtime.ProviderState;
 import com.javaclaw.server.persistence.ProviderService;
+import com.javaclaw.server.security.vault.VaultRuntimeGate;
 
 /**
  * 从 H2 Provider 历史建立可原子替换的精确 ModelGateway 路由。
  *
  * <p>实现说明：每次刷新先完整构造新 Generation，再一次交换引用；旧 Generation 等在途调用释放后关闭。Provider 的最新版本一旦 DISABLED/ARCHIVED，该 Provider
  * 的全部历史路由立即从新 Generation 移除，形成实时 kill switch。
+ *
+ * <p>Vault 变化时先通过共享门闩阻断新 lease，再退役旧 Generation 并重建。lease 获取前后必须处于同一开放 epoch，避免凭据失效期间继续获得旧 Adapter。
  */
 public final class ProviderModelRegistry
         implements ModelGateway, NativeConversationSupport, NativeCompactionSupport, AutoCloseable {
     private final ProviderService providers;
     private final AdapterFactory adapters;
+    private final VaultRuntimeGate runtimeGate;
     private final ReentrantLock refreshLock = new ReentrantLock();
     private volatile Generation current = Generation.empty();
     private boolean closed;
 
     /**
-     * 创建并加载 H2 Provider 路由。
+     * 创建并加载与 Vault 状态线性化的 H2 Provider 路由。
      *
      * @param providers Provider 历史服务
      * @param adapters 精确 Adapter 构造边界
+     * @param runtimeGate Vault 变化期间阻止新 lease 的共享门闩
      */
-    public ProviderModelRegistry(ProviderService providers, AdapterFactory adapters) {
+    public ProviderModelRegistry(ProviderService providers, AdapterFactory adapters, VaultRuntimeGate runtimeGate) {
         this.providers = Objects.requireNonNull(providers, "providers");
         this.adapters = Objects.requireNonNull(adapters, "adapters");
+        this.runtimeGate = Objects.requireNonNull(runtimeGate, "runtimeGate");
         reload();
         providers.participate(this::prepare);
     }
@@ -66,6 +72,21 @@ public final class ProviderModelRegistry
             Generation next = build(providers.listAllVersions());
             Generation previous = current;
             current = next;
+            previous.retire();
+        } finally {
+            refreshLock.unlock();
+        }
+    }
+
+    /** 立即退役所有已复制 Vault 凭据的 Adapter；重建失败时保持无路由状态。 */
+    public void invalidate() {
+        refreshLock.lock();
+        try {
+            if (closed) {
+                return;
+            }
+            Generation previous = current;
+            current = Generation.empty();
             previous.retire();
         } finally {
             refreshLock.unlock();
@@ -165,11 +186,14 @@ public final class ProviderModelRegistry
             for (ProviderEndpoint endpoint : history) {
                 ProviderEndpoint currentEndpoint = latest.get(endpoint.id());
                 if (currentEndpoint.lifecycle() != ProviderLifecycle.ACTIVE
-                        || !endpoint.spec().roles().contains(ProviderRole.CHAT)) {
+                        || endpoint.lifecycle() != ProviderLifecycle.ACTIVE) {
                     continue;
                 }
-                for (String model : endpoint.spec().models()) {
-                    ProviderRef reference = new ProviderRef(endpoint.id(), endpoint.revision(), model);
+                for (var model : endpoint.spec().models()) {
+                    if (!model.supports(ProviderModelPurpose.CHAT)) {
+                        continue;
+                    }
+                    ProviderRef reference = new ProviderRef(endpoint.id(), endpoint.revision(), model.modelId());
                     routes.put(reference.routeKey(), adapters.create(endpoint, reference));
                 }
             }
@@ -182,10 +206,14 @@ public final class ProviderModelRegistry
 
     private Lease acquireCurrent() {
         while (true) {
+            long gateStamp = runtimeGate.requireOpenStamp();
             Generation observed = current;
             Lease lease = observed.tryAcquire();
-            if (lease != null) {
+            if (lease != null && runtimeGate.remainsOpen(gateStamp)) {
                 return lease;
+            }
+            if (lease != null) {
+                lease.close();
             }
         }
     }

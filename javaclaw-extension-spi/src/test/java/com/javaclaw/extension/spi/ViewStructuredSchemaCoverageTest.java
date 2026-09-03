@@ -174,6 +174,48 @@ class ViewStructuredSchemaCoverageTest {
     }
 
     @Test
+    void dynamicChoice由平台目录约束而非静态选项约束() {
+        ViewOptionSource source = new ViewOptionSource(
+                "toolFields", "fieldPointer", "fieldLabel", Optional.of(new ViewOptionFilter("toolName", "toolName")));
+        ViewStructuredItemField dynamic = new ViewStructuredItemField(
+                "fieldPointer",
+                "输出字段",
+                ViewStructuredItemType.CHOICE,
+                Optional.of("/exitCode"),
+                List.of(),
+                ViewStructuredItemValidation.required(true),
+                List.of(),
+                Optional.of(source));
+        ViewStructuredListField list = new ViewStructuredListField(
+                "items",
+                "条目",
+                new ViewBinding("editor", "items"),
+                0,
+                1,
+                "id",
+                List.of(dynamic),
+                List.of(),
+                Optional.empty());
+
+        assertEquals(
+                "/success",
+                list.normalizeRows(List.of(Map.of("id", "one", "fieldPointer", "/success")))
+                        .getFirst()
+                        .get("fieldPointer"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new ViewStructuredItemField(
+                        "text",
+                        "文本",
+                        ViewStructuredItemType.TEXT,
+                        Optional.empty(),
+                        List.of(),
+                        ViewStructuredItemValidation.required(false),
+                        List.of(),
+                        Optional.of(source)));
+    }
+
+    @Test
     void structuredValidation拒绝越界和逆序范围() {
         assertInvalidStructuredValidation(Optional.of(-1), Optional.empty(), Optional.empty(), Optional.empty());
         assertInvalidStructuredValidation(Optional.empty(), Optional.of(4_001), Optional.empty(), Optional.empty());
@@ -297,7 +339,8 @@ class ViewStructuredSchemaCoverageTest {
             List<String> initialList,
             ViewStructuredItemValidation validation,
             List<ViewOption> options) {
-        return new ViewStructuredItemField(name, "字段", type, initial, initialList, validation, options);
+        return new ViewStructuredItemField(
+                name, "字段", type, initial, initialList, validation, options, Optional.empty());
     }
 
     private static ViewStructuredItemValidation required() {

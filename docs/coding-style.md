@@ -6,7 +6,7 @@
 ## 可读性与结构
 
 - Java 使用 UTF-8、LF、4 空格缩进和 120 列目标；禁止通配符 import、一行多语句与压缩非空方法体。
-- 手写 Java、CSS、FXML 与发布脚本单文件最多 600 行，目标不超过 400 行；Java 单方法最多 60 行。
+- 手写 Java、SQL、CSS、FXML 与发布脚本单文件最多 600 行，目标不超过 400 行；Java 单方法最多 60 行。
 - cyclomatic complexity 不超过 12，控制结构嵌套不超过 4 层，参数不超过 7 个。
 - 参数过多时使用有语义的不可变 command/options record；不得用无意义 Map 代替模型。
 - 一个类只有一个主要变化原因。禁止 `Utils`、`Common`、万能 `Manager`、Service Locator 与全局静态容器。

@@ -240,7 +240,7 @@ class ServerInfrastructureTest {
             ScheduleLifecycleCoordinator schedule,
             CanonicalJson json,
             Clock clock) {
-        ProviderService providers = new ProviderService(database, json, clock);
+        ProviderService providers = new ProviderService(database, reference -> true, json, clock);
         ExtensionJobService jobs = new ExtensionJobService(database, json, clock);
         ExtensionCatalogRepository extensions = new ExtensionCatalogRepository(database, json, clock);
         extensions.installBuiltIn(McpBuiltinExtensionDescriptor.create());

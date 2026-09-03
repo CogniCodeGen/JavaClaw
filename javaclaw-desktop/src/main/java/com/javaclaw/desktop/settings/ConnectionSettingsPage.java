@@ -14,7 +14,7 @@ import com.javaclaw.desktop.component.PlatformComponentFactory;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 
-/** 当前本地 App Server SDK 会话和 Protocol v2 协商状态页面。 */
+/** 当前本地 JavaClaw 服务客户端会话和协议协商状态页面。 */
 public final class ConnectionSettingsPage implements ManagedSettingsPage {
     private final PlatformComponentFactory components = new PlatformComponentFactory();
     private final ConnectionSettingsPresenter presenter;
@@ -66,20 +66,20 @@ public final class ConnectionSettingsPage implements ManagedSettingsPage {
     public void discardDraft() {}
 
     private void buildLayout() {
-        Label hint = new Label("此页只展示 Desktop 当前 Java SDK 会话，不读取 transport 实现或 App Server 内部对象。");
+        Label hint = new Label("此页只显示桌面端与 JavaClaw 服务的当前连接，不读取传输层实现或服务端内部对象。");
         hint.setWrapText(true);
         hint.getStyleClass().add("sec-hint");
-        FormSection session = new FormSection("SDK 会话", "initialize/session 成功后固定 Protocol v2 和协商能力，断线后不会伪造在线状态。");
+        FormSection session = new FormSection("客户端会话", "初始化成功后会固定协议版本和双方支持的能力；断线后不会伪造在线状态。");
         session.addField("状态", status);
-        session.addField("App Server", server);
-        session.addField("Protocol", protocol);
-        session.addField("Stable", stable);
-        session.addField("Experimental", experimental);
-        FormSection recovery = new FormSection("连接恢复", "重连与启动服务需要 Desktop 连接协调器和 launcher supervisor 的显式状态。");
+        session.addField("JavaClaw 服务", server);
+        session.addField("协议", protocol);
+        session.addField("稳定能力", stable);
+        session.addField("实验能力", experimental);
+        FormSection recovery = new FormSection("连接恢复", "重新连接或启动服务时，桌面端会使用当前连接协调和启动器状态。");
         Button start = components.action(launcher.controlLabel(), ActionStyle.PRIMARY, ActionSize.NORMAL);
         start.setDisable(true);
         start.setTooltip(new Tooltip(launcher.recoveryInstruction()));
-        Label unavailable = new Label("“重新连接”会关闭旧 SDK 会话并重新协商 Protocol v2。" + launcher.recoveryInstruction());
+        Label unavailable = new Label("“重新连接”会关闭旧会话，并重新协商第 2 版协议。" + launcher.recoveryInstruction());
         unavailable.setWrapText(true);
         unavailable.getStyleClass().addAll("sec-hint", "platform-action-error");
         recovery.addFullWidth(new javafx.scene.layout.HBox(8, reconnect, start));
@@ -106,7 +106,7 @@ public final class ConnectionSettingsPage implements ManagedSettingsPage {
     private void renderSummary(ConnectionSummary summary) {
         status.setText("已连接");
         server.setText(summary.serverName() + " " + summary.serverVersion());
-        protocol.setText("App Protocol v" + summary.protocolVersion() + " / JSON-RPC 2.0");
+        protocol.setText("应用协议 v" + summary.protocolVersion() + " / JSON-RPC 2.0");
         stable.setText(join(summary.stableCapabilities()));
         experimental.setText(join(summary.experimentalCapabilities()));
     }

@@ -6,9 +6,10 @@
 
 ## 平台基线
 
-- [x] Reactor 收敛为 14 个明确模块，版本统一为 `5.0.0-SNAPSHOT`；Browser 与 Knowledge 各自拥有独立 Worker 模块。
+- [x] Reactor 收敛为 14 个子模块，版本统一为 `5.0.0-SNAPSHOT`；包含根聚合项目时 Maven Reactor 共 15 个 project，
+  Browser 与 Knowledge 各自拥有独立 Worker 模块。
 - [x] 建立 Thread / Turn / ItemEnvelope、Protocol v2 和 H2 `data-v5` 空库初始化。
-- [x] Protocol v2 catalog 的 138 个方法都有严格 params/result Schema；ID、时间和 Duration 只有一种 wire 表示。
+- [x] Protocol v2 catalog 的 147 个方法都有严格 params/result Schema；ID、时间和 Duration 只有一种 wire 表示。
 - [x] 建立 Thin Turn Harness、预算、取消、流事件、背压和 EffectReceipt 契约。
 - [x] Turn 在模型/工具边界前持久化 phase、intent digest、usage、冻结工具目录与 batch；结果和 checkpoint 同事务推进。
 - [x] Extension Job 使用持久化 intent/checkpoint 恢复活动工作单元；无法确认的在途副作用进入 `UNKNOWN_OUTCOME`。
@@ -26,9 +27,18 @@
 - [x] OpenAI Responses reasoning summary、opaque state 与 native compaction 专用契约测试。
 - [x] 冻结工具目录、渐进发现、schema/revision 校验与实时撤权。
 - [x] Provider、Agent Profile、PermissionProfile、Secret Vault 的强类型 RPC、SDK、持久化和管理页面。
+- [x] Provider 逐模型声明 Chat/Embedding 用途；安装级 Embedding 使用精确 `ProviderRef` 绑定，不再按名称或隐藏选项选择。
+- [x] 四类 Provider 的有界模型目录发现贯通 Adapter、App Server、Protocol、SDK 与设置页；session-owned 的
+  start/read/cancel 操作最长 30 秒、最多 1000 条，关闭页面、session 或服务会取消真实 HTTP 调用，结果不持久化。
+- [x] Provider 首次设置按“禁用连接壳、凭据、模型用途、启用”使用确定性幂等命令恢复；中断后继续缺失步骤，ID 冲突不覆盖。
+- [x] `default/worker/explorer` Profile 预设和 Workspace review/developer 权限预设由服务端版本化目录提供；实例化后仍是
+  普通 Profile/PermissionProfile，不增加角色运行时。预设不进入 H2；向导复用普通 create/update/binding RPC，并以
+  Workspace 确定性 ID 和幂等键恢复。`standard` 技术模板在 UI 中显示为“受限对话”。
 - [x] 本机端到端测试已验证 Provider 配置、Vault Secret、Profile 精确引用驱动 Turn，并在关闭后从同一 `data-v5`
   重建 App Server 再次完成 Turn。
-- [x] Provider 配置与凭据由服务端复合命令原子提交；非计费探测与显式确认的计费 round-trip 分离。
+- [x] Provider 配置按不可变 revision 提交；`provider/credential/*` 先构造候选 Adapter，在同一 H2 事务提交 Vault
+  密文、Secret 元数据 revision、Provider 新 revision 和幂等回执，再同步交换 registry generation；数据库提交后的
+  激活或清理异常不能回滚 H2，运行时保持 fail closed。非计费探测与显式确认的计费 round-trip 分离。
 - [x] Prompt provenance 预览和受预算 Harness Turn 的 Prompt 优化 Draft/显式采纳闭环。
 - [x] PermissionProfile 标准模板、clone、历史、diff、五层有效权限预览与实时撤权。
 - [x] 审批、Sandbox、PTY 和 EffectReceipt 执行链。
@@ -55,7 +65,8 @@
 - [x] `extension/event` 仅携带资源标识和 revision；SDK 持续接收，Desktop 合并失效并重新读取权威状态。
 - [x] ViewSchema v2 policy、受限 renderer、平台 Graph 控件及 dirty/revision conflict 草稿保护。
 - [x] 单实例设置与管理中心、九主题、四档字号、三档密度和共享组件。
-- [x] 29 个生产管理入口均接入强类型 SDK 或 ViewSchema v2；Desktop 覆盖率和 Golden 继续作为独立发布证据。
+- [x] 29 个生产管理入口均接入强类型 SDK 或 ViewSchema v2；学习策略由 Memory 独立 ViewDocument 拥有，不保留重复
+  Desktop 表单；Desktop 覆盖率和 Golden 继续作为独立发布证据。
 - [x] Managed Worktree 的父子 Thread 绑定、隔离根、Patch、备份后 cleanup 和受治理 apply 管理纵切。
 - [x] 第三方 Bundle 的 digest staging、签名/信任审阅、原子升级、进程监督、配额、隔离和可恢复 Trash 管理纵切。
 - [x] lifecycle lease、固定 60 秒退出、Schedule 登录启动项协调和托盘控制实现。
@@ -79,19 +90,20 @@
 - [x] GitHub provenance 与 CycloneDX SBOM attestation 配置。
 - [x] 主运行时与 Browser/Knowledge/Skill image 完成依赖隔离；Browser 运行期不下载 Chromium，安装缺少两类真实
   原生能力回执时 fail closed。
-- [x] macOS 设置中心 54 张生产 Scene Golden 已按 29 个入口重新生成；矩阵锁定九主题、三密度和两种窗口，
-  并由独立 Failsafe JVM 执行逐字节回归，避免 JavaFX 进程级字形缓存造成测试顺序污染。
+- [x] macOS 设置中心壳和外观页已有 54 张生产 Scene Golden；矩阵锁定九主题、三密度、100% 字号和两种窗口，
+  并由独立 Failsafe JVM 执行逐字节回归，避免 JavaFX 进程级字形缓存造成测试顺序污染；导航目录另行断言 29 个入口。
+- [ ] 29 页正文、多状态和其余三档字号的 macOS 视觉 Golden。`阻断`
 - [x] 生产 import graph 无包循环，架构门禁使用最长包名归属解析，能检出父包与子包之间的真实边。
 - [x] API、Extension SPI、Protocol 与 Agent Runtime 已分别通过当前模块 90%/80% 覆盖率门禁。
 - [x] Model Adapter、Builtin Contracts/Extensions、Knowledge Worker、Native Host 与 Client 已分别通过当前模块
   80%/70% 覆盖率门禁。
-- [x] Browser Service 的 47 个自动测试通过，覆盖率为行 81.67%、分支 71.10%，达到 80%/70% 门禁。
-- [x] Packaging 本机 `clean verify` 共 87 个测试，行覆盖率 82.56%、分支覆盖率 76.67%，达到 80%/70% 门禁。
-- [x] App Server 全量 621 个测试通过，行覆盖率 90.54%、分支覆盖率 80.00%，达到 90%/80% 门禁。
-- [x] Desktop 的 165 个单元测试和 1 个 Golden 集成测试通过；单元测试覆盖率为行 86.70%、分支 70.10%，
+- [x] Browser Service 的 47 个自动测试通过，覆盖率为行 81.62%、分支 71.45%，达到 80%/70% 门禁。
+- [x] Packaging 本机 `clean verify` 共 87 个测试，行覆盖率 82.58%、分支覆盖率 76.67%，达到 80%/70% 门禁。
+- [x] App Server 全量 667 个测试通过，行覆盖率 90.63%、分支覆盖率 80.00%，达到 90%/80% 门禁。
+- [x] Desktop 的 254 个单元测试和 1 个 Golden 集成测试通过；单元测试覆盖率为行 88.41%、分支 73.10%，
   达到 80%/70% 门禁。
 - [x] 当前改造后的 macOS jlink 发行目录已通过隔离 `data-v5` 的 Protocol v2 initialize 与 Workspace 查询健康检查。
 - [x] 2026-09-02 当前 macOS aarch64 工作树通过 Spotless、Checkstyle、依赖分析、架构测试与完整
-  `mvn clean verify`；15 个 Reactor 模块全部成功，总耗时 5 分 20 秒。
+  `mvn clean verify`；15 个 Reactor project 全部成功，共执行 1801 个测试，0 失败、0 错误，7 个按当前平台条件跳过。
 - [ ] 五个原生 Runner、性能/背压、安装启动和真实签名/公证全部通过。`阻断`
 - [ ] Linux/Windows 设置中心 Golden 上传，以及主聊天、审批和断线恢复等独立生产 Scene 参考集。`阻断`

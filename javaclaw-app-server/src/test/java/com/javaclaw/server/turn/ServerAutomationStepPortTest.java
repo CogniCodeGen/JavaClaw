@@ -31,8 +31,8 @@ import com.javaclaw.api.PermissionProfile;
 import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderEndpointSpec;
+import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.SandboxExecutor;
 import com.javaclaw.api.ToolCallRequest;
 import com.javaclaw.api.ToolDescriptor;
@@ -74,6 +74,7 @@ import com.javaclaw.server.persistence.ProfileBindingService;
 import com.javaclaw.server.persistence.ProviderService;
 import com.javaclaw.server.security.grant.UnattendedToolGrantService;
 
+import static com.javaclaw.server.ProviderEndpointTestFixtures.chat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -243,8 +244,12 @@ class ServerAutomationStepPortTest {
 
     private AgentProfileService installProfile(
             H2Database database, PermissionProfileService permissions, PermissionProfile permission, Clock clock) {
-        ProviderService providers = new ProviderService(database, json, clock);
-        providers.create(identity("provider/create", "provider", Map.of()), "provider", providerSpec());
+        ProviderService providers = new ProviderService(database, reference -> true, json, clock);
+        providers.create(
+                identity("provider/create", "provider", Map.of()),
+                "provider",
+                providerSpec(),
+                ProviderLifecycle.ACTIVE);
         AgentProfileService profiles = new AgentProfileService(database, providers, permissions, json, clock);
         AgentProfileSpec spec = new AgentProfileSpec(
                 "Workflow",
@@ -317,16 +322,7 @@ class ServerAutomationStepPortTest {
     }
 
     private static ProviderEndpointSpec providerSpec() {
-        return new ProviderEndpointSpec(
-                "Provider",
-                ProviderAdapter.OPENAI_COMPATIBLE,
-                Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of("model"),
-                Optional.empty(),
-                Duration.ofSeconds(30),
-                0,
-                Map.of());
+        return chat("Provider", ProviderAdapter.OPENAI_COMPATIBLE, "model");
     }
 
     private CommandIdentity identity(String method, String key, Object payload) {

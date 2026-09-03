@@ -18,6 +18,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
+import javafx.scene.layout.VBox;
 import org.junit.jupiter.api.Test;
 
 import com.javaclaw.api.ManagedWorktree;
@@ -32,20 +33,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ManagedWorktreeSettingsPageTest {
     @Test
-    void 恢复中心生成Patch和Backup后保持Thread导航与安全动作状态() {
+    void 恢复中心生成补丁和备份后保持父子任务导航与安全动作状态() {
         FxTestSupport.run(() -> {
             WorktreeGateway gateway = new WorktreeGateway();
             ManagedWorktreeSettingsPage page = page(gateway);
 
-            button(page, "生成 Patch Attachment").fire();
-            assertTrue(texts(page).contains("PATCH"));
-            button(page, "生成验证 Backup").fire();
-            assertTrue(texts(page).contains("BACKUP"));
-            assertFalse(button(page, "危险 Cleanup").isDisabled());
+            button(page, "生成补丁附件").fire();
+            assertTrue(texts(page).contains("补丁"));
+            button(page, "生成验证备份").fire();
+            assertTrue(texts(page).contains("备份"));
+            assertFalse(button(page, "危险清理").isDisabled());
 
-            button(page, "打开父 Thread").fire();
+            button(page, "打开父对话").fire();
             assertTrue(texts(page).stream().anyMatch(value -> value.contains("主窗口打开")));
-            button(page, "打开子 Thread").fire();
+            button(page, "打开子对话").fire();
             checkBox(page, "显示已清理历史").setSelected(true);
             assertTrue(checkBox(page, "显示已清理历史").isSelected());
         });
@@ -69,18 +70,21 @@ class ManagedWorktreeSettingsPageTest {
                 boolean interruptible = worktree.state() == ManagedWorktreeState.READY
                         || worktree.state() == ManagedWorktreeState.RUNNING;
                 boolean cleanupAllowed = capturable && worktree.backup().isPresent();
-                assertTrue(button(page, "生成 Patch Attachment").isDisabled() != capturable);
+                assertTrue(button(page, "生成补丁附件").isDisabled() != capturable);
                 assertTrue(button(page, "中断子任务").isDisabled() != interruptible);
-                assertTrue(button(page, "危险 Cleanup").isDisabled() != cleanupAllowed);
+                assertTrue(button(page, "危险清理").isDisabled() != cleanupAllowed);
             }
         });
     }
 
     private static ManagedWorktreeSettingsPage page(WorktreeGateway gateway) {
         ManagedWorktreeSettingsPage page = new ManagedWorktreeSettingsPage(gateway.proxy());
-        new Scene(page, 1_040, 720);
+        page.workspaceChanged(Optional.of(DesktopTestFixtures.workspace()));
+        VBox root = new VBox(page);
+        page.actionContent().ifPresent(root.getChildren()::add);
+        new Scene(root, 1_040, 720);
         page.activate();
-        page.applyCss();
+        root.applyCss();
         return page;
     }
 
@@ -99,7 +103,8 @@ class ManagedWorktreeSettingsPageTest {
     }
 
     private static Button button(Parent root, String text) {
-        return nodes(root, Button.class).stream()
+        Parent searchRoot = root.getScene() == null ? root : root.getScene().getRoot();
+        return nodes(searchRoot, Button.class).stream()
                 .filter(value -> text.equals(value.getText()))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("缺少按钮: " + text));
@@ -113,7 +118,8 @@ class ManagedWorktreeSettingsPageTest {
     }
 
     private static List<String> texts(Parent root) {
-        return nodes(root, Label.class).stream().map(Label::getText).toList();
+        Parent searchRoot = root.getScene() == null ? root : root.getScene().getRoot();
+        return nodes(searchRoot, Label.class).stream().map(Label::getText).toList();
     }
 
     private static <T extends Node> List<T> nodes(Parent root, Class<T> type) {

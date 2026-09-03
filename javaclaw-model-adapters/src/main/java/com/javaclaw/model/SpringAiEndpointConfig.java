@@ -5,6 +5,8 @@ import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
 
+import com.javaclaw.api.ProviderAuthentication;
+
 /**
  * Spring AI 模型端点配置。
  *
@@ -12,6 +14,10 @@ import java.util.Optional;
  * @param provider Provider 类型
  * @param model Provider 原生模型名
  * @param baseUri 可选兼容端点地址；官方默认地址时为空
+ * @param authentication 鉴权方式
+ * @param organization OpenAI organization
+ * @param project OpenAI project
+ * @param apiVersion Google Gen AI API version
  * @param timeout 单次网络调用超时
  * @param maximumRetries Provider 客户端最大重试次数
  */
@@ -20,6 +26,10 @@ public record SpringAiEndpointConfig(
         SpringAiProvider provider,
         String model,
         Optional<URI> baseUri,
+        ProviderAuthentication authentication,
+        Optional<String> organization,
+        Optional<String> project,
+        Optional<String> apiVersion,
         Duration timeout,
         int maximumRetries) {
     /** 校验端点配置。 */
@@ -28,6 +38,10 @@ public record SpringAiEndpointConfig(
         Objects.requireNonNull(provider, "provider");
         model = text(model, "model");
         baseUri = Objects.requireNonNull(baseUri, "baseUri");
+        Objects.requireNonNull(authentication, "authentication");
+        organization = Objects.requireNonNull(organization, "organization");
+        project = Objects.requireNonNull(project, "project");
+        apiVersion = Objects.requireNonNull(apiVersion, "apiVersion");
         timeout = Objects.requireNonNull(timeout, "timeout");
         if (timeout.isZero() || timeout.isNegative()) {
             throw new IllegalArgumentException("timeout must be positive");

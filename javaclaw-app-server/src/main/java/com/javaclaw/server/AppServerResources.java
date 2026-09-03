@@ -15,6 +15,7 @@ record AppServerResources(
         AutoCloseable approvals,
         ExtensionHost extensions,
         AutoCloseable scheduleLifecycle,
+        AutoCloseable modelDiscovery,
         AutoCloseable embeddings,
         AutoCloseable vault,
         AutoCloseable isolatedServices)
@@ -29,6 +30,7 @@ record AppServerResources(
         Objects.requireNonNull(approvals, "approvals");
         Objects.requireNonNull(extensions, "extensions");
         Objects.requireNonNull(scheduleLifecycle, "scheduleLifecycle");
+        Objects.requireNonNull(modelDiscovery, "modelDiscovery");
         Objects.requireNonNull(embeddings, "embeddings");
         Objects.requireNonNull(vault, "vault");
         Objects.requireNonNull(isolatedServices, "isolatedServices");
@@ -45,6 +47,7 @@ record AppServerResources(
         failure = close(approvals, failure);
         failure = close(extensions, failure);
         failure = close(scheduleLifecycle, failure);
+        failure = close(modelDiscovery, failure);
         failure = close(embeddings, failure);
         failure = close(vault, failure);
         failure = close(isolatedServices, failure);

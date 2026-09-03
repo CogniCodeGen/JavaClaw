@@ -5,8 +5,10 @@ import java.util.Objects;
 import java.util.Optional;
 
 import com.javaclaw.api.AgentProfile;
+import com.javaclaw.api.AgentProfilePreset;
 import com.javaclaw.api.AgentProfileRef;
 import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.EmbeddingBinding;
 import com.javaclaw.api.ProfileBinding;
 import com.javaclaw.api.ProfileLifecycle;
 import com.javaclaw.api.ProviderEndpoint;
@@ -29,7 +31,7 @@ public final class ProviderProfileRpcContracts {
     public record ProviderReadPayload(String id, long revision) {
         /** 校验查询。 */
         public ProviderReadPayload {
-            id = text(id, "id");
+            id = identifier(id, "id");
             revision = positive(revision, "revision");
         }
     }
@@ -39,12 +41,21 @@ public final class ProviderProfileRpcContracts {
      *
      * @param id Provider 标识
      * @param spec Provider 配置
+     * @param lifecycle 初始生命周期；允许创建禁用的空模型连接壳
      */
-    public record ProviderCreatePayload(String id, ProviderEndpointSpec spec) {
+    public record ProviderCreatePayload(String id, ProviderEndpointSpec spec, ProviderLifecycle lifecycle) {
         /** 校验创建参数。 */
         public ProviderCreatePayload {
-            id = text(id, "id");
+            id = identifier(id, "id");
             Objects.requireNonNull(spec, "spec");
+            requireMutableLifecycle(lifecycle);
+            requireModelsWhenActive(spec, lifecycle);
+            if (spec.authentication() == com.javaclaw.api.ProviderAuthentication.API_KEY) {
+                if (lifecycle != ProviderLifecycle.DISABLED || spec.credential().isPresent()) {
+                    throw new IllegalArgumentException(
+                            "API_KEY Provider must be created as a credential-free disabled shell");
+                }
+            }
         }
     }
 
@@ -58,9 +69,10 @@ public final class ProviderProfileRpcContracts {
     public record ProviderUpdatePayload(String id, ProviderEndpointSpec spec, ProviderLifecycle lifecycle) {
         /** 校验更新参数。 */
         public ProviderUpdatePayload {
-            id = text(id, "id");
+            id = identifier(id, "id");
             Objects.requireNonNull(spec, "spec");
-            Objects.requireNonNull(lifecycle, "lifecycle");
+            requireMutableLifecycle(lifecycle);
+            requireModelsWhenActive(spec, lifecycle);
         }
     }
 
@@ -72,7 +84,7 @@ public final class ProviderProfileRpcContracts {
     public record ProviderArchivePayload(String id) {
         /** 校验标识。 */
         public ProviderArchivePayload {
-            id = text(id, "id");
+            id = identifier(id, "id");
         }
     }
 
@@ -88,6 +100,24 @@ public final class ProviderProfileRpcContracts {
         }
     }
 
+    /** 本地安装默认 Embedding 绑定查询参数。 */
+    public record EmbeddingBindingReadPayload() {
+        /** 创建无字段查询参数。 */
+        public EmbeddingBindingReadPayload {}
+    }
+
+    /**
+     * 本地安装默认 Embedding 绑定更新。
+     *
+     * @param provider 精确 Provider 与 Embedding 模型引用
+     */
+    public record EmbeddingBindingUpdatePayload(ProviderRef provider) {
+        /** 校验模型引用。 */
+        public EmbeddingBindingUpdatePayload {
+            Objects.requireNonNull(provider, "provider");
+        }
+    }
+
     /**
      * Agent Profile 精确版本查询。
      *
@@ -97,7 +127,7 @@ public final class ProviderProfileRpcContracts {
     public record AgentProfileReadPayload(String id, long revision) {
         /** 校验查询。 */
         public AgentProfileReadPayload {
-            id = text(id, "id");
+            id = identifier(id, "id");
             revision = positive(revision, "revision");
         }
     }
@@ -111,7 +141,7 @@ public final class ProviderProfileRpcContracts {
     public record AgentProfileCreatePayload(String id, AgentProfileSpec spec) {
         /** 校验创建参数。 */
         public AgentProfileCreatePayload {
-            id = text(id, "id");
+            id = identifier(id, "id");
             Objects.requireNonNull(spec, "spec");
         }
     }
@@ -126,7 +156,7 @@ public final class ProviderProfileRpcContracts {
     public record AgentProfileUpdatePayload(String id, AgentProfileSpec spec, ProfileLifecycle lifecycle) {
         /** 校验更新参数。 */
         public AgentProfileUpdatePayload {
-            id = text(id, "id");
+            id = identifier(id, "id");
             Objects.requireNonNull(spec, "spec");
             Objects.requireNonNull(lifecycle, "lifecycle");
         }
@@ -140,7 +170,7 @@ public final class ProviderProfileRpcContracts {
     public record AgentProfileArchivePayload(String id) {
         /** 校验标识。 */
         public AgentProfileArchivePayload {
-            id = text(id, "id");
+            id = identifier(id, "id");
         }
     }
 
@@ -214,6 +244,18 @@ public final class ProviderProfileRpcContracts {
     }
 
     /**
+     * 代码内置 Agent Profile 预设列表。
+     *
+     * @param presets 按稳定目录顺序排列的预设
+     */
+    public record AgentProfilePresetListResult(List<AgentProfilePreset> presets) {
+        /** 复制预设列表。 */
+        public AgentProfilePresetListResult {
+            presets = List.copyOf(presets);
+        }
+    }
+
+    /**
      * 可空的直接 Profile 绑定查询结果。
      *
      * @param binding 查询到的直接绑定；未设置时为空
@@ -225,10 +267,22 @@ public final class ProviderProfileRpcContracts {
         }
     }
 
-    private static String text(String value, String name) {
+    /**
+     * 可空的本地安装默认 Embedding 绑定查询结果。
+     *
+     * @param binding 未配置时为空
+     */
+    public record EmbeddingBindingReadResult(Optional<EmbeddingBinding> binding) {
+        /** 校验可选结果。 */
+        public EmbeddingBindingReadResult {
+            binding = Objects.requireNonNull(binding, "binding");
+        }
+    }
+
+    private static String identifier(String value, String name) {
         String normalized = Objects.requireNonNull(value, name).strip();
-        if (normalized.isEmpty()) {
-            throw new IllegalArgumentException(name + " must not be blank");
+        if (!normalized.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,239}")) {
+            throw new IllegalArgumentException(name + " contains unsupported characters");
         }
         return normalized;
     }
@@ -238,5 +292,18 @@ public final class ProviderProfileRpcContracts {
             throw new IllegalArgumentException(name + " must be positive");
         }
         return value;
+    }
+
+    private static void requireMutableLifecycle(ProviderLifecycle lifecycle) {
+        Objects.requireNonNull(lifecycle, "lifecycle");
+        if (lifecycle == ProviderLifecycle.ARCHIVED) {
+            throw new IllegalArgumentException("Provider create/update lifecycle must not be ARCHIVED");
+        }
+    }
+
+    private static void requireModelsWhenActive(ProviderEndpointSpec spec, ProviderLifecycle lifecycle) {
+        if (lifecycle == ProviderLifecycle.ACTIVE && spec.models().isEmpty()) {
+            throw new IllegalArgumentException("active Provider must declare at least one model");
+        }
     }
 }

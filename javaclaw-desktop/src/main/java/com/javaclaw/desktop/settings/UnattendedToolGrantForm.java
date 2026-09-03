@@ -7,21 +7,24 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import com.javaclaw.api.CanonicalPayload;
+import com.javaclaw.api.ToolCatalogQueryResult;
+import com.javaclaw.api.ToolDescriptor;
 import com.javaclaw.api.ToolIdentity;
 import com.javaclaw.api.UnattendedToolGrantDraft;
 import com.javaclaw.api.WorkspaceId;
+import com.javaclaw.builtin.contracts.ScheduleContracts;
 import com.javaclaw.protocol.CanonicalJson;
 
 /**
  * 无人值守 Tool Grant 的界面草稿；保留无效文本，直到用户提交时统一校验。
  *
- * @param scheduleId Schedule 定义标识
- * @param scheduleRevision Schedule revision 文本
- * @param producerId 工具来源
- * @param toolName 工具名称
- * @param toolRevision 工具 revision 文本
- * @param catalogRevision 工具目录 revision 文本
- * @param schemaHash 输入 Schema SHA-256
+ * @param scheduleId 从 Schedule 目录绑定的定义标识
+ * @param scheduleRevision 从 Schedule 目录绑定的 revision 文本
+ * @param producerId 从 ToolDescriptor 绑定的工具来源
+ * @param toolName 从 ToolDescriptor 绑定的工具名称
+ * @param toolRevision 从 ToolDescriptor 绑定的 revision 文本
+ * @param catalogRevision 服务端返回的权威目录 revision 文本
+ * @param schemaHash ToolDescriptor 输入 Schema SHA-256
  * @param fixedArguments 固定参数 JSON object
  * @param variableFields 可变化的顶层字符串字段
  * @param maximumUses 最大次数文本
@@ -59,6 +62,58 @@ public record UnattendedToolGrantForm(
         return new UnattendedToolGrantForm("", "", "", "", "", "", "", "{}", "", "1", "1");
     }
 
+    /**
+     * 用权威 Schedule 和工具目录选择替换全部技术字段，并保留用户可编辑参数。
+     *
+     * @param schedule 精确 Schedule 定义
+     * @param catalog 服务端权威目录
+     * @param tool 从目录中选中的精确描述
+     * @return 已绑定表单
+     */
+    public UnattendedToolGrantForm bind(
+            ScheduleContracts.Definition schedule, ToolCatalogQueryResult catalog, ToolDescriptor tool) {
+        ScheduleContracts.Definition checkedSchedule = Objects.requireNonNull(schedule, "schedule");
+        ToolCatalogQueryResult checkedCatalog = Objects.requireNonNull(catalog, "catalog");
+        ToolDescriptor checkedTool = Objects.requireNonNull(tool, "tool");
+        return new UnattendedToolGrantForm(
+                checkedSchedule.id(),
+                Long.toString(checkedSchedule.revision()),
+                checkedTool.identity().producerId(),
+                checkedTool.identity().name(),
+                Long.toString(checkedTool.identity().revision()),
+                Long.toString(checkedCatalog.catalogRevision()),
+                checkedTool.inputSchema().sha256(),
+                fixedArguments,
+                variableFields,
+                maximumUses,
+                validityDays);
+    }
+
+    /**
+     * 只替换允许用户编辑的参数、额度和期限字段。
+     *
+     * @param fixedArguments 固定参数 JSON
+     * @param variableFields 允许变化的字符串字段
+     * @param maximumUses 最大调用次数
+     * @param validityDays 有效天数
+     * @return 保留所有权威技术绑定的新草稿
+     */
+    public UnattendedToolGrantForm edit(
+            String fixedArguments, String variableFields, String maximumUses, String validityDays) {
+        return new UnattendedToolGrantForm(
+                scheduleId,
+                scheduleRevision,
+                producerId,
+                toolName,
+                toolRevision,
+                catalogRevision,
+                schemaHash,
+                fixedArguments,
+                variableFields,
+                maximumUses,
+                validityDays);
+    }
+
     /** @return 是否填写了足以表达新授权意图的字段 */
     public boolean dirty() {
         return !scheduleId.isBlank()
@@ -88,9 +143,9 @@ public record UnattendedToolGrantForm(
         return new UnattendedToolGrantDraft(
                 Objects.requireNonNull(workspaceId, "workspaceId"),
                 scheduleId,
-                positive(scheduleRevision, "Schedule revision"),
-                new ToolIdentity(producerId, toolName, positive(toolRevision, "工具 revision")),
-                positive(catalogRevision, "Catalog revision"),
+                positive(scheduleRevision, "定时任务版本"),
+                new ToolIdentity(producerId, toolName, positive(toolRevision, "工具版本")),
+                positive(catalogRevision, "目录版本"),
                 schemaHash,
                 arguments,
                 fields(variableFields),

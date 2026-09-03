@@ -16,6 +16,7 @@ import java.util.regex.Pattern;
  * @param initialTextList 一维文本列表初值
  * @param validation 有限类型校验
  * @param options CHOICE 的固定选项
+ * @param optionSource CHOICE 的可选动态选项来源
  */
 public record ViewStructuredItemField(
         String name,
@@ -24,7 +25,8 @@ public record ViewStructuredItemField(
         Optional<String> initialValue,
         List<String> initialTextList,
         ViewStructuredItemValidation validation,
-        List<ViewOption> options) {
+        List<ViewOption> options,
+        Optional<ViewOptionSource> optionSource) {
     private static final Pattern FIELD_NAME = Pattern.compile("[A-Za-z][A-Za-z0-9_-]{0,63}");
 
     /** 校验字段类型、初值和固定选项。 */
@@ -36,13 +38,14 @@ public record ViewStructuredItemField(
         initialTextList = List.copyOf(Objects.requireNonNull(initialTextList, "initialTextList"));
         Objects.requireNonNull(validation, "validation");
         options = List.copyOf(Objects.requireNonNull(options, "options"));
+        optionSource = Objects.requireNonNull(optionSource, "optionSource");
         if (!FIELD_NAME.matcher(name).matches()) {
             throw new IllegalArgumentException("name is not a safe field name");
         }
         validateText(label, "label");
         validateValidation(type, validation);
-        validateOptions(type, options);
-        validateInitial(type, initialValue, initialTextList, options);
+        validateOptions(type, options, optionSource);
+        validateInitial(type, initialValue, initialTextList, options, optionSource);
     }
 
     private static void validateValidation(ViewStructuredItemType type, ViewStructuredItemValidation validation) {
@@ -63,11 +66,12 @@ public record ViewStructuredItemField(
         }
     }
 
-    private static void validateOptions(ViewStructuredItemType type, List<ViewOption> options) {
-        if (type == ViewStructuredItemType.CHOICE && options.isEmpty()) {
+    private static void validateOptions(
+            ViewStructuredItemType type, List<ViewOption> options, Optional<ViewOptionSource> optionSource) {
+        if (type == ViewStructuredItemType.CHOICE && options.isEmpty() && optionSource.isEmpty()) {
             throw new IllegalArgumentException("choice item field requires options");
         }
-        if (type != ViewStructuredItemType.CHOICE && !options.isEmpty()) {
+        if (type != ViewStructuredItemType.CHOICE && (!options.isEmpty() || optionSource.isPresent())) {
             throw new IllegalArgumentException("only choice item field may declare options");
         }
         if (options.size() > ViewStructuredListField.MAX_OPTIONS
@@ -88,7 +92,8 @@ public record ViewStructuredItemField(
             ViewStructuredItemType type,
             Optional<String> initialValue,
             List<String> initialTextList,
-            List<ViewOption> options) {
+            List<ViewOption> options,
+            Optional<ViewOptionSource> optionSource) {
         if (type == ViewStructuredItemType.TEXT_LIST) {
             if (initialValue.isPresent() || initialTextList.size() > ViewStructuredListField.MAX_TEXT_LIST_ITEMS) {
                 throw new IllegalArgumentException("text list initial value is invalid");
@@ -99,10 +104,14 @@ public record ViewStructuredItemField(
         if (!initialTextList.isEmpty()) {
             throw new IllegalArgumentException("only text list item field may declare initialTextList");
         }
-        initialValue.ifPresent(value -> validateScalarInitial(type, value, options));
+        initialValue.ifPresent(value -> validateScalarInitial(type, value, options, optionSource));
     }
 
-    private static void validateScalarInitial(ViewStructuredItemType type, String value, List<ViewOption> options) {
+    private static void validateScalarInitial(
+            ViewStructuredItemType type,
+            String value,
+            List<ViewOption> options,
+            Optional<ViewOptionSource> optionSource) {
         validateText(value, "initialValue");
         switch (type) {
             case BOOLEAN -> {
@@ -112,7 +121,8 @@ public record ViewStructuredItemField(
             }
             case NUMBER -> new BigDecimal(value);
             case CHOICE -> {
-                if (options.stream().noneMatch(option -> option.value().equals(value))) {
+                if (optionSource.isEmpty()
+                        && options.stream().noneMatch(option -> option.value().equals(value))) {
                     throw new IllegalArgumentException("choice initialValue is not declared");
                 }
             }

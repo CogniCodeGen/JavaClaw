@@ -37,7 +37,7 @@ class InstructionSettingsPresenterTest {
         assertEquals("module/AGENTS.md", resolution.sources().getFirst().relativePath());
         assertEquals(12, resolution.projectIncludedBytes());
         assertEquals("PROJECT.md", latest.get().fallbackDraft());
-        assertTrue(latest.get().feedback().message().contains("变更只影响下一 Turn"));
+        assertTrue(latest.get().feedback().message().contains("变更只影响下一任务"));
     }
 
     @Test

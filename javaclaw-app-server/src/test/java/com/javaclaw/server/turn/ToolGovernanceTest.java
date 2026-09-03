@@ -77,7 +77,7 @@ class ToolGovernanceTest {
     Path temporaryDirectory;
 
     @Test
-    void searchRevealsOnlyFrozenAuthorizedToolBeforeExecution() throws Exception {
+    void settingsSearchShowsSelectableToolsWhileTurnStillUsesFrozenWhitelist() throws Exception {
         ProgressiveModel model = new ProgressiveModel();
         try (AppServerBootstrap.Components components = create(model)) {
             Fixture fixture = fixture(components);
@@ -167,8 +167,25 @@ class ToolGovernanceTest {
                 components,
                 ToolRpcContracts.SearchResult.class);
         assertEquals(
-                List.of(PLAN_READ),
+                List.of("plan_list", PLAN_READ),
                 result.tools().stream().map(tool -> tool.identity().name()).toList());
+        assertTrue(result.catalogRevision() > 0);
+
+        ToolRpcContracts.CatalogQuery executableQuery = new ToolRpcContracts.CatalogQuery(
+                fixture.workspace().id(),
+                PROFILE_ID,
+                2,
+                Optional.of(new AgentProfileRef(AGENT_PROFILE_ID, 1)),
+                "plan",
+                10);
+        ToolRpcContracts.SearchResult executable = decode(
+                fixture.session().handle(request(components, "tool-search-executable", "tool/search", executableQuery)),
+                components,
+                ToolRpcContracts.SearchResult.class);
+        assertEquals(result.catalogRevision(), executable.catalogRevision());
+        assertEquals(
+                List.of(PLAN_READ),
+                executable.tools().stream().map(tool -> tool.identity().name()).toList());
     }
 
     private void installProfile(

@@ -183,11 +183,21 @@
     "optionSource": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["sourceId", "valueField", "labelField"],
+      "required": ["sourceId", "valueField", "labelField", "filter"],
       "properties": {
         "sourceId": {"$ref": "#/$defs/identifier"},
         "valueField": {"$ref": "#/$defs/fieldName"},
-        "labelField": {"$ref": "#/$defs/fieldName"}
+        "labelField": {"$ref": "#/$defs/fieldName"},
+        "filter": {"oneOf": [{"$ref": "#/$defs/optionFilter"}, {"type": "null"}]}
+      }
+    },
+    "optionFilter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceField", "inputField"],
+      "properties": {
+        "sourceField": {"$ref": "#/$defs/fieldName"},
+        "inputField": {"$ref": "#/$defs/fieldName"}
       }
     },
     "condition": {
@@ -252,7 +262,9 @@
     "structuredItemField": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "label", "type", "initialValue", "initialTextList", "validation", "options"],
+      "required": [
+        "name", "label", "type", "initialValue", "initialTextList", "validation", "options", "optionSource"
+      ],
       "properties": {
         "name": {"$ref": "#/$defs/fieldName"},
         "label": {"$ref": "#/$defs/text"},
@@ -264,13 +276,20 @@
           "items": {"type": "string", "maxLength": 4000}
         },
         "validation": {"$ref": "#/$defs/structuredItemValidation"},
-        "options": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/option"}}
+        "options": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/option"}},
+        "optionSource": {"oneOf": [{"$ref": "#/$defs/optionSource"}, {"type": "null"}]}
       },
       "allOf": [
         {
           "if": {"properties": {"type": {"const": "CHOICE"}}},
-          "then": {"properties": {"options": {"minItems": 1}, "initialTextList": {"maxItems": 0}}},
-          "else": {"properties": {"options": {"maxItems": 0}}}
+          "then": {
+            "properties": {"initialTextList": {"maxItems": 0}},
+            "anyOf": [
+              {"properties": {"options": {"minItems": 1}}},
+              {"properties": {"optionSource": {"$ref": "#/$defs/optionSource"}}}
+            ]
+          },
+          "else": {"properties": {"options": {"maxItems": 0}, "optionSource": {"type": "null"}}}
         },
         {
           "if": {"properties": {"type": {"const": "TEXT_LIST"}}},

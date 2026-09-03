@@ -31,7 +31,7 @@ import com.javaclaw.api.ToolRisk;
  * @param executables 每行一个可执行文件规范名
  * @param allowPty 是否允许 PTY
  * @param processSeconds 单进程最长秒数
- * @param allowedTools 每行一个完整工具名
+ * @param allowedTools 从权威目录选择的精确工具名
  * @param maximumRisk 最大风险
  * @param approvalRequirement 审批强度
  * @param memoryMiB 最大内存 MiB
@@ -51,7 +51,7 @@ public record PermissionProfileDraft(
         String executables,
         boolean allowPty,
         long processSeconds,
-        String allowedTools,
+        Set<String> allowedTools,
         ToolRisk maximumRisk,
         ApprovalRequirement approvalRequirement,
         long memoryMiB,
@@ -68,7 +68,7 @@ public record PermissionProfileDraft(
         networkHosts = Objects.requireNonNullElse(networkHosts, "");
         networkPorts = Objects.requireNonNullElse(networkPorts, "");
         executables = Objects.requireNonNullElse(executables, "");
-        allowedTools = Objects.requireNonNullElse(allowedTools, "");
+        allowedTools = Set.copyOf(Objects.requireNonNull(allowedTools, "allowedTools"));
         maximumRisk = Objects.requireNonNull(maximumRisk, "maximumRisk");
         approvalRequirement = Objects.requireNonNull(approvalRequirement, "approvalRequirement");
     }
@@ -96,7 +96,7 @@ public record PermissionProfileDraft(
                 checked.processes().executables().stream().sorted().collect(java.util.stream.Collectors.joining("\n")),
                 checked.processes().allowPty(),
                 checked.processes().maxRunTime().toSeconds(),
-                checked.tools().allowedTools().stream().sorted().collect(java.util.stream.Collectors.joining("\n")),
+                checked.tools().allowedTools(),
                 checked.tools().maximumRisk(),
                 checked.tools().approvalRequirement(),
                 checked.resources().memoryBytes() / MIB,
@@ -140,7 +140,7 @@ public record PermissionProfileDraft(
      */
     public PermissionProfile toProfile(long version) {
         if (id.strip().equals("standard")) {
-            throw new IllegalArgumentException("内置 standard 只读，请先 clone 为新 ID");
+            throw new IllegalArgumentException("“受限对话”是内置只读模板，请先复制为新方案");
         }
         return new PermissionProfile(
                 id,
@@ -148,7 +148,7 @@ public record PermissionProfileDraft(
                 new FilePermission(paths(readRoots), paths(writeRoots), allowDelete, followSymbolicLinks),
                 new NetworkPermission(strings(networkHosts), integers(networkPorts), tlsOnly),
                 new ProcessPermission(strings(executables), allowPty, Duration.ofSeconds(processSeconds)),
-                new ToolPermission(strings(allowedTools), maximumRisk, approvalRequirement),
+                new ToolPermission(allowedTools, maximumRisk, approvalRequirement),
                 new ResourceLimits(
                         Math.multiplyExact(memoryMiB, MIB),
                         Math.multiplyExact(outputMiB, MIB),

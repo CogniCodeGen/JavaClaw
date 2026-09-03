@@ -355,8 +355,11 @@ public final class CoreRpcHandlers {
         WriteCommand command = json.decode(params, WriteCommand.class);
         ProviderProfileRpcContracts.ProviderCreatePayload payload =
                 json.decode(command.payload(), ProviderProfileRpcContracts.ProviderCreatePayload.class);
-        return json.encode(
-                providers.create(CommandIdentity.from("provider/create", command, json), payload.id(), payload.spec()));
+        return json.encode(providers.create(
+                CommandIdentity.from("provider/create", command, json),
+                payload.id(),
+                payload.spec(),
+                payload.lifecycle()));
     }
 
     private CanonicalPayload updateProvider(CanonicalPayload params) {

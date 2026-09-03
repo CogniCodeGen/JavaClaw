@@ -3,16 +3,6 @@
   "$id": "https://javaclaw.local/schema/provider-verification-v2.schema.json",
   "title": "JavaClaw Protocol v2 billed Provider verification",
   "$defs": {
-    "providerRef": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["endpointId", "endpointRevision", "model"],
-      "properties": {
-        "endpointId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,239}$"},
-        "endpointRevision": {"type": "integer", "minimum": 1},
-        "model": {"type": "string", "minLength": 1, "maxLength": 500}
-      }
-    },
     "usage": {
       "type": "object",
       "additionalProperties": false,
@@ -22,26 +12,6 @@
         "outputTokens": {"type": "integer", "minimum": 0},
         "reasoningTokens": {"type": "integer", "minimum": 0},
         "cachedInputTokens": {"type": "integer", "minimum": 0}
-      }
-    },
-    "capabilities": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["roles", "streaming", "toolCalls", "structuredOutput", "images", "reasoningSummary", "opaqueState", "nativeCompaction"],
-      "properties": {
-        "roles": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {"enum": ["CHAT", "EMBEDDING"]}
-        },
-        "streaming": {"type": "boolean"},
-        "toolCalls": {"type": "boolean"},
-        "structuredOutput": {"type": "boolean"},
-        "images": {"type": "boolean"},
-        "reasoningSummary": {"type": "boolean"},
-        "opaqueState": {"type": "boolean"},
-        "nativeCompaction": {"type": "boolean"}
       }
     },
     "verifyCommand": {
@@ -54,9 +24,10 @@
         "payload": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["provider", "billingConfirmed", "confirmation"],
+          "required": ["provider", "purpose", "billingConfirmed", "confirmation"],
           "properties": {
-            "provider": {"$ref": "#/$defs/providerRef"},
+            "provider": {"$ref": "provider-profile-v2.schema.json#/$defs/providerRef"},
+            "purpose": {"enum": ["CHAT", "EMBEDDING"]},
             "billingConfirmed": {"const": true},
             "confirmation": {"const": "我确认本次模型验证可能产生费用"}
           }
@@ -66,13 +37,14 @@
     "verificationResult": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provider", "state", "latencyMillis", "usage", "capabilities", "errorCode", "completedAt"],
+      "required": ["provider", "purpose", "state", "latencyMillis", "usage", "capabilities", "errorCode", "completedAt"],
       "properties": {
-        "provider": {"$ref": "#/$defs/providerRef"},
+        "provider": {"$ref": "provider-profile-v2.schema.json#/$defs/providerRef"},
+        "purpose": {"enum": ["CHAT", "EMBEDDING"]},
         "state": {"enum": ["SUCCEEDED", "FAILED", "TIMED_OUT", "CANCELLED", "UNKNOWN_OUTCOME"]},
         "latencyMillis": {"type": "integer", "minimum": 0},
         "usage": {"oneOf": [{"$ref": "#/$defs/usage"}, {"type": "null"}]},
-        "capabilities": {"$ref": "#/$defs/capabilities"},
+        "capabilities": {"$ref": "provider-profile-v2.schema.json#/$defs/providerCapabilities"},
         "errorCode": {"type": ["string", "null"], "minLength": 1, "maxLength": 160},
         "completedAt": {"type": "string", "format": "date-time"}
       },
@@ -81,11 +53,24 @@
           "if": {"properties": {"state": {"const": "SUCCEEDED"}}},
           "then": {
             "properties": {
-              "usage": {"$ref": "#/$defs/usage"},
               "errorCode": {"type": "null"}
             }
           },
           "else": {"properties": {"errorCode": {"type": "string", "minLength": 1, "maxLength": 160}}}
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {"const": "SUCCEEDED"},
+              "purpose": {"const": "CHAT"}
+            },
+            "required": ["state", "purpose"]
+          },
+          "then": {"properties": {"usage": {"$ref": "#/$defs/usage"}}}
+        },
+        {
+          "if": {"properties": {"purpose": {"const": "EMBEDDING"}}},
+          "then": {"properties": {"usage": {"type": "null"}}}
         },
         {
           "if": {"properties": {"state": {"const": "UNKNOWN_OUTCOME"}}},

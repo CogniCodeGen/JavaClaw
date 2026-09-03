@@ -1,5 +1,6 @@
 package com.javaclaw.server;
 
+import java.util.Objects;
 import java.util.Optional;
 
 import com.javaclaw.api.ItemSchemaRegistry;
@@ -21,9 +22,11 @@ import com.javaclaw.server.mcp.McpPlatformFactory;
 import com.javaclaw.server.mcp.McpRuntimePorts;
 import com.javaclaw.server.mcp.McpSamplingTurnService;
 import com.javaclaw.server.mcp.TurnMcpInteractionFactory;
+import com.javaclaw.server.model.EmbeddingAdapterFactory;
 import com.javaclaw.server.persistence.ExtensionJobSupervisor;
 import com.javaclaw.server.persistence.H2ModelEventSink;
 import com.javaclaw.server.persistence.H2TurnJournal;
+import com.javaclaw.server.persistence.ProviderModelDiscoveryService;
 import com.javaclaw.server.persistence.ProviderStateService;
 import com.javaclaw.server.persistence.ProviderVerificationService;
 import com.javaclaw.server.security.PinnedHttpNetworkBroker;
@@ -46,36 +49,32 @@ final class AppServerRuntimeBootstrap {
     private AppServerRuntimeBootstrap() {}
 
     static AppServerBootstrap.Components create(
-            AppServerBootstrap.Foundation foundation,
-            ModelGateway models,
-            EmbeddingPort embeddings,
-            IsolatedServicePort isolatedServices,
-            McpRuntimePorts mcpPorts,
-            StartupCloseStack startup) {
-        RuntimeResources resources = ownRuntimeResources(models, embeddings, isolatedServices, startup);
-        RuntimeState state = startRuntime(foundation, models, embeddings, isolatedServices, mcpPorts, startup);
+            AppServerBootstrap.Foundation foundation, RuntimeDependencies dependencies, StartupCloseStack startup) {
+        RuntimeResources resources = ownRuntimeResources(
+                dependencies.models(), dependencies.embeddings(), dependencies.isolatedServices(), startup);
+        RuntimeState state = startRuntime(foundation, dependencies, startup);
         bindDeferredPorts(foundation, state);
-        AppServerBootstrap.RuntimeAssembly runtime = assembly(foundation, mcpPorts, resources, state);
+        AppServerBootstrap.RuntimeAssembly runtime = assembly(foundation, dependencies.mcpPorts(), resources, state);
         AppServerBootstrap.Components result = AppServerBootstrap.components(foundation, runtime);
         startup.releaseAll();
         return result;
     }
 
     private static RuntimeState startRuntime(
-            AppServerBootstrap.Foundation foundation,
-            ModelGateway models,
-            EmbeddingPort embeddings,
-            IsolatedServicePort isolatedServices,
-            McpRuntimePorts mcpPorts,
-            StartupCloseStack startup) {
+            AppServerBootstrap.Foundation foundation, RuntimeDependencies dependencies, StartupCloseStack startup) {
         ItemSchemaRegistry schemas = CoreItemCodecs.createRegistry(foundation.json());
         H2TurnJournal journal =
                 new H2TurnJournal(foundation.database(), schemas, foundation.json(), foundation.clock());
         DeferredPorts deferred = new DeferredPorts();
         ScheduleLifecycleCoordinator scheduleLifecycle =
                 startup.own(new ScheduleLifecycleCoordinator(foundation.lifecycle(), foundation.loginStartup()));
-        BuiltinExtensionHost builtins =
-                startBuiltins(foundation, embeddings, isolatedServices, startup, deferred, scheduleLifecycle);
+        BuiltinExtensionHost builtins = startBuiltins(
+                foundation,
+                dependencies.embeddings(),
+                dependencies.isolatedServices(),
+                startup,
+                deferred,
+                scheduleLifecycle);
         ThirdPartyExtensionHost thirdParty = startThirdParty(foundation, builtins, startup);
         PlatformExtensionHost extensions = ownPlatformHost(builtins, thirdParty, startup);
         McpPlatformFactory.Services mcp = McpPlatformFactory.create(
@@ -88,22 +87,18 @@ final class AppServerRuntimeBootstrap {
                         foundation.json(),
                         foundation.clock()),
                 new McpPlatformFactory.RuntimeDependencies(
-                        mcpPorts,
+                        dependencies.mcpPorts(),
                         thirdParty,
-                        isolatedServices instanceof BuiltinIsolatedServices isolatedBuiltins
+                        dependencies.isolatedServices() instanceof BuiltinIsolatedServices isolatedBuiltins
                                 ? isolatedBuiltins.oauthBrowser()
                                 : Optional.empty()));
         ExtensionToolPlatform tools = toolPlatform(foundation, extensions, mcp);
-        DefaultTurnHarness harness = harness(foundation, models, schemas, journal, tools);
-        ProviderVerificationService providerVerification = startup.own(new ProviderVerificationService(
-                foundation.database(),
-                foundation.providers(),
-                foundation.vault(),
-                models,
-                foundation.json(),
-                foundation.clock()));
-        HarnessTurnDispatcher dispatcher = startup.own(dispatcher(foundation, models, journal, harness, tools));
-        bindMcpInteractions(foundation, mcpPorts, harness);
+        DefaultTurnHarness harness = harness(foundation, dependencies.models(), schemas, journal, tools);
+        ProviderVerificationService providerVerification = providerVerification(foundation, dependencies, startup);
+        ProviderModelDiscoveryService modelDiscovery = startup.own(dependencies.modelDiscovery());
+        HarnessTurnDispatcher dispatcher =
+                startup.own(dispatcher(foundation, dependencies.models(), journal, harness, tools));
+        bindMcpInteractions(foundation, dependencies.mcpPorts(), harness);
         ExtensionJobSupervisor jobs = startup.own(new ExtensionJobSupervisor(
                 foundation.extensionJobs(),
                 job -> foundation.lifecycle().acquirePersistentActivity("job:" + job.id(), "EXTENSION_JOB")::close));
@@ -115,10 +110,23 @@ final class AppServerRuntimeBootstrap {
                 mcp,
                 tools,
                 dispatcher,
+                modelDiscovery,
                 providerVerification,
                 journal,
                 jobs,
                 scheduleLifecycle);
+    }
+
+    private static ProviderVerificationService providerVerification(
+            AppServerBootstrap.Foundation foundation, RuntimeDependencies dependencies, StartupCloseStack startup) {
+        return startup.own(new ProviderVerificationService(
+                foundation.database(),
+                foundation.providers(),
+                foundation.vault(),
+                dependencies.models(),
+                dependencies.embeddingAdapters(),
+                foundation.json(),
+                foundation.clock()));
     }
 
     private static void bindMcpInteractions(
@@ -215,6 +223,7 @@ final class AppServerRuntimeBootstrap {
                         mcpPorts.available(),
                         resources.workerAvailability(),
                         state.scheduleLifecycle(),
+                        state.modelDiscovery(),
                         state.providerVerification()),
                 new AppServerResources(
                         state.jobs(),
@@ -226,6 +235,7 @@ final class AppServerRuntimeBootstrap {
                         foundation.approvals(),
                         state.extensions(),
                         state.scheduleLifecycle(),
+                        state.modelDiscovery(),
                         resources.embeddings(),
                         foundation.vault(),
                         resources.services()));
@@ -309,6 +319,35 @@ final class AppServerRuntimeBootstrap {
         }
     }
 
+    /**
+     * 汇总运行时组合根所需的模型、Embedding、隔离服务与 MCP 边界。
+     *
+     * <p>该值只描述依赖关系，不接管资源；资源所有权仍由 {@link StartupCloseStack} 按既有顺序管理。
+     *
+     * @param models 模型调用路由
+     * @param embeddings Embedding 调用路由
+     * @param embeddingAdapters Provider 验证使用的 Embedding Adapter 工厂
+     * @param modelDiscovery Provider 模型目录发现服务
+     * @param isolatedServices 受控进程外服务路由
+     * @param mcpPorts MCP 远端、交互、网络和 OAuth 边界
+     */
+    record RuntimeDependencies(
+            ModelGateway models,
+            EmbeddingPort embeddings,
+            EmbeddingAdapterFactory embeddingAdapters,
+            ProviderModelDiscoveryService modelDiscovery,
+            IsolatedServicePort isolatedServices,
+            McpRuntimePorts mcpPorts) {
+        RuntimeDependencies {
+            Objects.requireNonNull(models, "models");
+            Objects.requireNonNull(embeddings, "embeddings");
+            Objects.requireNonNull(embeddingAdapters, "embeddingAdapters");
+            Objects.requireNonNull(modelDiscovery, "modelDiscovery");
+            Objects.requireNonNull(isolatedServices, "isolatedServices");
+            Objects.requireNonNull(mcpPorts, "mcpPorts");
+        }
+    }
+
     private record DeferredPorts(
             DeferredTurnOrchestrationPort orchestration,
             DeferredAutomationExecutionPolicyPort executionPolicies,
@@ -342,6 +381,7 @@ final class AppServerRuntimeBootstrap {
             McpPlatformFactory.Services mcp,
             ExtensionToolPlatform tools,
             HarnessTurnDispatcher dispatcher,
+            ProviderModelDiscoveryService modelDiscovery,
             ProviderVerificationService providerVerification,
             H2TurnJournal journal,
             ExtensionJobSupervisor jobs,

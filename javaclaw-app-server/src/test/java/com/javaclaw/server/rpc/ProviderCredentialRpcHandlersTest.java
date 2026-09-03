@@ -4,15 +4,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -21,7 +18,6 @@ import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderCredentialBinding;
 import com.javaclaw.api.ProviderCredentialClearResult;
 import com.javaclaw.api.ProviderEndpointSpec;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.nativehost.credential.MasterKeyProtector;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.CredentialRpcContracts;
@@ -29,6 +25,7 @@ import com.javaclaw.protocol.ProviderCredentialRpcContracts;
 import com.javaclaw.protocol.SessionSecretChannel;
 import com.javaclaw.protocol.SessionSecretSealer;
 import com.javaclaw.protocol.WriteCommand;
+import com.javaclaw.server.ProviderEndpointTestFixtures;
 import com.javaclaw.server.persistence.CommandIdentity;
 import com.javaclaw.server.persistence.H2Database;
 import com.javaclaw.server.persistence.ProviderCredentialService;
@@ -52,7 +49,7 @@ class ProviderCredentialRpcHandlersTest {
         H2Database database = database();
         try (SecretVaultService vault = vault(database, json);
                 SessionSecretChannel secrets = SessionSecretChannel.open()) {
-            ProviderService providers = providers(database, json);
+            ProviderService providers = providers(database, vault, json);
             RpcRouter router = router(
                     new ProviderCredentialService(providers, vault.providerCredentials(), json, CLOCK), vault, json);
             WriteCommand set = setCommand(secrets, json);
@@ -91,7 +88,8 @@ class ProviderCredentialRpcHandlersTest {
         try (SecretVaultService vault = vault(database, json);
                 SessionSecretChannel secrets = SessionSecretChannel.open()) {
             RpcRouter router = router(
-                    new ProviderCredentialService(providers(database, json), vault.providerCredentials(), json, CLOCK),
+                    new ProviderCredentialService(
+                            providers(database, vault, json), vault.providerCredentials(), json, CLOCK),
                     vault,
                     json);
             char[] characters = SECRET.toCharArray();
@@ -124,24 +122,20 @@ class ProviderCredentialRpcHandlersTest {
         return new SecretVaultService(database, new MemoryProtector(), json, CLOCK, new SecureRandom());
     }
 
-    private static ProviderService providers(H2Database database, CanonicalJson json) {
-        ProviderService providers = new ProviderService(database, json, CLOCK);
-        ProviderEndpointSpec spec = new ProviderEndpointSpec(
-                "Provider",
-                ProviderAdapter.OPENAI_COMPATIBLE,
-                Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of("test-model"),
-                Optional.empty(),
-                Duration.ofSeconds(30),
-                0,
-                Map.of());
+    private static ProviderService providers(H2Database database, SecretVaultService vault, CanonicalJson json) {
+        ProviderService providers = new ProviderService(database, vault, json, CLOCK);
+        ProviderEndpointSpec spec =
+                ProviderEndpointTestFixtures.apiKeyChat("Provider", ProviderAdapter.OPENAI_COMPATIBLE, "test-model");
         WriteCommand create = new WriteCommand(
                 "create-provider",
                 0,
                 json.encode(new com.javaclaw.protocol.ProviderProfileRpcContracts.ProviderCreatePayload(
-                        "provider-main", spec)));
-        providers.create(CommandIdentity.from("provider/create", create, json), "provider-main", spec);
+                        "provider-main", spec, com.javaclaw.api.ProviderLifecycle.DISABLED)));
+        providers.create(
+                CommandIdentity.from("provider/create", create, json),
+                "provider-main",
+                spec,
+                com.javaclaw.api.ProviderLifecycle.DISABLED);
         return providers;
     }
 

@@ -30,6 +30,7 @@ import com.javaclaw.desktop.view.ViewLoadRequest;
 import com.javaclaw.extension.spi.ViewArgumentBinding;
 import com.javaclaw.extension.spi.ViewBinding;
 import com.javaclaw.extension.spi.ViewDataSource;
+import com.javaclaw.extension.spi.ViewPlatformDataSource;
 import com.javaclaw.extension.spi.ViewQueryRequest;
 import com.javaclaw.extension.spi.ViewSchema;
 import com.javaclaw.extension.spi.ViewSelectionMode;
@@ -177,19 +178,23 @@ class DesktopPresenterTest {
             assertEquals("plan.documents", views.getFirst().viewId());
 
             ViewData data = presenter
-                    .loadExtensionViewData(views.getFirst(), querySchema(), ViewLoadRequest.initial())
+                    .loadExtensionViewData(
+                            server.workspace().id(), views.getFirst(), querySchema(), ViewLoadRequest.initial())
                     .join();
             assertEquals(5, server.extensionQueries.get());
             assertEquals("计划", data.source("list").rows().getFirst().get("title"));
 
             presenter
                     .executeExtensionViewCommand(
-                            "plan", new ViewCommandInvocation("put", Map.of("title", "升级"), 7, false))
+                            server.workspace().id(),
+                            "plan",
+                            new ViewCommandInvocation("put", Map.of("title", "升级"), 7, false))
                     .join();
             await(() -> server.extensionCommands.get() == 1);
             assertEquals(7, server.lastExpectedRevision);
             presenter
-                    .executeExtensionViewCommand("plan", new ViewCommandInvocation("put", Map.of(), 0, false))
+                    .executeExtensionViewCommand(
+                            server.workspace().id(), "plan", new ViewCommandInvocation("put", Map.of(), 0, false))
                     .join();
             await(() -> server.extensionCommands.get() == 2);
             assertEquals(0, server.lastExpectedRevision);
@@ -210,7 +215,8 @@ class DesktopPresenterTest {
                     presenter.listExtensionViews(Optional.of("plan")).join().getFirst();
 
             ViewData initial = presenter
-                    .loadExtensionViewData(document, masterDetailSchema(), ViewLoadRequest.initial())
+                    .loadExtensionViewData(
+                            server.workspace().id(), document, masterDetailSchema(), ViewLoadRequest.initial())
                     .join();
 
             assertEquals(
@@ -226,7 +232,7 @@ class DesktopPresenterTest {
 
             ViewLoadRequest second = new ViewLoadRequest(Map.of(), Map.of("definitions", "workflow-2"), Map.of());
             ViewData switched = presenter
-                    .loadExtensionViewData(document, masterDetailSchema(), second)
+                    .loadExtensionViewData(server.workspace().id(), document, masterDetailSchema(), second)
                     .join();
 
             assertEquals(
@@ -234,6 +240,84 @@ class DesktopPresenterTest {
             assertEquals(
                     Map.of("definitionId", "workflow-2", "definitionRevision", "7"),
                     server.viewQueries.get(4).arguments());
+        } finally {
+            presenter.close();
+        }
+    }
+
+    @Test
+    void loadsGovernedToolAndScalarPointerOptionsFromExactWorkspaceProfile() throws Exception {
+        PresenterRpcServer server = new PresenterRpcServer();
+        DesktopPresenter presenter = new DesktopPresenter(server::client, Runnable::run, CLOCK);
+        AtomicReference<DesktopState> latest = observe(presenter);
+        try {
+            presenter.connect();
+            await(() -> latest.get().connection().status() == ConnectionState.Status.CONNECTED);
+            ViewSchema schema = new ViewSchema(
+                    ViewSchema.CURRENT_VERSION,
+                    "governed-options",
+                    "受治理选项",
+                    List.of(
+                            new ViewDataSource("tools", ViewPlatformDataSource.TOOL_CATALOG, Map.of(), List.of(), 100),
+                            new ViewDataSource(
+                                    "fields", ViewPlatformDataSource.TOOL_OUTPUT_FIELDS, Map.of(), List.of(), 200)),
+                    List.of(new ViewSchema.Card("summary", "目录", "平台只读目录", List.of())));
+            ExtensionRpcContracts.ViewDocument document = new ExtensionRpcContracts.ViewDocument(
+                    "loop", "loop.management", new CanonicalJson().encode(schema));
+
+            ViewData loaded = presenter
+                    .loadExtensionViewData(server.workspace().id(), document, schema, ViewLoadRequest.initial())
+                    .join();
+
+            assertEquals("read_file", loaded.source("tools").rows().getFirst().get("toolName"));
+            assertEquals(
+                    List.of("/exitCode", "/metadata/verified"),
+                    loaded.source("fields").rows().stream()
+                            .map(row -> row.get("fieldPointer"))
+                            .toList());
+            assertEquals(9, loaded.source("tools").revision());
+            assertEquals(server.workspace().id(), server.lastToolCatalog.workspaceId());
+            assertEquals(
+                    server.profile().spec().permissionProfile().id(), server.lastToolCatalog.permissionProfileId());
+            assertEquals(
+                    server.profile().spec().permissionProfile().version(),
+                    server.lastToolCatalog.permissionProfileVersion());
+            assertEquals(
+                    new com.javaclaw.api.AgentProfileRef(
+                            server.profile().id(), server.profile().revision()),
+                    server.lastToolCatalog.agentProfile().orElseThrow());
+            assertEquals(0, server.extensionQueries.get());
+        } finally {
+            presenter.close();
+        }
+    }
+
+    @Test
+    void governedToolOptionsFailClosedWithoutWorkspaceDefaultProfile() throws Exception {
+        PresenterRpcServer server = new PresenterRpcServer();
+        server.profileBound = false;
+        DesktopPresenter presenter = new DesktopPresenter(server::client, Runnable::run, CLOCK);
+        AtomicReference<DesktopState> latest = observe(presenter);
+        try {
+            presenter.connect();
+            await(() -> latest.get().connection().status() == ConnectionState.Status.CONNECTED);
+            ViewSchema schema = new ViewSchema(
+                    ViewSchema.CURRENT_VERSION,
+                    "governed-options",
+                    "受治理选项",
+                    List.of(new ViewDataSource("tools", ViewPlatformDataSource.TOOL_CATALOG, Map.of(), List.of(), 100)),
+                    List.of(new ViewSchema.Card("summary", "目录", "平台只读目录", List.of())));
+            ExtensionRpcContracts.ViewDocument document = new ExtensionRpcContracts.ViewDocument(
+                    "loop", "loop.management", new CanonicalJson().encode(schema));
+
+            RuntimeException failure = assertThrows(
+                    RuntimeException.class,
+                    () -> presenter
+                            .loadExtensionViewData(server.workspace().id(), document, schema, ViewLoadRequest.initial())
+                            .join());
+
+            assertTrue(failure.getCause().getMessage().contains("尚未绑定默认智能体"));
+            assertEquals(0, server.extensionQueries.get());
         } finally {
             presenter.close();
         }
@@ -306,12 +390,12 @@ class DesktopPresenterTest {
             assertThrows(NullPointerException.class, () -> presenter.listExtensionViews(null));
             assertThrows(
                     NullPointerException.class,
-                    () -> presenter.loadExtensionViewData(null, querySchema(), ViewLoadRequest.initial()));
+                    () -> presenter.loadExtensionViewData(null, null, querySchema(), ViewLoadRequest.initial()));
             assertThrows(NoSuchElementException.class, () -> presenter.createThread("无工作区"));
             assertThrows(
-                    NoSuchElementException.class,
+                    NullPointerException.class,
                     () -> presenter.executeExtensionViewCommand(
-                            "plan", new ViewCommandInvocation("put", Map.of(), 0, false)));
+                            null, "plan", new ViewCommandInvocation("put", Map.of(), 0, false)));
 
             presenter.connect();
             await(() -> latest.get().connection().status() == ConnectionState.Status.CONNECTED
@@ -390,10 +474,11 @@ class DesktopPresenterTest {
         AtomicReference<DesktopState> latest = observe(presenter);
         AtomicInteger deliveries = new AtomicInteger();
         AtomicReference<ExtensionRpcContracts.ExtensionEvent> last = new AtomicReference<>();
-        DesktopNotificationSubscription subscription = presenter.subscribeExtensionEvents("plan", event -> {
-            deliveries.incrementAndGet();
-            last.set(event);
-        });
+        DesktopNotificationSubscription subscription =
+                presenter.subscribeExtensionEvents(server.workspace().id(), "plan", event -> {
+                    deliveries.incrementAndGet();
+                    last.set(event);
+                });
         try {
             presenter.connect();
             await(() -> latest.get().connection().status() == ConnectionState.Status.CONNECTED);

@@ -4,8 +4,11 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 
+import com.javaclaw.api.AgentProfile;
+import com.javaclaw.api.CoreTools;
 import com.javaclaw.api.PrivateNetworkPurpose;
 import com.javaclaw.api.SecurityGrantState;
+import com.javaclaw.client.CommandOptions;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -42,29 +45,31 @@ class SecurityGrantSettingsPresentersTest {
     @Test
     void 无人值守授权冻结Schedule工具目录Schema参数额度和期限() {
         TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
-        UnattendedToolGrantSettingsPresenter presenter = new UnattendedToolGrantSettingsPresenter(gateway);
+        AgentProfile profile = gateway.createProfile(
+                        "schedule-agent", TestCoreSettingsGateway.profileSpec(), CommandOptions.create(0))
+                .toCompletableFuture()
+                .join();
+        var schedule = TestScheduleDefinitions.turn(profile);
+        UnattendedToolGrantSettingsPresenter presenter =
+                new UnattendedToolGrantSettingsPresenter(gateway, ignored -> completed(java.util.List.of(schedule)));
         AtomicReference<UnattendedToolGrantSettingsState> latest = new AtomicReference<>();
         presenter.subscribe(latest::set);
 
         presenter.reload();
-        presenter.edit(new UnattendedToolGrantForm(
-                "nightly-review",
-                "3",
-                "builtin.skill",
-                "review",
-                "4",
-                "11",
-                "a".repeat(64),
-                "{\"query\":\"stable\",\"limit\":3}",
-                "query",
-                "10",
-                "7"));
+        presenter.selectSchedule(schedule);
+        presenter.selectTool(latest.get().binding().catalog().orElseThrow().tools().stream()
+                .filter(tool -> tool.identity().name().equals(CoreTools.SEARCH_NAME))
+                .findFirst()
+                .orElseThrow());
+        presenter.editArguments("{\"query\":\"stable\",\"limit\":3}", "query", "10", "7");
         presenter.create();
 
         var status = latest.get().selected().orElseThrow();
         assertEquals("nightly-review", status.grant().scheduleId());
         assertEquals(3, status.grant().scheduleRevision());
         assertEquals(11, status.grant().catalogRevision());
+        assertEquals(CoreTools.SEARCH_NAME, status.grant().tool().name());
+        assertEquals(CoreTools.search().inputSchema().sha256(), status.grant().schemaHash());
         assertEquals(10, status.remainingUses());
         assertEquals(
                 "{\"limit\":3,\"query\":\"stable\"}",
@@ -74,5 +79,9 @@ class SecurityGrantSettingsPresentersTest {
         assertEquals(
                 SecurityGrantState.REVOKED,
                 latest.get().selected().orElseThrow().grant().state());
+    }
+
+    private static <T> java.util.concurrent.CompletionStage<T> completed(T value) {
+        return java.util.concurrent.CompletableFuture.completedFuture(value);
     }
 }

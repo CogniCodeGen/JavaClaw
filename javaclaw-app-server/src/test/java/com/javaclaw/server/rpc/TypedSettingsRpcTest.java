@@ -5,7 +5,6 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -31,7 +30,6 @@ import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderReadiness;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.ProviderStatus;
 import com.javaclaw.api.TurnBudget;
 import com.javaclaw.api.TurnId;
@@ -58,6 +56,7 @@ import com.javaclaw.runtime.ModelInvocation;
 import com.javaclaw.runtime.ModelInvocationResult;
 import com.javaclaw.runtime.ModelUsage;
 import com.javaclaw.server.AppServerBootstrap;
+import com.javaclaw.server.ProviderEndpointTestFixtures;
 import com.javaclaw.server.testkit.AttachmentRpcTestClient;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -110,23 +109,16 @@ class TypedSettingsRpcTest {
     }
 
     private ProviderEndpoint createProvider() {
-        ProviderEndpointSpec spec = new ProviderEndpointSpec(
-                "OpenAI Compatible",
-                ProviderAdapter.OPENAI_COMPATIBLE,
-                Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of("test-model"),
-                Optional.empty(),
-                Duration.ofSeconds(30),
-                0,
-                Map.of());
+        ProviderEndpointSpec spec =
+                ProviderEndpointTestFixtures.chat("OpenAI Compatible", ProviderAdapter.OPENAI_COMPATIBLE, "test-model");
         return decodeSuccess(
                 session.handle(request(
                         "provider-create",
                         "provider/create",
                         command(
                                 "provider-key",
-                                new ProviderProfileRpcContracts.ProviderCreatePayload("openai", spec)))),
+                                new ProviderProfileRpcContracts.ProviderCreatePayload(
+                                        "openai", spec, com.javaclaw.api.ProviderLifecycle.ACTIVE)))),
                 ProviderEndpoint.class);
     }
 
@@ -145,7 +137,7 @@ class TypedSettingsRpcTest {
 
         assertEquals(provider, providerRead);
         assertEquals(List.of(provider), providers.providers());
-        assertEquals(ProviderReadiness.CREDENTIAL_REQUIRED, status.readiness());
+        assertEquals(ProviderReadiness.READY, status.readiness());
         assertEquals(status.readiness(), probe.readiness());
         assertEquals("openai", provider.id());
     }

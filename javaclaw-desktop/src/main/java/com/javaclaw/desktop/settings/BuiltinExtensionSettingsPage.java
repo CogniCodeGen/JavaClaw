@@ -18,12 +18,13 @@ import com.javaclaw.desktop.component.PlatformComponentFactory;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 import com.javaclaw.desktop.component.PlatformComponentFactory.FeedbackKind;
+import com.javaclaw.desktop.component.PlatformDialogs;
 import com.javaclaw.desktop.component.RevisionConflictPane;
 import com.javaclaw.extension.spi.ExtensionAvailability;
 import com.javaclaw.extension.spi.ExtensionState;
 import com.javaclaw.protocol.BuiltinExtensionRpcContracts;
 
-/** 可选内置 Bundle 与 MCP 平台能力的统一实时启停页。 */
+/** 可选内置扩展包与 MCP 平台能力的统一实时启停页。 */
 public final class BuiltinExtensionSettingsPage extends VBox implements ManagedSettingsPage {
     private final PlatformComponentFactory components = new PlatformComponentFactory();
     private final BuiltinExtensionSettingsPresenter presenter;
@@ -60,6 +61,11 @@ public final class BuiltinExtensionSettingsPage extends VBox implements ManagedS
     }
 
     @Override
+    public Optional<Node> actionContent() {
+        return Optional.of(actions);
+    }
+
+    @Override
     public void activate() {
         presenter.reload();
     }
@@ -78,13 +84,13 @@ public final class BuiltinExtensionSettingsPage extends VBox implements ManagedS
     private void configurePage() {
         Label title = new Label("内置扩展");
         title.getStyleClass().addAll("sec-title", "platform-page-title");
-        Label hint = new Label("停用会立即阻止新的 Tool、View、Timer 和 command；已有数据不会删除。MCP 平台 Host 使用同一状态门禁。");
+        Label hint = new Label("停用会立即阻止新的工具、页面、定时器和命令；已有数据不会删除。MCP 平台能力使用同一安全开关。");
         hint.setWrapText(true);
         hint.getStyleClass().add("sec-hint");
         masterDetail
                 .list()
                 .setCellFactory(ignored -> components.detailCell(
-                        item -> item.displayName() + " · " + item.state(),
+                        item -> item.displayName() + " · " + SettingsLabels.extensionState(item.state()),
                         item -> item.id() + " · " + availability(item.availability())));
         masterDetail
                 .list()
@@ -93,7 +99,7 @@ public final class BuiltinExtensionSettingsPage extends VBox implements ManagedS
                 .addListener((observable, previous, selected) -> select(selected));
         masterDetail
                 .list()
-                .setPlaceholder(components.feedback(FeedbackKind.EMPTY, "暂无内置能力", "服务端没有返回内置 Bundle 或 MCP 平台能力。"));
+                .setPlaceholder(components.feedback(FeedbackKind.EMPTY, "暂无内置能力", "服务端没有返回内置扩展包或 MCP 平台能力。"));
         masterDetail.showDetail(detail());
         getChildren().addAll(title, hint, masterDetail);
         getStyleClass().add("platform-page");
@@ -105,11 +111,11 @@ public final class BuiltinExtensionSettingsPage extends VBox implements ManagedS
         status.addField("执行边界", runtime);
         status.addField("生命周期", lifecycle);
         status.addField("可用性", availability);
-        status.addField("贡献描述 revision", descriptorRevision);
-        status.addField("启停状态 revision", stateRevision);
+        status.addField("贡献描述版本", descriptorRevision);
+        status.addField("启停状态版本", stateRevision);
         status.addField("贡献点", contributions);
         status.addField("更新时间", updatedAt);
-        VBox detail = new VBox(12, status, conflict, actions);
+        VBox detail = new VBox(12, status, conflict);
         detail.getStyleClass().add("platform-page");
         return detail;
     }
@@ -137,11 +143,12 @@ public final class BuiltinExtensionSettingsPage extends VBox implements ManagedS
         identity.setText(
                 selected.map(item -> item.displayName() + " · " + item.id()).orElse("—"));
         runtime.setText(selected.map(item -> switch (item.runtimeKind()) {
-                    case BUNDLE -> "可信进程内 Bundle";
-                    case PLATFORM -> "App Server 平台 Host";
+                    case BUNDLE -> "可信进程内扩展包";
+                    case PLATFORM -> "JavaClaw 服务平台能力";
                 })
                 .orElse("—"));
-        lifecycle.setText(selected.map(item -> item.state().name()).orElse("—"));
+        lifecycle.setText(selected.map(item -> SettingsLabels.extensionState(item.state()))
+                .orElse("—"));
         availability.setText(
                 selected.map(item -> availability(item.availability())).orElse("—"));
         descriptorRevision.setText(
@@ -149,7 +156,7 @@ public final class BuiltinExtensionSettingsPage extends VBox implements ManagedS
         stateRevision.setText(
                 selected.map(item -> Long.toString(item.stateRevision())).orElse("—"));
         contributions.setText(selected.map(item -> item.contributionKinds().stream()
-                        .map(Enum::name)
+                        .map(SettingsLabels::contributionKind)
                         .sorted()
                         .collect(java.util.stream.Collectors.joining(", ")))
                 .orElse("—"));
@@ -193,17 +200,15 @@ public final class BuiltinExtensionSettingsPage extends VBox implements ManagedS
             return;
         }
         Alert dialog = new Alert(Alert.AlertType.CONFIRMATION);
-        if (getScene() != null) {
-            dialog.initOwner(getScene().getWindow());
-        }
         dialog.setTitle("停用内置能力");
         dialog.setHeaderText("停用 " + selected.displayName());
-        dialog.setContentText("新 Tool、View、Timer 和 command 会立即被拒绝；已有数据将保留。");
+        dialog.setContentText("新工具、页面、定时器和命令会立即被拒绝；已有数据将保留。");
+        PlatformDialogs.style(dialog, this);
         dialog.showAndWait().filter(ButtonType.OK::equals).ifPresent(ignored -> presenter.setEnabled(false));
     }
 
     private void describeConflict() {
-        actions.show(ActionState.ERROR, "服务端启停 revision 已变化；重新读取后再确认当前状态");
+        actions.show(ActionState.ERROR, "服务端启停版本已变化；重新读取后再确认当前状态");
     }
 
     private Button action(String text, ActionStyle style, Runnable action) {

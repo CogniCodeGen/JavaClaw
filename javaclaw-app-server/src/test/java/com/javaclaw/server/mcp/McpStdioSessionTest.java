@@ -1,16 +1,10 @@
 package com.javaclaw.server.mcp;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.io.OutputStreamWriter;
-import java.io.PipedInputStream;
-import java.io.PipedOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
@@ -20,7 +14,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 
@@ -38,6 +31,7 @@ import com.javaclaw.extension.spi.McpClientInteractionPort;
 import com.javaclaw.protocol.CanonicalJson;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -47,7 +41,7 @@ class McpStdioSessionTest {
     @Test
     void 签名Stdio会话只允许受治理Elicitation与Sampling() throws Exception {
         CanonicalJson json = new CanonicalJson();
-        ScriptedProcess process = new ScriptedProcess(peer -> serveInteractionFlow(peer, json));
+        ScriptedMcpProcess process = new ScriptedMcpProcess(peer -> serveInteractionFlow(peer, json));
         AtomicInteger elicited = new AtomicInteger();
         AtomicInteger sampled = new AtomicInteger();
         McpClientInteractionPort interactions = interactions(json, elicited, sampled);
@@ -67,7 +61,7 @@ class McpStdioSessionTest {
     @Test
     void 不声明交互且远端协议不匹配时不发送Initialized通知() throws Exception {
         CanonicalJson json = new CanonicalJson();
-        ScriptedProcess process = new ScriptedProcess(peer -> {
+        ScriptedMcpProcess process = new ScriptedMcpProcess(peer -> {
             CanonicalPayload initialize = peer.read(json);
             CanonicalPayload capabilities = json.objectField(initialize, "params")
                     .flatMap(params -> json.objectField(params, "capabilities"))
@@ -94,7 +88,7 @@ class McpStdioSessionTest {
     void 未知反向方法和非法参数返回JsonRpc错误而拒绝交互返回安全结果() throws Exception {
         CanonicalJson json = new CanonicalJson();
         AtomicInteger assistantMessages = new AtomicInteger();
-        ScriptedProcess process = new ScriptedProcess(peer -> serveRejectedInteractionFlow(peer, json));
+        ScriptedMcpProcess process = new ScriptedMcpProcess(peer -> serveRejectedInteractionFlow(peer, json));
         McpClientInteractionPort interactions = new McpClientInteractionPort() {
             @Override
             public Optional<CanonicalPayload> elicit(
@@ -131,6 +125,27 @@ class McpStdioSessionTest {
     }
 
     @Test
+    void 脚本端失败在Eof前发布原始原因() throws Exception {
+        CanonicalJson json = new CanonicalJson();
+        AssertionError peerFailure = new AssertionError("peer assertion failed");
+        ScriptedMcpProcess process = new ScriptedMcpProcess(peer -> {
+            peer.read(json);
+            throw peerFailure;
+        });
+
+        try (McpStdioSession session = new McpStdioSession(
+                process,
+                endpoint(),
+                decliningInteractions(),
+                new CancellationSource(),
+                json,
+                Clock.fixed(NOW, ZoneOffset.UTC))) {
+            IOException failure = assertThrows(IOException.class, () -> session.call("tools/call", json.parse("{}")));
+            assertSame(peerFailure, failure.getCause());
+        }
+    }
+
+    @Test
     void 反向通知超过固定上限时终止调用() throws Exception {
         CanonicalJson json = new CanonicalJson();
         StringBuilder responses = new StringBuilder();
@@ -155,7 +170,7 @@ class McpStdioSessionTest {
     @Test
     void 请求响应大小关闭管道与总超时均按边界失败() throws Exception {
         CanonicalJson json = new CanonicalJson();
-        ScriptedProcess oversizedRequest = new ScriptedProcess(peer -> {});
+        ScriptedMcpProcess oversizedRequest = new ScriptedMcpProcess(peer -> {});
         try (McpStdioSession session = new McpStdioSession(
                 oversizedRequest,
                 endpoint(),
@@ -168,7 +183,7 @@ class McpStdioSessionTest {
         }
         oversizedRequest.assertSucceeded();
 
-        ScriptedProcess oversizedResponse = new ScriptedProcess(peer -> {
+        ScriptedMcpProcess oversizedResponse = new ScriptedMcpProcess(peer -> {
             peer.read(json);
             peer.output().write("x".repeat(4 * 1024 * 1024 + 1));
             peer.output().newLine();
@@ -185,7 +200,7 @@ class McpStdioSessionTest {
         }
         oversizedResponse.assertSucceeded();
 
-        ScriptedProcess incomplete = new ScriptedProcess(peer -> peer.read(json));
+        ScriptedMcpProcess incomplete = new ScriptedMcpProcess(peer -> peer.read(json));
         try (McpStdioSession session = new McpStdioSession(
                 incomplete,
                 endpoint(),
@@ -197,7 +212,7 @@ class McpStdioSessionTest {
         }
         incomplete.assertSucceeded();
 
-        ScriptedProcess timedOut = new ScriptedProcess(peer -> {
+        ScriptedMcpProcess timedOut = new ScriptedMcpProcess(peer -> {
             peer.read(json);
             Thread.sleep(500);
         });
@@ -213,7 +228,8 @@ class McpStdioSessionTest {
         }
     }
 
-    private static void serveRejectedInteractionFlow(Peer peer, CanonicalJson json) throws Exception {
+    private static void serveRejectedInteractionFlow(ScriptedMcpProcess.Peer peer, CanonicalJson json)
+            throws Exception {
         peer.read(json);
         peer.write(json, Map.of("jsonrpc", "2.0", "id", "unknown-1", "method", "resources/read"));
         assertEquals(-32601L, errorCode(peer.read(json), json));
@@ -265,7 +281,7 @@ class McpStdioSessionTest {
     private static void assertCallFailure(Map<String, Object> response, Class<? extends Throwable> expected)
             throws Exception {
         CanonicalJson json = new CanonicalJson();
-        ScriptedProcess process = new ScriptedProcess(peer -> {
+        ScriptedMcpProcess process = new ScriptedMcpProcess(peer -> {
             peer.read(json);
             peer.write(json, response);
         });
@@ -320,7 +336,7 @@ class McpStdioSessionTest {
         };
     }
 
-    private static void serveInteractionFlow(Peer peer, CanonicalJson json) throws Exception {
+    private static void serveInteractionFlow(ScriptedMcpProcess.Peer peer, CanonicalJson json) throws Exception {
         CanonicalPayload initialize = peer.read(json);
         assertEquals("initialize", json.textField(initialize, "method").orElseThrow());
         assertTrue(json.objectField(initialize, "params")
@@ -403,116 +419,6 @@ class McpStdioSessionTest {
                 Optional.empty(),
                 timeout);
         return new McpEndpoint("signed", 1, McpEndpointState.ENABLED, 1, spec, NOW, NOW);
-    }
-
-    @FunctionalInterface
-    private interface Script {
-        void run(Peer peer) throws Exception;
-    }
-
-    private record Peer(BufferedReader input, BufferedWriter output) {
-        private CanonicalPayload read(CanonicalJson json) throws IOException {
-            String line = input.readLine();
-            if (line == null) {
-                throw new IOException("client closed scripted MCP pipe");
-            }
-            return json.parse(line);
-        }
-
-        private void write(CanonicalJson json, Object value) throws IOException {
-            output.write(json.encode(value).json());
-            output.newLine();
-            output.flush();
-        }
-    }
-
-    private static final class ScriptedProcess extends Process {
-        private final PipedOutputStream clientInput = new PipedOutputStream();
-        private final PipedInputStream clientOutput;
-        private final PipedInputStream serverInput;
-        private final PipedOutputStream serverOutput = new PipedOutputStream();
-        private final AtomicReference<Throwable> failure = new AtomicReference<>();
-        private final Thread server;
-
-        private ScriptedProcess(Script script) throws IOException {
-            serverInput = new PipedInputStream(clientInput);
-            clientOutput = new PipedInputStream(serverOutput);
-            server = Thread.startVirtualThread(() -> {
-                try (BufferedReader input =
-                                new BufferedReader(new InputStreamReader(serverInput, StandardCharsets.UTF_8));
-                        BufferedWriter output =
-                                new BufferedWriter(new OutputStreamWriter(serverOutput, StandardCharsets.UTF_8))) {
-                    script.run(new Peer(input, output));
-                } catch (Throwable problem) {
-                    failure.set(problem);
-                }
-            });
-        }
-
-        private void assertSucceeded() throws InterruptedException {
-            server.join(Duration.ofSeconds(2));
-            if (failure.get() != null) {
-                throw new AssertionError("scripted MCP peer failed", failure.get());
-            }
-            assertTrue(!server.isAlive(), "scripted MCP peer did not finish");
-        }
-
-        @Override
-        public OutputStream getOutputStream() {
-            return clientInput;
-        }
-
-        @Override
-        public InputStream getInputStream() {
-            return clientOutput;
-        }
-
-        @Override
-        public InputStream getErrorStream() {
-            return new ByteArrayInputStream(new byte[0]);
-        }
-
-        @Override
-        public int waitFor() throws InterruptedException {
-            server.join();
-            return 0;
-        }
-
-        @Override
-        public boolean waitFor(long timeout, TimeUnit unit) throws InterruptedException {
-            server.join(Duration.ofNanos(unit.toNanos(timeout)));
-            return !server.isAlive();
-        }
-
-        @Override
-        public int exitValue() {
-            if (server.isAlive()) {
-                throw new IllegalThreadStateException("scripted MCP peer is alive");
-            }
-            return 0;
-        }
-
-        @Override
-        public void destroy() {
-            try {
-                clientInput.close();
-                clientOutput.close();
-            } catch (IOException ignored) {
-                // 测试进程可能已经随完整帧结束。
-            }
-        }
-
-        @Override
-        public Process destroyForcibly() {
-            destroy();
-            server.interrupt();
-            return this;
-        }
-
-        @Override
-        public boolean isAlive() {
-            return server.isAlive();
-        }
     }
 
     private static final class StaticInputProcess extends Process {

@@ -318,6 +318,44 @@
     -fx-border-color: -jc-primary-200;
 }
 
+/* 复选框：令牌化 box、勾选标记和完整交互状态，避免回退到 Modena 灰色外观。 */
+.check-box {
+    -fx-text-fill: -jc-text-body;
+    -fx-cursor: hand;
+}
+
+.check-box > .box {
+    -fx-background-color: -jc-surface-card;
+    -fx-background-radius: 5;
+    -fx-border-color: -jc-border-strong;
+    -fx-border-radius: 5;
+    -fx-border-width: 1;
+    -fx-padding: 3;
+}
+
+.check-box:hover > .box {
+    -fx-border-color: -jc-primary-300;
+}
+
+.check-box:focused > .box {
+    -fx-border-color: -jc-primary-500;
+    -fx-effect: dropshadow(gaussian, -jc-focus-ring, 6, 0, 0, 0);
+}
+
+.check-box:selected > .box {
+    -fx-background-color: -jc-primary-500;
+    -fx-border-color: -jc-primary-500;
+}
+
+.check-box:selected > .box > .mark {
+    -fx-background-color: -jc-on-brand;
+}
+
+.check-box:disabled {
+    -fx-cursor: default;
+    -fx-opacity: 0.5;
+}
+
 /* 菜单按钮兜底（弹出面板沿用全局 context-menu 样式） */
 .menu-button {
     -fx-background-color: -jc-surface-sunken;
@@ -551,4 +589,3 @@
 .scroll-pane > .viewport {
     -fx-background-color: transparent;
 }
-

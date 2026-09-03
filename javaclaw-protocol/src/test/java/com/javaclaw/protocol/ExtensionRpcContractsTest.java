@@ -135,14 +135,17 @@ class ExtensionRpcContractsTest {
     }
 
     @Test
-    void tool搜索校验关键词版本与页大小() {
+    void tool搜索允许空查询并校验版本与页大小() {
         ToolRpcContracts.SearchArguments arguments = new ToolRpcContracts.SearchArguments(" files ", 100);
         ToolRpcContracts.CatalogQuery query =
                 new ToolRpcContracts.CatalogQuery(WORKSPACE_ID, " profile ", 1, " code ", 1);
 
         assertEquals("files", arguments.query());
         assertEquals("profile", query.permissionProfileId());
-        assertThrows(IllegalArgumentException.class, () -> new ToolRpcContracts.SearchArguments(" ", 1));
+        assertEquals("", new ToolRpcContracts.SearchArguments(" ", 1).query());
+        assertEquals("", new ToolRpcContracts.CatalogQuery(WORKSPACE_ID, "profile", 1, "", 1).query());
+        assertThrows(NullPointerException.class, () -> new ToolRpcContracts.SearchArguments(null, 1));
+        assertThrows(IllegalArgumentException.class, () -> new ToolRpcContracts.SearchArguments("x".repeat(1_001), 1));
         assertThrows(IllegalArgumentException.class, () -> new ToolRpcContracts.SearchArguments("x", 0));
         assertThrows(IllegalArgumentException.class, () -> new ToolRpcContracts.SearchArguments("x", 101));
         assertThrows(NullPointerException.class, () -> new ToolRpcContracts.CatalogQuery(null, "profile", 1, "x", 1));
@@ -158,9 +161,11 @@ class ExtensionRpcContractsTest {
     void tool搜索结果取得列表所有权() {
         ToolDescriptor descriptor = new ToolDescriptor(
                 new ToolIdentity("core", "read_file", 1), "读取文件", EMPTY, EMPTY, ToolRisk.READ_ONLY, Set.of("file"));
-        ToolRpcContracts.SearchResult result = new ToolRpcContracts.SearchResult(List.of(descriptor));
+        ToolRpcContracts.SearchResult result = new ToolRpcContracts.SearchResult(7, List.of(descriptor));
 
         assertEquals(List.of(descriptor), result.tools());
-        assertThrows(NullPointerException.class, () -> new ToolRpcContracts.SearchResult(null));
+        assertEquals(7, result.toApi().catalogRevision());
+        assertThrows(IllegalArgumentException.class, () -> new ToolRpcContracts.SearchResult(0, List.of()));
+        assertThrows(NullPointerException.class, () -> new ToolRpcContracts.SearchResult(1, null));
     }
 }

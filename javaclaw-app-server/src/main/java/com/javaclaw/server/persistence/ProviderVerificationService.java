@@ -10,16 +10,17 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import com.javaclaw.api.CancellationToken;
 import com.javaclaw.api.CredentialRef;
+import com.javaclaw.api.ProviderAuthentication;
 import com.javaclaw.api.ProviderCapabilities;
 import com.javaclaw.api.ProviderEndpoint;
-import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.ProviderVerificationResult;
 import com.javaclaw.api.ProviderVerificationState;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.ProviderVerificationRpcContracts;
 import com.javaclaw.runtime.ModelGateway;
+import com.javaclaw.server.model.EmbeddingAdapterFactory;
 
 /**
  * 显式计费 Provider round-trip 的幂等应用服务。
@@ -32,7 +33,8 @@ public final class ProviderVerificationService implements AutoCloseable {
     private final IdempotencyRepository idempotency = new IdempotencyRepository();
     private final ProviderService providers;
     private final CredentialAvailabilityPort credentials;
-    private final ProviderVerificationHarness harness;
+    private final ProviderVerificationHarness chatHarness;
+    private final ProviderEmbeddingVerificationHarness embeddingHarness;
     private final CanonicalJson json;
     private final Clock clock;
     private final ConcurrentHashMap<String, ActiveCall> active = new ConcurrentHashMap<>();
@@ -44,6 +46,7 @@ public final class ProviderVerificationService implements AutoCloseable {
      * @param providers Provider 权威版本服务
      * @param credentials Secret 实时可用性边界
      * @param models 生产环境中的 ProviderModelRegistry
+     * @param embeddingAdapters 精确版本的临时 Embedding Adapter 构造边界
      * @param json 规范 JSON codec
      * @param clock 平台时钟
      */
@@ -52,6 +55,7 @@ public final class ProviderVerificationService implements AutoCloseable {
             ProviderService providers,
             CredentialAvailabilityPort credentials,
             ModelGateway models,
+            EmbeddingAdapterFactory embeddingAdapters,
             CanonicalJson json,
             Clock clock) {
         transactions = new H2Transactions(Objects.requireNonNull(database, "database"));
@@ -59,7 +63,9 @@ public final class ProviderVerificationService implements AutoCloseable {
         this.credentials = Objects.requireNonNull(credentials, "credentials");
         this.json = Objects.requireNonNull(json, "json");
         this.clock = Objects.requireNonNull(clock, "clock");
-        harness = new ProviderVerificationHarness(Objects.requireNonNull(models, "models"), clock);
+        chatHarness = new ProviderVerificationHarness(Objects.requireNonNull(models, "models"), clock);
+        embeddingHarness = new ProviderEmbeddingVerificationHarness(
+                Objects.requireNonNull(embeddingAdapters, "embeddingAdapters"), clock);
         recoverInterrupted();
     }
 
@@ -67,13 +73,15 @@ public final class ProviderVerificationService implements AutoCloseable {
             H2Database database,
             ProviderService providers,
             CredentialAvailabilityPort credentials,
-            ProviderVerificationHarness harness,
+            ProviderVerificationHarness chatHarness,
+            ProviderEmbeddingVerificationHarness embeddingHarness,
             CanonicalJson json,
             Clock clock) {
         transactions = new H2Transactions(Objects.requireNonNull(database, "database"));
         this.providers = Objects.requireNonNull(providers, "providers");
         this.credentials = Objects.requireNonNull(credentials, "credentials");
-        this.harness = Objects.requireNonNull(harness, "harness");
+        this.chatHarness = Objects.requireNonNull(chatHarness, "chatHarness");
+        this.embeddingHarness = Objects.requireNonNull(embeddingHarness, "embeddingHarness");
         this.json = Objects.requireNonNull(json, "json");
         this.clock = Objects.requireNonNull(clock, "clock");
         recoverInterrupted();
@@ -84,13 +92,18 @@ public final class ProviderVerificationService implements AutoCloseable {
      *
      * @param identity 方法、幂等键、expected revision 与请求摘要
      * @param provider 精确 Provider 与模型版本
+     * @param purpose 本次验证的精确模型用途
      * @param cancellation 协作式取消；取消结果同样会持久化，禁止自动重试
      * @return 不含 Prompt 或响应正文的脱敏终态
      */
     public ProviderVerificationResult verify(
-            CommandIdentity identity, ProviderRef provider, CancellationToken cancellation) {
+            CommandIdentity identity,
+            ProviderRef provider,
+            ProviderModelPurpose purpose,
+            CancellationToken cancellation) {
         CommandIdentity checkedIdentity = requireIdentity(identity, provider);
         ProviderRef checkedProvider = Objects.requireNonNull(provider, "provider");
+        ProviderModelPurpose checkedPurpose = Objects.requireNonNull(purpose, "purpose");
         CancellationToken checkedCancellation = Objects.requireNonNull(cancellation, "cancellation");
         ActiveCall candidate = new ActiveCall(checkedIdentity.requestDigest());
         ActiveCall existing = active.putIfAbsent(checkedIdentity.idempotencyKey(), candidate);
@@ -99,7 +112,8 @@ public final class ProviderVerificationService implements AutoCloseable {
             return await(existing.result());
         }
         try {
-            ProviderVerificationResult result = verifyOwner(checkedIdentity, checkedProvider, checkedCancellation);
+            ProviderVerificationResult result =
+                    verifyOwner(checkedIdentity, checkedProvider, checkedPurpose, checkedCancellation);
             candidate.result().complete(result);
             return result;
         } catch (RuntimeException failure) {
@@ -113,33 +127,48 @@ public final class ProviderVerificationService implements AutoCloseable {
     /** 取消当前服务拥有的验证线程；已提交终态和 H2 意图不受影响。 */
     @Override
     public void close() {
-        harness.close();
+        chatHarness.close();
+        embeddingHarness.close();
     }
 
     private ProviderVerificationResult verifyOwner(
-            CommandIdentity identity, ProviderRef provider, CancellationToken cancellation) {
+            CommandIdentity identity,
+            ProviderRef provider,
+            ProviderModelPurpose purpose,
+            CancellationToken cancellation) {
         Optional<ProviderVerificationResult> replay = recover(identity);
         if (replay.isPresent()) {
             return replay.orElseThrow();
         }
-        Start start = providers.coordinateSerialCommand(identity, () -> begin(identity, provider));
+        Start start = providers.coordinateSerialCommand(identity, () -> begin(identity, provider, purpose));
         if (start.replay().isPresent()) {
             return start.replay().orElseThrow();
         }
-        ProviderVerificationResult result = harness.execute(start.endpoint(), provider, cancellation);
+        ProviderVerificationResult result = execute(start.endpoint(), provider, purpose, cancellation);
         try {
             return finish(identity, result);
         } catch (RuntimeException persistenceFailure) {
-            return unknown(start.endpoint(), provider, clock.instant());
+            return unknown(start.endpoint(), provider, purpose, clock.instant());
         }
     }
 
-    private Start begin(CommandIdentity identity, ProviderRef provider) {
+    private ProviderVerificationResult execute(
+            ProviderEndpoint endpoint,
+            ProviderRef provider,
+            ProviderModelPurpose purpose,
+            CancellationToken cancellation) {
+        return switch (purpose) {
+            case CHAT -> chatHarness.execute(endpoint, provider, cancellation);
+            case EMBEDDING -> embeddingHarness.execute(endpoint, provider, cancellation);
+        };
+    }
+
+    private Start begin(CommandIdentity identity, ProviderRef provider, ProviderModelPurpose purpose) {
         Optional<ProviderVerificationResult> replay = recover(identity);
         if (replay.isPresent()) {
             return new Start(null, replay);
         }
-        ProviderEndpoint endpoint = requireEligible(provider);
+        ProviderEndpoint endpoint = requireEligible(provider, purpose);
         requireCredentialAvailable(endpoint);
         Optional<ProviderVerificationResult> transactionalReplay = execute(connection -> {
             Optional<IdempotencyRepository.StoredCommand> stored =
@@ -152,7 +181,7 @@ public final class ProviderVerificationService implements AutoCloseable {
             if (intent.isPresent()) {
                 return Optional.of(recover(identity, intent.orElseThrow()));
             }
-            repository.insertRunning(connection, identity, provider, clock.instant());
+            repository.insertRunning(connection, identity, provider, purpose, clock.instant());
             return Optional.<ProviderVerificationResult>empty();
         });
         return transactionalReplay
@@ -211,22 +240,14 @@ public final class ProviderVerificationService implements AutoCloseable {
         return json.decode(stored.response(), ProviderVerificationResult.class);
     }
 
-    private ProviderEndpoint requireEligible(ProviderRef provider) {
-        ProviderEndpoint endpoint = providers.requireLatestForMutation(provider.endpointId());
-        if (endpoint.revision() != provider.endpointRevision()) {
-            throw PersistenceException.revisionConflict("Provider revision 已改变");
-        }
-        if (endpoint.lifecycle() != ProviderLifecycle.ACTIVE) {
-            throw PersistenceException.invalidRequest("只有 ACTIVE Provider 可以执行计费验证");
-        }
-        if (!endpoint.spec().roles().contains(ProviderRole.CHAT)
-                || !endpoint.spec().models().contains(provider.model())) {
-            throw PersistenceException.invalidRequest("Provider 精确模型不支持 Chat 验证");
-        }
-        return endpoint;
+    private ProviderEndpoint requireEligible(ProviderRef provider, ProviderModelPurpose purpose) {
+        return providers.requireAvailable(provider, purpose);
     }
 
     private void requireCredentialAvailable(ProviderEndpoint endpoint) {
+        if (endpoint.spec().authentication() == ProviderAuthentication.NONE) {
+            return;
+        }
         CredentialRef credential = endpoint.spec()
                 .credential()
                 .orElseThrow(() -> PersistenceException.invalidRequest("Provider 尚未绑定 CredentialRef"));
@@ -240,7 +261,8 @@ public final class ProviderVerificationService implements AutoCloseable {
             for (ProviderVerificationRepository.StoredVerification stored : repository.listRunning(connection)) {
                 ProviderEndpoint endpoint = providers.require(
                         stored.provider().endpointId(), stored.provider().endpointRevision());
-                ProviderVerificationResult unknown = unknown(endpoint, stored.provider(), clock.instant());
+                ProviderVerificationResult unknown =
+                        unknown(endpoint, stored.provider(), stored.purpose(), clock.instant());
                 CommandIdentity identity = new CommandIdentity(
                         stored.method(),
                         stored.idempotencyKey(),
@@ -261,14 +283,16 @@ public final class ProviderVerificationService implements AutoCloseable {
     private ProviderVerificationResult unknownForStored(ProviderVerificationRepository.StoredVerification stored) {
         ProviderEndpoint endpoint = providers.require(
                 stored.provider().endpointId(), stored.provider().endpointRevision());
-        return unknown(endpoint, stored.provider(), stored.updatedAt());
+        return unknown(endpoint, stored.provider(), stored.purpose(), stored.updatedAt());
     }
 
-    private ProviderVerificationResult unknown(ProviderEndpoint endpoint, ProviderRef provider, Instant completedAt) {
-        ProviderCapabilities capabilities = ProviderService.capabilities(
-                endpoint.spec().adapter(), endpoint.spec().roles());
+    private ProviderVerificationResult unknown(
+            ProviderEndpoint endpoint, ProviderRef provider, ProviderModelPurpose purpose, Instant completedAt) {
+        ProviderCapabilities capabilities =
+                ProviderService.capabilities(endpoint.spec().adapter(), java.util.Set.of(purpose));
         return new ProviderVerificationResult(
                 provider,
+                purpose,
                 ProviderVerificationState.UNKNOWN_OUTCOME,
                 0,
                 Optional.empty(),

@@ -20,7 +20,7 @@ import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 import com.javaclaw.protocol.DiagnosticsRpcContracts;
 
-/** 展示 App Server 固定退出策略、活动 Lease 和登录启动约束的管理页面。 */
+/** 展示 JavaClaw 服务固定退出策略、活动运行锁和登录启动约束的管理页面。 */
 public final class LifecycleSettingsPage extends VBox implements ManagedSettingsPage {
     private final CoreSettingsGateway gateway;
     private final Label clients = value();
@@ -59,6 +59,11 @@ public final class LifecycleSettingsPage extends VBox implements ManagedSettings
     }
 
     @Override
+    public Optional<Node> actionContent() {
+        return Optional.of(actions);
+    }
+
+    @Override
     public void activate() {
         load();
     }
@@ -82,27 +87,27 @@ public final class LifecycleSettingsPage extends VBox implements ManagedSettings
     private void configurePage(Button repair) {
         Label title = new Label("生命周期");
         title.getStyleClass().addAll("sec-title", "platform-page-title");
-        Label description = new Label("App Server 只由客户端连接和持久活动 Lease 保活；托盘不承担 Schedule 执行。");
+        Label description = new Label("JavaClaw 服务只由客户端连接和持久活动运行锁保活；托盘不执行定时任务。");
         description.setWrapText(true);
         description.getStyleClass().add("sec-hint");
 
         FormSection process = new FormSection("后台退出", "退出等待是产品安全边界，不提供用户可修改值。");
-        process.addField("无客户端、无 Lease", value("60 秒后退出（固定）"));
+        process.addField("无客户端、无运行锁", value("60 秒后退出（固定）"));
         process.addField("当前客户端", clients);
-        process.addField("活动 Lease", leases);
+        process.addField("活动运行锁", leases);
 
-        FormSection login = new FormSection("登录启动项", "首个启用 Schedule 注册，最后一个停用时注销；页面只允许修复权威投影。");
+        FormSection login = new FormSection("登录启动项", "首个启用定时任务注册，最后一个停用时注销；页面只允许修复权威投影。");
         login.addField("状态", startup);
         login.addFullWidth(new HBox(8, repair));
         login.addFullWidth(startupDetail);
 
-        FormSection supervisor = new FormSection("发行托盘", "托盘只控制 App Server 和打开主窗口，不承担 Schedule 执行。");
-        supervisor.addField("Launcher", launcher);
-        supervisor.addField("SystemTray", tray);
+        FormSection supervisor = new FormSection("发行托盘", "托盘只控制 JavaClaw 服务和打开主窗口，不执行定时任务。");
+        supervisor.addField("启动器", launcher);
+        supervisor.addField("系统托盘", tray);
         supervisor.addField("服务控制", serverControl);
         supervisor.addFullWidth(launcherDetail);
 
-        getChildren().addAll(title, description, process, login, supervisor, actions);
+        getChildren().addAll(title, description, process, login, supervisor);
         getStyleClass().add("platform-page");
     }
 
@@ -140,9 +145,8 @@ public final class LifecycleSettingsPage extends VBox implements ManagedSettings
         startup.setText(projectionMatches ? "已同步" : "需要修复");
         repair.setDisable(!schedule.repairAvailable());
         String detail = schedule.unavailableReason()
-                .orElseGet(() -> schedule.loginStartupRequired()
-                        ? "存在启用 Schedule；登录启动项应处于已安装状态。"
-                        : "没有启用 Schedule；登录启动项应处于未安装状态。");
+                .orElseGet(
+                        () -> schedule.loginStartupRequired() ? "存在启用定时任务；登录启动项应处于已安装状态。" : "没有启用定时任务；登录启动项应处于未安装状态。");
         startupDetail.setText(detail);
         repair.setTooltip(schedule.unavailableReason().map(Tooltip::new).orElse(null));
         renderSupervisor(loaded.launcher());
@@ -153,7 +157,7 @@ public final class LifecycleSettingsPage extends VBox implements ManagedSettings
         launcher.setText(status.launcherConfigured() ? "已配置" : "未配置");
         tray.setText(status.trayActive() ? "运行中" : "不可用");
         serverControl.setText(status.serverControlAvailable() ? "可用" : "不可用");
-        launcherDetail.setText(status.unavailableReason().orElse("发行托盘可以启动、停止、重启 App Server 并打开主窗口。"));
+        launcherDetail.setText(status.unavailableReason().orElse("发行托盘可以启动、停止、重启 JavaClaw 服务并打开主窗口。"));
     }
 
     private void repair() {
@@ -181,7 +185,7 @@ public final class LifecycleSettingsPage extends VBox implements ManagedSettings
                                 false, false, false, Optional.of("launcher 状态尚未读取"))));
         state = Optional.of(refreshed);
         render(refreshed);
-        actions.show(ActionState.SUCCESS, "登录启动项已按 Schedule 权威状态修复");
+        actions.show(ActionState.SUCCESS, "登录启动项已按定时任务权威状态修复");
     }
 
     private static Label value() {

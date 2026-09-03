@@ -97,6 +97,20 @@ final class MemoryExtensionPresentation {
                 managementNodes());
     }
 
+    /**
+     * 构造独立的学习策略文档，避免设置中心与记忆管理重复实现同一表单。
+     *
+     * @return 由 Memory 扩展拥有的 ViewSchema v2 文档
+     */
+    static ViewSchema learningView() {
+        return new ViewSchema(
+                ViewSchema.CURRENT_VERSION,
+                "javaclaw.memory.learning",
+                "学习策略",
+                List.of(new ViewDataSource("settings", "view.settings", Map.of(), List.of(), 1)),
+                List.of(learningSettingsForm()));
+    }
+
     private static List<ViewDataSource> managementDataSources() {
         return List.of(
                 new ViewDataSource("newMemory", "view.new-memory", Map.of(), List.of(), 1),
@@ -117,13 +131,11 @@ final class MemoryExtensionPresentation {
                         100),
                 new ViewDataSource("stats", "view.stats", Map.of(), List.of(), 1),
                 new ViewDataSource("tombstones", "view.tombstones", Map.of(), List.of(), 100),
-                new ViewDataSource("proposals", "view.proposals", Map.of(), List.of(), 100),
-                new ViewDataSource("settings", "view.settings", Map.of(), List.of(), 1));
+                new ViewDataSource("proposals", "view.proposals", Map.of(), List.of(), 100));
     }
 
     private static List<ViewSchema.Node> managementNodes() {
         return List.of(
-                learningSettingsForm(),
                 manualCreateForm(),
                 correctionForm(),
                 new ViewSchema.Table(
@@ -295,7 +307,14 @@ final class MemoryExtensionPresentation {
 
     private static ViewStructuredItemField structuredText(String name, String label, ViewStructuredItemType type) {
         return new ViewStructuredItemField(
-                name, label, type, Optional.empty(), List.of(), ViewStructuredItemValidation.required(true), List.of());
+                name,
+                label,
+                type,
+                Optional.empty(),
+                List.of(),
+                ViewStructuredItemValidation.required(true),
+                List.of(),
+                Optional.empty());
     }
 
     private static ViewField textField(String name, String label, String source, String field, ViewFieldType type) {

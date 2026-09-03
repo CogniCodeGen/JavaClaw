@@ -45,7 +45,7 @@ public final class PermissionPreviewPresenter {
                 state.turnGrant(),
                 state.toolDeclaration(),
                 state.preview(),
-                "正在读取 Workspace…",
+                "正在读取工作区…",
                 epoch));
         gateway.workspaces()
                 .thenCombine(gateway.permissionProfiles(), PreviewCatalog::new)
@@ -94,7 +94,7 @@ public final class PermissionPreviewPresenter {
      * @param profile 当前权威 PermissionProfile
      */
     public void preview(PermissionProfile profile) {
-        Workspace workspace = state.selectedWorkspace().orElseThrow(() -> new IllegalStateException("请先选择 Workspace"));
+        Workspace workspace = state.selectedWorkspace().orElseThrow(() -> new IllegalStateException("请先选择工作区"));
         PermissionProfile checked = Objects.requireNonNull(profile, "profile");
         long epoch = state.epoch() + 1;
         publish(new PermissionPreviewState(
@@ -169,7 +169,7 @@ public final class PermissionPreviewPresenter {
                 retain(state.turnGrant(), candidates),
                 retain(state.toolDeclaration(), candidates),
                 Optional.empty(),
-                workspaces.isEmpty() ? "请先创建 Workspace，才能计算有效权限" : "",
+                workspaces.isEmpty() ? "请先创建工作区，才能计算有效权限" : "",
                 epoch));
     }
 

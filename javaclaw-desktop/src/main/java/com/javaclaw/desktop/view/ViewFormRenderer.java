@@ -30,6 +30,7 @@ import com.javaclaw.extension.spi.ViewAttachmentPolicy;
 import com.javaclaw.extension.spi.ViewCondition;
 import com.javaclaw.extension.spi.ViewConditionOperator;
 import com.javaclaw.extension.spi.ViewField;
+import com.javaclaw.extension.spi.ViewFieldType;
 import com.javaclaw.extension.spi.ViewFieldValidation;
 import com.javaclaw.extension.spi.ViewFormField;
 import com.javaclaw.extension.spi.ViewOption;
@@ -90,9 +91,13 @@ final class ViewFormRenderer {
             GridPane.setHgrow(input, Priority.ALWAYS);
             grid.add(label, 0, row);
             grid.add(input, 1, row++);
-            result.put(field.name(), new ViewFormInputState(field, label, input, typedValue(field, input)));
+            Object initial = field instanceof ViewField scalar && scalar.type() == ViewFieldType.CHOICE
+                    ? initialText(scalar, data)
+                    : typedValue(field, input);
+            result.put(field.name(), new ViewFormInputState(field, label, input, initial));
         }
-        return Map.copyOf(result);
+        configureDynamicChoices(result, data);
+        return java.util.Collections.unmodifiableMap(result);
     }
 
     private Label fieldLabel(ViewFormField field) {
@@ -111,12 +116,10 @@ final class ViewFormRenderer {
                 switch (field) {
                     case ViewField scalar -> scalarInput(scalar, data, interactions);
                     case ViewStructuredListField structured ->
-                        new ViewStructuredListControl(structured, data.value(structured.binding()), components);
+                        new ViewStructuredListControl(structured, data.value(structured.binding()), data, components);
                 };
         input.setAccessibleText(field.label());
-        if (input instanceof Region region) {
-            region.setMaxWidth(Double.MAX_VALUE);
-        }
+        ((Region) input).setMaxWidth(Double.MAX_VALUE);
         return input;
     }
 
@@ -157,7 +160,7 @@ final class ViewFormRenderer {
                 throw new UnsupportedOperationException("ViewSchema choice is not editable");
             }
         });
-        input.getItems().setAll(options(field, data));
+        input.getItems().setAll(field.options());
         String selected = initialText(field, data);
         input.getItems().stream()
                 .filter(option -> option.value().equals(selected))
@@ -166,21 +169,56 @@ final class ViewFormRenderer {
         return input;
     }
 
-    private List<ViewOption> options(ViewField field, ViewData data) {
-        LinkedHashMap<String, ViewOption> options = new LinkedHashMap<>();
-        field.options().forEach(option -> options.put(option.value(), option));
-        field.optionSource()
-                .ifPresent(source ->
-                        dynamicOptions(source, data).forEach(option -> options.putIfAbsent(option.value(), option)));
-        return List.copyOf(options.values());
+    private void configureDynamicChoices(Map<String, ViewFormInputState> states, ViewData data) {
+        states.values().stream()
+                .filter(state -> state.field instanceof ViewField scalar
+                        && scalar.optionSource().isPresent())
+                .forEach(state -> configureDynamicChoice(state, states, data));
     }
 
-    private List<ViewOption> dynamicOptions(ViewOptionSource source, ViewData data) {
-        return data.source(source.sourceId()).rows().stream()
-                .map(row -> new ViewOption(
-                        Objects.toString(row.get(source.valueField()), ""),
-                        Objects.toString(row.get(source.labelField()), "")))
-                .toList();
+    private void configureDynamicChoice(
+            ViewFormInputState state, Map<String, ViewFormInputState> states, ViewData data) {
+        ViewField field = (ViewField) state.field;
+        ViewOptionSource source = field.optionSource().orElseThrow();
+        @SuppressWarnings("unchecked")
+        ComboBox<ViewOption> choice = (ComboBox<ViewOption>) state.input;
+        boolean[] initialized = {false};
+        Runnable refresh = () -> {
+            String selected = initialized[0]
+                    ? Optional.ofNullable(choice.getValue())
+                            .map(ViewOption::value)
+                            .orElse("")
+                    : Objects.toString(state.initial, "");
+            List<ViewOption> options =
+                    ViewDynamicOptions.resolve(field.options(), source, data, input -> inputValue(states.get(input)));
+            choice.getItems().setAll(options);
+            choice.setValue(options.stream()
+                    .filter(option -> option.value().equals(selected))
+                    .findFirst()
+                    .orElse(null));
+            choice.setDisable(options.isEmpty());
+            initialized[0] = true;
+        };
+        source.filter()
+                .map(filter -> states.get(filter.inputField()))
+                .ifPresent(dependency -> observe(dependency.input, refresh));
+        refresh.run();
+    }
+
+    private Object inputValue(ViewFormInputState state) {
+        ViewFormInputState checked = Objects.requireNonNull(state, "动态选项依赖字段");
+        return typedValue(checked.field, checked.input);
+    }
+
+    private void observe(Node input, Runnable refresh) {
+        javafx.beans.InvalidationListener listener = ignored -> refresh.run();
+        if (input instanceof CheckBox checkBox) {
+            checkBox.selectedProperty().addListener(listener);
+        } else if (input instanceof ComboBox<?> comboBox) {
+            comboBox.valueProperty().addListener(listener);
+        } else if (input instanceof TextInputControl text) {
+            text.textProperty().addListener(listener);
+        }
     }
 
     private TextArea multiline(ViewField field, ViewData data) {
@@ -198,9 +236,6 @@ final class ViewFormRenderer {
     }
 
     private String initialText(ViewField field, ViewData data) {
-        if (field.type() == com.javaclaw.extension.spi.ViewFieldType.ATTACHMENT) {
-            return "";
-        }
         Object bound = data.value(field.binding());
         return bound == null ? field.initialValue().orElse("") : Objects.toString(bound, "");
     }
@@ -291,20 +326,6 @@ final class ViewFormRenderer {
         }
         if (field.type() == com.javaclaw.extension.spi.ViewFieldType.NUMBER) {
             return validateNumber(field, value, validation);
-        }
-        if (field.type() == com.javaclaw.extension.spi.ViewFieldType.ATTACHMENT) {
-            return validateAttachment(field, value, validation);
-        }
-        return Optional.empty();
-    }
-
-    private Optional<String> validateAttachment(ViewField field, Object value, ViewFieldValidation validation) {
-        if (!(value instanceof com.javaclaw.api.AttachmentRef attachment)) {
-            return Optional.of(field.label() + "必须先完成上传");
-        }
-        ViewAttachmentPolicy policy = validation.attachment().orElseThrow();
-        if (!policy.accepts(attachment.mediaType()) || attachment.sizeBytes() > policy.maximumBytes()) {
-            return Optional.of(field.label() + "不符合允许的文件类型或大小限制");
         }
         return Optional.empty();
     }

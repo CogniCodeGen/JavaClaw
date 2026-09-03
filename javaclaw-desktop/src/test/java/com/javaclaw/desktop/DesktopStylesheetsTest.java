@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DesktopStylesheetsTest {
-    private static final String BASELINE_SHA256 = "1e95cbe4f963f1f6b12229f3a4cbbfb43861af0379491303c9bd1424f787d51f";
+    private static final String BASELINE_SHA256 = "0fbb07cbe860b39188a20936bdb0d13290a79b856c43e1875a4d91663cb5eb85";
 
     @Test
     void 可达视觉基线保持固定字节和级联顺序() throws Exception {
@@ -102,12 +102,34 @@ class DesktopStylesheetsTest {
             }
         }
 
+        String overlayStylesheet = resourceText("/css/interaction-overlays.css");
+        assertTrue(Pattern.compile(
+                        "\\.combo-box-popup > \\.list-view \\{[^}]*-fx-background-color: -jc-surface-card;[^}]*}",
+                        Pattern.DOTALL)
+                .matcher(overlayStylesheet)
+                .find());
+
+        assertCheckBoxBaseline(resourceText("/css/design-tokens-controls.css"));
+
         String mainFxml = resourceText("/fxml/main.fxml");
         assertFalse(mainFxml.contains(" style=\""), "FXML 不得通过 inline style 绕过设计系统");
         assertTrue(mainFxml.contains("fx:id=\"connectionErrorCard\""));
         assertTrue(mainFxml.contains("onAction=\"#retryConnection\""));
         assertTrue(mainFxml.contains("onAction=\"#openDiagnostics\""));
         assertFalse(mainFxml.contains("Connection refused"), "连接异常不得作为原始字符串直接写入界面");
+    }
+
+    private static void assertCheckBoxBaseline(String controlsStylesheet) {
+        for (String selector : List.of(
+                ".check-box {",
+                ".check-box > .box {",
+                ".check-box:hover > .box {",
+                ".check-box:focused > .box {",
+                ".check-box:selected > .box {",
+                ".check-box:selected > .box > .mark {",
+                ".check-box:disabled {")) {
+            assertTrue(controlsStylesheet.contains(selector), () -> "缺少复选框全局交互状态：" + selector);
+        }
     }
 
     private static String resourceText(String path) throws Exception {

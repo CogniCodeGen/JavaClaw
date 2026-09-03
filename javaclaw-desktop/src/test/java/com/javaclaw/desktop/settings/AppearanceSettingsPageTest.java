@@ -38,6 +38,7 @@ class AppearanceSettingsPageTest {
             applicationRoot.set(new VBox());
             manager.register(new Scene(applicationRoot.get()));
             AppearanceSettingsPage page = new AppearanceSettingsPage(manager, () -> closed.set(true));
+            attach(page);
 
             toggle(page, AppearanceTheme.CARBON).setSelected(true);
             toggle(page, FontScale.LARGE).setSelected(true);
@@ -64,6 +65,7 @@ class AppearanceSettingsPageTest {
         FxTestSupport.run(() -> {
             manager.register(new Scene(new VBox()));
             AppearanceSettingsPage page = new AppearanceSettingsPage(manager, () -> {});
+            attach(page);
             ToggleButton plum = toggle(page, AppearanceTheme.PLUM);
             plum.setSelected(true);
             plum.setSelected(false);
@@ -94,7 +96,8 @@ class AppearanceSettingsPageTest {
     }
 
     private static Button button(Parent root, String text) {
-        return descendants(root).stream()
+        Parent searchRoot = root.getScene() == null ? root : root.getScene().getRoot();
+        return descendants(searchRoot).stream()
                 .filter(Button.class::isInstance)
                 .map(Button.class::cast)
                 .filter(button -> text.equals(button.getText()))
@@ -102,10 +105,18 @@ class AppearanceSettingsPageTest {
                 .orElseThrow();
     }
 
+    private static void attach(AppearanceSettingsPage page) {
+        VBox root = new VBox(page);
+        page.actionContent().ifPresent(root.getChildren()::add);
+        new Scene(root, 900, 700);
+        root.applyCss();
+    }
+
     private static java.util.List<Node> descendants(Parent root) {
+        Parent searchRoot = root.getScene() == null ? root : root.getScene().getRoot();
         java.util.ArrayList<Node> result = new java.util.ArrayList<>();
         Queue<Node> pending = new ArrayDeque<>();
-        pending.add(root);
+        pending.add(searchRoot);
         while (!pending.isEmpty()) {
             Node node = pending.remove();
             result.add(node);

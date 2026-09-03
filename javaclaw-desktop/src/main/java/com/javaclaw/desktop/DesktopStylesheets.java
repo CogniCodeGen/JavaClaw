@@ -4,6 +4,7 @@ import java.net.URL;
 import java.util.List;
 import java.util.Objects;
 
+import javafx.scene.Parent;
 import javafx.scene.Scene;
 
 import com.javaclaw.desktop.appearance.DesktopAppearanceManager;
@@ -30,10 +31,28 @@ public final class DesktopStylesheets {
      */
     public static void apply(Scene scene) {
         Objects.requireNonNull(scene, "scene");
-        for (String resource : RESOURCES) {
-            scene.getStylesheets().add(requireResource(resource).toExternalForm());
-        }
+        addStylesheets(scene.getStylesheets());
         DesktopAppearanceManager.apply(scene, new JavaPreferencesAppearanceStore().load());
+    }
+
+    /**
+     * 将完整 Desktop 样式应用到独立节点树；主要供 JavaFX DialogPane 在展示前使用。
+     *
+     * @param root 接收样式和已保存外观的根节点
+     */
+    public static void applyTo(Parent root) {
+        Objects.requireNonNull(root, "root");
+        addStylesheets(root.getStylesheets());
+        DesktopAppearanceManager.applyTo(root, new JavaPreferencesAppearanceStore().load());
+    }
+
+    private static void addStylesheets(List<String> stylesheets) {
+        for (String resource : RESOURCES) {
+            String stylesheet = requireResource(resource).toExternalForm();
+            if (!stylesheets.contains(stylesheet)) {
+                stylesheets.add(stylesheet);
+            }
+        }
     }
 
     private static List<String> appendShellStylesheet(List<String> baseline) {

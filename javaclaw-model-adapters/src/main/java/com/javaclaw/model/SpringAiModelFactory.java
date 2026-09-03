@@ -8,7 +8,6 @@ import com.anthropic.models.messages.Model;
 import com.google.genai.Client;
 import com.google.genai.types.HttpOptions;
 import com.openai.client.OpenAIClient;
-import com.openai.client.okhttp.OpenAIOkHttpClient;
 import org.springframework.ai.anthropic.AnthropicChatModel;
 import org.springframework.ai.anthropic.AnthropicChatOptions;
 import org.springframework.ai.chat.model.ChatModel;
@@ -24,21 +23,22 @@ import com.javaclaw.runtime.ModelInvocation;
 /** 构造三家 Spring AI ChatModel，并把具体 SDK 类型封闭在本模块。 */
 final class SpringAiModelFactory {
     SpringAiEndpoint create(SpringAiEndpointConfig config, char[] apiKey) {
-        String secret = requiredSecret(apiKey);
         return switch (config.provider()) {
-            case OPENAI_COMPATIBLE -> openAi(config, secret);
-            case ANTHROPIC -> anthropic(config, secret);
-            case GOOGLE_GENAI -> google(config, secret);
+            case OPENAI_COMPATIBLE -> openAi(config, apiKey);
+            case ANTHROPIC -> anthropic(config, requiredSecret(apiKey));
+            case GOOGLE_GENAI -> google(config, requiredSecret(apiKey));
         };
     }
 
-    private SpringAiEndpoint openAi(SpringAiEndpointConfig config, String apiKey) {
-        OpenAIOkHttpClient.Builder clientBuilder = OpenAIOkHttpClient.builder()
-                .apiKey(apiKey)
-                .timeout(config.timeout())
-                .maxRetries(config.maximumRetries());
-        config.baseUri().ifPresent(uri -> clientBuilder.baseUrl(uri.toString()));
-        OpenAIClient client = clientBuilder.build();
+    private SpringAiEndpoint openAi(SpringAiEndpointConfig config, char[] apiKey) {
+        OpenAIClient client = OpenAiSdkClientFactory.create(
+                config.baseUri(),
+                config.authentication(),
+                config.organization(),
+                config.project(),
+                config.timeout(),
+                config.maximumRetries(),
+                apiKey);
         OpenAiChatOptions defaults =
                 OpenAiChatOptions.builder().model(config.model()).build();
         ChatModel model = OpenAiChatModel.builder()
@@ -72,6 +72,7 @@ final class SpringAiModelFactory {
         HttpOptions.Builder http =
                 HttpOptions.builder().timeout(Math.toIntExact(config.timeout().toMillis()));
         config.baseUri().ifPresent(uri -> http.baseUrl(uri.toString()));
+        config.apiVersion().ifPresent(http::apiVersion);
         Client client =
                 Client.builder().apiKey(apiKey).httpOptions(http.build()).build();
         GoogleGenAiChatOptions defaults = GoogleGenAiChatOptions.builder()

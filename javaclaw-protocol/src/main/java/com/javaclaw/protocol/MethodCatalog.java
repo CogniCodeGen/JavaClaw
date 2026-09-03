@@ -1,5 +1,6 @@
 package com.javaclaw.protocol;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,7 +40,7 @@ public final class MethodCatalog {
         LinkedHashMap<String, RpcMethod> methods = new LinkedHashMap<>();
         addPlatformMethods(methods);
         addInteractionAndExtensionMethods(methods);
-        return Map.copyOf(methods);
+        return Collections.unmodifiableMap(new LinkedHashMap<>(methods));
     }
 
     private static void addPlatformMethods(Map<String, RpcMethod> methods) {
@@ -63,6 +64,7 @@ public final class MethodCatalog {
         addAttachmentMethods(methods);
         addCredentialMethods(methods);
         add(methods, "profile/list", RpcMethodKind.QUERY);
+        add(methods, "profile/preset/list", RpcMethodKind.QUERY);
         add(methods, "profile/read", RpcMethodKind.QUERY);
         add(methods, "profile/create", RpcMethodKind.COMMAND);
         add(methods, "profile/update", RpcMethodKind.COMMAND);
@@ -76,6 +78,11 @@ public final class MethodCatalog {
         add(methods, "provider/create", RpcMethodKind.COMMAND);
         add(methods, "provider/update", RpcMethodKind.COMMAND);
         add(methods, "provider/archive", RpcMethodKind.COMMAND);
+        add(methods, ProviderModelDiscoveryRpcContracts.START_METHOD, RpcMethodKind.COMMAND);
+        add(methods, ProviderModelDiscoveryRpcContracts.READ_METHOD, RpcMethodKind.QUERY);
+        add(methods, ProviderModelDiscoveryRpcContracts.CANCEL_METHOD, RpcMethodKind.COMMAND);
+        add(methods, "provider/embeddingBinding/read", RpcMethodKind.QUERY);
+        add(methods, "provider/embeddingBinding/update", RpcMethodKind.COMMAND);
         add(methods, "provider/credential/set", RpcMethodKind.COMMAND);
         add(methods, "provider/credential/clear", RpcMethodKind.COMMAND);
         add(methods, "provider/status", RpcMethodKind.QUERY);
@@ -210,6 +217,9 @@ public final class MethodCatalog {
 
     private static void addPermissionProfileMethods(Map<String, RpcMethod> methods) {
         add(methods, "permissionProfile/list", RpcMethodKind.QUERY);
+        add(methods, "permissionProfile/preset/list", RpcMethodKind.QUERY);
+        add(methods, "permissionProfile/preset/preview", RpcMethodKind.QUERY);
+        add(methods, "permissionProfile/preset/instantiate", RpcMethodKind.COMMAND);
         add(methods, "permissionProfile/read", RpcMethodKind.QUERY);
         add(methods, "permissionProfile/history", RpcMethodKind.QUERY);
         add(methods, "permissionProfile/clone", RpcMethodKind.COMMAND);
@@ -219,6 +229,9 @@ public final class MethodCatalog {
     }
 
     private static void add(Map<String, RpcMethod> methods, String name, RpcMethodKind kind) {
-        methods.put(name, new RpcMethod(name, kind, java.util.Optional.empty(), false));
+        RpcMethod previous = methods.putIfAbsent(name, new RpcMethod(name, kind, java.util.Optional.empty(), false));
+        if (previous != null) {
+            throw new IllegalStateException("duplicate Protocol method: " + name);
+        }
     }
 }

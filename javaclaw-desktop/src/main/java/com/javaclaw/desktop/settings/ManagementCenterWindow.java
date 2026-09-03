@@ -3,6 +3,7 @@ package com.javaclaw.desktop.settings;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -33,6 +34,26 @@ public final class ManagementCenterWindow {
     private static final KeyCodeCombination SHORTCUT =
             new KeyCodeCombination(KeyCode.COMMA, KeyCombination.SHORTCUT_DOWN);
     private static final List<Destination> DESTINATIONS = destinations();
+    private static final Set<String> WORKSPACE_SCOPED_PAGES = Set.of(
+            "profiles",
+            "learning",
+            "permissions",
+            "unattended-grants",
+            "network-grants",
+            "mcp",
+            "site",
+            "workspace",
+            "instructions",
+            "worktrees",
+            "jobs",
+            "plan",
+            "loop",
+            "workflow",
+            "sdd",
+            "schedule",
+            "memory",
+            "knowledge",
+            "skill");
 
     private final DesktopAppearanceManager appearance;
     private final ManagementSettingsGateways gateways;
@@ -42,10 +63,12 @@ public final class ManagementCenterWindow {
     private ManagementPageShell shell;
     private SettingsPageRegistry pages;
     private ListView<Destination> navigation;
+    private ManagementScopeSession scope;
     private Destination selected;
     private ManagedSettingsPage activePage;
     private boolean activePageActivated;
     private boolean restoringSelection;
+    private boolean scopeWriteAvailable;
 
     /**
      * 创建设置与管理中心协调器；窗口在第一次打开时才创建。
@@ -144,6 +167,7 @@ public final class ManagementCenterWindow {
         if (pages != null) {
             pages.dispose();
         }
+        scope = null;
         if (stage != null) {
             stage.hide();
         }
@@ -160,6 +184,9 @@ public final class ManagementCenterWindow {
         shell = new ManagementPageShell("设置与管理");
         shell.setNavigationContent(createNavigation());
         pages = new SettingsPageRegistry(appearance, gateways, this::close);
+        scope = new ManagementScopeSession(
+                gateways.core(), gateways.preferredWorkspace(), () -> activePage, this::scopeAvailabilityChanged);
+        shell.setScopeContent(scope.content());
         Scene scene = new Scene(shell, 1_040, 720);
         DesktopStylesheets.apply(scene);
         appearance.register(scene);
@@ -178,6 +205,7 @@ public final class ManagementCenterWindow {
             savePreferences();
         });
         select(restoreDestination(restored.lastPageKey()));
+        scope.activate();
     }
 
     private VBox createNavigation() {
@@ -227,10 +255,30 @@ public final class ManagementCenterWindow {
         selected = destination;
         navigation.getSelectionModel().select(destination);
         activePage = pages.resolve(destination.key());
+        scope.bind(activePage);
         shell.showPage(destination.title(), scroll(activePage.content()));
+        shell.setActionContent(activePage.actionContent());
+        updatePageInteraction();
         if (stage.isShowing()) {
             activatePage();
         }
+    }
+
+    private void scopeAvailabilityChanged(boolean available) {
+        scopeWriteAvailable = available;
+        updatePageInteraction();
+    }
+
+    private void updatePageInteraction() {
+        if (shell == null || selected == null) {
+            return;
+        }
+        boolean workspaceScoped = workspaceScopeRequired(selected.key());
+        shell.setPageInteractionEnabled(!workspaceScoped || scopeWriteAvailable);
+    }
+
+    static boolean workspaceScopeRequired(String pageKey) {
+        return WORKSPACE_SCOPED_PAGES.contains(Objects.requireNonNull(pageKey, "pageKey"));
     }
 
     private void activatePage() {
@@ -311,34 +359,34 @@ public final class ManagementCenterWindow {
     private static List<Destination> destinations() {
         return List.of(
                 new Destination("appearance", "常规", "外观", "主题、字号与界面密度"),
-                new Destination("providers", "模型与智能体", "Provider", "模型端点、凭据与能力状态"),
-                new Destination("profiles", "模型与智能体", "Agent Profile", "Prompt、模型、工具与预算默认值"),
-                new Destination("learning", "模型与智能体", "学习策略", "Memory 学习与 Skill 提案策略"),
-                new Destination("permissions", "安全与连接", "PermissionProfile", "权限边界、审批和资源限制"),
-                new Destination("vault", "安全与连接", "Secret Vault", "主密钥、锁定状态与凭据元数据"),
-                new Destination("unattended-grants", "安全与连接", "无人值守授权", "Schedule 专用的限额 Tool Grant"),
-                new Destination("network-grants", "安全与连接", "私网授权", "临时、精确且可撤销的 Origin 授权"),
-                new Destination("mcp", "安全与连接", "MCP", "连接、OAuth、工具目录与健康状态"),
-                new Destination("site", "安全与连接", "Site", "受控站点、会话和凭据"),
+                new Destination("providers", "模型与智能体", "模型服务", "配置模型接口、密钥和可用模型"),
+                new Destination("profiles", "模型与智能体", "智能体方案", "设置提示词、模型、工具和任务限额"),
+                new Destination("learning", "模型与智能体", "学习策略", "设置记忆学习和技能建议规则"),
+                new Destination("permissions", "安全与连接", "权限方案", "设置文件、网络、审批和资源上限"),
+                new Destination("vault", "安全与连接", "密钥库", "管理主密钥、锁定状态和凭据记录"),
+                new Destination("unattended-grants", "安全与连接", "无人值守授权", "限制定时任务可调用的工具和额度"),
+                new Destination("network-grants", "安全与连接", "私网授权", "管理临时、精确、可撤销的访问地址"),
+                new Destination("mcp", "安全与连接", "MCP 外部工具", "管理连接、OAuth、工具目录和健康状态"),
+                new Destination("site", "安全与连接", "网站会话", "管理受控网站、登录会话和凭据"),
                 new Destination("builtins", "扩展", "内置扩展", "可选内置能力与运行状态"),
-                new Destination("bundles", "扩展", "第三方 Bundle", "安装、升级、健康、隔离和启停"),
+                new Destination("bundles", "扩展", "第三方扩展", "安装、升级、隔离、启用或停用扩展包"),
                 new Destination("trust", "扩展", "信任公钥", "签名公钥、指纹和撤销"),
-                new Destination("trash", "扩展", "Trash", "恢复或永久清除已卸载 Bundle"),
-                new Destination("workspace", "工作区", "Workspace", "默认 Profile、项目约定与归档"),
+                new Destination("trash", "扩展", "扩展回收站", "恢复或永久清除已卸载的扩展"),
+                new Destination("workspace", "工作区", "工作区", "设置默认智能体方案、项目约定和归档"),
                 new Destination("instructions", "工作区", "项目约定", "AGENTS 层级、摘要与冻结状态"),
-                new Destination("worktrees", "工作区", "Worktree 恢复", "隔离工作树、Patch、备份和清理"),
-                new Destination("jobs", "功能管理", "执行任务", "全局 Job、工作单元、checkpoint 与恢复动作"),
-                new Destination("plan", "功能管理", "Plan", "结构化计划、决策与执行"),
-                new Destination("loop", "功能管理", "Loop", "迭代目标、验证和停止条件"),
-                new Destination("workflow", "功能管理", "Workflow", "安全 Graph 与持久执行"),
-                new Destination("sdd", "功能管理", "SDD", "规格、审批、实现与验收"),
-                new Destination("schedule", "功能管理", "Schedule", "触发规则、Occurrence 与恢复"),
-                new Destination("memory", "功能管理", "Memory", "记忆、来源、历史与提案"),
-                new Destination("knowledge", "功能管理", "Knowledge", "资料、索引 Generation 与检索"),
-                new Destination("skill", "功能管理", "Skill", "Draft、发布、目录和资源"),
-                new Destination("connection", "系统", "连接", "App Server 连接、重试和启动能力"),
-                new Destination("lifecycle", "系统", "生命周期", "Lease、启动项和托盘状态"),
-                new Destination("diagnostics", "系统", "诊断", "脱敏状态、复制与导出"));
+                new Destination("worktrees", "工作区", "隔离工作区恢复", "管理补丁、备份和清理"),
+                new Destination("jobs", "功能管理", "后台任务", "查看工作单元、检查点和恢复操作"),
+                new Destination("plan", "功能管理", "计划", "结构化计划、决策与执行"),
+                new Destination("loop", "功能管理", "循环任务", "迭代目标、验证和停止条件"),
+                new Destination("workflow", "功能管理", "工作流", "安全编排和持久执行"),
+                new Destination("sdd", "功能管理", "规格驱动开发（SDD）", "管理规格、审批、实现和验收"),
+                new Destination("schedule", "功能管理", "定时任务", "管理触发规则、执行记录和失败恢复"),
+                new Destination("memory", "功能管理", "记忆", "管理记忆来源、历史和建议"),
+                new Destination("knowledge", "功能管理", "知识库", "管理资料、索引版本和检索"),
+                new Destination("skill", "功能管理", "技能", "管理草稿、发布、目录和资源"),
+                new Destination("connection", "系统", "服务连接", "管理 JavaClaw 服务的连接、重试和启动"),
+                new Destination("lifecycle", "系统", "运行与启动", "管理运行保活、开机启动和托盘"),
+                new Destination("diagnostics", "系统", "诊断", "查看脱敏状态、复制和导出"));
     }
 
     private record Destination(String key, String group, String title, String description) {
@@ -362,6 +410,8 @@ public final class ManagementCenterWindow {
         private final VBox content = new VBox(3, group, item);
 
         private DestinationCell() {
+            // VirtualFlow 负责把 Cell 扩到视口宽度；零首选宽度避免说明文本的单行宽度触发横向滚动条。
+            setPrefWidth(0);
             group.getStyleClass().add("modal-nav-group");
             title.getStyleClass().add("platform-detail-title");
             detail.setWrapText(true);

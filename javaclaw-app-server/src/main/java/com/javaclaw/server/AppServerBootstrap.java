@@ -10,6 +10,8 @@ import com.javaclaw.extension.spi.EmbeddingPort;
 import com.javaclaw.extension.spi.IsolatedServicePort;
 import com.javaclaw.extension.spi.LoginStartupPort;
 import com.javaclaw.model.ProviderCredentialResolver;
+import com.javaclaw.model.ProviderEmbeddingAdapterFactory;
+import com.javaclaw.model.ProviderModelDiscoveryAdapter;
 import com.javaclaw.nativehost.credential.MasterKeyProtector;
 import com.javaclaw.nativehost.credential.SystemMasterKeyProtector;
 import com.javaclaw.nativehost.startup.UserLoginStartup;
@@ -37,6 +39,7 @@ import com.javaclaw.server.persistence.AgentProfileService;
 import com.javaclaw.server.persistence.ApprovalService;
 import com.javaclaw.server.persistence.AttachmentService;
 import com.javaclaw.server.persistence.CoreCommandService;
+import com.javaclaw.server.persistence.EmbeddingBindingService;
 import com.javaclaw.server.persistence.ExtensionCatalogRepository;
 import com.javaclaw.server.persistence.ExtensionJobInputCoordinator;
 import com.javaclaw.server.persistence.ExtensionJobService;
@@ -47,9 +50,11 @@ import com.javaclaw.server.persistence.PermissionProfileService;
 import com.javaclaw.server.persistence.ProfileBindingService;
 import com.javaclaw.server.persistence.PromptOptimizationRepository;
 import com.javaclaw.server.persistence.ProviderCredentialService;
+import com.javaclaw.server.persistence.ProviderModelDiscoveryService;
 import com.javaclaw.server.persistence.ProviderService;
 import com.javaclaw.server.persistence.ProviderVerificationService;
 import com.javaclaw.server.persistence.RolloutCommandService;
+import com.javaclaw.server.profile.ProfilePresetCatalog;
 import com.javaclaw.server.rpc.AppServerSession;
 import com.javaclaw.server.rpc.CoreRpcHandlers;
 import com.javaclaw.server.rpc.CredentialRpcHandlers;
@@ -59,14 +64,19 @@ import com.javaclaw.server.rpc.ExtensionRpcHandlers;
 import com.javaclaw.server.rpc.InputJobRpcHandlers;
 import com.javaclaw.server.rpc.InstructionRpcHandlers;
 import com.javaclaw.server.rpc.LauncherLifecycleRpcHandlers;
+import com.javaclaw.server.rpc.PermissionPresetRpcHandlers;
 import com.javaclaw.server.rpc.PermissionProfileRpcHandlers;
+import com.javaclaw.server.rpc.ProfilePresetRpcHandlers;
 import com.javaclaw.server.rpc.PromptOptimizationRpcHandlers;
 import com.javaclaw.server.rpc.PromptPreviewRpcHandlers;
 import com.javaclaw.server.rpc.ProviderCredentialRpcHandlers;
+import com.javaclaw.server.rpc.ProviderEmbeddingBindingRpcHandlers;
+import com.javaclaw.server.rpc.ProviderModelDiscoveryRpcHandlers;
 import com.javaclaw.server.rpc.ProviderVerificationRpcHandlers;
 import com.javaclaw.server.rpc.RpcRouter;
 import com.javaclaw.server.rpc.SecurityGrantRpcHandlers;
 import com.javaclaw.server.rpc.ToolRpcHandlers;
+import com.javaclaw.server.security.PermissionPresetCatalog;
 import com.javaclaw.server.security.grant.PrivateNetworkGrantService;
 import com.javaclaw.server.security.grant.SecurityGrantAuditService;
 import com.javaclaw.server.security.grant.UnattendedToolGrantService;
@@ -179,12 +189,16 @@ public final class AppServerBootstrap {
         Foundation foundation = foundation(dataRoot, clock, new LockedMasterKeyProtector(), loginStartup);
         try (StartupCloseStack startup = new StartupCloseStack()) {
             ownFoundation(startup, foundation);
+            ProviderCredentialResolver credentials = new VaultProviderCredentialResolver(foundation.vault());
             return createReal(
                     foundation,
-                    models,
-                    EmbeddingPort.unavailable(),
-                    isolatedServices,
-                    productionMcpPorts(foundation),
+                    new AppServerRuntimeBootstrap.RuntimeDependencies(
+                            models,
+                            EmbeddingPort.unavailable(),
+                            new ProviderEmbeddingAdapterFactory(credentials)::create,
+                            modelDiscovery(foundation, credentials),
+                            isolatedServices,
+                            productionMcpPorts(foundation)),
                     startup);
         }
     }
@@ -214,18 +228,30 @@ public final class AppServerBootstrap {
         Foundation foundation = foundation(dataRoot, clock, new LockedMasterKeyProtector(), loginStartup);
         try (StartupCloseStack startup = new StartupCloseStack()) {
             ownFoundation(startup, foundation);
-            return createReal(foundation, models, EmbeddingPort.unavailable(), isolatedServices, mcpPorts, startup);
+            ProviderCredentialResolver credentials = new VaultProviderCredentialResolver(foundation.vault());
+            return createReal(
+                    foundation,
+                    new AppServerRuntimeBootstrap.RuntimeDependencies(
+                            models,
+                            EmbeddingPort.unavailable(),
+                            new ProviderEmbeddingAdapterFactory(credentials)::create,
+                            modelDiscovery(foundation, credentials),
+                            isolatedServices,
+                            mcpPorts),
+                    startup);
         }
     }
 
     static Components createReal(
             Foundation foundation,
-            ModelGateway models,
-            EmbeddingPort embeddings,
-            IsolatedServicePort isolatedServices,
-            McpRuntimePorts mcpPorts,
+            AppServerRuntimeBootstrap.RuntimeDependencies dependencies,
             StartupCloseStack startup) {
-        return AppServerRuntimeBootstrap.create(foundation, models, embeddings, isolatedServices, mcpPorts, startup);
+        return AppServerRuntimeBootstrap.create(foundation, dependencies, startup);
+    }
+
+    static ProviderModelDiscoveryService modelDiscovery(Foundation foundation, ProviderCredentialResolver credentials) {
+        return new ProviderModelDiscoveryService(
+                foundation.providers(), new ProviderModelDiscoveryAdapter(credentials, foundation.clock()));
     }
 
     private static Foundation foundation(
@@ -297,6 +323,13 @@ public final class AppServerBootstrap {
         new CoreRpcHandlers(platform, foundation.json(), interactions).register(routes);
         new PermissionProfileRpcHandlers(foundation.core(), foundation.permissionProfiles(), foundation.json())
                 .register(routes);
+        new PermissionPresetRpcHandlers(
+                        foundation.core(),
+                        foundation.permissionProfiles(),
+                        new PermissionPresetCatalog(),
+                        foundation.json())
+                .register(routes);
+        new ProfilePresetRpcHandlers(new ProfilePresetCatalog(), foundation.json()).register(routes);
         new SecurityGrantRpcHandlers(
                         foundation.privateNetworkGrants(),
                         foundation.unattendedToolGrants(),
@@ -305,6 +338,9 @@ public final class AppServerBootstrap {
                 .register(routes);
         new CredentialRpcHandlers(foundation.vault(), foundation.json()).register(routes);
         new ProviderCredentialRpcHandlers(foundation.providerCredentials(), foundation.json()).register(routes);
+        new ProviderEmbeddingBindingRpcHandlers(foundation.embeddingBinding(), foundation.json()).register(routes);
+        new ProviderModelDiscoveryRpcHandlers(runtime.management().providerModelDiscovery(), foundation.json())
+                .register(routes);
         new ProviderVerificationRpcHandlers(runtime.management().providerVerification(), foundation.json())
                 .register(routes);
         new InputJobRpcHandlers(foundation.inputs(), foundation.extensionJobs(), foundation.json()).register(routes);
@@ -353,7 +389,12 @@ public final class AppServerBootstrap {
                 routes, runtime.management().mcp(), foundation.extensionCatalog(), foundation.json());
         new ExtensionRpcHandlers(runtime.extensions(), foundation.json(), events).register(routes);
         new ExtensionBundleRpcHandlers(runtime.thirdParty(), foundation.json()).register(routes);
-        new ToolRpcHandlers(foundation.core(), foundation.permissionProfiles(), runtime.tools(), foundation.json())
+        new ToolRpcHandlers(
+                        foundation.core(),
+                        foundation.agentProfiles(),
+                        foundation.permissionProfiles(),
+                        runtime.tools(),
+                        foundation.json())
                 .register(routes);
     }
 
@@ -436,6 +477,7 @@ public final class AppServerBootstrap {
             AttachmentService attachments,
             ProviderService providers,
             ProviderCredentialService providerCredentials,
+            EmbeddingBindingService embeddingBinding,
             AgentProfileService agentProfiles,
             ProfileBindingService profileBindings,
             SecretVaultService vault,
@@ -476,11 +518,13 @@ public final class AppServerBootstrap {
             boolean mcpAvailable,
             BuiltinIsolatedServices.Availability workers,
             ScheduleLifecycleCoordinator scheduleLifecycle,
+            ProviderModelDiscoveryService providerModelDiscovery,
             ProviderVerificationService providerVerification) {
         RuntimeManagement {
             Objects.requireNonNull(mcp, "mcp");
             Objects.requireNonNull(workers, "workers");
             Objects.requireNonNull(scheduleLifecycle, "scheduleLifecycle");
+            Objects.requireNonNull(providerModelDiscovery, "providerModelDiscovery");
             Objects.requireNonNull(providerVerification, "providerVerification");
         }
     }

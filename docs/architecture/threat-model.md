@@ -26,7 +26,7 @@ flowchart LR
 | 工具在 Turn 内替换 schema | 冻结 ID/revision/schema hash，执行前复核 | revision 冲突 |
 | 用户撤权后仍执行 | enabled 与权限实时复核，快照只能缩小权限 | 权限拒绝 |
 | Secret 在本地 RPC 被旁路读取 | 会话 X25519 密封、Vault 仅写 API、AES-GCM AAD、脱敏通知与诊断 | Vault 锁定或请求拒绝 |
-| Provider 配置已写入但凭据或 Adapter 替换失败 | 服务端复合命令、候选 Adapter 先验证、配置/CredentialRef/registry 原子提交 | 旧 revision 与活动 Adapter 保持不变 |
+| Provider Secret 写入或 Adapter 替换失败 | `provider/credential/*` 先验证候选 Adapter；Vault 密文、Secret 元数据 revision、Provider 新 revision 与幂等回执在同一 H2 事务提交；Vault 变化串行化并先关闭 runtime epoch gate，Adapter lease 获取后复核 epoch | 候选构造或 H2 提交失败时保留旧 revision；提交后交换或重建异常时 gate 保持关闭并等待权威重建 |
 | 配置探测意外产生模型费用 | 非计费探测与真实 round-trip 分离，计费验证要求显式确认 | 拒绝计费调用 |
 | Prompt 优化静默改写 Profile | 正常受预算 Harness Turn 只生成 Draft，采纳时复核 Profile revision | 保留 Draft 或 revision 冲突 |
 | 私网授权扩大到任意内网 | preview-confirm、精确 Origin、固定 DNS 地址集合、最长 24 小时、实时撤销 | Broker 拒绝 |

@@ -32,16 +32,15 @@ import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 import com.javaclaw.desktop.component.PlatformComponentFactory.FeedbackKind;
 
-/** HTTPS MCP Endpoint、健康、Catalog 和 OAuth 的统一管理页面。 */
+/** HTTPS MCP 连接、健康状态、目录和 OAuth 的统一管理页面。 */
 public final class McpSettingsPage extends VBox implements ManagedSettingsPage {
     private final PlatformComponentFactory components = new PlatformComponentFactory();
     private final McpSettingsPresenter presenter;
     private final McpOAuthSettingsPresenter oauthPresenter;
     private final McpExternalDataPanel externalData;
-    private final ComboBox<Workspace> workspace = new ComboBox<>();
     private final Button create;
     private final ListDetailPane<McpEndpoint> masterDetail = new ListDetailPane<>();
-    private final TextField id = field("MCP Endpoint 标识");
+    private final TextField id = field("MCP 连接标识");
     private final TextField displayName = field("展示名称");
     private final TextField endpointUri = field("https://example.com/mcp");
     private final ComboBox<McpAuthType> authType = new ComboBox<>();
@@ -75,6 +74,7 @@ public final class McpSettingsPage extends VBox implements ManagedSettingsPage {
     private McpSettingsState state = McpSettingsState.initial();
     private McpOAuthSettingsState oauthSettings = McpOAuthSettingsState.initial();
     private Node editor;
+    private Optional<Workspace> scopedWorkspace = Optional.empty();
     private boolean rendering;
     private String oauthSelectionKey = "";
 
@@ -87,7 +87,7 @@ public final class McpSettingsPage extends VBox implements ManagedSettingsPage {
         presenter = new McpSettingsPresenter(gateway);
         oauthPresenter = new McpOAuthSettingsPresenter(gateway, presenter::applyOAuthRefresh);
         externalData = new McpExternalDataPanel(gateway);
-        create = components.action("新建 HTTPS Endpoint", ActionStyle.SOFT, ActionSize.NORMAL);
+        create = components.action("新建 HTTPS 连接", ActionStyle.SOFT, ActionSize.NORMAL);
         create.setOnAction(event -> presenter.createDraft());
         save = components.action("保存", ActionStyle.PRIMARY, ActionSize.NORMAL);
         save.setOnAction(event -> save());
@@ -97,7 +97,7 @@ public final class McpSettingsPage extends VBox implements ManagedSettingsPage {
         toggle.setOnAction(event -> presenter.toggleEnabled());
         probe = components.action("健康检查", ActionStyle.SOFT, ActionSize.NORMAL);
         probe.setOnAction(event -> presenter.probe());
-        refreshCatalog = components.action("刷新 Catalog", ActionStyle.SOFT, ActionSize.NORMAL);
+        refreshCatalog = components.action("刷新目录", ActionStyle.SOFT, ActionSize.NORMAL);
         refreshCatalog.setOnAction(event -> presenter.refreshCatalog());
         nextPage = components.action("下一页", ActionStyle.GHOST, ActionSize.NORMAL);
         nextPage.setOnAction(event -> presenter.loadNextCatalogPage());
@@ -119,8 +119,13 @@ public final class McpSettingsPage extends VBox implements ManagedSettingsPage {
     }
 
     @Override
+    public Optional<Node> actionContent() {
+        return Optional.of(actions);
+    }
+
+    @Override
     public void activate() {
-        presenter.reload();
+        scopedWorkspace.ifPresent(workspace -> presenter.chooseWorkspace(workspace.id()));
     }
 
     @Override
@@ -129,8 +134,31 @@ public final class McpSettingsPage extends VBox implements ManagedSettingsPage {
     }
 
     @Override
+    public boolean pending() {
+        return isPending(state.phase()) || isPending(oauthSettings.phase()) || oauthSettings.pendingAuthorization();
+    }
+
+    @Override
+    public void workspaceChanged(Optional<Workspace> workspace) {
+        Optional<Workspace> checked = Objects.requireNonNull(workspace, "workspace");
+        if (scopedWorkspace.equals(checked)) {
+            return;
+        }
+        scopedWorkspace = checked;
+        checked.ifPresentOrElse(value -> presenter.chooseWorkspace(value.id()), () -> {
+            presenter.invalidateWorkspace();
+            oauthPresenter.select(Optional.empty());
+        });
+        updateActionAvailability();
+    }
+
+    @Override
     public void warnUnsavedChanges() {
-        actions.show(ActionState.DIRTY, "请先保存或丢弃 MCP 草稿与 Secret，再离开此页");
+        actions.show(ActionState.DIRTY, "请先保存或丢弃 MCP 草稿与密钥，再离开此页");
+    }
+
+    private static boolean isPending(SettingsLoadState phase) {
+        return phase == SettingsLoadState.LOADING || phase == SettingsLoadState.SAVING;
     }
 
     @Override
@@ -141,26 +169,12 @@ public final class McpSettingsPage extends VBox implements ManagedSettingsPage {
     private void configurePage() {
         Label title = new Label("MCP");
         title.getStyleClass().addAll("sec-title", "platform-page-title");
-        Label hint = new Label("用户只可创建 HTTPS MCP；stdio 只能来自已验证签名 Bundle。Prompt、Resource 与 instruction 始终按外部数据处理。");
+        Label hint = new Label("用户只能创建 HTTPS MCP 连接；本地进程连接只能来自已验证签名的扩展包。提示词、资源和指令始终作为外部数据处理。");
         hint.setWrapText(true);
         hint.getStyleClass().add("sec-hint");
-        configureWorkspace();
         configureCatalog();
-        getChildren().addAll(title, hint, workspace, create, masterDetail);
+        getChildren().addAll(title, hint, create, masterDetail);
         getStyleClass().add("platform-page");
-    }
-
-    private void configureWorkspace() {
-        workspace.setMaxWidth(Double.MAX_VALUE);
-        workspace.setAccessibleText("MCP 所属 Workspace");
-        workspace.setCellFactory(ignored ->
-                components.detailCell(Workspace::name, value -> value.id().toString()));
-        workspace.setButtonCell(components.textCell(Workspace::name));
-        workspace.valueProperty().addListener((observable, previous, selected) -> {
-            if (!rendering && selected != null) {
-                presenter.chooseWorkspace(selected.id());
-            }
-        });
     }
 
     private void configureCatalog() {
@@ -168,7 +182,8 @@ public final class McpSettingsPage extends VBox implements ManagedSettingsPage {
                 .list()
                 .setCellFactory(ignored -> components.detailCell(
                         endpoint -> endpoint.spec().displayName(),
-                        endpoint -> endpoint.state() + " · catalog " + endpoint.catalogRevision()));
+                        endpoint -> SettingsLabels.mcpEndpointState(endpoint.state()) + " · 目录版本 "
+                                + endpoint.catalogRevision()));
         masterDetail
                 .list()
                 .getSelectionModel()
@@ -177,55 +192,54 @@ public final class McpSettingsPage extends VBox implements ManagedSettingsPage {
         masterDetail
                 .list()
                 .setPlaceholder(components.feedback(
-                        FeedbackKind.EMPTY, "暂无 MCP Endpoint", "创建 HTTPS Endpoint，或从签名 Bundle 安装 stdio Endpoint。"));
-        masterDetail.showDetail(components.feedback(FeedbackKind.EMPTY, "选择 Endpoint", "选择左侧条目查看配置与 Catalog。"));
+                        FeedbackKind.EMPTY, "暂无 MCP 连接", "创建 HTTPS 连接，或从签名扩展包安装本地标准输入输出（stdio）连接。"));
+        masterDetail.showDetail(components.feedback(FeedbackKind.EMPTY, "选择连接", "选择左侧条目查看配置与目录。"));
     }
 
     private Node detail() {
-        FormSection configuration = new FormSection("连接配置", "Endpoint 配置按 revision 更新；运行时执行前还会重新检查实时开关与 Catalog。");
+        FormSection configuration = new FormSection("连接配置", "配置按版本更新；每次调用前还会重新检查开关和工具目录。");
         configureEditors();
         configuration.addField("标识", id);
         configuration.addField("名称", displayName);
-        configuration.addField("HTTPS URL", endpointUri);
+        configuration.addField("HTTPS 地址", endpointUri);
         configuration.addField("认证", authType);
-        configuration.addField("API Key Header", apiKeyHeader);
+        configuration.addField("API 密钥请求头", apiKeyHeader);
         configuration.addField("私网授权", privateGrant);
         configuration.addField("超时（秒）", timeout);
-        configuration.addField("新 Secret", secret);
+        configuration.addField("新密钥", secret);
 
-        FormSection runtime = new FormSection("运行状态", "Secret 只显示是否已配置；健康信息和 Catalog 不包含远端正文。 ");
+        FormSection runtime = new FormSection("运行状态", "密钥只显示是否已配置；健康信息和目录不包含远端正文。");
         runtime.addField("传输", transport);
-        runtime.addField("签名 Bundle 来源", bundleSource);
+        runtime.addField("签名扩展包来源", bundleSource);
         runtime.addField("状态", lifecycle);
-        runtime.addField("Revision", revision);
-        runtime.addField("Catalog revision", catalogRevision);
-        runtime.addField("Credential", credentialStatus);
-        runtime.addField("健康", health);
+        runtime.addField("版本", revision);
+        runtime.addField("目录版本", catalogRevision);
+        runtime.addField("凭据", credentialStatus);
+        runtime.addField("健康检查", health);
 
-        FormSection oauthSection = new FormSection(
-                "OAuth 2.1 + PKCE", "授权页只在 App Server 管理的隔离 Browser Worker 中打开；Desktop 不接收 URL、code、state 或 token。");
+        FormSection oauthSection =
+                new FormSection("OAuth 2.1 + PKCE", "授权页只在 JavaClaw 服务管理的隔离浏览器中打开；桌面端不接收地址、授权码、状态值或令牌。");
         oauthSection.addField("状态", oauthState);
         oauthSection.addField("授权主机", oauthHost);
         oauthSection.addField("截止时间", oauthExpires);
         oauthSection.addField("说明", oauthFeedback);
 
-        FormSection catalogSection =
-                new FormSection("Catalog", "分页读取工具、Prompt 与 Resource 元数据；非 Tool 条目不会自动进入 system context。");
+        FormSection catalogSection = new FormSection("目录", "分页读取工具、提示词和资源的基本信息；非工具条目不会自动进入系统上下文。");
         catalog.setPrefHeight(180);
         catalog.setCellFactory(ignored -> catalogCell());
         catalogSection.addFullWidth(catalog);
         catalogSection.addFullWidth(nextPage);
 
-        FormSection historySection = new FormSection("版本历史", "服务端不可变历史，便于检查 revision 与配置变更。");
+        FormSection historySection = new FormSection("版本历史", "服务端不可变历史，便于检查版本与配置变更。");
         historySection.addFullWidth(history);
-        VBox content = new VBox(
-                12, configuration, runtime, oauthSection, catalogSection, externalData, historySection, actions);
+        VBox content = new VBox(12, configuration, runtime, oauthSection, catalogSection, externalData, historySection);
         content.getStyleClass().add("platform-page");
         return content;
     }
 
     private void configureEditors() {
         authType.getItems().setAll(McpAuthType.values());
+        authType.setConverter(SettingsLabels.converter(SettingsLabels::mcpAuthType));
         authType.setAccessibleText("MCP 认证方式");
         authType.setMaxWidth(Double.MAX_VALUE);
         privateGrant.setAccessibleText("MCP 私网授权");
@@ -234,8 +248,8 @@ public final class McpSettingsPage extends VBox implements ManagedSettingsPage {
         privateGrant.setButtonCell(grantCell());
         timeout.setEditable(true);
         timeout.setAccessibleText("MCP 请求超时秒数");
-        secret.setPromptText("留空则保留已配置 Secret");
-        secret.setAccessibleText("MCP Secret");
+        secret.setPromptText("留空则保留已配置密钥");
+        secret.setAccessibleText("MCP 密钥");
         id.textProperty().addListener((observable, previous, value) -> projectDraft());
         displayName.textProperty().addListener((observable, previous, value) -> projectDraft());
         endpointUri.textProperty().addListener((observable, previous, value) -> projectDraft());
@@ -297,8 +311,6 @@ public final class McpSettingsPage extends VBox implements ManagedSettingsPage {
         state = Objects.requireNonNull(snapshot, "snapshot");
         rendering = true;
         try {
-            workspace.getItems().setAll(snapshot.workspaces());
-            workspace.setValue(findWorkspace(snapshot));
             masterDetail.list().getItems().setAll(snapshot.endpoints());
             masterDetail
                     .list()
@@ -309,8 +321,8 @@ public final class McpSettingsPage extends VBox implements ManagedSettingsPage {
                     || !snapshot.selection().draft().id().isEmpty()) {
                 renderDetail(snapshot);
             } else {
-                masterDetail.showDetail(components.feedback(
-                        FeedbackKind.EMPTY, "暂无 MCP Endpoint", "创建新的 HTTPS Endpoint 后可配置认证和 Catalog。"));
+                masterDetail.showDetail(
+                        components.feedback(FeedbackKind.EMPTY, "暂无 MCP 连接", "创建新的 HTTPS 连接后可配置认证和目录。"));
             }
         } finally {
             rendering = false;
@@ -331,8 +343,9 @@ public final class McpSettingsPage extends VBox implements ManagedSettingsPage {
 
     private void renderOAuth(McpOAuthSettingsState snapshot) {
         oauthSettings = Objects.requireNonNull(snapshot, "snapshot");
-        oauthState.setText(
-                snapshot.authorization().map(value -> value.state().name()).orElse("尚未启动"));
+        oauthState.setText(snapshot.authorization()
+                .map(value -> SettingsLabels.mcpOAuthState(value.state()))
+                .orElse("尚未启动"));
         oauthHost.setText(
                 snapshot.authorization().map(value -> value.authorizationHost()).orElse("—"));
         oauthExpires.setText(snapshot.authorization()
@@ -362,18 +375,20 @@ public final class McpSettingsPage extends VBox implements ManagedSettingsPage {
     private void renderReadonly(McpSettingsState snapshot) {
         Optional<McpEndpoint> selected = snapshot.selection().endpoint();
         transport.setText(
-                selected.map(value -> value.spec().transport().name()).orElse(McpTransport.STREAMABLE_HTTPS.name()));
+                selected.map(value -> SettingsLabels.mcpTransport(value.spec().transport()))
+                        .orElse(SettingsLabels.mcpTransport(McpTransport.STREAMABLE_HTTPS)));
         bundleSource.setText(selected.flatMap(value -> value.spec().signedBundleId())
                 .map(value -> value + "（已验证签名，只读）")
                 .orElse("不适用"));
-        lifecycle.setText(selected.map(value -> value.state().name()).orElse("尚未保存"));
+        lifecycle.setText(selected.map(value -> SettingsLabels.mcpEndpointState(value.state()))
+                .orElse("尚未保存"));
         revision.setText(selected.map(value -> Long.toString(value.revision())).orElse("0"));
         catalogRevision.setText(
                 selected.map(value -> Long.toString(value.catalogRevision())).orElse("0"));
         credentialStatus.setText(snapshot.selection().draft().credential().isPresent() ? "已配置（不可读取）" : "未配置");
         health.setText(snapshot.selection()
                 .health()
-                .map(value -> value.state()
+                .map(value -> SettingsLabels.mcpHealthState(value.state())
                         + value.detail().map(detail -> " · " + detail).orElse(""))
                 .orElse("尚未检查"));
         catalog.getItems().setAll(snapshot.selection().catalog().entries());
@@ -381,13 +396,13 @@ public final class McpSettingsPage extends VBox implements ManagedSettingsPage {
         history.setEntries(snapshot.selection().history().stream()
                 .map(value -> new ExecutionTimeline.Entry(
                         value.updatedAt(),
-                        "revision " + value.revision(),
-                        value.state() + " · catalog " + value.catalogRevision()))
+                        "版本 " + value.revision(),
+                        SettingsLabels.mcpEndpointState(value.state()) + " · 目录版本 " + value.catalogRevision()))
                 .toList());
     }
 
     private void updateActionAvailability() {
-        boolean pending = state.phase() == SettingsLoadState.LOADING;
+        boolean pending = state.phase() == SettingsLoadState.LOADING || scopedWorkspace.isEmpty();
         Optional<McpEndpoint> selected = state.selection().endpoint();
         boolean editable = selected.map(value -> value.spec().transport() == McpTransport.STREAMABLE_HTTPS)
                 .orElse(true);
@@ -398,6 +413,7 @@ public final class McpSettingsPage extends VBox implements ManagedSettingsPage {
         updateEndpointActions(pending, selected);
         updateOAuthActions();
         updateEditors(selected, editable);
+        create.setDisable(pending);
     }
 
     private void updateDraftActions(boolean pending, boolean editable, boolean hasDraft, boolean secretDirty) {
@@ -451,7 +467,7 @@ public final class McpSettingsPage extends VBox implements ManagedSettingsPage {
         } else if (state.phase() == SettingsLoadState.ERROR) {
             actions.show(ActionState.ERROR, state.feedback().message());
         } else if (dirty()) {
-            actions.show(ActionState.DIRTY, "MCP 草稿或 Secret 尚未保存");
+            actions.show(ActionState.DIRTY, "MCP 草稿或密钥尚未保存");
         } else {
             actions.show(
                     state.feedback().message().isBlank() ? ActionState.IDLE : ActionState.SUCCESS,
@@ -469,14 +485,6 @@ public final class McpSettingsPage extends VBox implements ManagedSettingsPage {
         } finally {
             rendering = false;
         }
-    }
-
-    private static Workspace findWorkspace(McpSettingsState snapshot) {
-        return snapshot.workspaceId()
-                .flatMap(id -> snapshot.workspaces().stream()
-                        .filter(value -> value.id().equals(id))
-                        .findFirst())
-                .orElse(null);
     }
 
     private static PrivateNetworkGrant findGrant(
@@ -506,7 +514,8 @@ public final class McpSettingsPage extends VBox implements ManagedSettingsPage {
                 setText(
                         empty || item == null
                                 ? null
-                                : item.kind() + " · " + item.title().orElse(item.name()) + " — " + item.description());
+                                : SettingsLabels.mcpCatalogKind(item.kind()) + " · "
+                                        + item.title().orElse(item.name()) + " — " + item.description());
             }
         };
     }

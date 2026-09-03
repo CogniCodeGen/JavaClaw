@@ -98,6 +98,102 @@
         "resources": {"$ref": "#/$defs/resourceLimits"}
       }
     },
+    "permissionPreset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "revision", "displayName", "description", "executableSelectionAllowed"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "revision": {"$ref": "#/$defs/positiveRevision"},
+        "displayName": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "description": {"type": "string", "minLength": 1, "maxLength": 4000},
+        "executableSelectionAllowed": {"type": "boolean"}
+      }
+    },
+    "permissionPresetListResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["presets"],
+      "properties": {
+        "presets": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/permissionPreset"}}
+      }
+    },
+    "permissionPresetRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "presetId", "presetRevision", "workspaceId", "profileId", "allowedTools", "executables"
+      ],
+      "properties": {
+        "presetId": {"$ref": "#/$defs/identifier"},
+        "presetRevision": {"$ref": "#/$defs/positiveRevision"},
+        "workspaceId": {"$ref": "#/$defs/workspaceId"},
+        "profileId": {"$ref": "#/$defs/identifier", "not": {"const": "standard"}},
+        "allowedTools": {
+          "type": "array",
+          "maxItems": 10000,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 240, "not": {"pattern": "\\*"}}
+        },
+        "executables": {
+          "type": "array",
+          "maxItems": 1000,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 1000, "not": {"pattern": "\\*"}}
+        }
+      }
+    },
+    "permissionPresetPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request"],
+      "properties": {"request": {"$ref": "#/$defs/permissionPresetRequest"}}
+    },
+    "permissionPresetPreview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["preset", "workspaceId", "proposedProfile", "warnings"],
+      "properties": {
+        "preset": {"$ref": "#/$defs/permissionPreset"},
+        "workspaceId": {"$ref": "#/$defs/workspaceId"},
+        "proposedProfile": {
+          "allOf": [
+            {"$ref": "#/$defs/permissionProfile"},
+            {"properties": {"version": {"const": 1}}}
+          ]
+        },
+        "warnings": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {"type": "string", "minLength": 1, "maxLength": 1000}
+        }
+      }
+    },
+    "permissionPresetInstantiationResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["preset", "workspaceId", "profile"],
+      "properties": {
+        "preset": {"$ref": "#/$defs/permissionPreset"},
+        "workspaceId": {"$ref": "#/$defs/workspaceId"},
+        "profile": {
+          "allOf": [
+            {"$ref": "#/$defs/permissionProfile"},
+            {"properties": {"version": {"const": 1}}}
+          ]
+        }
+      }
+    },
+    "permissionPresetInstantiateCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotencyKey", "expectedRevision", "payload"],
+      "properties": {
+        "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 200},
+        "expectedRevision": {"const": 0},
+        "payload": {"$ref": "#/$defs/permissionPresetPayload"}
+      }
+    },
     "listResult": {
       "type": "object",
       "additionalProperties": false,

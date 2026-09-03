@@ -10,7 +10,6 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -20,6 +19,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.javaclaw.api.AgentProfile;
+import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderCredentialBinding;
 import com.javaclaw.api.ProviderEndpoint;
@@ -27,9 +29,10 @@ import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ProviderReadiness;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
+import com.javaclaw.api.TurnBudget;
 import com.javaclaw.nativehost.credential.MasterKeyProtector;
 import com.javaclaw.protocol.CanonicalJson;
+import com.javaclaw.server.ProviderEndpointTestFixtures;
 import com.javaclaw.server.security.vault.SecretVaultService;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -64,7 +67,7 @@ class ProviderCredentialServiceTest {
         assertEquals(SECRET, preparedSecret.get());
         assertEquals(SECRET, fixture.vault().use(bound.credential().reference(), ProviderCredentialServiceTest::text));
         assertEquals(
-                ProviderReadiness.CREDENTIAL_UNVERIFIED,
+                ProviderReadiness.DISABLED,
                 fixture.providers()
                         .probe(new ProviderRef(
                                 bound.provider().id(), bound.provider().revision(), "test-model"))
@@ -187,7 +190,7 @@ class ProviderCredentialServiceTest {
         CommandIdentity identity = identity("restart-replay", 1);
         ProviderCredentialBinding committed;
         try (SecretVaultService vault = vault(database, protector, json)) {
-            ProviderService providers = provider(database, json);
+            ProviderService providers = provider(database, vault, json);
             committed = new ProviderCredentialService(providers, vault.providerCredentials(), json, CLOCK)
                     .set(identity, "provider-main", 1, 0, SECRET.getBytes(StandardCharsets.UTF_8));
             assertEquals(
@@ -198,7 +201,10 @@ class ProviderCredentialServiceTest {
 
         try (SecretVaultService restarted = vault(database, protector, json)) {
             ProviderCredentialService service = new ProviderCredentialService(
-                    new ProviderService(database, json, CLOCK), restarted.providerCredentials(), json, CLOCK);
+                    new ProviderService(database, restarted, json, CLOCK),
+                    restarted.providerCredentials(),
+                    json,
+                    CLOCK);
             assertEquals(committed, service.recoverSet(identity).orElseThrow());
             assertEquals(1, restarted.status().credentialCount());
         }
@@ -222,19 +228,66 @@ class ProviderCredentialServiceTest {
         }
     }
 
+    @Test
+    void Credential实时失效会拒绝新Profile与已有Profile启动Turn() {
+        Fixture fixture = fixture(new ProviderCredentialTransactionPort(new CanonicalJson()));
+        ProviderCredentialBinding binding = fixture.service()
+                .set(
+                        identity("bind-profile-provider", 1),
+                        "provider-main",
+                        1,
+                        0,
+                        SECRET.getBytes(StandardCharsets.UTF_8));
+        ProviderEndpoint active = fixture.providers()
+                .update(
+                        new CommandIdentity("provider/update", "enable-profile-provider", 2, "a".repeat(64)),
+                        binding.provider().id(),
+                        binding.provider().spec(),
+                        ProviderLifecycle.ACTIVE);
+        CanonicalJson json = new CanonicalJson();
+        PermissionProfileService permissions = new PermissionProfileService(fixture.database(), json, CLOCK);
+        permissions.installStandardProfile();
+        AgentProfileService profiles =
+                new AgentProfileService(fixture.database(), fixture.providers(), permissions, json, CLOCK);
+        AgentProfileSpec profileSpec = new AgentProfileSpec(
+                "Default",
+                "执行用户任务。",
+                new ProviderRef(active.id(), active.revision(), "test-model"),
+                new PermissionProfileRef("standard", 1),
+                Set.of(),
+                new TurnBudget(4_000, 1_000, 4, 0, Duration.ofMinutes(1)));
+        AgentProfile created = profiles.create(
+                new CommandIdentity("profile/create", "profile-ready", 0, "b".repeat(64)),
+                "profile-ready",
+                profileSpec);
+
+        fixture.vault().close();
+
+        assertEquals(
+                ProviderReadiness.CREDENTIAL_UNAVAILABLE,
+                fixture.providers().probe(profileSpec.provider()).readiness());
+        assertThrows(
+                PersistenceException.class,
+                () -> profiles.create(
+                        new CommandIdentity("profile/create", "profile-rejected", 0, "c".repeat(64)),
+                        "profile-rejected",
+                        profileSpec));
+        assertThrows(PersistenceException.class, () -> profiles.requireAvailable(created.id(), created.revision()));
+    }
+
     private Fixture fixture(ProviderCredentialTransactionPort port) {
         CanonicalJson json = new CanonicalJson();
         H2Database database = database();
         SecretVaultService vault = vault(database, new MemoryProtector(), json);
-        ProviderService providers = provider(database, json);
+        ProviderService providers = provider(database, vault, json);
         ProviderCredentialService service =
                 new ProviderCredentialService(providers, vault.providerCredentials(), port, CLOCK);
         return new Fixture(database, providers, vault, service);
     }
 
-    private ProviderService provider(H2Database database, CanonicalJson json) {
-        ProviderService providers = new ProviderService(database, json, CLOCK);
-        providers.create(identity("create-provider", 0), "provider-main", providerSpec());
+    private ProviderService provider(H2Database database, CredentialAvailabilityPort credentials, CanonicalJson json) {
+        ProviderService providers = new ProviderService(database, credentials, json, CLOCK);
+        providers.create(identity("create-provider", 0), "provider-main", providerSpec(), ProviderLifecycle.DISABLED);
         return providers;
     }
 
@@ -249,16 +302,7 @@ class ProviderCredentialServiceTest {
     }
 
     private static ProviderEndpointSpec providerSpec() {
-        return new ProviderEndpointSpec(
-                "Provider",
-                ProviderAdapter.OPENAI_COMPATIBLE,
-                Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of("test-model"),
-                Optional.empty(),
-                Duration.ofSeconds(30),
-                0,
-                Map.of());
+        return ProviderEndpointTestFixtures.apiKeyChat("Provider", ProviderAdapter.OPENAI_COMPATIBLE, "test-model");
     }
 
     private static ProviderService.PreparedProviderChange preparedChange(

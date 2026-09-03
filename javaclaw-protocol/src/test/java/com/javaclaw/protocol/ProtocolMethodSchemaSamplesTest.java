@@ -6,8 +6,8 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -17,11 +17,17 @@ import com.javaclaw.api.AgentProfileRef;
 import com.javaclaw.api.AgentProfileSpec;
 import com.javaclaw.api.ApprovalDecision;
 import com.javaclaw.api.CanonicalPayload;
+import com.javaclaw.api.PermissionPresetInstantiationRequest;
 import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProviderAdapter;
+import com.javaclaw.api.ProviderAdapterOptions;
+import com.javaclaw.api.ProviderAuthentication;
 import com.javaclaw.api.ProviderEndpointSpec;
+import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.ProviderModelDiscoveryRequest;
+import com.javaclaw.api.ProviderModelPurpose;
+import com.javaclaw.api.ProviderModelSpec;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.TurnBudget;
 import com.javaclaw.api.TurnId;
@@ -69,7 +75,8 @@ class ProtocolMethodSchemaSamplesTest {
     @Test
     void provider与Profile实际编码匹配逐方法Schema() throws Exception {
         assertCommand(
-                new ProviderProfileRpcContracts.ProviderCreatePayload("cloud", providerSpec()),
+                new ProviderProfileRpcContracts.ProviderCreatePayload(
+                        "cloud", providerSpec(), ProviderLifecycle.DISABLED),
                 0,
                 "provider-profile-v2.schema.json",
                 "/$defs/providerCreateCommand");
@@ -84,6 +91,43 @@ class ProtocolMethodSchemaSamplesTest {
                 0,
                 "provider-profile-v2.schema.json",
                 "/$defs/bindingUpdateCommand");
+    }
+
+    @Test
+    void Provider发现Embedding绑定和权限预设匹配逐方法Schema() throws Exception {
+        ProviderRef embedding = new ProviderRef("cloud", 2, "embedding");
+        PermissionPresetInstantiationRequest permissionRequest = new PermissionPresetInstantiationRequest(
+                "workspace-review", 1, WORKSPACE_ID, "review-profile", Set.of("read_file"), Set.of());
+
+        assertClosedShape(
+                json.encode(new ProviderModelDiscoveryRequest("cloud", 2)),
+                "provider-profile-v2.schema.json",
+                "/$defs/providerModelDiscoveryRequest");
+        assertCommand(
+                new ProviderModelDiscoveryRequest("cloud", 2),
+                2,
+                "provider-profile-v2.schema.json",
+                "/$defs/providerModelDiscoveryStartCommand");
+        assertClosedShape(
+                json.encode(new ProviderModelDiscoveryRpcContracts.ReadPayload("11111111-1111-1111-1111-111111111111")),
+                "provider-profile-v2.schema.json",
+                "/$defs/providerModelDiscoveryReadParams");
+        assertCommand(
+                new ProviderModelDiscoveryRpcContracts.CancelPayload(
+                        "11111111-1111-1111-1111-111111111111", ProviderModelDiscoveryRpcContracts.CLIENT_CANCELLED),
+                1,
+                "provider-profile-v2.schema.json",
+                "/$defs/providerModelDiscoveryCancelCommand");
+        assertCommand(
+                new ProviderProfileRpcContracts.EmbeddingBindingUpdatePayload(embedding),
+                0,
+                "provider-profile-v2.schema.json",
+                "/$defs/embeddingBindingUpdateCommand");
+        assertCommand(
+                new PermissionProfileRpcContracts.PresetInstantiatePayload(permissionRequest),
+                0,
+                "permission-profile-v2.schema.json",
+                "/$defs/permissionPresetInstantiateCommand");
     }
 
     @Test
@@ -159,12 +203,13 @@ class ProtocolMethodSchemaSamplesTest {
                 "OpenAI",
                 ProviderAdapter.OPENAI_COMPATIBLE,
                 Optional.of(URI.create("https://api.example.test/v1")),
-                Set.of(ProviderRole.CHAT),
-                List.of("model"),
+                ProviderAuthentication.API_KEY,
+                List.of(new ProviderModelSpec(
+                        "model", "Model", Set.of(ProviderModelPurpose.CHAT), OptionalInt.empty())),
                 Optional.empty(),
                 Duration.ofSeconds(30),
                 1,
-                Map.of("organization", "example"));
+                new ProviderAdapterOptions.OpenAiCompatible(Optional.of("example"), Optional.empty()));
     }
 
     private static AgentProfileSpec profileSpec() {

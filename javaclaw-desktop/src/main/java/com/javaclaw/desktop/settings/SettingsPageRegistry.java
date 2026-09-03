@@ -19,11 +19,18 @@ final class SettingsPageRegistry {
         register("providers", new ProviderSettingsPage(gateway));
         register(
                 "profiles",
-                new AgentProfileSettingsPage(gateway, checked.promptPreview(), checked.promptOptimization()));
-        register("learning", new LearningSettingsPage(checked.learning()));
+                new AgentProfileSettingsPage(
+                        gateway, checked.agentOnboarding(), checked.promptPreview(), checked.promptOptimization()));
+        registerExtension(
+                "learning",
+                "学习策略",
+                "设置记忆学习和技能建议规则",
+                BuiltinExtensionIds.MEMORY,
+                "memory.learning",
+                checked.extensions());
         register("permissions", new PermissionProfileSettingsPage(gateway));
         register("vault", new VaultSettingsPage(gateway));
-        register("unattended-grants", new UnattendedToolGrantSettingsPage(gateway));
+        register("unattended-grants", new UnattendedToolGrantSettingsPage(gateway, checked.schedules()));
         register("network-grants", new PrivateNetworkGrantSettingsPage(gateway));
         register("mcp", new McpSettingsPage(checked.mcp()));
         register("connection", new ConnectionSettingsPage(gateway));
@@ -38,16 +45,14 @@ final class SettingsPageRegistry {
         register("builtins", new BuiltinExtensionSettingsPage(checked.builtins()));
         register("jobs", new AutomationJobSettingsPage(checked.jobs()));
         register("site", new SiteSettingsPage(gateway, checked.extensions()));
-        registerExtension("plan", "Plan", "结构化计划、决策与执行", BuiltinExtensionIds.PLAN, checked.extensions());
-        registerExtension("loop", "Loop", "迭代目标、验证和停止条件", BuiltinExtensionIds.LOOP, checked.extensions());
-        registerExtension("workflow", "Workflow", "安全 Graph 与持久执行", BuiltinExtensionIds.WORKFLOW, checked.extensions());
-        registerExtension("sdd", "SDD", "规格、审批、实现与验收", BuiltinExtensionIds.SDD, checked.extensions());
-        registerExtension(
-                "schedule", "Schedule", "触发规则、Occurrence 与恢复", BuiltinExtensionIds.SCHEDULE, checked.extensions());
-        registerExtension("memory", "Memory", "记忆、来源、历史与提案", BuiltinExtensionIds.MEMORY, checked.extensions());
-        registerExtension(
-                "knowledge", "Knowledge", "资料、索引 Generation 与检索", BuiltinExtensionIds.KNOWLEDGE, checked.extensions());
-        registerExtension("skill", "Skill", "Draft、发布、目录和资源", BuiltinExtensionIds.SKILL, checked.extensions());
+        registerExtension("plan", "计划", "结构化计划、决策与执行", BuiltinExtensionIds.PLAN, checked.extensions());
+        registerExtension("loop", "循环任务", "迭代目标、验证和停止条件", BuiltinExtensionIds.LOOP, checked.extensions());
+        registerExtension("workflow", "工作流", "安全编排和持久执行", BuiltinExtensionIds.WORKFLOW, checked.extensions());
+        registerExtension("sdd", "规格驱动开发（SDD）", "管理规格、审批、实现和验收", BuiltinExtensionIds.SDD, checked.extensions());
+        registerExtension("schedule", "定时任务", "管理触发规则、执行记录和失败恢复", BuiltinExtensionIds.SCHEDULE, checked.extensions());
+        registerExtension("memory", "记忆", "管理记忆来源、历史和建议", BuiltinExtensionIds.MEMORY, checked.extensions());
+        registerExtension("knowledge", "知识库", "管理资料、索引版本和检索", BuiltinExtensionIds.KNOWLEDGE, checked.extensions());
+        registerExtension("skill", "技能", "管理草稿、发布、目录和资源", BuiltinExtensionIds.SKILL, checked.extensions());
     }
 
     ManagedSettingsPage resolve(String key) {
@@ -76,5 +81,15 @@ final class SettingsPageRegistry {
             String extensionId,
             ExtensionSettingsGateway extensionGateway) {
         register(key, new ViewSchemaSettingsPage(extensionId, title, description, extensionGateway));
+    }
+
+    private void registerExtension(
+            String key,
+            String title,
+            String description,
+            String extensionId,
+            String preferredViewId,
+            ExtensionSettingsGateway extensionGateway) {
+        register(key, new ViewSchemaSettingsPage(extensionId, title, description, preferredViewId, extensionGateway));
     }
 }

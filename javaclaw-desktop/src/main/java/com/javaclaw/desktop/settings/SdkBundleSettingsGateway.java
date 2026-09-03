@@ -126,7 +126,7 @@ class SdkBundleSettingsGateway implements BundleSettingsGateway {
             BundleRpcContracts.TrustKey imported =
                     client.extensionBundles().importTrustKey(keyId, checked.attachment(), CommandOptions.create(0));
             if (!imported.fingerprint().equals(checked.fingerprint())) {
-                throw new SecurityException("服务端 Trust Key 指纹与确认值不一致");
+                throw new SecurityException("服务端信任公钥指纹与确认值不一致");
             }
             return imported;
         });
@@ -220,7 +220,7 @@ class SdkBundleSettingsGateway implements BundleSettingsGateway {
         if (!Objects.requireNonNull(staging, "staging")
                 .extensionId()
                 .equals(Objects.requireNonNull(current, "current").id())) {
-            throw new IllegalArgumentException("升级 staging 与当前 Bundle 标识不一致");
+            throw new IllegalArgumentException("待升级文件与当前扩展包标识不一致");
         }
     }
 }

@@ -41,7 +41,7 @@ public final class ConnectionSettingsPresenter {
 
     private void request(boolean reconnect) {
         long epoch = state.epoch() + 1;
-        String pending = reconnect ? "正在重新连接 App Server…" : "正在检查 App Server 会话…";
+        String pending = reconnect ? "正在重新连接 JavaClaw 服务…" : "正在检查 JavaClaw 服务会话…";
         publish(new ConnectionSettingsState(SettingsLoadState.LOADING, state.summary(), pending, epoch));
         java.util.concurrent.CompletionStage<ConnectionSummary> operation =
                 reconnect ? gateway.reconnect() : gateway.connection();

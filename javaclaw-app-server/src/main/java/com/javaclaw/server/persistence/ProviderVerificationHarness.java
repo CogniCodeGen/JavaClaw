@@ -29,6 +29,7 @@ import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProcessPermission;
 import com.javaclaw.api.ProviderCapabilities;
 import com.javaclaw.api.ProviderEndpoint;
+import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.api.ProviderRef;
 import com.javaclaw.api.ProviderVerificationResult;
 import com.javaclaw.api.ProviderVerificationState;
@@ -223,7 +224,14 @@ final class ProviderVerificationHarness implements AutoCloseable {
             ProviderCapabilities capabilities,
             Optional<String> errorCode) {
         return new ProviderVerificationResult(
-                provider, state, latencyMillis, usage, capabilities, errorCode, clock.instant());
+                provider,
+                ProviderModelPurpose.CHAT,
+                state,
+                latencyMillis,
+                usage,
+                capabilities,
+                errorCode,
+                clock.instant());
     }
 
     private DefaultTurnHarness harness() {
@@ -279,7 +287,7 @@ final class ProviderVerificationHarness implements AutoCloseable {
 
     private static ProviderCapabilities capabilities(ProviderEndpoint endpoint, ModelCapabilities value) {
         return new ProviderCapabilities(
-                endpoint.spec().roles(),
+                Set.of(ProviderModelPurpose.CHAT),
                 value.streaming(),
                 value.toolCalls(),
                 value.structuredOutput(),
@@ -381,24 +389,6 @@ final class ProviderVerificationHarness implements AutoCloseable {
         @Override
         public Optional<ToolCallResult> recoverEffect(ToolCallRequest request) {
             return Optional.empty();
-        }
-    }
-
-    private record CombinedCancellationToken(CancellationToken external, CancellationToken local)
-            implements CancellationToken {
-        private CombinedCancellationToken {
-            java.util.Objects.requireNonNull(external, "external");
-            java.util.Objects.requireNonNull(local, "local");
-        }
-
-        @Override
-        public boolean isCancelled() {
-            return external.isCancelled() || local.isCancelled();
-        }
-
-        @Override
-        public Optional<String> reason() {
-            return external.reason().or(local::reason);
         }
     }
 }

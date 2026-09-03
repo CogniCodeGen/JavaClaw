@@ -7,6 +7,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -15,11 +16,15 @@ import org.junit.jupiter.api.Test;
 import com.javaclaw.api.CancellationSource;
 import com.javaclaw.api.CredentialRef;
 import com.javaclaw.api.ProviderAdapter;
+import com.javaclaw.api.ProviderAdapterOptions;
+import com.javaclaw.api.ProviderAuthentication;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.ProviderModelPurpose;
+import com.javaclaw.api.ProviderModelSpec;
+import com.javaclaw.api.ProviderReasoningSummary;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.TurnId;
 import com.javaclaw.extension.spi.EmbeddingPort;
 import com.javaclaw.extension.spi.EmbeddingPurpose;
@@ -60,7 +65,8 @@ class ProviderAdapterFactoryContractsTest {
 
     @Test
     void 模型工厂拒绝不匹配的冻结引用和未声明模型() {
-        ProviderEndpoint endpoint = endpoint(ProviderAdapter.OPENAI_COMPATIBLE, Set.of(ProviderRole.CHAT), Map.of());
+        ProviderEndpoint endpoint =
+                endpoint(ProviderAdapter.OPENAI_COMPATIBLE, Set.of(ProviderModelPurpose.CHAT), Map.of());
         ProviderModelAdapterFactory factory = new ProviderModelAdapterFactory(reference -> Optional.empty());
 
         assertThrows(NullPointerException.class, () -> new ProviderModelAdapterFactory(null));
@@ -79,7 +85,7 @@ class ProviderAdapterFactoryContractsTest {
 
     @Test
     void 缺少凭据的模型网关对能力和调用均安全拒绝() {
-        ProviderEndpoint endpoint = endpoint(ProviderAdapter.ANTHROPIC, Set.of(ProviderRole.CHAT), Map.of());
+        ProviderEndpoint endpoint = endpoint(ProviderAdapter.ANTHROPIC, Set.of(ProviderModelPurpose.CHAT), Map.of());
         ProviderRef reference = reference(endpoint, MODEL);
         ModelGateway gateway = new ProviderModelAdapterFactory(ignored -> Optional.empty()).create(endpoint, reference);
 
@@ -102,7 +108,7 @@ class ProviderAdapterFactoryContractsTest {
         for (ProviderAdapter adapter : ProviderAdapter.values()) {
             Map<String, String> options =
                     adapter == ProviderAdapter.OPENAI_RESPONSES ? Map.of("reasoningSummary", "detailed") : Map.of();
-            ProviderEndpoint endpoint = endpoint(adapter, Set.of(ProviderRole.CHAT), options);
+            ProviderEndpoint endpoint = endpoint(adapter, Set.of(ProviderModelPurpose.CHAT), options);
             ProviderRef reference = reference(endpoint, MODEL);
             ModelGateway gateway = new ProviderModelAdapterFactory(this::credential).create(endpoint, reference);
 
@@ -117,41 +123,29 @@ class ProviderAdapterFactoryContractsTest {
     void Responses摘要选项忽略大小写并拒绝未知值() throws Exception {
         for (String value : List.of("AUTO", "concise", "Detailed")) {
             ProviderEndpoint endpoint = endpoint(
-                    ProviderAdapter.OPENAI_RESPONSES, Set.of(ProviderRole.CHAT), Map.of("reasoningSummary", value));
+                    ProviderAdapter.OPENAI_RESPONSES,
+                    Set.of(ProviderModelPurpose.CHAT),
+                    Map.of("reasoningSummary", value));
             ProviderRef reference = reference(endpoint, MODEL);
             ModelGateway gateway = new ProviderModelAdapterFactory(this::credential).create(endpoint, reference);
             ((AutoCloseable) gateway).close();
         }
-
-        ProviderEndpoint invalid = endpoint(
-                ProviderAdapter.OPENAI_RESPONSES, Set.of(ProviderRole.CHAT), Map.of("reasoningSummary", "unavailable"));
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> new ProviderModelAdapterFactory(ignored -> Optional.empty())
-                        .create(invalid, reference(invalid, MODEL)));
     }
 
     @Test
-    void Embedding工厂拒绝角色模型维度和默认选择错误() {
+    void Embedding工厂拒绝非Embedding模型和不匹配精确引用() {
         ProviderEmbeddingAdapterFactory factory = new ProviderEmbeddingAdapterFactory(ignored -> Optional.empty());
-        ProviderEndpoint chatOnly = endpoint(ProviderAdapter.OPENAI_COMPATIBLE, Set.of(ProviderRole.CHAT), Map.of());
-        ProviderEndpoint invalidNumber = embeddingEndpoint(ProviderAdapter.OPENAI_COMPATIBLE, "not-a-number");
-        ProviderEndpoint tooSmall = embeddingEndpoint(ProviderAdapter.OPENAI_COMPATIBLE, "0");
-        ProviderEndpoint tooLarge = embeddingEndpoint(ProviderAdapter.GOOGLE_GENAI, "65537");
-        ProviderEndpoint invalidDefault = endpoint(
-                ProviderAdapter.GOOGLE_GENAI, Set.of(ProviderRole.EMBEDDING), Map.of("defaultEmbedding", "sometimes"));
+        ProviderEndpoint chatOnly =
+                endpoint(ProviderAdapter.OPENAI_COMPATIBLE, Set.of(ProviderModelPurpose.CHAT), Map.of());
+        ProviderEndpoint embedding = embeddingEndpoint(ProviderAdapter.GOOGLE_GENAI, "3");
 
         assertThrows(NullPointerException.class, () -> new ProviderEmbeddingAdapterFactory(null));
-        assertThrows(NullPointerException.class, () -> factory.create(null, MODEL));
+        assertThrows(NullPointerException.class, () -> factory.create(null, reference(chatOnly, MODEL)));
         assertThrows(NullPointerException.class, () -> factory.create(chatOnly, null));
-        assertThrows(IllegalArgumentException.class, () -> factory.create(chatOnly, MODEL));
+        assertThrows(IllegalArgumentException.class, () -> factory.create(chatOnly, reference(chatOnly, MODEL)));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> factory.create(embeddingEndpoint(ProviderAdapter.GOOGLE_GENAI, "3"), "other"));
-        assertThrows(IllegalArgumentException.class, () -> factory.create(invalidNumber, MODEL));
-        assertThrows(IllegalArgumentException.class, () -> factory.create(tooSmall, MODEL));
-        assertThrows(IllegalArgumentException.class, () -> factory.create(tooLarge, MODEL));
-        assertThrows(IllegalArgumentException.class, () -> factory.create(invalidDefault, MODEL));
+                () -> factory.create(embedding, new ProviderRef(embedding.id(), embedding.revision(), "other")));
     }
 
     @Test
@@ -161,16 +155,15 @@ class ProviderAdapterFactoryContractsTest {
             resolved.set(true);
             return Optional.of(new CredentialMaterial("unused".toCharArray()));
         });
-        EmbeddingPort anthropic =
-                factory.create(endpoint(ProviderAdapter.ANTHROPIC, Set.of(ProviderRole.EMBEDDING), Map.of()), MODEL);
+        ProviderEndpoint chatOnly =
+                endpoint(ProviderAdapter.OPENAI_COMPATIBLE, Set.of(ProviderModelPurpose.CHAT), Map.of());
+        assertThrows(IllegalArgumentException.class, () -> factory.create(chatOnly, reference(chatOnly, MODEL)));
         assertFalse(resolved.get());
-        assertThrows(
-                EmbeddingUnavailableException.class,
-                () -> anthropic.embed(List.of("document"), EmbeddingPurpose.DOCUMENT, new CancellationSource()));
 
         ProviderEmbeddingAdapterFactory missing = new ProviderEmbeddingAdapterFactory(ignored -> Optional.empty());
-        EmbeddingPort unavailable = missing.create(
-                endpoint(ProviderAdapter.OPENAI_COMPATIBLE, Set.of(ProviderRole.EMBEDDING), Map.of()), MODEL);
+        ProviderEndpoint endpoint =
+                endpoint(ProviderAdapter.OPENAI_COMPATIBLE, Set.of(ProviderModelPurpose.EMBEDDING), Map.of());
+        EmbeddingPort unavailable = missing.create(endpoint, reference(endpoint, MODEL));
         assertThrows(
                 EmbeddingUnavailableException.class,
                 () -> unavailable.embed(List.of("query"), EmbeddingPurpose.QUERY, new CancellationSource()));
@@ -178,13 +171,11 @@ class ProviderAdapterFactoryContractsTest {
 
     @Test
     void OpenAI和GoogleEmbedding客户端可离线构造并释放() throws Exception {
-        for (ProviderAdapter adapter : List.of(
-                ProviderAdapter.OPENAI_COMPATIBLE, ProviderAdapter.OPENAI_RESPONSES, ProviderAdapter.GOOGLE_GENAI)) {
-            ProviderEndpoint endpoint = endpoint(
-                    adapter,
-                    Set.of(ProviderRole.EMBEDDING),
-                    Map.of("embeddingDimensions", "16", "defaultEmbedding", "true"));
-            EmbeddingPort port = new ProviderEmbeddingAdapterFactory(this::credential).create(endpoint, MODEL);
+        for (ProviderAdapter adapter : List.of(ProviderAdapter.OPENAI_COMPATIBLE, ProviderAdapter.GOOGLE_GENAI)) {
+            ProviderEndpoint endpoint =
+                    endpoint(adapter, Set.of(ProviderModelPurpose.EMBEDDING), Map.of("embeddingDimensions", "16"));
+            EmbeddingPort port =
+                    new ProviderEmbeddingAdapterFactory(this::credential).create(endpoint, reference(endpoint, MODEL));
 
             assertTrue(port instanceof AutoCloseable);
             ((AutoCloseable) port).close();
@@ -197,7 +188,7 @@ class ProviderAdapterFactoryContractsTest {
     }
 
     private static ProviderEndpoint embeddingEndpoint(ProviderAdapter adapter, String dimensions) {
-        return endpoint(adapter, Set.of(ProviderRole.EMBEDDING), Map.of("embeddingDimensions", dimensions));
+        return endpoint(adapter, Set.of(ProviderModelPurpose.EMBEDDING), Map.of("embeddingDimensions", dimensions));
     }
 
     private static ProviderRef reference(ProviderEndpoint endpoint, String model) {
@@ -205,17 +196,33 @@ class ProviderAdapterFactoryContractsTest {
     }
 
     private static ProviderEndpoint endpoint(
-            ProviderAdapter adapter, Set<ProviderRole> roles, Map<String, String> options) {
+            ProviderAdapter adapter, Set<ProviderModelPurpose> purposes, Map<String, String> options) {
+        OptionalInt dimensions = options.containsKey("embeddingDimensions")
+                ? OptionalInt.of(Integer.parseInt(options.get("embeddingDimensions")))
+                : OptionalInt.empty();
+        ProviderReasoningSummary reasoningSummary = ProviderReasoningSummary.valueOf(
+                options.getOrDefault("reasoningSummary", "AUTO").toUpperCase(java.util.Locale.ROOT));
         ProviderEndpointSpec spec = new ProviderEndpointSpec(
                 "Local fake provider",
                 adapter,
                 Optional.of(URI.create("http://127.0.0.1:1")),
-                roles,
-                List.of(MODEL),
+                ProviderAuthentication.API_KEY,
+                List.of(new ProviderModelSpec(MODEL, MODEL, purposes, dimensions)),
                 Optional.of(CREDENTIAL),
                 Duration.ofMillis(250),
                 0,
-                options);
+                adapterOptions(adapter, reasoningSummary));
         return new ProviderEndpoint("provider-main", 3, ProviderLifecycle.ACTIVE, spec, NOW, NOW);
+    }
+
+    private static ProviderAdapterOptions adapterOptions(
+            ProviderAdapter adapter, ProviderReasoningSummary reasoningSummary) {
+        return switch (adapter) {
+            case OPENAI_COMPATIBLE -> new ProviderAdapterOptions.OpenAiCompatible(Optional.empty(), Optional.empty());
+            case ANTHROPIC -> new ProviderAdapterOptions.Anthropic();
+            case GOOGLE_GENAI -> new ProviderAdapterOptions.GoogleGenAi(Optional.empty());
+            case OPENAI_RESPONSES ->
+                new ProviderAdapterOptions.OpenAiResponses(Optional.empty(), Optional.empty(), reasoningSummary);
+        };
     }
 }

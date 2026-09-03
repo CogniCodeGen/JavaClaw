@@ -11,6 +11,7 @@ import com.javaclaw.api.AgentProfile;
 import com.javaclaw.api.AgentProfileSpec;
 import com.javaclaw.api.PermissionProfile;
 import com.javaclaw.api.ProviderEndpoint;
+import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.client.CommandOptions;
 
 /** Agent Profile 设置页的异步状态机；不持有 JavaFX 控件。 */
@@ -47,9 +48,10 @@ public final class AgentProfileSettingsPresenter {
                 state.providers(),
                 state.permissions(),
                 state.selected(),
+                state.creating(),
                 state.baseline(),
                 state.draft(),
-                "正在读取 Agent Profile…",
+                "正在读取智能体方案…",
                 false,
                 epoch));
         gateway.profiles()
@@ -76,6 +78,7 @@ public final class AgentProfileSettingsPresenter {
                 state.providers(),
                 state.permissions(),
                 Optional.of(checked),
+                false,
                 draft,
                 draft,
                 "",
@@ -96,9 +99,10 @@ public final class AgentProfileSettingsPresenter {
                 state.providers(),
                 state.permissions(),
                 Optional.empty(),
+                true,
                 empty,
                 empty,
-                "填写新 Agent Profile",
+                "填写新智能体方案",
                 false,
                 state.epoch() + 1));
     }
@@ -115,6 +119,7 @@ public final class AgentProfileSettingsPresenter {
                 state.providers(),
                 state.permissions(),
                 state.selected(),
+                state.creating(),
                 state.baseline(),
                 draft,
                 state.message(),
@@ -133,7 +138,7 @@ public final class AgentProfileSettingsPresenter {
             publishFailure(invalid);
             return;
         }
-        publishSaving("正在保存 Agent Profile…");
+        publishSaving("正在保存智能体方案…");
         if (state.selected().isEmpty()) {
             gateway.createProfile(state.draft().id(), spec, CommandOptions.create(0))
                     .whenComplete(this::completeWrite);
@@ -152,7 +157,7 @@ public final class AgentProfileSettingsPresenter {
             warnUnsavedChanges();
             return;
         }
-        publishSaving("正在归档 Agent Profile…");
+        publishSaving("正在归档智能体方案…");
         gateway.archiveProfile(selected.id(), CommandOptions.create(selected.revision()))
                 .whenComplete(this::completeWrite);
     }
@@ -165,6 +170,7 @@ public final class AgentProfileSettingsPresenter {
                 state.providers(),
                 state.permissions(),
                 state.selected(),
+                false,
                 state.baseline(),
                 state.baseline(),
                 "本地草稿已丢弃",
@@ -180,9 +186,10 @@ public final class AgentProfileSettingsPresenter {
                 state.providers(),
                 state.permissions(),
                 state.selected(),
+                state.creating(),
                 state.baseline(),
                 state.draft(),
-                "请先保存或放弃 Agent Profile 草稿",
+                "请先保存或放弃智能体方案草稿",
                 false,
                 state.epoch()));
     }
@@ -203,6 +210,7 @@ public final class AgentProfileSettingsPresenter {
                     state.providers(),
                     state.permissions(),
                     state.selected(),
+                    state.creating(),
                     state.baseline(),
                     state.draft(),
                     SettingsFailures.message(failure),
@@ -213,13 +221,14 @@ public final class AgentProfileSettingsPresenter {
         List<AgentProfile> profiles = catalog.profiles();
         Optional<AgentProfile> selected = profiles.stream().findFirst();
         AgentProfileDraft draft = selected.map(AgentProfileDraft::from).orElseGet(AgentProfileDraft::empty);
-        String message = profiles.isEmpty() ? "尚未创建 Agent Profile" : missingCatalogMessage(catalog);
+        String message = profiles.isEmpty() ? "尚未创建智能体方案" : missingCatalogMessage(catalog);
         publish(new AgentProfileSettingsState(
                 SettingsLoadState.READY,
                 profiles,
                 catalog.providers(),
                 catalog.permissions(),
                 selected,
+                false,
                 draft,
                 draft,
                 message,
@@ -240,34 +249,36 @@ public final class AgentProfileSettingsPresenter {
                 state.providers(),
                 state.permissions(),
                 Optional.of(profile),
+                false,
                 draft,
                 draft,
-                "Agent Profile 已保存为 v" + profile.revision(),
+                "智能体方案已保存为版本 " + profile.revision(),
                 false,
                 state.epoch()));
     }
 
     private void requireActiveReferences(AgentProfileDraft draft) {
-        var provider = draft.provider().orElseThrow(() -> new IllegalArgumentException("请选择 Provider 和模型"));
+        var provider = draft.provider().orElseThrow(() -> new IllegalArgumentException("请选择模型服务和模型"));
         boolean providerAvailable = state.providers().stream()
                 .anyMatch(endpoint -> endpoint.id().equals(provider.endpointId())
                         && endpoint.revision() == provider.endpointRevision()
                         && endpoint.lifecycle() == com.javaclaw.api.ProviderLifecycle.ACTIVE
-                        && endpoint.spec().models().contains(provider.model()));
+                        && endpoint.spec().models().stream()
+                                .anyMatch(model -> model.modelId().equals(provider.model())
+                                        && model.supports(ProviderModelPurpose.CHAT)));
         if (!providerAvailable) {
-            throw new IllegalArgumentException("所选 Provider/model 已停用、归档或 revision 过期");
+            throw new IllegalArgumentException("所选模型服务和模型 已停用、归档或版本过期");
         }
-        var permission =
-                draft.permissionProfile().orElseThrow(() -> new IllegalArgumentException("请选择 PermissionProfile"));
+        var permission = draft.permissionProfile().orElseThrow(() -> new IllegalArgumentException("请选择权限方案"));
         boolean permissionAvailable = state.permissions().stream()
                 .anyMatch(profile -> profile.id().equals(permission.id()) && profile.version() == permission.version());
         if (!permissionAvailable) {
-            throw new IllegalArgumentException("所选 PermissionProfile revision 已过期");
+            throw new IllegalArgumentException("所选权限方案版本已过期");
         }
     }
 
     private AgentProfile requireSelected() {
-        return state.selected().orElseThrow(() -> new IllegalStateException("请先选择 Agent Profile"));
+        return state.selected().orElseThrow(() -> new IllegalStateException("请先选择智能体方案"));
     }
 
     private void publishSaving(String message) {
@@ -277,6 +288,7 @@ public final class AgentProfileSettingsPresenter {
                 state.providers(),
                 state.permissions(),
                 state.selected(),
+                state.creating(),
                 state.baseline(),
                 state.draft(),
                 message,
@@ -291,6 +303,7 @@ public final class AgentProfileSettingsPresenter {
                 state.providers(),
                 state.permissions(),
                 state.selected(),
+                state.creating(),
                 state.baseline(),
                 state.draft(),
                 SettingsFailures.message(failure),
@@ -301,10 +314,10 @@ public final class AgentProfileSettingsPresenter {
     private static String missingCatalogMessage(ProfileCatalog catalog) {
         if (catalog.providers().stream()
                 .noneMatch(endpoint -> endpoint.lifecycle() == com.javaclaw.api.ProviderLifecycle.ACTIVE)) {
-            return "没有可用于新 Profile 的活动 Provider";
+            return "没有可用于新智能体方案的活动模型服务";
         }
         if (catalog.permissions().isEmpty()) {
-            return "没有可用 PermissionProfile";
+            return "没有可用权限方案";
         }
         return "";
     }
@@ -312,7 +325,7 @@ public final class AgentProfileSettingsPresenter {
     private static String requireId(String value) {
         String normalized = Objects.requireNonNullElse(value, "").strip();
         if (!normalized.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,127}")) {
-            throw new IllegalArgumentException("Profile ID 只能包含字母、数字、点、下划线和连字符");
+            throw new IllegalArgumentException("智能体方案标识只能包含字母、数字、点、下划线和连字符");
         }
         return normalized;
     }

@@ -15,7 +15,7 @@
 <BorderPane fx:id="root" styleClass="chat-root" xmlns:fx="http://javafx.com/fxml/1"
     fx:controller="com.javaclaw.desktop.shell.DesktopShellController">
     <left>
-        <VBox fx:id="sidebar" prefWidth="240" minWidth="200" maxWidth="280" accessibleText="Workspace 与 Thread 导航"
+        <VBox fx:id="sidebar" prefWidth="240" minWidth="200" maxWidth="280" accessibleText="工作区与对话导航"
             styleClass="sidebar-root">
             <HBox alignment="CENTER_LEFT" spacing="8">
                 <padding>
@@ -55,7 +55,7 @@
                 <Button fx:id="settingsButton" text="⚙  设置与管理" onAction="#openSettings"
                     accessibleText="打开设置与管理中心，快捷键 Ctrl 或 Command 加逗号" maxWidth="Infinity"
                     styleClass="sidebar-nav-button" />
-                <Label fx:id="connectionLabel" text="尚未连接 App Server" accessibleText="App Server 连接状态"
+                <Label fx:id="connectionLabel" text="尚未连接 JavaClaw 服务" accessibleText="JavaClaw 服务连接状态"
                     wrapText="true" styleClass="chat-top-meta" />
             </VBox>
         </VBox>
@@ -80,19 +80,19 @@
                         <Label fx:id="errorLabel" visible="false" managed="false" wrapText="true"
                             maxWidth="Infinity" styleClass="error-banner" />
                         <VBox fx:id="connectionErrorCard" visible="false" managed="false" spacing="10"
-                            accessibleText="App Server 连接失败恢复操作"
+                            accessibleText="JavaClaw 服务连接失败恢复操作"
                             styleClass="jc-card,platform-section-card,connection-error-card">
                             <padding>
                                 <Insets top="12" right="16" bottom="12" left="16" />
                             </padding>
-                            <Label text="无法连接到 App Server" styleClass="grp-title,platform-action-error" />
+                            <Label text="无法连接到 JavaClaw 服务" styleClass="grp-title,platform-action-error" />
                             <Label fx:id="connectionErrorDetail" wrapText="true" styleClass="sec-hint" />
                             <HBox spacing="8" alignment="CENTER_LEFT">
-                                <Button text="重新连接" onAction="#retryConnection" accessibleText="重新连接 App Server"
+                                <Button text="重新连接" onAction="#retryConnection" accessibleText="重新连接 JavaClaw 服务"
                                     styleClass="jc-btn,jc-btn-primary" />
                                 <Button text="打开诊断" onAction="#openDiagnostics" accessibleText="打开脱敏诊断页面"
                                     styleClass="jc-btn,jc-btn-soft" />
-                                <Button fx:id="connectionStartButton" text="启动 App Server"
+                                <Button fx:id="connectionStartButton" text="启动 JavaClaw 服务"
                                     styleClass="jc-btn,jc-btn-ghost" />
                             </HBox>
                         </VBox>
@@ -117,11 +117,10 @@
                                 prefRowCount="2" wrapText="true" minHeight="56" maxHeight="240"
                                 styleClass="input-field,composer-input" />
                             <HBox spacing="8" alignment="CENTER_LEFT" styleClass="composer-toolbar">
-                                <ComboBox fx:id="profileBox" promptText="使用工作区默认 Agent Profile"
-                                    accessibleText="选择 Agent Profile；不选择时使用工作区默认配置" prefWidth="300"
-                                    styleClass="composer-select" />
-                                <Button text="默认" onAction="#useDefaultProfile"
-                                    accessibleText="恢复使用工作区默认 Agent Profile" styleClass="sidebar-manage-btn" />
+                                <ComboBox fx:id="profileBox" promptText="使用工作区默认智能体方案"
+                                    accessibleText="选择智能体方案；不选择时使用工作区默认配置" prefWidth="300" styleClass="composer-select" />
+                                <Button text="默认" onAction="#useDefaultProfile" accessibleText="恢复使用工作区默认智能体方案"
+                                    styleClass="sidebar-manage-btn" />
                                 <Region HBox.hgrow="ALWAYS" />
                                 <Button fx:id="interruptButton" text="停止" onAction="#interrupt"
                                     accessibleText="停止当前任务" styleClass="sidebar-manage-btn,composer-interrupt-button" />

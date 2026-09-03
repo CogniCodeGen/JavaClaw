@@ -6,7 +6,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -25,11 +24,12 @@ import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProcessPermission;
 import com.javaclaw.api.ProfileLifecycle;
 import com.javaclaw.api.ProviderAdapter;
+import com.javaclaw.api.ProviderAdapterOptions;
+import com.javaclaw.api.ProviderAuthentication;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.ResourceLimits;
 import com.javaclaw.api.ToolPermission;
 import com.javaclaw.api.ToolRisk;
@@ -39,6 +39,7 @@ import com.javaclaw.protocol.CoreRpcContracts;
 import com.javaclaw.protocol.PermissionProfileRpcContracts;
 import com.javaclaw.protocol.ProviderProfileRpcContracts;
 import com.javaclaw.protocol.WriteCommand;
+import com.javaclaw.server.ProviderEndpointTestFixtures;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -170,14 +171,14 @@ class PlatformConfigurationSecurityTest {
 
     @Test
     void providerConfigurationRejectsDirectCredentialMutationAndUsesOptimisticRevision() {
-        ProviderService service = new ProviderService(database, json, clock);
+        ProviderService service = new ProviderService(database, reference -> true, json, clock);
         ProviderEndpointSpec first = providerSpec("Primary", "gpt-test");
         ProviderProfileRpcContracts.ProviderCreatePayload firstPayload =
-                new ProviderProfileRpcContracts.ProviderCreatePayload("openai", first);
+                new ProviderProfileRpcContracts.ProviderCreatePayload("openai", first, ProviderLifecycle.ACTIVE);
         CommandIdentity firstIdentity = identity("provider/create", "provider-1", 0, firstPayload);
 
-        ProviderEndpoint created = service.create(firstIdentity, "openai", first);
-        assertEquals(created, service.create(firstIdentity, "openai", first));
+        ProviderEndpoint created = service.create(firstIdentity, "openai", first, ProviderLifecycle.ACTIVE);
+        assertEquals(created, service.create(firstIdentity, "openai", first, ProviderLifecycle.ACTIVE));
         assertEquals(List.of(created), service.listLatest());
 
         ProviderEndpointSpec second = providerSpec("Secondary", "gpt-test");
@@ -190,22 +191,7 @@ class PlatformConfigurationSecurityTest {
                 ProviderLifecycle.ACTIVE);
         assertEquals(2, updated.revision());
 
-        ProviderEndpointSpec directCredential = new ProviderEndpointSpec(
-                "Direct credential",
-                ProviderAdapter.OPENAI_COMPATIBLE,
-                Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of("gpt-test"),
-                Optional.of(new CredentialRef("provider", "opaque-test-key")),
-                Duration.ofSeconds(30),
-                1,
-                Map.of());
-        ProviderProfileRpcContracts.ProviderCreatePayload directPayload =
-                new ProviderProfileRpcContracts.ProviderCreatePayload("direct", directCredential);
-        assertThrows(
-                PersistenceException.class,
-                () -> service.create(
-                        identity("provider/create", "provider-direct", 0, directPayload), "direct", directCredential));
+        assertDirectCredentialRejected(service);
 
         assertThrows(
                 IllegalArgumentException.class,
@@ -213,12 +199,13 @@ class PlatformConfigurationSecurityTest {
                         "Unsafe",
                         ProviderAdapter.OPENAI_COMPATIBLE,
                         Optional.empty(),
-                        Set.of(ProviderRole.CHAT),
-                        List.of("gpt-test"),
+                        ProviderAuthentication.API_KEY,
+                        ProviderEndpointTestFixtures.chat("Unsafe", ProviderAdapter.OPENAI_COMPATIBLE, "gpt-test")
+                                .models(),
                         Optional.empty(),
                         Duration.ofSeconds(30),
                         0,
-                        Map.of("client_secret", "plain")));
+                        ProviderAdapterOptions.defaults(ProviderAdapter.ANTHROPIC)));
         assertThrows(
                 PersistenceException.class,
                 () -> service.update(
@@ -228,20 +215,47 @@ class PlatformConfigurationSecurityTest {
                         ProviderLifecycle.ACTIVE));
     }
 
+    private void assertDirectCredentialRejected(ProviderService service) {
+        ProviderEndpointSpec directCredential = new ProviderEndpointSpec(
+                "Direct credential",
+                ProviderAdapter.OPENAI_COMPATIBLE,
+                Optional.empty(),
+                ProviderAuthentication.API_KEY,
+                ProviderEndpointTestFixtures.chat("Direct credential", ProviderAdapter.OPENAI_COMPATIBLE, "gpt-test")
+                        .models(),
+                Optional.of(new CredentialRef("provider", "opaque-test-key")),
+                Duration.ofSeconds(30),
+                1,
+                ProviderAdapterOptions.defaults(ProviderAdapter.OPENAI_COMPATIBLE));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new ProviderProfileRpcContracts.ProviderCreatePayload(
+                        "direct", directCredential, ProviderLifecycle.ACTIVE));
+        assertThrows(
+                PersistenceException.class,
+                () -> service.create(
+                        identity("provider/create", "provider-direct", 0, directCredential),
+                        "direct",
+                        directCredential,
+                        ProviderLifecycle.ACTIVE));
+    }
+
     @Test
     void agentProfileUsesExactProviderAndPermissionReferences() {
         PermissionProfileService permissions = new PermissionProfileService(database, json, clock);
         permissions.installStandardProfile();
-        ProviderService providers = new ProviderService(database, json, clock);
+        ProviderService providers = new ProviderService(database, reference -> true, json, clock);
         ProviderEndpointSpec providerSpec = providerSpec("Primary", "gpt-test");
         providers.create(
                 identity(
                         "provider/create",
                         "profile-provider",
                         0,
-                        new ProviderProfileRpcContracts.ProviderCreatePayload("openai", providerSpec)),
+                        new ProviderProfileRpcContracts.ProviderCreatePayload(
+                                "openai", providerSpec, ProviderLifecycle.ACTIVE)),
                 "openai",
-                providerSpec);
+                providerSpec,
+                ProviderLifecycle.ACTIVE);
         AgentProfileService service = new AgentProfileService(database, providers, permissions, json, clock);
         AgentProfileSpec profileSpec = new AgentProfileSpec(
                 "Developer",
@@ -286,10 +300,13 @@ class PlatformConfigurationSecurityTest {
     void agentProfile拒绝归档更新无效引用和幂等身份漂移() {
         PermissionProfileService permissions = new PermissionProfileService(database, json, clock);
         permissions.installStandardProfile();
-        ProviderService providers = new ProviderService(database, json, clock);
+        ProviderService providers = new ProviderService(database, reference -> true, json, clock);
         ProviderEndpointSpec endpointSpec = providerSpec("Profile source", "gpt-test");
         providers.create(
-                identity("provider/create", "profile-source", 0, endpointSpec), "profile-source", endpointSpec);
+                identity("provider/create", "profile-source", 0, endpointSpec),
+                "profile-source",
+                endpointSpec,
+                ProviderLifecycle.ACTIVE);
         AgentProfileService profiles = new AgentProfileService(database, providers, permissions, json, clock);
         AgentProfileSpec valid = agentProfileSpec(new ProviderRef("profile-source", 1, "gpt-test"));
 
@@ -321,6 +338,13 @@ class PlatformConfigurationSecurityTest {
         CommandIdentity archiveMethodDrift = new CommandIdentity(
                 "provider/other", archive.idempotencyKey(), archive.expectedRevision(), archive.requestDigest());
         assertThrows(PersistenceException.class, () -> providers.archive(archiveMethodDrift, "profile-source"));
+        AgentProfileSpec staleActiveProvider = agentProfileSpec(new ProviderRef("profile-source", 1, "gpt-test"));
+        assertThrows(
+                PersistenceException.class,
+                () -> profiles.create(
+                        identity("profile/create", "stale-active-provider", 0, staleActiveProvider),
+                        "stale-active-provider",
+                        staleActiveProvider));
         AgentProfileSpec archivedProvider = agentProfileSpec(new ProviderRef("profile-source", 2, "gpt-test"));
         assertThrows(
                 PersistenceException.class,
@@ -331,16 +355,18 @@ class PlatformConfigurationSecurityTest {
     }
 
     private static ProviderEndpointSpec providerSpec(String name, String model) {
+        ProviderEndpointSpec defaults =
+                ProviderEndpointTestFixtures.chat(name, ProviderAdapter.OPENAI_COMPATIBLE, model);
         return new ProviderEndpointSpec(
-                name,
-                ProviderAdapter.OPENAI_COMPATIBLE,
-                Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of(model),
-                Optional.empty(),
-                Duration.ofSeconds(30),
+                defaults.displayName(),
+                defaults.adapter(),
+                defaults.baseUri(),
+                defaults.authentication(),
+                defaults.models(),
+                defaults.credential(),
+                defaults.timeout(),
                 1,
-                Map.of());
+                defaults.options());
     }
 
     private static AgentProfileSpec agentProfileSpec(ProviderRef provider) {

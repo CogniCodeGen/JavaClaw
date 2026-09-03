@@ -1,55 +1,90 @@
 package com.javaclaw.server.config;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
 import com.javaclaw.api.CancellationToken;
+import com.javaclaw.api.EmbeddingBinding;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderLifecycle;
-import com.javaclaw.api.ProviderRole;
+import com.javaclaw.api.ProviderModelPurpose;
+import com.javaclaw.api.ProviderRef;
 import com.javaclaw.extension.spi.EmbeddingBatch;
 import com.javaclaw.extension.spi.EmbeddingPort;
 import com.javaclaw.extension.spi.EmbeddingPurpose;
+import com.javaclaw.server.model.EmbeddingAdapterFactory;
+import com.javaclaw.server.persistence.EmbeddingBindingService;
 import com.javaclaw.server.persistence.ProviderService;
+import com.javaclaw.server.security.vault.VaultRuntimeGate;
 
-/** 从 H2 Provider 最新版本原子切换全局 Embedding endpoint。 */
+/**
+ * 从 H2 安装级精确绑定原子切换 Embedding Adapter。
+ *
+ * <p>Vault 变化时先通过共享门闩阻断新 lease，再退役旧 Generation 并重建。lease 获取前后必须处于同一开放 epoch，避免凭据失效期间继续获得旧 Adapter。
+ */
 public final class ProviderEmbeddingRegistry implements EmbeddingPort, AutoCloseable {
     private final ProviderService providers;
-    private final AdapterFactory adapters;
+    private final EmbeddingBindingService bindings;
+    private final EmbeddingAdapterFactory adapters;
+    private final VaultRuntimeGate runtimeGate;
     private final ReentrantLock refreshLock = new ReentrantLock();
     private volatile Generation current = Generation.unavailable();
     private boolean closed;
 
     /**
-     * 创建并加载 Embedding 路由。
+     * 创建并加载与 Vault 状态线性化的安装级 Embedding 路由。
      *
      * @param providers Provider 历史服务
+     * @param bindings 安装级精确绑定服务
      * @param adapters 精确版本 Adapter 构造器
+     * @param runtimeGate Vault 变化期间阻止新 lease 的共享门闩
      */
-    public ProviderEmbeddingRegistry(ProviderService providers, AdapterFactory adapters) {
+    public ProviderEmbeddingRegistry(
+            ProviderService providers,
+            EmbeddingBindingService bindings,
+            EmbeddingAdapterFactory adapters,
+            VaultRuntimeGate runtimeGate) {
         this.providers = Objects.requireNonNull(providers, "providers");
+        this.bindings = Objects.requireNonNull(bindings, "bindings");
         this.adapters = Objects.requireNonNull(adapters, "adapters");
+        this.runtimeGate = Objects.requireNonNull(runtimeGate, "runtimeGate");
         reload();
-        providers.participate(this::prepare);
+        providers.participate(this::prepareProvider);
+        bindings.participate(this::prepareBinding);
     }
 
-    /** 从 H2 重新构造并原子切换 Embedding endpoint。 */
+    /** 从 H2 重建并原子切换安装级 Embedding 路由。 */
     public void reload() {
         refreshLock.lock();
         try {
             if (closed) {
                 return;
             }
-            Generation next = build(providers.listAllVersions());
+            Generation next = build(providers.listAllVersions(), bindings.find());
             Generation previous = current;
             current = next;
+            previous.retire();
+        } finally {
+            refreshLock.unlock();
+        }
+    }
+
+    /** 立即退役已复制 Vault 凭据的 Adapter；重建失败时保持不可用状态。 */
+    public void invalidate() {
+        refreshLock.lock();
+        try {
+            if (closed) {
+                return;
+            }
+            Generation previous = current;
+            current = Generation.unavailable();
             previous.retire();
         } finally {
             refreshLock.unlock();
@@ -81,17 +116,31 @@ public final class ProviderEmbeddingRegistry implements EmbeddingPort, AutoClose
         }
     }
 
-    private ProviderService.PreparedProviderChange prepare(ProviderEndpoint candidate) {
+    private ProviderService.PreparedProviderChange prepareProvider(ProviderEndpoint candidate) {
         refreshLock.lock();
         try {
-            if (closed) {
-                throw new IllegalStateException("Provider Embedding Registry is closed");
-            }
-            validateCandidate(candidate);
-            return new PreparedGeneration(build(historyWith(candidate)));
+            requireOpen();
+            return new PreparedGeneration(build(historyWith(candidate), bindings.find()));
         } catch (RuntimeException failure) {
             refreshLock.unlock();
             throw failure;
+        }
+    }
+
+    private EmbeddingBindingService.PreparedBindingChange prepareBinding(EmbeddingBinding candidate) {
+        refreshLock.lock();
+        try {
+            requireOpen();
+            return new PreparedGeneration(build(providers.listAllVersions(), Optional.of(candidate)));
+        } catch (RuntimeException failure) {
+            refreshLock.unlock();
+            throw failure;
+        }
+    }
+
+    private void requireOpen() {
+        if (closed) {
+            throw new IllegalStateException("Provider Embedding Registry is closed");
         }
     }
 
@@ -103,99 +152,45 @@ public final class ProviderEmbeddingRegistry implements EmbeddingPort, AutoClose
         return List.copyOf(history);
     }
 
-    private void validateCandidate(ProviderEndpoint candidate) {
-        if (candidate.lifecycle() != ProviderLifecycle.ACTIVE
-                || !candidate.spec().roles().contains(ProviderRole.EMBEDDING)) {
-            return;
-        }
-        List<EmbeddingPort> probes = new ArrayList<>();
-        try {
-            for (String model : candidate.spec().models()) {
-                probes.add(adapters.create(candidate, model));
-            }
-        } catch (RuntimeException failure) {
-            try {
-                closeProbes(probes);
-            } catch (RuntimeException closeFailure) {
-                failure.addSuppressed(closeFailure);
-            }
-            throw failure;
-        }
-        closeProbes(probes);
-    }
-
-    private static void closeProbes(List<EmbeddingPort> probes) {
-        RuntimeException first = null;
-        for (int index = probes.size() - 1; index >= 0; index--) {
-            if (probes.get(index) instanceof AutoCloseable resource) {
-                try {
-                    resource.close();
-                } catch (Exception failure) {
-                    RuntimeException wrapped =
-                            new IllegalStateException("Embedding candidate could not be released", failure);
-                    if (first == null) {
-                        first = wrapped;
-                    } else {
-                        first.addSuppressed(wrapped);
-                    }
-                }
-            }
-        }
-        if (first != null) {
-            throw first;
-        }
-    }
-
-    private Generation build(List<ProviderEndpoint> history) {
-        Map<String, ProviderEndpoint> latest = new HashMap<>();
-        history.forEach(endpoint -> latest.put(endpoint.id(), endpoint));
-        List<Candidate> candidates = latest.values().stream()
-                .filter(endpoint -> endpoint.lifecycle() == ProviderLifecycle.ACTIVE)
-                .filter(endpoint -> endpoint.spec().roles().contains(ProviderRole.EMBEDDING))
-                .flatMap(endpoint -> endpoint.spec().models().stream().map(model -> new Candidate(endpoint, model)))
-                .sorted(Comparator.comparing(Candidate::preferred)
-                        .reversed()
-                        .thenComparing(candidate -> candidate.endpoint().id())
-                        .thenComparing(Candidate::model))
-                .toList();
-        if (candidates.isEmpty()) {
+    private Generation build(List<ProviderEndpoint> history, Optional<EmbeddingBinding> selected) {
+        if (selected.isEmpty()) {
             return Generation.unavailable();
         }
-        Candidate selected = candidates.getFirst();
-        return new Generation(adapters.create(selected.endpoint(), selected.model()));
+        ProviderRef reference = selected.orElseThrow().provider();
+        Map<String, ProviderEndpoint> latest = new HashMap<>();
+        history.forEach(endpoint -> latest.merge(
+                endpoint.id(), endpoint, (left, right) -> left.revision() > right.revision() ? left : right));
+        ProviderEndpoint currentEndpoint = latest.get(reference.endpointId());
+        if (currentEndpoint == null || currentEndpoint.lifecycle() != ProviderLifecycle.ACTIVE) {
+            return Generation.unavailable();
+        }
+        Optional<ProviderEndpoint> exact = history.stream()
+                .filter(endpoint -> endpoint.id().equals(reference.endpointId()))
+                .filter(endpoint -> endpoint.revision() == reference.endpointRevision())
+                .findFirst();
+        if (exact.isEmpty() || exact.orElseThrow().lifecycle() != ProviderLifecycle.ACTIVE) {
+            return Generation.unavailable();
+        }
+        boolean embeddingModel = exact.orElseThrow().spec().models().stream()
+                .anyMatch(model ->
+                        model.modelId().equals(reference.model()) && model.supports(ProviderModelPurpose.EMBEDDING));
+        if (!embeddingModel) {
+            return Generation.unavailable();
+        }
+        return new Generation(adapters.create(exact.orElseThrow(), reference));
     }
 
     private Lease acquireCurrent() {
         while (true) {
+            long gateStamp = runtimeGate.requireOpenStamp();
             Generation observed = current;
             Lease lease = observed.tryAcquire();
-            if (lease != null) {
+            if (lease != null && runtimeGate.remainsOpen(gateStamp)) {
                 return lease;
             }
-        }
-    }
-
-    /** Provider 版本到 EmbeddingPort 的构造边界。 */
-    @FunctionalInterface
-    public interface AdapterFactory {
-        /**
-         * 创建精确 Adapter。
-         *
-         * @param endpoint Provider 最新版本
-         * @param model Provider 模型
-         * @return 可关闭或无状态 EmbeddingPort
-         */
-        EmbeddingPort create(ProviderEndpoint endpoint, String model);
-    }
-
-    private record Candidate(ProviderEndpoint endpoint, String model) {
-        private Candidate {
-            Objects.requireNonNull(endpoint, "endpoint");
-            model = Objects.requireNonNull(model, "model");
-        }
-
-        boolean preferred() {
-            return Boolean.parseBoolean(endpoint.spec().options().getOrDefault("defaultEmbedding", "false"));
+            if (lease != null) {
+                lease.close();
+            }
         }
     }
 
@@ -281,7 +276,8 @@ public final class ProviderEmbeddingRegistry implements EmbeddingPort, AutoClose
         }
     }
 
-    private final class PreparedGeneration implements ProviderService.PreparedProviderChange {
+    private final class PreparedGeneration
+            implements ProviderService.PreparedProviderChange, EmbeddingBindingService.PreparedBindingChange {
         private Generation next;
 
         private PreparedGeneration(Generation next) {

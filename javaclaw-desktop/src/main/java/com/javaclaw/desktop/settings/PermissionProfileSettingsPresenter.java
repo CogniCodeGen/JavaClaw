@@ -45,14 +45,14 @@ public final class PermissionProfileSettingsPresenter {
                 state.baseline(),
                 state.draft(),
                 state.cloneSource(),
-                "正在读取 PermissionProfile…",
+                "正在读取权限方案…",
                 false,
                 epoch));
         gateway.permissionProfiles().whenComplete((profiles, failure) -> completeReload(epoch, profiles, failure));
     }
 
     /**
-     * 选择权威配置；standard 会以只读方式呈现。
+     * 选择权威配置；内置“受限对话”会以只读方式呈现。
      *
      * @param profile 权限配置
      */
@@ -70,15 +70,14 @@ public final class PermissionProfileSettingsPresenter {
                 draft,
                 draft,
                 Optional.empty(),
-                checked.id().equals("standard") ? "内置 standard 是只读模板，请 clone 后编辑" : "",
+                checked.id().equals("standard") ? "“受限对话”是内置只读模板，请复制后编辑" : "",
                 false,
                 state.epoch() + 1));
     }
 
     /** 从当前选中配置创建一个尚未命名的新配置草稿。 */
     public void cloneSelected() {
-        PermissionProfile selected =
-                state.selected().orElseThrow(() -> new IllegalStateException("请先选择 PermissionProfile 模板"));
+        PermissionProfile selected = state.selected().orElseThrow(() -> new IllegalStateException("请先选择权限方案模板"));
         if (state.dirty()) {
             warnUnsavedChanges();
             return;
@@ -91,7 +90,7 @@ public final class PermissionProfileSettingsPresenter {
                 cloned,
                 cloned,
                 Optional.of(new com.javaclaw.api.PermissionProfileRef(selected.id(), selected.version())),
-                "请输入新的 PermissionProfile ID；clone 永不修改模板",
+                "请输入新的权限方案标识；复制操作永远不会修改模板",
                 false,
                 state.epoch() + 1));
     }
@@ -120,7 +119,7 @@ public final class PermissionProfileSettingsPresenter {
     /** 保存新配置或写入自定义配置的新版本。 */
     public void save() {
         if (state.standardReadOnly()) {
-            publishFailure(new IllegalStateException("内置 standard 只读，请先 clone 为新 ID"));
+            publishFailure(new IllegalStateException("“受限对话”是内置只读模板，请先复制为新方案"));
             return;
         }
         if (state.cloning()) {
@@ -143,7 +142,7 @@ public final class PermissionProfileSettingsPresenter {
                 state.baseline(),
                 state.draft(),
                 state.cloneSource(),
-                "正在保存 PermissionProfile…",
+                "正在保存权限方案…",
                 false,
                 state.epoch()));
         gateway.updatePermissionProfile(profile, CommandOptions.create(expected))
@@ -173,7 +172,7 @@ public final class PermissionProfileSettingsPresenter {
                 state.baseline(),
                 state.draft(),
                 state.cloneSource(),
-                "请先保存或放弃 PermissionProfile 草稿",
+                "请先保存或放弃权限方案草稿",
                 false,
                 state.epoch()));
     }
@@ -208,8 +207,8 @@ public final class PermissionProfileSettingsPresenter {
         PermissionProfileDraft draft =
                 selected.map(PermissionProfileDraft::from).orElse(state.baseline());
         String message = selected.isEmpty()
-                ? "没有可用 PermissionProfile；服务端应在启动时安装 standard"
-                : selected.orElseThrow().id().equals("standard") ? "内置 standard 是只读模板，请 clone 后编辑" : "";
+                ? "没有可用权限方案；请检查服务端内置的“受限对话”方案"
+                : selected.orElseThrow().id().equals("standard") ? "“受限对话”是内置只读模板，请复制后编辑" : "";
         publish(new PermissionProfileSettingsState(
                 SettingsLoadState.READY, catalog, selected, draft, draft, Optional.empty(), message, false, epoch));
     }
@@ -228,7 +227,7 @@ public final class PermissionProfileSettingsPresenter {
                 draft,
                 draft,
                 Optional.empty(),
-                "PermissionProfile 已保存为 v" + profile.version(),
+                "权限方案已保存为版本 " + profile.version(),
                 false,
                 state.epoch()));
     }
@@ -261,7 +260,7 @@ public final class PermissionProfileSettingsPresenter {
                 state.baseline(),
                 state.draft(),
                 state.cloneSource(),
-                "正在由服务端 clone PermissionProfile…",
+                "正在由服务端复制权限方案…",
                 false,
                 state.epoch()));
         gateway.clonePermissionProfile(state.cloneSource().orElseThrow(), newId, CommandOptions.create(0))
@@ -271,7 +270,7 @@ public final class PermissionProfileSettingsPresenter {
     private static String requireId(String value) {
         String normalized = Objects.requireNonNullElse(value, "").strip();
         if (!normalized.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,127}")) {
-            throw new IllegalArgumentException("PermissionProfile ID 只能包含字母、数字、点、下划线和连字符");
+            throw new IllegalArgumentException("权限方案标识只能包含字母、数字、点、下划线和连字符");
         }
         return normalized;
     }

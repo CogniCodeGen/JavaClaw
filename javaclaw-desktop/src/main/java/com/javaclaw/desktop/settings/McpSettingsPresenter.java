@@ -67,6 +67,11 @@ public final class McpSettingsPresenter {
         loadWorkspace(checked, nextEpoch());
     }
 
+    /** 使旧请求失效并保留当前草稿；页面作用域恢复前不得提交。 */
+    public void invalidateWorkspace() {
+        publish(status(SettingsLoadState.READY, "固定工作区当前不可用；草稿已保留", state.dirty(), nextEpoch()));
+    }
+
     /**
      * 选择 Endpoint 并读取历史及首屏 Catalog。
      *
@@ -97,7 +102,7 @@ public final class McpSettingsPresenter {
                         Optional.empty(),
                         List.of(),
                         new McpSettingsState.Catalog(List.of(), Optional.empty())),
-                new McpSettingsState.Feedback("正在读取 Endpoint 详情…", false, epoch)));
+                new McpSettingsState.Feedback("正在读取 连接 详情…", false, epoch)));
         CompletionStage<List<McpEndpoint>> history = gateway.mcpEndpointHistory(endpoint.id());
         CompletionStage<McpCatalogPage> catalog =
                 gateway.mcpCatalog(endpoint.id(), Optional.empty(), Optional.empty(), CATALOG_PAGE_SIZE);
@@ -125,7 +130,7 @@ public final class McpSettingsPresenter {
                         Optional.empty(),
                         List.of(),
                         new McpSettingsState.Catalog(List.of(), Optional.empty())),
-                new McpSettingsState.Feedback("填写新的 HTTPS MCP Endpoint", true, nextEpoch())));
+                new McpSettingsState.Feedback("填写新的 HTTPS MCP 连接", true, nextEpoch())));
     }
 
     /** @param draft 控件投影出的完整草稿 */
@@ -165,7 +170,7 @@ public final class McpSettingsPresenter {
         try {
             requireEditableEndpoint();
             requireIdentifier(state.selection().draft().id());
-            long epoch = begin("正在密封凭据并保存 MCP Endpoint…");
+            long epoch = begin("正在密封凭据并保存 MCP 连接…");
             credentials.prepare(state.selection().draft(), secret).whenComplete((prepared, failure) -> {
                 if (failure != null) {
                     fail(epoch, failure);
@@ -192,7 +197,7 @@ public final class McpSettingsPresenter {
     /** 原子刷新目录，成功后重新读取第一页。 */
     public void refreshCatalog() {
         McpEndpoint selected = requireSelected();
-        long epoch = begin("正在刷新 MCP Catalog…");
+        long epoch = begin("正在刷新 MCP 目录…");
         gateway.refreshMcpCatalog(selected, CommandOptions.create(selected.revision()))
                 .whenComplete((updated, failure) -> completeCatalogRefresh(epoch, updated, failure));
     }
@@ -204,7 +209,7 @@ public final class McpSettingsPresenter {
         if (cursor.isEmpty()) {
             return;
         }
-        long epoch = begin("正在读取下一页 Catalog…");
+        long epoch = begin("正在读取下一页目录…");
         gateway.mcpCatalog(selected.id(), Optional.empty(), cursor, CATALOG_PAGE_SIZE)
                 .whenComplete((page, failure) -> completeCatalogPage(epoch, page, failure));
     }
@@ -217,7 +222,7 @@ public final class McpSettingsPresenter {
             return;
         }
         boolean enable = selected.state() != McpEndpointState.ENABLED;
-        long epoch = begin(enable ? "正在启用 MCP Endpoint…" : "正在停用 MCP Endpoint…");
+        long epoch = begin(enable ? "正在启用 MCP 连接…" : "正在停用 MCP 连接…");
         gateway.setMcpEndpointEnabled(selected, enable, CommandOptions.create(selected.revision()))
                 .whenComplete((updated, failure) -> completeWrite(epoch, updated, failure, Optional.empty()));
     }
@@ -275,7 +280,7 @@ public final class McpSettingsPresenter {
                 List.of(),
                 List.of(),
                 McpSettingsState.Selection.empty(McpEndpointDraft.empty(workspace)),
-                new McpSettingsState.Feedback(workspace.isEmpty() ? "暂无 Workspace" : "", false, epoch)));
+                new McpSettingsState.Feedback(workspace.isEmpty() ? "暂无工作区" : "", false, epoch)));
         workspace.ifPresent(value -> loadWorkspace(value, nextEpoch()));
     }
 
@@ -287,7 +292,7 @@ public final class McpSettingsPresenter {
                 List.of(),
                 List.of(),
                 McpSettingsState.Selection.empty(McpEndpointDraft.empty(Optional.of(workspaceId))),
-                new McpSettingsState.Feedback("正在读取 Workspace MCP 目录…", false, epoch)));
+                new McpSettingsState.Feedback("正在读取工作区 MCP 目录…", false, epoch)));
         gateway.mcpEndpoints(workspaceId)
                 .thenCombine(gateway.privateNetworkGrants(workspaceId), WorkspaceCatalog::new)
                 .whenComplete((catalog, failure) -> completeWorkspace(epoch, catalog, failure));
@@ -321,7 +326,7 @@ public final class McpSettingsPresenter {
                         Optional.empty(),
                         List.of(),
                         new McpSettingsState.Catalog(List.of(), Optional.empty())),
-                new McpSettingsState.Feedback(catalog.endpoints().isEmpty() ? "暂无 MCP Endpoint" : "", false, epoch)));
+                new McpSettingsState.Feedback(catalog.endpoints().isEmpty() ? "暂无 MCP 连接" : "", false, epoch)));
         first.ifPresent(this::loadEndpointDetails);
     }
 
@@ -390,7 +395,7 @@ public final class McpSettingsPresenter {
                         state.selection().health(),
                         state.selection().history(),
                         state.selection().catalog()),
-                new McpSettingsState.Feedback("MCP Endpoint 已保存", false, epoch)));
+                new McpSettingsState.Feedback("MCP 连接已保存", false, epoch)));
     }
 
     private void clearDetachedCredential(McpEndpoint endpoint) {
@@ -455,7 +460,7 @@ public final class McpSettingsPresenter {
                         state.selection().health(),
                         state.selection().history(),
                         new McpSettingsState.Catalog(List.of(), Optional.empty())),
-                new McpSettingsState.Feedback("Catalog 已提交，正在读取第一页…", false, epoch)));
+                new McpSettingsState.Feedback("目录已提交，正在读取第一页…", false, epoch)));
         gateway.mcpCatalog(updated.id(), Optional.empty(), Optional.empty(), CATALOG_PAGE_SIZE)
                 .whenComplete((page, pageFailure) -> completeCatalogPage(epoch, page, pageFailure));
     }
@@ -481,7 +486,7 @@ public final class McpSettingsPresenter {
                         current.health(),
                         current.history(),
                         new McpSettingsState.Catalog(entries, page.nextCursor())),
-                "Catalog 已刷新",
+                "目录已刷新",
                 false,
                 epoch));
     }
@@ -528,7 +533,7 @@ public final class McpSettingsPresenter {
     }
 
     private McpEndpoint requireSelected() {
-        return state.selection().endpoint().orElseThrow(() -> new IllegalStateException("请先选择 MCP Endpoint"));
+        return state.selection().endpoint().orElseThrow(() -> new IllegalStateException("请先选择 MCP 连接"));
     }
 
     private void requireEditableEndpoint() {
@@ -536,7 +541,7 @@ public final class McpSettingsPresenter {
                 .endpoint()
                 .filter(endpoint -> endpoint.spec().transport() == McpTransport.SIGNED_BUNDLE_STDIO)
                 .ifPresent(endpoint -> {
-                    throw new IllegalStateException("签名 Bundle 提供的 stdio MCP Endpoint 只读，不能由用户编辑");
+                    throw new IllegalStateException("签名扩展包提供的 stdio MCP 连接为只读，不能由用户编辑");
                 });
     }
 
@@ -555,7 +560,7 @@ public final class McpSettingsPresenter {
 
     private static void requireIdentifier(String value) {
         if (!Objects.requireNonNull(value, "id").strip().matches("[A-Za-z0-9][A-Za-z0-9._-]{0,239}")) {
-            throw new IllegalArgumentException("MCP Endpoint 标识只能包含字母、数字、点、下划线和短横线");
+            throw new IllegalArgumentException("MCP 连接标识只能包含字母、数字、点、下划线和短横线");
         }
     }
 

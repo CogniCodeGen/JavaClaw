@@ -4,8 +4,8 @@ import java.net.URI;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -21,11 +21,14 @@ import com.javaclaw.api.CancellationSource;
 import com.javaclaw.api.CancellationToken;
 import com.javaclaw.api.CredentialRef;
 import com.javaclaw.api.ProviderAdapter;
+import com.javaclaw.api.ProviderAdapterOptions;
+import com.javaclaw.api.ProviderAuthentication;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.ProviderModelPurpose;
+import com.javaclaw.api.ProviderModelSpec;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.ProviderVerificationState;
 import com.javaclaw.api.TurnId;
 import com.javaclaw.runtime.ModelCapabilities;
@@ -147,12 +150,13 @@ class ProviderVerificationHarnessTest {
                 "Provider",
                 ProviderAdapter.OPENAI_COMPATIBLE,
                 Optional.of(URI.create("http://127.0.0.1:1")),
-                Set.of(ProviderRole.CHAT),
-                List.of("test-model"),
+                ProviderAuthentication.API_KEY,
+                List.of(new ProviderModelSpec(
+                        "test-model", "test-model", Set.of(ProviderModelPurpose.CHAT), OptionalInt.empty())),
                 Optional.of(new CredentialRef("provider", "credential-1")),
                 timeout,
                 0,
-                Map.of());
+                ProviderAdapterOptions.defaults(ProviderAdapter.OPENAI_COMPATIBLE));
         java.time.Instant now = java.time.Instant.parse("2026-09-01T08:00:00Z");
         return new ProviderEndpoint("provider-main", 2, ProviderLifecycle.ACTIVE, spec, now, now);
     }

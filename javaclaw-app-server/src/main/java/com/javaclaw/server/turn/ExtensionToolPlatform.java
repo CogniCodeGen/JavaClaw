@@ -20,6 +20,7 @@ import com.javaclaw.api.PermissionProfile;
 import com.javaclaw.api.PermissionResolver;
 import com.javaclaw.api.ToolCallRequest;
 import com.javaclaw.api.ToolCallResult;
+import com.javaclaw.api.ToolCatalogQueryResult;
 import com.javaclaw.api.ToolCatalogSnapshot;
 import com.javaclaw.api.ToolDescriptor;
 import com.javaclaw.api.ToolRisk;
@@ -127,7 +128,7 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
         List<ToolDescriptor> tools = authorizedTools(permissions);
         return new ToolCatalogSnapshot(
-                turnId, catalogRevision(tools, permissions), tools, permissions, Instant.now(clock));
+                turnId, ToolCatalogQueries.revision(json, tools, permissions), tools, permissions, Instant.now(clock));
     }
 
     /** 重新绑定自动化冻结目录；实时目录任何差异均失败关闭，避免恢复时获得新工具或继续使用已变更工具。 */
@@ -178,7 +179,7 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
         List<ToolDescriptor> tools = authorizedTools(permissions, Optional.of(workspaceId));
         return new ToolCatalogSnapshot(
-                turnId, catalogRevision(tools, permissions), tools, permissions, Instant.now(clock));
+                turnId, ToolCatalogQueries.revision(json, tools, permissions), tools, permissions, Instant.now(clock));
     }
 
     @Override
@@ -199,22 +200,45 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
      */
     public List<ToolDescriptor> search(PermissionProfile permissions, String query, int limit) {
         ToolRpcContracts.SearchArguments arguments = new ToolRpcContracts.SearchArguments(query, limit);
-        return search(authorizedTools(permissions), arguments);
+        return ToolCatalogQueries.search(authorizedTools(permissions), arguments);
     }
 
     /**
-     * 按 Workspace 搜索包含 MCP 的实时目录。
+     * 返回权限编辑器可选择的候选，以及当前已授权目录的权威版本。
+     *
+     * <p>候选列表忽略尚未写入的工具名白名单，目录版本仍只覆盖当前真正可执行的工具，防止客户端根据分页结果伪造版本。
      *
      * @param workspaceId Workspace
-     * @param permissions 有效权限
-     * @param query 关键词
+     * @param permissions 当前精确权限
+     * @param query 查询词
      * @param limit 最大结果数
-     * @return 稳定搜索结果
+     * @return 候选切片与权威目录版本
      */
-    public List<ToolDescriptor> search(
+    public ToolCatalogQueryResult selectableCatalog(
             WorkspaceId workspaceId, PermissionProfile permissions, String query, int limit) {
         ToolRpcContracts.SearchArguments arguments = new ToolRpcContracts.SearchArguments(query, limit);
-        return search(authorizedTools(permissions, Optional.of(workspaceId)), arguments);
+        Optional<WorkspaceId> scope = Optional.of(Objects.requireNonNull(workspaceId, "workspaceId"));
+        List<ToolDescriptor> executable = authorizedTools(permissions, scope);
+        List<ToolDescriptor> candidates = ToolCatalogQueries.search(selectableTools(permissions, scope), arguments);
+        return new ToolCatalogQueryResult(ToolCatalogQueries.revision(json, executable, permissions), candidates);
+    }
+
+    /**
+     * 返回精确 Agent Profile 已收窄后的可执行工具目录。
+     *
+     * @param workspaceId Workspace
+     * @param permissions 已与 Profile 可见工具求交的权限
+     * @param query 查询词
+     * @param limit 最大结果数
+     * @return 可执行工具切片与同一完整目录的权威版本
+     */
+    public ToolCatalogQueryResult executableCatalog(
+            WorkspaceId workspaceId, PermissionProfile permissions, String query, int limit) {
+        ToolRpcContracts.SearchArguments arguments = new ToolRpcContracts.SearchArguments(query, limit);
+        List<ToolDescriptor> executable = authorizedTools(permissions, Optional.of(workspaceId));
+        return new ToolCatalogQueryResult(
+                ToolCatalogQueries.revision(json, executable, permissions),
+                ToolCatalogQueries.search(executable, arguments));
     }
 
     @Override
@@ -325,11 +349,14 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
     private ToolExecutionOutcome searchFrozen(ToolCallRequest request, ToolCatalogSnapshot snapshot) {
         ToolRpcContracts.SearchArguments arguments =
                 json.decode(request.arguments(), ToolRpcContracts.SearchArguments.class);
-        List<ToolDescriptor> found = search(snapshot.tools(), arguments).stream()
+        List<ToolDescriptor> found = ToolCatalogQueries.search(snapshot.tools(), arguments).stream()
                 .filter(tool -> !tool.identity().equals(CoreTools.search().identity()))
                 .toList();
         ToolCallResult result = new ToolCallResult(
-                request.callId(), true, json.encode(new ToolRpcContracts.SearchResult(found)), Optional.empty());
+                request.callId(),
+                true,
+                json.encode(new ToolRpcContracts.SearchResult(snapshot.catalogRevision(), found)),
+                Optional.empty());
         return new ToolExecutionOutcome(result, found);
     }
 
@@ -356,14 +383,26 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
 
     private List<ToolDescriptor> authorizedTools(PermissionProfile permissions, Optional<WorkspaceId> workspaceId) {
         Objects.requireNonNull(permissions, "permissions");
+        return availableTools(workspaceId)
+                .filter(tool -> isAllowed(tool, permissions))
+                .sorted(Comparator.comparing(tool -> tool.identity().name()))
+                .toList();
+    }
+
+    private List<ToolDescriptor> selectableTools(PermissionProfile permissions, Optional<WorkspaceId> workspaceId) {
+        Objects.requireNonNull(permissions, "permissions");
+        return availableTools(workspaceId)
+                .filter(tool -> ToolSelectionPolicy.allows(tool, permissions))
+                .sorted(Comparator.comparing(tool -> tool.identity().name()))
+                .toList();
+    }
+
+    private Stream<ToolDescriptor> availableTools(Optional<WorkspaceId> workspaceId) {
         Stream<ToolDescriptor> platform =
                 Stream.concat(Stream.of(CoreTools.search(), CoreTools.worktreeApply()), extensions.tools().stream());
         Stream<ToolDescriptor> remote = workspaceId.filter(ignored -> mcpEnabled()).flatMap(ignored -> mcp).stream()
                 .flatMap(service -> service.toolDescriptors(workspaceId.orElseThrow()).stream());
-        return Stream.concat(platform, remote)
-                .filter(tool -> isAllowed(tool, permissions))
-                .sorted(Comparator.comparing(tool -> tool.identity().name()))
-                .toList();
+        return Stream.concat(platform, remote);
     }
 
     private ToolExecutionOutcome executeMcp(
@@ -404,19 +443,6 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
         } catch (ExtensionAccessDeniedException disabled) {
             return false;
         }
-    }
-
-    private static List<ToolDescriptor> search(List<ToolDescriptor> tools, ToolRpcContracts.SearchArguments arguments) {
-        String normalized = arguments.query().toLowerCase(java.util.Locale.ROOT);
-        return tools.stream()
-                .filter(tool -> tool.identity()
-                                .name()
-                                .toLowerCase(java.util.Locale.ROOT)
-                                .contains(normalized)
-                        || tool.description().toLowerCase(java.util.Locale.ROOT).contains(normalized)
-                        || tool.tags().stream().anyMatch(tag -> tag.contains(normalized)))
-                .limit(arguments.limit())
-                .toList();
     }
 
     private static void requireFrozen(
@@ -542,13 +568,6 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
                 response.payload().sha256(),
                 Instant.now(clock)));
     }
-
-    private long catalogRevision(List<ToolDescriptor> tools, PermissionProfile permissions) {
-        String digest = json.encode(new CatalogFingerprint(tools, permissions)).sha256();
-        return Long.parseLong(digest.substring(0, 15), 16) + 1;
-    }
-
-    private record CatalogFingerprint(List<ToolDescriptor> tools, PermissionProfile permissions) {}
 
     private record ApprovalFingerprint(
             com.javaclaw.api.TurnId turnId, String callId, com.javaclaw.api.ToolIdentity tool, String requestDigest) {}

@@ -7,33 +7,39 @@ import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
+import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListView;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
+import javafx.scene.layout.BorderPane;
+import javafx.stage.Window;
 import org.junit.jupiter.api.Test;
 
 import com.javaclaw.api.AgentProfile;
 import com.javaclaw.api.ApprovalRequirement;
 import com.javaclaw.api.CanonicalPayload;
+import com.javaclaw.api.CoreTools;
 import com.javaclaw.api.PermissionProfile;
 import com.javaclaw.api.PrivateNetworkPurpose;
 import com.javaclaw.api.ProfileLifecycle;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderLifecycle;
-import com.javaclaw.api.SecurityGrantState;
 import com.javaclaw.api.ToolIdentity;
 import com.javaclaw.api.ToolRisk;
 import com.javaclaw.api.UnattendedToolGrantDraft;
@@ -43,6 +49,7 @@ import com.javaclaw.api.VaultManagementReceipt;
 import com.javaclaw.api.VaultState;
 import com.javaclaw.api.VaultStatus;
 import com.javaclaw.api.Workspace;
+import com.javaclaw.builtin.contracts.ScheduleContracts;
 import com.javaclaw.client.CommandOptions;
 import com.javaclaw.desktop.DesktopTestFixtures;
 import com.javaclaw.desktop.FxTestSupport;
@@ -60,32 +67,38 @@ class CoreSettingsPagesTest {
             Parent root = attach(page);
 
             button(root, "新建").fire();
-            fieldByPrompt(root, "例如 openai-primary").setText("provider-secondary");
+            assertTrue(labels(root).stream().anyMatch(value -> value.startsWith("provider-")));
+            assertTrue(button(root, "手工添加模型").isDisabled());
             fieldByPrompt(root, "用户可见名称").setText("Secondary");
             combo(root, ProviderAdapter.class).setValue(ProviderAdapter.OPENAI_COMPATIBLE);
             fieldByPrompt(root, "官方默认地址可留空；自定义地址必须是 HTTP(S)").setText("https://secondary.example.test/v1");
-            textAreaByPrompt(root, "每行一个 Provider 原生 model ID").setText("chat-model\nembed-model");
-            combo(root, ProviderLifecycle.class).setValue(ProviderLifecycle.ACTIVE);
-            button(root, "保存 Provider").fire();
+            button(root, "保存模型服务").fire();
 
             assertEquals(2, gateway.providers.size());
             assertFalse(page.dirty());
+            assertTrue(button(root, "手工添加模型").isDisabled());
             button(root, "配置").fire();
             PasswordField secret = password(root, "providerSecretInput");
             secret.setText("temporary-secret");
-            button(root, "写入 Secret").fire();
+            button(root, "写入密钥").fire();
             assertEquals(1, gateway.providerCredentialSetCalls);
             assertTrue(labels(root).contains("已安全配置"));
+            assertFalse(button(root, "手工添加模型").isDisabled());
+            completeModelDialog("chat-model", "Chat Model");
+            button(root, "手工添加模型").fire();
+            combo(root, ProviderLifecycle.class).setValue(ProviderLifecycle.ACTIVE);
+            button(root, "保存模型服务").fire();
             button(root, "本地检查").fire();
-            assertTrue(labels(root).stream().anyMatch(value -> value.contains("READY")));
+            assertTrue(labels(root).stream().anyMatch(value -> value.contains("可以使用")));
 
             fieldByPrompt(root, "60").setText("not-a-number");
-            button(root, "保存 Provider").fire();
+            button(root, "保存模型服务").fire();
             assertTrue(page.dirty());
             button(root, "放弃更改").fire();
             button(root, "清除").fire();
             assertEquals(1, gateway.providerCredentialClearCalls);
-            button(root, "归档当前 Provider").fire();
+            confirmNextDangerDialog("归档当前模型服务");
+            button(root, "归档当前模型服务").fire();
             assertEquals(ProviderLifecycle.ARCHIVED, gateway.providers.getLast().lifecycle());
         });
     }
@@ -96,11 +109,15 @@ class CoreSettingsPagesTest {
             TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
             AgentProfileSettingsPage page = new AgentProfileSettingsPage(
                     gateway,
+                    new TestAgentPresetOnboardingGateway(DesktopTestFixtures.workspace()),
                     emptyGateway(PromptPreviewSettingsGateway.class),
                     emptyGateway(PromptOptimizationSettingsGateway.class));
+            page.workspaceChanged(Optional.of(DesktopTestFixtures.workspace()));
             Parent root = attach(page);
 
+            assertFalse(button(root, "初始化内置智能体").isDisabled());
             button(root, "新建").fire();
+            assertTrue(button(root, "初始化内置智能体").isDisabled(), "Profile 草稿存在时不能再打开初始化向导");
             fieldByPrompt(root, "例如 coding-default").setText("coding-default");
             fieldByPrompt(root, "用户可见名称").setText("Coding Default");
             textAreaByPrompt(root, "只描述角色与工作偏好，不授予工具权限").setText("保持实现清晰。 ");
@@ -111,9 +128,10 @@ class CoreSettingsPagesTest {
             List<TextField> budget = textFieldsWithoutPrompt(root);
             setTexts(budget, "8000", "2000", "6", "1", "120");
             combo(root, ProfileLifecycle.class).setValue(ProfileLifecycle.ACTIVE);
-            button(root, "保存 Profile").fire();
+            button(root, "保存智能体方案").fire();
 
             assertEquals(1, gateway.profiles.size());
+            assertFalse(button(root, "初始化内置智能体").isDisabled());
             AgentProfile saved = gateway.profiles.getFirst();
             assertEquals(
                     gateway.providers.getFirst().revision(),
@@ -123,11 +141,12 @@ class CoreSettingsPagesTest {
                     saved.spec().permissionProfile().version());
 
             budget.get(3).setText(Long.toString((long) Integer.MAX_VALUE + 1));
-            button(root, "保存 Profile").fire();
+            button(root, "保存智能体方案").fire();
             assertTrue(page.dirty());
             assertTrue(labels(root).stream().anyMatch(value -> value.contains("childThreads")));
             button(root, "放弃更改").fire();
-            button(root, "归档当前 Profile").fire();
+            confirmNextDangerDialog("归档当前智能体方案");
+            button(root, "归档当前智能体方案").fire();
             assertEquals(ProfileLifecycle.ARCHIVED, gateway.profiles.getFirst().lifecycle());
         });
     }
@@ -137,14 +156,18 @@ class CoreSettingsPagesTest {
         FxTestSupport.run(() -> {
             TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
             PermissionProfileSettingsPage page = new PermissionProfileSettingsPage(gateway);
+            page.workspaceChanged(Optional.of(DesktopTestFixtures.workspace()));
             Parent root = attach(page);
 
-            assertTrue(fieldByPrompt(root, "clone 后输入新的稳定 ID").isDisabled());
-            button(root, "Clone 为新配置").fire();
-            fieldByPrompt(root, "clone 后输入新的稳定 ID").setText("workspace-safe");
+            assertTrue(root.lookup("#toolCatalogList") instanceof ListView<?>);
+            assertFalse(
+                    nodes(root, TextArea.class).stream().anyMatch(value -> "允许工具".equals(value.getAccessibleText())));
+            assertTrue(fieldByPrompt(root, "复制后输入新的稳定标识").isDisabled());
+            button(root, "复制为新方案").fire();
+            fieldByPrompt(root, "复制后输入新的稳定标识").setText("workspace-safe");
             checkBox(root, "允许删除").setSelected(true);
             checkBox(root, "允许跟随符号链接").setSelected(true);
-            checkBox(root, "允许 PTY").setSelected(true);
+            checkBox(root, "允许交互终端（PTY）").setSelected(true);
             combo(root, ToolRisk.class).setValue(ToolRisk.NETWORK);
             combo(root, ApprovalRequirement.class).setValue(ApprovalRequirement.EVERY_CALL);
             button(root, "保存新版本").fire();
@@ -153,14 +176,14 @@ class CoreSettingsPagesTest {
             assertTrue(gateway.permissions.stream().anyMatch(value -> value.id().equals("workspace-safe")));
             combo(root, ToolRisk.class).setValue(ToolRisk.PROCESS);
             button(root, "保存新版本").fire();
-            assertTrue(labels(root).stream().anyMatch(value -> value.contains("v1 → v2")));
+            assertTrue(labels(root).stream().anyMatch(value -> value.contains("版本 1 → 版本 2")));
 
             List<CheckBox> optionalLayers = checkBoxes(root, "应用");
             optionalLayers.getFirst().setSelected(true);
             optionalLayers.getLast().setSelected(true);
             button(root, "计算有效权限").fire();
-            assertTrue(labels(root).stream().anyMatch(value -> value.contains("SYSTEM_CEILING")));
-            assertTrue(labels(root).stream().anyMatch(value -> value.contains("TOOL_DECLARATION")));
+            assertTrue(labels(root).stream().anyMatch(value -> value.contains("平台安全上限")));
+            assertTrue(labels(root).stream().anyMatch(value -> value.contains("工具自身限制")));
         });
     }
 
@@ -168,13 +191,14 @@ class CoreSettingsPagesTest {
     void permission页拒绝非法草稿并可移除预览中的可选层() {
         FxTestSupport.run(() -> {
             PermissionProfileSettingsPage page = new PermissionProfileSettingsPage(new TestCoreSettingsGateway());
+            page.workspaceChanged(Optional.of(DesktopTestFixtures.workspace()));
             Parent root = attach(page);
 
-            button(root, "Clone 为新配置").fire();
-            TextField id = fieldByPrompt(root, "clone 后输入新的稳定 ID");
+            button(root, "复制为新方案").fire();
+            TextField id = fieldByPrompt(root, "复制后输入新的稳定标识");
             id.setText("bad id");
             button(root, "保存新版本").fire();
-            assertTrue(labels(root).stream().anyMatch(value -> value.contains("PermissionProfile ID")));
+            assertTrue(labels(root).stream().anyMatch(value -> value.contains("权限方案标识只能包含")));
 
             id.setText("narrow-preview");
             button(root, "保存新版本").fire();
@@ -194,6 +218,13 @@ class CoreSettingsPagesTest {
             optionalLayers.getLast().setSelected(false);
             button(root, "计算有效权限").fire();
             assertTrue(labels(root).stream().anyMatch(value -> value.contains("未提供")));
+
+            combo(root, ToolRisk.class).setValue(ToolRisk.EXTERNAL_EFFECT);
+            assertTrue(page.dirty());
+            page.workspaceChanged(Optional.empty());
+            assertTrue(page.dirty(), "Workspace 失效时必须保留权限草稿");
+            assertTrue(button(root, "保存新版本").isDisabled());
+            assertTrue(root.lookup("#toolCatalogList").isDisabled());
         });
     }
 
@@ -206,19 +237,20 @@ class CoreSettingsPagesTest {
                     .toCompletableFuture()
                     .join();
             WorkspaceSettingsPage page = new WorkspaceSettingsPage(gateway);
+            page.workspaceChanged(Optional.of(DesktopTestFixtures.workspace()));
             Parent root = attach(page);
 
-            TextField name = fieldByAccessibleText(root, "Workspace 名称");
+            TextField name = fieldByAccessibleText(root, "工作区名称");
             name.setText("新工作区");
             assertTrue(page.dirty());
             page.warnUnsavedChanges();
             assertTrue(labels(root).stream().anyMatch(value -> value.contains("请先保存或丢弃")));
             button(root, "保存名称").fire();
             combo(root, AgentProfile.class).setValue(profile);
-            button(root, "保存默认 Profile").fire();
+            button(root, "保存默认智能体方案").fire();
 
-            assertEquals("新工作区", gateway.lastWorkspaceName);
-            assertEquals(profile.revision(), gateway.lastWorkspaceProfile.revision());
+            assertEquals("新工作区", gateway.workspaceSettings.lastName);
+            assertEquals(profile.revision(), gateway.workspaceSettings.lastProfile.revision());
             name.setText("临时名称");
             page.discardDraft();
             assertFalse(page.dirty());
@@ -244,9 +276,10 @@ class CoreSettingsPagesTest {
             seedUnattended(gateway, workspace);
 
             PrivateNetworkGrantSettingsPage networkPage = new PrivateNetworkGrantSettingsPage(gateway);
+            networkPage.workspaceChanged(Optional.of(workspace));
             Parent networkRoot = attach(networkPage);
-            assertTrue(labels(networkRoot).contains(SecurityGrantState.ACTIVE.name()));
-            fieldByAccessibleText(networkRoot, "精确 HTTPS Origin").setText("https://site.example.test");
+            assertTrue(labels(networkRoot).contains("有效"));
+            fieldByAccessibleText(networkRoot, "精确 HTTPS 来源地址").setText("https://site.example.test");
             textAreaByAccessibleText(networkRoot, "DNS 地址集合").setText("10.0.0.9\nfd00::9");
             button(networkRoot, "生成确认预览").fire();
             assertTrue(labels(networkRoot).contains("https://site.example.test"));
@@ -256,13 +289,31 @@ class CoreSettingsPagesTest {
                     .toCompletableFuture()
                     .join();
             networkPage.activate();
-            assertTrue(labels(networkRoot).contains(SecurityGrantState.REVOKED.name()));
+            assertTrue(labels(networkRoot).contains("已撤销"));
 
-            UnattendedToolGrantSettingsPage unattendedPage = new UnattendedToolGrantSettingsPage(gateway);
+            AgentProfile profile = gateway.createProfile(
+                            "schedule-agent", TestCoreSettingsGateway.profileSpec(), CommandOptions.create(0))
+                    .toCompletableFuture()
+                    .join();
+            ScheduleContracts.Definition schedule = TestScheduleDefinitions.turn(profile);
+            UnattendedToolGrantSettingsPage unattendedPage = new UnattendedToolGrantSettingsPage(
+                    gateway, ignored -> CompletableFuture.completedFuture(List.of(schedule)));
+            unattendedPage.workspaceChanged(Optional.of(workspace));
             Parent unattendedRoot = attach(unattendedPage);
-            assertTrue(labels(unattendedRoot).contains(SecurityGrantState.ACTIVE.name()));
-            fieldByAccessibleText(unattendedRoot, "Schedule 定义 ID").setText("nightly-review-2");
+            assertTrue(unattendedRoot.lookup("#scheduleCatalogChoice") instanceof ComboBox<?>);
+            assertTrue(unattendedRoot.lookup("#unattendedToolCatalogChoice") instanceof ComboBox<?>);
+            assertTrue(unattendedRoot.lookup("#unattendedToolProducer") instanceof Label);
+            assertTrue(unattendedRoot.lookup("#unattendedToolRevision") instanceof Label);
+            assertTrue(unattendedRoot.lookup("#unattendedCatalogRevision") instanceof Label);
+            assertTrue(unattendedRoot.lookup("#unattendedToolSchemaHash") instanceof Label);
+            assertTrue(labels(unattendedRoot).contains("有效"));
+            combo(unattendedRoot, ScheduleContracts.Definition.class).setValue(schedule);
+            combo(unattendedRoot, com.javaclaw.api.ToolDescriptor.class).setValue(CoreTools.search());
             assertTrue(unattendedPage.dirty());
+            unattendedPage.workspaceChanged(Optional.empty());
+            assertTrue(unattendedPage.dirty(), "Workspace 失效时必须保留无人值守授权草稿");
+            assertTrue(button(unattendedRoot, "审核并创建").isDisabled());
+            assertTrue(combo(unattendedRoot, ScheduleContracts.Definition.class).isDisabled());
             unattendedPage.warnUnsavedChanges();
             assertTrue(labels(unattendedRoot).stream().anyMatch(value -> value.contains("请先创建或丢弃")));
             unattendedPage.discardDraft();
@@ -276,15 +327,15 @@ class CoreSettingsPagesTest {
             VaultSettingsPage page = new VaultSettingsPage(lockedVaultGateway());
             Parent root = attach(page);
 
-            assertTrue(labels(root).contains("VAULT_LOCKED"));
-            Button reset = button(root, "永久 Reset Vault");
+            assertTrue(labels(root).contains("已锁定"));
+            Button reset = button(root, "永久重置密钥库");
             assertTrue(reset.isDisabled());
-            fieldByAccessibleText(root, "Vault reset 危险确认").setText("RESET VAULT");
+            fieldByAccessibleText(root, "密钥库重置危险确认").setText("RESET VAULT");
             assertFalse(reset.isDisabled());
             reset.fire();
 
-            assertTrue(labels(root).contains("READY"));
-            assertTrue(labels(root).stream().anyMatch(value -> value.contains("VAULT_RESET")));
+            assertTrue(labels(root).contains("可以使用"));
+            assertTrue(labels(root).stream().anyMatch(value -> value.contains("已重置密钥库")));
         });
     }
 
@@ -331,11 +382,56 @@ class CoreSettingsPagesTest {
     }
 
     private static Parent attach(ManagedSettingsPage page) {
-        Parent root = (Parent) page.content();
+        BorderPane root = new BorderPane();
+        root.setCenter(page.content());
+        page.actionContent().ifPresent(root::setBottom);
         new Scene(root, 1_040, 720);
         page.activate();
         root.applyCss();
         return root;
+    }
+
+    private static void confirmNextDangerDialog(String actionLabel) {
+        Platform.runLater(() -> Window.getWindows().stream()
+                .map(Window::getScene)
+                .filter(Objects::nonNull)
+                .map(Scene::getRoot)
+                .filter(DialogPane.class::isInstance)
+                .map(DialogPane.class::cast)
+                .flatMap(dialog -> dialog.lookupAll(".button").stream())
+                .filter(Button.class::isInstance)
+                .map(Button.class::cast)
+                .filter(button -> actionLabel.equals(button.getText()))
+                .findFirst()
+                .ifPresent(Button::fire));
+    }
+
+    private static void completeModelDialog(String modelId, String displayName) {
+        Platform.runLater(() -> Window.getWindows().stream()
+                .map(Window::getScene)
+                .filter(Objects::nonNull)
+                .map(Scene::getRoot)
+                .filter(DialogPane.class::isInstance)
+                .map(DialogPane.class::cast)
+                .findFirst()
+                .ifPresent(dialog -> {
+                    setLabeledText(dialog, "真实模型 ID", modelId);
+                    setLabeledText(dialog, "显示名称", displayName);
+                    ((Button) dialog.lookupButton(javafx.scene.control.ButtonType.OK)).fire();
+                }));
+    }
+
+    private static void setLabeledText(DialogPane dialog, String label, String value) {
+        dialog.lookupAll(".label").stream()
+                .filter(Label.class::isInstance)
+                .map(Label.class::cast)
+                .filter(candidate -> label.equals(candidate.getText()))
+                .map(Label::getLabelFor)
+                .filter(TextField.class::isInstance)
+                .map(TextField.class::cast)
+                .findFirst()
+                .orElseThrow()
+                .setText(value);
     }
 
     @SuppressWarnings("unchecked")

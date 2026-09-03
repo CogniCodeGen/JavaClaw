@@ -38,7 +38,7 @@ final class McpCredentialSaveCoordinator {
         if (!requiresSecret) {
             Arrays.fill(owned, '\0');
             if (owned.length > 0) {
-                return failed(new IllegalArgumentException("当前认证方式不接收 Secret"));
+                return failed(new IllegalArgumentException("当前认证方式不接收密钥"));
             }
             return CompletableFuture.completedFuture(
                     new PreparedSave(checked.withCredential(Optional.empty()).toSpec(), Optional.empty()));
@@ -54,7 +54,7 @@ final class McpCredentialSaveCoordinator {
 
     private CompletionStage<PreparedSave> create(McpEndpointDraft draft, char[] secret) {
         if (secret.length == 0) {
-            return failed(new IllegalArgumentException("Bearer 与 API Key 必须填写 Secret"));
+            return failed(new IllegalArgumentException("Bearer 与 API Key 必须填写密钥"));
         }
         CompletionStage<CredentialMetadata> request = gateway.createCredential("mcp", secret, CommandOptions.create(0));
         Arrays.fill(secret, '\0');

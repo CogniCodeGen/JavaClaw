@@ -44,7 +44,7 @@ record McpExternalDataState(
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),
-                "请选择已启用的 HTTPS Endpoint",
+                "请选择已启用的 HTTPS 连接",
                 0);
     }
 }

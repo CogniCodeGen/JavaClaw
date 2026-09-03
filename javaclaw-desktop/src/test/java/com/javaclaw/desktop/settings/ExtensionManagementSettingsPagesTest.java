@@ -15,6 +15,7 @@ import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.TextField;
+import javafx.scene.layout.VBox;
 import javafx.stage.Window;
 import org.junit.jupiter.api.Test;
 
@@ -36,9 +37,9 @@ class ExtensionManagementSettingsPagesTest {
             page.activate();
             assertTrue(texts(page).stream().anyMatch(value -> value.contains("com.example.docs")));
             button(page, "健康检查").fire();
-            assertTrue(texts(page).contains("HEALTHY"));
+            assertTrue(texts(page).contains("正常"));
             button(page, "启用").fire();
-            assertTrue(texts(page).contains("ENABLED"));
+            assertTrue(texts(page).contains("已启用"));
             assertFalse(page.dirty());
 
             page.warnUnsavedChanges();
@@ -86,8 +87,8 @@ class ExtensionManagementSettingsPagesTest {
             TrustKeySettingsPage page = attach(new TrustKeySettingsPage(gateway));
 
             page.activate();
-            assertTrue(texts(page).contains("ACTIVE"));
-            TextField keyId = field(page, "Trust Key 标识");
+            assertTrue(texts(page).contains("有效"));
+            TextField keyId = field(page, "信任公钥标识");
             keyId.setText("draft-key");
             assertTrue(page.dirty());
             page.warnUnsavedChanges();
@@ -95,8 +96,8 @@ class ExtensionManagementSettingsPagesTest {
             assertFalse(page.dirty());
 
             select(page, BundleRpcContracts.TrustKey.class, value -> value.id().equals("retired-key"));
-            assertTrue(texts(page).contains("REVOKED"));
-            assertTrue(button(page, "撤销并禁用关联 Bundle").isDisabled());
+            assertTrue(texts(page).contains("已撤销"));
+            assertTrue(button(page, "撤销并停用关联扩展包").isDisabled());
         });
     }
 
@@ -110,10 +111,10 @@ class ExtensionManagementSettingsPagesTest {
             BundleTrashSettingsPage page = attach(new BundleTrashSettingsPage(gateway));
 
             page.activate();
-            assertFalse(button(page, "恢复为新 revision").isDisabled());
-            button(page, "恢复为新 revision").fire();
-            assertTrue(texts(page).contains("RESTORED"));
-            assertTrue(button(page, "恢复为新 revision").isDisabled());
+            assertFalse(button(page, "恢复为新版本").isDisabled());
+            button(page, "恢复为新版本").fire();
+            assertTrue(texts(page).contains("已恢复"));
+            assertTrue(button(page, "恢复为新版本").isDisabled());
             assertTrue(button(page, "永久清除").isDisabled());
             button(page, "刷新").fire();
             assertFalse(page.dirty());
@@ -131,11 +132,11 @@ class ExtensionManagementSettingsPagesTest {
             page.activate();
 
             completeTextDialog("not-confirmed");
-            button(page, "卸载 Bundle").fire();
+            button(page, "卸载扩展包").fire();
             assertEquals(List.of(bundle), gateway.bundles);
 
             completeTextDialog("UNINSTALL com.example.removable");
-            button(page, "卸载 Bundle").fire();
+            button(page, "卸载扩展包").fire();
             assertTrue(gateway.bundles.isEmpty());
             assertEquals("trash-com.example.removable", gateway.trash.getFirst().trashId());
         });
@@ -150,13 +151,13 @@ class ExtensionManagementSettingsPagesTest {
             page.activate();
 
             completeTextDialog("REVOKE release-key");
-            button(page, "撤销并禁用关联 Bundle").fire();
+            button(page, "撤销并停用关联扩展包").fire();
 
             assertEquals(
                     BundleRpcContracts.TrustState.REVOKED,
                     gateway.trustKeys.getFirst().state());
-            assertTrue(texts(page).contains("REVOKED"));
-            assertTrue(button(page, "撤销并禁用关联 Bundle").isDisabled());
+            assertTrue(texts(page).contains("已撤销"));
+            assertTrue(button(page, "撤销并停用关联扩展包").isDisabled());
         });
     }
 
@@ -176,19 +177,22 @@ class ExtensionManagementSettingsPagesTest {
             assertEquals(
                     BundleRpcContracts.TrashState.PURGED,
                     gateway.trash.getFirst().state());
-            assertTrue(texts(page).contains("PURGED"));
+            assertTrue(texts(page).contains("已永久清除"));
             assertTrue(button(page, "永久清除").isDisabled());
         });
     }
 
     private static <T extends Parent> T attach(T page) {
-        new Scene(page, 1_040, 720);
-        page.applyCss();
+        VBox root = new VBox(page);
+        ((ManagedSettingsPage) page).actionContent().ifPresent(root.getChildren()::add);
+        new Scene(root, 1_040, 720);
+        root.applyCss();
         return page;
     }
 
     private static Button button(Parent root, String text) {
-        return nodes(root, Button.class).stream()
+        Parent searchRoot = root.getScene() == null ? root : root.getScene().getRoot();
+        return nodes(searchRoot, Button.class).stream()
                 .filter(value -> text.equals(value.getText()))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("缺少按钮: " + text));
@@ -235,7 +239,14 @@ class ExtensionManagementSettingsPagesTest {
                     }
                     Node accept = dialog.lookupButton(ButtonType.OK);
                     if (accept instanceof Button button) {
-                        button.fire();
+                        if (button.isDisabled()) {
+                            Node cancel = dialog.lookupButton(ButtonType.CANCEL);
+                            if (cancel instanceof Button cancelButton) {
+                                cancelButton.fire();
+                            }
+                        } else {
+                            button.fire();
+                        }
                     }
                 }));
     }

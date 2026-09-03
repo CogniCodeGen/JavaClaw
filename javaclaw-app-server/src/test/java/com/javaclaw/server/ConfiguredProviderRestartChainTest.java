@@ -28,8 +28,8 @@ import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderEndpointSpec;
+import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.ThreadExecutionIntent;
 import com.javaclaw.api.TurnBudget;
 import com.javaclaw.api.TurnId;
@@ -38,6 +38,8 @@ import com.javaclaw.api.Workspace;
 import com.javaclaw.extension.spi.EmbeddingPort;
 import com.javaclaw.model.CredentialMaterial;
 import com.javaclaw.model.ProviderCredentialResolver;
+import com.javaclaw.model.ProviderEmbeddingAdapterFactory;
+import com.javaclaw.model.ProviderModelDiscoveryAdapter;
 import com.javaclaw.nativehost.credential.MasterKeyProtector;
 import com.javaclaw.protocol.CapabilityAdvertisement;
 import com.javaclaw.protocol.ClientInfo;
@@ -60,6 +62,7 @@ import com.javaclaw.server.config.ProviderModelRegistry;
 import com.javaclaw.server.config.VaultProviderCredentialResolver;
 import com.javaclaw.server.extension.BuiltinIsolatedServices;
 import com.javaclaw.server.persistence.CommandIdentity;
+import com.javaclaw.server.persistence.ProviderModelDiscoveryService;
 import com.javaclaw.server.rpc.AppServerSession;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -95,7 +98,7 @@ class ConfiguredProviderRestartChainTest {
             assertEquals(
                     references.profile(),
                     profileRef(restarted.foundation().agentProfiles().require(PROFILE_ID, 1)));
-            ProviderEndpoint provider = restarted.foundation().providers().require(PROVIDER_ID, 2);
+            ProviderEndpoint provider = restarted.foundation().providers().require(PROVIDER_ID, 3);
             assertTrue(provider.spec().credential().isPresent());
         }
 
@@ -106,8 +109,12 @@ class ConfiguredProviderRestartChainTest {
         AppServerBootstrap.Foundation foundation = boot.foundation();
         ProviderEndpoint first = foundation
                 .providers()
-                .create(identity("provider/create", "provider", 0, 'a'), PROVIDER_ID, providerSpec());
-        ProviderEndpoint bound = foundation
+                .create(
+                        identity("provider/create", "provider", 0, 'a'),
+                        PROVIDER_ID,
+                        providerSpec(),
+                        ProviderLifecycle.DISABLED);
+        ProviderEndpoint credentialBound = foundation
                 .providerCredentials()
                 .set(
                         identity("provider/credential/set", "credential", first.revision(), 'b'),
@@ -116,10 +123,17 @@ class ConfiguredProviderRestartChainTest {
                         0,
                         SECRET.getBytes(StandardCharsets.UTF_8))
                 .provider();
+        ProviderEndpoint bound = foundation
+                .providers()
+                .update(
+                        identity("provider/update", "enable-provider", credentialBound.revision(), 'c'),
+                        PROVIDER_ID,
+                        credentialBound.spec(),
+                        ProviderLifecycle.ACTIVE);
         AgentProfile profile = foundation
                 .agentProfiles()
                 .create(
-                        identity("profile/create", "profile", 0, 'c'),
+                        identity("profile/create", "profile", 0, 'd'),
                         PROFILE_ID,
                         new AgentProfileSpec(
                                 "Restart Profile",
@@ -142,15 +156,21 @@ class ConfiguredProviderRestartChainTest {
         ProviderCredentialResolver credentials = new VaultProviderCredentialResolver(foundation.vault());
         ProviderModelRegistry models = new ProviderModelRegistry(
                 foundation.providers(),
-                (endpoint, reference) -> new CredentialCheckingModel(endpoint, reference, credentials, invocations));
+                (endpoint, reference) -> new CredentialCheckingModel(endpoint, reference, credentials, invocations),
+                foundation.vault().runtimeGate());
+        foundation.vault().onRuntimeChange(models::invalidate, models::reload);
         try (StartupCloseStack startup = new StartupCloseStack()) {
             AppServerBootstrap.ownFoundation(startup, foundation);
             AppServerBootstrap.Components components = AppServerBootstrap.createReal(
                     foundation,
-                    models,
-                    EmbeddingPort.unavailable(),
-                    BuiltinIsolatedServices.browserUnavailable(),
-                    AppServerBootstrap.productionMcpPorts(foundation),
+                    new AppServerRuntimeBootstrap.RuntimeDependencies(
+                            models,
+                            EmbeddingPort.unavailable(),
+                            new ProviderEmbeddingAdapterFactory(credentials)::create,
+                            new ProviderModelDiscoveryService(
+                                    foundation.providers(), new ProviderModelDiscoveryAdapter(credentials, CLOCK)),
+                            BuiltinIsolatedServices.browserUnavailable(),
+                            AppServerBootstrap.productionMcpPorts(foundation)),
                     startup);
             startup.releaseAll();
             return new Boot(foundation, components);
@@ -219,16 +239,7 @@ class ConfiguredProviderRestartChainTest {
     }
 
     private static ProviderEndpointSpec providerSpec() {
-        return new ProviderEndpointSpec(
-                "Restart Provider",
-                ProviderAdapter.OPENAI_COMPATIBLE,
-                Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of(MODEL),
-                Optional.empty(),
-                Duration.ofSeconds(30),
-                0,
-                Map.of());
+        return ProviderEndpointTestFixtures.apiKeyChat("Restart Provider", ProviderAdapter.OPENAI_COMPATIBLE, MODEL);
     }
 
     private static CommandIdentity identity(String method, String key, long revision, char digest) {

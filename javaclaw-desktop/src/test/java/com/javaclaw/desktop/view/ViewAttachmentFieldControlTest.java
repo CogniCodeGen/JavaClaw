@@ -112,6 +112,38 @@ class ViewAttachmentFieldControlTest {
                 assertEquals("background.txt", holder[0].value().orElseThrow().fileName()));
     }
 
+    @Test
+    void 数值初值空闲取消和无消息异常都保持确定状态() {
+        FxTestSupport.run(() -> {
+            UploadInteractions interactions = new UploadInteractions();
+            ViewAttachmentFieldControl field = control(
+                    Map.of(
+                            "digest",
+                            "f".repeat(64),
+                            "mediaType",
+                            "text/plain",
+                            "fileName",
+                            "number.txt",
+                            "sizeBytes",
+                            6L),
+                    interactions);
+
+            field.cancelUpload();
+            assertFalse(field.pending());
+            assertEquals(6, field.value().orElseThrow().sizeBytes());
+
+            CompletableFuture<AttachmentRef> noCause = interactions.next();
+            field.upload(Path.of("no-cause.txt"));
+            noCause.completeExceptionally(new CompletionException((Throwable) null));
+            assertTrue(labels(field).stream().anyMatch(value -> value.contains("CompletionException")));
+
+            CompletableFuture<AttachmentRef> blankMessage = interactions.next();
+            field.upload(Path.of("blank-message.txt"));
+            blankMessage.completeExceptionally(new IllegalStateException(" "));
+            assertTrue(labels(field).stream().anyMatch(value -> value.contains("IllegalStateException")));
+        });
+    }
+
     private static ViewAttachmentFieldControl control(Object initial, UploadInteractions interactions) {
         return new ViewAttachmentFieldControl("文件", POLICY, initial, interactions, new PlatformComponentFactory());
     }

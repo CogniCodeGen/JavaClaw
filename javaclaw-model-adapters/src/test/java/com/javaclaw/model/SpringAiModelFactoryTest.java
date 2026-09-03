@@ -14,6 +14,7 @@ import org.springframework.ai.google.genai.GoogleGenAiChatOptions;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 
+import com.javaclaw.api.ProviderAuthentication;
 import com.javaclaw.runtime.ModelInvocation;
 
 import static com.javaclaw.model.ModelAdapterTestFixtures.TOOL;
@@ -105,6 +106,10 @@ class SpringAiModelFactoryTest {
                 provider,
                 "provider-model",
                 Optional.of(LOCAL_ENDPOINT),
+                ProviderAuthentication.API_KEY,
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
                 Duration.ofMillis(500),
                 0);
     }

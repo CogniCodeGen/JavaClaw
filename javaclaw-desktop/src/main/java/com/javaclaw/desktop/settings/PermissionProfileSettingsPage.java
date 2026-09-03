@@ -3,6 +3,7 @@ package com.javaclaw.desktop.settings;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 import javafx.collections.FXCollections;
 import javafx.scene.Node;
@@ -17,10 +18,8 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 
 import com.javaclaw.api.ApprovalRequirement;
-import com.javaclaw.api.EffectivePermissionPreview;
 import com.javaclaw.api.PermissionProfile;
 import com.javaclaw.api.PermissionProfileRef;
-import com.javaclaw.api.PermissionSection;
 import com.javaclaw.api.ToolRisk;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.desktop.component.AsyncActionBar;
@@ -32,13 +31,13 @@ import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 import com.javaclaw.desktop.component.RevisionConflictPane;
 
-/** PermissionProfile 版本编辑、standard clone、本地 diff 和有效权限说明页面。 */
+/** 权限方案版本编辑、内置方案复制、本地差异和有效权限说明页面。 */
 public final class PermissionProfileSettingsPage implements ManagedSettingsPage {
     private final PlatformComponentFactory components = new PlatformComponentFactory();
     private final PermissionProfileSettingsPresenter presenter;
     private final PermissionPreviewPresenter previewPresenter;
     private final PermissionHistoryPresenter historyPresenter;
-    private final VBox content = components.page("PermissionProfile");
+    private final VBox content = components.page("权限方案");
     private final ListDetailPane<PermissionProfile> masterDetail = new ListDetailPane<>();
     private final VBox form = new VBox(12);
     private final List<FormSection> editorSections = new ArrayList<>();
@@ -49,11 +48,11 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
     private final CheckBox followLinks = new CheckBox("允许跟随符号链接");
     private final TextArea hosts = area(3);
     private final TextField ports = new TextField();
-    private final CheckBox tlsOnly = new CheckBox("只允许 TLS");
+    private final CheckBox tlsOnly = new CheckBox("只允许加密连接（TLS）");
     private final TextArea executables = area(3);
-    private final CheckBox allowPty = new CheckBox("允许 PTY");
+    private final CheckBox allowPty = new CheckBox("允许交互终端（PTY）");
     private final TextField processSeconds = new TextField();
-    private final TextArea allowedTools = area(4);
+    private final PermissionToolCatalogEditor allowedTools;
     private final ComboBox<ToolRisk> maximumRisk = new ComboBox<>();
     private final ComboBox<ApprovalRequirement> approval = new ComboBox<>();
     private final TextField memoryMiB = new TextField();
@@ -63,7 +62,6 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
     private final Label diff = new Label();
     private final VBox historyRows = new VBox(6);
     private final Label historyMessage = new Label();
-    private final ComboBox<Workspace> previewWorkspace = new ComboBox<>();
     private final CheckBox includeTurnGrant = new CheckBox("应用");
     private final ComboBox<PermissionProfile> previewTurnGrant = new ComboBox<>();
     private final CheckBox includeToolDeclaration = new CheckBox("应用");
@@ -75,10 +73,12 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
     private final Button discard;
     private final AsyncActionBar actions;
     private final RevisionConflictPane conflict;
+    private PermissionPreviewState previewState = PermissionPreviewState.initial();
+    private Optional<Workspace> scopedWorkspace = Optional.empty();
     private boolean rendering;
 
     /**
-     * 创建 PermissionProfile 设置页。
+     * 创建权限方案设置页。
      *
      * @param gateway SDK 异步边界
      */
@@ -86,11 +86,13 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
         presenter = new PermissionProfileSettingsPresenter(gateway);
         previewPresenter = new PermissionPreviewPresenter(gateway);
         historyPresenter = new PermissionHistoryPresenter(gateway);
+        allowedTools = new PermissionToolCatalogEditor(gateway, this::draftChanged);
         save = components.action("保存新版本", ActionStyle.PRIMARY, ActionSize.NORMAL);
         discard = components.action("放弃更改", ActionStyle.GHOST, ActionSize.NORMAL);
         previewButton = components.action("计算有效权限", ActionStyle.SOFT, ActionSize.NORMAL);
         actions = new AsyncActionBar(discard, save);
         conflict = new RevisionConflictPane(presenter::reload, this::showConflictComparison);
+        allowedTools.onStateChanged(() -> renderStatus(presenter.state()));
         configureControls();
         buildLayout();
         bindEvents();
@@ -105,14 +107,37 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
     }
 
     @Override
+    public Optional<Node> actionContent() {
+        return Optional.of(actions);
+    }
+
+    @Override
     public void activate() {
         presenter.reload();
-        previewPresenter.reloadWorkspaces();
+        scopedWorkspace.ifPresent(previewPresenter::selectWorkspace);
     }
 
     @Override
     public boolean dirty() {
         return presenter.state().dirty();
+    }
+
+    @Override
+    public boolean pending() {
+        return presenter.state().pending()
+                || previewState.phase() == SettingsLoadState.LOADING
+                || allowedTools.pending();
+    }
+
+    @Override
+    public void workspaceChanged(Optional<Workspace> workspace) {
+        Optional<Workspace> checked = Objects.requireNonNull(workspace, "workspace");
+        if (scopedWorkspace.equals(checked)) {
+            return;
+        }
+        scopedWorkspace = checked;
+        checked.ifPresent(previewPresenter::selectWorkspace);
+        syncToolCatalog(presenter.state());
     }
 
     @Override
@@ -126,23 +151,21 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
     }
 
     private void configureControls() {
-        id.setPromptText("clone 后输入新的稳定 ID");
+        id.setPromptText("复制后输入新的稳定标识");
         readRoots.setPromptText("每行一个绝对路径");
         writeRoots.setPromptText("每行一个绝对路径");
         hosts.setPromptText("每行一个小写 DNS 主机名；* 只能作为权限上限");
         ports.setPromptText("例如 443, 8443");
         executables.setPromptText("每行一个可执行文件规范名");
         processSeconds.setPromptText("30");
-        allowedTools.setPromptText("每行一个完整工具名");
         maximumRisk.setItems(FXCollections.observableArrayList(ToolRisk.values()));
+        maximumRisk.setConverter(SettingsLabels.converter(SettingsLabels::toolRisk));
         approval.setItems(FXCollections.observableArrayList(ApprovalRequirement.values()));
+        approval.setConverter(SettingsLabels.converter(SettingsLabels::approvalRequirement));
         diff.setWrapText(true);
         diff.getStyleClass().add("sec-hint");
         historyMessage.setWrapText(true);
         historyMessage.getStyleClass().add("sec-hint");
-        previewWorkspace.setCellFactory(ignored -> components.detailCell(
-                Workspace::name, workspace -> workspace.id().value().toString()));
-        previewWorkspace.setButtonCell(components.textCell(workspace -> workspace == null ? "" : workspace.name()));
         configurePermissionChoice(previewTurnGrant);
         configurePermissionChoice(previewToolDeclaration);
         previewMessage.setWrapText(true);
@@ -150,10 +173,10 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
     }
 
     private void buildLayout() {
-        Label hint = new Label("权限版本不可变。活动 Turn 使用冻结版本与当前最新版本求交，因此后续扩权不会扩大活动 Turn，撤权会实时收窄。");
+        Label hint = new Label("每次保存都会生成不可变的新版本。正在运行的任务不会因后续放宽权限而获得更多权限；收紧权限会立即生效。");
         hint.setWrapText(true);
         hint.getStyleClass().add("sec-hint");
-        Button clone = components.action("Clone 为新配置", ActionStyle.PRIMARY, ActionSize.COMPACT);
+        Button clone = components.action("复制为新方案", ActionStyle.PRIMARY, ActionSize.COMPACT);
         clone.setId("permissionCloneButton");
         clone.setOnAction(event -> presenter.cloneSelected());
         Button reload = components.action("刷新", ActionStyle.GHOST, ActionSize.COMPACT);
@@ -161,8 +184,9 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
         masterDetail
                 .list()
                 .setCellFactory(ignored -> components.detailCell(
-                        PermissionProfile::id,
-                        profile -> "v" + profile.version() + (profile.id().equals("standard") ? " · 内置只读" : "")));
+                        profile -> SettingsLabels.permissionProfile(profile.id()),
+                        profile -> profile.id() + " · 版本 " + profile.version()
+                                + (profile.id().equals("standard") ? " · 内置只读" : "")));
         FormSection identity = identitySection();
         FormSection files = fileSection();
         FormSection network = networkSection();
@@ -181,21 +205,20 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
                         diffSection(),
                         historySection(),
                         effectivePreview(),
-                        conflict,
-                        actions);
+                        conflict);
         masterDetail.showDetail(form);
         VBox.setVgrow(masterDetail, Priority.ALWAYS);
         content.getChildren().addAll(hint, new HBox(8, clone, reload), masterDetail);
     }
 
     private FormSection identitySection() {
-        FormSection section = new FormSection("版本身份", "standard 是平台只读模板；自定义配置每次保存都会生成新版本。");
-        section.addField("配置 ID", id);
+        FormSection section = new FormSection("版本身份", "“受限对话”是内置只读模板（技术标识 standard）；自定义方案每次保存都会生成新版本。");
+        section.addField("方案标识", id);
         return section;
     }
 
     private FormSection fileSection() {
-        FormSection section = new FormSection("文件", "最终访问根目录仍会与 system ceiling、Workspace 和 Turn grant 求交。");
+        FormSection section = new FormSection("文件", "最终文件访问范围还会受平台安全上限、工作区和本次任务授权限制。");
         section.addField("读取根目录", readRoots);
         section.addField("写入根目录", writeRoots);
         section.addField("危险能力", new HBox(12, allowDelete, followLinks));
@@ -203,7 +226,7 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
     }
 
     private FormSection networkSection() {
-        FormSection section = new FormSection("网络", "这里定义 Broker 上限；私网仍需要精确且可撤销的 PrivateNetworkGrant。");
+        FormSection section = new FormSection("网络", "这里设置网络访问上限；访问私网还需要单独创建精确且可撤销的私网授权。");
         section.addField("主机", hosts);
         section.addField("端口", ports);
         section.addField("传输", tlsOnly);
@@ -211,7 +234,7 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
     }
 
     private FormSection processSection() {
-        FormSection section = new FormSection("进程与 PTY", "进程始终由 Native Sandbox 启动；此处不能配置 HOST_FULL_ACCESS。");
+        FormSection section = new FormSection("进程与交互终端", "进程始终由系统沙箱启动；此处不能授予完整主机访问权限。");
         section.addField("可执行文件", executables);
         section.addField("最长运行（秒）", processSeconds);
         section.addField("交互终端", allowPty);
@@ -219,7 +242,7 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
     }
 
     private FormSection toolSection() {
-        FormSection section = new FormSection("工具与审批", "工具声明风险也会参与求交；此处只能设置允许上限。");
+        FormSection section = new FormSection("工具与审批", "候选来自当前固定工作区和精确权限版本；只有明确选中的完整工具名会写入白名单。");
         section.addField("允许工具", allowedTools);
         section.addField("最大风险", maximumRisk);
         section.addField("审批强度", approval);
@@ -227,9 +250,9 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
     }
 
     private FormSection resourceSection() {
-        FormSection section = new FormSection("资源上限", "内存和输出使用 MiB；数值必须为有限正数。");
-        section.addField("内存 MiB", memoryMiB);
-        section.addField("输出 MiB", outputMiB);
+        FormSection section = new FormSection("资源上限", "内存和输出量以 MiB 为单位；数值必须是有限正数。");
+        section.addField("内存上限（MiB）", memoryMiB);
+        section.addField("输出上限（MiB）", outputMiB);
         section.addField("子进程数", childProcesses);
         section.addField("打开文件数", openFiles);
         return section;
@@ -242,17 +265,15 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
     }
 
     private FormSection historySection() {
-        FormSection section = new FormSection("版本历史与服务端 diff", "历史版本不可变；diff 由服务端比较最近两个版本。");
+        FormSection section = new FormSection("版本历史与差异", "历史版本不可修改；差异由服务端比较最近两个版本。");
         section.addFullWidth(historyRows);
         section.addFullWidth(historyMessage);
         return section;
     }
 
     private FormSection effectivePreview() {
-        FormSection section =
-                new FormSection("有效权限预览", "权威预览必须由服务端按 system ceiling、Workspace、Profile、Turn grant 和工具声明逐层求交。");
-        section.addField("Workspace", previewWorkspace);
-        section.addField("Turn grant", new HBox(8, includeTurnGrant, previewTurnGrant));
+        FormSection section = new FormSection("有效权限预览", "服务端会按平台安全上限、工作区、智能体方案、本次任务授权和工具自身限制逐层收紧。");
+        section.addField("本次任务授权", new HBox(8, includeTurnGrant, previewTurnGrant));
         section.addField("工具声明", new HBox(8, includeToolDeclaration, previewToolDeclaration));
         section.addFullWidth(new HBox(8, previewButton));
         section.addFullWidth(previewLayers);
@@ -277,18 +298,12 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
         executables.textProperty().addListener((ignored, previous, value) -> draftChanged());
         allowPty.selectedProperty().addListener((ignored, previous, value) -> draftChanged());
         processSeconds.textProperty().addListener((ignored, previous, value) -> draftChanged());
-        allowedTools.textProperty().addListener((ignored, previous, value) -> draftChanged());
         maximumRisk.valueProperty().addListener((ignored, previous, value) -> draftChanged());
         approval.valueProperty().addListener((ignored, previous, value) -> draftChanged());
         memoryMiB.textProperty().addListener((ignored, previous, value) -> draftChanged());
         outputMiB.textProperty().addListener((ignored, previous, value) -> draftChanged());
         childProcesses.textProperty().addListener((ignored, previous, value) -> draftChanged());
         openFiles.textProperty().addListener((ignored, previous, value) -> draftChanged());
-        previewWorkspace.valueProperty().addListener((ignored, previous, value) -> {
-            if (!rendering) {
-                previewPresenter.selectWorkspace(value);
-            }
-        });
         includeTurnGrant.selectedProperty().addListener((ignored, previous, selected) -> {
             if (!rendering) {
                 selectOptionalLayer(selected, previewTurnGrant, true);
@@ -329,14 +344,14 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
                 tlsOnly.isSelected(),
                 executables.getText(),
                 allowPty.isSelected(),
-                number(processSeconds.getText()),
-                allowedTools.getText(),
+                PermissionSettingsFormatting.longValue(processSeconds.getText()),
+                allowedTools.selectedNames(),
                 maximumRisk.getValue(),
                 approval.getValue(),
-                number(memoryMiB.getText()),
-                number(outputMiB.getText()),
-                integer(childProcesses.getText()),
-                integer(openFiles.getText())));
+                PermissionSettingsFormatting.longValue(memoryMiB.getText()),
+                PermissionSettingsFormatting.longValue(outputMiB.getText()),
+                PermissionSettingsFormatting.intValue(childProcesses.getText()),
+                PermissionSettingsFormatting.intValue(openFiles.getText())));
     }
 
     private void render(PermissionProfileSettingsState state) {
@@ -350,6 +365,7 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
         } finally {
             rendering = false;
         }
+        syncToolCatalog(state);
     }
 
     private void renderDraft(PermissionProfileDraft draft, boolean existing) {
@@ -365,7 +381,7 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
         executables.setText(draft.executables());
         allowPty.setSelected(draft.allowPty());
         processSeconds.setText(Long.toString(draft.processSeconds()));
-        allowedTools.setText(draft.allowedTools());
+        allowedTools.showSelection(draft.allowedTools());
         maximumRisk.setValue(draft.maximumRisk());
         approval.setValue(draft.approvalRequirement());
         memoryMiB.setText(Long.toString(draft.memoryMiB()));
@@ -375,10 +391,10 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
     }
 
     private void renderStatus(PermissionProfileSettingsState state) {
-        editorSections.forEach(
-                section -> section.setDisable(state.standardReadOnly() || state.cloning() || state.pending()));
-        id.setDisable(state.selected().isPresent() || state.standardReadOnly() || state.pending());
-        save.setDisable(state.pending() || state.standardReadOnly() || !state.dirty());
+        boolean unavailable = scopedWorkspace.isEmpty();
+        editorSections.forEach(section -> section.setDisable(editorDisabled(state, unavailable)));
+        id.setDisable(identityDisabled(state, unavailable));
+        save.setDisable(saveDisabled(state, unavailable));
         discard.setDisable(state.pending() || !state.dirty());
         List<String> changed = state.draft().changedSections(state.baseline());
         diff.setText(changed.isEmpty() ? "没有本地更改" : "已更改：" + String.join("、", changed));
@@ -392,13 +408,25 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
         previewButton.setDisable(state.selected().isEmpty() || state.dirty());
     }
 
+    private static boolean editorDisabled(PermissionProfileSettingsState state, boolean unavailable) {
+        return unavailable || state.standardReadOnly() || state.cloning() || state.pending();
+    }
+
+    private static boolean identityDisabled(PermissionProfileSettingsState state, boolean unavailable) {
+        return unavailable || state.selected().isPresent() || state.standardReadOnly() || state.pending();
+    }
+
+    private boolean saveDisabled(PermissionProfileSettingsState state, boolean unavailable) {
+        return unavailable || state.pending() || state.standardReadOnly() || !state.dirty() || !allowedTools.ready();
+    }
+
     private void renderActionState(PermissionProfileSettingsState state) {
         if (state.pending()) {
             actions.show(ActionState.PENDING, state.message());
         } else if (state.phase() == SettingsLoadState.ERROR) {
             actions.show(ActionState.ERROR, state.message());
         } else if (state.dirty()) {
-            actions.show(ActionState.DIRTY, state.message().isBlank() ? "PermissionProfile 草稿尚未保存" : state.message());
+            actions.show(ActionState.DIRTY, state.message().isBlank() ? "权限方案草稿尚未保存" : state.message());
         } else if (!state.message().isBlank()) {
             actions.show(ActionState.SUCCESS, state.message());
         } else {
@@ -407,14 +435,13 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
     }
 
     private void showConflictComparison() {
-        actions.show(ActionState.DIRTY, "服务端未返回实际 revision；重新读取可查看权威版本，但会丢弃本地草稿。");
+        actions.show(ActionState.DIRTY, "服务端未返回实际版本；重新读取可查看权威版本，但会丢弃本地草稿。");
     }
 
     private void renderPreview(PermissionPreviewState state) {
+        previewState = Objects.requireNonNull(state, "state");
         rendering = true;
         try {
-            previewWorkspace.getItems().setAll(state.workspaces());
-            previewWorkspace.setValue(state.selectedWorkspace().orElse(null));
             previewTurnGrant.getItems().setAll(state.candidates());
             previewTurnGrant.setValue(state.turnGrant().orElse(null));
             includeTurnGrant.setSelected(state.turnGrant().isPresent());
@@ -427,16 +454,24 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
             rendering = false;
         }
         previewButton.setDisable(state.phase() == SettingsLoadState.LOADING
+                || scopedWorkspace.isEmpty()
                 || state.selectedWorkspace().isEmpty()
                 || presenter.state().selected().isEmpty()
                 || presenter.state().dirty());
         previewLayers.getChildren().clear();
-        state.preview().ifPresent(this::renderPreviewLayers);
+        state.preview().ifPresent(preview -> PermissionInsightRenderer.renderPreview(previewLayers, preview));
         previewMessage.setText(state.message());
         previewMessage.getStyleClass().remove("platform-action-error");
         if (state.phase() == SettingsLoadState.ERROR) {
             previewMessage.getStyleClass().add("platform-action-error");
         }
+    }
+
+    private void syncToolCatalog(PermissionProfileSettingsState state) {
+        Optional<PermissionProfileRef> reference = state.selected()
+                .map(profile -> new PermissionProfileRef(profile.id(), profile.version()))
+                .or(() -> state.cloneSource());
+        allowedTools.bind(scopedWorkspace.map(Workspace::id), reference);
     }
 
     private void syncHistory(PermissionProfileSettingsState state) {
@@ -452,56 +487,7 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
     }
 
     private void renderHistory(PermissionHistoryState state) {
-        historyRows.getChildren().clear();
-        for (PermissionProfile profile : state.history()) {
-            Label version = new Label("v" + profile.version()
-                    + (state.reference()
-                                    .map(reference -> reference.version() == profile.version())
-                                    .orElse(false)
-                            ? " · 当前"
-                            : ""));
-            version.getStyleClass().add("platform-detail-text");
-            historyRows.getChildren().add(version);
-        }
-        state.diff().ifPresent(serverDiff -> {
-            String sections = serverDiff.changedSections().isEmpty()
-                    ? "没有分区变化"
-                    : String.join(
-                            "、",
-                            serverDiff.changedSections().stream()
-                                    .map(PermissionProfileSettingsPage::sectionName)
-                                    .sorted()
-                                    .toList());
-            Label comparison = new Label("v" + serverDiff.before().version() + " → v"
-                    + serverDiff.after().version() + "：" + sections);
-            comparison.setWrapText(true);
-            comparison.getStyleClass().add("platform-detail-text");
-            historyRows.getChildren().add(comparison);
-        });
-        historyMessage.setText(state.message());
-        historyMessage.getStyleClass().remove("platform-action-error");
-        if (state.phase() == SettingsLoadState.ERROR) {
-            historyMessage.getStyleClass().add("platform-action-error");
-        }
-    }
-
-    private void renderPreviewLayers(EffectivePermissionPreview preview) {
-        for (var layer : preview.layers()) {
-            String source = layer.source()
-                    .map(reference -> reference.id() + " v" + reference.version())
-                    .orElse("平台即时约束");
-            String result = layer.denialReasons().isEmpty() ? "未进一步收窄" : String.join("；", layer.denialReasons());
-            Label line = new Label(layer.layer() + " · " + (layer.applied() ? source : "未提供") + " · " + result);
-            line.setWrapText(true);
-            line.getStyleClass().add("platform-detail-text");
-            previewLayers.getChildren().add(line);
-        }
-        if (!preview.denialReasons().isEmpty()) {
-            Label denials = new Label("最终拒绝原因：" + String.join("；", preview.denialReasons()));
-            denials.setWrapText(true);
-            denials.getStyleClass().add("platform-action-error");
-            previewLayers.getChildren().add(denials);
-        }
+        PermissionInsightRenderer.renderHistory(historyRows, historyMessage, state);
     }
 
     private static TextArea area(int rows) {
@@ -513,10 +499,13 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
     private void configurePermissionChoice(ComboBox<PermissionProfile> choice) {
         choice.setPromptText("未提供");
         choice.setMaxWidth(Double.MAX_VALUE);
-        choice.setCellFactory(
-                ignored -> components.detailCell(PermissionProfile::id, profile -> "v" + profile.version()));
-        choice.setButtonCell(
-                components.textCell(profile -> profile == null ? "" : profile.id() + " · v" + profile.version()));
+        choice.setCellFactory(ignored -> components.detailCell(
+                profile -> SettingsLabels.permissionProfile(profile.id()),
+                profile -> profile.id() + " · 版本 " + profile.version()));
+        choice.setButtonCell(components.textCell(profile -> profile == null
+                ? ""
+                : SettingsLabels.permissionProfile(profile.id()) + " · " + profile.id() + " · 版本 "
+                        + profile.version()));
     }
 
     private void selectOptionalLayer(boolean selected, ComboBox<PermissionProfile> choice, boolean turnGrant) {
@@ -539,28 +528,5 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
         return selected == null && !choice.getItems().isEmpty()
                 ? choice.getItems().getFirst()
                 : selected;
-    }
-
-    private static String sectionName(PermissionSection section) {
-        return switch (section) {
-            case FILE -> "文件";
-            case NETWORK -> "网络";
-            case PROCESS -> "进程与 PTY";
-            case TOOL -> "工具与审批";
-            case RESOURCE -> "资源上限";
-        };
-    }
-
-    private static long number(String value) {
-        try {
-            return Long.parseLong(Objects.requireNonNullElse(value, "").strip());
-        } catch (NumberFormatException invalid) {
-            return -1;
-        }
-    }
-
-    private static int integer(String value) {
-        long parsed = number(value);
-        return parsed < Integer.MIN_VALUE || parsed > Integer.MAX_VALUE ? -1 : (int) parsed;
     }
 }

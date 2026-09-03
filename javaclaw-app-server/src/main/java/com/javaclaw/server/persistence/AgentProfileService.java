@@ -9,8 +9,7 @@ import java.util.Optional;
 import com.javaclaw.api.AgentProfile;
 import com.javaclaw.api.AgentProfileSpec;
 import com.javaclaw.api.ProfileLifecycle;
-import com.javaclaw.api.ProviderEndpoint;
-import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.protocol.CanonicalJson;
 
 /** Agent Profile 不可变版本、引用校验与归档服务。 */
@@ -64,6 +63,25 @@ public final class AgentProfileService {
                         connection, VersionedSettingsRepository.Table.PROFILE, identifier(id), revision)
                 .map(this::decode)
                 .orElseThrow(() -> PersistenceException.invalidRequest("Agent Profile 不存在")));
+    }
+
+    /**
+     * 读取可用于新绑定或新 Turn 的精确 Profile。
+     *
+     * <p>精确版本决定冻结配置，最新版本生命周期决定该 Profile 是否仍允许开始新工作。
+     *
+     * @param id Profile 标识
+     * @param revision 精确版本
+     * @return 当前可用的精确 Profile
+     */
+    public AgentProfile requireAvailable(String id, long revision) {
+        AgentProfile profile = require(id, revision);
+        AgentProfile latest = requireLatest(id);
+        if (profile.lifecycle() != ProfileLifecycle.ACTIVE || latest.lifecycle() != ProfileLifecycle.ACTIVE) {
+            throw PersistenceException.invalidRequest("Agent Profile 当前不可用于新绑定或新 Turn");
+        }
+        providers.requireAvailable(profile.spec().provider(), ProviderModelPurpose.CHAT);
+        return profile;
     }
 
     /**
@@ -132,14 +150,7 @@ public final class AgentProfileService {
     }
 
     private void validateReferences(AgentProfileSpec spec) {
-        ProviderEndpoint provider =
-                providers.require(spec.provider().endpointId(), spec.provider().endpointRevision());
-        if (provider.lifecycle() != ProviderLifecycle.ACTIVE) {
-            throw PersistenceException.invalidRequest("Agent Profile 只能引用 ACTIVE Provider");
-        }
-        if (!provider.spec().models().contains(spec.provider().model())) {
-            throw PersistenceException.invalidRequest("Agent Profile 模型不在 Provider 目录中");
-        }
+        providers.requireAvailable(spec.provider(), ProviderModelPurpose.CHAT);
         permissions.require(
                 spec.permissionProfile().id(), spec.permissionProfile().version());
     }

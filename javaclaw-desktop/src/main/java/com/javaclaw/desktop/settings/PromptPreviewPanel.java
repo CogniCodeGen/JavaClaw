@@ -2,10 +2,8 @@ package com.javaclaw.desktop.settings;
 
 import java.util.Optional;
 
-import javafx.collections.FXCollections;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
-import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.TextArea;
@@ -22,13 +20,11 @@ import com.javaclaw.desktop.component.PlatformComponentFactory;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 
-/** Agent Profile 页内可复用的 Prompt provenance 只读面板。 */
+/** 智能体方案页内可复用的提示词来源只读面板。 */
 public final class PromptPreviewPanel {
     private final PlatformComponentFactory components = new PlatformComponentFactory();
     private final PromptPreviewSettingsPresenter presenter;
-    private final FormSection content =
-            new FormSection("Prompt provenance", "服务端按精确 revision 组装下一 Turn 预览；项目约定、Skill 和 Context 只显示来源元数据，不返回正文。");
-    private final ComboBox<Workspace> workspace = new ComboBox<>();
+    private final FormSection content = new FormSection("提示词来源", "服务端按精确版本组装下一个任务的预览。项目约定、技能和扩展上下文只显示来源信息，不显示正文。");
     private final Button preview;
     private final Label status = new Label();
     private final Label identity = new Label("尚未生成预览");
@@ -37,12 +33,12 @@ public final class PromptPreviewPanel {
     private final ListView<PromptSourceMetadata> sources = new ListView<>();
     private final TextArea coreTemplate = readOnlyArea();
     private final TextArea profileInstruction = readOnlyArea();
-    private boolean rendering;
+    private Optional<Workspace> scopedWorkspace = Optional.empty();
 
     /**
      * 创建面板。
      *
-     * @param gateway Prompt 预览 SDK 边界
+     * @param gateway 提示词预览 SDK 边界
      */
     public PromptPreviewPanel(PromptPreviewSettingsGateway gateway) {
         presenter = new PromptPreviewSettingsPresenter(gateway);
@@ -53,80 +49,78 @@ public final class PromptPreviewPanel {
         presenter.subscribe(this::render);
     }
 
-    /** @return 可嵌入 Profile 页面表单的根节点 */
+    /** @return 可嵌入智能体方案页面表单的根节点 */
     public Node content() {
         return content;
     }
 
-    /** 激活面板并刷新 Workspace 目录。 */
+    /** 激活面板并刷新当前固定 Workspace。 */
     public void activate() {
-        presenter.reloadWorkspaces();
+        scopedWorkspace.ifPresent(presenter::selectWorkspace);
     }
 
     /**
-     * 切换当前权威 Profile；草稿尚未保存时传空。
+     * 固定提示词预览的 Workspace 作用域。
      *
-     * @param profile 当前 Profile
+     * @param workspace 设置中心作用域
+     */
+    public void workspaceChanged(Optional<Workspace> workspace) {
+        Optional<Workspace> checked = java.util.Objects.requireNonNull(workspace, "workspace");
+        if (scopedWorkspace.equals(checked)) {
+            return;
+        }
+        scopedWorkspace = checked;
+        presenter.selectWorkspace(checked.orElse(null));
+    }
+
+    /**
+     * 切换当前权威智能体方案；草稿尚未保存时传空。
+     *
+     * @param profile 当前智能体方案
      */
     public void selectProfile(Optional<AgentProfile> profile) {
         presenter.selectProfile(profile);
     }
 
     private void configureControls() {
-        workspace.setPromptText("选择 Workspace");
-        workspace.setCellFactory(ignored -> components.detailCell(
-                Workspace::name, value -> value.id().value().toString()));
-        workspace.setButtonCell(components.textCell(
-                value -> value == null ? "" : value.name() + " · " + value.id().value()));
         identity.setWrapText(true);
         digest.setWrapText(true);
         digest.getStyleClass().add("platform-monospace");
         tokens.setWrapText(true);
         sources.setPrefHeight(150);
         sources.setCellFactory(ignored -> components.detailCell(
-                source -> source.kind() + " · " + source.sourceId(), PromptPreviewPanel::sourceDetail));
+                source -> SettingsLabels.promptSourceKind(source.kind()) + " · " + source.sourceId(),
+                PromptPreviewPanel::sourceDetail));
         status.setWrapText(true);
         status.getStyleClass().add("sec-hint");
     }
 
     private void buildLayout() {
-        content.addField("Workspace", workspace);
         content.addFullWidth(new HBox(8, preview, status));
         content.addField("冻结引用", identity);
-        content.addField("Manifest SHA-256", digest);
-        content.addField("输入 token 估算", tokens);
+        content.addField("清单指纹（SHA-256）", digest);
+        content.addField("输入令牌估算", tokens);
         content.addField("来源", sources);
-        content.addField("Core template", coreTemplate);
-        content.addField("Profile instruction", profileInstruction);
+        content.addField("内置系统提示词", coreTemplate);
+        content.addField("智能体方案提示词", profileInstruction);
         VBox.setVgrow(sources, Priority.ALWAYS);
     }
 
     private void bindEvents() {
-        workspace.valueProperty().addListener((ignored, previous, value) -> {
-            if (!rendering) {
-                presenter.selectWorkspace(value);
-            }
-        });
         preview.setOnAction(event -> presenter.preview());
     }
 
     private void render(PromptPreviewSettingsState state) {
-        rendering = true;
-        try {
-            workspace.setItems(FXCollections.observableArrayList(state.workspaces()));
-            workspace.setValue(state.workspace().orElse(null));
-            renderPreview(state.preview());
-            status.setText(state.message());
-            status.getStyleClass().remove("platform-action-error");
-            if (state.phase() == SettingsLoadState.ERROR) {
-                status.getStyleClass().add("platform-action-error");
-            }
-            preview.setDisable(state.phase() == SettingsLoadState.LOADING
-                    || state.workspace().isEmpty()
-                    || state.profile().isEmpty());
-        } finally {
-            rendering = false;
+        renderPreview(state.preview());
+        status.setText(state.message());
+        status.getStyleClass().remove("platform-action-error");
+        if (state.phase() == SettingsLoadState.ERROR) {
+            status.getStyleClass().add("platform-action-error");
         }
+        preview.setDisable(state.phase() == SettingsLoadState.LOADING
+                || scopedWorkspace.isEmpty()
+                || state.workspace().isEmpty()
+                || state.profile().isEmpty());
     }
 
     private void renderPreview(Optional<PromptManifestPreview> value) {
@@ -141,10 +135,10 @@ public final class PromptPreviewPanel {
             return;
         }
         identity.setText(
-                "Profile " + current.profile().id() + "@" + current.profile().revision()
-                        + " · Provider " + current.provider().endpointId() + "@"
+                "智能体方案 " + current.profile().id() + "@" + current.profile().revision()
+                        + " · 模型服务 " + current.provider().endpointId() + "@"
                         + current.provider().endpointRevision()
-                        + " · Permission " + current.permissionProfile().id() + "@"
+                        + " · 权限方案 " + current.permissionProfile().id() + "@"
                         + current.permissionProfile().version());
         digest.setText(current.manifestDigest());
         tokens.setText(current.estimatedInputTokens() + " · " + current.tokenEstimator());
@@ -166,6 +160,6 @@ public final class PromptPreviewPanel {
         String digest =
                 source.digest().map(value -> " · " + value.substring(0, 12)).orElse(" · 未纳入");
         String warnings = source.warnings().isEmpty() ? "" : " · " + String.join(", ", source.warnings());
-        return source.includedBytes() + " bytes" + revision + digest + warnings;
+        return source.includedBytes() + " 字节" + revision + digest + warnings;
     }
 }

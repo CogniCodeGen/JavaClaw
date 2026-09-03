@@ -20,7 +20,7 @@ import com.javaclaw.desktop.component.PlatformComponentFactory;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 
-/** Site 页面中由平台拥有的强类型 Secret 管理分区。 */
+/** 网站页面中由平台拥有的强类型密钥管理分区。 */
 final class SiteCredentialSettingsSection {
     private static final String CLEAR_CONFIRMATION = "CLEAR SITE SECRET";
 
@@ -47,7 +47,12 @@ final class SiteCredentialSettingsSection {
         create = action("创建新凭据", ActionStyle.PRIMARY, this::create);
         rotate = action("轮换所选凭据", ActionStyle.SOFT, this::rotate);
         actions = new AsyncActionBar(refresh, rotate, create);
-        clearZone = new DangerZone("永久清除 Site 凭据", "清除后 Secret 不能恢复，引用立即失效；Site 绑定不会获得明文或替代值。", "永久清除", this::clear);
+        clearZone = new DangerZone(
+                "永久清除网站凭据",
+                "清除后密钥不能恢复，引用立即失效；网站绑定不会获得明文或替代值。",
+                "永久清除",
+                ignored -> CLEAR_CONFIRMATION.equals(clearConfirmation.getText()),
+                this::clear);
         configure();
         presenter.subscribe(this::render);
     }
@@ -64,8 +69,12 @@ final class SiteCredentialSettingsSection {
         return !secret.getText().isEmpty() || !clearConfirmation.getText().isEmpty();
     }
 
+    boolean pending() {
+        return state.phase() == SettingsLoadState.LOADING || state.phase() == SettingsLoadState.SAVING;
+    }
+
     void warnUnsavedChanges() {
-        actions.show(ActionState.DIRTY, "Secret 或危险确认尚未提交；离页会清空本地输入");
+        actions.show(ActionState.DIRTY, "密钥或危险确认尚未提交；离页会清空本地输入");
     }
 
     void discardDraft() {
@@ -76,23 +85,22 @@ final class SiteCredentialSettingsSection {
 
     private void configure() {
         configureCredentialChoice();
-        secret.setPromptText("输入新 Secret；提交后立即清空");
-        secret.setAccessibleText("Site Secret 临时输入");
+        secret.setPromptText("输入新密钥；提交后立即清空");
+        secret.setAccessibleText("网站密钥临时输入");
         clearConfirmation.setPromptText("精确输入 " + CLEAR_CONFIRMATION);
-        clearConfirmation.setAccessibleText("Site Secret 永久清除确认");
+        clearConfirmation.setAccessibleText("网站密钥永久清除确认");
         secret.textProperty().addListener((ignored, previous, value) -> updateActions());
         clearConfirmation.textProperty().addListener((ignored, previous, value) -> updateActions());
 
-        FormSection catalog =
-                new FormSection("Site HTTP 凭据", "仅显示 site 命名空间中的 opaque ID、revision 和更新时间；Secret 永远不能读取、复制或导出。");
+        FormSection catalog = new FormSection("网站 HTTP 凭据", "只显示网站凭据的不透明标识、版本和更新时间；密钥永远不能读取、复制或导出。");
         catalog.addField("凭据", credentials);
-        catalog.addField("Opaque 引用", reference);
-        catalog.addField("Revision", revision);
+        catalog.addField("凭据引用", reference);
+        catalog.addField("版本", revision);
         catalog.addField("更新时间", updatedAt);
-        catalog.addField("新 Secret", secret);
+        catalog.addField("新密钥", secret);
         catalog.addFullWidth(actions);
 
-        FormSection danger = new FormSection("危险操作", "永久清除使用当前脱敏 revision 做乐观锁校验。Site 权威视图随后重新读取。");
+        FormSection danger = new FormSection("危险操作", "永久清除时会校验当前脱敏版本，随后重新读取服务端状态。");
         danger.addField("确认文本", clearConfirmation);
         danger.addFullWidth(clearZone);
         root.getChildren().addAll(catalog, danger);
@@ -101,7 +109,7 @@ final class SiteCredentialSettingsSection {
 
     private void configureCredentialChoice() {
         credentials.setMaxWidth(Double.MAX_VALUE);
-        credentials.setAccessibleText("Site 凭据元数据选择");
+        credentials.setAccessibleText("网站凭据元数据选择");
         credentials.setCellFactory(
                 ignored -> components.detailCell(this::credentialLabel, value -> "更新时间 " + value.updatedAt()));
         credentials.setButtonCell(components.textCell(this::credentialLabel));
@@ -133,7 +141,7 @@ final class SiteCredentialSettingsSection {
     }
 
     private void updateActions() {
-        boolean pending = state.phase() == SettingsLoadState.LOADING || state.phase() == SettingsLoadState.SAVING;
+        boolean pending = pending();
         boolean selected = state.selected().isPresent();
         boolean hasSecret = !secret.getText().isEmpty();
         refresh.setDisable(pending);
@@ -146,7 +154,7 @@ final class SiteCredentialSettingsSection {
         } else if (state.phase() == SettingsLoadState.ERROR) {
             actions.show(ActionState.ERROR, state.message());
         } else if (dirty()) {
-            actions.show(ActionState.DIRTY, "Secret 只会写入 Vault，不会显示在 Site 文档或日志中");
+            actions.show(ActionState.DIRTY, "密钥只会写入密钥库，不会显示在网站文档或日志中");
         } else {
             ActionState result = state.message().isBlank() ? ActionState.IDLE : ActionState.SUCCESS;
             actions.show(result, state.message());
@@ -177,7 +185,7 @@ final class SiteCredentialSettingsSection {
     }
 
     private String credentialLabel(CredentialMetadata value) {
-        return value.reference().id() + " · revision " + value.revision();
+        return value.reference().id() + " · 版本 " + value.revision();
     }
 
     private static Label value() {

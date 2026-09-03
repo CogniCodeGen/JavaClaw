@@ -298,7 +298,8 @@ final class PlanManagement {
                 Optional.empty(),
                 List.of(),
                 ViewStructuredItemValidation.required(required),
-                List.of());
+                List.of(),
+                Optional.empty());
     }
 
     private static ViewStructuredItemField textList(String name, String label) {
@@ -311,7 +312,14 @@ final class PlanManagement {
                 Optional.of(0),
                 Optional.of(ViewStructuredListField.MAX_TEXT_LIST_ITEMS));
         return new ViewStructuredItemField(
-                name, label, ViewStructuredItemType.TEXT_LIST, Optional.empty(), List.of(), validation, List.of());
+                name,
+                label,
+                ViewStructuredItemType.TEXT_LIST,
+                Optional.empty(),
+                List.of(),
+                validation,
+                List.of(),
+                Optional.empty());
     }
 
     private record PlanEditor(

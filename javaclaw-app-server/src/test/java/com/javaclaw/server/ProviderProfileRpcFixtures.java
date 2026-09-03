@@ -1,9 +1,5 @@
 package com.javaclaw.server;
 
-import java.time.Duration;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 
 import com.javaclaw.api.AgentProfile;
@@ -13,8 +9,8 @@ import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderEndpointSpec;
+import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.TurnBudget;
 import com.javaclaw.protocol.JsonRpcRequest;
 import com.javaclaw.protocol.JsonRpcResponse;
@@ -37,18 +33,11 @@ public final class ProviderProfileRpcFixtures {
      */
     public static AgentProfileRef install(
             AppServerSession session, AppServerBootstrap.Components components, Installation installation) {
-        ProviderEndpointSpec providerSpec = new ProviderEndpointSpec(
-                "Test " + installation.providerId(),
-                ProviderAdapter.OPENAI_COMPATIBLE,
-                Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of(installation.model()),
-                Optional.empty(),
-                Duration.ofSeconds(30),
-                0,
-                Map.of());
+        ProviderEndpointSpec providerSpec = ProviderEndpointTestFixtures.chat(
+                "Test " + installation.providerId(), ProviderAdapter.OPENAI_COMPATIBLE, installation.model());
         ProviderProfileRpcContracts.ProviderCreatePayload providerPayload =
-                new ProviderProfileRpcContracts.ProviderCreatePayload(installation.providerId(), providerSpec);
+                new ProviderProfileRpcContracts.ProviderCreatePayload(
+                        installation.providerId(), providerSpec, ProviderLifecycle.ACTIVE);
         decode(
                 session.handle(request(
                         components,

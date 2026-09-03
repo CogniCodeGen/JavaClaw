@@ -102,8 +102,7 @@ final class TurnCommandFactory {
         Workspace workspace = core.findWorkspace(workspaceId)
                 .orElseThrow(() -> new IllegalArgumentException("Workspace does not exist"));
         requireActive(workspace);
-        AgentProfile profile = profiles.require(reference.id(), reference.revision());
-        requireActive(profile);
+        AgentProfile profile = profiles.requireAvailable(reference.id(), reference.revision());
         models.capabilities(profile.spec().provider().routeKey());
         PermissionProfile effective = effectivePermissions(profile, workspace);
         ToolCatalogSnapshot catalog = catalogs.freeze(TurnId.random(), workspace.id(), effective, cancellation);

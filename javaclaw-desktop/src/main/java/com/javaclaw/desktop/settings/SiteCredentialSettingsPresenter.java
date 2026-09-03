@@ -34,7 +34,7 @@ final class SiteCredentialSettingsPresenter {
 
     void reload() {
         long epoch = nextEpoch();
-        publish(copy(SettingsLoadState.LOADING, "正在读取 Site 凭据元数据…", epoch));
+        publish(copy(SettingsLoadState.LOADING, "正在读取网站凭据元数据…", epoch));
         gateway.credentials(SiteContracts.SITE_CREDENTIAL_NAMESPACE)
                 .whenComplete((credentials, failure) -> completeReload(epoch, credentials, failure));
     }
@@ -42,7 +42,7 @@ final class SiteCredentialSettingsPresenter {
     void select(CredentialMetadata credential) {
         CredentialMetadata checked = Objects.requireNonNull(credential, "credential");
         if (!state.credentials().contains(checked)) {
-            throw new IllegalArgumentException("Site 凭据不在当前脱敏目录中");
+            throw new IllegalArgumentException("网站凭据不在当前脱敏目录中");
         }
         publish(new SiteCredentialSettingsState(
                 state.phase(), state.credentials(), Optional.of(checked), state.message(), state.epoch()));
@@ -51,7 +51,7 @@ final class SiteCredentialSettingsPresenter {
     void create(char[] secret) {
         submitSecret(
                 secret,
-                "正在创建 Site 凭据…",
+                "正在创建网站凭据…",
                 value -> gateway.createCredential(
                         SiteContracts.SITE_CREDENTIAL_NAMESPACE, value, CommandOptions.create(0)));
     }
@@ -60,7 +60,7 @@ final class SiteCredentialSettingsPresenter {
         CredentialMetadata current = selected();
         submitSecret(
                 secret,
-                "正在轮换 Site 凭据…",
+                "正在轮换网站凭据…",
                 value -> gateway.rotateCredential(
                         current.reference(), value, CommandOptions.create(current.revision())));
     }
@@ -68,7 +68,7 @@ final class SiteCredentialSettingsPresenter {
     void clear() {
         CredentialMetadata current = selected();
         long epoch = nextEpoch();
-        publish(copy(SettingsLoadState.SAVING, "正在永久清除 Site 凭据…", epoch));
+        publish(copy(SettingsLoadState.SAVING, "正在永久清除网站凭据…", epoch));
         gateway.clearCredential(current.reference(), CommandOptions.create(current.revision()))
                 .whenComplete((receipt, failure) -> completeClear(epoch, current, receipt, failure));
     }
@@ -81,7 +81,7 @@ final class SiteCredentialSettingsPresenter {
             char[] secret, String message, Function<char[], CompletionStage<CredentialMetadata>> operation) {
         char[] checked = Objects.requireNonNull(secret, "secret");
         if (checked.length == 0) {
-            publish(copy(SettingsLoadState.ERROR, "Secret 不能为空", state.epoch()));
+            publish(copy(SettingsLoadState.ERROR, "密钥不能为空", state.epoch()));
             return;
         }
         long epoch = nextEpoch();
@@ -131,7 +131,7 @@ final class SiteCredentialSettingsPresenter {
         updated.add(checked);
         updated.sort(Comparator.comparing(value -> value.reference().id()));
         publish(new SiteCredentialSettingsState(
-                SettingsLoadState.READY, updated, Optional.of(checked), "Site 凭据已保存；Secret 不可回读", epoch));
+                SettingsLoadState.READY, updated, Optional.of(checked), "网站凭据已保存；密钥不可回读", epoch));
         authorityRefresh.run();
     }
 
@@ -153,18 +153,18 @@ final class SiteCredentialSettingsPresenter {
                 .filter(candidate -> !candidate.reference().equals(current.reference()))
                 .toList();
         publish(new SiteCredentialSettingsState(
-                SettingsLoadState.READY, updated, updated.stream().findFirst(), "Site 凭据已永久清除；引用立即失效", epoch));
+                SettingsLoadState.READY, updated, updated.stream().findFirst(), "网站凭据已永久清除；引用立即失效", epoch));
         authorityRefresh.run();
     }
 
     private CredentialMetadata selected() {
-        return state.selected().orElseThrow(() -> new IllegalStateException("请先选择 Site 凭据"));
+        return state.selected().orElseThrow(() -> new IllegalStateException("请先选择网站凭据"));
     }
 
     private CredentialMetadata requireSiteCredential(CredentialMetadata value) {
         CredentialMetadata checked = Objects.requireNonNull(value, "credential");
         if (!isSiteCredential(checked)) {
-            throw new IllegalArgumentException("服务端返回了非 Site 命名空间凭据");
+            throw new IllegalArgumentException("服务端返回了非网站命名空间凭据");
         }
         return checked;
     }

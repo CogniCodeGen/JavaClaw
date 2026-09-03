@@ -12,6 +12,32 @@
     -fx-min-height: 420;
 }
 
+.management-scope-slot {
+    -fx-background-color: -jc-surface-card;
+    -fx-border-color: transparent transparent -jc-border transparent;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 8 24 8 24;
+}
+
+.management-scope {
+    -fx-alignment: center-left;
+    -fx-spacing: 8;
+}
+
+.management-scope-label {
+    -fx-font-weight: 600;
+    -fx-text-fill: -jc-text-muted;
+}
+
+.management-scope .combo-box {
+    -fx-min-width: 220;
+    -fx-pref-width: 300;
+}
+
+.management-scope-status {
+    -fx-text-fill: -jc-text-hint;
+}
+
 .platform-section-hint {
     -fx-text-fill: -jc-text-muted;
 }

@@ -16,6 +16,7 @@ import com.javaclaw.api.ProviderEndpoint;
  * @param providers 最新 Provider 目录
  * @param permissions 最新权限目录
  * @param selected 当前权威 Profile
+ * @param creating 是否正在编辑尚未保存的新 Profile
  * @param baseline 草稿比较基线
  * @param draft 当前草稿
  * @param message 状态或错误说明
@@ -28,6 +29,7 @@ public record AgentProfileSettingsState(
         List<ProviderEndpoint> providers,
         List<PermissionProfile> permissions,
         Optional<AgentProfile> selected,
+        boolean creating,
         AgentProfileDraft baseline,
         AgentProfileDraft draft,
         String message,
@@ -54,6 +56,7 @@ public record AgentProfileSettingsState(
                 List.of(),
                 List.of(),
                 Optional.empty(),
+                false,
                 empty,
                 empty,
                 "",
@@ -63,7 +66,7 @@ public record AgentProfileSettingsState(
 
     /** @return 草稿是否尚未保存 */
     public boolean dirty() {
-        return !baseline.equals(draft);
+        return creating || !baseline.equals(draft);
     }
 
     /** @return 是否正在后台读取或写入 */

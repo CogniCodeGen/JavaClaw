@@ -164,6 +164,47 @@
     -fx-padding: 8 0 0 0;
 }
 
+.platform-field-label-text {
+    -fx-text-fill: -jc-text-body;
+}
+
+.platform-field-requirement {
+    -fx-font-size: 10px;
+    -fx-padding: 2 5;
+    -fx-background-radius: 999;
+}
+
+.platform-field-required {
+    -fx-background-color: -jc-danger-bg;
+    -fx-text-fill: -jc-danger;
+}
+
+.platform-field-optional {
+    -fx-background-color: -jc-surface-sunken;
+    -fx-text-fill: -jc-text-muted;
+}
+
+.platform-field-content {
+    -fx-fill-width: true;
+}
+
+.platform-field-help,
+.platform-field-error {
+    -fx-font-size: 11.5px;
+}
+
+.platform-field-help {
+    -fx-text-fill: -jc-text-hint;
+}
+
+.platform-field-error {
+    -fx-text-fill: -jc-danger;
+}
+
+.platform-list-detail-retry {
+    -fx-alignment: center;
+}
+
 .platform-action-bar {
     -fx-spacing: 8;
     -fx-padding: 4 0 0 0;

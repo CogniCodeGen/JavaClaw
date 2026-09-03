@@ -225,7 +225,7 @@ class McpSettingsPresenterTest {
 
         assertTrue(latest.get().workspaces().isEmpty());
         assertTrue(latest.get().workspaceId().isEmpty());
-        assertEquals("暂无 Workspace", latest.get().feedback().message());
+        assertEquals("暂无工作区", latest.get().feedback().message());
     }
 
     @Test

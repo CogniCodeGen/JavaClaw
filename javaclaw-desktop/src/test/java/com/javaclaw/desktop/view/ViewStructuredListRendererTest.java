@@ -12,6 +12,7 @@ import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.VBox;
@@ -29,6 +30,7 @@ import com.javaclaw.extension.spi.ViewField;
 import com.javaclaw.extension.spi.ViewFieldType;
 import com.javaclaw.extension.spi.ViewFieldValidation;
 import com.javaclaw.extension.spi.ViewOption;
+import com.javaclaw.extension.spi.ViewOptionSource;
 import com.javaclaw.extension.spi.ViewSchema;
 import com.javaclaw.extension.spi.ViewStructuredItemField;
 import com.javaclaw.extension.spi.ViewStructuredItemType;
@@ -114,6 +116,62 @@ class ViewStructuredListRendererTest {
         });
     }
 
+    @Test
+    void structuredChoiceUsesDynamicPlatformOptionsInsteadOfFreeText() {
+        FxTestSupport.run(() -> {
+            ViewStructuredItemField tool = new ViewStructuredItemField(
+                    "toolName",
+                    "工具",
+                    ViewStructuredItemType.CHOICE,
+                    Optional.empty(),
+                    List.of(),
+                    ViewStructuredItemValidation.required(true),
+                    List.of(),
+                    Optional.of(new ViewOptionSource("tools", "toolName", "toolLabel", Optional.empty())));
+            ViewStructuredListField list = new ViewStructuredListField(
+                    "steps",
+                    "步骤",
+                    new ViewBinding("editor", "steps"),
+                    1,
+                    2,
+                    "stepId",
+                    List.of(tool),
+                    List.of(Map.of("stepId", "first", "toolName", "read_file")),
+                    Optional.empty());
+            ViewSchema schema =
+                    schema(List.of(list), List.of(new ViewDataSource("tools", "view.tools", Map.of(), List.of(), 20)));
+            ViewData data = new ViewData(Map.of(
+                    "editor",
+                    new ViewData.Source(
+                            List.of(),
+                            Map.of("steps", List.of(Map.of("stepId", "first", "toolName", "read_file"))),
+                            "",
+                            "",
+                            false,
+                            1,
+                            0,
+                            Optional.empty()),
+                    "tools",
+                    new ViewData.Source(
+                            List.of(Map.of("toolName", "read_file", "toolLabel", "读取文件 · r3")),
+                            Map.of(),
+                            "",
+                            "",
+                            false,
+                            9,
+                            0,
+                            Optional.empty())));
+
+            VBox page = (VBox) new ViewSchemaRenderer().render(schema, data, new RecordingInteractions());
+            ComboBox<?> choice = nodes(page, ComboBox.class).getFirst();
+
+            assertEquals("read_file", ((ViewOption) choice.getValue()).value());
+            assertEquals("读取文件 · r3", ((ViewOption) choice.getValue()).label());
+            assertTrue(
+                    nodes(page, TextField.class).stream().noneMatch(field -> "工具".equals(field.getAccessibleText())));
+        });
+    }
+
     private static ViewSchema schema() {
         return schema(List.of(structured(Optional.empty())));
     }
@@ -135,6 +193,11 @@ class ViewStructuredListRendererTest {
     }
 
     private static ViewSchema schema(List<? extends com.javaclaw.extension.spi.ViewFormField> fields) {
+        return schema(fields, List.of());
+    }
+
+    private static ViewSchema schema(
+            List<? extends com.javaclaw.extension.spi.ViewFormField> fields, List<ViewDataSource> additionalSources) {
         ViewDataSource editor = new ViewDataSource("editor", "view.read", Map.of(), List.of(), 1);
         ViewAction save = new ViewAction(
                 "保存", "steps.put", Map.of(), Map.of(), new ExpectedRevisionBinding.SourceRevision("editor"), false);
@@ -142,7 +205,8 @@ class ViewStructuredListRendererTest {
                 ViewSchema.CURRENT_VERSION,
                 "steps.editor",
                 "步骤编辑",
-                List.of(editor),
+                java.util.stream.Stream.concat(java.util.stream.Stream.of(editor), additionalSources.stream())
+                        .toList(),
                 List.of(new ViewSchema.Form("editor", "编辑", fields, save)));
     }
 
@@ -167,7 +231,8 @@ class ViewStructuredListRendererTest {
                 Optional.empty(),
                 List.of(),
                 ViewStructuredItemValidation.required(true),
-                List.of());
+                List.of(),
+                Optional.empty());
     }
 
     private static ViewStructuredItemField weight() {
@@ -185,7 +250,8 @@ class ViewStructuredListRendererTest {
                         Optional.of(BigDecimal.TEN),
                         Optional.empty(),
                         Optional.empty()),
-                List.of());
+                List.of(),
+                Optional.empty());
     }
 
     private static ViewStructuredItemField enabled() {
@@ -196,7 +262,8 @@ class ViewStructuredListRendererTest {
                 Optional.of("false"),
                 List.of(),
                 ViewStructuredItemValidation.required(false),
-                List.of());
+                List.of(),
+                Optional.empty());
     }
 
     private static ViewStructuredItemField kind() {
@@ -207,7 +274,8 @@ class ViewStructuredListRendererTest {
                 Optional.of("turn"),
                 List.of(),
                 ViewStructuredItemValidation.required(true),
-                List.of(new ViewOption("turn", "Turn"), new ViewOption("tool", "Tool")));
+                List.of(new ViewOption("turn", "Turn"), new ViewOption("tool", "Tool")),
+                Optional.empty());
     }
 
     private static ViewStructuredItemField tags() {
@@ -225,7 +293,8 @@ class ViewStructuredListRendererTest {
                         Optional.empty(),
                         Optional.empty(),
                         Optional.of(4)),
-                List.of());
+                List.of(),
+                Optional.empty());
     }
 
     private static ViewData data() {

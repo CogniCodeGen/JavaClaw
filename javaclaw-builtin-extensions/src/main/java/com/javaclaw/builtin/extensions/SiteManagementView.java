@@ -152,7 +152,7 @@ final class SiteManagementView {
                 Optional.empty(),
                 ViewFieldValidation.required(true),
                 List.of(),
-                Optional.of(new ViewOptionSource(SiteManagement.CREDENTIAL_SOURCE, "id", "label")),
+                Optional.of(new ViewOptionSource(SiteManagement.CREDENTIAL_SOURCE, "id", "label", Optional.empty())),
                 Optional.empty());
         ViewField header = new ViewField(
                 "apiKeyHeader",
@@ -184,7 +184,8 @@ final class SiteManagementView {
                 Optional.empty(),
                 ViewFieldValidation.required(true),
                 List.of(),
-                Optional.of(new ViewOptionSource(SiteManagement.PRIVATE_NETWORK_SOURCE, "id", "label")),
+                Optional.of(
+                        new ViewOptionSource(SiteManagement.PRIVATE_NETWORK_SOURCE, "id", "label", Optional.empty())),
                 Optional.empty());
         return new ViewSchema.Form(
                 "site-private-network-bind",
@@ -274,7 +275,8 @@ final class SiteManagementView {
                 Optional.empty(),
                 List.of(),
                 validation,
-                List.of());
+                List.of(),
+                Optional.empty());
         return new ViewStructuredListField(
                 "allowedOrigins",
                 "允许的精确 Origin",

@@ -35,13 +35,18 @@ public final class ManagedWorktreeSettingsPresenter {
     /** 重新读取 Workspace 并选择首个 Workspace。 */
     public void reload() {
         long epoch = nextEpoch();
-        publish(copy(SettingsLoadState.LOADING, "正在读取 Workspace…", epoch));
+        publish(copy(SettingsLoadState.LOADING, "正在读取工作区…", epoch));
         gateway.workspaces().whenComplete((workspaces, failure) -> applyWorkspaces(epoch, workspaces, failure));
     }
 
     /** @param workspace 要查看的 Workspace */
     public void selectWorkspace(Workspace workspace) {
         loadWorkspace(Objects.requireNonNull(workspace, "workspace"), state.includeCleaned(), Optional.empty(), "");
+    }
+
+    /** 使当前异步响应失效；保留只读快照，等待原 Workspace 恢复后重新读取。 */
+    public void invalidateWorkspace() {
+        publish(copy(SettingsLoadState.READY, "固定工作区当前不可用；操作已暂停", nextEpoch()));
     }
 
     /** @param include 是否包含 CLEANED 历史 */
@@ -81,23 +86,21 @@ public final class ManagedWorktreeSettingsPresenter {
         executeWorktree(
                 gateway.interruptManagedWorktree(
                         current, Objects.requireNonNullElse(reason, ""), CommandOptions.create(current.revision())),
-                "子 Thread 已请求中断");
+                "子对话已请求中断");
     }
 
     /** 生成有界 Patch Attachment，不触发合并。 */
     public void exportPatch() {
         ManagedWorktree current = state.selected().orElseThrow();
         executeArtifact(
-                gateway.exportManagedWorktreePatch(current, CommandOptions.create(current.revision())),
-                "Patch Attachment 已生成");
+                gateway.exportManagedWorktreePatch(current, CommandOptions.create(current.revision())), "补丁附件已生成");
     }
 
     /** 生成并回读验证 cleanup 所需 Backup Attachment。 */
     public void backup() {
         ManagedWorktree current = state.selected().orElseThrow();
         executeArtifact(
-                gateway.backupManagedWorktree(current, CommandOptions.create(current.revision())),
-                "Backup Attachment 已生成并验证");
+                gateway.backupManagedWorktree(current, CommandOptions.create(current.revision())), "备份附件已生成并验证");
     }
 
     /** 使用固定危险确认永久清理受管目录。 */
@@ -106,7 +109,7 @@ public final class ManagedWorktreeSettingsPresenter {
         executeWorktree(
                 gateway.cleanupManagedWorktree(
                         current, WorktreeRpcContracts.CLEANUP_CONFIRMATION, CommandOptions.create(current.revision())),
-                "受管 Worktree 已清理");
+                "受管隔离工作区已清理");
     }
 
     /** @param parent 为 true 导航父 Thread，否则导航子 Thread */
@@ -130,7 +133,7 @@ public final class ManagedWorktreeSettingsPresenter {
                 state.worktrees(),
                 state.selected(),
                 artifact,
-                successMessage.isBlank() ? "正在读取受管 Worktree…" : successMessage,
+                successMessage.isBlank() ? "正在读取受管隔离工作区…" : successMessage,
                 epoch));
         gateway.managedWorktrees(workspace.id(), includeCleaned)
                 .whenComplete(
@@ -152,7 +155,7 @@ public final class ManagedWorktreeSettingsPresenter {
 
     private void executeNavigation(CompletionStage<ConversationThread> operation) {
         long epoch = nextEpoch();
-        publish(copy(SettingsLoadState.SAVING, "正在主窗口打开 Thread…", epoch));
+        publish(copy(SettingsLoadState.SAVING, "正在主窗口打开对话…", epoch));
         operation.whenComplete((thread, failure) -> {
             if (epoch != state.epoch()) {
                 return;
@@ -195,7 +198,7 @@ public final class ManagedWorktreeSettingsPresenter {
                 List.of(),
                 Optional.empty(),
                 Optional.empty(),
-                sorted.isEmpty() ? "暂无 Workspace" : "",
+                sorted.isEmpty() ? "暂无工作区" : "",
                 epoch));
         sorted.stream().findFirst().ifPresent(this::selectWorkspace);
     }

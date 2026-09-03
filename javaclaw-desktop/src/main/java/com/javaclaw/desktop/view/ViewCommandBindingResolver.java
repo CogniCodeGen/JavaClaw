@@ -54,12 +54,12 @@ final class ViewCommandBindingResolver {
 
     Optional<String> unavailable(ViewAction action, Map<String, Object> row) {
         for (String field : action.rowArguments().values()) {
-            if (missing(row.get(field)) || !row.containsKey(field)) {
+            if (missing(row.get(field))) {
                 return Optional.of("请选择包含字段 “" + field + "” 的记录");
             }
         }
         if (action.expectedRevision() instanceof ExpectedRevisionBinding.RowField field
-                && (missing(row.get(field.field())) || !row.containsKey(field.field()))) {
+                && missing(row.get(field.field()))) {
             return Optional.of("请选择包含 revision 字段 “" + field.field() + "” 的记录");
         }
         return action.commandBindings().stream()

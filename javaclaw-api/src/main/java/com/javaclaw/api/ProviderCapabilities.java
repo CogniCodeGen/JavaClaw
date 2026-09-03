@@ -5,7 +5,7 @@ import java.util.Set;
 /**
  * Provider 端点声明的稳定能力快照。
  *
- * @param roles 支持的模型角色
+ * @param purposes 支持的模型用途
  * @param streaming 支持流式事件
  * @param toolCalls 支持结构化工具调用
  * @param structuredOutput 支持结构化输出
@@ -15,7 +15,7 @@ import java.util.Set;
  * @param nativeCompaction 支持 Provider 原生压缩
  */
 public record ProviderCapabilities(
-        Set<ProviderRole> roles,
+        Set<ProviderModelPurpose> purposes,
         boolean streaming,
         boolean toolCalls,
         boolean structuredOutput,
@@ -23,11 +23,8 @@ public record ProviderCapabilities(
         boolean reasoningSummary,
         boolean opaqueState,
         boolean nativeCompaction) {
-    /** 固定角色集合。 */
+    /** 固定用途集合；禁用的空模型连接壳允许没有用途。 */
     public ProviderCapabilities {
-        roles = Set.copyOf(roles);
-        if (roles.isEmpty()) {
-            throw new IllegalArgumentException("provider roles must not be empty");
-        }
+        purposes = Set.copyOf(purposes);
     }
 }

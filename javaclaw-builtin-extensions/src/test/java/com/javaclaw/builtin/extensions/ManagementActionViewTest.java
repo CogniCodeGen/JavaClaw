@@ -232,6 +232,20 @@ class ManagementActionViewTest {
     }
 
     @Test
+    void memoryLearningSettingsUseAnIndependentViewDocument() {
+        ViewSchema management = MemoryExtensionPresentation.managementView();
+        ViewSchema learning = MemoryExtensionPresentation.learningView();
+
+        assertTrue(management.nodes().stream().noneMatch(node -> "learning-settings".equals(node.id())));
+        assertEquals("javaclaw.memory.learning", learning.viewId());
+        assertEquals(
+                List.of("settings"),
+                learning.dataSources().stream().map(source -> source.id()).toList());
+        assertEquals(
+                "settings/update", form(learning, "learning-settings").submit().command());
+    }
+
+    @Test
     void skillManagementActionsSavePublishEnableDeleteAndRestoreDraft() throws Exception {
         BuiltinExtensionTestSupport support = new BuiltinExtensionTestSupport();
         var started = support.start(new SkillExtension());

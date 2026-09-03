@@ -40,7 +40,7 @@ public final class PrivateNetworkGrantSettingsPresenter {
     /** 重新读取 Workspace，并选择首个 Workspace。 */
     public void reload() {
         long epoch = nextEpoch();
-        publish(copy(SettingsLoadState.LOADING, "正在读取 Workspace…", epoch));
+        publish(copy(SettingsLoadState.LOADING, "正在读取工作区…", epoch));
         gateway.workspaces().whenComplete((workspaces, failure) -> applyWorkspaces(epoch, workspaces, failure));
     }
 
@@ -68,6 +68,11 @@ public final class PrivateNetworkGrantSettingsPresenter {
                                 checked.id(), SecurityGrantKind.PRIVATE_NETWORK, Optional.empty(), 100),
                         GrantCatalog::new)
                 .whenComplete((catalog, failure) -> applyGrantCatalog(epoch, checked, catalog, failure));
+    }
+
+    /** 使旧响应失效并保留尚未提交的授权草稿。 */
+    public void invalidateWorkspace() {
+        publish(copy(SettingsLoadState.READY, "固定工作区当前不可用；草稿已保留", nextEpoch()));
     }
 
     /** @param grant 列表中选中的授权 */
@@ -173,7 +178,7 @@ public final class PrivateNetworkGrantSettingsPresenter {
                     state.validityHours(),
                     Optional.of(preview),
                     state.decisions(),
-                    "请核对 Origin、地址集合和期限后确认",
+                    "请核对来源地址、地址集合和期限后确认",
                     epoch));
         });
     }
@@ -218,7 +223,7 @@ public final class PrivateNetworkGrantSettingsPresenter {
                 "1",
                 Optional.empty(),
                 List.of(),
-                sorted.isEmpty() ? "暂无 Workspace" : "",
+                sorted.isEmpty() ? "暂无工作区" : "",
                 epoch));
         sorted.stream().findFirst().ifPresent(this::selectWorkspace);
     }

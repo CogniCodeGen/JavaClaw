@@ -145,8 +145,18 @@ public final class DesktopAppearanceManager {
      */
     public static void apply(Scene scene, AppearancePreferences preferences) {
         Objects.requireNonNull(scene, "scene");
+        applyTo(scene.getRoot(), preferences);
+    }
+
+    /**
+     * 将一组外观 class 应用到独立 Parent；用于尚未挂载到 Scene 的 DialogPane。
+     *
+     * @param root 目标根节点
+     * @param preferences 完整外观偏好
+     */
+    public static void applyTo(Parent root, AppearancePreferences preferences) {
+        Objects.requireNonNull(root, "root");
         Objects.requireNonNull(preferences, "preferences");
-        Parent root = scene.getRoot();
         root.getStyleClass().removeIf(DesktopAppearanceManager::isAppearanceClass);
         root.getStyleClass()
                 .addAll(

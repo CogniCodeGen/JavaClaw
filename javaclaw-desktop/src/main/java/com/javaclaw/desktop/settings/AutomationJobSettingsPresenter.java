@@ -52,7 +52,7 @@ public final class AutomationJobSettingsPresenter {
     /** 重新读取 Workspace，并从当前过滤条件的第一页读取 Job。 */
     public void reload() {
         long epoch = nextEpoch();
-        publish(withFeedback(SettingsLoadState.LOADING, "正在读取 Workspace 与可恢复 Job…", epoch));
+        publish(withFeedback(SettingsLoadState.LOADING, "正在读取工作区与可恢复后台任务…", epoch));
         gateway.workspaces().whenComplete((workspaces, failure) -> completeWorkspaces(epoch, workspaces, failure));
     }
 
@@ -105,7 +105,7 @@ public final class AutomationJobSettingsPresenter {
                 state.filter(),
                 page,
                 AutomationJobDetail.empty(),
-                feedback(SettingsLoadState.LOADING, "正在读取 Job 工作单元与 checkpoint…", epoch)));
+                feedback(SettingsLoadState.LOADING, "正在读取后台任务工作单元与 检查点…", epoch)));
         readDetail(epoch, selected);
     }
 
@@ -172,7 +172,7 @@ public final class AutomationJobSettingsPresenter {
                 filter,
                 loading,
                 AutomationJobDetail.empty(),
-                feedback(SettingsLoadState.LOADING, "正在读取第 " + (index + 1) + " 页 Job…", epoch)));
+                feedback(SettingsLoadState.LOADING, "正在读取第 " + (index + 1) + " 页后台任务…", epoch)));
         gateway.jobs(filter.workspaceId(), filter.extensionId(), filter.states(), loading.currentStart(), PAGE_SIZE)
                 .whenComplete((page, failure) -> completePage(epoch, selectedId, page, failure));
     }
@@ -193,14 +193,14 @@ public final class AutomationJobSettingsPresenter {
                 .or(() -> jobs.stream().findFirst());
         AutomationJobPage page =
                 new AutomationJobPage(jobs, state.page().starts(), state.page().index(), result.nextCursor(), selected);
-        String message = jobs.isEmpty() ? "当前过滤条件下暂无可恢复 Job" : "";
+        String message = jobs.isEmpty() ? "当前过滤条件下暂无可恢复后台任务" : "";
         SettingsLoadState phase = selected.isPresent() ? SettingsLoadState.LOADING : SettingsLoadState.READY;
         publish(new AutomationJobSettingsState(
                 state.workspaces(),
                 state.filter(),
                 page,
                 AutomationJobDetail.empty(),
-                feedback(phase, selected.isPresent() ? "正在读取 Job 详情…" : message, epoch)));
+                feedback(phase, selected.isPresent() ? "正在读取后台任务详情…" : message, epoch)));
         selected.ifPresent(job -> readDetail(epoch, job));
     }
 
@@ -229,7 +229,7 @@ public final class AutomationJobSettingsPresenter {
         }
         InputJobRpcContracts.JobReadResult checked = Objects.requireNonNull(detail, "detail");
         if (!checked.job().id().equals(selectedId)) {
-            fail(epoch, new IllegalStateException("Job 详情与选择不一致"), false);
+            fail(epoch, new IllegalStateException("后台任务详情与选择不一致"), false);
             return;
         }
         AutomationJobPage page = replaceReceipt(state.page(), checked.job());
@@ -244,7 +244,7 @@ public final class AutomationJobSettingsPresenter {
     private void mutate(JobAction action) {
         ExtensionExecutionReceipt job = authoritativeSelection();
         if (!action.allowed(job.state())) {
-            throw new IllegalStateException("Job 当前状态不允许" + action.label());
+            throw new IllegalStateException("后台任务当前状态不允许" + action.label());
         }
         long epoch = nextEpoch();
         publish(new AutomationJobSettingsState(
@@ -252,7 +252,7 @@ public final class AutomationJobSettingsPresenter {
                 state.filter(),
                 state.page(),
                 new AutomationJobDetail(state.detail().value(), false),
-                feedback(SettingsLoadState.SAVING, "正在" + action.label() + " Job…", epoch)));
+                feedback(SettingsLoadState.SAVING, "正在" + action.label() + " 后台任务…", epoch)));
         CommandOptions options = CommandOptions.create(job.revision());
         execute(action, job, options)
                 .whenComplete((updated, failure) -> completeMutation(epoch, action, updated, failure));
@@ -277,7 +277,7 @@ public final class AutomationJobSettingsPresenter {
         }
         ExtensionExecutionReceipt checked = Objects.requireNonNull(updated, "updated");
         if (!selected(checked.id())) {
-            fail(epoch, new IllegalStateException("Job 动作结果与选择不一致"), false);
+            fail(epoch, new IllegalStateException("后台任务动作结果与选择不一致"), false);
             return;
         }
         AutomationJobPage page = replaceReceipt(state.page(), checked);
@@ -288,7 +288,7 @@ public final class AutomationJobSettingsPresenter {
                 page,
                 detail,
                 feedback(SettingsLoadState.LOADING, action.label() + "成功，正在刷新工作单元…", epoch)));
-        readDetail(epoch, checked, action.label() + " Job 已提交");
+        readDetail(epoch, checked, action.label() + " 后台任务已提交");
     }
 
     private void fail(long epoch, Throwable failure, boolean conflict) {
@@ -318,7 +318,7 @@ public final class AutomationJobSettingsPresenter {
         return state.page().jobs().stream()
                 .filter(job -> job.id().equals(id))
                 .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Job 已不在当前页"));
+                .orElseThrow(() -> new IllegalArgumentException("后台任务已不在当前页"));
     }
 
     private AutomationJobPage selectedPage(ExtensionExecutionReceipt selected) {

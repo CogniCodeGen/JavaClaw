@@ -100,8 +100,8 @@ public record AgentProfileDraft(
         return new AgentProfileSpec(
                 displayName,
                 systemInstruction,
-                provider.orElseThrow(() -> new IllegalArgumentException("请选择 Provider 和模型")),
-                permissionProfile.orElseThrow(() -> new IllegalArgumentException("请选择 PermissionProfile")),
+                provider.orElseThrow(() -> new IllegalArgumentException("请选择模型服务和模型")),
+                permissionProfile.orElseThrow(() -> new IllegalArgumentException("请选择权限方案")),
                 tools,
                 budget);
     }

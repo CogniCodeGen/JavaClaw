@@ -6,6 +6,10 @@ import java.util.Objects;
 import java.util.Optional;
 
 import com.javaclaw.api.EffectivePermissionPreview;
+import com.javaclaw.api.PermissionPresetDescriptor;
+import com.javaclaw.api.PermissionPresetInstantiationRequest;
+import com.javaclaw.api.PermissionPresetInstantiationResult;
+import com.javaclaw.api.PermissionPresetPreview;
 import com.javaclaw.api.PermissionProfile;
 import com.javaclaw.api.PermissionProfileDiff;
 import com.javaclaw.api.PermissionProfileRef;
@@ -36,6 +40,46 @@ public final class PermissionProfileClient {
         return connection
                 .query("permissionProfile/list", Map.of(), PermissionProfileRpcContracts.ListResult.class)
                 .profiles();
+    }
+
+    /**
+     * 列出代码内置的只读权限预设。
+     *
+     * @return 预设描述
+     */
+    public List<PermissionPresetDescriptor> presets() {
+        return connection
+                .query("permissionProfile/preset/list", Map.of(), PermissionProfileRpcContracts.PresetListResult.class)
+                .presets();
+    }
+
+    /**
+     * 预览权限预设针对固定 Workspace 生成的普通配置。
+     *
+     * @param request 精确预设和用户确认的工具、进程选择
+     * @return 尚未写入 H2 的配置预览
+     */
+    public PermissionPresetPreview previewPreset(PermissionPresetInstantiationRequest request) {
+        return connection.query(
+                "permissionProfile/preset/preview",
+                new PermissionProfileRpcContracts.PresetPreviewPayload(request),
+                PermissionPresetPreview.class);
+    }
+
+    /**
+     * 将权限预设实例化为普通 PermissionProfile revision 1。
+     *
+     * @param request 精确预设和用户确认的工具、进程选择
+     * @param options expected revision 必须为 0
+     * @return 已持久化配置及实际使用的预设
+     */
+    public PermissionPresetInstantiationResult instantiatePreset(
+            PermissionPresetInstantiationRequest request, CommandOptions options) {
+        return connection.command(
+                "permissionProfile/preset/instantiate",
+                new PermissionProfileRpcContracts.PresetInstantiatePayload(request),
+                options,
+                PermissionPresetInstantiationResult.class);
     }
 
     /**

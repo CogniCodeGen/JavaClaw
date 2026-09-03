@@ -17,7 +17,7 @@ public record ProviderRef(String endpointId, long endpointRevision, String model
     public ProviderRef {
         endpointId = Preconditions.identifier(endpointId, "endpointId");
         endpointRevision = Preconditions.positive(endpointRevision, "endpointRevision");
-        model = Preconditions.text(model, "model");
+        model = Preconditions.boundedText(model, "model", 1_000);
     }
 
     /**

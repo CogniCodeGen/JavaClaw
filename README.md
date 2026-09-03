@@ -40,9 +40,9 @@ mvn clean verify
 ```
 
 开发调试使用下文的 IDEA 共享运行配置；已打包产物使用发行目录中的 `bin/javaclaw`
-（Windows 为 `bin\javaclaw.cmd`）。发行运行数据默认位于 `$HOME/.javaclaw/data-v5`；开发服务进程可通过
-`-Djavaclaw.data.root=<absolute-data-v5>` 使用独立数据根，日志写入该根下的 `logs`。Provider 凭据不得直接写入
-配置 payload，只能保存 Vault `CredentialRef`。
+（Windows 为 `bin\javaclaw.cmd`）。发行运行数据默认位于 `$HOME/.javaclaw/data-v5`。手工覆盖开发数据根时，应同时设置
+`-Djavaclaw.data.root=<absolute-data-v5>` 与 `-Djavaclaw.log.dir=<absolute-data-v5>/logs`；IDEA 共享配置和发行脚本已经同时
+设置二者。Provider 凭据不得直接写入配置 payload，只能保存 Vault `CredentialRef`。
 
 ### IntelliJ IDEA 一键调试
 
@@ -68,7 +68,7 @@ IDEA 直接调试没有发行启动器 supervisor，因此“修复登录启动�
 - 写命令统一携带 idempotency key 与 expected revision
 - 扩展业务统一使用 `extension/query`、`extension/command`、`extension/schema/read`、`extension/view/list`
 - 扩展写入通过无正文的 `extension/event` 通知失效，SDK 持续接收后重新读取权威状态
-- 当前 catalog 共 138 个方法；每个方法都有独立且严格的 params/result JSON Schema
+- 当前 catalog 共 147 个方法；每个方法都有独立且严格的 params/result JSON Schema
 - Core ID 使用标量字符串，时间与 Duration 使用 ISO-8601 文本，不接受第二种 wire 表示
 - 未知 Item schema 保留规范 JSON payload，供 5.x 前向演进
 
@@ -78,13 +78,24 @@ Schema 位于
 
 ## 模型配置
 
-App Server 从 H2 中的版本化 Provider 配置建立热更新 registry，CredentialRef 只在调用边界从 Secret Vault 解封。
-通用语义由 Spring AI Adapter 统一，OpenAI Responses 的 reasoning summary、opaque state 与原生 compaction 使用
-专用 Adapter。JavaClaw 不使用 Spring AI 的自动工具循环；审批、Sandbox、预算和 EffectReceipt 始终由 Harness
-控制。
+App Server 从 H2 中的版本化 Provider 配置建立热更新 registry。每个模型独立声明 Chat/Embedding 用途；聊天入口只认
+Workspace 的精确 `AgentProfileRef` 默认绑定，Embedding 则使用独立的精确 `ProviderRef` 绑定。CredentialRef 仅在构造
+候选 Adapter 的受控 callback 内从 Secret Vault 解封；Vault 产生的临时字节和字符缓冲区会在 callback 返回前清零，厂商
+SDK 内部凭据表示则随 Adapter generation 生命周期存在。Vault 变化按顺序执行，并在变更前关闭带 epoch 的运行时门闩；
+新调用取得 Adapter lease 后仍需复核 epoch，重建失败时门闩保持关闭。旧客户端只在调用租约释放后关闭。
 
-Provider 配置与凭据通过服务端复合命令原子提交，候选 Adapter 验证失败不会替换活动 registry。非计费配置探测和
-可能计费的模型 round-trip 分开呈现，后者必须由用户显式确认。Prompt 优化通过正常、受预算的 Harness Turn 生成
+模型目录发现使用 session-owned 的 `provider/model/discovery/start|read|cancel` 临时操作，最长 30 秒、最多 1000 条，
+不执行推理也不持久化结果；页面、RPC session 或 App Server 关闭会取消真实 HTTP 调用。目录读取拒绝 redirect；使用
+`API_KEY` 的自定义地址必须为 HTTPS，仅显式 loopback 可用 HTTP，`NONE` 只允许自定义 OpenAI-compatible 地址且不能
+绑定 CredentialRef。首次设置按“禁用连接壳 → 凭据 → 模型用途 → 启用”恢复，确定性幂等键不包含 Secret，ID 冲突不覆盖。
+
+通用语义由 Spring AI Adapter 统一，OpenAI Responses 的 reasoning summary、opaque state 与原生 compaction 使用专用
+Adapter。JavaClaw 不使用 Spring AI 的自动工具循环；审批、Sandbox、预算和 EffectReceipt 始终由 Harness 控制。
+
+Provider 普通配置按不可变 revision 提交。`provider/credential/*` 先预构造候选 Adapter；Vault 密文、Secret 元数据
+revision、Provider 新 revision 与幂等回执在同一 H2 事务提交，成功后再通过无 I/O 的引用交换同步激活候选 generation。
+候选构造或 H2 提交失败时旧 revision 和路由保持不变；数据库提交后的激活异常不能回滚 H2，而必须保持 fail closed。
+非计费配置探测和可能计费的模型 round-trip 分开呈现，后者必须由用户显式确认。Prompt 优化通过正常、受预算的 Harness Turn 生成
 Draft；只有用户显式采纳且 revision 仍匹配时才会更新 Profile。
 
 没有有效 Provider 配置或 Vault 处于锁定状态时，App Server 仍可启动并提供管理能力，但依赖模型或 Secret 的操作
@@ -103,7 +114,10 @@ Plan、Loop、Workflow、SDD、Schedule、Memory、Knowledge、Skill 与 Site �
 
 当前设置与管理中心的 29 个生产导航入口均已接入强类型 SDK 或 ViewSchema v2 权威数据源。扩展写入后的
 `extension/event` 只触发按 revision 重新读取；快速通知会合并，dirty 草稿遇到冲突时不会被后台刷新覆盖。
-macOS 参考集包含九主题、三密度、两种窗口共 54 张生产 Scene，并在独立 JVM 中执行逐字节回归。
+设置中心冻结自己的 Workspace 选择，不跟随主窗口切换；目录重载或目标失效时保留页面与草稿，但在确认其仍可用前
+暂停写入。dirty 或 pending 时会阻止重载和切换，旧 epoch 的异步响应不会进入新 Workspace。
+macOS 参考集包含设置中心壳与外观页在九主题、三密度、100% 字号和两种窗口下的 54 张生产 Scene，并在独立 JVM
+中执行逐字节回归。29 个入口的目录完整性由同一测试另行断言；29 页正文、多状态和其余三档字号仍需补充视觉证据。
 
 ## 恢复语义
 

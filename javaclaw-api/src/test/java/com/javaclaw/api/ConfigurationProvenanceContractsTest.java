@@ -4,8 +4,8 @@ import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.UUID;
 
@@ -21,58 +21,54 @@ class ConfigurationProvenanceContractsTest {
     private static final WorkspaceId WORKSPACE_ID = WorkspaceId.random();
 
     @Test
-    void provider配置复制集合并拒绝Secret与不安全地址() {
+    void provider配置按模型声明用途并拒绝不安全配置() {
+        ProviderModelSpec chat = model("model-a", Set.of(ProviderModelPurpose.CHAT));
+        ProviderModelSpec embedding = new ProviderModelSpec(
+                "embed-a", "Embed A", Set.of(ProviderModelPurpose.EMBEDDING), OptionalInt.of(1536));
+        ProviderAdapterOptions.OpenAiCompatible options =
+                new ProviderAdapterOptions.OpenAiCompatible(Optional.of("team"), Optional.empty());
         ProviderEndpointSpec spec = providerSpec(
                 Optional.of(URI.create("https://models.example.test/v1")),
-                Set.of(ProviderRole.CHAT, ProviderRole.EMBEDDING),
-                List.of("model-a", "model-a", "embed-a"),
+                List.of(chat, embedding),
                 Optional.of(new CredentialRef("provider", "credential")),
                 Duration.ofSeconds(30),
                 2,
-                Map.of("organization", "team"));
+                options);
 
-        assertEquals(List.of("model-a", "embed-a"), spec.models());
-        assertEquals(2, spec.roles().size());
-        assertEquals("team", spec.options().get("organization"));
+        assertEquals(List.of(chat, embedding), spec.models());
+        assertEquals("team", options.organization().orElseThrow());
         assertInvalidProviderUri("relative/path");
         assertInvalidProviderUri("file:///tmp/model");
         assertInvalidProviderUri("https://user@models.example.test/v1");
         assertInvalidProviderUri("https://models.example.test/v1#fragment");
-        assertInvalidProvider(Set.of(), List.of("model"), Optional.empty(), Duration.ofSeconds(1), 0, Map.of());
+        assertInvalidProviderUri("https://models.example.test/v1?key=value");
         assertInvalidProvider(
-                Set.of(ProviderRole.CHAT), List.of(), Optional.empty(), Duration.ofSeconds(1), 0, Map.of());
-        assertInvalidProvider(
-                Set.of(ProviderRole.CHAT), List.of(" "), Optional.empty(), Duration.ofSeconds(1), 0, Map.of());
-        assertInvalidProvider(
-                Set.of(ProviderRole.CHAT),
-                List.of("model"),
+                List.of(chat),
                 Optional.of(new CredentialRef("mcp", "credential")),
                 Duration.ofSeconds(1),
                 0,
-                Map.of());
+                ProviderAdapterOptions.defaults(ProviderAdapter.OPENAI_COMPATIBLE));
+        assertInvalidProvider(List.of(chat), Optional.empty(), Duration.ZERO, 0, options);
         assertInvalidProvider(
-                Set.of(ProviderRole.CHAT), List.of("model"), Optional.empty(), Duration.ZERO, 0, Map.of());
-        assertInvalidProvider(
-                Set.of(ProviderRole.CHAT),
-                List.of("model"),
-                Optional.empty(),
-                Duration.ofMinutes(10).plusNanos(1),
-                0,
-                Map.of());
-        assertInvalidProvider(
-                Set.of(ProviderRole.CHAT), List.of("model"), Optional.empty(), Duration.ofSeconds(1), -1, Map.of());
-        assertInvalidProvider(
-                Set.of(ProviderRole.CHAT), List.of("model"), Optional.empty(), Duration.ofSeconds(1), 11, Map.of());
-        for (String key :
-                List.of("api_key", "authorization", "cookie", "password", "private-key", "secret", "access.token")) {
-            assertInvalidProvider(
-                    Set.of(ProviderRole.CHAT),
-                    List.of("model"),
-                    Optional.empty(),
-                    Duration.ofSeconds(1),
-                    0,
-                    Map.of(key, "value"));
-        }
+                List.of(chat), Optional.empty(), Duration.ofMinutes(10).plusNanos(1), 0, options);
+        assertInvalidProvider(List.of(chat), Optional.empty(), Duration.ofSeconds(1), -1, options);
+        assertInvalidProvider(List.of(chat), Optional.empty(), Duration.ofSeconds(1), 11, options);
+        assertInvalidProvider(List.of(chat, chat), Optional.empty(), Duration.ofSeconds(1), 0, options);
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new ProviderModelSpec("chat", "Chat", Set.of(ProviderModelPurpose.CHAT), OptionalInt.of(3)));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new ProviderEndpointSpec(
+                        "Provider",
+                        ProviderAdapter.OPENAI_COMPATIBLE,
+                        Optional.empty(),
+                        ProviderAuthentication.NONE,
+                        List.of(),
+                        Optional.empty(),
+                        Duration.ofSeconds(1),
+                        0,
+                        options));
     }
 
     @Test
@@ -293,7 +289,7 @@ class ConfigurationProvenanceContractsTest {
         ProviderStatus status = new ProviderStatus(
                 providerRef(),
                 ProviderReadiness.READY,
-                new ProviderCapabilities(Set.of(ProviderRole.CHAT), true, true, true, true, true, true, true),
+                new ProviderCapabilities(Set.of(ProviderModelPurpose.CHAT), true, true, true, true, true, true, true),
                 Optional.of("  "),
                 NOW);
 
@@ -326,17 +322,16 @@ class ConfigurationProvenanceContractsTest {
 
     private static ProviderEndpointSpec providerSpec(
             Optional<URI> baseUri,
-            Set<ProviderRole> roles,
-            List<String> models,
+            List<ProviderModelSpec> models,
             Optional<CredentialRef> credential,
             Duration timeout,
             int retries,
-            Map<String, String> options) {
+            ProviderAdapterOptions options) {
         return new ProviderEndpointSpec(
                 "Provider",
                 ProviderAdapter.OPENAI_COMPATIBLE,
                 baseUri,
-                roles,
+                ProviderAuthentication.API_KEY,
                 models,
                 credential,
                 timeout,
@@ -349,24 +344,26 @@ class ConfigurationProvenanceContractsTest {
                 IllegalArgumentException.class,
                 () -> providerSpec(
                         Optional.of(URI.create(uri)),
-                        Set.of(ProviderRole.CHAT),
-                        List.of("model"),
+                        List.of(model("model", Set.of(ProviderModelPurpose.CHAT))),
                         Optional.empty(),
                         Duration.ofSeconds(1),
                         0,
-                        Map.of()));
+                        ProviderAdapterOptions.defaults(ProviderAdapter.OPENAI_COMPATIBLE)));
     }
 
     private static void assertInvalidProvider(
-            Set<ProviderRole> roles,
-            List<String> models,
+            List<ProviderModelSpec> models,
             Optional<CredentialRef> credential,
             Duration timeout,
             int retries,
-            Map<String, String> options) {
+            ProviderAdapterOptions options) {
         assertThrows(
                 RuntimeException.class,
-                () -> providerSpec(Optional.empty(), roles, models, credential, timeout, retries, options));
+                () -> providerSpec(Optional.empty(), models, credential, timeout, retries, options));
+    }
+
+    private static ProviderModelSpec model(String id, Set<ProviderModelPurpose> purposes) {
+        return new ProviderModelSpec(id, id, purposes, OptionalInt.empty());
     }
 
     private static InstructionSourceResolution source(

@@ -1,6 +1,7 @@
 package com.javaclaw.desktop.settings;
 
 import java.util.Objects;
+import java.util.Optional;
 
 import javafx.scene.Node;
 import javafx.scene.control.Alert;
@@ -22,8 +23,9 @@ import com.javaclaw.desktop.component.PlatformComponentFactory;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 import com.javaclaw.desktop.component.PlatformComponentFactory.FeedbackKind;
+import com.javaclaw.desktop.component.PlatformDialogs;
 
-/** Workspace 重命名、归档和默认 Agent Profile 管理页面。 */
+/** 工作区重命名、归档和默认智能体方案管理页面。 */
 public final class WorkspaceSettingsPage extends VBox implements ManagedSettingsPage {
     private final PlatformComponentFactory components = new PlatformComponentFactory();
     private final WorkspaceSettingsPresenter presenter;
@@ -42,7 +44,7 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
     private boolean rendering;
 
     /**
-     * 创建 Workspace 设置页。
+     * 创建工作区设置页。
      *
      * @param gateway 强类型 SDK 设置边界
      */
@@ -50,7 +52,7 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
         presenter = new WorkspaceSettingsPresenter(gateway);
         saveName = components.action("保存名称", ActionStyle.SOFT, ActionSize.NORMAL);
         saveName.setOnAction(event -> presenter.saveName());
-        saveProfile = components.action("保存默认 Profile", ActionStyle.PRIMARY, ActionSize.NORMAL);
+        saveProfile = components.action("保存默认智能体方案", ActionStyle.PRIMARY, ActionSize.NORMAL);
         saveProfile.setOnAction(event -> presenter.saveProfile());
         archive = components.action("归档登记", ActionStyle.DANGER, ActionSize.NORMAL);
         archive.setOnAction(event -> archive());
@@ -65,6 +67,11 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
     }
 
     @Override
+    public Optional<Node> actionContent() {
+        return Optional.of(actions);
+    }
+
+    @Override
     public void activate() {
         presenter.reload();
     }
@@ -75,8 +82,18 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
     }
 
     @Override
+    public boolean pending() {
+        return state.phase() == SettingsLoadState.LOADING;
+    }
+
+    @Override
+    public void workspaceChanged(Optional<Workspace> workspace) {
+        presenter.bindWorkspace(Objects.requireNonNull(workspace, "workspace"));
+    }
+
+    @Override
     public void warnUnsavedChanges() {
-        actions.show(ActionState.DIRTY, "请先保存或丢弃 Workspace 草稿，再离开此页");
+        actions.show(ActionState.DIRTY, "请先保存或丢弃工作区草稿，再离开此页");
     }
 
     @Override
@@ -85,9 +102,9 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
     }
 
     private void configurePage() {
-        Label title = new Label("Workspace");
+        Label title = new Label("工作区");
         title.getStyleClass().addAll("sec-title", "platform-page-title");
-        Label hint = new Label("Workspace 根目录在创建后不可修改。归档只移除 JavaClaw 登记，永远不会删除用户目录。");
+        Label hint = new Label("工作区根目录在创建后不可修改。归档只移除 JavaClaw 登记，永远不会删除用户目录。");
         hint.setWrapText(true);
         hint.getStyleClass().add("sec-hint");
         configureCatalog();
@@ -99,45 +116,45 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
         masterDetail
                 .list()
                 .setCellFactory(ignored -> components.detailCell(
-                        Workspace::name, workspace -> workspace.lifecycle() + " · revision " + workspace.revision()));
+                        Workspace::name,
+                        workspace -> SettingsLabels.workspaceLifecycle(workspace.lifecycle()) + " · 版本 "
+                                + workspace.revision()));
         masterDetail
                 .list()
                 .getSelectionModel()
                 .selectedItemProperty()
                 .addListener((observable, previous, selected) -> select(selected));
-        masterDetail
-                .list()
-                .setPlaceholder(components.feedback(FeedbackKind.EMPTY, "暂无 Workspace", "请先在主窗口创建 Workspace。"));
-        masterDetail.showDetail(components.feedback(FeedbackKind.EMPTY, "选择 Workspace", "选择左侧项目后可管理名称与默认 Profile。"));
+        masterDetail.list().setPlaceholder(components.feedback(FeedbackKind.EMPTY, "暂无工作区", "请先在主窗口创建工作区。"));
+        masterDetail.showDetail(components.feedback(FeedbackKind.EMPTY, "选择工作区", "选择左侧项目后可管理名称与默认智能体方案。"));
     }
 
     private Node detail() {
-        FormSection identity = new FormSection("登记信息", "根目录只读；名称与生命周期使用各自的权威 revision。");
-        name.setAccessibleText("Workspace 名称");
-        name.setPromptText("Workspace 名称");
+        FormSection identity = new FormSection("登记信息", "根目录只读；名称与生命周期使用各自的权威版本。");
+        name.setAccessibleText("工作区名称");
+        name.setPromptText("工作区名称");
         name.getStyleClass().add("settings-field");
         name.textProperty().addListener((observable, previous, value) -> editName(value));
         identity.addField("名称", name);
         identity.addField("根目录", rootPath);
         identity.addField("状态", lifecycle);
-        identity.addField("Revision", revision);
+        identity.addField("版本", revision);
 
-        FormSection defaults = new FormSection("Turn 默认配置", "绑定精确 Agent Profile revision；变更只影响之后启动的 Turn。");
+        FormSection defaults = new FormSection("任务默认配置", "绑定精确智能体方案版本；变更只影响之后启动的任务。");
         profile.setMaxWidth(Double.MAX_VALUE);
-        profile.setAccessibleText("Workspace 默认 Agent Profile");
+        profile.setAccessibleText("工作区默认智能体方案");
         profile.setCellFactory(ignored -> components.detailCell(
                 candidate -> candidate.spec().displayName(),
-                candidate -> candidate.id() + " · revision " + candidate.revision()));
-        profile.setButtonCell(components.textCell(
-                candidate -> candidate.spec().displayName() + " · revision " + candidate.revision()));
+                candidate -> candidate.id() + " · 版本 " + candidate.revision()));
+        profile.setButtonCell(
+                components.textCell(candidate -> candidate.spec().displayName() + " · 版本 " + candidate.revision()));
         profile.valueProperty().addListener((observable, previous, selected) -> chooseProfile(selected));
-        defaults.addField("默认 Profile", profile);
-        Label rule = new Label("Thread 可以选择自己的 Profile；活动 Turn 始终继续使用启动时冻结的快照。");
+        defaults.addField("默认智能体方案", profile);
+        Label rule = new Label("对话可以选择自己的智能体方案；活动任务始终继续使用启动时冻结的快照。");
         rule.setWrapText(true);
         rule.getStyleClass().add("sec-hint");
         defaults.addFullWidth(rule);
 
-        VBox detail = new VBox(12, identity, defaults, actions);
+        VBox detail = new VBox(12, identity, defaults);
         detail.getStyleClass().add("platform-page");
         return detail;
     }
@@ -175,7 +192,7 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
             if (snapshot.selected().isPresent()) {
                 renderSelected(snapshot);
             } else {
-                masterDetail.showDetail(components.feedback(FeedbackKind.EMPTY, "暂无 Workspace", "请先在主窗口创建 Workspace。"));
+                masterDetail.showDetail(components.feedback(FeedbackKind.EMPTY, "暂无工作区", "请先在主窗口创建工作区。"));
             }
         } finally {
             rendering = false;
@@ -190,7 +207,7 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
         masterDetail.showDetail(editor);
         name.setText(snapshot.draftName());
         rootPath.setText(selected.root().toString());
-        lifecycle.setText(selected.lifecycle().name());
+        lifecycle.setText(SettingsLabels.workspaceLifecycle(selected.lifecycle()));
         revision.setText(Long.toString(selected.revision()));
         profile.getItems().setAll(snapshot.profiles());
         profile.setValue(snapshot.draftProfile().orElse(null));
@@ -208,7 +225,7 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
         } else if (snapshot.phase() == SettingsLoadState.ERROR) {
             actions.show(ActionState.ERROR, snapshot.message());
         } else if (snapshot.dirty()) {
-            actions.show(ActionState.DIRTY, "Workspace 草稿尚未保存");
+            actions.show(ActionState.DIRTY, "工作区草稿尚未保存");
         } else {
             actions.show(snapshot.message().isBlank() ? ActionState.IDLE : ActionState.SUCCESS, snapshot.message());
         }
@@ -227,14 +244,12 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
         Workspace selected = state.selected().orElseThrow();
         Alert alert = new Alert(
                 Alert.AlertType.CONFIRMATION,
-                "只归档 JavaClaw 中的 Workspace 登记，不会删除目录：" + selected.root(),
+                "只归档 JavaClaw 中的工作区登记，不会删除目录：" + selected.root(),
                 ButtonType.CANCEL,
                 ButtonType.OK);
-        if (getScene() != null && getScene().getWindow() != null) {
-            alert.initOwner(getScene().getWindow());
-        }
-        alert.setTitle("归档 Workspace 登记");
+        alert.setTitle("归档工作区登记");
         alert.setHeaderText("确认归档 “" + selected.name() + "”？");
+        PlatformDialogs.style(alert, this);
         if (alert.showAndWait().filter(ButtonType.OK::equals).isPresent()) {
             presenter.archive();
         }

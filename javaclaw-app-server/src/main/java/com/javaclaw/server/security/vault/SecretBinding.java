@@ -2,6 +2,8 @@ package com.javaclaw.server.security.vault;
 
 import java.util.Objects;
 
+import com.javaclaw.api.CredentialMetadata;
+
 /**
  * Vault 密文的不可变身份绑定。
  *
@@ -20,6 +22,12 @@ record SecretBinding(String namespace, String reference, long revision) {
 
     String aad() {
         return "javaclaw-vault\u0000" + namespace + '\u0000' + reference + '\u0000' + revision;
+    }
+
+    static SecretBinding from(CredentialMetadata metadata) {
+        CredentialMetadata checked = Objects.requireNonNull(metadata, "metadata");
+        return new SecretBinding(
+                checked.reference().namespace(), checked.reference().id(), checked.revision());
     }
 
     private static String identifier(String value, String name) {

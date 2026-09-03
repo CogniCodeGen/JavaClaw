@@ -2,13 +2,16 @@ package com.javaclaw.protocol;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SessionSecretChannelTest {
     @Test
@@ -80,6 +83,21 @@ class SessionSecretChannelTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> SessionSecretSealer.seal(info, "credential/oauth/create", new char[0]));
+    }
+
+    @Test
+    void 连接关闭回调只执行一次且关闭后注册会立即执行() {
+        SessionSecretChannel channel = SessionSecretChannel.open();
+        AtomicInteger callbacks = new AtomicInteger();
+        assertFalse(channel.isClosed());
+        channel.onClose(callbacks::incrementAndGet);
+
+        channel.close();
+        channel.close();
+        channel.onClose(callbacks::incrementAndGet);
+
+        assertTrue(channel.isClosed());
+        assertEquals(2, callbacks.get());
     }
 
     private static String flip(String encoded) {

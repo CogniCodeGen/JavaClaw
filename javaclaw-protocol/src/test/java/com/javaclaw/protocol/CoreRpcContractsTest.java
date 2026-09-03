@@ -3,8 +3,8 @@ package com.javaclaw.protocol;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.UUID;
 
@@ -17,9 +17,13 @@ import com.javaclaw.api.ApprovalDecision;
 import com.javaclaw.api.AttachmentScope;
 import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProviderAdapter;
+import com.javaclaw.api.ProviderAdapterOptions;
+import com.javaclaw.api.ProviderAuthentication;
 import com.javaclaw.api.ProviderEndpointSpec;
+import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.ProviderModelPurpose;
+import com.javaclaw.api.ProviderModelSpec;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.ThreadExecutionIntent;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.TurnBudget;
@@ -177,7 +181,8 @@ class CoreRpcContractsTest {
     @Test
     void configurationPermissionApproval与Rollout契约完整校验() {
         ProviderProfileRpcContracts.ProviderCreatePayload provider =
-                new ProviderProfileRpcContracts.ProviderCreatePayload(" provider ", providerSpec());
+                new ProviderProfileRpcContracts.ProviderCreatePayload(
+                        " provider ", providerSpec(), ProviderLifecycle.DISABLED);
         ProviderProfileRpcContracts.AgentProfileCreatePayload profile =
                 new ProviderProfileRpcContracts.AgentProfileCreatePayload(" profile ", profileSpec());
         CoreRpcContracts.ApprovalResolvePayload approval =
@@ -195,7 +200,8 @@ class CoreRpcContractsTest {
     @Test
     void configurationPermissionApproval与Rollout拒绝无效字段() {
         assertThrows(
-                NullPointerException.class, () -> new ProviderProfileRpcContracts.ProviderCreatePayload("id", null));
+                NullPointerException.class,
+                () -> new ProviderProfileRpcContracts.ProviderCreatePayload("id", null, ProviderLifecycle.ACTIVE));
         assertThrows(
                 NullPointerException.class,
                 () -> new ProviderProfileRpcContracts.AgentProfileCreatePayload("id", null));
@@ -235,12 +241,13 @@ class CoreRpcContractsTest {
                 "Provider",
                 ProviderAdapter.OPENAI_COMPATIBLE,
                 Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of("model"),
+                ProviderAuthentication.API_KEY,
+                List.of(new ProviderModelSpec(
+                        "model", "Model", Set.of(ProviderModelPurpose.CHAT), OptionalInt.empty())),
                 Optional.empty(),
                 Duration.ofSeconds(30),
                 1,
-                Map.of());
+                ProviderAdapterOptions.defaults(ProviderAdapter.OPENAI_COMPATIBLE));
     }
 
     private AgentProfileSpec profileSpec() {

@@ -156,13 +156,16 @@ class ViewSchemaCoverageTest {
 
     @Test
     void optionBindingExtensionContext和Attachment策略保持声明式边界() {
-        ViewOptionSource options = new ViewOptionSource("  providers  ", "  id  ", "  name  ");
+        ViewOptionSource options = new ViewOptionSource("  providers  ", "  id  ", "  name  ", Optional.empty());
+        ViewOptionFilter filter = new ViewOptionFilter("  toolName  ", "  selectedTool  ");
         ViewArgumentBinding argument = new ViewArgumentBinding("  providerId  ", "  providers  ", "  id  ");
         ExpectedRevisionBinding.RowField revision = new ExpectedRevisionBinding.RowField("  revision  ");
         ViewAttachmentPolicy policy = new ViewAttachmentPolicy(Set.of("TEXT/*", "application/pdf"), 1024);
         ExtensionContext context = new ExtensionContext(SpiFixtures.CLOCK, codec());
 
         assertEquals("providers", options.sourceId());
+        assertEquals("toolName", filter.sourceField());
+        assertEquals("selectedTool", filter.inputField());
         assertEquals("providerId", argument.argument());
         assertEquals("revision", revision.field());
         assertTrue(policy.accepts("text/plain; charset=utf-8"));
@@ -178,7 +181,7 @@ class ViewSchemaCoverageTest {
 
     @Test
     void scalarViewFields接受匹配类型的选项上传策略和初值() {
-        ViewOptionSource dynamic = new ViewOptionSource("options", "id", "name");
+        ViewOptionSource dynamic = new ViewOptionSource("options", "id", "name", Optional.empty());
         ViewAttachmentPolicy policy = new ViewAttachmentPolicy(Set.of("text/*"), 1024);
         ViewField staticChoice = field(
                 ViewFieldType.CHOICE,
@@ -216,7 +219,7 @@ class ViewSchemaCoverageTest {
 
     @Test
     void scalarViewFields拒绝错误选项和上传策略() {
-        ViewOptionSource dynamic = new ViewOptionSource("options", "id", "name");
+        ViewOptionSource dynamic = new ViewOptionSource("options", "id", "name", Optional.empty());
         ViewAttachmentPolicy policy = new ViewAttachmentPolicy(Set.of("text/*"), 1024);
 
         assertInvalidField(

@@ -39,6 +39,7 @@ import com.javaclaw.extension.spi.ViewStructuredListField;
 /** 平台拥有的结构化列表编辑器；只创建固定 JavaFX 控件并提交有界标量对象。 */
 final class ViewStructuredListControl extends VBox {
     private final ViewStructuredListField definition;
+    private final ViewData data;
     private final PlatformComponentFactory components;
     private final List<RowEditor> rows = new ArrayList<>();
     private final VBox rowContainer = new VBox();
@@ -47,15 +48,13 @@ final class ViewStructuredListControl extends VBox {
     private long nextKey;
 
     ViewStructuredListControl(
-            ViewStructuredListField definition, Object boundValue, PlatformComponentFactory components) {
+            ViewStructuredListField definition, Object boundValue, ViewData data, PlatformComponentFactory components) {
         this.definition = Objects.requireNonNull(definition, "definition");
+        this.data = Objects.requireNonNull(data, "data");
         this.components = Objects.requireNonNull(components, "components");
         getStyleClass().add("platform-form-grid");
         List<Map<String, Object>> initial = definition.normalizeRows(boundValue);
         initial.forEach(row -> rows.add(new RowEditor(row)));
-        while (rows.size() < definition.minRows()) {
-            rows.add(new RowEditor(definition.newItem(newKey())));
-        }
         addButton = components.action("新增行", ActionStyle.SOFT, ActionSize.COMPACT);
         addButton.setAccessibleText(definition.label() + "新增行");
         addButton.setOnAction(ignored -> addRow());
@@ -172,6 +171,7 @@ final class ViewStructuredListControl extends VBox {
                 inputs.put(field, input);
                 observe(input);
             }
+            configureDynamicChoices(initial);
         }
 
         private Map<String, Object> value() {
@@ -182,7 +182,11 @@ final class ViewStructuredListControl extends VBox {
         }
 
         private void observe(Node input) {
-            InvalidationListener listener = ignored -> publish();
+            observe(input, ViewStructuredListControl.this::publish);
+        }
+
+        private void observe(Node input, Runnable action) {
+            InvalidationListener listener = ignored -> action.run();
             if (input instanceof CheckBox checkBox) {
                 checkBox.selectedProperty().addListener(listener);
             } else if (input instanceof ComboBox<?> comboBox) {
@@ -190,6 +194,50 @@ final class ViewStructuredListControl extends VBox {
             } else {
                 ((TextInputControl) input).textProperty().addListener(listener);
             }
+        }
+
+        private void configureDynamicChoices(Map<String, Object> initial) {
+            inputs.forEach((field, input) -> {
+                if (field.optionSource().isEmpty()) {
+                    return;
+                }
+                @SuppressWarnings("unchecked")
+                ComboBox<ViewOption> choice = (ComboBox<ViewOption>) input;
+                boolean[] initialized = {false};
+                Runnable refresh = () -> {
+                    String selected = initialized[0]
+                            ? Optional.ofNullable(choice.getValue())
+                                    .map(ViewOption::value)
+                                    .orElse("")
+                            : Objects.toString(initial.get(field.name()), "");
+                    List<ViewOption> options = ViewDynamicOptions.resolve(
+                            field.options(),
+                            field.optionSource().orElseThrow(),
+                            data,
+                            dependency -> value().get(dependency));
+                    choice.getItems().setAll(options);
+                    choice.setValue(options.stream()
+                            .filter(option -> option.value().equals(selected))
+                            .findFirst()
+                            .orElse(null));
+                    choice.setDisable(options.isEmpty());
+                    initialized[0] = true;
+                };
+                field.optionSource()
+                        .orElseThrow()
+                        .filter()
+                        .map(filter -> dependencyInput(filter.inputField()))
+                        .ifPresent(dependency -> observe(dependency, refresh));
+                refresh.run();
+            });
+        }
+
+        private Node dependencyInput(String fieldName) {
+            return inputs.entrySet().stream()
+                    .filter(entry -> entry.getKey().name().equals(fieldName))
+                    .map(Map.Entry::getValue)
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException("动态选项依赖字段未渲染: " + fieldName));
         }
     }
 
@@ -202,9 +250,7 @@ final class ViewStructuredListControl extends VBox {
                     case NUMBER, TEXT -> textInput(field, initial);
                 };
         input.setAccessibleText(field.label());
-        if (input instanceof Region region) {
-            region.setMaxWidth(Double.MAX_VALUE);
-        }
+        ((Region) input).setMaxWidth(Double.MAX_VALUE);
         return input;
     }
 

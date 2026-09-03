@@ -31,7 +31,7 @@ public record AutomationJobSettingsState(
         detail.value().ifPresent(value -> {
             String selectedId = checkedPage.selected().orElseThrow().id();
             if (!selectedId.equals(value.job().id())) {
-                throw new IllegalArgumentException("Job detail does not match selection");
+                throw new IllegalArgumentException("后台任务 detail does not match selection");
             }
         });
     }

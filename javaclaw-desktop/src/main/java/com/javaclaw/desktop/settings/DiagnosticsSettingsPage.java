@@ -68,6 +68,11 @@ public final class DiagnosticsSettingsPage extends VBox implements ManagedSettin
     }
 
     @Override
+    public Optional<Node> actionContent() {
+        return Optional.of(actions);
+    }
+
+    @Override
     public void activate() {
         load();
     }
@@ -91,13 +96,13 @@ public final class DiagnosticsSettingsPage extends VBox implements ManagedSettin
     private void configurePage() {
         Label title = new Label("诊断");
         title.getStyleClass().addAll("sec-title", "platform-page-title");
-        Label description = new Label("只展示协议白名单中的构建、数据库和运行状态；不读取环境变量、Secret、用户正文或绝对路径。");
+        Label description = new Label("只展示协议白名单中的构建、数据库和运行状态；不读取环境变量、密钥、用户正文或绝对路径。");
         description.setWrapText(true);
         description.getStyleClass().add("sec-hint");
         snapshotContent
                 .getChildren()
-                .setAll(components.feedback(FeedbackKind.LOADING, "正在读取诊断", "等待 App Server 返回脱敏快照。"));
-        getChildren().addAll(title, description, snapshotContent, actions);
+                .setAll(components.feedback(FeedbackKind.LOADING, "正在读取诊断", "等待 JavaClaw 服务返回脱敏快照。"));
+        getChildren().addAll(title, description, snapshotContent);
         getStyleClass().add("platform-page");
     }
 
@@ -107,7 +112,7 @@ public final class DiagnosticsSettingsPage extends VBox implements ManagedSettin
         if (snapshot.isEmpty()) {
             snapshotContent
                     .getChildren()
-                    .setAll(components.feedback(FeedbackKind.LOADING, "正在读取诊断", "等待 App Server 返回脱敏快照。"));
+                    .setAll(components.feedback(FeedbackKind.LOADING, "正在读取诊断", "等待 JavaClaw 服务返回脱敏快照。"));
         }
         gateway.diagnostics()
                 .whenComplete(
@@ -157,37 +162,39 @@ public final class DiagnosticsSettingsPage extends VBox implements ManagedSettin
 
     private FormSection buildSection(DiagnosticsSnapshot value) {
         DiagnosticsSnapshot.BuildIdentity build = value.build();
-        FormSection identity = new FormSection("构建与数据", "用于确认客户端与 App Server 的版本边界。");
+        FormSection identity = new FormSection("构建与数据", "用于确认客户端与 JavaClaw 服务的版本边界。");
         identity.addField("JavaClaw", text(build.applicationVersion()));
-        identity.addField("Protocol", text("v" + build.protocolVersion()));
-        identity.addField("data-v5 Schema", text("V" + build.dataSchemaVersion()));
+        identity.addField("协议版本", text("v" + build.protocolVersion()));
+        identity.addField("数据库结构版本", text("V" + build.dataSchemaVersion()));
         identity.addField("启动时间", text(format(value.startedAt())));
         return identity;
     }
 
     private FormSection runtimeSection(DiagnosticsSnapshot.RuntimeHealth health) {
-        FormSection runtime = new FormSection("运行状态", "计数只表示当前本地进程，不包含 Workspace 名称或内容。");
+        FormSection runtime = new FormSection("运行状态", "计数只表示当前本地进程，不包含工作区名称或内容。");
         runtime.addField("数据库", healthStatus(health.databaseHealthy()));
-        runtime.addField("Workspace", text(Integer.toString(health.workspaceCount())));
+        runtime.addField("工作区", text(Integer.toString(health.workspaceCount())));
         runtime.addField("扩展", text(Integer.toString(health.extensionCount())));
         runtime.addField("连接客户端", text(Integer.toString(health.connectedClients())));
-        runtime.addField("活动 Lease", text(Integer.toString(health.activeLeases())));
+        runtime.addField("活动运行锁", text(Integer.toString(health.activeLeases())));
         runtime.addField("运行平台", text(health.operatingSystem() + " · Java " + health.javaVersion()));
         return runtime;
     }
 
     private FormSection providerSection(DiagnosticsSnapshot.ProviderVaultHealth providers) {
-        FormSection platform = new FormSection("模型与 Vault", "仅展示配置数量和 Vault 可用性，不读取端点、模型或 Secret 内容。");
+        FormSection platform = new FormSection("模型与密钥库", "仅展示配置数量和密钥库可用性，不读取端点、模型或密钥内容。");
         platform.addField(
-                "Provider", text(providers.activeProviders() + " 启用 / " + providers.configuredProviders() + " 已配置"));
-        platform.addField("Vault", text(providers.vaultState() + " · " + providers.credentialCount() + " 条凭据"));
+                "模型服务", text(providers.activeProviders() + " 启用 / " + providers.configuredProviders() + " 已配置"));
+        platform.addField(
+                "密钥库",
+                text(SettingsLabels.vaultState(providers.vaultState()) + " · " + providers.credentialCount() + " 条凭据"));
         return platform;
     }
 
     private FormSection extensionSection(DiagnosticsSnapshot.ExtensionHealth extensions) {
-        FormSection extension = new FormSection("扩展运行状态", "只展示数量与隔离状态，不包含 Bundle 路径或失败正文。");
+        FormSection extension = new FormSection("扩展运行状态", "只展示数量与隔离状态，不包含扩展包路径或失败正文。");
         extension.addField(
-                "Extension",
+                "扩展",
                 text(extensions.enabled()
                         + " 启用 · "
                         + extensions.disabled()
@@ -199,7 +206,7 @@ public final class DiagnosticsSettingsPage extends VBox implements ManagedSettin
     }
 
     private FormSection integrationSection(DiagnosticsSnapshot.IntegrationHealth integrations) {
-        FormSection external = new FormSection("连接与隔离 Worker", "MCP 异常计数来自最近健康投影；UNKNOWN 不记为异常。");
+        FormSection external = new FormSection("连接与隔离运行器", "MCP 异常计数来自最近的健康状态；尚未检查不记为异常。");
         external.addField(
                 "MCP",
                 text(integrations.enabledMcpEndpoints()
@@ -208,20 +215,20 @@ public final class DiagnosticsSettingsPage extends VBox implements ManagedSettin
                         + " 已配置 / "
                         + integrations.unhealthyMcpEndpoints()
                         + " 异常"));
-        external.addField("Browser Worker", availability(integrations.browserWorkerAvailable()));
-        external.addField("Knowledge Worker", availability(integrations.knowledgeWorkerAvailable()));
-        external.addField("Skill Java/JShell", availability(integrations.skillExecutionAvailable()));
+        external.addField("浏览器运行器", availability(integrations.browserWorkerAvailable()));
+        external.addField("知识库运行器", availability(integrations.knowledgeWorkerAvailable()));
+        external.addField("技能运行器（Java/JShell）", availability(integrations.skillExecutionAvailable()));
         return external;
     }
 
     private FormSection backgroundSection(
             DiagnosticsSnapshot.JobHealth jobs, DiagnosticsSnapshot.ScheduleHealth schedule) {
-        FormSection background = new FormSection("后台执行", "Job 和 Schedule 计数不包含 Workspace、Definition 或正文。");
+        FormSection background = new FormSection("后台执行", "后台任务和定时任务计数不包含工作区、任务定义或正文。");
         background.addField(
-                "Extension Job",
+                "扩展后台任务",
                 text(jobs.queued() + " 排队 · " + jobs.running() + " 运行 · " + jobs.waiting() + " 等待 · " + jobs.paused()
                         + " 暂停"));
-        background.addField("Schedule Lease", state(schedule.leaseHeld(), "已持有", "未持有"));
+        background.addField("定时任务运行锁", state(schedule.leaseHeld(), "已持有", "未持有"));
         background.addField(
                 "登录启动项",
                 text(
@@ -232,10 +239,10 @@ public final class DiagnosticsSettingsPage extends VBox implements ManagedSettin
     }
 
     private FormSection launcherSection(DiagnosticsSnapshot.LauncherHealth launcher) {
-        FormSection supervisor = new FormSection("发行生命周期", "托盘只控制 App Server 与主窗口，不承担 Schedule 执行。");
-        supervisor.addField("Launcher", state(launcher.launcherConfigured(), "已配置", "未配置"));
-        supervisor.addField("SystemTray", state(launcher.trayActive(), "运行中", "未运行"));
-        supervisor.addField("Server 控制", availability(launcher.serverControlAvailable()));
+        FormSection supervisor = new FormSection("发行生命周期", "托盘只控制 JavaClaw 服务和主窗口，不执行定时任务。");
+        supervisor.addField("启动器", state(launcher.launcherConfigured(), "已配置", "未配置"));
+        supervisor.addField("系统托盘", state(launcher.trayActive(), "运行中", "未运行"));
+        supervisor.addField("服务控制", availability(launcher.serverControlAvailable()));
         launcher.unavailableReason().ifPresent(reason -> supervisor.addField("不可用原因", text(reason)));
         return supervisor;
     }
@@ -310,29 +317,30 @@ public final class DiagnosticsSettingsPage extends VBox implements ManagedSettin
     private static String summary(DiagnosticsSnapshot value) {
         DiagnosticsSnapshot.RuntimeHealth health = value.health();
         return "JavaClaw " + value.build().applicationVersion()
-                + " · Protocol v" + value.build().protocolVersion()
-                + " · data-v5 V" + value.build().dataSchemaVersion()
+                + " · 协议 v" + value.build().protocolVersion()
+                + " · 数据库结构 V" + value.build().dataSchemaVersion()
                 + System.lineSeparator()
-                + "DB=" + (health.databaseHealthy() ? "healthy" : "unhealthy")
-                + ", workspaces=" + health.workspaceCount()
-                + ", extensions=" + health.extensionCount()
-                + ", clients=" + health.connectedClients()
-                + ", leases=" + health.activeLeases()
+                + "数据库=" + (health.databaseHealthy() ? "正常" : "异常")
+                + "，工作区=" + health.workspaceCount()
+                + "，扩展=" + health.extensionCount()
+                + "，客户端=" + health.connectedClients()
+                + "，运行锁=" + health.activeLeases()
                 + System.lineSeparator()
-                + "providers=" + value.subsystems().providers().activeProviders()
+                + "模型服务=" + value.subsystems().providers().activeProviders()
                 + "/" + value.subsystems().providers().configuredProviders()
-                + ", vault=" + value.subsystems().providers().vaultState()
-                + ", mcp=" + value.subsystems().integrations().enabledMcpEndpoints()
+                + "，密钥库="
+                + SettingsLabels.vaultState(value.subsystems().providers().vaultState())
+                + "，MCP=" + value.subsystems().integrations().enabledMcpEndpoints()
                 + "/" + value.subsystems().integrations().configuredMcpEndpoints()
-                + ", extensionEnabled=" + value.subsystems().extensions().enabled()
+                + "，已启用扩展=" + value.subsystems().extensions().enabled()
                 + "/" + value.subsystems().extensions().registered()
-                + ", extensionQuarantined=" + value.subsystems().extensions().quarantined()
-                + ", jobs=" + value.subsystems().jobs().queued()
+                + "，已隔离扩展=" + value.subsystems().extensions().quarantined()
+                + "，后台任务=" + value.subsystems().jobs().queued()
                 + "/" + value.subsystems().jobs().running()
-                + ", launcher=" + value.subsystems().launcher().launcherConfigured()
-                + ", tray=" + value.subsystems().launcher().trayActive()
+                + "，启动器=" + SettingsLabels.yesNo(value.subsystems().launcher().launcherConfigured())
+                + "，托盘=" + SettingsLabels.yesNo(value.subsystems().launcher().trayActive())
                 + System.lineSeparator()
-                + "observedAt=" + value.observedAt();
+                + "观测时间=" + value.observedAt();
     }
 
     private static String format(java.time.Instant value) {

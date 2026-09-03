@@ -92,7 +92,8 @@ final class MemoryExtension implements ExtensionBundle {
                         "memory.propose.tool",
                         MemoryExtensionPresentation.proposeTool(payloads, descriptor.revision()),
                         commands::submitProposal),
-                new ExtensionContributions.View("memory.management", MemoryExtensionPresentation.managementView()));
+                new ExtensionContributions.View("memory.management", MemoryExtensionPresentation.managementView()),
+                new ExtensionContributions.View("memory.learning", MemoryExtensionPresentation.learningView()));
     }
 
     @Override

@@ -4,6 +4,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
+import com.javaclaw.api.PermissionPresetDescriptor;
+import com.javaclaw.api.PermissionPresetInstantiationRequest;
 import com.javaclaw.api.PermissionProfile;
 import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.WorkspaceId;
@@ -11,6 +13,30 @@ import com.javaclaw.api.WorkspaceId;
 /** PermissionProfile 管理与有效权限预览的 Protocol v2 DTO。 */
 public final class PermissionProfileRpcContracts {
     private PermissionProfileRpcContracts() {}
+
+    /**
+     * 针对固定 Workspace 预览权限预设。
+     *
+     * @param request 精确预设、目标 Profile 和用户确认的能力选择
+     */
+    public record PresetPreviewPayload(PermissionPresetInstantiationRequest request) {
+        /** 校验请求。 */
+        public PresetPreviewPayload {
+            Objects.requireNonNull(request, "request");
+        }
+    }
+
+    /**
+     * 针对固定 Workspace 实例化权限预设。
+     *
+     * @param request 精确预设、目标 Profile 和用户确认的能力选择
+     */
+    public record PresetInstantiatePayload(PermissionPresetInstantiationRequest request) {
+        /** 校验请求。 */
+        public PresetInstantiatePayload {
+            Objects.requireNonNull(request, "request");
+        }
+    }
 
     /**
      * 读取精确不可变版本。
@@ -109,6 +135,18 @@ public final class PermissionProfileRpcContracts {
         /** 复制列表。 */
         public ListResult {
             profiles = List.copyOf(profiles);
+        }
+    }
+
+    /**
+     * 代码内置 PermissionProfile 预设列表。
+     *
+     * @param presets 按稳定目录顺序排列的预设
+     */
+    public record PresetListResult(List<PermissionPresetDescriptor> presets) {
+        /** 复制预设列表。 */
+        public PresetListResult {
+            presets = List.copyOf(presets);
         }
     }
 

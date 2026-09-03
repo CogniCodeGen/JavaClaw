@@ -55,7 +55,7 @@ public record PermissionProfileSettingsState(
                 "",
                 false,
                 30,
-                "",
+                java.util.Set.of(),
                 com.javaclaw.api.ToolRisk.READ_ONLY,
                 com.javaclaw.api.ApprovalRequirement.RISKY,
                 256,

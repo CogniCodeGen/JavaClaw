@@ -6,7 +6,6 @@ import java.util.Optional;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
-import javafx.scene.control.TextInputDialog;
 import javafx.scene.layout.VBox;
 
 import com.javaclaw.desktop.component.AsyncActionBar;
@@ -19,9 +18,10 @@ import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 import com.javaclaw.desktop.component.PlatformComponentFactory.FeedbackKind;
 import com.javaclaw.desktop.component.RevisionConflictPane;
+import com.javaclaw.desktop.component.TypedTextDangerConfirmationPolicy;
 import com.javaclaw.protocol.BundleRpcContracts;
 
-/** 已卸载 Bundle 的恢复与永久清除页面。 */
+/** 已卸载扩展包的恢复与永久清除页面。 */
 public final class BundleTrashSettingsPage extends VBox implements ManagedSettingsPage {
     private final PlatformComponentFactory components = new PlatformComponentFactory();
     private final BundleTrashSettingsPresenter presenter;
@@ -48,10 +48,14 @@ public final class BundleTrashSettingsPage extends VBox implements ManagedSettin
     public BundleTrashSettingsPage(BundleSettingsGateway gateway) {
         presenter = new BundleTrashSettingsPresenter(gateway);
         refresh = action("刷新", ActionStyle.GHOST, presenter::reload);
-        restore = action("恢复为新 revision", ActionStyle.SOFT, presenter::restore);
+        restore = action("恢复为新版本", ActionStyle.SOFT, presenter::restore);
         actions = new AsyncActionBar(refresh, restore);
         purge = new DangerZone(
-                "永久清除 Trash 文件", "清除后只保留最小 tombstone 防止 revision 重用；Bundle 文件不可恢复。", "永久清除", this::confirmPurge);
+                "永久清除回收站文件",
+                "清除后只保留最小删除记录，防止版本被重复使用；扩展包文件不可恢复。",
+                "永久清除",
+                new TypedTextDangerConfirmationPolicy(this, this::purgeConfirmation),
+                () -> presenter.purge(purgeConfirmation()));
         conflict = new RevisionConflictPane(presenter::reload, this::describeConflict);
         configurePage();
         presenter.subscribe(this::render);
@@ -60,6 +64,11 @@ public final class BundleTrashSettingsPage extends VBox implements ManagedSettin
     @Override
     public Node content() {
         return this;
+    }
+
+    @Override
+    public Optional<Node> actionContent() {
+        return Optional.of(actions);
     }
 
     @Override
@@ -79,42 +88,40 @@ public final class BundleTrashSettingsPage extends VBox implements ManagedSettin
     public void discardDraft() {}
 
     private void configurePage() {
-        Label title = new Label("Bundle Trash");
+        Label title = new Label("扩展包回收站");
         title.getStyleClass().addAll("sec-title", "platform-page-title");
-        Label hint = new Label("Trash 只保存平台管理的 Bundle 文件和不可变 tombstone；恢复会重新验签并分配新的单调 revision。");
+        Label hint = new Label("回收站保存已卸载的扩展包文件和不可修改的删除记录；恢复时会重新验证签名并分配新版本。");
         hint.setWrapText(true);
         hint.getStyleClass().add("sec-hint");
         masterDetail
                 .list()
                 .setCellFactory(ignored -> components.detailCell(
-                        value -> value.extensionId() + " · " + value.state(),
-                        value -> value.version() + " · revision " + value.revision() + " · " + value.removedAt()));
+                        value -> value.extensionId() + " · " + SettingsLabels.trashState(value.state()),
+                        value -> value.version() + " · 版本 " + value.revision() + " · " + value.removedAt()));
         masterDetail
                 .list()
                 .getSelectionModel()
                 .selectedItemProperty()
                 .addListener((observable, previous, selected) -> select(selected));
-        masterDetail
-                .list()
-                .setPlaceholder(components.feedback(FeedbackKind.EMPTY, "Trash 为空", "卸载第三方 Bundle 后，可恢复条目会显示在这里。"));
+        masterDetail.list().setPlaceholder(components.feedback(FeedbackKind.EMPTY, "回收站为空", "卸载第三方扩展包后，可恢复条目会显示在这里。"));
         masterDetail.showDetail(detail());
         getChildren().addAll(title, hint, masterDetail);
         getStyleClass().add("platform-page");
     }
 
     private Node detail() {
-        FormSection snapshot = new FormSection("Trash tombstone", "不展示服务端目录路径；状态为 RESTORED 或 PURGED 时不再允许文件动作。");
-        snapshot.addField("Trash ID", trashId);
+        FormSection snapshot = new FormSection("回收站记录", "不展示服务端目录路径；已恢复或已永久清除的记录不再允许文件操作。");
+        snapshot.addField("回收站标识", trashId);
         snapshot.addField("扩展", extension);
         snapshot.addField("状态", stateLabel);
         snapshot.addField("版本", version);
-        snapshot.addField("被卸载 revision", revision);
-        snapshot.addField("Manifest SHA-256", manifest);
+        snapshot.addField("被卸载版本", revision);
+        snapshot.addField("清单指纹（SHA-256）", manifest);
         snapshot.addField("签名密钥", signer);
         snapshot.addField("卸载时间", removedAt);
-        snapshot.addField("恢复 revision", restoredRevision);
+        snapshot.addField("恢复版本", restoredRevision);
         snapshot.addField("永久清除时间", purgedAt);
-        VBox detail = new VBox(12, snapshot, conflict, actions, purge);
+        VBox detail = new VBox(12, snapshot, conflict, purge);
         detail.getStyleClass().add("platform-page");
         return detail;
     }
@@ -142,7 +149,8 @@ public final class BundleTrashSettingsPage extends VBox implements ManagedSettin
         trashId.setText(selected.map(BundleRpcContracts.TrashEntry::trashId).orElse("—"));
         extension.setText(
                 selected.map(BundleRpcContracts.TrashEntry::extensionId).orElse("—"));
-        stateLabel.setText(selected.map(value -> value.state().name()).orElse("—"));
+        stateLabel.setText(
+                selected.map(value -> SettingsLabels.trashState(value.state())).orElse("—"));
         version.setText(selected.map(BundleRpcContracts.TrashEntry::version).orElse("—"));
         revision.setText(selected.map(value -> Long.toString(value.revision())).orElse("—"));
         manifest.setText(
@@ -181,31 +189,18 @@ public final class BundleTrashSettingsPage extends VBox implements ManagedSettin
         }
     }
 
-    private void confirmPurge() {
-        BundleRpcContracts.TrashEntry entry = state.selected().orElseThrow();
-        String expected = "PURGE " + entry.trashId();
-        TextInputDialog dialog = new TextInputDialog();
-        own(dialog);
-        dialog.setTitle("永久清除 Bundle Trash");
-        dialog.setHeaderText("清除后 Bundle 文件不可恢复");
-        dialog.setContentText("输入 " + expected + "：");
-        dialog.showAndWait().filter(expected::equals).ifPresent(presenter::purge);
+    private String purgeConfirmation() {
+        return state.selected().map(entry -> "PURGE " + entry.trashId()).orElse("");
     }
 
     private void describeConflict() {
-        actions.show(ActionState.ERROR, "Trash revision 已改变，请重新读取权威状态");
+        actions.show(ActionState.ERROR, "回收站版本已改变，请重新读取权威状态");
     }
 
     private Button action(String text, ActionStyle style, Runnable action) {
         Button button = components.action(text, style, ActionSize.NORMAL);
         button.setOnAction(event -> action.run());
         return button;
-    }
-
-    private void own(javafx.scene.control.Dialog<?> dialog) {
-        if (getScene() != null && getScene().getWindow() != null) {
-            dialog.initOwner(getScene().getWindow());
-        }
     }
 
     private static Label value() {

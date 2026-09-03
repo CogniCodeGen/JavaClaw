@@ -31,8 +31,11 @@ import com.javaclaw.server.persistence.PersistenceException;
 /**
  * 以系统凭据封装主密钥、以 H2 保存 AES-256-GCM 密文的本地 Secret Vault。
  *
- * <p>所有公开方法在同一实例锁内串行，主密钥轮换不会与读取或写入交错。Secret 明文仅在调用栈内短暂存在，服务在 callback 返回后立即清零；callback 不得保留数组引用。系统凭据设施不可用时服务保留管理状态，但所有
- * Secret 操作均 fail closed。
+ * <p>Vault 状态和 Secret 操作在同一实例锁内串行，主密钥轮换不会与读取或写入交错。Secret 明文仅在调用栈内短暂存在，服务在 callback 返回后立即清零；callback
+ * 不得保留数组引用。系统凭据设施不可用时服务保留管理状态，但所有 Secret 操作均 fail closed。
+ *
+ * <p><b>并发不变量：</b>监听回调只在 Vault 实例锁外同步执行。这样既保证方法返回前运行时已看到新状态，也避免与 Provider Registry 的刷新锁形成 AB/BA 死锁。安全重建失败不会反向回滚已提交的
+ * Vault 变更，但会保持运行时门闩关闭并向调用方报告失败。
  *
  * <p>主密钥先写入系统凭据，再在单个 H2 事务中重加密全部记录并切换 active key。旧 key id 会留在 {@code PREVIOUS_KEY_ID}，直至系统包装确认删除，因此崩溃恢复不会丢失唯一可解密的主密钥。
  */
@@ -47,7 +50,7 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
     private final Clock clock;
     private final SecureRandom random;
     private final VaultCipher cipher;
-    private final VaultChangeListeners changeListeners = new VaultChangeListeners();
+    private final VaultChangeListeners changeListeners;
     private final VaultCredentialTransactions credentialTransactions;
     private final ProviderCredentialVault providerCredentials;
 
@@ -74,6 +77,7 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
         this.json = Objects.requireNonNull(json, "json");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.random = Objects.requireNonNull(random, "random");
+        changeListeners = new VaultChangeListeners(() -> !closed);
         cipher = new VaultCipher(random);
         credentialTransactions = new VaultCredentialTransactions(database, json, clock, random);
         providerCredentials = new ProviderCredentialVault(this, credentialTransactions);
@@ -103,11 +107,13 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
      *
      * @return 刷新后的脱敏状态
      */
-    public synchronized VaultStatus refresh() {
-        requireOpen();
-        clearActiveKey();
-        initialize();
-        return status();
+    public VaultStatus refresh() {
+        return changeListeners.afterAvailabilityRefresh(this, this::ready, () -> {
+            requireOpen();
+            clearActiveKey();
+            initialize();
+            return status();
+        });
     }
 
     /**
@@ -115,8 +121,23 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
      *
      * @param listener 快速、非阻塞监听器
      */
-    public synchronized void onChange(Runnable listener) {
+    public void onChange(Runnable listener) {
         changeListeners.add(listener);
+    }
+
+    /**
+     * 注册需要在 Vault 变化时先失效、再重建的 Provider 运行时。
+     *
+     * @param invalidate 立即退役旧凭据运行时的同步操作
+     * @param rebuild 从已提交状态重建运行时的同步操作
+     */
+    public void onRuntimeChange(Runnable invalidate, Runnable rebuild) {
+        changeListeners.addRuntime(invalidate, rebuild);
+    }
+
+    /** @return 与本 Vault 变化线性化的 Provider 运行时门闩 */
+    public VaultRuntimeGate runtimeGate() {
+        return changeListeners.runtimeGate();
     }
 
     /**
@@ -127,17 +148,16 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
      * @param secret Secret 字节；调用方继续拥有并负责清理原数组
      * @return 仅含引用、版本和时间的元数据
      */
-    public synchronized CredentialMetadata create(CommandIdentity identity, String namespace, byte[] secret) {
-        CommandIdentity checkedIdentity = VaultChecks.requireExpectedRevision(identity, 0);
-        byte[] key = requireReadyKey();
-        try {
-            CredentialMetadata created =
-                    credentialTransactions.create(checkedIdentity, namespace, secret, key, activeKeyId);
-            notifyChanged();
-            return created;
-        } finally {
-            Arrays.fill(key, (byte) 0);
-        }
+    public CredentialMetadata create(CommandIdentity identity, String namespace, byte[] secret) {
+        return changeListeners.afterChange(this, () -> {
+            CommandIdentity checkedIdentity = VaultChecks.requireExpectedRevision(identity, 0);
+            byte[] key = requireReadyKey();
+            try {
+                return credentialTransactions.create(checkedIdentity, namespace, secret, key, activeKeyId);
+            } finally {
+                Arrays.fill(key, (byte) 0);
+            }
+        });
     }
 
     /**
@@ -148,17 +168,17 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
      * @param secret 新 Secret；调用方继续拥有并负责清理原数组
      * @return 新版本的脱敏元数据
      */
-    public synchronized CredentialMetadata rotate(CommandIdentity identity, CredentialRef reference, byte[] secret) {
-        CommandIdentity checkedIdentity = Objects.requireNonNull(identity, "identity");
-        byte[] key = requireReadyKey();
-        try {
-            CredentialMetadata rotated = credentialTransactions.rotate(
-                    checkedIdentity, Objects.requireNonNull(reference, "reference"), secret, key, activeKeyId);
-            notifyChanged();
-            return rotated;
-        } finally {
-            Arrays.fill(key, (byte) 0);
-        }
+    public CredentialMetadata rotate(CommandIdentity identity, CredentialRef reference, byte[] secret) {
+        return changeListeners.afterChange(this, () -> {
+            CommandIdentity checkedIdentity = Objects.requireNonNull(identity, "identity");
+            byte[] key = requireReadyKey();
+            try {
+                return credentialTransactions.rotate(
+                        checkedIdentity, Objects.requireNonNull(reference, "reference"), secret, key, activeKeyId);
+            } finally {
+                Arrays.fill(key, (byte) 0);
+            }
+        });
     }
 
     /**
@@ -206,13 +226,12 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
      * @param reference Vault 引用
      * @return 可安全重放的脱敏回执
      */
-    public synchronized CredentialClearReceipt clear(CommandIdentity identity, CredentialRef reference) {
-        CommandIdentity checkedIdentity = Objects.requireNonNull(identity, "identity");
-        requireReady();
-        CredentialClearReceipt receipt =
-                credentialTransactions.clear(checkedIdentity, Objects.requireNonNull(reference, "reference"));
-        notifyChanged();
-        return receipt;
+    public CredentialClearReceipt clear(CommandIdentity identity, CredentialRef reference) {
+        return changeListeners.afterChange(this, () -> {
+            CommandIdentity checkedIdentity = Objects.requireNonNull(identity, "identity");
+            requireReady();
+            return credentialTransactions.clear(checkedIdentity, Objects.requireNonNull(reference, "reference"));
+        });
     }
 
     /**
@@ -268,7 +287,7 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
             VaultRepository.StoredSecret stored = execute(connection -> repository
                     .find(connection, Objects.requireNonNull(reference, "reference"), false)
                     .orElseThrow(() -> PersistenceException.invalidRequest("CredentialRef 不存在")));
-            plaintext = cipher.decrypt(key, binding(stored.metadata()), stored.encrypted());
+            plaintext = cipher.decrypt(key, SecretBinding.from(stored.metadata()), stored.encrypted());
             return Objects.requireNonNull(operation, "operation").use(plaintext);
         } catch (RuntimeException failure) {
             throw failure;
@@ -290,11 +309,17 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
      * @param identity 幂等命令身份；expected revision 必须为 0
      * @return 被重加密数量与提交时间
      */
-    public synchronized VaultManagementReceipt rotateMasterKey(CommandIdentity identity) {
+    public VaultManagementReceipt rotateMasterKey(CommandIdentity identity) {
+        return changeListeners
+                .afterConditionalChange(this, () -> rotateMasterKeyLocked(identity), VaultManagementResult::changed)
+                .receipt();
+    }
+
+    private VaultManagementResult rotateMasterKeyLocked(CommandIdentity identity) {
         CommandIdentity checkedIdentity = VaultChecks.requireExpectedRevision(identity, 0);
         Optional<VaultManagementReceipt> recovered = recover(checkedIdentity, VaultManagementReceipt.class);
         if (recovered.isPresent()) {
-            return recovered.orElseThrow();
+            return new VaultManagementResult(recovered.orElseThrow(), false);
         }
         requireNoPendingCleanup();
         byte[] oldKey = requireReadyKey();
@@ -313,7 +338,7 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
                     throw new VaultException("Vault key state 已改变，请刷新后重试");
                 }
                 List<VaultRepository.StoredSecret> secrets = repository.listForUpdate(connection);
-                reencrypt(connection, secrets, oldKey, newKey);
+                credentialTransactions.reencrypt(connection, secrets, oldKey, newKey);
                 Instant completedAt = clock.instant();
                 repository.rotateKeyState(connection, newKeyId, oldKeyId, completedAt);
                 VaultManagementReceipt result = new VaultManagementReceipt(
@@ -324,15 +349,14 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
             committed = true;
             replaceActiveKey(newKeyId, newKey);
             cleanupPreviousKey();
-            notifyChanged();
-            return receipt;
+            return new VaultManagementResult(receipt, true);
         } catch (MasterKeyProtectionException failure) {
             throw new VaultException("系统凭据设施拒绝轮换 Vault 主密钥", failure);
         } finally {
             Arrays.fill(oldKey, (byte) 0);
             Arrays.fill(newKey, (byte) 0);
             if (!committed) {
-                deleteUncommittedKey(newKeyId);
+                VaultKeyCleanup.deleteUnreferenced(protector, newKeyId);
             }
         }
     }
@@ -343,11 +367,17 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
      * @param identity 幂等命令身份；expected revision 必须为 0
      * @return 被失效凭据数量与提交时间
      */
-    public synchronized VaultManagementReceipt reset(CommandIdentity identity) {
+    public VaultManagementReceipt reset(CommandIdentity identity) {
+        return changeListeners
+                .afterConditionalChange(this, () -> resetLocked(identity), VaultManagementResult::changed)
+                .receipt();
+    }
+
+    private VaultManagementResult resetLocked(CommandIdentity identity) {
         CommandIdentity checkedIdentity = VaultChecks.requireExpectedRevision(identity, 0);
         Optional<VaultManagementReceipt> recovered = recover(checkedIdentity, VaultManagementReceipt.class);
         if (recovered.isPresent()) {
-            return recovered.orElseThrow();
+            return new VaultManagementResult(recovered.orElseThrow(), false);
         }
         requireOpen();
         requireNoPendingCleanup();
@@ -378,26 +408,31 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
             committed = true;
             replaceActiveKey(newKeyId, newKey);
             cleanupPreviousKey();
-            notifyChanged();
-            return receipt;
+            return new VaultManagementResult(receipt, true);
         } catch (MasterKeyProtectionException failure) {
             throw new VaultException("系统凭据设施拒绝重置 Vault", failure);
         } finally {
             Arrays.fill(newKey, (byte) 0);
             if (!committed) {
-                deleteUncommittedKey(newKeyId);
+                VaultKeyCleanup.deleteUnreferenced(protector, newKeyId);
             }
         }
     }
 
     /** 清零进程内主密钥；系统凭据包装与 H2 密文保持不变。 */
     @Override
-    public synchronized void close() {
-        if (!closed) {
-            closed = true;
-            clearActiveKey();
-            lockReason = VaultLockReason.CLOSED;
+    public void close() {
+        changeListeners.afterConditionalChange(this, this::closeLocked, Boolean::booleanValue);
+    }
+
+    private boolean closeLocked() {
+        if (closed) {
+            return false;
         }
+        closed = true;
+        clearActiveKey();
+        lockReason = VaultLockReason.CLOSED;
+        return true;
     }
 
     private void initialize() {
@@ -452,21 +487,7 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
         } finally {
             Arrays.fill(key, (byte) 0);
             if (!inserted) {
-                deleteUncommittedKey(keyId);
-            }
-        }
-    }
-
-    private void reencrypt(
-            java.sql.Connection connection, List<VaultRepository.StoredSecret> secrets, byte[] oldKey, byte[] newKey)
-            throws Exception {
-        for (VaultRepository.StoredSecret stored : secrets) {
-            byte[] plaintext = cipher.decrypt(oldKey, binding(stored.metadata()), stored.encrypted());
-            try {
-                EncryptedSecret encrypted = cipher.encrypt(newKey, binding(stored.metadata()), plaintext);
-                repository.replaceCipher(connection, new VaultRepository.StoredSecret(stored.metadata(), encrypted));
-            } finally {
-                Arrays.fill(plaintext, (byte) 0);
+                VaultKeyCleanup.deleteUnreferenced(protector, keyId);
             }
         }
     }
@@ -497,18 +518,6 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
         if (state.previousKeyId() != null) {
             throw new VaultException("旧 Vault 主密钥包装尚未清理，拒绝再次轮换");
         }
-    }
-
-    private void deleteUncommittedKey(String keyId) {
-        try {
-            protector.delete(keyId);
-        } catch (MasterKeyProtectionException ignored) {
-            // H2 从未引用该 key；残留包装不具备解密任何 Vault 记录的能力。
-        }
-    }
-
-    private void notifyChanged() {
-        changeListeners.notifyAllListeners();
     }
 
     byte[] requireReadyKey() {
@@ -556,11 +565,6 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
     private <T> Optional<T> recover(CommandIdentity identity, Class<T> resultType) {
         return execute(
                 connection -> commands.recover(connection, identity).map(payload -> json.decode(payload, resultType)));
-    }
-
-    private static SecretBinding binding(CredentialMetadata metadata) {
-        return new SecretBinding(
-                metadata.reference().namespace(), metadata.reference().id(), metadata.revision());
     }
 
     String activeKeyId() {

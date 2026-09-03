@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import com.javaclaw.api.CredentialRef;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -61,6 +62,8 @@ class ProviderCredentialRpcContractsTest {
         String methods = read("/schema/methods-v2.json");
 
         json.parse(schema);
+        assertFalse(schema.contains("\"roles\""));
+        assertTrue(schema.contains("provider-profile-v2.schema.json#/$defs/provider"));
         assertTrue(methods.contains("provider-credential-v2.schema.json#/$defs/setCommand"));
         assertTrue(methods.contains("provider-credential-v2.schema.json#/$defs/clearCommand"));
         assertTrue(methods.contains("provider-credential-v2.schema.json#/$defs/bindingResult"));

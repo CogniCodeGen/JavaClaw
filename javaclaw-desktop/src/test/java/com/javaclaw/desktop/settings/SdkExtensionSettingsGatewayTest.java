@@ -66,6 +66,19 @@ class SdkExtensionSettingsGatewayTest {
         assertEquals("所选文件类型不在扩展声明的允许范围内: text/x-java-source", failure.getMessage());
     }
 
+    @Test
+    void unknownSuffixUsesSafeBinaryFallback(@TempDir Path temporary) {
+        SdkExtensionSettingsGateway.UploadSnapshot snapshot = SdkExtensionSettingsGateway.snapshot(
+                request(
+                        temporary.resolve("evidence.javaclaw-unknown"),
+                        Set.of("application/octet-stream"),
+                        2_048,
+                        new CancellationSource()),
+                INITIAL_WORKSPACE);
+
+        assertEquals("application/octet-stream", snapshot.options().mediaType());
+    }
+
     private static ViewAttachmentUploadRequest request(
             Path source, Set<String> mediaTypes, long maximumBytes, CancellationSource cancellation) {
         return new ViewAttachmentUploadRequest(

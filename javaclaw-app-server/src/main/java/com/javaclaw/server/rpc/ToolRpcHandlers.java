@@ -1,18 +1,25 @@
 package com.javaclaw.server.rpc;
 
+import java.util.HashSet;
 import java.util.Objects;
+import java.util.Set;
 
+import com.javaclaw.api.AgentProfile;
 import com.javaclaw.api.PermissionProfile;
+import com.javaclaw.api.ToolCatalogQueryResult;
+import com.javaclaw.api.ToolPermission;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.ToolRpcContracts;
+import com.javaclaw.server.persistence.AgentProfileService;
 import com.javaclaw.server.persistence.CoreCommandService;
 import com.javaclaw.server.persistence.PermissionProfileService;
 import com.javaclaw.server.turn.ExtensionToolPlatform;
 
-/** Protocol v2 Tool 目录方法到实时权限目录的薄映射。 */
+/** Protocol v2 Tool 设置候选目录到实时工具平台的薄映射。 */
 public final class ToolRpcHandlers {
     private final CoreCommandService core;
+    private final AgentProfileService agentProfiles;
     private final PermissionProfileService profiles;
     private final ExtensionToolPlatform tools;
     private final CanonicalJson json;
@@ -21,16 +28,19 @@ public final class ToolRpcHandlers {
      * 创建 Tool handlers。
      *
      * @param core Core 查询服务
+     * @param agentProfiles Agent Profile 精确版本服务
      * @param profiles 权限服务
      * @param tools 工具目录平台
      * @param json 规范 JSON codec
      */
     public ToolRpcHandlers(
             CoreCommandService core,
+            AgentProfileService agentProfiles,
             PermissionProfileService profiles,
             ExtensionToolPlatform tools,
             CanonicalJson json) {
         this.core = Objects.requireNonNull(core, "core");
+        this.agentProfiles = Objects.requireNonNull(agentProfiles, "agentProfiles");
         this.profiles = Objects.requireNonNull(profiles, "profiles");
         this.tools = Objects.requireNonNull(tools, "tools");
         this.json = Objects.requireNonNull(json, "json");
@@ -51,7 +61,38 @@ public final class ToolRpcHandlers {
                 .orElseThrow(() -> new IllegalArgumentException("Workspace does not exist"));
         PermissionProfile permissions =
                 profiles.resolve(query.permissionProfileId(), query.permissionProfileVersion(), workspace);
-        return json.encode(new ToolRpcContracts.SearchResult(
-                tools.search(workspace.id(), permissions, query.query(), query.limit())));
+        ToolCatalogQueryResult result = query.agentProfile()
+                .map(reference -> executableCatalog(query, workspace, permissions, reference))
+                .orElseGet(() -> tools.selectableCatalog(workspace.id(), permissions, query.query(), query.limit()));
+        return json.encode(new ToolRpcContracts.SearchResult(result.catalogRevision(), result.tools()));
+    }
+
+    private ToolCatalogQueryResult executableCatalog(
+            ToolRpcContracts.CatalogQuery query,
+            Workspace workspace,
+            PermissionProfile permissions,
+            com.javaclaw.api.AgentProfileRef reference) {
+        AgentProfile profile = agentProfiles.requireAvailable(reference.id(), reference.revision());
+        if (!profile.spec().permissionProfile().id().equals(query.permissionProfileId())
+                || profile.spec().permissionProfile().version() != query.permissionProfileVersion()) {
+            throw new IllegalArgumentException("Agent Profile 与 PermissionProfile 引用不一致");
+        }
+        return tools.executableCatalog(
+                workspace.id(), visibleTools(profile, permissions), query.query(), query.limit());
+    }
+
+    private static PermissionProfile visibleTools(AgentProfile profile, PermissionProfile permissions) {
+        Set<String> visible = new HashSet<>(permissions.tools().allowedTools());
+        visible.retainAll(profile.spec().visibleTools());
+        ToolPermission tools = new ToolPermission(
+                visible, permissions.tools().maximumRisk(), permissions.tools().approvalRequirement());
+        return new PermissionProfile(
+                permissions.id(),
+                permissions.version(),
+                permissions.files(),
+                permissions.network(),
+                permissions.processes(),
+                tools,
+                permissions.resources());
     }
 }

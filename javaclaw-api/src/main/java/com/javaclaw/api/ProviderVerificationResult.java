@@ -10,6 +10,7 @@ import java.util.Optional;
  * <p>该类型不包含 Prompt、模型响应正文、Secret 或厂商原始异常。UNKNOWN_OUTCOME 表示平台不能证明外部调用是否完成，客户端不得自动重试。
  *
  * @param provider 精确 Provider 与模型版本
+ * @param purpose 本次实际验证的模型用途
  * @param state 验证终态
  * @param latencyMillis 端到端延迟毫秒；UNKNOWN_OUTCOME 时为 0
  * @param usage 已知 token 使用量；外部结果不确定时为空
@@ -19,6 +20,7 @@ import java.util.Optional;
  */
 public record ProviderVerificationResult(
         ProviderRef provider,
+        ProviderModelPurpose purpose,
         ProviderVerificationState state,
         long latencyMillis,
         Optional<ProviderVerificationUsage> usage,
@@ -28,12 +30,16 @@ public record ProviderVerificationResult(
     /** 校验结果不会用缺失字段伪装成功。 */
     public ProviderVerificationResult {
         Objects.requireNonNull(provider, "provider");
+        Objects.requireNonNull(purpose, "purpose");
         Objects.requireNonNull(state, "state");
         if (latencyMillis < 0) {
             throw new IllegalArgumentException("latencyMillis must not be negative");
         }
         usage = Objects.requireNonNull(usage, "usage");
         Objects.requireNonNull(capabilities, "capabilities");
+        if (!capabilities.purposes().contains(purpose)) {
+            throw new IllegalArgumentException("capabilities must contain verified purpose");
+        }
         errorCode = Objects.requireNonNull(errorCode, "errorCode")
                 .map(String::strip)
                 .filter(value -> !value.isEmpty());
@@ -41,8 +47,11 @@ public record ProviderVerificationResult(
         if ((state == ProviderVerificationState.SUCCEEDED) == errorCode.isPresent()) {
             throw new IllegalArgumentException("errorCode must be absent only for SUCCEEDED");
         }
-        if (state == ProviderVerificationState.SUCCEEDED && usage.isEmpty()) {
-            throw new IllegalArgumentException("SUCCEEDED verification requires usage");
+        if (state == ProviderVerificationState.SUCCEEDED && purpose == ProviderModelPurpose.CHAT && usage.isEmpty()) {
+            throw new IllegalArgumentException("SUCCEEDED Chat verification requires usage");
+        }
+        if (purpose == ProviderModelPurpose.EMBEDDING && usage.isPresent()) {
+            throw new IllegalArgumentException("Embedding verification must not expose token usage");
         }
         if (state == ProviderVerificationState.UNKNOWN_OUTCOME && latencyMillis != 0) {
             throw new IllegalArgumentException("UNKNOWN_OUTCOME latency must be zero");

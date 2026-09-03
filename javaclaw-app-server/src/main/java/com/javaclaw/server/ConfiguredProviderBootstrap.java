@@ -21,24 +21,32 @@ final class ConfiguredProviderBootstrap {
         ProviderEmbeddingAdapterFactory embeddingAdapters = new ProviderEmbeddingAdapterFactory(checkedCredentials);
         try (StartupCloseStack startup = new StartupCloseStack()) {
             AppServerBootstrap.ownFoundation(startup, foundation);
-            ProviderModelRegistry models =
-                    startup.own(new ProviderModelRegistry(foundation.providers(), modelAdapters::create));
-            ProviderEmbeddingRegistry embeddings =
-                    startup.own(new ProviderEmbeddingRegistry(foundation.providers(), embeddingAdapters::create));
-            foundation.vault().onChange(models::reload);
-            foundation.vault().onChange(embeddings::reload);
+            ProviderModelRegistry models = startup.own(new ProviderModelRegistry(
+                    foundation.providers(),
+                    modelAdapters::create,
+                    foundation.vault().runtimeGate()));
+            ProviderEmbeddingRegistry embeddings = startup.own(new ProviderEmbeddingRegistry(
+                    foundation.providers(),
+                    foundation.embeddingBinding(),
+                    embeddingAdapters::create,
+                    foundation.vault().runtimeGate()));
+            foundation.vault().onRuntimeChange(models::invalidate, models::reload);
+            foundation.vault().onRuntimeChange(embeddings::invalidate, embeddings::reload);
             return AppServerBootstrap.createReal(
                     foundation,
-                    models,
-                    embeddings,
-                    BuiltinIsolatedServices.production(
-                            foundation.database(),
-                            foundation.attachments(),
-                            foundation.vault(),
-                            foundation.privateNetworkGrants(),
-                            foundation.json(),
-                            foundation.clock()),
-                    AppServerBootstrap.productionMcpPorts(foundation),
+                    new AppServerRuntimeBootstrap.RuntimeDependencies(
+                            models,
+                            embeddings,
+                            embeddingAdapters::create,
+                            AppServerBootstrap.modelDiscovery(foundation, checkedCredentials),
+                            BuiltinIsolatedServices.production(
+                                    foundation.database(),
+                                    foundation.attachments(),
+                                    foundation.vault(),
+                                    foundation.privateNetworkGrants(),
+                                    foundation.json(),
+                                    foundation.clock()),
+                            AppServerBootstrap.productionMcpPorts(foundation)),
                     startup);
         }
     }

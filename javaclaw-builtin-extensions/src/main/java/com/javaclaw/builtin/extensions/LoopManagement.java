@@ -29,6 +29,9 @@ import com.javaclaw.extension.spi.ViewField;
 import com.javaclaw.extension.spi.ViewFieldType;
 import com.javaclaw.extension.spi.ViewFieldValidation;
 import com.javaclaw.extension.spi.ViewOption;
+import com.javaclaw.extension.spi.ViewOptionFilter;
+import com.javaclaw.extension.spi.ViewOptionSource;
+import com.javaclaw.extension.spi.ViewPlatformDataSource;
 import com.javaclaw.extension.spi.ViewQueryRequest;
 import com.javaclaw.extension.spi.ViewQueryResult;
 import com.javaclaw.extension.spi.ViewSchema;
@@ -36,6 +39,8 @@ import com.javaclaw.extension.spi.ViewSelectionMode;
 
 /** Loop 管理中心的强类型 Definition 编辑；revision 和时间始终由服务端生成。 */
 final class LoopManagement {
+    private static final String TOOLS_SOURCE = "platformTools";
+    private static final String TOOL_FIELDS_SOURCE = "platformToolFields";
     private static final String SAVE = "definition/save";
     private static final String VIEW_NEW = "definition/view.new";
     private static final String VIEW_SELECTED = "definition/view.selected";
@@ -240,6 +245,13 @@ final class LoopManagement {
                 "循环定义",
                 List.of(
                         new ViewDataSource("documents", "view.list", Map.of(), List.of(), 100),
+                        new ViewDataSource(TOOLS_SOURCE, ViewPlatformDataSource.TOOL_CATALOG, Map.of(), List.of(), 100),
+                        new ViewDataSource(
+                                TOOL_FIELDS_SOURCE,
+                                ViewPlatformDataSource.TOOL_OUTPUT_FIELDS,
+                                Map.of(),
+                                List.of(),
+                                200),
                         new ViewDataSource("newDefinition", VIEW_NEW, Map.of(), List.of(), 1),
                         new ViewDataSource(
                                 "definitionEditor",
@@ -297,7 +309,7 @@ final class LoopManagement {
                 number(source, "maximumIterations", "最大迭代数", "10", 1, 100, Optional.empty()),
                 number(source, "noProgressThreshold", "无进展阈值", "3", 1, 100, Optional.empty()),
                 verificationKind(source),
-                text(source, "toolName", "证据工具名", ViewFieldType.TEXT, false),
+                toolChoice(source),
                 number(
                         source,
                         "expectedExitCode",
@@ -306,11 +318,48 @@ final class LoopManagement {
                         Integer.MIN_VALUE,
                         Integer.MAX_VALUE,
                         visible(source, "verificationKind", "TOOL_EXIT_CODE")),
-                conditionalText(source, "fieldPointer", "字段 JSON Pointer", "verificationKind", "TOOL_FIELD_ASSERTION"),
+                pointerChoice(source),
                 expectedValueKind(source),
                 conditionalText(
                         source, "expectedValue", "期望标量值（不是 JSON）", "verificationKind", "TOOL_FIELD_ASSERTION")));
         return List.copyOf(fields);
+    }
+
+    private ViewField toolChoice(String source) {
+        return new ViewField(
+                "toolName",
+                "证据工具",
+                ViewFieldType.CHOICE,
+                new ViewBinding(source, "toolName"),
+                Optional.empty(),
+                ViewFieldValidation.required(true),
+                List.of(),
+                Optional.of(new ViewOptionSource(
+                        TOOLS_SOURCE,
+                        ViewPlatformDataSource.TOOL_NAME_FIELD,
+                        ViewPlatformDataSource.TOOL_LABEL_FIELD,
+                        Optional.empty())),
+                Optional.of(new ViewCondition(
+                        new ViewBinding(source, "verificationKind"),
+                        ViewConditionOperator.NOT_EQUALS,
+                        "USER_CONFIRMATION")));
+    }
+
+    private ViewField pointerChoice(String source) {
+        return new ViewField(
+                "fieldPointer",
+                "工具输出标量字段",
+                ViewFieldType.CHOICE,
+                new ViewBinding(source, "fieldPointer"),
+                Optional.empty(),
+                ViewFieldValidation.required(true),
+                List.of(),
+                Optional.of(new ViewOptionSource(
+                        TOOL_FIELDS_SOURCE,
+                        ViewPlatformDataSource.POINTER_FIELD,
+                        ViewPlatformDataSource.POINTER_LABEL_FIELD,
+                        Optional.of(new ViewOptionFilter(ViewPlatformDataSource.TOOL_NAME_FIELD, "toolName")))),
+                visible(source, "verificationKind", "TOOL_FIELD_ASSERTION"));
     }
 
     private ViewField verificationKind(String source) {

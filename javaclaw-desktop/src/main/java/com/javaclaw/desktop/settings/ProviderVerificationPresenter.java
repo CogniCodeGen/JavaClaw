@@ -4,8 +4,10 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
 
+import com.javaclaw.api.ProviderAuthentication;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.api.ProviderRef;
 import com.javaclaw.api.ProviderVerificationResult;
 import com.javaclaw.client.CommandOptions;
@@ -14,16 +16,20 @@ import com.javaclaw.protocol.ProviderVerificationRpcContracts;
 /** Provider 显式计费验证的独立异步状态机。 */
 public final class ProviderVerificationPresenter {
     private final CoreSettingsGateway gateway;
+    private final ProviderModelPurpose purpose;
     private Consumer<ProviderVerificationSettingsState> listener = ignored -> {};
-    private ProviderVerificationSettingsState state = ProviderVerificationSettingsState.initial();
+    private ProviderVerificationSettingsState state;
 
     /**
      * 创建 Presenter。
      *
      * @param gateway SDK 异步边界
+     * @param purpose 此 Presenter 独立管理的模型用途
      */
-    public ProviderVerificationPresenter(CoreSettingsGateway gateway) {
+    public ProviderVerificationPresenter(CoreSettingsGateway gateway, ProviderModelPurpose purpose) {
         this.gateway = Objects.requireNonNull(gateway, "gateway");
+        this.purpose = Objects.requireNonNull(purpose, "purpose");
+        state = ProviderVerificationSettingsState.initial(purpose);
     }
 
     /**
@@ -46,11 +52,18 @@ public final class ProviderVerificationPresenter {
      */
     public void bind(
             Optional<ProviderEndpoint> endpoint, Optional<String> model, boolean credentialAvailable, boolean blocked) {
-        Optional<ProviderRef> reference = endpoint.flatMap(
-                value -> model.map(selected -> new ProviderRef(value.id(), value.revision(), selected)));
+        Optional<ProviderRef> reference =
+                endpoint.flatMap(value -> model.filter(selected -> value.spec().models().stream()
+                                .anyMatch(candidate ->
+                                        candidate.modelId().equals(selected) && candidate.supports(purpose)))
+                        .map(selected -> new ProviderRef(value.id(), value.revision(), selected)));
+        boolean authenticationAvailable = endpoint.map(
+                        value -> value.spec().authentication() == ProviderAuthentication.NONE
+                                || value.spec().credential().isPresent())
+                .orElse(false);
         boolean available = endpoint.filter(value -> value.lifecycle() == ProviderLifecycle.ACTIVE)
-                        .flatMap(value -> value.spec().credential())
                         .isPresent()
+                && authenticationAvailable
                 && credentialAvailable
                 && !blocked
                 && reference.isPresent();
@@ -59,6 +72,7 @@ public final class ProviderVerificationPresenter {
         publish(new ProviderVerificationSettingsState(
                 SettingsLoadState.READY,
                 reference,
+                purpose,
                 available,
                 changed ? Optional.empty() : state.result(),
                 message,
@@ -73,7 +87,7 @@ public final class ProviderVerificationPresenter {
      */
     public void verify(boolean billingConfirmed, String confirmation) {
         if (!state.available()) {
-            publishFailure("Provider 当前不满足计费验证条件");
+            publishFailure("模型服务当前不满足计费验证条件");
             return;
         }
         if (!billingConfirmed || !ProviderVerificationRpcContracts.BILLING_CONFIRMATION.equals(confirmation)) {
@@ -83,9 +97,10 @@ public final class ProviderVerificationPresenter {
         ProviderRef provider = state.provider().orElseThrow();
         long epoch = state.epoch() + 1;
         publish(new ProviderVerificationSettingsState(
-                SettingsLoadState.SAVING, state.provider(), true, state.result(), "正在执行可能计费的最小模型调用…", epoch));
+                SettingsLoadState.SAVING, state.provider(), purpose, true, state.result(), "正在执行可能计费的最小模型调用…", epoch));
         gateway.verifyProviderRoundTrip(
                         provider,
+                        purpose,
                         true,
                         ProviderVerificationRpcContracts.BILLING_CONFIRMATION,
                         CommandOptions.create(provider.endpointRevision()))
@@ -105,9 +120,14 @@ public final class ProviderVerificationPresenter {
             publishFailure(SettingsFailures.message(failure));
             return;
         }
+        if (result.purpose() != purpose) {
+            publishFailure("模型服务返回了不匹配的验证用途");
+            return;
+        }
         publish(new ProviderVerificationSettingsState(
                 SettingsLoadState.READY,
                 state.provider(),
+                purpose,
                 true,
                 Optional.of(result),
                 result.state() + " · " + result.latencyMillis() + " ms",
@@ -116,7 +136,13 @@ public final class ProviderVerificationPresenter {
 
     private void publishFailure(String message) {
         publish(new ProviderVerificationSettingsState(
-                SettingsLoadState.ERROR, state.provider(), state.available(), state.result(), message, state.epoch()));
+                SettingsLoadState.ERROR,
+                state.provider(),
+                purpose,
+                state.available(),
+                state.result(),
+                message,
+                state.epoch()));
     }
 
     private static String unavailableMessage(
@@ -125,16 +151,18 @@ public final class ProviderVerificationPresenter {
             boolean blocked,
             Optional<ProviderRef> reference) {
         if (endpoint.isEmpty()) {
-            return "请选择已保存的 Provider";
+            return "请选择已保存的模型服务";
         }
         if (endpoint.orElseThrow().lifecycle() != ProviderLifecycle.ACTIVE) {
-            return "只有 ACTIVE Provider 可以执行计费验证";
+            return "只有已启用的模型服务可以执行可能计费的验证";
         }
-        if (endpoint.orElseThrow().spec().credential().isEmpty() || !credentialAvailable) {
+        if ((endpoint.orElseThrow().spec().authentication() != ProviderAuthentication.NONE
+                        && endpoint.orElseThrow().spec().credential().isEmpty())
+                || !credentialAvailable) {
             return "CredentialRef 不可用，计费验证已关闭";
         }
         if (blocked) {
-            return "请先保存或放弃 Provider 草稿";
+            return "请先保存或放弃模型服务草稿";
         }
         if (reference.isEmpty()) {
             return "请选择精确模型";

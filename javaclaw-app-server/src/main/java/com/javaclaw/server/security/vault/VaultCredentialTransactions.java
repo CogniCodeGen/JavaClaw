@@ -109,11 +109,28 @@ final class VaultCredentialTransactions {
 
     <T> T usePrepared(PreparedProviderCredentialMutation prepared, byte[] key, SecretOperation<T> operation)
             throws Exception {
-        byte[] plaintext = cipher.decrypt(key, binding(prepared.metadata()), prepared.encrypted());
+        byte[] plaintext = cipher.decrypt(key, SecretBinding.from(prepared.metadata()), prepared.encrypted());
         try {
             return operation.use(plaintext);
         } finally {
             Arrays.fill(plaintext, (byte) 0);
+        }
+    }
+
+    void reencrypt(
+            java.sql.Connection connection,
+            java.util.List<VaultRepository.StoredSecret> secrets,
+            byte[] oldKey,
+            byte[] newKey)
+            throws Exception {
+        for (VaultRepository.StoredSecret stored : secrets) {
+            byte[] plaintext = cipher.decrypt(oldKey, SecretBinding.from(stored.metadata()), stored.encrypted());
+            try {
+                EncryptedSecret encrypted = cipher.encrypt(newKey, SecretBinding.from(stored.metadata()), plaintext);
+                repository.replaceCipher(connection, new VaultRepository.StoredSecret(stored.metadata(), encrypted));
+            } finally {
+                Arrays.fill(plaintext, (byte) 0);
+            }
         }
     }
 
@@ -149,7 +166,7 @@ final class VaultCredentialTransactions {
             String keyId) {
         byte[] plaintext = VaultChecks.checkedSecret(secret);
         try {
-            EncryptedSecret encrypted = cipher.encrypt(key, binding(metadata), plaintext);
+            EncryptedSecret encrypted = cipher.encrypt(key, SecretBinding.from(metadata), plaintext);
             return new PreparedProviderCredentialMutation(action, metadata, keyId, encrypted);
         } finally {
             Arrays.fill(plaintext, (byte) 0);
@@ -199,11 +216,6 @@ final class VaultCredentialTransactions {
         if (!state.activeKeyId().equals(prepared.keyId())) {
             throw new VaultException("Vault 主密钥已变化，请重新提交 Provider Secret");
         }
-    }
-
-    private static SecretBinding binding(CredentialMetadata metadata) {
-        return new SecretBinding(
-                metadata.reference().namespace(), metadata.reference().id(), metadata.revision());
     }
 
     private <T> T execute(H2Transactions.SqlWork<T> work) {

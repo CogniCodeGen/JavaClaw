@@ -37,7 +37,7 @@ public final class VaultSettingsPresenter {
     public void reload() {
         long epoch = state.epoch() + 1;
         publish(new VaultSettingsState(
-                SettingsLoadState.LOADING, state.status(), state.receipt(), "正在读取 Vault 状态…", epoch));
+                SettingsLoadState.LOADING, state.status(), state.receipt(), "正在读取密钥库状态…", epoch));
         gateway.vaultStatus().whenComplete((status, failure) -> completeStatus(epoch, status, failure, ""));
     }
 
@@ -45,15 +45,15 @@ public final class VaultSettingsPresenter {
     public void refresh() {
         long epoch = state.epoch() + 1;
         publish(new VaultSettingsState(
-                SettingsLoadState.LOADING, state.status(), state.receipt(), "正在重新解封 Vault 主密钥…", epoch));
-        gateway.refreshVault().whenComplete((status, failure) -> completeStatus(epoch, status, failure, "Vault 状态已刷新"));
+                SettingsLoadState.LOADING, state.status(), state.receipt(), "正在重新解封密钥库主密钥…", epoch));
+        gateway.refreshVault().whenComplete((status, failure) -> completeStatus(epoch, status, failure, "密钥库状态已刷新"));
     }
 
     /** 原子轮换主密钥并保持 CredentialRef 不变。 */
     public void rotateMasterKey() {
         long epoch = state.epoch() + 1;
         publish(new VaultSettingsState(
-                SettingsLoadState.SAVING, state.status(), state.receipt(), "正在原子轮换 Vault 主密钥…", epoch));
+                SettingsLoadState.SAVING, state.status(), state.receipt(), "正在原子轮换密钥库主密钥…", epoch));
         gateway.rotateVaultMasterKey(CommandOptions.create(0))
                 .whenComplete((receipt, failure) -> completeManagement(epoch, receipt, failure));
     }
@@ -66,12 +66,11 @@ public final class VaultSettingsPresenter {
     public void reset(String confirmation) {
         if (!"RESET VAULT".equals(confirmation)) {
             publish(new VaultSettingsState(
-                    SettingsLoadState.ERROR, state.status(), state.receipt(), "Vault reset 确认文本不匹配", state.epoch()));
+                    SettingsLoadState.ERROR, state.status(), state.receipt(), "密钥库重置确认文本不匹配", state.epoch()));
             return;
         }
         long epoch = state.epoch() + 1;
-        publish(new VaultSettingsState(
-                SettingsLoadState.SAVING, state.status(), state.receipt(), "正在永久重置 Vault…", epoch));
+        publish(new VaultSettingsState(SettingsLoadState.SAVING, state.status(), state.receipt(), "正在永久重置密钥库…", epoch));
         gateway.resetVault(confirmation, CommandOptions.create(0))
                 .whenComplete((receipt, failure) -> completeManagement(epoch, receipt, failure));
     }

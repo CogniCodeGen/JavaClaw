@@ -32,7 +32,7 @@ public final class TrustKeySettingsPresenter {
             warnUnsavedChanges();
             return;
         }
-        loadCatalog(Optional.empty(), "正在读取 Trust Key…", "");
+        loadCatalog(Optional.empty(), "正在读取信任公钥…", "");
     }
 
     /** @param key 选择的 Trust Key */
@@ -58,7 +58,7 @@ public final class TrustKeySettingsPresenter {
 
     /** @param file 用户选择的 DER 或 Base64 DER 公钥 */
     public void prepare(Path file) {
-        long epoch = begin("正在上传公钥 Attachment 并计算规范指纹…");
+        long epoch = begin("正在上传公钥附件并计算规范指纹…");
         gateway.prepareTrustKey(file).whenComplete((draft, failure) -> completePrepare(epoch, draft, failure));
     }
 
@@ -72,9 +72,9 @@ public final class TrustKeySettingsPresenter {
             return;
         }
         TrustKeyImportDraft draft = state.draft().orElseThrow();
-        long epoch = begin("正在导入已确认指纹的 Trust Key…");
+        long epoch = begin("正在导入已确认指纹的信任公钥…");
         gateway.importTrustKey(keyId, draft)
-                .whenComplete((key, failure) -> completeWrite(epoch, key, "Trust Key 已导入", failure));
+                .whenComplete((key, failure) -> completeWrite(epoch, key, "信任公钥已导入", failure));
     }
 
     /** 实时撤销所选 Trust Key，并由服务端禁用其签名 Bundle。 */
@@ -83,9 +83,9 @@ public final class TrustKeySettingsPresenter {
             throw new IllegalStateException("请先丢弃导入草稿");
         }
         BundleRpcContracts.TrustKey key = state.selected().orElseThrow();
-        long epoch = begin("正在撤销 Trust Key 并禁用关联 Bundle…");
+        long epoch = begin("正在撤销信任公钥并停用关联扩展包…");
         gateway.revokeTrustKey(key)
-                .whenComplete((updated, failure) -> completeWrite(epoch, updated, "Trust Key 已撤销", failure));
+                .whenComplete((updated, failure) -> completeWrite(epoch, updated, "信任公钥已撤销", failure));
     }
 
     /** 丢弃本地导入标识和指纹草稿。 */
@@ -100,7 +100,7 @@ public final class TrustKeySettingsPresenter {
                 state.selected(),
                 state.keyId(),
                 state.draft(),
-                "请先确认导入或丢弃 Trust Key 草稿",
+                "请先确认导入或丢弃信任公钥草稿",
                 false,
                 state.epoch()));
     }
@@ -143,7 +143,7 @@ public final class TrustKeySettingsPresenter {
                 selected,
                 "",
                 Optional.empty(),
-                resultMessage.isBlank() && sorted.isEmpty() ? "暂无 Trust Key" : resultMessage,
+                resultMessage.isBlank() && sorted.isEmpty() ? "暂无信任公钥" : resultMessage,
                 false,
                 epoch));
     }
@@ -175,7 +175,7 @@ public final class TrustKeySettingsPresenter {
             return;
         }
         publish(copy(SettingsLoadState.READY, Optional.of(key), "", Optional.empty(), success, false, epoch));
-        loadCatalog(Optional.of(key.id()), "正在刷新 Trust Key…", success);
+        loadCatalog(Optional.of(key.id()), "正在刷新信任公钥…", success);
     }
 
     private String requireKeyId() {

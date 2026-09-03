@@ -35,7 +35,7 @@ public record McpOAuthSettingsState(
     /** @return 尚未选择 Endpoint 的初始状态 */
     public static McpOAuthSettingsState initial() {
         return new McpOAuthSettingsState(
-                SettingsLoadState.READY, Optional.empty(), Optional.empty(), "请选择 OAuth Endpoint", 0);
+                SettingsLoadState.READY, Optional.empty(), Optional.empty(), "请选择 OAuth 连接", 0);
     }
 
     /** @return 是否正在等待隔离 Browser Worker 完成 */

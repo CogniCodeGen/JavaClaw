@@ -5,7 +5,9 @@ import java.util.Objects;
 import java.util.Optional;
 
 import com.javaclaw.api.CredentialMetadata;
+import com.javaclaw.api.ProviderAuthentication;
 import com.javaclaw.api.ProviderEndpoint;
+import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ProviderStatus;
 
 /**
@@ -69,5 +71,33 @@ public record ProviderSettingsState(
     /** @return 当前是否正在执行后台动作 */
     public boolean pending() {
         return phase == SettingsLoadState.LOADING || phase == SettingsLoadState.SAVING;
+    }
+
+    /** @return 根据权威 Provider 与凭据元数据推导的首次配置下一步 */
+    ProviderSetupPhase setupPhase() {
+        if (selected.isEmpty()) {
+            return ProviderSetupPhase.CONNECTION;
+        }
+        if (draft.authentication() == ProviderAuthentication.API_KEY && credential.isEmpty()) {
+            return ProviderSetupPhase.CREDENTIAL;
+        }
+        ProviderEndpoint endpoint = selected.orElseThrow();
+        if (endpoint.spec().models().isEmpty()) {
+            return ProviderSetupPhase.MODELS;
+        }
+        return endpoint.lifecycle() == ProviderLifecycle.ACTIVE
+                ? ProviderSetupPhase.COMPLETE
+                : ProviderSetupPhase.ENABLE;
+    }
+
+    /** @return 当前首次配置进度的用户可读说明 */
+    String setupMessage() {
+        return switch (setupPhase()) {
+            case CONNECTION -> "第 1/4 步：保存禁用的连接壳；模型和凭据不会在此步写入。";
+            case CREDENTIAL -> "第 2/4 步：配置访问密钥；无鉴权兼容端点会自动跳过。";
+            case MODELS -> draft.models().isEmpty() ? "第 3/4 步：读取模型目录或手工添加模型，并确认每个模型的用途。" : "第 4/4 步：保存模型目录并启用此模型服务。";
+            case ENABLE -> "第 4/4 步：确认配置后启用此模型服务。";
+            case COMPLETE -> "配置完成；新智能体方案可以显式引用这个精确版本。";
+        };
     }
 }

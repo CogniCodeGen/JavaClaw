@@ -3,8 +3,10 @@ package com.javaclaw.protocol;
 import java.security.KeyPair;
 import java.security.PublicKey;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -21,6 +23,7 @@ public final class SessionSecretChannel implements AutoCloseable {
     private final String keyId;
     private final SessionKeyInfo publicKey;
     private final Set<String> consumed = new LinkedHashSet<>();
+    private final List<Runnable> closeListeners = new ArrayList<>();
     private KeyPair keyPair;
 
     private SessionSecretChannel(KeyPair keyPair) {
@@ -56,6 +59,49 @@ public final class SessionSecretChannel implements AutoCloseable {
     }
 
     /**
+     * 返回当前连接的稳定、不透明会话标识。
+     *
+     * <p>该标识只用于服务端将短期资源绑定到连接生命周期，不应写入日志或持久化。
+     *
+     * @return 当前连接标识
+     */
+    public String sessionId() {
+        return keyId;
+    }
+
+    /**
+     * 返回当前连接是否已经关闭。
+     *
+     * <p>仅用于注册临时资源后的竞态复检；资源仍必须通过 {@link #onClose(Runnable)} 绑定清理回调。
+     *
+     * @return 私钥与连接生命周期已经结束时为 true
+     */
+    public synchronized boolean isClosed() {
+        return keyPair == null;
+    }
+
+    /**
+     * 注册连接关闭回调；若连接已经关闭则立即执行。
+     *
+     * <p>回调不得阻塞，也不得抛出异常。它用于取消当前连接拥有的临时网络操作，不承载业务提交。
+     *
+     * @param listener 关闭回调
+     */
+    public void onClose(Runnable listener) {
+        Runnable checked = Objects.requireNonNull(listener, "listener");
+        boolean closed;
+        synchronized (this) {
+            closed = keyPair == null;
+            if (!closed) {
+                closeListeners.add(checked);
+            }
+        }
+        if (closed) {
+            runCloseListener(checked);
+        }
+    }
+
+    /**
      * 校验用途、会话、认证标签和 replay 后解封 Secret。
      *
      * <p>调用方拥有返回数组，写入 Vault 或下游受信端口后必须立即清零。
@@ -83,9 +129,18 @@ public final class SessionSecretChannel implements AutoCloseable {
 
     /** 关闭当前连接的解封能力并丢弃 replay 状态。 */
     @Override
-    public synchronized void close() {
-        keyPair = null;
-        consumed.clear();
+    public void close() {
+        List<Runnable> listeners;
+        synchronized (this) {
+            if (keyPair == null) {
+                return;
+            }
+            keyPair = null;
+            consumed.clear();
+            listeners = List.copyOf(closeListeners);
+            closeListeners.clear();
+        }
+        listeners.forEach(SessionSecretChannel::runCloseListener);
     }
 
     private byte[] decrypt(SealedSecret sealed, String purpose) {
@@ -120,6 +175,15 @@ public final class SessionSecretChannel implements AutoCloseable {
     private void requireOpen() {
         if (keyPair == null) {
             throw new SecretSealingException("会话 Secret 通道已关闭");
+        }
+    }
+
+    private static void runCloseListener(Runnable listener) {
+        try {
+            listener.run();
+        } catch (RuntimeException failure) {
+            System.getLogger(SessionSecretChannel.class.getName())
+                    .log(System.Logger.Level.WARNING, "Session close listener failed", failure);
         }
     }
 }

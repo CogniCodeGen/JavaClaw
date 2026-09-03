@@ -54,7 +54,7 @@ class McpExternalDataPresenterTest {
         presenter.getPrompt(snapshot.get().prompts().getFirst(), Map.of("topic", "v5"));
         assertEquals(1, snapshot.get().prompt().orElseThrow().messages().size());
         assertTrue(snapshot.get().resource().isEmpty());
-        assertTrue(snapshot.get().message().contains("system context"));
+        assertTrue(snapshot.get().message().contains("系统上下文"));
     }
 
     @Test

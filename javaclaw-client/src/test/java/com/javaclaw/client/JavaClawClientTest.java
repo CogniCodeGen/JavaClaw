@@ -91,6 +91,7 @@ class JavaClawClientTest {
             assertTrue(client.permissionProfiles() != null);
             assertTrue(client.approvals() != null);
             assertTrue(client.securityGrants() != null);
+            assertTrue(client.tools() != null);
             assertTrue(client.rollouts() != null);
             assertTrue(client.worktrees() != null);
             assertTrue(client.diagnostics() != null);

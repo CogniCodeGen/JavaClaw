@@ -8,13 +8,16 @@ import java.util.Set;
 import java.util.concurrent.CompletionStage;
 
 import com.javaclaw.api.AgentProfile;
+import com.javaclaw.api.AgentProfileRef;
 import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.CancellationToken;
 import com.javaclaw.api.ConversationThread;
 import com.javaclaw.api.CredentialClearReceipt;
 import com.javaclaw.api.CredentialMetadata;
 import com.javaclaw.api.CredentialRef;
 import com.javaclaw.api.DiagnosticsSnapshot;
 import com.javaclaw.api.EffectivePermissionPreview;
+import com.javaclaw.api.EmbeddingBinding;
 import com.javaclaw.api.ManagedWorktree;
 import com.javaclaw.api.ManagedWorktreeArtifact;
 import com.javaclaw.api.PermissionDecisionTrace;
@@ -31,11 +34,14 @@ import com.javaclaw.api.ProviderCredentialClearResult;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.ProviderModelDiscoveryResult;
+import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.api.ProviderRef;
 import com.javaclaw.api.ProviderStatus;
 import com.javaclaw.api.ProviderVerificationResult;
 import com.javaclaw.api.SecurityGrantKind;
 import com.javaclaw.api.ThreadId;
+import com.javaclaw.api.ToolCatalogQueryResult;
 import com.javaclaw.api.UnattendedToolGrant;
 import com.javaclaw.api.UnattendedToolGrantDraft;
 import com.javaclaw.api.UnattendedToolGrantStatus;
@@ -60,10 +66,12 @@ public interface CoreSettingsGateway {
      *
      * @param id 稳定标识
      * @param spec 完整配置
+     * @param lifecycle 初始状态；只有 DISABLED 允许空模型目录
      * @param options 幂等与 revision
      * @return 创建结果
      */
-    CompletionStage<ProviderEndpoint> createProvider(String id, ProviderEndpointSpec spec, CommandOptions options);
+    CompletionStage<ProviderEndpoint> createProvider(
+            String id, ProviderEndpointSpec spec, ProviderLifecycle lifecycle, CommandOptions options);
 
     /**
      * 更新 Provider。
@@ -87,6 +95,29 @@ public interface CoreSettingsGateway {
     CompletionStage<ProviderEndpoint> archiveProvider(String id, CommandOptions options);
 
     /**
+     * 读取已保存 Provider 精确版本的远程模型目录，不执行推理。
+     *
+     * @param id Provider 标识
+     * @param revision 精确版本
+     * @param cancellation 页面或作用域取消信号
+     * @return 有界候选目录
+     */
+    CompletionStage<ProviderModelDiscoveryResult> discoverProviderModels(
+            String id, long revision, CancellationToken cancellation);
+
+    /** @return 本地安装的精确 Embedding 默认绑定 */
+    CompletionStage<Optional<EmbeddingBinding>> embeddingBinding();
+
+    /**
+     * 设置本地安装的精确 Embedding 模型。
+     *
+     * @param provider 支持 Embedding 的精确 ProviderRef
+     * @param options 绑定自身的 expected revision
+     * @return 新绑定
+     */
+    CompletionStage<EmbeddingBinding> bindEmbedding(ProviderRef provider, CommandOptions options);
+
+    /**
      * 执行不产生模型费用的本地 Provider 探测。
      *
      * @param provider 精确 Provider 引用
@@ -98,13 +129,18 @@ public interface CoreSettingsGateway {
      * 执行可能计费的最小 Provider round-trip。
      *
      * @param provider 精确 Provider 与模型
+     * @param purpose 本次要验证的模型用途
      * @param billingConfirmed 必须为 true 的显式确认
      * @param confirmation 固定危险确认文本
      * @param options 幂等与 Provider revision
      * @return 脱敏延迟、usage、能力和终态
      */
     CompletionStage<ProviderVerificationResult> verifyProviderRoundTrip(
-            ProviderRef provider, boolean billingConfirmed, String confirmation, CommandOptions options);
+            ProviderRef provider,
+            ProviderModelPurpose purpose,
+            boolean billingConfirmed,
+            String confirmation,
+            CommandOptions options);
 
     /**
      * 原子绑定或轮换 Provider Secret。
@@ -131,6 +167,14 @@ public interface CoreSettingsGateway {
 
     /** @return 最新 Agent Profile 目录 */
     CompletionStage<List<AgentProfile>> profiles();
+
+    /**
+     * 读取不可变的精确 Agent Profile。
+     *
+     * @param reference 精确引用
+     * @return Profile 快照
+     */
+    CompletionStage<AgentProfile> profile(AgentProfileRef reference);
 
     /**
      * 创建 Agent Profile。
@@ -165,6 +209,33 @@ public interface CoreSettingsGateway {
 
     /** @return 最新 PermissionProfile 目录 */
     CompletionStage<List<PermissionProfile>> permissionProfiles();
+
+    /**
+     * 读取不可变的精确 PermissionProfile。
+     *
+     * @param reference 精确引用
+     * @return 权限快照
+     */
+    CompletionStage<PermissionProfile> permissionProfile(PermissionProfileRef reference);
+
+    /**
+     * 查询固定 Workspace 和权限版本下的工具目录。
+     *
+     * <p>提供 Agent Profile 时返回其实际可执行目录；省略时返回权限编辑器的可选候选。目录 revision 始终由服务端计算。
+     *
+     * @param workspaceId 固定 Workspace
+     * @param permissionProfile 精确权限版本
+     * @param agentProfile 精确 Agent Profile
+     * @param query 查询词
+     * @param limit 最大结果数
+     * @return 权威目录版本与有界结果
+     */
+    CompletionStage<ToolCatalogQueryResult> toolCatalog(
+            WorkspaceId workspaceId,
+            PermissionProfileRef permissionProfile,
+            Optional<AgentProfileRef> agentProfile,
+            String query,
+            int limit);
 
     /**
      * 读取指定 PermissionProfile 的不可变版本历史。

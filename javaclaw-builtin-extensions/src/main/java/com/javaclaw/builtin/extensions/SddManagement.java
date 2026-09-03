@@ -28,6 +28,9 @@ import com.javaclaw.extension.spi.ViewFieldType;
 import com.javaclaw.extension.spi.ViewFieldValidation;
 import com.javaclaw.extension.spi.ViewFormField;
 import com.javaclaw.extension.spi.ViewOption;
+import com.javaclaw.extension.spi.ViewOptionFilter;
+import com.javaclaw.extension.spi.ViewOptionSource;
+import com.javaclaw.extension.spi.ViewPlatformDataSource;
 import com.javaclaw.extension.spi.ViewSchema;
 import com.javaclaw.extension.spi.ViewSelectionMode;
 import com.javaclaw.extension.spi.ViewStructuredItemField;
@@ -37,6 +40,8 @@ import com.javaclaw.extension.spi.ViewStructuredListField;
 
 /** SDD 管理中心的强类型新建、权威详情和乐观锁编辑纵切。 */
 final class SddManagement {
+    private static final String TOOLS_SOURCE = "platformTools";
+    private static final String TOOL_FIELDS_SOURCE = "platformToolFields";
     private static final String CREATE = "definition/create";
     private static final String UPDATE = "definition/update";
     private static final String VIEW_NEW = "definition/view.new";
@@ -181,6 +186,13 @@ final class SddManagement {
                 "规格驱动开发定义",
                 List.of(
                         new ViewDataSource("documents", "view.list", Map.of(), List.of(), 100),
+                        new ViewDataSource(TOOLS_SOURCE, ViewPlatformDataSource.TOOL_CATALOG, Map.of(), List.of(), 100),
+                        new ViewDataSource(
+                                TOOL_FIELDS_SOURCE,
+                                ViewPlatformDataSource.TOOL_OUTPUT_FIELDS,
+                                Map.of(),
+                                List.of(),
+                                200),
                         new ViewDataSource(NEW_SOURCE, VIEW_NEW, Map.of(), List.of(), 1),
                         new ViewDataSource(
                                 EDIT_SOURCE,
@@ -236,7 +248,7 @@ final class SddManagement {
         fields.add(text(source, "design", "设计说明", ViewFieldType.MULTILINE, true));
         fields.add(tasks(source));
         fields.add(verificationKind(source));
-        fields.add(text(source, "toolName", "证据工具名", ViewFieldType.TEXT, true));
+        fields.add(toolChoice(source));
         fields.add(number(
                 source,
                 "expectedExitCode",
@@ -245,13 +257,46 @@ final class SddManagement {
                 Integer.MIN_VALUE,
                 Integer.MAX_VALUE,
                 visible(source, "verificationKind", "TOOL_EXIT_CODE")));
-        fields.add(
-                conditionalText(source, "fieldPointer", "字段 JSON Pointer", "verificationKind", "TOOL_FIELD_ASSERTION"));
+        fields.add(pointerChoice(source));
         fields.add(expectedValueKind(source));
         fields.add(
                 conditionalText(source, "expectedValue", "期望标量值（不是 JSON）", "verificationKind", "TOOL_FIELD_ASSERTION"));
         fields.add(number(source, "maximumRemediations", "最大修复轮数", "1", 0, 10, Optional.empty()));
         return List.copyOf(fields);
+    }
+
+    private static ViewField toolChoice(String source) {
+        return new ViewField(
+                "toolName",
+                "证据工具",
+                ViewFieldType.CHOICE,
+                new ViewBinding(source, "toolName"),
+                Optional.empty(),
+                ViewFieldValidation.required(true),
+                List.of(),
+                Optional.of(new ViewOptionSource(
+                        TOOLS_SOURCE,
+                        ViewPlatformDataSource.TOOL_NAME_FIELD,
+                        ViewPlatformDataSource.TOOL_LABEL_FIELD,
+                        Optional.empty())),
+                Optional.empty());
+    }
+
+    private static ViewField pointerChoice(String source) {
+        return new ViewField(
+                "fieldPointer",
+                "工具输出标量字段",
+                ViewFieldType.CHOICE,
+                new ViewBinding(source, "fieldPointer"),
+                Optional.empty(),
+                ViewFieldValidation.required(true),
+                List.of(),
+                Optional.of(new ViewOptionSource(
+                        TOOL_FIELDS_SOURCE,
+                        ViewPlatformDataSource.POINTER_FIELD,
+                        ViewPlatformDataSource.POINTER_LABEL_FIELD,
+                        Optional.of(new ViewOptionFilter(ViewPlatformDataSource.TOOL_NAME_FIELD, "toolName")))),
+                visible(source, "verificationKind", "TOOL_FIELD_ASSERTION"));
     }
 
     private static ViewStructuredListField tasks(String source) {
@@ -262,7 +307,8 @@ final class SddManagement {
                 Optional.empty(),
                 List.of(),
                 ViewStructuredItemValidation.required(true),
-                List.of());
+                List.of(),
+                Optional.empty());
         return new ViewStructuredListField(
                 "tasks",
                 "实施任务",

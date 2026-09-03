@@ -67,7 +67,7 @@ Approval、Extension/Bundle/Job、MCP、Tool、Worktree、Lifecycle、Diagnostic
 Memory 等业务领域统一通过四个 Extension 方法访问，不把领域命令扩散进平台目录。所有写命令携带 idempotency key
 与 expected revision；服务端在同一事务内检查 revision、记录幂等结果并写 outbox。
 
-当前 `methods-v2.json` 包含 138 个方法。每个方法分别绑定严格的 params 和 result Schema；通知没有 result，普通方法
+当前 `methods-v2.json` 包含 147 个方法。每个方法分别绑定严格的 params 和 result Schema；通知没有 result，普通方法
 不得省略 result Schema。catalog、Java contract 和示例由测试逐方法对齐，不能用一个宽松对象 schema 掩盖遗漏字段。
 
 stdio、Unix Domain Socket 与 Windows Named Pipe 均已进入当前实现；TCP 与 WebSocket 不实现。Named Pipe 使用
@@ -81,24 +81,47 @@ Core ID 在 wire 上统一编码为标量字符串，时间统一使用 RFC 3339
 
 ## 4.1 设置数据与强类型契约
 
-Desktop 本机只保存主题、字号、密度、窗口位置和最后打开页面。本地安装全局配置保存 Provider、Agent Profile、
-PermissionProfile、Vault 元数据、Bundle 与信任公钥；Workspace 保存默认 Profile、MCP、Site、学习策略、授权与扩展
-定义。Thread 只引用默认 Profile ID，Turn 则冻结 Profile、Provider、Permission、Prompt manifest 与工具目录的精确
-revision/hash。
+Desktop 本机只保存主题、字号、密度、窗口位置和最后打开页面。设置中心的 Workspace 作用域只属于当前 Desktop
+窗口会话：切换主窗口 Workspace 不会改变已打开设置中心的目标。作用域将 frozen selection 与 available selection
+分开；目录重载、断线或 Workspace 失效时保留前者及页面草稿，但清空后者并暂停写入。dirty/pending 时禁止重载或
+切换，切换会取消旧读取、递增请求 epoch，并丢弃迟到响应。安装级配置保存 Provider、Agent Profile、
+PermissionProfile、默认 Embedding 的精确绑定、Vault 元数据、Bundle 与信任公钥；Workspace 保存精确
+`AgentProfileRef` 默认绑定、MCP、Site、学习策略、授权与扩展定义。Thread 可保存精确 `AgentProfileRef` 覆盖，Turn 则冻结
+Profile、Provider、Permission、Prompt manifest 与工具目录的精确 revision/hash。
 
-Provider 与 Agent Profile 使用独立强类型 API，不接受通用配置 JSON。Provider 保存时先构造候选 Adapter，再在配置和
-CredentialRef 同一提交成功后原子替换 Model Registry；旧实例等待在途调用释放后关闭。Provider 或凭据禁用是实时
-kill switch，活动 Turn 的后续模型调用也必须失败。Prompt 优化通过受预算的普通 Harness Turn 生成 Draft，显式展示
-可能计费确认，并且只有用户采纳后才改变 Profile。
+Provider 与 Agent Profile 使用独立强类型 API，不接受通用配置 JSON。Provider 的每个模型分别声明 `CHAT`、
+`EMBEDDING` 用途；聊天路由和 Embedding 路由不会交叉注册。Embedding 不按名称或字典序推断默认值，而由安装级精确
+`ProviderRef` 绑定选择。Provider 普通配置按不可变 revision 独立提交；涉及 Secret 的 `provider/credential/*` 命令先构造
+候选 Adapter，再在同一 H2 事务提交 Vault 密文、Secret 元数据 revision、Provider 新 revision 与幂等回执，提交成功后
+通过无 I/O 的引用交换同步激活候选 generation。旧实例等待在途调用释放后关闭。历史精确 `ProviderRef` 只有在最新
+Provider lifecycle 仍为 `ACTIVE`、当前 CredentialRef 可用且 Vault 未锁定时才可进入新 Profile、绑定或 Turn；最新
+Provider 被禁用/归档、Secret 被清除或 Vault 锁定都会同步 fail closed。Provider 新 revision 不会静默改变已有 Profile 或
+Turn，UI 必须展示旧引用并由用户显式更新。Prompt 优化通过
+受预算的普通 Harness Turn 生成 Draft，显式展示可能计费确认，并且只有用户采纳后才改变 Profile。
+
+模型目录发现只能读取已保存的精确 Provider revision，不执行推理，也不持久化远端结果。它通过 session-owned 的
+`provider/model/discovery/start|read|cancel` 操作提供最长 30 秒、最多 1000 条的有界读取；页面、RPC session 或服务关闭
+会取消真实 HTTP 调用，所有 redirect 均被拒绝。`API_KEY` 自定义地址只允许 HTTPS 或显式 loopback HTTP；`NONE` 仅允许
+自定义 OpenAI-compatible 地址且不得绑定 CredentialRef。首次配置按“禁用连接壳、凭据、模型用途、启用”四步恢复，
+使用不含 Secret 的确定性幂等键，已有不同内容的相同 ID 不会被覆盖。厂商 SDK 与目录解析留在
+`javaclaw-model-adapters`，App Server 只负责有界协调和安全校验，Desktop 仍通过 SDK 使用。内置
+`default/worker/explorer` 是带 revision 与发行资源摘要校验的 Profile 初始模板；客户端选择预设后仍通过普通
+`profile/create` 创建完整快照，不额外持久化预设身份。实例化后是普通可编辑 Profile，不增加角色表或 Harness 分支。
+Explorer 的只读边界由针对固定 Workspace 实例化的 PermissionProfile 保证，提示词不能授予权限。角色职责参考
+[Codex Subagents](https://developers.openai.com/codex/agent-configuration/subagents) 的公开设计，内置文本由本项目独立编写。
 
 配置探测只检查 adapter、URI、模型目录和厂商选项的非计费可用性；真实模型 round-trip 是独立命令，必须携带用户的
-显式计费确认。复合写命令把 Provider 配置、CredentialRef 和 registry 替换作为一个服务端原子动作，候选构造或提交
-失败时活动 Adapter 与原 revision 保持不变。
+显式计费确认。Provider 普通配置按不可变 revision 提交；`provider/credential/*` 的候选构造发生在写事务前，Vault
+密文、Secret 元数据 revision、Provider 新 revision 与幂等回执在同一 H2 事务提交，随后才激活候选 registry。
+候选构造或 H2 提交失败时活动 Adapter 与原 revision 保持不变；提交后的激活或清理异常不能回滚 H2，运行时必须保持
+fail closed 并交由下一次权威重建恢复。
 
-Secret Vault 在 H2 中只保存 AES-256-GCM 密文、随机 nonce、版本和元数据；AAD 绑定 namespace、资源、SecretRef 与
-revision。主密钥由 macOS Keychain、Windows 系统凭据设施或 Linux Secret Service 封装。连接初始化协商会话级
-X25519 公钥，PasswordField 内容必须密封后才进入 JSON-RPC。Secret 只能写入、轮换、清除和查看“已配置”状态，
-不得读取、复制或导出；系统凭据设施不可用时进入 `VAULT_LOCKED` 并 fail closed。
+Secret Vault 在 H2 中只保存 AES-256-GCM 密文、随机 nonce、版本和元数据；AAD 绑定版本域、namespace、opaque
+CredentialRef ID 与 Secret revision。主密钥由 macOS Keychain、Windows 系统凭据设施或 Linux Secret Service 封装。
+连接初始化协商会话级 X25519 公钥，PasswordField 内容必须密封后才进入 JSON-RPC。面向 SDK/RPC 的管理 API 只能写入、
+轮换、清除和查看“已配置”状态，不提供读取、复制或导出；服务端只在受控 callback 中解封。Vault 变化串行化，并在
+修改前关闭运行时 epoch gate；调用取得 Adapter lease 后仍要复核 epoch，防止旧 generation 在并发变化中重新进入。
+运行时重建失败时 gate 保持关闭。系统凭据设施不可用时进入 `VaultState.LOCKED` 并 fail closed。
 
 ## 5. 模型边界
 
@@ -222,8 +245,9 @@ epoch、revision 冲突和安全 Graph，不允许 FXML、CSS、Controller、Jav
 当前 29 个生产管理入口均连接到强类型 SDK 或 ViewSchema v2 数据源。异步 Presenter 使用请求 epoch 丢弃旧响应；
 通知刷新不能覆盖 dirty 草稿，revision 冲突必须保留草稿并等待用户显式选择重新加载或继续编辑。
 
-macOS 设置中心 Golden 固定九主题、三密度、两种窗口与 29 个入口，共 54 张生产 Scene。Golden 由 Failsafe 在独立
-JVM 中运行并逐字节比较，隔离 JavaFX 进程级字形缓存与普通窗口测试的执行顺序；普通 `verify` 不得改写参考图。
+macOS 设置中心 Golden 固定设置中心壳和外观页的九主题、三密度、100% 字号与两种窗口，共 54 张生产 Scene；测试另行
+断言导航目录包含 29 个入口。Golden 由 Failsafe 在独立 JVM 中运行并逐字节比较，隔离 JavaFX 进程级字形缓存与普通
+窗口测试的执行顺序；普通 `verify` 不得改写参考图。29 页正文、多状态和其余三档字号仍需由后续视觉参考集补证。
 
 ## 11. 失败语义与可观测性
 

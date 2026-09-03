@@ -137,7 +137,7 @@ class MemorySkillLifecycleTest {
         MemoryContracts.LearningSettings initialSettings =
                 support.payloads.decode(initial.values(), MemoryContracts.LearningSettings.class);
         ViewSchema.Form form = (ViewSchema.Form)
-                MemoryExtensionPresentation.managementView().nodes().getFirst();
+                MemoryExtensionPresentation.learningView().nodes().getFirst();
 
         assertEquals(MemoryContracts.LearningPolicy.SUGGEST, initialSettings.policy());
         assertEquals(0, initial.revision());

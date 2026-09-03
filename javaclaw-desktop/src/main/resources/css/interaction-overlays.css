@@ -203,7 +203,7 @@
     -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.12), 20, 0, 0, 6);
 }
 
-/* UIHelper 为全部 DialogPane 追加该类：窗口尺寸由代码按屏幕约束，正文独立滚动。 */
+/* PlatformDialogs 为全部 DialogPane 追加该类：窗口尺寸由代码按屏幕约束，正文独立滚动。 */
 .dialog-pane.jc-dialog-pane {
     -fx-border-color: -jc-border;
     -fx-border-width: 1;
@@ -291,7 +291,7 @@
     -fx-max-width: 560;
 }
 
-/* 弹窗图标区域（已在 UIHelper 中移除默认图标） */
+/* 弹窗图标区域（已在 PlatformDialogs 中移除默认图标） */
 .dialog-pane > .graphic-container {
     -fx-padding: 0;
 }
@@ -337,6 +337,17 @@
     -fx-font-size: 14px;
     -fx-line-spacing: 3;
     -fx-padding: 4 10 8 0;
+}
+
+/* ==================== 统一下拉弹层样式 ==================== */
+
+/*
+ * ComboBox 的选项弹层由独立 PopupWindow 承载，内部仍是 ListView。
+ * 必须在这里恢复不透明表面，避免通用透明列表样式让宿主页面控件透出。
+ */
+.combo-box-popup > .list-view {
+    -fx-background-color: -jc-surface-card;
+    -fx-background-insets: 0;
 }
 
 /* ==================== 统一右键菜单样式 ==================== */
@@ -506,4 +517,3 @@
 .status-warning {
     -fx-text-fill: #F59E0B;
 }
-

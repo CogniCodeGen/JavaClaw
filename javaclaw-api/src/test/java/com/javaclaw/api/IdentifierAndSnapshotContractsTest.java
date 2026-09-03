@@ -4,7 +4,6 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -337,11 +336,12 @@ class IdentifierAndSnapshotContractsTest {
                 "OpenAI",
                 ProviderAdapter.OPENAI_COMPATIBLE,
                 Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of("model"),
+                ProviderAuthentication.API_KEY,
+                List.of(new ProviderModelSpec(
+                        "model", "model", Set.of(ProviderModelPurpose.CHAT), java.util.OptionalInt.empty())),
                 Optional.empty(),
                 Duration.ofSeconds(30),
                 1,
-                Map.of());
+                ProviderAdapterOptions.defaults(ProviderAdapter.OPENAI_COMPATIBLE));
     }
 }

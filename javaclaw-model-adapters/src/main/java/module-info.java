@@ -7,6 +7,8 @@ module com.javaclaw.model.adapters {
     requires com.javaclaw.extension.spi;
     requires openai.java.client.okhttp;
     requires openai.java.core;
+    requires okhttp3;
+    requires kotlin.stdlib;
     requires anthropic.java.client.okhttp;
     requires anthropic.java.core;
     requires reactor.core;

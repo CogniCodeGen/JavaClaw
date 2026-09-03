@@ -11,6 +11,7 @@ import java.util.Set;
 import java.util.concurrent.CompletionStage;
 
 import com.javaclaw.api.AgentProfile;
+import com.javaclaw.api.AgentProfileRef;
 import com.javaclaw.api.AgentProfileSpec;
 import com.javaclaw.api.ConversationThread;
 import com.javaclaw.api.CredentialClearReceipt;
@@ -18,6 +19,7 @@ import com.javaclaw.api.CredentialMetadata;
 import com.javaclaw.api.CredentialRef;
 import com.javaclaw.api.DiagnosticsSnapshot;
 import com.javaclaw.api.EffectivePermissionPreview;
+import com.javaclaw.api.EmbeddingBinding;
 import com.javaclaw.api.ManagedWorktree;
 import com.javaclaw.api.ManagedWorktreeArtifact;
 import com.javaclaw.api.McpCatalogKind;
@@ -44,11 +46,14 @@ import com.javaclaw.api.ProviderCredentialClearResult;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.ProviderModelDiscoveryResult;
+import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.api.ProviderRef;
 import com.javaclaw.api.ProviderStatus;
 import com.javaclaw.api.ProviderVerificationResult;
 import com.javaclaw.api.SecurityGrantKind;
 import com.javaclaw.api.ThreadId;
+import com.javaclaw.api.ToolCatalogQueryResult;
 import com.javaclaw.api.UnattendedToolGrant;
 import com.javaclaw.api.UnattendedToolGrantDraft;
 import com.javaclaw.api.UnattendedToolGrantStatus;
@@ -83,8 +88,8 @@ public final class SdkCoreSettingsGateway extends SdkBundleSettingsGateway
 
     @Override
     public CompletionStage<ProviderEndpoint> createProvider(
-            String id, ProviderEndpointSpec spec, CommandOptions options) {
-        return desktop.submitSettingsRequest(client -> client.providers().create(id, spec, options));
+            String id, ProviderEndpointSpec spec, ProviderLifecycle lifecycle, CommandOptions options) {
+        return desktop.submitSettingsRequest(client -> client.providers().create(id, spec, lifecycle, options));
     }
 
     @Override
@@ -99,15 +104,35 @@ public final class SdkCoreSettingsGateway extends SdkBundleSettingsGateway
     }
 
     @Override
+    public CompletionStage<ProviderModelDiscoveryResult> discoverProviderModels(
+            String id, long revision, com.javaclaw.api.CancellationToken cancellation) {
+        return desktop.submitSettingsRequest(client -> client.providers().discoverModels(id, revision, cancellation));
+    }
+
+    @Override
+    public CompletionStage<Optional<EmbeddingBinding>> embeddingBinding() {
+        return desktop.submitSettingsRequest(client -> client.providers().embeddingBinding());
+    }
+
+    @Override
+    public CompletionStage<EmbeddingBinding> bindEmbedding(ProviderRef provider, CommandOptions options) {
+        return desktop.submitSettingsRequest(client -> client.providers().bindEmbedding(provider, options));
+    }
+
+    @Override
     public CompletionStage<ProviderStatus> probeProvider(ProviderRef provider) {
         return desktop.submitSettingsRequest(client -> client.providers().probe(provider));
     }
 
     @Override
     public CompletionStage<ProviderVerificationResult> verifyProviderRoundTrip(
-            ProviderRef provider, boolean billingConfirmed, String confirmation, CommandOptions options) {
-        return desktop.submitSettingsRequest(
-                client -> client.providers().verifyRoundTrip(provider, billingConfirmed, confirmation, options));
+            ProviderRef provider,
+            ProviderModelPurpose purpose,
+            boolean billingConfirmed,
+            String confirmation,
+            CommandOptions options) {
+        return desktop.submitSettingsRequest(client ->
+                client.providers().verifyRoundTrip(provider, purpose, billingConfirmed, confirmation, options));
     }
 
     @Override
@@ -138,6 +163,12 @@ public final class SdkCoreSettingsGateway extends SdkBundleSettingsGateway
     }
 
     @Override
+    public CompletionStage<AgentProfile> profile(AgentProfileRef reference) {
+        AgentProfileRef checked = Objects.requireNonNull(reference, "reference");
+        return desktop.submitSettingsRequest(client -> client.profiles().read(checked.id(), checked.revision()));
+    }
+
+    @Override
     public CompletionStage<AgentProfile> createProfile(String id, AgentProfileSpec spec, CommandOptions options) {
         return desktop.submitSettingsRequest(client -> client.profiles().create(id, spec, options));
     }
@@ -157,6 +188,23 @@ public final class SdkCoreSettingsGateway extends SdkBundleSettingsGateway
     public CompletionStage<List<PermissionProfile>> permissionProfiles() {
         return desktop.submitSettingsRequest(
                 client -> client.permissionProfiles().list());
+    }
+
+    @Override
+    public CompletionStage<PermissionProfile> permissionProfile(PermissionProfileRef reference) {
+        return desktop.submitSettingsRequest(
+                client -> client.permissionProfiles().read(Objects.requireNonNull(reference, "reference")));
+    }
+
+    @Override
+    public CompletionStage<ToolCatalogQueryResult> toolCatalog(
+            WorkspaceId workspaceId,
+            PermissionProfileRef permissionProfile,
+            Optional<AgentProfileRef> agentProfile,
+            String query,
+            int limit) {
+        return desktop.submitSettingsRequest(
+                client -> client.tools().catalog(workspaceId, permissionProfile, agentProfile, query, limit));
     }
 
     @Override

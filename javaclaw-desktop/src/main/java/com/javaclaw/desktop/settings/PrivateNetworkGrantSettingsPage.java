@@ -1,6 +1,7 @@
 package com.javaclaw.desktop.settings;
 
 import java.util.Objects;
+import java.util.Optional;
 
 import javafx.scene.Node;
 import javafx.scene.control.Alert;
@@ -26,12 +27,12 @@ import com.javaclaw.desktop.component.PlatformComponentFactory;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 import com.javaclaw.desktop.component.PlatformComponentFactory.FeedbackKind;
+import com.javaclaw.desktop.component.PlatformDialogs;
 
-/** 私网授权 preview-confirm、审计与不可逆撤销页面。 */
+/** 私网授权预览确认、审计与不可逆撤销页面。 */
 public final class PrivateNetworkGrantSettingsPage extends VBox implements ManagedSettingsPage {
     private final PlatformComponentFactory components = new PlatformComponentFactory();
     private final PrivateNetworkGrantSettingsPresenter presenter;
-    private final ComboBox<Workspace> workspace = new ComboBox<>();
     private final ComboBox<PrivateNetworkPurpose> purpose = new ComboBox<>();
     private final TextField origin = new TextField();
     private final TextArea dnsAddresses = new TextArea();
@@ -53,6 +54,7 @@ public final class PrivateNetworkGrantSettingsPage extends VBox implements Manag
     private final AsyncActionBar actions;
     private PrivateNetworkGrantSettingsState state = PrivateNetworkGrantSettingsState.initial();
     private Node detail;
+    private Optional<Workspace> scopedWorkspace = Optional.empty();
     private boolean rendering;
 
     /** @param gateway 强类型 SDK 设置边界 */
@@ -75,13 +77,34 @@ public final class PrivateNetworkGrantSettingsPage extends VBox implements Manag
     }
 
     @Override
+    public Optional<Node> actionContent() {
+        return Optional.of(actions);
+    }
+
+    @Override
     public void activate() {
-        presenter.reload();
+        scopedWorkspace.ifPresent(presenter::selectWorkspace);
     }
 
     @Override
     public boolean dirty() {
         return state.dirty();
+    }
+
+    @Override
+    public boolean pending() {
+        return state.phase() == SettingsLoadState.LOADING || state.phase() == SettingsLoadState.SAVING;
+    }
+
+    @Override
+    public void workspaceChanged(Optional<Workspace> workspace) {
+        Optional<Workspace> checked = Objects.requireNonNull(workspace, "workspace");
+        if (scopedWorkspace.equals(checked)) {
+            return;
+        }
+        scopedWorkspace = checked;
+        checked.ifPresentOrElse(presenter::selectWorkspace, presenter::invalidateWorkspace);
+        renderActions(state);
     }
 
     @Override
@@ -97,35 +120,25 @@ public final class PrivateNetworkGrantSettingsPage extends VBox implements Manag
     private void configurePage() {
         Label title = new Label("私网授权");
         title.getStyleClass().addAll("sec-title", "platform-page-title");
-        Label hint = new Label("授权只绑定一个 Workspace、用途、精确 HTTPS Origin、当前 DNS 地址集合和期限；撤销会立即阻止新请求。");
+        Label hint = new Label("授权只绑定一个工作区、用途、精确 HTTPS 来源地址、当前 DNS 地址集合和期限；撤销会立即阻止新请求。");
         hint.setWrapText(true);
         hint.getStyleClass().add("sec-hint");
-        configureWorkspace();
         FormSection draft = draftSection();
         FormSection previewSection = previewSection();
         configureGrantList();
-        getChildren().addAll(title, hint, workspace, draft, previewSection, actions, grants);
+        getChildren().addAll(title, hint, draft, previewSection, grants);
         getStyleClass().add("platform-page");
-    }
-
-    private void configureWorkspace() {
-        workspace.setMaxWidth(Double.MAX_VALUE);
-        workspace.setAccessibleText("私网授权所属 Workspace");
-        workspace.setPromptText("选择 Workspace");
-        workspace.setCellFactory(ignored -> components.detailCell(
-                Workspace::name, value -> value.id().value() + " · revision " + value.revision()));
-        workspace.setButtonCell(components.textCell(Workspace::name));
-        workspace.valueProperty().addListener((observable, previous, selected) -> selectWorkspace(selected));
     }
 
     private FormSection draftSection() {
         FormSection section = new FormSection("新授权", "先生成服务端权威预览，再核对摘要并确认创建；默认 1 小时，硬上限 24 小时。");
         purpose.getItems().setAll(PrivateNetworkPurpose.values());
         purpose.setValue(PrivateNetworkPurpose.MCP);
+        purpose.setConverter(SettingsLabels.converter(SettingsLabels::privateNetworkPurpose));
         purpose.setMaxWidth(Double.MAX_VALUE);
         purpose.setAccessibleText("私网授权用途");
         origin.setPromptText("https://service.example.test[:port]");
-        origin.setAccessibleText("精确 HTTPS Origin");
+        origin.setAccessibleText("精确 HTTPS 来源地址");
         dnsAddresses.setPromptText("每行一个当前 DNS 数字地址，例如 10.0.0.8");
         dnsAddresses.setAccessibleText("DNS 地址集合");
         dnsAddresses.setPrefRowCount(3);
@@ -135,10 +148,10 @@ public final class PrivateNetworkGrantSettingsPage extends VBox implements Manag
         dnsAddresses.textProperty().addListener((observable, previous, value) -> edit());
         validityHours.textProperty().addListener((observable, previous, value) -> edit());
         section.addField("用途", purpose);
-        section.addField("Origin", origin);
+        section.addField("来源地址", origin);
         section.addField("DNS 地址", dnsAddresses);
         section.addField("有效小时", validityHours);
-        Label forbidden = new Label("loopback、link-local、metadata、multicast 永不可授权；来源或地址变化后旧授权不会自动扩大。");
+        Label forbidden = new Label("本机回环、本地链路、云元数据和多播地址永远不可授权；来源或地址变化后，旧授权不会自动扩大。");
         forbidden.setWrapText(true);
         forbidden.getStyleClass().add("sec-hint");
         section.addFullWidth(forbidden);
@@ -147,7 +160,7 @@ public final class PrivateNetworkGrantSettingsPage extends VBox implements Manag
 
     private FormSection previewSection() {
         FormSection section = new FormSection("待确认预览", "任何草稿变更都会立即作废旧预览，避免确认内容与提交内容不一致。");
-        section.addField("规范 Origin", previewOrigin);
+        section.addField("规范来源地址", previewOrigin);
         section.addField("地址集合", previewAddresses);
         section.addField("到期时间", previewExpiry);
         section.addField("确认摘要", previewDigest);
@@ -157,8 +170,9 @@ public final class PrivateNetworkGrantSettingsPage extends VBox implements Manag
     private void configureGrantList() {
         grants.list()
                 .setCellFactory(ignored -> components.detailCell(
-                        value -> value.purpose() + " · " + value.origin(),
-                        value -> value.state() + " · revision " + value.revision() + " · " + value.expiresAt()));
+                        value -> SettingsLabels.privateNetworkPurpose(value.purpose()) + " · " + value.origin(),
+                        value -> SettingsLabels.securityGrantState(value.state()) + " · 版本 " + value.revision() + " · "
+                                + value.expiresAt()));
         grants.list()
                 .getSelectionModel()
                 .selectedItemProperty()
@@ -168,29 +182,17 @@ public final class PrivateNetworkGrantSettingsPage extends VBox implements Manag
     }
 
     private Node grantDetail() {
-        FormSection identity = new FormSection("授权快照", "授权范围不可编辑；变更必须撤销并重新走 preview-confirm。");
-        identity.addField("授权 ID", grantId);
+        FormSection identity = new FormSection("授权快照", "授权范围不可编辑；如需变更，必须撤销后重新预览并确认。");
+        identity.addField("授权标识", grantId);
         identity.addField("状态", grantState);
         identity.addField("范围", grantScope);
         identity.addField("DNS 地址", grantAddresses);
         identity.addField("到期", grantExpiry);
-        FormSection audit = new FormSection("权限决策", "记录逐层校验结果，不包含 Secret、正文或用户绝对路径。");
+        FormSection audit = new FormSection("权限决策", "记录逐层校验结果，不包含密钥、正文或用户绝对路径。");
         audit.addFullWidth(decisions);
         VBox box = new VBox(12, identity, audit, revoke);
         box.getStyleClass().add("platform-page");
         return box;
-    }
-
-    private void selectWorkspace(Workspace selected) {
-        if (rendering || selected == null || selected.equals(state.workspace().orElse(null))) {
-            return;
-        }
-        if (dirty()) {
-            warnUnsavedChanges();
-            restoreWorkspaceSelection();
-            return;
-        }
-        presenter.selectWorkspace(selected);
     }
 
     private void selectGrant(PrivateNetworkGrant selected) {
@@ -209,8 +211,6 @@ public final class PrivateNetworkGrantSettingsPage extends VBox implements Manag
         state = Objects.requireNonNull(snapshot, "snapshot");
         rendering = true;
         try {
-            workspace.getItems().setAll(snapshot.workspaces());
-            workspace.setValue(snapshot.workspace().orElse(null));
             purpose.setValue(snapshot.purpose());
             origin.setText(snapshot.origin());
             dnsAddresses.setText(snapshot.dnsAddresses());
@@ -241,9 +241,9 @@ public final class PrivateNetworkGrantSettingsPage extends VBox implements Manag
             detail = grantDetail();
         }
         grants.showDetail(detail);
-        grantId.setText(selected.id() + " · revision " + selected.revision());
-        grantState.setText(selected.state().name());
-        grantScope.setText(selected.purpose() + " · " + selected.origin());
+        grantId.setText(selected.id() + " · 版本 " + selected.revision());
+        grantState.setText(SettingsLabels.securityGrantState(selected.state()));
+        grantScope.setText(SettingsLabels.privateNetworkPurpose(selected.purpose()) + " · " + selected.origin());
         grantAddresses.setText(String.join(", ", selected.dnsAddresses()));
         grantExpiry.setText(selected.expiresAt().toString());
         decisions.setEntries(state.decisions().stream()
@@ -262,11 +262,11 @@ public final class PrivateNetworkGrantSettingsPage extends VBox implements Manag
     private void renderActions(PrivateNetworkGrantSettingsState snapshot) {
         boolean pending = snapshot.phase() == SettingsLoadState.LOADING || snapshot.phase() == SettingsLoadState.SAVING;
         preview.setDisable(pending
+                || scopedWorkspace.isEmpty()
                 || snapshot.workspace().isEmpty()
                 || snapshot.origin().isBlank()
                 || snapshot.dnsAddresses().isBlank());
         confirm.setDisable(pending || snapshot.preview().isEmpty());
-        workspace.setDisable(pending);
         purpose.setDisable(pending);
         origin.setDisable(pending);
         dnsAddresses.setDisable(pending);
@@ -289,9 +289,9 @@ public final class PrivateNetworkGrantSettingsPage extends VBox implements Manag
                 current.origin() + "\n" + String.join(", ", current.dnsAddresses()) + "\n到期：" + current.expiresAt(),
                 ButtonType.CANCEL,
                 ButtonType.OK);
-        own(alert);
         alert.setTitle("确认私网授权");
-        alert.setHeaderText("确认授予 " + current.purpose() + " 精确私网访问？");
+        alert.setHeaderText("确认授予 " + SettingsLabels.privateNetworkPurpose(current.purpose()) + " 精确私网访问？");
+        PlatformDialogs.style(alert, this);
         if (alert.showAndWait().filter(ButtonType.OK::equals).isPresent()) {
             presenter.confirmCreate();
         }
@@ -300,30 +300,12 @@ public final class PrivateNetworkGrantSettingsPage extends VBox implements Manag
     private void revoke() {
         PrivateNetworkGrant current = state.selected().orElseThrow();
         Alert alert = new Alert(
-                Alert.AlertType.CONFIRMATION,
-                "撤销不可恢复；依赖该 revision 的 MCP 或 Site 新请求会立即失败。",
-                ButtonType.CANCEL,
-                ButtonType.OK);
-        own(alert);
+                Alert.AlertType.CONFIRMATION, "撤销不可恢复；依赖该版本的 MCP 或网站新请求会立即失败。", ButtonType.CANCEL, ButtonType.OK);
         alert.setTitle("撤销私网授权");
         alert.setHeaderText(current.origin().toString());
+        PlatformDialogs.style(alert, this);
         if (alert.showAndWait().filter(ButtonType.OK::equals).isPresent()) {
             presenter.revoke();
-        }
-    }
-
-    private void own(Alert alert) {
-        if (getScene() != null && getScene().getWindow() != null) {
-            alert.initOwner(getScene().getWindow());
-        }
-    }
-
-    private void restoreWorkspaceSelection() {
-        rendering = true;
-        try {
-            workspace.setValue(state.workspace().orElse(null));
-        } finally {
-            rendering = false;
         }
     }
 

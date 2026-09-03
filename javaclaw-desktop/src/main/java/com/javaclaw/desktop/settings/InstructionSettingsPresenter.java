@@ -51,6 +51,11 @@ public final class InstructionSettingsPresenter {
         loadWorkspace(Objects.requireNonNull(workspace, "workspace"), nextEpoch());
     }
 
+    /** 使旧读取结果失效并保留本地 fallback 草稿。 */
+    public void invalidateWorkspace() {
+        publish(copy(SettingsLoadState.READY, "固定工作区当前不可用；草稿已保留", nextEpoch()));
+    }
+
     /** @param fallbackBasename 安全 basename 草稿；空白表示关闭 fallback */
     public void editFallback(String fallbackBasename) {
         publish(new InstructionSettingsState(
@@ -67,7 +72,7 @@ public final class InstructionSettingsPresenter {
 
     /** 保存 fallback 设置并按新 revision 重新解析当前 Workspace。 */
     public void saveFallback() {
-        Workspace workspace = state.workspace().orElseThrow(() -> new IllegalStateException("请先选择 Workspace"));
+        Workspace workspace = state.workspace().orElseThrow(() -> new IllegalStateException("请先选择工作区"));
         WorkspaceInstructionSettings settings = state.settings().orElseThrow();
         String draft = state.fallbackDraft().strip();
         if (!draft.isEmpty() && !draft.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,119}")) {
@@ -109,12 +114,12 @@ public final class InstructionSettingsPresenter {
      * @param worktree 可选 Worktree
      */
     public void chooseWorktree(Optional<ManagedWorktree> worktree) {
-        Workspace workspace = state.workspace().orElseThrow(() -> new IllegalStateException("请先选择 Workspace"));
+        Workspace workspace = state.workspace().orElseThrow(() -> new IllegalStateException("请先选择工作区"));
         Optional<ManagedWorktree> checked = Objects.requireNonNull(worktree, "worktree");
         checked.ifPresent(value -> {
             if (!value.workspaceId().equals(workspace.id())
                     || !state.worktrees().contains(value)) {
-                throw new IllegalArgumentException("Managed Worktree 不属于当前 Workspace 目录");
+                throw new IllegalArgumentException("Managed 隔离工作区不属于当前工作区目录");
             }
         });
         loadResolution(workspace, checked, nextEpoch());
@@ -144,7 +149,7 @@ public final class InstructionSettingsPresenter {
                 Optional.empty(),
                 "",
                 Optional.empty(),
-                new InstructionSettingsState.Feedback(first.isEmpty() ? "暂无 Workspace" : "", epoch)));
+                new InstructionSettingsState.Feedback(first.isEmpty() ? "暂无工作区" : "", epoch)));
         first.ifPresent(workspace -> loadWorkspace(workspace, nextEpoch()));
     }
 
@@ -158,7 +163,7 @@ public final class InstructionSettingsPresenter {
                 Optional.empty(),
                 "",
                 Optional.empty(),
-                new InstructionSettingsState.Feedback("正在解析 Workspace 根项目约定…", epoch)));
+                new InstructionSettingsState.Feedback("正在解析工作区根项目约定…", epoch)));
         CompletionStage<List<ManagedWorktree>> worktrees = gateway.managedWorktrees(workspace.id(), false);
         CompletionStage<WorkspaceInstructionSettings> settings = gateway.instructionSettings(workspace.id());
         CompletionStage<InstructionResolution> resolution =
@@ -277,7 +282,7 @@ public final class InstructionSettingsPresenter {
     private static String summary(InstructionResolution resolution) {
         return resolution.sources().isEmpty()
                 ? "当前 execution root 未发现项目约定文件"
-                : "已解析 " + resolution.sources().size() + " 个来源；变更只影响下一 Turn";
+                : "已解析 " + resolution.sources().size() + " 个来源；变更只影响下一任务";
     }
 
     private record WorkspaceContext(List<ManagedWorktree> worktrees, WorkspaceInstructionSettings settings) {

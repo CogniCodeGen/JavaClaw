@@ -3,18 +3,27 @@ package com.javaclaw.client.facade;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
+import com.javaclaw.api.CancellationToken;
+import com.javaclaw.api.EmbeddingBinding;
 import com.javaclaw.api.ProviderCredentialBinding;
 import com.javaclaw.api.ProviderCredentialClearResult;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.ProviderModelDiscoveryOperation;
+import com.javaclaw.api.ProviderModelDiscoveryOperationState;
+import com.javaclaw.api.ProviderModelDiscoveryRequest;
+import com.javaclaw.api.ProviderModelDiscoveryResult;
+import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.api.ProviderRef;
 import com.javaclaw.api.ProviderStatus;
 import com.javaclaw.api.ProviderVerificationResult;
 import com.javaclaw.client.CommandOptions;
 import com.javaclaw.client.RpcClientConnection;
 import com.javaclaw.protocol.ProviderCredentialRpcContracts;
+import com.javaclaw.protocol.ProviderModelDiscoveryRpcContracts;
 import com.javaclaw.protocol.ProviderProfileRpcContracts;
 import com.javaclaw.protocol.ProviderVerificationRpcContracts;
 import com.javaclaw.protocol.SealedSecret;
@@ -63,13 +72,15 @@ public final class ProviderClient {
      *
      * @param id 稳定标识
      * @param spec 完整配置
+     * @param lifecycle ACTIVE 或 DISABLED；禁用连接允许暂时没有模型
      * @param options expected revision 必须为 0
      * @return 首个版本
      */
-    public ProviderEndpoint create(String id, ProviderEndpointSpec spec, CommandOptions options) {
+    public ProviderEndpoint create(
+            String id, ProviderEndpointSpec spec, ProviderLifecycle lifecycle, CommandOptions options) {
         return connection.command(
                 "provider/create",
-                new ProviderProfileRpcContracts.ProviderCreatePayload(id, spec),
+                new ProviderProfileRpcContracts.ProviderCreatePayload(id, spec, lifecycle),
                 options,
                 ProviderEndpoint.class);
     }
@@ -105,6 +116,98 @@ public final class ProviderClient {
                 new ProviderProfileRpcContracts.ProviderArchivePayload(id),
                 options,
                 ProviderEndpoint.class);
+    }
+
+    /**
+     * 读取已保存精确版本的远端模型目录，不执行模型推理。
+     *
+     * @param id Provider 标识
+     * @param revision 精确 Provider 版本
+     * @param cancellation 页面、作用域或上层会话的取消信号
+     * @return 有界模型候选和截断状态
+     */
+    public ProviderModelDiscoveryResult discoverModels(String id, long revision, CancellationToken cancellation) {
+        CancellationToken checkedCancellation = Objects.requireNonNull(cancellation, "cancellation");
+        checkedCancellation.throwIfCancelled();
+        ProviderModelDiscoveryOperation operation = connection.command(
+                ProviderModelDiscoveryRpcContracts.START_METHOD,
+                new ProviderModelDiscoveryRequest(id, revision),
+                CommandOptions.create(revision),
+                ProviderModelDiscoveryOperation.class);
+        while (!operation.terminal()) {
+            if (checkedCancellation.isCancelled()) {
+                cancelDiscovery(operation, ProviderModelDiscoveryRpcContracts.CLIENT_CANCELLED);
+                checkedCancellation.throwIfCancelled();
+            }
+            java.util.concurrent.locks.LockSupport.parkNanos(
+                    java.time.Duration.ofMillis(100).toNanos());
+            if (Thread.interrupted()) {
+                cancelDiscovery(operation, ProviderModelDiscoveryRpcContracts.THREAD_INTERRUPTED);
+                Thread.currentThread().interrupt();
+                throw new com.javaclaw.api.TurnCancelledException("Provider model discovery was interrupted");
+            }
+            if (checkedCancellation.isCancelled()) {
+                continue;
+            }
+            operation = connection.query(
+                    ProviderModelDiscoveryRpcContracts.READ_METHOD,
+                    new ProviderModelDiscoveryRpcContracts.ReadPayload(operation.operationId()),
+                    ProviderModelDiscoveryOperation.class);
+        }
+        checkedCancellation.throwIfCancelled();
+        return discoveryResult(operation);
+    }
+
+    private void cancelDiscovery(ProviderModelDiscoveryOperation operation, String reason) {
+        try {
+            connection.command(
+                    ProviderModelDiscoveryRpcContracts.CANCEL_METHOD,
+                    new ProviderModelDiscoveryRpcContracts.CancelPayload(operation.operationId(), reason),
+                    CommandOptions.create(operation.revision()),
+                    ProviderModelDiscoveryOperation.class);
+        } catch (RuntimeException ignored) {
+            // 本地连接可能已关闭；服务端 session close 回调仍会取消其拥有的网络调用。
+        }
+    }
+
+    private static ProviderModelDiscoveryResult discoveryResult(ProviderModelDiscoveryOperation operation) {
+        if (operation.state() == ProviderModelDiscoveryOperationState.SUCCEEDED) {
+            return operation.result().orElseThrow();
+        }
+        if (operation.state() == ProviderModelDiscoveryOperationState.CANCELLED) {
+            throw new com.javaclaw.api.TurnCancelledException("Provider model discovery was cancelled");
+        }
+        throw new IllegalStateException(
+                "Provider model discovery failed: " + operation.failureCode().orElse("DISCOVERY_FAILED"));
+    }
+
+    /**
+     * 读取本地安装默认 Embedding 绑定。
+     *
+     * @return 未配置时为空
+     */
+    public Optional<EmbeddingBinding> embeddingBinding() {
+        return connection
+                .query(
+                        "provider/embeddingBinding/read",
+                        new ProviderProfileRpcContracts.EmbeddingBindingReadPayload(),
+                        ProviderProfileRpcContracts.EmbeddingBindingReadResult.class)
+                .binding();
+    }
+
+    /**
+     * 创建或替换本地安装默认 Embedding 绑定。
+     *
+     * @param provider 精确 Provider 与 Embedding 模型
+     * @param options 绑定自身的 expected revision
+     * @return 已提交绑定
+     */
+    public EmbeddingBinding bindEmbedding(ProviderRef provider, CommandOptions options) {
+        return connection.command(
+                "provider/embeddingBinding/update",
+                new ProviderProfileRpcContracts.EmbeddingBindingUpdatePayload(provider),
+                options,
+                EmbeddingBinding.class);
     }
 
     /**
@@ -181,17 +284,22 @@ public final class ProviderClient {
      * 执行一次可能计费的最小模型 round-trip。
      *
      * @param provider 已保存的精确 Provider 与模型
+     * @param purpose 本次要验证的模型用途
      * @param billingConfirmed 调用方显式确认标记，必须为 true
      * @param confirmation 固定危险确认文本
      * @param options 幂等键，expected revision 必须匹配 Provider
      * @return 不含 Prompt 或模型正文的脱敏结果
      */
     public ProviderVerificationResult verifyRoundTrip(
-            ProviderRef provider, boolean billingConfirmed, String confirmation, CommandOptions options) {
+            ProviderRef provider,
+            ProviderModelPurpose purpose,
+            boolean billingConfirmed,
+            String confirmation,
+            CommandOptions options) {
         requireProviderRevision(provider.endpointRevision(), options);
         return connection.command(
                 ProviderVerificationRpcContracts.METHOD,
-                new ProviderVerificationRpcContracts.VerifyPayload(provider, billingConfirmed, confirmation),
+                new ProviderVerificationRpcContracts.VerifyPayload(provider, purpose, billingConfirmed, confirmation),
                 options,
                 ProviderVerificationResult.class);
     }

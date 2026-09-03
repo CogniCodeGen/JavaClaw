@@ -9,7 +9,6 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -26,8 +25,8 @@ import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProfileLifecycle;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderEndpointSpec;
+import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.SandboxCommand;
 import com.javaclaw.api.SandboxExecutor;
 import com.javaclaw.api.SandboxResult;
@@ -47,6 +46,7 @@ import com.javaclaw.server.persistence.ManagedWorktreeService;
 import com.javaclaw.server.persistence.PermissionProfileService;
 import com.javaclaw.server.persistence.ProviderService;
 
+import static com.javaclaw.server.ProviderEndpointTestFixtures.chat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -70,7 +70,7 @@ class AutomationProfileCatalogTest {
         H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
         database.initialize();
         core = new CoreCommandService(database, json, clock);
-        providers = new ProviderService(database, json, clock);
+        providers = new ProviderService(database, reference -> true, json, clock);
         PermissionProfileService permissions = new PermissionProfileService(database, json, clock);
         permissions.installStandardProfile();
         profiles = new AgentProfileService(database, providers, permissions, json, clock);
@@ -83,7 +83,10 @@ class AutomationProfileCatalogTest {
                 database, new AttachmentService(database, json, clock), json, clock, new UnavailableSandbox());
         port = new ServerTurnOrchestrationPort(core, profiles, worktrees, unavailableDispatcher(), json);
         providers.create(
-                identity("provider/create", "provider", 0, Map.of("id", "provider")), "provider", providerSpec());
+                identity("provider/create", "provider", 0, Map.of("id", "provider")),
+                "provider",
+                providerSpec(),
+                ProviderLifecycle.ACTIVE);
     }
 
     @Test
@@ -162,16 +165,7 @@ class AutomationProfileCatalogTest {
     }
 
     private static ProviderEndpointSpec providerSpec() {
-        return new ProviderEndpointSpec(
-                "Provider",
-                ProviderAdapter.OPENAI_COMPATIBLE,
-                Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of("test-model"),
-                Optional.empty(),
-                Duration.ofSeconds(30),
-                0,
-                Map.of());
+        return chat("Provider", ProviderAdapter.OPENAI_COMPATIBLE, "test-model");
     }
 
     private CommandIdentity identity(String method, String key, long expectedRevision, Object payload) {

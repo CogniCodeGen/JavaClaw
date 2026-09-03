@@ -121,7 +121,7 @@ class OpenAiResponsesModelAdapterTest {
         assertThrows(
                 IllegalArgumentException.class, () -> endpointConfig("endpoint", "gpt-5", Duration.ofSeconds(1), 11));
         assertThrows(NullPointerException.class, () -> OpenAiResponsesModelAdapter.create(null, new char[] {'x'}));
-        assertThrows(IllegalArgumentException.class, () -> OpenAiResponsesModelAdapter.create(config(), null));
+        assertThrows(IllegalArgumentException.class, () -> OpenAiResponsesModelAdapter.create(config(), (char[]) null));
         assertThrows(IllegalArgumentException.class, () -> OpenAiResponsesModelAdapter.create(config(), new char[0]));
     }
 

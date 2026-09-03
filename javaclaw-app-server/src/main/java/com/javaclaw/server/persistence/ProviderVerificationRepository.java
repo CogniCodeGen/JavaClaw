@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Optional;
 
 import com.javaclaw.api.CanonicalPayload;
+import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.api.ProviderRef;
 
 /** Provider 外部验证意图与脱敏终态的 SQL 边界。 */
@@ -20,7 +21,7 @@ final class ProviderVerificationRepository {
             throws SQLException {
         String lock = forUpdate ? " FOR UPDATE" : "";
         try (PreparedStatement statement = connection.prepareStatement("""
-                SELECT METHOD_NAME, REQUEST_DIGEST, PROVIDER_ID, PROVIDER_REVISION, MODEL,
+                SELECT METHOD_NAME, REQUEST_DIGEST, PROVIDER_ID, PROVIDER_REVISION, MODEL, PURPOSE,
                        STATE, RESULT_PAYLOAD, CREATED_AT, UPDATED_AT
                 FROM CORE.PROVIDER_VERIFICATION WHERE IDEMPOTENCY_KEY = ?
                 """ + lock)) {
@@ -31,13 +32,18 @@ final class ProviderVerificationRepository {
         }
     }
 
-    void insertRunning(Connection connection, CommandIdentity identity, ProviderRef provider, Instant createdAt)
+    void insertRunning(
+            Connection connection,
+            CommandIdentity identity,
+            ProviderRef provider,
+            ProviderModelPurpose purpose,
+            Instant createdAt)
             throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO CORE.PROVIDER_VERIFICATION (
                     IDEMPOTENCY_KEY, METHOD_NAME, REQUEST_DIGEST, PROVIDER_ID, PROVIDER_REVISION,
-                    MODEL, STATE, RESULT_PAYLOAD, CREATED_AT, UPDATED_AT
-                ) VALUES (?, ?, ?, ?, ?, ?, 'RUNNING', NULL, ?, ?)
+                    MODEL, PURPOSE, STATE, RESULT_PAYLOAD, CREATED_AT, UPDATED_AT
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'RUNNING', NULL, ?, ?)
                 """)) {
             statement.setString(1, identity.idempotencyKey());
             statement.setString(2, identity.method());
@@ -45,8 +51,9 @@ final class ProviderVerificationRepository {
             statement.setString(4, provider.endpointId());
             statement.setLong(5, provider.endpointRevision());
             statement.setString(6, provider.model());
-            statement.setObject(7, createdAt.atOffset(ZoneOffset.UTC));
+            statement.setString(7, purpose.name());
             statement.setObject(8, createdAt.atOffset(ZoneOffset.UTC));
+            statement.setObject(9, createdAt.atOffset(ZoneOffset.UTC));
             statement.executeUpdate();
         }
     }
@@ -72,7 +79,7 @@ final class ProviderVerificationRepository {
     List<StoredVerification> listRunning(Connection connection) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
                 SELECT IDEMPOTENCY_KEY, METHOD_NAME, REQUEST_DIGEST, PROVIDER_ID, PROVIDER_REVISION,
-                       MODEL, STATE, RESULT_PAYLOAD, CREATED_AT, UPDATED_AT
+                       MODEL, PURPOSE, STATE, RESULT_PAYLOAD, CREATED_AT, UPDATED_AT
                 FROM CORE.PROVIDER_VERIFICATION WHERE STATE = 'RUNNING'
                 ORDER BY CREATED_AT, IDEMPOTENCY_KEY
                 FOR UPDATE
@@ -97,6 +104,7 @@ final class ProviderVerificationRepository {
                         result.getString("PROVIDER_ID"),
                         result.getLong("PROVIDER_REVISION"),
                         result.getString("MODEL")),
+                ProviderModelPurpose.valueOf(result.getString("PURPOSE")),
                 result.getString("STATE"),
                 Optional.ofNullable(payload).map(CanonicalPayload::new),
                 result.getObject("CREATED_AT", OffsetDateTime.class).toInstant(),
@@ -108,6 +116,7 @@ final class ProviderVerificationRepository {
             String method,
             String requestDigest,
             ProviderRef provider,
+            ProviderModelPurpose purpose,
             String state,
             Optional<CanonicalPayload> result,
             Instant createdAt,

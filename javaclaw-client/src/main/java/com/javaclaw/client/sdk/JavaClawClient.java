@@ -27,6 +27,7 @@ import com.javaclaw.client.facade.ProviderClient;
 import com.javaclaw.client.facade.RolloutClient;
 import com.javaclaw.client.facade.SecurityGrantClient;
 import com.javaclaw.client.facade.ThreadClient;
+import com.javaclaw.client.facade.ToolClient;
 import com.javaclaw.client.facade.TurnClient;
 import com.javaclaw.client.facade.WorkspaceClient;
 import com.javaclaw.client.facade.WorktreeClient;
@@ -60,6 +61,7 @@ public final class JavaClawClient implements AutoCloseable {
     private final PermissionProfileClient permissionProfiles;
     private final ApprovalClient approvals;
     private final SecurityGrantClient securityGrants;
+    private final ToolClient tools;
     private final McpClient mcp;
     private final RolloutClient rollouts;
     private final WorktreeClient worktrees;
@@ -87,6 +89,7 @@ public final class JavaClawClient implements AutoCloseable {
         permissionProfiles = new PermissionProfileClient(connection);
         approvals = new ApprovalClient(connection);
         securityGrants = new SecurityGrantClient(connection);
+        tools = new ToolClient(connection);
         mcp = new McpClient(connection);
         rollouts = new RolloutClient(connection);
         worktrees = new WorktreeClient(connection);
@@ -222,6 +225,11 @@ public final class JavaClawClient implements AutoCloseable {
     /** @return 私网、无人值守授权与权限决策 facade */
     public SecurityGrantClient securityGrants() {
         return securityGrants;
+    }
+
+    /** @return 当前权限可见工具目录 facade */
+    public ToolClient tools() {
+        return tools;
     }
 
     /** @return MCP Endpoint、健康与 Catalog facade */

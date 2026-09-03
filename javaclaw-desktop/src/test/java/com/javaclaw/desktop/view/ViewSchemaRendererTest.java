@@ -345,7 +345,7 @@ class ViewSchemaRendererTest {
                         Optional.empty(),
                         ViewFieldValidation.required(true),
                         List.of(),
-                        Optional.of(new ViewOptionSource("options", "value", "label")),
+                        Optional.of(new ViewOptionSource("options", "value", "label", Optional.empty())),
                         Optional.empty()),
                 new ViewField(
                         "mode",

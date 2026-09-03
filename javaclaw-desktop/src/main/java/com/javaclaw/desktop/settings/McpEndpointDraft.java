@@ -89,7 +89,7 @@ public record McpEndpointDraft(
         Optional<String> header =
                 authType == McpAuthType.API_KEY ? Optional.of(apiKeyHeader.strip()) : Optional.empty();
         return new McpEndpointSpec(
-                workspaceId.orElseThrow(() -> new IllegalArgumentException("必须选择 Workspace")),
+                workspaceId.orElseThrow(() -> new IllegalArgumentException("必须选择工作区")),
                 displayName,
                 McpTransport.STREAMABLE_HTTPS,
                 Optional.of(URI.create(endpointUri.strip())),

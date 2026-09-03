@@ -19,7 +19,7 @@ public final class SdkManagementSettingsGateways {
         SdkCoreSettingsGateway core = new SdkCoreSettingsGateway(checked);
         return new ManagementSettingsGateways(
                 core,
-                new SdkLearningSettingsGateway(checked),
+                new SdkAgentPresetOnboardingGateway(checked),
                 new SdkPromptPreviewSettingsGateway(checked),
                 new SdkPromptOptimizationSettingsGateway(checked),
                 core,
@@ -27,6 +27,8 @@ public final class SdkManagementSettingsGateways {
                 core,
                 new SdkBuiltinExtensionSettingsGateway(checked),
                 new SdkAutomationJobSettingsGateway(checked),
-                new SdkExtensionSettingsGateway(checked));
+                new SdkScheduleCatalogGateway(checked),
+                new SdkExtensionSettingsGateway(checked),
+                checked::selectedWorkspaceIdSnapshot);
     }
 }

@@ -3,8 +3,10 @@ package com.javaclaw.desktop.settings;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 import javafx.geometry.Insets;
+import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.Toggle;
@@ -60,7 +62,7 @@ public final class AppearanceSettingsPage extends VBox implements ManagedSetting
         Label description = new Label("调整主题、字号与界面密度。所有已打开窗口会立即预览，保存后下次启动继续使用。");
         description.setWrapText(true);
         description.getStyleClass().add("sec-hint");
-        getChildren().addAll(title, description, themeSection(), typographySection(), actions);
+        getChildren().addAll(title, description, themeSection(), typographySection());
         getStyleClass().add("platform-page");
         listenForDraftChanges();
         beginEditing();
@@ -93,6 +95,11 @@ public final class AppearanceSettingsPage extends VBox implements ManagedSetting
     @Override
     public javafx.scene.Node content() {
         return this;
+    }
+
+    @Override
+    public Optional<Node> actionContent() {
+        return Optional.of(actions);
     }
 
     /** 从已保存外观开始编辑。 */

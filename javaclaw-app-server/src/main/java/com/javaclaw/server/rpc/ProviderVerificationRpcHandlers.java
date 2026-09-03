@@ -41,6 +41,6 @@ public final class ProviderVerificationRpcHandlers {
         ProviderVerificationRpcContracts.VerifyPayload payload =
                 json.decode(command.payload(), ProviderVerificationRpcContracts.VerifyPayload.class);
         CommandIdentity identity = CommandIdentity.from(ProviderVerificationRpcContracts.METHOD, command, json);
-        return json.encode(service.verify(identity, payload.provider(), new CancellationSource()));
+        return json.encode(service.verify(identity, payload.provider(), payload.purpose(), new CancellationSource()));
     }
 }

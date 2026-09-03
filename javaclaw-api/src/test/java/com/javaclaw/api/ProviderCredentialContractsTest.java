@@ -3,7 +3,6 @@ package com.javaclaw.api;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -55,11 +54,12 @@ class ProviderCredentialContractsTest {
                 "Provider",
                 ProviderAdapter.OPENAI_COMPATIBLE,
                 Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of("test-model"),
+                ProviderAuthentication.API_KEY,
+                List.of(new ProviderModelSpec(
+                        "test-model", "Test model", Set.of(ProviderModelPurpose.CHAT), java.util.OptionalInt.empty())),
                 credential,
                 Duration.ofSeconds(30),
                 0,
-                Map.of());
+                ProviderAdapterOptions.defaults(ProviderAdapter.OPENAI_COMPATIBLE));
     }
 }

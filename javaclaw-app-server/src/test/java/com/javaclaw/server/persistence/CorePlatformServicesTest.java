@@ -8,9 +8,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,16 +19,17 @@ import com.javaclaw.api.AttachmentMetadata;
 import com.javaclaw.api.AttachmentRef;
 import com.javaclaw.api.AttachmentScope;
 import com.javaclaw.api.ProviderAdapter;
+import com.javaclaw.api.ProviderAdapterOptions;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.protocol.AttachmentRpcContracts;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.CoreRpcContracts;
 import com.javaclaw.protocol.ProviderProfileRpcContracts;
 import com.javaclaw.protocol.WriteCommand;
+import com.javaclaw.server.ProviderEndpointTestFixtures;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -111,13 +110,16 @@ class CorePlatformServicesTest {
     }
 
     @Test
-    void typedProviderServiceEnforcesRevisionAndRejectsInlineSecrets() {
-        ProviderService service = new ProviderService(database, json, clock);
+    void typedProviderServiceEnforcesRevisionAndRejectsMismatchedAdapterOptions() {
+        ProviderService service = new ProviderService(database, reference -> true, json, clock);
         ProviderEndpointSpec firstSpec = providerSpec("Provider", "gpt-test");
         ProviderProfileRpcContracts.ProviderCreatePayload firstPayload =
-                new ProviderProfileRpcContracts.ProviderCreatePayload("openai", firstSpec);
-        ProviderEndpoint first =
-                service.create(identity("provider/create", "provider-create", 0, firstPayload), "openai", firstSpec);
+                new ProviderProfileRpcContracts.ProviderCreatePayload("openai", firstSpec, ProviderLifecycle.ACTIVE);
+        ProviderEndpoint first = service.create(
+                identity("provider/create", "provider-create", 0, firstPayload),
+                "openai",
+                firstSpec,
+                ProviderLifecycle.ACTIVE);
         ProviderEndpointSpec secondSpec = providerSpec("Provider 2", "gpt-test");
         ProviderProfileRpcContracts.ProviderUpdatePayload secondPayload =
                 new ProviderProfileRpcContracts.ProviderUpdatePayload("openai", secondSpec, ProviderLifecycle.ACTIVE);
@@ -143,25 +145,17 @@ class CorePlatformServicesTest {
                         "Unsafe",
                         ProviderAdapter.OPENAI_COMPATIBLE,
                         Optional.empty(),
-                        Set.of(ProviderRole.CHAT),
-                        List.of("gpt-test"),
+                        com.javaclaw.api.ProviderAuthentication.API_KEY,
+                        ProviderEndpointTestFixtures.chat("Unsafe", ProviderAdapter.OPENAI_COMPATIBLE, "gpt-test")
+                                .models(),
                         Optional.empty(),
                         Duration.ofSeconds(30),
                         0,
-                        Map.of("apiKey", "must-not-persist")));
+                        ProviderAdapterOptions.defaults(ProviderAdapter.ANTHROPIC)));
     }
 
     private static ProviderEndpointSpec providerSpec(String displayName, String model) {
-        return new ProviderEndpointSpec(
-                displayName,
-                ProviderAdapter.OPENAI_COMPATIBLE,
-                Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of(model),
-                Optional.empty(),
-                Duration.ofSeconds(30),
-                0,
-                Map.of());
+        return ProviderEndpointTestFixtures.chat(displayName, ProviderAdapter.OPENAI_COMPATIBLE, model);
     }
 
     private Workspace createWorkspace(CoreCommandService core, String name) {

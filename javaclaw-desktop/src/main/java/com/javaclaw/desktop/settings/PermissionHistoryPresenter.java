@@ -62,7 +62,7 @@ public final class PermissionHistoryPresenter {
                 Optional.empty(),
                 List.of(),
                 Optional.empty(),
-                "请先选择已保存的 PermissionProfile",
+                "请先选择已保存的权限方案",
                 state.epoch() + 1));
     }
 

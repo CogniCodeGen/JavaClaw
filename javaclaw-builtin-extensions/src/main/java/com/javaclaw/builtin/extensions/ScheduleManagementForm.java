@@ -104,9 +104,17 @@ final class ScheduleManagementForm {
                 ViewStructuredItemValidation.required(true),
                 java.util.Arrays.stream(ScheduleActionContracts.ValueType.values())
                         .map(value -> new ViewOption(value.name(), value.name()))
-                        .toList());
+                        .toList(),
+                Optional.empty());
         ViewStructuredItemField value = new ViewStructuredItemField(
-                "value", "固定值", ViewStructuredItemType.TEXT, Optional.of(""), List.of(), boundedText, List.of());
+                "value",
+                "固定值",
+                ViewStructuredItemType.TEXT,
+                Optional.of(""),
+                List.of(),
+                boundedText,
+                List.of(),
+                Optional.empty());
         return new ViewStructuredListField(
                 "actionArguments",
                 "SchedulableAction 固定参数",

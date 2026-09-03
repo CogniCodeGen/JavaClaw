@@ -2,21 +2,19 @@ package com.javaclaw.desktop.settings;
 
 import java.net.URI;
 import java.time.Duration;
-import java.util.Arrays;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 
 import com.javaclaw.api.CredentialRef;
 import com.javaclaw.api.ProviderAdapter;
+import com.javaclaw.api.ProviderAdapterOptions;
+import com.javaclaw.api.ProviderAuthentication;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
-import com.javaclaw.api.ProviderRole;
+import com.javaclaw.api.ProviderModelSpec;
+import com.javaclaw.api.ProviderReasoningSummary;
 
 /**
  * Provider 表单的不可变草稿。
@@ -24,14 +22,16 @@ import com.javaclaw.api.ProviderRole;
  * @param id 稳定 Provider 标识
  * @param displayName 用户可见名称
  * @param adapter 适配器
- * @param baseUri 可空的兼容端点文本
- * @param chat 是否承担 Chat 角色
- * @param embedding 是否承担 Embedding 角色
- * @param models 以逗号或换行分隔的模型目录
+ * @param baseUri 可空的自定义地址文本
+ * @param authentication 鉴权方式
+ * @param models 逐模型用途目录
  * @param credential 脱敏 CredentialRef
  * @param timeoutSeconds 请求超时秒数
  * @param maximumRetries 最大重试次数
- * @param options 每行一个 key=value 的非敏感选项
+ * @param organization OpenAI organization；不使用时为空文本
+ * @param project OpenAI project；不使用时为空文本
+ * @param apiVersion Google API version；使用默认值时为空文本
+ * @param reasoningSummary OpenAI Responses reasoning summary 详细度
  * @param lifecycle 生命周期
  */
 public record ProviderDraft(
@@ -39,41 +39,74 @@ public record ProviderDraft(
         String displayName,
         ProviderAdapter adapter,
         String baseUri,
-        boolean chat,
-        boolean embedding,
-        String models,
+        ProviderAuthentication authentication,
+        List<ProviderModelSpec> models,
         Optional<CredentialRef> credential,
         int timeoutSeconds,
         int maximumRetries,
-        String options,
+        String organization,
+        String project,
+        String apiVersion,
+        ProviderReasoningSummary reasoningSummary,
         ProviderLifecycle lifecycle) {
     /** 规范化可空文本并保留尚未通过领域校验的用户输入。 */
     public ProviderDraft {
         id = Objects.requireNonNullElse(id, "");
         displayName = Objects.requireNonNullElse(displayName, "");
-        adapter = Objects.requireNonNull(adapter, "adapter");
+        Objects.requireNonNull(adapter, "adapter");
         baseUri = Objects.requireNonNullElse(baseUri, "");
-        models = Objects.requireNonNullElse(models, "");
+        Objects.requireNonNull(authentication, "authentication");
+        models = List.copyOf(Objects.requireNonNull(models, "models"));
         credential = Objects.requireNonNull(credential, "credential");
-        options = Objects.requireNonNullElse(options, "");
-        lifecycle = Objects.requireNonNull(lifecycle, "lifecycle");
+        organization = Objects.requireNonNullElse(organization, "");
+        project = Objects.requireNonNullElse(project, "");
+        apiVersion = Objects.requireNonNullElse(apiVersion, "");
+        Objects.requireNonNull(reasoningSummary, "reasoningSummary");
+        Objects.requireNonNull(lifecycle, "lifecycle");
     }
 
-    /** @return 新建 Provider 的初始草稿 */
+    /** @return 新建 Provider 的可恢复禁用连接壳草稿 */
     public static ProviderDraft empty() {
         return new ProviderDraft(
                 "",
                 "",
                 ProviderAdapter.OPENAI_COMPATIBLE,
                 "",
-                true,
-                false,
-                "",
+                ProviderAuthentication.API_KEY,
+                List.of(),
                 Optional.empty(),
                 60,
                 0,
                 "",
-                ProviderLifecycle.ACTIVE);
+                "",
+                "",
+                ProviderReasoningSummary.AUTO,
+                ProviderLifecycle.DISABLED);
+    }
+
+    /**
+     * 创建已分配稳定标识的新 Provider 草稿。
+     *
+     * @param id Presenter 生成的稳定技术标识
+     * @return 可继续填写的禁用连接壳草稿
+     */
+    public static ProviderDraft forNew(String id) {
+        ProviderDraft empty = empty();
+        return new ProviderDraft(
+                Objects.requireNonNull(id, "id"),
+                empty.displayName(),
+                empty.adapter(),
+                empty.baseUri(),
+                empty.authentication(),
+                empty.models(),
+                empty.credential(),
+                empty.timeoutSeconds(),
+                empty.maximumRetries(),
+                empty.organization(),
+                empty.project(),
+                empty.apiVersion(),
+                empty.reasoningSummary(),
+                empty.lifecycle());
     }
 
     /**
@@ -85,18 +118,22 @@ public record ProviderDraft(
     public static ProviderDraft from(ProviderEndpoint endpoint) {
         ProviderEndpoint checked = Objects.requireNonNull(endpoint, "endpoint");
         ProviderEndpointSpec spec = checked.spec();
+        ProviderAdapterOptions options = spec.options();
+        DraftAdapterOptions adapterOptions = draftOptions(options);
         return new ProviderDraft(
                 checked.id(),
                 spec.displayName(),
                 spec.adapter(),
                 spec.baseUri().map(URI::toString).orElse(""),
-                spec.roles().contains(ProviderRole.CHAT),
-                spec.roles().contains(ProviderRole.EMBEDDING),
-                String.join("\n", spec.models()),
+                spec.authentication(),
+                spec.models(),
                 spec.credential(),
                 Math.toIntExact(spec.timeout().toSeconds()),
                 spec.maximumRetries(),
-                formatOptions(spec.options()),
+                adapterOptions.organization(),
+                adapterOptions.project(),
+                adapterOptions.apiVersion(),
+                adapterOptions.reasoningSummary(),
                 checked.lifecycle());
     }
 
@@ -106,23 +143,44 @@ public record ProviderDraft(
      * @return 已通过 ProviderEndpointSpec 校验的配置
      */
     public ProviderEndpointSpec toSpec() {
-        Set<ProviderRole> roles = new LinkedHashSet<>();
-        if (chat) {
-            roles.add(ProviderRole.CHAT);
-        }
-        if (embedding) {
-            roles.add(ProviderRole.EMBEDDING);
-        }
         return new ProviderEndpointSpec(
                 displayName,
                 adapter,
                 optionalUri(baseUri),
-                roles,
-                values(models),
+                authentication,
+                models,
                 credential,
                 Duration.ofSeconds(timeoutSeconds),
                 maximumRetries,
-                parseOptions(options));
+                adapterOptions());
+    }
+
+    /**
+     * 替换逐模型目录。
+     *
+     * @param value 新目录
+     * @return 新草稿
+     */
+    public ProviderDraft withModels(List<ProviderModelSpec> value) {
+        return copy(List.copyOf(value), credential);
+    }
+
+    ProviderDraft withLifecycle(ProviderLifecycle value) {
+        return new ProviderDraft(
+                id,
+                displayName,
+                adapter,
+                baseUri,
+                authentication,
+                models,
+                credential,
+                timeoutSeconds,
+                maximumRetries,
+                organization,
+                project,
+                apiVersion,
+                reasoningSummary,
+                Objects.requireNonNull(value, "value"));
     }
 
     /**
@@ -132,18 +190,24 @@ public record ProviderDraft(
      * @return 新草稿
      */
     public ProviderDraft withCredential(Optional<CredentialRef> reference) {
+        return copy(models, Objects.requireNonNull(reference, "reference"));
+    }
+
+    private ProviderDraft copy(List<ProviderModelSpec> modelCatalog, Optional<CredentialRef> reference) {
         return new ProviderDraft(
                 id,
                 displayName,
                 adapter,
                 baseUri,
-                chat,
-                embedding,
-                models,
+                authentication,
+                modelCatalog,
                 reference,
                 timeoutSeconds,
                 maximumRetries,
-                options,
+                organization,
+                project,
+                apiVersion,
+                reasoningSummary,
                 lifecycle);
     }
 
@@ -152,38 +216,47 @@ public record ProviderDraft(
         return normalized.isEmpty() ? Optional.empty() : Optional.of(URI.create(normalized));
     }
 
-    private static List<String> values(String value) {
-        return Arrays.stream(value.split("[,\\n]"))
-                .map(String::strip)
-                .filter(item -> !item.isEmpty())
-                .distinct()
-                .toList();
+    private static Optional<String> optionalText(String value) {
+        String normalized = value.strip();
+        return normalized.isEmpty() ? Optional.empty() : Optional.of(normalized);
     }
 
-    private static Map<String, String> parseOptions(String value) {
-        Map<String, String> parsed = new LinkedHashMap<>();
-        for (String line : value.split("\\R")) {
-            String normalized = line.strip();
-            if (normalized.isEmpty()) {
-                continue;
-            }
-            int separator = normalized.indexOf('=');
-            if (separator < 1) {
-                throw new IllegalArgumentException("Provider 选项必须使用 key=value 格式");
-            }
-            String key = normalized.substring(0, separator).strip();
-            String optionValue = normalized.substring(separator + 1).strip();
-            if (parsed.putIfAbsent(key, optionValue) != null) {
-                throw new IllegalArgumentException("Provider 选项键重复: " + key);
-            }
+    private ProviderAdapterOptions adapterOptions() {
+        return switch (adapter) {
+            case OPENAI_COMPATIBLE ->
+                new ProviderAdapterOptions.OpenAiCompatible(optionalText(organization), optionalText(project));
+            case ANTHROPIC -> new ProviderAdapterOptions.Anthropic();
+            case GOOGLE_GENAI -> new ProviderAdapterOptions.GoogleGenAi(optionalText(apiVersion));
+            case OPENAI_RESPONSES ->
+                new ProviderAdapterOptions.OpenAiResponses(
+                        optionalText(organization), optionalText(project), reasoningSummary);
+        };
+    }
+
+    private static DraftAdapterOptions draftOptions(ProviderAdapterOptions options) {
+        return switch (options) {
+            case ProviderAdapterOptions.OpenAiCompatible openAi ->
+                new DraftAdapterOptions(
+                        openAi.organization().orElse(""),
+                        openAi.project().orElse(""),
+                        "",
+                        ProviderReasoningSummary.AUTO);
+            case ProviderAdapterOptions.Anthropic ignored -> DraftAdapterOptions.empty();
+            case ProviderAdapterOptions.GoogleGenAi google ->
+                new DraftAdapterOptions("", "", google.apiVersion().orElse(""), ProviderReasoningSummary.AUTO);
+            case ProviderAdapterOptions.OpenAiResponses responses ->
+                new DraftAdapterOptions(
+                        responses.organization().orElse(""),
+                        responses.project().orElse(""),
+                        "",
+                        responses.reasoningSummary());
+        };
+    }
+
+    private record DraftAdapterOptions(
+            String organization, String project, String apiVersion, ProviderReasoningSummary reasoningSummary) {
+        private static DraftAdapterOptions empty() {
+            return new DraftAdapterOptions("", "", "", ProviderReasoningSummary.AUTO);
         }
-        return Map.copyOf(parsed);
-    }
-
-    private static String formatOptions(Map<String, String> options) {
-        return options.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .map(entry -> entry.getKey() + "=" + entry.getValue())
-                .collect(java.util.stream.Collectors.joining("\n"));
     }
 }

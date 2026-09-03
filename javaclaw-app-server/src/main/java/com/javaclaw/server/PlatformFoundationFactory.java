@@ -19,6 +19,7 @@ import com.javaclaw.server.persistence.AgentProfileService;
 import com.javaclaw.server.persistence.ApprovalService;
 import com.javaclaw.server.persistence.AttachmentService;
 import com.javaclaw.server.persistence.CoreCommandService;
+import com.javaclaw.server.persistence.EmbeddingBindingService;
 import com.javaclaw.server.persistence.ExtensionCatalogRepository;
 import com.javaclaw.server.persistence.ExtensionJobInputCoordinator;
 import com.javaclaw.server.persistence.ExtensionJobService;
@@ -78,9 +79,10 @@ final class PlatformFoundationFactory {
 
     private static ManagementServices managementServices(
             H2Database database, CanonicalJson json, Clock clock, CoreServices core) {
-        ProviderService providers = new ProviderService(database, json, clock);
+        ProviderService providers = new ProviderService(database, core.vault(), json, clock);
         ProviderCredentialService credentials =
                 new ProviderCredentialService(providers, core.vault().providerCredentials(), json, clock);
+        EmbeddingBindingService embeddingBinding = new EmbeddingBindingService(database, providers, json, clock);
         AgentProfileService profiles = new AgentProfileService(database, providers, core.permissions(), json, clock);
         ProfileBindingService bindings = new ProfileBindingService(database, core.commands(), profiles, json, clock);
         ManagedWorktreeService worktrees =
@@ -95,6 +97,7 @@ final class PlatformFoundationFactory {
         return new ManagementServices(
                 providers,
                 credentials,
+                embeddingBinding,
                 profiles,
                 bindings,
                 worktrees,
@@ -132,6 +135,7 @@ final class PlatformFoundationFactory {
                 core.attachments(),
                 management.providers(),
                 management.credentials(),
+                management.embeddingBinding(),
                 management.profiles(),
                 management.bindings(),
                 core.vault(),
@@ -164,6 +168,7 @@ final class PlatformFoundationFactory {
     private record ManagementServices(
             ProviderService providers,
             ProviderCredentialService credentials,
+            EmbeddingBindingService embeddingBinding,
             AgentProfileService profiles,
             ProfileBindingService bindings,
             ManagedWorktreeService worktrees,

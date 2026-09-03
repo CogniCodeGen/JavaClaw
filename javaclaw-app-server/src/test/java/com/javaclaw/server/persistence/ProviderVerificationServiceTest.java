@@ -13,6 +13,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -22,13 +23,20 @@ import org.junit.jupiter.api.io.TempDir;
 import com.javaclaw.api.CancellationSource;
 import com.javaclaw.api.CancellationToken;
 import com.javaclaw.api.ProviderAdapter;
+import com.javaclaw.api.ProviderAdapterOptions;
+import com.javaclaw.api.ProviderAuthentication;
 import com.javaclaw.api.ProviderCredentialBinding;
 import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.ProviderModelPurpose;
+import com.javaclaw.api.ProviderModelSpec;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.ProviderVerificationState;
 import com.javaclaw.api.TurnId;
+import com.javaclaw.extension.spi.EmbeddingBatch;
+import com.javaclaw.extension.spi.EmbeddingPort;
+import com.javaclaw.extension.spi.EmbeddingPurpose;
+import com.javaclaw.extension.spi.EmbeddingVector;
 import com.javaclaw.nativehost.credential.MasterKeyProtector;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.ProviderVerificationRpcContracts;
@@ -63,8 +71,10 @@ class ProviderVerificationServiceTest {
             ProviderRef provider = fixture.reference();
             CommandIdentity identity = identity(fixture.json(), "verify-once", provider);
 
-            var first = fixture.verification().verify(identity, provider, new CancellationSource());
-            var replay = fixture.verification().verify(identity, provider, new CancellationSource());
+            var first = fixture.verification()
+                    .verify(identity, provider, ProviderModelPurpose.CHAT, new CancellationSource());
+            var replay = fixture.verification()
+                    .verify(identity, provider, ProviderModelPurpose.CHAT, new CancellationSource());
 
             assertEquals(first, replay);
             assertEquals(ProviderVerificationState.SUCCEEDED, first.state());
@@ -84,6 +94,7 @@ class ProviderVerificationServiceTest {
                 IllegalArgumentException.class,
                 () -> new ProviderVerificationRpcContracts.VerifyPayload(
                         new ProviderRef("provider-main", 2, "test-model"),
+                        ProviderModelPurpose.CHAT,
                         false,
                         ProviderVerificationRpcContracts.BILLING_CONFIRMATION));
         try (Fixture fixture = fixture()) {
@@ -106,6 +117,7 @@ class ProviderVerificationServiceTest {
                             .verify(
                                     identity(fixture.json(), "disabled", provider),
                                     provider,
+                                    ProviderModelPurpose.CHAT,
                                     new CancellationSource()));
             assertEquals(0, fixture.adapters().invocations.get());
         }
@@ -132,7 +144,11 @@ class ProviderVerificationServiceTest {
             assertThrows(
                     PersistenceException.class,
                     () -> fixture.verification()
-                            .verify(identity(fixture.json(), "revoked", provider), provider, new CancellationSource()));
+                            .verify(
+                                    identity(fixture.json(), "revoked", provider),
+                                    provider,
+                                    ProviderModelPurpose.CHAT,
+                                    new CancellationSource()));
             assertEquals(0, fixture.adapters().invocations.get());
         }
     }
@@ -141,9 +157,11 @@ class ProviderVerificationServiceTest {
     void 启动恢复把未完成意图固定为Unknown且不再次调用模型() throws Exception {
         try (Fixture fixture = fixture()) {
             ProviderRef provider = fixture.reference();
-            CommandIdentity identity = identity(fixture.json(), "interrupted", provider);
+            CommandIdentity identity =
+                    identity(fixture.json(), "interrupted", provider, ProviderModelPurpose.EMBEDDING);
             new H2Transactions(fixture.database()).execute(connection -> {
-                new ProviderVerificationRepository().insertRunning(connection, identity, provider, CLOCK.instant());
+                new ProviderVerificationRepository()
+                        .insertRunning(connection, identity, provider, ProviderModelPurpose.EMBEDDING, CLOCK.instant());
                 return null;
             });
 
@@ -152,12 +170,16 @@ class ProviderVerificationServiceTest {
                     fixture.providers(),
                     fixture.vault(),
                     fixture.registry(),
+                    fixture.adapters()::createEmbedding,
                     fixture.json(),
                     CLOCK)) {
-                var result = restarted.verify(identity, provider, new CancellationSource());
+                var result =
+                        restarted.verify(identity, provider, ProviderModelPurpose.EMBEDDING, new CancellationSource());
 
                 assertEquals(ProviderVerificationState.UNKNOWN_OUTCOME, result.state());
+                assertEquals(ProviderModelPurpose.EMBEDDING, result.purpose());
                 assertEquals(0, fixture.adapters().invocations.get());
+                assertEquals(0, fixture.adapters().embeddingInvocations.get());
             }
         }
     }
@@ -177,6 +199,7 @@ class ProviderVerificationServiceTest {
                                             valid.expectedRevision(),
                                             valid.requestDigest()),
                                     provider,
+                                    ProviderModelPurpose.CHAT,
                                     new CancellationSource()));
             assertThrows(
                     PersistenceException.class,
@@ -188,6 +211,7 @@ class ProviderVerificationServiceTest {
                                             provider.endpointRevision() - 1,
                                             valid.requestDigest()),
                                     provider,
+                                    ProviderModelPurpose.CHAT,
                                     new CancellationSource()));
 
             ProviderRef stale =
@@ -198,6 +222,7 @@ class ProviderVerificationServiceTest {
                             .verify(
                                     identity(fixture.json(), "stale-provider", stale),
                                     stale,
+                                    ProviderModelPurpose.CHAT,
                                     new CancellationSource()));
             ProviderRef unknownModel =
                     new ProviderRef(provider.endpointId(), provider.endpointRevision(), "unknown-model");
@@ -207,13 +232,14 @@ class ProviderVerificationServiceTest {
                             .verify(
                                     identity(fixture.json(), "unknown-model", unknownModel),
                                     unknownModel,
+                                    ProviderModelPurpose.CHAT,
                                     new CancellationSource()));
             assertEquals(0, fixture.adapters().invocations.get());
         }
     }
 
     @Test
-    void 验证拒绝EmbeddingOnly与未绑定Credential的Provider() {
+    void 验证拒绝EmbeddingOnly且Provider拒绝无凭据启用() {
         try (Fixture fixture = fixture()) {
             ProviderRef provider = fixture.reference();
             ProviderEndpointSpec current = fixture.binding().provider().spec();
@@ -221,8 +247,9 @@ class ProviderVerificationServiceTest {
                     current.displayName(),
                     current.adapter(),
                     current.baseUri(),
-                    Set.of(ProviderRole.EMBEDDING),
-                    current.models(),
+                    current.authentication(),
+                    List.of(new ProviderModelSpec(
+                            "test-model", "test-model", Set.of(ProviderModelPurpose.EMBEDDING), OptionalInt.empty())),
                     current.credential(),
                     current.timeout(),
                     current.maximumRetries(),
@@ -241,18 +268,16 @@ class ProviderVerificationServiceTest {
                             .verify(
                                     identity(fixture.json(), "embedding-only", embedding),
                                     embedding,
+                                    ProviderModelPurpose.CHAT,
                                     new CancellationSource()));
-
-            fixture.providers()
-                    .create(
-                            new CommandIdentity("provider/create", "unbound-provider", 0, "d".repeat(64)),
-                            "provider-unbound",
-                            providerSpec());
-            ProviderRef unbound = new ProviderRef("provider-unbound", 1, "test-model");
             assertThrows(
                     PersistenceException.class,
-                    () -> fixture.verification()
-                            .verify(identity(fixture.json(), "unbound", unbound), unbound, new CancellationSource()));
+                    () -> fixture.providers()
+                            .create(
+                                    new CommandIdentity("provider/create", "unbound-provider", 0, "d".repeat(64)),
+                                    "provider-unbound",
+                                    providerSpec(),
+                                    ProviderLifecycle.ACTIVE));
             assertEquals(0, fixture.adapters().invocations.get());
         }
     }
@@ -262,15 +287,52 @@ class ProviderVerificationServiceTest {
         try (Fixture fixture = fixture()) {
             ProviderRef provider = fixture.reference();
             CommandIdentity identity = identity(fixture.json(), "stored-conflict", provider);
-            fixture.verification().verify(identity, provider, new CancellationSource());
+            fixture.verification().verify(identity, provider, ProviderModelPurpose.CHAT, new CancellationSource());
             CommandIdentity changed = new CommandIdentity(
                     identity.method(), identity.idempotencyKey(), identity.expectedRevision(), "f".repeat(64));
 
             assertThrows(
                     PersistenceException.class,
-                    () -> fixture.verification().verify(changed, provider, new CancellationSource()));
+                    () -> fixture.verification()
+                            .verify(changed, provider, ProviderModelPurpose.CHAT, new CancellationSource()));
             assertEquals(1, fixture.adapters().invocations.get());
         }
+    }
+
+    @Test
+    void 向量验证使用用户选择的精确引用且不依赖全局绑定() throws Exception {
+        AdapterFactory adapters;
+        try (Fixture fixture = fixture()) {
+            adapters = fixture.adapters();
+            ProviderRef provider = fixture.reference();
+            CommandIdentity identity =
+                    identity(fixture.json(), "embedding-once", provider, ProviderModelPurpose.EMBEDDING);
+
+            var result = fixture.verification()
+                    .verify(identity, provider, ProviderModelPurpose.EMBEDDING, new CancellationSource());
+
+            assertEquals(ProviderVerificationState.SUCCEEDED, result.state());
+            assertEquals(ProviderModelPurpose.EMBEDDING, result.purpose());
+            assertEquals(Optional.empty(), result.usage());
+            assertEquals(
+                    Set.of(ProviderModelPurpose.EMBEDDING),
+                    result.capabilities().purposes());
+            assertEquals(1, adapters.embeddingInvocations.get());
+            assertEquals(0, adapters.invocations.get());
+            new H2Transactions(fixture.database()).execute(connection -> {
+                try (var statement = connection.prepareStatement(
+                        "SELECT PURPOSE FROM CORE.PROVIDER_VERIFICATION WHERE IDEMPOTENCY_KEY = ?")) {
+                    statement.setString(1, identity.idempotencyKey());
+                    try (var rows = statement.executeQuery()) {
+                        assertTrue(rows.next());
+                        assertEquals("EMBEDDING", rows.getString(1));
+                    }
+                }
+                return null;
+            });
+            assertNoSensitivePersistence(fixture.database());
+        }
+        assertEquals(1, adapters.embeddingClosed.get());
     }
 
     private Fixture fixture() {
@@ -279,11 +341,12 @@ class ProviderVerificationServiceTest {
         database.initialize();
         SecretVaultService vault =
                 new SecretVaultService(database, new MemoryProtector(), json, CLOCK, new SecureRandom());
-        ProviderService providers = new ProviderService(database, json, CLOCK);
+        ProviderService providers = new ProviderService(database, reference -> true, json, CLOCK);
         providers.create(
                 new CommandIdentity("provider/create", "create-provider", 0, "a".repeat(64)),
                 "provider-main",
-                providerSpec());
+                providerSpec(),
+                ProviderLifecycle.DISABLED);
         ProviderCredentialService credentials =
                 new ProviderCredentialService(providers, vault.providerCredentials(), json, CLOCK);
         ProviderCredentialBinding binding = credentials.set(
@@ -292,10 +355,18 @@ class ProviderVerificationServiceTest {
                 1,
                 0,
                 "local-fake-secret".getBytes(StandardCharsets.UTF_8));
+        var active = providers.update(
+                new CommandIdentity(
+                        "provider/update", "enable-provider", binding.provider().revision(), "c".repeat(64)),
+                binding.provider().id(),
+                binding.provider().spec(),
+                ProviderLifecycle.ACTIVE);
+        binding = new ProviderCredentialBinding(active, binding.credential());
         AdapterFactory adapters = new AdapterFactory();
-        ProviderModelRegistry registry = new ProviderModelRegistry(providers, adapters::create);
-        ProviderVerificationService verification =
-                new ProviderVerificationService(database, providers, vault, registry, json, CLOCK);
+        ProviderModelRegistry registry = new ProviderModelRegistry(providers, adapters::create, vault.runtimeGate());
+        vault.onRuntimeChange(registry::invalidate, registry::reload);
+        ProviderVerificationService verification = new ProviderVerificationService(
+                database, providers, vault, registry, adapters::createEmbedding, json, CLOCK);
         return new Fixture(database, json, providers, credentials, vault, registry, verification, adapters, binding);
     }
 
@@ -304,17 +375,26 @@ class ProviderVerificationServiceTest {
                 "Provider",
                 ProviderAdapter.OPENAI_COMPATIBLE,
                 Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of("test-model"),
+                ProviderAuthentication.API_KEY,
+                List.of(new ProviderModelSpec(
+                        "test-model",
+                        "test-model",
+                        Set.of(ProviderModelPurpose.CHAT, ProviderModelPurpose.EMBEDDING),
+                        OptionalInt.of(3))),
                 Optional.empty(),
                 Duration.ofSeconds(2),
                 0,
-                Map.of());
+                ProviderAdapterOptions.defaults(ProviderAdapter.OPENAI_COMPATIBLE));
     }
 
     private static CommandIdentity identity(CanonicalJson json, String key, ProviderRef provider) {
+        return identity(json, key, provider, ProviderModelPurpose.CHAT);
+    }
+
+    private static CommandIdentity identity(
+            CanonicalJson json, String key, ProviderRef provider, ProviderModelPurpose purpose) {
         var payload = new ProviderVerificationRpcContracts.VerifyPayload(
-                provider, true, ProviderVerificationRpcContracts.BILLING_CONFIRMATION);
+                provider, purpose, true, ProviderVerificationRpcContracts.BILLING_CONFIRMATION);
         return new CommandIdentity(
                 ProviderVerificationRpcContracts.METHOD,
                 key,
@@ -379,9 +459,32 @@ class ProviderVerificationServiceTest {
     private static final class AdapterFactory {
         private final AtomicInteger invocations = new AtomicInteger();
         private final AtomicInteger closed = new AtomicInteger();
+        private final AtomicInteger embeddingInvocations = new AtomicInteger();
+        private final AtomicInteger embeddingClosed = new AtomicInteger();
 
         private ModelGateway create(com.javaclaw.api.ProviderEndpoint endpoint, ProviderRef provider) {
             return new FakeAdapter(invocations, closed);
+        }
+
+        private EmbeddingPort createEmbedding(com.javaclaw.api.ProviderEndpoint endpoint, ProviderRef provider) {
+            return new FakeEmbeddingAdapter(embeddingInvocations, embeddingClosed);
+        }
+    }
+
+    private record FakeEmbeddingAdapter(AtomicInteger invocations, AtomicInteger closed)
+            implements EmbeddingPort, AutoCloseable {
+        @Override
+        public EmbeddingBatch embed(List<String> texts, EmbeddingPurpose purpose, CancellationToken cancellation) {
+            invocations.incrementAndGet();
+            cancellation.throwIfCancelled();
+            assertEquals(1, texts.size());
+            assertEquals(EmbeddingPurpose.QUERY, purpose);
+            return new EmbeddingBatch("1".repeat(64), 3, List.of(new EmbeddingVector(List.of(0.1, 0.2, 0.3))));
+        }
+
+        @Override
+        public void close() {
+            closed.incrementAndGet();
         }
     }
 

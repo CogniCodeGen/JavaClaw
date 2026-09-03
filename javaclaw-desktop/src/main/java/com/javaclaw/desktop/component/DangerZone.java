@@ -19,18 +19,30 @@ public final class DangerZone extends VBox {
      * @param title 动作名称
      * @param description 后果说明
      * @param actionLabel 按钮文字
+     * @param confirmation 执行前的明确确认策略
      * @param action 用户确认后执行的动作
      */
-    public DangerZone(String title, String description, String actionLabel, Runnable action) {
+    public DangerZone(
+            String title,
+            String description,
+            String actionLabel,
+            DangerConfirmationPolicy confirmation,
+            Runnable action) {
+        DangerConfirmationRequest request = new DangerConfirmationRequest(title, description, actionLabel);
+        DangerConfirmationPolicy checkedConfirmation = Objects.requireNonNull(confirmation, "confirmation");
         Runnable checkedAction = Objects.requireNonNull(action, "action");
-        Label heading = new Label(Objects.requireNonNull(title, "title"));
+        Label heading = new Label(request.title());
         heading.getStyleClass().add("platform-danger-title");
-        Label detail = new Label(Objects.requireNonNull(description, "description"));
+        Label detail = new Label(request.consequence());
         detail.setWrapText(true);
         detail.getStyleClass().add("platform-danger-detail");
-        actionButton = new PlatformComponentFactory()
-                .action(Objects.requireNonNull(actionLabel, "actionLabel"), ActionStyle.DANGER, ActionSize.NORMAL);
-        actionButton.setOnAction(event -> checkedAction.run());
+        actionButton =
+                new PlatformComponentFactory().action(request.actionLabel(), ActionStyle.DANGER, ActionSize.NORMAL);
+        actionButton.setOnAction(event -> {
+            if (checkedConfirmation.confirm(request)) {
+                checkedAction.run();
+            }
+        });
         getChildren().addAll(heading, detail, actionButton);
         getStyleClass().add("platform-danger-zone");
     }

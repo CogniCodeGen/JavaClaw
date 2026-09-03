@@ -2,13 +2,11 @@ package com.javaclaw.server.config;
 
 import java.nio.file.Path;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
@@ -20,8 +18,8 @@ import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.TurnId;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.runtime.ModelCapabilities;
@@ -39,7 +37,10 @@ import com.javaclaw.runtime.ProviderState;
 import com.javaclaw.server.persistence.CommandIdentity;
 import com.javaclaw.server.persistence.H2Database;
 import com.javaclaw.server.persistence.ProviderService;
+import com.javaclaw.server.security.vault.VaultRuntimeGate;
 
+import static com.javaclaw.server.ProviderEndpointTestFixtures.chat;
+import static com.javaclaw.server.ProviderEndpointTestFixtures.embedding;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -55,11 +56,13 @@ class ProviderModelRegistryLifecycleTest {
         ProviderEndpoint endpoint = providers.create(
                 identity("provider/create", "routing-create", 0, Map.of("scenario", "routing")),
                 "primary",
-                spec(Set.of(ProviderRole.CHAT), List.of("first", "second")));
+                spec(ProviderModelPurpose.CHAT, List.of("first", "second")),
+                ProviderLifecycle.ACTIVE);
         TrackingGateway shared = new TrackingGateway();
         String firstRoute = route(endpoint, "first");
 
-        ProviderModelRegistry registry = new ProviderModelRegistry(providers, (candidate, reference) -> shared);
+        ProviderModelRegistry registry =
+                new ProviderModelRegistry(providers, (candidate, reference) -> shared, new VaultRuntimeGate());
 
         assertEquals(shared.capabilities(firstRoute), registry.capabilities(firstRoute));
         assertEquals(
@@ -77,11 +80,12 @@ class ProviderModelRegistryLifecycleTest {
     @Test
     void disabledProviderIsImmediateKillSwitchAndClosedRegistryRejectsMutation() {
         ProviderService providers = providers("kill-switch");
-        ProviderEndpointSpec spec = spec(Set.of(ProviderRole.CHAT), List.of("model"));
-        ProviderEndpoint active =
-                providers.create(identity("provider/create", "kill-create", 0, spec), "primary", spec);
+        ProviderEndpointSpec spec = spec(ProviderModelPurpose.CHAT, List.of("model"));
+        ProviderEndpoint active = providers.create(
+                identity("provider/create", "kill-create", 0, spec), "primary", spec, ProviderLifecycle.ACTIVE);
         TrackingGateway adapter = new TrackingGateway();
-        ProviderModelRegistry registry = new ProviderModelRegistry(providers, (candidate, reference) -> adapter);
+        ProviderModelRegistry registry =
+                new ProviderModelRegistry(providers, (candidate, reference) -> adapter, new VaultRuntimeGate());
         String route = route(active, "model");
 
         ProviderEndpoint disabled = providers.update(
@@ -108,12 +112,16 @@ class ProviderModelRegistryLifecycleTest {
         ProviderEndpoint embedding = embeddings.create(
                 identity("provider/create", "embedding", 0, Map.of("scenario", "embedding")),
                 "embedding",
-                spec(Set.of(ProviderRole.EMBEDDING), List.of("vector")));
+                spec(ProviderModelPurpose.EMBEDDING, List.of("vector")),
+                ProviderLifecycle.ACTIVE);
         AtomicInteger creations = new AtomicInteger();
-        try (ProviderModelRegistry registry = new ProviderModelRegistry(embeddings, (candidate, reference) -> {
-            creations.incrementAndGet();
-            return new TrackingGateway();
-        })) {
+        try (ProviderModelRegistry registry = new ProviderModelRegistry(
+                embeddings,
+                (candidate, reference) -> {
+                    creations.incrementAndGet();
+                    return new TrackingGateway();
+                },
+                new VaultRuntimeGate())) {
             assertEquals(0, creations.get());
             assertThrows(IllegalArgumentException.class, () -> registry.capabilities(route(embedding, "vector")));
         }
@@ -122,17 +130,21 @@ class ProviderModelRegistryLifecycleTest {
         failing.create(
                 identity("provider/create", "failed", 0, Map.of("scenario", "failed-generation")),
                 "failed",
-                spec(Set.of(ProviderRole.CHAT), List.of("first", "second")));
+                spec(ProviderModelPurpose.CHAT, List.of("first", "second")),
+                ProviderLifecycle.ACTIVE);
         TrackingGateway partial = new TrackingGateway();
         AtomicInteger attempts = new AtomicInteger();
         assertThrows(
                 IllegalStateException.class,
-                () -> new ProviderModelRegistry(failing, (candidate, reference) -> {
-                    if (attempts.incrementAndGet() == 1) {
-                        return partial;
-                    }
-                    throw new IllegalStateException("adapter construction failed");
-                }));
+                () -> new ProviderModelRegistry(
+                        failing,
+                        (candidate, reference) -> {
+                            if (attempts.incrementAndGet() == 1) {
+                                return partial;
+                            }
+                            throw new IllegalStateException("adapter construction failed");
+                        },
+                        new VaultRuntimeGate()));
         assertEquals(1, partial.closed.get());
     }
 
@@ -142,12 +154,13 @@ class ProviderModelRegistryLifecycleTest {
         ProviderEndpoint nativeEndpoint = nativeProviders.create(
                 identity("provider/create", "native", 0, Map.of("scenario", "native")),
                 "native",
-                spec(Set.of(ProviderRole.CHAT), List.of("model")));
+                spec(ProviderModelPurpose.CHAT, List.of("model")),
+                ProviderLifecycle.ACTIVE);
         NativeGateway nativeAdapter = new NativeGateway();
         ProviderState state = new ProviderState("native", "v1", new CanonicalJson().parse("{}"));
         String nativeRoute = route(nativeEndpoint, "model");
-        try (ProviderModelRegistry registry =
-                new ProviderModelRegistry(nativeProviders, (candidate, reference) -> nativeAdapter)) {
+        try (ProviderModelRegistry registry = new ProviderModelRegistry(
+                nativeProviders, (candidate, reference) -> nativeAdapter, new VaultRuntimeGate())) {
             assertEquals(
                     "continued",
                     registry.invokeContinuing(
@@ -169,9 +182,10 @@ class ProviderModelRegistryLifecycleTest {
         ProviderEndpoint plain = plainProviders.create(
                 identity("provider/create", "plain", 0, Map.of("scenario", "plain")),
                 "plain",
-                spec(Set.of(ProviderRole.CHAT), List.of("model")));
-        try (ProviderModelRegistry registry =
-                new ProviderModelRegistry(plainProviders, (candidate, reference) -> new TrackingGateway())) {
+                spec(ProviderModelPurpose.CHAT, List.of("model")),
+                ProviderLifecycle.ACTIVE);
+        try (ProviderModelRegistry registry = new ProviderModelRegistry(
+                plainProviders, (candidate, reference) -> new TrackingGateway(), new VaultRuntimeGate())) {
             String route = route(plain, "model");
             assertThrows(
                     IllegalStateException.class,
@@ -187,20 +201,14 @@ class ProviderModelRegistryLifecycleTest {
     private ProviderService providers(String suffix) {
         H2Database database = new H2Database(temporaryDirectory.resolve(suffix).resolve("data-v5"));
         database.initialize();
-        return new ProviderService(database, new CanonicalJson(), CLOCK);
+        return new ProviderService(database, reference -> true, new CanonicalJson(), CLOCK);
     }
 
-    private static ProviderEndpointSpec spec(Set<ProviderRole> roles, List<String> models) {
-        return new ProviderEndpointSpec(
-                "Provider",
-                ProviderAdapter.OPENAI_COMPATIBLE,
-                Optional.empty(),
-                roles,
-                models,
-                Optional.empty(),
-                Duration.ofSeconds(30),
-                0,
-                Map.of());
+    private static ProviderEndpointSpec spec(ProviderModelPurpose purpose, List<String> models) {
+        String[] modelIds = models.toArray(String[]::new);
+        return purpose == ProviderModelPurpose.CHAT
+                ? chat("Provider", ProviderAdapter.OPENAI_COMPATIBLE, modelIds)
+                : embedding("Provider", ProviderAdapter.OPENAI_COMPATIBLE, modelIds);
     }
 
     private static String route(ProviderEndpoint endpoint, String model) {

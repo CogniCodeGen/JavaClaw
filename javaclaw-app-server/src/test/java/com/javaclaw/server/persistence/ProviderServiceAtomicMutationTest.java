@@ -2,13 +2,9 @@ package com.javaclaw.server.persistence;
 
 import java.nio.file.Path;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
@@ -18,9 +14,9 @@ import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.WriteCommand;
+import com.javaclaw.server.ProviderEndpointTestFixtures;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -36,7 +32,8 @@ class ProviderServiceAtomicMutationTest {
         H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
         database.initialize();
         CanonicalJson json = new CanonicalJson();
-        ProviderService service = new ProviderService(database, json, Clock.fixed(NOW, ZoneOffset.UTC));
+        ProviderService service =
+                new ProviderService(database, reference -> true, json, Clock.fixed(NOW, ZoneOffset.UTC));
         RecordingParticipant models = new RecordingParticipant();
         RecordingParticipant embeddings = new RecordingParticipant();
         service.participate(models);
@@ -44,8 +41,8 @@ class ProviderServiceAtomicMutationTest {
 
         ProviderEndpointSpec firstSpec = spec("第一版");
         CommandIdentity create = identity(json, "provider/create", "provider-create", 0, firstSpec);
-        ProviderEndpoint first = service.create(create, "primary", firstSpec);
-        assertEquals(first, service.create(create, "primary", firstSpec));
+        ProviderEndpoint first = service.create(create, "primary", firstSpec, ProviderLifecycle.ACTIVE);
+        assertEquals(first, service.create(create, "primary", firstSpec, ProviderLifecycle.ACTIVE));
         assertEquals(1, models.prepared.get());
         assertEquals(1, models.activated.get());
         assertEquals(1, embeddings.prepared.get());
@@ -66,16 +63,7 @@ class ProviderServiceAtomicMutationTest {
     }
 
     private static ProviderEndpointSpec spec(String name) {
-        return new ProviderEndpointSpec(
-                name,
-                ProviderAdapter.OPENAI_COMPATIBLE,
-                Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of("test-model"),
-                Optional.empty(),
-                Duration.ofSeconds(30),
-                0,
-                Map.of());
+        return ProviderEndpointTestFixtures.chat(name, ProviderAdapter.OPENAI_COMPATIBLE, "test-model");
     }
 
     private static CommandIdentity identity(

@@ -21,6 +21,10 @@ import com.javaclaw.api.ConversationThread;
 import com.javaclaw.api.ExecutionState;
 import com.javaclaw.api.InputRequestRecord;
 import com.javaclaw.api.InputRequestState;
+import com.javaclaw.api.ProfileBinding;
+import com.javaclaw.api.ToolDescriptor;
+import com.javaclaw.api.ToolIdentity;
+import com.javaclaw.api.ToolRisk;
 import com.javaclaw.api.TurnStatus;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.client.ServerNotification;
@@ -45,6 +49,7 @@ import com.javaclaw.protocol.NegotiatedCapabilities;
 import com.javaclaw.protocol.ProviderProfileRpcContracts;
 import com.javaclaw.protocol.RpcConnection;
 import com.javaclaw.protocol.SessionSecretChannel;
+import com.javaclaw.protocol.ToolRpcContracts;
 import com.javaclaw.protocol.TransportKind;
 import com.javaclaw.protocol.WriteCommand;
 
@@ -85,6 +90,8 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
     volatile InputRequestRecord input = DesktopTestFixtures.input();
     volatile ExtensionExecutionReceipt job = job(ExecutionState.RUNNING, 3);
     volatile CanonicalPayload viewSchema = new CanonicalPayload("{\"schemaVersion\":2}");
+    volatile boolean profileBound = true;
+    volatile ToolRpcContracts.CatalogQuery lastToolCatalog;
 
     JavaClawClient client(Consumer<ServerNotification> notifications) throws IOException {
         return JavaClawClient.connect(this, new ClientInfo("desktop-test", "5.0"), Set.of(), notifications);
@@ -160,10 +167,42 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
             case "workspace/list" -> new CoreRpcContracts.WorkspaceListResult(List.of(workspace));
             case "workspace/create" -> createdWorkspace(request);
             case "profile/list" -> new ProviderProfileRpcContracts.AgentProfileListResult(List.of(profile));
+            case "profile/read" -> profile;
+            case "profile/binding/read" -> profileBinding(request);
+            case "tool/search" -> toolCatalog(request);
             case "thread/list" -> new CoreRpcContracts.ThreadListResult(List.of(thread));
             case "thread/create" -> createdThread(request);
             default -> executionResult(request);
         };
+    }
+
+    private ProviderProfileRpcContracts.ProfileBindingReadResult profileBinding(JsonRpcRequest request) {
+        ProviderProfileRpcContracts.ProfileBindingReadPayload payload =
+                json.decode(request.params(), ProviderProfileRpcContracts.ProfileBindingReadPayload.class);
+        if (!workspace.id().equals(payload.workspaceId()) || payload.threadId().isPresent()) {
+            throw new AssertionError("profile binding scope mismatch");
+        }
+        ProfileBinding binding = new ProfileBinding(
+                workspace.id(),
+                Optional.empty(),
+                new com.javaclaw.api.AgentProfileRef(profile.id(), profile.revision()),
+                1,
+                DesktopTestFixtures.NOW);
+        return new ProviderProfileRpcContracts.ProfileBindingReadResult(
+                profileBound ? Optional.of(binding) : Optional.empty());
+    }
+
+    private ToolRpcContracts.SearchResult toolCatalog(JsonRpcRequest request) {
+        lastToolCatalog = json.decode(request.params(), ToolRpcContracts.CatalogQuery.class);
+        ToolDescriptor tool = new ToolDescriptor(
+                new ToolIdentity("core", "read_file", 3),
+                "读取文件",
+                new CanonicalPayload("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}"),
+                new CanonicalPayload(
+                        "{\"additionalProperties\":false,\"properties\":{\"exitCode\":{\"type\":\"integer\"},\"metadata\":{\"properties\":{\"verified\":{\"type\":\"boolean\"}},\"type\":\"object\"},\"rows\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"}"),
+                ToolRisk.READ_ONLY,
+                Set.of("file"));
+        return new ToolRpcContracts.SearchResult(9, List.of(tool));
     }
 
     private Object executionResult(JsonRpcRequest request) {

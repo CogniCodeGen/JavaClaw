@@ -26,6 +26,9 @@ public record ProviderEndpoint(
         revision = Preconditions.positive(revision, "revision");
         Objects.requireNonNull(lifecycle, "lifecycle");
         Objects.requireNonNull(spec, "spec");
+        if (lifecycle == ProviderLifecycle.ACTIVE && spec.models().isEmpty()) {
+            throw new IllegalArgumentException("active Provider must declare at least one model");
+        }
         Objects.requireNonNull(createdAt, "createdAt");
         Objects.requireNonNull(updatedAt, "updatedAt");
         if (updatedAt.isBefore(createdAt)) {

@@ -12,6 +12,10 @@ import org.junit.jupiter.api.Test;
 import com.javaclaw.api.ApprovalRequirement;
 import com.javaclaw.api.FilePermission;
 import com.javaclaw.api.NetworkPermission;
+import com.javaclaw.api.PermissionPresetDescriptor;
+import com.javaclaw.api.PermissionPresetInstantiationRequest;
+import com.javaclaw.api.PermissionPresetInstantiationResult;
+import com.javaclaw.api.PermissionPresetPreview;
 import com.javaclaw.api.PermissionProfile;
 import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProcessPermission;
@@ -73,6 +77,27 @@ class PermissionProfileRpcContractsTest {
     }
 
     @Test
+    void 权限预设请求预览和实例化结果保持固定Workspace() {
+        PermissionPresetDescriptor preset =
+                new PermissionPresetDescriptor("workspace-review", 1, "只读审查", "只读 Workspace", false);
+        PermissionPresetInstantiationRequest request = new PermissionPresetInstantiationRequest(
+                preset.id(), preset.revision(), WORKSPACE, "workspace-review-profile", Set.of("read"), Set.of());
+        PermissionProfile profile = profile(request.profileId(), 1);
+        PermissionPresetPreview preview = new PermissionPresetPreview(preset, WORKSPACE, profile, List.of());
+        PermissionPresetInstantiationResult result =
+                new PermissionPresetInstantiationResult(preset, WORKSPACE, profile);
+
+        assertEquals(
+                new PermissionProfileRpcContracts.PresetPreviewPayload(request),
+                json.decode(
+                        json.encode(new PermissionProfileRpcContracts.PresetPreviewPayload(request)),
+                        PermissionProfileRpcContracts.PresetPreviewPayload.class));
+        assertEquals(preview, json.decode(json.encode(preview), PermissionPresetPreview.class));
+        assertEquals(result, json.decode(json.encode(result), PermissionPresetInstantiationResult.class));
+        assertEquals(List.of(preset), new PermissionProfileRpcContracts.PresetListResult(List.of(preset)).presets());
+    }
+
+    @Test
     void 方法目录和逐方法Schema声明完整管理面() throws IOException {
         NegotiatedCapabilities none = new NegotiatedCapabilities(Set.of(), Set.of());
 
@@ -82,6 +107,10 @@ class PermissionProfileRpcContractsTest {
         assertEquals(
                 RpcMethodKind.QUERY,
                 MethodCatalog.require("permissionProfile/effectivePreview", none)
+                        .kind());
+        assertEquals(
+                RpcMethodKind.COMMAND,
+                MethodCatalog.require("permissionProfile/preset/instantiate", none)
                         .kind());
         String schema = read("/schema/permission-profile-v2.schema.json");
         String methods = read("/schema/methods-v2.json");

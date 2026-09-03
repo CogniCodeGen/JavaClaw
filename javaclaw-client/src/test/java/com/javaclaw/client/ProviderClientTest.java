@@ -4,8 +4,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -13,21 +13,32 @@ import java.util.function.Function;
 
 import org.junit.jupiter.api.Test;
 
+import com.javaclaw.api.CancellationSource;
 import com.javaclaw.api.CredentialClearReceipt;
 import com.javaclaw.api.CredentialMetadata;
 import com.javaclaw.api.CredentialRef;
+import com.javaclaw.api.EmbeddingBinding;
 import com.javaclaw.api.ProviderAdapter;
+import com.javaclaw.api.ProviderAdapterOptions;
+import com.javaclaw.api.ProviderAuthentication;
 import com.javaclaw.api.ProviderCapabilities;
 import com.javaclaw.api.ProviderCredentialBinding;
 import com.javaclaw.api.ProviderCredentialClearResult;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.ProviderModelDiscoveryCandidate;
+import com.javaclaw.api.ProviderModelDiscoveryOperation;
+import com.javaclaw.api.ProviderModelDiscoveryOperationState;
+import com.javaclaw.api.ProviderModelDiscoveryRequest;
+import com.javaclaw.api.ProviderModelDiscoveryResult;
+import com.javaclaw.api.ProviderModelPurpose;
+import com.javaclaw.api.ProviderModelSpec;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.ProviderVerificationResult;
 import com.javaclaw.api.ProviderVerificationState;
 import com.javaclaw.api.ProviderVerificationUsage;
+import com.javaclaw.api.TurnCancelledException;
 import com.javaclaw.client.facade.CredentialClient;
 import com.javaclaw.client.facade.ProviderClient;
 import com.javaclaw.client.testkit.ScriptedRpcConnection;
@@ -35,6 +46,7 @@ import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.JsonRpcRequest;
 import com.javaclaw.protocol.JsonRpcResponse;
 import com.javaclaw.protocol.ProviderCredentialRpcContracts;
+import com.javaclaw.protocol.ProviderModelDiscoveryRpcContracts;
 import com.javaclaw.protocol.ProviderVerificationRpcContracts;
 import com.javaclaw.protocol.SessionSecretChannel;
 import com.javaclaw.protocol.WriteCommand;
@@ -109,10 +121,12 @@ class ProviderClientTest {
         ProviderRef provider = new ProviderRef("provider-main", 2, "test-model");
         ProviderVerificationResult expected = new ProviderVerificationResult(
                 provider,
+                ProviderModelPurpose.CHAT,
                 ProviderVerificationState.SUCCEEDED,
                 9,
                 Optional.of(new ProviderVerificationUsage(2, 1, 0, 0)),
-                new ProviderCapabilities(Set.of(ProviderRole.CHAT), true, true, true, false, false, false, false),
+                new ProviderCapabilities(
+                        Set.of(ProviderModelPurpose.CHAT), true, true, true, false, false, false, false),
                 Optional.empty(),
                 NOW);
         AtomicInteger requests = new AtomicInteger();
@@ -124,6 +138,7 @@ class ProviderClientTest {
                 assertEquals(ProviderVerificationRpcContracts.METHOD, request.method());
                 assertEquals(2, command.expectedRevision());
                 assertEquals(provider, payload.provider());
+                assertEquals(ProviderModelPurpose.CHAT, payload.purpose());
                 return JsonRpcResponse.success(request.id(), JSON.encode(expected));
             });
 
@@ -131,6 +146,7 @@ class ProviderClientTest {
                     expected,
                     client.verifyRoundTrip(
                             provider,
+                            ProviderModelPurpose.CHAT,
                             true,
                             ProviderVerificationRpcContracts.BILLING_CONFIRMATION,
                             new CommandOptions("verify", 2)));
@@ -138,10 +154,122 @@ class ProviderClientTest {
                     IllegalArgumentException.class,
                     () -> client.verifyRoundTrip(
                             provider,
+                            ProviderModelPurpose.CHAT,
                             false,
                             ProviderVerificationRpcContracts.BILLING_CONFIRMATION,
                             new CommandOptions("unconfirmed", 2)));
             assertEquals(1, requests.get());
+        }
+    }
+
+    @Test
+    void SDK暴露禁用连接创建目录发现和精确Embedding绑定() {
+        ProviderEndpoint disabled =
+                new ProviderEndpoint("provider-main", 1, ProviderLifecycle.DISABLED, emptyProviderSpec(), NOW, NOW);
+        ProviderModelDiscoveryResult discovery = new ProviderModelDiscoveryResult(
+                "provider-main",
+                1,
+                List.of(new ProviderModelDiscoveryCandidate("chat", "Chat", Set.of(), OptionalInt.empty())),
+                false,
+                NOW);
+        EmbeddingBinding binding = new EmbeddingBinding(new ProviderRef("provider-main", 2, "embedding"), 1, NOW);
+
+        try (SessionSecretChannel secrets = SessionSecretChannel.open()) {
+            ProviderClient client = client(secrets, request -> switch (request.method()) {
+                case "provider/create" -> {
+                    WriteCommand command = JSON.decode(request.params(), WriteCommand.class);
+                    var payload = JSON.decode(
+                            command.payload(),
+                            com.javaclaw.protocol.ProviderProfileRpcContracts.ProviderCreatePayload.class);
+                    assertEquals(ProviderLifecycle.DISABLED, payload.lifecycle());
+                    yield JsonRpcResponse.success(request.id(), JSON.encode(disabled));
+                }
+                case ProviderModelDiscoveryRpcContracts.START_METHOD -> {
+                    WriteCommand command = JSON.decode(request.params(), WriteCommand.class);
+                    assertEquals(
+                            new ProviderModelDiscoveryRequest("provider-main", 1),
+                            JSON.decode(command.payload(), ProviderModelDiscoveryRequest.class));
+                    assertEquals(1, command.expectedRevision());
+                    yield JsonRpcResponse.success(
+                            request.id(),
+                            JSON.encode(new ProviderModelDiscoveryOperation(
+                                    "11111111-1111-1111-1111-111111111111",
+                                    2,
+                                    "provider-main",
+                                    1,
+                                    ProviderModelDiscoveryOperationState.SUCCEEDED,
+                                    Optional.of(discovery),
+                                    Optional.empty(),
+                                    NOW,
+                                    NOW)));
+                }
+                case "provider/embeddingBinding/read" ->
+                    JsonRpcResponse.success(
+                            request.id(),
+                            JSON.encode(
+                                    new com.javaclaw.protocol.ProviderProfileRpcContracts.EmbeddingBindingReadResult(
+                                            Optional.of(binding))));
+                case "provider/embeddingBinding/update" -> JsonRpcResponse.success(request.id(), JSON.encode(binding));
+                default -> throw new AssertionError("unexpected method " + request.method());
+            });
+
+            assertEquals(
+                    disabled,
+                    client.create(
+                            disabled.id(),
+                            disabled.spec(),
+                            ProviderLifecycle.DISABLED,
+                            new CommandOptions("create-shell", 0)));
+            assertEquals(discovery, client.discoverModels("provider-main", 1, new CancellationSource()));
+            assertEquals(Optional.of(binding), client.embeddingBinding());
+            assertEquals(binding, client.bindEmbedding(binding.provider(), new CommandOptions("bind-embedding", 0)));
+        }
+    }
+
+    @Test
+    void SDK取消令牌会发送Cancel命令而不是只丢弃响应() {
+        CancellationSource cancellation = new CancellationSource();
+        AtomicInteger cancels = new AtomicInteger();
+        Instant createdAt = NOW;
+        try (SessionSecretChannel secrets = SessionSecretChannel.open()) {
+            ProviderClient client = client(secrets, request -> {
+                if (ProviderModelDiscoveryRpcContracts.START_METHOD.equals(request.method())) {
+                    cancellation.cancel("页面切换");
+                    return JsonRpcResponse.success(
+                            request.id(),
+                            JSON.encode(new ProviderModelDiscoveryOperation(
+                                    "11111111-1111-1111-1111-111111111111",
+                                    1,
+                                    "provider-main",
+                                    1,
+                                    ProviderModelDiscoveryOperationState.RUNNING,
+                                    Optional.empty(),
+                                    Optional.empty(),
+                                    createdAt,
+                                    createdAt)));
+                }
+                assertEquals(ProviderModelDiscoveryRpcContracts.CANCEL_METHOD, request.method());
+                WriteCommand command = JSON.decode(request.params(), WriteCommand.class);
+                var payload = JSON.decode(command.payload(), ProviderModelDiscoveryRpcContracts.CancelPayload.class);
+                assertEquals("11111111-1111-1111-1111-111111111111", payload.operationId());
+                assertEquals(1, command.expectedRevision());
+                cancels.incrementAndGet();
+                return JsonRpcResponse.success(
+                        request.id(),
+                        JSON.encode(new ProviderModelDiscoveryOperation(
+                                payload.operationId(),
+                                2,
+                                "provider-main",
+                                1,
+                                ProviderModelDiscoveryOperationState.CANCELLED,
+                                Optional.empty(),
+                                Optional.empty(),
+                                createdAt,
+                                createdAt)));
+            });
+
+            assertThrows(TurnCancelledException.class, () -> client.discoverModels("provider-main", 1, cancellation));
+            assertEquals(1, cancels.get());
         }
     }
 
@@ -200,12 +328,26 @@ class ProviderClientTest {
                 "Provider",
                 ProviderAdapter.OPENAI_COMPATIBLE,
                 Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of("test-model"),
+                ProviderAuthentication.API_KEY,
+                List.of(new ProviderModelSpec(
+                        "test-model", "Test model", Set.of(ProviderModelPurpose.CHAT), OptionalInt.empty())),
                 credential,
                 Duration.ofSeconds(30),
                 0,
-                Map.of());
+                ProviderAdapterOptions.defaults(ProviderAdapter.OPENAI_COMPATIBLE));
         return new ProviderEndpoint("provider-main", revision, ProviderLifecycle.ACTIVE, spec, NOW, NOW);
+    }
+
+    private static ProviderEndpointSpec emptyProviderSpec() {
+        return new ProviderEndpointSpec(
+                "Provider",
+                ProviderAdapter.OPENAI_COMPATIBLE,
+                Optional.empty(),
+                ProviderAuthentication.API_KEY,
+                List.of(),
+                Optional.empty(),
+                Duration.ofSeconds(30),
+                0,
+                ProviderAdapterOptions.defaults(ProviderAdapter.OPENAI_COMPATIBLE));
     }
 }

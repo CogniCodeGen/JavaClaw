@@ -97,7 +97,8 @@ class ViewStructuredListFieldTest {
                                 Optional.empty(),
                                 Optional.empty(),
                                 Optional.of(2)),
-                        List.of()));
+                        List.of(),
+                        Optional.empty()));
     }
 
     private static ViewStructuredListField field(int minRows, int maxRows, List<Map<String, Object>> initialRows) {
@@ -121,7 +122,8 @@ class ViewStructuredListFieldTest {
                 Optional.empty(),
                 List.of(),
                 ViewStructuredItemValidation.required(true),
-                List.of());
+                List.of(),
+                Optional.empty());
     }
 
     private static ViewStructuredItemField number() {
@@ -139,7 +141,8 @@ class ViewStructuredListFieldTest {
                         Optional.of(BigDecimal.TEN),
                         Optional.empty(),
                         Optional.empty()),
-                List.of());
+                List.of(),
+                Optional.empty());
     }
 
     private static ViewStructuredItemField booleanField() {
@@ -150,7 +153,8 @@ class ViewStructuredListFieldTest {
                 Optional.of("true"),
                 List.of(),
                 ViewStructuredItemValidation.required(false),
-                List.of());
+                List.of(),
+                Optional.empty());
     }
 
     private static ViewStructuredItemField choice() {
@@ -161,7 +165,8 @@ class ViewStructuredListFieldTest {
                 Optional.of("task"),
                 List.of(),
                 ViewStructuredItemValidation.required(true),
-                List.of(new ViewOption("task", "任务"), new ViewOption("turn", "Turn")));
+                List.of(new ViewOption("task", "任务"), new ViewOption("turn", "Turn")),
+                Optional.empty());
     }
 
     private static ViewStructuredItemField textList() {
@@ -179,7 +184,8 @@ class ViewStructuredListFieldTest {
                         Optional.empty(),
                         Optional.empty(),
                         Optional.of(4)),
-                List.of());
+                List.of(),
+                Optional.empty());
     }
 
     private static Map<String, Object> row(String id, String name, Object weight, Object tags) {

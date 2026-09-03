@@ -96,20 +96,24 @@ public final class DesktopPresenter implements AutoCloseable {
     }
 
     /**
-     * 订阅当前 Workspace 中一个 Extension 的失效事件。
+     * 订阅一个已冻结 Workspace 中 Extension 的失效事件。
      *
+     * @param workspaceId 设置中心发起订阅时的精确 Workspace
      * @param extensionId 精确 Extension 标识
      * @param listener 资源 revision 事件监听者
      * @return 幂等取消句柄
      */
     public DesktopNotificationSubscription subscribeExtensionEvents(
-            String extensionId, Consumer<ExtensionRpcContracts.ExtensionEvent> listener) {
+            com.javaclaw.api.WorkspaceId workspaceId,
+            String extensionId,
+            Consumer<ExtensionRpcContracts.ExtensionEvent> listener) {
+        com.javaclaw.api.WorkspaceId checkedWorkspace = Objects.requireNonNull(workspaceId, "workspaceId");
         String checkedId = requireText(extensionId, "extensionId");
         Consumer<ExtensionRpcContracts.ExtensionEvent> checkedListener = Objects.requireNonNull(listener, "listener");
         return subscribeNotifications(notification -> {
             if (notification instanceof ServerNotification.ExtensionChanged changed
                     && checkedId.equals(changed.event().extensionId())
-                    && currentWorkspace(changed.event())) {
+                    && checkedWorkspace.equals(changed.event().workspaceId())) {
                 checkedListener.accept(changed.event());
             }
         });
@@ -196,17 +200,14 @@ public final class DesktopPresenter implements AutoCloseable {
     }
 
     /**
-     * 返回当前页面操作所属的 Workspace。
+     * 返回主窗口当前 Workspace 的瞬时快照，仅用于设置中心首次选择作用域。
      *
-     * @return 当前已选择 Workspace 的稳定标识
-     * @throws IllegalStateException 尚未选择 Workspace
+     * <p>设置请求不得在后台重新读取该值；必须显式携带设置中心已冻结的 WorkspaceId。
+     *
+     * @return 当前 Workspace；尚未连接或未选择时为空
      */
-    public com.javaclaw.api.WorkspaceId selectedWorkspaceId() {
-        return store.state()
-                .threads()
-                .selectedWorkspace()
-                .orElseThrow(() -> new IllegalStateException("请先选择 Workspace"))
-                .id();
+    public Optional<com.javaclaw.api.WorkspaceId> selectedWorkspaceIdSnapshot() {
+        return store.state().threads().selectedWorkspace().map(Workspace::id);
     }
 
     /**
@@ -288,12 +289,17 @@ public final class DesktopPresenter implements AutoCloseable {
      * @return 在 JavaFX 调度器上完成的权威页面数据
      */
     public CompletableFuture<ViewData> loadExtensionViewData(
-            ExtensionRpcContracts.ViewDocument document, ViewSchema schema, ViewLoadRequest request) {
+            com.javaclaw.api.WorkspaceId workspaceId,
+            ExtensionRpcContracts.ViewDocument document,
+            ViewSchema schema,
+            ViewLoadRequest request) {
+        Objects.requireNonNull(workspaceId, "workspaceId");
         Objects.requireNonNull(document, "document");
         Objects.requireNonNull(schema, "schema");
         Objects.requireNonNull(request, "request");
         DesktopState snapshot = store.state();
-        return submitSettingsRequest(connected -> extensions.load(connected, document, schema, snapshot, request));
+        return submitSettingsRequest(
+                connected -> extensions.load(connected, workspaceId, document, schema, snapshot, request));
     }
 
     /**
@@ -304,12 +310,13 @@ public final class DesktopPresenter implements AutoCloseable {
      * @return 在 JavaFX 调度器上完成的命令结果
      */
     public CompletableFuture<ExtensionRpcContracts.CallResult> executeExtensionViewCommand(
-            String extensionId, ViewCommandInvocation invocation) {
+            com.javaclaw.api.WorkspaceId workspaceId, String extensionId, ViewCommandInvocation invocation) {
         DesktopState snapshot = store.state();
-        snapshot.threads().selectedWorkspace().orElseThrow();
+        Objects.requireNonNull(workspaceId, "workspaceId");
         requireText(extensionId, "extensionId");
         Objects.requireNonNull(invocation, "invocation");
-        return submitSettingsRequest(connected -> extensions.execute(connected, extensionId, invocation, snapshot));
+        return submitSettingsRequest(
+                connected -> extensions.execute(connected, workspaceId, extensionId, invocation, snapshot));
     }
 
     /**
@@ -404,14 +411,6 @@ public final class DesktopPresenter implements AutoCloseable {
                 notifications.publish(checked);
             }
         });
-    }
-
-    private boolean currentWorkspace(ExtensionRpcContracts.ExtensionEvent event) {
-        return store.state()
-                .threads()
-                .selectedWorkspace()
-                .map(workspace -> workspace.id().equals(event.workspaceId()))
-                .orElse(false);
     }
 
     private void discardClient(JavaClawClient candidate) {

@@ -47,6 +47,18 @@ class PromptOptimizationSettingsPresenterTest {
     private static final String DIGEST = "a".repeat(64);
 
     @Test
+    void 固定Workspace可在独立目录尚未加载时直接绑定() {
+        FakeGateway gateway = new FakeGateway();
+        PromptOptimizationSettingsPresenter presenter = new PromptOptimizationSettingsPresenter(gateway, () -> {});
+
+        presenter.selectWorkspace(gateway.workspace);
+
+        assertEquals(
+                gateway.workspace, presenter.state().selection().workspace().orElseThrow());
+        assertEquals(List.of(gateway.workspace), presenter.state().selection().workspaces());
+    }
+
+    @Test
     void explicitConfirmationsGateStartAndAdoptionConflictPreservesReadyDraft() {
         FakeGateway gateway = new FakeGateway();
         AtomicBoolean adoptedCallback = new AtomicBoolean();

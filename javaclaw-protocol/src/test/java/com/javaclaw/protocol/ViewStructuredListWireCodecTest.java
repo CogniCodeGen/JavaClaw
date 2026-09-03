@@ -14,6 +14,8 @@ import com.javaclaw.extension.spi.ViewAction;
 import com.javaclaw.extension.spi.ViewBinding;
 import com.javaclaw.extension.spi.ViewDataSource;
 import com.javaclaw.extension.spi.ViewOption;
+import com.javaclaw.extension.spi.ViewOptionFilter;
+import com.javaclaw.extension.spi.ViewOptionSource;
 import com.javaclaw.extension.spi.ViewSchema;
 import com.javaclaw.extension.spi.ViewStructuredItemField;
 import com.javaclaw.extension.spi.ViewStructuredItemType;
@@ -61,6 +63,39 @@ class ViewStructuredListWireCodecTest {
         assertEquals(new BigDecimal("2"), decodedField.initialRows().getFirst().get("weight"));
         assertTrue(payload.json().contains("\"type\":\"STRUCTURED_LIST\""));
         assertTrue(payload.json().contains("\"itemKey\":\"stepId\""));
+    }
+
+    @Test
+    void roundTripsFilteredDynamicChoiceWithoutFreeTextFallback() {
+        ViewStructuredItemField dynamic = new ViewStructuredItemField(
+                "fieldPointer",
+                "输出字段",
+                ViewStructuredItemType.CHOICE,
+                Optional.of("/exitCode"),
+                List.of(),
+                ViewStructuredItemValidation.required(true),
+                List.of(),
+                Optional.of(new ViewOptionSource(
+                        "toolFields",
+                        "fieldPointer",
+                        "fieldLabel",
+                        Optional.of(new ViewOptionFilter("toolName", "toolName")))));
+        ViewStructuredListField field = new ViewStructuredListField(
+                "steps",
+                "步骤",
+                new ViewBinding("editor", "steps"),
+                0,
+                10,
+                "stepId",
+                List.of(dynamic),
+                List.of(),
+                Optional.empty());
+        ViewSchema schema =
+                schema(field, List.of(new ViewDataSource("toolFields", "view.tool-fields", Map.of(), List.of(), 50)));
+        ViewSchemaWireCodec codec = new ViewSchemaWireCodec(new CanonicalJson());
+
+        assertEquals(schema, codec.decode(codec.encode(schema)));
+        assertTrue(codec.encode(schema).json().contains("\"sourceField\":\"toolName\""));
     }
 
     @Test
@@ -113,7 +148,34 @@ class ViewStructuredListWireCodecTest {
         assertInvalid(new ViewSchemaWireCodec(new CanonicalJson()), wirePayload(0, 100, List.of(), fields));
     }
 
+    @Test
+    void rejectsDynamicChoiceWhoseWireFilterShapeIsIncomplete() {
+        Map<String, Object> dynamic = Map.of(
+                "name",
+                "fieldPointer",
+                "label",
+                "输出字段",
+                "type",
+                "CHOICE",
+                "initialValue",
+                Optional.empty(),
+                "initialTextList",
+                List.of(),
+                "validation",
+                ViewStructuredItemValidation.required(true),
+                "options",
+                List.of(),
+                "optionSource",
+                Map.of("sourceId", "toolFields", "valueField", "fieldPointer", "labelField", "fieldLabel"));
+
+        assertInvalid(new ViewSchemaWireCodec(new CanonicalJson()), wirePayload(0, 10, List.of(), List.of(dynamic)));
+    }
+
     private static ViewSchema schema(ViewStructuredListField field) {
+        return schema(field, List.of());
+    }
+
+    private static ViewSchema schema(ViewStructuredListField field, List<ViewDataSource> additionalSources) {
         ViewDataSource editor = new ViewDataSource("editor", "view.read", Map.of(), List.of(), 1);
         ViewAction save = new ViewAction(
                 "保存", "steps.put", Map.of(), Map.of(), new ExpectedRevisionBinding.SourceRevision("editor"), false);
@@ -121,7 +183,8 @@ class ViewStructuredListWireCodecTest {
                 ViewSchema.CURRENT_VERSION,
                 "steps.editor",
                 "步骤编辑",
-                List.of(editor),
+                java.util.stream.Stream.concat(java.util.stream.Stream.of(editor), additionalSources.stream())
+                        .toList(),
                 List.of(new ViewSchema.Form("editor", "编辑", List.of(field), save)));
     }
 
@@ -196,7 +259,8 @@ class ViewStructuredListWireCodecTest {
                         Optional.empty(),
                         List.of(),
                         ViewStructuredItemValidation.required(false),
-                        List.of()),
+                        List.of(),
+                        Optional.empty()),
                 new ViewStructuredItemField(
                         "enabled",
                         "启用",
@@ -204,7 +268,8 @@ class ViewStructuredListWireCodecTest {
                         Optional.of("false"),
                         List.of(),
                         ViewStructuredItemValidation.required(false),
-                        List.of()),
+                        List.of(),
+                        Optional.empty()),
                 new ViewStructuredItemField(
                         "kind",
                         "类型",
@@ -212,7 +277,8 @@ class ViewStructuredListWireCodecTest {
                         Optional.of("turn"),
                         List.of(),
                         ViewStructuredItemValidation.required(true),
-                        List.of(new ViewOption("turn", "Turn"), new ViewOption("tool", "Tool"))),
+                        List.of(new ViewOption("turn", "Turn"), new ViewOption("tool", "Tool")),
+                        Optional.empty()),
                 new ViewStructuredItemField(
                         "tags",
                         "标签",
@@ -220,7 +286,8 @@ class ViewStructuredListWireCodecTest {
                         Optional.empty(),
                         List.of(),
                         ViewStructuredItemValidation.required(false),
-                        List.of()));
+                        List.of(),
+                        Optional.empty()));
     }
 
     private static ViewStructuredItemField textField(String name, String label) {
@@ -231,7 +298,8 @@ class ViewStructuredListWireCodecTest {
                 Optional.empty(),
                 List.of(),
                 ViewStructuredItemValidation.required(true),
-                List.of());
+                List.of(),
+                Optional.empty());
     }
 
     private static void assertInvalid(ViewSchemaWireCodec codec, CanonicalPayload payload) {

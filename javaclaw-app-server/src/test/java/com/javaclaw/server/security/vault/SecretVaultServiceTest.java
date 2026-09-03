@@ -8,8 +8,10 @@ import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -20,16 +22,29 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import com.javaclaw.api.CredentialMetadata;
+import com.javaclaw.api.ProviderAdapter;
+import com.javaclaw.api.ProviderAuthentication;
+import com.javaclaw.api.ProviderEndpoint;
+import com.javaclaw.api.ProviderEndpointSpec;
+import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.ProviderRef;
 import com.javaclaw.api.VaultLockReason;
 import com.javaclaw.api.VaultManagementAction;
 import com.javaclaw.api.VaultState;
+import com.javaclaw.model.ProviderModelAdapterFactory;
 import com.javaclaw.nativehost.credential.MasterKeyProtectionException;
 import com.javaclaw.nativehost.credential.MasterKeyProtector;
 import com.javaclaw.protocol.CanonicalJson;
+import com.javaclaw.server.ProviderEndpointTestFixtures;
+import com.javaclaw.server.config.ProviderModelRegistry;
+import com.javaclaw.server.config.VaultProviderCredentialResolver;
 import com.javaclaw.server.persistence.CommandIdentity;
 import com.javaclaw.server.persistence.H2Database;
 import com.javaclaw.server.persistence.PersistenceException;
+import com.javaclaw.server.persistence.ProviderCredentialService;
+import com.javaclaw.server.persistence.ProviderService;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -144,6 +159,112 @@ class SecretVaultServiceTest {
                     1,
                     vault.create(identity("credential/create", 0), "provider", new byte[] {7})
                             .revision());
+        }
+    }
+
+    @Test
+    void 所有变更通知均同步且在Vault锁外执行() {
+        FakeProtector protector = new FakeProtector();
+        try (SecretVaultService vault = vault(protector)) {
+            List<Boolean> callbackHeldVaultLock = new ArrayList<>();
+            List<Boolean> runtimeCallbackHeldVaultLock = new ArrayList<>();
+            List<VaultState> observedStates = new ArrayList<>();
+            vault.onChange(() -> {
+                callbackHeldVaultLock.add(Thread.holdsLock(vault));
+                observedStates.add(vault.status().state());
+            });
+            vault.onRuntimeChange(
+                    () -> runtimeCallbackHeldVaultLock.add(Thread.holdsLock(vault)),
+                    () -> runtimeCallbackHeldVaultLock.add(Thread.holdsLock(vault)));
+
+            CredentialMetadata created =
+                    vault.create(identity("credential/create", 0), "site", "first".getBytes(StandardCharsets.UTF_8));
+            CredentialMetadata rotated = vault.rotate(
+                    identity("credential/rotate", created.revision()),
+                    created.reference(),
+                    "second".getBytes(StandardCharsets.UTF_8));
+            vault.clear(identity("credential/clear", rotated.revision()), rotated.reference());
+            CommandIdentity masterKeyRotation = identity("vault/masterKey/rotate", 0);
+            vault.rotateMasterKey(masterKeyRotation);
+            assertEquals(4, observedStates.size());
+            vault.rotateMasterKey(masterKeyRotation);
+            assertEquals(4, observedStates.size());
+
+            CommandIdentity reset = identity("vault/reset", 0);
+            vault.reset(reset);
+            assertEquals(5, observedStates.size());
+            vault.reset(reset);
+            vault.refresh();
+            assertEquals(5, observedStates.size());
+
+            protector.loadUnavailable = true;
+            assertEquals(VaultState.LOCKED, vault.refresh().state());
+            assertEquals(6, observedStates.size());
+            protector.loadUnavailable = false;
+            assertEquals(VaultState.READY, vault.refresh().state());
+
+            assertEquals(7, observedStates.size());
+            assertEquals(VaultState.LOCKED, observedStates.get(5));
+            assertEquals(VaultState.READY, observedStates.get(6));
+            assertTrue(callbackHeldVaultLock.stream().noneMatch(Boolean::booleanValue));
+            assertTrue(runtimeCallbackHeldVaultLock.stream().noneMatch(Boolean::booleanValue));
+        }
+    }
+
+    @Test
+    void Vault可用性刷新同步重建Provider路由并且FailClosed() {
+        FakeProtector protector = new FakeProtector();
+        H2Database database = new H2Database(temporaryDirectory.resolve("registry-refresh/data-v5"));
+        database.initialize();
+        CanonicalJson json = new CanonicalJson();
+        try (SecretVaultService vault = new SecretVaultService(database, protector, json, CLOCK, new SecureRandom())) {
+            ProviderEndpointSpec shell =
+                    ProviderEndpointTestFixtures.apiKeyChat("Anthropic", ProviderAdapter.ANTHROPIC, "claude-test");
+            ProviderService providers = new ProviderService(database, vault, json, CLOCK);
+            ProviderEndpoint disabled =
+                    providers.create(identity("provider/create", 0), "anthropic", shell, ProviderLifecycle.DISABLED);
+            ProviderCredentialService credentials =
+                    new ProviderCredentialService(providers, vault.providerCredentials(), json, CLOCK);
+            ProviderEndpoint configured = credentials
+                    .set(
+                            identity("provider/credential/set", disabled.revision()),
+                            disabled.id(),
+                            disabled.revision(),
+                            0,
+                            "runtime-secret".getBytes(StandardCharsets.UTF_8))
+                    .provider();
+            ProviderEndpoint endpoint = providers.update(
+                    identity("provider/update", configured.revision()),
+                    configured.id(),
+                    configured.spec(),
+                    ProviderLifecycle.ACTIVE);
+            ProviderEndpoint noneEndpoint = providers.create(
+                    identity("provider/create", 0),
+                    "local-none",
+                    ProviderEndpointTestFixtures.chat("Local", ProviderAdapter.OPENAI_COMPATIBLE, "local-model"),
+                    ProviderLifecycle.ACTIVE);
+            assertEquals(ProviderAuthentication.NONE, noneEndpoint.spec().authentication());
+            ProviderModelAdapterFactory adapters =
+                    new ProviderModelAdapterFactory(new VaultProviderCredentialResolver(vault));
+            try (ProviderModelRegistry registry =
+                    new ProviderModelRegistry(providers, adapters::create, vault.runtimeGate())) {
+                vault.onRuntimeChange(registry::invalidate, registry::reload);
+                String route = new ProviderRef(endpoint.id(), endpoint.revision(), "claude-test").routeKey();
+                String noneRoute =
+                        new ProviderRef(noneEndpoint.id(), noneEndpoint.revision(), "local-model").routeKey();
+                assertDoesNotThrow(() -> registry.capabilities(route));
+                assertDoesNotThrow(() -> registry.capabilities(noneRoute));
+
+                protector.loadUnavailable = true;
+                assertEquals(VaultState.LOCKED, vault.refresh().state());
+                assertThrows(IllegalStateException.class, () -> registry.capabilities(route));
+                assertDoesNotThrow(() -> registry.capabilities(noneRoute));
+
+                protector.loadUnavailable = false;
+                assertEquals(VaultState.READY, vault.refresh().state());
+                assertDoesNotThrow(() -> registry.capabilities(route));
+                assertDoesNotThrow(() -> registry.capabilities(noneRoute));
+            }
         }
     }
 

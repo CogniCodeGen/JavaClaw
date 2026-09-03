@@ -5,7 +5,6 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -22,12 +21,13 @@ import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProfileBinding;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderEndpointSpec;
+import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.ThreadExecutionIntent;
 import com.javaclaw.api.TurnBudget;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.protocol.CanonicalJson;
+import com.javaclaw.server.ProviderEndpointTestFixtures;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -59,9 +59,10 @@ class ProfileBindingServiceTest {
         core = new CoreCommandService(database, json, clock);
         PermissionProfileService permissions = new PermissionProfileService(database, json, clock);
         permissions.installStandardProfile();
-        ProviderService providers = new ProviderService(database, json, clock);
+        ProviderService providers = new ProviderService(database, reference -> true, json, clock);
         ProviderEndpointSpec provider = providerSpec();
-        providers.create(identity("provider/create", "provider", 0, provider), "provider", provider);
+        providers.create(
+                identity("provider/create", "provider", 0, provider), "provider", provider, ProviderLifecycle.ACTIVE);
         profiles = new AgentProfileService(database, providers, permissions, json, clock);
         firstProfile = profiles.create(
                 identity("profile/create", "first", 0, Map.of("profileId", "first")), "first", profileSpec("First"));
@@ -162,16 +163,7 @@ class ProfileBindingServiceTest {
     }
 
     private static ProviderEndpointSpec providerSpec() {
-        return new ProviderEndpointSpec(
-                "Provider",
-                ProviderAdapter.OPENAI_COMPATIBLE,
-                Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of("test-model"),
-                Optional.empty(),
-                Duration.ofSeconds(30),
-                0,
-                Map.of());
+        return ProviderEndpointTestFixtures.chat("Provider", ProviderAdapter.OPENAI_COMPATIBLE, "test-model");
     }
 
     private static AgentProfileSpec profileSpec(String name) {

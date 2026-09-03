@@ -24,7 +24,7 @@ import com.javaclaw.desktop.component.PlatformComponentFactory;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 
-/** MCP 设置页中显式读取 Resource 与 Prompt 的可复用操作面板。 */
+/** MCP 设置页中显式读取资源与提示词的可复用操作面板。 */
 final class McpExternalDataPanel extends VBox {
     private static final int MAXIMUM_PREVIEW = 12_000;
 
@@ -45,12 +45,12 @@ final class McpExternalDataPanel extends VBox {
     McpExternalDataPanel(McpSettingsGateway gateway) {
         PlatformComponentFactory components = new PlatformComponentFactory();
         presenter = new McpExternalDataPresenter(gateway);
-        loadResources = action(components, "读取 Resource", ActionStyle.SOFT);
+        loadResources = action(components, "读取资源", ActionStyle.SOFT);
         nextResources = action(components, "下一页", ActionStyle.GHOST);
         readResource = action(components, "读取所选内容", ActionStyle.PRIMARY);
-        loadPrompts = action(components, "读取 Prompt", ActionStyle.SOFT);
+        loadPrompts = action(components, "读取提示词", ActionStyle.SOFT);
         nextPrompts = action(components, "下一页", ActionStyle.GHOST);
-        getPrompt = action(components, "展开所选 Prompt", ActionStyle.PRIMARY);
+        getPrompt = action(components, "展开所选提示词", ActionStyle.PRIMARY);
         bindActions();
         configureLists(components);
         configureText();
@@ -76,12 +76,12 @@ final class McpExternalDataPanel extends VBox {
 
     private void configureLists(PlatformComponentFactory components) {
         resources.setPrefHeight(150);
-        resources.setPlaceholder(new Label("尚未读取 Resource"));
+        resources.setPlaceholder(new Label("尚未读取资源"));
         resources.setCellFactory(ignored ->
                 components.detailCell(value -> value.title().orElse(value.name()), McpResourceDescriptor::uri));
         resources.getSelectionModel().selectedItemProperty().addListener(ignored -> updateActions());
         prompts.setPrefHeight(150);
-        prompts.setPlaceholder(new Label("尚未读取 Prompt"));
+        prompts.setPlaceholder(new Label("尚未读取提示词"));
         prompts.setCellFactory(ignored -> components.detailCell(
                 value -> value.title().orElse(value.name()),
                 value -> value.arguments().size() + " 个参数"));
@@ -91,7 +91,7 @@ final class McpExternalDataPanel extends VBox {
     private void configureText() {
         arguments.setPromptText("每行填写 name=value；只发送显式参数");
         arguments.setPrefRowCount(3);
-        arguments.setAccessibleText("MCP Prompt 参数");
+        arguments.setAccessibleText("MCP 提示词参数");
         preview.setEditable(false);
         preview.setWrapText(true);
         preview.setPrefRowCount(8);
@@ -101,14 +101,14 @@ final class McpExternalDataPanel extends VBox {
     }
 
     private FormSection resourceSection() {
-        FormSection section = new FormSection("Resource", "仅在用户点击后读取；内容不会写入 Prompt、Item 或 system context。");
+        FormSection section = new FormSection("资源", "仅在用户点击后读取；内容不会自动写入提示词、任务内容或系统上下文。");
         section.addFullWidth(new HBox(8, loadResources, nextResources, readResource));
         section.addFullWidth(resources);
         return section;
     }
 
     private FormSection promptSection() {
-        FormSection section = new FormSection("Prompt", "模板与消息始终是外部数据；平台不会把它们提升为系统指令。");
+        FormSection section = new FormSection("提示词", "模板与消息始终是外部数据；平台不会把它们提升为系统指令。");
         section.addFullWidth(new HBox(8, loadPrompts, nextPrompts, getPrompt));
         section.addField("参数", arguments);
         section.addFullWidth(prompts);
@@ -116,7 +116,7 @@ final class McpExternalDataPanel extends VBox {
     }
 
     private FormSection previewSection() {
-        FormSection section = new FormSection("外部数据预览", "Blob 只显示元数据，避免把编码内容误作可读文本。");
+        FormSection section = new FormSection("外部数据预览", "二进制内容只显示基本信息，避免把编码数据误当成可读文本。");
         section.addFullWidth(preview);
         section.addFullWidth(feedback);
         return section;
@@ -167,7 +167,7 @@ final class McpExternalDataPanel extends VBox {
             content.text().ifPresent(text -> value.append(text).append('\n'));
             content.blobBase64()
                     .ifPresent(blob ->
-                            value.append("Blob(Base64): ").append(blob.length()).append(" 字符\n"));
+                            value.append("二进制内容（Base64）：").append(blob.length()).append(" 字符\n"));
         });
         return truncate(value.toString());
     }
@@ -176,7 +176,7 @@ final class McpExternalDataPanel extends VBox {
         StringBuilder value = new StringBuilder();
         result.description().ifPresent(description -> value.append(description).append("\n\n"));
         result.messages()
-                .forEach(message -> value.append(message.role())
+                .forEach(message -> value.append(SettingsLabels.mcpSamplingRole(message.role()))
                         .append(": ")
                         .append(message.content().json())
                         .append('\n'));
@@ -191,11 +191,11 @@ final class McpExternalDataPanel extends VBox {
             }
             int separator = line.indexOf('=');
             if (separator < 1) {
-                throw new IllegalArgumentException("Prompt 参数必须使用 name=value 格式");
+                throw new IllegalArgumentException("提示词参数必须使用 name=value 格式");
             }
             String previous = values.putIfAbsent(line.substring(0, separator).strip(), line.substring(separator + 1));
             if (previous != null || values.size() > 32) {
-                throw new IllegalArgumentException("Prompt 参数重复或超过 32 个");
+                throw new IllegalArgumentException("提示词参数重复或超过 32 个");
             }
         }
         return Map.copyOf(values);

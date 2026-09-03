@@ -30,6 +30,7 @@ import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 import com.javaclaw.api.CanonicalPayload;
+import com.javaclaw.api.ProviderAdapterOptions;
 
 /** 共享的严格 JSON 编解码器；Server 与 SDK 不再各自维护 Mapper。 */
 public final class CanonicalJson {
@@ -42,6 +43,9 @@ public final class CanonicalJson {
         paths.addDeserializer(Path.class, new CanonicalJsonCodecs.PathDeserializer());
         paths.addSerializer(CanonicalPayload.class, new CanonicalJsonCodecs.CanonicalPayloadSerializer());
         paths.addDeserializer(CanonicalPayload.class, new CanonicalJsonCodecs.CanonicalPayloadDeserializer());
+        paths.addSerializer(ProviderAdapterOptions.class, new CanonicalJsonCodecs.ProviderAdapterOptionsSerializer());
+        paths.addDeserializer(
+                ProviderAdapterOptions.class, new CanonicalJsonCodecs.ProviderAdapterOptionsDeserializer());
         paths.addSerializer(new CanonicalJsonCodecs.DeterministicSetSerializer());
         mapper = JsonMapper.builder()
                 .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)

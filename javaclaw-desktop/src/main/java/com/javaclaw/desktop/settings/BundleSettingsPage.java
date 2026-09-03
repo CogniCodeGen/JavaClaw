@@ -10,7 +10,6 @@ import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
-import javafx.scene.control.TextInputDialog;
 import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 
@@ -23,10 +22,12 @@ import com.javaclaw.desktop.component.PlatformComponentFactory;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 import com.javaclaw.desktop.component.PlatformComponentFactory.FeedbackKind;
+import com.javaclaw.desktop.component.PlatformDialogs;
 import com.javaclaw.desktop.component.RevisionConflictPane;
+import com.javaclaw.desktop.component.TypedTextDangerConfirmationPolicy;
 import com.javaclaw.protocol.BundleRpcContracts;
 
-/** 第三方 Bundle 的 Attachment staging、权限审阅、健康与生命周期管理页。 */
+/** 第三方扩展包的附件暂存、权限审阅、健康与生命周期管理页。 */
 public final class BundleSettingsPage extends VBox implements ManagedSettingsPage {
     private final PlatformComponentFactory components = new PlatformComponentFactory();
     private final BundleSettingsPresenter presenter;
@@ -63,15 +64,19 @@ public final class BundleSettingsPage extends VBox implements ManagedSettingsPag
     /** @param gateway 强类型 SDK 设置边界 */
     public BundleSettingsPage(BundleSettingsGateway gateway) {
         presenter = new BundleSettingsPresenter(gateway);
-        choose = action("选择并上传 Bundle", ActionStyle.SOFT, this::chooseBundle);
+        choose = action("选择并上传扩展包", ActionStyle.SOFT, this::chooseBundle);
         install = action("确认并安装", ActionStyle.PRIMARY, () -> confirmStage(false));
         upgrade = action("确认并升级", ActionStyle.PRIMARY, () -> confirmStage(true));
-        discard = action("丢弃 staging", ActionStyle.GHOST, presenter::discardDraft);
+        discard = action("丢弃待安装文件", ActionStyle.GHOST, presenter::discardDraft);
         probe = action("健康检查", ActionStyle.SOFT, presenter::probe);
         toggle = action("启用", ActionStyle.SOFT, presenter::toggleEnabled);
         actions = new AsyncActionBar(choose, install, upgrade, discard, probe, toggle);
-        uninstall =
-                new DangerZone("卸载到 Trash", "卸载会实时阻止新调用并保留可恢复文件；不会永久清除 Bundle。", "卸载 Bundle", this::confirmUninstall);
+        uninstall = new DangerZone(
+                "卸载到回收站",
+                "卸载会实时阻止新调用并保留可恢复文件；不会永久清除扩展包。",
+                "卸载扩展包",
+                new TypedTextDangerConfirmationPolicy(this, this::uninstallConfirmation),
+                presenter::uninstall);
         conflict = new RevisionConflictPane(this::reloadAfterConflict, this::describeConflict);
         configurePage();
         presenter.subscribe(this::render);
@@ -80,6 +85,11 @@ public final class BundleSettingsPage extends VBox implements ManagedSettingsPag
     @Override
     public Node content() {
         return this;
+    }
+
+    @Override
+    public Optional<Node> actionContent() {
+        return Optional.of(actions);
     }
 
     @Override
@@ -103,25 +113,22 @@ public final class BundleSettingsPage extends VBox implements ManagedSettingsPag
     }
 
     private void configurePage() {
-        Label title = new Label("第三方 Bundle");
+        Label title = new Label("第三方扩展包");
         title.getStyleClass().addAll("sec-title", "platform-page-title");
-        Label hint = new Label("Bundle 只能从 Core Attachment staging；请逐项核对签名、摘要和进程权限后安装或原子升级。");
+        Label hint = new Label("扩展包会先作为 JavaClaw 服务附件上传；请逐项核对签名、摘要和进程权限，再安装或升级。");
         hint.setWrapText(true);
         hint.getStyleClass().add("sec-hint");
         masterDetail
                 .list()
                 .setCellFactory(ignored -> components.detailCell(
-                        value -> value.displayName() + " · " + value.state(),
-                        value -> value.id() + " · v" + value.revision() + " · " + value.version()));
+                        value -> value.displayName() + " · " + SettingsLabels.extensionState(value.state()),
+                        value -> value.id() + " · 版本 " + value.revision() + " · " + value.version()));
         masterDetail
                 .list()
                 .getSelectionModel()
                 .selectedItemProperty()
                 .addListener((observable, previous, selected) -> select(selected));
-        masterDetail
-                .list()
-                .setPlaceholder(
-                        components.feedback(FeedbackKind.EMPTY, "暂无第三方 Bundle", "选择签名 Bundle 文件进行 staging 和权限审阅。"));
+        masterDetail.list().setPlaceholder(components.feedback(FeedbackKind.EMPTY, "暂无第三方扩展包", "选择已签名的扩展包文件，上传后审阅权限。"));
         masterDetail.showDetail(detail());
         getChildren().addAll(title, hint, masterDetail);
         getStyleClass().add("platform-page");
@@ -129,11 +136,11 @@ public final class BundleSettingsPage extends VBox implements ManagedSettingsPag
 
     private Node detail() {
         FormSection installed = new FormSection("安装快照", "所有字段来自服务端权威目录；页面不读取安装路径或扩展进程文件。");
-        installed.addField("Bundle", identity);
+        installed.addField("扩展包", identity);
         installed.addField("状态", lifecycle);
-        installed.addField("版本", version);
-        installed.addField("Revision", revision);
-        installed.addField("Manifest SHA-256", manifest);
+        installed.addField("包版本", version);
+        installed.addField("配置版本", revision);
+        installed.addField("清单指纹（SHA-256）", manifest);
         installed.addField("签名密钥", signer);
         installed.addField("签名指纹", fingerprint);
         installed.addField("贡献点", contributions);
@@ -142,13 +149,13 @@ public final class BundleSettingsPage extends VBox implements ManagedSettingsPag
         healthSection.addField("连续失败", failures);
         healthSection.addField("下次重试", retry);
         healthSection.addField("最近失败", lastFailure);
-        FormSection staging = new FormSection("待确认 staging", "点击安装或升级即表示已核对下列签名、摘要和权限请求。");
+        FormSection staging = new FormSection("待确认的安装文件", "点击安装或升级即表示已核对下列签名、摘要和权限请求。");
         staging.addField("扩展", stagingIdentity);
-        staging.addField("Attachment", stagingAttachment);
-        staging.addField("Manifest SHA-256", stagingManifest);
+        staging.addField("附件", stagingAttachment);
+        staging.addField("清单指纹（SHA-256）", stagingManifest);
         staging.addField("签名密钥 / 指纹", stagingSigner);
         staging.addField("权限审阅", stagingPermissions);
-        VBox detail = new VBox(12, installed, healthSection, staging, conflict, actions, uninstall);
+        VBox detail = new VBox(12, installed, healthSection, staging, conflict, uninstall);
         detail.getStyleClass().add("platform-page");
         return detail;
     }
@@ -176,16 +183,22 @@ public final class BundleSettingsPage extends VBox implements ManagedSettingsPag
     private void renderInstalled(Optional<BundleRpcContracts.Bundle> selected) {
         identity.setText(
                 selected.map(value -> value.displayName() + " · " + value.id()).orElse("尚未安装"));
-        lifecycle.setText(selected.map(BundleRpcContracts.Bundle::state).orElse("—"));
+        lifecycle.setText(selected.map(value -> SettingsLabels.extensionState(value.state()))
+                .orElse("—"));
         version.setText(selected.map(BundleRpcContracts.Bundle::version).orElse("—"));
         revision.setText(selected.map(value -> Long.toString(value.revision())).orElse("—"));
         manifest.setText(selected.map(BundleRpcContracts.Bundle::manifestDigest).orElse("—"));
         signer.setText(selected.map(BundleRpcContracts.Bundle::signingKeyId).orElse("—"));
         fingerprint.setText(
                 selected.map(BundleRpcContracts.Bundle::signingKeyFingerprint).orElse("—"));
-        contributions.setText(selected.map(value -> String.join(", ", value.contributionKinds()))
+        contributions.setText(selected.map(value -> value.contributionKinds().stream()
+                        .map(SettingsLabels::contributionKind)
+                        .sorted()
+                        .collect(java.util.stream.Collectors.joining("、")))
                 .orElse("—"));
-        health.setText(selected.map(value -> value.health().state().name()).orElse("—"));
+        health.setText(
+                selected.map(value -> SettingsLabels.bundleHealth(value.health().state()))
+                        .orElse("—"));
         failures.setText(selected.map(value -> Integer.toString(value.health().failureCount()))
                 .orElse("—"));
         retry.setText(selected.flatMap(value -> value.health().nextRetryAt())
@@ -272,8 +285,8 @@ public final class BundleSettingsPage extends VBox implements ManagedSettingsPag
 
     private void chooseBundle() {
         FileChooser chooser = new FileChooser();
-        chooser.setTitle("选择签名 JavaClaw Bundle");
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("JavaClaw Bundle ZIP", "*.zip"));
+        chooser.setTitle("选择签名 JavaClaw 扩展包");
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("JavaClaw 扩展包 ZIP", "*.zip"));
         File selected =
                 chooser.showOpenDialog(getScene() == null ? null : getScene().getWindow());
         if (selected != null) {
@@ -284,11 +297,11 @@ public final class BundleSettingsPage extends VBox implements ManagedSettingsPag
     private void confirmStage(boolean upgradeAction) {
         BundleRpcContracts.StageResult staged = state.staging().orElseThrow();
         Alert dialog = new Alert(Alert.AlertType.CONFIRMATION);
-        own(dialog);
-        dialog.setTitle(upgradeAction ? "确认原子升级" : "确认安装 Bundle");
+        dialog.setTitle(upgradeAction ? "确认原子升级" : "确认安装扩展包");
         dialog.setHeaderText(staged.displayName() + " · " + staged.version());
-        dialog.setContentText("Manifest: " + staged.manifestDigest() + "\n签名指纹: " + staged.signingKeyFingerprint()
-                + "\n权限: " + permissions(staged.permissions()));
+        dialog.setContentText("清单指纹：" + staged.manifestDigest() + "\n签名指纹：" + staged.signingKeyFingerprint() + "\n权限："
+                + permissions(staged.permissions()));
+        PlatformDialogs.style(dialog, this);
         if (dialog.showAndWait().filter(ButtonType.OK::equals).isPresent()) {
             if (upgradeAction) {
                 presenter.upgrade();
@@ -298,15 +311,8 @@ public final class BundleSettingsPage extends VBox implements ManagedSettingsPag
         }
     }
 
-    private void confirmUninstall() {
-        BundleRpcContracts.Bundle bundle = state.selected().orElseThrow();
-        String expected = "UNINSTALL " + bundle.id();
-        TextInputDialog dialog = new TextInputDialog();
-        own(dialog);
-        dialog.setTitle("卸载第三方 Bundle");
-        dialog.setHeaderText("Bundle 会进入可恢复 Trash，不会永久清除");
-        dialog.setContentText("输入 " + expected + "：");
-        dialog.showAndWait().filter(expected::equals).ifPresent(ignored -> presenter.uninstall());
+    private String uninstallConfirmation() {
+        return state.selected().map(bundle -> "UNINSTALL " + bundle.id()).orElse("");
     }
 
     private void reloadAfterConflict() {
@@ -315,7 +321,7 @@ public final class BundleSettingsPage extends VBox implements ManagedSettingsPag
     }
 
     private void describeConflict() {
-        actions.show(ActionState.ERROR, "服务端 revision 已改变；staging 保留，可丢弃后重新读取再比较摘要");
+        actions.show(ActionState.ERROR, "服务端版本已改变；待安装文件已保留，可丢弃后重新读取并比较摘要");
     }
 
     private Button action(String text, ActionStyle style, Runnable action) {
@@ -324,22 +330,16 @@ public final class BundleSettingsPage extends VBox implements ManagedSettingsPag
         return button;
     }
 
-    private void own(javafx.scene.control.Dialog<?> dialog) {
-        if (getScene() != null && getScene().getWindow() != null) {
-            dialog.initOwner(getScene().getWindow());
-        }
-    }
-
     private static String permissions(BundleRpcContracts.PermissionReview value) {
-        return "Workspace read=" + value.workspaceRead()
-                + ", write=" + value.workspaceWrite()
-                + ", delete=" + value.allowDelete()
-                + "; network=" + value.networkHosts()
+        return "工作区：读取=" + SettingsLabels.yesNo(value.workspaceRead())
+                + "、写入=" + SettingsLabels.yesNo(value.workspaceWrite())
+                + "、删除=" + SettingsLabels.yesNo(value.allowDelete())
+                + "；网络：" + value.networkHosts()
                 + ":" + value.networkPorts()
-                + "; executable=" + value.executableName()
-                + "; timeout=" + value.maxRunTime()
-                + "; memory=" + value.memoryBytes()
-                + " bytes";
+                + "；可执行文件：" + value.executableName()
+                + "；超时：" + value.maxRunTime()
+                + "；内存：" + value.memoryBytes()
+                + " 字节";
     }
 
     private static Label value() {

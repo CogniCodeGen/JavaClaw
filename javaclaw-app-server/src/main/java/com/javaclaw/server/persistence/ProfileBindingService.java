@@ -9,7 +9,6 @@ import com.javaclaw.api.AgentProfile;
 import com.javaclaw.api.AgentProfileRef;
 import com.javaclaw.api.ConversationThread;
 import com.javaclaw.api.ProfileBinding;
-import com.javaclaw.api.ProfileLifecycle;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.protocol.CanonicalJson;
@@ -72,11 +71,7 @@ public final class ProfileBindingService {
                 .or(() -> find(thread.workspaceId(), Optional.empty()))
                 .map(ProfileBinding::profile)
                 .orElseThrow(() -> PersistenceException.invalidRequest("Thread 与 Workspace 均未配置默认 Profile")));
-        AgentProfile profile = profiles.require(reference.id(), reference.revision());
-        if (profile.lifecycle() != ProfileLifecycle.ACTIVE) {
-            throw PersistenceException.invalidRequest("新 Turn 只能使用 ACTIVE Agent Profile");
-        }
-        return profile;
+        return profiles.requireAvailable(reference.id(), reference.revision());
     }
 
     /**
@@ -91,10 +86,7 @@ public final class ProfileBindingService {
     public ProfileBinding update(
             CommandIdentity identity, WorkspaceId workspaceId, Optional<ThreadId> threadId, AgentProfileRef profile) {
         validateScope(workspaceId, threadId);
-        AgentProfile target = profiles.require(profile.id(), profile.revision());
-        if (target.lifecycle() != ProfileLifecycle.ACTIVE) {
-            throw PersistenceException.invalidRequest("默认绑定只能使用 ACTIVE Agent Profile");
-        }
+        profiles.requireAvailable(profile.id(), profile.revision());
         synchronized (CommandLocks.forKey(identity.idempotencyKey())) {
             return execute(connection -> {
                 Optional<IdempotencyRepository.StoredCommand> stored =

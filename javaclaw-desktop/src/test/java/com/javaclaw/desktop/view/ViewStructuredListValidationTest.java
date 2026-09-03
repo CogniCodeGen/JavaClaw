@@ -163,7 +163,8 @@ class ViewStructuredListValidationTest {
 
     private static ViewStructuredItemField field(
             String name, String label, ViewStructuredItemType type, ViewStructuredItemValidation validation) {
-        return new ViewStructuredItemField(name, label, type, Optional.empty(), List.of(), validation, List.of());
+        return new ViewStructuredItemField(
+                name, label, type, Optional.empty(), List.of(), validation, List.of(), Optional.empty());
     }
 
     private static ViewStructuredItemField choice() {
@@ -174,7 +175,8 @@ class ViewStructuredListValidationTest {
                 Optional.of("turn"),
                 List.of(),
                 required(),
-                List.of(new ViewOption("turn", "Turn"), new ViewOption("tool", "Tool")));
+                List.of(new ViewOption("turn", "Turn"), new ViewOption("tool", "Tool")),
+                Optional.empty());
     }
 
     private static ViewStructuredItemField number() {
@@ -192,7 +194,8 @@ class ViewStructuredListValidationTest {
                         Optional.of(BigDecimal.TEN),
                         Optional.empty(),
                         Optional.empty()),
-                List.of());
+                List.of(),
+                Optional.empty());
     }
 
     private static ViewStructuredItemField tags() {
@@ -210,7 +213,8 @@ class ViewStructuredListValidationTest {
                         Optional.empty(),
                         Optional.of(2),
                         Optional.of(3)),
-                List.of());
+                List.of(),
+                Optional.empty());
     }
 
     private static ViewStructuredItemValidation required() {

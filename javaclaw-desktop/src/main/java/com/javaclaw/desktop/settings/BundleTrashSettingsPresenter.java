@@ -27,7 +27,7 @@ public final class BundleTrashSettingsPresenter {
 
     /** 读取全部 Trash tombstone。 */
     public void reload() {
-        load(Optional.empty(), "正在读取 Bundle Trash…", "");
+        load(Optional.empty(), "正在读取扩展包回收站…", "");
     }
 
     /** @param entry 选择的 Trash 条目 */
@@ -38,12 +38,12 @@ public final class BundleTrashSettingsPresenter {
     /** 恢复所选 TRASHED Bundle 为新的 DISABLED revision。 */
     public void restore() {
         BundleRpcContracts.TrashEntry entry = requireTrashed();
-        long epoch = begin("正在重新验签并恢复 Bundle…");
+        long epoch = begin("正在重新验签并恢复扩展包…");
         gateway.restoreBundle(entry).whenComplete((bundle, failure) -> {
             if (completeFailure(epoch, failure)) {
                 return;
             }
-            load(Optional.of(entry.trashId()), "正在刷新 Bundle Trash…", "Bundle 已恢复为 revision " + bundle.revision());
+            load(Optional.of(entry.trashId()), "正在刷新扩展包回收站…", "扩展包已恢复为版本 " + bundle.revision());
         });
     }
 
@@ -55,12 +55,12 @@ public final class BundleTrashSettingsPresenter {
             publish(copy(SettingsLoadState.ERROR, state.selected(), "危险确认不匹配", false, state.epoch()));
             return;
         }
-        long epoch = begin("正在永久清除 Trash 文件…");
+        long epoch = begin("正在永久清除回收站文件…");
         gateway.purgeBundle(entry, confirmation).whenComplete((purged, failure) -> {
             if (completeFailure(epoch, failure)) {
                 return;
             }
-            load(Optional.of(purged.trashId()), "正在刷新 Bundle Trash…", "Trash 文件已永久清除");
+            load(Optional.of(purged.trashId()), "正在刷新扩展包回收站…", "回收站文件已永久清除");
         });
     }
 
@@ -102,7 +102,7 @@ public final class BundleTrashSettingsPresenter {
                 SettingsLoadState.READY,
                 sorted,
                 selected,
-                resultMessage.isBlank() && sorted.isEmpty() ? "Trash 为空" : resultMessage,
+                resultMessage.isBlank() && sorted.isEmpty() ? "回收站为空" : resultMessage,
                 false,
                 epoch));
     }

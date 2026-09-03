@@ -57,9 +57,9 @@ class ArchitectureBoundaryTest {
             "javaclaw-client",
             "javaclaw-desktop");
     private static final Set<String> TEXT_SUFFIXES =
-            Set.of(".java", ".xml", ".json", ".css", ".fxml", ".md", ".sh", ".cmd", ".ps1", ".yml", ".yaml");
+            Set.of(".java", ".xml", ".json", ".sql", ".css", ".fxml", ".md", ".sh", ".cmd", ".ps1", ".yml", ".yaml");
     private static final Set<String> MAINTAINED_PRODUCTION_SUFFIXES =
-            Set.of(".java", ".css", ".fxml", ".sh", ".cmd", ".ps1");
+            Set.of(".java", ".sql", ".css", ".fxml", ".sh", ".cmd", ".ps1");
     private static final Pattern REMOVED_IDENTIFIERS = Pattern.compile(
             "(?i)(data-v4|config-v4|protocol[-_ ]?v?1|javaclaw-v4|javaclaw\\s+v?4(?:\\.0)?\\b|@Deprecated)");
     private static final Path ROOT = locateRoot();

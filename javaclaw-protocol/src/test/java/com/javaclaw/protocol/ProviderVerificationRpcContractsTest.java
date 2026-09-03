@@ -5,9 +5,11 @@ import java.nio.charset.StandardCharsets;
 
 import org.junit.jupiter.api.Test;
 
+import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.api.ProviderRef;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -17,23 +19,27 @@ class ProviderVerificationRpcContractsTest {
     @Test
     void 双重危险确认必须同时精确匹配() {
         ProviderVerificationRpcContracts.VerifyPayload payload = new ProviderVerificationRpcContracts.VerifyPayload(
-                PROVIDER, true, ProviderVerificationRpcContracts.BILLING_CONFIRMATION);
+                PROVIDER, ProviderModelPurpose.CHAT, true, ProviderVerificationRpcContracts.BILLING_CONFIRMATION);
 
         assertEquals(PROVIDER, payload.provider());
         assertThrows(
                 IllegalArgumentException.class,
                 () -> new ProviderVerificationRpcContracts.VerifyPayload(
-                        PROVIDER, false, ProviderVerificationRpcContracts.BILLING_CONFIRMATION));
+                        PROVIDER,
+                        ProviderModelPurpose.CHAT,
+                        false,
+                        ProviderVerificationRpcContracts.BILLING_CONFIRMATION));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new ProviderVerificationRpcContracts.VerifyPayload(PROVIDER, true, "确认"));
+                () -> new ProviderVerificationRpcContracts.VerifyPayload(
+                        PROVIDER, ProviderModelPurpose.CHAT, true, "确认"));
     }
 
     @Test
     void 规范Json不会引入额外确认字段() {
         CanonicalJson json = new CanonicalJson();
         ProviderVerificationRpcContracts.VerifyPayload payload = new ProviderVerificationRpcContracts.VerifyPayload(
-                PROVIDER, true, ProviderVerificationRpcContracts.BILLING_CONFIRMATION);
+                PROVIDER, ProviderModelPurpose.EMBEDDING, true, ProviderVerificationRpcContracts.BILLING_CONFIRMATION);
 
         assertEquals(payload, json.decode(json.encode(payload), ProviderVerificationRpcContracts.VerifyPayload.class));
         assertEquals(
@@ -51,6 +57,8 @@ class ProviderVerificationRpcContractsTest {
         String methods = read("/schema/methods-v2.json");
 
         json.parse(schema);
+        assertFalse(schema.contains("\"roles\""));
+        assertTrue(schema.contains("provider-profile-v2.schema.json#/$defs/providerCapabilities"));
         assertTrue(schema.contains("\"billingConfirmed\": {\"const\": true}"));
         assertTrue(schema.contains(ProviderVerificationRpcContracts.BILLING_CONFIRMATION));
         assertTrue(methods.contains("provider-verification-v2.schema.json#/$defs/verifyCommand"));

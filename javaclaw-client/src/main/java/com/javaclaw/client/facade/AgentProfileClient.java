@@ -6,6 +6,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 import com.javaclaw.api.AgentProfile;
+import com.javaclaw.api.AgentProfilePreset;
 import com.javaclaw.api.AgentProfileRef;
 import com.javaclaw.api.AgentProfileSpec;
 import com.javaclaw.api.ProfileBinding;
@@ -35,6 +36,17 @@ public final class AgentProfileClient {
         return connection
                 .query("profile/list", Map.of(), ProviderProfileRpcContracts.AgentProfileListResult.class)
                 .profiles();
+    }
+
+    /**
+     * 列出代码内置、版本化的 Profile 创建预设。
+     *
+     * @return 可审阅的预设及默认预算
+     */
+    public List<AgentProfilePreset> presets() {
+        return connection
+                .query("profile/preset/list", Map.of(), ProviderProfileRpcContracts.AgentProfilePresetListResult.class)
+                .presets();
     }
 
     /**

@@ -13,6 +13,14 @@ final class Preconditions {
         return normalized;
     }
 
+    static String boundedText(String value, String name, int maximumLength) {
+        String normalized = text(value, name);
+        if (normalized.length() > maximumLength) {
+            throw new IllegalArgumentException(name + " exceeds maximum length " + maximumLength);
+        }
+        return normalized;
+    }
+
     static String identifier(String value, String name) {
         String normalized = text(value, name);
         if (!normalized.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,239}")) {

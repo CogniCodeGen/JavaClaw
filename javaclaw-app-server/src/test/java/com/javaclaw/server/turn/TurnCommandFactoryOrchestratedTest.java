@@ -32,8 +32,8 @@ import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProfileLifecycle;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderEndpointSpec;
+import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ProviderRole;
 import com.javaclaw.api.SandboxExecutor;
 import com.javaclaw.api.ThreadExecutionIntent;
 import com.javaclaw.api.ToolCatalogSnapshot;
@@ -58,10 +58,12 @@ import com.javaclaw.server.persistence.CoreCommandService;
 import com.javaclaw.server.persistence.H2Database;
 import com.javaclaw.server.persistence.ManagedWorktreeService;
 import com.javaclaw.server.persistence.PermissionProfileService;
+import com.javaclaw.server.persistence.PersistenceException;
 import com.javaclaw.server.persistence.ProfileBindingService;
 import com.javaclaw.server.persistence.ProviderService;
 import com.javaclaw.server.persistence.TurnStartRequest;
 
+import static com.javaclaw.server.ProviderEndpointTestFixtures.chat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -91,8 +93,12 @@ class TurnCommandFactoryOrchestratedTest {
         PermissionProfileService permissions = new PermissionProfileService(database, json, clock);
         permissions.installStandardProfile();
         PermissionProfile standard = permissions.require(PermissionProfileService.STANDARD_PROFILE_ID, 1);
-        ProviderService providers = new ProviderService(database, json, clock);
-        providers.create(identity("provider/create", "provider", Map.of()), "provider", providerSpec());
+        ProviderService providers = new ProviderService(database, reference -> true, json, clock);
+        providers.create(
+                identity("provider/create", "provider", Map.of()),
+                "provider",
+                providerSpec(),
+                ProviderLifecycle.ACTIVE);
         profiles = new AgentProfileService(database, providers, permissions, json, clock);
         profile = profiles.create(identity("profile/create", "profile", Map.of()), "profile", profileSpec(standard));
         ProfileBindingService bindings = new ProfileBindingService(database, core, profiles, json, clock);
@@ -191,7 +197,7 @@ class TurnCommandFactoryOrchestratedTest {
                 ProfileLifecycle.DISABLED);
         assertEquals(ProfileLifecycle.DISABLED, disabled.lifecycle());
         assertThrows(
-                IllegalArgumentException.class,
+                PersistenceException.class,
                 () -> factory.freezeAutomation(
                         workspace.id(),
                         new AgentProfileRef(disabled.id(), disabled.revision()),
@@ -307,16 +313,7 @@ class TurnCommandFactoryOrchestratedTest {
     }
 
     private static ProviderEndpointSpec providerSpec() {
-        return new ProviderEndpointSpec(
-                "Provider",
-                ProviderAdapter.OPENAI_COMPATIBLE,
-                Optional.empty(),
-                Set.of(ProviderRole.CHAT),
-                List.of("model"),
-                Optional.empty(),
-                Duration.ofSeconds(30),
-                0,
-                Map.of());
+        return chat("Provider", ProviderAdapter.OPENAI_COMPATIBLE, "model");
     }
 
     private CommandIdentity identity(String method, String key, Object payload) {

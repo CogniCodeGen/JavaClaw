@@ -45,29 +45,37 @@ public final class SdkExtensionSettingsGateway implements ExtensionSettingsGatew
 
     @Override
     public CompletableFuture<ViewData> load(
-            ExtensionRpcContracts.ViewDocument document, ViewSchema schema, ViewLoadRequest request) {
-        return presenter.loadExtensionViewData(document, schema, request);
+            WorkspaceId workspaceId,
+            ExtensionRpcContracts.ViewDocument document,
+            ViewSchema schema,
+            ViewLoadRequest request) {
+        return presenter.loadExtensionViewData(workspaceId, document, schema, request);
     }
 
     @Override
     public CompletableFuture<ExtensionRpcContracts.CallResult> execute(
-            String extensionId, ViewCommandInvocation invocation) {
-        return presenter.executeExtensionViewCommand(requireText(extensionId, "extensionId"), invocation);
+            WorkspaceId workspaceId, String extensionId, ViewCommandInvocation invocation) {
+        return presenter.executeExtensionViewCommand(
+                Objects.requireNonNull(workspaceId, "workspaceId"),
+                requireText(extensionId, "extensionId"),
+                invocation);
     }
 
     @Override
-    public CompletableFuture<AttachmentRef> upload(ViewAttachmentUploadRequest request) {
+    public CompletableFuture<AttachmentRef> upload(WorkspaceId workspaceId, ViewAttachmentUploadRequest request) {
         ViewAttachmentUploadRequest checked = Objects.requireNonNull(request, "request");
-        UploadSnapshot snapshot = snapshot(checked, presenter.selectedWorkspaceId());
+        UploadSnapshot snapshot = snapshot(checked, Objects.requireNonNull(workspaceId, "workspaceId"));
         return presenter.submitSettingsRequest(
                 client -> client.attachments().upload(snapshot.source(), snapshot.options()));
     }
 
     @Override
     public DesktopNotificationSubscription subscribe(
-            String extensionId, Consumer<ExtensionRpcContracts.ExtensionEvent> listener) {
+            WorkspaceId workspaceId, String extensionId, Consumer<ExtensionRpcContracts.ExtensionEvent> listener) {
         return presenter.subscribeExtensionEvents(
-                requireText(extensionId, "extensionId"), Objects.requireNonNull(listener, "listener"));
+                Objects.requireNonNull(workspaceId, "workspaceId"),
+                requireText(extensionId, "extensionId"),
+                Objects.requireNonNull(listener, "listener"));
     }
 
     private static String mediaType(Path source) {

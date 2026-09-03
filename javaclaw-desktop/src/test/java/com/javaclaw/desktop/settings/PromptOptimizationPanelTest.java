@@ -63,6 +63,7 @@ class PromptOptimizationPanelTest {
             AtomicBoolean adopted = new AtomicBoolean();
             PromptOptimizationPanel panel = new PromptOptimizationPanel(gateway, () -> adopted.set(true));
             Parent root = attach(panel.content());
+            panel.workspaceChanged(Optional.of(gateway.workspace));
             panel.selectProfile(Optional.of(gateway.profile));
             panel.activate();
 
@@ -75,8 +76,8 @@ class PromptOptimizationPanelTest {
                             .result()
                             .state()
                     == PromptOptimizationState.QUEUED);
-            assertFalse(button(root, "取消 Turn").isDisabled());
-            button(root, "取消 Turn").fire();
+            assertFalse(button(root, "取消任务").isDisabled());
+            button(root, "取消任务").fire();
             assertTrue(draftList(root)
                             .getSelectionModel()
                             .getSelectedItem()
@@ -101,20 +102,21 @@ class PromptOptimizationPanelTest {
     }
 
     @Test
-    void 无活动Workspace或非活动Profile时不开放付费动作() {
+    void 无活动工作区或非活动智能体方案时不开放付费动作() {
         FxTestSupport.run(() -> {
             PanelGateway gateway = new PanelGateway();
             gateway.workspace = workspace(WorkspaceLifecycle.ARCHIVED);
             PromptOptimizationPanel panel = new PromptOptimizationPanel(gateway, () -> {});
             Parent root = attach(panel.content());
+            panel.workspaceChanged(Optional.empty());
             panel.selectProfile(Optional.of(profile(ProfileLifecycle.DISABLED)));
             panel.activate();
 
             assertTrue(button(root, "生成优化草稿").isDisabled());
             assertTrue(button(root, "刷新状态").isDisabled());
-            assertTrue(texts(root).stream().anyMatch(value -> value.contains("请先保存 Profile")));
+            assertTrue(texts(root).stream().anyMatch(value -> value.contains("请先保存智能体方案")));
             panel.selectProfile(Optional.empty());
-            assertTrue(texts(root).stream().anyMatch(value -> value.contains("请先保存 Profile")));
+            assertTrue(texts(root).stream().anyMatch(value -> value.contains("请先保存智能体方案")));
         });
     }
 

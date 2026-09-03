@@ -31,6 +31,7 @@ class ProtocolMethodSchemaCatalogTest {
         JsonNode methods = resources.get("methods-v2.json").path("methods");
         Map<String, RpcMethodKind> javaMethods = javaMethods();
         Map<String, RpcMethodKind> resourceMethods = new HashMap<>();
+        List<String> resourceOrder = new ArrayList<>();
 
         for (JsonNode method : methods) {
             String name = requiredText(method, "name");
@@ -38,6 +39,7 @@ class ProtocolMethodSchemaCatalogTest {
                     RpcMethodKind.valueOf(requiredText(method, "kind").toUpperCase());
             assertFalse(resourceMethods.containsKey(name), "重复方法: " + name);
             resourceMethods.put(name, kind);
+            resourceOrder.add(name);
             assertReferenceExists(requiredText(method, "paramsSchema"), "methods-v2.json", resources);
             if (kind == RpcMethodKind.NOTIFICATION) {
                 assertFalse(method.has("resultSchema"), "通知不得声明 result: " + name);
@@ -47,6 +49,10 @@ class ProtocolMethodSchemaCatalogTest {
         }
 
         assertEquals(javaMethods, resourceMethods);
+        assertEquals(147, resourceOrder.size());
+        assertEquals(
+                resourceOrder,
+                MethodCatalog.methods().stream().map(RpcMethod::name).toList());
         assertEquals(Set.of("extension/event"), notificationNames(resourceMethods));
     }
 
