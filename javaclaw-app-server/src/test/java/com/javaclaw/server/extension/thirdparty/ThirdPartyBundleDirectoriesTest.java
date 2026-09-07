@@ -25,7 +25,7 @@ class ThirdPartyBundleDirectoriesTest {
 
     @BeforeEach
     void initializeDirectories() {
-        directories = new ThirdPartyBundleDirectories(temporaryDirectory.resolve("data-v5"), CLOCK);
+        directories = new ThirdPartyBundleDirectories(temporaryDirectory.resolve("data-v6"), CLOCK);
     }
 
     @Test
@@ -79,11 +79,12 @@ class ThirdPartyBundleDirectoriesTest {
                 () -> new ThirdPartyBundleDirectories(temporaryDirectory.resolve("wrong-root"), CLOCK));
 
         Path fileParent = Files.createDirectory(temporaryDirectory.resolve("file-parent"));
-        Path regularFileRoot = Files.writeString(fileParent.resolve("data-v5"), "blocked");
+        Path regularFileRoot = Files.writeString(fileParent.resolve("data-v6"), "blocked");
         assertThrows(IllegalStateException.class, () -> new ThirdPartyBundleDirectories(regularFileRoot, CLOCK));
 
-        Path root = Files.createDirectory(temporaryDirectory.resolve("nested")).resolve("data-v5");
-        Files.createDirectory(root);
+        Path root = Files.createDirectory(temporaryDirectory.resolve("nested")).resolve("data-v6");
+        com.javaclaw.nativehost.ManagedRuntimeDirectory.prepare(
+                root.toAbsolutePath().normalize());
         Path outside = Files.createDirectory(temporaryDirectory.resolve("outside-extensions"));
         Files.createSymbolicLink(root.resolve("extensions"), outside);
         assertThrows(SecurityException.class, () -> new ThirdPartyBundleDirectories(root, CLOCK));

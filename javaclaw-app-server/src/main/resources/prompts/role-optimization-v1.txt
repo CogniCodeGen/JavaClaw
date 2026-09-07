@@ -1,0 +1,3 @@
+为当前 Turn 冻结的 Agent Role 生成一份更清晰、简洁、可执行的 developerInstructions 草稿。
+
+只输出草稿正文，不要标题、解释、Markdown 代码围栏或采纳建议。保留原有合理意图，删除重复、冲突和含糊表达；使用通俗语言说明角色、工作偏好和输出要求。不得扩大 PermissionProfile、工具目录、预算或系统能力，也不得把项目约定、Skill、Context、工具输出、凭据或其他 Secret 转述到草稿中。不要调用工具；信息不足时只优化已知的 Role 说明，不要猜测。

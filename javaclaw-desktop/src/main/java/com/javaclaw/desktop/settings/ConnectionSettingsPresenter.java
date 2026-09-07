@@ -34,7 +34,7 @@ public final class ConnectionSettingsPresenter {
         request(false);
     }
 
-    /** 关闭旧会话并重新执行本地 transport 连接与 Protocol v2 初始化。 */
+    /** 关闭旧会话并重新执行本地 transport 连接与 Protocol v3 初始化。 */
     public void reconnect() {
         request(true);
     }

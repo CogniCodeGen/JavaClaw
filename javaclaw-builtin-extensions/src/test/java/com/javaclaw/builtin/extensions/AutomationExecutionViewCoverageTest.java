@@ -8,7 +8,7 @@ import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.builtin.contracts.OrchestrationContracts;
 import com.javaclaw.builtin.contracts.PlanContracts;
 import com.javaclaw.extension.spi.AutomationStepPort;
@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AutomationExecutionViewCoverageTest {
-    private static final AgentProfileRef PROFILE = new AgentProfileRef("profile", 1);
+    private static final AgentRoleRef PROFILE = new AgentRoleRef("profile", 1);
     private static final OrchestrationContracts.ExecutionBudget BUDGET =
             new OrchestrationContracts.ExecutionBudget(5, 1_000, 500, 10);
 
@@ -62,23 +62,22 @@ class AutomationExecutionViewCoverageTest {
         BuiltinExtensionTestSupport support = new BuiltinExtensionTestSupport();
         var started = startPlan(support);
 
-        ViewQueryResult first = view(support, started, "execution/profile/view.list", "profiles", Map.of(), "", 1);
+        ViewQueryResult first = view(support, started, "execution/role/view.list", "roles", Map.of(), "", 1);
         ViewQueryResult exhausted =
-                view(support, started, "execution/profile/view.list", "profiles", Map.of(), "profile", 10);
+                view(support, started, "execution/role/view.list", "roles", Map.of(), "profile", 10);
 
         assertEquals(1, first.rows().size());
         assertFalse(first.hasMore());
         assertTrue(exhausted.rows().isEmpty());
         assertThrows(
                 IllegalArgumentException.class,
-                () -> view(support, started, "execution/profile/view.list", "wrong", Map.of(), "", 10));
+                () -> view(support, started, "execution/role/view.list", "wrong", Map.of(), "", 10));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> view(
-                        support, started, "execution/profile/view.list", "profiles", Map.of("id", "profile"), "", 10));
+                () -> view(support, started, "execution/role/view.list", "roles", Map.of("id", "profile"), "", 10));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> view(support, started, "execution/profile/view.list", "profiles", Map.of(), "missing", 10));
+                () -> view(support, started, "execution/role/view.list", "roles", Map.of(), "missing", 10));
     }
 
     @Test
@@ -110,7 +109,7 @@ class AutomationExecutionViewCoverageTest {
 
         String extensionId = extension.descriptor().id().value();
         assertEquals(
-                Set.of(extensionId + "/document/v1", extensionId + "/proposal/v5", extensionId + "/execution-start/v1"),
+                Set.of(extensionId + "/document/v1", extensionId + "/proposal/v5", extensionId + "/execution-start/v2"),
                 extension.schemas().stream()
                         .map(com.javaclaw.extension.spi.ExtensionSchema::schemaId)
                         .collect(Collectors.toUnmodifiableSet()));
@@ -147,7 +146,7 @@ class AutomationExecutionViewCoverageTest {
             throws Exception {
         started.orchestrate(support.request(
                 "execution/start",
-                new OrchestrationContracts.StartRequest("plan", PROFILE, BUDGET),
+                new OrchestrationContracts.StartRequest("plan", AutomationV6Fixtures.selection(PROFILE), BUDGET),
                 Optional.of(key),
                 1));
     }

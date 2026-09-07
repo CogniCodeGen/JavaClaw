@@ -16,7 +16,7 @@ import com.javaclaw.protocol.RpcId;
 import com.javaclaw.protocol.WriteCommand;
 import com.javaclaw.server.rpc.AppServerSession;
 
-/** 测试通过真实 Protocol v2 route 分块创建 Attachment 的小型客户端。 */
+/** 测试通过真实 Protocol v3 route 分块创建 Attachment 的小型客户端。 */
 public final class AttachmentRpcTestClient {
     private AttachmentRpcTestClient() {}
 

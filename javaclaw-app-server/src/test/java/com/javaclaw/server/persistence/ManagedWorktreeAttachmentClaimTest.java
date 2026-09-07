@@ -45,9 +45,9 @@ class ManagedWorktreeAttachmentClaimTest {
     private int sequence;
 
     @BeforeEach
-    void initializeDataV5() {
+    void initializeDataV6() {
         json = new CanonicalJson();
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
         transactions = new H2Transactions(database);

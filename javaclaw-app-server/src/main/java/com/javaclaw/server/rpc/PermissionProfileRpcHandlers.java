@@ -32,7 +32,7 @@ public final class PermissionProfileRpcHandlers {
     }
 
     /**
-     * 注册 PermissionProfile Protocol v2 方法。
+     * 注册 PermissionProfile Protocol v3 方法。
      *
      * @param routes Router Builder
      */

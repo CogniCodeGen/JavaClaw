@@ -13,4 +13,12 @@ final class DesktopFailures {
                 .orElse(checked.getClass().getSimpleName());
         return message.length() > 500 ? message.substring(0, 500) : message;
     }
+
+    static String requireText(String value, String name) {
+        String normalized = java.util.Objects.requireNonNull(value, name).strip();
+        if (normalized.isEmpty()) {
+            throw new IllegalArgumentException(name + " 不能为空");
+        }
+        return normalized;
+    }
 }

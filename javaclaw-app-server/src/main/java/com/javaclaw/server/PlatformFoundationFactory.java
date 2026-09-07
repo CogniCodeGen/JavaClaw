@@ -15,11 +15,12 @@ import com.javaclaw.server.lifecycle.ApprovalLifecycleCoordinator;
 import com.javaclaw.server.lifecycle.InputLifecycleCoordinator;
 import com.javaclaw.server.lifecycle.LifecycleCoordinator;
 import com.javaclaw.server.mcp.McpBuiltinExtensionDescriptor;
-import com.javaclaw.server.persistence.AgentProfileService;
+import com.javaclaw.server.persistence.AgentRoleService;
 import com.javaclaw.server.persistence.ApprovalService;
 import com.javaclaw.server.persistence.AttachmentService;
 import com.javaclaw.server.persistence.CoreCommandService;
 import com.javaclaw.server.persistence.EmbeddingBindingService;
+import com.javaclaw.server.persistence.ExecutionConfigurationService;
 import com.javaclaw.server.persistence.ExtensionCatalogRepository;
 import com.javaclaw.server.persistence.ExtensionJobInputCoordinator;
 import com.javaclaw.server.persistence.ExtensionJobService;
@@ -28,7 +29,6 @@ import com.javaclaw.server.persistence.InputRequestService;
 import com.javaclaw.server.persistence.LifecycleLeaseRepository;
 import com.javaclaw.server.persistence.ManagedWorktreeService;
 import com.javaclaw.server.persistence.PermissionProfileService;
-import com.javaclaw.server.persistence.ProfileBindingService;
 import com.javaclaw.server.persistence.ProviderCredentialService;
 import com.javaclaw.server.persistence.ProviderService;
 import com.javaclaw.server.security.grant.PrivateNetworkGrantService;
@@ -41,9 +41,9 @@ final class PlatformFoundationFactory {
     private PlatformFoundationFactory() {}
 
     /**
-     * 按依赖顺序创建 data-v5 基础服务。
+     * 按依赖顺序创建 data-v6 基础服务。
      *
-     * @param dataRoot data-v5 根目录
+     * @param dataRoot data-v6 根目录
      * @param clock 平台时钟
      * @param masterKeys 系统主密钥封装端口
      * @param loginStartup 用户登录启动项端口
@@ -83,8 +83,9 @@ final class PlatformFoundationFactory {
         ProviderCredentialService credentials =
                 new ProviderCredentialService(providers, core.vault().providerCredentials(), json, clock);
         EmbeddingBindingService embeddingBinding = new EmbeddingBindingService(database, providers, json, clock);
-        AgentProfileService profiles = new AgentProfileService(database, providers, core.permissions(), json, clock);
-        ProfileBindingService bindings = new ProfileBindingService(database, core.commands(), profiles, json, clock);
+        AgentRoleService profiles = new AgentRoleService(database, providers, json, clock);
+        ExecutionConfigurationService bindings =
+                new ExecutionConfigurationService(database, core.commands(), profiles, json, clock);
         ManagedWorktreeService worktrees =
                 new ManagedWorktreeService(database, core.attachments(), json, clock, new PlatformSandboxExecutor());
         worktrees.reconcileProvisioning();
@@ -169,8 +170,8 @@ final class PlatformFoundationFactory {
             ProviderService providers,
             ProviderCredentialService credentials,
             EmbeddingBindingService embeddingBinding,
-            AgentProfileService profiles,
-            ProfileBindingService bindings,
+            AgentRoleService profiles,
+            ExecutionConfigurationService bindings,
             ManagedWorktreeService worktrees,
             InputRequestService inputs,
             InputLifecycleCoordinator inputLifecycle,

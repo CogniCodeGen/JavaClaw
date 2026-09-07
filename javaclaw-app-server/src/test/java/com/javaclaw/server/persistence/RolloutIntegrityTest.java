@@ -54,7 +54,7 @@ class RolloutIntegrityTest {
     @BeforeEach
     void exportValidRollout() throws Exception {
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         core = new CoreCommandService(database, json, clock);

@@ -51,7 +51,7 @@ final class OpenAiResponsesResultMapper {
                 calls,
                 usage,
                 summary.isEmpty() ? Optional.empty() : Optional.of(summary),
-                Optional.of(states.response(response, invocation.systemInstruction())),
+                Optional.of(states.response(response, invocation.instructions())),
                 reason);
     }
 

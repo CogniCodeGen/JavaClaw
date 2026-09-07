@@ -16,7 +16,7 @@ import com.javaclaw.server.persistence.PermissionProfileService;
 import com.javaclaw.server.persistence.PersistenceException;
 import com.javaclaw.server.security.PermissionPresetCatalog;
 
-/** 将权限预设的预览和实例化映射为 Protocol v2 方法。 */
+/** 将权限预设的预览和实例化映射为 Protocol v3 方法。 */
 public final class PermissionPresetRpcHandlers {
     private final CoreCommandService core;
     private final PermissionProfileService profiles;

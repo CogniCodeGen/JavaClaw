@@ -51,8 +51,8 @@ class UnattendedToolGrantServiceTest {
     private Workspace workspace;
 
     @BeforeEach
-    void 初始化全新DataV5与Workspace() {
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+    void 初始化全新DataV6与Workspace() {
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         clock = new MutableClock(NOW);

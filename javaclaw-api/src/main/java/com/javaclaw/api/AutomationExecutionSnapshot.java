@@ -4,32 +4,46 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * 平台在自动化 Execution 启动时生成的权威执行快照。
+ * 自动化 Execution 启动时由 App Server 冻结的权威执行快照。
  *
- * <p>快照固定 Profile、Provider、PermissionProfile、单 Turn 预算与工具目录。客户端不能构造或提交该对象；后续 Turn 只能收窄权限，并且必须继续使用这里冻结的工具身份与 Schema。
+ * <p>恢复及后续 Turn 继续使用同一配置和工具目录；角色新版本不能改变活动 Execution，实时撤权仍立即生效。
  *
- * @param profile 精确 Agent Profile
- * @param provider 精确 Provider 与模型
- * @param permissionProfile 精确 PermissionProfile
- * @param turnBudget 每个子 Turn 的冻结预算上限
- * @param toolCatalog 平台权威冻结的工具目录
- * @param unattendedExecutionScope Schedule 无人值守来源；交互或普通自动化为空
+ * @param configuration 完整已解析配置，不可为空
+ * @param toolCatalog 平台冻结工具目录，不可为空
+ * @param unattendedExecutionScope Schedule 无人值守来源；普通执行时为空
  */
 public record AutomationExecutionSnapshot(
-        AgentProfileRef profile,
-        ProviderRef provider,
-        PermissionProfileRef permissionProfile,
-        TurnBudget turnBudget,
+        ResolvedTurnConfig configuration,
         ToolCatalogSnapshot toolCatalog,
         Optional<UnattendedExecutionScope> unattendedExecutionScope) {
-    /** 校验完整快照。 */
+    /** 校验配置、工具目录摘要与无人值守来源。 */
     public AutomationExecutionSnapshot {
-        Objects.requireNonNull(profile, "profile");
-        Objects.requireNonNull(provider, "provider");
-        Objects.requireNonNull(permissionProfile, "permissionProfile");
-        Objects.requireNonNull(turnBudget, "turnBudget");
+        Objects.requireNonNull(configuration, "configuration");
         Objects.requireNonNull(toolCatalog, "toolCatalog");
         unattendedExecutionScope = Objects.requireNonNull(unattendedExecutionScope, "unattendedExecutionScope");
+        if (!configuration.toolCatalogDigest().equals(toolCatalog.digest())) {
+            throw new IllegalArgumentException("configuration must reference frozen tool catalog");
+        }
+    }
+
+    /** @return 精确角色引用 */
+    public AgentRoleRef role() {
+        return configuration.role();
+    }
+
+    /** @return 精确 Provider 和模型 */
+    public ProviderRef provider() {
+        return configuration.provider();
+    }
+
+    /** @return 精确权限配置 */
+    public PermissionProfileRef permissionProfile() {
+        return configuration.permissionProfile();
+    }
+
+    /** @return 每个子 Turn 的冻结预算上限 */
+    public TurnBudget turnBudget() {
+        return configuration.budget();
     }
 
     /**
@@ -44,7 +58,6 @@ public record AutomationExecutionSnapshot(
                 && !unattendedExecutionScope.orElseThrow().equals(checked)) {
             throw new IllegalStateException("automation snapshot already belongs to another Schedule occurrence");
         }
-        return new AutomationExecutionSnapshot(
-                profile, provider, permissionProfile, turnBudget, toolCatalog, Optional.of(checked));
+        return new AutomationExecutionSnapshot(configuration, toolCatalog, Optional.of(checked));
     }
 }

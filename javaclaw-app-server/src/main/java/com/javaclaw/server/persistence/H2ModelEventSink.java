@@ -24,7 +24,7 @@ public final class H2ModelEventSink implements ModelEventSink {
      *
      * <p>每次 publish 在返回前完成一次本地事务，因此 Provider 产生速度不会超过持久消费者；不使用无界内存队列。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      * @param json 共享 JSON codec
      * @param clock 平台时钟
      */

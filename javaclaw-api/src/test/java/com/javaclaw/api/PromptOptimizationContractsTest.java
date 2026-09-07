@@ -20,8 +20,8 @@ class PromptOptimizationContractsTest {
         PromptOptimizationDraft draft = new PromptOptimizationDraft(
                 ref,
                 result,
-                new PromptOptimizationProvenance("profile-optimization-v1", DIGEST, NOW, NOW),
-                Optional.of(new AgentProfileRef("profile", 2)));
+                new PromptOptimizationProvenance("role-optimization-v1", DIGEST, NOW, NOW),
+                Optional.of(new AgentRoleRef("profile", 2)));
 
         assertEquals("简洁说明", draft.result().content().orElseThrow());
         assertThrows(
@@ -31,7 +31,7 @@ class PromptOptimizationContractsTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> new PromptOptimizationDraft(
-                        ref, result, draft.provenance(), Optional.of(new AgentProfileRef("profile", 1))));
+                        ref, result, draft.provenance(), Optional.of(new AgentRoleRef("profile", 1))));
     }
 
     @Test
@@ -50,7 +50,7 @@ class PromptOptimizationContractsTest {
         return new PromptOptimizationRef(
                 PromptOptimizationId.parse("00000000-0000-0000-0000-000000000001"),
                 WorkspaceId.parse("00000000-0000-0000-0000-000000000002"),
-                new AgentProfileRef("profile", 1),
+                new AgentRoleRef("profile", 1),
                 ThreadId.parse("00000000-0000-0000-0000-000000000003"),
                 TurnId.parse("00000000-0000-0000-0000-000000000004"));
     }

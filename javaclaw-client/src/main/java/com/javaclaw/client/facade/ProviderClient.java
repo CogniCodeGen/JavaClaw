@@ -24,7 +24,7 @@ import com.javaclaw.client.CommandOptions;
 import com.javaclaw.client.RpcClientConnection;
 import com.javaclaw.protocol.ProviderCredentialRpcContracts;
 import com.javaclaw.protocol.ProviderModelDiscoveryRpcContracts;
-import com.javaclaw.protocol.ProviderProfileRpcContracts;
+import com.javaclaw.protocol.ProviderRpcContracts;
 import com.javaclaw.protocol.ProviderVerificationRpcContracts;
 import com.javaclaw.protocol.SealedSecret;
 import com.javaclaw.protocol.SessionKeyInfo;
@@ -46,10 +46,39 @@ public final class ProviderClient {
         this.sessionKey = Objects.requireNonNull(sessionKey, "sessionKey");
     }
 
+    /**
+     * 读取精确模型版本声明的容量；未知值不会被平台 fallback 覆盖。
+     *
+     * @param provider 精确引用
+     * @return 容量元数据
+     */
+    public com.javaclaw.api.ModelContextLimits contextLimits(ProviderRef provider) {
+        return connection.query(
+                com.javaclaw.protocol.ProviderContextRpcContracts.READ_METHOD,
+                new com.javaclaw.protocol.ProviderContextRpcContracts.ReadPayload(provider),
+                com.javaclaw.api.ModelContextLimits.class);
+    }
+
+    /**
+     * 创建新的 Provider revision 保存模型容量。
+     *
+     * @param limits 基于当前精确版本的新容量
+     * @param options expected revision 必须匹配 Provider 当前版本
+     * @return 指向新 Provider revision 的容量
+     */
+    public com.javaclaw.api.ModelContextLimits updateContextLimits(
+            com.javaclaw.api.ModelContextLimits limits, CommandOptions options) {
+        return connection.command(
+                com.javaclaw.protocol.ProviderContextRpcContracts.UPDATE_METHOD,
+                limits,
+                options,
+                com.javaclaw.api.ModelContextLimits.class);
+    }
+
     /** @return 每个 Provider 的最新版本 */
     public List<ProviderEndpoint> list() {
         return connection
-                .query("provider/list", Map.of(), ProviderProfileRpcContracts.ProviderListResult.class)
+                .query("provider/list", Map.of(), ProviderRpcContracts.ProviderListResult.class)
                 .providers();
     }
 
@@ -62,9 +91,7 @@ public final class ProviderClient {
      */
     public ProviderEndpoint read(String id, long revision) {
         return connection.query(
-                "provider/read",
-                new ProviderProfileRpcContracts.ProviderReadPayload(id, revision),
-                ProviderEndpoint.class);
+                "provider/read", new ProviderRpcContracts.ProviderReadPayload(id, revision), ProviderEndpoint.class);
     }
 
     /**
@@ -80,7 +107,7 @@ public final class ProviderClient {
             String id, ProviderEndpointSpec spec, ProviderLifecycle lifecycle, CommandOptions options) {
         return connection.command(
                 "provider/create",
-                new ProviderProfileRpcContracts.ProviderCreatePayload(id, spec, lifecycle),
+                new ProviderRpcContracts.ProviderCreatePayload(id, spec, lifecycle),
                 options,
                 ProviderEndpoint.class);
     }
@@ -98,7 +125,7 @@ public final class ProviderClient {
             String id, ProviderEndpointSpec spec, ProviderLifecycle lifecycle, CommandOptions options) {
         return connection.command(
                 "provider/update",
-                new ProviderProfileRpcContracts.ProviderUpdatePayload(id, spec, lifecycle),
+                new ProviderRpcContracts.ProviderUpdatePayload(id, spec, lifecycle),
                 options,
                 ProviderEndpoint.class);
     }
@@ -113,7 +140,7 @@ public final class ProviderClient {
     public ProviderEndpoint archive(String id, CommandOptions options) {
         return connection.command(
                 "provider/archive",
-                new ProviderProfileRpcContracts.ProviderArchivePayload(id),
+                new ProviderRpcContracts.ProviderArchivePayload(id),
                 options,
                 ProviderEndpoint.class);
     }
@@ -190,8 +217,8 @@ public final class ProviderClient {
         return connection
                 .query(
                         "provider/embeddingBinding/read",
-                        new ProviderProfileRpcContracts.EmbeddingBindingReadPayload(),
-                        ProviderProfileRpcContracts.EmbeddingBindingReadResult.class)
+                        new ProviderRpcContracts.EmbeddingBindingReadPayload(),
+                        ProviderRpcContracts.EmbeddingBindingReadResult.class)
                 .binding();
     }
 
@@ -205,7 +232,7 @@ public final class ProviderClient {
     public EmbeddingBinding bindEmbedding(ProviderRef provider, CommandOptions options) {
         return connection.command(
                 "provider/embeddingBinding/update",
-                new ProviderProfileRpcContracts.EmbeddingBindingUpdatePayload(provider),
+                new ProviderRpcContracts.EmbeddingBindingUpdatePayload(provider),
                 options,
                 EmbeddingBinding.class);
     }
@@ -264,9 +291,7 @@ public final class ProviderClient {
      */
     public ProviderStatus status(ProviderRef provider) {
         return connection.query(
-                "provider/status",
-                new ProviderProfileRpcContracts.ProviderProbePayload(provider),
-                ProviderStatus.class);
+                "provider/status", new ProviderRpcContracts.ProviderProbePayload(provider), ProviderStatus.class);
     }
 
     /**
@@ -277,7 +302,7 @@ public final class ProviderClient {
      */
     public ProviderStatus probe(ProviderRef provider) {
         return connection.query(
-                "provider/probe", new ProviderProfileRpcContracts.ProviderProbePayload(provider), ProviderStatus.class);
+                "provider/probe", new ProviderRpcContracts.ProviderProbePayload(provider), ProviderStatus.class);
     }
 
     /**

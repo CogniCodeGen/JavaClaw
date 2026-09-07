@@ -19,6 +19,7 @@ import com.openai.models.responses.ResponseIncludable;
 import com.openai.models.responses.ResponseInputItem;
 
 import com.javaclaw.api.ToolDescriptor;
+import com.javaclaw.runtime.ModelInstructions;
 import com.javaclaw.runtime.ModelInvocation;
 import com.javaclaw.runtime.ModelMessage;
 import com.javaclaw.runtime.ModelToolCall;
@@ -40,15 +41,22 @@ final class OpenAiResponsesRequestMapper {
             OpenAiResponsesEndpointConfig config, ModelInvocation invocation, ProviderStateCodec.DecodedState state) {
         requireSameInstructions(invocation, state);
         List<ResponseInputItem> input = new ArrayList<>(states.inputItems(state));
-        input.addAll(messages(continuationMessages(invocation.messages())));
+        input.addAll(messages(invocation.messages()));
         return create(config, invocation, input);
     }
 
     ResponseCompactParams compact(OpenAiResponsesEndpointConfig config, ProviderStateCodec.DecodedState state) {
+        return compact(config, state, List.of());
+    }
+
+    ResponseCompactParams compact(
+            OpenAiResponsesEndpointConfig config, ProviderStateCodec.DecodedState state, List<ModelMessage> pending) {
+        List<ResponseInputItem> input = new ArrayList<>(states.inputItems(state));
+        input.addAll(messages(pending));
         return ResponseCompactParams.builder()
                 .model(config.model())
-                .instructions(state.instructions())
-                .input(ResponseCompactParams.Input.ofResponseInputItems(states.inputItems(state)))
+                .instructions(state.instructions().systemInstruction())
+                .input(ResponseCompactParams.Input.ofResponseInputItems(withInstructions(state.instructions(), input)))
                 .build();
     }
 
@@ -56,20 +64,36 @@ final class OpenAiResponsesRequestMapper {
             OpenAiResponsesEndpointConfig config, ModelInvocation invocation, List<ResponseInputItem> input) {
         ResponseCreateParams.Builder builder = ResponseCreateParams.builder()
                 .model(config.model())
-                .instructions(invocation.systemInstruction())
-                .input(ResponseCreateParams.Input.ofResponse(input))
+                .instructions(invocation.instructions().systemInstruction())
+                .input(ResponseCreateParams.Input.ofResponse(withInstructions(invocation.instructions(), input)))
                 .maxOutputTokens(invocation.maximumOutputTokens())
                 .parallelToolCalls(true)
                 .store(false)
                 .include(List.of(ResponseIncludable.REASONING_ENCRYPTED_CONTENT))
-                .reasoning(Reasoning.builder()
-                        .summary(summary(config.summaryStyle()))
-                        .build());
+                .reasoning(reasoning(config, invocation));
         invocation.tools().stream().map(this::tool).forEach(builder::addTool);
         return builder.build();
     }
 
-    private List<ResponseInputItem> messages(List<ModelMessage> messages) {
+    private Reasoning reasoning(OpenAiResponsesEndpointConfig config, ModelInvocation invocation) {
+        Reasoning.Builder builder = Reasoning.builder().summary(summary(config.summaryStyle()));
+        invocation.reasoning().ifPresent(preference -> builder.effort(AdapterReasoningMapping.openAi(preference)));
+        return builder.build();
+    }
+
+    private List<ResponseInputItem> withInstructions(ModelInstructions instructions, List<ResponseInputItem> messages) {
+        List<ResponseInputItem> input = new ArrayList<>();
+        if (!instructions.developerInstructions().isBlank()) {
+            input.add(easy(instructions.developerInstructions(), EasyInputMessage.Role.DEVELOPER));
+        }
+        input.addAll(messages);
+        if (!instructions.responseContract().isBlank()) {
+            input.add(easy(instructions.responseContract(), EasyInputMessage.Role.DEVELOPER));
+        }
+        return input;
+    }
+
+    List<ResponseInputItem> messages(List<ModelMessage> messages) {
         List<ResponseInputItem> result = new ArrayList<>();
         messages.forEach(message -> append(message, result));
         return result;
@@ -140,18 +164,9 @@ final class OpenAiResponsesRequestMapper {
         }
     }
 
-    private List<ModelMessage> continuationMessages(List<ModelMessage> messages) {
-        for (int index = messages.size() - 1; index >= 0; index--) {
-            if (messages.get(index).role() == com.javaclaw.api.MessageRole.ASSISTANT) {
-                return messages.subList(index + 1, messages.size());
-            }
-        }
-        return messages;
-    }
-
     private void requireSameInstructions(ModelInvocation invocation, ProviderStateCodec.DecodedState state) {
-        if (!state.instructions().equals(invocation.systemInstruction())) {
-            throw new IllegalArgumentException("Provider state cannot cross a system-instruction revision");
+        if (!state.instructions().equals(invocation.instructions())) {
+            throw new IllegalArgumentException("Provider state cannot cross an instruction-layer revision");
         }
     }
 

@@ -15,17 +15,18 @@ import com.javaclaw.api.PermissionPresetInstantiationRequest;
 import com.javaclaw.api.PermissionPresetInstantiationResult;
 import com.javaclaw.api.PermissionPresetPreview;
 import com.javaclaw.api.Workspace;
+import com.javaclaw.protocol.AgentRoleRpcContracts;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.CoreRpcContracts;
 import com.javaclaw.protocol.PermissionProfileRpcContracts;
-import com.javaclaw.protocol.ProviderProfileRpcContracts;
 import com.javaclaw.protocol.SessionSecretChannel;
 import com.javaclaw.protocol.WriteCommand;
+import com.javaclaw.server.persistence.AgentRoleService;
 import com.javaclaw.server.persistence.CommandIdentity;
 import com.javaclaw.server.persistence.CoreCommandService;
 import com.javaclaw.server.persistence.H2Database;
 import com.javaclaw.server.persistence.PermissionProfileService;
-import com.javaclaw.server.profile.ProfilePresetCatalog;
+import com.javaclaw.server.persistence.ProviderService;
 import com.javaclaw.server.security.PermissionPresetCatalog;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -45,7 +46,7 @@ class PresetRpcHandlersTest {
 
     @BeforeEach
     void initializeRoutes() {
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
@@ -53,23 +54,25 @@ class PresetRpcHandlersTest {
         PermissionProfileService profiles = new PermissionProfileService(database, json, clock);
         workspace = createWorkspace(core);
         RpcRouter.Builder routes = RpcRouter.builder();
-        new ProfilePresetRpcHandlers(new ProfilePresetCatalog(), json).register(routes);
+        new AgentRoleRpcHandlers(
+                        new AgentRoleService(
+                                database, new ProviderService(database, ignored -> true, json, clock), json, clock),
+                        json)
+                .register(routes);
         new PermissionPresetRpcHandlers(core, profiles, new PermissionPresetCatalog(), json).register(routes);
         router = routes.build();
     }
 
     @Test
-    void exposesReviewedProfilePresets() throws Exception {
+    void exposesReadOnlyBuiltinRoles() throws Exception {
         try (SessionSecretChannel secrets = SessionSecretChannel.open()) {
             var result = json.decode(
-                    router.route("profile/preset/list", json.parse("{}"), secrets),
-                    ProviderProfileRpcContracts.AgentProfilePresetListResult.class);
+                    router.route("agent/role/list", json.parse("{}"), secrets), AgentRoleRpcContracts.ListResult.class);
 
             assertEquals(
-                    java.util.List.of("default", "worker", "explorer"),
-                    result.presets().stream().map(preset -> preset.id()).toList());
-            assertTrue(
-                    result.presets().stream().allMatch(preset -> preset.digest().matches("[0-9a-f]{64}")));
+                    java.util.List.of("default", "explorer", "software-engineer", "worker"),
+                    result.roles().stream().map(role -> role.id()).sorted().toList());
+            assertTrue(result.roles().stream().allMatch(role -> role.builtin() && role.revision() == 1));
         }
     }
 

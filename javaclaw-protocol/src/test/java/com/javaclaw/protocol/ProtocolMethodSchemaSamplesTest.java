@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
@@ -13,12 +14,14 @@ import java.util.Set;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.ApprovalDecision;
 import com.javaclaw.api.CanonicalPayload;
+import com.javaclaw.api.CapabilityNarrowing;
+import com.javaclaw.api.ExecutionOverrides;
+import com.javaclaw.api.PermissionConstraint;
 import com.javaclaw.api.PermissionPresetInstantiationRequest;
-import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderAdapterOptions;
 import com.javaclaw.api.ProviderAuthentication;
@@ -29,7 +32,6 @@ import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.api.ProviderModelSpec;
 import com.javaclaw.api.ProviderRef;
 import com.javaclaw.api.ThreadId;
-import com.javaclaw.api.TurnBudget;
 import com.javaclaw.api.TurnId;
 import com.javaclaw.api.WorkspaceId;
 
@@ -46,51 +48,49 @@ class ProtocolMethodSchemaSamplesTest {
     @Test
     void initialize实际编码匹配封闭Schema() throws Exception {
         InitializeParams params = new InitializeParams(
-                2,
-                new ClientInfo("Desktop", "5.0.0"),
+                3,
+                new ClientInfo("Desktop", "6.0.0"),
                 new CapabilityAdvertisement(Set.of("items"), Set.of("native-compaction")));
 
-        assertClosedShape(json.encode(params), "initialization-v2.schema.json", "/$defs/initializeParams");
+        assertClosedShape(json.encode(params), "initialization-v3.schema.json", "/$defs/initializeParams");
     }
 
     @Test
     void turn审批与Rollout写信封匹配逐方法Schema() throws Exception {
         assertCommand(
-                new CoreRpcContracts.TurnStartPayload(THREAD_ID, Optional.of(new AgentProfileRef("coding", 2)), "修复测试"),
+                new CoreRpcContracts.TurnStartPayload(THREAD_ID, selection("coding", 2), "修复测试"),
                 0,
-                "core-interaction-v2.schema.json",
+                "core-interaction-v3.schema.json",
                 "/$defs/turnStartCommand");
         assertCommand(
                 new CoreRpcContracts.ApprovalResolvePayload("approval-1", ApprovalDecision.APPROVED, "已确认"),
                 2,
-                "core-interaction-v2.schema.json",
+                "core-interaction-v3.schema.json",
                 "/$defs/approvalResolveCommand");
         assertCommand(
                 new CoreRpcContracts.RolloutExportPayload(THREAD_ID, Path.of("/tmp/rollout.jsonl")),
                 7,
-                "core-interaction-v2.schema.json",
+                "core-interaction-v3.schema.json",
                 "/$defs/rolloutExportCommand");
     }
 
     @Test
-    void provider与Profile实际编码匹配逐方法Schema() throws Exception {
+    void provider与Role实际编码匹配逐方法Schema() throws Exception {
         assertCommand(
-                new ProviderProfileRpcContracts.ProviderCreatePayload(
-                        "cloud", providerSpec(), ProviderLifecycle.DISABLED),
+                new ProviderRpcContracts.ProviderCreatePayload("cloud", providerSpec(), ProviderLifecycle.DISABLED),
                 0,
-                "provider-profile-v2.schema.json",
+                "provider-v3.schema.json",
                 "/$defs/providerCreateCommand");
         assertCommand(
-                new ProviderProfileRpcContracts.AgentProfileCreatePayload("coding", profileSpec()),
+                new AgentRoleRpcContracts.CreatePayload("coding", roleSpec()),
                 0,
-                "provider-profile-v2.schema.json",
-                "/$defs/profileCreateCommand");
+                "agent-role-v3.schema.json",
+                "/$defs/createCommand");
         assertCommand(
-                new ProviderProfileRpcContracts.ProfileBindingUpdatePayload(
-                        WORKSPACE_ID, Optional.of(THREAD_ID), new AgentProfileRef("coding", 1)),
+                new ExecutionRpcContracts.ThreadUpdatePayload(WORKSPACE_ID, THREAD_ID, selection("coding", 1)),
                 0,
-                "provider-profile-v2.schema.json",
-                "/$defs/bindingUpdateCommand");
+                "execution-v3.schema.json",
+                "/$defs/threadUpdateCommand");
     }
 
     @Test
@@ -101,32 +101,32 @@ class ProtocolMethodSchemaSamplesTest {
 
         assertClosedShape(
                 json.encode(new ProviderModelDiscoveryRequest("cloud", 2)),
-                "provider-profile-v2.schema.json",
+                "provider-v3.schema.json",
                 "/$defs/providerModelDiscoveryRequest");
         assertCommand(
                 new ProviderModelDiscoveryRequest("cloud", 2),
                 2,
-                "provider-profile-v2.schema.json",
+                "provider-v3.schema.json",
                 "/$defs/providerModelDiscoveryStartCommand");
         assertClosedShape(
                 json.encode(new ProviderModelDiscoveryRpcContracts.ReadPayload("11111111-1111-1111-1111-111111111111")),
-                "provider-profile-v2.schema.json",
+                "provider-v3.schema.json",
                 "/$defs/providerModelDiscoveryReadParams");
         assertCommand(
                 new ProviderModelDiscoveryRpcContracts.CancelPayload(
                         "11111111-1111-1111-1111-111111111111", ProviderModelDiscoveryRpcContracts.CLIENT_CANCELLED),
                 1,
-                "provider-profile-v2.schema.json",
+                "provider-v3.schema.json",
                 "/$defs/providerModelDiscoveryCancelCommand");
         assertCommand(
-                new ProviderProfileRpcContracts.EmbeddingBindingUpdatePayload(embedding),
+                new ProviderRpcContracts.EmbeddingBindingUpdatePayload(embedding),
                 0,
-                "provider-profile-v2.schema.json",
+                "provider-v3.schema.json",
                 "/$defs/embeddingBindingUpdateCommand");
         assertCommand(
                 new PermissionProfileRpcContracts.PresetInstantiatePayload(permissionRequest),
                 0,
-                "permission-profile-v2.schema.json",
+                "permission-profile-v3.schema.json",
                 "/$defs/permissionPresetInstantiateCommand");
     }
 
@@ -139,12 +139,49 @@ class ProtocolMethodSchemaSamplesTest {
         ToolRpcContracts.CatalogQuery toolQuery =
                 new ToolRpcContracts.CatalogQuery(WORKSPACE_ID, "standard", 1, "file", 20);
 
-        assertClosedShape(json.encode(call), "extension-v2.schema.json", "/$defs/callPayload");
-        assertClosedShape(json.encode(event), "extension-v2.schema.json", "/$defs/extensionEvent");
-        assertClosedShape(json.encode(toolQuery), "tool-v2.schema.json", "/$defs/catalogQuery");
+        assertClosedShape(json.encode(call), "extension-v3.schema.json", "/$defs/callPayload");
+        assertClosedShape(json.encode(event), "extension-v3.schema.json", "/$defs/extensionEvent");
+        assertClosedShape(json.encode(toolQuery), "tool-v3.schema.json", "/$defs/catalogQuery");
         assertEquals(
                 WORKSPACE_ID.toString(),
                 json.textField(json.encode(event), "workspaceId").orElseThrow());
+    }
+
+    @Test
+    void 子智能体模型默认配置使用独立Revision和受限封闭Schema() throws Exception {
+        ExecutionOverrides defaults = new ExecutionOverrides(
+                Optional.empty(),
+                Optional.of(new ProviderRef("cloud", 2, "child-model")),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.of(com.javaclaw.api.ReasoningPreference.HIGH));
+        assertCommand(
+                new ExecutionRpcContracts.DefaultUpdatePayload(Optional.of(WORKSPACE_ID), defaults),
+                2,
+                "execution-v3.schema.json",
+                "/$defs/subagentUpdateCommand");
+        assertClosedShape(json.encode(defaults), "execution-v3.schema.json", "/$defs/subagentOverrides");
+    }
+
+    @Test
+    void 子智能体请求使用父Revision与独立执行覆盖() throws Exception {
+        assertCommand(
+                new CollaborationRpcContracts.SpawnPayload(
+                        TURN_ID, "explorer", "检查影响范围", ExecutionOverrides.empty(), "范围检查"),
+                4,
+                "collaboration-v3.schema.json",
+                "/$defs/spawnCommand");
+        assertCommand(
+                new CollaborationRpcContracts.InterruptPayload(TURN_ID, "父任务取消"),
+                2,
+                "collaboration-v3.schema.json",
+                "/$defs/interruptCommand");
+        assertClosedShape(
+                json.encode(new CollaborationRpcContracts.WaitPayload(TURN_ID)),
+                "collaboration-v3.schema.json",
+                "/$defs/waitParams");
     }
 
     private void assertCommand(Object payload, long revision, String resource, String pointer) throws Exception {
@@ -212,13 +249,26 @@ class ProtocolMethodSchemaSamplesTest {
                 new ProviderAdapterOptions.OpenAiCompatible(Optional.of("example"), Optional.empty()));
     }
 
-    private static AgentProfileSpec profileSpec() {
-        return new AgentProfileSpec(
-                "Coding",
+    private static AgentRoleSpec roleSpec() {
+        return new AgentRoleSpec(
+                "Role",
+                "可复用角色",
                 "保持代码清晰。",
-                new ProviderRef("cloud", 1, "model"),
-                new PermissionProfileRef("standard", 1),
-                Set.of("read_file"),
-                new TurnBudget(10_000, 2_000, 20, 2, Duration.ofMinutes(5)));
+                Optional.empty(),
+                Optional.empty(),
+                new CapabilityNarrowing(Optional.of(Set.of("read_file")), Optional.empty()),
+                PermissionConstraint.INHERIT,
+                Map.of());
+    }
+
+    private static ExecutionOverrides selection(String id, long revision) {
+        return new ExecutionOverrides(
+                Optional.of(new AgentRoleRef(id, revision)),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
     }
 }

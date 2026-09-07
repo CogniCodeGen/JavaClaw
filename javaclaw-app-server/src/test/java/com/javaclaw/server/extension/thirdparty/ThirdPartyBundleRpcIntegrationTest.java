@@ -50,7 +50,7 @@ class ThirdPartyBundleRpcIntegrationTest {
 
     @Test
     void attachmentTrustBundle和Trash形成可重启恢复闭环() throws Exception {
-        Path dataRoot = temporaryDirectory.resolve("data-v5");
+        Path dataRoot = temporaryDirectory.resolve("data-v6");
         KeyPair keys = ThirdPartyBundleTestFixtures.keyPair();
         var json = new com.javaclaw.protocol.CanonicalJson();
         byte[] archive = Files.readAllBytes(ThirdPartyBundleTestFixtures.archive(temporaryDirectory, json, keys));
@@ -95,7 +95,7 @@ class ThirdPartyBundleRpcIntegrationTest {
 
     @Test
     void staging拒绝非Attachment路径入口和错误摘要确认() throws Exception {
-        Path dataRoot = temporaryDirectory.resolve("data-v5");
+        Path dataRoot = temporaryDirectory.resolve("data-v6");
         KeyPair keys = ThirdPartyBundleTestFixtures.keyPair();
         var json = new com.javaclaw.protocol.CanonicalJson();
         byte[] archive = Files.readAllBytes(ThirdPartyBundleTestFixtures.archive(temporaryDirectory, json, keys));

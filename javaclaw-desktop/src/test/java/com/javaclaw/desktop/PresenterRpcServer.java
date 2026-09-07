@@ -12,7 +12,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
-import com.javaclaw.api.AgentProfile;
+import com.javaclaw.api.AgentRole;
 import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.ApprovalDecision;
 import com.javaclaw.api.ApprovalState;
@@ -21,7 +21,7 @@ import com.javaclaw.api.ConversationThread;
 import com.javaclaw.api.ExecutionState;
 import com.javaclaw.api.InputRequestRecord;
 import com.javaclaw.api.InputRequestState;
-import com.javaclaw.api.ProfileBinding;
+import com.javaclaw.api.PromptManifestPreview;
 import com.javaclaw.api.ToolDescriptor;
 import com.javaclaw.api.ToolIdentity;
 import com.javaclaw.api.ToolRisk;
@@ -34,9 +34,11 @@ import com.javaclaw.extension.spi.ExtensionId;
 import com.javaclaw.extension.spi.ExtensionJobUnitState;
 import com.javaclaw.extension.spi.ViewQueryRequest;
 import com.javaclaw.extension.spi.ViewQueryResult;
+import com.javaclaw.protocol.AgentRoleRpcContracts;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.ClientInfo;
 import com.javaclaw.protocol.CoreRpcContracts;
+import com.javaclaw.protocol.ExecutionRpcContracts;
 import com.javaclaw.protocol.ExtensionRpcContracts;
 import com.javaclaw.protocol.InitializeResult;
 import com.javaclaw.protocol.InputJobRpcContracts;
@@ -46,7 +48,7 @@ import com.javaclaw.protocol.JsonRpcRequest;
 import com.javaclaw.protocol.JsonRpcResponse;
 import com.javaclaw.protocol.LocalTransport;
 import com.javaclaw.protocol.NegotiatedCapabilities;
-import com.javaclaw.protocol.ProviderProfileRpcContracts;
+import com.javaclaw.protocol.ProviderRpcContracts;
 import com.javaclaw.protocol.RpcConnection;
 import com.javaclaw.protocol.SessionSecretChannel;
 import com.javaclaw.protocol.ToolRpcContracts;
@@ -61,7 +63,7 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
     private final BlockingQueue<Object> inbound = new ArrayBlockingQueue<>(64);
     private final Workspace workspace = DesktopTestFixtures.workspace();
     private final ConversationThread thread = DesktopTestFixtures.thread(workspace);
-    private final AgentProfile profile = DesktopTestFixtures.profile();
+    private final AgentRole profile = DesktopTestFixtures.profile();
 
     final AtomicInteger workspaceCreates = new AtomicInteger();
     final AtomicInteger threadCreates = new AtomicInteger();
@@ -96,7 +98,7 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
     volatile long lastTurnStartExpectedRevision = -1;
 
     JavaClawClient client(Consumer<ServerNotification> notifications) throws IOException {
-        return JavaClawClient.connect(this, new ClientInfo("desktop-test", "5.0"), Set.of(), notifications);
+        return JavaClawClient.connect(this, new ClientInfo("desktop-test", "6.0"), Set.of(), notifications);
     }
 
     Workspace workspace() {
@@ -107,7 +109,7 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
         return thread;
     }
 
-    AgentProfile profile() {
+    AgentRole profile() {
         return profile;
     }
 
@@ -161,16 +163,19 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
         return switch (request.method()) {
             case "initialize/session" ->
                 new InitializeResult(
-                        2,
+                        3,
                         "javaclaw-app-server",
-                        "5.0.0-SNAPSHOT",
+                        "6.0.0-SNAPSHOT",
                         new NegotiatedCapabilities(Set.of("core.item-envelope"), Set.of()),
                         secrets.publicKey());
             case "workspace/list" -> new CoreRpcContracts.WorkspaceListResult(List.of(workspace));
             case "workspace/create" -> createdWorkspace(request);
-            case "profile/list" -> new ProviderProfileRpcContracts.AgentProfileListResult(List.of(profile));
-            case "profile/read" -> profile;
-            case "profile/binding/read" -> profileBinding(request);
+            case "agent/role/list" -> new AgentRoleRpcContracts.ListResult(List.of(profile));
+            case "agent/role/read" -> profile;
+            case "prompt/manifest/preview" -> promptPreview();
+            case "execution/default/read", "thread/execution/read" ->
+                new ExecutionRpcContracts.ReadResult(Optional.empty());
+
             case "tool/search" -> toolCatalog(request);
             case "thread/list" -> new CoreRpcContracts.ThreadListResult(List.of(thread));
             case "thread/create" -> createdThread(request);
@@ -178,20 +183,11 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
         };
     }
 
-    private ProviderProfileRpcContracts.ProfileBindingReadResult profileBinding(JsonRpcRequest request) {
-        ProviderProfileRpcContracts.ProfileBindingReadPayload payload =
-                json.decode(request.params(), ProviderProfileRpcContracts.ProfileBindingReadPayload.class);
-        if (!workspace.id().equals(payload.workspaceId()) || payload.threadId().isPresent()) {
-            throw new AssertionError("profile binding scope mismatch");
+    private PromptManifestPreview promptPreview() {
+        if (!profileBound) {
+            throw new IllegalStateException("当前工作区尚未配置默认执行参数");
         }
-        ProfileBinding binding = new ProfileBinding(
-                workspace.id(),
-                Optional.empty(),
-                new com.javaclaw.api.AgentProfileRef(profile.id(), profile.revision()),
-                1,
-                DesktopTestFixtures.NOW);
-        return new ProviderProfileRpcContracts.ProfileBindingReadResult(
-                profileBound ? Optional.of(binding) : Optional.empty());
+        return DesktopTestFixtures.promptPreview();
     }
 
     private ToolRpcContracts.SearchResult toolCatalog(JsonRpcRequest request) {
@@ -209,6 +205,9 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
 
     private Object executionResult(JsonRpcRequest request) {
         return switch (request.method()) {
+            case "provider/list" -> new ProviderRpcContracts.ProviderListResult(List.of());
+            case "permissionProfile/list" ->
+                new com.javaclaw.protocol.PermissionProfileRpcContracts.ListResult(List.of());
             case "item/list" -> items(request);
             case "turn/start" -> startedTurn(request);
             case "turn/read" -> currentTurn();
@@ -267,13 +266,14 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
         return new CoreRpcContracts.ItemListResult(List.of(), payload.afterSequence());
     }
 
-    private AgentTurn startedTurn(JsonRpcRequest request) {
+    private CoreRpcContracts.TurnStartResult startedTurn(JsonRpcRequest request) {
         WriteCommand command = json.decode(request.params(), WriteCommand.class);
         lastTurnStartExpectedRevision = command.expectedRevision();
         lastTurnStart = json.decode(command.payload(), CoreRpcContracts.TurnStartPayload.class);
         cancelRequested = false;
         turnStarts.incrementAndGet();
-        return DesktopTestFixtures.turn(thread, TurnStatus.RUNNING, 1);
+        AgentTurn started = DesktopTestFixtures.turn(thread, TurnStatus.RUNNING, 1);
+        return new CoreRpcContracts.TurnStartResult(started, started.resolvedConfig());
     }
 
     private AgentTurn currentTurn() {

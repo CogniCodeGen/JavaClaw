@@ -5,18 +5,21 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.ApprovalDecision;
 import com.javaclaw.api.ApprovalRecord;
+import com.javaclaw.api.AttachmentRef;
 import com.javaclaw.api.ConversationThread;
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.ItemEnvelope;
+import com.javaclaw.api.ResolvedTurnConfigSummary;
 import com.javaclaw.api.ThreadExecutionIntent;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.TurnId;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceId;
 
-/** Protocol v2 Core 方法的请求 payload；领域响应直接复用 {@code javaclaw-api}。 */
+/** Protocol v3 Core 方法的请求 payload；领域响应直接复用 {@code javaclaw-api}。 */
 public final class CoreRpcContracts {
     private CoreRpcContracts() {}
 
@@ -25,12 +28,24 @@ public final class CoreRpcContracts {
      *
      * @param name 用户可见名称
      * @param root 规范绝对根目录
+     * @param execution 初始独立执行选择；空值继承安装默认
      */
-    public record WorkspaceCreatePayload(String name, Path root) {
+    public record WorkspaceCreatePayload(String name, Path root, Optional<ExecutionOverrides> execution) {
         /** 校验参数。 */
         public WorkspaceCreatePayload {
             name = text(name, "name");
             root = Objects.requireNonNull(root, "root").toAbsolutePath().normalize();
+            execution = Objects.requireNonNull(execution, "execution");
+        }
+
+        /**
+         * 创建继承安装默认配置的 Workspace 参数。
+         *
+         * @param name 用户可见名称
+         * @param root 规范绝对根目录
+         */
+        public WorkspaceCreatePayload(String name, Path root) {
+            this(name, root, Optional.empty());
         }
     }
 
@@ -88,18 +103,49 @@ public final class CoreRpcContracts {
     }
 
     /**
-     * Turn 启动参数。
+     * Turn 启动参数；选择在服务端统一解析，附件必须已上传到所属 Workspace。
      *
      * @param threadId 所属 Thread
-     * @param profile 显式 Profile；为空时依次使用 Thread、Workspace 默认绑定
-     * @param message 用户消息
+     * @param execution 独立 Role、模型、权限与可收窄执行选项
+     * @param message 用户消息，可为空字符串
+     * @param attachments 已上传附件引用，不可空
      */
-    public record TurnStartPayload(ThreadId threadId, Optional<AgentProfileRef> profile, String message) {
-        /** 校验参数。 */
+    public record TurnStartPayload(
+            ThreadId threadId, ExecutionOverrides execution, String message, List<AttachmentRef> attachments) {
+        /** 校验执行选择与输入并冻结附件列表。 */
         public TurnStartPayload {
             Objects.requireNonNull(threadId, "threadId");
-            profile = Objects.requireNonNull(profile, "profile");
+            Objects.requireNonNull(execution, "execution");
             message = Objects.requireNonNull(message, "message");
+            attachments = List.copyOf(attachments);
+        }
+
+        /**
+         * 创建不含附件的 Turn 启动参数。
+         *
+         * @param threadId 所属 Thread
+         * @param execution 独立执行选择
+         * @param message 用户消息
+         */
+        public TurnStartPayload(ThreadId threadId, ExecutionOverrides execution, String message) {
+            this(threadId, execution, message, List.of());
+        }
+    }
+
+    /**
+     * 已接受的 Turn 与安全执行摘要；不包含 Prompt 正文、凭据或内部策略。
+     *
+     * @param turn 已持久化 Turn
+     * @param configuration 本 Turn 冻结的安全执行摘要
+     */
+    public record TurnStartResult(AgentTurn turn, ResolvedTurnConfigSummary configuration) {
+        /** 校验 Turn 与摘要一致，避免展示尚未冻结的选择。 */
+        public TurnStartResult {
+            Objects.requireNonNull(turn, "turn");
+            Objects.requireNonNull(configuration, "configuration");
+            if (!configuration.equals(turn.resolvedConfig())) {
+                throw new IllegalArgumentException("configuration must match the frozen Turn");
+            }
         }
     }
 

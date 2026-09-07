@@ -187,7 +187,7 @@ public final class DiagnosticsService {
 
     private static String applicationVersion() {
         String implementation = DiagnosticsService.class.getPackage().getImplementationVersion();
-        return implementation == null || implementation.isBlank() ? "5.0.0-SNAPSHOT" : implementation;
+        return implementation == null || implementation.isBlank() ? "6.0.0-SNAPSHOT" : implementation;
     }
 
     private <T> T execute(H2Transactions.SqlWork<T> work) {

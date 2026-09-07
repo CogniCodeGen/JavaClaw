@@ -8,7 +8,7 @@ import java.util.Objects;
  * @param phase 异步阶段
  * @param selection 目录与选择
  * @param message 用户可见状态
- * @param revisionConflict 最近一次采纳是否发生 Profile revision 冲突
+ * @param revisionConflict 最近一次采纳是否发生 Role revision 冲突
  * @param epoch 请求 epoch；旧响应必须丢弃
  */
 public record PromptOptimizationSettingsState(

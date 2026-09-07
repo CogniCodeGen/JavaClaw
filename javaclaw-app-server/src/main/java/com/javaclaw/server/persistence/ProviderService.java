@@ -36,7 +36,7 @@ public final class ProviderService {
     /**
      * 创建 Provider 服务。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      * @param credentials Provider Secret 的实时可用性边界
      * @param json 规范 JSON codec
      * @param clock 平台时钟
@@ -305,6 +305,7 @@ public final class ProviderService {
                     versions.latest(connection, VersionedSettingsRepository.Table.PROVIDER, candidate.id(), true);
             requireRevision(current, identity.expectedRevision());
             versions.insert(connection, VersionedSettingsRepository.Table.PROVIDER, stored(candidate));
+            new ProviderContextRepository().inherit(connection, current.map(this::decode), candidate);
             idempotency.insert(connection, identity, json.encode(candidate), candidate.updatedAt());
             return candidate;
         });

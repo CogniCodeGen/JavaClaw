@@ -7,16 +7,17 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.AutomationExecutionSnapshot;
 import com.javaclaw.api.CancellationToken;
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.builtin.contracts.OrchestrationContracts;
 import com.javaclaw.builtin.contracts.ScheduleActionContracts;
 import com.javaclaw.builtin.contracts.ScheduleContracts;
 import com.javaclaw.builtin.contracts.ScheduleManagementContracts;
 import com.javaclaw.extension.spi.AutomationExecutionPolicyPort;
-import com.javaclaw.extension.spi.AutomationProfileOption;
+import com.javaclaw.extension.spi.AutomationRoleOption;
 import com.javaclaw.extension.spi.AutomationStepPort;
 import com.javaclaw.extension.spi.ExtensionContribution;
 import com.javaclaw.extension.spi.ExtensionContributions;
@@ -36,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ScheduleManagementBranchCoverageTest {
-    private static final AgentProfileRef PROFILE = new AgentProfileRef("profile", 1);
+    private static final AgentRoleRef PROFILE = new AgentRoleRef("profile", 1);
     private static final OrchestrationContracts.ExecutionBudget BUDGET =
             new OrchestrationContracts.ExecutionBudget(4, 4_000, 2_000, 20);
 
@@ -51,14 +52,14 @@ class ScheduleManagementBranchCoverageTest {
                     started,
                     support,
                     context,
-                    "definition/view.profiles",
-                    new ViewQueryRequest("profiles", Map.of(), "", 1, Optional.empty()));
+                    "definition/view.roles",
+                    new ViewQueryRequest("roles", Map.of(), "", 1, Optional.empty()));
             ViewQueryResult secondProfiles = query(
                     started,
                     support,
                     context,
-                    "definition/view.profiles",
-                    new ViewQueryRequest("profiles", Map.of(), "profile-a", 2, Optional.empty()));
+                    "definition/view.roles",
+                    new ViewQueryRequest("roles", Map.of(), "profile-a", 2, Optional.empty()));
             ViewQueryResult firstTargets = query(
                     started,
                     support,
@@ -236,15 +237,13 @@ class ScheduleManagementBranchCoverageTest {
             ExtensionExecutionContext context) {
         assertThrows(
                 IllegalArgumentException.class,
-                () -> query(started, support, context, "definition/view.profiles", view("wrong", Map.of(), "")));
+                () -> query(started, support, context, "definition/view.roles", view("wrong", Map.of(), "")));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> query(
-                        started, support, context, "definition/view.profiles", view("profiles", Map.of("x", "y"), "")));
+                () -> query(started, support, context, "definition/view.roles", view("roles", Map.of("x", "y"), "")));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> query(
-                        started, support, context, "definition/view.profiles", view("profiles", Map.of(), "stale")));
+                () -> query(started, support, context, "definition/view.roles", view("roles", Map.of(), "stale")));
         assertThrows(
                 IllegalArgumentException.class,
                 () -> query(started, support, context, "definition/view.targets", view("wrong", Map.of(), "")));
@@ -389,12 +388,13 @@ class ScheduleManagementBranchCoverageTest {
     }
 
     private static ScheduleContracts.Target turn() {
-        return ScheduleContracts.Target.turn(new ScheduleContracts.TurnTemplate(PROFILE, "标题", "执行任务", BUDGET));
+        return ScheduleContracts.Target.turn(
+                new ScheduleContracts.TurnTemplate(AutomationV6Fixtures.selection(PROFILE), "标题", "执行任务", BUDGET));
     }
 
     private static ScheduleContracts.Target definitionTarget() {
-        return ScheduleContracts.Target.definition(
-                new ScheduleContracts.DefinitionTarget("javaclaw.plan", "plan", 3, PROFILE, BUDGET));
+        return ScheduleContracts.Target.definition(new ScheduleContracts.DefinitionTarget(
+                "javaclaw.plan", "plan", 3, AutomationV6Fixtures.selection(PROFILE), BUDGET));
     }
 
     private static ScheduleContracts.Target action(boolean parameterized) {
@@ -442,8 +442,7 @@ class ScheduleManagementBranchCoverageTest {
                 Optional.empty(),
                 Optional.of(5L),
                 Optional.of(NOW.plusSeconds(60)),
-                profileId,
-                profileRevision,
+                AutomationV6Fixtures.selection(new AgentRoleRef(profileId, profileRevision)),
                 "标题",
                 "执行任务",
                 BUDGET.maximumTurns(),
@@ -454,20 +453,20 @@ class ScheduleManagementBranchCoverageTest {
     }
 
     private static AutomationExecutionPolicyPort profiles(BuiltinExtensionTestSupport support) {
-        List<AutomationProfileOption> values = List.of(
-                new AutomationProfileOption(new AgentProfileRef("profile-a", 1), "A"),
-                new AutomationProfileOption(new AgentProfileRef("profile-b", 2), "B"),
-                new AutomationProfileOption(new AgentProfileRef("profile-c", 3), "C"));
+        List<AutomationRoleOption> values = List.of(
+                new AutomationRoleOption(new AgentRoleRef("profile-a", 1), "A"),
+                new AutomationRoleOption(new AgentRoleRef("profile-b", 2), "B"),
+                new AutomationRoleOption(new AgentRoleRef("profile-c", 3), "C"));
         return new AutomationExecutionPolicyPort() {
             @Override
-            public List<AutomationProfileOption> profiles(WorkspaceId workspaceId) {
+            public List<AutomationRoleOption> roles(WorkspaceId workspaceId) {
                 return values;
             }
 
             @Override
             public AutomationExecutionSnapshot freeze(
-                    WorkspaceId workspaceId, AgentProfileRef profile, CancellationToken cancellation) {
-                return support.executionSnapshot(profile);
+                    WorkspaceId workspaceId, ExecutionOverrides execution, CancellationToken cancellation) {
+                return support.executionSnapshot(execution.role().orElseThrow());
             }
         };
     }
@@ -520,7 +519,8 @@ class ScheduleManagementBranchCoverageTest {
                 source.credentials(),
                 source.privateNetworkGrants(),
                 source.services(),
-                source.embeddings());
+                source.embeddings(),
+                com.javaclaw.extension.spi.WorkspaceExecutionPort.denied());
     }
 
     private static ExtensionJobRuntimeContext runtime(BuiltinExtensionTestSupport support) {

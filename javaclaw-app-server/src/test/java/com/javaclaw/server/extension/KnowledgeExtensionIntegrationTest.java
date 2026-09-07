@@ -109,7 +109,7 @@ class KnowledgeExtensionIntegrationTest {
 
     private AppServerBootstrap.Components server(IsolatedServicePort service) {
         return AppServerBootstrap.create(
-                temporaryDirectory.resolve("data-v5"), Clock.systemUTC(), new UnusedModel(), enabled -> {}, service);
+                temporaryDirectory.resolve("data-v6"), Clock.systemUTC(), new UnusedModel(), enabled -> {}, service);
     }
 
     private KnowledgeContracts.ImportAccepted importSource(

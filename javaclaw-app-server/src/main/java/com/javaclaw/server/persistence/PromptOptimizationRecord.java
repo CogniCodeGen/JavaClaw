@@ -12,7 +12,7 @@ import com.javaclaw.api.PromptOptimizationRef;
  * @param ref 优化任务与普通 Thread/Turn 关联
  * @param instructionRevision 内置优化说明版本
  * @param instructionDigest 内置优化说明 SHA-256
- * @param adoptedProfileRevision 已人工采纳的新 Profile revision
+ * @param adoptedRoleRevision 已人工采纳的新 Role revision
  * @param adoptedAt 采纳时间
  * @param createdAt 创建时间
  */
@@ -20,7 +20,7 @@ public record PromptOptimizationRecord(
         PromptOptimizationRef ref,
         String instructionRevision,
         String instructionDigest,
-        Optional<Long> adoptedProfileRevision,
+        Optional<Long> adoptedRoleRevision,
         Optional<Instant> adoptedAt,
         Instant createdAt) {
     /** 校验管理关联，不保存草稿正文或运行状态。 */
@@ -28,15 +28,15 @@ public record PromptOptimizationRecord(
         Objects.requireNonNull(ref, "ref");
         instructionRevision = text(instructionRevision, "instructionRevision");
         instructionDigest = digest(instructionDigest);
-        adoptedProfileRevision = Objects.requireNonNull(adoptedProfileRevision, "adoptedProfileRevision");
+        adoptedRoleRevision = Objects.requireNonNull(adoptedRoleRevision, "adoptedRoleRevision");
         adoptedAt = Objects.requireNonNull(adoptedAt, "adoptedAt");
         Objects.requireNonNull(createdAt, "createdAt");
-        if (adoptedProfileRevision.isPresent() != adoptedAt.isPresent()) {
+        if (adoptedRoleRevision.isPresent() != adoptedAt.isPresent()) {
             throw new IllegalArgumentException("adopted revision and time must appear together");
         }
-        adoptedProfileRevision.ifPresent(revision -> {
-            if (revision <= ref.sourceProfile().revision()) {
-                throw new IllegalArgumentException("adopted Profile revision must be newer than source");
+        adoptedRoleRevision.ifPresent(revision -> {
+            if (revision <= ref.sourceRole().revision()) {
+                throw new IllegalArgumentException("adopted Role revision must be newer than source");
             }
         });
     }

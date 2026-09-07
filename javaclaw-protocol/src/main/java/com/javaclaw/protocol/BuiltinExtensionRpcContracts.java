@@ -9,7 +9,7 @@ import com.javaclaw.extension.spi.ContributionKind;
 import com.javaclaw.extension.spi.ExtensionAvailability;
 import com.javaclaw.extension.spi.ExtensionState;
 
-/** Protocol v2 内置扩展管理的强类型 wire 契约。 */
+/** Protocol v3 内置扩展管理的强类型 wire 契约。 */
 public final class BuiltinExtensionRpcContracts {
     private BuiltinExtensionRpcContracts() {}
 

@@ -57,7 +57,7 @@ class InstructionRpcHandlersTest {
 
         json = new CanonicalJson();
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         CoreCommandService core = new CoreCommandService(database, json, clock);
         AttachmentService attachments = new AttachmentService(database, json, clock);

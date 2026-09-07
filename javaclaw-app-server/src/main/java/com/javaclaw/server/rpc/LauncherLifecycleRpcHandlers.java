@@ -9,7 +9,7 @@ import com.javaclaw.protocol.WriteCommand;
 import com.javaclaw.server.lifecycle.LauncherLifecycleService;
 import com.javaclaw.server.persistence.CommandIdentity;
 
-/** launcher 与 App Server 生命周期 Protocol v2 的薄映射。 */
+/** launcher 与 App Server 生命周期 Protocol v3 的薄映射。 */
 public final class LauncherLifecycleRpcHandlers {
     private final LauncherLifecycleService service;
     private final CanonicalJson json;

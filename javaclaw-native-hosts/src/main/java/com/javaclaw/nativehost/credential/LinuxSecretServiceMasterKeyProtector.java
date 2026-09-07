@@ -37,7 +37,7 @@ final class LinuxSecretServiceMasterKeyProtector implements MasterKeyProtector {
                     List.of(
                             "secret-tool",
                             "store",
-                            "--label=JavaClaw v5 master key",
+                            "--label=JavaClaw v6 master key",
                             "application",
                             "javaclaw",
                             "purpose",

@@ -40,13 +40,39 @@ final class WindowsProcessAttributes implements AutoCloseable {
         return new WindowsProcessAttributes(list, arena);
     }
 
-    void addSecurityCapabilities(MemorySegment appContainerSid) throws IOException {
+    void addSecurityCapabilities(MemorySegment appContainerSid, boolean guardedProxy) throws IOException {
         MemorySegment value = arena.allocate(WindowsSandboxNative.SECURITY_CAPABILITIES);
         value.set(ADDRESS, 0, appContainerSid);
-        value.set(ADDRESS, 8, MemorySegment.NULL);
-        value.set(JAVA_INT, 16, 0);
+        value.set(ADDRESS, 8, guardedProxy ? localNetworkCapability() : MemorySegment.NULL);
+        value.set(JAVA_INT, 16, guardedProxy ? 1 : 0);
         value.set(JAVA_INT, 20, 0);
         update(SECURITY_CAPABILITIES, value, value.byteSize());
+    }
+
+    private MemorySegment localNetworkCapability() throws IOException {
+        var backend = WindowsSandboxNative.requireBackend();
+        MemorySegment output = arena.allocate(ADDRESS);
+        var converted =
+                backend.invoke(backend.convertStringSid, WindowsSandboxNative.wide(arena, "S-1-15-3-3"), output);
+        if (converted.number() == 0) {
+            throw WindowsSandboxNative.error("ConvertStringSidToSidW(privateNetworkClientServer)", converted.error());
+        }
+        MemorySegment allocated = output.get(ADDRESS, 0);
+        try {
+            int bytes = backend.invoke(backend.getLengthSid, allocated).number();
+            if (bytes < 1 || bytes > 1024) {
+                throw new IOException("invalid Windows capability SID size");
+            }
+            MemorySegment sid = arena.allocate(bytes, 4);
+            sid.copyFrom(allocated.reinterpret(bytes));
+            MemorySegment attributes = arena.allocate(16, 8);
+            attributes.set(ADDRESS, 0, sid);
+            attributes.set(JAVA_INT, 8, 4);
+            // 目标保持 CREATE_SUSPENDED；只有服务持久拒绝和精确代理允许均已生效后才 resume。
+            return attributes;
+        } finally {
+            WindowsSandboxNative.localFree(allocated);
+        }
     }
 
     void addHandleList(List<MemorySegment> handles) throws IOException {

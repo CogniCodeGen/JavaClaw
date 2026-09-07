@@ -77,7 +77,7 @@ class McpServiceTest {
 
     @BeforeEach
     void 初始化全新McpHost() {
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);

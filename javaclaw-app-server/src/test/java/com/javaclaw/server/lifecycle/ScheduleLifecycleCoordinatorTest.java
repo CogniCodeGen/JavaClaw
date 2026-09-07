@@ -21,7 +21,7 @@ class ScheduleLifecycleCoordinatorTest {
 
     @Test
     void allWorkspacesShareOneLeaseAndLastDisableRemovesLoginStartup() {
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         List<Boolean> startupChanges = new ArrayList<>();
         try (LifecycleCoordinator lifecycle =

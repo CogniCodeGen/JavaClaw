@@ -17,9 +17,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.AutomationExecutionSnapshot;
 import com.javaclaw.api.CancellationSource;
@@ -29,11 +29,11 @@ import com.javaclaw.api.CorePayloads;
 import com.javaclaw.api.MessageRole;
 import com.javaclaw.api.PermissionProfile;
 import com.javaclaw.api.PermissionProfileRef;
-import com.javaclaw.api.ProfileLifecycle;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ProviderRef;
+import com.javaclaw.api.RoleLifecycle;
 import com.javaclaw.api.SandboxExecutor;
 import com.javaclaw.api.ThreadExecutionIntent;
 import com.javaclaw.api.ToolCatalogSnapshot;
@@ -51,15 +51,15 @@ import com.javaclaw.runtime.ModelInvocationResult;
 import com.javaclaw.runtime.ToolCatalogPort;
 import com.javaclaw.runtime.TurnExecutionCommand;
 import com.javaclaw.server.instructions.ProjectInstructionResolver;
-import com.javaclaw.server.persistence.AgentProfileService;
+import com.javaclaw.server.persistence.AgentRoleService;
 import com.javaclaw.server.persistence.AttachmentService;
 import com.javaclaw.server.persistence.CommandIdentity;
 import com.javaclaw.server.persistence.CoreCommandService;
+import com.javaclaw.server.persistence.ExecutionConfigurationService;
 import com.javaclaw.server.persistence.H2Database;
 import com.javaclaw.server.persistence.ManagedWorktreeService;
 import com.javaclaw.server.persistence.PermissionProfileService;
 import com.javaclaw.server.persistence.PersistenceException;
-import com.javaclaw.server.persistence.ProfileBindingService;
 import com.javaclaw.server.persistence.ProviderService;
 import com.javaclaw.server.persistence.TurnStartRequest;
 
@@ -75,19 +75,19 @@ class TurnCommandFactoryOrchestratedTest {
 
     private CanonicalJson json;
     private CoreCommandService core;
-    private AgentProfileService profiles;
+    private AgentRoleService roles;
     private RecordingCatalog catalogs;
     private RecordingModel models;
     private TurnCommandFactory factory;
     private Workspace workspace;
     private ConversationThread thread;
-    private AgentProfile profile;
+    private AgentRole role;
 
     @BeforeEach
-    void initializeDataV5() throws Exception {
+    void initializeDataV6() throws Exception {
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
         json = new CanonicalJson();
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         core = new CoreCommandService(database, json, clock);
         PermissionProfileService permissions = new PermissionProfileService(database, json, clock);
@@ -99,9 +99,16 @@ class TurnCommandFactoryOrchestratedTest {
                 "provider",
                 providerSpec(),
                 ProviderLifecycle.ACTIVE);
-        profiles = new AgentProfileService(database, providers, permissions, json, clock);
-        profile = profiles.create(identity("profile/create", "profile", Map.of()), "profile", profileSpec(standard));
-        ProfileBindingService bindings = new ProfileBindingService(database, core, profiles, json, clock);
+        roles = new AgentRoleService(database, providers, json, clock);
+        role = roles.create(identity("agent/role/create", "profile", Map.of()), "profile", roleSpec(standard));
+        ExecutionConfigurationService bindings = new ExecutionConfigurationService(database, core, roles, json, clock);
+        TurnV6Fixtures.defaults(
+                bindings,
+                role.ref(),
+                new ProviderRef("provider", 1, "model"),
+                new PermissionProfileRef("standard", 1),
+                budget(),
+                Set.of());
         ManagedWorktreeService worktrees = new ManagedWorktreeService(
                 database, new AttachmentService(database, json, clock), json, clock, unavailableSandbox());
         catalogs = new RecordingCatalog();
@@ -109,7 +116,7 @@ class TurnCommandFactoryOrchestratedTest {
         factory = new TurnCommandFactory(
                 new TurnPlatformServices(
                         core,
-                        profiles,
+                        roles,
                         bindings,
                         permissions,
                         new ProjectInstructionResolver(temporaryDirectory.resolve("state"), clock),
@@ -123,11 +130,11 @@ class TurnCommandFactoryOrchestratedTest {
 
     @Test
     void automation快照解析和执行命令始终复用冻结Provider权限预算与目录() {
-        AgentProfileRef profileRef = new AgentProfileRef(profile.id(), profile.revision());
+        AgentRoleRef roleRef = new AgentRoleRef(role.id(), role.revision());
         AutomationExecutionSnapshot snapshot =
-                factory.freezeAutomation(workspace.id(), profileRef, new CancellationSource());
+                factory.freezeAutomation(workspace.id(), TurnV6Fixtures.selection(roleRef), new CancellationSource());
         CoreRpcContracts.TurnStartPayload payload =
-                new CoreRpcContracts.TurnStartPayload(thread.id(), Optional.of(profileRef), "执行自动化步骤");
+                new CoreRpcContracts.TurnStartPayload(thread.id(), TurnV6Fixtures.selection(roleRef), "执行自动化步骤");
         CorePayloads.Message message =
                 new CorePayloads.Message(MessageRole.USER, payload.message(), List.of(), Optional.empty());
         TurnStartRequest resolved = factory.resolveOrchestrated(payload, message, snapshot);
@@ -152,55 +159,57 @@ class TurnCommandFactoryOrchestratedTest {
     }
 
     @Test
-    void automation解析拒绝Profile不一致和权威配置漂移() {
-        AgentProfileRef profileRef = new AgentProfileRef(profile.id(), profile.revision());
+    void automation解析继承冻结Role并拒绝未持久化Prompt() {
+        AgentRoleRef roleRef = new AgentRoleRef(role.id(), role.revision());
         AutomationExecutionSnapshot snapshot =
-                factory.freezeAutomation(workspace.id(), profileRef, new CancellationSource());
-        CoreRpcContracts.TurnStartPayload missingProfile =
-                new CoreRpcContracts.TurnStartPayload(thread.id(), Optional.empty(), "missing");
+                factory.freezeAutomation(workspace.id(), TurnV6Fixtures.selection(roleRef), new CancellationSource());
+        CoreRpcContracts.TurnStartPayload inheritedRole = new CoreRpcContracts.TurnStartPayload(
+                thread.id(), com.javaclaw.api.ExecutionOverrides.empty(), "missing");
         CorePayloads.Message message =
                 new CorePayloads.Message(MessageRole.USER, "missing", List.of(), Optional.empty());
-        AutomationExecutionSnapshot wrongProvider = new AutomationExecutionSnapshot(
-                snapshot.profile(),
-                new ProviderRef("other", 1, "model"),
+        AutomationExecutionSnapshot unpersisted = TurnV6Fixtures.snapshot(
+                snapshot.role(),
+                snapshot.provider(),
                 snapshot.permissionProfile(),
                 snapshot.turnBudget(),
                 snapshot.toolCatalog(),
                 snapshot.unattendedExecutionScope());
 
-        assertThrows(
-                IllegalArgumentException.class, () -> factory.resolveOrchestrated(missingProfile, message, snapshot));
+        assertEquals(
+                snapshot.configuration(),
+                factory.resolveOrchestrated(inheritedRole, message, snapshot).configuration());
         CoreRpcContracts.TurnStartPayload explicit =
-                new CoreRpcContracts.TurnStartPayload(thread.id(), Optional.of(profileRef), "missing");
-        assertThrows(
-                IllegalArgumentException.class, () -> factory.resolveOrchestrated(explicit, message, wrongProvider));
+                new CoreRpcContracts.TurnStartPayload(thread.id(), TurnV6Fixtures.selection(roleRef), "missing");
+        assertThrows(PersistenceException.class, () -> factory.resolveOrchestrated(explicit, message, unpersisted));
     }
 
     @Test
-    void freeze拒绝缺失Workspace和取消信号且Profile停用立即生效() {
-        AgentProfileRef profileRef = new AgentProfileRef(profile.id(), profile.revision());
+    void freeze拒绝缺失Workspace和取消信号且Role停用立即生效() {
+        AgentRoleRef roleRef = new AgentRoleRef(role.id(), role.revision());
         CancellationSource cancelled = new CancellationSource();
         cancelled.cancel("test cancelled");
 
         assertThrows(
                 IllegalArgumentException.class,
                 () -> factory.freezeAutomation(
-                        com.javaclaw.api.WorkspaceId.random(), profileRef, new CancellationSource()));
+                        com.javaclaw.api.WorkspaceId.random(),
+                        TurnV6Fixtures.selection(roleRef),
+                        new CancellationSource()));
         assertThrows(
                 com.javaclaw.api.TurnCancelledException.class,
-                () -> factory.freezeAutomation(workspace.id(), profileRef, cancelled));
+                () -> factory.freezeAutomation(workspace.id(), TurnV6Fixtures.selection(roleRef), cancelled));
 
-        AgentProfile disabled = profiles.update(
-                identity("profile/update", "disable-profile", profile.revision(), Map.of()),
-                profile.id(),
-                profile.spec(),
-                ProfileLifecycle.DISABLED);
-        assertEquals(ProfileLifecycle.DISABLED, disabled.lifecycle());
+        AgentRole disabled = roles.update(
+                identity("agent/role/update", "disable-profile", role.revision(), Map.of()),
+                role.id(),
+                role.spec(),
+                RoleLifecycle.DISABLED);
+        assertEquals(RoleLifecycle.DISABLED, disabled.lifecycle());
         assertThrows(
                 PersistenceException.class,
                 () -> factory.freezeAutomation(
                         workspace.id(),
-                        new AgentProfileRef(disabled.id(), disabled.revision()),
+                        TurnV6Fixtures.selection(new AgentRoleRef(disabled.id(), disabled.revision())),
                         new CancellationSource()));
     }
 
@@ -209,11 +218,11 @@ class TurnCommandFactoryOrchestratedTest {
         ExecutionFixture execution = execution("identity-drift");
         CoreRpcContracts.TurnStartPayload wrongThread = new CoreRpcContracts.TurnStartPayload(
                 com.javaclaw.api.ThreadId.random(),
-                execution.payload().profile(),
+                execution.payload().execution(),
                 execution.payload().message());
-        CoreRpcContracts.TurnStartPayload wrongProfile = new CoreRpcContracts.TurnStartPayload(
+        CoreRpcContracts.TurnStartPayload wrongRole = new CoreRpcContracts.TurnStartPayload(
                 thread.id(),
-                Optional.of(new AgentProfileRef("other-profile", 1)),
+                TurnV6Fixtures.selection(new AgentRoleRef("other-profile", 1)),
                 execution.payload().message());
 
         assertThrows(
@@ -221,9 +230,9 @@ class TurnCommandFactoryOrchestratedTest {
                 () -> factory.createOrchestrated(execution.turn(), wrongThread, execution.snapshot()));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> factory.createOrchestrated(execution.turn(), wrongProfile, execution.snapshot()));
+                () -> factory.createOrchestrated(execution.turn(), wrongRole, execution.snapshot()));
         assertThrows(
-                IllegalStateException.class,
+                IllegalArgumentException.class,
                 () -> factory.createOrchestrated(
                         altered(execution.turn(), TurnMutation.PROMPT), execution.payload(), execution.snapshot()));
         assertThrows(
@@ -231,7 +240,7 @@ class TurnCommandFactoryOrchestratedTest {
                 () -> factory.createOrchestrated(
                         altered(execution.turn(), TurnMutation.ROOT), execution.payload(), execution.snapshot()));
         assertThrows(
-                IllegalStateException.class,
+                IllegalArgumentException.class,
                 () -> factory.createOrchestrated(
                         altered(execution.turn(), TurnMutation.CATALOG), execution.payload(), execution.snapshot()));
     }
@@ -246,11 +255,11 @@ class TurnCommandFactoryOrchestratedTest {
     }
 
     private ExecutionFixture execution(String key) {
-        AgentProfileRef profileRef = new AgentProfileRef(profile.id(), profile.revision());
+        AgentRoleRef roleRef = new AgentRoleRef(role.id(), role.revision());
         AutomationExecutionSnapshot snapshot =
-                factory.freezeAutomation(workspace.id(), profileRef, new CancellationSource());
+                factory.freezeAutomation(workspace.id(), TurnV6Fixtures.selection(roleRef), new CancellationSource());
         CoreRpcContracts.TurnStartPayload payload =
-                new CoreRpcContracts.TurnStartPayload(thread.id(), Optional.of(profileRef), key);
+                new CoreRpcContracts.TurnStartPayload(thread.id(), TurnV6Fixtures.selection(roleRef), key);
         CorePayloads.Message message = new CorePayloads.Message(MessageRole.USER, key, List.of(), Optional.empty());
         TurnStartRequest resolved = factory.resolveOrchestrated(payload, message, snapshot);
         AgentTurn turn = core.startTurn(identity("turn/start", key, payload), resolved);
@@ -265,25 +274,45 @@ class TurnCommandFactoryOrchestratedTest {
     }
 
     private AgentTurn altered(AgentTurn source, TurnMutation mutation) {
+        var frozen = source.resolvedConfig();
+        TurnBudget budget = mutation == TurnMutation.BUDGET
+                ? new TurnBudget(4_001, 1_000, 2, 0, Duration.ofMinutes(1))
+                : source.budget();
+        ProviderRef provider =
+                mutation == TurnMutation.PROVIDER ? new ProviderRef("other-provider", 1, "model") : source.provider();
+        PermissionProfileRef permission = mutation == TurnMutation.PERMISSION
+                ? new PermissionProfileRef("other-permission", 1)
+                : source.permissionProfile();
+        String promptDigest = mutation == TurnMutation.PROMPT ? "f".repeat(64) : source.promptManifestDigest();
+        String catalogDigest = mutation == TurnMutation.CATALOG ? "e".repeat(64) : source.toolCatalogDigest();
+        var altered = new com.javaclaw.api.ResolvedTurnConfigSummary(
+                source.role(),
+                provider,
+                permission,
+                frozen.approvalPolicy(),
+                budget,
+                frozen.effectiveCapabilities(),
+                frozen.reasoning(),
+                promptDigest,
+                catalogDigest,
+                frozen.modelLocked(),
+                frozen.provenance());
         return new AgentTurn(
                 source.id(),
                 source.threadId(),
                 source.status(),
                 source.revision(),
-                mutation == TurnMutation.BUDGET
-                        ? new TurnBudget(4_001, 1_000, 2, 0, Duration.ofMinutes(1))
-                        : source.budget(),
-                source.profile(),
-                mutation == TurnMutation.PROVIDER ? new ProviderRef("other-provider", 1, "model") : source.provider(),
-                mutation == TurnMutation.PERMISSION
-                        ? new PermissionProfileRef("other-permission", 1)
-                        : source.permissionProfile(),
+                budget,
+                source.role(),
+                provider,
+                permission,
                 mutation == TurnMutation.ROOT ? temporaryDirectory.resolve("other-root") : source.executionRoot(),
-                mutation == TurnMutation.PROMPT ? "f".repeat(64) : source.promptManifestDigest(),
-                mutation == TurnMutation.CATALOG ? "e".repeat(64) : source.toolCatalogDigest(),
+                promptDigest,
+                catalogDigest,
                 source.errorCode(),
                 source.createdAt(),
-                source.updatedAt());
+                source.updatedAt(),
+                altered);
     }
 
     private void createWorkspaceAndThread() throws Exception {
@@ -302,14 +331,20 @@ class TurnCommandFactoryOrchestratedTest {
                 "Automation");
     }
 
-    private AgentProfileSpec profileSpec(PermissionProfile permission) {
-        return new AgentProfileSpec(
+    private AgentRoleSpec roleSpec(PermissionProfile permission) {
+        return new AgentRoleSpec(
                 "Automation",
+                "",
                 "system profile",
-                new ProviderRef("provider", 1, "model"),
-                new PermissionProfileRef(permission.id(), permission.version()),
-                Set.of(),
-                new TurnBudget(4_000, 1_000, 2, 0, Duration.ofMinutes(1)));
+                Optional.empty(),
+                Optional.empty(),
+                new com.javaclaw.api.CapabilityNarrowing(Optional.of(Set.of()), Optional.empty()),
+                com.javaclaw.api.PermissionConstraint.INHERIT,
+                java.util.Map.of());
+    }
+
+    private static TurnBudget budget() {
+        return new TurnBudget(4_000, 1_000, 2, 0, Duration.ofMinutes(1));
     }
 
     private static ProviderEndpointSpec providerSpec() {

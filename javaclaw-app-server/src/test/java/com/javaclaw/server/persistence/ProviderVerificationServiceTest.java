@@ -83,7 +83,7 @@ class ProviderVerificationServiceTest {
             assertNoSensitivePersistence(fixture.database());
         }
         assertTrue(adapters.closed.get() > 0);
-        try (var paths = Files.walk(temporaryDirectory.resolve("data-v5"))) {
+        try (var paths = Files.walk(temporaryDirectory.resolve("data-v6"))) {
             assertTrue(paths.filter(Files::isRegularFile).noneMatch(this::containsSensitiveContent));
         }
     }
@@ -337,7 +337,7 @@ class ProviderVerificationServiceTest {
 
     private Fixture fixture() {
         CanonicalJson json = new CanonicalJson();
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         SecretVaultService vault =
                 new SecretVaultService(database, new MemoryProtector(), json, CLOCK, new SecureRandom());

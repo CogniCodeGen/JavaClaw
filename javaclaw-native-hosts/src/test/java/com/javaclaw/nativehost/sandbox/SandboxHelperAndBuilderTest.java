@@ -12,6 +12,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import com.javaclaw.api.ResourceLimits;
 import com.javaclaw.api.SandboxMode;
+import com.javaclaw.nativehost.network.SandboxNetworkAccess;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -110,7 +111,7 @@ class SandboxHelperAndBuilderTest {
     }
 
     @Test
-    void windowsHelperArgumentsReconstructOneV5Request() {
+    void windowsHelperArgumentsReconstructOneV6Request() {
         String root = temporaryDirectory.toString();
         var request = WindowsSandboxHelperArguments.parse(new String[] {
             root,
@@ -182,7 +183,8 @@ class SandboxHelperAndBuilderTest {
                 List.of(),
                 List.of(executable),
                 false,
-                Optional.empty());
+                Optional.empty(),
+                SandboxNetworkAccess.offline());
         input[0] = 9;
         byte[] returned = command.standardInput();
         returned[1] = 9;
@@ -213,7 +215,8 @@ class SandboxHelperAndBuilderTest {
                 writeRoots,
                 List.of(executable),
                 allowDelete,
-                Optional.empty());
+                Optional.empty(),
+                SandboxNetworkAccess.offline());
     }
 
     private static Path existing(String... candidates) throws Exception {

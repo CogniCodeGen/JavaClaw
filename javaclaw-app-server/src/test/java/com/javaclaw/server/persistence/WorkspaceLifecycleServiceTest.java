@@ -68,7 +68,7 @@ class WorkspaceLifecycleServiceTest {
     }
 
     private CoreCommandService service() {
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         return new CoreCommandService(database, new CanonicalJson(), CLOCK);
     }

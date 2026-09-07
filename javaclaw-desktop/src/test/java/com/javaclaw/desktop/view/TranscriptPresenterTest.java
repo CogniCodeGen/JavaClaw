@@ -17,9 +17,12 @@ import com.javaclaw.api.ItemStatus;
 import com.javaclaw.api.MessageRole;
 import com.javaclaw.api.ToolRisk;
 import com.javaclaw.api.TurnId;
+import com.javaclaw.builtin.contracts.CodingContracts;
+import com.javaclaw.builtin.contracts.CodingResults;
 import com.javaclaw.protocol.CanonicalJson;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TranscriptPresenterTest {
     private final CanonicalJson json = new CanonicalJson();
@@ -35,6 +38,44 @@ class TranscriptPresenterTest {
         assertEquals("ASSISTANT", presented.title());
         assertEquals("架构已更新", presented.body());
         assertEquals("message-assistant", presented.styleClass());
+    }
+
+    @Test
+    void 虚拟化列表先绘制结果也根据完整快照中的冻结调用显示命令输出() {
+        TurnId turn = TurnId.random();
+        var call = new ItemEnvelope(
+                ItemId.random(),
+                turn,
+                1,
+                "tool",
+                CoreSchemas.TOOL_CALL,
+                "core",
+                ItemStatus.COMPLETED,
+                json.encode(new CorePayloads.ToolCall(
+                        "run", CodingContracts.EXTENSION_ID, "command_run", 1, json.parse("{}"))),
+                Instant.EPOCH,
+                Optional.of(Instant.EPOCH));
+        var output = new CodingResults.CommandResult(
+                new CodingResults.CommandSummary(
+                        "run-1", List.of("java"), ".", Optional.of(0), CodingResults.ProcessState.COMPLETED, 2),
+                new CodingResults.Output("PASS", "diagnostic", 14, false));
+        var result = new ItemEnvelope(
+                ItemId.random(),
+                turn,
+                2,
+                "tool",
+                CoreSchemas.TOOL_RESULT,
+                "core",
+                ItemStatus.COMPLETED,
+                json.encode(new CorePayloads.ToolResult("run", true, json.encode(output), Optional.empty())),
+                Instant.EPOCH,
+                Optional.of(Instant.EPOCH));
+        presenter.replaceItems(List.of(call, result));
+        PresentedItem shown = presenter.present(result);
+        assertEquals("命令 · COMPLETED", shown.title());
+        assertTrue(shown.body().contains("PASS\nstderr:\ndiagnostic"));
+        presenter.replaceItems(List.of(result));
+        assertEquals("工具结果", presenter.present(result).title());
     }
 
     @Test
@@ -71,7 +112,7 @@ class TranscriptPresenterTest {
                 CoreSchemas.TOOL_RESULT,
                 new CorePayloads.ToolResult("call-2", false, new CanonicalPayload("{\"ok\":false}"), Optional.empty()));
         assertEquals("工具结果", success.title());
-        assertEquals("工具未执行", failure.title());
+        assertEquals("工具结果 · 失败或未完成", failure.title());
 
         PresentedItem approval = present(
                 CoreSchemas.APPROVAL,
@@ -86,7 +127,7 @@ class TranscriptPresenterTest {
         assertEquals("transcript-error-block", error.styleClass());
 
         PresentedItem unknown = presenter.present(item("extension/custom@1", new CanonicalPayload("{\"x\":1}")));
-        assertEquals("message", unknown.title());
+        assertEquals("执行记录 · extension/custom@1", unknown.title());
         assertEquals("{\"x\":1}", unknown.body());
     }
 

@@ -6,12 +6,12 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.ProfileLifecycle;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.PromptOptimizationAdoption;
 import com.javaclaw.api.PromptOptimizationDraft;
 import com.javaclaw.api.PromptOptimizationState;
+import com.javaclaw.api.RoleLifecycle;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceLifecycle;
 import com.javaclaw.client.CommandOptions;
@@ -28,7 +28,7 @@ public final class PromptOptimizationSettingsPresenter {
      * 创建 Presenter。
      *
      * @param gateway SDK 异步边界
-     * @param adoptedCallback 成功采纳后刷新 Agent Profile 目录
+     * @param adoptedCallback 成功采纳后刷新 Agent Role 目录
      */
     public PromptOptimizationSettingsPresenter(PromptOptimizationSettingsGateway gateway, Runnable adoptedCallback) {
         this.gateway = Objects.requireNonNull(gateway, "gateway");
@@ -45,7 +45,7 @@ public final class PromptOptimizationSettingsPresenter {
         listener.accept(state);
     }
 
-    /** 读取活动 Workspace，并加载当前 Profile 的历史草稿。 */
+    /** 读取活动 Workspace，并加载当前 Role 的历史草稿。 */
     public void activate() {
         long epoch = nextEpoch();
         publish(state(SettingsLoadState.LOADING, state.selection(), "正在读取提示词优化任务…", false, epoch));
@@ -53,18 +53,18 @@ public final class PromptOptimizationSettingsPresenter {
     }
 
     /**
-     * 设置 Agent Profile 页面当前权威版本。
+     * 设置 Agent Role 页面当前权威版本。
      *
-     * @param profile 已保存 Profile；新建草稿时为空
+     * @param role 已保存 Role；新建草稿时为空
      */
-    public void selectProfile(Optional<AgentProfile> profile) {
-        Optional<AgentProfile> checked = Objects.requireNonNull(profile, "profile");
-        if (state.selection().profile().equals(checked)) {
+    public void selectRole(Optional<AgentRole> role) {
+        Optional<AgentRole> checked = Objects.requireNonNull(role, "role");
+        if (state.selection().role().equals(checked)) {
             return;
         }
         PromptOptimizationSelection selection = new PromptOptimizationSelection(
                 state.selection().workspaces(), state.selection().workspace(), checked, List.of(), Optional.empty());
-        publish(state(SettingsLoadState.READY, selection, "智能体方案已变化，正在刷新草稿…", false, nextEpoch()));
+        publish(state(SettingsLoadState.READY, selection, "Agent已变化，正在刷新草稿…", false, nextEpoch()));
         loadDrafts();
     }
 
@@ -77,7 +77,7 @@ public final class PromptOptimizationSettingsPresenter {
         Optional<Workspace> selected = Optional.ofNullable(workspace);
         List<Workspace> catalog = selected.map(List::of).orElseGet(List::of);
         PromptOptimizationSelection selection = new PromptOptimizationSelection(
-                catalog, selected, state.selection().profile(), List.of(), Optional.empty());
+                catalog, selected, state.selection().role(), List.of(), Optional.empty());
         publish(state(SettingsLoadState.READY, selection, "", false, nextEpoch()));
         loadDrafts();
     }
@@ -98,7 +98,7 @@ public final class PromptOptimizationSettingsPresenter {
                 new PromptOptimizationSelection(
                         selection.workspaces(),
                         selection.workspace(),
-                        selection.profile(),
+                        selection.role(),
                         selection.drafts(),
                         Optional.of(checked)),
                 "",
@@ -113,10 +113,10 @@ public final class PromptOptimizationSettingsPresenter {
             return;
         }
         Workspace workspace = state.selection().workspace().orElseThrow(() -> new IllegalStateException("请先选择工作区"));
-        AgentProfile profile = requireActiveProfile();
+        AgentRole role = requireActiveRole();
         long epoch = nextEpoch();
         publish(state(SettingsLoadState.SAVING, state.selection(), "正在提交提示词优化任务…", false, epoch));
-        AgentProfileRef reference = new AgentProfileRef(profile.id(), profile.revision());
+        AgentRoleRef reference = new AgentRoleRef(role.id(), role.revision());
         gateway.start(workspace.id(), reference, true, confirmation, CommandOptions.create(0))
                 .whenComplete((draft, failure) -> completeDraft(epoch, draft, failure, "提示词优化任务已提交"));
     }
@@ -150,24 +150,24 @@ public final class PromptOptimizationSettingsPresenter {
                 .whenComplete((result, failure) -> completeDraft(epoch, result, failure, "提示词优化已取消"));
     }
 
-    /** 以源 Profile 精确 revision 人工采纳当前 READY 草稿。 */
+    /** 以源 Role 精确 revision 人工采纳当前 READY 草稿。 */
     public void adopt(boolean adoptionConfirmed, String confirmation) {
         if (!exactConfirmation(adoptionConfirmed, confirmation, PromptOptimizationRpcContracts.ADOPTION_CONFIRMATION)) {
-            publish(state(SettingsLoadState.ERROR, state.selection(), "确认文本不匹配，草稿与智能体方案均未改变", false, nextEpoch()));
+            publish(state(SettingsLoadState.ERROR, state.selection(), "确认文本不匹配，草稿与Agent均未改变", false, nextEpoch()));
             return;
         }
         PromptOptimizationDraft draft = requireSelected();
         if (draft.result().state() != PromptOptimizationState.READY
-                || draft.adoptedProfile().isPresent()) {
+                || draft.adoptedRole().isPresent()) {
             throw new IllegalStateException("只有已生成且尚未采纳的提示词草稿可以采纳");
         }
         long epoch = nextEpoch();
-        publish(state(SettingsLoadState.SAVING, state.selection(), "正在创建新的智能体方案版本…", false, epoch));
+        publish(state(SettingsLoadState.SAVING, state.selection(), "正在创建新的Agent版本…", false, epoch));
         gateway.adopt(
                         draft.ref().id(),
                         true,
                         confirmation,
-                        CommandOptions.create(draft.ref().sourceProfile().revision()))
+                        CommandOptions.create(draft.ref().sourceRole().revision()))
                 .whenComplete((adoption, failure) -> completeAdoption(epoch, adoption, failure));
     }
 
@@ -178,8 +178,8 @@ public final class PromptOptimizationSettingsPresenter {
 
     private void loadDrafts() {
         Optional<Workspace> workspace = state.selection().workspace();
-        if (workspace.isEmpty() || state.selection().profile().isEmpty()) {
-            publish(state(SettingsLoadState.READY, state.selection(), "请先保存智能体方案并选择工作区", false, nextEpoch()));
+        if (workspace.isEmpty() || state.selection().role().isEmpty()) {
+            publish(state(SettingsLoadState.READY, state.selection(), "请先保存Agent并选择工作区", false, nextEpoch()));
             return;
         }
         long epoch = nextEpoch();
@@ -204,7 +204,7 @@ public final class PromptOptimizationSettingsPresenter {
         Optional<Workspace> selected =
                 retainWorkspace(active).or(() -> active.stream().findFirst());
         PromptOptimizationSelection selection = new PromptOptimizationSelection(
-                active, selected, state.selection().profile(), List.of(), Optional.empty());
+                active, selected, state.selection().role(), List.of(), Optional.empty());
         publish(state(SettingsLoadState.READY, selection, active.isEmpty() ? "尚未登记活动工作区" : "", false, epoch));
         loadDrafts();
     }
@@ -217,16 +217,16 @@ public final class PromptOptimizationSettingsPresenter {
             fail(epoch, failure);
             return;
         }
-        AgentProfile profile = state.selection().profile().orElseThrow();
+        AgentRole role = state.selection().role().orElseThrow();
         List<PromptOptimizationDraft> filtered = Objects.requireNonNull(drafts, "drafts").stream()
-                .filter(draft -> draft.ref().sourceProfile().id().equals(profile.id()))
+                .filter(draft -> draft.ref().sourceRole().id().equals(role.id()))
                 .toList();
         Optional<PromptOptimizationDraft> selected =
                 retainDraft(filtered).or(() -> filtered.stream().findFirst());
         PromptOptimizationSelection selection = new PromptOptimizationSelection(
                 state.selection().workspaces(),
                 state.selection().workspace(),
-                state.selection().profile(),
+                state.selection().role(),
                 filtered,
                 selected);
         publish(state(SettingsLoadState.READY, selection, filtered.isEmpty() ? "尚无提示词优化草稿" : "", false, epoch));
@@ -245,7 +245,7 @@ public final class PromptOptimizationSettingsPresenter {
         PromptOptimizationSelection selection = new PromptOptimizationSelection(
                 state.selection().workspaces(),
                 state.selection().workspace(),
-                state.selection().profile(),
+                state.selection().role(),
                 drafts,
                 Optional.of(checked));
         publish(state(SettingsLoadState.READY, selection, successMessage, false, epoch));
@@ -264,16 +264,16 @@ public final class PromptOptimizationSettingsPresenter {
                     epoch));
             return;
         }
-        completeDraft(epoch, Objects.requireNonNull(adoption, "adoption").draft(), null, "草稿已采纳为新的智能体方案版本");
+        completeDraft(epoch, Objects.requireNonNull(adoption, "adoption").draft(), null, "草稿已采纳为新的Agent版本");
         adoptedCallback.run();
     }
 
-    private AgentProfile requireActiveProfile() {
-        AgentProfile profile = state.selection().profile().orElseThrow(() -> new IllegalStateException("请先保存并选择智能体方案"));
-        if (profile.lifecycle() != ProfileLifecycle.ACTIVE) {
-            throw new IllegalStateException("只有已启用的智能体方案可以启动优化");
+    private AgentRole requireActiveRole() {
+        AgentRole role = state.selection().role().orElseThrow(() -> new IllegalStateException("请先保存并选择Agent"));
+        if (role.lifecycle() != RoleLifecycle.ACTIVE) {
+            throw new IllegalStateException("只有已启用的Agent可以启动优化");
         }
-        return profile;
+        return role;
     }
 
     private PromptOptimizationDraft requireSelected() {

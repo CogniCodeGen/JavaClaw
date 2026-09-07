@@ -1,0 +1,11 @@
+XZ for Java 1.12
+Maven coordinates: org.tukaani:xz:1.12
+SPDX license identifier: 0BSD
+Copyright (C) The XZ for Java authors and contributors
+
+JavaClaw 使用此组件读取应用托管工具链的 tar.xz 归档。
+随附 xz-java-COPYING.txt 保留上游 v1.12 的 COPYING 原文。
+二进制 JAR 的 Bundle-License 与源码 SPDX 均声明 0BSD。
+
+官方项目：https://tukaani.org/xz/java.html
+许可原文：https://github.com/tukaani-project/xz-java/blob/v1.12/COPYING

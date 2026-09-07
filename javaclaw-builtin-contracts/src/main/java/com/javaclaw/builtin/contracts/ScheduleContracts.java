@@ -7,8 +7,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-import com.javaclaw.api.AgentProfileRef;
 import com.javaclaw.api.AutomationExecutionSnapshot;
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.WorkspaceId;
 
 /** Schedule Definition、H2 权威 Occurrence 与投递契约。 */
@@ -137,21 +137,21 @@ public final class ScheduleContracts {
      * @param extensionId Definition 所有者
      * @param definitionId Definition 标识
      * @param definitionRevision 固定 revision
-     * @param profile 冻结执行使用的 Profile
+     * @param execution 独立执行配置，在 Occurrence 创建时冻结
      * @param budget Execution 总预算
      */
     public record DefinitionTarget(
             String extensionId,
             String definitionId,
             long definitionRevision,
-            AgentProfileRef profile,
+            ExecutionOverrides execution,
             OrchestrationContracts.ExecutionBudget budget) {
         /** 校验 Definition 目标。 */
         public DefinitionTarget {
             extensionId = ContractValidation.text(extensionId, "extensionId");
             definitionId = ContractValidation.text(definitionId, "definitionId");
             definitionRevision = ContractValidation.revision(definitionRevision);
-            Objects.requireNonNull(profile, "profile");
+            Objects.requireNonNull(execution, "execution");
             Objects.requireNonNull(budget, "budget");
         }
     }
@@ -159,16 +159,19 @@ public final class ScheduleContracts {
     /**
      * 固定 Turn 模板目标。
      *
-     * @param profile Agent Profile
+     * @param execution 独立执行配置，在 Occurrence 创建时冻结
      * @param title Thread 标题
      * @param instruction 冻结指令
      * @param budget Execution 总预算
      */
     public record TurnTemplate(
-            AgentProfileRef profile, String title, String instruction, OrchestrationContracts.ExecutionBudget budget) {
+            ExecutionOverrides execution,
+            String title,
+            String instruction,
+            OrchestrationContracts.ExecutionBudget budget) {
         /** 校验 Turn 模板。 */
         public TurnTemplate {
-            Objects.requireNonNull(profile, "profile");
+            Objects.requireNonNull(execution, "execution");
             title = ContractValidation.text(title, "title");
             instruction = ContractValidation.text(instruction, "instruction");
             Objects.requireNonNull(budget, "budget");

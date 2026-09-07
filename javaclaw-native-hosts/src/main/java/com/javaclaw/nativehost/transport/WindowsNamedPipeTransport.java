@@ -51,7 +51,7 @@ public final class WindowsNamedPipeTransport implements LocalTransport {
     /**
      * 连接 Named Pipe。
      *
-     * @return 使用 Protocol v2 framing 的 RPC 连接
+     * @return 使用 Protocol v3 framing 的 RPC 连接
      * @throws IOException 服务不可用、超时或原生调用失败
      */
     @Override

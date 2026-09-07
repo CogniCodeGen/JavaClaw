@@ -3,7 +3,7 @@ package com.javaclaw.protocol;
 import java.util.Objects;
 import java.util.Optional;
 
-/** Diagnostics 与后台生命周期管理的 Protocol v2 payload。 */
+/** Diagnostics 与后台生命周期管理的 Protocol v3 payload。 */
 public final class DiagnosticsRpcContracts {
     private DiagnosticsRpcContracts() {}
 

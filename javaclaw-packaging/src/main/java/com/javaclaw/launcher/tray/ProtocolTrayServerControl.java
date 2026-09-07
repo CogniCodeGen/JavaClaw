@@ -10,7 +10,7 @@ import com.javaclaw.client.sdk.JavaClawClient;
 import com.javaclaw.protocol.ClientInfo;
 import com.javaclaw.protocol.DiagnosticsRpcContracts;
 
-/** 使用 Protocol v2 协作式停止、禁止强制杀进程的托盘 Server 控制器。 */
+/** 使用 Protocol v3 协作式停止、禁止强制杀进程的托盘 Server 控制器。 */
 public final class ProtocolTrayServerControl implements TrayServerControl {
     private static final Duration STOP_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration POLL_INTERVAL = Duration.ofMillis(50);
@@ -80,7 +80,7 @@ public final class ProtocolTrayServerControl implements TrayServerControl {
 
     private static DiagnosticsRpcContracts.ServerStopResult requestStop(TrayServerProcess process) throws Exception {
         try (JavaClawClient client = JavaClawClient.connect(
-                process.transport(), new ClientInfo("JavaClaw Tray", "5.0"), Set.of(), ignored -> {})) {
+                process.transport(), new ClientInfo("JavaClaw Tray", "6.0"), Set.of(), ignored -> {})) {
             return client.diagnostics().stopServer(CommandOptions.create(0));
         }
     }

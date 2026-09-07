@@ -1,5 +1,6 @@
 package com.javaclaw.desktop.settings;
 
+import java.util.Objects;
 import java.util.Optional;
 
 import javafx.scene.Node;
@@ -11,7 +12,7 @@ import javafx.scene.control.TextInputDialog;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 
-import com.javaclaw.api.AgentProfile;
+import com.javaclaw.api.AgentRole;
 import com.javaclaw.api.PromptOptimizationDraft;
 import com.javaclaw.api.PromptOptimizationState;
 import com.javaclaw.api.Workspace;
@@ -22,12 +23,12 @@ import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 import com.javaclaw.desktop.component.PlatformDialogs;
 import com.javaclaw.protocol.PromptOptimizationRpcContracts;
 
-/** 智能体方案页内可复用的提示词优化、历史草稿与人工采纳面板。 */
+/** Agent页内可复用的提示词优化、历史草稿与人工采纳面板。 */
 public final class PromptOptimizationPanel {
     private final PlatformComponentFactory components = new PlatformComponentFactory();
     private final PromptOptimizationSettingsPresenter presenter;
     private final FormSection content =
-            new FormSection("提示词优化草稿", "优化会通过当前智能体方案启动普通受预算任务，并可能产生模型服务费用。结果只保存为草稿，人工采纳后才创建新版本。");
+            new FormSection("提示词优化草稿", "优化会通过当前Agent启动普通受预算任务，并可能产生模型服务费用。结果只保存为草稿，人工采纳后才创建新版本。");
     private final Button start;
     private final Button refresh;
     private final Button cancel;
@@ -40,12 +41,14 @@ public final class PromptOptimizationPanel {
     private final TextArea result = new TextArea();
     private Optional<Workspace> scopedWorkspace = Optional.empty();
     private boolean rendering;
+    private boolean reportedPending;
+    private Runnable pendingChanged = () -> {};
 
     /**
      * 创建面板。
      *
      * @param gateway 提示词优化 SDK 边界
-     * @param adoptedCallback 采纳成功后刷新智能体方案目录
+     * @param adoptedCallback 采纳成功后刷新Agent目录
      */
     public PromptOptimizationPanel(PromptOptimizationSettingsGateway gateway, Runnable adoptedCallback) {
         presenter = new PromptOptimizationSettingsPresenter(gateway, adoptedCallback);
@@ -59,7 +62,7 @@ public final class PromptOptimizationPanel {
         presenter.subscribe(this::render);
     }
 
-    /** @return 可嵌入智能体方案页面表单的根节点 */
+    /** @return 可嵌入Agent页面表单的根节点 */
     public Node content() {
         return content;
     }
@@ -89,12 +92,21 @@ public final class PromptOptimizationPanel {
     }
 
     /**
-     * 切换当前已保存智能体方案；新建或脏草稿传空。
+     * 监听本面板操作状态，供所属页面即时更新编辑与导入的互斥控件。
      *
-     * @param profile 当前权威智能体方案
+     * @param listener 状态改变时在 UI Thread 调用，不修改优化任务
      */
-    public void selectProfile(Optional<AgentProfile> profile) {
-        presenter.selectProfile(profile);
+    public void onPendingChanged(Runnable listener) {
+        pendingChanged = Objects.requireNonNull(listener, "listener");
+    }
+
+    /**
+     * 切换当前已保存Agent；新建或脏草稿传空。
+     *
+     * @param role 当前权威Agent
+     */
+    public void selectRole(Optional<AgentRole> role) {
+        presenter.selectRole(role);
     }
 
     private void configureControls() {
@@ -149,6 +161,10 @@ public final class PromptOptimizationPanel {
         } finally {
             rendering = false;
         }
+        if (reportedPending != state.pending()) {
+            reportedPending = state.pending();
+            pendingChanged.run();
+        }
     }
 
     private void renderDraft(Optional<PromptOptimizationDraft> selected) {
@@ -160,17 +176,17 @@ public final class PromptOptimizationPanel {
             adoption.setText("尚未采纳");
             return;
         }
-        identity.setText("智能体方案 " + draft.ref().sourceProfile().id() + "@"
-                + draft.ref().sourceProfile().revision()
+        identity.setText("Agent " + draft.ref().sourceRole().id() + "@"
+                + draft.ref().sourceRole().revision()
                 + " · 对话 " + draft.ref().threadId() + " · 任务 "
                 + draft.ref().turnId()
                 + " · 任务版本 " + draft.result().turnRevision());
         provenance.setText(draft.provenance().instructionRevision() + " · "
                 + draft.provenance().instructionDigest());
         result.setText(draft.result().content().orElse(""));
-        adoption.setText(draft.adoptedProfile()
-                .map(profile -> "已采纳为 " + profile.id() + "@" + profile.revision())
-                .orElse("尚未采纳；草稿不会自动修改智能体方案"));
+        adoption.setText(draft.adoptedRole()
+                .map(role -> "已采纳为 " + role.id() + "@" + role.revision())
+                .orElse("尚未采纳；草稿不会自动修改Agent"));
     }
 
     private void renderButtons(PromptOptimizationSettingsState state) {
@@ -180,12 +196,12 @@ public final class PromptOptimizationPanel {
         boolean pending = state.pending();
         boolean active = taskState == PromptOptimizationState.QUEUED || taskState == PromptOptimizationState.RUNNING;
         boolean ready = taskState == PromptOptimizationState.READY
-                && selected.flatMap(PromptOptimizationDraft::adoptedProfile).isEmpty();
+                && selected.flatMap(PromptOptimizationDraft::adoptedRole).isEmpty();
         boolean canStart = scopedWorkspace.isPresent()
                 && state.selection().workspace().isPresent()
                 && state.selection()
-                        .profile()
-                        .filter(profile -> profile.lifecycle() == com.javaclaw.api.ProfileLifecycle.ACTIVE)
+                        .role()
+                        .filter(role -> role.lifecycle() == com.javaclaw.api.RoleLifecycle.ACTIVE)
                         .isPresent();
         start.setDisable(pending || !canStart);
         refresh.setDisable(pending || state.selection().workspace().isEmpty());
@@ -198,14 +214,14 @@ public final class PromptOptimizationPanel {
         if (state.phase() == SettingsLoadState.ERROR) {
             status.getStyleClass().add("platform-action-error");
         }
-        String conflict = state.revisionConflict() ? "智能体方案版本已改变；草稿仍保留，可刷新后重新决策。" : "";
+        String conflict = state.revisionConflict() ? "Agent版本已改变；草稿仍保留，可刷新后重新决策。" : "";
         status.setText(conflict.isEmpty() ? state.message() : conflict + " " + state.message());
     }
 
     private void confirmStart() {
         TextInputDialog dialog = confirmationDialog(
                 "确认可能计费的提示词优化",
-                "此操作会用当前智能体方案启动真实任务，并调用所选模型服务",
+                "此操作会用当前Agent启动真实任务，并调用所选模型服务",
                 PromptOptimizationRpcContracts.BILLING_CONFIRMATION,
                 "启动优化");
         dialog.showAndWait().ifPresent(value -> presenter.start(true, value));
@@ -214,7 +230,7 @@ public final class PromptOptimizationPanel {
     private void confirmAdoption() {
         TextInputDialog dialog = confirmationDialog(
                 "确认人工采纳提示词草稿",
-                "采纳会以源智能体方案版本为前提创建新版本；不会覆盖或删除草稿",
+                "采纳会以源Agent版本为前提创建新版本；不会覆盖或删除草稿",
                 PromptOptimizationRpcContracts.ADOPTION_CONFIRMATION,
                 "采纳草稿");
         dialog.showAndWait().ifPresent(value -> presenter.adopt(true, value));
@@ -226,9 +242,9 @@ public final class PromptOptimizationPanel {
     }
 
     private static String draftDetail(PromptOptimizationDraft draft) {
-        String adoption = draft.adoptedProfile().map(ignored -> " · 已采纳").orElse("");
+        String adoption = draft.adoptedRole().map(ignored -> " · 已采纳").orElse("");
         String error = draft.result().errorCode().map(value -> " · " + value).orElse("");
-        return draft.provenance().createdAt() + " · 智能体方案 "
-                + draft.ref().sourceProfile().revision() + adoption + error;
+        return draft.provenance().createdAt() + " · Agent "
+                + draft.ref().sourceRole().revision() + adoption + error;
     }
 }

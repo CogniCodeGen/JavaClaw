@@ -44,6 +44,7 @@ public final class BuiltinExtensionHost implements ExtensionHost, ScheduleTarget
     private final CoreCommandService core;
     private final PermissionProfileService profiles;
     private final BuiltinExtensionRuntimePorts ports;
+    private final Optional<com.javaclaw.server.coding.CodingPlatform> coding;
     private final CanonicalJson json = new CanonicalJson();
     private final ViewSchemaWireCodec viewSchemas = new ViewSchemaWireCodec(json);
 
@@ -51,11 +52,13 @@ public final class BuiltinExtensionHost implements ExtensionHost, ScheduleTarget
             Map<ExtensionId, RegisteredExtension> extensions,
             CoreCommandService core,
             PermissionProfileService profiles,
-            BuiltinExtensionRuntimePorts ports) {
+            BuiltinExtensionRuntimePorts ports,
+            Optional<com.javaclaw.server.coding.CodingPlatform> coding) {
         this.extensions = Collections.unmodifiableMap(new LinkedHashMap<>(extensions));
         this.core = core;
         this.profiles = profiles;
         this.ports = ports;
+        this.coding = coding;
     }
 
     /**
@@ -74,6 +77,27 @@ public final class BuiltinExtensionHost implements ExtensionHost, ScheduleTarget
             PermissionProfileService profiles,
             BuiltinExtensionRuntimePorts ports)
             throws Exception {
+        return start(bundles, core, profiles, ports, Optional.empty());
+    }
+
+    /**
+     * 启动内置扩展并绑定可选 Coding 平台；只有应用组合根提供真实执行端口。
+     *
+     * @param bundles 内置 Bundle
+     * @param core Core 查询
+     * @param profiles 权限服务
+     * @param ports 通用运行端口
+     * @param coding 可信 Coding 平台，兼容测试或最小宿主可为空
+     * @return 已启动 Host，接管 Coding 平台关闭职责
+     * @throws Exception 扩展注册失败
+     */
+    public static BuiltinExtensionHost start(
+            List<ExtensionBundle> bundles,
+            CoreCommandService core,
+            PermissionProfileService profiles,
+            BuiltinExtensionRuntimePorts ports,
+            Optional<com.javaclaw.server.coding.CodingPlatform> coding)
+            throws Exception {
         Objects.requireNonNull(bundles, "bundles");
         LinkedHashMap<ExtensionId, RegisteredExtension> registered = new LinkedHashMap<>();
         try {
@@ -91,7 +115,8 @@ public final class BuiltinExtensionHost implements ExtensionHost, ScheduleTarget
                 ports.catalog().installBuiltIn(extension.descriptor());
                 ports.managedStore().inTransaction(extension.descriptor().id(), transaction -> null);
             }
-            return new BuiltinExtensionHost(registered, core, profiles, ports);
+            return new BuiltinExtensionHost(
+                    registered, core, profiles, ports, Objects.requireNonNull(coding, "coding"));
         } catch (Exception failure) {
             BuiltinExtensionRegistry.closeReverse(new ArrayList<>(registered.values()), failure);
             throw failure;
@@ -139,6 +164,7 @@ public final class BuiltinExtensionHost implements ExtensionHost, ScheduleTarget
                     .forEach(registration ->
                             checked.register(extension.descriptor().id(), registration));
         }
+        coding.ifPresent(platform -> platform.registerJobs(checked));
     }
 
     /**
@@ -235,6 +261,17 @@ public final class BuiltinExtensionHost implements ExtensionHost, ScheduleTarget
             PermissionProfile callerPermissions,
             CancellationToken cancellation)
             throws Exception {
+        return executeToolWithFacts(request, frozenDescriptor, callerPermissions, cancellation)
+                .response();
+    }
+
+    @Override
+    public com.javaclaw.server.extension.contract.GovernedExtensionResponse executeToolWithFacts(
+            ToolCallRequest request,
+            ToolDescriptor frozenDescriptor,
+            PermissionProfile callerPermissions,
+            CancellationToken cancellation)
+            throws Exception {
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(frozenDescriptor, "frozenDescriptor");
         Objects.requireNonNull(callerPermissions, "callerPermissions");
@@ -250,8 +287,6 @@ public final class BuiltinExtensionHost implements ExtensionHost, ScheduleTarget
         var turn =
                 core.findTurn(request.turnId()).orElseThrow(() -> new IllegalArgumentException("Turn does not exist"));
         Workspace workspace = core.workspaceForThread(turn.threadId());
-        PermissionProfile effective = PermissionResolver.intersect(
-                List.of(callerPermissions, extension.descriptor().requirements().permissionCeiling()));
         ExtensionRequest extensionRequest = new ExtensionRequest(
                 workspace.id(),
                 Optional.of(turn.threadId()),
@@ -261,7 +296,35 @@ public final class BuiltinExtensionHost implements ExtensionHost, ScheduleTarget
                 Optional.of(request.idempotencyKey()),
                 0,
                 core.unattendedExecutionScope(turn.id()));
-        return tool.handler().handle(extensionRequest, context(extension, workspace, effective, cancellation));
+        return invokeTool(extension, workspace, callerPermissions, cancellation, request, extensionRequest, tool);
+    }
+
+    private com.javaclaw.server.extension.contract.GovernedExtensionResponse invokeTool(
+            RegisteredExtension extension,
+            Workspace workspace,
+            PermissionProfile caller,
+            CancellationToken cancellation,
+            ToolCallRequest request,
+            ExtensionRequest extensionRequest,
+            ExtensionContributions.Tool tool)
+            throws Exception {
+        PermissionProfile effective = PermissionResolver.intersect(
+                List.of(caller, extension.descriptor().requirements().permissionCeiling()));
+        if (isCoding(extension)) {
+            try (var binding = coding.orElseThrow(() -> new SecurityException("Coding 平台尚未装配"))
+                    .bindTool(request, caller, cancellation)) {
+                var response = tool.handler()
+                        .handle(extensionRequest, context(extension, workspace, effective, cancellation, binding));
+                return binding.result(response);
+            }
+        }
+        return new com.javaclaw.server.extension.contract.GovernedExtensionResponse(
+                tool.handler().handle(extensionRequest, context(extension, workspace, effective, cancellation)),
+                List.of());
+    }
+
+    private static boolean isCoding(RegisteredExtension extension) {
+        return extension.descriptor().id().value().equals(com.javaclaw.builtin.contracts.CodingContracts.EXTENSION_ID);
     }
 
     /**
@@ -410,16 +473,30 @@ public final class BuiltinExtensionHost implements ExtensionHost, ScheduleTarget
                 idempotencyKey,
                 expectedRevision,
                 unattendedExecutionScope);
+        if (isCoding(extension)) {
+            try (var binding = coding.orElseThrow(() -> new SecurityException("Coding 平台尚未装配"))
+                    .bindManagement(request, kind, new CancellationSource())) {
+                var response = handler.handle(request, context(extension, call.workspaceId(), binding));
+                return binding.result(response).response();
+            }
+        }
         return handler.handle(request, context(extension, call.workspaceId()));
     }
 
     private ExtensionExecutionContext context(RegisteredExtension extension, com.javaclaw.api.WorkspaceId workspaceId) {
+        return context(extension, workspaceId, com.javaclaw.extension.spi.WorkspaceExecutionPort.denied());
+    }
+
+    private ExtensionExecutionContext context(
+            RegisteredExtension extension,
+            com.javaclaw.api.WorkspaceId workspaceId,
+            com.javaclaw.extension.spi.WorkspaceExecutionPort execution) {
         Workspace workspace = core.findWorkspace(workspaceId)
                 .orElseThrow(() -> new IllegalArgumentException("Workspace does not exist"));
         PermissionProfile caller = profiles.resolve(PermissionProfileService.STANDARD_PROFILE_ID, 1, workspace);
         PermissionProfile effective = PermissionResolver.intersect(
                 List.of(caller, extension.descriptor().requirements().permissionCeiling()));
-        return context(extension, workspace, effective, new CancellationSource());
+        return context(extension, workspace, effective, new CancellationSource(), execution);
     }
 
     private ExtensionExecutionContext context(
@@ -427,24 +504,21 @@ public final class BuiltinExtensionHost implements ExtensionHost, ScheduleTarget
             Workspace workspace,
             PermissionProfile effective,
             CancellationToken cancellation) {
-        return new ExtensionExecutionContext(
-                extension.descriptor(),
-                workspace.id(),
+        return context(
+                extension,
+                workspace,
                 effective,
                 cancellation,
-                ports.clock(),
-                ports.managedStore(),
-                ports.turns(),
-                ports.executionPolicies(),
-                this,
-                ports.inputs(),
-                ports.jobs(),
-                ports.evidence(),
-                ports.attachments().apply(workspace.id()),
-                ports.credentials(),
-                ports.privateNetworkGrants(),
-                ports.services(),
-                ports.embeddings());
+                com.javaclaw.extension.spi.WorkspaceExecutionPort.denied());
+    }
+
+    private ExtensionExecutionContext context(
+            RegisteredExtension extension,
+            Workspace workspace,
+            PermissionProfile effective,
+            CancellationToken cancellation,
+            com.javaclaw.extension.spi.WorkspaceExecutionPort execution) {
+        return BuiltinExtensionContexts.create(ports, this, extension, workspace, effective, cancellation, execution);
     }
 
     private void validateOwnership(ExtensionRpcContracts.CallPayload call) {
@@ -499,6 +573,12 @@ public final class BuiltinExtensionHost implements ExtensionHost, ScheduleTarget
     /** 按逆序关闭全部 Bundle。 */
     @Override
     public void close() throws Exception {
-        BuiltinExtensionRegistry.closeReverse(new ArrayList<>(extensions.values()), null);
+        try {
+            BuiltinExtensionRegistry.closeReverse(new ArrayList<>(extensions.values()), null);
+        } finally {
+            if (coding.isPresent()) {
+                coding.orElseThrow().close();
+            }
+        }
     }
 }

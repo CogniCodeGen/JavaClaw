@@ -9,7 +9,9 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.Objects;
 
-/** data-v5 内 staging、installed、Trash 与管理员信任目录的安全布局。 */
+import com.javaclaw.nativehost.ManagedRuntimeDirectory;
+
+/** data-v6 内 staging、installed、Trash 与管理员信任目录的安全布局。 */
 final class ThirdPartyBundleDirectories {
     private final Path root;
     private final Path staging;
@@ -22,11 +24,11 @@ final class ThirdPartyBundleDirectories {
         Path supplied =
                 Objects.requireNonNull(dataRoot, "dataRoot").toAbsolutePath().normalize();
         if (supplied.getFileName() == null
-                || !"data-v5".equals(supplied.getFileName().toString())) {
-            throw new IllegalArgumentException("data root must end with data-v5");
+                || !"data-v6".equals(supplied.getFileName().toString())) {
+            throw new IllegalArgumentException("data root must end with data-v6");
         }
         try {
-            Files.createDirectories(supplied);
+            ManagedRuntimeDirectory.prepare(supplied);
             root = supplied.toRealPath();
             Path extensions = secureDirectory(root.resolve("extensions"));
             staging = secureDirectory(extensions.resolve("staging"));
@@ -130,7 +132,7 @@ final class ThirdPartyBundleDirectories {
         Files.createDirectories(directory);
         Path real = directory.toRealPath();
         if (!real.startsWith(root)) {
-            throw new SecurityException("extension directory escapes data-v5");
+            throw new SecurityException("extension directory escapes data-v6");
         }
         try {
             Files.setPosixFilePermissions(

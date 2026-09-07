@@ -6,7 +6,7 @@ import java.util.Objects;
 import com.javaclaw.api.AttachmentScope;
 import com.javaclaw.api.AttachmentUploadSession;
 
-/** Protocol v2 分块 Attachment 上传与读取请求契约。 */
+/** Protocol v3 分块 Attachment 上传与读取请求契约。 */
 public final class AttachmentRpcContracts {
     /** 单个 Attachment 允许的最大原始字节数。 */
     public static final int MAX_ATTACHMENT_BYTES = Math.toIntExact(AttachmentUploadSession.MAXIMUM_BYTES);

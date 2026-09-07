@@ -64,7 +64,7 @@ class ThirdPartyBundleRecoveryTest {
     void initialize() {
         clock = Clock.fixed(NOW, ZoneOffset.UTC);
         json = new CanonicalJson();
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         attachments = new AttachmentService(database, json, clock);
         keys = ThirdPartyBundleTestFixtures.keyPair();

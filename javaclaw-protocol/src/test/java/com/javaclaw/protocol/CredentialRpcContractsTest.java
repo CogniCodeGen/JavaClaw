@@ -53,15 +53,15 @@ class CredentialRpcContractsTest {
     @Test
     void Vault和Workspace方法都声明逐方法Schema() throws Exception {
         CanonicalJson json = new CanonicalJson();
-        String credential = read("/schema/credential-v2.schema.json");
-        String workspace = read("/schema/workspace-v2.schema.json");
-        String methods = read("/schema/methods-v2.json");
+        String credential = read("/schema/credential-v3.schema.json");
+        String workspace = read("/schema/workspace-v3.schema.json");
+        String methods = read("/schema/methods-v3.json");
 
         json.parse(credential);
         json.parse(workspace);
-        assertTrue(methods.contains("credential-v2.schema.json#/$defs/resetCommand"));
-        assertTrue(methods.contains("credential-v2.schema.json#/$defs/listResult"));
-        assertTrue(methods.contains("workspace-v2.schema.json#/$defs/archiveCommand"));
+        assertTrue(methods.contains("credential-v3.schema.json#/$defs/resetCommand"));
+        assertTrue(methods.contains("credential-v3.schema.json#/$defs/listResult"));
+        assertTrue(methods.contains("workspace-v3.schema.json#/$defs/archiveCommand"));
     }
 
     private static String read(String resource) throws IOException {

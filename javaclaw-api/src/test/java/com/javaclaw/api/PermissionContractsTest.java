@@ -140,7 +140,7 @@ class PermissionContractsTest {
         assertEquals(4, new TurnBudget(1, 1, 1, 4, Duration.ofSeconds(1)).childThreads());
         assertThrows(IllegalArgumentException.class, () -> new TurnBudget(0, 1, 1, 0, Duration.ofSeconds(1)));
         assertThrows(IllegalArgumentException.class, () -> new TurnBudget(1, 0, 1, 0, Duration.ofSeconds(1)));
-        assertThrows(IllegalArgumentException.class, () -> new TurnBudget(1, 1, 0, 0, Duration.ofSeconds(1)));
+        assertThrows(IllegalArgumentException.class, () -> new TurnBudget(1, 1, -1, 0, Duration.ofSeconds(1)));
         assertThrows(IllegalArgumentException.class, () -> new TurnBudget(1, 1, 1, -1, Duration.ofSeconds(1)));
         assertThrows(IllegalArgumentException.class, () -> new TurnBudget(1, 1, 1, 5, Duration.ofSeconds(1)));
         assertThrows(NullPointerException.class, () -> new TurnBudget(1, 1, 1, 0, null));

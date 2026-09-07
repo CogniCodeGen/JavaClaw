@@ -23,7 +23,7 @@ class ProviderModelDiscoveryRpcHandlersTest {
 
     @Test
     void 同一长连接的顺序请求只注册一次关闭回调() {
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         CanonicalJson json = new CanonicalJson();
         ProviderService providers = new ProviderService(database, ignored -> true, json, Clock.systemUTC());

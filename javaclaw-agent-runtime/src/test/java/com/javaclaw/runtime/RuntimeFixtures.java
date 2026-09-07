@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.ApprovalRequirement;
 import com.javaclaw.api.CancellationToken;
@@ -90,7 +90,7 @@ final class RuntimeFixtures {
                 status,
                 1,
                 budget,
-                new AgentProfileRef("runtime-profile", 1),
+                new AgentRoleRef("runtime-role", 1),
                 new ProviderRef("runtime-provider", 1, "model"),
                 new PermissionProfileRef("runtime-test", 2),
                 Path.of("."),
@@ -98,7 +98,19 @@ final class RuntimeFixtures {
                 catalog.digest(),
                 Optional.empty(),
                 NOW,
-                NOW);
+                NOW,
+                new com.javaclaw.api.ResolvedTurnConfigSummary(
+                        new AgentRoleRef("runtime-role", 1),
+                        new ProviderRef("runtime-provider", 1, "model"),
+                        new PermissionProfileRef("runtime-test", 2),
+                        com.javaclaw.api.ApprovalPolicy.NONE,
+                        budget,
+                        permissions().tools().allowedTools(),
+                        Optional.empty(),
+                        "a".repeat(64),
+                        catalog.digest(),
+                        false,
+                        List.of()));
     }
 
     static ToolDescriptor tool(String producer, String name, long revision) {

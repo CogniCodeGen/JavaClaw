@@ -41,7 +41,6 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
     private final ProviderVerificationPresenter embeddingVerification;
     private final ProviderModelDiscoveryPresenter discovery;
     private final ProviderEmbeddingBindingPresenter embeddingBinding;
-    private final ProviderProfileReferencePanel profileReferences;
     private final VBox content = components.page("模型服务");
     private final ListDetailPane<ProviderEndpoint> masterDetail = new ListDetailPane<>();
     private final Label id = new Label("—");
@@ -61,6 +60,7 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
     private final ProviderSecretSection secretSection;
     private final ProviderVerificationSection verificationSection;
     private final ProviderModelCatalogEditor modelCatalog;
+    private final ProviderContextEditor contextEditor;
     private final Button save;
     private final Button discard;
     private final Button probe;
@@ -87,9 +87,10 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
         embeddingVerification = new ProviderVerificationPresenter(gateway, ProviderModelPurpose.EMBEDDING);
         discovery = new ProviderModelDiscoveryPresenter(gateway);
         embeddingBinding = new ProviderEmbeddingBindingPresenter(gateway);
-        profileReferences = new ProviderProfileReferencePanel(gateway);
         modelCatalog =
                 new ProviderModelCatalogEditor(this::discoverModels, this::replaceModels, this::bindEmbeddingModel);
+        contextEditor = new ProviderContextEditor(gateway, presenter::reload);
+        modelCatalog.onModelSelected(ignored -> bindModelContext());
         save = components.action("保存模型服务", ActionStyle.PRIMARY, ActionSize.NORMAL);
         discard = components.action("放弃更改", ActionStyle.GHOST, ActionSize.NORMAL);
         probe = components.action("本地检查", ActionStyle.SOFT, ActionSize.NORMAL);
@@ -97,7 +98,7 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
         conflict = new RevisionConflictPane(presenter::reload, this::showConflictComparison);
         dangerZone = new DangerZone(
                 "归档模型服务",
-                "归档后不会删除历史任务，但不能用于新智能体方案或新任务。",
+                "归档后不会删除历史任务，但不能用于新Agent或新任务。",
                 "归档当前模型服务",
                 new AlertDangerConfirmationPolicy(content),
                 presenter::archive);
@@ -147,7 +148,7 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
 
     @Override
     public boolean dirty() {
-        return presenter.state().dirty();
+        return presenter.state().dirty() || contextEditor.dirty();
     }
 
     @Override
@@ -156,11 +157,13 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
                 || chatVerificationState.pending()
                 || embeddingVerificationState.pending()
                 || discoveryState.pending()
-                || embeddingState.pending();
+                || embeddingState.pending()
+                || contextEditor.pending();
     }
 
     @Override
     public void warnUnsavedChanges() {
+        contextEditor.warnUnsavedChanges();
         presenter.warnUnsavedChanges();
     }
 
@@ -212,10 +215,10 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
                         identitySection(),
                         connectionSection(),
                         modelSection(),
+                        contextEditor,
                         secretSection.content(),
                         requestSection(),
                         verificationSection.content(),
-                        profileReferences.content(),
                         technicalDetails(),
                         conflict,
                         dangerZone);
@@ -277,6 +280,10 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
 
     private void bindEvents() {
         masterDetail.list().getSelectionModel().selectedItemProperty().addListener((ignored, previous, selected) -> {
+            if (!rendering && selected != null && contextEditor.dirty()) {
+                contextEditor.warnUnsavedChanges();
+                return;
+            }
             if (!rendering && selected != null) {
                 discovery.reset();
                 presenter.select(selected);
@@ -345,7 +352,6 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
                     state.selected().map(endpoint -> endpoint.spec().models()).orElse(List.of()));
             renderModelCatalog();
             bindVerifications();
-            profileReferences.bind(state.selected());
         } finally {
             rendering = false;
         }
@@ -495,6 +501,18 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
                 canDiscover(provider),
                 canEditCatalog(provider),
                 exactSaved);
+        bindModelContext();
+    }
+
+    private void bindModelContext() {
+        ProviderSettingsState state = presenter.state();
+        var selected = Optional.ofNullable(modelCatalog.selectedModel())
+                .filter(model -> model.supports(ProviderModelPurpose.CHAT));
+        contextEditor.bind(state.selected()
+                .filter(endpoint ->
+                        !state.dirty() && !state.pending() && endpoint.lifecycle() != ProviderLifecycle.ARCHIVED)
+                .flatMap(endpoint -> selected.map(model ->
+                        new com.javaclaw.api.ProviderRef(endpoint.id(), endpoint.revision(), model.modelId()))));
     }
 
     private boolean canEditCatalog(ProviderSettingsState state) {

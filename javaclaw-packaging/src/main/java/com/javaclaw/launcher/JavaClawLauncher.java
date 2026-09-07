@@ -10,6 +10,7 @@ import com.javaclaw.launcher.tray.ProtocolTrayServerControl;
 import com.javaclaw.launcher.tray.TrayApplicationController;
 import com.javaclaw.launcher.tray.TrayCommand;
 import com.javaclaw.launcher.tray.TrayServerProcess;
+import com.javaclaw.nativehost.ManagedRuntimeDirectory;
 import com.javaclaw.nativehost.transport.WindowsPipeName;
 import com.javaclaw.nativehost.tray.SystemTrayFeature;
 import com.javaclaw.nativehost.tray.TrayPresenceLease;
@@ -29,6 +30,7 @@ public final class JavaClawLauncher {
      */
     public static void main(String[] arguments) throws Exception {
         RuntimeLayout layout = RuntimeLayout.fromSystemProperties();
+        ManagedRuntimeDirectory.prepare(layout.dataDirectory());
         SystemTrayFeature.Status tray = SystemTrayFeature.detect();
         if (!tray.available()) {
             launchDesktopOnce(layout, arguments);
@@ -120,6 +122,7 @@ public final class JavaClawLauncher {
         if (RuntimeLayout.isWindows()) {
             command.add("--enable-native-access=ALL-UNNAMED");
         }
+        command.addAll(layout.runtimeProperties());
         command.add(transportProperty);
         command.add("-D" + SUPERVISED_PROPERTY + "=true");
         command.add("-D" + TRAY_ACTIVE_PROPERTY + "=" + trayActive);

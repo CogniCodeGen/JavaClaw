@@ -82,7 +82,7 @@ class ThirdPartyExtensionHostTest {
     void initialize() {
         clock = new MutableClock(NOW);
         json = new CanonicalJson();
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         core = new CoreCommandService(database, json, clock);
         attachments = new AttachmentService(database, json, clock);

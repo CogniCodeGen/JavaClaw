@@ -71,7 +71,7 @@ class VaultProviderCredentialResolverTest {
     }
 
     private SecretVaultService vault() {
-        H2Database database = new H2Database(temporaryDirectory.resolve(UUID.randomUUID() + "/data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve(UUID.randomUUID() + "/data-v6"));
         database.initialize();
         return new SecretVaultService(database, new MemoryProtector(), new CanonicalJson(), CLOCK, new SecureRandom());
     }

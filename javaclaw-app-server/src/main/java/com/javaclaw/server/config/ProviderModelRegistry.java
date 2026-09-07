@@ -127,6 +127,18 @@ public final class ProviderModelRegistry
     }
 
     @Override
+    public ProviderState restoreCoveredState(
+            String modelId, ProviderState state, java.util.List<com.javaclaw.runtime.ModelMessage> coveredMessages) {
+        try (Lease lease = acquireCurrent()) {
+            ModelGateway gateway = lease.generation().route(modelId);
+            if (!(gateway instanceof NativeConversationSupport support)) {
+                throw new IllegalStateException("Provider 不支持旧状态恢复");
+            }
+            return support.restoreCoveredState(modelId, state, coveredMessages);
+        }
+    }
+
+    @Override
     public NativeCompactionResult compact(NativeCompactionRequest request, CancellationToken cancellation)
             throws Exception {
         try (Lease lease = acquireCurrent()) {

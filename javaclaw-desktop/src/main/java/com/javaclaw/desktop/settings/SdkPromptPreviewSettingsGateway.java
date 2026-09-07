@@ -2,9 +2,11 @@ package com.javaclaw.desktop.settings;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletionStage;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.PromptManifestPreview;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceId;
@@ -29,7 +31,18 @@ public final class SdkPromptPreviewSettingsGateway implements PromptPreviewSetti
     }
 
     @Override
-    public CompletionStage<PromptManifestPreview> preview(WorkspaceId workspaceId, AgentProfileRef profile) {
-        return desktop.submitSettingsRequest(client -> client.profiles().previewPrompt(workspaceId, profile));
+    public CompletionStage<PromptManifestPreview> preview(WorkspaceId workspaceId, AgentRoleRef profile) {
+        return desktop.submitSettingsRequest(client -> client.prompts()
+                .preview(
+                        workspaceId,
+                        Optional.empty(),
+                        new ExecutionOverrides(
+                                Optional.of(profile),
+                                Optional.empty(),
+                                Optional.empty(),
+                                Optional.empty(),
+                                Optional.empty(),
+                                Optional.empty(),
+                                Optional.empty())));
     }
 }

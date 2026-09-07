@@ -16,6 +16,7 @@ import com.javaclaw.api.ToolDescriptor;
 import com.javaclaw.api.ToolIdentity;
 import com.javaclaw.api.ToolRisk;
 import com.javaclaw.runtime.ModelFinishReason;
+import com.javaclaw.runtime.ModelInstructions;
 import com.javaclaw.runtime.ModelInvocation;
 import com.javaclaw.runtime.ModelMessage;
 import com.javaclaw.runtime.ProviderState;
@@ -80,8 +81,8 @@ class OpenAiResponsesMappingContractsTest {
                         .asResponse()
                         .size());
 
-        ProviderStateCodec.DecodedState emptyState =
-                new ProviderStateCodec.DecodedState("response", "response-1", INSTRUCTIONS, List.of(), 2);
+        ProviderStateCodec.DecodedState emptyState = new ProviderStateCodec.DecodedState(
+                "response", "response-1", new ModelInstructions(INSTRUCTIONS, "", ""), List.of(), 2);
         ModelInvocation continuation = invocation(INSTRUCTIONS, List.of(message(MessageRole.USER, "继续")), List.of());
         assertEquals(
                 1,
@@ -151,7 +152,7 @@ class OpenAiResponsesMappingContractsTest {
     @Test
     void Provider状态可把函数调用输出恢复为下一次输入() throws Exception {
         ProviderStateCodec codec = new ProviderStateCodec();
-        ProviderState state = codec.response(functionCallResponse(), INSTRUCTIONS);
+        ProviderState state = codec.response(functionCallResponse(), new ModelInstructions(INSTRUCTIONS, "", ""));
         ProviderStateCodec.DecodedState decoded = codec.decode(state);
 
         assertEquals("response", decoded.kind());

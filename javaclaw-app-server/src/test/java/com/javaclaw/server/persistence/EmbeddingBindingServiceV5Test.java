@@ -38,7 +38,7 @@ class EmbeddingBindingServiceV5Test {
 
     @Test
     void 精确Binding写入H2并在重启后恢复且最新停用立即阻断() {
-        Path dataRoot = temporaryDirectory.resolve("data-v5");
+        Path dataRoot = temporaryDirectory.resolve("data-v6");
         H2Database database = new H2Database(dataRoot);
         database.initialize();
         CanonicalJson json = new CanonicalJson();
@@ -77,7 +77,7 @@ class EmbeddingBindingServiceV5Test {
 
     @Test
     void Binding拒绝Chat模型且Active壳必须具备模型和凭据引用() {
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         CanonicalJson json = new CanonicalJson();
         ProviderService providers = new ProviderService(database, credential -> true, json, CLOCK);

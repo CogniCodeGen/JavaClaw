@@ -57,9 +57,9 @@ class JsonRpcCodecTest {
     void 非法请求信封全部在handler之前拒绝() {
         assertCode(ProtocolErrorCode.PARSE_ERROR, "{");
         assertCode(ProtocolErrorCode.INVALID_REQUEST, "[]");
-        assertCode(ProtocolErrorCode.UNSUPPORTED_PROTOCOL, "{}");
-        assertCode(ProtocolErrorCode.UNSUPPORTED_PROTOCOL, "{\"jsonrpc\":2}");
-        assertCode(ProtocolErrorCode.UNSUPPORTED_PROTOCOL, "{\"jsonrpc\":\"1.0\"}");
+        assertCode(ProtocolErrorCode.UNSUPPORTED_PROTOCOL_VERSION, "{}");
+        assertCode(ProtocolErrorCode.UNSUPPORTED_PROTOCOL_VERSION, "{\"jsonrpc\":2}");
+        assertCode(ProtocolErrorCode.UNSUPPORTED_PROTOCOL_VERSION, "{\"jsonrpc\":\"1.0\"}");
         assertCode(ProtocolErrorCode.INVALID_REQUEST, "{\"jsonrpc\":\"2.0\",\"method\":\"thread/read\",\"extra\":1}");
         assertCode(ProtocolErrorCode.INVALID_REQUEST, "{\"jsonrpc\":\"2.0\",\"method\":\" \"}");
         assertCode(ProtocolErrorCode.INVALID_REQUEST, "{\"jsonrpc\":\"2.0\",\"method\":\"thread/read\",\"params\":[]}");

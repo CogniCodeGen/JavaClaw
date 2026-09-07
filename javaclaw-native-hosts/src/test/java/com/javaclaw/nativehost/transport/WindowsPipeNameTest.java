@@ -32,9 +32,9 @@ class WindowsPipeNameTest {
         WindowsPipeName second = WindowsPipeName.currentUserDefault();
 
         assertEquals(first, second);
-        assertTrue(first.value().startsWith("javaclaw-app-server-v5-"));
+        assertTrue(first.value().startsWith("javaclaw-app-server-v6-"));
         assertEquals(
-                24, first.value().substring("javaclaw-app-server-v5-".length()).length());
+                24, first.value().substring("javaclaw-app-server-v6-".length()).length());
         assertFalse(first.nativePath().contains(System.getProperty("user.home")));
         assertNotEquals(first, new Object());
     }

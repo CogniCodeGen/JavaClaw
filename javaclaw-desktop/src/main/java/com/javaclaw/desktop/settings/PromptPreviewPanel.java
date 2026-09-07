@@ -11,7 +11,7 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 
-import com.javaclaw.api.AgentProfile;
+import com.javaclaw.api.AgentRole;
 import com.javaclaw.api.PromptManifestPreview;
 import com.javaclaw.api.PromptSourceMetadata;
 import com.javaclaw.api.Workspace;
@@ -20,7 +20,7 @@ import com.javaclaw.desktop.component.PlatformComponentFactory;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 
-/** 智能体方案页内可复用的提示词来源只读面板。 */
+/** Agent页内可复用的提示词来源只读面板。 */
 public final class PromptPreviewPanel {
     private final PlatformComponentFactory components = new PlatformComponentFactory();
     private final PromptPreviewSettingsPresenter presenter;
@@ -49,7 +49,7 @@ public final class PromptPreviewPanel {
         presenter.subscribe(this::render);
     }
 
-    /** @return 可嵌入智能体方案页面表单的根节点 */
+    /** @return 可嵌入Agent页面表单的根节点 */
     public Node content() {
         return content;
     }
@@ -74,12 +74,12 @@ public final class PromptPreviewPanel {
     }
 
     /**
-     * 切换当前权威智能体方案；草稿尚未保存时传空。
+     * 切换当前权威Agent；草稿尚未保存时传空。
      *
-     * @param profile 当前智能体方案
+     * @param role 当前Agent
      */
-    public void selectProfile(Optional<AgentProfile> profile) {
-        presenter.selectProfile(profile);
+    public void selectRole(Optional<AgentRole> role) {
+        presenter.selectRole(role);
     }
 
     private void configureControls() {
@@ -102,7 +102,7 @@ public final class PromptPreviewPanel {
         content.addField("输入令牌估算", tokens);
         content.addField("来源", sources);
         content.addField("内置系统提示词", coreTemplate);
-        content.addField("智能体方案提示词", profileInstruction);
+        content.addField("Agent提示词", profileInstruction);
         VBox.setVgrow(sources, Priority.ALWAYS);
     }
 
@@ -120,7 +120,7 @@ public final class PromptPreviewPanel {
         preview.setDisable(state.phase() == SettingsLoadState.LOADING
                 || scopedWorkspace.isEmpty()
                 || state.workspace().isEmpty()
-                || state.profile().isEmpty());
+                || state.role().isEmpty());
     }
 
     private void renderPreview(Optional<PromptManifestPreview> value) {
@@ -134,17 +134,16 @@ public final class PromptPreviewPanel {
             profileInstruction.clear();
             return;
         }
-        identity.setText(
-                "智能体方案 " + current.profile().id() + "@" + current.profile().revision()
-                        + " · 模型服务 " + current.provider().endpointId() + "@"
-                        + current.provider().endpointRevision()
-                        + " · 权限方案 " + current.permissionProfile().id() + "@"
-                        + current.permissionProfile().version());
+        identity.setText("Agent " + current.role().id() + "@" + current.role().revision()
+                + " · 模型服务 " + current.provider().endpointId() + "@"
+                + current.provider().endpointRevision()
+                + " · 权限方案 " + current.permissionProfile().id() + "@"
+                + current.permissionProfile().version());
         digest.setText(current.manifestDigest());
         tokens.setText(current.estimatedInputTokens() + " · " + current.tokenEstimator());
         sources.getItems().setAll(current.sources());
         coreTemplate.setText(current.coreTemplate());
-        profileInstruction.setText(current.profileInstruction());
+        profileInstruction.setText(current.developerInstructions());
     }
 
     private static TextArea readOnlyArea() {

@@ -11,8 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AttachmentSchemaResourceTest {
     @Test
     void catalogUsesChunkedUploadAndPublishesHardWireLimits() throws IOException {
-        String methods = resource("/schema/methods-v2.json");
-        String schema = resource("/schema/attachment-v2.schema.json");
+        String methods = resource("/schema/methods-v3.json");
+        String schema = resource("/schema/attachment-v3.schema.json");
 
         assertTrue(methods.contains("attachment/upload/begin"));
         assertTrue(methods.contains("attachment/upload/chunk"));

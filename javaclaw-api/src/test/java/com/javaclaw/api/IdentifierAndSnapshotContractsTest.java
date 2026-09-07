@@ -98,7 +98,8 @@ class IdentifierAndSnapshotContractsTest {
                 "b".repeat(64),
                 Optional.of("  "),
                 ApiFixtures.NOW,
-                later);
+                later,
+                ApiFixtures.config("b".repeat(64)).summary());
 
         assertTrue(turn.errorCode().isEmpty());
         assertEquals(
@@ -117,7 +118,8 @@ class IdentifierAndSnapshotContractsTest {
                                 "b".repeat(64),
                                 Optional.of(" failed "),
                                 ApiFixtures.NOW,
-                                later)
+                                later,
+                                ApiFixtures.config("b".repeat(64)).summary())
                         .errorCode()
                         .orElseThrow());
     }
@@ -175,7 +177,8 @@ class IdentifierAndSnapshotContractsTest {
                         "b".repeat(64),
                         Optional.empty(),
                         later,
-                        ApiFixtures.NOW));
+                        ApiFixtures.NOW,
+                        ApiFixtures.config("b".repeat(64)).summary()));
     }
 
     @Test
@@ -319,8 +322,8 @@ class IdentifierAndSnapshotContractsTest {
         assertFalse(random.isBlank());
     }
 
-    private static AgentProfileRef profileRef() {
-        return new AgentProfileRef("default", 1);
+    private static AgentRoleRef profileRef() {
+        return new AgentRoleRef("default", 1);
     }
 
     private static ProviderRef providerRef() {

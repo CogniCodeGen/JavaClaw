@@ -178,7 +178,7 @@ public final class ProviderSettingsPresenter {
                 .whenComplete(this::completeWrite);
     }
 
-    /** 归档当前 Provider；归档后不再供新 Profile 使用。 */
+    /** 归档当前 Provider；归档后不再供新的执行配置使用。 */
     public void archive() {
         ProviderEndpoint selected = requireSelected();
         if (state.dirty()) {

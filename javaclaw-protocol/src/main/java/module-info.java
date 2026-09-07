@@ -1,4 +1,4 @@
-/** JavaClaw 本地 App Protocol v2。 */
+/** JavaClaw 本地 App Protocol v3。 */
 module com.javaclaw.protocol {
     requires transitive com.javaclaw.api;
     requires transitive com.javaclaw.extension.spi;

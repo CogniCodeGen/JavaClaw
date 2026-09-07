@@ -4,7 +4,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletionStage;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.PromptOptimizationAdoption;
 import com.javaclaw.api.PromptOptimizationDraft;
 import com.javaclaw.api.PromptOptimizationId;
@@ -34,12 +35,12 @@ public final class SdkPromptOptimizationSettingsGateway implements PromptOptimiz
     @Override
     public CompletionStage<PromptOptimizationDraft> start(
             WorkspaceId workspaceId,
-            AgentProfileRef profile,
+            AgentRoleRef role,
             boolean billingConfirmed,
             String confirmation,
             CommandOptions options) {
-        return desktop.submitSettingsRequest(client ->
-                client.promptOptimizations().start(workspaceId, profile, billingConfirmed, confirmation, options));
+        return desktop.submitSettingsRequest(client -> client.promptOptimizations()
+                .start(workspaceId, role, ExecutionOverrides.empty(), billingConfirmed, confirmation, options));
     }
 
     @Override

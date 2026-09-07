@@ -15,7 +15,7 @@ import java.util.concurrent.locks.LockSupport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.ConversationThread;
 import com.javaclaw.api.CorePayloads;
@@ -53,7 +53,7 @@ import com.javaclaw.runtime.ModelStreamEvent;
 import com.javaclaw.runtime.ModelUsage;
 import com.javaclaw.server.AppServerBootstrap;
 import com.javaclaw.server.BuiltinManagementFixtures;
-import com.javaclaw.server.ProviderProfileRpcFixtures;
+import com.javaclaw.server.ProviderRoleRpcFixtures;
 import com.javaclaw.server.persistence.H2Database;
 import com.javaclaw.server.persistence.LifecycleLeaseRepository;
 import com.javaclaw.server.rpc.AppServerSession;
@@ -69,22 +69,28 @@ class RealTurnChainTest {
     void persistedTurnRunsThroughHarnessAndRetryDoesNotInvokeModelTwice() throws Exception {
         RecordingModel model = new RecordingModel();
         try (AppServerBootstrap.Components components =
-                AppServerBootstrap.create(temporaryDirectory.resolve("data-v5"), Clock.systemUTC(), model)) {
+                AppServerBootstrap.create(temporaryDirectory.resolve("data-v6"), Clock.systemUTC(), model)) {
             AppServerSession session = components.newSession();
             initialize(session, components);
             Workspace workspace = createWorkspace(session, components);
             ConversationThread thread = createThread(session, components, workspace);
-            AgentProfileRef profile = installProfile(session, components, RecordingModel.ID);
-            CoreRpcContracts.TurnStartPayload payload = turnPayload(thread, profile);
+            AgentRoleRef role = installRole(session, components, RecordingModel.ID);
+            CoreRpcContracts.TurnStartPayload payload = turnPayload(thread, role);
             WriteCommand command =
                     new WriteCommand("real-turn-key", 0, components.json().encode(payload));
 
             AgentTurn accepted = decode(
-                    session.handle(request(components, "start-1", "turn/start", command)), components, AgentTurn.class);
+                            session.handle(request(components, "start-1", "turn/start", command)),
+                            components,
+                            CoreRpcContracts.TurnStartResult.class)
+                    .turn();
             AgentTurn completed = awaitTerminal(session, components, accepted.id());
             List<ItemEnvelope> items = items(session, components, thread);
             AgentTurn retried = decode(
-                    session.handle(request(components, "start-2", "turn/start", command)), components, AgentTurn.class);
+                            session.handle(request(components, "start-2", "turn/start", command)),
+                            components,
+                            CoreRpcContracts.TurnStartResult.class)
+                    .turn();
 
             assertEquals(TurnStatus.COMPLETED, completed.status());
             assertEquals(accepted.id(), retried.id());
@@ -99,25 +105,27 @@ class RealTurnChainTest {
     void cancellationIsDurableAndConvergesRunningTurnToCancelled() throws Exception {
         BlockingModel model = new BlockingModel();
         try (AppServerBootstrap.Components components =
-                AppServerBootstrap.create(temporaryDirectory.resolve("data-v5"), Clock.systemUTC(), model)) {
+                AppServerBootstrap.create(temporaryDirectory.resolve("data-v6"), Clock.systemUTC(), model)) {
             AppServerSession session = components.newSession();
             initialize(session, components);
             Workspace workspace = createWorkspace(session, components);
             ConversationThread thread = createThread(session, components, workspace);
-            AgentProfileRef profile = installProfile(session, components, BlockingModel.ID);
+            AgentRoleRef role = installRole(session, components, BlockingModel.ID);
             CoreRpcContracts.TurnStartPayload payload =
-                    new CoreRpcContracts.TurnStartPayload(thread.id(), Optional.of(profile), "等待取消");
+                    new CoreRpcContracts.TurnStartPayload(thread.id(), TurnV6Fixtures.selection(role), "等待取消");
             AgentTurn accepted = decode(
-                    session.handle(request(
+                            session.handle(request(
+                                    components,
+                                    "start",
+                                    "turn/start",
+                                    new WriteCommand(
+                                            "cancel-turn", 0, components.json().encode(payload)))),
                             components,
-                            "start",
-                            "turn/start",
-                            new WriteCommand("cancel-turn", 0, components.json().encode(payload)))),
-                    components,
-                    AgentTurn.class);
+                            CoreRpcContracts.TurnStartResult.class)
+                    .turn();
             assertTrue(model.started.await(2, TimeUnit.SECONDS));
             LifecycleLeaseRepository leases = new LifecycleLeaseRepository(
-                    new H2Database(temporaryDirectory.resolve("data-v5")), Clock.systemUTC());
+                    new H2Database(temporaryDirectory.resolve("data-v6")), Clock.systemUTC());
             assertEquals(1, leases.activeCount());
             AgentTurn running = readTurn(session, components, accepted.id(), "running");
             CoreRpcContracts.TurnCancelPayload cancelPayload =
@@ -146,12 +154,12 @@ class RealTurnChainTest {
     void planExecutionStartReturnsImmediatelyAndRecoversTheSameFrozenJob() throws Exception {
         RecordingModel model = new RecordingModel();
         try (AppServerBootstrap.Components components =
-                AppServerBootstrap.create(temporaryDirectory.resolve("data-v5"), Clock.systemUTC(), model)) {
+                AppServerBootstrap.create(temporaryDirectory.resolve("data-v6"), Clock.systemUTC(), model)) {
             AppServerSession session = components.newSession();
             initialize(session, components);
             Workspace workspace = createWorkspace(session, components);
             ConversationThread parent = createThread(session, components, workspace);
-            AgentProfileRef profile = installProfile(session, components, RecordingModel.ID);
+            AgentRoleRef role = installRole(session, components, RecordingModel.ID);
             PlanContracts.Definition plan = savePlan(
                     session,
                     components,
@@ -160,8 +168,8 @@ class RealTurnChainTest {
                     "definition/create",
                     0,
                     BuiltinManagementFixtures.plan(plan()));
-            OrchestrationContracts.StartRequest run =
-                    new OrchestrationContracts.StartRequest(plan.id(), profile, executionBudget());
+            OrchestrationContracts.StartRequest run = new OrchestrationContracts.StartRequest(
+                    plan.id(), TurnV6Fixtures.selection(role), executionBudget());
             WriteCommand command = new WriteCommand(
                     "plan-run",
                     1,
@@ -324,16 +332,15 @@ class RealTurnChainTest {
                 ConversationThread.class);
     }
 
-    private CoreRpcContracts.TurnStartPayload turnPayload(ConversationThread thread, AgentProfileRef profile) {
-        return new CoreRpcContracts.TurnStartPayload(thread.id(), Optional.of(profile), "请用一句话回答");
+    private CoreRpcContracts.TurnStartPayload turnPayload(ConversationThread thread, AgentRoleRef role) {
+        return new CoreRpcContracts.TurnStartPayload(thread.id(), TurnV6Fixtures.selection(role), "请用一句话回答");
     }
 
-    private AgentProfileRef installProfile(
-            AppServerSession session, AppServerBootstrap.Components components, String model) {
-        return ProviderProfileRpcFixtures.install(
+    private AgentRoleRef installRole(AppServerSession session, AppServerBootstrap.Components components, String model) {
+        return ProviderRoleRpcFixtures.install(
                 session,
                 components,
-                new ProviderProfileRpcFixtures.Installation(
+                new ProviderRoleRpcFixtures.Installation(
                         providerId(model),
                         model,
                         model + "-profile",

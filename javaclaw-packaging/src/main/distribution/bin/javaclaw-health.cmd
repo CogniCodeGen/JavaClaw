@@ -10,8 +10,8 @@ mkdir "%HEALTH_ROOT%" || exit /b 6
     "%APP_ROOT%\runtime\bin\java.exe" ^
     --enable-native-access=ALL-UNNAMED ^
     "-Djavaclaw.program.dir=%APP_ROOT%" ^
-    "-Djavaclaw.data.root=%HEALTH_ROOT%\data-v5" ^
-    "-Djavaclaw.log.dir=%HEALTH_ROOT%\data-v5\logs" ^
+    "-Djavaclaw.data.root=%HEALTH_ROOT%\data-v6" ^
+    "-Djavaclaw.log.dir=%HEALTH_ROOT%\data-v6\logs" ^
     -Djavaclaw.log.process=health-server ^
     -cp "%APP_ROOT%\lib\*" ^
     com.javaclaw.launcher.AppServerLauncher --health-check

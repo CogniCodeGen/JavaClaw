@@ -86,10 +86,10 @@ class ExtensionToolPlatformBoundaryTest {
     private AgentTurn turn;
 
     @BeforeEach
-    void initializeDataV5() throws Exception {
+    void initializeDataV6() throws Exception {
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
         json = new CanonicalJson();
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         core = new CoreCommandService(database, json, clock);
         profiles = new PermissionProfileService(database, json, clock);
@@ -385,10 +385,14 @@ class ExtensionToolPlatformBoundaryTest {
                 new ToolCatalogSnapshot(TurnId.random(), 1, List.of(), permission, clock.instant());
         TurnStartRequest request = new TurnStartRequest(
                 thread.id(),
-                budget(),
-                new com.javaclaw.api.AgentProfileRef("tool-agent", 1),
-                new ProviderRef("provider", 1, "model"),
-                new PermissionProfileRef(permission.id(), permission.version()),
+                com.javaclaw.server.TurnContractFixtures.configuration(
+                        new com.javaclaw.server.TurnContractFixtures.Selection(
+                                budget(),
+                                new com.javaclaw.api.AgentRoleRef("tool-agent", 1),
+                                new ProviderRef("provider", 1, "model"),
+                                new PermissionProfileRef(permission.id(), permission.version())),
+                        json.parse("{\"prompt\":\"test\"}"),
+                        initial),
                 root,
                 json.parse("{\"prompt\":\"test\"}"),
                 initial,
@@ -411,10 +415,14 @@ class ExtensionToolPlatformBoundaryTest {
                 new ToolCatalogSnapshot(TurnId.random(), 1, List.of(), permission, clock.instant());
         TurnStartRequest request = new TurnStartRequest(
                 thread.id(),
-                budget(),
-                new com.javaclaw.api.AgentProfileRef("tool-agent", 1),
-                new ProviderRef("provider", 1, "model"),
-                new PermissionProfileRef(permission.id(), permission.version()),
+                com.javaclaw.server.TurnContractFixtures.configuration(
+                        new com.javaclaw.server.TurnContractFixtures.Selection(
+                                budget(),
+                                new com.javaclaw.api.AgentRoleRef("tool-agent", 1),
+                                new ProviderRef("provider", 1, "model"),
+                                new PermissionProfileRef(permission.id(), permission.version())),
+                        json.parse("{\"prompt\":\"scheduled\"}"),
+                        initial),
                 workspace.root(),
                 json.parse("{\"prompt\":\"scheduled\"}"),
                 initial,

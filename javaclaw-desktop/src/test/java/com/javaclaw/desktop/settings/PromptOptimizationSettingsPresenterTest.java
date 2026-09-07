@@ -1,7 +1,6 @@
 package com.javaclaw.desktop.settings;
 
 import java.nio.file.Path;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -14,11 +13,9 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.AgentProfileSpec;
-import com.javaclaw.api.PermissionProfileRef;
-import com.javaclaw.api.ProfileLifecycle;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.PromptOptimizationAdoption;
 import com.javaclaw.api.PromptOptimizationDraft;
 import com.javaclaw.api.PromptOptimizationId;
@@ -27,8 +24,8 @@ import com.javaclaw.api.PromptOptimizationRef;
 import com.javaclaw.api.PromptOptimizationResult;
 import com.javaclaw.api.PromptOptimizationState;
 import com.javaclaw.api.ProviderRef;
+import com.javaclaw.api.RoleLifecycle;
 import com.javaclaw.api.ThreadId;
-import com.javaclaw.api.TurnBudget;
 import com.javaclaw.api.TurnId;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceId;
@@ -67,7 +64,7 @@ class PromptOptimizationSettingsPresenterTest {
         AtomicReference<PromptOptimizationSettingsState> latest = new AtomicReference<>();
         presenter.subscribe(latest::set);
         presenter.activate();
-        presenter.selectProfile(Optional.of(gateway.profile));
+        presenter.selectRole(Optional.of(gateway.role));
 
         assertEquals(
                 PromptOptimizationState.READY,
@@ -93,12 +90,8 @@ class PromptOptimizationSettingsPresenterTest {
                         .result()
                         .content()
                         .orElseThrow());
-        assertTrue(latest.get()
-                .selection()
-                .selected()
-                .orElseThrow()
-                .adoptedProfile()
-                .isEmpty());
+        assertTrue(
+                latest.get().selection().selected().orElseThrow().adoptedRole().isEmpty());
 
         gateway.conflict = false;
         presenter.adopt(true, PromptOptimizationRpcContracts.ADOPTION_CONFIRMATION);
@@ -109,7 +102,7 @@ class PromptOptimizationSettingsPresenterTest {
                         .selection()
                         .selected()
                         .orElseThrow()
-                        .adoptedProfile()
+                        .adoptedRole()
                         .orElseThrow()
                         .revision());
     }
@@ -123,7 +116,7 @@ class PromptOptimizationSettingsPresenterTest {
                 1,
                 NOW,
                 NOW);
-        private final AgentProfile profile = profile();
+        private final AgentRole role = role();
         private final PromptOptimizationDraft ready = draft(PromptOptimizationState.READY, Optional.empty());
         private final AtomicInteger startCalls = new AtomicInteger();
         private final AtomicInteger adoptCalls = new AtomicInteger();
@@ -137,7 +130,7 @@ class PromptOptimizationSettingsPresenterTest {
         @Override
         public CompletionStage<PromptOptimizationDraft> start(
                 WorkspaceId workspaceId,
-                AgentProfileRef profileRef,
+                AgentRoleRef profileRef,
                 boolean billingConfirmed,
                 String confirmation,
                 CommandOptions options) {
@@ -167,41 +160,43 @@ class PromptOptimizationSettingsPresenterTest {
             adoptCalls.incrementAndGet();
             if (conflict) {
                 return CompletableFuture.failedFuture(new RemoteRpcException(new JsonRpcError(
-                        ProtocolErrorCode.REVISION_CONFLICT, "Agent Profile revision 已改变", Optional.empty())));
+                        ProtocolErrorCode.REVISION_CONFLICT, "Agent Role revision 已改变", Optional.empty())));
             }
-            AgentProfile updated = new AgentProfile(
-                    profile.id(), 2, ProfileLifecycle.ACTIVE, profile.spec(), profile.createdAt(), NOW.plusSeconds(1));
+            AgentRole updated = new AgentRole(
+                    role.id(), 2, RoleLifecycle.ACTIVE, role.spec(), false, role.createdAt(), NOW.plusSeconds(1));
             PromptOptimizationDraft adopted =
-                    draft(PromptOptimizationState.READY, Optional.of(new AgentProfileRef(profile.id(), 2)));
+                    draft(PromptOptimizationState.READY, Optional.of(new AgentRoleRef(role.id(), 2)));
             return CompletableFuture.completedFuture(new PromptOptimizationAdoption(adopted, updated));
         }
 
-        private PromptOptimizationDraft draft(PromptOptimizationState state, Optional<AgentProfileRef> adoptedProfile) {
+        private PromptOptimizationDraft draft(PromptOptimizationState state, Optional<AgentRoleRef> adoptedRole) {
             Optional<String> content =
                     state == PromptOptimizationState.READY ? Optional.of("优化后的说明") : Optional.empty();
             Optional<String> digest = state == PromptOptimizationState.READY ? Optional.of(DIGEST) : Optional.empty();
             PromptOptimizationRef ref = new PromptOptimizationRef(
                     PromptOptimizationId.parse("00000000-0000-0000-0000-000000000002"),
                     workspace.id(),
-                    new AgentProfileRef(profile.id(), profile.revision()),
+                    new AgentRoleRef(role.id(), role.revision()),
                     ThreadId.parse("00000000-0000-0000-0000-000000000003"),
                     TurnId.parse("00000000-0000-0000-0000-000000000004"));
             return new PromptOptimizationDraft(
                     ref,
                     new PromptOptimizationResult(state, 2, content, digest, Optional.empty()),
-                    new PromptOptimizationProvenance("profile-optimization-v1", DIGEST, NOW, NOW),
-                    adoptedProfile);
+                    new PromptOptimizationProvenance("role-optimization-v1", DIGEST, NOW, NOW),
+                    adoptedRole);
         }
 
-        private static AgentProfile profile() {
-            AgentProfileSpec spec = new AgentProfileSpec(
+        private static AgentRole role() {
+            AgentRoleSpec spec = new AgentRoleSpec(
                     "Profile",
+                    "角色测试",
                     "原始说明",
-                    new ProviderRef("provider", 1, "model"),
-                    new PermissionProfileRef("standard", 1),
-                    Set.of(),
-                    new TurnBudget(4_000, 1_000, 2, 0, Duration.ofSeconds(30)));
-            return new AgentProfile("profile", 1, ProfileLifecycle.ACTIVE, spec, NOW, NOW);
+                    Optional.of(new com.javaclaw.api.ModelPreference(new ProviderRef("provider", 1, "model"))),
+                    Optional.empty(),
+                    new com.javaclaw.api.CapabilityNarrowing(Optional.of(Set.of()), Optional.empty()),
+                    com.javaclaw.api.PermissionConstraint.INHERIT,
+                    java.util.Map.of());
+            return new AgentRole("role", 1, RoleLifecycle.ACTIVE, spec, false, NOW, NOW);
         }
     }
 }

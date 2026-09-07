@@ -45,7 +45,7 @@ class InputLifecycleCoordinatorTest {
     void 等待输入在重启后重建Lease并在决议后立即释放() {
         MutableClock clock = new MutableClock(NOW);
         CanonicalJson json = new CanonicalJson();
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         CoreCommandService core = new CoreCommandService(database, json, clock);
         InputRequestService inputs = new InputRequestService(database, json, clock);

@@ -52,7 +52,7 @@ public final class RpcRouter {
         /**
          * 注册方法。
          *
-         * @param method Protocol v2 方法名
+         * @param method Protocol v3 方法名
          * @param handler 处理器
          * @return 当前 Builder
          */
@@ -64,7 +64,7 @@ public final class RpcRouter {
         /**
          * 注册需要当前连接 Secret 通道的方法。
          *
-         * @param method Protocol v2 方法名
+         * @param method Protocol v3 方法名
          * @param handler 会话感知处理器
          * @return 当前 Builder
          */

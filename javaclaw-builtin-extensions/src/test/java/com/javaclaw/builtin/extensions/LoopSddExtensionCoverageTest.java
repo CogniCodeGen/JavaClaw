@@ -6,7 +6,7 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.ExecutionState;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.builtin.contracts.BuiltinExtensionIds;
@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class LoopSddExtensionCoverageTest {
-    private static final AgentProfileRef PROFILE = new AgentProfileRef("profile", 1);
+    private static final AgentRoleRef PROFILE = new AgentRoleRef("profile", 1);
     private static final OrchestrationContracts.ExecutionBudget BUDGET =
             new OrchestrationContracts.ExecutionBudget(5, 1_000, 500, 10);
 

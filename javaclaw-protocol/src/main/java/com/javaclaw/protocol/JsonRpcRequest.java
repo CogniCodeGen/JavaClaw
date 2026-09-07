@@ -8,7 +8,7 @@ import com.javaclaw.api.CanonicalPayload;
  * JSON-RPC request。
  *
  * @param id 调用标识
- * @param method Protocol v2 方法名
+ * @param method Protocol v3 方法名
  * @param params 对象参数
  */
 public record JsonRpcRequest(RpcId id, String method, CanonicalPayload params) implements JsonRpcMessage {

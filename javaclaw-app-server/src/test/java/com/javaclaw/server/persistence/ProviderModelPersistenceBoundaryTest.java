@@ -55,8 +55,8 @@ class ProviderModelPersistenceBoundaryTest {
     private Workspace workspace;
 
     @BeforeEach
-    void initializeDataV5() {
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+    void initializeDataV6() {
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
@@ -141,12 +141,13 @@ class ProviderModelPersistenceBoundaryTest {
                 ThreadExecutionIntent.WORKSPACE,
                 suffix);
         CorePayloads.Message message = new CorePayloads.Message(MessageRole.USER, suffix, List.of(), Optional.empty());
-        TurnStartRequest request = new TurnStartRequest(
+        TurnStartRequest request = com.javaclaw.server.TurnContractFixtures.request(
                 thread.id(),
-                new TurnBudget(4_000, 1_000, 2, 0, Duration.ofMinutes(1)),
-                TurnContractFixtures.PROFILE,
-                provider,
-                TurnContractFixtures.PERMISSIONS,
+                new com.javaclaw.server.TurnContractFixtures.Selection(
+                        new TurnBudget(4_000, 1_000, 2, 0, Duration.ofMinutes(1)),
+                        TurnContractFixtures.ROLE,
+                        provider,
+                        TurnContractFixtures.PERMISSIONS),
                 temporaryDirectory.resolve("workspace"),
                 TurnContractFixtures.PROMPT_SNAPSHOT,
                 TurnContractFixtures.TOOL_CATALOG,

@@ -1,0 +1,12 @@
+{
+  "platform": "macOS 26.5.2 aarch64 / JDK 25",
+  "host": "真实 PTY",
+  "command": "JavaClawCli turn-start 00000000-0000-0000-0000-000000000001 测试Ctrl-C -- java -cp <当前 client 测试 classpath> com.javaclaw.client.cli.CliStdioTestServer /tmp/javaclaw-cli-ctrl-c-marker.txt await-cancel",
+  "initial_observation": "Turn 00000000-0000-0000-0000-000000000002 已接受，等待执行结果。\nTurn 状态：RUNNING",
+  "signal": "Ctrl-C",
+  "exit_code": 130,
+  "final_observation": "^CTurn 00000000-0000-0000-0000-000000000002 取消结果未确认：服务端未在期限内确认终态。\r\n",
+  "server_marker_after_exit": "started",
+  "cancellation_persisted": "未确认",
+  "limitation": "使用可控测试协议对端，没有证明真实 App Server 在信号下已持久化取消；Linux/Windows 未验收。"
+}

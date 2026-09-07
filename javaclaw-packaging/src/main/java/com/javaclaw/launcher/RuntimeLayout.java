@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
+import com.javaclaw.nativehost.LocalRuntimeDirectories;
+
 /** 已安装发行包中经过验证的只读路径布局。 */
 record RuntimeLayout(Path root, Path javaExecutable, Path libraryDirectory, Optional<Path> serviceLauncher) {
     RuntimeLayout {
@@ -31,7 +33,7 @@ record RuntimeLayout(Path root, Path javaExecutable, Path libraryDirectory, Opti
         if (configured.isEmpty()) {
             throw new IllegalStateException("必须通过 -Djavaclaw.program.dir 指定发行包绝对目录");
         }
-        Path root = directory(Path.of(configured).toAbsolutePath().normalize(), "distribution root");
+        Path root = directory(LocalRuntimeDirectories.programDirectory(), "distribution root");
         String javaName = isWindows() ? "java.exe" : "java";
         String launcherName = isWindows() ? "javaclaw-service.cmd" : "javaclaw-service";
         boolean expanded = Files.isDirectory(root.resolve("runtime")) && Files.isDirectory(root.resolve("lib"));
@@ -48,8 +50,31 @@ record RuntimeLayout(Path root, Path javaExecutable, Path libraryDirectory, Opti
         return libraryDirectory.resolve("*").toString();
     }
 
+    Path dataDirectory() {
+        return LocalRuntimeDirectories.dataDirectory(root);
+    }
+
+    Path logDirectory() {
+        String configured = System.getProperty("javaclaw.log.dir", "").strip();
+        return configured.isEmpty()
+                ? dataDirectory().resolve("logs")
+                : Path.of(configured).toAbsolutePath().normalize();
+    }
+
+    List<String> runtimeProperties() {
+        ArrayList<String> properties = new ArrayList<>(List.of(
+                "-Djavaclaw.program.dir=" + root,
+                "-Djavaclaw.data.root=" + dataDirectory(),
+                "-Djavaclaw.log.dir=" + logDirectory()));
+        String process = System.getProperty("javaclaw.log.process", "").strip();
+        if (!process.isEmpty()) {
+            properties.add("-Djavaclaw.log.process=" + process);
+        }
+        return List.copyOf(properties);
+    }
+
     List<String> appServerProperties() {
-        ArrayList<String> properties = new ArrayList<>();
+        ArrayList<String> properties = new ArrayList<>(runtimeProperties());
         serviceLauncher.ifPresent(path -> properties.add("-Djavaclaw.server.launcher=" + path));
         addWorker(properties, "skill", "javaclaw.skill.worker.image-root");
         addWorker(properties, "knowledge", "javaclaw.knowledge.worker.image-root");

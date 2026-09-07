@@ -21,7 +21,7 @@ public final class SecurityGrantAuditService {
     /**
      * 创建审计读取服务。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      * @param json 规范 JSON codec
      */
     public SecurityGrantAuditService(H2Database database, CanonicalJson json) {

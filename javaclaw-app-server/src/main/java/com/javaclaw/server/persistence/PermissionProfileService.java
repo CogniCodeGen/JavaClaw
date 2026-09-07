@@ -46,7 +46,7 @@ public final class PermissionProfileService {
     /**
      * 创建权限配置服务。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      * @param json 共享 JSON codec
      * @param clock 平台时钟
      */

@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ToolCatalogQueryResult;
 import com.javaclaw.api.ToolDescriptor;
@@ -45,11 +45,11 @@ public final class ToolClient {
     /**
      * 读取设置页面使用的工具目录与服务端权威目录版本。
      *
-     * <p>提供 Agent Profile 时，服务端会按 Profile 的精确权限引用和工具可见范围收窄结果；省略时返回权限编辑器可选候选。
+     * <p>提供 Agent Role 时，服务端会按 Role 的能力收窄范围收窄结果；省略时返回权限编辑器可选候选。
      *
      * @param workspaceId 固定 Workspace
      * @param permissionProfile 精确权限配置版本
-     * @param agentProfile 精确 Agent Profile；权限编辑器传空值
+     * @param agentRole 精确 Agent Role；权限编辑器传空值
      * @param query 名称、说明或标签关键词
      * @param limit 最大结果数，1 到 100
      * @return 权威目录版本与有界描述
@@ -57,7 +57,7 @@ public final class ToolClient {
     public ToolCatalogQueryResult catalog(
             WorkspaceId workspaceId,
             PermissionProfileRef permissionProfile,
-            Optional<AgentProfileRef> agentProfile,
+            Optional<AgentRoleRef> agentRole,
             String query,
             int limit) {
         PermissionProfileRef checked = Objects.requireNonNull(permissionProfile, "permissionProfile");
@@ -65,7 +65,7 @@ public final class ToolClient {
                 Objects.requireNonNull(workspaceId, "workspaceId"),
                 checked.id(),
                 checked.version(),
-                Objects.requireNonNull(agentProfile, "agentProfile"),
+                Objects.requireNonNull(agentRole, "agentRole"),
                 query,
                 limit);
         return connection

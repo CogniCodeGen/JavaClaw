@@ -25,7 +25,7 @@ class TrayPresenceLeaseTest {
     @Test
     void 独占Lease写入新鲜心跳且关闭不触碰Server() throws Exception {
         MutableClock clock = new MutableClock(NOW);
-        Path presence = temporaryDirectory.resolve("run/tray-v5.presence");
+        Path presence = temporaryDirectory.resolve("run/tray-v6.presence");
         TrayPresenceProbe probe = new TrayPresenceProbe(presence, clock, processId -> processId == 42);
 
         try (TrayPresenceLease ignored = TrayPresenceLease.acquire(presence, clock, 42)) {
@@ -44,7 +44,7 @@ class TrayPresenceLeaseTest {
     @Test
     void 损坏心跳和已退出进程均FailClosed() throws Exception {
         MutableClock clock = new MutableClock(NOW);
-        Path presence = temporaryDirectory.resolve("tray-v5.presence");
+        Path presence = temporaryDirectory.resolve("tray-v6.presence");
         java.nio.file.Files.writeString(presence, "broken");
         assertFalse(
                 new TrayPresenceProbe(presence, clock, ignored -> true).status().active());
@@ -62,7 +62,7 @@ class TrayPresenceLeaseTest {
     @Test
     void 关闭Lease是幂等操作() throws Exception {
         MutableClock clock = new MutableClock(NOW);
-        Path presence = temporaryDirectory.resolve("idempotent/tray-v5.presence");
+        Path presence = temporaryDirectory.resolve("idempotent/tray-v6.presence");
         TrayPresenceLease lease = TrayPresenceLease.acquire(presence, clock, 42);
 
         lease.close();

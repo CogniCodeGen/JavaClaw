@@ -17,6 +17,8 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.javaclaw.nativehost.ManagedRuntimeDirectory;
+
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -29,6 +31,7 @@ class JavaClawLauncherTest {
     Path temporaryDirectory;
 
     private final String originalHome = System.getProperty("user.home");
+    private final String originalDataRoot = System.getProperty("javaclaw.data.root");
     private final String originalOperatingSystem = System.getProperty("os.name");
     private final String originalProgramDirectory = System.getProperty(PROGRAM_DIRECTORY_PROPERTY);
     private Path shortHome;
@@ -38,6 +41,11 @@ class JavaClawLauncherTest {
         restore("user.home", originalHome);
         restore("os.name", originalOperatingSystem);
         restore(PROGRAM_DIRECTORY_PROPERTY, originalProgramDirectory);
+        if (originalDataRoot == null) {
+            System.clearProperty("javaclaw.data.root");
+        } else {
+            System.setProperty("javaclaw.data.root", originalDataRoot);
+        }
         deleteShortHome();
     }
 
@@ -49,7 +57,7 @@ class JavaClawLauncherTest {
         try (ServerSocketChannel server = listen(socket)) {
             Path successful = createDistribution("successful", 0, false);
             System.setProperty(PROGRAM_DIRECTORY_PROPERTY, successful.toString());
-            assertDoesNotThrow(() -> JavaClawLauncher.main(new String[] {"--profile", "test"}));
+            assertDoesNotThrow(() -> JavaClawLauncher.main(new String[] {"--role", "test"}));
 
             Path failing = createDistribution("failing", 23, false);
             System.setProperty(PROGRAM_DIRECTORY_PROPERTY, failing.toString());
@@ -67,20 +75,23 @@ class JavaClawLauncherTest {
 
         RuntimeLayout layout = RuntimeLayout.fromSystemProperties();
         List<String> command = JavaClawLauncher.desktopCommand(
-                layout, "-Djavaclaw.server.pipe=javaclaw-test", new String[] {"--profile", "test"}, true);
+                layout, "-Djavaclaw.server.pipe=javaclaw-test", new String[] {"--role", "test"}, true);
 
         assertEquals(layout.javaExecutable().toString(), command.getFirst());
         assertTrue(command.contains("--enable-native-access=ALL-UNNAMED"));
         assertTrue(command.contains("-Djavaclaw.server.pipe=javaclaw-test"));
         assertTrue(command.contains("-Djavaclaw.launcher.supervised=true"));
         assertTrue(command.contains("-Djavaclaw.launcher.tray-active=true"));
-        assertEquals(List.of("--profile", "test"), command.subList(command.size() - 2, command.size()));
+        assertEquals(List.of("--role", "test"), command.subList(command.size() - 2, command.size()));
     }
 
     private Path configureShortHome() throws IOException {
         shortHome = Files.createTempDirectory(Path.of("/tmp"), "jcl");
         System.setProperty("user.home", shortHome.toString());
-        Path socket = shortHome.resolve(".javaclaw/run/app-server-v5.sock");
+        Path dataRoot = shortHome.resolve("data-v6");
+        System.setProperty("javaclaw.data.root", dataRoot.toString());
+        ManagedRuntimeDirectory.prepare(dataRoot);
+        Path socket = dataRoot.resolve("run/app-server-v6.sock");
         Files.createDirectories(socket.getParent());
         return socket;
     }

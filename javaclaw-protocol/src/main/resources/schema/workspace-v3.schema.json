@@ -1,0 +1,381 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javaclaw.local/schema/workspace-v3.schema.json",
+  "title": "JavaClaw Protocol v3 Workspace methods",
+  "$defs": {
+    "workspaceId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "threadId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "root",
+        "lifecycle",
+        "revision",
+        "createdAt",
+        "updatedAt"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/workspaceId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "root": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "lifecycle": {
+          "enum": [
+            "ACTIVE",
+            "ARCHIVED"
+          ]
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "writeCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "payload"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "payload": {
+          "type": "object"
+        }
+      }
+    },
+    "listParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 0
+    },
+    "listResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaces"
+      ],
+      "properties": {
+        "workspaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/workspace"
+          }
+        }
+      }
+    },
+    "thread": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "workspaceId",
+        "parentThreadId",
+        "executionIntent",
+        "title",
+        "status",
+        "revision",
+        "createdAt",
+        "updatedAt"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/threadId"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/workspaceId"
+        },
+        "parentThreadId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/threadId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executionIntent": {
+          "enum": [
+            "WORKSPACE",
+            "READ_ONLY",
+            "ISOLATED_WRITE"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "status": {
+          "enum": [
+            "ACTIVE",
+            "ARCHIVED",
+            "WAITING",
+            "FAILED"
+          ]
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "threadListParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaceId"
+      ],
+      "properties": {
+        "workspaceId": {
+          "$ref": "#/$defs/workspaceId"
+        }
+      }
+    },
+    "threadListResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "threads"
+      ],
+      "properties": {
+        "threads": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/thread"
+          }
+        }
+      }
+    },
+    "threadReadParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "threadId"
+      ],
+      "properties": {
+        "threadId": {
+          "$ref": "#/$defs/threadId"
+        }
+      }
+    },
+    "threadCreateCommand": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/writeCommand"
+        },
+        {
+          "properties": {
+            "expectedRevision": {
+              "const": 0
+            },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "workspaceId",
+                "parentThreadId",
+                "executionIntent",
+                "title"
+              ],
+              "properties": {
+                "workspaceId": {
+                  "$ref": "#/$defs/workspaceId"
+                },
+                "parentThreadId": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/threadId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "executionIntent": {
+                  "enum": [
+                    "WORKSPACE",
+                    "READ_ONLY",
+                    "ISOLATED_WRITE"
+                  ]
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                }
+              },
+              "oneOf": [
+                {
+                  "properties": {
+                    "parentThreadId": {
+                      "type": "null"
+                    },
+                    "executionIntent": {
+                      "const": "WORKSPACE"
+                    }
+                  }
+                },
+                {
+                  "properties": {
+                    "parentThreadId": {
+                      "$ref": "#/$defs/threadId"
+                    },
+                    "executionIntent": {
+                      "enum": [
+                        "READ_ONLY",
+                        "ISOLATED_WRITE"
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "createCommand": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/writeCommand"
+        },
+        {
+          "properties": {
+            "expectedRevision": {
+              "const": 0
+            },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "root",
+                "execution"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "root": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "execution": {
+                  "anyOf": [
+                    {
+                      "$ref": "execution-v3.schema.json#/$defs/overrides"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "renameCommand": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/writeCommand"
+        },
+        {
+          "properties": {
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "workspaceId",
+                "name"
+              ],
+              "properties": {
+                "workspaceId": {
+                  "$ref": "#/$defs/workspaceId"
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "archiveCommand": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/writeCommand"
+        },
+        {
+          "properties": {
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "workspaceId"
+              ],
+              "properties": {
+                "workspaceId": {
+                  "$ref": "#/$defs/workspaceId"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

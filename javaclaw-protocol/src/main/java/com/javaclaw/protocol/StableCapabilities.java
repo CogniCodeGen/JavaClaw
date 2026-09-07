@@ -3,7 +3,7 @@ package com.javaclaw.protocol;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
-/** Protocol v2 客户端与 App Server 共同声明的 5.x 稳定能力目录。 */
+/** Protocol v3 客户端与 App Server 共同声明的 5.x 稳定能力目录。 */
 public final class StableCapabilities {
     /** 固定 MCP Host 协议能力。 */
     public static final String MCP_2026_07_28 = "extension.mcp-2026-07-28";
@@ -15,6 +15,7 @@ public final class StableCapabilities {
             "core.secret-vault",
             "core.security-grants",
             "core.typed-settings",
+            ProviderContextRpcContracts.CAPABILITY,
             "extension.job-supervisor",
             "extension.view-schema-v2");
     private static final Set<String> WITH_MCP = with(BASE, MCP_2026_07_28);

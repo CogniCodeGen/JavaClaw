@@ -7,9 +7,12 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletionStage;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleFileExport;
+import com.javaclaw.api.AgentRoleFileFormat;
+import com.javaclaw.api.AgentRoleFilePreview;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.CancellationToken;
 import com.javaclaw.api.ConversationThread;
 import com.javaclaw.api.CredentialClearReceipt;
@@ -18,6 +21,8 @@ import com.javaclaw.api.CredentialRef;
 import com.javaclaw.api.DiagnosticsSnapshot;
 import com.javaclaw.api.EffectivePermissionPreview;
 import com.javaclaw.api.EmbeddingBinding;
+import com.javaclaw.api.ExecutionConfiguration;
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.ManagedWorktree;
 import com.javaclaw.api.ManagedWorktreeArtifact;
 import com.javaclaw.api.PermissionDecisionTrace;
@@ -27,8 +32,7 @@ import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.PrivateNetworkGrant;
 import com.javaclaw.api.PrivateNetworkGrantPreview;
 import com.javaclaw.api.PrivateNetworkPurpose;
-import com.javaclaw.api.ProfileBinding;
-import com.javaclaw.api.ProfileLifecycle;
+import com.javaclaw.api.PromptManifestPreview;
 import com.javaclaw.api.ProviderCredentialBinding;
 import com.javaclaw.api.ProviderCredentialClearResult;
 import com.javaclaw.api.ProviderEndpoint;
@@ -39,6 +43,7 @@ import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.api.ProviderRef;
 import com.javaclaw.api.ProviderStatus;
 import com.javaclaw.api.ProviderVerificationResult;
+import com.javaclaw.api.RoleLifecycle;
 import com.javaclaw.api.SecurityGrantKind;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.ToolCatalogQueryResult;
@@ -57,7 +62,7 @@ import com.javaclaw.protocol.DiagnosticsRpcContracts;
  *
  * <p>所有 CompletionStage 必须在 JavaFX 调度器上完成；实现不得让页面直接访问 App Server Service、H2 或传输层。
  */
-public interface CoreSettingsGateway {
+public interface CoreSettingsGateway extends ProviderContextSettingsGateway {
     /** @return 最新 Provider 目录 */
     CompletionStage<List<ProviderEndpoint>> providers();
 
@@ -165,29 +170,29 @@ public interface CoreSettingsGateway {
     CompletionStage<ProviderCredentialClearResult> clearProviderCredential(
             ProviderEndpoint provider, CredentialMetadata credential, CommandOptions options);
 
-    /** @return 最新 Agent Profile 目录 */
-    CompletionStage<List<AgentProfile>> profiles();
+    /** @return 最新 Agent Role 目录 */
+    CompletionStage<List<AgentRole>> roles();
 
     /**
-     * 读取不可变的精确 Agent Profile。
+     * 读取不可变的精确 Agent Role。
      *
      * @param reference 精确引用
-     * @return Profile 快照
+     * @return Role 快照
      */
-    CompletionStage<AgentProfile> profile(AgentProfileRef reference);
+    CompletionStage<AgentRole> role(AgentRoleRef reference);
 
     /**
-     * 创建 Agent Profile。
+     * 创建 Agent Role。
      *
      * @param id 稳定标识
      * @param spec 完整配置
      * @param options 幂等与 revision
      * @return 创建结果
      */
-    CompletionStage<AgentProfile> createProfile(String id, AgentProfileSpec spec, CommandOptions options);
+    CompletionStage<AgentRole> createRole(String id, AgentRoleSpec spec, CommandOptions options);
 
     /**
-     * 更新 Agent Profile。
+     * 更新 Agent Role。
      *
      * @param id 稳定标识
      * @param spec 完整配置
@@ -195,17 +200,30 @@ public interface CoreSettingsGateway {
      * @param options 幂等与 revision
      * @return 更新结果
      */
-    CompletionStage<AgentProfile> updateProfile(
-            String id, AgentProfileSpec spec, ProfileLifecycle lifecycle, CommandOptions options);
+    CompletionStage<AgentRole> updateRole(
+            String id, AgentRoleSpec spec, RoleLifecycle lifecycle, CommandOptions options);
 
     /**
-     * 归档 Agent Profile。
+     * 归档 Agent Role。
      *
      * @param id 稳定标识
      * @param options 幂等与 revision
      * @return 归档结果
      */
-    CompletionStage<AgentProfile> archiveProfile(String id, CommandOptions options);
+    CompletionStage<AgentRole> archiveRole(String id, CommandOptions options);
+
+    /** @param id 导入目标标识 @param content UTF-8 TOML 内容 @param format 文件模式 @return 只读预览，不写入角色 */
+    CompletionStage<AgentRoleFilePreview> previewRoleImport(String id, String content, AgentRoleFileFormat format);
+
+    /**
+     * @param previewId 用户确认的预览 @param mapping 未解析模型的用户选择
+     * @param options 目标 revision 与幂等键 @return 已提交角色
+     */
+    CompletionStage<AgentRole> commitRoleImport(
+            String previewId, Optional<ProviderRef> mapping, CommandOptions options);
+
+    /** @param reference 精确角色 @param format 可移植或完整模式 @return 文件名、内容与摘要 */
+    CompletionStage<AgentRoleFileExport> exportRole(AgentRoleRef reference, AgentRoleFileFormat format);
 
     /** @return 最新 PermissionProfile 目录 */
     CompletionStage<List<PermissionProfile>> permissionProfiles();
@@ -221,11 +239,11 @@ public interface CoreSettingsGateway {
     /**
      * 查询固定 Workspace 和权限版本下的工具目录。
      *
-     * <p>提供 Agent Profile 时返回其实际可执行目录；省略时返回权限编辑器的可选候选。目录 revision 始终由服务端计算。
+     * <p>提供 Agent Role 时返回其实际可执行目录；省略时返回权限编辑器的可选候选。目录 revision 始终由服务端计算。
      *
      * @param workspaceId 固定 Workspace
      * @param permissionProfile 精确权限版本
-     * @param agentProfile 精确 Agent Profile
+     * @param agentRole 精确 Agent Role
      * @param query 查询词
      * @param limit 最大结果数
      * @return 权威目录版本与有界结果
@@ -233,7 +251,7 @@ public interface CoreSettingsGateway {
     CompletionStage<ToolCatalogQueryResult> toolCatalog(
             WorkspaceId workspaceId,
             PermissionProfileRef permissionProfile,
-            Optional<AgentProfileRef> agentProfile,
+            Optional<AgentRoleRef> agentRole,
             String query,
             int limit);
 
@@ -277,24 +295,27 @@ public interface CoreSettingsGateway {
      */
     CompletionStage<Workspace> archiveWorkspace(Workspace workspace, CommandOptions options);
 
-    /**
-     * 读取 Workspace 直接默认 Agent Profile 绑定。
-     *
-     * @param workspaceId Workspace
-     * @return 当前绑定
-     */
-    CompletionStage<Optional<ProfileBinding>> workspaceProfileBinding(WorkspaceId workspaceId);
+    /** @param workspaceId 空值表示安装默认 @return 此作用域的直接执行配置 */
+    CompletionStage<Optional<ExecutionConfiguration>> executionDefaults(Optional<WorkspaceId> workspaceId);
 
     /**
-     * 创建或替换 Workspace 默认 Agent Profile。
-     *
-     * @param workspaceId Workspace
-     * @param profile 精确 Profile 版本
-     * @param options 绑定自身的 expected revision
-     * @return 新绑定
+     * @param workspaceId 空值表示安装默认 @param execution 独立执行覆盖
+     * @param options 当前配置版本与幂等键 @return 新配置快照
      */
-    CompletionStage<ProfileBinding> bindWorkspaceProfile(
-            WorkspaceId workspaceId, com.javaclaw.api.AgentProfileRef profile, CommandOptions options);
+    CompletionStage<ExecutionConfiguration> updateExecutionDefaults(
+            Optional<WorkspaceId> workspaceId, ExecutionOverrides execution, CommandOptions options);
+
+    /** @param workspaceId 所属 Workspace @param threadId 精确 Thread @return Thread 直接执行覆盖 */
+    CompletionStage<Optional<ExecutionConfiguration>> threadExecution(WorkspaceId workspaceId, ThreadId threadId);
+
+    /** @param workspaceId 固定 Workspace @param execution 独立执行选择 @return 服务端解析后的脱敏 Prompt 预览 */
+    CompletionStage<PromptManifestPreview> previewExecution(WorkspaceId workspaceId, ExecutionOverrides execution);
+
+    /**
+     * @param source 精确源角色 @param id 新标识 @param name 新名称
+     * @param options 新建版本与幂等键 @return 自定义角色首个版本
+     */
+    CompletionStage<AgentRole> cloneRole(AgentRoleRef source, String id, String name, CommandOptions options);
 
     /**
      * 列出平台为写型子 Thread 创建的受管 Worktree。
@@ -535,7 +556,7 @@ public interface CoreSettingsGateway {
     CompletionStage<ConnectionSummary> connection();
 
     /**
-     * 关闭旧 SDK 会话并重新执行本地连接与 Protocol v2 初始化。
+     * 关闭旧 SDK 会话并重新执行本地连接与 Protocol v3 初始化。
      *
      * @return 新会话脱敏摘要
      */

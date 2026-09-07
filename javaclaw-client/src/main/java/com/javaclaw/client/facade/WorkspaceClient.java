@@ -4,7 +4,9 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.client.CommandOptions;
 import com.javaclaw.client.RpcClientConnection;
@@ -45,6 +47,23 @@ public final class WorkspaceClient {
     public Workspace create(String name, Path root, CommandOptions options) {
         return connection.command(
                 "workspace/create", new CoreRpcContracts.WorkspaceCreatePayload(name, root), options, Workspace.class);
+    }
+
+    /**
+     * 创建 Workspace 并在同一事务内保存独立执行选择。
+     *
+     * @param name 可见名称
+     * @param root 绝对根目录
+     * @param execution 初始执行覆盖
+     * @param options 创建 revision 为 0 的幂等写入参数
+     * @return 已创建 Workspace
+     */
+    public Workspace create(String name, Path root, ExecutionOverrides execution, CommandOptions options) {
+        return connection.command(
+                "workspace/create",
+                new CoreRpcContracts.WorkspaceCreatePayload(name, root, Optional.of(execution)),
+                options,
+                Workspace.class);
     }
 
     /**

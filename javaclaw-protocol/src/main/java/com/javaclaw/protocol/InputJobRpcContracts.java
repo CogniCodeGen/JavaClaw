@@ -15,7 +15,7 @@ import com.javaclaw.extension.spi.ExtensionJobCursor;
 import com.javaclaw.extension.spi.ExtensionJobUnit;
 import com.javaclaw.extension.spi.ExtensionJobUnitState;
 
-/** Turn 输入与 Extension Job 管理方法的 Protocol v2 强类型契约。 */
+/** Turn 输入与 Extension Job 管理方法的 Protocol v3 强类型契约。 */
 public final class InputJobRpcContracts {
     private InputJobRpcContracts() {}
 

@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javaclaw.local/schema/extension-v3.schema.json",
+  "title": "JavaClaw Protocol v3 generic Extension methods",
+  "$defs": {
+    "empty": {"type": "object", "additionalProperties": false, "maxProperties": 0},
+    "uuid": {"type": "string", "format": "uuid"},
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+    },
+    "canonicalPayload": {
+      "type": "object",
+      "description": "由扩展注册的逐操作 JSON Schema 进一步约束的规范 payload"
+    },
+    "callPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["extensionId", "workspaceId", "threadId", "turnId", "operation", "payload"],
+      "properties": {
+        "extensionId": {"$ref": "#/$defs/identifier"},
+        "workspaceId": {"$ref": "#/$defs/uuid"},
+        "threadId": {
+          "oneOf": [
+            {"$ref": "#/$defs/uuid"},
+            {"type": "null"}
+          ]
+        },
+        "turnId": {
+          "oneOf": [
+            {"$ref": "#/$defs/uuid"},
+            {"type": "null"}
+          ]
+        },
+        "operation": {"$ref": "#/$defs/identifier"},
+        "payload": {"$ref": "#/$defs/canonicalPayload"}
+      }
+    },
+    "callResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payload", "revision"],
+      "properties": {
+        "payload": {"$ref": "#/$defs/canonicalPayload"},
+        "revision": {"type": "integer", "minimum": 0}
+      }
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotencyKey", "expectedRevision", "payload"],
+      "properties": {
+        "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 200},
+        "expectedRevision": {"type": "integer", "minimum": 0},
+        "payload": {"$ref": "#/$defs/callPayload"}
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "displayName", "version", "revision", "state", "trust", "contributionKinds"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "displayName": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "version": {"type": "string", "minLength": 1, "maxLength": 100},
+        "revision": {"type": "integer", "minimum": 1},
+        "state": {"type": "string", "minLength": 1, "maxLength": 100},
+        "trust": {"type": "string", "minLength": 1, "maxLength": 100},
+        "contributionKinds": {
+          "type": "array",
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 100}
+        }
+      }
+    },
+    "listResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["extensions"],
+      "properties": {
+        "extensions": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/summary"}}
+      }
+    },
+    "schemaReadParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["extensionId", "schemaId"],
+      "properties": {
+        "extensionId": {"$ref": "#/$defs/identifier"},
+        "schemaId": {"type": "string", "minLength": 1, "maxLength": 500}
+      }
+    },
+    "schemaResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["extensionId", "schemaId", "schema"],
+      "properties": {
+        "extensionId": {"$ref": "#/$defs/identifier"},
+        "schemaId": {"type": "string", "minLength": 1, "maxLength": 500},
+        "schema": {
+          "type": "object",
+          "description": "扩展注册且由平台校验的 JSON Schema 文档"
+        }
+      }
+    },
+    "viewListParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["extensionId"],
+      "properties": {
+        "extensionId": {
+          "oneOf": [
+            {"$ref": "#/$defs/identifier"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "viewDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["extensionId", "viewId", "schema"],
+      "properties": {
+        "extensionId": {"$ref": "#/$defs/identifier"},
+        "viewId": {"$ref": "#/$defs/identifier"},
+        "schema": {
+          "type": "object",
+          "description": "符合 ViewSchema v3 白名单的声明式页面"
+        }
+      }
+    },
+    "viewListResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["views"],
+      "properties": {
+        "views": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/viewDocument"}}
+      }
+    },
+    "extensionEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspaceId", "extensionId", "scope", "resourceId", "operation", "revision"],
+      "properties": {
+        "workspaceId": {"$ref": "#/$defs/uuid"},
+        "extensionId": {"$ref": "#/$defs/identifier"},
+        "scope": {"$ref": "#/$defs/identifier"},
+        "resourceId": {"$ref": "#/$defs/identifier"},
+        "operation": {"$ref": "#/$defs/identifier"},
+        "revision": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

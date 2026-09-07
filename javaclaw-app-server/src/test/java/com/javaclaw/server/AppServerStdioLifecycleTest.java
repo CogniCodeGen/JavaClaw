@@ -35,7 +35,7 @@ class AppServerStdioLifecycleTest {
             assertTimeoutPreemptively(Duration.ofSeconds(3), () -> {
                 Clock clock = Clock.fixed(Instant.parse("2026-09-02T05:00:00Z"), ZoneOffset.UTC);
                 AppServerBootstrap.Foundation foundation = PlatformFoundationFactory.create(
-                        temporaryDirectory.resolve("stdio/data-v5"), clock, new MemoryProtector(), required -> {});
+                        temporaryDirectory.resolve("stdio/data-v6"), clock, new MemoryProtector(), required -> {});
                 try (AppServerBootstrap.Components components =
                         ConfiguredProviderBootstrap.create(foundation, reference -> Optional.empty())) {
                     AppServerMain.serveStdio(components);

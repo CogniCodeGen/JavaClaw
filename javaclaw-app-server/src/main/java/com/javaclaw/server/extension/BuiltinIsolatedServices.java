@@ -43,7 +43,7 @@ public final class BuiltinIsolatedServices implements IsolatedServicePort, AutoC
      *
      * <p>Browser 只在签名发行镜像路径显式配置时启用；IDEA 与缺少原生 Sandbox 的环境安全拒绝页面调用，不回退普通 {@link ProcessBuilder}。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      * @param attachments Core Attachment 服务
      * @param vault Secret Vault
      * @param grants 私网授权服务

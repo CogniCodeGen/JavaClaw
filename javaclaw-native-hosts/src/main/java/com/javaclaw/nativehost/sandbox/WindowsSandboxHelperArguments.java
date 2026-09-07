@@ -1,5 +1,6 @@
 package com.javaclaw.nativehost.sandbox;
 
+import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Arrays;
@@ -9,6 +10,7 @@ import java.util.Map;
 import com.javaclaw.api.ResourceLimits;
 import com.javaclaw.nativehost.ffm.WindowsSandboxContext;
 import com.javaclaw.nativehost.ffm.WindowsSandboxRequest;
+import com.javaclaw.nativehost.network.SandboxNetworkAccess;
 
 /** 解析 Windows helper 的固定位置参数；目标 argv 位于唯一分隔符之后。 */
 final class WindowsSandboxHelperArguments {
@@ -23,6 +25,10 @@ final class WindowsSandboxHelperArguments {
         int readCount = nonNegativeInt(arguments[7], "read-count");
         int writeCount = nonNegativeInt(arguments[8], "write-count");
         int separator = Math.addExact(FIXED_ARGUMENTS, Math.addExact(readCount, writeCount));
+        SandboxNetworkAccess network = network(arguments, separator);
+        if (network.mode() == SandboxNetworkAccess.Mode.PROXY_ONLY) {
+            separator = Math.addExact(separator, 4);
+        }
         if (separator >= arguments.length || !"--".equals(arguments[separator]) || separator + 1 >= arguments.length) {
             throw new IllegalArgumentException("Windows Sandbox helper path counts or argv delimiter are invalid");
         }
@@ -41,7 +47,23 @@ final class WindowsSandboxHelperArguments {
                 writes,
                 parseBoolean(arguments[1]),
                 Duration.ofMillis(positiveLong(arguments[2], "timeout-ms")),
-                limits);
+                limits,
+                network);
+    }
+
+    private static SandboxNetworkAccess network(String[] arguments, int offset) {
+        if (offset < arguments.length && "--network-proxy-v1".equals(arguments[offset])) {
+            if (offset + 4 >= arguments.length) {
+                throw new IllegalArgumentException("Windows proxy helper arguments are incomplete");
+            }
+            Path control = Path.of(arguments[offset + 3]);
+            return SandboxNetworkAccess.proxyOnly(
+                    arguments[offset + 1],
+                    new InetSocketAddress("127.0.0.1", positiveInt(arguments[offset + 2], "proxy-port")),
+                    control,
+                    new WindowsProxyCleanup(control));
+        }
+        return SandboxNetworkAccess.offline();
     }
 
     private static List<Path> paths(String[] arguments, int offset, int count) {

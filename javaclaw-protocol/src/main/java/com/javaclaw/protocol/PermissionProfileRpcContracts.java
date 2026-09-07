@@ -10,7 +10,7 @@ import com.javaclaw.api.PermissionProfile;
 import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.WorkspaceId;
 
-/** PermissionProfile 管理与有效权限预览的 Protocol v2 DTO。 */
+/** PermissionProfile 管理与有效权限预览的 Protocol v3 DTO。 */
 public final class PermissionProfileRpcContracts {
     private PermissionProfileRpcContracts() {}
 

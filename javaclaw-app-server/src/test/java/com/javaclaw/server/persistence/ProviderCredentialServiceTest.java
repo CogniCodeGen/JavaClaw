@@ -5,7 +5,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Arrays;
@@ -19,9 +18,11 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileSpec;
-import com.javaclaw.api.PermissionProfileRef;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleSpec;
+import com.javaclaw.api.CapabilityNarrowing;
+import com.javaclaw.api.ModelPreference;
+import com.javaclaw.api.PermissionConstraint;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderCredentialBinding;
 import com.javaclaw.api.ProviderEndpoint;
@@ -29,7 +30,6 @@ import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ProviderReadiness;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.TurnBudget;
 import com.javaclaw.nativehost.credential.MasterKeyProtector;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.server.ProviderEndpointTestFixtures;
@@ -223,13 +223,13 @@ class ProviderCredentialServiceTest {
         assertFalse(failure.toString().contains(SECRET));
         fixture.vault().close();
 
-        try (var paths = Files.walk(temporaryDirectory.resolve("data-v5"))) {
+        try (var paths = Files.walk(temporaryDirectory.resolve("data-v6"))) {
             assertTrue(paths.filter(Files::isRegularFile).noneMatch(this::containsPlaintext));
         }
     }
 
     @Test
-    void Credential实时失效会拒绝新Profile与已有Profile启动Turn() {
+    void Credential实时失效会拒绝锁定模型的新Role与已有Role启动Turn() {
         Fixture fixture = fixture(new ProviderCredentialTransactionPort(new CanonicalJson()));
         ProviderCredentialBinding binding = fixture.service()
                 .set(
@@ -247,17 +247,18 @@ class ProviderCredentialServiceTest {
         CanonicalJson json = new CanonicalJson();
         PermissionProfileService permissions = new PermissionProfileService(fixture.database(), json, CLOCK);
         permissions.installStandardProfile();
-        AgentProfileService profiles =
-                new AgentProfileService(fixture.database(), fixture.providers(), permissions, json, CLOCK);
-        AgentProfileSpec profileSpec = new AgentProfileSpec(
+        AgentRoleService profiles = new AgentRoleService(fixture.database(), fixture.providers(), json, CLOCK);
+        AgentRoleSpec profileSpec = new AgentRoleSpec(
                 "Default",
+                "",
                 "执行用户任务。",
-                new ProviderRef(active.id(), active.revision(), "test-model"),
-                new PermissionProfileRef("standard", 1),
-                Set.of(),
-                new TurnBudget(4_000, 1_000, 4, 0, Duration.ofMinutes(1)));
-        AgentProfile created = profiles.create(
-                new CommandIdentity("profile/create", "profile-ready", 0, "b".repeat(64)),
+                Optional.of(new ModelPreference(new ProviderRef(active.id(), active.revision(), "test-model"))),
+                Optional.empty(),
+                new CapabilityNarrowing(Optional.of(Set.of()), Optional.empty()),
+                PermissionConstraint.INHERIT,
+                java.util.Map.of());
+        AgentRole created = profiles.create(
+                new CommandIdentity("agent/role/create", "profile-ready", 0, "b".repeat(64)),
                 "profile-ready",
                 profileSpec);
 
@@ -265,11 +266,13 @@ class ProviderCredentialServiceTest {
 
         assertEquals(
                 ProviderReadiness.CREDENTIAL_UNAVAILABLE,
-                fixture.providers().probe(profileSpec.provider()).readiness());
+                fixture.providers()
+                        .probe(profileSpec.model().orElseThrow().provider())
+                        .readiness());
         assertThrows(
                 PersistenceException.class,
                 () -> profiles.create(
-                        new CommandIdentity("profile/create", "profile-rejected", 0, "c".repeat(64)),
+                        new CommandIdentity("agent/role/create", "profile-rejected", 0, "c".repeat(64)),
                         "profile-rejected",
                         profileSpec));
         assertThrows(PersistenceException.class, () -> profiles.requireAvailable(created.id(), created.revision()));
@@ -292,7 +295,7 @@ class ProviderCredentialServiceTest {
     }
 
     private H2Database database() {
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         return database;
     }

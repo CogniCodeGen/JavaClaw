@@ -36,8 +36,8 @@ class ProviderServiceReadinessBranchesTest {
     private CanonicalJson json;
 
     @BeforeEach
-    void initializeDataV5() {
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+    void initializeDataV6() {
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
     }

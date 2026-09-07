@@ -7,7 +7,8 @@ import java.util.function.Function;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.PromptOptimizationDraft;
 import com.javaclaw.api.PromptOptimizationId;
 import com.javaclaw.api.PromptOptimizationProvenance;
@@ -32,7 +33,7 @@ class PromptOptimizationClientTest {
     private static final CanonicalJson JSON = new CanonicalJson();
 
     @Test
-    void sdkCarriesExactProfileAndBillingConfirmationBeforeAnyProviderCall() {
+    void sdkCarriesExactRoleAndBillingConfirmationBeforeAnyProviderCall() {
         PromptOptimizationDraft expected = draft();
         AtomicInteger requests = new AtomicInteger();
         PromptOptimizationClient client = client(request -> {
@@ -40,9 +41,9 @@ class PromptOptimizationClientTest {
             WriteCommand command = JSON.decode(request.params(), WriteCommand.class);
             PromptOptimizationRpcContracts.StartPayload payload =
                     JSON.decode(command.payload(), PromptOptimizationRpcContracts.StartPayload.class);
-            assertEquals("profile/prompt/optimization/start", request.method());
+            assertEquals("agent/role/prompt/optimization/start", request.method());
             assertEquals(0, command.expectedRevision());
-            assertEquals(expected.ref().sourceProfile(), payload.profile());
+            assertEquals(expected.ref().sourceRole(), payload.role());
             return JsonRpcResponse.success(request.id(), JSON.encode(expected));
         });
 
@@ -50,7 +51,8 @@ class PromptOptimizationClientTest {
                 expected,
                 client.start(
                         expected.ref().workspaceId(),
-                        expected.ref().sourceProfile(),
+                        expected.ref().sourceRole(),
+                        ExecutionOverrides.empty(),
                         true,
                         PromptOptimizationRpcContracts.BILLING_CONFIRMATION,
                         new CommandOptions("prompt-opt-start", 0)));
@@ -58,7 +60,8 @@ class PromptOptimizationClientTest {
                 IllegalArgumentException.class,
                 () -> client.start(
                         expected.ref().workspaceId(),
-                        expected.ref().sourceProfile(),
+                        expected.ref().sourceRole(),
+                        ExecutionOverrides.empty(),
                         false,
                         PromptOptimizationRpcContracts.BILLING_CONFIRMATION,
                         new CommandOptions("prompt-opt-unconfirmed", 0)));
@@ -94,7 +97,7 @@ class PromptOptimizationClientTest {
         PromptOptimizationRef ref = new PromptOptimizationRef(
                 PromptOptimizationId.parse("00000000-0000-0000-0000-000000000001"),
                 WorkspaceId.parse("00000000-0000-0000-0000-000000000002"),
-                new AgentProfileRef("profile", 3),
+                new AgentRoleRef("profile", 3),
                 ThreadId.parse("00000000-0000-0000-0000-000000000003"),
                 TurnId.parse("00000000-0000-0000-0000-000000000004"));
         return new PromptOptimizationDraft(

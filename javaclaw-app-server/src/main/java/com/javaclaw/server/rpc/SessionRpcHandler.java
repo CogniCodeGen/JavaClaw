@@ -3,7 +3,7 @@ package com.javaclaw.server.rpc;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.protocol.SessionSecretChannel;
 
-/** 需要当前连接 Secret 解封通道的 Protocol v2 内部处理端口。 */
+/** 需要当前连接 Secret 解封通道的 Protocol v3 内部处理端口。 */
 @FunctionalInterface
 public interface SessionRpcHandler {
     /**

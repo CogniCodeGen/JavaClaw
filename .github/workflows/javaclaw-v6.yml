@@ -1,0 +1,347 @@
+name: JavaClaw 6 verification gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v6.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+concurrency:
+  group: javaclaw-v6-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-verify:
+    name: ${{ matrix.platform }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: macos
+            arch: arm64
+            package-type: dmg
+          - os: macos-15-intel
+            platform: macos
+            arch: x64
+            package-type: pkg
+          - os: ubuntu-24.04
+            platform: linux
+            arch: x64
+            package-type: deb
+          - os: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+            package-type: deb
+          - os: windows-2025
+            platform: windows
+            arch: x64
+            package-type: msi
+
+    env:
+      JAVACLAW_APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.JAVACLAW_APPLE_CERTIFICATE_P12_BASE64 }}
+      JAVACLAW_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.JAVACLAW_APPLE_CERTIFICATE_PASSWORD }}
+      JAVACLAW_APPLE_SIGN_IDENTITY: ${{ secrets.JAVACLAW_APPLE_SIGN_IDENTITY }}
+      JAVACLAW_APPLE_INSTALLER_IDENTITY: ${{ secrets.JAVACLAW_APPLE_INSTALLER_IDENTITY }}
+      JAVACLAW_APPLE_ID: ${{ secrets.JAVACLAW_APPLE_ID }}
+      JAVACLAW_APPLE_TEAM_ID: ${{ secrets.JAVACLAW_APPLE_TEAM_ID }}
+      JAVACLAW_APPLE_APP_PASSWORD: ${{ secrets.JAVACLAW_APPLE_APP_PASSWORD }}
+      JAVACLAW_LINUX_GPG_PRIVATE_KEY_BASE64: ${{ secrets.JAVACLAW_LINUX_GPG_PRIVATE_KEY_BASE64 }}
+      JAVACLAW_LINUX_GPG_KEY: ${{ secrets.JAVACLAW_LINUX_GPG_KEY }}
+      JAVACLAW_LINUX_GPG_PASSPHRASE: ${{ secrets.JAVACLAW_LINUX_GPG_PASSPHRASE }}
+      JAVACLAW_WINDOWS_PFX_BASE64: ${{ secrets.JAVACLAW_WINDOWS_PFX_BASE64 }}
+      JAVACLAW_WINDOWS_PFX_PASSWORD: ${{ secrets.JAVACLAW_WINDOWS_PFX_PASSWORD }}
+      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/javaclaw-playwright-1.52.0
+      JAVACLAW_TOOLCHAIN_ARCHIVES: ${{ runner.temp }}/javaclaw-coding-archives
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore exact platform coding toolchain archive cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.JAVACLAW_TOOLCHAIN_ARCHIVES }}
+          key: coding-archives-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('javaclaw-app-server/src/main/resources/coding/toolchains-v1.json') }}
+
+      - name: Verify or download every published coding toolchain for this runner
+        run: python scripts/prepare-coding-acceptance.py "${{ env.JAVACLAW_TOOLCHAIN_ARCHIVES }}"
+
+      - name: Download locked Playwright 1.52 Chromium
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: |
+          mkdir -p "$PLAYWRIGHT_BROWSERS_PATH"
+          npx --yes playwright@1.52.0 install chromium
+          printf '%s\n' 'playwright:1.52.0' > \
+            "$PLAYWRIGHT_BROWSERS_PATH/.javaclaw-playwright-version"
+
+      - name: Download locked Playwright 1.52 Chromium on Windows
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path $env:PLAYWRIGHT_BROWSERS_PATH -Force | Out-Null
+          npx --yes playwright@1.52.0 install chromium
+          [IO.File]::WriteAllText(
+              (Join-Path $env:PLAYWRIGHT_BROWSERS_PATH ".javaclaw-playwright-version"),
+              "playwright:1.52.0`n",
+              [Text.Encoding]::ASCII)
+
+      - name: Install Linux sandbox and headless UI prerequisites
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            bubblewrap dbus-x11 fakeroot fonts-noto-cjk gnome-keyring libsecret-tools xvfb
+
+      - name: Install signed Windows guard fixture for real native verification
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          foreach ($script in Get-ChildItem javaclaw-packaging/src/main/packaging -Filter *.ps1) {
+              $tokens = $null
+              $errors = $null
+              [void][System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$errors)
+              if ($errors.Count -ne 0) { throw "invalid packaging PowerShell: $($script.Name): $errors" }
+          }
+          javaclaw-packaging/src/main/packaging/windows-network-guard-ci.ps1 -Mode Prepare
+
+      - name: Reject mismatched or snapshot release tags
+        if: startsWith(github.ref, 'refs/tags/v6.')
+        shell: bash
+        run: |
+          expected_version="${GITHUB_REF_NAME#v}"
+          actual_version="$(mvn --quiet --no-transfer-progress help:evaluate \
+            -Dexpression=project.version -DforceStdout)"
+          test "$actual_version" = "$expected_version"
+          case "$actual_version" in
+            *-SNAPSHOT) echo "release tags cannot publish SNAPSHOT versions" >&2; exit 2 ;;
+          esac
+
+      - name: Verify source format and static contracts
+        run: >-
+          mvn --batch-mode --no-transfer-progress
+          spotless:check checkstyle:check
+
+      - name: Verify runtime, architecture, coverage and native behavior
+        if: matrix.platform != 'linux'
+        run: >-
+          mvn --batch-mode --no-transfer-progress
+          -Djavaclaw.require.native.credential=true
+          -Djavaclaw.require.native.sandbox=true
+          -Djavaclaw.performance.gate=true
+          -Djavaclaw.codingNetworkAcceptance=true
+          -Djavaclaw.codingHarnessNetworkAcceptance=true
+          -Djavaclaw.toolchainArchives="${{ env.JAVACLAW_TOOLCHAIN_ARCHIVES }}"
+          -Djavaclaw.playwright.browsers.path="${{ env.PLAYWRIGHT_BROWSERS_PATH }}"
+          clean verify
+
+      - name: Verify Linux runtime and JavaFX under Xvfb
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          dbus-run-session -- bash -euo pipefail -c '
+            export XDG_RUNTIME_DIR="${RUNNER_TEMP}/javaclaw-keyring-runtime"
+            mkdir -p "$XDG_RUNTIME_DIR"
+            chmod 700 "$XDG_RUNTIME_DIR"
+            printf "javaclaw-ci\n" | gnome-keyring-daemon --unlock --components=secrets >/dev/null
+            xvfb-run --auto-servernum \
+              mvn --batch-mode --no-transfer-progress \
+              -Djavaclaw.require.native.credential=true \
+              -Djavaclaw.require.native.sandbox=true \
+              -Djavaclaw.performance.gate=true \
+              -Djavaclaw.codingNetworkAcceptance=true \
+              -Djavaclaw.codingHarnessNetworkAcceptance=true \
+              -Djavaclaw.toolchainArchives="$JAVACLAW_TOOLCHAIN_ARCHIVES" \
+              -Djavaclaw.playwright.browsers.path="$PLAYWRIGHT_BROWSERS_PATH" \
+              clean verify
+          '
+
+      - name: Remove Windows guard fixture and test trust before release packaging
+        if: always() && matrix.platform == 'windows'
+        shell: pwsh
+        run: javaclaw-packaging/src/main/packaging/windows-network-guard-ci.ps1 -Mode Cleanup
+
+      - name: Upload UI Golden review matrix
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: javaclaw-ui-golden-${{ matrix.platform }}-${{ matrix.arch }}
+          if-no-files-found: warn
+          path: javaclaw-desktop/target/ui-golden/${{ matrix.platform }}/*
+
+      - name: Verify packaged App Server
+        if: matrix.platform != 'windows'
+        run: javaclaw-packaging/target/distribution/bin/javaclaw-health
+
+      - name: Verify packaged App Server on Windows
+        if: matrix.platform == 'windows'
+        shell: cmd
+        run: javaclaw-packaging\target\distribution\bin\javaclaw-health.cmd
+
+      - name: Import macOS signing identities and configure notarization
+        if: matrix.platform == 'macos' && startsWith(github.ref, 'refs/tags/v6.')
+        shell: bash
+        run: |
+          for required in JAVACLAW_APPLE_CERTIFICATE_P12_BASE64 JAVACLAW_APPLE_CERTIFICATE_PASSWORD \
+            JAVACLAW_APPLE_SIGN_IDENTITY JAVACLAW_APPLE_INSTALLER_IDENTITY JAVACLAW_APPLE_ID \
+            JAVACLAW_APPLE_TEAM_ID JAVACLAW_APPLE_APP_PASSWORD; do
+            test -n "$(printenv "$required")" || { echo "missing release secret: $required" >&2; exit 2; }
+          done
+          certificate_path="$RUNNER_TEMP/javaclaw-signing.p12"
+          keychain_path="$RUNNER_TEMP/javaclaw-signing.keychain-db"
+          printf '%s' "$JAVACLAW_APPLE_CERTIFICATE_P12_BASE64" | \
+            openssl base64 -d -A >"$certificate_path"
+          security create-keychain -p javaclaw-ci-ephemeral "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p javaclaw-ci-ephemeral "$keychain_path"
+          security import "$certificate_path" -k "$keychain_path" \
+            -P "$JAVACLAW_APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productsign
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k javaclaw-ci-ephemeral "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+          xcrun notarytool store-credentials javaclaw-ci-notary \
+            --apple-id "$JAVACLAW_APPLE_ID" --team-id "$JAVACLAW_APPLE_TEAM_ID" \
+            --password "$JAVACLAW_APPLE_APP_PASSWORD"
+
+      - name: Import Linux release signing key
+        if: matrix.platform == 'linux' && startsWith(github.ref, 'refs/tags/v6.')
+        shell: bash
+        run: |
+          test -n "$JAVACLAW_LINUX_GPG_PRIVATE_KEY_BASE64" || { echo "missing Linux signing key" >&2; exit 2; }
+          test -n "$JAVACLAW_LINUX_GPG_KEY" || { echo "missing Linux signing key id" >&2; exit 2; }
+          test -n "$JAVACLAW_LINUX_GPG_PASSPHRASE" || { echo "missing Linux signing passphrase" >&2; exit 2; }
+          printf '%s' "$JAVACLAW_LINUX_GPG_PRIVATE_KEY_BASE64" | base64 --decode | gpg --batch --import
+          gpg --batch --list-secret-keys "$JAVACLAW_LINUX_GPG_KEY"
+
+      - name: Install WiX and import Windows release certificate
+        if: matrix.platform == 'windows' && startsWith(github.ref, 'refs/tags/v6.')
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:JAVACLAW_WINDOWS_PFX_BASE64)) {
+              throw "missing Windows release certificate"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:JAVACLAW_WINDOWS_PFX_PASSWORD)) {
+              throw "missing Windows release certificate password"
+          }
+          choco install wixtoolset --no-progress --yes
+          $certificatePath = Join-Path $env:RUNNER_TEMP "javaclaw-signing.pfx"
+          [IO.File]::WriteAllBytes(
+              $certificatePath,
+              [Convert]::FromBase64String($env:JAVACLAW_WINDOWS_PFX_BASE64))
+          $password = ConvertTo-SecureString $env:JAVACLAW_WINDOWS_PFX_PASSWORD -AsPlainText -Force
+          $imported = Import-PfxCertificate -FilePath $certificatePath `
+              -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          $certificate = $imported | Where-Object { $_.HasPrivateKey } | Select-Object -First 1
+          if ($null -eq $certificate) { throw "the Windows release certificate has no private key" }
+          "JAVACLAW_WINDOWS_CERTIFICATE=$($certificate.Thumbprint)" | Out-File $env:GITHUB_ENV -Append
+          "JAVACLAW_WINDOWS_TIMESTAMP_URL=http://timestamp.digicert.com" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Build, sign and notarize macOS installer
+        if: matrix.platform == 'macos' && startsWith(github.ref, 'refs/tags/v6.')
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          javaclaw-packaging/src/main/packaging/package-macos.sh \
+            "$JAVA_HOME/bin/jpackage" "${{ matrix.package-type }}" \
+            javaclaw-packaging/target/release javaclaw-packaging/target/distribution/lib \
+            javaclaw-packaging/target/distribution/runtime \
+            "javaclaw-packaging-${version}.jar" com.javaclaw.launcher.JavaClawLauncher \
+            "$version" javaclaw-packaging/target/native/app-image \
+            javaclaw-packaging/target/distribution/workers
+          javaclaw-packaging/src/main/signing/sign-macos.sh \
+            javaclaw-packaging/target/release "$JAVACLAW_APPLE_SIGN_IDENTITY" \
+            "$JAVACLAW_APPLE_INSTALLER_IDENTITY" javaclaw-ci-notary
+
+      - name: Build and sign Linux installer
+        if: matrix.platform == 'linux' && startsWith(github.ref, 'refs/tags/v6.')
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          javaclaw-packaging/src/main/packaging/package-linux.sh \
+            "$JAVA_HOME/bin/jpackage" "${{ matrix.package-type }}" \
+            javaclaw-packaging/target/release javaclaw-packaging/target/native/app-image \
+            javaclaw-packaging/target/distribution/lib javaclaw-packaging/target/distribution/runtime \
+            "javaclaw-packaging-${version}.jar" com.javaclaw.launcher.JavaClawLauncher "$version" \
+            javaclaw-packaging/target/distribution/workers
+          javaclaw-packaging/src/main/signing/sign-linux.sh \
+            javaclaw-packaging/target/release "$JAVACLAW_LINUX_GPG_KEY" \
+            "$JAVACLAW_LINUX_GPG_PASSPHRASE"
+
+      - name: Build and sign Windows installer
+        if: matrix.platform == 'windows' && startsWith(github.ref, 'refs/tags/v6.')
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          & javaclaw-packaging/src/main/packaging/package-windows.ps1 `
+              -JPackage "$env:JAVA_HOME\bin\jpackage.exe" `
+              -PackageType "${{ matrix.package-type }}" `
+              -Destination javaclaw-packaging/target/release `
+              -AppImageRoot javaclaw-packaging/target/native/app-image `
+              -InputDirectory javaclaw-packaging/target/distribution/lib `
+              -RuntimeImage javaclaw-packaging/target/distribution/runtime `
+              -WorkersDirectory javaclaw-packaging/target/distribution/workers `
+              -MainJar "javaclaw-packaging-$version.jar" `
+              -MainClass com.javaclaw.launcher.JavaClawLauncher -Version $version
+
+      - name: Rebuild and verify signed release manifest
+        if: startsWith(github.ref, 'refs/tags/v6.')
+        shell: bash
+        run: |
+          java -cp javaclaw-packaging/target/classes com.javaclaw.release.ReleaseManifestMain \
+            create javaclaw-packaging/target/release \
+            javaclaw-packaging/target/release/RELEASE-MANIFEST.json
+          java -cp javaclaw-packaging/target/classes com.javaclaw.release.ReleaseManifestMain \
+            verify javaclaw-packaging/target/release \
+            javaclaw-packaging/target/release/RELEASE-MANIFEST.json
+
+      - name: Attest release provenance
+        if: startsWith(github.ref, 'refs/tags/v6.')
+        uses: actions/attest@v4
+        with:
+          subject-path: javaclaw-packaging/target/release/*
+
+      - name: Attest release SBOM
+        if: startsWith(github.ref, 'refs/tags/v6.')
+        uses: actions/attest@v4
+        with:
+          subject-path: javaclaw-packaging/target/release/*
+          sbom-path: javaclaw-packaging/target/release-evidence/bom.json
+
+      - name: Upload distribution evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: javaclaw-${{ matrix.platform }}-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            javaclaw-packaging/target/release/*
+            javaclaw-packaging/target/release-evidence/*
+
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: javaclaw-diagnostics-${{ matrix.platform }}-${{ matrix.arch }}
+          if-no-files-found: warn
+          path: |
+            javaclaw-*/target/surefire-reports/*
+            javaclaw-*/target/site/jacoco/*

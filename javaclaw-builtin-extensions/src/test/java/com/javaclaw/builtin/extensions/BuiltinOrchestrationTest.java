@@ -7,7 +7,7 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.CancellationSource;
 import com.javaclaw.api.ExecutionState;
 import com.javaclaw.builtin.contracts.BuiltinExtensionIds;
@@ -33,7 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BuiltinOrchestrationTest {
-    private static final AgentProfileRef PROFILE = new AgentProfileRef("profile", 1);
+    private static final AgentRoleRef PROFILE = new AgentRoleRef("profile", 1);
     private static final OrchestrationContracts.ExecutionBudget BUDGET =
             new OrchestrationContracts.ExecutionBudget(10, 10_000, 10_000, 100);
 
@@ -202,7 +202,7 @@ class BuiltinOrchestrationTest {
 
     private static com.javaclaw.extension.spi.ExtensionRequest start(
             BuiltinExtensionTestSupport support, String id, String key, long revision) {
-        var request = new OrchestrationContracts.StartRequest(id, PROFILE, BUDGET);
+        var request = new OrchestrationContracts.StartRequest(id, AutomationV6Fixtures.selection(PROFILE), BUDGET);
         return support.request("execution/start", request, Optional.of(key), revision);
     }
 

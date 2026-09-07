@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javaclaw.local/schema/extension-bundle-v3.schema.json",
+  "title": "JavaClaw Protocol v3 third-party Bundle management",
+  "$defs": {
+    "empty": {"type": "object", "additionalProperties": false},
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "identifier": {"type": "string", "minLength": 1, "maxLength": 240},
+    "keyId": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,80}$"},
+    "attachmentPointer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attachmentId", "digest"],
+      "properties": {
+        "attachmentId": {"$ref": "#/$defs/digest"},
+        "digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "permissionReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaceRead", "workspaceWrite", "allowDelete", "networkHosts", "networkPorts",
+        "tlsOnly", "executableName", "maxRunTime", "memoryBytes", "outputBytes",
+        "childProcesses", "openFiles"
+      ],
+      "properties": {
+        "workspaceRead": {"type": "boolean"},
+        "workspaceWrite": {"type": "boolean"},
+        "allowDelete": {"type": "boolean"},
+        "networkHosts": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "networkPorts": {"type": "array", "uniqueItems": true, "items": {"type": "integer", "minimum": 1, "maximum": 65535}},
+        "tlsOnly": {"type": "boolean"},
+        "executableName": {"type": "string", "minLength": 1, "maxLength": 240},
+        "maxRunTime": {"type": "string", "format": "duration"},
+        "memoryBytes": {"type": "integer", "minimum": 1},
+        "outputBytes": {"type": "integer", "minimum": 1},
+        "childProcesses": {"type": "integer", "minimum": 1},
+        "openFiles": {"type": "integer", "minimum": 1}
+      }
+    },
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "failureCount", "checkedAt", "nextRetryAt", "lastFailure"],
+      "properties": {
+        "state": {"enum": ["NOT_PROBED", "HEALTHY", "DISABLED", "BACKING_OFF", "QUARANTINED"]},
+        "failureCount": {"type": "integer", "minimum": 0},
+        "checkedAt": {"type": ["string", "null"], "format": "date-time"},
+        "nextRetryAt": {"type": ["string", "null"], "format": "date-time"},
+        "lastFailure": {"type": ["string", "null"], "maxLength": 1000}
+      }
+    },
+    "bundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "displayName", "version", "revision", "state", "manifestDigest",
+        "signingKeyId", "signingKeyFingerprint", "contributionKinds", "permissions", "health"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "displayName": {"type": "string", "minLength": 1, "maxLength": 240},
+        "version": {"type": "string", "minLength": 1, "maxLength": 120},
+        "revision": {"type": "integer", "minimum": 1},
+        "state": {"enum": ["INSTALLED", "STARTING", "ENABLED", "DISABLED", "QUARANTINED", "REMOVING"]},
+        "manifestDigest": {"$ref": "#/$defs/digest"},
+        "signingKeyId": {"$ref": "#/$defs/keyId"},
+        "signingKeyFingerprint": {"$ref": "#/$defs/digest"},
+        "contributionKinds": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "permissions": {"$ref": "#/$defs/permissionReview"},
+        "health": {"$ref": "#/$defs/health"}
+      }
+    },
+    "bundleResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bundle"],
+      "properties": {"bundle": {"$ref": "#/$defs/bundle"}}
+    },
+    "bundleListResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bundles"],
+      "properties": {"bundles": {"type": "array", "items": {"$ref": "#/$defs/bundle"}}}
+    },
+    "bundlePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["extensionId"],
+      "properties": {"extensionId": {"$ref": "#/$defs/identifier"}}
+    },
+    "stagePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attachment"],
+      "properties": {"attachment": {"$ref": "#/$defs/attachmentPointer"}}
+    },
+    "stageResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stagingId", "attachment", "manifestDigest", "extensionId", "displayName", "version",
+        "signingKeyId", "signingKeyFingerprint", "contributionKinds", "permissions"
+      ],
+      "properties": {
+        "stagingId": {"$ref": "#/$defs/digest"},
+        "attachment": {"$ref": "#/$defs/attachmentPointer"},
+        "manifestDigest": {"$ref": "#/$defs/digest"},
+        "extensionId": {"$ref": "#/$defs/identifier"},
+        "displayName": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "signingKeyId": {"$ref": "#/$defs/keyId"},
+        "signingKeyFingerprint": {"$ref": "#/$defs/digest"},
+        "contributionKinds": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "permissions": {"$ref": "#/$defs/permissionReview"}
+      }
+    },
+    "commitPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stagingId", "approvedManifestDigest"],
+      "properties": {
+        "stagingId": {"$ref": "#/$defs/digest"},
+        "approvedManifestDigest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "writeCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotencyKey", "expectedRevision", "payload"],
+      "properties": {
+        "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 200},
+        "expectedRevision": {"type": "integer", "minimum": 0},
+        "payload": {"type": "object"}
+      }
+    },
+    "stageCommand": {"allOf": [{"$ref": "#/$defs/writeCommand"}, {"properties": {"payload": {"$ref": "#/$defs/stagePayload"}}}]},
+    "commitCommand": {"allOf": [{"$ref": "#/$defs/writeCommand"}, {"properties": {"payload": {"$ref": "#/$defs/commitPayload"}}}]},
+    "bundleCommand": {"allOf": [{"$ref": "#/$defs/writeCommand"}, {"properties": {"payload": {"$ref": "#/$defs/bundlePayload"}}}]},
+    "trustKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "fingerprint", "attachmentDigest", "revision", "state", "createdAt", "updatedAt"],
+      "properties": {
+        "id": {"$ref": "#/$defs/keyId"},
+        "fingerprint": {"$ref": "#/$defs/digest"},
+        "attachmentDigest": {"$ref": "#/$defs/digest"},
+        "revision": {"type": "integer", "minimum": 1},
+        "state": {"enum": ["ACTIVE", "REVOKED"]},
+        "createdAt": {"type": "string", "format": "date-time"},
+        "updatedAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "trustKeyPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["keyId"],
+      "properties": {"keyId": {"$ref": "#/$defs/keyId"}}
+    },
+    "trustKeyImportPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["keyId", "attachment"],
+      "properties": {
+        "keyId": {"$ref": "#/$defs/keyId"},
+        "attachment": {"$ref": "#/$defs/attachmentPointer"}
+      }
+    },
+    "trustKeyResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key"],
+      "properties": {"key": {"$ref": "#/$defs/trustKey"}}
+    },
+    "trustKeyListResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["keys"],
+      "properties": {"keys": {"type": "array", "items": {"$ref": "#/$defs/trustKey"}}}
+    },
+    "trustKeyImportCommand": {"allOf": [{"$ref": "#/$defs/writeCommand"}, {"properties": {"payload": {"$ref": "#/$defs/trustKeyImportPayload"}}}]},
+    "trustKeyCommand": {"allOf": [{"$ref": "#/$defs/writeCommand"}, {"properties": {"payload": {"$ref": "#/$defs/trustKeyPayload"}}}]},
+    "trashEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trashId", "extensionId", "version", "revision", "manifestDigest", "signingKeyId",
+        "state", "removedAt", "restoredRevision", "purgedAt"
+      ],
+      "properties": {
+        "trashId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "extensionId": {"$ref": "#/$defs/identifier"},
+        "version": {"type": "string", "minLength": 1},
+        "revision": {"type": "integer", "minimum": 1},
+        "manifestDigest": {"$ref": "#/$defs/digest"},
+        "signingKeyId": {"$ref": "#/$defs/keyId"},
+        "state": {"enum": ["TRASHED", "RESTORED", "PURGED"]},
+        "removedAt": {"type": "string", "format": "date-time"},
+        "restoredRevision": {"type": ["integer", "null"], "minimum": 1},
+        "purgedAt": {"type": ["string", "null"], "format": "date-time"}
+      }
+    },
+    "trashPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trashId"],
+      "properties": {"trashId": {"type": "string", "minLength": 1, "maxLength": 160}}
+    },
+    "trashPurgePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trashId", "confirmation"],
+      "properties": {
+        "trashId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "confirmation": {"type": "string", "pattern": "^PURGE .+$"}
+      }
+    },
+    "trashResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry"],
+      "properties": {"entry": {"$ref": "#/$defs/trashEntry"}}
+    },
+    "trashListResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entries"],
+      "properties": {"entries": {"type": "array", "items": {"$ref": "#/$defs/trashEntry"}}}
+    },
+    "trashCommand": {"allOf": [{"$ref": "#/$defs/writeCommand"}, {"properties": {"payload": {"$ref": "#/$defs/trashPayload"}}}]},
+    "trashPurgeCommand": {"allOf": [{"$ref": "#/$defs/writeCommand"}, {"properties": {"payload": {"$ref": "#/$defs/trashPurgePayload"}}}]}
+  }
+}

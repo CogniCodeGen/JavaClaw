@@ -93,7 +93,7 @@ class McpRpcHandlersTest {
     void 启动带内存Mcp端口的完整会话() {
         remote = new FakeRemote();
         components = AppServerBootstrap.create(
-                temporaryDirectory.resolve("data-v5"),
+                temporaryDirectory.resolve("data-v6"),
                 CLOCK,
                 new NoOpModel(),
                 required -> {},

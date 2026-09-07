@@ -4,7 +4,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * Protocol v2 写命令的调用选项。
+ * Protocol v3 写命令的调用选项。
  *
  * @param idempotencyKey 跨重试保持不变的键
  * @param expectedRevision 目标乐观锁版本；创建为 0

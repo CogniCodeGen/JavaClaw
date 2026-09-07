@@ -5,10 +5,10 @@
     <parent>
         <groupId>com.javaclaw</groupId>
         <artifactId>javaclaw-parent</artifactId>
-        <version>5.0.0-SNAPSHOT</version>
+        <version>6.0.0-SNAPSHOT</version>
     </parent>
     <artifactId>javaclaw-protocol</artifactId>
-    <name>JavaClaw App Protocol v2</name>
+    <name>JavaClaw App Protocol v3</name>
     <properties>
         <jacoco.line.ratio>0.90</jacoco.line.ratio>
         <jacoco.branch.ratio>0.80</jacoco.branch.ratio>

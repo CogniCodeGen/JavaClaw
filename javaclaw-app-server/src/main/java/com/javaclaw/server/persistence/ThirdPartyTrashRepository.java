@@ -35,7 +35,7 @@ public final class ThirdPartyTrashRepository {
     /**
      * 创建 Trash 仓储。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      * @param json 共享 JSON codec
      * @param clock 平台时钟
      */

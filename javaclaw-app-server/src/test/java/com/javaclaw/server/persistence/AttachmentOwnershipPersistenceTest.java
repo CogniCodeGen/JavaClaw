@@ -42,7 +42,7 @@ class AttachmentOwnershipPersistenceTest {
 
     @BeforeEach
     void initialize() {
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         clock = Clock.fixed(NOW, ZoneOffset.UTC);

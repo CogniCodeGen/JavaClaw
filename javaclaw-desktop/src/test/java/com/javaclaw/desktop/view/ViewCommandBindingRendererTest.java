@@ -40,17 +40,17 @@ class ViewCommandBindingRendererTest {
                     new ViewSchemaRenderer().render(schema(), data(Optional.of("definition-2"), true), interactions);
             List<Node> nodes = descendants(page);
 
-            TextField name = control(nodes, TextField.class, "Profile 名称");
+            TextField name = control(nodes, TextField.class, "Role 名称");
             name.setText("更新后的名称");
-            Button save = button(nodes, "保存 Profile");
+            Button save = button(nodes, "保存 Role");
             assertFalse(save.isDisabled());
             save.fire();
             button(nodes, "启动定义").fire();
             button(nodes, "归档定义").fire();
 
             ViewCommandInvocation saved = interactions.commands.get(0);
-            assertEquals("profile-1", saved.arguments().get("profileId"));
-            assertEquals(7, saved.arguments().get("profileRevision"));
+            assertEquals("role-1", saved.arguments().get("roleId"));
+            assertEquals(7, saved.arguments().get("roleRevision"));
             assertEquals("更新后的名称", saved.arguments().get("displayName"));
             assertEquals(9, saved.expectedRevision());
 
@@ -60,27 +60,27 @@ class ViewCommandBindingRendererTest {
 
             ViewCommandInvocation archived = interactions.commands.get(2);
             assertEquals("definition-2", archived.arguments().get("definitionId"));
-            assertEquals("profile-1", archived.arguments().get("profileId"));
+            assertEquals("role-1", archived.arguments().get("roleId"));
             assertEquals(4, archived.expectedRevision());
         });
     }
 
     @Test
     void authoritativeBindingsOverwriteInjectedArgumentsLast() {
-        ViewAction action = profileSave();
+        ViewAction action = roleSave();
         ViewSchema schema = new ViewSchema(
                 ViewSchema.CURRENT_VERSION,
-                "profile.action",
-                "Profile",
-                List.of(source("profiles", "profile/read")),
+                "role.action",
+                "Role",
+                List.of(source("roles", "role/read")),
                 List.of(new ViewSchema.Card("action", "操作", "保存", List.of(action))));
         ViewCommandBindingResolver resolver = new ViewCommandBindingResolver(schema, data(Optional.empty(), true));
 
         ViewCommandInvocation invocation = resolver.invocation(
-                action, Map.of("profileId", "attacker", "profileRevision", -1, "displayName", "新名称"), Map.of());
+                action, Map.of("roleId", "attacker", "roleRevision", -1, "displayName", "新名称"), Map.of());
 
-        assertEquals("profile-1", invocation.arguments().get("profileId"));
-        assertEquals(7, invocation.arguments().get("profileRevision"));
+        assertEquals("role-1", invocation.arguments().get("roleId"));
+        assertEquals(7, invocation.arguments().get("roleRevision"));
     }
 
     @Test
@@ -108,7 +108,7 @@ class ViewCommandBindingRendererTest {
                 Map.of("definitionId", "id"),
                 new ExpectedRevisionBinding.RowField("revision"),
                 true,
-                binding("profileId", "profiles", "id"));
+                binding("roleId", "roles", "id"));
         ViewAction start = new ViewAction(
                 "启动定义",
                 "execution/start",
@@ -122,7 +122,7 @@ class ViewCommandBindingRendererTest {
                 ViewSchema.CURRENT_VERSION,
                 "authority",
                 "权威绑定",
-                List.of(source("profiles", "profile/read"), source("definitions", "definition/list")),
+                List.of(source("roles", "role/read"), source("definitions", "definition/list")),
                 List.of(
                         new ViewSchema.Table(
                                 "definitions",
@@ -132,28 +132,28 @@ class ViewCommandBindingRendererTest {
                                 List.of(new ViewSchema.Column("title", "名称", Optional.empty())),
                                 ViewSelectionMode.SINGLE,
                                 List.of(archive)),
-                        new ViewSchema.Form("profile", "Profile", List.of(profileName()), profileSave()),
+                        new ViewSchema.Form("role", "Role", List.of(roleName()), roleSave()),
                         new ViewSchema.Card("start", "启动", "启动选中定义", List.of(start))));
     }
 
-    private static ViewAction profileSave() {
+    private static ViewAction roleSave() {
         return new ViewAction(
-                "保存 Profile",
-                "profile/put",
+                "保存 Role",
+                "role/put",
                 Map.of(),
                 Map.of(),
-                new ExpectedRevisionBinding.SourceRevision("profiles"),
+                new ExpectedRevisionBinding.SourceRevision("roles"),
                 false,
-                binding("profileId", "profiles", "id"),
-                binding("profileRevision", "profiles", "revision"));
+                binding("roleId", "roles", "id"),
+                binding("roleRevision", "roles", "revision"));
     }
 
-    private static ViewField profileName() {
+    private static ViewField roleName() {
         return new ViewField(
                 "displayName",
-                "Profile 名称",
+                "Role 名称",
                 ViewFieldType.TEXT,
-                new ViewBinding("profiles", "name"),
+                new ViewBinding("roles", "name"),
                 Optional.empty(),
                 ViewFieldValidation.required(true),
                 List.of(),
@@ -174,16 +174,9 @@ class ViewCommandBindingRendererTest {
                 4,
                 0,
                 selectedDefinition);
-        ViewData.Source profiles = new ViewData.Source(
-                List.of(),
-                Map.of("id", "profile-1", "revision", 7, "name", "原名称"),
-                "",
-                "",
-                false,
-                9,
-                0,
-                Optional.empty());
-        return new ViewData(Map.of("profiles", profiles, "definitions", definitions));
+        ViewData.Source roles = new ViewData.Source(
+                List.of(), Map.of("id", "role-1", "revision", 7, "name", "原名称"), "", "", false, 9, 0, Optional.empty());
+        return new ViewData(Map.of("roles", roles, "definitions", definitions));
     }
 
     private static ViewDataSource source(String id, String query) {

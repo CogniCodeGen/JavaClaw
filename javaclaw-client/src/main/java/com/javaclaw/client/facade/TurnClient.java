@@ -26,10 +26,10 @@ public final class TurnClient {
      *
      * @param payload 冻结模型、预算、权限和用户输入
      * @param options 幂等键；创建命令 expected revision 必须为 0
-     * @return 已持久化 Turn
+     * @return 已持久化 Turn 及安全执行配置摘要
      */
-    public AgentTurn start(CoreRpcContracts.TurnStartPayload payload, CommandOptions options) {
-        return connection.command("turn/start", payload, options, AgentTurn.class);
+    public CoreRpcContracts.TurnStartResult start(CoreRpcContracts.TurnStartPayload payload, CommandOptions options) {
+        return connection.command("turn/start", payload, options, CoreRpcContracts.TurnStartResult.class);
     }
 
     /**

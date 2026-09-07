@@ -42,7 +42,7 @@ public final class ManagedWorktreeService {
     /**
      * 创建 Managed Worktree 服务。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      * @param attachments 内容寻址附件服务
      * @param json 共享 JSON codec
      * @param clock 平台时钟

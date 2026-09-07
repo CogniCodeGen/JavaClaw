@@ -5,10 +5,13 @@ module com.javaclaw.nativehosts {
     requires com.javaclaw.protocol;
     requires java.desktop;
 
+    exports com.javaclaw.nativehost;
     exports com.javaclaw.nativehost.startup;
     exports com.javaclaw.nativehost.tray;
     exports com.javaclaw.nativehost.credential;
     exports com.javaclaw.nativehost.process;
     exports com.javaclaw.nativehost.sandbox;
+    exports com.javaclaw.nativehost.network;
+    exports com.javaclaw.nativehost.coding;
     exports com.javaclaw.nativehost.transport;
 }

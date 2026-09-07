@@ -110,7 +110,7 @@ class ServerInfrastructureTest {
 
             DiagnosticsSnapshot snapshot = diagnostics.read();
 
-            assertEquals("5.0.0-SNAPSHOT", snapshot.build().applicationVersion());
+            assertEquals("6.0.0-SNAPSHOT", snapshot.build().applicationVersion());
             assertEquals(0, snapshot.health().workspaceCount());
             assertEquals(9, snapshot.health().extensionCount());
             assertEquals(1, snapshot.health().connectedClients());
@@ -189,20 +189,29 @@ class ServerInfrastructureTest {
         }
 
         String prior = System.getProperty("javaclaw.data.root");
+        String priorProgram = System.getProperty("javaclaw.program.dir");
         try {
             System.setProperty(
                     "javaclaw.data.root",
-                    temporaryDirectory.resolve("custom-data-v5").toString());
+                    temporaryDirectory.resolve("custom-data-v6").toString());
             assertEquals(
                     temporaryDirectory
-                            .resolve("custom-data-v5")
+                            .resolve("custom-data-v6")
                             .toAbsolutePath()
                             .normalize(),
                     AppServerMain.dataRoot());
             System.setProperty("javaclaw.data.root", "   ");
-            assertTrue(AppServerMain.dataRoot().endsWith(Path.of(".javaclaw", "data-v5")));
+            Path program =
+                    temporaryDirectory.resolve("program").toAbsolutePath().normalize();
+            System.setProperty("javaclaw.program.dir", program.toString());
+            assertEquals(program.resolve("data-v6"), AppServerMain.dataRoot());
             assertFalse(AppServerMain.dataRoot().toString().isBlank());
         } finally {
+            if (priorProgram == null) {
+                System.clearProperty("javaclaw.program.dir");
+            } else {
+                System.setProperty("javaclaw.program.dir", priorProgram);
+            }
             if (prior == null) {
                 System.clearProperty("javaclaw.data.root");
             } else {
@@ -212,10 +221,10 @@ class ServerInfrastructureTest {
     }
 
     @Test
-    void 配置化Bootstrap从DataV5构造并关闭完整运行时() throws Exception {
+    void 配置化Bootstrap从DataV6构造并关闭完整运行时() throws Exception {
         Clock clock = Clock.fixed(Instant.parse("2026-09-02T05:00:00Z"), ZoneOffset.UTC);
         AppServerBootstrap.Foundation foundation = PlatformFoundationFactory.create(
-                temporaryDirectory.resolve("configured/data-v5"), clock, new MemoryProtector(), required -> {});
+                temporaryDirectory.resolve("configured/data-v6"), clock, new MemoryProtector(), required -> {});
 
         try (AppServerBootstrap.Components components =
                 ConfiguredProviderBootstrap.create(foundation, reference -> Optional.empty())) {
@@ -227,7 +236,7 @@ class ServerInfrastructureTest {
     }
 
     private H2Database database() {
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         return database;
     }

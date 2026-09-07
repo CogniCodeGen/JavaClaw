@@ -1,0 +1,367 @@
+{
+  "recorded_at": "2026-09-07T06:08:34.661872+00:00",
+  "baseline_commit": "438aa5fb045ed0e3190c0e4c9d6db18179ab68c9",
+  "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "command": "mvn --batch-mode --no-transfer-progress -Djavaclaw.update.ui.golden=false -Djavaclaw.performance.gate=true clean verify",
+  "reactor_projects": 15,
+  "result": "BUILD SUCCESS",
+  "totals": {
+    "tests": 1952,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 8
+  },
+  "log_path": "/tmp/javaclaw-review-fixes-verify.log",
+  "log_sha256": "de22e5525f7da0bb5bfd21791b846452b4ffa9af1e3c39c360f33f651b728b22",
+  "modules": [
+    {
+      "module": "javaclaw-agent-runtime",
+      "tests": 35,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 193,
+          "missed": 43,
+          "percent": 81.7797
+        },
+        "line": {
+          "covered": 644,
+          "missed": 22,
+          "percent": 96.6967
+        }
+      }
+    },
+    {
+      "module": "javaclaw-api",
+      "tests": 93,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 798,
+          "missed": 198,
+          "percent": 80.1205
+        },
+        "line": {
+          "covered": 2059,
+          "missed": 153,
+          "percent": 93.0832
+        }
+      }
+    },
+    {
+      "module": "javaclaw-app-server",
+      "tests": 731,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 5000,
+          "missed": 1201,
+          "percent": 80.6322
+        },
+        "line": {
+          "covered": 18966,
+          "missed": 1865,
+          "percent": 91.047
+        }
+      }
+    },
+    {
+      "module": "javaclaw-browser-service",
+      "tests": 47,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 396,
+          "missed": 161,
+          "percent": 71.0952
+        },
+        "line": {
+          "covered": 1230,
+          "missed": 276,
+          "percent": 81.6733
+        }
+      }
+    },
+    {
+      "module": "javaclaw-builtin-contracts",
+      "tests": 53,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 580,
+          "missed": 228,
+          "percent": 71.7822
+        },
+        "line": {
+          "covered": 1588,
+          "missed": 204,
+          "percent": 88.6161
+        }
+      }
+    },
+    {
+      "module": "javaclaw-builtin-extensions",
+      "tests": 161,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 1253,
+          "missed": 513,
+          "percent": 70.9513
+        },
+        "line": {
+          "covered": 6760,
+          "missed": 747,
+          "percent": 90.0493
+        }
+      }
+    },
+    {
+      "module": "javaclaw-client",
+      "tests": 88,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 333,
+          "missed": 129,
+          "percent": 72.0779
+        },
+        "line": {
+          "covered": 1517,
+          "missed": 210,
+          "percent": 87.8402
+        }
+      }
+    },
+    {
+      "module": "javaclaw-desktop",
+      "tests": 275,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 1,
+      "coverage": {
+        "branch": {
+          "covered": 3487,
+          "missed": 1223,
+          "percent": 74.034
+        },
+        "line": {
+          "covered": 13418,
+          "missed": 1733,
+          "percent": 88.5618
+        }
+      }
+    },
+    {
+      "module": "javaclaw-extension-spi",
+      "tests": 60,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 508,
+          "missed": 111,
+          "percent": 82.0679
+        },
+        "line": {
+          "covered": 1182,
+          "missed": 65,
+          "percent": 94.7875
+        }
+      }
+    },
+    {
+      "module": "javaclaw-knowledge-worker",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 23,
+          "missed": 7,
+          "percent": 76.6667
+        },
+        "line": {
+          "covered": 75,
+          "missed": 6,
+          "percent": 92.5926
+        }
+      }
+    },
+    {
+      "module": "javaclaw-model-adapters",
+      "tests": 62,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 358,
+          "missed": 119,
+          "percent": 75.0524
+        },
+        "line": {
+          "covered": 1268,
+          "missed": 152,
+          "percent": 89.2958
+        }
+      }
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "tests": 114,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 5,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 533,
+          "missed": 199,
+          "percent": 72.8142
+        },
+        "line": {
+          "covered": 1538,
+          "missed": 326,
+          "percent": 82.5107
+        }
+      }
+    },
+    {
+      "module": "javaclaw-packaging",
+      "tests": 87,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 2,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 299,
+          "missed": 91,
+          "percent": 76.6667
+        },
+        "line": {
+          "covered": 766,
+          "missed": 161,
+          "percent": 82.6321
+        }
+      }
+    },
+    {
+      "module": "javaclaw-protocol",
+      "tests": 139,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 608,
+          "missed": 132,
+          "percent": 82.1622
+        },
+        "line": {
+          "covered": 2157,
+          "missed": 198,
+          "percent": 91.5924
+        }
+      }
+    }
+  ],
+  "skipped_tests": [
+    {
+      "module": "javaclaw-app-server",
+      "class": "com.javaclaw.server.LocalProviderAcceptanceTest",
+      "test": "本地兼容Provider贯通默认Profile对话Embedding记忆与Skill审核",
+      "reason": "System property [javaclaw.live.local] does not exist"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.credential.SystemMasterKeyProtectorNativeTest",
+      "test": "currentUserCredentialFacilityStoresLoadsReplacesAndDeletesMasterKey",
+      "reason": ""
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.sandbox.WindowsSandboxIntegrationTest",
+      "test": "conPtySupportsBackpressuredOutputResizeAndInput",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.sandbox.WindowsSandboxIntegrationTest",
+      "test": "appContainerAllowsDeclaredWriteButDeniesDeleteAndEnforcesWallTimeout",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.transport.WindowsNamedPipeIntegrationTest",
+      "test": "closeWakesPendingAcceptAndIsIdempotent",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.transport.WindowsNamedPipeIntegrationTest",
+      "test": "exchangesFramedProtocolMessagesAndOwnsBothHandles",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-packaging",
+      "class": "com.javaclaw.launcher.WindowsServerSupervisorTest",
+      "test": "reusesReachableCurrentUserPipeWithoutStartingProcess",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-packaging",
+      "class": "com.javaclaw.release.BrowserNativeSandboxSmokeTest",
+      "test": "五平台Runner只在原生Sandbox登录和OAuth私有回调成功后分别发布能力",
+      "reason": ""
+    }
+  ],
+  "limits": [
+    "仅代表本机 macOS aarch64 的默认 Maven 门禁；条件跳过项不算通过。",
+    "三平台原生安装、完整 Browser/OAuth、系统凭据设施和签名公证仍需目标 Runner。",
+    "CLI 真实 macOS Ctrl-C 验证退出 130 与未知结果提示，未证明真实 App Server 已持久化取消；Linux/Windows 终端未验证。",
+    "未调用付费模型；配置准备性能另行使用现有源码基准测量，不能由 Maven property 推定已测。"
+  ],
+  "additional_checks": [
+    {
+      "command": "mvn --batch-mode --no-transfer-progress spotless:apply spotless:check checkstyle:check",
+      "result": "BUILD SUCCESS",
+      "log_path": "/tmp/javaclaw-review-fixes-style.log",
+      "log_sha256": "cd620de5d95ba95f961b5422ee2f457571ddfb1797a409db08beade565a9233a",
+      "formatted_source_changes": 0
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ]
+}

@@ -13,13 +13,14 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.ApprovalDecision;
 import com.javaclaw.api.ApprovalRecord;
 import com.javaclaw.api.ConversationThread;
-import com.javaclaw.api.ProfileLifecycle;
+import com.javaclaw.api.ExecutionOverrides;
+import com.javaclaw.api.RoleLifecycle;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.client.CommandOptions;
@@ -108,7 +109,7 @@ public final class DesktopPresenter implements AutoCloseable {
             String extensionId,
             Consumer<ExtensionRpcContracts.ExtensionEvent> listener) {
         com.javaclaw.api.WorkspaceId checkedWorkspace = Objects.requireNonNull(workspaceId, "workspaceId");
-        String checkedId = requireText(extensionId, "extensionId");
+        String checkedId = DesktopFailures.requireText(extensionId, "extensionId");
         Consumer<ExtensionRpcContracts.ExtensionEvent> checkedListener = Objects.requireNonNull(listener, "listener");
         return subscribeNotifications(notification -> {
             if (notification instanceof ServerNotification.ExtensionChanged changed
@@ -125,7 +126,7 @@ public final class DesktopPresenter implements AutoCloseable {
     }
 
     /**
-     * 关闭旧会话并重新建立 Protocol v2 连接。
+     * 关闭旧会话并重新建立 Protocol v3 连接。
      *
      * <p>该操作可在当前连接已经失败时执行。并发重连只允许最后一次结果进入 Desktop 状态，较早建立的会话会立即关闭。
      *
@@ -177,8 +178,14 @@ public final class DesktopPresenter implements AutoCloseable {
      * @param root 绝对根目录
      */
     public void createWorkspace(String name, Path root) {
+        createWorkspace(name, root, ExecutionOverrides.empty());
+    }
+
+    /** @param name 名称 @param root 绝对根目录 @param execution 独立角色、模型与权限选择 */
+    public void createWorkspace(String name, Path root, ExecutionOverrides execution) {
+        Objects.requireNonNull(execution, "execution");
         workers.submit(() -> runGuarded(() -> {
-            Workspace created = requireClient().workspaces().create(name, root, CommandOptions.create(0));
+            Workspace created = requireClient().workspaces().create(name, root, execution, CommandOptions.create(0));
             reloadCatalog(created);
         }));
     }
@@ -215,14 +222,29 @@ public final class DesktopPresenter implements AutoCloseable {
      * @param message 用户消息
      */
     public void send(String message) {
-        DesktopState snapshot = store.state();
-        ConversationThread thread = snapshot.threads().selectedThread().orElseThrow();
-        Optional<AgentProfileRef> profile = snapshot.interaction()
-                .selectedProfile()
-                .map(selected -> new AgentProfileRef(selected.id(), selected.revision()));
-        String prompt = requireText(message, "message");
+        Optional<AgentRoleRef> role = store.state()
+                .interaction()
+                .selectedRole()
+                .map(selected -> new AgentRoleRef(selected.id(), selected.revision()));
+        send(
+                message,
+                new ExecutionOverrides(
+                        role,
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty()));
+    }
+
+    /** @param message 用户消息 @param execution 当前显式独立选择，服务端负责解析与冻结 */
+    public void send(String message, ExecutionOverrides execution) {
+        ConversationThread thread = store.state().threads().selectedThread().orElseThrow();
+        String prompt = DesktopFailures.requireText(message, "message");
+        ExecutionOverrides selection = Objects.requireNonNull(execution, "execution");
         setBusy(true);
-        workers.submit(() -> runGuarded(() -> startAndObserve(thread, profile, prompt)));
+        workers.submit(() -> runGuarded(() -> startAndObserve(thread, selection, prompt)));
     }
 
     /** 请求取消当前活动 Turn。 */
@@ -248,23 +270,23 @@ public final class DesktopPresenter implements AutoCloseable {
                 .resolve(
                         approval.request().id(),
                         decision,
-                        requireText(reason, "reason"),
+                        DesktopFailures.requireText(reason, "reason"),
                         CommandOptions.create(approval.revision()))));
     }
 
     /**
-     * 选择用于后续 Turn 的精确 Agent Profile。
+     * 选择用于后续 Turn 的精确 Agent Role。
      *
-     * @param profile 最新版本配置
+     * @param role 最新版本配置
      */
-    public void selectProfile(AgentProfile profile) {
-        Objects.requireNonNull(profile, "profile");
-        update(state -> DesktopStateProjection.selectProfile(state, profile));
+    public void selectRole(AgentRole role) {
+        Objects.requireNonNull(role, "role");
+        update(state -> DesktopStateProjection.selectRole(state, role));
     }
 
-    /** 清除显式选择，使后续 Turn 重新解析 Workspace 默认 Agent Profile。 */
-    public void clearProfileSelection() {
-        update(DesktopStateProjection::clearProfileSelection);
+    /** 清除显式选择，使后续 Turn 重新解析 Workspace 默认 Agent Role。 */
+    public void clearRoleSelection() {
+        update(DesktopStateProjection::clearRoleSelection);
     }
 
     /**
@@ -312,7 +334,7 @@ public final class DesktopPresenter implements AutoCloseable {
             com.javaclaw.api.WorkspaceId workspaceId, String extensionId, ViewCommandInvocation invocation) {
         DesktopState snapshot = store.state();
         Objects.requireNonNull(workspaceId, "workspaceId");
-        requireText(extensionId, "extensionId");
+        DesktopFailures.requireText(extensionId, "extensionId");
         Objects.requireNonNull(invocation, "invocation");
         return submitSettingsRequest(
                 connected -> extensions.execute(connected, workspaceId, extensionId, invocation, snapshot));
@@ -375,8 +397,8 @@ public final class DesktopPresenter implements AutoCloseable {
 
     private void loadConnectedCatalog(JavaClawClient connected) {
         List<Workspace> workspaces = connected.workspaces().list();
-        List<AgentProfile> profiles = connected.profiles().list().stream()
-                .filter(profile -> profile.lifecycle() == ProfileLifecycle.ACTIVE)
+        List<AgentRole> roles = connected.roles().list().stream()
+                .filter(role -> role.lifecycle() == RoleLifecycle.ACTIVE)
                 .toList();
         Optional<Workspace> selected = workspaces.stream().findFirst();
         List<ConversationThread> threads = selected.map(
@@ -385,7 +407,7 @@ public final class DesktopPresenter implements AutoCloseable {
         Optional<ConversationThread> thread = threads.stream().findFirst();
         String detail =
                 connected.server().serverName() + " " + connected.server().serverVersion();
-        publishConnected(detail, workspaces, selected, threads, thread, profiles);
+        publishConnected(detail, workspaces, selected, threads, thread, roles);
         thread.ifPresent(this::loadTranscript);
     }
 
@@ -439,12 +461,14 @@ public final class DesktopPresenter implements AutoCloseable {
         }
     }
 
-    private void startAndObserve(ConversationThread thread, Optional<AgentProfileRef> profile, String message)
+    private void startAndObserve(ConversationThread thread, ExecutionOverrides execution, String message)
             throws InterruptedException {
         CoreRpcContracts.TurnStartPayload payload =
-                new CoreRpcContracts.TurnStartPayload(thread.id(), profile, message);
-        AgentTurn turn = requireClient().turns().start(payload, CommandOptions.create(0));
-        publishActiveTurn(turn);
+                new CoreRpcContracts.TurnStartPayload(thread.id(), execution, message);
+        AgentTurn turn =
+                requireClient().turns().start(payload, CommandOptions.create(0)).turn();
+        AgentTurn started = turn;
+        update(state -> DesktopStateProjection.activeTurn(state, started));
         long cursor = store.state().transcript().nextSequence();
         while (!DesktopStateProjection.terminal(turn.status()) && !closed) {
             Thread.sleep(150);
@@ -452,7 +476,8 @@ public final class DesktopPresenter implements AutoCloseable {
             cursor = page.nextSequence();
             turn = requireClient().turns().read(turn.id());
             List<ApprovalRecord> approvals = requireClient().approvals().list(Optional.of(turn.id()), false);
-            publishObservation(turn, page, approvals);
+            AgentTurn observed = turn;
+            update(state -> DesktopStateProjection.observation(state, observed, page, approvals));
         }
         setBusy(false);
     }
@@ -497,7 +522,7 @@ public final class DesktopPresenter implements AutoCloseable {
     private void reloadCatalog(Workspace selected) {
         List<Workspace> workspaces = requireClient().workspaces().list();
         List<ConversationThread> threads = requireClient().threads().list(selected.id());
-        publishCatalog(workspaces, selected, threads);
+        update(state -> DesktopStateProjection.catalog(state, workspaces, selected, threads));
     }
 
     private void publishConnected(
@@ -506,29 +531,15 @@ public final class DesktopPresenter implements AutoCloseable {
             Optional<Workspace> selected,
             List<ConversationThread> threads,
             Optional<ConversationThread> thread,
-            List<AgentProfile> profiles) {
-        DesktopConnectionCatalog catalog =
-                new DesktopConnectionCatalog(workspaces, selected, threads, thread, profiles);
+            List<AgentRole> roles) {
+        DesktopConnectionCatalog catalog = new DesktopConnectionCatalog(workspaces, selected, threads, thread, roles);
         update(state -> DesktopStateProjection.connected(state, detail, Instant.now(clock), catalog));
-    }
-
-    private void publishCatalog(List<Workspace> workspaces, Workspace selected, List<ConversationThread> threads) {
-        update(state -> DesktopStateProjection.catalog(state, workspaces, selected, threads));
     }
 
     private void publishThreads(
             Workspace workspace, List<ConversationThread> threads, Optional<ConversationThread> selected) {
         update(state -> DesktopStateProjection.threadCatalog(state, workspace, threads, selected));
         selected.ifPresent(this::loadTranscript);
-    }
-
-    private void publishActiveTurn(AgentTurn turn) {
-        update(state -> DesktopStateProjection.activeTurn(state, turn));
-    }
-
-    private void publishObservation(
-            AgentTurn turn, CoreRpcContracts.ItemListResult page, List<ApprovalRecord> approvals) {
-        update(state -> DesktopStateProjection.observation(state, turn, page, approvals));
     }
 
     private void setBusy(boolean busy) {
@@ -559,14 +570,6 @@ public final class DesktopPresenter implements AutoCloseable {
 
     private JavaClawClient requireClient() {
         return Objects.requireNonNull(client, "Desktop 尚未连接 App Server");
-    }
-
-    private static String requireText(String value, String name) {
-        String normalized = Objects.requireNonNull(value, name).strip();
-        if (normalized.isEmpty()) {
-            throw new IllegalArgumentException(name + " 不能为空");
-        }
-        return normalized;
     }
 
     /** 关闭 SDK 和未完成后台任务。 */

@@ -8,7 +8,7 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.CancellationSource;
 import com.javaclaw.api.CancellationToken;
 import com.javaclaw.api.CanonicalPayload;
@@ -42,7 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ScheduleOccurrenceCoverageTest {
-    private static final AgentProfileRef PROFILE = new AgentProfileRef("profile", 1);
+    private static final AgentRoleRef PROFILE = new AgentRoleRef("profile", 1);
     private static final OrchestrationContracts.ExecutionBudget BUDGET =
             new OrchestrationContracts.ExecutionBudget(4, 1_000, 1_000, 4);
 
@@ -141,8 +141,8 @@ class ScheduleOccurrenceCoverageTest {
         RecordingCommands commands = new RecordingCommands(support);
         ScheduleContracts.Definition definition = definition(
                 "definition",
-                ScheduleContracts.Target.definition(
-                        new ScheduleContracts.DefinitionTarget("javaclaw.plan", "plan", 3, PROFILE, BUDGET)));
+                ScheduleContracts.Target.definition(new ScheduleContracts.DefinitionTarget(
+                        "javaclaw.plan", "plan", 3, AutomationV6Fixtures.selection(PROFILE), BUDGET)));
         ExtensionJob job = dispatchedJob(support, definition, Optional.empty());
         ScheduleOccurrenceJobExecutor executor = executor(support, commands);
 
@@ -421,7 +421,8 @@ class ScheduleOccurrenceCoverageTest {
     }
 
     private static ScheduleContracts.Target turnTarget() {
-        return ScheduleContracts.Target.turn(new ScheduleContracts.TurnTemplate(PROFILE, "定时任务", "执行固定任务", BUDGET));
+        return ScheduleContracts.Target.turn(
+                new ScheduleContracts.TurnTemplate(AutomationV6Fixtures.selection(PROFILE), "定时任务", "执行固定任务", BUDGET));
     }
 
     private static ScheduleContracts.Occurrence create(

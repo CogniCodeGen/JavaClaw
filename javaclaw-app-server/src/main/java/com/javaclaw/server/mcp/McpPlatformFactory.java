@@ -68,7 +68,7 @@ public final class McpPlatformFactory {
     /**
      * 平台级 MCP 依赖。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      * @param vault Secret Vault
      * @param privateNetworkGrants 私网授权权威服务
      * @param extensions MCP 实时启停目录

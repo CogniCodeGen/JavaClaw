@@ -12,18 +12,23 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.AgentTurn;
+import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProviderRef;
+import com.javaclaw.api.ResolvedTurnConfig;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.TurnBudget;
 import com.javaclaw.api.TurnCancelledException;
 import com.javaclaw.api.TurnId;
 import com.javaclaw.api.TurnStatus;
+import com.javaclaw.protocol.CanonicalJson;
 
 /** Turn 行映射、创建与状态条件更新。 */
 final class TurnRepository {
+    private final CanonicalJson json = new CanonicalJson();
+
     List<AgentTurn> listRecoverable(Connection connection) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
                 SELECT * FROM CORE.AGENT_TURN
@@ -36,6 +41,16 @@ final class TurnRepository {
                 recoverable.add(map(result));
             }
             return List.copyOf(recoverable);
+        }
+    }
+
+    Optional<AgentTurn> findByThread(Connection connection, ThreadId threadId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT * FROM CORE.AGENT_TURN WHERE THREAD_ID = ? ORDER BY CREATED_AT, ID FETCH FIRST ROW ONLY")) {
+            statement.setString(1, threadId.toString());
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? Optional.of(map(result)) : Optional.empty();
+            }
         }
     }
 
@@ -70,27 +85,32 @@ final class TurnRepository {
                 request.threadId(),
                 TurnStatus.QUEUED,
                 1,
-                request.budget(),
-                request.profile(),
-                request.provider(),
-                request.permissionProfile(),
+                request.configuration().budget(),
+                request.configuration().role(),
+                request.configuration().provider(),
+                request.configuration().permissionProfile(),
                 request.executionRoot(),
-                request.promptManifestDigest(),
-                request.toolCatalogDigest(),
+                request.configuration().promptManifestDigest(),
+                request.configuration().toolCatalogDigest(),
                 Optional.empty(),
                 now,
-                now);
+                now,
+                request.configuration().summary());
         try (PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO CORE.AGENT_TURN (
                     ID, THREAD_ID, STATUS, REVISION, INPUT_TOKENS, OUTPUT_TOKENS, TOOL_CALLS, CHILD_THREADS,
-                    WALL_TIME_MILLIS, PROFILE_ID, PROFILE_REVISION, PROVIDER_ID, PROVIDER_REVISION, MODEL,
+                    WALL_TIME_MILLIS, ROLE_ID, ROLE_REVISION, PROVIDER_ID, PROVIDER_REVISION, MODEL,
                     PERMISSION_PROFILE_ID, PERMISSION_PROFILE_VERSION, EXECUTION_ROOT, PROMPT_MANIFEST_DIGEST,
-                    TOOL_CATALOG_DIGEST, ERROR_CODE, CREATED_AT, UPDATED_AT
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    TOOL_CATALOG_DIGEST, ERROR_CODE, CREATED_AT, UPDATED_AT, RESOLVED_CONFIG_JSON
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """)) {
             bindInsert(statement, turn);
+            statement.setString(23, json.encode(request.configuration()).json());
             statement.executeUpdate();
         }
+        new TurnContextRepository(json).freeze(connection, turn.id(), turn.provider());
+        CodingEnvironmentRepository.freeze(
+                connection, turn, request.codingEnvironment().orElseThrow(), now);
         return turn;
     }
 
@@ -121,7 +141,7 @@ final class TurnRepository {
         }
     }
 
-    private boolean hasCancellation(Connection connection, TurnId turnId) throws SQLException {
+    boolean hasCancellation(Connection connection, TurnId turnId) throws SQLException {
         try (PreparedStatement statement =
                 connection.prepareStatement("SELECT COUNT(*) FROM CORE.TURN_CANCELLATION WHERE TURN_ID = ?")) {
             statement.setString(1, turnId.toString());
@@ -181,7 +201,7 @@ final class TurnRepository {
         }
     }
 
-    private AgentTurn lock(Connection connection, TurnId turnId) throws SQLException {
+    AgentTurn lock(Connection connection, TurnId turnId) throws SQLException {
         try (PreparedStatement statement =
                 connection.prepareStatement("SELECT * FROM CORE.AGENT_TURN WHERE ID = ? FOR UPDATE")) {
             statement.setString(1, turnId.toString());
@@ -233,8 +253,8 @@ final class TurnRepository {
         statement.setInt(7, turn.budget().toolCalls());
         statement.setInt(8, turn.budget().childThreads());
         statement.setLong(9, turn.budget().wallTime().toMillis());
-        statement.setString(10, turn.profile().id());
-        statement.setLong(11, turn.profile().revision());
+        statement.setString(10, turn.role().id());
+        statement.setLong(11, turn.role().revision());
         statement.setString(12, turn.provider().endpointId());
         statement.setLong(13, turn.provider().endpointRevision());
         statement.setString(14, turn.provider().model());
@@ -262,7 +282,7 @@ final class TurnRepository {
                 TurnStatus.valueOf(result.getString("STATUS")),
                 result.getLong("REVISION"),
                 budget,
-                new AgentProfileRef(result.getString("PROFILE_ID"), result.getLong("PROFILE_REVISION")),
+                new AgentRoleRef(result.getString("ROLE_ID"), result.getLong("ROLE_REVISION")),
                 new ProviderRef(
                         result.getString("PROVIDER_ID"),
                         result.getLong("PROVIDER_REVISION"),
@@ -274,7 +294,22 @@ final class TurnRepository {
                 result.getString("TOOL_CATALOG_DIGEST"),
                 Optional.ofNullable(errorCode),
                 instant(result, "CREATED_AT"),
-                instant(result, "UPDATED_AT"));
+                instant(result, "UPDATED_AT"),
+                decodeConfiguration(result).summary());
+    }
+
+    Optional<ResolvedTurnConfig> configuration(Connection connection, TurnId turnId) throws SQLException {
+        try (PreparedStatement statement =
+                connection.prepareStatement("SELECT RESOLVED_CONFIG_JSON FROM CORE.AGENT_TURN WHERE ID = ?")) {
+            statement.setString(1, turnId.toString());
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? Optional.of(decodeConfiguration(result)) : Optional.empty();
+            }
+        }
+    }
+
+    private ResolvedTurnConfig decodeConfiguration(ResultSet result) throws SQLException {
+        return json.decode(new CanonicalPayload(result.getString("RESOLVED_CONFIG_JSON")), ResolvedTurnConfig.class);
     }
 
     private static OffsetDateTime at(Instant instant) {

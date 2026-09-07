@@ -6,7 +6,7 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.TurnId;
 import com.javaclaw.api.TurnStatus;
@@ -128,7 +128,7 @@ class ExtensionContractsTest {
                 Optional.empty(),
                 com.javaclaw.api.ThreadExecutionIntent.WORKSPACE,
                 title,
-                SpiFixtures.executionSnapshot(new AgentProfileRef(model, 1)),
+                SpiFixtures.executionSnapshot(new AgentRoleRef(model, 1)),
                 instruction,
                 SpiFixtures.payload(),
                 key);

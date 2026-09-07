@@ -49,7 +49,7 @@ class PermissionProfileManagementTest {
 
     @BeforeEach
     void initialize() {
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         service = new PermissionProfileService(database, json, Clock.fixed(NOW, ZoneOffset.UTC));

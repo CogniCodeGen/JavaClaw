@@ -52,7 +52,7 @@ class SecurityGrantRpcHandlersTest {
 
     @BeforeEach
     void 初始化独立Registrar() {
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);

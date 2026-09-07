@@ -14,7 +14,7 @@ import com.javaclaw.server.persistence.CommandIdentity;
 import com.javaclaw.server.persistence.ExtensionJobService;
 import com.javaclaw.server.persistence.InputRequestService;
 
-/** InputRequest 与 Extension Job Protocol v2 方法的薄 RPC 映射。 */
+/** InputRequest 与 Extension Job Protocol v3 方法的薄 RPC 映射。 */
 public final class InputJobRpcHandlers {
     private final InputRequestService inputs;
     private final ExtensionJobService jobs;

@@ -29,21 +29,21 @@ class ViewCommandBindingWireCodecTest {
                 Map.of(),
                 new ExpectedRevisionBinding.None(),
                 false,
-                binding("profileId", "profiles", "id"),
-                binding("profileRevision", "profiles", "revision"));
+                binding("roleId", "roles", "id"),
+                binding("roleRevision", "roles", "revision"));
         ViewSchema schema = new ViewSchema(
                 ViewSchema.CURRENT_VERSION,
                 "profiles.start",
                 "启动",
-                List.of(new ViewDataSource("profiles", "profile/list", Map.of(), List.of(), 20)),
-                List.of(new ViewSchema.Card("start", "启动", "使用选中的 Profile", List.of(start))));
+                List.of(new ViewDataSource("roles", "agent/role/list", Map.of(), List.of(), 20)),
+                List.of(new ViewSchema.Card("start", "启动", "使用选中的 Role", List.of(start))));
         ViewSchemaWireCodec codec = new ViewSchemaWireCodec(new CanonicalJson());
 
         CanonicalPayload encoded = codec.encode(schema);
 
         assertEquals(schema, codec.decode(encoded));
         assertTrue(encoded.json().contains("\"commandBindings\""));
-        assertTrue(encoded.json().contains("\"argumentName\":\"profileRevision\""));
+        assertTrue(encoded.json().contains("\"argumentName\":\"roleRevision\""));
     }
 
     @Test
@@ -55,9 +55,9 @@ class ViewCommandBindingWireCodecTest {
                 "commandBindings",
                 List.of(Map.of(
                         "argumentName",
-                        "profileId",
+                        "roleId",
                         "binding",
-                        Map.of("sourceId", "profiles", "field", "id"),
+                        Map.of("sourceId", "roles", "field", "id"),
                         "script",
                         "run()")));
 
@@ -75,7 +75,7 @@ class ViewCommandBindingWireCodecTest {
                         .mapToObj(index -> wireBinding("argument" + index, "field" + index))
                         .toList());
         Map<String, Object> duplicate = action();
-        duplicate.put("commandBindings", List.of(wireBinding("profileId", "id"), wireBinding("profileId", "otherId")));
+        duplicate.put("commandBindings", List.of(wireBinding("roleId", "id"), wireBinding("roleId", "otherId")));
 
         assertThrows(ProtocolException.class, () -> codec.decode(payload(tooMany)));
         assertThrows(ProtocolException.class, () -> codec.decode(payload(duplicate)));
@@ -106,13 +106,13 @@ class ViewCommandBindingWireCodecTest {
                         "title",
                         "启动",
                         "dataSources",
-                        List.of(new ViewDataSource("profiles", "profile/list", Map.of(), List.of(), 20)),
+                        List.of(new ViewDataSource("roles", "agent/role/list", Map.of(), List.of(), 20)),
                         "nodes",
                         List.of(Map.of(
                                 "type", "card",
                                 "id", "start",
                                 "title", "启动",
-                                "body", "使用选中的 Profile",
+                                "body", "使用选中的 Role",
                                 "actions", List.of(action)))));
     }
 
@@ -121,6 +121,6 @@ class ViewCommandBindingWireCodecTest {
     }
 
     private static Map<String, Object> wireBinding(String argument, String field) {
-        return Map.of("argumentName", argument, "binding", Map.of("sourceId", "profiles", "field", field));
+        return Map.of("argumentName", argument, "binding", Map.of("sourceId", "roles", "field", field));
     }
 }

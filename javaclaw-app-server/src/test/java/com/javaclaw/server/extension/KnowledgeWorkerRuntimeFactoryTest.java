@@ -31,7 +31,7 @@ class KnowledgeWorkerRuntimeFactoryTest {
     @ResourceLock(Resources.SYSTEM_PROPERTIES)
     void 完整镜像创建客户端和隔离临时目录() throws Exception {
         Path image = prepareImage(temporaryDirectory.resolve("image"), "java");
-        Path data = Files.createDirectories(temporaryDirectory.resolve("data-v5"));
+        Path data = Files.createDirectories(temporaryDirectory.resolve("data-v6"));
 
         withProperties(image, "Mac OS X", () -> {
             Optional<KnowledgeWorkerClient> created = KnowledgeWorkerRuntimeFactory.create(data);
@@ -46,7 +46,7 @@ class KnowledgeWorkerRuntimeFactoryTest {
     @ResourceLock(Resources.SYSTEM_PROPERTIES)
     void Windows镜像使用JavaExe且错误标记失败关闭() throws Exception {
         Path windowsImage = prepareImage(temporaryDirectory.resolve("windows-image"), "java.exe");
-        Path data = Files.createDirectories(temporaryDirectory.resolve("windows-data-v5"));
+        Path data = Files.createDirectories(temporaryDirectory.resolve("windows-data-v6"));
         withProperties(windowsImage, "Windows 11", () -> {
             try (KnowledgeWorkerClient ignored =
                     KnowledgeWorkerRuntimeFactory.create(data).orElseThrow()) {
@@ -68,7 +68,7 @@ class KnowledgeWorkerRuntimeFactoryTest {
     @Test
     @ResourceLock(Resources.SYSTEM_PROPERTIES)
     void 缺失不完整和不安全镜像均拒绝() throws Exception {
-        Path data = Files.createDirectories(temporaryDirectory.resolve("failure-data-v5"));
+        Path data = Files.createDirectories(temporaryDirectory.resolve("failure-data-v6"));
         Path missing = temporaryDirectory.resolve("missing");
         withProperties(
                 missing,

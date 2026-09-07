@@ -18,7 +18,7 @@ final class JavaPreferencesManagementWindowStore implements ManagementWindowPref
 
     JavaPreferencesManagementWindowStore() {
         this(Preferences.userNodeForPackage(JavaPreferencesManagementWindowStore.class)
-                .node("management-window-v5"));
+                .node("management-window-v6"));
     }
 
     JavaPreferencesManagementWindowStore(Preferences preferences) {

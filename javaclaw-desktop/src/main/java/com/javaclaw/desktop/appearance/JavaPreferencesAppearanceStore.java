@@ -12,10 +12,10 @@ public final class JavaPreferencesAppearanceStore implements AppearancePreferenc
 
     private final Preferences preferences;
 
-    /** 创建 JavaClaw 5 独立命名空间的外观存储。 */
+    /** 创建 JavaClaw 6 独立命名空间的外观存储。 */
     public JavaPreferencesAppearanceStore() {
         this(Preferences.userNodeForPackage(JavaPreferencesAppearanceStore.class)
-                .node("appearance-v5"));
+                .node("appearance-v6"));
     }
 
     JavaPreferencesAppearanceStore(Preferences preferences) {

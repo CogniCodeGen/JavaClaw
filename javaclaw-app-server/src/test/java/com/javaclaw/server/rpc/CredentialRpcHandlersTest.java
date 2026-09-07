@@ -38,7 +38,7 @@ class CredentialRpcHandlersTest {
     @Test
     void registrar提供脱敏刷新主密钥轮换和危险重置() throws Exception {
         CanonicalJson json = new CanonicalJson();
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         try (SecretVaultService vault =
                         new SecretVaultService(database, new MemoryProtector(), json, CLOCK, new SecureRandom());

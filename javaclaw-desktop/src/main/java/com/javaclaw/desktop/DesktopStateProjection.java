@@ -4,7 +4,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
-import com.javaclaw.api.AgentProfile;
+import com.javaclaw.api.AgentRole;
 import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.ApprovalRecord;
 import com.javaclaw.api.ConversationThread;
@@ -39,11 +39,11 @@ final class DesktopStateProjection {
         return threads(state, threads, TranscriptState.empty());
     }
 
-    static DesktopState selectProfile(DesktopState state, AgentProfile profile) {
-        return interaction(state, interaction(state, Optional.of(profile), false));
+    static DesktopState selectRole(DesktopState state, AgentRole role) {
+        return interaction(state, interaction(state, Optional.of(role), false));
     }
 
-    static DesktopState clearProfileSelection(DesktopState state) {
+    static DesktopState clearRoleSelection(DesktopState state) {
         return interaction(state, interaction(state, Optional.empty(), false));
     }
 
@@ -60,7 +60,7 @@ final class DesktopStateProjection {
                         Optional.empty()),
                 TranscriptState.empty(),
                 new InteractionState(
-                        catalog.profiles(),
+                        catalog.roles(),
                         Optional.empty(),
                         List.of(),
                         InputInteractionState.initial(),
@@ -132,8 +132,8 @@ final class DesktopStateProjection {
                 state.threads().selectedThread(),
                 terminal ? Optional.empty() : Optional.of(turn));
         InteractionState interaction = new InteractionState(
-                state.interaction().profiles(),
-                state.interaction().selectedProfile(),
+                state.interaction().roles(),
+                state.interaction().selectedRole(),
                 approvals,
                 state.interaction().inputs(),
                 !terminal,
@@ -145,8 +145,8 @@ final class DesktopStateProjection {
         return interaction(
                 state,
                 new InteractionState(
-                        state.interaction().profiles(),
-                        state.interaction().selectedProfile(),
+                        state.interaction().roles(),
+                        state.interaction().selectedRole(),
                         state.interaction().pendingApprovals(),
                         state.interaction().inputs(),
                         busy,
@@ -157,8 +157,8 @@ final class DesktopStateProjection {
         return interaction(
                 state,
                 new InteractionState(
-                        state.interaction().profiles(),
-                        state.interaction().selectedProfile(),
+                        state.interaction().roles(),
+                        state.interaction().selectedRole(),
                         state.interaction().pendingApprovals(),
                         state.interaction().inputs(),
                         false,
@@ -219,10 +219,10 @@ final class DesktopStateProjection {
         return status == TurnStatus.COMPLETED || status == TurnStatus.CANCELLED || status == TurnStatus.FAILED;
     }
 
-    private static InteractionState interaction(DesktopState state, Optional<AgentProfile> profile, boolean busy) {
+    private static InteractionState interaction(DesktopState state, Optional<AgentRole> role, boolean busy) {
         return new InteractionState(
-                state.interaction().profiles(),
-                profile,
+                state.interaction().roles(),
+                role,
                 state.interaction().pendingApprovals(),
                 state.interaction().inputs(),
                 busy,
@@ -235,8 +235,8 @@ final class DesktopStateProjection {
 
     private static DesktopState inputs(DesktopState state, InputInteractionState inputs) {
         InteractionState interaction = new InteractionState(
-                state.interaction().profiles(),
-                state.interaction().selectedProfile(),
+                state.interaction().roles(),
+                state.interaction().selectedRole(),
                 state.interaction().pendingApprovals(),
                 inputs,
                 state.interaction().busy(),

@@ -36,8 +36,11 @@ final class ProviderCredentialTransactionPort {
     }
 
     void insert(Connection connection, ProviderEndpoint candidate) throws Exception {
+        var previous = versions.latest(connection, VersionedSettingsRepository.Table.PROVIDER, candidate.id(), true)
+                .map(this::decode);
         failureProbe.beforeInsert();
         versions.insert(connection, VersionedSettingsRepository.Table.PROVIDER, stored(candidate));
+        new ProviderContextRepository().inherit(connection, previous, candidate);
     }
 
     void requireExclusiveReference(Connection connection, String ownerId, CredentialRef reference) throws Exception {

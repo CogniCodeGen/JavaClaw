@@ -218,7 +218,7 @@ public final class ExtensionJobSupervisor implements AutoCloseable, ExtensionJob
     /**
      * 发布取消并等待后台虚拟线程退出。
      *
-     * <p>不中断正在执行的 JDBC 调用；H2 的文件通道在中断时会被异步关闭，可能破坏整个 data-v5。空闲等待只用 {@link LockSupport#unpark(Thread)} 唤醒，活动单元通过
+     * <p>不中断正在执行的 JDBC 调用；H2 的文件通道在中断时会被异步关闭，可能破坏整个 data-v6。空闲等待只用 {@link LockSupport#unpark(Thread)} 唤醒，活动单元通过
      * CancellationToken 协作式收敛。
      */
     @Override

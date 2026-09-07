@@ -4,7 +4,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ToolCatalogQueryResult;
 import com.javaclaw.api.WorkspaceId;
@@ -33,15 +33,15 @@ public final class ToolCatalogSelectionPresenter {
      *
      * @param workspaceId Workspace；空值关闭并清空目录
      * @param permissionProfile 精确权限版本；必须与 Workspace 同时存在
-     * @param agentProfile 可选精确 Agent Profile
+     * @param agentRole 可选精确 Agent Role
      */
     public void bind(
             Optional<WorkspaceId> workspaceId,
             Optional<PermissionProfileRef> permissionProfile,
-            Optional<AgentProfileRef> agentProfile) {
+            Optional<AgentRoleRef> agentRole) {
         Optional<WorkspaceId> workspace = Objects.requireNonNull(workspaceId, "workspaceId");
         Optional<PermissionProfileRef> permission = Objects.requireNonNull(permissionProfile, "permissionProfile");
-        Optional<AgentProfileRef> agent = Objects.requireNonNull(agentProfile, "agentProfile");
+        Optional<AgentRoleRef> agent = Objects.requireNonNull(agentRole, "agentRole");
         if (sameBinding(workspace, permission, agent) && state.phase() != SettingsLoadState.ERROR) {
             return;
         }
@@ -74,7 +74,7 @@ public final class ToolCatalogSelectionPresenter {
                 SettingsLoadState.LOADING,
                 state.workspaceId(),
                 state.permissionProfile(),
-                state.agentProfile(),
+                state.agentRole(),
                 Optional.empty(),
                 normalized,
                 "正在筛选工具目录…",
@@ -91,7 +91,7 @@ public final class ToolCatalogSelectionPresenter {
         gateway.toolCatalog(
                         state.workspaceId().orElseThrow(),
                         state.permissionProfile().orElseThrow(),
-                        state.agentProfile(),
+                        state.agentRole(),
                         query,
                         RESULT_LIMIT)
                 .whenComplete((result, failure) -> complete(epoch, query, result, failure));
@@ -106,7 +106,7 @@ public final class ToolCatalogSelectionPresenter {
                     SettingsLoadState.ERROR,
                     state.workspaceId(),
                     state.permissionProfile(),
-                    state.agentProfile(),
+                    state.agentRole(),
                     Optional.empty(),
                     query,
                     SettingsFailures.message(failure),
@@ -118,7 +118,7 @@ public final class ToolCatalogSelectionPresenter {
                 SettingsLoadState.READY,
                 state.workspaceId(),
                 state.permissionProfile(),
-                state.agentProfile(),
+                state.agentRole(),
                 Optional.of(checked),
                 query,
                 checked.tools().isEmpty() ? "没有匹配的工具" : "已读取 " + checked.tools().size() + " 个工具",
@@ -126,12 +126,10 @@ public final class ToolCatalogSelectionPresenter {
     }
 
     private boolean sameBinding(
-            Optional<WorkspaceId> workspace,
-            Optional<PermissionProfileRef> permission,
-            Optional<AgentProfileRef> agent) {
+            Optional<WorkspaceId> workspace, Optional<PermissionProfileRef> permission, Optional<AgentRoleRef> agent) {
         return state.workspaceId().equals(workspace)
                 && state.permissionProfile().equals(permission)
-                && state.agentProfile().equals(agent);
+                && state.agentRole().equals(agent);
     }
 
     private void publish(ToolCatalogSelectionState next) {

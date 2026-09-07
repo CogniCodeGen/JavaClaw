@@ -54,7 +54,7 @@ public final class McpOAuthService {
     /**
      * 创建 OAuth PKCE 服务。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      * @param mcp MCP Endpoint 服务
      * @param vault Secret Vault
      * @param broker OAuth metadata/token Broker

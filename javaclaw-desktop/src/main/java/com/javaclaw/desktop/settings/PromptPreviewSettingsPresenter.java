@@ -6,8 +6,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.PromptManifestPreview;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceLifecycle;
@@ -44,7 +44,7 @@ public final class PromptPreviewSettingsPresenter {
                 SettingsLoadState.LOADING,
                 state.workspaces(),
                 state.workspace(),
-                state.profile(),
+                state.role(),
                 Optional.empty(),
                 "正在读取工作区…",
                 epoch));
@@ -61,20 +61,20 @@ public final class PromptPreviewSettingsPresenter {
                 SettingsLoadState.READY,
                 state.workspaces(),
                 Optional.ofNullable(workspace),
-                state.profile(),
+                state.role(),
                 Optional.empty(),
                 "",
                 state.epoch() + 1));
     }
 
     /**
-     * 设置当前 Profile；新建草稿或归档 Profile 不允许预览。
+     * 设置当前 Role；新建草稿或归档 Role 不允许预览。
      *
-     * @param profile 当前权威 Profile；没有权威版本时为空
+     * @param role 当前权威 Role；没有权威版本时为空
      */
-    public void selectProfile(Optional<AgentProfile> profile) {
-        Optional<AgentProfile> checked = Objects.requireNonNull(profile, "profile");
-        if (state.profile().equals(checked)) {
+    public void selectRole(Optional<AgentRole> role) {
+        Optional<AgentRole> checked = Objects.requireNonNull(role, "role");
+        if (state.role().equals(checked)) {
             return;
         }
         publish(new PromptPreviewSettingsState(
@@ -83,24 +83,24 @@ public final class PromptPreviewSettingsPresenter {
                 state.workspace(),
                 checked,
                 Optional.empty(),
-                "智能体方案已变化，请重新预览",
+                "Agent已变化，请重新预览",
                 state.epoch() + 1));
     }
 
     /** 请求权威 Prompt provenance；项目约定、Skill 和 Context 正文不会进入结果。 */
     public void preview() {
         Workspace workspace = state.workspace().orElseThrow(() -> new IllegalStateException("请先选择工作区"));
-        AgentProfile profile = state.profile().orElseThrow(() -> new IllegalStateException("请先保存并选择智能体方案"));
+        AgentRole role = state.role().orElseThrow(() -> new IllegalStateException("请先保存并选择Agent"));
         long epoch = state.epoch() + 1;
         publish(new PromptPreviewSettingsState(
                 SettingsLoadState.LOADING,
                 state.workspaces(),
                 state.workspace(),
-                state.profile(),
+                state.role(),
                 Optional.empty(),
                 "正在生成下一任务的提示词来源预览…",
                 epoch));
-        AgentProfileRef reference = new AgentProfileRef(profile.id(), profile.revision());
+        AgentRoleRef reference = new AgentRoleRef(role.id(), role.revision());
         gateway.preview(workspace.id(), reference)
                 .whenComplete((result, failure) -> completePreview(epoch, result, failure));
     }
@@ -129,7 +129,7 @@ public final class PromptPreviewSettingsPresenter {
                 SettingsLoadState.READY,
                 active,
                 selected,
-                state.profile(),
+                state.role(),
                 Optional.empty(),
                 active.isEmpty() ? "尚未登记活动工作区" : "",
                 epoch));
@@ -147,7 +147,7 @@ public final class PromptPreviewSettingsPresenter {
                 SettingsLoadState.READY,
                 state.workspaces(),
                 state.workspace(),
-                state.profile(),
+                state.role(),
                 Optional.of(Objects.requireNonNull(preview, "preview")),
                 "提示词来源预览已按当前版本生成",
                 epoch));
@@ -165,7 +165,7 @@ public final class PromptPreviewSettingsPresenter {
                 SettingsLoadState.ERROR,
                 state.workspaces(),
                 state.workspace(),
-                state.profile(),
+                state.role(),
                 Optional.empty(),
                 SettingsFailures.message(failure),
                 epoch));

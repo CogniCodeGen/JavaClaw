@@ -3,18 +3,19 @@ package com.javaclaw.protocol;
 import java.util.List;
 import java.util.Objects;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.PromptOptimizationDraft;
 import com.javaclaw.api.PromptOptimizationId;
 import com.javaclaw.api.WorkspaceId;
 
-/** Agent Profile Prompt 优化的 Protocol v2 强类型 payload。 */
+/** Agent Role Prompt 优化的 Protocol v3 强类型 payload。 */
 public final class PromptOptimizationRpcContracts {
     /** 启动命令要求的显式计费确认文本。 */
     public static final String BILLING_CONFIRMATION = "我确认本次 Prompt 优化会调用当前 Provider，并且可能产生费用";
 
     /** 采纳命令要求的显式人工确认文本。 */
-    public static final String ADOPTION_CONFIRMATION = "我确认仅采纳此草稿，并创建新的 Agent Profile revision";
+    public static final String ADOPTION_CONFIRMATION = "我确认仅采纳此草稿，并创建新的 Agent Role revision";
 
     private PromptOptimizationRpcContracts() {}
 
@@ -22,16 +23,22 @@ public final class PromptOptimizationRpcContracts {
      * 启动一个普通 Harness Turn。
      *
      * @param workspaceId 项目约定和执行根所属 Workspace
-     * @param profile 精确源 Agent Profile
+     * @param role 精确源 Agent Role
+     * @param execution 独立模型、权限和预算选择
      * @param billingConfirmed 必须为 true
      * @param confirmation 必须与 {@link #BILLING_CONFIRMATION} 完全一致
      */
     public record StartPayload(
-            WorkspaceId workspaceId, AgentProfileRef profile, boolean billingConfirmed, String confirmation) {
+            WorkspaceId workspaceId,
+            AgentRoleRef role,
+            ExecutionOverrides execution,
+            boolean billingConfirmed,
+            String confirmation) {
         /** 校验引用和确认文本存在；服务端再校验精确常量。 */
         public StartPayload {
             Objects.requireNonNull(workspaceId, "workspaceId");
-            Objects.requireNonNull(profile, "profile");
+            Objects.requireNonNull(role, "role");
+            Objects.requireNonNull(execution, "execution");
             confirmation = text(confirmation, "confirmation");
         }
     }

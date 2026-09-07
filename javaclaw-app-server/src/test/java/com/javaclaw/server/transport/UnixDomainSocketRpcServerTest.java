@@ -136,7 +136,7 @@ class UnixDomainSocketRpcServerTest {
         Path socket = temporaryDirectory.resolve("rpc.sock");
         AtomicReference<Throwable> serverFailure = new AtomicReference<>();
         try (AppServerBootstrap.Components components = AppServerBootstrap.create(
-                        temporaryDirectory.resolve("data-v5"), Clock.systemUTC(), new NoopModel());
+                        temporaryDirectory.resolve("data-v6"), Clock.systemUTC(), new NoopModel());
                 UnixDomainSocketRpcServer server = UnixDomainSocketRpcServer.bind(socket)) {
             Thread serving = Thread.ofVirtual().start(() -> {
                 try {

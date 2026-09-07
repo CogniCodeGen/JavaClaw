@@ -1,7 +1,6 @@
 package com.javaclaw.desktop.settings;
 
 import java.nio.file.Path;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -26,11 +25,9 @@ import javafx.scene.control.TextField;
 import javafx.stage.Window;
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.AgentProfileSpec;
-import com.javaclaw.api.PermissionProfileRef;
-import com.javaclaw.api.ProfileLifecycle;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.PromptOptimizationAdoption;
 import com.javaclaw.api.PromptOptimizationDraft;
 import com.javaclaw.api.PromptOptimizationId;
@@ -39,8 +36,8 @@ import com.javaclaw.api.PromptOptimizationRef;
 import com.javaclaw.api.PromptOptimizationResult;
 import com.javaclaw.api.PromptOptimizationState;
 import com.javaclaw.api.ProviderRef;
+import com.javaclaw.api.RoleLifecycle;
 import com.javaclaw.api.ThreadId;
-import com.javaclaw.api.TurnBudget;
 import com.javaclaw.api.TurnId;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceId;
@@ -64,7 +61,7 @@ class PromptOptimizationPanelTest {
             PromptOptimizationPanel panel = new PromptOptimizationPanel(gateway, () -> adopted.set(true));
             Parent root = attach(panel.content());
             panel.workspaceChanged(Optional.of(gateway.workspace));
-            panel.selectProfile(Optional.of(gateway.profile));
+            panel.selectRole(Optional.of(gateway.role));
             panel.activate();
 
             assertFalse(button(root, "生成优化草稿").isDisabled());
@@ -102,21 +99,21 @@ class PromptOptimizationPanelTest {
     }
 
     @Test
-    void 无活动工作区或非活动智能体方案时不开放付费动作() {
+    void 无活动工作区或非活动Agent时不开放付费动作() {
         FxTestSupport.run(() -> {
             PanelGateway gateway = new PanelGateway();
             gateway.workspace = workspace(WorkspaceLifecycle.ARCHIVED);
             PromptOptimizationPanel panel = new PromptOptimizationPanel(gateway, () -> {});
             Parent root = attach(panel.content());
             panel.workspaceChanged(Optional.empty());
-            panel.selectProfile(Optional.of(profile(ProfileLifecycle.DISABLED)));
+            panel.selectRole(Optional.of(role(RoleLifecycle.DISABLED)));
             panel.activate();
 
             assertTrue(button(root, "生成优化草稿").isDisabled());
             assertTrue(button(root, "刷新状态").isDisabled());
-            assertTrue(texts(root).stream().anyMatch(value -> value.contains("请先保存智能体方案")));
-            panel.selectProfile(Optional.empty());
-            assertTrue(texts(root).stream().anyMatch(value -> value.contains("请先保存智能体方案")));
+            assertTrue(texts(root).stream().anyMatch(value -> value.contains("请先保存Agent")));
+            panel.selectRole(Optional.empty());
+            assertTrue(texts(root).stream().anyMatch(value -> value.contains("请先保存Agent")));
         });
     }
 
@@ -199,20 +196,22 @@ class PromptOptimizationPanelTest {
                 NOW);
     }
 
-    private static AgentProfile profile(ProfileLifecycle lifecycle) {
-        AgentProfileSpec spec = new AgentProfileSpec(
+    private static AgentRole role(RoleLifecycle lifecycle) {
+        AgentRoleSpec spec = new AgentRoleSpec(
                 "Profile",
+                "角色测试",
                 "原始说明",
-                new ProviderRef("provider", 1, "model"),
-                new PermissionProfileRef("standard", 1),
-                Set.of(),
-                new TurnBudget(4_000, 1_000, 2, 0, Duration.ofSeconds(30)));
-        return new AgentProfile("profile", 1, lifecycle, spec, NOW, NOW);
+                Optional.of(new com.javaclaw.api.ModelPreference(new ProviderRef("provider", 1, "model"))),
+                Optional.empty(),
+                new com.javaclaw.api.CapabilityNarrowing(Optional.of(Set.of()), Optional.empty()),
+                com.javaclaw.api.PermissionConstraint.INHERIT,
+                java.util.Map.of());
+        return new AgentRole("role", 1, lifecycle, spec, false, NOW, NOW);
     }
 
     private static final class PanelGateway implements PromptOptimizationSettingsGateway {
         private Workspace workspace = workspace(WorkspaceLifecycle.ACTIVE);
-        private final AgentProfile profile = profile(ProfileLifecycle.ACTIVE);
+        private final AgentRole role = role(RoleLifecycle.ACTIVE);
         private final List<PromptOptimizationDraft> drafts = new ArrayList<>();
         private int nextId = 10;
 
@@ -228,7 +227,7 @@ class PromptOptimizationPanelTest {
         @Override
         public CompletionStage<PromptOptimizationDraft> start(
                 WorkspaceId workspaceId,
-                AgentProfileRef profileRef,
+                AgentRoleRef profileRef,
                 boolean billingConfirmed,
                 String confirmation,
                 CommandOptions options) {
@@ -258,11 +257,11 @@ class PromptOptimizationPanelTest {
         @Override
         public CompletionStage<PromptOptimizationAdoption> adopt(
                 PromptOptimizationId id, boolean adoptionConfirmed, String confirmation, CommandOptions options) {
-            AgentProfileRef adoptedRef = new AgentProfileRef(profile.id(), 2);
+            AgentRoleRef adoptedRef = new AgentRoleRef(role.id(), 2);
             PromptOptimizationDraft adopted = copy(require(id), PromptOptimizationState.READY, Optional.of(adoptedRef));
             replace(adopted);
-            AgentProfile updated = new AgentProfile(
-                    profile.id(), 2, ProfileLifecycle.ACTIVE, profile.spec(), profile.createdAt(), NOW.plusSeconds(1));
+            AgentRole updated = new AgentRole(
+                    role.id(), 2, RoleLifecycle.ACTIVE, role.spec(), false, role.createdAt(), NOW.plusSeconds(1));
             return CompletableFuture.completedFuture(new PromptOptimizationAdoption(adopted, updated));
         }
 
@@ -279,27 +278,25 @@ class PromptOptimizationPanelTest {
         }
 
         private PromptOptimizationDraft draft(
-                int suffix, PromptOptimizationState state, Optional<AgentProfileRef> adoptedProfile) {
+                int suffix, PromptOptimizationState state, Optional<AgentRoleRef> adoptedRole) {
             PromptOptimizationId id =
                     PromptOptimizationId.parse(String.format("00000000-0000-0000-0000-%012d", suffix));
             PromptOptimizationRef ref = new PromptOptimizationRef(
                     id,
                     workspace.id(),
-                    new AgentProfileRef(profile.id(), profile.revision()),
+                    new AgentRoleRef(role.id(), role.revision()),
                     ThreadId.parse("00000000-0000-0000-0000-000000000003"),
                     TurnId.parse("00000000-0000-0000-0000-000000000004"));
             return new PromptOptimizationDraft(
                     ref,
                     result(state),
-                    new PromptOptimizationProvenance("profile-optimization-v1", DIGEST, NOW, NOW),
-                    adoptedProfile);
+                    new PromptOptimizationProvenance("role-optimization-v1", DIGEST, NOW, NOW),
+                    adoptedRole);
         }
 
         private static PromptOptimizationDraft copy(
-                PromptOptimizationDraft source,
-                PromptOptimizationState state,
-                Optional<AgentProfileRef> adoptedProfile) {
-            return new PromptOptimizationDraft(source.ref(), result(state), source.provenance(), adoptedProfile);
+                PromptOptimizationDraft source, PromptOptimizationState state, Optional<AgentRoleRef> adoptedRole) {
+            return new PromptOptimizationDraft(source.ref(), result(state), source.provenance(), adoptedRole);
         }
 
         private static PromptOptimizationResult result(PromptOptimizationState state) {

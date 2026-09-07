@@ -4,7 +4,7 @@ import java.util.Objects;
 
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.protocol.CanonicalJson;
-import com.javaclaw.protocol.ProviderProfileRpcContracts;
+import com.javaclaw.protocol.ProviderRpcContracts;
 import com.javaclaw.protocol.WriteCommand;
 import com.javaclaw.server.persistence.CommandIdentity;
 import com.javaclaw.server.persistence.EmbeddingBindingService;
@@ -39,14 +39,14 @@ public final class ProviderEmbeddingBindingRpcHandlers {
     }
 
     private CanonicalPayload read(CanonicalPayload params) {
-        json.decode(params, ProviderProfileRpcContracts.EmbeddingBindingReadPayload.class);
-        return json.encode(new ProviderProfileRpcContracts.EmbeddingBindingReadResult(service.find()));
+        json.decode(params, ProviderRpcContracts.EmbeddingBindingReadPayload.class);
+        return json.encode(new ProviderRpcContracts.EmbeddingBindingReadResult(service.find()));
     }
 
     private CanonicalPayload update(CanonicalPayload params) {
         WriteCommand command = json.decode(params, WriteCommand.class);
-        ProviderProfileRpcContracts.EmbeddingBindingUpdatePayload payload =
-                json.decode(command.payload(), ProviderProfileRpcContracts.EmbeddingBindingUpdatePayload.class);
+        ProviderRpcContracts.EmbeddingBindingUpdatePayload payload =
+                json.decode(command.payload(), ProviderRpcContracts.EmbeddingBindingUpdatePayload.class);
         return json.encode(service.update(CommandIdentity.from(UPDATE_METHOD, command, json), payload.provider()));
     }
 }

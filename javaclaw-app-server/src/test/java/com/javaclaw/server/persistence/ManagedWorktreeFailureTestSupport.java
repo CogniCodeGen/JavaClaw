@@ -15,7 +15,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.CancellationToken;
 import com.javaclaw.api.ConversationThread;
@@ -37,7 +37,7 @@ import com.javaclaw.api.TurnBudget;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.protocol.CanonicalJson;
 
-/** Worktree 失败分支测试共享的真实 Git 与 data-v5 夹具。 */
+/** Worktree 失败分支测试共享的真实 Git 与 data-v6 夹具。 */
 abstract class ManagedWorktreeFailureTestSupport {
     static final Instant NOW = Instant.parse("2026-09-02T00:00:00Z");
     static final Path GIT = Path.of("/usr/bin/git");
@@ -59,12 +59,12 @@ abstract class ManagedWorktreeFailureTestSupport {
     AgentTurn parentTurn;
 
     @BeforeEach
-    void createDataV5AndRepository() throws Exception {
+    void createDataV6AndRepository() throws Exception {
         org.junit.jupiter.api.Assumptions.assumeTrue(Files.isExecutable(GIT));
         repository = initializeRepository(temporaryDirectory.resolve("repository"));
         json = new CanonicalJson();
         clock = Clock.fixed(NOW, ZoneOffset.UTC);
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         core = new CoreCommandService(database, json, clock);
         PermissionProfileService profiles = new PermissionProfileService(database, json, clock);
@@ -106,12 +106,13 @@ abstract class ManagedWorktreeFailureTestSupport {
                 new ToolCatalogSnapshot(com.javaclaw.api.TurnId.random(), 1, List.of(), standardPermission, NOW);
         return core.startTurn(
                 identity("turn/start", "turn-" + suffix, Map.of("thread", thread.id())),
-                new TurnStartRequest(
+                com.javaclaw.server.TurnContractFixtures.request(
                         thread.id(),
-                        new TurnBudget(1_000, 1_000, 10, 4, Duration.ofMinutes(5)),
-                        new AgentProfileRef("test-profile", 1),
-                        new ProviderRef("test-provider", 1, "test-model"),
-                        new PermissionProfileRef(PermissionProfileService.STANDARD_PROFILE_ID, 1),
+                        new com.javaclaw.server.TurnContractFixtures.Selection(
+                                new TurnBudget(1_000, 1_000, 10, 4, Duration.ofMinutes(5)),
+                                new AgentRoleRef("test-profile", 1),
+                                new ProviderRef("test-provider", 1, "test-model"),
+                                new PermissionProfileRef(PermissionProfileService.STANDARD_PROFILE_ID, 1)),
                         executionRoot,
                         json.encode(Map.of("thread", thread.id())),
                         tools,

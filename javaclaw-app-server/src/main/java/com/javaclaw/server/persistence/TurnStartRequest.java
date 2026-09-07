@@ -4,48 +4,39 @@ import java.nio.file.Path;
 import java.util.Objects;
 import java.util.Optional;
 
-import com.javaclaw.api.AgentProfileRef;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.CorePayloads;
-import com.javaclaw.api.PermissionProfileRef;
-import com.javaclaw.api.ProviderRef;
+import com.javaclaw.api.ResolvedTurnConfig;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.ToolCatalogSnapshot;
-import com.javaclaw.api.TurnBudget;
 import com.javaclaw.api.UnattendedExecutionScope;
 
 /**
- * 同事务创建 Turn 与首条用户消息的语义参数。
+ * 创建 Turn、解析配置、Prompt、目录和首条消息的同事务参数。
  *
  * @param threadId 所属 Thread
- * @param budget 冻结预算
- * @param profile 冻结 Agent Profile
- * @param provider 冻结 Provider 与模型
- * @param permissionProfile 冻结权限配置
- * @param executionRoot 服务端解析的规范绝对执行根
- * @param promptSnapshot Prompt 来源与完整 system prompt 的冻结快照
- * @param toolCatalog 冻结工具目录；Core 会将其重新绑定到实际 Turn ID 后持久化
+ * @param configuration 唯一完整冻结配置
+ * @param executionRoot 服务端验证的绝对执行根
+ * @param promptSnapshot 分层 Prompt 与来源正文，仅服务端可读
+ * @param toolCatalog 冻结目录，持久化时重新绑定真实 Turn ID
  * @param message 首条用户消息
- * @param unattendedExecutionScope Schedule 无人值守来源；普通 Turn 为空
+ * @param unattendedExecutionScope 无人值守来源；普通 Turn 为空
+ * @param codingEnvironment 事务外准备的项目声明及精确工具链；旧内部调用可为空，由 Core 补齐
  */
 public record TurnStartRequest(
         ThreadId threadId,
-        TurnBudget budget,
-        AgentProfileRef profile,
-        ProviderRef provider,
-        PermissionProfileRef permissionProfile,
+        ResolvedTurnConfig configuration,
         Path executionRoot,
         CanonicalPayload promptSnapshot,
         ToolCatalogSnapshot toolCatalog,
         CorePayloads.Message message,
-        Optional<UnattendedExecutionScope> unattendedExecutionScope) {
-    /** 校验参数；权限快照内容由服务端另行解析。 */
+        Optional<UnattendedExecutionScope> unattendedExecutionScope,
+        Optional<com.javaclaw.server.toolchain.CodingEnvironmentSelection> codingEnvironment) {
+    /** 校验快照之间的摘要一致性，禁止拼接来自不同解析的配置。 */
     public TurnStartRequest {
         Objects.requireNonNull(threadId, "threadId");
-        Objects.requireNonNull(budget, "budget");
-        Objects.requireNonNull(profile, "profile");
-        Objects.requireNonNull(provider, "provider");
-        Objects.requireNonNull(permissionProfile, "permissionProfile");
+        codingEnvironment = Objects.requireNonNull(codingEnvironment, "codingEnvironment");
+        Objects.requireNonNull(configuration, "configuration");
         executionRoot = Objects.requireNonNull(executionRoot, "executionRoot")
                 .toAbsolutePath()
                 .normalize();
@@ -53,23 +44,57 @@ public record TurnStartRequest(
         Objects.requireNonNull(toolCatalog, "toolCatalog");
         Objects.requireNonNull(message, "message");
         unattendedExecutionScope = Objects.requireNonNull(unattendedExecutionScope, "unattendedExecutionScope");
+        if (!configuration.promptManifestDigest().equals(promptSnapshot.sha256())
+                || !configuration.toolCatalogDigest().equals(toolCatalog.digest())) {
+            throw new IllegalArgumentException("解析配置与 Prompt 或工具目录摘要不一致");
+        }
     }
 
     /**
-     * 返回持久化到 AgentTurn 的 Prompt manifest 摘要。
+     * 兼容旧内部创建路径；Coding 选择由 Core 在创建事务前准备。
      *
-     * @return 冻结 snapshot 的 SHA-256
+     * @param threadId 所属 Thread
+     * @param configuration 已冻结配置
+     * @param executionRoot 权威执行根
+     * @param promptSnapshot Prompt 快照
+     * @param toolCatalog 工具目录
+     * @param message 首条消息
+     * @param unattendedExecutionScope 无人值守来源
      */
-    public String promptManifestDigest() {
-        return promptSnapshot.sha256();
+    public TurnStartRequest(
+            ThreadId threadId,
+            ResolvedTurnConfig configuration,
+            Path executionRoot,
+            CanonicalPayload promptSnapshot,
+            ToolCatalogSnapshot toolCatalog,
+            CorePayloads.Message message,
+            Optional<UnattendedExecutionScope> unattendedExecutionScope) {
+        this(
+                threadId,
+                configuration,
+                executionRoot,
+                promptSnapshot,
+                toolCatalog,
+                message,
+                unattendedExecutionScope,
+                Optional.empty());
     }
 
     /**
-     * 返回持久化到 AgentTurn 的冻结目录摘要。
+     * 绑定已完成受限读取的选择，不改变已有的模型、提示词和权限快照。
      *
-     * @return 工具目录 SHA-256
+     * @param selection 权威准备结果
+     * @return 包含 Coding 环境的创建参数
      */
-    public String toolCatalogDigest() {
-        return toolCatalog.digest();
+    public TurnStartRequest withCodingEnvironment(com.javaclaw.server.toolchain.CodingEnvironmentSelection selection) {
+        return new TurnStartRequest(
+                threadId,
+                configuration,
+                executionRoot,
+                promptSnapshot,
+                toolCatalog,
+                message,
+                unattendedExecutionScope,
+                Optional.of(selection));
     }
 }

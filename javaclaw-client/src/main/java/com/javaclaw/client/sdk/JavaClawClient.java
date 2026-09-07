@@ -9,12 +9,14 @@ import com.javaclaw.client.RpcClientConnection;
 import com.javaclaw.client.ServerNotification;
 import com.javaclaw.client.extension.BuiltinExtensionClients;
 import com.javaclaw.client.extension.ExtensionClient;
-import com.javaclaw.client.facade.AgentProfileClient;
+import com.javaclaw.client.facade.AgentClient;
+import com.javaclaw.client.facade.AgentRoleClient;
 import com.javaclaw.client.facade.ApprovalClient;
 import com.javaclaw.client.facade.AttachmentClient;
 import com.javaclaw.client.facade.BuiltinExtensionManagementClient;
 import com.javaclaw.client.facade.CredentialClient;
 import com.javaclaw.client.facade.DiagnosticsClient;
+import com.javaclaw.client.facade.ExecutionClient;
 import com.javaclaw.client.facade.ExtensionBundleClient;
 import com.javaclaw.client.facade.ExtensionJobClient;
 import com.javaclaw.client.facade.InputClient;
@@ -22,6 +24,7 @@ import com.javaclaw.client.facade.InstructionClient;
 import com.javaclaw.client.facade.ItemClient;
 import com.javaclaw.client.facade.McpClient;
 import com.javaclaw.client.facade.PermissionProfileClient;
+import com.javaclaw.client.facade.PromptManifestClient;
 import com.javaclaw.client.facade.PromptOptimizationClient;
 import com.javaclaw.client.facade.ProviderClient;
 import com.javaclaw.client.facade.RolloutClient;
@@ -42,7 +45,7 @@ import com.javaclaw.protocol.SealedSecret;
 import com.javaclaw.protocol.SessionSecretSealer;
 import com.javaclaw.protocol.StableCapabilities;
 
-/** JavaClaw Protocol v2 的强类型 Java SDK 入口。 */
+/** JavaClaw Protocol v3 的强类型 Java SDK 入口。 */
 public final class JavaClawClient implements AutoCloseable {
     private static final Set<String> STABLE_CAPABILITIES = StableCapabilities.withMcp();
 
@@ -55,7 +58,10 @@ public final class JavaClawClient implements AutoCloseable {
     private final InputClient inputs;
     private final AttachmentClient attachments;
     private final CredentialClient credentials;
-    private final AgentProfileClient profiles;
+    private final AgentRoleClient roles;
+    private final AgentClient agents;
+    private final ExecutionClient executions;
+    private final PromptManifestClient prompts;
     private final ProviderClient providers;
     private final PromptOptimizationClient promptOptimizations;
     private final PermissionProfileClient permissionProfiles;
@@ -83,7 +89,10 @@ public final class JavaClawClient implements AutoCloseable {
         inputs = new InputClient(connection);
         attachments = new AttachmentClient(connection);
         credentials = new CredentialClient(connection, server.secretKey());
-        profiles = new AgentProfileClient(connection);
+        roles = new AgentRoleClient(connection);
+        agents = new AgentClient(connection);
+        executions = new ExecutionClient(connection);
+        prompts = new PromptManifestClient(connection);
         providers = new ProviderClient(connection, server.secretKey());
         promptOptimizations = new PromptOptimizationClient(connection);
         permissionProfiles = new PermissionProfileClient(connection);
@@ -103,7 +112,7 @@ public final class JavaClawClient implements AutoCloseable {
     }
 
     /**
-     * 连接本地 App Server 并完成 Protocol v2 协商。
+     * 连接本地 App Server 并完成 Protocol v3 协商。
      *
      * @param transport stdio、UDS 或 Named Pipe 实现
      * @param clientInfo 客户端身份
@@ -197,9 +206,24 @@ public final class JavaClawClient implements AutoCloseable {
         return credentials;
     }
 
-    /** @return Profile 配置 facade */
-    public AgentProfileClient profiles() {
-        return profiles;
+    /** @return Agent Role 配置 facade */
+    public AgentRoleClient roles() {
+        return roles;
+    }
+
+    /** @return 使用父级权限和预算的子智能体协作 */
+    public AgentClient agents() {
+        return agents;
+    }
+
+    /** @return 安装、Workspace 和 Thread 独立执行配置 */
+    public ExecutionClient executions() {
+        return executions;
+    }
+
+    /** @return 分层 Prompt 来源预览 */
+    public PromptManifestClient prompts() {
+        return prompts;
     }
 
     /** @return Provider 配置 facade */
@@ -207,7 +231,7 @@ public final class JavaClawClient implements AutoCloseable {
         return providers;
     }
 
-    /** @return Agent Profile Prompt 优化 facade */
+    /** @return Agent Role Prompt 优化 facade */
     public PromptOptimizationClient promptOptimizations() {
         return promptOptimizations;
     }

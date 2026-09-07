@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javaclaw.local/schema/initialization-v3.schema.json",
+  "title": "JavaClaw Protocol v3 session initialization",
+  "$defs": {
+    "capabilityName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
+    },
+    "capabilitySet": {
+      "type": "array",
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/capabilityName"
+      }
+    },
+    "clientInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      }
+    },
+    "advertisement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stableCapabilities",
+        "requestedExperimentalCapabilities"
+      ],
+      "properties": {
+        "stableCapabilities": {
+          "$ref": "#/$defs/capabilitySet"
+        },
+        "requestedExperimentalCapabilities": {
+          "$ref": "#/$defs/capabilitySet"
+        }
+      }
+    },
+    "initializeParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "appProtocolVersion",
+        "clientInfo",
+        "capabilities"
+      ],
+      "properties": {
+        "appProtocolVersion": {
+          "const": 3
+        },
+        "clientInfo": {
+          "$ref": "#/$defs/clientInfo"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/advertisement"
+        }
+      }
+    },
+    "negotiatedCapabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stableCapabilities",
+        "experimentalCapabilities"
+      ],
+      "properties": {
+        "stableCapabilities": {
+          "$ref": "#/$defs/capabilitySet"
+        },
+        "experimentalCapabilities": {
+          "$ref": "#/$defs/capabilitySet"
+        }
+      }
+    },
+    "sessionKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "keyId",
+        "encodedPublicKey"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "X25519-HKDF-SHA256-AES-256-GCM"
+        },
+        "keyId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+        },
+        "encodedPublicKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        }
+      }
+    },
+    "initializeResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "appProtocolVersion",
+        "serverName",
+        "serverVersion",
+        "capabilities",
+        "secretKey"
+      ],
+      "properties": {
+        "appProtocolVersion": {
+          "const": 3
+        },
+        "serverName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "serverVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "capabilities": {
+          "$ref": "#/$defs/negotiatedCapabilities"
+        },
+        "secretKey": {
+          "$ref": "#/$defs/sessionKey"
+        }
+      }
+    }
+  }
+}

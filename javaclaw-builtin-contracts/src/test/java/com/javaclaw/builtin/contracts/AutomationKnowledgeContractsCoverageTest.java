@@ -8,7 +8,7 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.AttachmentRef;
 import com.javaclaw.api.TurnId;
 
@@ -390,20 +390,21 @@ class AutomationKnowledgeContractsCoverageTest {
     }
 
     @Test
-    void orchestrationAvailabilityManagementAndCountersFailClosed() {
+    void orchestrationAvailabilityStartAndCountersFailClosed() {
         OrchestrationContracts.Availability available = new OrchestrationContracts.Availability(true, "");
         OrchestrationContracts.Availability unavailable =
                 new OrchestrationContracts.Availability(false, " provider unavailable ");
-        OrchestrationContracts.ManagementStartRequest management =
-                new OrchestrationContracts.ManagementStartRequest("definition", "profile", 2, 3, 100, 50, 5);
+        OrchestrationContracts.StartRequest start = new OrchestrationContracts.StartRequest(
+                "definition",
+                AutomationV6Fixtures.selection(new AgentRoleRef("worker", 2)),
+                new OrchestrationContracts.ExecutionBudget(3, 100, 50, 5));
         OrchestrationContracts.ExecutionConsumption zero = OrchestrationContracts.ExecutionConsumption.zero();
         OrchestrationContracts.UnitResult unit = new OrchestrationContracts.UnitResult(
                 "unit", TurnId.parse(UUID.randomUUID().toString()), "done");
 
         assertTrue(available.executable());
         assertEquals("provider unavailable", unavailable.reason());
-        assertEquals(
-                new AgentProfileRef("profile", 2), management.toStartRequest().profile());
+        assertEquals(new AgentRoleRef("worker", 2), start.execution().role().orElseThrow());
         assertEquals(0, zero.turns());
         assertEquals("done", unit.summary());
         assertThrows(IllegalArgumentException.class, () -> new OrchestrationContracts.Availability(true, "unexpected"));

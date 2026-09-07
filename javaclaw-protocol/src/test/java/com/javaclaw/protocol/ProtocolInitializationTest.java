@@ -50,31 +50,32 @@ class ProtocolInitializationTest {
         ProtocolNegotiator negotiator = new ProtocolNegotiator(Set.of(), Set.of());
         ProtocolException version = assertThrows(
                 ProtocolException.class,
-                () -> negotiator.negotiate(new InitializeParams(3, validClient(), validAdvertisement())));
-        assertEquals(ProtocolErrorCode.UNSUPPORTED_PROTOCOL, version.code());
+                () -> negotiator.negotiate(new InitializeParams(2, validClient(), validAdvertisement())));
+        assertEquals(ProtocolErrorCode.UNSUPPORTED_PROTOCOL_VERSION, version.code());
+        assertTrue(version.getMessage().contains("UNSUPPORTED_PROTOCOL_VERSION"));
         assertThrows(NullPointerException.class, () -> negotiator.negotiate(null));
     }
 
     @Test
     void initializeResult只接受当前协议和完整服务信息() {
         NegotiatedCapabilities capabilities = new NegotiatedCapabilities(Set.of("items"), Set.of());
-        InitializeResult result = new InitializeResult(2, " JavaClaw ", " 5.0.0 ", capabilities, testSessionKey());
+        InitializeResult result = new InitializeResult(3, " JavaClaw ", " 5.0.0 ", capabilities, testSessionKey());
 
         assertEquals("JavaClaw", result.serverName());
         assertEquals("5.0.0", result.serverVersion());
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new InitializeResult(3, "server", "1", capabilities, testSessionKey()));
+                () -> new InitializeResult(2, "server", "1", capabilities, testSessionKey()));
         assertThrows(
-                NullPointerException.class, () -> new InitializeResult(2, null, "1", capabilities, testSessionKey()));
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> new InitializeResult(2, " ", "1", capabilities, testSessionKey()));
+                NullPointerException.class, () -> new InitializeResult(3, null, "1", capabilities, testSessionKey()));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new InitializeResult(2, "server", " ", capabilities, testSessionKey()));
-        assertThrows(NullPointerException.class, () -> new InitializeResult(2, "server", "1", null, testSessionKey()));
-        assertThrows(NullPointerException.class, () -> new InitializeResult(2, "server", "1", capabilities, null));
+                () -> new InitializeResult(3, " ", "1", capabilities, testSessionKey()));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new InitializeResult(3, "server", " ", capabilities, testSessionKey()));
+        assertThrows(NullPointerException.class, () -> new InitializeResult(3, "server", "1", null, testSessionKey()));
+        assertThrows(NullPointerException.class, () -> new InitializeResult(3, "server", "1", capabilities, null));
         assertThrows(NullPointerException.class, () -> new NegotiatedCapabilities(null, Set.of()));
     }
 
@@ -85,7 +86,7 @@ class ProtocolInitializationTest {
     @Test
     void 方法目录稳定且未知或未协商能力被拒绝() {
         NegotiatedCapabilities none = new NegotiatedCapabilities(Set.of(), Set.of());
-        assertEquals(147, MethodCatalog.methods().size());
+        assertEquals(159, MethodCatalog.methods().size());
         assertEquals(
                 RpcMethodKind.QUERY, MethodCatalog.require("thread/read", none).kind());
         assertEquals(
@@ -127,7 +128,7 @@ class ProtocolInitializationTest {
 
     @Test
     void 协议常量和枚举完整可访问() {
-        assertEquals(2, ProtocolVersion.CURRENT);
+        assertEquals(3, ProtocolVersion.CURRENT);
         assertEquals(3, RpcMethodKind.values().length);
         assertEquals(3, TransportKind.values().length);
         assertEquals(-32700, ProtocolErrorCode.PARSE_ERROR);
@@ -135,7 +136,7 @@ class ProtocolInitializationTest {
         assertEquals(-32601, ProtocolErrorCode.METHOD_NOT_FOUND);
         assertEquals(-32602, ProtocolErrorCode.INVALID_PARAMS);
         assertEquals(-32603, ProtocolErrorCode.INTERNAL_ERROR);
-        assertEquals(-32020, ProtocolErrorCode.UNSUPPORTED_PROTOCOL);
+        assertEquals(-32020, ProtocolErrorCode.UNSUPPORTED_PROTOCOL_VERSION);
         assertEquals(-32022, ProtocolErrorCode.REVISION_CONFLICT);
         assertEquals(-32023, ProtocolErrorCode.IDEMPOTENCY_CONFLICT);
         assertEquals(-32024, ProtocolErrorCode.PERMISSION_DENIED);

@@ -64,7 +64,7 @@ class SkillResourceExecutionValidationTest {
     @ResourceLock(Resources.SYSTEM_PROPERTIES)
     void 生产服务对缺失或损坏镜像均失败关闭() throws Exception {
         CanonicalJson json = new CanonicalJson();
-        H2Database database = database("production-data-v5");
+        H2Database database = database("production-data-v6");
         AttachmentService attachments = new AttachmentService(database, json, Clock.systemUTC());
 
         System.clearProperty(SkillResourceRuntimeLayout.IMAGE_ROOT_PROPERTY);
@@ -85,7 +85,7 @@ class SkillResourceExecutionValidationTest {
     @Test
     void 不可用服务拒绝执行与伪造服务标识() throws Exception {
         CanonicalJson json = new CanonicalJson();
-        H2Database database = database("unavailable-data-v5");
+        H2Database database = database("unavailable-data-v6");
         AttachmentService attachments = new AttachmentService(database, json, Clock.systemUTC());
         SkillResourceExecutionService service = SkillResourceExecutionService.unavailable(attachments, json);
         WorkspaceId workspaceId = WorkspaceId.random();
@@ -107,7 +107,7 @@ class SkillResourceExecutionValidationTest {
     @ResourceLock(Resources.SYSTEM_PROPERTIES)
     void 执行前拒绝取消损坏编码与不匹配元数据() throws Exception {
         CanonicalJson json = new CanonicalJson();
-        H2Database database = database("validation-data-v5");
+        H2Database database = database("validation-data-v6");
         AttachmentService attachments = new AttachmentService(database, json, Clock.systemUTC());
         SkillResourceRuntimeLayout layout = layout(database.dataRoot(), "validation-image");
         SkillResourceExecutionService service = available(attachments, json, layout);
@@ -152,7 +152,7 @@ class SkillResourceExecutionValidationTest {
     @ResourceLock(Resources.SYSTEM_PROPERTIES)
     void JShell参数校验失败后仍清理任务目录() throws Exception {
         CanonicalJson json = new CanonicalJson();
-        H2Database database = database("cleanup-data-v5");
+        H2Database database = database("cleanup-data-v6");
         AttachmentService attachments = new AttachmentService(database, json, Clock.systemUTC());
         SkillResourceRuntimeLayout layout = layout(database.dataRoot(), "cleanup-image");
         SkillResourceExecutionService service = available(attachments, json, layout);
@@ -178,7 +178,7 @@ class SkillResourceExecutionValidationTest {
     }
 
     private H2Database database(String name) {
-        H2Database database = new H2Database(temporaryDirectory.resolve(name).resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve(name).resolve("data-v6"));
         database.initialize();
         return database;
     }

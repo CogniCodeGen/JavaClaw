@@ -113,7 +113,7 @@ class ProviderCredentialRpcHandlersTest {
     }
 
     private H2Database database() {
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         return database;
     }
@@ -129,7 +129,7 @@ class ProviderCredentialRpcHandlersTest {
         WriteCommand create = new WriteCommand(
                 "create-provider",
                 0,
-                json.encode(new com.javaclaw.protocol.ProviderProfileRpcContracts.ProviderCreatePayload(
+                json.encode(new com.javaclaw.protocol.ProviderRpcContracts.ProviderCreatePayload(
                         "provider-main", spec, com.javaclaw.api.ProviderLifecycle.DISABLED)));
         providers.create(
                 CommandIdentity.from("provider/create", create, json),

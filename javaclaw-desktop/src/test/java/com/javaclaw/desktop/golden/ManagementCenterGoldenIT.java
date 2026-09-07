@@ -81,9 +81,22 @@ class ManagementCenterGoldenIT {
     }
 
     private static void assertProductionNavigation(List<String> entries) {
-        assertEquals(29, entries.size(), "Golden 必须读取全部生产管理入口，不能使用手写示意目录");
+        assertEquals(30, entries.size(), "Golden 必须读取全部生产管理入口，不能使用手写示意目录");
         for (String title : List.of(
-                "外观", "模型服务", "智能体方案", "权限方案", "MCP 外部工具", "网站会话", "工作区", "后台任务", "工作流", "定时任务", "知识库", "技能", "诊断")) {
+                "外观",
+                "模型服务",
+                "Agent",
+                "权限方案",
+                "MCP 外部工具",
+                "网站会话",
+                "工作区",
+                "编程环境",
+                "后台任务",
+                "工作流",
+                "定时任务",
+                "知识库",
+                "技能",
+                "诊断")) {
             assertTrue(entries.stream().anyMatch(entry -> entry.contains("title=" + title)), () -> "导航缺少：" + title);
         }
     }

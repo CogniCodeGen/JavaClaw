@@ -52,7 +52,7 @@ class ThirdPartyWorkerClientTest {
         json = new CanonicalJson();
         var keys = ThirdPartyBundleTestFixtures.keyPair();
         ThirdPartyBundleDirectories directories = new ThirdPartyBundleDirectories(
-                temporaryDirectory.resolve("data-v5"), Clock.fixed(NOW, ZoneOffset.UTC));
+                temporaryDirectory.resolve("data-v6"), Clock.fixed(NOW, ZoneOffset.UTC));
         ThirdPartyBundleArchive archive =
                 new ThirdPartyBundleArchive(json, ThirdPartyBundleTestFixtures.trustedKeys(keys), directories);
         VerifiedThirdPartyBundle staged = archive.stage(ThirdPartyBundleTestFixtures.attachment(
@@ -68,7 +68,7 @@ class ThirdPartyWorkerClientTest {
                 NOW,
                 NOW);
         sandbox = new StubSandbox();
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         client = new ThirdPartyWorkerClient(
                 sandbox,

@@ -27,7 +27,7 @@ import com.javaclaw.desktop.DesktopStylesheets;
 import com.javaclaw.desktop.appearance.DesktopAppearanceManager;
 import com.javaclaw.desktop.component.ManagementPageShell;
 
-/** 单实例、非阻塞的 JavaClaw 5 设置与管理中心窗口。 */
+/** 单实例、非阻塞的 JavaClaw 6 设置与管理中心窗口。 */
 public final class ManagementCenterWindow {
     static final double MINIMUM_WIDTH = 880;
     static final double MINIMUM_HEIGHT = 620;
@@ -35,7 +35,7 @@ public final class ManagementCenterWindow {
             new KeyCodeCombination(KeyCode.COMMA, KeyCombination.SHORTCUT_DOWN);
     private static final List<Destination> DESTINATIONS = destinations();
     private static final Set<String> WORKSPACE_SCOPED_PAGES = Set.of(
-            "profiles",
+            "roles",
             "learning",
             "permissions",
             "unattended-grants",
@@ -43,6 +43,7 @@ public final class ManagementCenterWindow {
             "mcp",
             "site",
             "workspace",
+            "coding",
             "instructions",
             "worktrees",
             "jobs",
@@ -106,6 +107,13 @@ public final class ManagementCenterWindow {
      */
     public void show(Window owner) {
         show(owner, null);
+    }
+
+    /** 服务连接恢复后刷新正在显示的 Workspace 执行配置；隐藏页面在下次激活时加载，未保存草稿保持原样。 */
+    public void refreshExecutionConfiguration() {
+        if (stage != null && stage.isShowing() && activePage instanceof WorkspaceSettingsPage workspacePage) {
+            workspacePage.refreshExecutionConfiguration();
+        }
     }
 
     /**
@@ -360,7 +368,7 @@ public final class ManagementCenterWindow {
         return List.of(
                 new Destination("appearance", "常规", "外观", "主题、字号与界面密度"),
                 new Destination("providers", "模型与智能体", "模型服务", "配置模型接口、密钥和可用模型"),
-                new Destination("profiles", "模型与智能体", "智能体方案", "设置提示词、模型、工具和任务限额"),
+                new Destination("roles", "模型与智能体", "Agent Studio", "编辑角色指令、能力收窄和可选模型偏好"),
                 new Destination("learning", "模型与智能体", "学习策略", "设置记忆学习和技能建议规则"),
                 new Destination("permissions", "安全与连接", "权限方案", "设置文件、网络、审批和资源上限"),
                 new Destination("vault", "安全与连接", "密钥库", "管理主密钥、锁定状态和凭据记录"),
@@ -372,7 +380,8 @@ public final class ManagementCenterWindow {
                 new Destination("bundles", "扩展", "第三方扩展", "安装、升级、隔离、启用或停用扩展包"),
                 new Destination("trust", "扩展", "信任公钥", "签名公钥、指纹和撤销"),
                 new Destination("trash", "扩展", "扩展回收站", "恢复或永久清除已卸载的扩展"),
-                new Destination("workspace", "工作区", "工作区", "设置默认智能体方案、项目约定和归档"),
+                new Destination("workspace", "工作区", "工作区", "设置默认 Agent、模型、权限和归档"),
+                new Destination("coding", "工作区", "编程环境", "托管工具链、依赖准备和安装进度"),
                 new Destination("instructions", "工作区", "项目约定", "AGENTS 层级、摘要与冻结状态"),
                 new Destination("worktrees", "工作区", "隔离工作区恢复", "管理补丁、备份和清理"),
                 new Destination("jobs", "功能管理", "后台任务", "查看工作单元、检查点和恢复操作"),

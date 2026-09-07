@@ -20,13 +20,13 @@ import com.javaclaw.api.McpSamplingRole;
 import com.javaclaw.api.McpTransport;
 import com.javaclaw.api.PermissionLayerKind;
 import com.javaclaw.api.PrivateNetworkPurpose;
-import com.javaclaw.api.ProfileLifecycle;
 import com.javaclaw.api.PromptOptimizationState;
 import com.javaclaw.api.PromptSourceKind;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ProviderReadiness;
 import com.javaclaw.api.ProviderVerificationState;
+import com.javaclaw.api.RoleLifecycle;
 import com.javaclaw.api.SecurityGrantState;
 import com.javaclaw.api.ToolRisk;
 import com.javaclaw.api.VaultLockReason;
@@ -110,7 +110,7 @@ final class SettingsLabels {
         };
     }
 
-    static String profileLifecycle(ProfileLifecycle value) {
+    static String roleLifecycle(RoleLifecycle value) {
         return switch (value) {
             case ACTIVE -> "启用";
             case DISABLED -> "停用";
@@ -207,8 +207,10 @@ final class SettingsLabels {
 
     static String promptSourceKind(PromptSourceKind value) {
         return switch (value) {
-            case CORE_TEMPLATE -> "内置模板";
-            case AGENT_PROFILE -> "智能体方案";
+            case MODEL_BASE -> "模型基础指令";
+            case PLATFORM -> "平台安全与行为";
+            case RUNTIME_CAPABILITIES -> "运行时能力";
+            case AGENT_ROLE -> "Agent 角色指令";
             case PROJECT_INSTRUCTION -> "项目约定";
             case SKILL -> "技能";
             case CONTEXT -> "扩展上下文";

@@ -3,7 +3,6 @@ package com.javaclaw.server.rpc;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
-import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -14,37 +13,40 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.AttachmentContent;
 import com.javaclaw.api.AttachmentMetadata;
 import com.javaclaw.api.AttachmentScope;
 import com.javaclaw.api.CancellationToken;
+import com.javaclaw.api.CapabilityNarrowing;
 import com.javaclaw.api.DiagnosticsSnapshot;
+import com.javaclaw.api.ExecutionConfiguration;
+import com.javaclaw.api.ExecutionOverrides;
+import com.javaclaw.api.ModelPreference;
+import com.javaclaw.api.PermissionConstraint;
 import com.javaclaw.api.PermissionProfile;
-import com.javaclaw.api.PermissionProfileRef;
-import com.javaclaw.api.ProfileBinding;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderReadiness;
 import com.javaclaw.api.ProviderRef;
 import com.javaclaw.api.ProviderStatus;
-import com.javaclaw.api.TurnBudget;
 import com.javaclaw.api.TurnId;
 import com.javaclaw.api.Workspace;
+import com.javaclaw.protocol.AgentRoleRpcContracts;
 import com.javaclaw.protocol.AttachmentRpcContracts;
 import com.javaclaw.protocol.CapabilityAdvertisement;
 import com.javaclaw.protocol.ClientInfo;
 import com.javaclaw.protocol.CoreRpcContracts;
+import com.javaclaw.protocol.ExecutionRpcContracts;
 import com.javaclaw.protocol.InitializeParams;
 import com.javaclaw.protocol.JsonRpcRequest;
 import com.javaclaw.protocol.JsonRpcResponse;
 import com.javaclaw.protocol.MethodCatalog;
 import com.javaclaw.protocol.PermissionProfileRpcContracts;
 import com.javaclaw.protocol.ProtocolVersion;
-import com.javaclaw.protocol.ProviderProfileRpcContracts;
+import com.javaclaw.protocol.ProviderRpcContracts;
 import com.javaclaw.protocol.RpcId;
 import com.javaclaw.protocol.RpcMethodKind;
 import com.javaclaw.protocol.WriteCommand;
@@ -73,7 +75,7 @@ class TypedSettingsRpcTest {
     @BeforeEach
     void createSession() {
         components =
-                AppServerBootstrap.create(temporaryDirectory.resolve("data-v5"), Clock.systemUTC(), new StubModel());
+                AppServerBootstrap.create(temporaryDirectory.resolve("data-v6"), Clock.systemUTC(), new StubModel());
         session = components.newSession();
         initialize();
     }
@@ -88,7 +90,7 @@ class TypedSettingsRpcTest {
         assertAttachmentRoundTrip();
         ProviderEndpoint provider = createProvider();
         assertProviderQueries(provider);
-        AgentProfile profile = createProfile(provider);
+        AgentRole profile = createProfile(provider);
         assertProfileQueries(profile);
         assertWorkspaceBinding(profile);
         assertDiagnosticsAndCatalog();
@@ -117,7 +119,7 @@ class TypedSettingsRpcTest {
                         "provider/create",
                         command(
                                 "provider-key",
-                                new ProviderProfileRpcContracts.ProviderCreatePayload(
+                                new ProviderRpcContracts.ProviderCreatePayload(
                                         "openai", spec, com.javaclaw.api.ProviderLifecycle.ACTIVE)))),
                 ProviderEndpoint.class);
     }
@@ -127,11 +129,11 @@ class TypedSettingsRpcTest {
                 session.handle(request(
                         "provider-read",
                         "provider/read",
-                        new ProviderProfileRpcContracts.ProviderReadPayload(provider.id(), provider.revision()))),
+                        new ProviderRpcContracts.ProviderReadPayload(provider.id(), provider.revision()))),
                 ProviderEndpoint.class);
-        ProviderProfileRpcContracts.ProviderListResult providers = decodeSuccess(
+        ProviderRpcContracts.ProviderListResult providers = decodeSuccess(
                 session.handle(request("provider-list", "provider/list", new Empty())),
-                ProviderProfileRpcContracts.ProviderListResult.class);
+                ProviderRpcContracts.ProviderListResult.class);
         ProviderStatus status = providerStatus("provider-status", "provider/status", provider);
         ProviderStatus probe = providerStatus("provider-probe", "provider/probe", provider);
 
@@ -145,50 +147,48 @@ class TypedSettingsRpcTest {
     private ProviderStatus providerStatus(String requestId, String method, ProviderEndpoint provider) {
         ProviderRef providerRef = new ProviderRef(provider.id(), provider.revision(), "test-model");
         return decodeSuccess(
-                session.handle(
-                        request(requestId, method, new ProviderProfileRpcContracts.ProviderProbePayload(providerRef))),
+                session.handle(request(requestId, method, new ProviderRpcContracts.ProviderProbePayload(providerRef))),
                 ProviderStatus.class);
     }
 
-    private AgentProfile createProfile(ProviderEndpoint provider) {
+    private AgentRole createProfile(ProviderEndpoint provider) {
         PermissionProfile permission = decodeSuccess(
                         session.handle(request("permission-list", "permissionProfile/list", new Empty())),
                         PermissionProfileRpcContracts.ListResult.class)
                 .profiles()
                 .getFirst();
-        AgentProfileSpec spec = new AgentProfileSpec(
+        AgentRoleSpec spec = new AgentRoleSpec(
                 "Architect",
+                "",
                 "保持架构边界清晰。",
-                new ProviderRef(provider.id(), provider.revision(), "test-model"),
-                new PermissionProfileRef(permission.id(), permission.version()),
-                Set.of(),
-                new TurnBudget(4_000, 1_000, 4, 1, Duration.ofMinutes(1)));
+                Optional.of(new ModelPreference(new ProviderRef(provider.id(), provider.revision(), "test-model"))),
+                Optional.empty(),
+                new CapabilityNarrowing(Optional.of(Set.of()), Optional.empty()),
+                PermissionConstraint.INHERIT,
+                java.util.Map.of());
         return decodeSuccess(
                 session.handle(request(
                         "profile-create",
-                        "profile/create",
-                        command(
-                                "profile-key",
-                                new ProviderProfileRpcContracts.AgentProfileCreatePayload("architect", spec)))),
-                AgentProfile.class);
+                        "agent/role/create",
+                        command("profile-key", new AgentRoleRpcContracts.CreatePayload("architect", spec)))),
+                AgentRole.class);
     }
 
-    private void assertProfileQueries(AgentProfile profile) {
-        AgentProfile profileRead = decodeSuccess(
+    private void assertProfileQueries(AgentRole profile) {
+        AgentRole profileRead = decodeSuccess(
                 session.handle(request(
-                        "profile-read",
-                        "profile/read",
-                        new ProviderProfileRpcContracts.AgentProfileReadPayload(profile.id(), profile.revision()))),
-                AgentProfile.class);
-        ProviderProfileRpcContracts.AgentProfileListResult profiles = decodeSuccess(
-                session.handle(request("profile-list", "profile/list", new Empty())),
-                ProviderProfileRpcContracts.AgentProfileListResult.class);
+                        "profile-read", "agent/role/read", new AgentRoleRpcContracts.ReadPayload(profile.ref()))),
+                AgentRole.class);
+        AgentRoleRpcContracts.ListResult profiles = decodeSuccess(
+                session.handle(request("profile-list", "agent/role/list", new Empty())),
+                AgentRoleRpcContracts.ListResult.class);
 
         assertEquals(profile, profileRead);
-        assertEquals(List.of(profile), profiles.profiles());
+        assertTrue(profiles.roles().contains(profile));
+        assertEquals(5, profiles.roles().size());
     }
 
-    private void assertWorkspaceBinding(AgentProfile profile) {
+    private void assertWorkspaceBinding(AgentRole profile) {
         Workspace workspace = decodeSuccess(
                 session.handle(request(
                         "settings-workspace",
@@ -198,20 +198,27 @@ class TypedSettingsRpcTest {
                                 new CoreRpcContracts.WorkspaceCreatePayload(
                                         "Settings", temporaryDirectory.resolve("settings-workspace"))))),
                 Workspace.class);
-        ProviderProfileRpcContracts.ProfileBindingUpdatePayload payload =
-                new ProviderProfileRpcContracts.ProfileBindingUpdatePayload(
-                        workspace.id(), Optional.empty(), new AgentProfileRef(profile.id(), profile.revision()));
-        ProfileBinding binding = decodeSuccess(
-                session.handle(request("binding-update", "profile/binding/update", command("binding-key", payload))),
-                ProfileBinding.class);
-        ProviderProfileRpcContracts.ProfileBindingReadResult bindingRead = decodeSuccess(
+        ExecutionOverrides execution = new ExecutionOverrides(
+                Optional.of(profile.ref()),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
+        ExecutionRpcContracts.DefaultUpdatePayload payload =
+                new ExecutionRpcContracts.DefaultUpdatePayload(Optional.of(workspace.id()), execution);
+        ExecutionConfiguration configured = decodeSuccess(
+                session.handle(
+                        request("execution-update", "execution/default/update", command("execution-key", payload))),
+                ExecutionConfiguration.class);
+        ExecutionRpcContracts.ReadResult read = decodeSuccess(
                 session.handle(request(
-                        "binding-read",
-                        "profile/binding/read",
-                        new ProviderProfileRpcContracts.ProfileBindingReadPayload(workspace.id(), Optional.empty()))),
-                ProviderProfileRpcContracts.ProfileBindingReadResult.class);
-
-        assertEquals(binding, bindingRead.binding().orElseThrow());
+                        "execution-read",
+                        "execution/default/read",
+                        new ExecutionRpcContracts.DefaultReadPayload(Optional.of(workspace.id())))),
+                ExecutionRpcContracts.ReadResult.class);
+        assertEquals(configured, read.configuration().orElseThrow());
     }
 
     private void assertDiagnosticsAndCatalog() {
@@ -224,7 +231,7 @@ class TypedSettingsRpcTest {
                 .collect(Collectors.toUnmodifiableSet());
 
         assertTrue(diagnostics.health().databaseHealthy());
-        assertEquals(9, diagnostics.health().extensionCount());
+        assertEquals(10, diagnostics.health().extensionCount());
         assertEquals(callableCatalog, components.router().implementedMethods());
     }
 

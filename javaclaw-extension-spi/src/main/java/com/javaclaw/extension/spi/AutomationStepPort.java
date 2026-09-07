@@ -48,7 +48,7 @@ public interface AutomationStepPort {
      * @param workspaceId Workspace
      * @param parentThreadId 父 Thread；顶层为空
      * @param title 子 Thread 标题
-     * @param snapshot Execution 启动时冻结的 Profile、权限、预算与工具目录
+     * @param snapshot Execution 启动时冻结的 Role、模型、权限、预算与工具目录
      * @param idempotencyKey 工作单元恢复键
      */
     record StepContext(

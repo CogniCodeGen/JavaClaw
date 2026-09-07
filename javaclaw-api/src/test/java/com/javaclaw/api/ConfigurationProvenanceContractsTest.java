@@ -151,7 +151,7 @@ class ConfigurationProvenanceContractsTest {
     @Test
     void prompt预览固定来源引用摘要和估算器() {
         PromptSourceMetadata core = new PromptSourceMetadata(
-                PromptSourceKind.CORE_TEMPLATE,
+                PromptSourceKind.MODEL_BASE,
                 "core/chat",
                 Optional.of("5.0"),
                 Optional.of(ApiFixtures.DIGEST),
@@ -212,25 +212,32 @@ class ConfigurationProvenanceContractsTest {
     }
 
     @Test
-    void profile与绑定冻结精确Provider权限和预算() {
-        AgentProfileSpec spec = profileSpec();
-        AgentProfile profile =
-                new AgentProfile("profile_default", 2, ProfileLifecycle.ACTIVE, spec, NOW, NOW.plusSeconds(1));
-        ProfileBinding workspaceBinding = new ProfileBinding(WORKSPACE_ID, Optional.empty(), profileRef(), 3, NOW);
-        ProfileBinding threadBinding =
-                new ProfileBinding(WORKSPACE_ID, Optional.of(ThreadId.random()), profileRef(), 4, NOW);
+    void role与执行配置分离并冻结精确来源() {
+        AgentRoleSpec spec = profileSpec();
+        AgentRole role = new AgentRole("role_default", 2, RoleLifecycle.ACTIVE, spec, false, NOW, NOW.plusSeconds(1));
+        ExecutionConfiguration workspace = new ExecutionConfiguration(
+                Optional.of(WORKSPACE_ID), Optional.empty(), ExecutionOverrides.empty(), 3, NOW);
+        ExecutionConfiguration thread = new ExecutionConfiguration(
+                Optional.of(WORKSPACE_ID), Optional.of(ThreadId.random()), ExecutionOverrides.empty(), 4, NOW);
 
-        assertEquals("Default", profile.spec().displayName());
-        assertTrue(spec.visibleTools().contains("read_file"));
-        assertTrue(workspaceBinding.threadId().isEmpty());
-        assertTrue(threadBinding.threadId().isPresent());
+        assertEquals("Default", role.spec().name());
+        assertTrue(spec.narrowing().capabilities().orElseThrow().contains("read_file"));
+        assertTrue(workspace.threadId().isEmpty());
+        assertTrue(thread.threadId().isPresent());
         assertThrows(
                 NullPointerException.class,
-                () -> new AgentProfileSpec("Default", "", providerRef(), permissionRef(), null, ApiFixtures.budget()));
+                () -> new AgentRoleSpec(
+                        "Default",
+                        "",
+                        "",
+                        Optional.empty(),
+                        Optional.empty(),
+                        null,
+                        PermissionConstraint.INHERIT,
+                        java.util.Map.of()));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new AgentProfile(
-                        "profile_default", 2, ProfileLifecycle.ARCHIVED, spec, NOW, NOW.minusSeconds(1)));
+                () -> new AgentRole("role_default", 2, RoleLifecycle.ARCHIVED, spec, false, NOW, NOW.minusSeconds(1)));
     }
 
     @Test
@@ -257,8 +264,8 @@ class ConfigurationProvenanceContractsTest {
     void automation快照与Worktree产物保留内容寻址证据() {
         ToolCatalogSnapshot catalog =
                 catalog(TurnId.random(), List.of(ApiFixtures.tool("read_file", "读取", Set.of())), NOW);
-        AutomationExecutionSnapshot snapshot = new AutomationExecutionSnapshot(
-                profileRef(), providerRef(), permissionRef(), ApiFixtures.budget(), catalog, Optional.empty());
+        AutomationExecutionSnapshot snapshot =
+                new AutomationExecutionSnapshot(ApiFixtures.config(catalog.digest()), catalog, Optional.empty());
         UnattendedExecutionScope scope =
                 new UnattendedExecutionScope(WORKSPACE_ID, "schedule_daily", 3, "occurrence_20260901");
         AutomationExecutionSnapshot scheduled = snapshot.withUnattendedExecutionScope(scope);
@@ -389,14 +396,16 @@ class ConfigurationProvenanceContractsTest {
                         InstructionScope.PROJECT, "AGENTS.md", digest, byteCount, includedBytes, truncated, errorCode));
     }
 
-    private static AgentProfileSpec profileSpec() {
-        return new AgentProfileSpec(
+    private static AgentRoleSpec profileSpec() {
+        return new AgentRoleSpec(
                 "Default",
+                "",
                 "Answer clearly.",
-                providerRef(),
-                permissionRef(),
-                Set.of("read_file", "write_file"),
-                ApiFixtures.budget());
+                Optional.of(new ModelPreference(providerRef())),
+                Optional.empty(),
+                new CapabilityNarrowing(Optional.of(Set.of("read_file", "write_file")), Optional.empty()),
+                PermissionConstraint.INHERIT,
+                java.util.Map.of());
     }
 
     private static ToolCatalogSnapshot catalog(TurnId turnId, List<ToolDescriptor> tools, Instant capturedAt) {
@@ -407,8 +416,8 @@ class ConfigurationProvenanceContractsTest {
         return tools.stream().map(tool -> tool.identity().name()).toList();
     }
 
-    private static AgentProfileRef profileRef() {
-        return new AgentProfileRef("profile_default", 2);
+    private static AgentRoleRef profileRef() {
+        return new AgentRoleRef("profile_default", 2);
     }
 
     private static ProviderRef providerRef() {

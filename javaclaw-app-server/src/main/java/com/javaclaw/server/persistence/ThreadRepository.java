@@ -19,6 +19,18 @@ import com.javaclaw.api.WorkspaceId;
 
 /** Thread 行映射与 SQL。 */
 final class ThreadRepository {
+    void validateParent(Connection connection, WorkspaceId workspaceId, Optional<ThreadId> parentId)
+            throws SQLException {
+        if (parentId.isEmpty()) {
+            return;
+        }
+        ConversationThread parent =
+                find(connection, parentId.orElseThrow()).orElseThrow(() -> new PersistenceException("父 Thread 不存在"));
+        if (!parent.workspaceId().equals(workspaceId)) {
+            throw new PersistenceException("父子 Thread 必须属于同一 Workspace");
+        }
+    }
+
     ConversationThread insert(
             Connection connection,
             WorkspaceId workspaceId,

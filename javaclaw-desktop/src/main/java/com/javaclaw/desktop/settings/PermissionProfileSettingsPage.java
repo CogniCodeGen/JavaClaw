@@ -272,7 +272,7 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
     }
 
     private FormSection effectivePreview() {
-        FormSection section = new FormSection("有效权限预览", "服务端会按平台安全上限、工作区、智能体方案、本次任务授权和工具自身限制逐层收紧。");
+        FormSection section = new FormSection("有效权限预览", "服务端会按平台安全上限、工作区、Agent、本次任务授权和工具自身限制逐层收紧。");
         section.addField("本次任务授权", new HBox(8, includeTurnGrant, previewTurnGrant));
         section.addField("工具声明", new HBox(8, includeToolDeclaration, previewToolDeclaration));
         section.addFullWidth(new HBox(8, previewButton));

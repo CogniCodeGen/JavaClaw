@@ -3,72 +3,75 @@ package com.javaclaw.server.turn;
 import java.util.Objects;
 import java.util.Optional;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.ProfileLifecycle;
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.PromptManifestPreview;
+import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.api.WorkspaceLifecycle;
 import com.javaclaw.protocol.CanonicalJson;
-import com.javaclaw.server.instructions.ProjectInstructionResolver;
-import com.javaclaw.server.persistence.AgentProfileService;
-import com.javaclaw.server.persistence.CoreCommandService;
 import com.javaclaw.server.persistence.PersistenceException;
 
-/** 为管理中心构造下一 Turn 的只读 Prompt provenance 预览。 */
+/** 与 Turn 共用配置与项目约定解析，只返回允许用户审阅的 Prompt 来源和角色正文。 */
 public final class PromptPreviewService {
-    private final CoreCommandService core;
-    private final AgentProfileService profiles;
-    private final ProjectInstructionResolver instructions;
+    private final TurnPlatformServices services;
+    private final AgentConfigurationResolver resolver;
     private final PromptManifestAssembler assembler;
     private final CanonicalJson json;
+    private final com.javaclaw.runtime.ToolCatalogPort catalogs;
 
     /**
-     * 创建服务。
+     * 创建下一 Turn 预览服务。
      *
-     * @param core Workspace 查询服务
-     * @param profiles Agent Profile 版本服务
-     * @param instructions 与 Turn 创建共用的项目约定解析器
-     * @param coreInstruction 当前审阅过的 Core system instruction
+     * @param services 与正式执行共用的平台权威服务
+     * @param catalogs 正式执行的实际工具目录
+     * @param coreInstruction 版本化平台说明
      * @param json 规范 JSON codec
      */
     public PromptPreviewService(
-            CoreCommandService core,
-            AgentProfileService profiles,
-            ProjectInstructionResolver instructions,
+            TurnPlatformServices services,
+            com.javaclaw.runtime.ToolCatalogPort catalogs,
             String coreInstruction,
             CanonicalJson json) {
-        this.core = Objects.requireNonNull(core, "core");
-        this.profiles = Objects.requireNonNull(profiles, "profiles");
-        this.instructions = Objects.requireNonNull(instructions, "instructions");
+        this.services = Objects.requireNonNull(services, "services");
+        this.catalogs = Objects.requireNonNull(catalogs, "catalogs");
+        resolver = new AgentConfigurationResolver(
+                services.roles(), services.configurations(), services.permissions(), services.core());
         assembler = new PromptManifestAssembler(coreInstruction);
         this.json = Objects.requireNonNull(json, "json");
     }
 
     /**
-     * 按精确 Profile 和 Workspace 当前约定生成预览。
+     * 按相同优先级与安全边界解析预览；不创建 Turn，不调用模型，也不保存项目正文。
      *
-     * <p>结果不包含项目约定正文；文件变化只会反映在下一次调用中。
-     *
-     * @param workspaceId Workspace
-     * @param profileRef 精确 Agent Profile
-     * @return Prompt 来源、摘要与 token 估算
+     * @param workspaceId 所属 Workspace
+     * @param threadId 可选已有 Thread；有值时校验归属及执行根
+     * @param execution 临时独立选择，均不能扩大权限或预算
+     * @return 版本、来源、估算 token 与可审阅的 Role 文本
      */
-    public PromptManifestPreview preview(WorkspaceId workspaceId, AgentProfileRef profileRef) {
-        Workspace workspace = core.findWorkspace(Objects.requireNonNull(workspaceId, "workspaceId"))
+    public PromptManifestPreview preview(
+            WorkspaceId workspaceId, Optional<ThreadId> threadId, ExecutionOverrides execution) {
+        Workspace workspace = services.core()
+                .findWorkspace(workspaceId)
                 .orElseThrow(() -> PersistenceException.invalidRequest("Workspace 不存在"));
         if (workspace.lifecycle() != WorkspaceLifecycle.ACTIVE) {
             throw PersistenceException.invalidRequest("已归档 Workspace 不能预览下一 Turn");
         }
-        AgentProfileRef checkedRef = Objects.requireNonNull(profileRef, "profileRef");
-        AgentProfile profile = profiles.require(checkedRef.id(), checkedRef.revision());
-        if (profile.lifecycle() != ProfileLifecycle.ACTIVE) {
-            throw PersistenceException.invalidRequest("已归档或停用 Agent Profile 不能用于下一 Turn");
+        ThreadExecutionScope scope = threadId.map(
+                        id -> ThreadExecutionScope.resolve(services.core(), services.worktrees(), id))
+                .orElseGet(() -> ThreadExecutionScope.workspace(workspace));
+        if (!scope.workspace().id().equals(workspaceId)) {
+            throw PersistenceException.invalidRequest("Thread 不属于请求的 Workspace");
         }
+        ResolvedAgentConfiguration configuration = resolver.resolve(scope, threadId, execution);
+        configuration = configuration.withCatalog(catalogs.freeze(
+                com.javaclaw.api.TurnId.random(),
+                workspaceId,
+                configuration.effectivePermissions(),
+                new com.javaclaw.api.CancellationSource()));
         Optional<String> fallback =
-                core.workspaceInstructionSettings(workspace.id()).fallbackBasename();
-        var resolved = instructions.resolve(workspace.root(), workspace.root(), fallback);
-        return assembler.preview(profile, resolved, json);
+                services.core().workspaceInstructionSettings(workspaceId).fallbackBasename();
+        var instructions = services.instructions().resolve(scope.root(), scope.root(), fallback);
+        return assembler.preview(configuration, instructions, json);
     }
 }

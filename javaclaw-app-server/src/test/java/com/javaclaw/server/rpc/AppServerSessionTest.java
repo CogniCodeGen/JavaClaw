@@ -18,7 +18,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.ConversationThread;
@@ -54,7 +54,7 @@ import com.javaclaw.runtime.ModelInvocationResult;
 import com.javaclaw.runtime.ModelUsage;
 import com.javaclaw.server.AppServerBootstrap;
 import com.javaclaw.server.BuiltinManagementFixtures;
-import com.javaclaw.server.ProviderProfileRpcFixtures;
+import com.javaclaw.server.ProviderRoleRpcFixtures;
 import com.javaclaw.server.persistence.PersistenceException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -72,7 +72,7 @@ class AppServerSessionTest {
     @BeforeEach
     void createSession() {
         model = new RecordingModel();
-        components = AppServerBootstrap.create(temporaryDirectory.resolve("data-v5"), Clock.systemUTC(), model);
+        components = AppServerBootstrap.create(temporaryDirectory.resolve("data-v6"), Clock.systemUTC(), model);
         session = components.newSession();
     }
 
@@ -82,7 +82,7 @@ class AppServerSessionTest {
     }
 
     @Test
-    void initializeIsRequiredAndVersionOneIsRejected() {
+    void initializeIsRequiredAndVersionTwoIsRejected() {
         JsonRpcResponse beforeInitialize = session.handle(request("1", "workspace/list", new Empty()));
         assertEquals(
                 ProtocolErrorCode.INVALID_REQUEST,
@@ -90,10 +90,10 @@ class AppServerSessionTest {
 
         AppServerSession oldSession = components.newSession();
         InitializeParams oldParams =
-                new InitializeParams(1, new ClientInfo("test", "1"), new CapabilityAdvertisement(Set.of(), Set.of()));
+                new InitializeParams(2, new ClientInfo("test", "5"), new CapabilityAdvertisement(Set.of(), Set.of()));
         JsonRpcResponse oldVersion = oldSession.handle(request("2", "initialize/session", oldParams));
         assertEquals(
-                ProtocolErrorCode.UNSUPPORTED_PROTOCOL,
+                ProtocolErrorCode.UNSUPPORTED_PROTOCOL_VERSION,
                 oldVersion.error().orElseThrow().code());
 
         initialize();
@@ -138,7 +138,7 @@ class AppServerSessionTest {
         routes.register("attachment/read", ignored -> {
             throw PersistenceException.revisionConflict("revision");
         });
-        routes.register("profile/list", ignored -> {
+        routes.register("agent/role/list", ignored -> {
             throw PersistenceException.idempotencyConflict("idempotency");
         });
         routes.register("provider/list", ignored -> {
@@ -156,7 +156,7 @@ class AppServerSessionTest {
         assertEquals(500, bounded.error().orElseThrow().message().length());
         assertError(failures, "item/list", ProtocolErrorCode.INVALID_PARAMS, "invalid");
         assertError(failures, "attachment/read", ProtocolErrorCode.REVISION_CONFLICT, "revision");
-        assertError(failures, "profile/list", ProtocolErrorCode.IDEMPOTENCY_CONFLICT, "idempotency");
+        assertError(failures, "agent/role/list", ProtocolErrorCode.IDEMPOTENCY_CONFLICT, "idempotency");
         assertError(failures, "provider/list", ProtocolErrorCode.INTERNAL_ERROR, "internal persistence error");
         assertError(failures, "diagnostics/read", ProtocolErrorCode.INTERNAL_ERROR, "internal server error");
     }
@@ -194,26 +194,29 @@ class AppServerSessionTest {
                 session.handle(request("t1", "thread/create", command("thread-key", threadPayload))),
                 ConversationThread.class);
         com.javaclaw.api.TurnBudget budget = new com.javaclaw.api.TurnBudget(4_000, 1_000, 4, 2, Duration.ofMinutes(1));
-        AgentProfileRef profile = ProviderProfileRpcFixtures.install(
+        AgentRoleRef profile = ProviderRoleRpcFixtures.install(
                 session,
                 components,
-                new ProviderProfileRpcFixtures.Installation(
+                new ProviderRoleRpcFixtures.Installation(
                         "test-provider",
                         "test-model",
                         "test-profile",
                         new PermissionProfileRef("standard", 1),
                         Set.of(),
                         budget));
-        CoreRpcContracts.TurnStartPayload turnPayload =
-                new CoreRpcContracts.TurnStartPayload(thread.id(), Optional.of(profile), "请开始");
-        AgentTurn turn = decodeSuccess(
-                session.handle(request("r1", "turn/start", command("turn-key", turnPayload))), AgentTurn.class);
+        CoreRpcContracts.TurnStartPayload turnPayload = new CoreRpcContracts.TurnStartPayload(
+                thread.id(), com.javaclaw.server.TurnContractFixtures.select(profile), "请开始");
+        CoreRpcContracts.TurnStartResult started = decodeSuccess(
+                session.handle(request("r1", "turn/start", command("turn-key", turnPayload))),
+                CoreRpcContracts.TurnStartResult.class);
+        AgentTurn turn = started.turn();
+        assertEquals(turn.resolvedConfig(), started.configuration());
         CoreRpcContracts.ItemListResult items = decodeSuccess(
                 session.handle(request("i1", "item/list", new CoreRpcContracts.ItemList(thread.id(), 0, 100))),
                 CoreRpcContracts.ItemListResult.class);
 
         assertEquals(1, turn.revision());
-        assertEquals(profile, turn.profile());
+        assertEquals(profile, turn.role());
         assertEquals(new ProviderRef("test-provider", 1, "test-model"), turn.provider());
         assertEquals(new PermissionProfileRef("standard", 1), turn.permissionProfile());
         assertEquals(64, turn.promptManifestDigest().length());
@@ -339,7 +342,7 @@ class AppServerSessionTest {
         ExtensionRpcContracts.ListResult catalog = decodeSuccess(
                 session.handle(request("extension-list", "extension/list", new Empty())),
                 ExtensionRpcContracts.ListResult.class);
-        assertEquals(9, catalog.extensions().size());
+        assertEquals(10, catalog.extensions().size());
 
         assertPlanManagementRoundTrip(workspace);
         assertPlanWorkspaceIsolation(workspace);

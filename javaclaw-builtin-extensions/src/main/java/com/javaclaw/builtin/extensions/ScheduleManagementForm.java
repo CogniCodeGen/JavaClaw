@@ -27,9 +27,9 @@ import com.javaclaw.extension.spi.ViewStructuredListField;
 
 /** Schedule 管理页复用的新建与编辑表单定义。 */
 final class ScheduleManagementForm {
-    private static final String CREATE = "definition/create";
-    private static final String UPDATE = "definition/update";
-    private static final String PROFILE_SOURCE = "profiles";
+    private static final String CREATE = "definition/form/create";
+    private static final String UPDATE = "definition/form/update";
+    private static final String ROLE_SOURCE = "roles";
     private static final String TARGET_SOURCE = "scheduleTargets";
 
     private ScheduleManagementForm() {}
@@ -46,8 +46,8 @@ final class ScheduleManagementForm {
         if (update) {
             bindings.add(new ViewCommandBinding("id", new ViewBinding(source, "id")));
         }
-        bindings.add(new ViewCommandBinding("profileId", new ViewBinding(PROFILE_SOURCE, "id")));
-        bindings.add(new ViewCommandBinding("profileRevision", new ViewBinding(PROFILE_SOURCE, "revision")));
+        bindings.add(new ViewCommandBinding("role", new ViewBinding(ROLE_SOURCE, "role")));
+        bindings.addAll(AutomationSelectionView.bindings());
         bindings.add(new ViewCommandBinding("targetKind", new ViewBinding(TARGET_SOURCE, "targetKind")));
         bindings.add(new ViewCommandBinding("targetExtensionId", new ViewBinding(TARGET_SOURCE, "targetExtensionId")));
         bindings.add(new ViewCommandBinding("targetId", new ViewBinding(TARGET_SOURCE, "targetId")));
@@ -79,10 +79,11 @@ final class ScheduleManagementForm {
         fields.add(text(source, "title", "新 Thread 标题", ViewFieldType.TEXT, 200, Optional.empty()));
         fields.add(text(source, "instruction", "Turn 指令", ViewFieldType.MULTILINE, 32_768, Optional.empty()));
         fields.add(actionArguments(actionSource));
+        fields.addAll(AutomationSelectionView.fields(source));
         fields.add(number(source, "maximumTurns", "最大 Turn 数", "10", 1, 10_000, Optional.empty()));
         fields.add(number(source, "inputTokens", "输入 token 总上限", "100000", 1, 1_000_000_000, Optional.empty()));
         fields.add(number(source, "outputTokens", "输出 token 总上限", "50000", 1, 1_000_000_000, Optional.empty()));
-        fields.add(number(source, "toolCalls", "Tool 调用总上限", "100", 1, 1_000_000, Optional.empty()));
+        fields.add(number(source, "toolCalls", "Tool 调用总上限", "100", 0, 1_000_000, Optional.empty()));
         return List.copyOf(fields);
     }
 

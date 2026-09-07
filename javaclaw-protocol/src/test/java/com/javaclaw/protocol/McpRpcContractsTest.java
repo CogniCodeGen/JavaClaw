@@ -34,7 +34,7 @@ class McpRpcContractsTest {
     }
 
     @Test
-    void WorkspaceId按ProtocolV2标量编码() {
+    void WorkspaceId按ProtocolV3标量编码() {
         CanonicalJson json = new CanonicalJson();
         WorkspaceId workspaceId = WorkspaceId.parse("00000000-0000-0000-0000-000000000101");
 
@@ -70,8 +70,8 @@ class McpRpcContractsTest {
 
     @Test
     void OAuth逐方法Schema不暴露完成回调或敏感字段() throws IOException {
-        String schema = resource("/schema/mcp-v2.schema.json");
-        String methods = resource("/schema/methods-v2.json");
+        String schema = resource("/schema/mcp-v3.schema.json");
+        String methods = resource("/schema/methods-v3.json");
         new CanonicalJson().parse(schema);
 
         assertTrue(methods.contains("mcp/oauth/read"));

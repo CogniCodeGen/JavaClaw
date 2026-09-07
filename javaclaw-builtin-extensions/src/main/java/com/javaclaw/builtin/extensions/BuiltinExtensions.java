@@ -4,7 +4,7 @@ import java.util.List;
 
 import com.javaclaw.extension.spi.ExtensionBundle;
 
-/** 随 JavaClaw 5 发行并显式装配的内置 Bundle 清单。 */
+/** 随 JavaClaw 6 发行并显式装配的内置 Bundle 清单。 */
 public final class BuiltinExtensions {
     private BuiltinExtensions() {}
 
@@ -23,6 +23,7 @@ public final class BuiltinExtensions {
                 new MemoryExtension(),
                 new KnowledgeExtension(),
                 new SkillExtension(),
-                new SiteExtension());
+                new SiteExtension(),
+                new CodingExtension());
     }
 }

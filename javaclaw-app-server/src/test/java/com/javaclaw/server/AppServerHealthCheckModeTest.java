@@ -33,7 +33,7 @@ class AppServerHealthCheckModeTest {
         AppServerOptions options = AppServerOptions.parse(new String[] {"--health-check"});
 
         try (AppServerBootstrap.Components components =
-                        AppServerMain.createComponents(options, temporaryDirectory.resolve("health/data-v5"), clock);
+                        AppServerMain.createComponents(options, temporaryDirectory.resolve("health/data-v6"), clock);
                 var session = components.newSession()) {
             JsonRpcResponse initialized = session.handle(request(
                     components,

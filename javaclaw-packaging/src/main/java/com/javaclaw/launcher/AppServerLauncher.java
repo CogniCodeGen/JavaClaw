@@ -3,11 +3,10 @@ package com.javaclaw.launcher;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.javaclaw.nativehost.ManagedRuntimeDirectory;
+
 /** 从完整发行布局启动 App Server；只把校验通过的独立 Worker image 交给服务端。 */
 public final class AppServerLauncher {
-    private static final List<String> PROPAGATED_PROPERTIES =
-            List.of("javaclaw.data.root", "javaclaw.log.dir", "javaclaw.log.process");
-
     private AppServerLauncher() {}
 
     /**
@@ -18,6 +17,7 @@ public final class AppServerLauncher {
      */
     public static void main(String[] arguments) throws Exception {
         RuntimeLayout layout = RuntimeLayout.fromSystemProperties();
+        ManagedRuntimeDirectory.prepare(layout.dataDirectory());
         Process server =
                 new ProcessBuilder(command(layout, arguments)).inheritIO().start();
         int exitCode = server.waitFor();
@@ -30,21 +30,11 @@ public final class AppServerLauncher {
         ArrayList<String> command = new ArrayList<>();
         command.add(layout.javaExecutable().toString());
         command.add("--enable-native-access=ALL-UNNAMED");
-        addPropagatedProperties(command);
         command.addAll(layout.appServerProperties());
         command.add("-cp");
         command.add(layout.classpath());
         command.add("com.javaclaw.server.AppServerMain");
         command.addAll(List.of(arguments));
         return List.copyOf(command);
-    }
-
-    private static void addPropagatedProperties(List<String> command) {
-        for (String name : PROPAGATED_PROPERTIES) {
-            String value = System.getProperty(name, "").strip();
-            if (!value.isEmpty()) {
-                command.add("-D" + name + "=" + value);
-            }
-        }
     }
 }

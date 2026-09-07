@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javaclaw.local/schema/prompt-preview-v3.schema.json",
+  "title": "JavaClaw Prompt provenance preview v3",
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "providerRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "endpointId",
+        "endpointRevision",
+        "model"
+      ],
+      "properties": {
+        "endpointId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "endpointRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "model": {
+          "$ref": "#/$defs/identifier"
+        }
+      }
+    },
+    "permissionProfileRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "previewParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaceId",
+        "threadId",
+        "execution"
+      ],
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "threadId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "execution": {
+          "$ref": "execution-v3.schema.json#/$defs/overrides"
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "sourceId",
+        "revision",
+        "digest",
+        "includedBytes",
+        "warnings"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "MODEL_BASE",
+            "PLATFORM",
+            "AGENT_ROLE",
+            "PROJECT_INSTRUCTION",
+            "RUNTIME_CAPABILITIES",
+            "SKILL",
+            "CONTEXT"
+          ]
+        },
+        "sourceId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "digest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "includedBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warnings": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        }
+      }
+    },
+    "preview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "provider",
+        "permissionProfile",
+        "sources",
+        "manifestDigest",
+        "estimatedInputTokens",
+        "tokenEstimator",
+        "coreTemplate",
+        "developerInstructions"
+      ],
+      "properties": {
+        "role": {
+          "$ref": "#/$defs/roleRef"
+        },
+        "provider": {
+          "$ref": "#/$defs/providerRef"
+        },
+        "permissionProfile": {
+          "$ref": "#/$defs/permissionProfileRef"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/source"
+          }
+        },
+        "manifestDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "estimatedInputTokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tokenEstimator": {
+          "$ref": "#/$defs/identifier"
+        },
+        "coreTemplate": {
+          "type": "string",
+          "minLength": 1
+        },
+        "developerInstructions": {
+          "type": "string"
+        }
+      }
+    },
+    "roleRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "revision"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

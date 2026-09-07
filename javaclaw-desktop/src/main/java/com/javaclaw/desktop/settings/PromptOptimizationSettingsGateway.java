@@ -3,7 +3,7 @@ package com.javaclaw.desktop.settings;
 import java.util.List;
 import java.util.concurrent.CompletionStage;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.PromptOptimizationAdoption;
 import com.javaclaw.api.PromptOptimizationDraft;
 import com.javaclaw.api.PromptOptimizationId;
@@ -20,7 +20,7 @@ public interface PromptOptimizationSettingsGateway {
      * 启动可能计费的普通 Harness Turn。
      *
      * @param workspaceId Workspace
-     * @param profile 精确源 Profile
+     * @param role 精确源 Role
      * @param billingConfirmed 显式确认标记
      * @param confirmation 固定计费确认文本
      * @param options expected revision 为 0
@@ -28,7 +28,7 @@ public interface PromptOptimizationSettingsGateway {
      */
     CompletionStage<PromptOptimizationDraft> start(
             WorkspaceId workspaceId,
-            AgentProfileRef profile,
+            AgentRoleRef role,
             boolean billingConfirmed,
             String confirmation,
             CommandOptions options);
@@ -65,8 +65,8 @@ public interface PromptOptimizationSettingsGateway {
      * @param id 任务标识
      * @param adoptionConfirmed 显式确认标记
      * @param confirmation 固定采纳确认文本
-     * @param options 源 Profile revision
-     * @return 新 Profile 与保留草稿
+     * @param options 源 Role revision
+     * @return 新 Role 与保留草稿
      */
     CompletionStage<PromptOptimizationAdoption> adopt(
             PromptOptimizationId id, boolean adoptionConfirmed, String confirmation, CommandOptions options);

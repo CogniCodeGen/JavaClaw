@@ -112,12 +112,12 @@ class PermissionProfileRpcContractsTest {
                 RpcMethodKind.COMMAND,
                 MethodCatalog.require("permissionProfile/preset/instantiate", none)
                         .kind());
-        String schema = read("/schema/permission-profile-v2.schema.json");
-        String methods = read("/schema/methods-v2.json");
+        String schema = read("/schema/permission-profile-v3.schema.json");
+        String methods = read("/schema/methods-v3.json");
         json.parse(schema);
         json.parse(methods);
         assertTrue(schema.contains("effectivePermissionPreview"));
-        assertTrue(methods.contains("permission-profile-v2.schema.json#/$defs/diffPayload"));
+        assertTrue(methods.contains("permission-profile-v3.schema.json#/$defs/diffPayload"));
     }
 
     private static PermissionProfile profile(String id, long version) {

@@ -1,12 +1,15 @@
 package com.javaclaw.desktop.shell;
 
 import java.io.File;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 
 import javafx.fxml.FXML;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
@@ -17,7 +20,6 @@ import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 
-import com.javaclaw.api.AgentProfile;
 import com.javaclaw.api.ApprovalDecision;
 import com.javaclaw.api.ApprovalRecord;
 import com.javaclaw.api.ConversationThread;
@@ -30,7 +32,9 @@ import com.javaclaw.desktop.appearance.JavaPreferencesAppearanceStore;
 import com.javaclaw.desktop.component.InputRequestPanel;
 import com.javaclaw.desktop.component.PlatformComponentFactory;
 import com.javaclaw.desktop.component.PlatformDialogs;
+import com.javaclaw.desktop.settings.ExecutionSelectionPanel;
 import com.javaclaw.desktop.settings.ManagementCenterWindow;
+import com.javaclaw.desktop.settings.SdkCoreSettingsGateway;
 import com.javaclaw.desktop.settings.SdkManagementSettingsGateways;
 import com.javaclaw.desktop.state.ConnectionState;
 import com.javaclaw.desktop.state.DesktopState;
@@ -62,7 +66,7 @@ public final class DesktopShellController {
     private ListView<ItemEnvelope> transcriptList;
 
     @FXML
-    private ComboBox<AgentProfile> profileBox;
+    private VBox executionHost;
 
     @FXML
     private TextArea composer;
@@ -109,7 +113,10 @@ public final class DesktopShellController {
     private DesktopPresenter presenter;
     private ManagementCenterWindow managementCenter;
     private InputRequestPanel inputRequests;
+    private CodingExecutionPanel codingOutput;
     private boolean rendering;
+    private ExecutionSelectionPanel executionSelection;
+    private Optional<Instant> executionConnection = Optional.empty();
 
     /** 配置单元格与选择事件。 */
     @FXML
@@ -118,8 +125,6 @@ public final class DesktopShellController {
         workspaceBox.setButtonCell(components.textCell(Workspace::name));
         threadList.setCellFactory(ignored -> components.textCell(ConversationThread::title));
         transcriptList.setCellFactory(ignored -> new TranscriptCell(transcriptPresenter));
-        profileBox.setCellFactory(ignored -> components.textCell(DesktopShellController::profileName));
-        profileBox.setButtonCell(components.textCell(DesktopShellController::profileName));
         approvalList.setCellFactory(ignored -> components.detailCell(
                 approval -> approval.request().tool().name() + " · "
                         + approval.request().risk(),
@@ -129,7 +134,6 @@ public final class DesktopShellController {
                 .getSelectionModel()
                 .selectedItemProperty()
                 .addListener((observable, previous, value) -> selectThread(value));
-        profileBox.valueProperty().addListener((observable, previous, value) -> selectProfile(value));
         approvalList
                 .getSelectionModel()
                 .selectedItemProperty()
@@ -159,6 +163,8 @@ public final class DesktopShellController {
             throw new IllegalStateException("controller is already attached");
         }
         presenter = Objects.requireNonNull(value, "presenter");
+        executionSelection = new ExecutionSelectionPanel(new SdkCoreSettingsGateway(value));
+        executionHost.getChildren().setAll(executionSelection);
         managementCenter = Objects.requireNonNull(center, "center");
         inputRequests = new InputRequestPanel(
                 new CanonicalJson(),
@@ -166,6 +172,8 @@ public final class DesktopShellController {
                 (request, response) -> presenter.inputs().resolve(request, response),
                 request -> presenter.inputs().cancel(request));
         inputRequestHost.getChildren().setAll(inputRequests);
+        codingOutput = new CodingExecutionPanel(value);
+        progressPanel.getChildren().add(2, codingOutput);
         managementCenter.installShortcut(root.getScene());
         presenter.subscribe(this::render);
         presenter.connect();
@@ -202,9 +210,28 @@ public final class DesktopShellController {
         chooser.setTitle("选择 Workspace 根目录");
         File selected = chooser.showDialog(root.getScene().getWindow());
         if (selected != null) {
-            presenter.createWorkspace(
-                    name.orElseThrow(), selected.toPath().toAbsolutePath().normalize());
+            chooseWorkspaceExecution(name.orElseThrow(), selected);
         }
+    }
+
+    private void chooseWorkspaceExecution(String name, File directory) {
+        ExecutionSelectionPanel selection = new ExecutionSelectionPanel(new SdkCoreSettingsGateway(presenter));
+        Dialog<com.javaclaw.api.ExecutionOverrides> dialog = new Dialog<>();
+        dialog.setTitle("创建 Workspace");
+        dialog.setHeaderText("分别选择 Agent、模型与权限");
+        dialog.getDialogPane().setContent(selection);
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.CANCEL, ButtonType.OK);
+        PlatformDialogs.style(dialog, root);
+        selection.prepareWorkspaceCreation();
+        dialog.setResultConverter(button -> button == ButtonType.OK ? selection.execution() : null);
+        dialog.getDialogPane().lookupButton(ButtonType.OK).addEventFilter(javafx.event.ActionEvent.ACTION, event -> {
+            if (selection.pending() || !selection.ready()) {
+                event.consume();
+            }
+        });
+        dialog.showAndWait()
+                .ifPresent(execution -> presenter.createWorkspace(
+                        name, directory.toPath().toAbsolutePath().normalize(), execution));
     }
 
     /** 创建当前 Workspace 的 Thread。 */
@@ -222,7 +249,7 @@ public final class DesktopShellController {
     @FXML
     public void send() {
         try {
-            presenter.send(composer.getText());
+            presenter.send(composer.getText(), executionSelection.execution());
             composer.clear();
         } catch (RuntimeException failure) {
             errorLabel.setText(failure.getMessage());
@@ -243,7 +270,7 @@ public final class DesktopShellController {
         managementCenter.show(root.getScene().getWindow());
     }
 
-    /** 关闭旧 SDK 会话并重新协商 Protocol v2。 */
+    /** 关闭旧 SDK 会话并重新协商 Protocol v3。 */
     @FXML
     public void retryConnection() {
         presenter.reconnect();
@@ -255,10 +282,11 @@ public final class DesktopShellController {
         managementCenter.show(root.getScene().getWindow(), "diagnostics");
     }
 
-    /** 清除显式 Agent Profile，恢复使用 Workspace 默认配置。 */
+    /** 清除显式 Agent Role，恢复使用 Workspace 默认配置。 */
     @FXML
-    public void useDefaultProfile() {
-        presenter.clearProfileSelection();
+    public void useDefaultRole() {
+        presenter.clearRoleSelection();
+        executionSelection.discard();
     }
 
     /** 批准选中的调用。 */
@@ -282,15 +310,29 @@ public final class DesktopShellController {
             threadList
                     .getSelectionModel()
                     .select(state.threads().selectedThread().orElse(null));
+            transcriptPresenter.replaceItems(state.transcript().items());
             transcriptList.getItems().setAll(state.transcript().items());
-            profileBox.getItems().setAll(state.interaction().profiles());
-            profileBox.setValue(state.interaction().selectedProfile().orElse(null));
             approvalList.getItems().setAll(state.interaction().pendingApprovals());
             inputRequests.render(state.interaction().inputs());
+            codingOutput.bind(state);
+            executionSelection.bind(
+                    state.threads().selectedWorkspace(), state.threads().selectedThread(), false);
+            refreshExecutionConnection(state);
             renderLabels(state);
             renderActions(state);
         } finally {
             rendering = false;
+        }
+    }
+
+    private void refreshExecutionConnection(DesktopState state) {
+        Optional<Instant> connectedAt = state.connection().connectedAt();
+        if (!executionConnection.equals(connectedAt)) {
+            executionConnection = connectedAt;
+            if (connectedAt.isPresent()) {
+                executionSelection.refresh();
+                managementCenter.refreshExecutionConfiguration();
+            }
         }
     }
 
@@ -307,6 +349,20 @@ public final class DesktopShellController {
                 .activeTurn()
                 .map(turn -> "Turn " + turn.status())
                 .orElse("选择工作区和权限配置后开始任务"));
+        threadMeta.setTooltip(state.threads()
+                .activeTurn()
+                .map(turn -> new Tooltip(
+                        "Agent " + turn.role().id() + "@" + turn.role().revision()
+                                + " · 模型 " + turn.provider().model()
+                                + (turn.resolvedConfig().modelLocked() ? "（由 Agent 锁定）" : "")
+                                + " · 权限 " + turn.permissionProfile().id() + "@"
+                                + turn.permissionProfile().version()
+                                + "\n"
+                                + turn.resolvedConfig().provenance().stream()
+                                        .map(source -> source.field() + " ← " + source.source() + " / "
+                                                + source.sourceId() + "@" + source.revision())
+                                        .collect(java.util.stream.Collectors.joining("\n"))))
+                .orElse(null));
         errorLabel.setText(state.interaction().error().orElse(""));
         visible(errorLabel, state.interaction().error().isPresent());
     }
@@ -335,12 +391,6 @@ public final class DesktopShellController {
         }
     }
 
-    private void selectProfile(AgentProfile value) {
-        if (!rendering && value != null) {
-            presenter.selectProfile(value);
-        }
-    }
-
     private void resolveSelected(ApprovalDecision decision, String reason) {
         ApprovalRecord selected = approvalList.getSelectionModel().getSelectedItem();
         if (selected != null) {
@@ -364,10 +414,6 @@ public final class DesktopShellController {
     private static void visible(javafx.scene.Node node, boolean value) {
         node.setVisible(value);
         node.setManaged(value);
-    }
-
-    private static String profileName(AgentProfile profile) {
-        return profile.spec().displayName() + " · " + profile.id() + " · v" + profile.revision();
     }
 
     private static final class TranscriptCell extends ListCell<ItemEnvelope> {

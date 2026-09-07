@@ -30,15 +30,12 @@ import javafx.scene.layout.BorderPane;
 import javafx.stage.Window;
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfile;
+import com.javaclaw.api.AgentRole;
 import com.javaclaw.api.ApprovalRequirement;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.CoreTools;
-import com.javaclaw.api.PermissionProfile;
 import com.javaclaw.api.PrivateNetworkPurpose;
-import com.javaclaw.api.ProfileLifecycle;
 import com.javaclaw.api.ProviderAdapter;
-import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ToolIdentity;
 import com.javaclaw.api.ToolRisk;
@@ -101,54 +98,6 @@ class CoreSettingsPagesTest {
             confirmNextDangerDialog("归档当前模型服务");
             button(root, "归档当前模型服务").fire();
             assertEquals(ProviderLifecycle.ARCHIVED, gateway.providers.getLast().lifecycle());
-        });
-    }
-
-    @Test
-    void profile页保存精确Provider权限与预算并拒绝非法数字() {
-        FxTestSupport.run(() -> {
-            TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
-            AgentProfileSettingsPage page = new AgentProfileSettingsPage(
-                    gateway,
-                    new TestAgentPresetOnboardingGateway(DesktopTestFixtures.workspace()),
-                    emptyGateway(PromptPreviewSettingsGateway.class),
-                    emptyGateway(PromptOptimizationSettingsGateway.class));
-            page.workspaceChanged(Optional.of(DesktopTestFixtures.workspace()));
-            Parent root = attach(page);
-
-            assertFalse(button(root, "初始化内置智能体").isDisabled());
-            button(root, "新建").fire();
-            assertTrue(button(root, "初始化内置智能体").isDisabled(), "Profile 草稿存在时不能再打开初始化向导");
-            fieldByPrompt(root, "例如 coding-default").setText("coding-default");
-            fieldByPrompt(root, "用户可见名称").setText("Coding Default");
-            textAreaByPrompt(root, "只描述角色与工作偏好，不授予工具权限").setText("保持实现清晰。 ");
-            combo(root, ProviderEndpoint.class).setValue(gateway.providers.getFirst());
-            combo(root, String.class).setValue("fake-model");
-            combo(root, PermissionProfile.class).setValue(gateway.permissions.getFirst());
-            textAreaByPrompt(root, "每行一个完整工具名；空集合表示不向模型公开工具").setText("core/tool/search");
-            List<TextField> budget = textFieldsWithoutPrompt(root);
-            setTexts(budget, "8000", "2000", "6", "1", "120");
-            combo(root, ProfileLifecycle.class).setValue(ProfileLifecycle.ACTIVE);
-            button(root, "保存智能体方案").fire();
-
-            assertEquals(1, gateway.profiles.size());
-            assertFalse(button(root, "初始化内置智能体").isDisabled());
-            AgentProfile saved = gateway.profiles.getFirst();
-            assertEquals(
-                    gateway.providers.getFirst().revision(),
-                    saved.spec().provider().endpointRevision());
-            assertEquals(
-                    gateway.permissions.getFirst().version(),
-                    saved.spec().permissionProfile().version());
-
-            budget.get(3).setText(Long.toString((long) Integer.MAX_VALUE + 1));
-            button(root, "保存智能体方案").fire();
-            assertTrue(page.dirty());
-            assertTrue(labels(root).stream().anyMatch(value -> value.contains("childThreads")));
-            button(root, "放弃更改").fire();
-            confirmNextDangerDialog("归档当前智能体方案");
-            button(root, "归档当前智能体方案").fire();
-            assertEquals(ProfileLifecycle.ARCHIVED, gateway.profiles.getFirst().lifecycle());
         });
     }
 
@@ -230,10 +179,10 @@ class CoreSettingsPagesTest {
     }
 
     @Test
-    void workspace页分别保存名称和默认Profile且保留离页草稿() {
+    void workspace页分别保存名称和执行配置且名称保存保留执行草稿() {
         FxTestSupport.run(() -> {
             TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
-            AgentProfile profile = gateway.createProfile(
+            AgentRole profile = gateway.createRole(
                             "workspace-profile", TestCoreSettingsGateway.profileSpec(), CommandOptions.create(0))
                     .toCompletableFuture()
                     .join();
@@ -246,12 +195,15 @@ class CoreSettingsPagesTest {
             assertTrue(page.dirty());
             page.warnUnsavedChanges();
             assertTrue(labels(root).stream().anyMatch(value -> value.contains("请先保存或丢弃")));
+            combo(root, AgentRole.class).setValue(profile);
             button(root, "保存名称").fire();
-            combo(root, AgentProfile.class).setValue(profile);
-            button(root, "保存默认智能体方案").fire();
+            assertTrue(page.dirty(), "名称的 revision 更新不能丢弃独立执行草稿");
+            button(root, "保存执行默认配置").fire();
 
             assertEquals("新工作区", gateway.workspaceSettings.lastName);
-            assertEquals(profile.revision(), gateway.workspaceSettings.lastProfile.revision());
+            assertEquals(
+                    profile.revision(),
+                    gateway.workspaceSettings.lastExecution.role().orElseThrow().revision());
             name.setText("临时名称");
             page.discardDraft();
             assertFalse(page.dirty());
@@ -292,7 +244,7 @@ class CoreSettingsPagesTest {
             networkPage.activate();
             assertTrue(labels(networkRoot).contains("已撤销"));
 
-            AgentProfile profile = gateway.createProfile(
+            AgentRole profile = gateway.createRole(
                             "schedule-agent", TestCoreSettingsGateway.profileSpec(), CommandOptions.create(0))
                     .toCompletableFuture()
                     .join();

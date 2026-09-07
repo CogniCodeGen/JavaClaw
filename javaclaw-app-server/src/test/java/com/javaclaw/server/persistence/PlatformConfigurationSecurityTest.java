@@ -13,16 +13,18 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.ApprovalRequirement;
+import com.javaclaw.api.CapabilityNarrowing;
 import com.javaclaw.api.CredentialRef;
 import com.javaclaw.api.FilePermission;
+import com.javaclaw.api.ModelPreference;
 import com.javaclaw.api.NetworkPermission;
+import com.javaclaw.api.PermissionConstraint;
 import com.javaclaw.api.PermissionProfile;
 import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProcessPermission;
-import com.javaclaw.api.ProfileLifecycle;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderAdapterOptions;
 import com.javaclaw.api.ProviderAuthentication;
@@ -31,13 +33,15 @@ import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ProviderRef;
 import com.javaclaw.api.ResourceLimits;
+import com.javaclaw.api.RoleLifecycle;
 import com.javaclaw.api.ToolPermission;
 import com.javaclaw.api.ToolRisk;
 import com.javaclaw.api.Workspace;
+import com.javaclaw.protocol.AgentRoleRpcContracts;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.CoreRpcContracts;
 import com.javaclaw.protocol.PermissionProfileRpcContracts;
-import com.javaclaw.protocol.ProviderProfileRpcContracts;
+import com.javaclaw.protocol.ProviderRpcContracts;
 import com.javaclaw.protocol.WriteCommand;
 import com.javaclaw.server.ProviderEndpointTestFixtures;
 
@@ -57,8 +61,8 @@ class PlatformConfigurationSecurityTest {
     private Clock clock;
 
     @BeforeEach
-    void initializeDataV5() {
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+    void initializeDataV6() {
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         clock = Clock.fixed(NOW, ZoneOffset.UTC);
@@ -173,8 +177,8 @@ class PlatformConfigurationSecurityTest {
     void providerConfigurationRejectsDirectCredentialMutationAndUsesOptimisticRevision() {
         ProviderService service = new ProviderService(database, reference -> true, json, clock);
         ProviderEndpointSpec first = providerSpec("Primary", "gpt-test");
-        ProviderProfileRpcContracts.ProviderCreatePayload firstPayload =
-                new ProviderProfileRpcContracts.ProviderCreatePayload("openai", first, ProviderLifecycle.ACTIVE);
+        ProviderRpcContracts.ProviderCreatePayload firstPayload =
+                new ProviderRpcContracts.ProviderCreatePayload("openai", first, ProviderLifecycle.ACTIVE);
         CommandIdentity firstIdentity = identity("provider/create", "provider-1", 0, firstPayload);
 
         ProviderEndpoint created = service.create(firstIdentity, "openai", first, ProviderLifecycle.ACTIVE);
@@ -182,8 +186,8 @@ class PlatformConfigurationSecurityTest {
         assertEquals(List.of(created), service.listLatest());
 
         ProviderEndpointSpec second = providerSpec("Secondary", "gpt-test");
-        ProviderProfileRpcContracts.ProviderUpdatePayload secondPayload =
-                new ProviderProfileRpcContracts.ProviderUpdatePayload("openai", second, ProviderLifecycle.ACTIVE);
+        ProviderRpcContracts.ProviderUpdatePayload secondPayload =
+                new ProviderRpcContracts.ProviderUpdatePayload("openai", second, ProviderLifecycle.ACTIVE);
         ProviderEndpoint updated = service.update(
                 identity("provider/update", "provider-2", 1, secondPayload),
                 "openai",
@@ -229,7 +233,7 @@ class PlatformConfigurationSecurityTest {
                 ProviderAdapterOptions.defaults(ProviderAdapter.OPENAI_COMPATIBLE));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new ProviderProfileRpcContracts.ProviderCreatePayload(
+                () -> new ProviderRpcContracts.ProviderCreatePayload(
                         "direct", directCredential, ProviderLifecycle.ACTIVE));
         assertThrows(
                 PersistenceException.class,
@@ -241,7 +245,7 @@ class PlatformConfigurationSecurityTest {
     }
 
     @Test
-    void agentProfileUsesExactProviderAndPermissionReferences() {
+    void agentRoleCanLockAnExactProviderWithoutCarryingPermissionGrants() {
         PermissionProfileService permissions = new PermissionProfileService(database, json, clock);
         permissions.installStandardProfile();
         ProviderService providers = new ProviderService(database, reference -> true, json, clock);
@@ -251,34 +255,35 @@ class PlatformConfigurationSecurityTest {
                         "provider/create",
                         "profile-provider",
                         0,
-                        new ProviderProfileRpcContracts.ProviderCreatePayload(
+                        new ProviderRpcContracts.ProviderCreatePayload(
                                 "openai", providerSpec, ProviderLifecycle.ACTIVE)),
                 "openai",
                 providerSpec,
                 ProviderLifecycle.ACTIVE);
-        AgentProfileService service = new AgentProfileService(database, providers, permissions, json, clock);
-        AgentProfileSpec profileSpec = new AgentProfileSpec(
+        AgentRoleService service = new AgentRoleService(database, providers, json, clock);
+        AgentRoleSpec profileSpec = new AgentRoleSpec(
                 "Developer",
+                "",
                 "保持变更简洁。",
-                new ProviderRef("openai", 1, "gpt-test"),
-                new PermissionProfileRef(PermissionProfileService.STANDARD_PROFILE_ID, 1),
-                Set.of("tool/search"),
-                new com.javaclaw.api.TurnBudget(4_000, 1_000, 4, 1, Duration.ofMinutes(1)));
-        ProviderProfileRpcContracts.AgentProfileCreatePayload command =
-                new ProviderProfileRpcContracts.AgentProfileCreatePayload("developer", profileSpec);
-        CommandIdentity createIdentity = identity("profile/create", "profile-key", 0, command);
+                Optional.of(new ModelPreference(new ProviderRef("openai", 1, "gpt-test"))),
+                Optional.empty(),
+                new CapabilityNarrowing(Optional.of(Set.of("tool/search")), Optional.empty()),
+                PermissionConstraint.INHERIT,
+                java.util.Map.of());
+        AgentRoleRpcContracts.CreatePayload command = new AgentRoleRpcContracts.CreatePayload("developer", profileSpec);
+        CommandIdentity createIdentity = identity("agent/role/create", "profile-key", 0, command);
 
-        AgentProfile created = service.create(createIdentity, "developer", profileSpec);
+        AgentRole created = service.create(createIdentity, "developer", profileSpec);
         assertEquals(created, service.create(createIdentity, "developer", profileSpec));
         assertEquals(1, created.revision());
         assertThrows(
                 PersistenceException.class,
                 () -> service.create(
                         identity(
-                                "profile/create",
+                                "agent/role/create",
                                 "profile-key",
                                 0,
-                                new ProviderProfileRpcContracts.AgentProfileCreatePayload("other", profileSpec)),
+                                new AgentRoleRpcContracts.CreatePayload("other", profileSpec)),
                         "other",
                         profileSpec));
         assertThrows(IllegalArgumentException.class, () -> service.create(createIdentity, "bad space", profileSpec));
@@ -286,18 +291,18 @@ class PlatformConfigurationSecurityTest {
                 PersistenceException.class,
                 () -> service.update(
                         identity(
-                                "profile/update",
+                                "agent/role/update",
                                 "profile-stale",
                                 0,
-                                new ProviderProfileRpcContracts.AgentProfileUpdatePayload(
-                                        "developer", profileSpec, ProfileLifecycle.ACTIVE)),
+                                new AgentRoleRpcContracts.UpdatePayload(
+                                        "developer", profileSpec, RoleLifecycle.ACTIVE)),
                         "developer",
                         profileSpec,
-                        ProfileLifecycle.ACTIVE));
+                        RoleLifecycle.ACTIVE));
     }
 
     @Test
-    void agentProfile拒绝归档更新无效引用和幂等身份漂移() {
+    void agentRole拒绝归档更新无效引用和幂等身份漂移() {
         PermissionProfileService permissions = new PermissionProfileService(database, json, clock);
         permissions.installStandardProfile();
         ProviderService providers = new ProviderService(database, reference -> true, json, clock);
@@ -307,23 +312,25 @@ class PlatformConfigurationSecurityTest {
                 "profile-source",
                 endpointSpec,
                 ProviderLifecycle.ACTIVE);
-        AgentProfileService profiles = new AgentProfileService(database, providers, permissions, json, clock);
-        AgentProfileSpec valid = agentProfileSpec(new ProviderRef("profile-source", 1, "gpt-test"));
+        AgentRoleService profiles = new AgentRoleService(database, providers, json, clock);
+        AgentRoleSpec valid = agentProfileSpec(new ProviderRef("profile-source", 1, "gpt-test"));
 
         assertThrows(
                 PersistenceException.class,
                 () -> profiles.update(
-                        identity("profile/update", "archive-through-update", 1, valid),
+                        identity("agent/role/update", "archive-through-update", 1, valid),
                         "profile",
                         valid,
-                        ProfileLifecycle.ARCHIVED));
-        AgentProfileSpec missingModel = agentProfileSpec(new ProviderRef("profile-source", 1, "missing-model"));
+                        RoleLifecycle.ARCHIVED));
+        AgentRoleSpec missingModel = agentProfileSpec(new ProviderRef("profile-source", 1, "missing-model"));
         assertThrows(
                 PersistenceException.class,
                 () -> profiles.create(
-                        identity("profile/create", "missing-model", 0, missingModel), "missing-model", missingModel));
+                        identity("agent/role/create", "missing-model", 0, missingModel),
+                        "missing-model",
+                        missingModel));
 
-        CommandIdentity create = identity("profile/create", "stable-profile", 0, valid);
+        CommandIdentity create = identity("agent/role/create", "stable-profile", 0, valid);
         profiles.create(create, "stable-profile", valid);
         CommandIdentity changedMethod = new CommandIdentity(
                 "profile/other", create.idempotencyKey(), create.expectedRevision(), create.requestDigest());
@@ -331,25 +338,25 @@ class PlatformConfigurationSecurityTest {
         assertThrows(
                 PersistenceException.class,
                 () -> profiles.create(
-                        identity("profile/create", "missing-revision", 1, valid), "missing-revision", valid));
+                        identity("agent/role/create", "missing-revision", 1, valid), "missing-revision", valid));
 
         CommandIdentity archive = identity("provider/archive", "archive-source", 1, endpointSpec);
         providers.archive(archive, "profile-source");
         CommandIdentity archiveMethodDrift = new CommandIdentity(
                 "provider/other", archive.idempotencyKey(), archive.expectedRevision(), archive.requestDigest());
         assertThrows(PersistenceException.class, () -> providers.archive(archiveMethodDrift, "profile-source"));
-        AgentProfileSpec staleActiveProvider = agentProfileSpec(new ProviderRef("profile-source", 1, "gpt-test"));
+        AgentRoleSpec staleActiveProvider = agentProfileSpec(new ProviderRef("profile-source", 1, "gpt-test"));
         assertThrows(
                 PersistenceException.class,
                 () -> profiles.create(
-                        identity("profile/create", "stale-active-provider", 0, staleActiveProvider),
+                        identity("agent/role/create", "stale-active-provider", 0, staleActiveProvider),
                         "stale-active-provider",
                         staleActiveProvider));
-        AgentProfileSpec archivedProvider = agentProfileSpec(new ProviderRef("profile-source", 2, "gpt-test"));
+        AgentRoleSpec archivedProvider = agentProfileSpec(new ProviderRef("profile-source", 2, "gpt-test"));
         assertThrows(
                 PersistenceException.class,
                 () -> profiles.create(
-                        identity("profile/create", "archived-provider", 0, archivedProvider),
+                        identity("agent/role/create", "archived-provider", 0, archivedProvider),
                         "archived-provider",
                         archivedProvider));
     }
@@ -369,14 +376,16 @@ class PlatformConfigurationSecurityTest {
                 defaults.options());
     }
 
-    private static AgentProfileSpec agentProfileSpec(ProviderRef provider) {
-        return new AgentProfileSpec(
+    private static AgentRoleSpec agentProfileSpec(ProviderRef provider) {
+        return new AgentRoleSpec(
                 "Developer",
                 "",
-                provider,
-                new PermissionProfileRef(PermissionProfileService.STANDARD_PROFILE_ID, 1),
-                Set.of(),
-                new com.javaclaw.api.TurnBudget(4_000, 1_000, 4, 1, Duration.ofMinutes(1)));
+                "",
+                Optional.of(new ModelPreference(provider)),
+                Optional.empty(),
+                new CapabilityNarrowing(Optional.of(Set.of()), Optional.empty()),
+                PermissionConstraint.INHERIT,
+                java.util.Map.of());
     }
 
     private PermissionProfile profile(String id, long version, Set<String> tools, ToolRisk risk) {

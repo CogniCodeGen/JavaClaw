@@ -40,7 +40,7 @@ class AttachmentUploadServiceTest {
 
     @BeforeEach
     void initialize() {
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         attachments = new AttachmentService(database, json, Clock.fixed(NOW, ZoneOffset.UTC));

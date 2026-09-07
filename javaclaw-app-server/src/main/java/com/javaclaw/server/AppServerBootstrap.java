@@ -35,11 +35,12 @@ import com.javaclaw.server.lifecycle.ScheduleLifecycleCoordinator;
 import com.javaclaw.server.mcp.McpPlatformFactory;
 import com.javaclaw.server.mcp.McpProductionPortsFactory;
 import com.javaclaw.server.mcp.McpRuntimePorts;
-import com.javaclaw.server.persistence.AgentProfileService;
+import com.javaclaw.server.persistence.AgentRoleService;
 import com.javaclaw.server.persistence.ApprovalService;
 import com.javaclaw.server.persistence.AttachmentService;
 import com.javaclaw.server.persistence.CoreCommandService;
 import com.javaclaw.server.persistence.EmbeddingBindingService;
+import com.javaclaw.server.persistence.ExecutionConfigurationService;
 import com.javaclaw.server.persistence.ExtensionCatalogRepository;
 import com.javaclaw.server.persistence.ExtensionJobInputCoordinator;
 import com.javaclaw.server.persistence.ExtensionJobService;
@@ -47,14 +48,12 @@ import com.javaclaw.server.persistence.H2Database;
 import com.javaclaw.server.persistence.InputRequestService;
 import com.javaclaw.server.persistence.ManagedWorktreeService;
 import com.javaclaw.server.persistence.PermissionProfileService;
-import com.javaclaw.server.persistence.ProfileBindingService;
 import com.javaclaw.server.persistence.PromptOptimizationRepository;
 import com.javaclaw.server.persistence.ProviderCredentialService;
 import com.javaclaw.server.persistence.ProviderModelDiscoveryService;
 import com.javaclaw.server.persistence.ProviderService;
 import com.javaclaw.server.persistence.ProviderVerificationService;
 import com.javaclaw.server.persistence.RolloutCommandService;
-import com.javaclaw.server.profile.ProfilePresetCatalog;
 import com.javaclaw.server.rpc.AppServerSession;
 import com.javaclaw.server.rpc.CoreRpcHandlers;
 import com.javaclaw.server.rpc.CredentialRpcHandlers;
@@ -66,7 +65,6 @@ import com.javaclaw.server.rpc.InstructionRpcHandlers;
 import com.javaclaw.server.rpc.LauncherLifecycleRpcHandlers;
 import com.javaclaw.server.rpc.PermissionPresetRpcHandlers;
 import com.javaclaw.server.rpc.PermissionProfileRpcHandlers;
-import com.javaclaw.server.rpc.ProfilePresetRpcHandlers;
 import com.javaclaw.server.rpc.PromptOptimizationRpcHandlers;
 import com.javaclaw.server.rpc.PromptPreviewRpcHandlers;
 import com.javaclaw.server.rpc.ProviderCredentialRpcHandlers;
@@ -93,11 +91,11 @@ public final class AppServerBootstrap {
     private AppServerBootstrap() {}
 
     /**
-     * 从 data-v5 Provider 配置建立真实模型注册表。
+     * 从 data-v6 Provider 配置建立真实模型注册表。
      *
      * <p>凭据只在模型调用边界从 Vault 解封；Vault 锁定或引用失效时会安全拒绝调用，不会回退环境变量。
      *
-     * @param dataRoot 必须以 {@code data-v5} 结尾
+     * @param dataRoot 必须以 {@code data-v6} 结尾
      * @param clock 平台时钟
      * @return 可关闭组件
      */
@@ -113,7 +111,7 @@ public final class AppServerBootstrap {
      * <p>此路径显式锁定 Vault，不构造也不访问 macOS Keychain、Windows DPAPI/Credential Manager 或 Linux Secret Service。传输层必须由
      * {@link AppServerOptions} 限定为 stdio。
      *
-     * @param dataRoot 必须以 {@code data-v5} 结尾的临时根目录
+     * @param dataRoot 必须以 {@code data-v6} 结尾的临时根目录
      * @param clock 平台时钟
      * @return Vault 始终锁定的可关闭组件
      */
@@ -125,7 +123,7 @@ public final class AppServerBootstrap {
     /**
      * 从 H2 配置与显式 Vault 读取边界建立模型注册表。
      *
-     * @param dataRoot 必须以 {@code data-v5} 结尾
+     * @param dataRoot 必须以 {@code data-v6} 结尾
      * @param clock 平台时钟
      * @param credentials Secret Vault 解析边界
      * @return 可关闭组件
@@ -143,7 +141,7 @@ public final class AppServerBootstrap {
     /**
      * 创建带真实 Thin Harness 调度链的 App Server。
      *
-     * @param dataRoot 必须以 {@code data-v5} 结尾
+     * @param dataRoot 必须以 {@code data-v6} 结尾
      * @param clock 平台时钟
      * @param models 已配置模型路由；所有权转移给返回组件
      * @return 可关闭组件
@@ -155,7 +153,7 @@ public final class AppServerBootstrap {
     /**
      * 创建可注入登录启动端口的真实 App Server；平台测试可使用无外部副作用实现。
      *
-     * @param dataRoot 必须以 {@code data-v5} 结尾
+     * @param dataRoot 必须以 {@code data-v6} 结尾
      * @param clock 平台时钟
      * @param models 已配置模型路由；所有权转移给返回组件
      * @param loginStartup Schedule 登录启动项端口
@@ -170,7 +168,7 @@ public final class AppServerBootstrap {
      *
      * <p>如果 {@code isolatedServices} 实现 {@link AutoCloseable}，其所有权会转移给返回组件。
      *
-     * @param dataRoot 必须以 {@code data-v5} 结尾
+     * @param dataRoot 必须以 {@code data-v6} 结尾
      * @param clock 平台时钟
      * @param models 已配置模型路由；所有权转移给返回组件
      * @param loginStartup Schedule 登录启动项端口
@@ -206,7 +204,7 @@ public final class AppServerBootstrap {
     /**
      * 创建可注入 MCP Broker/Sandbox 端口的真实 App Server。
      *
-     * @param dataRoot 必须以 {@code data-v5} 结尾
+     * @param dataRoot 必须以 {@code data-v6} 结尾
      * @param clock 平台时钟
      * @param models 已配置模型路由；所有权转移给返回组件
      * @param loginStartup Schedule 登录启动项端口
@@ -312,8 +310,6 @@ public final class AppServerBootstrap {
                 foundation.core(),
                 foundation.attachments(),
                 foundation.providers(),
-                foundation.agentProfiles(),
-                foundation.profileBindings(),
                 foundation.worktrees(),
                 diagnostics);
         CoreRpcHandlers.InteractionServices interactions = new CoreRpcHandlers.InteractionServices(
@@ -329,7 +325,7 @@ public final class AppServerBootstrap {
                         new PermissionPresetCatalog(),
                         foundation.json())
                 .register(routes);
-        new ProfilePresetRpcHandlers(new ProfilePresetCatalog(), foundation.json()).register(routes);
+        registerRoleRoutes(routes, foundation);
         new SecurityGrantRpcHandlers(
                         foundation.privateNetworkGrants(),
                         foundation.unattendedToolGrants(),
@@ -337,27 +333,78 @@ public final class AppServerBootstrap {
                         foundation.json())
                 .register(routes);
         new CredentialRpcHandlers(foundation.vault(), foundation.json()).register(routes);
-        new ProviderCredentialRpcHandlers(foundation.providerCredentials(), foundation.json()).register(routes);
-        new ProviderEmbeddingBindingRpcHandlers(foundation.embeddingBinding(), foundation.json()).register(routes);
-        new ProviderModelDiscoveryRpcHandlers(runtime.management().providerModelDiscovery(), foundation.json())
-                .register(routes);
-        new ProviderVerificationRpcHandlers(runtime.management().providerVerification(), foundation.json())
-                .register(routes);
+        registerProviderRoutes(routes, foundation, runtime);
         new InputJobRpcHandlers(foundation.inputs(), foundation.extensionJobs(), foundation.json()).register(routes);
         new InstructionRpcHandlers(
                         foundation.core(), foundation.worktrees(), foundation.instructions(), foundation.json())
                 .register(routes);
         new PromptPreviewRpcHandlers(
                         new PromptPreviewService(
-                                foundation.core(),
-                                foundation.agentProfiles(),
-                                foundation.instructions(),
+                                new com.javaclaw.server.turn.TurnPlatformServices(
+                                        foundation.core(),
+                                        foundation.agentRoles(),
+                                        foundation.executionConfigurations(),
+                                        foundation.permissionProfiles(),
+                                        foundation.instructions(),
+                                        foundation.worktrees()),
+                                runtime.tools(),
                                 CoreSystemInstruction.load(),
                                 foundation.json()),
                         foundation.json())
                 .register(routes);
         registerPromptOptimization(routes, foundation, runtime.dispatcher());
+        if (runtime.dispatcher() instanceof com.javaclaw.server.turn.HarnessTurnDispatcher dispatcher) {
+            new com.javaclaw.server.rpc.CollaborationRpcHandlers(
+                            collaboration(foundation, dispatcher), foundation.json())
+                    .register(routes);
+        }
         new LauncherLifecycleRpcHandlers(launcher, foundation.json()).register(routes);
+    }
+
+    private static void registerProviderRoutes(
+            RpcRouter.Builder routes, Foundation foundation, RuntimeAssembly runtime) {
+        new ProviderCredentialRpcHandlers(foundation.providerCredentials(), foundation.json()).register(routes);
+        new ProviderEmbeddingBindingRpcHandlers(foundation.embeddingBinding(), foundation.json()).register(routes);
+        new com.javaclaw.server.rpc.ProviderContextRpcHandlers(
+                        new com.javaclaw.server.persistence.ProviderContextService(
+                                foundation.database(), foundation.providers(), foundation.json(), foundation.clock()),
+                        foundation.json())
+                .register(routes);
+        new ProviderModelDiscoveryRpcHandlers(runtime.management().providerModelDiscovery(), foundation.json())
+                .register(routes);
+        new ProviderVerificationRpcHandlers(runtime.management().providerVerification(), foundation.json())
+                .register(routes);
+    }
+
+    private static void registerRoleRoutes(RpcRouter.Builder routes, Foundation foundation) {
+        new com.javaclaw.server.rpc.AgentRoleRpcHandlers(foundation.agentRoles(), foundation.json()).register(routes);
+        new com.javaclaw.server.rpc.ExecutionRpcHandlers(foundation.executionConfigurations(), foundation.json())
+                .register(routes);
+        new com.javaclaw.server.rpc.AgentRoleFileRpcHandlers(
+                        new com.javaclaw.server.persistence.AgentRoleFileService(
+                                foundation.database(),
+                                foundation.agentRoles(),
+                                foundation.providers(),
+                                foundation.json(),
+                                foundation.clock()),
+                        foundation.json())
+                .register(routes);
+    }
+
+    static com.javaclaw.server.turn.AgentCollaborationService collaboration(
+            Foundation foundation, com.javaclaw.server.turn.HarnessTurnDispatcher dispatcher) {
+        return new com.javaclaw.server.turn.AgentCollaborationService(
+                new com.javaclaw.server.turn.TurnPlatformServices(
+                        foundation.core(),
+                        foundation.agentRoles(),
+                        foundation.executionConfigurations(),
+                        foundation.permissionProfiles(),
+                        foundation.instructions(),
+                        foundation.worktrees()),
+                foundation.core().childTurns(),
+                dispatcher,
+                foundation.json(),
+                foundation.clock());
     }
 
     private static LauncherLifecycleService launcherLifecycle(Foundation foundation) {
@@ -373,7 +420,7 @@ public final class AppServerBootstrap {
             RpcRouter.Builder routes, Foundation foundation, TurnDispatcher turns) {
         PromptOptimizationService service = new PromptOptimizationService(
                 foundation.core(),
-                foundation.agentProfiles(),
+                foundation.agentRoles(),
                 new PromptOptimizationRepository(foundation.database(), foundation.json(), foundation.clock()),
                 turns,
                 PromptOptimizationInstruction.load(),
@@ -391,7 +438,7 @@ public final class AppServerBootstrap {
         new ExtensionBundleRpcHandlers(runtime.thirdParty(), foundation.json()).register(routes);
         new ToolRpcHandlers(
                         foundation.core(),
-                        foundation.agentProfiles(),
+                        foundation.agentRoles(),
                         foundation.permissionProfiles(),
                         runtime.tools(),
                         foundation.json())
@@ -478,8 +525,8 @@ public final class AppServerBootstrap {
             ProviderService providers,
             ProviderCredentialService providerCredentials,
             EmbeddingBindingService embeddingBinding,
-            AgentProfileService agentProfiles,
-            ProfileBindingService profileBindings,
+            AgentRoleService agentRoles,
+            ExecutionConfigurationService executionConfigurations,
             SecretVaultService vault,
             ManagedWorktreeService worktrees,
             InputRequestService inputs,

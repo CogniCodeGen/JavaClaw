@@ -1,6 +1,6 @@
 package com.javaclaw.protocol;
 
-/** JSON-RPC 标准错误和 JavaClaw v2 平台错误。 */
+/** JSON-RPC 标准错误和 JavaClaw v3 平台错误。 */
 public final class ProtocolErrorCode {
     /** JSON 语法无效。 */
     public static final int PARSE_ERROR = -32700;
@@ -13,7 +13,7 @@ public final class ProtocolErrorCode {
     /** 服务端内部错误。 */
     public static final int INTERNAL_ERROR = -32603;
     /** App Protocol 版本不支持。 */
-    public static final int UNSUPPORTED_PROTOCOL = -32020;
+    public static final int UNSUPPORTED_PROTOCOL_VERSION = -32020;
     /** stable 或 experimental capability 未协商。 */
     public static final int CAPABILITY_NOT_NEGOTIATED = -32021;
     /** expected revision 冲突。 */

@@ -22,6 +22,8 @@ public final class BuiltinExtensionIds {
     public static final String SITE = "com.javaclaw.site";
     /** 平台 MCP Host。 */
     public static final String MCP = "com.javaclaw.mcp";
+    /** 受治理的 Workspace 文件、命令、工具链与依赖准备。 */
+    public static final String CODING = CodingContracts.EXTENSION_ID;
 
     private BuiltinExtensionIds() {}
 }

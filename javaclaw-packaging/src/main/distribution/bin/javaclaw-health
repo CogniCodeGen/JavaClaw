@@ -1,19 +1,19 @@
 #!/bin/sh
 set -eu
 APP_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-HEALTH_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/javaclaw-health-v5.XXXXXX")
+HEALTH_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/javaclaw-health-v6.XXXXXX")
 cleanup() {
     if [ -n "${HEALTH_ROOT:-}" ] && [ -d "$HEALTH_ROOT" ]; then
         rm -rf -- "$HEALTH_ROOT"
     fi
 }
 trap cleanup EXIT HUP INT TERM
-"$APP_ROOT/runtime/bin/java" -Djavaclaw.data.root="$HEALTH_ROOT/data-v5" \
+"$APP_ROOT/runtime/bin/java" -Djavaclaw.data.root="$HEALTH_ROOT/data-v6" \
     -cp "$APP_ROOT/lib/*" com.javaclaw.client.cli.JavaClawCli \
     workspace-list -- "$APP_ROOT/runtime/bin/java" \
     --enable-native-access=ALL-UNNAMED \
     -Djavaclaw.program.dir="$APP_ROOT" \
-    -Djavaclaw.data.root="$HEALTH_ROOT/data-v5" \
-    -Djavaclaw.log.dir="$HEALTH_ROOT/data-v5/logs" \
+    -Djavaclaw.data.root="$HEALTH_ROOT/data-v6" \
+    -Djavaclaw.log.dir="$HEALTH_ROOT/data-v6/logs" \
     -Djavaclaw.log.process=health-server \
     -cp "$APP_ROOT/lib/*" com.javaclaw.launcher.AppServerLauncher --health-check

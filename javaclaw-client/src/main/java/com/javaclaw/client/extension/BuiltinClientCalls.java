@@ -7,6 +7,7 @@ import java.util.Optional;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.TurnId;
 import com.javaclaw.api.WorkspaceId;
+import com.javaclaw.builtin.contracts.CodingEnvironmentContracts;
 import com.javaclaw.builtin.contracts.DocumentContracts;
 import com.javaclaw.builtin.contracts.VersionedExtensionDocument;
 import com.javaclaw.client.CommandOptions;
@@ -112,6 +113,10 @@ final class BuiltinClientCalls {
         T value = json.decode(result.payload(), Objects.requireNonNull(resultType, "resultType"));
         if (value instanceof VersionedExtensionDocument document && document.revision() != result.revision()) {
             throw new IllegalStateException("extension result revision mismatch");
+        }
+        if (value instanceof CodingEnvironmentContracts.Environment environment
+                && environment.revision() != result.revision()) {
+            throw new IllegalStateException("coding environment revision mismatch");
         }
         if (value instanceof ExtensionExecutionReceipt receipt && receipt.revision() != result.revision()) {
             throw new IllegalStateException("extension execution revision mismatch");

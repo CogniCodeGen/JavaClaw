@@ -25,7 +25,7 @@ class AttachmentBlobStoreSecurityTest {
 
     @BeforeEach
     void initialize() throws Exception {
-        dataRoot = Files.createDirectory(temporaryDirectory.resolve("data-v5"));
+        dataRoot = Files.createDirectory(temporaryDirectory.resolve("data-v6"));
         blobs = new AttachmentBlobStore(dataRoot);
     }
 
@@ -118,7 +118,7 @@ class AttachmentBlobStoreSecurityTest {
     void 不存在或不是目录的数据根不会产生非受管Blob() throws Exception {
         assertThrows(
                 PersistenceException.class,
-                () -> new AttachmentBlobStore(temporaryDirectory.resolve("missing-data-v5")));
+                () -> new AttachmentBlobStore(temporaryDirectory.resolve("missing-data-v6")));
 
         Path regularFile = Files.writeString(temporaryDirectory.resolve("data-root-file"), "not a directory");
         AttachmentBlobStore invalid = new AttachmentBlobStore(regularFile);

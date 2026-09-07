@@ -4,7 +4,7 @@ import java.util.Set;
 
 /** 平台为 ViewSchema v2 提供的受限只读数据源。 */
 public final class ViewPlatformDataSource {
-    /** 当前 Workspace 默认 Agent Profile 实际可见的精确工具目录。 */
+    /** 当前 Workspace 默认 Agent Role 实际可见的精确工具目录。 */
     public static final String TOOL_CATALOG = "platform/tool-catalog";
 
     /** 当前工具目录中各工具 outputSchema 的可断言标量 JSON Pointer。 */

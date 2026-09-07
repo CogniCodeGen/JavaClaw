@@ -4,7 +4,7 @@ import java.util.Objects;
 
 import com.javaclaw.api.CredentialRef;
 
-/** Provider 配置与 Secret Vault 原子复合写入的 Protocol v2 payload。 */
+/** Provider 配置与 Secret Vault 原子复合写入的 Protocol v3 payload。 */
 public final class ProviderCredentialRpcContracts {
     /** Provider Secret 的固定会话密封用途。 */
     public static final String SET_PURPOSE = "provider/credential/set";

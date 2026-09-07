@@ -2,7 +2,7 @@ package com.javaclaw.protocol;
 
 import java.util.Objects;
 
-/** Provider 模型目录发现临时操作的 Protocol v2 契约。 */
+/** Provider 模型目录发现临时操作的 Protocol v3 契约。 */
 public final class ProviderModelDiscoveryRpcContracts {
     /** 用户或页面生命周期主动取消，不携带自由文本。 */
     public static final String CLIENT_CANCELLED = "CLIENT_CANCELLED";

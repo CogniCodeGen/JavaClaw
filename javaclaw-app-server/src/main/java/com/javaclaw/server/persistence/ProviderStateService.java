@@ -14,7 +14,7 @@ public final class ProviderStateService {
     /**
      * 创建查询服务。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      */
     public ProviderStateService(H2Database database) {
         transactions = new H2Transactions(Objects.requireNonNull(database, "database"));
@@ -30,6 +30,27 @@ public final class ProviderStateService {
     public Optional<StateSnapshot> latest(ThreadId threadId, String modelId) {
         return execute(
                 connection -> states.latest(connection, threadId, modelId).map(StateSnapshot::from));
+    }
+
+    /**
+     * 只复用与本 Turn Prompt 完全相同的模型状态；Role 或项目约定变化时从完整 Item 重建窗口。
+     *
+     * @param threadId Thread
+     * @param modelId 精确模型路由
+     * @param promptDigest 当前冻结 Prompt 摘要
+     * @return 可安全续接的状态；指令变化时为空
+     */
+    public Optional<StateSnapshot> latest(ThreadId threadId, String modelId, String promptDigest) {
+        return execute(connection -> {
+            var stored = states.latest(connection, threadId, modelId);
+            if (stored.isEmpty()) {
+                return Optional.empty();
+            }
+            var turn =
+                    new TurnRepository().find(connection, stored.orElseThrow().turnId());
+            return turn.filter(value -> value.promptManifestDigest().equals(promptDigest))
+                    .map(ignored -> StateSnapshot.from(stored.orElseThrow()));
+        });
     }
 
     private <T> T execute(H2Transactions.SqlWork<T> work) {

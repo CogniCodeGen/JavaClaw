@@ -41,8 +41,8 @@ class WorktreeRpcContractsTest {
 
     @Test
     void methodCatalogOnlyExposesRecoveryActionsAndSchemaIsV2Only() throws IOException {
-        String methods = read("/schema/methods-v2.json");
-        String schema = read("/schema/worktree-v2.schema.json");
+        String methods = read("/schema/methods-v3.json");
+        String schema = read("/schema/worktree-v3.schema.json");
 
         assertTrue(methods.contains("\"worktree/read\""));
         assertTrue(methods.contains("\"worktree/patch/export\""));

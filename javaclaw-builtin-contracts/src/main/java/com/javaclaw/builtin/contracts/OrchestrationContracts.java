@@ -3,9 +3,9 @@ package com.javaclaw.builtin.contracts;
 import java.util.Objects;
 import java.util.Optional;
 
-import com.javaclaw.api.AgentProfileRef;
 import com.javaclaw.api.AutomationExecutionSnapshot;
 import com.javaclaw.api.CanonicalPayload;
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.TurnId;
 
@@ -33,57 +33,15 @@ public final class OrchestrationContracts {
      * 从一个精确 Definition revision 启动 Execution。
      *
      * @param definitionId Definition 标识
-     * @param profile 精确 Agent Profile
-     * @param budget Execution 总预算；每个 Turn 仍受 Profile ceiling 约束
+     * @param execution 独立执行选择，Role 本身不授予权限
+     * @param budget Execution 总预算；每个 Turn 仍受冻结配置约束
      */
-    public record StartRequest(String definitionId, AgentProfileRef profile, ExecutionBudget budget) {
+    public record StartRequest(String definitionId, ExecutionOverrides execution, ExecutionBudget budget) {
         /** 校验启动输入。 */
         public StartRequest {
             definitionId = ContractValidation.text(definitionId, "definitionId");
-            Objects.requireNonNull(profile, "profile");
+            Objects.requireNonNull(execution, "execution");
             Objects.requireNonNull(budget, "budget");
-        }
-    }
-
-    /**
-     * 管理中心提交的扁平启动参数。
-     *
-     * <p>Definition 与 Profile 身份由 ViewSchema 的权威数据源绑定注入；用户只编辑有限预算。服务端在创建 Job 前重新校验精确版本。
-     *
-     * @param definitionId 权威 Definition 标识
-     * @param profileId 权威 Agent Profile 标识
-     * @param profileRevision 权威 Agent Profile 版本
-     * @param maximumTurns Execution 最大 Turn 数
-     * @param inputTokens 累计输入 token 上限
-     * @param outputTokens 累计输出 token 上限
-     * @param toolCalls 累计工具调用上限
-     */
-    public record ManagementStartRequest(
-            String definitionId,
-            String profileId,
-            long profileRevision,
-            int maximumTurns,
-            long inputTokens,
-            long outputTokens,
-            int toolCalls) {
-        /** 校验权威身份和有限预算。 */
-        public ManagementStartRequest {
-            definitionId = ContractValidation.text(definitionId, "definitionId");
-            profileId = ContractValidation.text(profileId, "profileId");
-            profileRevision = ContractValidation.revision(profileRevision);
-            new ExecutionBudget(maximumTurns, inputTokens, outputTokens, toolCalls);
-        }
-
-        /**
-         * 转换为编排内核使用的精确启动契约。
-         *
-         * @return 不可变启动请求
-         */
-        public StartRequest toStartRequest() {
-            return new StartRequest(
-                    definitionId,
-                    new AgentProfileRef(profileId, profileRevision),
-                    new ExecutionBudget(maximumTurns, inputTokens, outputTokens, toolCalls));
         }
     }
 
@@ -96,10 +54,10 @@ public final class OrchestrationContracts {
      * @param toolCalls 累计工具调用上限
      */
     public record ExecutionBudget(int maximumTurns, long inputTokens, long outputTokens, int toolCalls) {
-        /** 校验所有上限为有限正数。 */
+        /** 校验 Turn 数与 token 上限为有限正数，工具调用上限允许为零。 */
         public ExecutionBudget {
-            if (maximumTurns < 1 || maximumTurns > 10_000 || inputTokens < 1 || outputTokens < 1 || toolCalls < 1) {
-                throw new IllegalArgumentException("execution budget values must be finite and positive");
+            if (maximumTurns < 1 || maximumTurns > 10_000 || inputTokens < 1 || outputTokens < 1 || toolCalls < 0) {
+                throw new IllegalArgumentException("execution budget values must be finite and toolCalls nonnegative");
             }
         }
     }
@@ -143,7 +101,7 @@ public final class OrchestrationContracts {
     /**
      * Job 创建时冻结的执行输入。
      *
-     * @param platform 平台权威冻结的 Profile、权限、单 Turn 预算与工具目录
+     * @param platform 平台权威冻结的 Role、模型、权限、单 Turn 预算与工具目录
      * @param parentThreadId 可选父 Thread
      * @param definition 完整 Definition 规范 payload
      * @param budget Execution 总预算

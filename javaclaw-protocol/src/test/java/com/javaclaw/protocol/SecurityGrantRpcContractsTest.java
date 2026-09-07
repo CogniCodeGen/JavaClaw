@@ -103,12 +103,12 @@ class SecurityGrantRpcContractsTest {
                 RpcMethodKind.QUERY,
                 MethodCatalog.require("permissionDecision/list", none).kind());
 
-        String schema = read("/schema/security-grants-v2.schema.json");
-        String methods = read("/schema/methods-v2.json");
+        String schema = read("/schema/security-grants-v3.schema.json");
+        String methods = read("/schema/methods-v3.json");
         json.parse(schema);
         json.parse(methods);
         assertTrue(schema.contains("UNKNOWN_OUTCOME") || schema.contains("unattendedToolGrant"));
-        assertTrue(methods.contains("security-grants-v2.schema.json#/$defs/privateNetworkPreviewParams"));
+        assertTrue(methods.contains("security-grants-v3.schema.json#/$defs/privateNetworkPreviewParams"));
     }
 
     private static String read(String resource) throws IOException {

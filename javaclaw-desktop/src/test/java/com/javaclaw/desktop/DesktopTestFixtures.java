@@ -6,9 +6,9 @@ import java.time.Instant;
 import java.util.Optional;
 import java.util.Set;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.ApprovalRecord;
 import com.javaclaw.api.ApprovalRequest;
@@ -22,8 +22,8 @@ import com.javaclaw.api.ItemEnvelope;
 import com.javaclaw.api.ItemId;
 import com.javaclaw.api.ItemStatus;
 import com.javaclaw.api.PermissionProfileRef;
-import com.javaclaw.api.ProfileLifecycle;
 import com.javaclaw.api.ProviderRef;
+import com.javaclaw.api.RoleLifecycle;
 import com.javaclaw.api.ThreadExecutionIntent;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.ThreadStatus;
@@ -73,36 +73,68 @@ public final class DesktopTestFixtures {
     }
 
     public static AgentTurn turn(ConversationThread thread, TurnStatus status, long revision) {
-        AgentProfile profile = profile();
+        AgentRole profile = profile();
         return new AgentTurn(
                 TurnId.parse("686f3060-41b0-4d24-be52-226227701a77"),
                 thread.id(),
                 status,
                 revision,
                 new TurnBudget(1_000, 1_000, 8, 1, Duration.ofMinutes(1)),
-                new AgentProfileRef(profile.id(), profile.revision()),
-                profile.spec().provider(),
-                profile.spec().permissionProfile(),
+                new AgentRoleRef(profile.id(), profile.revision()),
+                profile.spec().model().orElseThrow().provider(),
+                new PermissionProfileRef("default", 1),
                 Path.of("."),
                 "a".repeat(64),
                 "b".repeat(64),
                 Optional.empty(),
                 NOW,
-                NOW);
+                NOW,
+                resolved());
     }
 
-    public static AgentProfile profile() {
-        return new AgentProfile(
+    public static com.javaclaw.api.ResolvedTurnConfigSummary resolved() {
+        return new com.javaclaw.api.ResolvedTurnConfigSummary(
+                new AgentRoleRef("default", 1),
+                new ProviderRef("openai", 1, "model-test"),
+                new PermissionProfileRef("default", 1),
+                com.javaclaw.api.ApprovalPolicy.RISKY,
+                new TurnBudget(1_000, 1_000, 8, 1, Duration.ofMinutes(1)),
+                Set.of("core/read"),
+                Optional.empty(),
+                "a".repeat(64),
+                "b".repeat(64),
+                true,
+                java.util.List.of());
+    }
+
+    public static com.javaclaw.api.PromptManifestPreview promptPreview() {
+        return new com.javaclaw.api.PromptManifestPreview(
+                resolved().role(),
+                resolved().provider(),
+                resolved().permissionProfile(),
+                java.util.List.of(),
+                "a".repeat(64),
+                100,
+                "test",
+                "测试模板",
+                "");
+    }
+
+    public static AgentRole profile() {
+        return new AgentRole(
                 "default",
                 1,
-                ProfileLifecycle.ACTIVE,
-                new AgentProfileSpec(
+                RoleLifecycle.ACTIVE,
+                new AgentRoleSpec(
                         "默认 Agent",
+                        "角色测试",
                         "",
-                        new ProviderRef("openai", 1, "model-test"),
-                        new PermissionProfileRef("default", 1),
-                        Set.of("core/read"),
-                        new TurnBudget(1_000, 1_000, 8, 1, Duration.ofMinutes(1))),
+                        Optional.of(new com.javaclaw.api.ModelPreference(new ProviderRef("openai", 1, "model-test"))),
+                        Optional.empty(),
+                        new com.javaclaw.api.CapabilityNarrowing(Optional.of(Set.of("core/read")), Optional.empty()),
+                        com.javaclaw.api.PermissionConstraint.INHERIT,
+                        java.util.Map.of()),
+                false,
                 NOW,
                 NOW);
     }

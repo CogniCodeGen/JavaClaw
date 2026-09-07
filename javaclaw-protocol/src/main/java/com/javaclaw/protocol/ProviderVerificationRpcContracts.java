@@ -5,7 +5,7 @@ import java.util.Objects;
 import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.api.ProviderRef;
 
-/** Provider 显式计费 round-trip 的 Protocol v2 契约。 */
+/** Provider 显式计费 round-trip 的 Protocol v3 契约。 */
 public final class ProviderVerificationRpcContracts {
     /** 验证命令的方法名。 */
     public static final String METHOD = "provider/roundTrip/verify";

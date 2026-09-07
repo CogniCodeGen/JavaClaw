@@ -92,7 +92,7 @@ class ManagementCenterWindowTest {
     void 作用域不可用只锁定Workspace页面而保留本地全局页面() {
         assertTrue(ManagementCenterWindow.workspaceScopeRequired("plan"));
         assertTrue(ManagementCenterWindow.workspaceScopeRequired("network-grants"));
-        assertTrue(ManagementCenterWindow.workspaceScopeRequired("profiles"));
+        assertTrue(ManagementCenterWindow.workspaceScopeRequired("roles"));
         assertTrue(ManagementCenterWindow.workspaceScopeRequired("permissions"));
         assertFalse(ManagementCenterWindow.workspaceScopeRequired("appearance"));
         assertFalse(ManagementCenterWindow.workspaceScopeRequired("connection"));
@@ -222,7 +222,7 @@ class ManagementCenterWindowTest {
         TextField search = (TextField) management.getScene().lookup(".settings-search-field");
         ListView<?> navigation = (ListView<?>) management.getScene().lookup(".management-navigation-list");
         StackPane actionSlot = (StackPane) management.getScene().lookup(".management-action-slot");
-        assertEquals(29, navigation.getItems().size());
+        assertEquals(30, navigation.getItems().size());
         assertEquals(Priority.ALWAYS, VBox.getVgrow(navigation));
         assertTrue(actionSlot.isManaged());
         search.setText("诊断");

@@ -33,7 +33,7 @@ class BuiltinExtensionManagementTest {
 
     @BeforeEach
     void initialize() {
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         catalog = new ExtensionCatalogRepository(database, new CanonicalJson(), Clock.fixed(NOW, ZoneOffset.UTC));
     }

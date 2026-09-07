@@ -5,12 +5,15 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -28,10 +31,25 @@ class AppServerLauncherTest {
     Path temporaryDirectory;
 
     private final String originalProgramDirectory = System.getProperty(PROGRAM_DIRECTORY_PROPERTY);
+    private final Map<String, String> originalProperties = new HashMap<>();
+
+    @BeforeEach
+    void 隔离运行属性() {
+        for (String name : PROPERTIES) {
+            originalProperties.put(name, System.getProperty(name));
+            System.clearProperty(name);
+        }
+    }
 
     @AfterEach
     void 清理测试属性() {
-        PROPERTIES.forEach(System::clearProperty);
+        originalProperties.forEach((name, value) -> {
+            if (value == null) {
+                System.clearProperty(name);
+            } else {
+                System.setProperty(name, value);
+            }
+        });
         if (originalProgramDirectory == null) {
             System.clearProperty(PROGRAM_DIRECTORY_PROPERTY);
         } else {
@@ -43,15 +61,16 @@ class AppServerLauncherTest {
     void 命令仅传播允许的运行属性且不猜测Worker路径() throws Exception {
         RuntimeLayout layout = layout();
         System.setProperty(
-                "javaclaw.data.root", temporaryDirectory.resolve("data-v5").toString());
+                "javaclaw.data.root", temporaryDirectory.resolve("data-v6").toString());
         System.setProperty("javaclaw.log.process", "test-server");
 
         List<String> command = AppServerLauncher.command(layout, new String[] {"--stdio"});
 
         assertEquals(layout.javaExecutable().toString(), command.getFirst());
-        assertTrue(command.contains("-Djavaclaw.data.root=" + temporaryDirectory.resolve("data-v5")));
+        assertTrue(command.contains("-Djavaclaw.data.root=" + temporaryDirectory.resolve("data-v6")));
         assertTrue(command.contains("-Djavaclaw.log.process=test-server"));
         assertTrue(command.contains("com.javaclaw.server.AppServerMain"));
+        assertTrue(command.contains("-Djavaclaw.program.dir=" + layout.root()));
         assertEquals("--stdio", command.getLast());
         assertFalse(command.stream().anyMatch(argument -> argument.contains("worker.image-root")));
     }

@@ -13,9 +13,12 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.PromptOptimizationId;
 import com.javaclaw.api.PromptOptimizationRef;
+import com.javaclaw.api.RoleLifecycle;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.TurnId;
 import com.javaclaw.api.WorkspaceId;
@@ -31,7 +34,7 @@ public final class PromptOptimizationRepository {
     /**
      * 创建 Repository。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      * @param json 规范 JSON codec
      * @param clock 平台时钟
      */
@@ -109,39 +112,70 @@ public final class PromptOptimizationRepository {
     }
 
     /**
-     * 幂等记录人工采纳产生的新 Profile revision。
+     * 幂等记录人工采纳产生的新 Role revision。
      *
      * @param id 优化任务标识
-     * @param adoptedProfileRevision 新 Profile revision
+     * @param adoptedRoleRevision 新 Role revision
      * @return 更新后的关联
      */
-    public PromptOptimizationRecord markAdopted(PromptOptimizationId id, long adoptedProfileRevision) {
-        if (adoptedProfileRevision < 1) {
-            throw new IllegalArgumentException("adoptedProfileRevision must be positive");
+    public PromptOptimizationRecord markAdopted(PromptOptimizationId id, long adoptedRoleRevision) {
+        if (adoptedRoleRevision < 1) {
+            throw new IllegalArgumentException("adoptedRoleRevision must be positive");
         }
         synchronized (CommandLocks.forKey("prompt-optimization:" + id)) {
-            return execute(connection -> markAdopted(connection, id, adoptedProfileRevision));
+            return execute(connection -> markAdopted(connection, id, adoptedRoleRevision));
+        }
+    }
+
+    /**
+     * 原子提交人工采纳生成的 Role revision 和草稿采纳标记。
+     *
+     * @param identity 采纳命令，expected revision 必须匹配源 Role
+     * @param id 已确认的草稿标识
+     * @param roles Role 版本服务
+     * @param spec 仅修改开发者指令的候选定义
+     * @param lifecycle 保留源 Role 生命周期
+     * @return 已提交的新 Role
+     */
+    public AgentRole adopt(
+            CommandIdentity identity,
+            PromptOptimizationId id,
+            AgentRoleService roles,
+            AgentRoleSpec spec,
+            RoleLifecycle lifecycle) {
+        synchronized (CommandLocks.forKey(identity.idempotencyKey())) {
+            return execute(connection -> {
+                PromptOptimizationRecord current = find(connection, id, true)
+                        .orElseThrow(() -> PersistenceException.invalidRequest("Prompt 优化任务不存在"));
+                if (identity.expectedRevision() != current.ref().sourceRole().revision()) {
+                    throw PersistenceException.revisionConflict("采纳必须使用源 Role 精确 revision");
+                }
+                AgentRole role = roles.writeInTransaction(
+                        connection, identity, current.ref().sourceRole().id(), spec, lifecycle);
+                markAdopted(connection, id, role.revision());
+                return role;
+            });
         }
     }
 
     private PromptOptimizationRecord markAdopted(
-            Connection connection, PromptOptimizationId id, long adoptedProfileRevision) throws SQLException {
+            Connection connection, PromptOptimizationId id, long adoptedRoleRevision) throws SQLException {
         PromptOptimizationRecord current = find(connection, Objects.requireNonNull(id, "id"), true)
                 .orElseThrow(() -> PersistenceException.invalidRequest("Prompt 优化任务不存在"));
-        if (current.adoptedProfileRevision().isPresent()) {
-            long existing = current.adoptedProfileRevision().orElseThrow();
-            if (existing != adoptedProfileRevision) {
-                throw PersistenceException.revisionConflict("Prompt 草稿已采纳为另一个 Profile revision");
+        if (current.adoptedRoleRevision().isPresent()) {
+            long existing = current.adoptedRoleRevision().orElseThrow();
+            if (existing != adoptedRoleRevision) {
+                throw PersistenceException.revisionConflict("Prompt 草稿已采纳为另一个 Role revision");
             }
             return current;
         }
         Instant adoptedAt = Instant.now(clock);
         try (PreparedStatement statement = connection.prepareStatement("""
                 UPDATE CORE.PROMPT_OPTIMIZATION
-                SET ADOPTED_PROFILE_REVISION = ?, ADOPTED_AT = ?
-                WHERE ID = ? AND ADOPTED_PROFILE_REVISION IS NULL
+                SET ADOPTED_ROLE_REVISION = ?, ADOPTED_AT = ?
+                WHERE ID = ? AND ADOPTED_ROLE_REVISION IS NULL
                 """)) {
-            statement.setLong(1, adoptedProfileRevision);
+            statement.setLong(1, adoptedRoleRevision);
             statement.setObject(2, adoptedAt.atOffset(ZoneOffset.UTC));
             statement.setString(3, id.toString());
             if (statement.executeUpdate() != 1) {
@@ -152,7 +186,7 @@ public final class PromptOptimizationRepository {
                 current.ref(),
                 current.instructionRevision(),
                 current.instructionDigest(),
-                Optional.of(adoptedProfileRevision),
+                Optional.of(adoptedRoleRevision),
                 Optional.of(adoptedAt),
                 current.createdAt());
     }
@@ -160,15 +194,15 @@ public final class PromptOptimizationRepository {
     private void insert(Connection connection, PromptOptimizationRecord record) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO CORE.PROMPT_OPTIMIZATION (
-                    ID, WORKSPACE_ID, SOURCE_PROFILE_ID, SOURCE_PROFILE_REVISION,
+                    ID, WORKSPACE_ID, SOURCE_ROLE_ID, SOURCE_ROLE_REVISION,
                     THREAD_ID, TURN_ID, INSTRUCTION_REVISION, INSTRUCTION_DIGEST, CREATED_AT
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """)) {
             PromptOptimizationRef ref = record.ref();
             statement.setString(1, ref.id().toString());
             statement.setString(2, ref.workspaceId().toString());
-            statement.setString(3, ref.sourceProfile().id());
-            statement.setLong(4, ref.sourceProfile().revision());
+            statement.setString(3, ref.sourceRole().id());
+            statement.setLong(4, ref.sourceRole().revision());
             statement.setString(5, ref.threadId().toString());
             statement.setString(6, ref.turnId().toString());
             statement.setString(7, record.instructionRevision());
@@ -181,9 +215,9 @@ public final class PromptOptimizationRepository {
     private Optional<PromptOptimizationRecord> find(Connection connection, PromptOptimizationId id, boolean lock)
             throws SQLException {
         String sql = """
-                SELECT ID, WORKSPACE_ID, SOURCE_PROFILE_ID, SOURCE_PROFILE_REVISION,
+                SELECT ID, WORKSPACE_ID, SOURCE_ROLE_ID, SOURCE_ROLE_REVISION,
                        THREAD_ID, TURN_ID, INSTRUCTION_REVISION, INSTRUCTION_DIGEST,
-                       ADOPTED_PROFILE_REVISION, ADOPTED_AT, CREATED_AT
+                       ADOPTED_ROLE_REVISION, ADOPTED_AT, CREATED_AT
                 FROM CORE.PROMPT_OPTIMIZATION WHERE ID = ?
                 """ + (lock ? " FOR UPDATE" : "");
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -196,9 +230,9 @@ public final class PromptOptimizationRepository {
 
     private List<PromptOptimizationRecord> list(Connection connection, WorkspaceId workspaceId) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
-                SELECT ID, WORKSPACE_ID, SOURCE_PROFILE_ID, SOURCE_PROFILE_REVISION,
+                SELECT ID, WORKSPACE_ID, SOURCE_ROLE_ID, SOURCE_ROLE_REVISION,
                        THREAD_ID, TURN_ID, INSTRUCTION_REVISION, INSTRUCTION_DIGEST,
-                       ADOPTED_PROFILE_REVISION, ADOPTED_AT, CREATED_AT
+                       ADOPTED_ROLE_REVISION, ADOPTED_AT, CREATED_AT
                 FROM CORE.PROMPT_OPTIMIZATION
                 WHERE WORKSPACE_ID = ?
                 ORDER BY CREATED_AT DESC, ID
@@ -216,9 +250,9 @@ public final class PromptOptimizationRepository {
 
     private List<PromptOptimizationRecord> listQueued(Connection connection) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
-                SELECT O.ID, O.WORKSPACE_ID, O.SOURCE_PROFILE_ID, O.SOURCE_PROFILE_REVISION,
+                SELECT O.ID, O.WORKSPACE_ID, O.SOURCE_ROLE_ID, O.SOURCE_ROLE_REVISION,
                        O.THREAD_ID, O.TURN_ID, O.INSTRUCTION_REVISION, O.INSTRUCTION_DIGEST,
-                       O.ADOPTED_PROFILE_REVISION, O.ADOPTED_AT, O.CREATED_AT
+                       O.ADOPTED_ROLE_REVISION, O.ADOPTED_AT, O.CREATED_AT
                 FROM CORE.PROMPT_OPTIMIZATION O
                 JOIN CORE.AGENT_TURN T ON T.ID = O.TURN_ID
                 WHERE T.STATUS = 'QUEUED'
@@ -235,15 +269,15 @@ public final class PromptOptimizationRepository {
     }
 
     private static PromptOptimizationRecord map(ResultSet result) throws SQLException {
-        AgentProfileRef source =
-                new AgentProfileRef(result.getString("SOURCE_PROFILE_ID"), result.getLong("SOURCE_PROFILE_REVISION"));
+        AgentRoleRef source =
+                new AgentRoleRef(result.getString("SOURCE_ROLE_ID"), result.getLong("SOURCE_ROLE_REVISION"));
         PromptOptimizationRef ref = new PromptOptimizationRef(
                 PromptOptimizationId.parse(result.getString("ID")),
                 WorkspaceId.parse(result.getString("WORKSPACE_ID")),
                 source,
                 ThreadId.parse(result.getString("THREAD_ID")),
                 TurnId.parse(result.getString("TURN_ID")));
-        Long adoptedRevision = result.getObject("ADOPTED_PROFILE_REVISION", Long.class);
+        Long adoptedRevision = result.getObject("ADOPTED_ROLE_REVISION", Long.class);
         OffsetDateTime adoptedAt = result.getObject("ADOPTED_AT", OffsetDateTime.class);
         return new PromptOptimizationRecord(
                 ref,

@@ -14,12 +14,13 @@ import org.springframework.ai.chat.prompt.Prompt;
 import com.javaclaw.runtime.ModelInvocation;
 import com.javaclaw.runtime.ModelMessage;
 
-/** 将 Harness 上下文映射为 Spring AI Prompt。 */
+/** 将冻结层映射为 Spring AI Prompt；其统一消息模型没有 developer role，只在此边界按固定顺序合并。 */
 final class SpringAiPromptMapper {
     Prompt map(ModelInvocation invocation, ChatOptions options) {
         List<Message> messages = new ArrayList<>();
-        if (!invocation.systemInstruction().isBlank()) {
-            messages.add(new SystemMessage(invocation.systemInstruction()));
+        String merged = AdapterInstructionMapping.merged(invocation.instructions());
+        if (!merged.isBlank()) {
+            messages.add(new SystemMessage(merged));
         }
         invocation.messages().stream().map(this::mapMessage).forEach(messages::add);
         return new Prompt(messages, options);

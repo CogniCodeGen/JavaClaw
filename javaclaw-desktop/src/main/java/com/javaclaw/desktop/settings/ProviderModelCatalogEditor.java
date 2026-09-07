@@ -52,6 +52,7 @@ final class ProviderModelCatalogEditor extends VBox {
     private final Button bindEmbedding;
     private ProviderModelCatalogState state;
     private boolean canBind;
+    private Consumer<ProviderModelSpec> selectionChanged = ignored -> {};
 
     ProviderModelCatalogEditor(
             Runnable discover,
@@ -102,6 +103,14 @@ final class ProviderModelCatalogEditor extends VBox {
         updateSelectionActions(canEdit);
     }
 
+    void onModelSelected(Consumer<ProviderModelSpec> listener) {
+        selectionChanged = Objects.requireNonNull(listener, "listener");
+    }
+
+    ProviderModelSpec selectedModel() {
+        return models.getSelectionModel().getSelectedItem();
+    }
+
     private void configureTable() {
         models.getStyleClass().add("platform-data-table");
         models.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
@@ -116,9 +125,10 @@ final class ProviderModelCatalogEditor extends VBox {
                                 ? Integer.toString(model.embeddingDimensions().getAsInt())
                                 : "由服务端决定"));
         models.getColumns().add(column("验证状态", this::validationStatus));
-        models.getSelectionModel()
-                .selectedItemProperty()
-                .addListener((ignored, previous, selected) -> updateSelectionActions(canEdit()));
+        models.getSelectionModel().selectedItemProperty().addListener((ignored, previous, selected) -> {
+            updateSelectionActions(canEdit());
+            selectionChanged.accept(selected);
+        });
     }
 
     private void configureCandidates() {

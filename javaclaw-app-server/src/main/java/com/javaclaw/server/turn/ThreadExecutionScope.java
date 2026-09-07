@@ -12,12 +12,21 @@ import com.javaclaw.server.persistence.CoreCommandService;
 import com.javaclaw.server.persistence.ManagedWorktreeService;
 
 /** 服务端根据 Thread 意图解析的执行根与写入能力。 */
-record ThreadExecutionScope(ConversationThread thread, Workspace workspace, Path root, boolean writable) {
+record ThreadExecutionScope(
+        java.util.Optional<ConversationThread> thread, Workspace workspace, Path root, boolean writable) {
     /** 校验执行根为规范绝对路径。 */
     ThreadExecutionScope {
         Objects.requireNonNull(thread, "thread");
         Objects.requireNonNull(workspace, "workspace");
         root = Objects.requireNonNull(root, "root").toAbsolutePath().normalize();
+    }
+
+    ThreadExecutionScope(ConversationThread thread, Workspace workspace, Path root, boolean writable) {
+        this(java.util.Optional.of(thread), workspace, root, writable);
+    }
+
+    static ThreadExecutionScope workspace(Workspace workspace) {
+        return new ThreadExecutionScope(java.util.Optional.empty(), workspace, workspace.root(), true);
     }
 
     static ThreadExecutionScope resolve(CoreCommandService core, ManagedWorktreeService worktrees, ThreadId threadId) {
@@ -45,6 +54,7 @@ record ThreadExecutionScope(ConversationThread thread, Workspace workspace, Path
     }
 
     boolean isolatedWrite() {
-        return thread.executionIntent() == ThreadExecutionIntent.ISOLATED_WRITE;
+        return thread.map(value -> value.executionIntent() == ThreadExecutionIntent.ISOLATED_WRITE)
+                .orElse(false);
     }
 }

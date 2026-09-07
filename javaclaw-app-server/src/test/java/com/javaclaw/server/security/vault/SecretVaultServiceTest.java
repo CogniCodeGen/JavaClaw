@@ -214,7 +214,7 @@ class SecretVaultServiceTest {
     @Test
     void Vault可用性刷新同步重建Provider路由并且FailClosed() {
         FakeProtector protector = new FakeProtector();
-        H2Database database = new H2Database(temporaryDirectory.resolve("registry-refresh/data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("registry-refresh/data-v6"));
         database.initialize();
         CanonicalJson json = new CanonicalJson();
         try (SecretVaultService vault = new SecretVaultService(database, protector, json, CLOCK, new SecureRandom())) {
@@ -307,7 +307,7 @@ class SecretVaultServiceTest {
             assertFalse(error.toString().contains(marker));
         }
 
-        Path root = temporaryDirectory.resolve("data-v5");
+        Path root = temporaryDirectory.resolve("data-v6");
         try (var paths = Files.walk(root)) {
             assertTrue(paths.filter(Files::isRegularFile).noneMatch(path -> contains(path, marker)));
         }
@@ -385,7 +385,7 @@ class SecretVaultServiceTest {
     }
 
     private SecretVaultService vault(FakeProtector protector) {
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         return new SecretVaultService(database, protector, new CanonicalJson(), CLOCK, new SecureRandom());
     }

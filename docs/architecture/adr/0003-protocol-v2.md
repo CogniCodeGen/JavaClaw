@@ -1,7 +1,9 @@
 # ADR 0003：Protocol v2 与能力协商
 
-- 状态：Accepted
+- 状态：Superseded by [ADR 0009](0009-agent-role-v6.md)（2026-09-07）
 - 日期：2026-09-01
+
+本页保留 v5 的历史决策依据；当前契约与运行路径以 ADR 0009 和 ADR 0010 为准。
 
 ## 背景
 

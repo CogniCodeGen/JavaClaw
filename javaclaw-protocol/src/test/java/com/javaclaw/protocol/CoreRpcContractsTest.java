@@ -3,6 +3,7 @@ package com.javaclaw.protocol;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
@@ -11,11 +12,13 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.ApprovalDecision;
 import com.javaclaw.api.AttachmentScope;
-import com.javaclaw.api.PermissionProfileRef;
+import com.javaclaw.api.CapabilityNarrowing;
+import com.javaclaw.api.ExecutionOverrides;
+import com.javaclaw.api.PermissionConstraint;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderAdapterOptions;
 import com.javaclaw.api.ProviderAuthentication;
@@ -23,7 +26,6 @@ import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.api.ProviderModelSpec;
-import com.javaclaw.api.ProviderRef;
 import com.javaclaw.api.ThreadExecutionIntent;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.TurnBudget;
@@ -51,15 +53,15 @@ class CoreRpcContractsTest {
                 new CoreRpcContracts.WorkspaceRenamePayload(WORKSPACE_ID, " Renamed ");
         CoreRpcContracts.ThreadCreatePayload thread = new CoreRpcContracts.ThreadCreatePayload(
                 WORKSPACE_ID, Optional.empty(), ThreadExecutionIntent.WORKSPACE, " Topic ");
-        CoreRpcContracts.TurnStartPayload turn = new CoreRpcContracts.TurnStartPayload(
-                THREAD_ID, Optional.of(new AgentProfileRef("profile", 1)), "message");
+        CoreRpcContracts.TurnStartPayload turn =
+                new CoreRpcContracts.TurnStartPayload(THREAD_ID, selection("profile", 1), "message");
 
         assertEquals("Demo", workspace.name());
         assertEquals("Renamed", rename.name());
         assertEquals(WORKSPACE_ID, new CoreRpcContracts.WorkspaceArchivePayload(WORKSPACE_ID).workspaceId());
         assertEquals(temporaryDirectory, workspace.root());
         assertEquals("Topic", thread.title());
-        assertEquals("profile", turn.profile().orElseThrow().id());
+        assertEquals("profile", turn.execution().role().orElseThrow().id());
         assertEquals(THREAD_ID, new CoreRpcContracts.ThreadQuery(THREAD_ID).threadId());
         assertEquals(TURN_ID, new CoreRpcContracts.TurnQuery(TURN_ID).turnId());
         assertEquals(WORKSPACE_ID, new CoreRpcContracts.WorkspaceQuery(WORKSPACE_ID).workspaceId());
@@ -95,8 +97,8 @@ class CoreRpcContractsTest {
                 NullPointerException.class, () -> new CoreRpcContracts.TurnStartPayload(THREAD_ID, null, "message"));
         assertThrows(
                 NullPointerException.class,
-                () -> new CoreRpcContracts.TurnStartPayload(THREAD_ID, Optional.empty(), null));
-        assertThrows(IllegalArgumentException.class, () -> new AgentProfileRef("profile", 0));
+                () -> new CoreRpcContracts.TurnStartPayload(THREAD_ID, ExecutionOverrides.empty(), null));
+        assertThrows(IllegalArgumentException.class, () -> new AgentRoleRef("profile", 0));
         assertThrows(NullPointerException.class, () -> new CoreRpcContracts.ThreadQuery(null));
         assertThrows(NullPointerException.class, () -> new CoreRpcContracts.TurnQuery(null));
         assertThrows(NullPointerException.class, () -> new CoreRpcContracts.WorkspaceQuery(null));
@@ -180,11 +182,10 @@ class CoreRpcContractsTest {
 
     @Test
     void configurationPermissionApproval与Rollout契约完整校验() {
-        ProviderProfileRpcContracts.ProviderCreatePayload provider =
-                new ProviderProfileRpcContracts.ProviderCreatePayload(
-                        " provider ", providerSpec(), ProviderLifecycle.DISABLED);
-        ProviderProfileRpcContracts.AgentProfileCreatePayload profile =
-                new ProviderProfileRpcContracts.AgentProfileCreatePayload(" profile ", profileSpec());
+        ProviderRpcContracts.ProviderCreatePayload provider = new ProviderRpcContracts.ProviderCreatePayload(
+                " provider ", providerSpec(), ProviderLifecycle.DISABLED);
+        AgentRoleRpcContracts.CreatePayload profile =
+                new AgentRoleRpcContracts.CreatePayload(" profile ", profileSpec());
         CoreRpcContracts.ApprovalResolvePayload approval =
                 new CoreRpcContracts.ApprovalResolvePayload(" approval ", ApprovalDecision.APPROVED, " allowed ");
         CoreRpcContracts.RolloutExportPayload rollout =
@@ -201,10 +202,8 @@ class CoreRpcContractsTest {
     void configurationPermissionApproval与Rollout拒绝无效字段() {
         assertThrows(
                 NullPointerException.class,
-                () -> new ProviderProfileRpcContracts.ProviderCreatePayload("id", null, ProviderLifecycle.ACTIVE));
-        assertThrows(
-                NullPointerException.class,
-                () -> new ProviderProfileRpcContracts.AgentProfileCreatePayload("id", null));
+                () -> new ProviderRpcContracts.ProviderCreatePayload("id", null, ProviderLifecycle.ACTIVE));
+        assertThrows(NullPointerException.class, () -> new AgentRoleRpcContracts.CreatePayload("id", null));
         assertThrows(NullPointerException.class, () -> new CoreRpcContracts.ApprovalListPayload(null, false));
         assertThrows(
                 NullPointerException.class, () -> new CoreRpcContracts.ApprovalResolvePayload("id", null, "reason"));
@@ -222,12 +221,10 @@ class CoreRpcContractsTest {
         assertTrue(new CoreRpcContracts.ItemListResult(List.of(), 0).items().isEmpty());
         assertTrue(
                 new CoreRpcContracts.ApprovalListResult(List.of()).approvals().isEmpty());
-        assertTrue(new ProviderProfileRpcContracts.ProviderListResult(List.of())
+        assertTrue(new ProviderRpcContracts.ProviderListResult(List.of())
                 .providers()
                 .isEmpty());
-        assertTrue(new ProviderProfileRpcContracts.AgentProfileListResult(List.of())
-                .profiles()
-                .isEmpty());
+        assertTrue(new AgentRoleRpcContracts.ListResult(List.of()).roles().isEmpty());
         assertThrows(IllegalArgumentException.class, () -> new CoreRpcContracts.ItemListResult(List.of(), -1));
         assertThrows(NullPointerException.class, () -> new CoreRpcContracts.WorkspaceListResult(null));
     }
@@ -250,13 +247,26 @@ class CoreRpcContractsTest {
                 ProviderAdapterOptions.defaults(ProviderAdapter.OPENAI_COMPATIBLE));
     }
 
-    private AgentProfileSpec profileSpec() {
-        return new AgentProfileSpec(
-                "Profile",
-                "system",
-                new ProviderRef("provider", 1, "model"),
-                new PermissionProfileRef("default", 1),
-                Set.of(),
-                budget());
+    private static AgentRoleSpec profileSpec() {
+        return new AgentRoleSpec(
+                "Role",
+                "可复用角色",
+                "保持代码清晰。",
+                Optional.empty(),
+                Optional.empty(),
+                new CapabilityNarrowing(Optional.of(Set.of("read_file")), Optional.empty()),
+                PermissionConstraint.INHERIT,
+                Map.of());
+    }
+
+    private static ExecutionOverrides selection(String id, long revision) {
+        return new ExecutionOverrides(
+                Optional.of(new AgentRoleRef(id, revision)),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
     }
 }

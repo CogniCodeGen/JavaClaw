@@ -59,26 +59,54 @@ class BudgetContextCompactorTest {
         ConversationWindow window = new ConversationWindow(messages, Optional.empty(), 500);
 
         CompactionOutcome outcome =
-                compactor.compact(command(30), window, new BasicGateway(false), new CancellationSource());
+                compactor.compact(command(100), window, new BasicGateway(false), new CancellationSource());
 
         assertEquals("extractive-summary", outcome.item().strategy());
-        assertEquals(MessageRole.SYSTEM, outcome.window().messages().getFirst().role());
-        assertTrue(outcome.item().summary().contains("USER: " + oldText));
-        assertTrue(outcome.item().summary().contains("ASSISTANT: 较早回答 第二行"));
+        assertEquals(
+                MessageRole.ASSISTANT, outcome.window().messages().getFirst().role());
+        assertTrue(outcome.item().summary().contains("USER: 旧消息"));
+        assertTrue(outcome.window().estimatedInputTokens() <= 100);
         assertEquals("最新问题", outcome.window().messages().getLast().text());
         assertTrue(outcome.window().estimatedInputTokens() > 0);
     }
 
     @Test
-    void aSingleOversizedMessageCannotBeExtractivelyCompacted() {
+    void aSingleOversizedMessageIsRetainedForHarnessHardLimitCheck() throws Exception {
         ConversationWindow window = new ConversationWindow(
                 List.of(message(MessageRole.USER, "不可删除的当前消息".repeat(200))), Optional.empty(), 1_000);
 
-        TurnFailureException failure = assertThrows(
-                TurnFailureException.class,
-                () -> compactor.compact(command(32), window, new BasicGateway(false), new CancellationSource()));
+        CompactionOutcome result =
+                compactor.compact(command(32), window, new BasicGateway(false), new CancellationSource());
+        assertEquals(window.messages(), result.window().messages());
+        assertTrue(result.window().estimatedInputTokens() > 32);
+    }
 
-        assertEquals("CONTEXT_WINDOW_EXCEEDED", failure.code());
+    @Test
+    void 摘要不能提升历史权限且最后工具调用组保持完整() throws Exception {
+        var call = new com.javaclaw.runtime.ModelToolCall(
+                "call-group", new com.javaclaw.api.ToolIdentity("core", "read", 1), new CanonicalJson().parse("{}"));
+        var tool = ModelMessage.tool("call-group", "read", "文件结果");
+        var window = new ConversationWindow(
+                List.of(
+                        message(MessageRole.USER, "旧历史".repeat(300)),
+                        message(MessageRole.USER, "最新输入"),
+                        ModelMessage.assistant("", List.of(call)),
+                        tool),
+                Optional.empty(),
+                1200);
+        var outcome = compactor.compact(command(100), window, new BasicGateway(false), new CancellationSource());
+        assertTrue(outcome.window().messages().stream().noneMatch(message -> message.role() == MessageRole.SYSTEM));
+        assertEquals(tool, outcome.window().messages().getLast());
+        assertEquals(
+                List.of(call),
+                outcome.window()
+                        .messages()
+                        .get(outcome.window().messages().size() - 2)
+                        .toolCalls());
+        var broken = new ConversationWindow(List.of(ModelMessage.assistant("", List.of(call))), Optional.empty(), 20);
+        assertThrows(
+                TurnFailureException.class,
+                () -> compactor.compact(command(100), broken, new BasicGateway(false), new CancellationSource()));
     }
 
     @Test
@@ -108,7 +136,8 @@ class BudgetContextCompactorTest {
         assertEquals("provider-native", outcome.item().strategy());
         assertEquals(40, outcome.item().consumedTokens());
         assertEquals(state("after"), outcome.window().providerState().orElseThrow());
-        assertEquals(window.messages(), outcome.window().messages());
+        assertTrue(outcome.window().messages().isEmpty());
+        assertEquals(window.messages(), gateway.request.messages());
         assertEquals(com.javaclaw.server.TurnContractFixtures.PROVIDER.routeKey(), gateway.request.modelId());
     }
 
@@ -135,7 +164,7 @@ class BudgetContextCompactorTest {
                 TurnStatus.QUEUED,
                 1,
                 new TurnBudget(inputTokens, 100, 2, 0, Duration.ofMinutes(1)),
-                com.javaclaw.server.TurnContractFixtures.PROFILE,
+                com.javaclaw.server.TurnContractFixtures.ROLE,
                 com.javaclaw.server.TurnContractFixtures.PROVIDER,
                 com.javaclaw.server.TurnContractFixtures.PERMISSIONS,
                 Path.of("."),
@@ -143,7 +172,14 @@ class BudgetContextCompactorTest {
                 catalog.digest(),
                 Optional.empty(),
                 now,
-                now);
+                now,
+                TurnV6Fixtures.summary(
+                        new TurnBudget(inputTokens, 100, 2, 0, Duration.ofMinutes(1)),
+                        com.javaclaw.server.TurnContractFixtures.ROLE,
+                        com.javaclaw.server.TurnContractFixtures.PROVIDER,
+                        com.javaclaw.server.TurnContractFixtures.PERMISSIONS,
+                        com.javaclaw.server.TurnContractFixtures.PROMPT_DIGEST,
+                        catalog.digest()));
         return new TurnExecutionCommand(
                 turn, com.javaclaw.server.TurnContractFixtures.PROVIDER, "系统说明", "当前问题", permissions, catalog);
     }

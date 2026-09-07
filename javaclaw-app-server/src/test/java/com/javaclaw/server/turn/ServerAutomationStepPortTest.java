@@ -19,9 +19,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.ApprovalRequirement;
 import com.javaclaw.api.AutomationExecutionSnapshot;
 import com.javaclaw.api.CancellationSource;
@@ -58,11 +58,12 @@ import com.javaclaw.runtime.TurnHarness;
 import com.javaclaw.server.extension.contract.ExtensionHost;
 import com.javaclaw.server.instructions.ProjectInstructionResolver;
 import com.javaclaw.server.lifecycle.LifecycleCoordinator;
-import com.javaclaw.server.persistence.AgentProfileService;
+import com.javaclaw.server.persistence.AgentRoleService;
 import com.javaclaw.server.persistence.ApprovalService;
 import com.javaclaw.server.persistence.AttachmentService;
 import com.javaclaw.server.persistence.CommandIdentity;
 import com.javaclaw.server.persistence.CoreCommandService;
+import com.javaclaw.server.persistence.ExecutionConfigurationService;
 import com.javaclaw.server.persistence.ExtensionCatalogRepository;
 import com.javaclaw.server.persistence.H2Database;
 import com.javaclaw.server.persistence.H2TurnJournal;
@@ -70,7 +71,6 @@ import com.javaclaw.server.persistence.InputRequestService;
 import com.javaclaw.server.persistence.LifecycleLeaseRepository;
 import com.javaclaw.server.persistence.ManagedWorktreeService;
 import com.javaclaw.server.persistence.PermissionProfileService;
-import com.javaclaw.server.persistence.ProfileBindingService;
 import com.javaclaw.server.persistence.ProviderService;
 import com.javaclaw.server.security.grant.UnattendedToolGrantService;
 
@@ -98,18 +98,25 @@ class ServerAutomationStepPortTest {
     private AutomationExecutionSnapshot snapshot;
 
     @BeforeEach
-    void initializeDataV5() throws Exception {
+    void initializeDataV6() throws Exception {
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
         json = new CanonicalJson();
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         core = new CoreCommandService(database, json, clock);
         journal = new H2TurnJournal(database, CoreItemCodecs.createRegistry(json), json, clock);
         PermissionProfileService permissions = new PermissionProfileService(database, json, clock);
         permissions.installStandardProfile();
         PermissionProfile permission = installPermission(permissions);
-        AgentProfileService profiles = installProfile(database, permissions, permission, clock);
-        ProfileBindingService bindings = new ProfileBindingService(database, core, profiles, json, clock);
+        AgentRoleService roles = installRole(database, permissions, permission, clock);
+        ExecutionConfigurationService bindings = new ExecutionConfigurationService(database, core, roles, json, clock);
+        TurnV6Fixtures.defaults(
+                bindings,
+                new AgentRoleRef("workflow-agent", 1),
+                new ProviderRef("provider", 1, "model"),
+                new PermissionProfileRef(permission.id(), permission.version()),
+                budget(),
+                Set.of(TOOL_ID.name()));
         AttachmentService attachments = new AttachmentService(database, json, clock);
         ManagedWorktreeService worktrees =
                 new ManagedWorktreeService(database, attachments, json, clock, unavailableSandbox());
@@ -127,13 +134,15 @@ class ServerAutomationStepPortTest {
                 new UnattendedToolGrantService(database, json, clock),
                 Optional.empty()));
         lifecycle = new LifecycleCoordinator(new LifecycleLeaseRepository(database, clock), Duration.ofSeconds(1));
-        dispatcher = dispatcher(profiles, bindings, permissions, worktrees, tools, clock);
+        dispatcher = dispatcher(roles, bindings, permissions, worktrees, tools, clock);
         InputRequestService inputs = new InputRequestService(database, json, clock);
         steps = new ServerAutomationStepPort(new ServerAutomationStepPort.Dependencies(
                 core, worktrees, dispatcher, journal, tools, inputs, json, clock));
         workspace = createWorkspace();
-        snapshot =
-                dispatcher.freeze(workspace.id(), new AgentProfileRef("workflow-agent", 1), new CancellationSource());
+        snapshot = dispatcher.freeze(
+                workspace.id(),
+                TurnV6Fixtures.selection(new AgentRoleRef("workflow-agent", 1)),
+                new CancellationSource());
     }
 
     @AfterEach
@@ -213,8 +222,8 @@ class ServerAutomationStepPortTest {
     }
 
     private HarnessTurnDispatcher dispatcher(
-            AgentProfileService profiles,
-            ProfileBindingService bindings,
+            AgentRoleService roles,
+            ExecutionConfigurationService bindings,
             PermissionProfileService permissions,
             ManagedWorktreeService worktrees,
             ExtensionToolPlatform tools,
@@ -230,7 +239,7 @@ class ServerAutomationStepPortTest {
         return new HarnessTurnDispatcher(
                 new TurnPlatformServices(
                         core,
-                        profiles,
+                        roles,
                         bindings,
                         permissions,
                         new ProjectInstructionResolver(temporaryDirectory.resolve("state"), clock),
@@ -242,7 +251,7 @@ class ServerAutomationStepPortTest {
                 json);
     }
 
-    private AgentProfileService installProfile(
+    private AgentRoleService installRole(
             H2Database database, PermissionProfileService permissions, PermissionProfile permission, Clock clock) {
         ProviderService providers = new ProviderService(database, reference -> true, json, clock);
         providers.create(
@@ -250,17 +259,19 @@ class ServerAutomationStepPortTest {
                 "provider",
                 providerSpec(),
                 ProviderLifecycle.ACTIVE);
-        AgentProfileService profiles = new AgentProfileService(database, providers, permissions, json, clock);
-        AgentProfileSpec spec = new AgentProfileSpec(
+        AgentRoleService roles = new AgentRoleService(database, providers, json, clock);
+        AgentRoleSpec spec = new AgentRoleSpec(
                 "Workflow",
                 "",
-                new ProviderRef("provider", 1, "model"),
-                new PermissionProfileRef(permission.id(), permission.version()),
-                Set.of(TOOL_ID.name()),
-                budget());
-        AgentProfile created = profiles.create(identity("profile/create", "profile", Map.of()), "workflow-agent", spec);
+                "",
+                Optional.empty(),
+                Optional.empty(),
+                new com.javaclaw.api.CapabilityNarrowing(Optional.of(Set.of(TOOL_ID.name())), Optional.empty()),
+                com.javaclaw.api.PermissionConstraint.INHERIT,
+                java.util.Map.of());
+        AgentRole created = roles.create(identity("agent/role/create", "profile", Map.of()), "workflow-agent", spec);
         assertEquals(1, created.revision());
-        return profiles;
+        return roles;
     }
 
     private PermissionProfile installPermission(PermissionProfileService permissions) {

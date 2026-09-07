@@ -9,7 +9,7 @@ import com.javaclaw.protocol.WriteCommand;
 /**
  * 持久命令的幂等身份。
  *
- * @param method Protocol v2 方法
+ * @param method Protocol v3 方法
  * @param idempotencyKey 全局幂等键
  * @param expectedRevision 客户端期望版本
  * @param requestDigest expected revision 与 payload 的共同摘要

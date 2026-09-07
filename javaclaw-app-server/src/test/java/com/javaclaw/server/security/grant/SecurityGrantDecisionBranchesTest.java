@@ -52,8 +52,8 @@ class SecurityGrantDecisionBranchesTest {
     private Workspace otherWorkspace;
 
     @BeforeEach
-    void 创建DataV5与两个有效Workspace() {
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+    void 创建DataV6与两个有效Workspace() {
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         clock = new MutableClock(NOW);

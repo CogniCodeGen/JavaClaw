@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProviderRef;
@@ -45,7 +45,7 @@ import com.javaclaw.runtime.ModelInvocationResult;
 import com.javaclaw.runtime.ModelUsage;
 import com.javaclaw.server.AppServerBootstrap;
 import com.javaclaw.server.BuiltinManagementFixtures;
-import com.javaclaw.server.ProviderProfileRpcFixtures;
+import com.javaclaw.server.ProviderRoleRpcFixtures;
 import com.javaclaw.server.rpc.AppServerSession;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -55,7 +55,7 @@ class ScheduleExtensionIntegrationTest {
     private static final Instant NOW = Instant.parse("2026-09-01T00:00:00Z");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
     private static final String PROVIDER_ID = "schedule-provider";
-    private static final AgentProfileRef PROFILE = new AgentProfileRef("schedule-agent", 1);
+    private static final AgentRoleRef PROFILE = new AgentRoleRef("schedule-agent", 1);
     private static final OrchestrationContracts.ExecutionBudget BUDGET =
             new OrchestrationContracts.ExecutionBudget(4, 20_000, 20_000, 20);
 
@@ -65,7 +65,7 @@ class ScheduleExtensionIntegrationTest {
     @Test
     void schedulePersistsFiveFirePreviewAndCreatesH2OccurrenceBeforeAsyncExecution() throws Exception {
         RecordingModel model = new RecordingModel();
-        Path dataRoot = temporaryDirectory.resolve("data-v5");
+        Path dataRoot = temporaryDirectory.resolve("data-v6");
         List<Boolean> loginStartupChanges = new ArrayList<>();
         try (AppServerBootstrap.Components components =
                 AppServerBootstrap.create(dataRoot, CLOCK, model, loginStartupChanges::add)) {
@@ -119,7 +119,7 @@ class ScheduleExtensionIntegrationTest {
 
     @Test
     void enabledScheduleAndProjectionRecoverFromH2WithoutCatchingUpMissedRuns() throws Exception {
-        Path dataRoot = temporaryDirectory.resolve("data-v5");
+        Path dataRoot = temporaryDirectory.resolve("data-v6");
         Workspace workspace;
         List<Boolean> initialStartupChanges = new ArrayList<>();
         try (AppServerBootstrap.Components components =
@@ -186,8 +186,7 @@ class ScheduleExtensionIntegrationTest {
                 Optional.empty(),
                 Optional.of(5L),
                 Optional.of(NOW.plus(Duration.ofHours(1))),
-                PROFILE.id(),
-                PROFILE.revision(),
+                com.javaclaw.server.TurnContractFixtures.select(PROFILE),
                 "执行计划",
                 "execute",
                 BUDGET.maximumTurns(),
@@ -211,10 +210,10 @@ class ScheduleExtensionIntegrationTest {
     }
 
     private void installProfile(AppServerSession session, AppServerBootstrap.Components components) {
-        ProviderProfileRpcFixtures.install(
+        ProviderRoleRpcFixtures.install(
                 session,
                 components,
-                new ProviderProfileRpcFixtures.Installation(
+                new ProviderRoleRpcFixtures.Installation(
                         PROVIDER_ID,
                         RecordingModel.ID,
                         PROFILE.id(),

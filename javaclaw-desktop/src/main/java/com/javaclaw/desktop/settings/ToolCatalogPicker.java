@@ -174,6 +174,6 @@ public final class ToolCatalogPicker extends VBox {
     private static String bindingKey(ToolCatalogSelectionState state) {
         return state.workspaceId().map(Object::toString).orElse("") + "|"
                 + state.permissionProfile().map(Object::toString).orElse("") + "|"
-                + state.agentProfile().map(Object::toString).orElse("");
+                + state.agentRole().map(Object::toString).orElse("");
     }
 }

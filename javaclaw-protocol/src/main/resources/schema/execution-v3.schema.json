@@ -1,0 +1,568 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javaclaw.local/schema/execution-v3.schema.json",
+  "title": "JavaClaw Protocol v3 execution",
+  "$defs": {
+    "overrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "provider",
+        "permissionProfile",
+        "approvalPolicy",
+        "budget",
+        "visibleCapabilities",
+        "reasoning"
+      ],
+      "properties": {
+        "role": {
+          "anyOf": [
+            {
+              "$ref": "agent-role-v3.schema.json#/$defs/roleRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "$ref": "core-interaction-v3.schema.json#/$defs/providerRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "permissionProfile": {
+          "anyOf": [
+            {
+              "$ref": "core-interaction-v3.schema.json#/$defs/permissionProfileRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "approvalPolicy": {
+          "anyOf": [
+            {
+              "enum": [
+                "NONE",
+                "RISKY",
+                "EVERY_CALL"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "budget": {
+          "anyOf": [
+            {
+              "$ref": "core-interaction-v3.schema.json#/$defs/turnBudget"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "visibleCapabilities": {
+          "anyOf": [
+            {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reasoning": {
+          "anyOf": [
+            {
+              "enum": [
+                "NONE",
+                "MINIMAL",
+                "LOW",
+                "MEDIUM",
+                "HIGH",
+                "XHIGH",
+                "MAX"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "provider",
+        "permissionProfile",
+        "approvalPolicy",
+        "budget",
+        "visibleCapabilities",
+        "reasoning"
+      ],
+      "properties": {
+        "role": {
+          "$ref": "agent-role-v3.schema.json#/$defs/roleRef"
+        },
+        "provider": {
+          "$ref": "core-interaction-v3.schema.json#/$defs/providerRef"
+        },
+        "permissionProfile": {
+          "$ref": "core-interaction-v3.schema.json#/$defs/permissionProfileRef"
+        },
+        "approvalPolicy": {
+          "enum": [
+            "NONE",
+            "RISKY",
+            "EVERY_CALL"
+          ]
+        },
+        "budget": {
+          "$ref": "core-interaction-v3.schema.json#/$defs/turnBudget"
+        },
+        "visibleCapabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "reasoning": {
+          "anyOf": [
+            {
+              "enum": [
+                "NONE",
+                "MINIMAL",
+                "LOW",
+                "MEDIUM",
+                "HIGH",
+                "XHIGH",
+                "MAX"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaceId",
+        "threadId",
+        "overrides",
+        "revision",
+        "updatedAt"
+      ],
+      "properties": {
+        "workspaceId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "overrides": {
+          "$ref": "#/$defs/overrides"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "source",
+        "sourceId",
+        "revision"
+      ],
+      "properties": {
+        "field": {
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "INSTALLATION",
+            "WORKSPACE",
+            "THREAD",
+            "TURN",
+            "ROLE",
+            "PARENT",
+            "SYSTEM"
+          ]
+        },
+        "sourceId": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "provider",
+        "permissionProfile",
+        "approvalPolicy",
+        "budget",
+        "reasoning",
+        "effectiveCapabilities",
+        "promptManifestDigest",
+        "toolCatalogDigest",
+        "modelLocked",
+        "provenance"
+      ],
+      "properties": {
+        "role": {
+          "$ref": "agent-role-v3.schema.json#/$defs/roleRef"
+        },
+        "provider": {
+          "$ref": "core-interaction-v3.schema.json#/$defs/providerRef"
+        },
+        "permissionProfile": {
+          "$ref": "core-interaction-v3.schema.json#/$defs/permissionProfileRef"
+        },
+        "approvalPolicy": {
+          "enum": [
+            "NONE",
+            "RISKY",
+            "EVERY_CALL"
+          ]
+        },
+        "budget": {
+          "$ref": "core-interaction-v3.schema.json#/$defs/turnBudget"
+        },
+        "reasoning": {
+          "anyOf": [
+            {
+              "enum": [
+                "NONE",
+                "MINIMAL",
+                "LOW",
+                "MEDIUM",
+                "HIGH",
+                "XHIGH",
+                "MAX"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "effectiveCapabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "promptManifestDigest": {
+          "$ref": "core-interaction-v3.schema.json#/$defs/digest"
+        },
+        "toolCatalogDigest": {
+          "$ref": "core-interaction-v3.schema.json#/$defs/digest"
+        },
+        "modelLocked": {
+          "type": "boolean"
+        },
+        "provenance": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/provenance"
+          }
+        }
+      }
+    },
+    "defaultReadParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaceId"
+      ],
+      "properties": {
+        "workspaceId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "defaultUpdateCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "payload"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "workspaceId",
+            "execution"
+          ],
+          "properties": {
+            "workspaceId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "execution": {
+              "$ref": "#/$defs/overrides"
+            }
+          }
+        }
+      }
+    },
+    "threadReadParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaceId",
+        "threadId"
+      ],
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "threadId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "threadUpdateCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "payload"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "workspaceId",
+            "threadId",
+            "execution"
+          ],
+          "properties": {
+            "workspaceId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "threadId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "execution": {
+              "$ref": "#/$defs/overrides"
+            }
+          }
+        }
+      }
+    },
+    "readResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "configuration"
+      ],
+      "properties": {
+        "configuration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/configuration"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "subagentOverrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "provider",
+        "permissionProfile",
+        "approvalPolicy",
+        "budget",
+        "visibleCapabilities",
+        "reasoning"
+      ],
+      "properties": {
+        "role": {
+          "type": "null"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "$ref": "core-interaction-v3.schema.json#/$defs/providerRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "permissionProfile": {
+          "type": "null"
+        },
+        "approvalPolicy": {
+          "type": "null"
+        },
+        "budget": {
+          "type": "null"
+        },
+        "visibleCapabilities": {
+          "type": "null"
+        },
+        "reasoning": {
+          "anyOf": [
+            {
+              "enum": [
+                "NONE",
+                "MINIMAL",
+                "LOW",
+                "MEDIUM",
+                "HIGH",
+                "XHIGH",
+                "MAX"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "subagentUpdateCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "payload"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "workspaceId",
+            "execution"
+          ],
+          "properties": {
+            "workspaceId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "execution": {
+              "$ref": "#/$defs/subagentOverrides"
+            }
+          }
+        }
+      }
+    }
+  }
+}

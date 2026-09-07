@@ -24,22 +24,26 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.AgentTurn;
+import com.javaclaw.api.ApprovalPolicy;
 import com.javaclaw.api.ApprovalRequirement;
 import com.javaclaw.api.AttachmentMetadata;
 import com.javaclaw.api.AttachmentRef;
 import com.javaclaw.api.AttachmentScope;
 import com.javaclaw.api.CanonicalPayload;
+import com.javaclaw.api.CapabilityNarrowing;
 import com.javaclaw.api.ConversationThread;
 import com.javaclaw.api.CoreTools;
 import com.javaclaw.api.EmbeddingBinding;
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.ExecutionState;
 import com.javaclaw.api.FilePermission;
 import com.javaclaw.api.MessageRole;
 import com.javaclaw.api.NetworkPermission;
+import com.javaclaw.api.PermissionConstraint;
 import com.javaclaw.api.PermissionProfile;
 import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProcessPermission;
@@ -68,6 +72,7 @@ import com.javaclaw.extension.spi.IsolatedServiceInvocation;
 import com.javaclaw.extension.spi.IsolatedServicePort;
 import com.javaclaw.model.ProviderCredentialResolver;
 import com.javaclaw.model.ProviderEmbeddingAdapterFactory;
+import com.javaclaw.protocol.AgentRoleRpcContracts;
 import com.javaclaw.protocol.CapabilityAdvertisement;
 import com.javaclaw.protocol.ClientInfo;
 import com.javaclaw.protocol.CoreRpcContracts;
@@ -78,7 +83,7 @@ import com.javaclaw.protocol.JsonRpcRequest;
 import com.javaclaw.protocol.JsonRpcResponse;
 import com.javaclaw.protocol.PermissionProfileRpcContracts;
 import com.javaclaw.protocol.ProtocolVersion;
-import com.javaclaw.protocol.ProviderProfileRpcContracts;
+import com.javaclaw.protocol.ProviderRpcContracts;
 import com.javaclaw.protocol.RpcId;
 import com.javaclaw.protocol.WriteCommand;
 import com.javaclaw.runtime.ModelCapabilities;
@@ -102,7 +107,7 @@ class ConfiguredEmbeddingKnowledgeEndToEndTest {
     private static final String PROVIDER_ID = "knowledge-provider";
     private static final String MODEL_ID = "local-embedding-model";
     private static final String PERMISSION_ID = "knowledge-reader";
-    private static final String PROFILE_ID = "knowledge-agent";
+    private static final String ROLE_ID = "knowledge-agent";
     private static final String SOURCE_ID = "architecture-guide";
     private static final String KNOWLEDGE_SEARCH = "knowledge_search";
 
@@ -122,7 +127,7 @@ class ConfiguredEmbeddingKnowledgeEndToEndTest {
             ConversationThread thread = rpc.createThread(workspace);
             ProviderRef provider = rpc.createProvider(endpoint.baseUri());
             EmbeddingBinding binding = rpc.bindEmbedding(provider);
-            AgentProfileRef profile = rpc.createProfile(installPermission(rpc), provider);
+            AgentRoleRef role = rpc.createRole(installPermission(rpc), provider);
             AttachmentRef attachment = rpc.upload(workspace, "architecture source");
 
             KnowledgeContracts.ImportAccepted accepted = rpc.importKnowledge(workspace, attachment);
@@ -140,8 +145,9 @@ class ConfiguredEmbeddingKnowledgeEndToEndTest {
             assertEquals(1, endpoint.requests().size());
             assertEquals(1, extraction.invocations.get());
 
-            AgentTurn terminal =
-                    rpc.awaitTerminal(rpc.startTurn(thread, profile).id());
+            AgentTurn started = rpc.startTurn(thread);
+            assertEquals(role, started.role());
+            AgentTurn terminal = rpc.awaitTerminal(started.id());
 
             assertEquals(TurnStatus.COMPLETED, terminal.status());
             assertTrue(model.visibleTools.size() >= 2);
@@ -155,7 +161,7 @@ class ConfiguredEmbeddingKnowledgeEndToEndTest {
 
     private Boot bootstrap(ModelGateway model, IsolatedServicePort extraction) {
         AppServerBootstrap.Foundation foundation = PlatformFoundationFactory.create(
-                temporaryDirectory.resolve("data-v5"), CLOCK, new LockedMasterKeyProtector(), required -> {});
+                temporaryDirectory.resolve("data-v6"), CLOCK, new LockedMasterKeyProtector(), required -> {});
         ProviderCredentialResolver credentials = ignored -> Optional.empty();
         ProviderEmbeddingAdapterFactory adapters = new ProviderEmbeddingAdapterFactory(credentials);
         try (StartupCloseStack startup = new StartupCloseStack()) {
@@ -241,6 +247,7 @@ class ConfiguredEmbeddingKnowledgeEndToEndTest {
         private final AppServerBootstrap.Components components;
         private final AppServerSession session;
         private final AtomicInteger requestIds = new AtomicInteger();
+        private ExecutionOverrides execution = ExecutionOverrides.empty();
 
         private RpcClient(AppServerBootstrap.Components components) {
             this.components = components;
@@ -250,7 +257,7 @@ class ConfiguredEmbeddingKnowledgeEndToEndTest {
         private void initialize() {
             InitializeParams params = new InitializeParams(
                     ProtocolVersion.CURRENT,
-                    new ClientInfo("embedding-knowledge-e2e", "5.0"),
+                    new ClientInfo("embedding-knowledge-e2e", "6.0"),
                     new CapabilityAdvertisement(Set.of("core.item-envelope"), Set.of()));
             assertTrue(call("initialize/session", params).result().isPresent());
         }
@@ -271,9 +278,8 @@ class ConfiguredEmbeddingKnowledgeEndToEndTest {
         }
 
         private ProviderRef createProvider(URI baseUri) {
-            ProviderProfileRpcContracts.ProviderCreatePayload payload =
-                    new ProviderProfileRpcContracts.ProviderCreatePayload(
-                            PROVIDER_ID, providerSpec(baseUri), ProviderLifecycle.ACTIVE);
+            ProviderRpcContracts.ProviderCreatePayload payload = new ProviderRpcContracts.ProviderCreatePayload(
+                    PROVIDER_ID, providerSpec(baseUri), ProviderLifecycle.ACTIVE);
             ProviderEndpoint endpoint = write("provider/create", "provider-create", 0, payload, ProviderEndpoint.class);
             return new ProviderRef(endpoint.id(), endpoint.revision(), MODEL_ID);
         }
@@ -283,25 +289,35 @@ class ConfiguredEmbeddingKnowledgeEndToEndTest {
                     "provider/embeddingBinding/update",
                     "embedding-bind",
                     0,
-                    new ProviderProfileRpcContracts.EmbeddingBindingUpdatePayload(provider),
+                    new ProviderRpcContracts.EmbeddingBindingUpdatePayload(provider),
                     EmbeddingBinding.class);
         }
 
-        private AgentProfileRef createProfile(PermissionProfileRef permission, ProviderRef provider) {
-            AgentProfileSpec spec = new AgentProfileSpec(
+        private AgentRoleRef createRole(PermissionProfileRef permission, ProviderRef provider) {
+            AgentRoleSpec spec = new AgentRoleSpec(
                     "Knowledge Agent",
+                    "",
                     "只使用已授权工具检索知识。",
-                    provider,
-                    permission,
-                    Set.of("tool_search", KNOWLEDGE_SEARCH),
-                    new TurnBudget(4_000, 1_000, 3, 0, Duration.ofSeconds(30)));
-            AgentProfile profile = write(
-                    "profile/create",
-                    "profile-create",
+                    Optional.empty(),
+                    Optional.empty(),
+                    CapabilityNarrowing.inherit(),
+                    PermissionConstraint.INHERIT,
+                    java.util.Map.of());
+            AgentRole role = write(
+                    "agent/role/create",
+                    "role-create",
                     0,
-                    new ProviderProfileRpcContracts.AgentProfileCreatePayload(PROFILE_ID, spec),
-                    AgentProfile.class);
-            return new AgentProfileRef(profile.id(), profile.revision());
+                    new AgentRoleRpcContracts.CreatePayload(ROLE_ID, spec),
+                    AgentRole.class);
+            execution = new ExecutionOverrides(
+                    Optional.of(role.ref()),
+                    Optional.of(provider),
+                    Optional.of(permission),
+                    Optional.of(ApprovalPolicy.NONE),
+                    Optional.of(new TurnBudget(4_000, 1_000, 3, 0, Duration.ofSeconds(30))),
+                    Optional.of(Set.of("tool_search", KNOWLEDGE_SEARCH)),
+                    Optional.empty());
+            return role.ref();
         }
 
         private AttachmentRef upload(Workspace workspace, String text) {
@@ -380,10 +396,13 @@ class ConfiguredEmbeddingKnowledgeEndToEndTest {
             throw new AssertionError("Knowledge Job did not reach " + expected);
         }
 
-        private AgentTurn startTurn(ConversationThread thread, AgentProfileRef profile) {
+        private AgentTurn startTurn(ConversationThread thread) {
             CoreRpcContracts.TurnStartPayload payload =
-                    new CoreRpcContracts.TurnStartPayload(thread.id(), Optional.of(profile), "检索语义相关的架构资料");
-            return write("turn/start", "turn-start", 0, payload, AgentTurn.class);
+                    new CoreRpcContracts.TurnStartPayload(thread.id(), execution, "检索语义相关的架构资料", List.of());
+            CoreRpcContracts.TurnStartResult result =
+                    write("turn/start", "turn-start", 0, payload, CoreRpcContracts.TurnStartResult.class);
+            assertEquals(result.turn().resolvedConfig(), result.configuration());
+            return result.turn();
         }
 
         private AgentTurn awaitTerminal(TurnId turnId) throws InterruptedException {

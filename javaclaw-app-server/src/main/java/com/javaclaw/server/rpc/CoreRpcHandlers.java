@@ -2,6 +2,7 @@ package com.javaclaw.server.rpc;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.CanonicalPayload;
@@ -16,18 +17,17 @@ import com.javaclaw.protocol.AttachmentRpcContracts;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.CoreRpcContracts;
 import com.javaclaw.protocol.DiagnosticsRpcContracts;
-import com.javaclaw.protocol.ProviderProfileRpcContracts;
+import com.javaclaw.protocol.ProviderRpcContracts;
 import com.javaclaw.protocol.WorktreeRpcContracts;
 import com.javaclaw.protocol.WriteCommand;
 import com.javaclaw.server.diagnostics.DiagnosticsService;
-import com.javaclaw.server.persistence.AgentProfileService;
 import com.javaclaw.server.persistence.ApprovalService;
 import com.javaclaw.server.persistence.AttachmentService;
 import com.javaclaw.server.persistence.CommandIdentity;
+import com.javaclaw.server.persistence.CommandLocks;
 import com.javaclaw.server.persistence.CoreCommandService;
 import com.javaclaw.server.persistence.ManagedWorktreeService;
 import com.javaclaw.server.persistence.PersistenceException;
-import com.javaclaw.server.persistence.ProfileBindingService;
 import com.javaclaw.server.persistence.ProviderService;
 import com.javaclaw.server.persistence.RolloutCommandService;
 import com.javaclaw.server.persistence.TurnStartRequest;
@@ -42,8 +42,6 @@ public final class CoreRpcHandlers {
     private final ApprovalService approvals;
     private final AttachmentService attachments;
     private final ProviderService providers;
-    private final AgentProfileService profiles;
-    private final ProfileBindingService profileBindings;
     private final ManagedWorktreeService worktrees;
     private final DiagnosticsService diagnostics;
 
@@ -60,8 +58,6 @@ public final class CoreRpcHandlers {
         core = checkedPlatform.core();
         attachments = checkedPlatform.attachments();
         providers = checkedPlatform.providers();
-        profiles = checkedPlatform.profiles();
-        profileBindings = checkedPlatform.profileBindings();
         worktrees = checkedPlatform.worktrees();
         diagnostics = checkedPlatform.diagnostics();
         this.json = Objects.requireNonNull(json, "json");
@@ -88,13 +84,6 @@ public final class CoreRpcHandlers {
                 .register("turn/cancel", this::cancelTurn)
                 .register("item/list", this::listItems)
                 .register("attachment/read", this::readAttachment)
-                .register("profile/list", this::listProfiles)
-                .register("profile/read", this::readProfile)
-                .register("profile/create", this::createProfile)
-                .register("profile/update", this::updateProfile)
-                .register("profile/archive", this::archiveProfile)
-                .register("profile/binding/read", this::readProfileBinding)
-                .register("profile/binding/update", this::updateProfileBinding)
                 .register("provider/list", this::listProviders)
                 .register("provider/read", this::readProvider)
                 .register("provider/create", this::createProvider)
@@ -134,7 +123,10 @@ public final class CoreRpcHandlers {
         CoreRpcContracts.WorkspaceCreatePayload payload =
                 json.decode(command.payload(), CoreRpcContracts.WorkspaceCreatePayload.class);
         Workspace workspace = core.createWorkspace(
-                CommandIdentity.from("workspace/create", command, json), payload.name(), payload.root());
+                CommandIdentity.from("workspace/create", command, json),
+                payload.name(),
+                payload.root(),
+                payload.execution());
         return json.encode(workspace);
     }
 
@@ -196,14 +188,28 @@ public final class CoreRpcHandlers {
 
     private CanonicalPayload startTurn(CanonicalPayload params) {
         WriteCommand command = json.decode(params, WriteCommand.class);
+        CommandIdentity identity = CommandIdentity.from("turn/start", command, json);
+        synchronized (CommandLocks.forKey(identity.idempotencyKey())) {
+            Optional<AgentTurn> recovered = core.recoverTurnStart(identity);
+            if (recovered.isPresent()) {
+                AgentTurn turn = recovered.orElseThrow();
+                turns.resume(turn.id());
+                return json.encode(new CoreRpcContracts.TurnStartResult(turn, turn.resolvedConfig()));
+            }
+            return startNewTurn(command, identity);
+        }
+    }
+
+    /** 同一幂等键的首次解析、提交和派发受共享锁串行保护；配置解析不占用数据库事务。 */
+    private CanonicalPayload startNewTurn(WriteCommand command, CommandIdentity identity) {
         CoreRpcContracts.TurnStartPayload payload =
                 json.decode(command.payload(), CoreRpcContracts.TurnStartPayload.class);
-        CorePayloads.Message message =
-                new CorePayloads.Message(MessageRole.USER, payload.message(), List.of(), java.util.Optional.empty());
+        CorePayloads.Message message = new CorePayloads.Message(
+                MessageRole.USER, payload.message(), payload.attachments(), java.util.Optional.empty());
         TurnStartRequest request = turns.resolve(payload, message);
-        AgentTurn turn = core.startTurn(CommandIdentity.from("turn/start", command, json), request);
+        AgentTurn turn = core.startTurn(identity, request);
         turns.dispatch(turn, payload);
-        return json.encode(turn);
+        return json.encode(new CoreRpcContracts.TurnStartResult(turn, turn.resolvedConfig()));
     }
 
     private CanonicalPayload readTurn(CanonicalPayload params) {
@@ -285,76 +291,21 @@ public final class CoreRpcHandlers {
         return json.encode(attachments.read(payload.scope(), payload.digest()));
     }
 
-    private CanonicalPayload listProfiles(CanonicalPayload params) {
-        requireEmpty(params);
-        return json.encode(new ProviderProfileRpcContracts.AgentProfileListResult(profiles.listLatest()));
-    }
-
-    private CanonicalPayload readProfile(CanonicalPayload params) {
-        ProviderProfileRpcContracts.AgentProfileReadPayload payload =
-                json.decode(params, ProviderProfileRpcContracts.AgentProfileReadPayload.class);
-        return json.encode(profiles.require(payload.id(), payload.revision()));
-    }
-
-    private CanonicalPayload createProfile(CanonicalPayload params) {
-        WriteCommand command = json.decode(params, WriteCommand.class);
-        ProviderProfileRpcContracts.AgentProfileCreatePayload payload =
-                json.decode(command.payload(), ProviderProfileRpcContracts.AgentProfileCreatePayload.class);
-        return json.encode(
-                profiles.create(CommandIdentity.from("profile/create", command, json), payload.id(), payload.spec()));
-    }
-
-    private CanonicalPayload updateProfile(CanonicalPayload params) {
-        WriteCommand command = json.decode(params, WriteCommand.class);
-        ProviderProfileRpcContracts.AgentProfileUpdatePayload payload =
-                json.decode(command.payload(), ProviderProfileRpcContracts.AgentProfileUpdatePayload.class);
-        return json.encode(profiles.update(
-                CommandIdentity.from("profile/update", command, json),
-                payload.id(),
-                payload.spec(),
-                payload.lifecycle()));
-    }
-
-    private CanonicalPayload archiveProfile(CanonicalPayload params) {
-        WriteCommand command = json.decode(params, WriteCommand.class);
-        ProviderProfileRpcContracts.AgentProfileArchivePayload payload =
-                json.decode(command.payload(), ProviderProfileRpcContracts.AgentProfileArchivePayload.class);
-        return json.encode(profiles.archive(CommandIdentity.from("profile/archive", command, json), payload.id()));
-    }
-
-    private CanonicalPayload readProfileBinding(CanonicalPayload params) {
-        ProviderProfileRpcContracts.ProfileBindingReadPayload payload =
-                json.decode(params, ProviderProfileRpcContracts.ProfileBindingReadPayload.class);
-        return json.encode(new ProviderProfileRpcContracts.ProfileBindingReadResult(
-                profileBindings.find(payload.workspaceId(), payload.threadId())));
-    }
-
-    private CanonicalPayload updateProfileBinding(CanonicalPayload params) {
-        WriteCommand command = json.decode(params, WriteCommand.class);
-        ProviderProfileRpcContracts.ProfileBindingUpdatePayload payload =
-                json.decode(command.payload(), ProviderProfileRpcContracts.ProfileBindingUpdatePayload.class);
-        return json.encode(profileBindings.update(
-                CommandIdentity.from("profile/binding/update", command, json),
-                payload.workspaceId(),
-                payload.threadId(),
-                payload.profile()));
-    }
-
     private CanonicalPayload listProviders(CanonicalPayload params) {
         requireEmpty(params);
-        return json.encode(new ProviderProfileRpcContracts.ProviderListResult(providers.listLatest()));
+        return json.encode(new ProviderRpcContracts.ProviderListResult(providers.listLatest()));
     }
 
     private CanonicalPayload readProvider(CanonicalPayload params) {
-        ProviderProfileRpcContracts.ProviderReadPayload payload =
-                json.decode(params, ProviderProfileRpcContracts.ProviderReadPayload.class);
+        ProviderRpcContracts.ProviderReadPayload payload =
+                json.decode(params, ProviderRpcContracts.ProviderReadPayload.class);
         return json.encode(providers.require(payload.id(), payload.revision()));
     }
 
     private CanonicalPayload createProvider(CanonicalPayload params) {
         WriteCommand command = json.decode(params, WriteCommand.class);
-        ProviderProfileRpcContracts.ProviderCreatePayload payload =
-                json.decode(command.payload(), ProviderProfileRpcContracts.ProviderCreatePayload.class);
+        ProviderRpcContracts.ProviderCreatePayload payload =
+                json.decode(command.payload(), ProviderRpcContracts.ProviderCreatePayload.class);
         return json.encode(providers.create(
                 CommandIdentity.from("provider/create", command, json),
                 payload.id(),
@@ -364,8 +315,8 @@ public final class CoreRpcHandlers {
 
     private CanonicalPayload updateProvider(CanonicalPayload params) {
         WriteCommand command = json.decode(params, WriteCommand.class);
-        ProviderProfileRpcContracts.ProviderUpdatePayload payload =
-                json.decode(command.payload(), ProviderProfileRpcContracts.ProviderUpdatePayload.class);
+        ProviderRpcContracts.ProviderUpdatePayload payload =
+                json.decode(command.payload(), ProviderRpcContracts.ProviderUpdatePayload.class);
         return json.encode(providers.update(
                 CommandIdentity.from("provider/update", command, json),
                 payload.id(),
@@ -375,14 +326,14 @@ public final class CoreRpcHandlers {
 
     private CanonicalPayload archiveProvider(CanonicalPayload params) {
         WriteCommand command = json.decode(params, WriteCommand.class);
-        ProviderProfileRpcContracts.ProviderArchivePayload payload =
-                json.decode(command.payload(), ProviderProfileRpcContracts.ProviderArchivePayload.class);
+        ProviderRpcContracts.ProviderArchivePayload payload =
+                json.decode(command.payload(), ProviderRpcContracts.ProviderArchivePayload.class);
         return json.encode(providers.archive(CommandIdentity.from("provider/archive", command, json), payload.id()));
     }
 
     private CanonicalPayload probeProvider(CanonicalPayload params) {
-        ProviderProfileRpcContracts.ProviderProbePayload payload =
-                json.decode(params, ProviderProfileRpcContracts.ProviderProbePayload.class);
+        ProviderRpcContracts.ProviderProbePayload payload =
+                json.decode(params, ProviderRpcContracts.ProviderProbePayload.class);
         return json.encode(providers.probe(payload.provider()));
     }
 
@@ -475,8 +426,6 @@ public final class CoreRpcHandlers {
      * @param core Workspace、Thread、Turn、Item
      * @param attachments 内容寻址附件
      * @param providers Provider 版本服务
-     * @param profiles Agent Profile 版本服务
-     * @param profileBindings Workspace 与 Thread 默认 Profile
      * @param worktrees Git Worktree
      * @param diagnostics 非敏感诊断
      */
@@ -484,8 +433,6 @@ public final class CoreRpcHandlers {
             CoreCommandService core,
             AttachmentService attachments,
             ProviderService providers,
-            AgentProfileService profiles,
-            ProfileBindingService profileBindings,
             ManagedWorktreeService worktrees,
             DiagnosticsService diagnostics) {
         /** 校验平台用例。 */
@@ -493,8 +440,6 @@ public final class CoreRpcHandlers {
             Objects.requireNonNull(core, "core");
             Objects.requireNonNull(attachments, "attachments");
             Objects.requireNonNull(providers, "providers");
-            Objects.requireNonNull(profiles, "profiles");
-            Objects.requireNonNull(profileBindings, "profileBindings");
             Objects.requireNonNull(worktrees, "worktrees");
             Objects.requireNonNull(diagnostics, "diagnostics");
         }

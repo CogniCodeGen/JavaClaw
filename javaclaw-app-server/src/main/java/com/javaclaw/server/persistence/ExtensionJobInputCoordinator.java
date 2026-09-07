@@ -46,7 +46,7 @@ public final class ExtensionJobInputCoordinator implements AutoCloseable {
     /**
      * 创建协调器，立即恢复数据库中的等待关联并开始周期扫描。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      * @param inputs InputRequest 权威服务
      * @param clock 平台时钟
      */

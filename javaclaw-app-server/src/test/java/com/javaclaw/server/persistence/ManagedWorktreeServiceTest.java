@@ -18,7 +18,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.AttachmentScope;
 import com.javaclaw.api.ConversationThread;
@@ -65,7 +65,7 @@ class ManagedWorktreeServiceTest {
     private int sequence;
 
     @BeforeEach
-    void createRepositoryAndDataV5() throws Exception {
+    void createRepositoryAndDataV6() throws Exception {
         org.junit.jupiter.api.Assumptions.assumeTrue(Files.isExecutable(GIT));
         repository = temporaryDirectory.resolve("repository");
         Files.createDirectories(repository);
@@ -81,7 +81,7 @@ class ManagedWorktreeServiceTest {
 
         json = new CanonicalJson();
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         core = new CoreCommandService(database, json, clock);
         PermissionProfileService testProfiles = new PermissionProfileService(database, json, clock);
@@ -98,12 +98,13 @@ class ManagedWorktreeServiceTest {
                 "Parent");
         parentTurn = core.startTurn(
                 identity("turn/start", "parent-turn", parent),
-                new TurnStartRequest(
+                com.javaclaw.server.TurnContractFixtures.request(
                         parent.id(),
-                        new TurnBudget(1_000, 1_000, 10, 4, Duration.ofMinutes(5)),
-                        new AgentProfileRef("test-profile", 1),
-                        new ProviderRef("test-provider", 1, "test-model"),
-                        new PermissionProfileRef("standard", 1),
+                        new com.javaclaw.server.TurnContractFixtures.Selection(
+                                new TurnBudget(1_000, 1_000, 10, 4, Duration.ofMinutes(5)),
+                                new AgentRoleRef("test-profile", 1),
+                                new ProviderRef("test-provider", 1, "test-model"),
+                                new PermissionProfileRef("standard", 1)),
                         repository,
                         json.encode(Map.of()),
                         new com.javaclaw.api.ToolCatalogSnapshot(
@@ -488,12 +489,13 @@ class ManagedWorktreeServiceTest {
     private AgentTurn startChildTurn(WorktreeFixture fixture) {
         return core.startTurn(
                 identity("turn/start", "child-turn", fixture.child()),
-                new TurnStartRequest(
+                com.javaclaw.server.TurnContractFixtures.request(
                         fixture.child().id(),
-                        new TurnBudget(1_000, 1_000, 10, 4, Duration.ofMinutes(5)),
-                        parentTurn.profile(),
-                        parentTurn.provider(),
-                        parentTurn.permissionProfile(),
+                        new com.javaclaw.server.TurnContractFixtures.Selection(
+                                new TurnBudget(1_000, 1_000, 10, 4, Duration.ofMinutes(5)),
+                                parentTurn.role(),
+                                parentTurn.provider(),
+                                parentTurn.permissionProfile()),
                         fixture.worktree().executionRoot(),
                         json.encode(Map.of()),
                         new com.javaclaw.api.ToolCatalogSnapshot(

@@ -46,10 +46,10 @@ class InputRequestServiceTest {
     private InputRequestService inputs;
 
     @BeforeEach
-    void initializeDataV5() {
+    void initializeDataV6() {
         clock = new MutableClock(NOW);
         json = new CanonicalJson();
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         core = new CoreCommandService(database, json, clock);
         journal = new H2TurnJournal(database, CoreItemCodecs.createRegistry(json), json, clock);

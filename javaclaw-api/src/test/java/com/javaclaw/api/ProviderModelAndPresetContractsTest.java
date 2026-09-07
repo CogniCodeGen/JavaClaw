@@ -152,10 +152,7 @@ class ProviderModelAndPresetContractsTest {
     }
 
     @Test
-    void Profile和权限预设只是普通配置的可审阅初值() {
-        TurnBudget budget = new TurnBudget(32_000, 4_000, 24, 0, Duration.ofMinutes(5));
-        AgentProfilePreset profilePreset =
-                new AgentProfilePreset("explorer", 1, "Explorer", "只读探索", "只读探索并返回证据。", "a".repeat(64), budget);
+    void 权限预设提供独立于角色的可审阅初值() {
         PermissionPresetDescriptor permissionPreset =
                 new PermissionPresetDescriptor("workspace-review", 1, "Workspace review", "只读工作区", false);
         PermissionPresetInstantiationRequest request = new PermissionPresetInstantiationRequest(
@@ -171,7 +168,6 @@ class ProviderModelAndPresetContractsTest {
         PermissionPresetInstantiationResult result =
                 new PermissionPresetInstantiationResult(permissionPreset, WORKSPACE, proposed);
 
-        assertEquals(budget, profilePreset.defaultBudget());
         assertEquals(proposed, preview.proposedProfile());
         assertEquals(proposed, result.profile());
         assertThrows(

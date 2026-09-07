@@ -30,7 +30,7 @@ public final class H2ThirdPartyDocumentStore implements ExtensionDocumentStore {
     /**
      * 创建绑定到单个扩展命名空间的存储。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      * @param extensionId 第三方扩展标识
      * @param quota 存储上限
      * @param clock 平台时钟

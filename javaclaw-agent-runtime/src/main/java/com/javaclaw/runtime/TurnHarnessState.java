@@ -19,6 +19,7 @@ final class TurnHarnessState {
     private TurnToolBatch toolBatch;
     private int nextToolIndex;
     private int modelInvocations;
+    private boolean finalizationAttempted;
 
     TurnHarnessState(TurnExecutionCommand command, TurnRecoverySnapshot recovery, Clock clock) {
         this.command = Objects.requireNonNull(command, "command");
@@ -61,6 +62,19 @@ final class TurnHarnessState {
     void consume(ModelUsage value) {
         budget.consume(value);
         usage = usage.plus(value);
+    }
+
+    boolean observeUsage(ModelUsage value) {
+        usage = usage.plus(value);
+        return budget.recordObservedUsage(value);
+    }
+
+    boolean beginFinalization() {
+        if (finalizationAttempted) {
+            return false;
+        }
+        finalizationAttempted = true;
+        return true;
     }
 
     StringBuilder assistant() {
@@ -106,9 +120,7 @@ final class TurnHarnessState {
     }
 
     void appendMessages(List<ModelMessage> messages) {
-        long estimate = messages.stream()
-                .mapToLong(message -> Math.max(1, message.text().length() / 4L))
-                .sum();
+        long estimate = ContextTokenEstimator.messages(messages);
         window = window().append(messages, estimate);
     }
 }

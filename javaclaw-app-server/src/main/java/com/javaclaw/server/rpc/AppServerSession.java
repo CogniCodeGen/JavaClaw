@@ -143,7 +143,7 @@ public final class AppServerSession implements AutoCloseable {
         InitializeParams params = json.decode(request.params(), InitializeParams.class);
         capabilities = negotiator.negotiate(params);
         InitializeResult result = new InitializeResult(
-                ProtocolVersion.CURRENT, "JavaClaw App Server", "5.0.0-SNAPSHOT", capabilities, secrets.publicKey());
+                ProtocolVersion.CURRENT, "JavaClaw App Server", "6.0.0-SNAPSHOT", capabilities, secrets.publicKey());
         return JsonRpcResponse.success(request.id(), json.encode(result));
     }
 

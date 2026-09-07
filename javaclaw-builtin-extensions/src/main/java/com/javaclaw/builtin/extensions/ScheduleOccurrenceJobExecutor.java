@@ -69,7 +69,7 @@ final class ScheduleOccurrenceJobExecutor implements ExtensionJobExecutor {
             throws Exception {
         ScheduleContracts.DefinitionTarget target =
                 frozen.definition().target().definition().orElseThrow();
-        var start = new OrchestrationContracts.StartRequest(target.definitionId(), target.profile(), target.budget());
+        var start = new OrchestrationContracts.StartRequest(target.definitionId(), target.execution(), target.budget());
         var response = context.scheduledCommands()
                 .execute(
                         new ScheduledCommand(

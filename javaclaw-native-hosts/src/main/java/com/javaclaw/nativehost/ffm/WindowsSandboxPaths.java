@@ -8,6 +8,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.javaclaw.nativehost.network.SandboxNetworkAccess;
+
 /** 将 Windows 请求解析成无 reparse point 的真实路径，避免 ACL 授权被路径别名绕过。 */
 final class WindowsSandboxPaths {
     private static final int INVALID_FILE_ATTRIBUTES = -1;
@@ -47,7 +49,8 @@ final class WindowsSandboxPaths {
                 writes,
                 request.allowDelete(),
                 request.timeout(),
-                request.limits());
+                request.limits(),
+                request.networkAccess());
     }
 
     static void rejectReparsePoint(Path path) throws IOException {
@@ -114,5 +117,6 @@ final class WindowsSandboxPaths {
             List<Path> writeRoots,
             boolean allowDelete,
             java.time.Duration timeout,
-            com.javaclaw.api.ResourceLimits limits) {}
+            com.javaclaw.api.ResourceLimits limits,
+            SandboxNetworkAccess networkAccess) {}
 }

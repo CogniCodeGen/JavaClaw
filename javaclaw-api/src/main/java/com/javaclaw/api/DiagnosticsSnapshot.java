@@ -32,7 +32,7 @@ public record DiagnosticsSnapshot(
      *
      * @param applicationVersion JavaClaw 版本
      * @param protocolVersion Protocol 主版本
-     * @param dataSchemaVersion data-v5 Core schema 版本
+     * @param dataSchemaVersion data-v6 Core schema 版本
      */
     public record BuildIdentity(String applicationVersion, int protocolVersion, int dataSchemaVersion) {
         /** 校验版本身份。 */

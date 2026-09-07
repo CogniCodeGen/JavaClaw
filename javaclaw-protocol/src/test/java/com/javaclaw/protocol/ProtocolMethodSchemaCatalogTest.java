@@ -28,7 +28,7 @@ class ProtocolMethodSchemaCatalogTest {
     @Test
     void 方法资源与Java目录逐项一致且没有无契约方法() throws Exception {
         Map<String, JsonNode> resources = schemaResources();
-        JsonNode methods = resources.get("methods-v2.json").path("methods");
+        JsonNode methods = resources.get("methods-v3.json").path("methods");
         Map<String, RpcMethodKind> javaMethods = javaMethods();
         Map<String, RpcMethodKind> resourceMethods = new HashMap<>();
         List<String> resourceOrder = new ArrayList<>();
@@ -40,16 +40,16 @@ class ProtocolMethodSchemaCatalogTest {
             assertFalse(resourceMethods.containsKey(name), "重复方法: " + name);
             resourceMethods.put(name, kind);
             resourceOrder.add(name);
-            assertReferenceExists(requiredText(method, "paramsSchema"), "methods-v2.json", resources);
+            assertReferenceExists(requiredText(method, "paramsSchema"), "methods-v3.json", resources);
             if (kind == RpcMethodKind.NOTIFICATION) {
                 assertFalse(method.has("resultSchema"), "通知不得声明 result: " + name);
             } else {
-                assertReferenceExists(requiredText(method, "resultSchema"), "methods-v2.json", resources);
+                assertReferenceExists(requiredText(method, "resultSchema"), "methods-v3.json", resources);
             }
         }
 
         assertEquals(javaMethods, resourceMethods);
-        assertEquals(147, resourceOrder.size());
+        assertEquals(159, resourceOrder.size());
         assertEquals(
                 resourceOrder,
                 MethodCatalog.methods().stream().map(RpcMethod::name).toList());
@@ -59,7 +59,7 @@ class ProtocolMethodSchemaCatalogTest {
     @Test
     void 所有写方法都使用封闭幂等并发信封() throws Exception {
         Map<String, JsonNode> resources = schemaResources();
-        JsonNode methods = resources.get("methods-v2.json").path("methods");
+        JsonNode methods = resources.get("methods-v3.json").path("methods");
 
         for (JsonNode method : methods) {
             if (!"command".equals(requiredText(method, "kind"))) {
@@ -69,7 +69,7 @@ class ProtocolMethodSchemaCatalogTest {
             if ("initialize/session".equals(name)) {
                 continue;
             }
-            SchemaLocation location = resolve(requiredText(method, "paramsSchema"), "methods-v2.json", resources);
+            SchemaLocation location = resolve(requiredText(method, "paramsSchema"), "methods-v3.json", resources);
             List<JsonNode> composition = composition(location, resources);
             assertTrue(composition.stream().anyMatch(ProtocolMethodSchemaCatalogTest::isWriteEnvelope), name);
             assertTrue(composition.stream().anyMatch(node -> hasClosedPayload(node, location.file(), resources)), name);
@@ -125,7 +125,7 @@ class ProtocolMethodSchemaCatalogTest {
                 assertEquals(null, previous, "重复 schema 文件");
             }
         }
-        assertTrue(result.containsKey("methods-v2.json"));
+        assertTrue(result.containsKey("methods-v3.json"));
         return Map.copyOf(result);
     }
 

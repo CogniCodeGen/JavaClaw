@@ -6,8 +6,8 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.ProfileBinding;
+import com.javaclaw.api.ExecutionConfiguration;
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.api.WorkspaceLifecycle;
@@ -17,11 +17,11 @@ import com.javaclaw.desktop.DesktopTestFixtures;
 /** Workspace 设置测试共享的目录和写入回执。 */
 final class TestWorkspaceSettings {
     final List<Workspace> catalog = new ArrayList<>(List.of(DesktopTestFixtures.workspace()));
-    Optional<ProfileBinding> binding = Optional.empty();
+    Optional<ExecutionConfiguration> binding = Optional.empty();
     RuntimeException nextFailure;
     CompletableFuture<List<Workspace>> nextResponse;
     String lastName = "";
-    AgentProfileRef lastProfile;
+    ExecutionOverrides lastExecution;
     boolean archived;
     int reads;
 
@@ -64,10 +64,11 @@ final class TestWorkspaceSettings {
                 DesktopTestFixtures.NOW);
     }
 
-    ProfileBinding bind(WorkspaceId workspaceId, AgentProfileRef profile, CommandOptions options) {
-        lastProfile = profile;
-        ProfileBinding updated = new ProfileBinding(
-                workspaceId, Optional.empty(), profile, options.expectedRevision() + 1, DesktopTestFixtures.NOW);
+    ExecutionConfiguration bind(
+            Optional<WorkspaceId> workspaceId, ExecutionOverrides execution, CommandOptions options) {
+        lastExecution = execution;
+        ExecutionConfiguration updated = new ExecutionConfiguration(
+                workspaceId, Optional.empty(), execution, options.expectedRevision() + 1, DesktopTestFixtures.NOW);
         binding = Optional.of(updated);
         return updated;
     }

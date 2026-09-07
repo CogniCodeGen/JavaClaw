@@ -106,7 +106,7 @@ public final class BuiltinExtensionSettingsPage extends VBox implements ManagedS
     }
 
     private Node detail() {
-        FormSection status = new FormSection("实时状态", "状态来自 H2 v5 权威目录；页面不会从本地进程或旧配置推测启停结果。");
+        FormSection status = new FormSection("实时状态", "状态来自服务端权威目录，配置更新后重新读取。");
         status.addField("能力", identity);
         status.addField("执行边界", runtime);
         status.addField("生命周期", lifecycle);

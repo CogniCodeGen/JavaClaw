@@ -12,7 +12,7 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.util.HexFormat;
 import java.util.Set;
 
-/** data-v5 内内容寻址 Blob 的原子文件实现。 */
+/** data-v6 内内容寻址 Blob 的原子文件实现。 */
 final class AttachmentBlobStore {
     private static final Set<PosixFilePermission> DIRECTORY_PERMISSIONS =
             Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE);
@@ -25,7 +25,7 @@ final class AttachmentBlobStore {
         try {
             root = dataRoot.toRealPath();
         } catch (IOException failure) {
-            throw new PersistenceException("无法解析 data-v5 Blob 根目录", failure);
+            throw new PersistenceException("无法解析 data-v6 Blob 根目录", failure);
         }
     }
 
@@ -197,7 +197,7 @@ final class AttachmentBlobStore {
         try {
             Files.deleteIfExists(temporary);
         } catch (IOException ignored) {
-            // 临时文件位于受控 data-v5 内；下次瘦身审计可以安全清理。
+            // 临时文件位于受控 data-v6 内；下次瘦身审计可以安全清理。
         }
     }
 }

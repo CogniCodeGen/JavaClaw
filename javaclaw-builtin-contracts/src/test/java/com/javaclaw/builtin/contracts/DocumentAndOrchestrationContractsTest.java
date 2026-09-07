@@ -6,7 +6,7 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.CanonicalPayload;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -128,7 +128,8 @@ class DocumentAndOrchestrationContractsTest {
     @Test
     void orchestrationAcceptsOnlyDefinitionProfileAndBoundedBudgetFromClient() {
         var budget = new OrchestrationContracts.ExecutionBudget(5, 1000, 500, 20);
-        var request = new OrchestrationContracts.StartRequest("definition", new AgentProfileRef("profile", 1), budget);
+        var request = new OrchestrationContracts.StartRequest(
+                "definition", AutomationV6Fixtures.selection(new AgentRoleRef("profile", 1)), budget);
         var checkpoint = new OrchestrationContracts.ExecutionCheckpoint(
                 BuiltinContractsFixtures.payload(), new OrchestrationContracts.ExecutionConsumption(2, 10, 20, 1));
 
@@ -138,7 +139,7 @@ class DocumentAndOrchestrationContractsTest {
                 IllegalArgumentException.class,
                 () -> new OrchestrationContracts.StartRequest(
                         "definition",
-                        new AgentProfileRef("profile", 1),
+                        AutomationV6Fixtures.selection(new AgentRoleRef("profile", 1)),
                         new OrchestrationContracts.ExecutionBudget(0, 1, 1, 1)));
     }
 

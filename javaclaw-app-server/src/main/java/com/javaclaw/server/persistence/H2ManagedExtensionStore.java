@@ -40,7 +40,7 @@ public final class H2ManagedExtensionStore implements ManagedExtensionStore {
     /**
      * 创建托管扩展存储。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      * @param clock 平台时钟
      */
     public H2ManagedExtensionStore(H2Database database, Clock clock) {

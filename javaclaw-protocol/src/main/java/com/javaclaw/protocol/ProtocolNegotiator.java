@@ -30,8 +30,9 @@ public final class ProtocolNegotiator {
         Objects.requireNonNull(params, "params");
         if (params.appProtocolVersion() != ProtocolVersion.CURRENT) {
             throw new ProtocolException(
-                    ProtocolErrorCode.UNSUPPORTED_PROTOCOL,
-                    "appProtocolVersion " + params.appProtocolVersion() + " is not supported");
+                    ProtocolErrorCode.UNSUPPORTED_PROTOCOL_VERSION,
+                    "UNSUPPORTED_PROTOCOL_VERSION: appProtocolVersion " + params.appProtocolVersion()
+                            + " is not supported");
         }
         Set<String> stable =
                 intersection(stableCapabilities, params.capabilities().stableCapabilities());

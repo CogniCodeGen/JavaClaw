@@ -86,7 +86,8 @@ public final class JsonRpcCodec {
     private static void requireVersion(ObjectNode root) {
         JsonNode version = root.get("jsonrpc");
         if (version == null || !version.isTextual() || !ProtocolVersion.JSON_RPC.equals(version.textValue())) {
-            throw new ProtocolException(ProtocolErrorCode.UNSUPPORTED_PROTOCOL, "only JSON-RPC 2.0 is supported");
+            throw new ProtocolException(
+                    ProtocolErrorCode.UNSUPPORTED_PROTOCOL_VERSION, "only JSON-RPC 2.0 is supported");
         }
     }
 

@@ -24,7 +24,7 @@ final class WindowsAppContainerScope implements AutoCloseable {
     }
 
     static WindowsAppContainerScope open(WindowsSandboxPaths.Prepared request) throws IOException {
-        String name = "JavaClaw.Sandbox.v5." + UUID.randomUUID().toString().replace("-", "");
+        String name = "JavaClaw.Sandbox.v6." + UUID.randomUUID().toString().replace("-", "");
         MemorySegment sid = createProfile(name);
         try {
             return new WindowsAppContainerScope(name, sid, WindowsAclManager.grant(request, sid));
@@ -37,6 +37,10 @@ final class WindowsAppContainerScope implements AutoCloseable {
             }
             throw failure;
         }
+    }
+
+    String profileName() {
+        return profileName;
     }
 
     MemorySegment sid() {
@@ -73,7 +77,7 @@ final class WindowsAppContainerScope implements AutoCloseable {
                     backend.createAppContainerProfile,
                     WindowsSandboxNative.wide(arena, name),
                     WindowsSandboxNative.wide(arena, "JavaClaw Sandbox"),
-                    WindowsSandboxNative.wide(arena, "Ephemeral JavaClaw 5 sandbox"),
+                    WindowsSandboxNative.wide(arena, "Ephemeral JavaClaw 6 sandbox"),
                     MemorySegment.NULL,
                     0,
                     sidOut);

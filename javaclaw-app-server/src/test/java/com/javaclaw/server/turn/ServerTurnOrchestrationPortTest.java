@@ -16,9 +16,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.AutomationExecutionSnapshot;
 import com.javaclaw.api.CancellationSource;
@@ -47,7 +47,7 @@ import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.CoreItemCodecs;
 import com.javaclaw.runtime.ModelUsage;
 import com.javaclaw.runtime.TurnExecutionResult;
-import com.javaclaw.server.persistence.AgentProfileService;
+import com.javaclaw.server.persistence.AgentRoleService;
 import com.javaclaw.server.persistence.AttachmentService;
 import com.javaclaw.server.persistence.CommandIdentity;
 import com.javaclaw.server.persistence.CoreCommandService;
@@ -77,10 +77,10 @@ class ServerTurnOrchestrationPortTest {
     private AutomationExecutionSnapshot snapshot;
 
     @BeforeEach
-    void initializeDataV5() throws Exception {
+    void initializeDataV6() throws Exception {
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
         json = new CanonicalJson();
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         core = new CoreCommandService(database, json, clock);
         journal = new H2TurnJournal(database, CoreItemCodecs.createRegistry(json), json, clock);
@@ -93,15 +93,15 @@ class ServerTurnOrchestrationPortTest {
                 "provider",
                 providerSpec(),
                 ProviderLifecycle.ACTIVE);
-        AgentProfileService profiles = new AgentProfileService(database, providers, permissions, json, clock);
-        AgentProfile profile =
-                profiles.create(identity("profile/create", "profile", Map.of()), "profile", profileSpec(standard));
+        AgentRoleService roles = new AgentRoleService(database, providers, json, clock);
+        AgentRole role =
+                roles.create(identity("agent/role/create", "profile", Map.of()), "profile", roleSpec(standard));
         Files.createDirectories(temporaryDirectory.resolve("workspace"));
         workspace = core.createWorkspace(
                 identity("workspace/create", "workspace", Map.of()),
                 "Workspace",
                 temporaryDirectory.resolve("workspace"));
-        snapshot = snapshot(profile, standard);
+        snapshot = snapshot(role, standard);
     }
 
     @Test
@@ -147,7 +147,9 @@ class ServerTurnOrchestrationPortTest {
         RecordingDispatcher dispatcher = new RecordingDispatcher(TurnStatus.CANCELLED, Optional.empty(), false);
         ServerTurnOrchestrationPort port = port(dispatcher);
 
-        assertSame(snapshot, port.freeze(workspace.id(), snapshot.profile(), new CancellationSource()));
+        assertSame(
+                snapshot,
+                port.freeze(workspace.id(), TurnV6Fixtures.selection(snapshot.role()), new CancellationSource()));
         OrchestratedTurnFailureException failure = assertThrows(
                 OrchestratedTurnFailureException.class,
                 () -> port.execute(command("cancelled"), new CancellationSource()));
@@ -157,15 +159,26 @@ class ServerTurnOrchestrationPortTest {
     }
 
     private ServerTurnOrchestrationPort port(RecordingDispatcher dispatcher) {
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
         AttachmentService attachments = new AttachmentService(database, json, clock);
         ManagedWorktreeService worktrees =
                 new ManagedWorktreeService(database, attachments, json, clock, unavailableSandbox());
         PermissionProfileService permissions = new PermissionProfileService(database, json, clock);
         ProviderService providers = new ProviderService(database, reference -> true, json, clock);
-        AgentProfileService profiles = new AgentProfileService(database, providers, permissions, json, clock);
-        return new ServerTurnOrchestrationPort(core, profiles, worktrees, dispatcher, json);
+        AgentRoleService roles = new AgentRoleService(database, providers, json, clock);
+        return new ServerTurnOrchestrationPort(
+                new TurnPlatformServices(
+                        core,
+                        roles,
+                        new com.javaclaw.server.persistence.ExecutionConfigurationService(
+                                database, core, roles, json, clock),
+                        permissions,
+                        new com.javaclaw.server.instructions.ProjectInstructionResolver(temporaryDirectory, clock),
+                        worktrees),
+                providers,
+                dispatcher,
+                json);
     }
 
     private OrchestratedTurnCommand command(String key) {
@@ -180,25 +193,27 @@ class ServerTurnOrchestrationPortTest {
                 "orchestration-" + key);
     }
 
-    private AutomationExecutionSnapshot snapshot(AgentProfile profile, PermissionProfile permission) {
+    private AutomationExecutionSnapshot snapshot(AgentRole role, PermissionProfile permission) {
         ToolCatalogSnapshot catalog = new ToolCatalogSnapshot(TurnId.random(), 9, List.of(), permission, NOW);
-        return new AutomationExecutionSnapshot(
-                new AgentProfileRef(profile.id(), profile.revision()),
-                profile.spec().provider(),
-                profile.spec().permissionProfile(),
-                profile.spec().budget(),
+        return TurnV6Fixtures.snapshot(
+                new AgentRoleRef(role.id(), role.revision()),
+                new ProviderRef("provider", 1, "test-model"),
+                new PermissionProfileRef(permission.id(), permission.version()),
+                budget(),
                 catalog,
                 Optional.empty());
     }
 
-    private AgentProfileSpec profileSpec(PermissionProfile permission) {
-        return new AgentProfileSpec(
+    private AgentRoleSpec roleSpec(PermissionProfile permission) {
+        return new AgentRoleSpec(
                 "Automation",
                 "",
-                new ProviderRef("provider", 1, "test-model"),
-                new PermissionProfileRef(permission.id(), permission.version()),
-                Set.of(),
-                budget());
+                "",
+                Optional.empty(),
+                Optional.empty(),
+                new com.javaclaw.api.CapabilityNarrowing(Optional.of(Set.of()), Optional.empty()),
+                com.javaclaw.api.PermissionConstraint.INHERIT,
+                java.util.Map.of());
     }
 
     private static ProviderEndpointSpec providerSpec() {
@@ -244,10 +259,11 @@ class ServerTurnOrchestrationPortTest {
             message = user.text();
             return new TurnStartRequest(
                     request.threadId(),
-                    frozen.turnBudget(),
-                    frozen.profile(),
-                    frozen.provider(),
-                    frozen.permissionProfile(),
+                    com.javaclaw.server.TurnContractFixtures.configuration(
+                            new com.javaclaw.server.TurnContractFixtures.Selection(
+                                    frozen.turnBudget(), frozen.role(), frozen.provider(), frozen.permissionProfile()),
+                            json.parse("{\"prompt\":\"automation\"}"),
+                            frozen.toolCatalog()),
                     workspace.root(),
                     json.parse("{\"prompt\":\"automation\"}"),
                     frozen.toolCatalog(),
@@ -302,7 +318,9 @@ class ServerTurnOrchestrationPortTest {
 
         @Override
         public AutomationExecutionSnapshot freeze(
-                com.javaclaw.api.WorkspaceId workspaceId, AgentProfileRef profile, CancellationToken cancellation) {
+                com.javaclaw.api.WorkspaceId workspaceId,
+                com.javaclaw.api.ExecutionOverrides execution,
+                CancellationToken cancellation) {
             return ServerTurnOrchestrationPortTest.this.snapshot;
         }
 

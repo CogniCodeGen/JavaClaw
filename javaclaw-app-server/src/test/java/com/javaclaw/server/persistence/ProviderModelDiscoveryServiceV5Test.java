@@ -280,7 +280,7 @@ class ProviderModelDiscoveryServiceV5Test {
 
     private Fixture fixture() {
         CanonicalJson json = new CanonicalJson();
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         ProviderService providers = new ProviderService(database, reference -> true, json, CLOCK);
         ProviderEndpointSpec shell = shell();

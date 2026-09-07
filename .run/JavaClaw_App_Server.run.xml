@@ -3,9 +3,9 @@
         <option name="MAIN_CLASS_NAME" value="com.javaclaw.server.AppServerMain" />
         <module name="javaclaw-app-server" />
         <option name="PROGRAM_PARAMETERS"
-            value="--socket &quot;$PROJECT_DIR$/.javaclaw/idea/app-server-v5.sock&quot;" />
+            value="--socket &quot;$PROJECT_DIR$/.javaclaw/idea/app-server-v6.sock&quot;" />
         <option name="VM_PARAMETERS"
-            value="--enable-native-access=ALL-UNNAMED -Djavaclaw.data.root=&quot;$PROJECT_DIR$/.javaclaw/idea/data-v5&quot; -Djavaclaw.log.dir=&quot;$PROJECT_DIR$/.javaclaw/idea/data-v5/logs&quot; -Djavaclaw.log.process=idea-app-server" />
+            value="--enable-native-access=ALL-UNNAMED -Djavaclaw.data.root=&quot;$PROJECT_DIR$/.javaclaw/idea/data-v6&quot; -Djavaclaw.log.dir=&quot;$PROJECT_DIR$/.javaclaw/idea/data-v6/logs&quot; -Djavaclaw.log.process=idea-app-server" />
         <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
         <method v="2">
             <option name="Make" enabled="true" />

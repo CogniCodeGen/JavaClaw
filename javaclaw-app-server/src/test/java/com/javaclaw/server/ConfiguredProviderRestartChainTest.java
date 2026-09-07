@@ -18,12 +18,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.AgentTurn;
+import com.javaclaw.api.ApprovalPolicy;
+import com.javaclaw.api.CapabilityNarrowing;
 import com.javaclaw.api.ConversationThread;
 import com.javaclaw.api.CredentialRef;
+import com.javaclaw.api.ExecutionOverrides;
+import com.javaclaw.api.PermissionConstraint;
 import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderEndpoint;
@@ -72,15 +76,15 @@ class ConfiguredProviderRestartChainTest {
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-09-02T00:00:00Z"), ZoneOffset.UTC);
     private static final String PROVIDER_ID = "restart-provider";
     private static final String MODEL = "restart-model";
-    private static final String PROFILE_ID = "restart-profile";
+    private static final String ROLE_ID = "restart-role";
     private static final String SECRET = "restart-secret";
 
     @TempDir
     Path temporaryDirectory;
 
     @Test
-    void providerSecret与Profile在重启后继续驱动精确Turn() throws Exception {
-        Path dataRoot = temporaryDirectory.resolve("data-v5");
+    void providerSecret与Role在重启后继续驱动精确Turn() throws Exception {
+        Path dataRoot = temporaryDirectory.resolve("data-v6");
         Files.createDirectories(temporaryDirectory.resolve("workspace"));
         MemoryProtector protector = new MemoryProtector();
         AtomicInteger invocations = new AtomicInteger();
@@ -96,8 +100,8 @@ class ConfiguredProviderRestartChainTest {
             AgentTurn completed = runTurn(restarted.components(), references, "second-turn", "重启后执行");
             assertEquals(TurnStatus.COMPLETED, completed.status());
             assertEquals(
-                    references.profile(),
-                    profileRef(restarted.foundation().agentProfiles().require(PROFILE_ID, 1)));
+                    references.role(),
+                    roleRef(restarted.foundation().agentRoles().require(ROLE_ID, 1)));
             ProviderEndpoint provider = restarted.foundation().providers().require(PROVIDER_ID, 3);
             assertTrue(provider.spec().credential().isPresent());
         }
@@ -130,24 +134,41 @@ class ConfiguredProviderRestartChainTest {
                         PROVIDER_ID,
                         credentialBound.spec(),
                         ProviderLifecycle.ACTIVE);
-        AgentProfile profile = foundation
-                .agentProfiles()
+        AgentRole role = foundation
+                .agentRoles()
                 .create(
-                        identity("profile/create", "profile", 0, 'd'),
-                        PROFILE_ID,
-                        new AgentProfileSpec(
-                                "Restart Profile",
+                        identity("agent/role/create", "role", 0, 'd'),
+                        ROLE_ID,
+                        new AgentRoleSpec(
+                                "Restart Role",
+                                "",
                                 "保持回答简短。",
-                                new ProviderRef(PROVIDER_ID, bound.revision(), MODEL),
-                                new PermissionProfileRef("standard", 1),
-                                Set.of(),
-                                new TurnBudget(4_000, 1_000, 2, 0, Duration.ofSeconds(30))));
+                                Optional.empty(),
+                                Optional.empty(),
+                                CapabilityNarrowing.inherit(),
+                                PermissionConstraint.INHERIT,
+                                Map.of()));
 
         AppServerSession session = boot.components().newSession();
         initialize(session, boot.components());
         Workspace workspace = createWorkspace(session, boot.components());
+        ExecutionOverrides execution = new ExecutionOverrides(
+                Optional.of(roleRef(role)),
+                Optional.of(new ProviderRef(PROVIDER_ID, bound.revision(), MODEL)),
+                Optional.of(new PermissionProfileRef("standard", 1)),
+                Optional.of(ApprovalPolicy.NONE),
+                Optional.of(new TurnBudget(4_000, 1_000, 2, 0, Duration.ofSeconds(30))),
+                Optional.of(Set.of()),
+                Optional.empty());
+        foundation
+                .executionConfigurations()
+                .update(
+                        identity("execution/default/update", "workspace-default", 0, 'e'),
+                        Optional.of(workspace.id()),
+                        Optional.empty(),
+                        execution);
         ConversationThread thread = createThread(session, boot.components(), workspace);
-        return new PersistentReferences(thread, profileRef(profile));
+        return new PersistentReferences(thread, roleRef(role));
     }
 
     private Boot bootstrap(Path dataRoot, MasterKeyProtector protector, AtomicInteger invocations) {
@@ -183,16 +204,17 @@ class ConfiguredProviderRestartChainTest {
         AppServerSession session = components.newSession();
         initialize(session, components);
         CoreRpcContracts.TurnStartPayload payload = new CoreRpcContracts.TurnStartPayload(
-                references.thread().id(), Optional.of(references.profile()), message);
-        AgentTurn accepted = decode(
+                references.thread().id(), TurnContractFixtures.select(references.role()), message, List.of());
+        CoreRpcContracts.TurnStartResult accepted = decode(
                 session.handle(request(
                         components,
                         key,
                         "turn/start",
                         new WriteCommand(key, 0, components.json().encode(payload)))),
                 components,
-                AgentTurn.class);
-        return awaitTerminal(session, components, accepted.id());
+                CoreRpcContracts.TurnStartResult.class);
+        assertEquals(accepted.turn().resolvedConfig(), accepted.configuration());
+        return awaitTerminal(session, components, accepted.turn().id());
     }
 
     private Workspace createWorkspace(AppServerSession session, AppServerBootstrap.Components components) {
@@ -247,14 +269,14 @@ class ConfiguredProviderRestartChainTest {
                 method, key, revision, Character.toString(digest).repeat(64));
     }
 
-    private static AgentProfileRef profileRef(AgentProfile profile) {
-        return new AgentProfileRef(profile.id(), profile.revision());
+    private static AgentRoleRef roleRef(AgentRole role) {
+        return new AgentRoleRef(role.id(), role.revision());
     }
 
     private static void initialize(AppServerSession session, AppServerBootstrap.Components components) {
         InitializeParams params = new InitializeParams(
                 ProtocolVersion.CURRENT,
-                new ClientInfo("restart-chain-test", "5.0"),
+                new ClientInfo("restart-chain-test", "6.0"),
                 new CapabilityAdvertisement(Set.of("core.item-envelope"), Set.of()));
         assertTrue(session.handle(request(components, "init", "initialize/session", params))
                 .result()
@@ -276,7 +298,7 @@ class ConfiguredProviderRestartChainTest {
                         type);
     }
 
-    private record PersistentReferences(ConversationThread thread, AgentProfileRef profile) {}
+    private record PersistentReferences(ConversationThread thread, AgentRoleRef role) {}
 
     private record Boot(AppServerBootstrap.Foundation foundation, AppServerBootstrap.Components components)
             implements AutoCloseable {

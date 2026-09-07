@@ -63,37 +63,30 @@ final class AppServerRuntimeBootstrap {
     private static RuntimeState startRuntime(
             AppServerBootstrap.Foundation foundation, RuntimeDependencies dependencies, StartupCloseStack startup) {
         ItemSchemaRegistry schemas = CoreItemCodecs.createRegistry(foundation.json());
-        H2TurnJournal journal =
-                new H2TurnJournal(foundation.database(), schemas, foundation.json(), foundation.clock());
+        H2TurnJournal journal = new H2TurnJournal(
+                foundation.database(),
+                schemas,
+                foundation.json(),
+                foundation.clock(),
+                foundation.core().liveBudgets());
         DeferredPorts deferred = new DeferredPorts();
         ScheduleLifecycleCoordinator scheduleLifecycle =
                 startup.own(new ScheduleLifecycleCoordinator(foundation.lifecycle(), foundation.loginStartup()));
+        var coding = coding(foundation, startup);
         BuiltinExtensionHost builtins = startBuiltins(
                 foundation,
                 dependencies.embeddings(),
                 dependencies.isolatedServices(),
                 startup,
                 deferred,
-                scheduleLifecycle);
+                scheduleLifecycle,
+                coding);
+        startup.release(coding);
         ThirdPartyExtensionHost thirdParty = startThirdParty(foundation, builtins, startup);
         PlatformExtensionHost extensions = ownPlatformHost(builtins, thirdParty, startup);
-        McpPlatformFactory.Services mcp = McpPlatformFactory.create(
-                new McpPlatformFactory.PlatformDependencies(
-                        foundation.database(),
-                        foundation.vault(),
-                        foundation.privateNetworkGrants(),
-                        foundation.extensionCatalog(),
-                        foundation.lifecycle(),
-                        foundation.json(),
-                        foundation.clock()),
-                new McpPlatformFactory.RuntimeDependencies(
-                        dependencies.mcpPorts(),
-                        thirdParty,
-                        dependencies.isolatedServices() instanceof BuiltinIsolatedServices isolatedBuiltins
-                                ? isolatedBuiltins.oauthBrowser()
-                                : Optional.empty()));
+        McpPlatformFactory.Services mcp = mcp(foundation, dependencies, thirdParty);
         ExtensionToolPlatform tools = toolPlatform(foundation, extensions, mcp);
-        DefaultTurnHarness harness = harness(foundation, dependencies.models(), schemas, journal, tools);
+        DefaultTurnHarness harness = harness(foundation, dependencies.models(), schemas, journal, tools, coding);
         ProviderVerificationService providerVerification = providerVerification(foundation, dependencies, startup);
         ProviderModelDiscoveryService modelDiscovery = startup.own(dependencies.modelDiscovery());
         HarnessTurnDispatcher dispatcher =
@@ -115,6 +108,27 @@ final class AppServerRuntimeBootstrap {
                 journal,
                 jobs,
                 scheduleLifecycle);
+    }
+
+    private static McpPlatformFactory.Services mcp(
+            AppServerBootstrap.Foundation foundation,
+            RuntimeDependencies dependencies,
+            ThirdPartyExtensionHost thirdParty) {
+        return McpPlatformFactory.create(
+                new McpPlatformFactory.PlatformDependencies(
+                        foundation.database(),
+                        foundation.vault(),
+                        foundation.privateNetworkGrants(),
+                        foundation.extensionCatalog(),
+                        foundation.lifecycle(),
+                        foundation.json(),
+                        foundation.clock()),
+                new McpPlatformFactory.RuntimeDependencies(
+                        dependencies.mcpPorts(),
+                        thirdParty,
+                        dependencies.isolatedServices() instanceof BuiltinIsolatedServices isolatedBuiltins
+                                ? isolatedBuiltins.oauthBrowser()
+                                : Optional.empty()));
     }
 
     private static ProviderVerificationService providerVerification(
@@ -145,7 +159,8 @@ final class AppServerRuntimeBootstrap {
             IsolatedServicePort isolatedServices,
             StartupCloseStack startup,
             DeferredPorts deferred,
-            ScheduleLifecycleCoordinator scheduleLifecycle) {
+            ScheduleLifecycleCoordinator scheduleLifecycle,
+            com.javaclaw.server.coding.CodingPlatform coding) {
         return startup.own(AppServerExtensionBootstrap.start(
                 foundation,
                 new AppServerExtensionBootstrap.RuntimeDependencies(
@@ -155,7 +170,41 @@ final class AppServerRuntimeBootstrap {
                         embeddings,
                         deferred.automationSteps(),
                         deferred.scheduledCommands(),
-                        scheduleLifecycle)));
+                        scheduleLifecycle,
+                        coding)));
+    }
+
+    private static com.javaclaw.server.coding.CodingPlatform coding(
+            AppServerBootstrap.Foundation foundation, StartupCloseStack startup) {
+        try {
+            var toolchains = startup.own(new com.javaclaw.server.coding.ToolchainManager(
+                    new com.javaclaw.server.coding.ToolchainManager.Dependencies(
+                            foundation.database(),
+                            foundation.extensionJobs(),
+                            com.javaclaw.server.toolchain.CodingToolchainCatalog.bundled(),
+                            foundation.json(),
+                            foundation.clock(),
+                            new com.javaclaw.server.security.PinnedArtifactDownloader())));
+            var platform = startup.own(new com.javaclaw.server.coding.CodingPlatform(
+                    new com.javaclaw.server.coding.CodingPlatform.Dependencies(
+                            foundation.database(),
+                            foundation.core(),
+                            new com.javaclaw.server.turn.CodingExecutionAuthority(
+                                    foundation.core(),
+                                    foundation.permissionProfiles(),
+                                    foundation.worktrees(),
+                                    foundation.extensionCatalog(),
+                                    foundation.json()),
+                            foundation.attachments(),
+                            toolchains,
+                            new PlatformSandboxExecutor(),
+                            foundation.json(),
+                            foundation.clock())));
+            startup.release(toolchains);
+            return platform;
+        } catch (Exception failure) {
+            throw new IllegalStateException("Coding 平台装配失败", failure);
+        }
     }
 
     private static ThirdPartyExtensionHost startThirdParty(
@@ -180,10 +229,16 @@ final class AppServerRuntimeBootstrap {
     }
 
     private static void bindDeferredPorts(AppServerBootstrap.Foundation foundation, RuntimeState state) {
+        state.tools().bindCollaboration(AppServerBootstrap.collaboration(foundation, state.dispatcher()));
         ServerTurnOrchestrationPort turns = new ServerTurnOrchestrationPort(
-                foundation.core(),
-                foundation.agentProfiles(),
-                foundation.worktrees(),
+                new TurnPlatformServices(
+                        foundation.core(),
+                        foundation.agentRoles(),
+                        foundation.executionConfigurations(),
+                        foundation.permissionProfiles(),
+                        foundation.instructions(),
+                        foundation.worktrees()),
+                foundation.providers(),
                 state.dispatcher(),
                 foundation.json());
         state.deferred().orchestration().bind(turns);
@@ -275,15 +330,18 @@ final class AppServerRuntimeBootstrap {
             ModelGateway models,
             ItemSchemaRegistry schemas,
             H2TurnJournal journal,
-            ExtensionToolPlatform tools) {
+            ExtensionToolPlatform tools,
+            com.javaclaw.server.coding.CodingPlatform coding) {
         TurnHarnessServices services = new TurnHarnessServices(
                 models,
-                new H2ConversationContext(foundation.core(), new ProviderStateService(foundation.database()), schemas),
+                new H2ConversationContext(
+                        foundation.core(), new ProviderStateService(foundation.database()), schemas, models),
                 new BudgetContextCompactor(),
                 tools,
                 tools,
                 journal,
-                new H2ModelEventSink(foundation.database(), foundation.json(), foundation.clock()));
+                new H2ModelEventSink(foundation.database(), foundation.json(), foundation.clock()),
+                coding);
         return new DefaultTurnHarness(services, foundation.clock());
     }
 
@@ -296,8 +354,8 @@ final class AppServerRuntimeBootstrap {
         return new HarnessTurnDispatcher(
                 new TurnPlatformServices(
                         foundation.core(),
-                        foundation.agentProfiles(),
-                        foundation.profileBindings(),
+                        foundation.agentRoles(),
+                        foundation.executionConfigurations(),
                         foundation.permissionProfiles(),
                         foundation.instructions(),
                         foundation.worktrees()),

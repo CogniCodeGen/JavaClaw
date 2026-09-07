@@ -8,7 +8,7 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.CancellationSource;
 import com.javaclaw.api.CancellationToken;
 import com.javaclaw.api.CanonicalPayload;
@@ -36,7 +36,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorkflowJobExecutorCoverageTest {
-    private static final AgentProfileRef PROFILE = new AgentProfileRef("profile", 1);
+    private static final AgentRoleRef PROFILE = new AgentRoleRef("profile", 1);
     private static final OrchestrationContracts.ExecutionBudget BUDGET =
             new OrchestrationContracts.ExecutionBudget(20, 10_000, 10_000, 20);
 

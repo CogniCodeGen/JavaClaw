@@ -7,9 +7,9 @@ import java.nio.charset.StandardCharsets;
 /** 读取随发行版审阅、版本化的 Core system instruction。 */
 public final class CoreSystemInstruction {
     /** Prompt manifest 使用的稳定 Core instruction revision。 */
-    public static final String REVISION = "core-system-v5";
+    public static final String REVISION = "core-system-v6";
 
-    private static final String RESOURCE = "/prompts/core-system-v5.txt";
+    private static final String RESOURCE = "/prompts/core-system-v6.txt";
 
     private CoreSystemInstruction() {}
 

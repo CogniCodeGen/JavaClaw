@@ -51,7 +51,11 @@ final class AppServerExtensionBootstrap {
                 foundation.extensionCatalog());
         try {
             return BuiltinExtensionHost.start(
-                    BuiltinExtensions.create(), foundation.core(), foundation.permissionProfiles(), ports);
+                    BuiltinExtensions.create(),
+                    foundation.core(),
+                    foundation.permissionProfiles(),
+                    ports,
+                    java.util.Optional.of(runtime.coding()));
         } catch (Exception failure) {
             throw new IllegalStateException("内置扩展启动失败", failure);
         }
@@ -66,7 +70,18 @@ final class AppServerExtensionBootstrap {
         new BuiltinExtensionRpcHandlers(catalog, json).register(routes);
     }
 
-    /** 内置扩展启动所需的运行端口；组合根一次性显式提供。 */
+    /**
+     * 内置扩展启动所需的非空运行端口；组合根一次性显式提供。
+     *
+     * @param orchestration Turn 编排
+     * @param executionPolicies 执行政策
+     * @param services 隔离服务
+     * @param embeddings Embedding 路由
+     * @param automationSteps 自动化步骤
+     * @param scheduledCommands 调度命令
+     * @param scheduleLifecycle 调度生命周期
+     * @param coding 可信 Coding 平台
+     */
     record RuntimeDependencies(
             TurnOrchestrationPort orchestration,
             AutomationExecutionPolicyPort executionPolicies,
@@ -74,7 +89,8 @@ final class AppServerExtensionBootstrap {
             EmbeddingPort embeddings,
             AutomationStepPort automationSteps,
             ScheduledCommandPort scheduledCommands,
-            ScheduleLifecyclePort scheduleLifecycle) {
+            ScheduleLifecyclePort scheduleLifecycle,
+            com.javaclaw.server.coding.CodingPlatform coding) {
         RuntimeDependencies {
             Objects.requireNonNull(orchestration, "orchestration");
             Objects.requireNonNull(executionPolicies, "executionPolicies");
@@ -83,6 +99,7 @@ final class AppServerExtensionBootstrap {
             Objects.requireNonNull(automationSteps, "automationSteps");
             Objects.requireNonNull(scheduledCommands, "scheduledCommands");
             Objects.requireNonNull(scheduleLifecycle, "scheduleLifecycle");
+            Objects.requireNonNull(coding, "coding");
         }
     }
 }

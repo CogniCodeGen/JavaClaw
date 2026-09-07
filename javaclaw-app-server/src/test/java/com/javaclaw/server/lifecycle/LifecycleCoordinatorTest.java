@@ -183,7 +183,7 @@ class LifecycleCoordinatorTest {
     }
 
     private H2Database database() {
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         return database;
     }

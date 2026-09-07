@@ -209,7 +209,7 @@ class VaultProviderRuntimeSafetyTest {
 
     private ConfiguredProvider configure(String directory, ProviderModelPurpose purpose) {
         H2Database database =
-                new H2Database(temporaryDirectory.resolve(directory).resolve("data-v5"));
+                new H2Database(temporaryDirectory.resolve(directory).resolve("data-v6"));
         database.initialize();
         CanonicalJson json = new CanonicalJson();
         MemoryProtector protector = new MemoryProtector();

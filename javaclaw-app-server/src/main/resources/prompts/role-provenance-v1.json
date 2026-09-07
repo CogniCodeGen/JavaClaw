@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "templates": [
+    {
+      "roleId": "default",
+      "revision": 1,
+      "template": "role-default-v1.txt",
+      "templateSha256": "00947186a5562c07e858836240860675ead622fd12c335ebe76684e178f8c188",
+      "sourceCommit": "8b8ee28a9b0df8188fec8d4e3855a7b3af3ed8a2",
+      "sourceFile": "codex-rs/core/gpt_5_codex_prompt.md",
+      "sourceSha256": "42842be69650ae563d212695e8d3f3591534908fd8ca33b63f742daf41f88b65",
+      "adaptation": "通用 fallback 来自 JavaClaw v6 架构约定；只复用公开模板中按任务证据行动和保留用户成果的原则，删除软件开发领域假设。"
+    },
+    {
+      "roleId": "worker",
+      "revision": 1,
+      "template": "role-worker-v1.txt",
+      "templateSha256": "a136db26b7b0c74a8af7338587806f9aa2fbd34a862dc2507add90b23de46d27",
+      "sourceCommit": "8b8ee28a9b0df8188fec8d4e3855a7b3af3ed8a2",
+      "sourceFile": "codex-rs/core/gpt_5_codex_prompt.md",
+      "sourceSha256": "42842be69650ae563d212695e8d3f3591534908fd8ca33b63f742daf41f88b65",
+      "adaptation": "复用公开模板中的有限范围、验证和不覆盖工作树原则；增加共享工作区所有权约束；删除身份、专属工具、CLI和无条件并行规则。"
+    },
+    {
+      "roleId": "explorer",
+      "revision": 1,
+      "template": "role-explorer-v1.txt",
+      "templateSha256": "147ec3b0c07d7ce1df89d9013a20c33f18e3bd12ef863f3a779712f7c776113f",
+      "sourceCommit": "8b8ee28a9b0df8188fec8d4e3855a7b3af3ed8a2",
+      "sourceFile": "codex-rs/core/gpt_5_codex_prompt.md",
+      "sourceSha256": "42842be69650ae563d212695e8d3f3591534908fd8ca33b63f742daf41f88b65",
+      "adaptation": "只读探索职责及代码权限上限来自 JavaClaw v6 架构约定；公开模板仅作证据驱动调查和区分事实的行为参考，不声称源commit中的空explorer.toml提供了正文。"
+    },
+    {
+      "roleId": "software-engineer",
+      "revision": 1,
+      "template": "role-software-engineer-v1.txt",
+      "templateSha256": "b21511e374790f95339a0e48e9ead57a9494522b5733a67db3d81ed18e75a11b",
+      "sourceCommit": "8b8ee28a9b0df8188fec8d4e3855a7b3af3ed8a2",
+      "sourceFile": "codex-rs/core/gpt_5_codex_prompt.md",
+      "sourceSha256": "42842be69650ae563d212695e8d3f3591534908fd8ca33b63f742daf41f88b65",
+      "adaptation": "复用公开模板中的端到端开发、验证和保留用户修改原则；沿用 JavaClaw 项目已有 UI 设计体系；移除产品身份、模型声明、内部工具和终端细节。"
+    }
+  ]
+}

@@ -28,6 +28,11 @@ public record ModelUsage(long inputTokens, long outputTokens, long reasoningToke
         return new ModelUsage(0, 0, 0, 0);
     }
 
+    /** @return 包含推理、避免重复计数的实际生成 token 总量 */
+    public long generatedTokens() {
+        return Math.addExact(outputTokens, reasoningTokens);
+    }
+
     /**
      * 合并两次独立调用。
      *

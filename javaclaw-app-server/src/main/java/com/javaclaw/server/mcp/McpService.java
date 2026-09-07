@@ -65,7 +65,7 @@ public final class McpService {
     /**
      * 创建 MCP Host 应用服务。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      * @param dependencies 远端、交互、授权、凭据与签名 Bundle 边界
      * @param json 规范 JSON codec
      * @param clock 平台时钟

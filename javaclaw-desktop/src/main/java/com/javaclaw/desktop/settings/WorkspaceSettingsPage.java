@@ -7,12 +7,10 @@ import javafx.scene.Node;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
-import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.VBox;
 
-import com.javaclaw.api.AgentProfile;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceLifecycle;
 import com.javaclaw.desktop.component.AsyncActionBar;
@@ -25,18 +23,18 @@ import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 import com.javaclaw.desktop.component.PlatformComponentFactory.FeedbackKind;
 import com.javaclaw.desktop.component.PlatformDialogs;
 
-/** 工作区重命名、归档和默认智能体方案管理页面。 */
+/** 工作区重命名、归档和独立执行默认配置管理页面。 */
 public final class WorkspaceSettingsPage extends VBox implements ManagedSettingsPage {
     private final PlatformComponentFactory components = new PlatformComponentFactory();
     private final WorkspaceSettingsPresenter presenter;
     private final ListDetailPane<Workspace> masterDetail = new ListDetailPane<>();
     private final TextField name = new TextField();
-    private final ComboBox<AgentProfile> profile = new ComboBox<>();
+    private final ExecutionSelectionPanel execution;
     private final Label rootPath = value();
     private final Label lifecycle = value();
     private final Label revision = value();
     private final Button saveName;
-    private final Button saveProfile;
+    private final Button saveExecution;
     private final Button archive;
     private final AsyncActionBar actions;
     private WorkspaceSettingsState state = WorkspaceSettingsState.initial();
@@ -50,14 +48,16 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
      */
     public WorkspaceSettingsPage(CoreSettingsGateway gateway) {
         presenter = new WorkspaceSettingsPresenter(gateway);
+        execution = new ExecutionSelectionPanel(gateway);
         saveName = components.action("保存名称", ActionStyle.SOFT, ActionSize.NORMAL);
         saveName.setOnAction(event -> presenter.saveName());
-        saveProfile = components.action("保存默认智能体方案", ActionStyle.PRIMARY, ActionSize.NORMAL);
-        saveProfile.setOnAction(event -> presenter.saveProfile());
+        saveExecution = components.action("保存执行默认配置", ActionStyle.PRIMARY, ActionSize.NORMAL);
+        saveExecution.setOnAction(event -> execution.save());
         archive = components.action("归档登记", ActionStyle.DANGER, ActionSize.NORMAL);
         archive.setOnAction(event -> archive());
-        actions = new AsyncActionBar(saveName, saveProfile, archive);
+        actions = new AsyncActionBar(saveName, saveExecution, archive);
         configurePage();
+        execution.onStateChanged(this::updateActions);
         presenter.subscribe(this::render);
     }
 
@@ -73,17 +73,31 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
 
     @Override
     public void activate() {
+        if (dirty()) {
+            warnUnsavedChanges();
+            return;
+        }
+        if (state.selected().isPresent()) {
+            execution.refresh();
+        }
         presenter.reload();
+    }
+
+    /** 连接恢复时只刷新执行配置；具体草稿保护由执行面板统一判断。 */
+    void refreshExecutionConfiguration() {
+        if (state.selected().isPresent()) {
+            execution.refresh();
+        }
     }
 
     @Override
     public boolean dirty() {
-        return state.dirty();
+        return state.dirty() || execution.dirty();
     }
 
     @Override
     public boolean pending() {
-        return state.phase() == SettingsLoadState.LOADING;
+        return state.phase() == SettingsLoadState.LOADING || execution.pending();
     }
 
     @Override
@@ -99,6 +113,7 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
     @Override
     public void discardDraft() {
         presenter.discardDraft();
+        execution.discard();
     }
 
     private void configurePage() {
@@ -125,7 +140,7 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
                 .selectedItemProperty()
                 .addListener((observable, previous, selected) -> select(selected));
         masterDetail.list().setPlaceholder(components.feedback(FeedbackKind.EMPTY, "暂无工作区", "请先在主窗口创建工作区。"));
-        masterDetail.showDetail(components.feedback(FeedbackKind.EMPTY, "选择工作区", "选择左侧项目后可管理名称与默认智能体方案。"));
+        masterDetail.showDetail(components.feedback(FeedbackKind.EMPTY, "选择工作区", "选择左侧项目后可管理名称与执行默认配置。"));
     }
 
     private Node detail() {
@@ -139,20 +154,8 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
         identity.addField("状态", lifecycle);
         identity.addField("版本", revision);
 
-        FormSection defaults = new FormSection("任务默认配置", "绑定精确智能体方案版本；变更只影响之后启动的任务。");
-        profile.setMaxWidth(Double.MAX_VALUE);
-        profile.setAccessibleText("工作区默认智能体方案");
-        profile.setCellFactory(ignored -> components.detailCell(
-                candidate -> candidate.spec().displayName(),
-                candidate -> candidate.id() + " · 版本 " + candidate.revision()));
-        profile.setButtonCell(
-                components.textCell(candidate -> candidate.spec().displayName() + " · 版本 " + candidate.revision()));
-        profile.valueProperty().addListener((observable, previous, selected) -> chooseProfile(selected));
-        defaults.addField("默认智能体方案", profile);
-        Label rule = new Label("对话可以选择自己的智能体方案；活动任务始终继续使用启动时冻结的快照。");
-        rule.setWrapText(true);
-        rule.getStyleClass().add("sec-hint");
-        defaults.addFullWidth(rule);
+        FormSection defaults = new FormSection("任务默认配置", "Agent、模型与权限分别固定到精确版本；变更只影响新任务。");
+        defaults.addFullWidth(execution);
 
         VBox detail = new VBox(12, identity, defaults);
         detail.getStyleClass().add("platform-page");
@@ -174,12 +177,6 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
     private void editName(String value) {
         if (!rendering) {
             presenter.editName(value);
-        }
-    }
-
-    private void chooseProfile(AgentProfile selected) {
-        if (!rendering && selected != null) {
-            presenter.chooseProfile(selected);
         }
     }
 
@@ -209,14 +206,19 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
         rootPath.setText(selected.root().toString());
         lifecycle.setText(SettingsLabels.workspaceLifecycle(selected.lifecycle()));
         revision.setText(Long.toString(selected.revision()));
-        profile.getItems().setAll(snapshot.profiles());
-        profile.setValue(snapshot.draftProfile().orElse(null));
-        boolean pending = snapshot.phase() == SettingsLoadState.LOADING;
-        boolean active = selected.lifecycle() == WorkspaceLifecycle.ACTIVE;
-        saveName.setDisable(pending || !active || !snapshot.nameDirty());
-        saveProfile.setDisable(pending || !active || !snapshot.profileDirty());
+        execution.bind(snapshot.selected(), Optional.empty(), true);
+        updateActions();
+    }
+
+    private void updateActions() {
+        boolean pending = pending();
+        boolean active = state.selected()
+                .filter(value -> value.lifecycle() == WorkspaceLifecycle.ACTIVE)
+                .isPresent();
+        saveName.setDisable(pending || !active || !state.nameDirty());
+        saveExecution.setDisable(pending || !active || !execution.canSave());
         archive.setDisable(pending || !active);
-        showStatus(snapshot);
+        showStatus(state);
     }
 
     private void showStatus(WorkspaceSettingsState snapshot) {
@@ -224,7 +226,7 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
             actions.show(ActionState.PENDING, snapshot.message());
         } else if (snapshot.phase() == SettingsLoadState.ERROR) {
             actions.show(ActionState.ERROR, snapshot.message());
-        } else if (snapshot.dirty()) {
+        } else if (snapshot.dirty() || execution.dirty()) {
             actions.show(ActionState.DIRTY, "工作区草稿尚未保存");
         } else {
             actions.show(snapshot.message().isBlank() ? ActionState.IDLE : ActionState.SUCCESS, snapshot.message());

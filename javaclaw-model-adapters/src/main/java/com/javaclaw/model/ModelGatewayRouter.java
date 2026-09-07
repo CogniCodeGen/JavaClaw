@@ -71,6 +71,16 @@ public final class ModelGatewayRouter
     }
 
     @Override
+    public ProviderState restoreCoveredState(
+            String modelId, ProviderState state, java.util.List<com.javaclaw.runtime.ModelMessage> coveredMessages) {
+        ModelGateway gateway = route(modelId);
+        if (!(gateway instanceof NativeConversationSupport support)) {
+            throw new IllegalStateException("Provider 不支持旧状态恢复");
+        }
+        return support.restoreCoveredState(modelId, state, coveredMessages);
+    }
+
+    @Override
     public NativeCompactionResult compact(NativeCompactionRequest request, CancellationToken cancellation)
             throws Exception {
         ModelGateway gateway = route(request.modelId());

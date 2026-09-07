@@ -64,7 +64,7 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
      *
      * <p>系统凭据设施失败不会阻止 App Server 启动；状态会变为 {@link VaultState#LOCKED}。
      *
-     * @param database 已初始化 V001 baseline 的 data-v5 数据库
+     * @param database 已初始化 V001 baseline 的 data-v6 数据库
      * @param protector 当前操作系统的用户级主密钥保护器
      * @param json 规范 JSON codec，用于持久幂等回执
      * @param clock 平台时钟

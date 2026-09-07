@@ -26,10 +26,12 @@ import javafx.stage.Stage;
 import javafx.stage.Window;
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfile;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.ApprovalRecord;
 import com.javaclaw.api.ConversationThread;
 import com.javaclaw.api.ItemEnvelope;
+import com.javaclaw.api.ReasoningPreference;
 import com.javaclaw.api.TurnStatus;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.client.sdk.JavaClawClient;
@@ -159,11 +161,15 @@ class DesktopShellControllerTest {
         private void assertConnectedControls() {
             FxTestSupport.run(() -> {
                 assertEquals(
-                        "javaclaw-app-server 5.0.0-SNAPSHOT",
+                        "javaclaw-app-server 6.0.0-SNAPSHOT",
                         label("connectionLabel").getText());
                 assertEquals("架构升级", label("threadTitle").getText());
                 assertEquals(1, list("transcriptList").getItems().size());
                 assertFalse(button("sendButton").isDisabled());
+                assertNotNull(combo("executionRole"));
+                assertNotNull(combo("executionModel"));
+                assertNotNull(combo("executionPermission"));
+                assertNotNull(combo("executionReasoning"));
                 assertTrue(button("interruptButton").isDisabled());
                 assertFalse(label("errorLabel").isVisible());
                 assertTrue(button("approveButton").getStyleClass().contains("jc-btn-primary"));
@@ -223,7 +229,7 @@ class DesktopShellControllerTest {
                 ComboBox<Workspace> workspaces = combo("workspaceBox");
                 workspaces.setValue(null);
                 workspaces.setValue(server.workspace());
-                assertCellRendering(workspaces, list("threadList"), combo("profileBox"));
+                assertCellRendering(workspaces, list("threadList"), combo("executionRole"));
             });
             FxTestSupport.await(() -> !latest.get().threads().threads().isEmpty()
                     && latest.get().threads().selectedThread().isPresent());
@@ -231,14 +237,14 @@ class DesktopShellControllerTest {
                 ListView<ConversationThread> threads = list("threadList");
                 threads.getSelectionModel().clearSelection();
                 threads.getSelectionModel().select(server.thread());
-                ComboBox<AgentProfile> profiles = combo("profileBox");
-                profiles.setValue(null);
-                profiles.setValue(server.profile());
+                ComboBox<AgentRole> roles = combo("executionRole");
+                roles.setValue(null);
+                roles.setValue(server.profile());
             });
             FxTestSupport.await(() -> latest.get().threads().selectedThread().isPresent());
-            FxTestSupport.run(controller::useDefaultProfile);
-            FxTestSupport.await(
-                    () -> latest.get().interaction().selectedProfile().isEmpty());
+            FxTestSupport.run(controller::useDefaultRole);
+            FxTestSupport.await(() -> latest.get().interaction().selectedRole().isEmpty());
+            FxTestSupport.run(() -> assertNull(combo("executionRole").getValue()));
         }
 
         private void exerciseSendApprovalAndCancellation() {
@@ -251,13 +257,26 @@ class DesktopShellControllerTest {
                 assertFalse(label("errorLabel").getText().isBlank());
             });
             server.completion = TurnStatus.RUNNING;
+            FxTestSupport.await(
+                    () -> FxTestSupport.call(() -> !combo("executionRole").isDisabled()
+                            && !combo("executionRole").getItems().isEmpty()));
             FxTestSupport.run(() -> {
+                combo("executionRole").setValue(server.profile());
+                combo("executionReasoning").setValue(ReasoningPreference.HIGH);
                 control("composer", TextArea.class).setText("执行并等待审批");
                 controller.send();
                 assertEquals("", control("composer", TextArea.class).getText());
             });
             FxTestSupport.await(() -> latest.get().threads().activeTurn().isPresent()
                     && !latest.get().interaction().pendingApprovals().isEmpty());
+            assertEquals(
+                    new AgentRoleRef(server.profile().id(), server.profile().revision()),
+                    server.lastTurnStart.execution().role().orElseThrow());
+            assertEquals(
+                    ReasoningPreference.HIGH,
+                    server.lastTurnStart.execution().reasoning().orElseThrow());
+            assertTrue(server.lastTurnStart.execution().provider().isEmpty());
+            assertTrue(server.lastTurnStart.execution().permissionProfile().isEmpty());
             FxTestSupport.run(() -> {
                 assertFalse(button("interruptButton").isDisabled());
                 ListView<ApprovalRecord> approvals = list("approvalList");
@@ -305,7 +324,7 @@ class DesktopShellControllerTest {
         }
 
         private void assertCellRendering(
-                ComboBox<Workspace> workspaces, ListView<ConversationThread> threads, ComboBox<AgentProfile> profiles) {
+                ComboBox<Workspace> workspaces, ListView<ConversationThread> threads, ComboBox<AgentRole> roles) {
             ListCell<Workspace> workspaceCell = workspaces.getCellFactory().call(null);
             update(workspaceCell, server.workspace(), false);
             assertEquals("工作区", workspaceCell.getText());
@@ -318,9 +337,11 @@ class DesktopShellControllerTest {
             update(threadCell, server.thread(), true);
             assertNull(threadCell.getText());
 
-            ListCell<AgentProfile> profileCell = profiles.getCellFactory().call(null);
-            update(profileCell, server.profile(), false);
-            assertTrue(profileCell.getText().contains("默认 Agent · default · v1"));
+            ListCell<AgentRole> roleCell = roles.getCellFactory().call(null);
+            update(roleCell, server.profile(), false);
+            assertEquals(server.profile().spec().name(), roleCell.getText());
+            update(roleCell, null, true);
+            assertNull(roleCell.getText());
 
             ListView<ApprovalRecord> approvals = list("approvalList");
             ListCell<ApprovalRecord> approvalCell = approvals.getCellFactory().call(approvals);
@@ -347,7 +368,7 @@ class DesktopShellControllerTest {
 
         @SuppressWarnings("unchecked")
         private <T> ComboBox<T> combo(String id) {
-            return (ComboBox<T>) controls.get(id);
+            return (ComboBox<T>) control(id, ComboBox.class);
         }
 
         @SuppressWarnings("unchecked")
@@ -364,7 +385,10 @@ class DesktopShellControllerTest {
         }
 
         private <T> T control(String id, Class<T> type) {
-            return type.cast(controls.get(id));
+            return type.cast(
+                    controls.containsKey(id)
+                            ? controls.get(id)
+                            : stage.getScene().lookup("#" + id));
         }
 
         private static void update(ListCell<?> cell, Object item, boolean empty) {

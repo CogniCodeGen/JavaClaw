@@ -114,7 +114,7 @@ class KnowledgeExtractionServiceBoundaryTest {
     }
 
     private Fixture fixture() {
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         Clock clock = Clock.systemUTC();
         Workspace workspace = new CoreCommandService(database, json, clock)

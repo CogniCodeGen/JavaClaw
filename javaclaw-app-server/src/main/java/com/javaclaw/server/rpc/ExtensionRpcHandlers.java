@@ -12,7 +12,7 @@ import com.javaclaw.protocol.ExtensionRpcContracts;
 import com.javaclaw.protocol.WriteCommand;
 import com.javaclaw.server.extension.contract.ExtensionHost;
 
-/** Protocol v2 通用 Extension 方法到内置 Host 的薄映射。 */
+/** Protocol v3 通用 Extension 方法到内置 Host 的薄映射。 */
 public final class ExtensionRpcHandlers {
     private static final Logger LOGGER = LoggerFactory.getLogger(ExtensionRpcHandlers.class);
 

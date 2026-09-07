@@ -1,0 +1,844 @@
+{
+  "artifacts": [
+    {
+      "reference": {
+        "kind": "JDK",
+        "version": "25.0.1+8",
+        "artifactSha256": "964ffce1ff9f24e8d29df4e4201b5b96499026dc8387cf35bb39fe969ffea2bb"
+      },
+      "platform": "macos",
+      "architecture": "arm64",
+      "downloadUri": "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.1%2B8/OpenJDK25U-jdk_aarch64_mac_hotspot_25.0.1_8.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "java": "jdk-25.0.1+8/Contents/Home/bin/java",
+        "javac": "jdk-25.0.1+8/Contents/Home/bin/javac",
+        "jar": "jdk-25.0.1+8/Contents/Home/bin/jar",
+        "javadoc": "jdk-25.0.1+8/Contents/Home/bin/javadoc",
+        "jshell": "jdk-25.0.1+8/Contents/Home/bin/jshell"
+      },
+      "downloadBytes": 136288422,
+      "license": "GPL-2.0-only WITH Classpath-exception-2.0"
+    },
+    {
+      "reference": {
+        "kind": "JDK",
+        "version": "21.0.8+9",
+        "artifactSha256": "59422c2292ae4e76b87e00d8808dbe49cffa39af731e08bb0292ddb0af4e0261"
+      },
+      "platform": "macos",
+      "architecture": "arm64",
+      "downloadUri": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.8%2B9/OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.8_9.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "java": "jdk-21.0.8+9/Contents/Home/bin/java",
+        "javac": "jdk-21.0.8+9/Contents/Home/bin/javac",
+        "jar": "jdk-21.0.8+9/Contents/Home/bin/jar",
+        "javadoc": "jdk-21.0.8+9/Contents/Home/bin/javadoc",
+        "jshell": "jdk-21.0.8+9/Contents/Home/bin/jshell"
+      },
+      "downloadBytes": 199817579,
+      "license": "GPL-2.0-only WITH Classpath-exception-2.0"
+    },
+    {
+      "reference": {
+        "kind": "MAVEN",
+        "version": "3.9.11",
+        "artifactSha256": "4b7195b6a4f5c81af4c0212677a32ee8143643401bc6e1e8412e6b06ea82beac"
+      },
+      "platform": "macos",
+      "architecture": "arm64",
+      "downloadUri": "https://archive.apache.org/dist/maven/maven-3/3.9.11/binaries/apache-maven-3.9.11-bin.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "mvn": "apache-maven-3.9.11/bin/mvn"
+      },
+      "downloadBytes": 9160848,
+      "license": "Apache-2.0"
+    },
+    {
+      "reference": {
+        "kind": "GRADLE",
+        "version": "9.1.0",
+        "artifactSha256": "a17ddd85a26b6a7f5ddb71ff8b05fc5104c0202c6e64782429790c933686c806"
+      },
+      "platform": "macos",
+      "architecture": "arm64",
+      "downloadUri": "https://services.gradle.org/distributions/gradle-9.1.0-bin.zip",
+      "archiveFormat": "zip",
+      "executablePaths": {
+        "gradle": "gradle-9.1.0/bin/gradle"
+      },
+      "downloadBytes": 268435456,
+      "license": "Apache-2.0"
+    },
+    {
+      "reference": {
+        "kind": "GRADLE",
+        "version": "8.14.3",
+        "artifactSha256": "bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531"
+      },
+      "platform": "macos",
+      "architecture": "arm64",
+      "downloadUri": "https://services.gradle.org/distributions/gradle-8.14.3-bin.zip",
+      "archiveFormat": "zip",
+      "executablePaths": {
+        "gradle": "gradle-8.14.3/bin/gradle"
+      },
+      "downloadBytes": 268435456,
+      "license": "Apache-2.0"
+    },
+    {
+      "reference": {
+        "kind": "NODE",
+        "version": "22.18.0",
+        "artifactSha256": "2c12913cba67af77ded8a399df3fd91c2e7f8628c7079da40bb9ff33bf00dfc0"
+      },
+      "platform": "macos",
+      "architecture": "arm64",
+      "downloadUri": "https://nodejs.org/dist/v22.18.0/node-v22.18.0-darwin-arm64.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "node": "node-v22.18.0-darwin-arm64/bin/node"
+      },
+      "downloadBytes": 134217728,
+      "license": "MIT and bundled third-party licenses"
+    },
+    {
+      "reference": {
+        "kind": "NPM",
+        "version": "10.9.3",
+        "artifactSha256": "2c12913cba67af77ded8a399df3fd91c2e7f8628c7079da40bb9ff33bf00dfc0"
+      },
+      "platform": "macos",
+      "architecture": "arm64",
+      "downloadUri": "https://nodejs.org/dist/v22.18.0/node-v22.18.0-darwin-arm64.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "npm": "node-v22.18.0-darwin-arm64/lib/node_modules/npm/bin/npm-cli.js"
+      },
+      "downloadBytes": 134217728,
+      "license": "Artistic-2.0 and bundled third-party licenses"
+    },
+    {
+      "reference": {
+        "kind": "PNPM",
+        "version": "10.14.0",
+        "artifactSha256": "297534e65d5842450539c1e8022c8831ab5e1fe2eb74664787a815519542d620"
+      },
+      "platform": "macos",
+      "architecture": "arm64",
+      "downloadUri": "https://registry.npmjs.org/pnpm/-/pnpm-10.14.0.tgz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "pnpm": "package/bin/pnpm.cjs"
+      },
+      "downloadBytes": 4205866,
+      "license": "MIT"
+    },
+    {
+      "reference": {
+        "kind": "PYTHON",
+        "version": "3.12.11+20250818",
+        "artifactSha256": "fabb5fd4de54c68ce7e70d19fb08127549da5787cd38a34d00000749f4fde478"
+      },
+      "platform": "macos",
+      "architecture": "arm64",
+      "downloadUri": "https://github.com/astral-sh/python-build-standalone/releases/download/20250818/cpython-3.12.11%2B20250818-aarch64-apple-darwin-install_only.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "python": "python/bin/python3.12"
+      },
+      "downloadBytes": 15715366,
+      "license": "Python-2.0 and bundled third-party licenses"
+    },
+    {
+      "reference": {
+        "kind": "PIP",
+        "version": "24.3.1",
+        "artifactSha256": "fabb5fd4de54c68ce7e70d19fb08127549da5787cd38a34d00000749f4fde478"
+      },
+      "platform": "macos",
+      "architecture": "arm64",
+      "downloadUri": "https://github.com/astral-sh/python-build-standalone/releases/download/20250818/cpython-3.12.11%2B20250818-aarch64-apple-darwin-install_only.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "pip": "python/bin/pip3"
+      },
+      "downloadBytes": 15715366,
+      "license": "MIT"
+    },
+    {
+      "reference": {
+        "kind": "JDK",
+        "version": "25.0.1+8",
+        "artifactSha256": "720829aa4e4bddf3e95171cc059a52f7b9c56f443313dfef05114701bf60da06"
+      },
+      "platform": "macos",
+      "architecture": "x64",
+      "downloadUri": "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.1%2B8/OpenJDK25U-jdk_x64_mac_hotspot_25.0.1_8.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "java": "jdk-25.0.1+8/Contents/Home/bin/java",
+        "javac": "jdk-25.0.1+8/Contents/Home/bin/javac",
+        "jar": "jdk-25.0.1+8/Contents/Home/bin/jar",
+        "javadoc": "jdk-25.0.1+8/Contents/Home/bin/javadoc",
+        "jshell": "jdk-25.0.1+8/Contents/Home/bin/jshell"
+      },
+      "downloadBytes": 120223169,
+      "license": "GPL-2.0-only WITH Classpath-exception-2.0"
+    },
+    {
+      "reference": {
+        "kind": "JDK",
+        "version": "21.0.8+9",
+        "artifactSha256": "0ceaf7060b2c9dbbe8ecc4fb9351c6b4cf24e4350d58772c9656589933a4fdeb"
+      },
+      "platform": "macos",
+      "architecture": "x64",
+      "downloadUri": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.8%2B9/OpenJDK21U-jdk_x64_mac_hotspot_21.0.8_9.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "java": "jdk-21.0.8+9/Contents/Home/bin/java",
+        "javac": "jdk-21.0.8+9/Contents/Home/bin/javac",
+        "jar": "jdk-21.0.8+9/Contents/Home/bin/jar",
+        "javadoc": "jdk-21.0.8+9/Contents/Home/bin/javadoc",
+        "jshell": "jdk-21.0.8+9/Contents/Home/bin/jshell"
+      },
+      "downloadBytes": 194046408,
+      "license": "GPL-2.0-only WITH Classpath-exception-2.0"
+    },
+    {
+      "reference": {
+        "kind": "MAVEN",
+        "version": "3.9.11",
+        "artifactSha256": "4b7195b6a4f5c81af4c0212677a32ee8143643401bc6e1e8412e6b06ea82beac"
+      },
+      "platform": "macos",
+      "architecture": "x64",
+      "downloadUri": "https://archive.apache.org/dist/maven/maven-3/3.9.11/binaries/apache-maven-3.9.11-bin.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "mvn": "apache-maven-3.9.11/bin/mvn"
+      },
+      "downloadBytes": 9160848,
+      "license": "Apache-2.0"
+    },
+    {
+      "reference": {
+        "kind": "GRADLE",
+        "version": "9.1.0",
+        "artifactSha256": "a17ddd85a26b6a7f5ddb71ff8b05fc5104c0202c6e64782429790c933686c806"
+      },
+      "platform": "macos",
+      "architecture": "x64",
+      "downloadUri": "https://services.gradle.org/distributions/gradle-9.1.0-bin.zip",
+      "archiveFormat": "zip",
+      "executablePaths": {
+        "gradle": "gradle-9.1.0/bin/gradle"
+      },
+      "downloadBytes": 268435456,
+      "license": "Apache-2.0"
+    },
+    {
+      "reference": {
+        "kind": "GRADLE",
+        "version": "8.14.3",
+        "artifactSha256": "bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531"
+      },
+      "platform": "macos",
+      "architecture": "x64",
+      "downloadUri": "https://services.gradle.org/distributions/gradle-8.14.3-bin.zip",
+      "archiveFormat": "zip",
+      "executablePaths": {
+        "gradle": "gradle-8.14.3/bin/gradle"
+      },
+      "downloadBytes": 268435456,
+      "license": "Apache-2.0"
+    },
+    {
+      "reference": {
+        "kind": "NODE",
+        "version": "22.18.0",
+        "artifactSha256": "9c8aa1e5ff5780b38cc1134e2263d84e2f4308eb84c02515e3af33936ca02cdc"
+      },
+      "platform": "macos",
+      "architecture": "x64",
+      "downloadUri": "https://nodejs.org/dist/v22.18.0/node-v22.18.0-darwin-x64.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "node": "node-v22.18.0-darwin-x64/bin/node"
+      },
+      "downloadBytes": 134217728,
+      "license": "MIT and bundled third-party licenses"
+    },
+    {
+      "reference": {
+        "kind": "NPM",
+        "version": "10.9.3",
+        "artifactSha256": "9c8aa1e5ff5780b38cc1134e2263d84e2f4308eb84c02515e3af33936ca02cdc"
+      },
+      "platform": "macos",
+      "architecture": "x64",
+      "downloadUri": "https://nodejs.org/dist/v22.18.0/node-v22.18.0-darwin-x64.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "npm": "node-v22.18.0-darwin-x64/lib/node_modules/npm/bin/npm-cli.js"
+      },
+      "downloadBytes": 134217728,
+      "license": "Artistic-2.0 and bundled third-party licenses"
+    },
+    {
+      "reference": {
+        "kind": "PNPM",
+        "version": "10.14.0",
+        "artifactSha256": "297534e65d5842450539c1e8022c8831ab5e1fe2eb74664787a815519542d620"
+      },
+      "platform": "macos",
+      "architecture": "x64",
+      "downloadUri": "https://registry.npmjs.org/pnpm/-/pnpm-10.14.0.tgz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "pnpm": "package/bin/pnpm.cjs"
+      },
+      "downloadBytes": 4205866,
+      "license": "MIT"
+    },
+    {
+      "reference": {
+        "kind": "PYTHON",
+        "version": "3.12.11+20250818",
+        "artifactSha256": "896add7763faa8012ba6a37346718b32ed0ac041230979cfe8fc802fbb0daeef"
+      },
+      "platform": "macos",
+      "architecture": "x64",
+      "downloadUri": "https://github.com/astral-sh/python-build-standalone/releases/download/20250818/cpython-3.12.11%2B20250818-x86_64-apple-darwin-install_only.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "python": "python/bin/python3.12"
+      },
+      "downloadBytes": 15965126,
+      "license": "Python-2.0 and bundled third-party licenses"
+    },
+    {
+      "reference": {
+        "kind": "PIP",
+        "version": "24.3.1",
+        "artifactSha256": "896add7763faa8012ba6a37346718b32ed0ac041230979cfe8fc802fbb0daeef"
+      },
+      "platform": "macos",
+      "architecture": "x64",
+      "downloadUri": "https://github.com/astral-sh/python-build-standalone/releases/download/20250818/cpython-3.12.11%2B20250818-x86_64-apple-darwin-install_only.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "pip": "python/bin/pip3"
+      },
+      "downloadBytes": 15965126,
+      "license": "MIT"
+    },
+    {
+      "reference": {
+        "kind": "JDK",
+        "version": "25.0.1+8",
+        "artifactSha256": "5c83b7d2121ed482fd06831a1eba1633dbab818aba6addddf48e075b97e6e9b8"
+      },
+      "platform": "linux",
+      "architecture": "arm64",
+      "downloadUri": "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.1%2B8/OpenJDK25U-jdk_aarch64_linux_hotspot_25.0.1_8.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "java": "jdk-25.0.1+8/bin/java",
+        "javac": "jdk-25.0.1+8/bin/javac",
+        "jar": "jdk-25.0.1+8/bin/jar",
+        "javadoc": "jdk-25.0.1+8/bin/javadoc",
+        "jshell": "jdk-25.0.1+8/bin/jshell"
+      },
+      "downloadBytes": 139632170,
+      "license": "GPL-2.0-only WITH Classpath-exception-2.0"
+    },
+    {
+      "reference": {
+        "kind": "JDK",
+        "version": "21.0.8+9",
+        "artifactSha256": "e5c41a1ab0865ea5de9b4529bf8526005f1d4593090845387d14fe450ce39c33"
+      },
+      "platform": "linux",
+      "architecture": "arm64",
+      "downloadUri": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.8%2B9/OpenJDK21U-jdk_aarch64_linux_hotspot_21.0.8_9.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "java": "jdk-21.0.8+9/bin/java",
+        "javac": "jdk-21.0.8+9/bin/javac",
+        "jar": "jdk-21.0.8+9/bin/jar",
+        "javadoc": "jdk-21.0.8+9/bin/javadoc",
+        "jshell": "jdk-21.0.8+9/bin/jshell"
+      },
+      "downloadBytes": 205275133,
+      "license": "GPL-2.0-only WITH Classpath-exception-2.0"
+    },
+    {
+      "reference": {
+        "kind": "MAVEN",
+        "version": "3.9.11",
+        "artifactSha256": "4b7195b6a4f5c81af4c0212677a32ee8143643401bc6e1e8412e6b06ea82beac"
+      },
+      "platform": "linux",
+      "architecture": "arm64",
+      "downloadUri": "https://archive.apache.org/dist/maven/maven-3/3.9.11/binaries/apache-maven-3.9.11-bin.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "mvn": "apache-maven-3.9.11/bin/mvn"
+      },
+      "downloadBytes": 9160848,
+      "license": "Apache-2.0"
+    },
+    {
+      "reference": {
+        "kind": "GRADLE",
+        "version": "9.1.0",
+        "artifactSha256": "a17ddd85a26b6a7f5ddb71ff8b05fc5104c0202c6e64782429790c933686c806"
+      },
+      "platform": "linux",
+      "architecture": "arm64",
+      "downloadUri": "https://services.gradle.org/distributions/gradle-9.1.0-bin.zip",
+      "archiveFormat": "zip",
+      "executablePaths": {
+        "gradle": "gradle-9.1.0/bin/gradle"
+      },
+      "downloadBytes": 268435456,
+      "license": "Apache-2.0"
+    },
+    {
+      "reference": {
+        "kind": "GRADLE",
+        "version": "8.14.3",
+        "artifactSha256": "bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531"
+      },
+      "platform": "linux",
+      "architecture": "arm64",
+      "downloadUri": "https://services.gradle.org/distributions/gradle-8.14.3-bin.zip",
+      "archiveFormat": "zip",
+      "executablePaths": {
+        "gradle": "gradle-8.14.3/bin/gradle"
+      },
+      "downloadBytes": 268435456,
+      "license": "Apache-2.0"
+    },
+    {
+      "reference": {
+        "kind": "NODE",
+        "version": "22.18.0",
+        "artifactSha256": "d415eeea90a2fdb60c66dd386b258acbfc4d1fa4720a8df5dea7369fbdbcddee"
+      },
+      "platform": "linux",
+      "architecture": "arm64",
+      "downloadUri": "https://nodejs.org/dist/v22.18.0/node-v22.18.0-linux-arm64.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "node": "node-v22.18.0-linux-arm64/bin/node"
+      },
+      "downloadBytes": 134217728,
+      "license": "MIT and bundled third-party licenses"
+    },
+    {
+      "reference": {
+        "kind": "NPM",
+        "version": "10.9.3",
+        "artifactSha256": "d415eeea90a2fdb60c66dd386b258acbfc4d1fa4720a8df5dea7369fbdbcddee"
+      },
+      "platform": "linux",
+      "architecture": "arm64",
+      "downloadUri": "https://nodejs.org/dist/v22.18.0/node-v22.18.0-linux-arm64.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "npm": "node-v22.18.0-linux-arm64/lib/node_modules/npm/bin/npm-cli.js"
+      },
+      "downloadBytes": 134217728,
+      "license": "Artistic-2.0 and bundled third-party licenses"
+    },
+    {
+      "reference": {
+        "kind": "PNPM",
+        "version": "10.14.0",
+        "artifactSha256": "297534e65d5842450539c1e8022c8831ab5e1fe2eb74664787a815519542d620"
+      },
+      "platform": "linux",
+      "architecture": "arm64",
+      "downloadUri": "https://registry.npmjs.org/pnpm/-/pnpm-10.14.0.tgz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "pnpm": "package/bin/pnpm.cjs"
+      },
+      "downloadBytes": 4205866,
+      "license": "MIT"
+    },
+    {
+      "reference": {
+        "kind": "PYTHON",
+        "version": "3.12.11+20250818",
+        "artifactSha256": "b3df3317e101cadcc56f08912fe0f68c5fbe1649a035585d650891ecd60a7d0a"
+      },
+      "platform": "linux",
+      "architecture": "arm64",
+      "downloadUri": "https://github.com/astral-sh/python-build-standalone/releases/download/20250818/cpython-3.12.11%2B20250818-aarch64-unknown-linux-gnu-install_only.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "python": "python/bin/python3.12"
+      },
+      "downloadBytes": 78135711,
+      "license": "Python-2.0 and bundled third-party licenses"
+    },
+    {
+      "reference": {
+        "kind": "PIP",
+        "version": "24.3.1",
+        "artifactSha256": "b3df3317e101cadcc56f08912fe0f68c5fbe1649a035585d650891ecd60a7d0a"
+      },
+      "platform": "linux",
+      "architecture": "arm64",
+      "downloadUri": "https://github.com/astral-sh/python-build-standalone/releases/download/20250818/cpython-3.12.11%2B20250818-aarch64-unknown-linux-gnu-install_only.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "pip": "python/bin/pip3"
+      },
+      "downloadBytes": 78135711,
+      "license": "MIT"
+    },
+    {
+      "reference": {
+        "kind": "JDK",
+        "version": "25.0.1+8",
+        "artifactSha256": "8daf77d1aacffe38c9889689bc224a13557de77559d9a5bb91991e6a298baa0d"
+      },
+      "platform": "linux",
+      "architecture": "x64",
+      "downloadUri": "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.1%2B8/OpenJDK25U-jdk_x64_linux_hotspot_25.0.1_8.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "java": "jdk-25.0.1+8/bin/java",
+        "javac": "jdk-25.0.1+8/bin/javac",
+        "jar": "jdk-25.0.1+8/bin/jar",
+        "javadoc": "jdk-25.0.1+8/bin/javadoc",
+        "jshell": "jdk-25.0.1+8/bin/jshell"
+      },
+      "downloadBytes": 140725210,
+      "license": "GPL-2.0-only WITH Classpath-exception-2.0"
+    },
+    {
+      "reference": {
+        "kind": "JDK",
+        "version": "21.0.8+9",
+        "artifactSha256": "f2dc5418092c43003db8f9005c4a286e1c0104fea96ccdd49e8ebd037cac9219"
+      },
+      "platform": "linux",
+      "architecture": "x64",
+      "downloadUri": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.8%2B9/OpenJDK21U-jdk_x64_linux_hotspot_21.0.8_9.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "java": "jdk-21.0.8+9/bin/java",
+        "javac": "jdk-21.0.8+9/bin/javac",
+        "jar": "jdk-21.0.8+9/bin/jar",
+        "javadoc": "jdk-21.0.8+9/bin/javadoc",
+        "jshell": "jdk-21.0.8+9/bin/jshell"
+      },
+      "downloadBytes": 207098019,
+      "license": "GPL-2.0-only WITH Classpath-exception-2.0"
+    },
+    {
+      "reference": {
+        "kind": "MAVEN",
+        "version": "3.9.11",
+        "artifactSha256": "4b7195b6a4f5c81af4c0212677a32ee8143643401bc6e1e8412e6b06ea82beac"
+      },
+      "platform": "linux",
+      "architecture": "x64",
+      "downloadUri": "https://archive.apache.org/dist/maven/maven-3/3.9.11/binaries/apache-maven-3.9.11-bin.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "mvn": "apache-maven-3.9.11/bin/mvn"
+      },
+      "downloadBytes": 9160848,
+      "license": "Apache-2.0"
+    },
+    {
+      "reference": {
+        "kind": "GRADLE",
+        "version": "9.1.0",
+        "artifactSha256": "a17ddd85a26b6a7f5ddb71ff8b05fc5104c0202c6e64782429790c933686c806"
+      },
+      "platform": "linux",
+      "architecture": "x64",
+      "downloadUri": "https://services.gradle.org/distributions/gradle-9.1.0-bin.zip",
+      "archiveFormat": "zip",
+      "executablePaths": {
+        "gradle": "gradle-9.1.0/bin/gradle"
+      },
+      "downloadBytes": 268435456,
+      "license": "Apache-2.0"
+    },
+    {
+      "reference": {
+        "kind": "GRADLE",
+        "version": "8.14.3",
+        "artifactSha256": "bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531"
+      },
+      "platform": "linux",
+      "architecture": "x64",
+      "downloadUri": "https://services.gradle.org/distributions/gradle-8.14.3-bin.zip",
+      "archiveFormat": "zip",
+      "executablePaths": {
+        "gradle": "gradle-8.14.3/bin/gradle"
+      },
+      "downloadBytes": 268435456,
+      "license": "Apache-2.0"
+    },
+    {
+      "reference": {
+        "kind": "NODE",
+        "version": "22.18.0",
+        "artifactSha256": "a2e703725d8683be86bb5da967bf8272f4518bdaf10f21389e2b2c9eaeae8c8a"
+      },
+      "platform": "linux",
+      "architecture": "x64",
+      "downloadUri": "https://nodejs.org/dist/v22.18.0/node-v22.18.0-linux-x64.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "node": "node-v22.18.0-linux-x64/bin/node"
+      },
+      "downloadBytes": 134217728,
+      "license": "MIT and bundled third-party licenses"
+    },
+    {
+      "reference": {
+        "kind": "NPM",
+        "version": "10.9.3",
+        "artifactSha256": "a2e703725d8683be86bb5da967bf8272f4518bdaf10f21389e2b2c9eaeae8c8a"
+      },
+      "platform": "linux",
+      "architecture": "x64",
+      "downloadUri": "https://nodejs.org/dist/v22.18.0/node-v22.18.0-linux-x64.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "npm": "node-v22.18.0-linux-x64/lib/node_modules/npm/bin/npm-cli.js"
+      },
+      "downloadBytes": 134217728,
+      "license": "Artistic-2.0 and bundled third-party licenses"
+    },
+    {
+      "reference": {
+        "kind": "PNPM",
+        "version": "10.14.0",
+        "artifactSha256": "297534e65d5842450539c1e8022c8831ab5e1fe2eb74664787a815519542d620"
+      },
+      "platform": "linux",
+      "architecture": "x64",
+      "downloadUri": "https://registry.npmjs.org/pnpm/-/pnpm-10.14.0.tgz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "pnpm": "package/bin/pnpm.cjs"
+      },
+      "downloadBytes": 4205866,
+      "license": "MIT"
+    },
+    {
+      "reference": {
+        "kind": "PYTHON",
+        "version": "3.12.11+20250818",
+        "artifactSha256": "98229938166f51deff81b00d71455fac84a57290b71089bd5fe673738557f053"
+      },
+      "platform": "linux",
+      "architecture": "x64",
+      "downloadUri": "https://github.com/astral-sh/python-build-standalone/releases/download/20250818/cpython-3.12.11%2B20250818-x86_64-unknown-linux-gnu-install_only.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "python": "python/bin/python3.12"
+      },
+      "downloadBytes": 102707634,
+      "license": "Python-2.0 and bundled third-party licenses"
+    },
+    {
+      "reference": {
+        "kind": "PIP",
+        "version": "24.3.1",
+        "artifactSha256": "98229938166f51deff81b00d71455fac84a57290b71089bd5fe673738557f053"
+      },
+      "platform": "linux",
+      "architecture": "x64",
+      "downloadUri": "https://github.com/astral-sh/python-build-standalone/releases/download/20250818/cpython-3.12.11%2B20250818-x86_64-unknown-linux-gnu-install_only.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "pip": "python/bin/pip3"
+      },
+      "downloadBytes": 102707634,
+      "license": "MIT"
+    },
+    {
+      "reference": {
+        "kind": "JDK",
+        "version": "25.0.1+8",
+        "artifactSha256": "46897db80b6df8fad1f6cccce9e8514210bfd0181085dcd346f5c710a70a0d58"
+      },
+      "platform": "windows",
+      "architecture": "x64",
+      "downloadUri": "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.1%2B8/OpenJDK25U-jdk_x64_windows_hotspot_25.0.1_8.zip",
+      "archiveFormat": "zip",
+      "executablePaths": {
+        "java": "jdk-25.0.1+8/bin/java.exe",
+        "javac": "jdk-25.0.1+8/bin/javac.exe",
+        "jar": "jdk-25.0.1+8/bin/jar.exe",
+        "javadoc": "jdk-25.0.1+8/bin/javadoc.exe",
+        "jshell": "jdk-25.0.1+8/bin/jshell.exe"
+      },
+      "downloadBytes": 141066608,
+      "license": "GPL-2.0-only WITH Classpath-exception-2.0"
+    },
+    {
+      "reference": {
+        "kind": "JDK",
+        "version": "21.0.8+9",
+        "artifactSha256": "5dbb74a4edda94c2aae97a1e30f448db0ad9023a9466fe31a8c68377d9dfbac4"
+      },
+      "platform": "windows",
+      "architecture": "x64",
+      "downloadUri": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.8%2B9/OpenJDK21U-jdk_x64_windows_hotspot_21.0.8_9.zip",
+      "archiveFormat": "zip",
+      "executablePaths": {
+        "java": "jdk-21.0.8+9/bin/java.exe",
+        "javac": "jdk-21.0.8+9/bin/javac.exe",
+        "jar": "jdk-21.0.8+9/bin/jar.exe",
+        "javadoc": "jdk-21.0.8+9/bin/javadoc.exe",
+        "jshell": "jdk-21.0.8+9/bin/jshell.exe"
+      },
+      "downloadBytes": 204850009,
+      "license": "GPL-2.0-only WITH Classpath-exception-2.0"
+    },
+    {
+      "reference": {
+        "kind": "MAVEN",
+        "version": "3.9.11",
+        "artifactSha256": "4b7195b6a4f5c81af4c0212677a32ee8143643401bc6e1e8412e6b06ea82beac"
+      },
+      "platform": "windows",
+      "architecture": "x64",
+      "downloadUri": "https://archive.apache.org/dist/maven/maven-3/3.9.11/binaries/apache-maven-3.9.11-bin.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "mvn": "apache-maven-3.9.11/bin/mvn.cmd"
+      },
+      "downloadBytes": 9160848,
+      "license": "Apache-2.0"
+    },
+    {
+      "reference": {
+        "kind": "GRADLE",
+        "version": "9.1.0",
+        "artifactSha256": "a17ddd85a26b6a7f5ddb71ff8b05fc5104c0202c6e64782429790c933686c806"
+      },
+      "platform": "windows",
+      "architecture": "x64",
+      "downloadUri": "https://services.gradle.org/distributions/gradle-9.1.0-bin.zip",
+      "archiveFormat": "zip",
+      "executablePaths": {
+        "gradle": "gradle-9.1.0/bin/gradle.bat"
+      },
+      "downloadBytes": 268435456,
+      "license": "Apache-2.0"
+    },
+    {
+      "reference": {
+        "kind": "GRADLE",
+        "version": "8.14.3",
+        "artifactSha256": "bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531"
+      },
+      "platform": "windows",
+      "architecture": "x64",
+      "downloadUri": "https://services.gradle.org/distributions/gradle-8.14.3-bin.zip",
+      "archiveFormat": "zip",
+      "executablePaths": {
+        "gradle": "gradle-8.14.3/bin/gradle.bat"
+      },
+      "downloadBytes": 268435456,
+      "license": "Apache-2.0"
+    },
+    {
+      "reference": {
+        "kind": "NODE",
+        "version": "22.18.0",
+        "artifactSha256": "c95d8a7e1c99e669cc08c9f1176e068c1f50847c37908fcb8c35b62482366511"
+      },
+      "platform": "windows",
+      "architecture": "x64",
+      "downloadUri": "https://nodejs.org/dist/v22.18.0/node-v22.18.0-win-x64.zip",
+      "archiveFormat": "zip",
+      "executablePaths": {
+        "node": "node-v22.18.0-win-x64/node.exe"
+      },
+      "downloadBytes": 134217728,
+      "license": "MIT and bundled third-party licenses"
+    },
+    {
+      "reference": {
+        "kind": "NPM",
+        "version": "10.9.3",
+        "artifactSha256": "c95d8a7e1c99e669cc08c9f1176e068c1f50847c37908fcb8c35b62482366511"
+      },
+      "platform": "windows",
+      "architecture": "x64",
+      "downloadUri": "https://nodejs.org/dist/v22.18.0/node-v22.18.0-win-x64.zip",
+      "archiveFormat": "zip",
+      "executablePaths": {
+        "npm": "node-v22.18.0-win-x64/node_modules/npm/bin/npm-cli.js"
+      },
+      "downloadBytes": 134217728,
+      "license": "Artistic-2.0 and bundled third-party licenses"
+    },
+    {
+      "reference": {
+        "kind": "PNPM",
+        "version": "10.14.0",
+        "artifactSha256": "297534e65d5842450539c1e8022c8831ab5e1fe2eb74664787a815519542d620"
+      },
+      "platform": "windows",
+      "architecture": "x64",
+      "downloadUri": "https://registry.npmjs.org/pnpm/-/pnpm-10.14.0.tgz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "pnpm": "package/bin/pnpm.cjs"
+      },
+      "downloadBytes": 4205866,
+      "license": "MIT"
+    },
+    {
+      "reference": {
+        "kind": "PYTHON",
+        "version": "3.12.11+20250818",
+        "artifactSha256": "a6bc8c4658a758ec0c111b5f887f80595943fd84f28bbbaea6e7e30c7815dd26"
+      },
+      "platform": "windows",
+      "architecture": "x64",
+      "downloadUri": "https://github.com/astral-sh/python-build-standalone/releases/download/20250818/cpython-3.12.11%2B20250818-x86_64-pc-windows-msvc-install_only.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "python": "python/python.exe"
+      },
+      "downloadBytes": 42198056,
+      "license": "Python-2.0 and bundled third-party licenses"
+    },
+    {
+      "reference": {
+        "kind": "PIP",
+        "version": "24.3.1",
+        "artifactSha256": "a6bc8c4658a758ec0c111b5f887f80595943fd84f28bbbaea6e7e30c7815dd26"
+      },
+      "platform": "windows",
+      "architecture": "x64",
+      "downloadUri": "https://github.com/astral-sh/python-build-standalone/releases/download/20250818/cpython-3.12.11%2B20250818-x86_64-pc-windows-msvc-install_only.tar.gz",
+      "archiveFormat": "tar.gz",
+      "executablePaths": {
+        "pip": "python/python.exe"
+      },
+      "downloadBytes": 42198056,
+      "license": "MIT"
+    }
+  ]
+}

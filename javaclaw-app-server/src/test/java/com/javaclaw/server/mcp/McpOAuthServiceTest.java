@@ -84,7 +84,7 @@ class McpOAuthServiceTest {
 
     @BeforeEach
     void 创建全新OAuth状态机() {
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         CoreCommandService core = new CoreCommandService(database, json, CLOCK);
@@ -186,7 +186,7 @@ class McpOAuthServiceTest {
                 () -> service.completeBrowser(
                         launch.authorization().id(), URI.create(REDIRECT + "?code=stale&state=" + broker.state)));
 
-        H2Database lockedDatabase = new H2Database(temporaryDirectory.resolve("locked-vault/data-v5"));
+        H2Database lockedDatabase = new H2Database(temporaryDirectory.resolve("locked-vault/data-v6"));
         lockedDatabase.initialize();
         MemoryProtector unavailable = new MemoryProtector();
         unavailable.unavailable = true;

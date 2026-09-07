@@ -59,8 +59,8 @@ class ExtensionJobSupervisorTest {
     private Workspace workspace;
 
     @BeforeEach
-    void initializeDataV5() {
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+    void initializeDataV6() {
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         clock = Clock.fixed(NOW, ZoneOffset.UTC);
@@ -422,7 +422,7 @@ class ExtensionJobSupervisorTest {
                 "workflow",
                 definitionId,
                 1,
-                json.parse("{\"profileRevision\":1}"),
+                json.parse("{\"roleRevision\":1}"),
                 json.parse("{\"completed\":0}"));
     }
 

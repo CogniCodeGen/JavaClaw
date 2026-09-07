@@ -97,7 +97,7 @@ public record ProviderSettingsState(
             case CREDENTIAL -> "第 2/4 步：配置访问密钥；无鉴权兼容端点会自动跳过。";
             case MODELS -> draft.models().isEmpty() ? "第 3/4 步：读取模型目录或手工添加模型，并确认每个模型的用途。" : "第 4/4 步：保存模型目录并启用此模型服务。";
             case ENABLE -> "第 4/4 步：确认配置后启用此模型服务。";
-            case COMPLETE -> "配置完成；新智能体方案可以显式引用这个精确版本。";
+            case COMPLETE -> "配置完成；新Agent可以显式引用这个精确版本。";
         };
     }
 }

@@ -8,7 +8,7 @@ import com.javaclaw.protocol.StreamRpcConnection;
 import com.javaclaw.server.transport.UnixDomainSocketRpcServer;
 import com.javaclaw.server.transport.WindowsNamedPipeSessionServer;
 
-/** JavaClaw 5 本地 App Server 的 stdio、Unix Domain Socket 与 Windows Named Pipe 入口。 */
+/** JavaClaw 6 本地 App Server 的 stdio、Unix Domain Socket 与 Windows Named Pipe 入口。 */
 public final class AppServerMain {
     private AppServerMain() {}
 
@@ -89,12 +89,6 @@ public final class AppServerMain {
     }
 
     static Path dataRoot() {
-        String configured = System.getProperty("javaclaw.data.root", "").strip();
-        if (!configured.isEmpty()) {
-            return Path.of(configured).toAbsolutePath().normalize();
-        }
-        return Path.of(System.getProperty("user.home"), ".javaclaw", "data-v5")
-                .toAbsolutePath()
-                .normalize();
+        return com.javaclaw.nativehost.LocalRuntimeDirectories.dataDirectory();
     }
 }

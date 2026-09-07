@@ -1,24 +1,18 @@
 package com.javaclaw.server.turn;
 
-import java.util.HashSet;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
 import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.AutomationExecutionSnapshot;
 import com.javaclaw.api.CancellationSource;
 import com.javaclaw.api.CancellationToken;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.CorePayloads;
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.PermissionProfile;
-import com.javaclaw.api.PermissionProfileRef;
-import com.javaclaw.api.ProfileLifecycle;
-import com.javaclaw.api.ProviderRef;
+import com.javaclaw.api.ResolvedTurnConfig;
 import com.javaclaw.api.ToolCatalogSnapshot;
-import com.javaclaw.api.ToolPermission;
 import com.javaclaw.api.TurnId;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceId;
@@ -30,20 +24,16 @@ import com.javaclaw.runtime.ToolCatalogPort;
 import com.javaclaw.runtime.TurnExecutionCommand;
 import com.javaclaw.server.instructions.ProjectInstructionResolver;
 import com.javaclaw.server.instructions.ResolvedInstructions;
-import com.javaclaw.server.persistence.AgentProfileService;
 import com.javaclaw.server.persistence.CoreCommandService;
 import com.javaclaw.server.persistence.ManagedWorktreeService;
-import com.javaclaw.server.persistence.PermissionProfileService;
-import com.javaclaw.server.persistence.ProfileBindingService;
 import com.javaclaw.server.persistence.TurnPromptSnapshot;
 import com.javaclaw.server.persistence.TurnStartRequest;
 
-/** 只使用服务器权威状态解析 Profile，并构造冻结的 Thin Harness 命令。 */
+/** 将唯一解析器的结果冻结为 Prompt、目录和 Turn 命令；恢复只读取持久快照。 */
 final class TurnCommandFactory {
     private final CoreCommandService core;
-    private final AgentProfileService profiles;
-    private final ProfileBindingService bindings;
-    private final PermissionProfileService permissions;
+    private final TurnPlatformServices services;
+    private final AgentConfigurationResolver configurations;
     private final ProjectInstructionResolver instructions;
     private final ManagedWorktreeService worktrees;
     private final ModelGateway models;
@@ -58,10 +48,10 @@ final class TurnCommandFactory {
             String coreInstruction,
             CanonicalJson json) {
         Objects.requireNonNull(services, "services");
+        this.services = services;
         core = services.core();
-        profiles = services.profiles();
-        bindings = services.bindings();
-        permissions = services.permissions();
+        configurations = new AgentConfigurationResolver(
+                services.roles(), services.configurations(), services.permissions(), core);
         instructions = services.instructions();
         worktrees = services.worktrees();
         this.models = Objects.requireNonNull(models, "models");
@@ -71,143 +61,137 @@ final class TurnCommandFactory {
     }
 
     TurnStartRequest resolve(CoreRpcContracts.TurnStartPayload request, CorePayloads.Message message) {
-        Objects.requireNonNull(request, "request");
-        Objects.requireNonNull(message, "message");
-        AgentProfile profile = bindings.resolve(request.threadId(), request.profile());
-        requireActive(profile);
         ThreadExecutionScope scope = executionScope(request.threadId());
-        PermissionProfile effective = effectivePermissions(profile, scope);
-        ProviderRef provider = profile.spec().provider();
-        models.capabilities(provider.routeKey());
-        ToolCatalogSnapshot catalog =
-                catalogs.freeze(TurnId.random(), scope.workspace().id(), effective, new CancellationSource());
-        ResolvedInstructions resolvedInstructions = resolveInstructions(scope);
+        ResolvedAgentConfiguration resolved =
+                configurations.resolve(scope, Optional.of(request.threadId()), request.execution());
+        models.capabilities(resolved.provider().routeKey());
+        ToolCatalogSnapshot catalog = catalogs.freeze(
+                TurnId.random(), scope.workspace().id(), resolved.effectivePermissions(), new CancellationSource());
+        resolved = resolved.withCatalog(catalog);
+        catalog = boundedCatalog(catalog, resolved.effectivePermissions());
+        CanonicalPayload prompt = json.encode(prompts.snapshot(resolved, resolveInstructions(scope)));
         return new TurnStartRequest(
                 request.threadId(),
-                profile.spec().budget(),
-                new AgentProfileRef(profile.id(), profile.revision()),
-                provider,
-                profile.spec().permissionProfile(),
+                resolved.freeze(prompt.sha256(), catalog.digest()),
                 scope.root(),
-                promptSnapshot(profile, resolvedInstructions),
+                prompt,
                 catalog,
                 message,
                 Optional.empty());
     }
 
     AutomationExecutionSnapshot freezeAutomation(
-            WorkspaceId workspaceId, AgentProfileRef reference, CancellationToken cancellation) {
-        Objects.requireNonNull(workspaceId, "workspaceId");
-        Objects.requireNonNull(reference, "reference");
+            WorkspaceId workspaceId, ExecutionOverrides selection, CancellationToken cancellation) {
         Workspace workspace = core.findWorkspace(workspaceId)
                 .orElseThrow(() -> new IllegalArgumentException("Workspace does not exist"));
         requireActive(workspace);
-        AgentProfile profile = profiles.requireAvailable(reference.id(), reference.revision());
-        models.capabilities(profile.spec().provider().routeKey());
-        PermissionProfile effective = effectivePermissions(profile, workspace);
-        ToolCatalogSnapshot catalog = catalogs.freeze(TurnId.random(), workspace.id(), effective, cancellation);
+        ThreadExecutionScope scope = ThreadExecutionScope.workspace(workspace);
+        ResolvedAgentConfiguration resolved = configurations.resolve(scope, Optional.empty(), selection);
+        models.capabilities(resolved.provider().routeKey());
+        ToolCatalogSnapshot catalog =
+                catalogs.freeze(TurnId.random(), workspace.id(), resolved.effectivePermissions(), cancellation);
+        resolved = resolved.withCatalog(catalog);
+        catalog = boundedCatalog(catalog, resolved.effectivePermissions());
+        CanonicalPayload prompt = json.encode(prompts.snapshot(resolved, resolveInstructions(scope)));
+        core.freezePromptManifest(prompt);
+        core.codingEnvironments()
+                .freezeExecution(catalog.turnId(), workspace.id(), scope.root(), catalog.permissionCeiling());
         return new AutomationExecutionSnapshot(
-                reference,
-                profile.spec().provider(),
-                profile.spec().permissionProfile(),
-                profile.spec().budget(),
-                catalog,
-                Optional.empty());
+                resolved.freeze(prompt.sha256(), catalog.digest()), catalog, Optional.empty());
+    }
+
+    AutomationExecutionSnapshot freezeChild(AgentTurn parent, ExecutionOverrides spawn) {
+        ThreadExecutionScope scope = requireFrozenScope(parent);
+        ResolvedTurnConfig parentConfig = core.resolvedConfig(parent.id());
+        PermissionProfile current = ParentTurnPermissions.intersect(
+                services, json, parent, configurations.restorePermissions(parentConfig, scope));
+        ToolCatalogSnapshot parentCatalog =
+                json.decode(core.toolCatalogSnapshot(parent.id()), ToolCatalogSnapshot.class);
+        current = com.javaclaw.api.PermissionResolver.intersect(
+                java.util.List.of(current, parentCatalog.permissionCeiling()));
+        ResolvedAgentConfiguration child = configurations.resolveChild(scope, parentConfig, spawn, current);
+        models.capabilities(child.provider().routeKey());
+        ToolCatalogSnapshot catalog = catalogs.freeze(
+                TurnId.random(), scope.workspace().id(), child.effectivePermissions(), new CancellationSource());
+        child = child.withCatalog(catalog);
+        catalog = boundedCatalog(catalog, child.effectivePermissions());
+        CanonicalPayload prompt = json.encode(prompts.snapshot(child, resolveInstructions(scope)));
+        core.freezePromptManifest(prompt);
+        core.codingEnvironments()
+                .freezeChild(catalog.turnId(), scope.workspace().id(), parent.id());
+        return new AutomationExecutionSnapshot(
+                child.freeze(prompt.sha256(), catalog.digest()), catalog, Optional.empty());
     }
 
     TurnStartRequest resolveOrchestrated(
             CoreRpcContracts.TurnStartPayload request,
             CorePayloads.Message message,
             AutomationExecutionSnapshot snapshot) {
-        Objects.requireNonNull(request, "request");
-        Objects.requireNonNull(message, "message");
-        AgentProfile profile = requireAutomationProfile(request, snapshot);
+        Objects.requireNonNull(snapshot, "snapshot");
         ThreadExecutionScope scope = executionScope(request.threadId());
-        PermissionProfile effective = effectivePermissions(profile, scope);
-        models.capabilities(snapshot.provider().routeKey());
+        ResolvedTurnConfig frozen = snapshot.configuration();
+        requireRequestedRole(request, frozen);
+        PermissionProfile current = ParentTurnPermissions.intersect(
+                services, json, scope, configurations.restorePermissions(frozen, scope));
+        models.capabilities(frozen.provider().routeKey());
         ToolCatalogSnapshot catalog = catalogs.bindFrozen(
-                TurnId.random(), scope.workspace().id(), snapshot.toolCatalog(), effective, new CancellationSource());
-        ResolvedInstructions resolvedInstructions = resolveInstructions(scope);
+                TurnId.random(), scope.workspace().id(), snapshot.toolCatalog(), current, new CancellationSource());
+        CanonicalPayload prompt = core.promptManifest(frozen.promptManifestDigest());
         return new TurnStartRequest(
                 request.threadId(),
-                snapshot.turnBudget(),
-                snapshot.profile(),
-                snapshot.provider(),
-                snapshot.permissionProfile(),
+                frozen,
                 scope.root(),
-                promptSnapshot(profile, resolvedInstructions),
+                prompt,
                 catalog,
                 message,
-                snapshot.unattendedExecutionScope());
+                snapshot.unattendedExecutionScope(),
+                Optional.of(core.codingEnvironments()
+                        .execution(
+                                snapshot.toolCatalog().turnId(),
+                                scope.workspace().id())));
     }
 
     TurnExecutionCommand create(AgentTurn turn, CoreRpcContracts.TurnStartPayload request) {
-        Objects.requireNonNull(turn, "turn");
-        Objects.requireNonNull(request, "request");
-        requireRequestIdentity(turn, request);
-        AgentProfile profile =
-                profiles.require(turn.profile().id(), turn.profile().revision());
-        CanonicalPayload promptPayload = core.promptSnapshot(turn.id());
-        if (!turn.promptManifestDigest().equals(promptPayload.sha256())) {
-            throw new IllegalStateException("Turn Prompt snapshot 与冻结摘要不匹配");
+        ResolvedTurnConfig frozen = core.resolvedConfig(turn.id());
+        requireRequestedRole(request, frozen);
+        if (!turn.threadId().equals(request.threadId())
+                || !turn.resolvedConfig().equals(frozen.summary())) {
+            throw new IllegalArgumentException("Turn 身份与冻结解析配置不一致");
         }
-        TurnPromptSnapshot prompt = json.decode(promptPayload, TurnPromptSnapshot.class);
-        requireFrozenIdentity(turn, profile, prompt);
+        CanonicalPayload payload = core.promptSnapshot(turn.id());
+        if (!frozen.promptManifestDigest().equals(payload.sha256())) {
+            throw new IllegalStateException("Turn Prompt 快照与摘要不一致");
+        }
+        TurnPromptSnapshot prompt = json.decode(payload, TurnPromptSnapshot.class);
+        if (!prompt.role().equals(frozen.role()) || !prompt.provider().equals(frozen.provider())) {
+            throw new IllegalStateException("Turn Prompt 与解析配置身份不一致");
+        }
         ThreadExecutionScope scope = requireFrozenScope(turn);
-        PermissionProfile effective = effectivePermissions(profile, scope);
-        models.capabilities(turn.provider().routeKey());
-        ToolCatalogSnapshot catalog = bindPersistedCatalog(turn, scope, effective);
+        PermissionProfile current =
+                ParentTurnPermissions.intersect(services, json, turn, configurations.restorePermissions(frozen, scope));
+        models.capabilities(frozen.provider().routeKey());
+        ToolCatalogSnapshot catalog = bindPersistedCatalog(turn, scope, current);
         return new TurnExecutionCommand(
-                turn, turn.provider(), prompt.systemInstruction(), request.message(), effective, catalog);
+                turn,
+                frozen.provider(),
+                prompt.modelInstructions(),
+                request.message(),
+                current,
+                catalog,
+                core.contexts().policy(turn.id()));
     }
 
     TurnExecutionCommand createOrchestrated(
             AgentTurn turn, CoreRpcContracts.TurnStartPayload request, AutomationExecutionSnapshot snapshot) {
-        Objects.requireNonNull(turn, "turn");
-        Objects.requireNonNull(request, "request");
-        requireRequestIdentity(turn, request);
-        AgentProfile profile = requireAutomationProfile(request, snapshot);
-        CanonicalPayload promptPayload = core.promptSnapshot(turn.id());
-        if (!turn.promptManifestDigest().equals(promptPayload.sha256())) {
-            throw new IllegalStateException("Turn Prompt snapshot 与冻结摘要不匹配");
+        if (!core.resolvedConfig(turn.id()).equals(snapshot.configuration())) {
+            throw new IllegalArgumentException("自动化 Turn 与活动 Execution 冻结配置不一致");
         }
-        TurnPromptSnapshot prompt = json.decode(promptPayload, TurnPromptSnapshot.class);
-        requireFrozenIdentity(turn, profile, prompt);
-        requireTurnSnapshot(turn, snapshot);
-        ThreadExecutionScope scope = requireFrozenScope(turn);
-        PermissionProfile effective = effectivePermissions(profile, scope);
-        models.capabilities(snapshot.provider().routeKey());
-        ToolCatalogSnapshot catalog = bindPersistedCatalog(turn, scope, effective);
-        return new TurnExecutionCommand(
-                turn, snapshot.provider(), prompt.systemInstruction(), request.message(), effective, catalog);
+        return create(turn, request);
     }
 
-    private PermissionProfile effectivePermissions(AgentProfile profile, Workspace workspace) {
-        PermissionProfileRef reference = profile.spec().permissionProfile();
-        PermissionProfile resolved = permissions.resolve(reference.id(), reference.version(), workspace);
-        return visibleTools(profile, resolved);
-    }
-
-    private PermissionProfile effectivePermissions(AgentProfile profile, ThreadExecutionScope scope) {
-        PermissionProfileRef reference = profile.spec().permissionProfile();
-        PermissionProfile resolved = permissions.resolveForExecution(
-                reference.id(), reference.version(), scope.workspace(), scope.root(), scope.writable());
-        return visibleTools(profile, resolved);
-    }
-
-    private static PermissionProfile visibleTools(AgentProfile profile, PermissionProfile resolved) {
-        Set<String> visible = new HashSet<>(resolved.tools().allowedTools());
-        visible.retainAll(profile.spec().visibleTools());
-        ToolPermission tools = new ToolPermission(
-                visible, resolved.tools().maximumRisk(), resolved.tools().approvalRequirement());
-        return new PermissionProfile(
-                resolved.id(),
-                resolved.version(),
-                resolved.files(),
-                resolved.network(),
-                resolved.processes(),
-                tools,
-                resolved.resources());
+    private static ToolCatalogSnapshot boundedCatalog(ToolCatalogSnapshot catalog, PermissionProfile permissions) {
+        return new ToolCatalogSnapshot(
+                catalog.turnId(), catalog.catalogRevision(), catalog.tools(), permissions, catalog.capturedAt());
     }
 
     private ThreadExecutionScope executionScope(com.javaclaw.api.ThreadId threadId) {
@@ -230,80 +214,28 @@ final class TurnCommandFactory {
         return instructions.resolve(scope.root(), scope.root(), fallback);
     }
 
-    private CanonicalPayload promptSnapshot(AgentProfile profile, ResolvedInstructions instructions) {
-        return json.encode(prompts.snapshot(profile, instructions));
-    }
-
     private ToolCatalogSnapshot bindPersistedCatalog(
             AgentTurn turn, ThreadExecutionScope scope, PermissionProfile currentPermissions) {
         ToolCatalogSnapshot frozen = json.decode(core.toolCatalogSnapshot(turn.id()), ToolCatalogSnapshot.class);
-        boolean identityMatches =
-                frozen.turnId().equals(turn.id()) && frozen.digest().equals(turn.toolCatalogDigest());
-        if (!identityMatches) {
+        if (!frozen.turnId().equals(turn.id()) || !frozen.digest().equals(turn.toolCatalogDigest())) {
             throw new IllegalStateException("Turn 冻结工具目录身份或摘要不匹配");
         }
         return catalogs.bindFrozen(
                 turn.id(), scope.workspace().id(), frozen, currentPermissions, new CancellationSource());
     }
 
-    private AgentProfile requireAutomationProfile(
-            CoreRpcContracts.TurnStartPayload request, AutomationExecutionSnapshot snapshot) {
-        Objects.requireNonNull(snapshot, "snapshot");
-        if (request.profile().filter(snapshot.profile()::equals).isEmpty()) {
-            throw new IllegalArgumentException("自动化 Turn 必须使用 Execution 冻结 Profile");
-        }
-        AgentProfile profile =
-                profiles.require(snapshot.profile().id(), snapshot.profile().revision());
-        requireActive(profile);
-        boolean matches = snapshot.provider().equals(profile.spec().provider())
-                && snapshot.permissionProfile().equals(profile.spec().permissionProfile())
-                && snapshot.turnBudget().equals(profile.spec().budget());
-        if (!matches) {
-            throw new IllegalArgumentException("自动化执行快照与 Agent Profile 不一致");
-        }
-        return profile;
-    }
-
-    private static void requireTurnSnapshot(AgentTurn turn, AutomationExecutionSnapshot snapshot) {
-        boolean matches = turn.profile().equals(snapshot.profile())
-                && turn.provider().equals(snapshot.provider())
-                && turn.permissionProfile().equals(snapshot.permissionProfile())
-                && turn.budget().equals(snapshot.turnBudget());
-        if (!matches) {
-            throw new IllegalArgumentException("自动化 Turn 与 Execution 冻结快照不一致");
-        }
-    }
-
-    private static void requireRequestIdentity(AgentTurn turn, CoreRpcContracts.TurnStartPayload request) {
-        boolean explicitMatches =
-                request.profile().isEmpty() || request.profile().orElseThrow().equals(turn.profile());
-        if (!turn.threadId().equals(request.threadId()) || !explicitMatches) {
-            throw new IllegalArgumentException("persisted Turn does not match dispatch request");
-        }
-    }
-
-    private void requireFrozenIdentity(AgentTurn turn, AgentProfile profile, TurnPromptSnapshot prompt) {
-        boolean valid = turn.profile().equals(new AgentProfileRef(profile.id(), profile.revision()))
-                && turn.provider().equals(profile.spec().provider())
-                && turn.permissionProfile().equals(profile.spec().permissionProfile())
-                && turn.budget().equals(profile.spec().budget())
-                && prompt.profile().equals(turn.profile())
-                && prompt.provider().equals(turn.provider())
-                && prompt.coreInstructionRevision().equals(CoreSystemInstruction.REVISION);
-        if (!valid) {
-            throw new IllegalArgumentException("persisted Turn configuration does not match Agent Profile");
-        }
-    }
-
-    private static void requireActive(AgentProfile profile) {
-        if (profile.lifecycle() != ProfileLifecycle.ACTIVE) {
-            throw new IllegalArgumentException("new Turn requires an ACTIVE Agent Profile");
+    private static void requireRequestedRole(CoreRpcContracts.TurnStartPayload request, ResolvedTurnConfig frozen) {
+        if (request.execution()
+                .role()
+                .filter(value -> !value.equals(frozen.role()))
+                .isPresent()) {
+            throw new IllegalArgumentException("请求 Role 与冻结 Turn 不一致");
         }
     }
 
     private static void requireActive(Workspace workspace) {
         if (workspace.lifecycle() != WorkspaceLifecycle.ACTIVE) {
-            throw new IllegalArgumentException("已归档 Workspace 不能启动新 Turn");
+            throw new IllegalArgumentException("已归档 Workspace 不能执行新 Turn");
         }
     }
 }

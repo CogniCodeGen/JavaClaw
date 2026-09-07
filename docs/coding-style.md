@@ -1,4 +1,4 @@
-# JavaClaw 5 代码质量规范
+# JavaClaw 6 代码质量规范
 
 本规范适用于 14 个模块的手写生产代码、测试、构建配置与纳入维护的资源。根 `AGENTS.md`、
 `.editorconfig`、Checkstyle 和 Maven verify 共同构成可执行约束。

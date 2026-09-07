@@ -22,12 +22,12 @@ class DistributionScriptsTest {
         String unix = Files.readString(sourceBin().resolve("javaclaw-health"), StandardCharsets.UTF_8);
         String windows = Files.readString(sourceBin().resolve("javaclaw-health.cmd"), StandardCharsets.UTF_8);
 
-        assertTrue(unix.contains("-Djavaclaw.data.root=\"$HEALTH_ROOT/data-v5\""));
-        assertTrue(unix.contains("-Djavaclaw.log.dir=\"$HEALTH_ROOT/data-v5/logs\""));
+        assertTrue(unix.contains("-Djavaclaw.data.root=\"$HEALTH_ROOT/data-v6\""));
+        assertTrue(unix.contains("-Djavaclaw.log.dir=\"$HEALTH_ROOT/data-v6/logs\""));
         assertTrue(unix.contains("com.javaclaw.launcher.AppServerLauncher --health-check"));
         assertFalse(unix.contains("com.javaclaw.launcher.AppServerLauncher --stdio"));
-        assertTrue(windows.contains("-Djavaclaw.data.root=%HEALTH_ROOT%\\data-v5"));
-        assertTrue(windows.contains("-Djavaclaw.log.dir=%HEALTH_ROOT%\\data-v5\\logs"));
+        assertTrue(windows.contains("-Djavaclaw.data.root=%HEALTH_ROOT%\\data-v6"));
+        assertTrue(windows.contains("-Djavaclaw.log.dir=%HEALTH_ROOT%\\data-v6\\logs"));
         assertTrue(windows.contains("com.javaclaw.launcher.AppServerLauncher --health-check"));
         assertFalse(windows.contains("com.javaclaw.launcher.AppServerLauncher --stdio"));
     }
@@ -92,7 +92,7 @@ class DistributionScriptsTest {
     @Test
     void 构建将私有依赖分配到独立镜像并锁定Chromium来源() throws IOException {
         String pom = source("pom.xml");
-        String workflow = source("../.github/workflows/javaclaw-v5.yml");
+        String workflow = source("../.github/workflows/javaclaw-v6.yml");
 
         assertTrue(pom.contains("distribution/workers/browser/app"));
         assertTrue(pom.contains("distribution/workers/knowledge/app"));

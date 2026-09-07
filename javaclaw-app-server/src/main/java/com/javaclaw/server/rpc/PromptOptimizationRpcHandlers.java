@@ -9,7 +9,7 @@ import com.javaclaw.protocol.WriteCommand;
 import com.javaclaw.server.persistence.CommandIdentity;
 import com.javaclaw.server.turn.PromptOptimizationService;
 
-/** Agent Profile Prompt 优化 RPC 到可恢复 Harness 用例的薄映射。 */
+/** Agent Role Prompt 优化 RPC 到可恢复 Harness 用例的薄映射。 */
 public final class PromptOptimizationRpcHandlers {
     private final PromptOptimizationService service;
     private final CanonicalJson json;
@@ -31,11 +31,11 @@ public final class PromptOptimizationRpcHandlers {
      * @param builder Router Builder
      */
     public void register(RpcRouter.Builder builder) {
-        builder.register("profile/prompt/optimization/start", this::start)
-                .register("profile/prompt/optimization/read", this::read)
-                .register("profile/prompt/optimization/list", this::list)
-                .register("profile/prompt/optimization/cancel", this::cancel)
-                .register("profile/prompt/optimization/adopt", this::adopt);
+        builder.register("agent/role/prompt/optimization/start", this::start)
+                .register("agent/role/prompt/optimization/read", this::read)
+                .register("agent/role/prompt/optimization/list", this::list)
+                .register("agent/role/prompt/optimization/cancel", this::cancel)
+                .register("agent/role/prompt/optimization/adopt", this::adopt);
     }
 
     private CanonicalPayload start(CanonicalPayload params) {
@@ -43,7 +43,7 @@ public final class PromptOptimizationRpcHandlers {
         PromptOptimizationRpcContracts.StartPayload payload =
                 json.decode(command.payload(), PromptOptimizationRpcContracts.StartPayload.class);
         return json.encode(
-                service.start(CommandIdentity.from("profile/prompt/optimization/start", command, json), payload));
+                service.start(CommandIdentity.from("agent/role/prompt/optimization/start", command, json), payload));
     }
 
     private CanonicalPayload read(CanonicalPayload params) {
@@ -63,7 +63,7 @@ public final class PromptOptimizationRpcHandlers {
         PromptOptimizationRpcContracts.CancelPayload payload =
                 json.decode(command.payload(), PromptOptimizationRpcContracts.CancelPayload.class);
         return json.encode(service.cancel(
-                CommandIdentity.from("profile/prompt/optimization/cancel", command, json),
+                CommandIdentity.from("agent/role/prompt/optimization/cancel", command, json),
                 payload.draftId(),
                 payload.reason()));
     }
@@ -73,6 +73,6 @@ public final class PromptOptimizationRpcHandlers {
         PromptOptimizationRpcContracts.AdoptPayload payload =
                 json.decode(command.payload(), PromptOptimizationRpcContracts.AdoptPayload.class);
         return json.encode(
-                service.adopt(CommandIdentity.from("profile/prompt/optimization/adopt", command, json), payload));
+                service.adopt(CommandIdentity.from("agent/role/prompt/optimization/adopt", command, json), payload));
     }
 }

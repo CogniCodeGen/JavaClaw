@@ -27,7 +27,7 @@ import com.javaclaw.api.Workspace;
 import com.javaclaw.protocol.AttachmentRpcContracts;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.CoreRpcContracts;
-import com.javaclaw.protocol.ProviderProfileRpcContracts;
+import com.javaclaw.protocol.ProviderRpcContracts;
 import com.javaclaw.protocol.WriteCommand;
 import com.javaclaw.server.ProviderEndpointTestFixtures;
 
@@ -46,8 +46,8 @@ class CorePlatformServicesTest {
     private Clock clock;
 
     @BeforeEach
-    void initializeDataV5() {
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+    void initializeDataV6() {
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         clock = Clock.fixed(NOW, ZoneOffset.UTC);
@@ -113,16 +113,16 @@ class CorePlatformServicesTest {
     void typedProviderServiceEnforcesRevisionAndRejectsMismatchedAdapterOptions() {
         ProviderService service = new ProviderService(database, reference -> true, json, clock);
         ProviderEndpointSpec firstSpec = providerSpec("Provider", "gpt-test");
-        ProviderProfileRpcContracts.ProviderCreatePayload firstPayload =
-                new ProviderProfileRpcContracts.ProviderCreatePayload("openai", firstSpec, ProviderLifecycle.ACTIVE);
+        ProviderRpcContracts.ProviderCreatePayload firstPayload =
+                new ProviderRpcContracts.ProviderCreatePayload("openai", firstSpec, ProviderLifecycle.ACTIVE);
         ProviderEndpoint first = service.create(
                 identity("provider/create", "provider-create", 0, firstPayload),
                 "openai",
                 firstSpec,
                 ProviderLifecycle.ACTIVE);
         ProviderEndpointSpec secondSpec = providerSpec("Provider 2", "gpt-test");
-        ProviderProfileRpcContracts.ProviderUpdatePayload secondPayload =
-                new ProviderProfileRpcContracts.ProviderUpdatePayload("openai", secondSpec, ProviderLifecycle.ACTIVE);
+        ProviderRpcContracts.ProviderUpdatePayload secondPayload =
+                new ProviderRpcContracts.ProviderUpdatePayload("openai", secondSpec, ProviderLifecycle.ACTIVE);
         ProviderEndpoint second = service.update(
                 identity("provider/update", "provider-update", 1, secondPayload),
                 "openai",

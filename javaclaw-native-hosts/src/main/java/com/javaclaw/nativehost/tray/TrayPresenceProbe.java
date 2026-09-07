@@ -10,6 +10,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
+import com.javaclaw.nativehost.LocalRuntimeDirectories;
+
 /** 读取不含路径或用户数据的托盘 supervisor 心跳。 */
 public final class TrayPresenceProbe {
     private static final long MAXIMUM_FILE_BYTES = 128;
@@ -23,11 +25,11 @@ public final class TrayPresenceProbe {
     /**
      * 创建当前用户默认探针。
      *
-     * @return 读取 {@code .javaclaw/run/tray-v5.presence} 的探针
+     * @return 读取 {@code data-v6/run/tray-v6.presence} 的探针
      */
     public static TrayPresenceProbe currentUser() {
-        Path home = Path.of(System.getProperty("user.home")).toAbsolutePath().normalize();
-        return new TrayPresenceProbe(home.resolve(".javaclaw/run/tray-v5.presence"), Clock.systemUTC());
+        return new TrayPresenceProbe(
+                LocalRuntimeDirectories.dataDirectory().resolve("run/tray-v6.presence"), Clock.systemUTC());
     }
 
     /**

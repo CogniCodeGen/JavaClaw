@@ -58,8 +58,8 @@ class H2TurnCrashRecoveryTest {
     private H2TurnJournal journal;
 
     @BeforeEach
-    void initializeDataV5() {
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+    void initializeDataV6() {
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         core = new CoreCommandService(database, json, Clock.fixed(NOW, ZoneOffset.UTC));
@@ -170,6 +170,67 @@ class H2TurnCrashRecoveryTest {
                 fixture.catalog().catalogRevision());
     }
 
+    @Test
+    void 原生压缩使用独立意图且原子提交状态用量与恢复位置() throws Exception {
+        Fixture fixture = fixture("native-context");
+        journal.beginOrRecover(fixture.command());
+        var request = new com.javaclaw.runtime.CompactionRequest(
+                fixture.command(),
+                new com.javaclaw.runtime.ConversationWindow(List.of(), Optional.empty(), 100),
+                50,
+                0);
+        var ticket = journal.recordCompactionIntent(request, true);
+        assertEquals(
+                TurnExecutionPhase.MODEL_IN_FLIGHT,
+                journal.readRecovery(fixture.turn().id()).phase());
+        assertThrows(
+                PersistenceException.class,
+                () -> journal.recordModelIntent(fixture.turn().id(), 1, "a".repeat(64)));
+        var state = new com.javaclaw.runtime.ProviderState("test", "v1", json.encode(Map.of("opaque", "preserved")));
+        var usage = new ModelUsage(101, 3, 2, 1);
+        var outcome = new com.javaclaw.runtime.CompactionOutcome(
+                new com.javaclaw.runtime.ConversationWindow(List.of(), Optional.of(state), 20),
+                new CorePayloads.Compaction("provider-native", 101, "摘要", Optional.of(state.digest())),
+                usage);
+        journal.commitCompaction(request, ticket, outcome, usage);
+        var restored = restartedJournal().beginOrRecover(running(fixture));
+        assertEquals(TurnExecutionPhase.READY_FOR_MODEL, restored.phase());
+        assertEquals(usage, restored.usage());
+        assertEquals(0, restored.modelInvocations());
+        assertEquals(
+                state,
+                core.contexts()
+                        .latest(
+                                fixture.turn().threadId(),
+                                fixture.turn().provider(),
+                                fixture.turn().promptManifestDigest())
+                        .orElseThrow()
+                        .window()
+                        .providerState()
+                        .orElseThrow());
+        assertThrows(PersistenceException.class, () -> journal.commitCompaction(request, ticket, outcome, usage));
+    }
+
+    @Test
+    void 未完成的本地摘要可重算而原生压缩重启保留未知结果边界() {
+        Fixture local = fixture("local-context");
+        journal.beginOrRecover(local.command());
+        var localRequest = new com.javaclaw.runtime.CompactionRequest(
+                local.command(), new com.javaclaw.runtime.ConversationWindow(List.of(), Optional.empty(), 100), 50, 0);
+        var abandoned = journal.recordCompactionIntent(localRequest, false);
+        assertEquals(
+                TurnExecutionPhase.READY_FOR_MODEL,
+                restartedJournal().beginOrRecover(running(local)).phase());
+        assertTrue(journal.recordCompactionIntent(localRequest, false).ordinal() > abandoned.ordinal());
+        Fixture nativeTurn = fixture("unknown-context");
+        journal.beginOrRecover(nativeTurn.command());
+        var nativeRequest =
+                new com.javaclaw.runtime.CompactionRequest(nativeTurn.command(), localRequest.window(), 50, 0);
+        journal.recordCompactionIntent(nativeRequest, true);
+        assertTrue(
+                restartedJournal().beginOrRecover(running(nativeTurn)).phase().unknownAfterRestart());
+    }
+
     private Fixture fixture(String suffix) {
         Workspace workspace = core.listWorkspaces().stream()
                 .findFirst()
@@ -195,12 +256,13 @@ class H2TurnCrashRecoveryTest {
         ToolCatalogSnapshot catalog =
                 new ToolCatalogSnapshot(com.javaclaw.api.TurnId.random(), 1, List.of(descriptor), permission, NOW);
         CorePayloads.Message message = new CorePayloads.Message(MessageRole.USER, suffix, List.of(), Optional.empty());
-        TurnStartRequest start = new TurnStartRequest(
+        TurnStartRequest start = com.javaclaw.server.TurnContractFixtures.request(
                 thread.id(),
-                budget(),
-                com.javaclaw.server.TurnContractFixtures.PROFILE,
-                com.javaclaw.server.TurnContractFixtures.PROVIDER,
-                com.javaclaw.server.TurnContractFixtures.PERMISSIONS,
+                new com.javaclaw.server.TurnContractFixtures.Selection(
+                        budget(),
+                        com.javaclaw.server.TurnContractFixtures.ROLE,
+                        com.javaclaw.server.TurnContractFixtures.PROVIDER,
+                        com.javaclaw.server.TurnContractFixtures.PERMISSIONS),
                 temporaryDirectory,
                 com.javaclaw.server.TurnContractFixtures.PROMPT_SNAPSHOT,
                 catalog,
@@ -227,7 +289,7 @@ class H2TurnCrashRecoveryTest {
 
     private void assertFrozenIdentity(AgentTurn expected) {
         AgentTurn current = core.findTurn(expected.id()).orElseThrow();
-        assertEquals(expected.profile(), current.profile());
+        assertEquals(expected.role(), current.role());
         assertEquals(expected.provider(), current.provider());
         assertEquals(expected.permissionProfile(), current.permissionProfile());
         assertEquals(expected.promptManifestDigest(), current.promptManifestDigest());

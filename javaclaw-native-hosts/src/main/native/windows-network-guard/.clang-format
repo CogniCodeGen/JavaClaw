@@ -1,0 +1,12 @@
+# 原生守护沿用仓库的四空格、120 列和完整控制块约定。
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 120
+BreakBeforeBraces: Attach
+AllowShortBlocksOnASingleLine: Never
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+SortIncludes: Never
+PointerAlignment: Left
+NamespaceIndentation: None

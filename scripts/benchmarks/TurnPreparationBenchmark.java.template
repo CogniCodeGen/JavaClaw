@@ -1,0 +1,150 @@
+package com.javaclaw.server.turn;
+
+import java.lang.reflect.Proxy;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
+import com.javaclaw.api.CancellationToken;
+import com.javaclaw.api.CorePayloads;
+import com.javaclaw.api.MessageRole;
+import com.javaclaw.api.PermissionProfile;
+import com.javaclaw.api.PermissionProfileRef;
+import com.javaclaw.api.ProviderAdapter;
+import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.ProviderRef;
+import com.javaclaw.api.SandboxExecutor;
+import com.javaclaw.api.ThreadExecutionIntent;
+import com.javaclaw.api.ToolCatalogSnapshot;
+import com.javaclaw.api.ToolDescriptor;
+import com.javaclaw.api.TurnBudget;
+import com.javaclaw.api.TurnId;
+import com.javaclaw.protocol.CanonicalJson;
+import com.javaclaw.protocol.CoreRpcContracts;
+import com.javaclaw.runtime.ModelCapabilities;
+import com.javaclaw.runtime.ModelEventSink;
+import com.javaclaw.runtime.ModelGateway;
+import com.javaclaw.runtime.ModelInvocation;
+import com.javaclaw.runtime.ModelInvocationResult;
+import com.javaclaw.runtime.ToolCatalogPort;
+import com.javaclaw.server.ProviderEndpointTestFixtures;
+import com.javaclaw.server.instructions.ProjectInstructionResolver;
+import com.javaclaw.server.persistence.AttachmentService;
+import com.javaclaw.server.persistence.CommandIdentity;
+import com.javaclaw.server.persistence.CoreCommandService;
+import com.javaclaw.server.persistence.H2Database;
+import com.javaclaw.server.persistence.ManagedWorktreeService;
+import com.javaclaw.server.persistence.PermissionProfileService;
+import com.javaclaw.server.persistence.ProviderService;
+import com.javaclaw.server.persistence.TurnPromptSnapshot;
+import com.javaclaw.server.persistence.TurnStartRequest;
+@VERSION_IMPORTS@
+
+/** 使用真实配置与 Prompt 准备路径测量延迟，所有模型和进程外部调用均被禁止。 */
+public final class TurnPreparationBenchmark {
+    private static final CanonicalJson JSON = new CanonicalJson();
+    private static volatile Object consumed;
+
+    private TurnPreparationBenchmark() {}
+
+    /**
+     * 创建临时权威配置，预热后输出每次准备延迟与实际 Prompt。
+     * @param args 数据根、预热次数、样本数、JSON 输出路径、可选基准 Prompt 文件
+     * @throws Exception 初始化或测量失败，不能输出通过结论
+     */
+    public static void main(String[] args) throws Exception {
+        Path root = Path.of(args[0]);
+        Files.createDirectories(root.resolve("workspace"));
+        Clock clock = Clock.fixed(Instant.parse("2026-09-07T00:00:00Z"), ZoneOffset.UTC);
+        H2Database database = new H2Database(root.resolve("@DATA_NAME@"));
+        database.initialize();
+        CoreCommandService core = new CoreCommandService(database, JSON, clock);
+        PermissionProfileService permissions = new PermissionProfileService(database, JSON, clock);
+        permissions.installStandardProfile();
+        ProviderService providers = new ProviderService(database, ignored -> true, JSON, clock);
+        providers.create(identity("provider/create", "provider"), "benchmark-provider",
+                ProviderEndpointTestFixtures.chat("Benchmark", ProviderAdapter.OPENAI_COMPATIBLE, "fake-model"),
+                ProviderLifecycle.ACTIVE);
+        ProviderRef provider = new ProviderRef("benchmark-provider", 1, "fake-model");
+        TurnBudget budget = new TurnBudget(32_000, 2_000, 4, 0, Duration.ofSeconds(60));
+        var workspace = core.createWorkspace(identity("workspace/create", "workspace"), "Benchmark", root.resolve("workspace"));
+        var thread = core.createThread(identity("thread/create", "thread"), workspace.id(), Optional.empty(),
+                ThreadExecutionIntent.WORKSPACE, "Benchmark");
+@VERSION_SETUP@
+        SandboxExecutor sandbox = (SandboxExecutor) Proxy.newProxyInstance(SandboxExecutor.class.getClassLoader(),
+                new Class<?>[] {SandboxExecutor.class}, (proxy, method, values) -> {
+                    throw new AssertionError("基准不得执行进程: " + method.getName());
+                });
+        ManagedWorktreeService worktrees = new ManagedWorktreeService(database,
+                new AttachmentService(database, JSON, clock), JSON, clock, sandbox);
+        TurnPlatformServices services = new TurnPlatformServices(core, roles, configurations, permissions,
+                new ProjectInstructionResolver(root.resolve("global"), clock), worktrees);
+        String platform = args.length > 4 ? Files.readString(Path.of(args[4]), StandardCharsets.UTF_8) : "固定平台基准说明。";
+        TurnCommandFactory factory = new TurnCommandFactory(services, new FakeModel(), new EmptyCatalog(), platform, JSON);
+        CorePayloads.Message message = new CorePayloads.Message(MessageRole.USER, "固定用户 Prompt：返回完成。", List.of(), Optional.empty());
+        CoreRpcContracts.TurnStartPayload request = @VERSION_REQUEST@;
+        measure(factory, request, message, Integer.parseInt(args[1]));
+        long[] samples = measure(factory, request, message, Integer.parseInt(args[2]));
+        TurnStartRequest prepared = factory.resolve(request, message);
+        TurnPromptSnapshot prompt = JSON.decode(prepared.promptSnapshot(), TurnPromptSnapshot.class);
+        String flatPrompt = @VERSION_PROMPT@;
+        Arrays.sort(samples);
+        String output = JSON.encode(Map.of("variant", "@VARIANT@", "samplesNanos", samples,
+                "p50Nanos", percentile(samples, 0.50), "p95Nanos", percentile(samples, 0.95),
+                "prompt", flatPrompt, "sampleCount", samples.length)).json();
+        Files.writeString(Path.of(args[3]), output, StandardCharsets.UTF_8);
+    }
+
+    private static long[] measure(TurnCommandFactory factory, CoreRpcContracts.TurnStartPayload request,
+            CorePayloads.Message message, int count) {
+        long[] times = new long[count];
+        for (int index = 0; index < count; index++) {
+            long started = System.nanoTime();
+            consumed = factory.resolve(request, message);
+            times[index] = System.nanoTime() - started;
+        }
+        return times;
+    }
+
+    private static long percentile(long[] samples, double percentile) {
+        return samples[Math.max(0, (int) Math.ceil(samples.length * percentile) - 1)];
+    }
+
+    private static CommandIdentity identity(String method, String key) {
+        return new CommandIdentity(method, key, 0, JSON.encode(Map.of("key", key)).sha256());
+    }
+
+    private static final class FakeModel implements ModelGateway {
+        @Override
+        public ModelCapabilities capabilities(String modelId) {
+            return new ModelCapabilities(false, false, false, false, false, false, false);
+        }
+
+        @Override
+        public ModelInvocationResult invoke(TurnId turn, ModelInvocation invocation, ModelEventSink events,
+                CancellationToken cancellation) {
+            throw new AssertionError("准备基准不得调用模型");
+        }
+    }
+
+    private static final class EmptyCatalog implements ToolCatalogPort {
+        @Override
+        public ToolCatalogSnapshot freeze(TurnId turn, PermissionProfile permissions, CancellationToken cancellation) {
+            return new ToolCatalogSnapshot(turn, 1, List.of(), permissions, Instant.EPOCH);
+        }
+
+        @Override
+        public List<ToolDescriptor> initialTools(ToolCatalogSnapshot snapshot) {
+            return List.of();
+        }
+    }
+}

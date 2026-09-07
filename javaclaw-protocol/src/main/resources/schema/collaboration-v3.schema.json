@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javaclaw.local/schema/collaboration-v3.schema.json",
+  "title": "JavaClaw Protocol v3 collaboration",
+  "$defs": {
+    "spawnCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "payload"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "parentTurnId",
+            "agentType",
+            "message",
+            "execution",
+            "title"
+          ],
+          "properties": {
+            "parentTurnId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "agentType": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1
+            },
+            "execution": {
+              "$ref": "execution-v3.schema.json#/$defs/overrides"
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "spawnResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "thread",
+        "turn",
+        "configuration"
+      ],
+      "properties": {
+        "thread": {
+          "$ref": "workspace-v3.schema.json#/$defs/thread"
+        },
+        "turn": {
+          "$ref": "core-interaction-v3.schema.json#/$defs/turn"
+        },
+        "configuration": {
+          "$ref": "execution-v3.schema.json#/$defs/summary"
+        }
+      }
+    },
+    "waitParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "turnId"
+      ],
+      "properties": {
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "interruptCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "payload"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "turnId",
+            "reason"
+          ],
+          "properties": {
+            "turnId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            }
+          }
+        }
+      }
+    }
+  }
+}

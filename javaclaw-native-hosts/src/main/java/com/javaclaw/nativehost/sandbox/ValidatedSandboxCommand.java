@@ -8,6 +8,7 @@ import java.util.Optional;
 
 import com.javaclaw.api.ResourceLimits;
 import com.javaclaw.api.SandboxMode;
+import com.javaclaw.nativehost.network.SandboxNetworkAccess;
 
 /** 已解析真实路径且可安全交给平台 backend 的内部命令。 */
 record ValidatedSandboxCommand(
@@ -24,7 +25,8 @@ record ValidatedSandboxCommand(
         List<Path> writeRoots,
         List<Path> executableRoots,
         boolean allowDelete,
-        Optional<Path> terminal) {
+        Optional<Path> terminal,
+        SandboxNetworkAccess networkAccess) {
     ValidatedSandboxCommand {
         argv = List.copyOf(argv);
         environment = Map.copyOf(environment);
@@ -34,6 +36,7 @@ record ValidatedSandboxCommand(
         writeRoots = List.copyOf(writeRoots);
         executableRoots = List.copyOf(executableRoots);
         terminal = java.util.Objects.requireNonNull(terminal, "terminal");
+        networkAccess = java.util.Objects.requireNonNull(networkAccess, "networkAccess");
     }
 
     @Override
@@ -56,7 +59,8 @@ record ValidatedSandboxCommand(
                 writeRoots,
                 executableRoots,
                 allowDelete,
-                Optional.of(path.toAbsolutePath().normalize()));
+                Optional.of(path.toAbsolutePath().normalize()),
+                networkAccess);
     }
 
     ValidatedSandboxCommand withExecutableRoots(List<Path> roots) {
@@ -74,6 +78,26 @@ record ValidatedSandboxCommand(
                 writeRoots,
                 roots,
                 allowDelete,
-                terminal);
+                terminal,
+                networkAccess);
+    }
+
+    ValidatedSandboxCommand withNetworkAccess(SandboxNetworkAccess access) {
+        return new ValidatedSandboxCommand(
+                id,
+                argv,
+                executable,
+                workingDirectory,
+                environment,
+                standardInput,
+                mode,
+                timeout,
+                limits,
+                readRoots,
+                writeRoots,
+                executableRoots,
+                allowDelete,
+                terminal,
+                access);
     }
 }

@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.ApprovalDecision;
 import com.javaclaw.api.ApprovalRecord;
@@ -64,7 +64,7 @@ import com.javaclaw.runtime.ModelToolCall;
 import com.javaclaw.runtime.ModelUsage;
 import com.javaclaw.server.AppServerBootstrap;
 import com.javaclaw.server.BuiltinManagementFixtures;
-import com.javaclaw.server.ProviderProfileRpcFixtures;
+import com.javaclaw.server.ProviderRoleRpcFixtures;
 import com.javaclaw.server.rpc.AppServerSession;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -73,7 +73,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SiteBrowserToolIntegrationTest {
     private static final String PROFILE_ID = "browser-test";
-    private static final String AGENT_PROFILE_ID = "browser-agent";
+    private static final String AGENT_ROLE_ID = "browser-agent";
     private static final String PROVIDER_ID = "browser-provider";
     private static final String SNAPSHOT_TOOL = "site_snapshot";
     private static final URI PAGE = URI.create("https://docs.example.com/start");
@@ -86,12 +86,12 @@ class SiteBrowserToolIntegrationTest {
         SnapshotService service = new SnapshotService();
         SnapshotModel model = new SnapshotModel();
         try (AppServerBootstrap.Components components = AppServerBootstrap.create(
-                temporaryDirectory.resolve("data-v5"), Clock.systemUTC(), model, enabled -> {}, service)) {
+                temporaryDirectory.resolve("data-v6"), Clock.systemUTC(), model, enabled -> {}, service)) {
             AppServerSession session = components.newSession();
             initialize(session, components);
             Workspace workspace = createWorkspace(session, components);
             ConversationThread thread = createThread(session, components, workspace);
-            installProfile(session, components, ApprovalRequirement.NONE);
+            installExecutionSettings(session, components, ApprovalRequirement.NONE);
             createSite(session, components, workspace, thread);
 
             AgentTurn accepted = startTurn(session, components, thread);
@@ -113,7 +113,7 @@ class SiteBrowserToolIntegrationTest {
         SnapshotService service = new SnapshotService();
         SnapshotModel model = new SnapshotModel();
         try (AppServerBootstrap.Components components = AppServerBootstrap.create(
-                temporaryDirectory.resolve("approved/data-v5"), Clock.systemUTC(), model, enabled -> {}, service)) {
+                temporaryDirectory.resolve("approved/data-v6"), Clock.systemUTC(), model, enabled -> {}, service)) {
             Fixture fixture = prepare(components, ApprovalRequirement.RISKY);
             AgentTurn accepted = startTurn(fixture.session(), components, fixture.thread());
 
@@ -142,7 +142,7 @@ class SiteBrowserToolIntegrationTest {
         SnapshotService service = new SnapshotService();
         SnapshotModel model = new SnapshotModel();
         try (AppServerBootstrap.Components components = AppServerBootstrap.create(
-                temporaryDirectory.resolve("denied/data-v5"), Clock.systemUTC(), model, enabled -> {}, service)) {
+                temporaryDirectory.resolve("denied/data-v6"), Clock.systemUTC(), model, enabled -> {}, service)) {
             Fixture fixture = prepare(components, ApprovalRequirement.RISKY);
             AgentTurn accepted = startTurn(fixture.session(), components, fixture.thread());
             ApprovalRecord pending = awaitPendingApproval(fixture.session(), components, accepted.id());
@@ -162,7 +162,7 @@ class SiteBrowserToolIntegrationTest {
         SnapshotService service = new SnapshotService();
         SnapshotModel model = new SnapshotModel();
         try (AppServerBootstrap.Components components = AppServerBootstrap.create(
-                temporaryDirectory.resolve("cancelled/data-v5"), Clock.systemUTC(), model, enabled -> {}, service)) {
+                temporaryDirectory.resolve("cancelled/data-v6"), Clock.systemUTC(), model, enabled -> {}, service)) {
             Fixture fixture = prepare(components, ApprovalRequirement.RISKY);
             AgentTurn accepted = startTurn(fixture.session(), components, fixture.thread());
             ApprovalRecord pending = awaitPendingApproval(fixture.session(), components, accepted.id());
@@ -198,12 +198,12 @@ class SiteBrowserToolIntegrationTest {
         initialize(session, components);
         Workspace workspace = createWorkspace(session, components);
         ConversationThread thread = createThread(session, components, workspace);
-        installProfile(session, components, approval);
+        installExecutionSettings(session, components, approval);
         createSite(session, components, workspace, thread);
         return new Fixture(session, thread);
     }
 
-    private void installProfile(
+    private void installExecutionSettings(
             AppServerSession session, AppServerBootstrap.Components components, ApprovalRequirement approval) {
         PermissionProfileRpcContracts.ClonePayload clone =
                 new PermissionProfileRpcContracts.ClonePayload(new PermissionProfileRef("standard", 1), PROFILE_ID);
@@ -233,13 +233,13 @@ class SiteBrowserToolIntegrationTest {
                         new WriteCommand("profile-key", 1, components.json().encode(payload)))),
                 components,
                 PermissionProfile.class);
-        ProviderProfileRpcFixtures.install(
+        ProviderRoleRpcFixtures.install(
                 session,
                 components,
-                new ProviderProfileRpcFixtures.Installation(
+                new ProviderRoleRpcFixtures.Installation(
                         PROVIDER_ID,
                         SnapshotModel.ID,
-                        AGENT_PROFILE_ID,
+                        AGENT_ROLE_ID,
                         new PermissionProfileRef(PROFILE_ID, 2),
                         Set.of(CoreTools.SEARCH_NAME, SNAPSHOT_TOOL),
                         new TurnBudget(4_000, 1_000, 3, 0, Duration.ofSeconds(30))));
@@ -281,15 +281,17 @@ class SiteBrowserToolIntegrationTest {
     private AgentTurn startTurn(
             AppServerSession session, AppServerBootstrap.Components components, ConversationThread thread) {
         CoreRpcContracts.TurnStartPayload payload = new CoreRpcContracts.TurnStartPayload(
-                thread.id(), Optional.of(new AgentProfileRef(AGENT_PROFILE_ID, 1)), "读取站点页面");
+                thread.id(), TurnV6Fixtures.selection(new AgentRoleRef(AGENT_ROLE_ID, 1)), "读取站点页面");
         return decode(
-                session.handle(request(
+                        session.handle(request(
+                                components,
+                                "turn",
+                                "turn/start",
+                                new WriteCommand(
+                                        "turn-key", 0, components.json().encode(payload)))),
                         components,
-                        "turn",
-                        "turn/start",
-                        new WriteCommand("turn-key", 0, components.json().encode(payload)))),
-                components,
-                AgentTurn.class);
+                        CoreRpcContracts.TurnStartResult.class)
+                .turn();
     }
 
     private Workspace createWorkspace(AppServerSession session, AppServerBootstrap.Components components) {

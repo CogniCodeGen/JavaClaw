@@ -498,7 +498,8 @@ class KnowledgeExtensionBranchCoverageTest {
                 source.credentials(),
                 source.privateNetworkGrants(),
                 source.services(),
-                source.embeddings());
+                source.embeddings(),
+                com.javaclaw.extension.spi.WorkspaceExecutionPort.denied());
     }
 
     private static com.javaclaw.extension.spi.ExtensionJobRuntimeContext runtime(BuiltinExtensionTestSupport support) {

@@ -60,8 +60,8 @@ class TurnJournalBranchesTest {
     private H2TurnJournal journal;
 
     @BeforeEach
-    void initializeDataV5() {
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+    void initializeDataV6() {
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         core = new CoreCommandService(database, json, Clock.fixed(NOW, ZoneOffset.UTC));
@@ -336,12 +336,13 @@ class TurnJournalBranchesTest {
                 com.javaclaw.server.TurnContractFixtures.TOOL_CATALOG.permissionCeiling(),
                 NOW);
         CorePayloads.Message message = new CorePayloads.Message(MessageRole.USER, suffix, List.of(), Optional.empty());
-        TurnStartRequest start = new TurnStartRequest(
+        TurnStartRequest start = com.javaclaw.server.TurnContractFixtures.request(
                 thread.id(),
-                budget(),
-                com.javaclaw.server.TurnContractFixtures.PROFILE,
-                com.javaclaw.server.TurnContractFixtures.PROVIDER,
-                com.javaclaw.server.TurnContractFixtures.PERMISSIONS,
+                new com.javaclaw.server.TurnContractFixtures.Selection(
+                        budget(),
+                        com.javaclaw.server.TurnContractFixtures.ROLE,
+                        com.javaclaw.server.TurnContractFixtures.PROVIDER,
+                        com.javaclaw.server.TurnContractFixtures.PERMISSIONS),
                 temporaryDirectory,
                 com.javaclaw.server.TurnContractFixtures.PROMPT_SNAPSHOT,
                 catalog,

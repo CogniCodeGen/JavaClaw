@@ -57,8 +57,8 @@ class PersistenceIntegrityTest {
     private H2TurnJournal journal;
 
     @BeforeEach
-    void initializeDataV5() {
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+    void initializeDataV6() {
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         clock = Clock.fixed(NOW, ZoneOffset.UTC);

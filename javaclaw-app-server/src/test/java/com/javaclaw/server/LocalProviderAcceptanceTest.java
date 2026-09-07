@@ -15,19 +15,23 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.AgentTurn;
+import com.javaclaw.api.ApprovalPolicy;
 import com.javaclaw.api.CancellationSource;
+import com.javaclaw.api.CapabilityNarrowing;
 import com.javaclaw.api.ConversationThread;
 import com.javaclaw.api.CorePayloads;
 import com.javaclaw.api.CoreSchemas;
 import com.javaclaw.api.EmbeddingBinding;
+import com.javaclaw.api.ExecutionConfiguration;
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.ItemEnvelope;
 import com.javaclaw.api.MessageRole;
+import com.javaclaw.api.PermissionConstraint;
 import com.javaclaw.api.PermissionProfileRef;
-import com.javaclaw.api.ProfileBinding;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderAdapterOptions;
 import com.javaclaw.api.ProviderAuthentication;
@@ -53,15 +57,17 @@ import com.javaclaw.extension.spi.EmbeddingPurpose;
 import com.javaclaw.model.ProviderCredentialResolver;
 import com.javaclaw.model.ProviderEmbeddingAdapterFactory;
 import com.javaclaw.model.ProviderModelAdapterFactory;
+import com.javaclaw.protocol.AgentRoleRpcContracts;
 import com.javaclaw.protocol.CapabilityAdvertisement;
 import com.javaclaw.protocol.ClientInfo;
 import com.javaclaw.protocol.CoreRpcContracts;
+import com.javaclaw.protocol.ExecutionRpcContracts;
 import com.javaclaw.protocol.ExtensionRpcContracts;
 import com.javaclaw.protocol.InitializeParams;
 import com.javaclaw.protocol.JsonRpcRequest;
 import com.javaclaw.protocol.JsonRpcResponse;
 import com.javaclaw.protocol.ProtocolVersion;
-import com.javaclaw.protocol.ProviderProfileRpcContracts;
+import com.javaclaw.protocol.ProviderRpcContracts;
 import com.javaclaw.protocol.ProviderVerificationRpcContracts;
 import com.javaclaw.protocol.RpcId;
 import com.javaclaw.protocol.WriteCommand;
@@ -81,7 +87,7 @@ class LocalProviderAcceptanceTest {
     private static final String EMBEDDING_MODEL_PROPERTY = "javaclaw.live.embedding-model";
     private static final String EMBEDDING_DIMENSIONS_PROPERTY = "javaclaw.live.embedding-dimensions";
     private static final String PROVIDER_ID = "live-local-provider";
-    private static final String PROFILE_ID = "live-local-profile";
+    private static final String ROLE_ID = "live-local-role";
     private static final String MEMORY_PROPOSAL_ID = "live-memory-proposal";
     private static final String MEMORY_MARKER = "JAVACLAW_LIVE_MEMORY_ACCEPTANCE_20260903";
     private static final String SKILL_PROPOSAL_ID = "live-skill-proposal";
@@ -111,8 +117,8 @@ class LocalProviderAcceptanceTest {
             ProviderVerificationResult embeddingVerification =
                     rpc.verifyProvider(embedding, ProviderModelPurpose.EMBEDDING, "live-embedding-verify");
             EmbeddingBinding embeddingBinding = rpc.bindEmbedding(embedding);
-            AgentProfileRef profile = rpc.createProfile(chat);
-            ProfileBinding profileBinding = rpc.bindDefaultProfile(workspace, profile);
+            AgentRoleRef role = rpc.createRole(chat);
+            ExecutionConfiguration roleConfiguration = rpc.saveWorkspaceExecutionDefaults(workspace);
             AgentTurn accepted = rpc.startTurn(thread);
             AgentTurn terminal = rpc.awaitTerminal(accepted.id());
             List<ItemEnvelope> items = rpc.listItems(thread);
@@ -123,8 +129,8 @@ class LocalProviderAcceptanceTest {
                     ProviderVerificationState.SUCCEEDED,
                     embeddingVerification.state(),
                     embeddingVerification::toString);
-            assertEquals(profile, profileBinding.profile());
-            assertEquals(profile, accepted.profile());
+            assertEquals(role, roleConfiguration.overrides().role().orElseThrow());
+            assertEquals(role, accepted.role());
             assertEquals(chat, accepted.provider());
             assertEquals(TurnStatus.COMPLETED, terminal.status(), terminal::toString);
             ItemEnvelope userItem = requireMessage(items, MessageRole.USER, MEMORY_MARKER);
@@ -140,7 +146,7 @@ class LocalProviderAcceptanceTest {
 
     private Boot bootstrap() {
         AppServerBootstrap.Foundation foundation = PlatformFoundationFactory.create(
-                temporaryDirectory.resolve("data-v5"),
+                temporaryDirectory.resolve("data-v6"),
                 Clock.systemUTC(),
                 new LockedMasterKeyProtector(),
                 required -> {});
@@ -381,6 +387,7 @@ class LocalProviderAcceptanceTest {
         private final AppServerBootstrap.Components components;
         private final AppServerSession session;
         private final AtomicInteger requestIds = new AtomicInteger();
+        private ExecutionOverrides execution = ExecutionOverrides.empty();
 
         private RpcClient(AppServerBootstrap.Components components) {
             this.components = components;
@@ -390,7 +397,7 @@ class LocalProviderAcceptanceTest {
         private void initialize() {
             InitializeParams params = new InitializeParams(
                     ProtocolVersion.CURRENT,
-                    new ClientInfo("local-provider-acceptance", "5.0"),
+                    new ClientInfo("local-provider-acceptance", "6.0"),
                     new CapabilityAdvertisement(Set.of("core.item-envelope"), Set.of()));
             assertTrue(call("initialize/session", params).result().isPresent());
         }
@@ -435,7 +442,7 @@ class LocalProviderAcceptanceTest {
                     "provider/create",
                     "live-provider-create",
                     0,
-                    new ProviderProfileRpcContracts.ProviderCreatePayload(PROVIDER_ID, spec, ProviderLifecycle.ACTIVE),
+                    new ProviderRpcContracts.ProviderCreatePayload(PROVIDER_ID, spec, ProviderLifecycle.ACTIVE),
                     ProviderEndpoint.class);
         }
 
@@ -444,7 +451,7 @@ class LocalProviderAcceptanceTest {
                     "provider/embeddingBinding/update",
                     "live-embedding-bind",
                     0,
-                    new ProviderProfileRpcContracts.EmbeddingBindingUpdatePayload(embedding),
+                    new ProviderRpcContracts.EmbeddingBindingUpdatePayload(embedding),
                     EmbeddingBinding.class);
         }
 
@@ -460,36 +467,50 @@ class LocalProviderAcceptanceTest {
                     ProviderVerificationResult.class);
         }
 
-        private AgentProfileRef createProfile(ProviderRef chat) {
-            AgentProfileSpec spec = new AgentProfileSpec(
+        private AgentRoleRef createRole(ProviderRef chat) {
+            AgentRoleSpec spec = new AgentRoleSpec(
                     "Local Acceptance Agent",
+                    "",
                     "直接、简短地回答用户，不要省略最终答案。",
-                    chat,
-                    new PermissionProfileRef("standard", 1),
-                    Set.of(),
-                    new TurnBudget(32_000, 2_048, 4, 0, Duration.ofSeconds(120)));
-            AgentProfile profile = write(
-                    "profile/create",
-                    "live-profile-create",
+                    Optional.empty(),
+                    Optional.empty(),
+                    CapabilityNarrowing.inherit(),
+                    PermissionConstraint.INHERIT,
+                    java.util.Map.of());
+            AgentRole role = write(
+                    "agent/role/create",
+                    "live-role-create",
                     0,
-                    new ProviderProfileRpcContracts.AgentProfileCreatePayload(PROFILE_ID, spec),
-                    AgentProfile.class);
-            return new AgentProfileRef(profile.id(), profile.revision());
+                    new AgentRoleRpcContracts.CreatePayload(ROLE_ID, spec),
+                    AgentRole.class);
+            execution = new ExecutionOverrides(
+                    Optional.of(role.ref()),
+                    Optional.of(chat),
+                    Optional.of(new PermissionProfileRef("standard", 1)),
+                    Optional.of(ApprovalPolicy.NONE),
+                    Optional.of(new TurnBudget(32_000, 2_048, 4, 0, Duration.ofSeconds(120))),
+                    Optional.of(Set.of()),
+                    Optional.empty());
+            return role.ref();
         }
 
-        private ProfileBinding bindDefaultProfile(Workspace workspace, AgentProfileRef profile) {
-            ProviderProfileRpcContracts.ProfileBindingUpdatePayload payload =
-                    new ProviderProfileRpcContracts.ProfileBindingUpdatePayload(
-                            workspace.id(), Optional.empty(), profile);
-            return write("profile/binding/update", "live-profile-bind", 0, payload, ProfileBinding.class);
+        private ExecutionConfiguration saveWorkspaceExecutionDefaults(Workspace workspace) {
+            ExecutionRpcContracts.DefaultUpdatePayload payload =
+                    new ExecutionRpcContracts.DefaultUpdatePayload(Optional.of(workspace.id()), execution);
+            return write(
+                    "execution/default/update", "live-execution-default", 0, payload, ExecutionConfiguration.class);
         }
 
         private AgentTurn startTurn(ConversationThread thread) {
             CoreRpcContracts.TurnStartPayload payload = new CoreRpcContracts.TurnStartPayload(
                     thread.id(),
-                    Optional.empty(),
-                    "请只用一句话确认本地模型对话成功，并在答案中包含 LIVE_CHAT_OK。" + " 这条消息也包含记忆验收标记：" + MEMORY_MARKER);
-            return write("turn/start", "live-turn-start", 0, payload, AgentTurn.class);
+                    ExecutionOverrides.empty(),
+                    "请只用一句话确认本地模型对话成功，并在答案中包含 LIVE_CHAT_OK。" + " 这条消息也包含记忆验收标记：" + MEMORY_MARKER,
+                    List.of());
+            CoreRpcContracts.TurnStartResult result =
+                    write("turn/start", "live-turn-start", 0, payload, CoreRpcContracts.TurnStartResult.class);
+            assertEquals(result.turn().resolvedConfig(), result.configuration());
+            return result.turn();
         }
 
         private AgentTurn awaitTerminal(TurnId turnId) throws InterruptedException {

@@ -62,7 +62,7 @@ class WorkerImageAssemblerMainTest {
     void Knowledge和Skill仅在固定入口与工具链完整时发布标记() throws Exception {
         Path knowledge = runtimeImage("knowledge");
         Files.createDirectories(knowledge.resolve("app"));
-        Files.createFile(knowledge.resolve("app/javaclaw-knowledge-worker-5.0.jar"));
+        Files.createFile(knowledge.resolve("app/javaclaw-knowledge-worker-6.0.jar"));
         Files.createFile(knowledge.resolve("app/pdfbox-3.0.jar"));
         Files.createFile(knowledge.resolve("app/poi-ooxml-5.4.jar"));
         Path skill = runtimeImage("skill");
@@ -94,7 +94,7 @@ class WorkerImageAssemblerMainTest {
     private Path browserImage() throws IOException {
         Path image = runtimeImage("browser");
         Files.createDirectories(image.resolve("app"));
-        Files.createFile(image.resolve("app/javaclaw-browser-service-5.0.jar"));
+        Files.createFile(image.resolve("app/javaclaw-browser-service-6.0.jar"));
         Files.createFile(image.resolve("app/playwright-1.52.0.jar"));
         Files.createDirectories(image.resolve("browser"));
         return image;

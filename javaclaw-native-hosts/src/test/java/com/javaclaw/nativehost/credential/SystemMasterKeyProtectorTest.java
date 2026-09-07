@@ -81,7 +81,7 @@ class SystemMasterKeyProtectorTest {
         runner.reply(3, new byte[0]);
 
         protector.store("linux-key", KEY);
-        assertTrue(runner.commands().getFirst().contains("--label=JavaClaw v5 master key"));
+        assertTrue(runner.commands().getFirst().contains("--label=JavaClaw v6 master key"));
         assertArrayEquals(KEY, protector.load("linux-key").orElseThrow());
         assertThrows(MasterKeyProtectionException.class, () -> protector.delete("linux-key"));
     }

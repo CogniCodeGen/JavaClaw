@@ -13,6 +13,8 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.javaclaw.nativehost.ManagedRuntimeDirectory;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -22,6 +24,8 @@ class UnixServerSupervisorTest {
     Path temporaryDirectory;
 
     private final String originalHome = System.getProperty("user.home");
+    private final String originalDataRoot = System.getProperty("javaclaw.data.root");
+    private final String originalLogDirectory = System.getProperty("javaclaw.log.dir");
     private Path shortHome;
 
     @AfterEach
@@ -30,6 +34,16 @@ class UnixServerSupervisorTest {
             System.clearProperty("user.home");
         } else {
             System.setProperty("user.home", originalHome);
+        }
+        if (originalDataRoot == null) {
+            System.clearProperty("javaclaw.data.root");
+        } else {
+            System.setProperty("javaclaw.data.root", originalDataRoot);
+        }
+        if (originalLogDirectory == null) {
+            System.clearProperty("javaclaw.log.dir");
+        } else {
+            System.setProperty("javaclaw.log.dir", originalLogDirectory);
         }
         deleteShortHome();
     }
@@ -55,7 +69,7 @@ class UnixServerSupervisorTest {
 
         IOException failure = assertThrows(IOException.class, () -> new UnixServerSupervisor(layout).ensureRunning());
 
-        Path log = shortHome.resolve(".javaclaw/data-v5/logs/app-server.log");
+        Path log = shortHome.resolve("data-v6/logs/app-server.log");
         assertEquals("App Server 启动失败，请检查日志: " + log, failure.getMessage());
         assertTrue(Files.isRegularFile(log));
         assertTrue(Files.readString(log).contains("com.javaclaw.server.AppServerMain"));
@@ -64,7 +78,11 @@ class UnixServerSupervisorTest {
     private Path configureShortHome() throws IOException {
         shortHome = Files.createTempDirectory(Path.of("/tmp"), "jcs");
         System.setProperty("user.home", shortHome.toString());
-        Path socket = shortHome.resolve(".javaclaw/run/app-server-v5.sock");
+        Path dataRoot = shortHome.resolve("data-v6");
+        System.setProperty("javaclaw.data.root", dataRoot.toString());
+        System.setProperty("javaclaw.log.dir", dataRoot.resolve("logs").toString());
+        ManagedRuntimeDirectory.prepare(dataRoot);
+        Path socket = dataRoot.resolve("run/app-server-v6.sock");
         Files.createDirectories(socket.getParent());
         return socket;
     }

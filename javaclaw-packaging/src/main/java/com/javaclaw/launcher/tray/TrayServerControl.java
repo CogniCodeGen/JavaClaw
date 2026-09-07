@@ -21,7 +21,7 @@ public interface TrayServerControl {
     void start() throws Exception;
 
     /**
-     * 通过 Protocol v2 请求协作式停止，禁止强制杀进程。
+     * 通过 Protocol v3 请求协作式停止，禁止强制杀进程。
      *
      * @return lease 或其他客户端可能拒绝操作
      * @throws Exception 本地 RPC 或等待退出失败

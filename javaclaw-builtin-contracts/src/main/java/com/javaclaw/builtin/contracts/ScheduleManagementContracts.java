@@ -5,7 +5,7 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.ExecutionOverrides;
 
 /** Schedule 管理中心的强类型写入契约。 */
 public final class ScheduleManagementContracts {
@@ -28,7 +28,7 @@ public final class ScheduleManagementContracts {
     /**
      * 创建或编辑一个 Schedule Definition。
      *
-     * <p>Profile 标识和版本必须来自管理页权威目录绑定。revision、固定调度策略和更新时间由服务端生成，客户端契约故意不包含这些字段。
+     * <p>Role、Provider 和 PermissionProfile 分别使用权威目录中的精确版本。revision、固定调度策略和更新时间由服务端生成，客户端契约故意不包含这些字段。
      *
      * @param id Schedule 标识；编辑时由权威详情数据源绑定
      * @param name 用户可见名称
@@ -43,8 +43,7 @@ public final class ScheduleManagementContracts {
      * @param zoneId IANA Zone；仅 Cron 存在
      * @param intervalMinutes 固定间隔分钟数；仅固定间隔存在
      * @param firstFireAt 首次触发时间；仅固定间隔存在
-     * @param profileId 权威 Agent Profile 标识
-     * @param profileRevision 权威 Agent Profile 版本
+     * @param execution 独立 Role、模型、权限与审批选择
      * @param title 新 Thread 标题
      * @param instruction 冻结到 Occurrence 的 Turn 指令
      * @param maximumTurns Execution 最大 Turn 数
@@ -67,8 +66,7 @@ public final class ScheduleManagementContracts {
             Optional<String> zoneId,
             Optional<Long> intervalMinutes,
             Optional<Instant> firstFireAt,
-            String profileId,
-            long profileRevision,
+            ExecutionOverrides execution,
             String title,
             String instruction,
             int maximumTurns,
@@ -92,8 +90,7 @@ public final class ScheduleManagementContracts {
             zoneId = optionalText(zoneId, "zoneId", MAXIMUM_ZONE_LENGTH);
             intervalMinutes = Objects.requireNonNull(intervalMinutes, "intervalMinutes");
             firstFireAt = Objects.requireNonNull(firstFireAt, "firstFireAt");
-            profileId = boundedText(profileId, "profileId", MAXIMUM_ID_LENGTH);
-            profileRevision = ContractValidation.revision(profileRevision);
+            Objects.requireNonNull(execution, "execution");
             title = boundedText(title, "title", MAXIMUM_TITLE_LENGTH);
             instruction = boundedText(instruction, "instruction", MAXIMUM_INSTRUCTION_LENGTH);
             new OrchestrationContracts.ExecutionBudget(maximumTurns, inputTokens, outputTokens, toolCalls);
@@ -111,15 +108,6 @@ public final class ScheduleManagementContracts {
          */
         public ScheduleContracts.Timing timing() {
             return buildTiming(timingKind, cronExpression, zoneId, intervalMinutes, firstFireAt);
-        }
-
-        /**
-         * 返回管理中心选择的精确 Profile。
-         *
-         * @return Profile 引用
-         */
-        public AgentProfileRef profile() {
-            return new AgentProfileRef(profileId, profileRevision);
         }
 
         /**

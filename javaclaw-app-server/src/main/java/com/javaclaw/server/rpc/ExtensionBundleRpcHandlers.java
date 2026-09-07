@@ -8,7 +8,7 @@ import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.WriteCommand;
 import com.javaclaw.server.extension.thirdparty.ThirdPartyExtensionHost;
 
-/** Protocol v2 Bundle、Trust Key 与 Trash 管理方法的薄映射。 */
+/** Protocol v3 Bundle、Trust Key 与 Trash 管理方法的薄映射。 */
 public final class ExtensionBundleRpcHandlers {
     private final ThirdPartyExtensionHost extensions;
     private final CanonicalJson json;

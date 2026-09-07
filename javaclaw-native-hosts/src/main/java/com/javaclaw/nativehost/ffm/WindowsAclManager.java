@@ -3,12 +3,12 @@ package com.javaclaw.nativehost.ffm;
 import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
@@ -22,9 +22,6 @@ final class WindowsAclManager {
     private static final int UNPROTECTED_DACL_SECURITY_INFORMATION = 0x20000000;
     private static final int SE_DACL_PROTECTED = 0x1000;
     private static final int SDDL_REVISION_1 = 1;
-    private static final int GRANT_ACCESS = 1;
-    private static final int DENY_ACCESS = 3;
-    private static final int SUB_CONTAINERS_AND_OBJECTS_INHERIT = 3;
     private static final int TRUSTEE_IS_SID = 0;
     private static final int TRUSTEE_IS_UNKNOWN = 0;
     private static final int FILE_GENERIC_READ = 0x00120089;
@@ -42,7 +39,8 @@ final class WindowsAclManager {
         int write = read | FILE_GENERIC_WRITE | (request.allowDelete() ? DELETE : 0);
         int deny = request.allowDelete() ? 0 : DELETE | FILE_DELETE_CHILD;
         request.writeRoots().forEach(path -> merge(grants, path, new Grant(write, deny)));
-        merge(grants, request.workingDirectory(), new Grant(read, 0));
+        // cwd 本身只需遍历；窄 readRoots 不应因进程工作目录而获得其余文件的读取权限。
+        merge(grants, request.workingDirectory(), new Grant(0x20 | 0x100000, 0));
         if (!WindowsSandboxPaths.trusted(request.executable())) {
             merge(grants, request.executable(), new Grant(read, 0));
         }
@@ -56,6 +54,7 @@ final class WindowsAclManager {
             IOException cleanup = restore(snapshots);
             if (cleanup != null) {
                 failure.addSuppressed(cleanup);
+                throw restorationFailure(failure);
             }
             throw failure;
         }
@@ -66,11 +65,13 @@ final class WindowsAclManager {
         for (int index = snapshots.size() - 1; index >= 0; index--) {
             try {
                 restore(snapshots.get(index));
-            } catch (IOException current) {
+            } catch (IOException | RuntimeException current) {
+                IOException cleanup =
+                        current instanceof IOException io ? io : new IOException("DACL restore failed", current);
                 if (failure == null) {
-                    failure = current;
+                    failure = cleanup;
                 } else {
-                    failure.addSuppressed(current);
+                    failure.addSuppressed(cleanup);
                 }
             }
         }
@@ -82,31 +83,22 @@ final class WindowsAclManager {
     }
 
     private static Snapshot change(Path path, MemorySegment sid, Grant grant) throws IOException {
-        WindowsSandboxPaths.rejectReparsePoint(path);
-        var backend = WindowsSandboxNative.requireBackend();
+        WindowsFileHandle handle = WindowsFileHandle.openPath(
+                path,
+                WindowsFileHandle.READ_CONTROL | WindowsFileHandle.WRITE_DAC | WindowsFileHandle.ATTRIBUTES,
+                WindowsFileHandle.ANY);
+        Snapshot snapshot = null;
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment daclOut = arena.allocate(ADDRESS);
-            MemorySegment descriptorOut = arena.allocate(ADDRESS);
-            var current = backend.invoke(
-                    backend.getNamedSecurityInfo,
-                    WindowsSandboxNative.wide(arena, path.toString()),
-                    SE_FILE_OBJECT,
-                    DACL_SECURITY_INFORMATION,
-                    MemorySegment.NULL,
-                    MemorySegment.NULL,
-                    daclOut,
-                    MemorySegment.NULL,
-                    descriptorOut);
-            if (current.number() != 0) {
-                throw WindowsSandboxNative.status("GetNamedSecurityInfoW", current.number());
-            }
-            MemorySegment descriptor = descriptorOut.get(ADDRESS, 0);
+            MemorySegment descriptor = readDescriptor(handle, daclOut, arena);
             try {
                 boolean protectedDacl = protectedDacl(descriptor, arena);
-                Snapshot snapshot = new Snapshot(path, descriptorSddl(descriptor, arena), protectedDacl);
-                MemorySegment updated = addEntries(path, sid, grant, daclOut.get(ADDRESS, 0), arena);
+                String sddl = descriptorSddl(descriptor, arena);
+                var evidence = WindowsAclEvidence.capture(handle, path, sddl, protectedDacl);
+                snapshot = new Snapshot(handle, sddl, protectedDacl, evidence);
+                MemorySegment updated = addEntries(handle.directory(), sid, grant, daclOut.get(ADDRESS, 0), arena);
                 try {
-                    setDacl(path, updated, protectedDacl, arena);
+                    setDacl(handle, updated, protectedDacl);
                 } finally {
                     WindowsSandboxNative.localFree(updated);
                 }
@@ -114,19 +106,57 @@ final class WindowsAclManager {
             } finally {
                 WindowsSandboxNative.localFree(descriptor);
             }
+        } catch (IOException | RuntimeException failure) {
+            try {
+                if (snapshot == null) {
+                    handle.close();
+                } else {
+                    restore(snapshot);
+                }
+            } catch (IOException | RuntimeException cleanup) {
+                failure.addSuppressed(cleanup);
+                throw restorationFailure(failure);
+            }
+            throw failure;
         }
     }
 
-    private static MemorySegment addEntries(
-            Path path, MemorySegment sid, Grant grant, MemorySegment currentDacl, Arena arena) throws IOException {
+    private static WindowsSandbox.AclRestorationException restorationFailure(Throwable cause) {
+        return new WindowsSandbox.AclRestorationException(
+                "Windows Sandbox partial ACL restoration failed; lock the Workspace", cause);
+    }
+
+    private static MemorySegment readDescriptor(WindowsFileHandle handle, MemorySegment daclOut, Arena arena)
+            throws IOException {
         var backend = WindowsSandboxNative.requireBackend();
-        int count = grant.denied() == 0 ? 1 : 2;
+        MemorySegment descriptorOut = arena.allocate(ADDRESS);
+        var current = backend.invoke(
+                backend.getSecurityInfo,
+                handle.address(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                MemorySegment.NULL,
+                MemorySegment.NULL,
+                daclOut,
+                MemorySegment.NULL,
+                descriptorOut);
+        if (current.number() != 0) {
+            throw WindowsSandboxNative.status("GetSecurityInfo", current.number());
+        }
+        return descriptorOut.get(ADDRESS, 0);
+    }
+
+    private static MemorySegment addEntries(
+            boolean directory, MemorySegment sid, Grant grant, MemorySegment currentDacl, Arena arena)
+            throws IOException {
+        var backend = WindowsSandboxNative.requireBackend();
+        var policy = WindowsFileAclPolicy.entries(directory, grant.allowed(), grant.denied());
+        int count = policy.size();
         MemorySegment entries = arena.allocate(
                 WindowsSandboxNative.EXPLICIT_ACCESS.byteSize() * count,
                 WindowsSandboxNative.EXPLICIT_ACCESS.byteAlignment());
-        fillEntry(entries, 0, path, sid, grant.allowed(), GRANT_ACCESS);
-        if (count == 2) {
-            fillEntry(entries, 1, path, sid, grant.denied(), DENY_ACCESS);
+        for (int index = 0; index < count; index++) {
+            fillEntry(entries, index, sid, policy.get(index));
         }
         MemorySegment aclOut = arena.allocate(ADDRESS);
         var result = backend.invoke(backend.setEntriesInAcl, count, entries, currentDacl, aclOut);
@@ -137,12 +167,12 @@ final class WindowsAclManager {
     }
 
     private static void fillEntry(
-            MemorySegment entries, int index, Path path, MemorySegment sid, int permissions, int mode) {
+            MemorySegment entries, int index, MemorySegment sid, WindowsFileAclPolicy.Entry policy) {
         long offset = WindowsSandboxNative.EXPLICIT_ACCESS.byteSize() * index;
         MemorySegment entry = entries.asSlice(offset, WindowsSandboxNative.EXPLICIT_ACCESS.byteSize());
-        entry.set(JAVA_INT, 0, permissions);
-        entry.set(JAVA_INT, 4, mode);
-        entry.set(JAVA_INT, 8, Files.isDirectory(path) ? SUB_CONTAINERS_AND_OBJECTS_INHERIT : 0);
+        entry.set(JAVA_INT, 0, policy.permissions());
+        entry.set(JAVA_INT, 4, policy.mode());
+        entry.set(JAVA_INT, 8, policy.inheritance());
         entry.set(ADDRESS, 16, MemorySegment.NULL);
         entry.set(JAVA_INT, 24, 0);
         entry.set(JAVA_INT, 28, TRUSTEE_IS_SID);
@@ -150,11 +180,12 @@ final class WindowsAclManager {
         entry.set(ADDRESS, 40, sid);
     }
 
-    private static void setDacl(Path path, MemorySegment dacl, boolean protectedDacl, Arena arena) throws IOException {
+    private static void setDacl(WindowsFileHandle handle, MemorySegment dacl, boolean protectedDacl)
+            throws IOException {
         var backend = WindowsSandboxNative.requireBackend();
         var result = backend.invoke(
-                backend.setNamedSecurityInfo,
-                WindowsSandboxNative.wide(arena, path.toString()),
+                backend.setSecurityInfo,
+                handle.address(),
                 SE_FILE_OBJECT,
                 daclFlags(protectedDacl),
                 MemorySegment.NULL,
@@ -162,17 +193,41 @@ final class WindowsAclManager {
                 dacl,
                 MemorySegment.NULL);
         if (result.number() != 0) {
-            throw WindowsSandboxNative.status("SetNamedSecurityInfoW", result.number());
+            throw WindowsSandboxNative.status("SetSecurityInfo", result.number());
         }
     }
 
     private static void restore(Snapshot snapshot) throws IOException {
+        if (!snapshot.restored.compareAndSet(false, true)) {
+            return;
+        }
+        IOException failure = null;
+        try (WindowsFileHandle handle = snapshot.handle) {
+            restoreDacl(snapshot, handle);
+        } catch (IOException | RuntimeException current) {
+            failure = current instanceof IOException io ? io : new IOException("DACL restore failed", current);
+        }
+        try {
+            snapshot.evidence.finish(failure);
+        } catch (IOException evidenceFailure) {
+            if (failure == null) {
+                failure = evidenceFailure;
+            } else {
+                failure.addSuppressed(evidenceFailure);
+            }
+        }
+        if (failure != null) {
+            throw failure;
+        }
+    }
+
+    private static void restoreDacl(Snapshot snapshot, WindowsFileHandle handle) throws IOException {
         var backend = WindowsSandboxNative.requireBackend();
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment descriptorOut = arena.allocate(ADDRESS);
             var decoded = backend.invoke(
                     backend.sddlToDescriptor,
-                    WindowsSandboxNative.wide(arena, snapshot.sddl()),
+                    WindowsSandboxNative.wide(arena, snapshot.sddl),
                     SDDL_REVISION_1,
                     descriptorOut,
                     MemorySegment.NULL);
@@ -188,7 +243,7 @@ final class WindowsAclManager {
                 if (dacl.number() == 0 || present.get(JAVA_INT, 0) == 0) {
                     throw WindowsSandboxNative.error("read saved DACL", dacl.error());
                 }
-                setDacl(snapshot.path(), daclOut.get(ADDRESS, 0), snapshot.protectedDacl(), arena);
+                setDacl(handle, daclOut.get(ADDRESS, 0), snapshot.protectedDacl);
             } finally {
                 WindowsSandboxNative.localFree(descriptor);
             }
@@ -232,7 +287,22 @@ final class WindowsAclManager {
                 | (protectedDacl ? PROTECTED_DACL_SECURITY_INFORMATION : UNPROTECTED_DACL_SECURITY_INFORMATION);
     }
 
-    record Snapshot(Path path, String sddl, boolean protectedDacl) {}
+    /** Snapshot 独占句柄；原始 DACL、授权和恢复始终指向同一对象，恢复至多尝试一次。 */
+    static final class Snapshot {
+        private final WindowsFileHandle handle;
+        private final String sddl;
+        private final boolean protectedDacl;
+        private final AtomicBoolean restored = new AtomicBoolean();
+        private final WindowsAclEvidence.Ticket evidence;
+
+        private Snapshot(
+                WindowsFileHandle handle, String sddl, boolean protectedDacl, WindowsAclEvidence.Ticket evidence) {
+            this.handle = handle;
+            this.sddl = sddl;
+            this.protectedDacl = protectedDacl;
+            this.evidence = evidence;
+        }
+    }
 
     private record Grant(int allowed, int denied) {
         private Grant merge(Grant other) {

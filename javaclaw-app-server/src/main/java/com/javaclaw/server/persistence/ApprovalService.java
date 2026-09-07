@@ -55,7 +55,7 @@ public final class ApprovalService implements AutoCloseable {
     /**
      * 创建审批服务。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      * @param json 共享规范 JSON codec
      * @param clock 平台时钟
      */

@@ -3,7 +3,7 @@
         <option name="MAIN_CLASS_NAME" value="com.javaclaw.desktop.shell.JavaClawDesktop" />
         <module name="javaclaw-desktop" />
         <option name="VM_PARAMETERS"
-            value="--enable-native-access=ALL-UNNAMED -Djavaclaw.server.socket=&quot;$PROJECT_DIR$/.javaclaw/idea/app-server-v5.sock&quot; -Djavaclaw.server.startup-timeout=PT15S" />
+            value="--enable-native-access=ALL-UNNAMED -Djavaclaw.server.socket=&quot;$PROJECT_DIR$/.javaclaw/idea/app-server-v6.sock&quot; -Djavaclaw.server.startup-timeout=PT15S" />
         <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
         <method v="2">
             <option name="Make" enabled="true" />

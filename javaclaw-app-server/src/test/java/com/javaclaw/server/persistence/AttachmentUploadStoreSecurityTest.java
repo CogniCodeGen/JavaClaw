@@ -33,7 +33,7 @@ class AttachmentUploadStoreSecurityTest {
 
     @BeforeEach
     void initializeStore() throws Exception {
-        dataRoot = Files.createDirectory(temporaryDirectory.resolve("data-v5"));
+        dataRoot = Files.createDirectory(temporaryDirectory.resolve("data-v6"));
         store = new AttachmentUploadStore(dataRoot);
     }
 

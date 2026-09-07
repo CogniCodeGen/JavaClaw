@@ -10,9 +10,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletionStage;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.ConversationThread;
 import com.javaclaw.api.CredentialClearReceipt;
 import com.javaclaw.api.CredentialMetadata;
@@ -39,8 +37,6 @@ import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.PrivateNetworkGrant;
 import com.javaclaw.api.PrivateNetworkGrantPreview;
 import com.javaclaw.api.PrivateNetworkPurpose;
-import com.javaclaw.api.ProfileBinding;
-import com.javaclaw.api.ProfileLifecycle;
 import com.javaclaw.api.ProviderCredentialBinding;
 import com.javaclaw.api.ProviderCredentialClearResult;
 import com.javaclaw.api.ProviderEndpoint;
@@ -67,7 +63,7 @@ import com.javaclaw.protocol.DiagnosticsRpcContracts;
 import com.javaclaw.protocol.InitializeResult;
 
 /** 通过当前 DesktopPresenter 会话执行 SDK 请求的管理中心网关。 */
-public final class SdkCoreSettingsGateway extends SdkBundleSettingsGateway
+public final class SdkCoreSettingsGateway extends SdkRoleExecutionSettingsGateway
         implements CoreSettingsGateway, McpSettingsGateway, InstructionSettingsGateway, BundleSettingsGateway {
     private final DesktopPresenter desktop;
 
@@ -79,6 +75,17 @@ public final class SdkCoreSettingsGateway extends SdkBundleSettingsGateway
     public SdkCoreSettingsGateway(DesktopPresenter desktop) {
         super(desktop);
         this.desktop = Objects.requireNonNull(desktop, "desktop");
+    }
+
+    @Override
+    public CompletionStage<com.javaclaw.api.ModelContextLimits> modelContextLimits(ProviderRef provider) {
+        return desktop.submitSettingsRequest(client -> client.providers().contextLimits(provider));
+    }
+
+    @Override
+    public CompletionStage<com.javaclaw.api.ModelContextLimits> updateModelContextLimits(
+            com.javaclaw.api.ModelContextLimits limits, CommandOptions options) {
+        return desktop.submitSettingsRequest(client -> client.providers().updateContextLimits(limits, options));
     }
 
     @Override
@@ -158,33 +165,6 @@ public final class SdkCoreSettingsGateway extends SdkBundleSettingsGateway
     }
 
     @Override
-    public CompletionStage<List<AgentProfile>> profiles() {
-        return desktop.submitSettingsRequest(client -> client.profiles().list());
-    }
-
-    @Override
-    public CompletionStage<AgentProfile> profile(AgentProfileRef reference) {
-        AgentProfileRef checked = Objects.requireNonNull(reference, "reference");
-        return desktop.submitSettingsRequest(client -> client.profiles().read(checked.id(), checked.revision()));
-    }
-
-    @Override
-    public CompletionStage<AgentProfile> createProfile(String id, AgentProfileSpec spec, CommandOptions options) {
-        return desktop.submitSettingsRequest(client -> client.profiles().create(id, spec, options));
-    }
-
-    @Override
-    public CompletionStage<AgentProfile> updateProfile(
-            String id, AgentProfileSpec spec, ProfileLifecycle lifecycle, CommandOptions options) {
-        return desktop.submitSettingsRequest(client -> client.profiles().update(id, spec, lifecycle, options));
-    }
-
-    @Override
-    public CompletionStage<AgentProfile> archiveProfile(String id, CommandOptions options) {
-        return desktop.submitSettingsRequest(client -> client.profiles().archive(id, options));
-    }
-
-    @Override
     public CompletionStage<List<PermissionProfile>> permissionProfiles() {
         return desktop.submitSettingsRequest(
                 client -> client.permissionProfiles().list());
@@ -200,11 +180,11 @@ public final class SdkCoreSettingsGateway extends SdkBundleSettingsGateway
     public CompletionStage<ToolCatalogQueryResult> toolCatalog(
             WorkspaceId workspaceId,
             PermissionProfileRef permissionProfile,
-            Optional<AgentProfileRef> agentProfile,
+            Optional<AgentRoleRef> agentRole,
             String query,
             int limit) {
         return desktop.submitSettingsRequest(
-                client -> client.tools().catalog(workspaceId, permissionProfile, agentProfile, query, limit));
+                client -> client.tools().catalog(workspaceId, permissionProfile, agentRole, query, limit));
     }
 
     @Override
@@ -233,18 +213,6 @@ public final class SdkCoreSettingsGateway extends SdkBundleSettingsGateway
     @Override
     public CompletionStage<Workspace> archiveWorkspace(Workspace workspace, CommandOptions options) {
         return desktop.submitSettingsRequest(client -> client.workspaces().archive(workspace, options));
-    }
-
-    @Override
-    public CompletionStage<Optional<ProfileBinding>> workspaceProfileBinding(WorkspaceId workspaceId) {
-        return desktop.submitSettingsRequest(client -> client.profiles().binding(workspaceId, Optional.empty()));
-    }
-
-    @Override
-    public CompletionStage<ProfileBinding> bindWorkspaceProfile(
-            WorkspaceId workspaceId, com.javaclaw.api.AgentProfileRef profile, CommandOptions options) {
-        return desktop.submitSettingsRequest(
-                client -> client.profiles().bind(workspaceId, Optional.empty(), profile, options));
     }
 
     @Override

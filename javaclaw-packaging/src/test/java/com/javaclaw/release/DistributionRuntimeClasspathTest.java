@@ -12,6 +12,27 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DistributionRuntimeClasspathTest {
     @Test
+    void 主发行携带工具链解包依赖及XZ许可() throws Exception {
+        Path distribution = packagingRoot().resolve("target/distribution");
+        Path libraries = distribution.resolve("lib");
+        assertContract(libraries, "commons-compress-", "org/apache/commons/compress/archivers/zip/ZipFile.class");
+        assertContract(libraries, "commons-io-", "org/apache/commons/io/build/AbstractStreamBuilder.class");
+        assertContract(libraries, "commons-lang3-", "org/apache/commons/lang3/ArrayUtils.class");
+        assertContract(libraries, "xz-", "org/tukaani/xz/XZInputStream.class");
+
+        String copying = Files.readString(distribution.resolve("legal/xz-java-COPYING.txt"));
+        assertTrue(copying.startsWith("Copyright (C) The XZ for Java authors and contributors"));
+        assertTrue(copying.contains("Permission to use, copy, modify, and/or distribute this"));
+        String notice = Files.readString(distribution.resolve("legal/xz-java-NOTICE.txt"));
+        assertTrue(notice.contains("SPDX license identifier: 0BSD"));
+        try (JarFile archive = new JarFile(findJar(libraries, "xz-").toFile())) {
+            String version = archive.getManifest().getMainAttributes().getValue("Implementation-Version");
+            assertNotNull(version);
+            assertTrue(notice.contains("Maven coordinates: org.tukaani:xz:" + version));
+        }
+    }
+
+    @Test
     void 主发行与Worker镜像都携带共享运行时契约() throws Exception {
         Path distribution = packagingRoot().resolve("target/distribution");
 

@@ -2,7 +2,7 @@ package com.javaclaw.server.rpc;
 
 import com.javaclaw.api.CanonicalPayload;
 
-/** 单个 Protocol v2 方法的内部处理端口。 */
+/** 单个 Protocol v3 方法的内部处理端口。 */
 @FunctionalInterface
 public interface RpcHandler {
     /**

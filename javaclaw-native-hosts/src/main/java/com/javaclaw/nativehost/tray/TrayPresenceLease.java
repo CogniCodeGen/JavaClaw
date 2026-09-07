@@ -19,6 +19,9 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import com.javaclaw.nativehost.LocalRuntimeDirectories;
+import com.javaclaw.nativehost.ManagedRuntimeDirectory;
+
 /** 独占托盘 supervisor 并周期刷新不含用户数据的活动心跳。 */
 public final class TrayPresenceLease implements AutoCloseable {
     private static final Duration HEARTBEAT_INTERVAL = Duration.ofSeconds(5);
@@ -38,8 +41,8 @@ public final class TrayPresenceLease implements AutoCloseable {
      * @throws IOException 目录、锁或心跳不可用
      */
     public static TrayPresenceLease acquireCurrentUser() throws IOException {
-        Path home = Path.of(System.getProperty("user.home")).toAbsolutePath().normalize();
-        Path presence = home.resolve(".javaclaw/run/tray-v5.presence");
+        ManagedRuntimeDirectory.prepare(LocalRuntimeDirectories.dataDirectory());
+        Path presence = LocalRuntimeDirectories.dataDirectory().resolve("run/tray-v6.presence");
         return acquire(presence, Clock.systemUTC(), ProcessHandle.current().pid());
     }
 
@@ -95,7 +98,7 @@ public final class TrayPresenceLease implements AutoCloseable {
 
     private void writeHeartbeat() throws IOException {
         String content = "1\n" + processId + '\n' + clock.millis() + '\n';
-        Path temporary = Files.createTempFile(presenceFile.getParent(), "tray-v5-", ".tmp");
+        Path temporary = Files.createTempFile(presenceFile.getParent(), "tray-v6-", ".tmp");
         try {
             Files.writeString(
                     temporary,

@@ -33,7 +33,7 @@ import com.javaclaw.protocol.ClientInfo;
 import com.javaclaw.protocol.InitializeParams;
 import com.javaclaw.protocol.JsonRpcRequest;
 import com.javaclaw.protocol.ProviderModelDiscoveryRpcContracts;
-import com.javaclaw.protocol.ProviderProfileRpcContracts;
+import com.javaclaw.protocol.ProviderRpcContracts;
 import com.javaclaw.protocol.RpcId;
 import com.javaclaw.protocol.WriteCommand;
 import com.javaclaw.runtime.ModelCapabilities;
@@ -56,7 +56,7 @@ class ProviderModelDiscoverySessionCancellationTest {
     void 关闭RpcSession会取消其阻塞中的OkHttpCall() throws Exception {
         try (BlockingHttpServer server = new BlockingHttpServer();
                 AppServerBootstrap.Components components = AppServerBootstrap.create(
-                        temporaryDirectory.resolve("data-v5"), Clock.systemUTC(), new NoOpModel())) {
+                        temporaryDirectory.resolve("data-v6"), Clock.systemUTC(), new NoOpModel())) {
             AppServerSession session = components.newSession();
             initialize(session, components);
             ProviderEndpoint endpoint = createProvider(session, components, server.baseUri());
@@ -83,7 +83,7 @@ class ProviderModelDiscoverySessionCancellationTest {
 
     private static void initialize(AppServerSession session, AppServerBootstrap.Components components) {
         InitializeParams params =
-                new InitializeParams(2, new ClientInfo("test", "5"), new CapabilityAdvertisement(Set.of(), Set.of()));
+                new InitializeParams(3, new ClientInfo("test", "6"), new CapabilityAdvertisement(Set.of(), Set.of()));
         assertTrue(session.handle(request("initialize", "initialize/session", params, components))
                 .result()
                 .isPresent());
@@ -101,8 +101,8 @@ class ProviderModelDiscoverySessionCancellationTest {
                 Duration.ofSeconds(30),
                 0,
                 ProviderAdapterOptions.defaults(ProviderAdapter.OPENAI_COMPATIBLE));
-        var payload = new ProviderProfileRpcContracts.ProviderCreatePayload(
-                "blocking-discovery", spec, ProviderLifecycle.DISABLED);
+        var payload =
+                new ProviderRpcContracts.ProviderCreatePayload("blocking-discovery", spec, ProviderLifecycle.DISABLED);
         WriteCommand command =
                 new WriteCommand("provider-create", 0, components.json().encode(payload));
         return components

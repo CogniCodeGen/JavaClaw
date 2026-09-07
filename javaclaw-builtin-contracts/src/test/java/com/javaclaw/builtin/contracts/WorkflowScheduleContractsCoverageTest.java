@@ -10,7 +10,7 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.TurnId;
 import com.javaclaw.api.WorkspaceId;
 
@@ -261,11 +261,11 @@ class WorkflowScheduleContractsCoverageTest {
     @Test
     void scheduleSupportsCronFixedIntervalAndAllTargetKinds() {
         OrchestrationContracts.ExecutionBudget budget = budget();
-        AgentProfileRef profile = new AgentProfileRef("profile", 2);
-        ScheduleContracts.DefinitionTarget definitionTarget =
-                new ScheduleContracts.DefinitionTarget("javaclaw.plan", "plan", 3, profile, budget);
-        ScheduleContracts.TurnTemplate template =
-                new ScheduleContracts.TurnTemplate(profile, "Daily review", "Review", budget);
+        AgentRoleRef profile = new AgentRoleRef("profile", 2);
+        ScheduleContracts.DefinitionTarget definitionTarget = new ScheduleContracts.DefinitionTarget(
+                "javaclaw.plan", "plan", 3, AutomationV6Fixtures.selection(profile), budget);
+        ScheduleContracts.TurnTemplate template = new ScheduleContracts.TurnTemplate(
+                AutomationV6Fixtures.selection(profile), "Daily review", "Review", budget);
         ScheduleActionContracts.Target action = actionTarget();
 
         assertEquals(
@@ -363,7 +363,7 @@ class WorkflowScheduleContractsCoverageTest {
         ScheduleManagementContracts.SaveRequest fixed = fixedScheduleRequest();
         ScheduleContracts.Target target = ScheduleContracts.Target.action(actionTarget());
 
-        assertEquals("profile", cron.profile().id());
+        assertEquals("profile", cron.execution().role().orElseThrow().id());
         assertEquals(4, cron.budget().maximumTurns());
         assertEquals(ScheduleContracts.TimingKind.FIXED_INTERVAL, fixed.timing().kind());
         assertEquals(3, cron.definition(target, 3, NOW).revision());
@@ -515,8 +515,7 @@ class WorkflowScheduleContractsCoverageTest {
                 Optional.empty(),
                 interval,
                 Optional.of(NOW),
-                "profile",
-                1,
+                AutomationV6Fixtures.selection(new AgentRoleRef("profile", 1)),
                 "Title",
                 "Instruction",
                 1,
@@ -541,8 +540,7 @@ class WorkflowScheduleContractsCoverageTest {
                 Optional.of("UTC"),
                 Optional.empty(),
                 Optional.empty(),
-                "profile",
-                2,
+                AutomationV6Fixtures.selection(new AgentRoleRef("profile", 2)),
                 "Daily",
                 "Refresh",
                 4,
@@ -567,8 +565,7 @@ class WorkflowScheduleContractsCoverageTest {
                 Optional.empty(),
                 Optional.of(15L),
                 Optional.of(NOW),
-                "profile",
-                2,
+                AutomationV6Fixtures.selection(new AgentRoleRef("profile", 2)),
                 "Interval",
                 "Run",
                 4,

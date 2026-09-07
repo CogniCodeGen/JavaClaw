@@ -16,7 +16,7 @@ import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.JsonRpcCodec;
 import com.javaclaw.protocol.RpcConnection;
 
-/** 在当前用户 Windows Named Pipe 上承载相互隔离的 Protocol v2 会话。 */
+/** 在当前用户 Windows Named Pipe 上承载相互隔离的 Protocol v3 会话。 */
 public final class WindowsNamedPipeSessionServer implements AutoCloseable {
     private static final Logger LOGGER = LoggerFactory.getLogger(WindowsNamedPipeSessionServer.class);
     private static final int MAXIMUM_CONNECTIONS = 128;

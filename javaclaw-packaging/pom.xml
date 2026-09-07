@@ -5,7 +5,7 @@
     <parent>
         <groupId>com.javaclaw</groupId>
         <artifactId>javaclaw-parent</artifactId>
-        <version>5.0.0-SNAPSHOT</version>
+        <version>6.0.0-SNAPSHOT</version>
     </parent>
     <artifactId>javaclaw-packaging</artifactId>
     <name>JavaClaw Packaging</name>
@@ -95,7 +95,8 @@
                         </goals>
                         <configuration>
                             <includeScope>runtime</includeScope>
-                            <excludeArtifactIds>javaclaw-knowledge-worker,playwright,driver,driver-bundle,pdfbox,pdfbox-io,fontbox,poi,poi-ooxml,poi-ooxml-lite,xmlbeans,SparseBitSet,commons-math3,commons-compress,commons-lang3,commons-io,curvesapi,log4j-api,commons-collections4,opentest4j</excludeArtifactIds>
+                            <!-- 工具链解包在 App Server 执行，因此主镜像也需要 Commons Compress 及其依赖。 -->
+                            <excludeArtifactIds>javaclaw-knowledge-worker,playwright,driver,driver-bundle,pdfbox,pdfbox-io,fontbox,poi,poi-ooxml,poi-ooxml-lite,xmlbeans,SparseBitSet,commons-math3,curvesapi,log4j-api,commons-collections4,opentest4j</excludeArtifactIds>
                             <outputDirectory>${project.build.directory}/distribution/lib</outputDirectory>
                         </configuration>
                     </execution>
@@ -188,6 +189,8 @@
                                 <licenseMerge>GPL-2.0-with-classpath-exception|GPLv2+CE</licenseMerge>
                             </licenseMerges>
                             <includedLicenses>
+                                <!-- XZ for Java 1.12 的源码 SPDX 与官方发行页均声明 0BSD；用于受控 tar.xz 解包。 -->
+                                <includedLicense>0BSD</includedLicense>
                                 <includedLicense>Apache-2.0</includedLicense>
                                 <includedLicense>BSD-2-Clause</includedLicense>
                                 <includedLicense>BSD-3-Clause</includedLicense>

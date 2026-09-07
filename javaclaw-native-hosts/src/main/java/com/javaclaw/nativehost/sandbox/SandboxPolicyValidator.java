@@ -13,6 +13,7 @@ import java.util.Objects;
 import com.javaclaw.api.PermissionProfile;
 import com.javaclaw.api.SandboxCommand;
 import com.javaclaw.api.SandboxMode;
+import com.javaclaw.nativehost.network.SandboxNetworkAccess;
 
 /** 将 PermissionProfile 收窄为平台 backend 可精确执行的路径、环境和进程边界。 */
 final class SandboxPolicyValidator {
@@ -23,8 +24,21 @@ final class SandboxPolicyValidator {
 
     static ValidatedSandboxCommand validate(
             SandboxCommand command, PermissionProfile permission, SandboxMode requiredMode) throws IOException {
+        return validate(
+                command, permission, requiredMode, SandboxRuntimeAccess.empty(), SandboxNetworkAccess.offline());
+    }
+
+    static ValidatedSandboxCommand validate(
+            SandboxCommand command,
+            PermissionProfile permission,
+            SandboxMode requiredMode,
+            SandboxRuntimeAccess runtimeAccess,
+            SandboxNetworkAccess networkAccess)
+            throws IOException {
         SandboxCommand checkedCommand = Objects.requireNonNull(command, "command");
         PermissionProfile checkedPermission = Objects.requireNonNull(permission, "permission");
+        Objects.requireNonNull(runtimeAccess, "runtimeAccess");
+        Objects.requireNonNull(networkAccess, "networkAccess");
         if (checkedCommand.mode() != requiredMode) {
             throw new IllegalArgumentException("sandbox command mode does not match the requested operation");
         }
@@ -37,12 +51,14 @@ final class SandboxPolicyValidator {
             throw new SecurityException("sandbox standard input exceeds the configured byte limit");
         }
         Path executable = executable(checkedCommand, checkedPermission);
-        List<Path> readRoots = realRoots(checkedPermission.files().readRoots(), "read root");
-        List<Path> writeRoots = realRoots(checkedPermission.files().writeRoots(), "write root");
+        List<Path> projectReadRoots = realRoots(checkedPermission.files().readRoots(), "read root");
+        List<Path> projectWriteRoots = realRoots(checkedPermission.files().writeRoots(), "write root");
         Path workingDirectory = checkedCommand.workingDirectory().toRealPath();
-        if (!Files.isDirectory(workingDirectory) || !insideAny(workingDirectory, readRoots, writeRoots)) {
+        if (!Files.isDirectory(workingDirectory) || !insideAny(workingDirectory, projectReadRoots, projectWriteRoots)) {
             throw new SecurityException("sandbox working directory is outside permitted roots");
         }
+        List<Path> readRoots = merge(projectReadRoots, realRoots(runtimeAccess.readRoots(), "runtime read root"));
+        List<Path> writeRoots = merge(projectWriteRoots, realRoots(runtimeAccess.writeRoots(), "runtime write root"));
         Duration timeout =
                 minimum(checkedCommand.timeout(), checkedPermission.processes().maxRunTime());
         return new ValidatedSandboxCommand(
@@ -57,9 +73,34 @@ final class SandboxPolicyValidator {
                 checkedPermission.resources(),
                 readRoots,
                 writeRoots,
-                List.of(executable),
+                executableRoots(executable, runtimeAccess, readRoots, writeRoots),
                 checkedPermission.files().allowDelete(),
-                java.util.Optional.empty());
+                java.util.Optional.empty(),
+                networkAccess);
+    }
+
+    private static List<Path> merge(List<Path> first, List<Path> second) {
+        return java.util.stream.Stream.concat(first.stream(), second.stream())
+                .distinct()
+                .toList();
+    }
+
+    private static List<Path> executableRoots(
+            Path executable, SandboxRuntimeAccess access, List<Path> reads, List<Path> writes) throws IOException {
+        ArrayList<Path> result = new ArrayList<>(List.of(executable));
+        for (Path root : access.executableRoots()) {
+            Path real = root.toRealPath();
+            if (!insideAny(real, reads, writes)) {
+                throw new SecurityException("runtime executable root must be inside an approved runtime root");
+            }
+            if (!Files.isDirectory(real) && (!Files.isRegularFile(real) || !Files.isExecutable(real))) {
+                throw new SecurityException("runtime executable root must be an executable file or directory");
+            }
+            if (!result.contains(real)) {
+                result.add(real);
+            }
+        }
+        return List.copyOf(result);
     }
 
     private static Path executable(SandboxCommand command, PermissionProfile permission) throws IOException {

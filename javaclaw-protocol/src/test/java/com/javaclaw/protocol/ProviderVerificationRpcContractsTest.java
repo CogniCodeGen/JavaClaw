@@ -53,16 +53,16 @@ class ProviderVerificationRpcContractsTest {
     @Test
     void 方法目录引用严格计费验证Schema() throws Exception {
         CanonicalJson json = new CanonicalJson();
-        String schema = read("/schema/provider-verification-v2.schema.json");
-        String methods = read("/schema/methods-v2.json");
+        String schema = read("/schema/provider-verification-v3.schema.json");
+        String methods = read("/schema/methods-v3.json");
 
         json.parse(schema);
         assertFalse(schema.contains("\"roles\""));
-        assertTrue(schema.contains("provider-profile-v2.schema.json#/$defs/providerCapabilities"));
+        assertTrue(schema.contains("provider-v3.schema.json#/$defs/providerCapabilities"));
         assertTrue(schema.contains("\"billingConfirmed\": {\"const\": true}"));
         assertTrue(schema.contains(ProviderVerificationRpcContracts.BILLING_CONFIRMATION));
-        assertTrue(methods.contains("provider-verification-v2.schema.json#/$defs/verifyCommand"));
-        assertTrue(methods.contains("provider-verification-v2.schema.json#/$defs/verificationResult"));
+        assertTrue(methods.contains("provider-verification-v3.schema.json#/$defs/verifyCommand"));
+        assertTrue(methods.contains("provider-verification-v3.schema.json#/$defs/verificationResult"));
     }
 
     private static String read(String resource) throws IOException {

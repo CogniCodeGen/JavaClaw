@@ -8,7 +8,7 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.AttachmentRef;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -110,7 +110,11 @@ class MemorySkillScheduleContractsTest {
                 ScheduleContracts.Timing.fixed(Duration.ofMinutes(5), BuiltinContractsFixtures.NOW);
         var budget = new OrchestrationContracts.ExecutionBudget(5, 1_000, 500, 10);
         ScheduleContracts.Target target = ScheduleContracts.Target.definition(new ScheduleContracts.DefinitionTarget(
-                BuiltinExtensionIds.PLAN, "plan", 1, new AgentProfileRef("profile", 1), budget));
+                BuiltinExtensionIds.PLAN,
+                "plan",
+                1,
+                AutomationV6Fixtures.selection(new AgentRoleRef("profile", 1)),
+                budget));
         ScheduleContracts.Definition schedule = new ScheduleContracts.Definition(
                 "schedule",
                 1,

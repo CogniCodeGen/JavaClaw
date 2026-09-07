@@ -21,7 +21,7 @@ public final class ViewSchemaWireCodec {
     /**
      * 创建 codec。
      *
-     * @param json Protocol v2 规范 JSON codec
+     * @param json Protocol v3 规范 JSON codec
      */
     public ViewSchemaWireCodec(CanonicalJson json) {
         this.json = Objects.requireNonNull(json, "json");
@@ -45,7 +45,7 @@ public final class ViewSchemaWireCodec {
     /**
      * 解码 v2 页面并拒绝旧版本和未知节点类型。
      *
-     * @param payload Protocol v2 页面 payload
+     * @param payload Protocol v3 页面 payload
      * @return 强类型页面
      */
     public ViewSchema decode(CanonicalPayload payload) {

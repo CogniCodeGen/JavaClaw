@@ -1,0 +1,480 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javaclaw.local/schema/prompt-optimization-v3.schema.json",
+  "title": "JavaClaw Agent Role Prompt optimization v3",
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "roleRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "revision"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,239}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "payload"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "payload": {
+          "type": "object"
+        }
+      }
+    },
+    "startPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaceId",
+        "role",
+        "billingConfirmed",
+        "confirmation",
+        "execution"
+      ],
+      "properties": {
+        "workspaceId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "role": {
+          "$ref": "#/$defs/roleRef"
+        },
+        "billingConfirmed": {
+          "const": true
+        },
+        "confirmation": {
+          "const": "我确认本次 Prompt 优化会调用当前 Provider，并且可能产生费用"
+        },
+        "execution": {
+          "$ref": "execution-v3.schema.json#/$defs/overrides"
+        }
+      }
+    },
+    "startCommand": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/command"
+        },
+        {
+          "properties": {
+            "expectedRevision": {
+              "const": 0
+            },
+            "payload": {
+              "$ref": "#/$defs/startPayload"
+            }
+          }
+        }
+      ]
+    },
+    "readPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "draftId"
+      ],
+      "properties": {
+        "draftId": {
+          "$ref": "#/$defs/uuid"
+        }
+      }
+    },
+    "listPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaceId"
+      ],
+      "properties": {
+        "workspaceId": {
+          "$ref": "#/$defs/uuid"
+        }
+      }
+    },
+    "cancelPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "draftId",
+        "reason"
+      ],
+      "properties": {
+        "draftId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      }
+    },
+    "cancelCommand": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/command"
+        },
+        {
+          "properties": {
+            "expectedRevision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "payload": {
+              "$ref": "#/$defs/cancelPayload"
+            }
+          }
+        }
+      ]
+    },
+    "adoptPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "draftId",
+        "adoptionConfirmed",
+        "confirmation"
+      ],
+      "properties": {
+        "draftId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "adoptionConfirmed": {
+          "const": true
+        },
+        "confirmation": {
+          "const": "我确认仅采纳此草稿，并创建新的 Agent Role revision"
+        }
+      }
+    },
+    "adoptCommand": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/command"
+        },
+        {
+          "properties": {
+            "expectedRevision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "payload": {
+              "$ref": "#/$defs/adoptPayload"
+            }
+          }
+        }
+      ]
+    },
+    "optimizationRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "workspaceId",
+        "sourceRole",
+        "threadId",
+        "turnId"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "sourceRole": {
+          "$ref": "#/$defs/roleRef"
+        },
+        "threadId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "turnId": {
+          "$ref": "#/$defs/uuid"
+        }
+      }
+    },
+    "optimizationResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "turnRevision",
+        "content",
+        "contentDigest",
+        "errorCode"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "QUEUED",
+            "RUNNING",
+            "READY",
+            "FAILED",
+            "CANCELLED"
+          ]
+        },
+        "turnRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "contentDigest": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "errorCode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 160
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "READY"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 65536
+              },
+              "contentDigest": {
+                "$ref": "#/$defs/digest"
+              },
+              "errorCode": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "content": {
+                "type": "null"
+              },
+              "contentDigest": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instructionRevision",
+        "instructionDigest",
+        "createdAt",
+        "updatedAt"
+      ],
+      "properties": {
+        "instructionRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "instructionDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "draft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "result",
+        "provenance",
+        "adoptedRole"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/optimizationRef"
+        },
+        "result": {
+          "$ref": "#/$defs/optimizationResult"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        },
+        "adoptedRole": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/roleRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "listResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "drafts"
+      ],
+      "properties": {
+        "drafts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/draft"
+          }
+        }
+      }
+    },
+    "providerRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "endpointId",
+        "endpointRevision",
+        "model"
+      ],
+      "properties": {
+        "endpointId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,239}$"
+        },
+        "endpointRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "permissionProfileRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,239}$"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "turnBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inputTokens",
+        "outputTokens",
+        "toolCalls",
+        "childThreads",
+        "wallTime"
+      ],
+      "properties": {
+        "inputTokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "outputTokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "toolCalls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "childThreads": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "wallTime": {
+          "type": "string",
+          "format": "duration"
+        }
+      }
+    },
+    "adoption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "draft",
+        "role"
+      ],
+      "properties": {
+        "draft": {
+          "$ref": "#/$defs/draft"
+        },
+        "role": {
+          "$ref": "agent-role-v3.schema.json#/$defs/role"
+        }
+      }
+    },
+    "agentRole": {
+      "$ref": "agent-role-v3.schema.json#/$defs/role"
+    }
+  }
+}

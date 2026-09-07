@@ -1,15 +1,20 @@
 package com.javaclaw.desktop.view;
 
+import java.util.List;
 import java.util.Objects;
 
 import com.javaclaw.api.CorePayloads;
 import com.javaclaw.api.CoreSchemas;
 import com.javaclaw.api.ItemEnvelope;
+import com.javaclaw.client.extension.CodingToolResultIndex;
+import com.javaclaw.client.extension.CodingTranscriptFormatter;
 import com.javaclaw.protocol.CanonicalJson;
 
-/** 只按 Core schema 呈现 Transcript；未知扩展 payload 原样保留但不执行。 */
+/** 按 Core 与 Coding 版本化 schema 呈现 Transcript；未知扩展 payload 原样保留但不执行。 */
 public final class TranscriptPresenter {
     private final CanonicalJson json;
+    private final CodingTranscriptFormatter coding;
+    private final CodingToolResultIndex codingCalls;
 
     /**
      * 创建 Item presenter。
@@ -18,6 +23,18 @@ public final class TranscriptPresenter {
      */
     public TranscriptPresenter(CanonicalJson json) {
         this.json = Objects.requireNonNull(json, "json");
+        coding = new CodingTranscriptFormatter(json);
+        codingCalls = new CodingToolResultIndex(json);
+    }
+
+    /**
+     * 在虚拟化列表绘制前装载完整快照的调用关联，避免依赖 Cell 绘制顺序。
+     *
+     * @param items 当前会话已加载的持久 Item
+     */
+    public void replaceItems(List<ItemEnvelope> items) {
+        codingCalls.clear();
+        items.forEach(codingCalls::accept);
     }
 
     /**
@@ -27,14 +44,23 @@ public final class TranscriptPresenter {
      * @return 可访问文本投影
      */
     public PresentedItem present(ItemEnvelope item) {
+        var fact = coding.format(item, codingCalls.callFor(item));
+        if (fact.isPresent()) {
+            return new PresentedItem(fact.get().title(), fact.get().body(), "transcript-execution-block");
+        }
         return switch (item.schemaId()) {
             case CoreSchemas.MESSAGE -> message(item);
             case CoreSchemas.TOOL_CALL -> toolCall(item);
             case CoreSchemas.TOOL_RESULT -> toolResult(item);
             case CoreSchemas.APPROVAL -> approval(item);
             case CoreSchemas.ERROR -> error(item);
-            default -> new PresentedItem(item.kind(), item.payload().json(), "transcript-execution-block");
+            default -> fallback(item);
         };
+    }
+
+    private PresentedItem fallback(ItemEnvelope item) {
+        var fallback = coding.fallback(item);
+        return new PresentedItem(fallback.title(), fallback.body(), "transcript-execution-block");
     }
 
     private PresentedItem message(ItemEnvelope item) {
@@ -58,8 +84,9 @@ public final class TranscriptPresenter {
 
     private PresentedItem toolResult(ItemEnvelope item) {
         CorePayloads.ToolResult payload = json.decode(item.payload(), CorePayloads.ToolResult.class);
-        String title = payload.success() ? "工具结果" : "工具未执行";
-        return new PresentedItem(title, payload.output().json(), "transcript-execution-block");
+        var fallback = coding.fallback(item);
+        String title = payload.success() ? "工具结果" : "工具结果 · 失败或未完成";
+        return new PresentedItem(title, fallback.body(), "transcript-execution-block");
     }
 
     private PresentedItem approval(ItemEnvelope item) {

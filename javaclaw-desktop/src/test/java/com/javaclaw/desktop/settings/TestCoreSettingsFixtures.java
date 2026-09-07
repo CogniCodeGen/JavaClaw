@@ -8,11 +8,10 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 
-import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.CoreTools;
 import com.javaclaw.api.CredentialRef;
 import com.javaclaw.api.DiagnosticsSnapshot;
-import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderAdapterOptions;
 import com.javaclaw.api.ProviderAuthentication;
@@ -26,7 +25,6 @@ import com.javaclaw.api.ProviderRef;
 import com.javaclaw.api.ProviderVerificationResult;
 import com.javaclaw.api.ProviderVerificationState;
 import com.javaclaw.api.ProviderVerificationUsage;
-import com.javaclaw.api.TurnBudget;
 import com.javaclaw.api.VaultState;
 import com.javaclaw.protocol.DiagnosticsRpcContracts;
 
@@ -53,18 +51,20 @@ final class TestCoreSettingsFixtures {
                 ProviderAdapterOptions.defaults(ProviderAdapter.OPENAI_COMPATIBLE));
     }
 
-    static AgentProfileSpec profileSpec() {
+    static AgentRoleSpec profileSpec() {
         ProviderEndpoint provider = provider(1, providerSpec(Optional.empty()), ProviderLifecycle.ACTIVE);
-        return new AgentProfileSpec(
+        return new AgentRoleSpec(
                 "Workspace Profile",
+                "角色测试",
                 "使用 Workspace 默认配置。",
-                new ProviderRef(
+                Optional.of(new com.javaclaw.api.ModelPreference(new ProviderRef(
                         provider.id(),
                         provider.revision(),
-                        provider.spec().models().getFirst().modelId()),
-                new PermissionProfileRef("standard", 1),
-                Set.of(CoreTools.SEARCH_NAME),
-                new TurnBudget(8_000, 2_000, 6, 1, Duration.ofSeconds(120)));
+                        provider.spec().models().getFirst().modelId()))),
+                Optional.empty(),
+                new com.javaclaw.api.CapabilityNarrowing(Optional.of(Set.of(CoreTools.SEARCH_NAME)), Optional.empty()),
+                com.javaclaw.api.PermissionConstraint.INHERIT,
+                java.util.Map.of());
     }
 
     static ProviderVerificationResult verification(ProviderRef provider, ProviderModelPurpose purpose, Instant now) {
@@ -82,11 +82,11 @@ final class TestCoreSettingsFixtures {
 
     static ConnectionSummary connection() {
         return new ConnectionSummary(
-                "javaclaw-app-server", "5.0.0-SNAPSHOT", 2, Set.of("core.item-envelope"), Set.of());
+                "javaclaw-app-server", "6.0.0-SNAPSHOT", 3, Set.of("core.item-envelope"), Set.of());
     }
 
     static DiagnosticsSnapshot diagnostics(Instant now) {
-        DiagnosticsSnapshot.BuildIdentity build = new DiagnosticsSnapshot.BuildIdentity("5.0.0-SNAPSHOT", 2, 1);
+        DiagnosticsSnapshot.BuildIdentity build = new DiagnosticsSnapshot.BuildIdentity("6.0.0-SNAPSHOT", 3, 1);
         DiagnosticsSnapshot.RuntimeHealth health =
                 new DiagnosticsSnapshot.RuntimeHealth(true, 1, 9, 1, 0, "test", "25");
         DiagnosticsSnapshot.SubsystemHealth subsystems = new DiagnosticsSnapshot.SubsystemHealth(

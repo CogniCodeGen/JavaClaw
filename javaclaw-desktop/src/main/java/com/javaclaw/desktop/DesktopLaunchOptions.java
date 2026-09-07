@@ -74,7 +74,7 @@ public record DesktopLaunchOptions(LocalTransport transport, Duration startupTim
      */
     public DesktopClientConnector connector() {
         DesktopClientConnector direct = notifications -> JavaClawClient.connect(
-                transport, new ClientInfo("javaclaw-desktop", "5.0.0-SNAPSHOT"), Set.of(), notifications);
+                transport, new ClientInfo("javaclaw-desktop", "6.0.0-SNAPSHOT"), Set.of(), notifications);
         return StartupWaitingConnector.wrap(direct, startupTimeout);
     }
 

@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-import com.javaclaw.api.AgentProfile;
+import com.javaclaw.api.AgentRole;
 import com.javaclaw.api.PromptOptimizationDraft;
 import com.javaclaw.api.Workspace;
 
@@ -13,21 +13,21 @@ import com.javaclaw.api.Workspace;
  *
  * @param workspaces 可选择的活动 Workspace
  * @param workspace 当前 Workspace
- * @param profile Agent Profile 页面当前权威版本
- * @param drafts 当前 Workspace 和 Profile 的草稿目录
+ * @param role Agent Role 页面当前权威版本
+ * @param drafts 当前 Workspace 和 Role 的草稿目录
  * @param selected 当前草稿
  */
 public record PromptOptimizationSelection(
         List<Workspace> workspaces,
         Optional<Workspace> workspace,
-        Optional<AgentProfile> profile,
+        Optional<AgentRole> role,
         List<PromptOptimizationDraft> drafts,
         Optional<PromptOptimizationDraft> selected) {
     /** 复制集合并校验选择属于目录。 */
     public PromptOptimizationSelection {
         workspaces = List.copyOf(workspaces);
         workspace = Objects.requireNonNull(workspace, "workspace");
-        profile = Objects.requireNonNull(profile, "profile");
+        role = Objects.requireNonNull(role, "role");
         drafts = List.copyOf(drafts);
         selected = Objects.requireNonNull(selected, "selected");
         if (workspace.filter(workspaces::contains).isEmpty() && workspace.isPresent()) {

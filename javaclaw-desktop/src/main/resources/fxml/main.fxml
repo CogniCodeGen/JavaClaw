@@ -11,7 +11,7 @@
 <?import javafx.scene.layout.Region?>
 <?import javafx.scene.layout.StackPane?>
 <?import javafx.scene.layout.VBox?>
-<!-- v5 JavaFX 壳沿用 509f197 的布局比例、CSS 令牌和交互语言；所有数据只来自 SDK。 -->
+<!-- v6 JavaFX 壳沿用 509f197 的布局比例、CSS 令牌和交互语言；所有数据只来自 SDK。 -->
 <BorderPane fx:id="root" styleClass="chat-root" xmlns:fx="http://javafx.com/fxml/1"
     fx:controller="com.javaclaw.desktop.shell.DesktopShellController">
     <left>
@@ -24,7 +24,7 @@
                 <Label text="✦" styleClass="sb-brand-mark" />
                 <Label text="JavaClaw" styleClass="sb-brand-name" />
                 <Region HBox.hgrow="ALWAYS" />
-                <Label text="5.0" styleClass="sb-brand-ver" />
+                <Label text="6.0" styleClass="sb-brand-ver" />
             </HBox>
             <VBox spacing="10">
                 <padding>
@@ -116,11 +116,8 @@
                             <TextArea fx:id="composer" promptText="输入消息…" accessibleText="消息输入框"
                                 prefRowCount="2" wrapText="true" minHeight="56" maxHeight="240"
                                 styleClass="input-field,composer-input" />
+                            <VBox fx:id="executionHost" accessibleText="独立选择 Agent、模型、推理与权限" />
                             <HBox spacing="8" alignment="CENTER_LEFT" styleClass="composer-toolbar">
-                                <ComboBox fx:id="profileBox" promptText="使用工作区默认智能体方案"
-                                    accessibleText="选择智能体方案；不选择时使用工作区默认配置" prefWidth="300" styleClass="composer-select" />
-                                <Button text="默认" onAction="#useDefaultProfile" accessibleText="恢复使用工作区默认智能体方案"
-                                    styleClass="sidebar-manage-btn" />
                                 <Region HBox.hgrow="ALWAYS" />
                                 <Button fx:id="interruptButton" text="停止" onAction="#interrupt"
                                     accessibleText="停止当前任务" styleClass="sidebar-manage-btn,composer-interrupt-button" />

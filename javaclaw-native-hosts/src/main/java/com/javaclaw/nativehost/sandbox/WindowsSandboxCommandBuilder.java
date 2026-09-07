@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.javaclaw.api.SandboxMode;
+import com.javaclaw.nativehost.network.SandboxNetworkAccess;
 
 /** 使用受信任 Java helper 启动 Windows AppContainer；helper 句柄关闭即终止目标 Job。 */
 final class WindowsSandboxCommandBuilder implements SandboxCommandBuilder {
@@ -24,13 +25,17 @@ final class WindowsSandboxCommandBuilder implements SandboxCommandBuilder {
 
     @Override
     public SandboxLaunchPlan build(ValidatedSandboxCommand command) {
+        return build(command, null);
+    }
+
+    SandboxLaunchPlan build(ValidatedSandboxCommand command, Path controlDirectory) {
         if (command.mode() != SandboxMode.BATCH) {
             throw new IllegalArgumentException("Windows batch builder cannot launch a PTY command");
         }
         if (!Files.isExecutable(javaExecutable)) {
             throw new UnsupportedOperationException("Windows Sandbox helper Java executable is unavailable");
         }
-        return new SandboxLaunchPlan(name(), helperCommand(command), command.environment(), 1, true);
+        return new SandboxLaunchPlan(name(), helperCommand(command, controlDirectory), command.environment(), 1, true);
     }
 
     @Override
@@ -38,7 +43,7 @@ final class WindowsSandboxCommandBuilder implements SandboxCommandBuilder {
         return "windows-appcontainer-job";
     }
 
-    private List<String> helperCommand(ValidatedSandboxCommand command) {
+    private List<String> helperCommand(ValidatedSandboxCommand command, Path controlDirectory) {
         ArrayList<String> result = new ArrayList<>();
         result.add(javaExecutable.toString());
         result.add("--enable-native-access=ALL-UNNAMED");
@@ -46,6 +51,10 @@ final class WindowsSandboxCommandBuilder implements SandboxCommandBuilder {
         result.add("-cp");
         result.add(System.getProperty("java.class.path"));
         result.add(WindowsSandboxExecMain.class.getName());
+        if (controlDirectory != null) {
+            result.add(WindowsHelperControl.OPTION);
+            result.add(controlDirectory.toString());
+        }
         addRequest(result, command);
         return List.copyOf(result);
     }
@@ -53,7 +62,9 @@ final class WindowsSandboxCommandBuilder implements SandboxCommandBuilder {
     private static void addRequest(List<String> result, ValidatedSandboxCommand command) {
         result.add(command.workingDirectory().toString());
         result.add(Boolean.toString(command.allowDelete()));
-        result.add(Long.toString(command.timeout().plus(FALLBACK_TIMEOUT_GRACE).toMillis()));
+        result.add(Long.toString(Math.min(
+                Duration.ofHours(24).toMillis(),
+                command.timeout().plus(FALLBACK_TIMEOUT_GRACE).toMillis())));
         result.add(Long.toString(command.limits().memoryBytes()));
         result.add(Long.toString(command.limits().outputBytes()));
         result.add(Integer.toString(command.limits().childProcesses()));
@@ -62,7 +73,17 @@ final class WindowsSandboxCommandBuilder implements SandboxCommandBuilder {
         result.add(Integer.toString(command.writeRoots().size()));
         command.readRoots().forEach(path -> result.add(path.toString()));
         command.writeRoots().forEach(path -> result.add(path.toString()));
+        addNetwork(result, command.networkAccess());
         result.add("--");
         result.addAll(command.argv());
+    }
+
+    private static void addNetwork(List<String> result, SandboxNetworkAccess network) {
+        if (network.mode() == SandboxNetworkAccess.Mode.PROXY_ONLY) {
+            result.add("--network-proxy-v1");
+            result.add(network.grantId().orElseThrow());
+            result.add(Integer.toString(network.proxyEndpoint().orElseThrow().getPort()));
+            result.add(network.controlDirectory().orElseThrow().toString());
+        }
     }
 }

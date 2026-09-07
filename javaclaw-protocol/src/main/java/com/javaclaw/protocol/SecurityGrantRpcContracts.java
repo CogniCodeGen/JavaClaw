@@ -17,7 +17,7 @@ import com.javaclaw.api.UnattendedToolGrantDraft;
 import com.javaclaw.api.UnattendedToolGrantStatus;
 import com.javaclaw.api.WorkspaceId;
 
-/** 私网授权、无人值守授权与决策审计的 Protocol v2 DTO。 */
+/** 私网授权、无人值守授权与决策审计的 Protocol v3 DTO。 */
 public final class SecurityGrantRpcContracts {
     private SecurityGrantRpcContracts() {}
 

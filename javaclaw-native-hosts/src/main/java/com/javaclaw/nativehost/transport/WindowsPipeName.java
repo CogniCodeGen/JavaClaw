@@ -1,13 +1,14 @@
 package com.javaclaw.nativehost.transport;
 
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.regex.Pattern;
+
+import com.javaclaw.nativehost.LocalRuntimeDirectories;
 
 /** Windows Named Pipe 的受限逻辑名称；不接受路径、远程主机或命名空间前缀。 */
 public final class WindowsPipeName {
@@ -36,19 +37,16 @@ public final class WindowsPipeName {
     }
 
     /**
-     * 为当前用户目录生成稳定且不泄露原路径的默认名称。
+     * 为当前用户的独立数据根生成稳定且不泄露原路径的默认名称。
      *
      * <p>名称哈希只用于减少多用户会话冲突；访问控制仍由服务端的登录 SID DACL 保证。
      *
      * @return 当前用户默认名称
      */
     public static WindowsPipeName currentUserDefault() {
-        String home = Path.of(System.getProperty("user.home"))
-                .toAbsolutePath()
-                .normalize()
-                .toString()
-                .toLowerCase(Locale.ROOT);
-        return parse("javaclaw-app-server-v5-" + digest(home).substring(0, 24));
+        String identity = System.getProperty("user.name") + "\n"
+                + LocalRuntimeDirectories.dataDirectory().toString().toLowerCase(Locale.ROOT);
+        return parse("javaclaw-app-server-v6-" + digest(identity).substring(0, 24));
     }
 
     /** @return 不含 Windows 命名空间前缀的逻辑名称 */

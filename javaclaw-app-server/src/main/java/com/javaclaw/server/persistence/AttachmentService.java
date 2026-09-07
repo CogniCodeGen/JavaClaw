@@ -30,7 +30,7 @@ public final class AttachmentService {
     /**
      * 创建附件服务。
      *
-     * @param database data-v5 数据库与 Blob 根目录
+     * @param database data-v6 数据库与 Blob 根目录
      * @param json 共享 JSON codec
      * @param clock 平台时钟
      */

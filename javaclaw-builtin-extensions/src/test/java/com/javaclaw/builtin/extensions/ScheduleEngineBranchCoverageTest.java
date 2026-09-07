@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.ExecutionState;
 import com.javaclaw.api.WorkspaceId;
@@ -47,7 +47,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ScheduleEngineBranchCoverageTest {
-    private static final AgentProfileRef PROFILE = new AgentProfileRef("profile", 1);
+    private static final AgentRoleRef PROFILE = new AgentRoleRef("profile", 1);
     private static final OrchestrationContracts.ExecutionBudget BUDGET =
             new OrchestrationContracts.ExecutionBudget(2, 2_000, 1_000, 10);
 
@@ -425,7 +425,8 @@ class ScheduleEngineBranchCoverageTest {
                 id,
                 true,
                 ScheduleContracts.Timing.fixed(Duration.ofMinutes(5), NOW.plusSeconds(60)),
-                ScheduleContracts.Target.turn(new ScheduleContracts.TurnTemplate(PROFILE, id, "执行定时任务", BUDGET)));
+                ScheduleContracts.Target.turn(new ScheduleContracts.TurnTemplate(
+                        AutomationV6Fixtures.selection(PROFILE), id, "执行定时任务", BUDGET)));
     }
 
     private static ScheduleContracts.Target actionTarget() {
@@ -476,7 +477,8 @@ class ScheduleEngineBranchCoverageTest {
                 source.credentials(),
                 source.privateNetworkGrants(),
                 source.services(),
-                source.embeddings());
+                source.embeddings(),
+                com.javaclaw.extension.spi.WorkspaceExecutionPort.denied());
     }
 
     private static Object invoke(Object target, String methodName, Class<?>[] parameterTypes, Object... arguments)

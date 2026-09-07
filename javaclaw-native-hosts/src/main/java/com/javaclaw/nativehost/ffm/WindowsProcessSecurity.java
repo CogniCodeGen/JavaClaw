@@ -31,6 +31,8 @@ final class WindowsProcessSecurity implements AutoCloseable {
     private final MemorySegment sourceToken;
     private final MemorySegment restrictedToken;
     private final MemorySegment job;
+    private WindowsNetworkLease networkLease;
+    private IOException cleanupFailure;
 
     private WindowsProcessSecurity(MemorySegment sourceToken, MemorySegment restrictedToken, MemorySegment job) {
         this.sourceToken = sourceToken;
@@ -38,7 +40,7 @@ final class WindowsProcessSecurity implements AutoCloseable {
         this.job = job;
     }
 
-    static WindowsProcessSecurity open(ResourceLimits limits, Arena arena) throws IOException {
+    static WindowsProcessSecurity open(ResourceLimits limits, Arena arena, boolean systemGuarded) throws IOException {
         var backend = WindowsSandboxNative.requireBackend();
         MemorySegment source = MemorySegment.NULL;
         MemorySegment restricted = MemorySegment.NULL;
@@ -73,10 +75,12 @@ final class WindowsProcessSecurity implements AutoCloseable {
             }
             restricted = WindowsSandboxNative.global(restrictedOut.get(ADDRESS, 0));
             applyLowIntegrity(restricted, arena);
-            var createdJob = backend.invoke(backend.createJobObject, MemorySegment.NULL, MemorySegment.NULL);
-            job = WindowsSandboxNative.global(createdJob.address());
-            WindowsSandboxNative.requireHandle(job, "CreateJobObjectW", createdJob.error());
-            configureJob(job, limits, arena);
+            if (!systemGuarded) {
+                var createdJob = backend.invoke(backend.createJobObject, MemorySegment.NULL, MemorySegment.NULL);
+                job = WindowsSandboxNative.global(createdJob.address());
+                WindowsSandboxNative.requireHandle(job, "CreateJobObjectW", createdJob.error());
+                configureJob(job, limits, arena);
+            }
             return new WindowsProcessSecurity(source, restricted, job);
         } catch (IOException | RuntimeException failure) {
             WindowsSandboxNative.closeHandleQuietly(job);
@@ -94,7 +98,17 @@ final class WindowsProcessSecurity implements AutoCloseable {
         return job;
     }
 
+    void guard(MemorySegment process, WindowsAppContainerScope scope, WindowsSandboxPaths.Prepared request)
+            throws IOException {
+        if (job.address() == 0) {
+            networkLease = WindowsNetworkLease.attach(process, scope, request);
+        }
+    }
+
     void assign(MemorySegment process) throws IOException {
+        if (networkLease != null) {
+            return;
+        }
         var backend = WindowsSandboxNative.requireBackend();
         var result = backend.invoke(backend.assignProcessToJob, job, process);
         if (result.number() == 0) {
@@ -103,6 +117,17 @@ final class WindowsProcessSecurity implements AutoCloseable {
     }
 
     void terminate(int exitCode) {
+        if (networkLease != null) {
+            try {
+                networkLease.close();
+            } catch (IOException failure) {
+                cleanupFailure = failure;
+            }
+            return;
+        }
+        if (job.address() == 0) {
+            return;
+        }
         try {
             var backend = WindowsSandboxNative.requireBackend();
             backend.invoke(backend.terminateJob, job, exitCode);
@@ -112,9 +137,15 @@ final class WindowsProcessSecurity implements AutoCloseable {
 
     @Override
     public void close() {
+        if (networkLease != null) {
+            terminate(137);
+        }
         WindowsSandboxNative.closeHandleQuietly(job);
         WindowsSandboxNative.closeHandleQuietly(restrictedToken);
         WindowsSandboxNative.closeHandleQuietly(sourceToken);
+        if (cleanupFailure != null) {
+            throw new java.io.UncheckedIOException(cleanupFailure);
+        }
     }
 
     private static void applyLowIntegrity(MemorySegment token, Arena arena) throws IOException {

@@ -23,6 +23,7 @@ import com.javaclaw.api.SandboxFrame;
 import com.javaclaw.api.SandboxResult;
 import com.javaclaw.api.SandboxSession;
 import com.javaclaw.api.SandboxSignal;
+import com.javaclaw.nativehost.ffm.WindowsAclEvidence;
 import com.javaclaw.nativehost.ffm.WindowsSandbox;
 import com.javaclaw.nativehost.ffm.WindowsSandboxContext;
 import com.javaclaw.nativehost.ffm.WindowsSandboxRequest;
@@ -41,6 +42,7 @@ final class WindowsSandboxSession implements SandboxSession {
     private final ValidatedSandboxCommand command;
     private final CancellationToken cancellation;
     private final WindowsSandbox.PseudoConsoleSession terminal;
+    private final WindowsHelperControl control;
     private final long started;
     private final PtyFramePublisher frames = new PtyFramePublisher();
     private final CompletableFuture<SandboxResult> completion = new CompletableFuture<>();
@@ -48,17 +50,20 @@ final class WindowsSandboxSession implements SandboxSession {
     private final ExecutorService operations = Executors.newSingleThreadExecutor(
             Thread.ofVirtual().name("javaclaw-conpty-operation-", 0).factory());
     private final AtomicBoolean closed = new AtomicBoolean();
-    private final AtomicBoolean released = new AtomicBoolean();
+    private boolean released;
+    private IOException releaseFailure;
     private final AtomicBoolean outputLimitExceeded = new AtomicBoolean();
 
     private WindowsSandboxSession(
             ValidatedSandboxCommand command,
             CancellationToken cancellation,
             WindowsSandbox.PseudoConsoleSession terminal,
+            WindowsHelperControl control,
             long started) {
         this.command = command;
         this.cancellation = cancellation;
         this.terminal = terminal;
+        this.control = control;
         this.started = started;
     }
 
@@ -67,15 +72,25 @@ final class WindowsSandboxSession implements SandboxSession {
         if (!WindowsSandbox.isSupported()) {
             throw new UnsupportedOperationException("Windows AppContainer/ConPTY APIs are unavailable");
         }
-        WindowsSandbox.PseudoConsoleSession terminal =
-                WindowsSandbox.openPseudoConsole(request(command), INITIAL_COLUMNS, INITIAL_ROWS);
-        WindowsSandboxSession session = new WindowsSandboxSession(command, cancellation, terminal, System.nanoTime());
+        WindowsHelperControl control = WindowsHelperControl.open();
+        WindowsSandboxSession session = null;
         try {
+            try (var evidence = WindowsAclEvidence.open(control.directory())) {
+                control.started();
+                var terminal = WindowsSandbox.openPseudoConsole(request(command), INITIAL_COLUMNS, INITIAL_ROWS);
+                session = new WindowsSandboxSession(command, cancellation, terminal, control, System.nanoTime());
+            }
+            // 先解除授予线程的作用域引用，再启动异步终结；极短命令不能提前宣告全部 ACL 租约释放。
             session.begin();
             return session;
         } catch (IOException | RuntimeException failure) {
             try {
-                terminal.close();
+                if (session == null) {
+                    WindowsHelperControl.failed(control.directory(), failure);
+                    control.close();
+                } else {
+                    session.releaseNative();
+                }
             } catch (IOException cleanup) {
                 failure.addSuppressed(cleanup);
             }
@@ -91,7 +106,8 @@ final class WindowsSandboxSession implements SandboxSession {
                 command.writeRoots(),
                 command.allowDelete(),
                 command.timeout(),
-                command.limits());
+                command.limits(),
+                command.networkAccess());
     }
 
     private void begin() throws IOException {
@@ -230,10 +246,9 @@ final class WindowsSandboxSession implements SandboxSession {
 
     @Override
     public void close() {
-        if (!closed.compareAndSet(false, true)) {
-            return;
-        }
+        closed.set(true);
         try {
+            // 并发 close 都必须等待同一原生终态，外层不能提前删除 helper 的隧道控制目录。
             releaseNative();
             frames.complete();
             completion.completeExceptionally(new CancellationException("ConPTY session closed"));
@@ -261,9 +276,33 @@ final class WindowsSandboxSession implements SandboxSession {
                 operations);
     }
 
-    private void releaseNative() throws IOException {
-        if (released.compareAndSet(false, true)) {
-            terminal.close();
+    private synchronized void releaseNative() throws IOException {
+        if (!released) {
+            released = true;
+            try {
+                terminal.close();
+                WindowsHelperControl.completed(control.directory(), 0);
+            } catch (IOException | RuntimeException failure) {
+                releaseFailure =
+                        failure instanceof IOException io ? io : new IOException("ConPTY cleanup failed", failure);
+                try {
+                    WindowsHelperControl.failed(control.directory(), failure);
+                } catch (IOException evidenceFailure) {
+                    failure.addSuppressed(evidenceFailure);
+                }
+            }
+            try {
+                control.close();
+            } catch (IOException evidenceFailure) {
+                if (releaseFailure == null) {
+                    releaseFailure = evidenceFailure;
+                } else {
+                    releaseFailure.addSuppressed(evidenceFailure);
+                }
+            }
+        }
+        if (releaseFailure != null) {
+            throw releaseFailure;
         }
     }
 

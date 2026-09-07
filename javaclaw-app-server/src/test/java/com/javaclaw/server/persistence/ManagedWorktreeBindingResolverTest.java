@@ -41,7 +41,7 @@ class ManagedWorktreeBindingResolverTest {
 
     @BeforeEach
     void initializeBindings() throws Exception {
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         core = new CoreCommandService(database, new CanonicalJson(), Clock.fixed(NOW, ZoneOffset.UTC));
         resolver = new ManagedWorktreeBindingResolver(database);

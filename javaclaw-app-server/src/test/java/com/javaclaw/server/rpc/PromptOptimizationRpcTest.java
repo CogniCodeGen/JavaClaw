@@ -17,8 +17,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.CancellationToken;
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.PromptOptimizationAdoption;
 import com.javaclaw.api.PromptOptimizationDraft;
@@ -44,7 +45,7 @@ import com.javaclaw.runtime.ModelInvocation;
 import com.javaclaw.runtime.ModelInvocationResult;
 import com.javaclaw.runtime.ModelUsage;
 import com.javaclaw.server.AppServerBootstrap;
-import com.javaclaw.server.ProviderProfileRpcFixtures;
+import com.javaclaw.server.ProviderRoleRpcFixtures;
 import com.javaclaw.server.persistence.PermissionProfileService;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -72,10 +73,12 @@ class PromptOptimizationRpcTest {
         WriteCommand command = startCommand("start-cancel", fixture);
 
         PromptOptimizationDraft started = decodeSuccess(
-                session.handle(request("profile/prompt/optimization/start", command)), PromptOptimizationDraft.class);
+                session.handle(request("agent/role/prompt/optimization/start", command)),
+                PromptOptimizationDraft.class);
         assertTrue(model.started.await(2, TimeUnit.SECONDS));
         PromptOptimizationDraft replayed = decodeSuccess(
-                session.handle(request("profile/prompt/optimization/start", command)), PromptOptimizationDraft.class);
+                session.handle(request("agent/role/prompt/optimization/start", command)),
+                PromptOptimizationDraft.class);
 
         assertEquals(started.ref(), replayed.ref());
         assertEquals(1, model.invocations.get());
@@ -85,7 +88,8 @@ class PromptOptimizationRpcTest {
                 current.result().turnRevision(),
                 new PromptOptimizationRpcContracts.CancelPayload(current.ref().id(), "用户取消 Prompt 优化"));
         PromptOptimizationDraft cancelled = decodeSuccess(
-                session.handle(request("profile/prompt/optimization/cancel", cancel)), PromptOptimizationDraft.class);
+                session.handle(request("agent/role/prompt/optimization/cancel", cancel)),
+                PromptOptimizationDraft.class);
         assertEquals(
                 PromptOptimizationState.CANCELLED,
                 awaitTerminal(cancelled).result().state());
@@ -101,14 +105,19 @@ class PromptOptimizationRpcTest {
         Fixture fixture = createFixture(firstModel, "adopt-profile");
         WriteCommand firstStart = startCommand("start-adopt", fixture);
         PromptOptimizationDraft initial = decodeSuccess(
-                session.handle(request("profile/prompt/optimization/start", firstStart)),
+                session.handle(request("agent/role/prompt/optimization/start", firstStart)),
                 PromptOptimizationDraft.class);
         PromptOptimizationDraft draft = awaitState(initial, PromptOptimizationState.READY);
 
         assertEquals("更清晰的系统说明", draft.result().content().orElseThrow());
-        assertTrue(firstModel.lastInvocation.get().systemInstruction().contains("JavaClaw 5"));
+        assertTrue(firstModel
+                .lastInvocation
+                .get()
+                .instructions()
+                .systemInstruction()
+                .contains("JavaClaw"));
         assertTrue(firstModel.lastInvocation.get().messages().getLast().text().contains("不得把项目约定、Skill、Context"));
-        Path dataRoot = temporaryDirectory.resolve("data-v5");
+        Path dataRoot = temporaryDirectory.resolve("data-v6");
         components.close();
         assertTrue(firstModel.closed.get());
 
@@ -122,35 +131,37 @@ class PromptOptimizationRpcTest {
 
         WriteCommand adopt = command(
                 "adopt-draft",
-                fixture.profile().revision(),
+                fixture.role().revision(),
                 new PromptOptimizationRpcContracts.AdoptPayload(
                         restored.ref().id(), true, PromptOptimizationRpcContracts.ADOPTION_CONFIRMATION));
         PromptOptimizationAdoption adoption = decodeSuccess(
-                session.handle(request("profile/prompt/optimization/adopt", adopt)), PromptOptimizationAdoption.class);
+                session.handle(request("agent/role/prompt/optimization/adopt", adopt)),
+                PromptOptimizationAdoption.class);
         PromptOptimizationAdoption replayed = decodeSuccess(
-                session.handle(request("profile/prompt/optimization/adopt", adopt)), PromptOptimizationAdoption.class);
-        assertEquals(2, adoption.profile().revision());
-        assertEquals("更清晰的系统说明", adoption.profile().spec().systemInstruction());
+                session.handle(request("agent/role/prompt/optimization/adopt", adopt)),
+                PromptOptimizationAdoption.class);
+        assertEquals(2, adoption.role().revision());
+        assertEquals("更清晰的系统说明", adoption.role().spec().developerInstructions());
         assertEquals(adoption, replayed);
 
         PromptOptimizationDraft second = awaitState(
                 decodeSuccess(
-                        session.handle(
-                                request("profile/prompt/optimization/start", startCommand("start-conflict", fixture))),
+                        session.handle(request(
+                                "agent/role/prompt/optimization/start", startCommand("start-conflict", fixture))),
                         PromptOptimizationDraft.class),
                 PromptOptimizationState.READY);
         WriteCommand conflictingAdopt = command(
                 "adopt-conflict",
-                fixture.profile().revision(),
+                fixture.role().revision(),
                 new PromptOptimizationRpcContracts.AdoptPayload(
                         second.ref().id(), true, PromptOptimizationRpcContracts.ADOPTION_CONFIRMATION));
-        JsonRpcResponse conflict = session.handle(request("profile/prompt/optimization/adopt", conflictingAdopt));
+        JsonRpcResponse conflict = session.handle(request("agent/role/prompt/optimization/adopt", conflictingAdopt));
         assertEquals(
                 ProtocolErrorCode.REVISION_CONFLICT,
                 conflict.error().orElseThrow().code());
         PromptOptimizationDraft preserved = read(second);
         assertEquals(PromptOptimizationState.READY, preserved.result().state());
-        assertTrue(preserved.adoptedProfile().isEmpty());
+        assertTrue(preserved.adoptedRole().isEmpty());
     }
 
     @Test
@@ -158,23 +169,23 @@ class PromptOptimizationRpcTest {
         Fixture fixture = createFixture(new FailingModel(), "failure-profile");
         PromptOptimizationDraft failed = awaitState(
                 decodeSuccess(
-                        session.handle(
-                                request("profile/prompt/optimization/start", startCommand("start-failure", fixture))),
+                        session.handle(request(
+                                "agent/role/prompt/optimization/start", startCommand("start-failure", fixture))),
                         PromptOptimizationDraft.class),
                 PromptOptimizationState.FAILED);
         assertTrue(failed.result().content().isEmpty());
         assertTrue(failed.result().errorCode().isPresent());
 
         PromptOptimizationRpcContracts.StartPayload unconfirmed = new PromptOptimizationRpcContracts.StartPayload(
-                fixture.workspace().id(), fixture.profile(), false, "尚未确认");
+                fixture.workspace().id(), fixture.role(), ExecutionOverrides.empty(), false, "尚未确认");
         JsonRpcResponse rejected =
-                session.handle(request("profile/prompt/optimization/start", command("unconfirmed", 0, unconfirmed)));
+                session.handle(request("agent/role/prompt/optimization/start", command("unconfirmed", 0, unconfirmed)));
         assertEquals(
                 ProtocolErrorCode.INVALID_PARAMS, rejected.error().orElseThrow().code());
     }
 
     private Fixture createFixture(ModelGateway model, String profileId) throws Exception {
-        Path dataRoot = temporaryDirectory.resolve("data-v5");
+        Path dataRoot = temporaryDirectory.resolve("data-v6");
         components = AppServerBootstrap.create(dataRoot, Clock.systemUTC(), model);
         session = initialized(components);
         Path workspaceRoot = Files.createDirectories(temporaryDirectory.resolve("workspace-" + profileId));
@@ -186,10 +197,10 @@ class PromptOptimizationRpcTest {
                                 0,
                                 new CoreRpcContracts.WorkspaceCreatePayload("Workspace", workspaceRoot)))),
                 Workspace.class);
-        AgentProfileRef profile = ProviderProfileRpcFixtures.install(
+        AgentRoleRef profile = ProviderRoleRpcFixtures.install(
                 session,
                 components,
-                new ProviderProfileRpcFixtures.Installation(
+                new ProviderRoleRpcFixtures.Installation(
                         "provider-" + profileId,
                         "test-model",
                         profileId,
@@ -203,7 +214,7 @@ class PromptOptimizationRpcTest {
         AppServerSession created = value.newSession();
         InitializeParams params = new InitializeParams(
                 ProtocolVersion.CURRENT,
-                new ClientInfo("prompt-optimization-test", "5.0"),
+                new ClientInfo("prompt-optimization-test", "6.0"),
                 new CapabilityAdvertisement(Set.of("core.item-envelope"), Set.of()));
         assertTrue(
                 created.handle(request("initialize/session", params)).result().isPresent());
@@ -212,14 +223,18 @@ class PromptOptimizationRpcTest {
 
     private WriteCommand startCommand(String key, Fixture fixture) {
         PromptOptimizationRpcContracts.StartPayload payload = new PromptOptimizationRpcContracts.StartPayload(
-                fixture.workspace().id(), fixture.profile(), true, PromptOptimizationRpcContracts.BILLING_CONFIRMATION);
+                fixture.workspace().id(),
+                fixture.role(),
+                ExecutionOverrides.empty(),
+                true,
+                PromptOptimizationRpcContracts.BILLING_CONFIRMATION);
         return command(key, 0, payload);
     }
 
     private PromptOptimizationDraft read(PromptOptimizationDraft draft) {
         return decodeSuccess(
                 session.handle(request(
-                        "profile/prompt/optimization/read",
+                        "agent/role/prompt/optimization/read",
                         new PromptOptimizationRpcContracts.ReadPayload(
                                 draft.ref().id()))),
                 PromptOptimizationDraft.class);
@@ -228,12 +243,12 @@ class PromptOptimizationRpcTest {
     private void assertUnconfirmedAdoptionRejected(Fixture fixture, PromptOptimizationDraft draft) {
         WriteCommand command = command(
                 "adopt-unconfirmed",
-                fixture.profile().revision(),
+                fixture.role().revision(),
                 new PromptOptimizationRpcContracts.AdoptPayload(draft.ref().id(), false, "尚未确认"));
-        JsonRpcResponse response = session.handle(request("profile/prompt/optimization/adopt", command));
+        JsonRpcResponse response = session.handle(request("agent/role/prompt/optimization/adopt", command));
         assertEquals(
                 ProtocolErrorCode.INVALID_PARAMS, response.error().orElseThrow().code());
-        assertTrue(read(draft).adoptedProfile().isEmpty());
+        assertTrue(read(draft).adoptedRole().isEmpty());
     }
 
     private PromptOptimizationDraft awaitState(PromptOptimizationDraft draft, PromptOptimizationState expected)
@@ -282,7 +297,7 @@ class PromptOptimizationRpcTest {
                 .decode(response.result().orElseThrow(() -> new AssertionError(response.error())), type);
     }
 
-    private record Fixture(Workspace workspace, AgentProfileRef profile) {}
+    private record Fixture(Workspace workspace, AgentRoleRef role) {}
 
     private static final class RecordingModel implements ModelGateway, AutoCloseable {
         private final String output;

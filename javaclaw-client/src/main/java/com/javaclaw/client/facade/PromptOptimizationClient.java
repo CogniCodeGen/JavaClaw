@@ -3,7 +3,8 @@ package com.javaclaw.client.facade;
 import java.util.List;
 import java.util.Objects;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.PromptOptimizationAdoption;
 import com.javaclaw.api.PromptOptimizationDraft;
 import com.javaclaw.api.PromptOptimizationId;
@@ -12,7 +13,7 @@ import com.javaclaw.client.CommandOptions;
 import com.javaclaw.client.RpcClientConnection;
 import com.javaclaw.protocol.PromptOptimizationRpcContracts;
 
-/** Agent Profile Prompt 优化、取消与人工采纳的强类型 SDK facade。 */
+/** Agent Role Prompt 优化、取消与人工采纳的强类型 SDK facade。 */
 public final class PromptOptimizationClient {
     private final RpcClientConnection connection;
 
@@ -29,7 +30,8 @@ public final class PromptOptimizationClient {
      * 异步启动可能计费的普通 Harness Turn；RPC 只返回初始任务快照。
      *
      * @param workspaceId Workspace
-     * @param profile 精确源 Agent Profile
+     * @param role 精确源 Agent Role
+     * @param execution 独立模型、权限和预算选择
      * @param billingConfirmed 必须由调用方显式传 true
      * @param confirmation 固定计费确认文本
      * @param options expected revision 必须为 0；网络重试复用同一幂等键
@@ -37,7 +39,8 @@ public final class PromptOptimizationClient {
      */
     public PromptOptimizationDraft start(
             WorkspaceId workspaceId,
-            AgentProfileRef profile,
+            AgentRoleRef role,
+            ExecutionOverrides execution,
             boolean billingConfirmed,
             String confirmation,
             CommandOptions options) {
@@ -48,8 +51,9 @@ public final class PromptOptimizationClient {
                 PromptOptimizationRpcContracts.BILLING_CONFIRMATION,
                 "Prompt optimization billing");
         return connection.command(
-                "profile/prompt/optimization/start",
-                new PromptOptimizationRpcContracts.StartPayload(workspaceId, profile, billingConfirmed, confirmation),
+                "agent/role/prompt/optimization/start",
+                new PromptOptimizationRpcContracts.StartPayload(
+                        workspaceId, role, execution, billingConfirmed, confirmation),
                 checked,
                 PromptOptimizationDraft.class);
     }
@@ -62,7 +66,7 @@ public final class PromptOptimizationClient {
      */
     public PromptOptimizationDraft read(PromptOptimizationId id) {
         return connection.query(
-                "profile/prompt/optimization/read",
+                "agent/role/prompt/optimization/read",
                 new PromptOptimizationRpcContracts.ReadPayload(id),
                 PromptOptimizationDraft.class);
     }
@@ -76,7 +80,7 @@ public final class PromptOptimizationClient {
     public List<PromptOptimizationDraft> list(WorkspaceId workspaceId) {
         return connection
                 .query(
-                        "profile/prompt/optimization/list",
+                        "agent/role/prompt/optimization/list",
                         new PromptOptimizationRpcContracts.ListPayload(workspaceId),
                         PromptOptimizationRpcContracts.ListResult.class)
                 .drafts();
@@ -96,26 +100,26 @@ public final class PromptOptimizationClient {
             throw new IllegalArgumentException("Prompt optimization cancel requires positive Turn revision");
         }
         return connection.command(
-                "profile/prompt/optimization/cancel",
+                "agent/role/prompt/optimization/cancel",
                 new PromptOptimizationRpcContracts.CancelPayload(id, reason),
                 checked,
                 PromptOptimizationDraft.class);
     }
 
     /**
-     * 人工采纳 READY 草稿并创建新的 Agent Profile revision。
+     * 人工采纳 READY 草稿并创建新的 Agent Role revision。
      *
      * @param id 优化任务标识
      * @param adoptionConfirmed 必须由调用方显式传 true
      * @param confirmation 固定人工采纳确认文本
-     * @param options expected revision 必须等于源 Profile revision
-     * @return 草稿和新 Profile
+     * @param options expected revision 必须等于源 Role revision
+     * @return 草稿和新 Role
      */
     public PromptOptimizationAdoption adopt(
             PromptOptimizationId id, boolean adoptionConfirmed, String confirmation, CommandOptions options) {
         CommandOptions checked = Objects.requireNonNull(options, "options");
         if (checked.expectedRevision() < 1) {
-            throw new IllegalArgumentException("Prompt adoption requires positive source Profile revision");
+            throw new IllegalArgumentException("Prompt adoption requires positive source Role revision");
         }
         requireConfirmation(
                 adoptionConfirmed,
@@ -123,7 +127,7 @@ public final class PromptOptimizationClient {
                 PromptOptimizationRpcContracts.ADOPTION_CONFIRMATION,
                 "Prompt adoption");
         return connection.command(
-                "profile/prompt/optimization/adopt",
+                "agent/role/prompt/optimization/adopt",
                 new PromptOptimizationRpcContracts.AdoptPayload(id, adoptionConfirmed, confirmation),
                 checked,
                 PromptOptimizationAdoption.class);

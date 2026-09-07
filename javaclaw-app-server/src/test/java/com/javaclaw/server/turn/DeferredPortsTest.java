@@ -9,7 +9,7 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.ApprovalRequirement;
 import com.javaclaw.api.AutomationExecutionSnapshot;
 import com.javaclaw.api.CancellationSource;
@@ -154,8 +154,8 @@ class DeferredPortsTest {
 
     private AutomationExecutionSnapshot snapshot() {
         PermissionProfile permission = permission();
-        return new AutomationExecutionSnapshot(
-                new AgentProfileRef("profile", 1),
+        return TurnV6Fixtures.snapshot(
+                new AgentRoleRef("profile", 1),
                 new ProviderRef("provider", 1, "model"),
                 new PermissionProfileRef(permission.id(), permission.version()),
                 new TurnBudget(1_000, 1_000, 4, 1, Duration.ofMinutes(1)),

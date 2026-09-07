@@ -10,16 +10,18 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.CorePayloads;
 import com.javaclaw.api.CoreSchemas;
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.ItemEnvelope;
 import com.javaclaw.api.MessageRole;
 import com.javaclaw.api.PromptOptimizationAdoption;
@@ -35,7 +37,7 @@ import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.CoreRpcContracts;
 import com.javaclaw.protocol.PromptOptimizationRpcContracts;
-import com.javaclaw.server.persistence.AgentProfileService;
+import com.javaclaw.server.persistence.AgentRoleService;
 import com.javaclaw.server.persistence.CommandIdentity;
 import com.javaclaw.server.persistence.CoreCommandService;
 import com.javaclaw.server.persistence.PersistenceException;
@@ -44,9 +46,9 @@ import com.javaclaw.server.persistence.PromptOptimizationRepository;
 import com.javaclaw.server.persistence.TurnStartRequest;
 
 /**
- * 通过普通 Thin Harness Turn 生成、投影和人工采纳 Agent Profile Prompt 草稿。
+ * 通过普通 Thin Harness Turn 生成、投影和人工采纳 Agent Role Prompt 草稿。
  *
- * <p>实现说明：管理表只保存 Thread/Turn 引用和优化说明 provenance。运行状态及正文始终来自 Core Turn/Item；启动 RPC 只提交虚拟线程， 不等待模型。采纳命令使用源 Profile 精确
+ * <p>实现说明：管理表只保存 Thread/Turn 引用和优化说明 provenance。运行状态及正文始终来自 Core Turn/Item；启动 RPC 只提交虚拟线程， 不等待模型。采纳命令使用源 Role 精确
  * revision，冲突不会删除或改写草稿。
  */
 public final class PromptOptimizationService {
@@ -54,7 +56,7 @@ public final class PromptOptimizationService {
     private static final int MAXIMUM_DRAFT_BYTES = 65_536;
 
     private final CoreCommandService core;
-    private final AgentProfileService profiles;
+    private final AgentRoleService roles;
     private final PromptOptimizationRepository records;
     private final TurnDispatcher turns;
     private final PromptOptimizationInstruction instruction;
@@ -65,7 +67,7 @@ public final class PromptOptimizationService {
      * 创建 Prompt 优化用例。
      *
      * @param core Core Thread、Turn 与 Item 服务
-     * @param profiles Agent Profile 版本服务
+     * @param roles Agent Role 版本服务
      * @param records 最小管理关联 Repository
      * @param turns 普通非阻塞 Turn 调度端口
      * @param instruction 已审阅内置优化说明
@@ -74,14 +76,14 @@ public final class PromptOptimizationService {
      */
     public PromptOptimizationService(
             CoreCommandService core,
-            AgentProfileService profiles,
+            AgentRoleService roles,
             PromptOptimizationRepository records,
             TurnDispatcher turns,
             PromptOptimizationInstruction instruction,
             CanonicalJson json,
             Clock clock) {
         this.core = Objects.requireNonNull(core, "core");
-        this.profiles = Objects.requireNonNull(profiles, "profiles");
+        this.roles = Objects.requireNonNull(roles, "roles");
         this.records = Objects.requireNonNull(records, "records");
         this.turns = Objects.requireNonNull(turns, "turns");
         this.instruction = Objects.requireNonNull(instruction, "instruction");
@@ -93,7 +95,7 @@ public final class PromptOptimizationService {
      * 幂等创建并异步提交一个普通 Harness Turn。
      *
      * @param identity 启动命令身份，expected revision 必须为 0
-     * @param request Workspace、源 Profile 与显式计费确认
+     * @param request Workspace、源 Role 与显式计费确认
      * @return QUEUED、RUNNING 或重试时的最新投影
      */
     public synchronized PromptOptimizationDraft start(
@@ -152,11 +154,11 @@ public final class PromptOptimizationService {
     }
 
     /**
-     * 使用 READY 草稿创建新的 Agent Profile revision；绝不自动采纳。
+     * 使用 READY 草稿创建新的 Agent Role revision；绝不自动采纳。
      *
-     * @param identity expected revision 必须等于源 Profile revision
+     * @param identity expected revision 必须等于源 Role revision
      * @param request 草稿与显式人工确认
-     * @return 新 Profile 和保留的草稿快照
+     * @return 新 Role 和保留的草稿快照
      */
     public PromptOptimizationAdoption adopt(
             CommandIdentity identity, PromptOptimizationRpcContracts.AdoptPayload request) {
@@ -167,11 +169,11 @@ public final class PromptOptimizationService {
         String content = draft.result()
                 .content()
                 .orElseThrow(() -> PersistenceException.invalidRequest("只有 READY Prompt 草稿可以采纳"));
-        AgentProfile source = profiles.require(
-                record.ref().sourceProfile().id(), record.ref().sourceProfile().revision());
-        AgentProfileSpec updatedSpec = withSystemInstruction(source.spec(), content);
-        AgentProfile updated = profiles.update(identity, source.id(), updatedSpec, source.lifecycle());
-        PromptOptimizationRecord adopted = records.markAdopted(record.ref().id(), updated.revision());
+        AgentRole source = roles.require(
+                record.ref().sourceRole().id(), record.ref().sourceRole().revision());
+        AgentRoleSpec updatedSpec = withDeveloperInstructions(source.spec(), content);
+        AgentRole updated = records.adopt(identity, record.ref().id(), roles, updatedSpec, source.lifecycle());
+        PromptOptimizationRecord adopted = records.require(record.ref().id());
         return new PromptOptimizationAdoption(project(adopted), updated);
     }
 
@@ -189,9 +191,8 @@ public final class PromptOptimizationService {
 
     private PromptOptimizationRecord createRecord(
             CommandIdentity identity, PromptOptimizationRpcContracts.StartPayload request) {
-        AgentProfile source =
-                profiles.require(request.profile().id(), request.profile().revision());
-        String title = "优化 Agent Profile：" + source.spec().displayName();
+        AgentRole source = roles.require(request.role().id(), request.role().revision());
+        String title = "优化 Agent Role：" + source.spec().name();
         DerivedStart derived = derived(identity, request, title);
         com.javaclaw.api.ConversationThread thread = core.createThread(
                 derived.threadIdentity(),
@@ -201,12 +202,12 @@ public final class PromptOptimizationService {
                 title);
         String message = instruction.message(source.id(), source.revision());
         CoreRpcContracts.TurnStartPayload payload =
-                new CoreRpcContracts.TurnStartPayload(thread.id(), Optional.of(request.profile()), message);
+                new CoreRpcContracts.TurnStartPayload(thread.id(), optimizationExecution(request), message, List.of());
         CorePayloads.Message item = new CorePayloads.Message(MessageRole.USER, message, List.of(), Optional.empty());
         TurnStartRequest startRequest = turns.resolve(payload, item);
         AgentTurn turn = core.startTurn(turnIdentity(derived.parentKey(), payload), startRequest);
         PromptOptimizationRef ref = new PromptOptimizationRef(
-                PromptOptimizationId.random(), request.workspaceId(), request.profile(), thread.id(), turn.id());
+                PromptOptimizationId.random(), request.workspaceId(), request.role(), thread.id(), turn.id());
         return new PromptOptimizationRecord(
                 ref,
                 PromptOptimizationInstruction.REVISION,
@@ -218,15 +219,23 @@ public final class PromptOptimizationService {
 
     private void dispatchIfQueued(PromptOptimizationRecord record) {
         AgentTurn turn = requireTurn(record);
-        if (turn.status() != TurnStatus.QUEUED) {
-            return;
+        if (turn.status() == TurnStatus.QUEUED) {
+            // 恢复只读取已持久化的输入和冻结配置，不重新解释新版 Role 或优化模板。
+            turns.resume(turn.id());
         }
-        requireCurrentInstruction(record);
-        String message = instruction.message(
-                record.ref().sourceProfile().id(), record.ref().sourceProfile().revision());
-        CoreRpcContracts.TurnStartPayload payload = new CoreRpcContracts.TurnStartPayload(
-                record.ref().threadId(), Optional.of(record.ref().sourceProfile()), message);
-        turns.dispatch(turn, payload);
+    }
+
+    private static ExecutionOverrides optimizationExecution(PromptOptimizationRpcContracts.StartPayload request) {
+        ExecutionOverrides execution = request.execution();
+        // 优化只产生模型草稿；工具集合在代码中置空，避免提示词承担无副作用保证。
+        return new ExecutionOverrides(
+                Optional.of(request.role()),
+                execution.provider(),
+                execution.permissionProfile(),
+                execution.approvalPolicy(),
+                execution.budget(),
+                Optional.of(Set.of()),
+                execution.reasoning());
     }
 
     private PromptOptimizationDraft project(PromptOptimizationRecord record) {
@@ -242,9 +251,8 @@ public final class PromptOptimizationService {
         }
         PromptOptimizationProvenance provenance = new PromptOptimizationProvenance(
                 record.instructionRevision(), record.instructionDigest(), record.createdAt(), updatedAt);
-        Optional<AgentProfileRef> adopted = record.adoptedProfileRevision()
-                .map(revision ->
-                        new AgentProfileRef(record.ref().sourceProfile().id(), revision));
+        Optional<AgentRoleRef> adopted = record.adoptedRoleRevision()
+                .map(revision -> new AgentRoleRef(record.ref().sourceRole().id(), revision));
         return new PromptOptimizationDraft(record.ref(), result, provenance, adopted);
     }
 
@@ -305,10 +313,10 @@ public final class PromptOptimizationService {
     private DerivedStart derived(
             CommandIdentity identity, PromptOptimizationRpcContracts.StartPayload request, String title) {
         String threadKey = derivedKey("thread", identity.idempotencyKey());
-        ThreadFingerprint threadFingerprint =
-                new ThreadFingerprint(request.workspaceId(), request.profile(), title, instruction.digest());
+        ThreadFingerprint threadFingerprint = new ThreadFingerprint(
+                request.workspaceId(), request.role(), request.execution(), title, instruction.digest());
         CommandIdentity threadIdentity = new CommandIdentity(
-                "profile/prompt/optimization/thread",
+                "agent/role/prompt/optimization/thread",
                 threadKey,
                 0,
                 json.encode(threadFingerprint).sha256());
@@ -317,7 +325,7 @@ public final class PromptOptimizationService {
 
     private CommandIdentity turnIdentity(String parentKey, CoreRpcContracts.TurnStartPayload payload) {
         return new CommandIdentity(
-                "profile/prompt/optimization/turn",
+                "agent/role/prompt/optimization/turn",
                 derivedKey("turn", parentKey),
                 0,
                 json.encode(payload).sha256());
@@ -325,14 +333,6 @@ public final class PromptOptimizationService {
 
     private static String derivedKey(String role, String sourceKey) {
         return "prompt-opt-" + role + ":" + digest(sourceKey);
-    }
-
-    private void requireCurrentInstruction(PromptOptimizationRecord record) {
-        boolean matches = PromptOptimizationInstruction.REVISION.equals(record.instructionRevision())
-                && instruction.digest().equals(record.instructionDigest());
-        if (!matches) {
-            throw new IllegalStateException("Prompt optimization instruction revision is unavailable");
-        }
     }
 
     private static PromptOptimizationRpcContracts.StartPayload requireBillingConfirmation(
@@ -357,8 +357,8 @@ public final class PromptOptimizationService {
 
     private static void requireSourceRevision(CommandIdentity identity, PromptOptimizationRecord record) {
         if (Objects.requireNonNull(identity, "identity").expectedRevision()
-                != record.ref().sourceProfile().revision()) {
-            throw PersistenceException.revisionConflict("采纳必须使用源 Agent Profile 精确 revision");
+                != record.ref().sourceRole().revision()) {
+            throw PersistenceException.revisionConflict("采纳必须使用源 Agent Role 精确 revision");
         }
     }
 
@@ -367,14 +367,16 @@ public final class PromptOptimizationService {
                 .orElseThrow(() -> new IllegalStateException("Prompt 优化关联的 Turn 不存在"));
     }
 
-    private static AgentProfileSpec withSystemInstruction(AgentProfileSpec source, String instruction) {
-        return new AgentProfileSpec(
-                source.displayName(),
+    private static AgentRoleSpec withDeveloperInstructions(AgentRoleSpec source, String instruction) {
+        return new AgentRoleSpec(
+                source.name(),
+                source.description(),
                 instruction,
-                source.provider(),
-                source.permissionProfile(),
-                source.visibleTools(),
-                source.budget());
+                source.model(),
+                source.reasoning(),
+                source.narrowing(),
+                source.permissionConstraint(),
+                source.extensions());
     }
 
     private static boolean terminal(TurnStatus status) {
@@ -391,7 +393,11 @@ public final class PromptOptimizationService {
     }
 
     private record ThreadFingerprint(
-            WorkspaceId workspaceId, AgentProfileRef profile, String title, String instructionDigest) {}
+            WorkspaceId workspaceId,
+            AgentRoleRef role,
+            ExecutionOverrides execution,
+            String title,
+            String instructionDigest) {}
 
     private record DerivedStart(CommandIdentity threadIdentity, String parentKey) {}
 }

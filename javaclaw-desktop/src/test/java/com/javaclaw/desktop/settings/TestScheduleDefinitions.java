@@ -2,9 +2,10 @@ package com.javaclaw.desktop.settings;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Optional;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.builtin.contracts.OrchestrationContracts;
 import com.javaclaw.builtin.contracts.ScheduleContracts;
 
@@ -12,11 +13,18 @@ import com.javaclaw.builtin.contracts.ScheduleContracts;
 final class TestScheduleDefinitions {
     private TestScheduleDefinitions() {}
 
-    /** @return 引用指定 Agent Profile 的固定间隔 Turn Schedule */
-    static ScheduleContracts.Definition turn(AgentProfile profile) {
-        AgentProfileRef reference = new AgentProfileRef(profile.id(), profile.revision());
+    /** @return 引用指定 Agent Role 的固定间隔 Turn Schedule */
+    static ScheduleContracts.Definition turn(AgentRole profile) {
+        AgentRoleRef reference = new AgentRoleRef(profile.id(), profile.revision());
         ScheduleContracts.TurnTemplate template = new ScheduleContracts.TurnTemplate(
-                reference,
+                new com.javaclaw.api.ExecutionOverrides(
+                        Optional.of(reference),
+                        Optional.empty(),
+                        Optional.of(new com.javaclaw.api.PermissionProfileRef("standard", 1)),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty()),
                 "Nightly review",
                 "执行只读审查。",
                 new OrchestrationContracts.ExecutionBudget(2, 8_000, 2_000, 10));

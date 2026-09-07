@@ -4,12 +4,12 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.ToolCatalogQueryResult;
 import com.javaclaw.api.ToolDescriptor;
 import com.javaclaw.api.WorkspaceId;
 
-/** Tool 目录查询与 Turn 内渐进搜索共用的 Protocol v2 契约。 */
+/** Tool 目录查询与 Turn 内渐进搜索共用的 Protocol v3 契约。 */
 public final class ToolRpcContracts {
     private ToolRpcContracts() {}
 
@@ -35,7 +35,7 @@ public final class ToolRpcContracts {
      * @param workspaceId Workspace
      * @param permissionProfileId 权限配置标识
      * @param permissionProfileVersion 冻结版本
-     * @param agentProfile 精确 Agent Profile；存在时按其工具可见范围返回可执行目录
+     * @param agentRole 精确 Agent Role；存在时按其工具可见范围返回可执行目录
      * @param query 名称、说明或标签关键词；空字符串表示列出有界候选
      * @param limit 最大结果数
      */
@@ -43,7 +43,7 @@ public final class ToolRpcContracts {
             WorkspaceId workspaceId,
             String permissionProfileId,
             long permissionProfileVersion,
-            Optional<AgentProfileRef> agentProfile,
+            Optional<AgentRoleRef> agentRole,
             String query,
             int limit) {
         /** 校验目录查询。 */
@@ -53,7 +53,7 @@ public final class ToolRpcContracts {
             if (permissionProfileVersion < 1) {
                 throw new IllegalArgumentException("permissionProfileVersion must be positive");
             }
-            agentProfile = Objects.requireNonNull(agentProfile, "agentProfile");
+            agentRole = Objects.requireNonNull(agentRole, "agentRole");
             query = normalizeQuery(query);
             if (limit < 1 || limit > 100) {
                 throw new IllegalArgumentException("limit must be between 1 and 100");

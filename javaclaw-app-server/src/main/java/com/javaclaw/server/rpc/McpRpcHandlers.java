@@ -38,7 +38,7 @@ public final class McpRpcHandlers {
     }
 
     /**
-     * 注册 MCP Protocol v2 方法。
+     * 注册 MCP Protocol v3 方法。
      *
      * @param routes Router Builder
      * @return 当前 Builder

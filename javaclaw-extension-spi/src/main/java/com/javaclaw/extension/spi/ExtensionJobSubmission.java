@@ -13,7 +13,7 @@ import com.javaclaw.api.WorkspaceId;
  * @param jobType 扩展内稳定的执行类型
  * @param definitionId 用户定义标识
  * @param definitionRevision 冻结的定义 revision
- * @param frozenInput 冻结 Profile、权限、预算和领域输入的规范快照
+ * @param frozenInput 冻结 Role、模型、权限、预算和领域输入的规范快照
  * @param initialCheckpoint 首个工作单元之前的 checkpoint
  */
 public record ExtensionJobSubmission(

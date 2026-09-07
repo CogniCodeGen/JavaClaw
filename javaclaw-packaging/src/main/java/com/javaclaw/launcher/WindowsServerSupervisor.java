@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.javaclaw.launcher.tray.TrayServerProcess;
+import com.javaclaw.nativehost.ManagedRuntimeDirectory;
 import com.javaclaw.nativehost.transport.WindowsNamedPipeTransport;
 import com.javaclaw.nativehost.transport.WindowsPipeName;
 import com.javaclaw.protocol.LocalTransport;
@@ -24,16 +25,14 @@ final class WindowsServerSupervisor implements TrayServerProcess {
     WindowsServerSupervisor(RuntimeLayout layout) {
         this.layout = layout;
         pipeName = WindowsPipeName.currentUserDefault();
-        Path stateRoot = Path.of(System.getProperty("user.home"), ".javaclaw")
-                .toAbsolutePath()
-                .normalize();
-        logFile = stateRoot.resolve("data-v5/logs/app-server.log");
+        logFile = layout.logDirectory().resolve("app-server.log");
     }
 
     WindowsPipeName ensureRunning() throws IOException, InterruptedException {
         if (!WindowsNamedPipeTransport.isSupported()) {
             throw new IOException("当前 Java Runtime 不支持 Windows Named Pipe FFM");
         }
+        ManagedRuntimeDirectory.prepare(layout.dataDirectory());
         if (canConnect()) {
             return pipeName;
         }

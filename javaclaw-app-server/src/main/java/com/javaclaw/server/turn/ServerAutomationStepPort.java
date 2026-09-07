@@ -113,7 +113,9 @@ public final class ServerAutomationStepPort implements AutomationStepPort {
                         context.title());
         provisionWorktree(context, thread);
         CoreRpcContracts.TurnStartPayload payload = new CoreRpcContracts.TurnStartPayload(
-                thread.id(), Optional.of(context.snapshot().profile()), message);
+                thread.id(),
+                AgentConfigurationResolver.overrides(context.snapshot().configuration()),
+                message);
         CorePayloads.Message user = new CorePayloads.Message(MessageRole.USER, message, List.of(), Optional.empty());
         TurnStartRequest request = dependencies.dispatcher().resolveOrchestrated(payload, user, context.snapshot());
         AgentTurn turn = dependencies

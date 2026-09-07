@@ -308,7 +308,7 @@ class SiteBrowserServiceTest {
 
     private Fixture fixture() {
         CanonicalJson json = new CanonicalJson();
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         H2ManagedExtensionStore documents = new H2ManagedExtensionStore(database, CLOCK);
         SecretVaultService vault =

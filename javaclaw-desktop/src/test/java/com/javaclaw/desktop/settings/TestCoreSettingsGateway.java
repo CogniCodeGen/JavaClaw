@@ -11,9 +11,8 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.CancellationToken;
 import com.javaclaw.api.ConversationThread;
 import com.javaclaw.api.CoreTools;
@@ -32,8 +31,6 @@ import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.PrivateNetworkGrant;
 import com.javaclaw.api.PrivateNetworkGrantPreview;
 import com.javaclaw.api.PrivateNetworkPurpose;
-import com.javaclaw.api.ProfileBinding;
-import com.javaclaw.api.ProfileLifecycle;
 import com.javaclaw.api.ProviderCapabilities;
 import com.javaclaw.api.ProviderCredentialBinding;
 import com.javaclaw.api.ProviderCredentialClearResult;
@@ -64,16 +61,14 @@ import com.javaclaw.client.CommandOptions;
 import com.javaclaw.protocol.DiagnosticsRpcContracts;
 
 /** 管理中心 Presenter 测试共享的纯内存 SDK 边界。 */
-final class TestCoreSettingsGateway implements CoreSettingsGateway {
+class TestCoreSettingsGateway extends TestRoleExecutionSettingsGateway {
     private static final Instant NOW = Instant.parse("2026-09-01T01:00:00Z");
 
     final List<ProviderEndpoint> providers = new ArrayList<>();
     final java.util.ArrayDeque<CompletableFuture<ProviderModelDiscoveryResult>> discoveryResponses = new ArrayDeque<>();
     final List<CancellationToken> discoveryCancellations = new ArrayList<>();
-    final List<AgentProfile> profiles = new ArrayList<>();
     private final TestPermissionSettings permissionSettings = new TestPermissionSettings();
     final List<PermissionProfile> permissions = permissionSettings.profiles;
-    final TestWorkspaceSettings workspaceSettings = new TestWorkspaceSettings();
     final List<PrivateNetworkGrant> privateNetworkGrants = permissionSettings.privateNetworkGrants;
     final List<UnattendedToolGrantStatus> unattendedToolGrants = permissionSettings.unattendedToolGrants;
     private Optional<CredentialMetadata> credential = Optional.empty();
@@ -258,49 +253,6 @@ final class TestCoreSettingsGateway implements CoreSettingsGateway {
     }
 
     @Override
-    public CompletionStage<List<AgentProfile>> profiles() {
-        return completed(List.copyOf(profiles));
-    }
-
-    @Override
-    public CompletionStage<AgentProfile> profile(AgentProfileRef reference) {
-        return completed(profiles.stream()
-                .filter(candidate ->
-                        candidate.id().equals(reference.id()) && candidate.revision() == reference.revision())
-                .findFirst()
-                .orElseThrow());
-    }
-
-    @Override
-    public CompletionStage<AgentProfile> createProfile(String id, AgentProfileSpec spec, CommandOptions options) {
-        AgentProfile created = new AgentProfile(id, 1, ProfileLifecycle.ACTIVE, spec, NOW, NOW);
-        profiles.add(created);
-        return completed(created);
-    }
-
-    @Override
-    public CompletionStage<AgentProfile> updateProfile(
-            String id, AgentProfileSpec spec, ProfileLifecycle lifecycle, CommandOptions options) {
-        AgentProfile current = profiles.stream()
-                .filter(candidate -> candidate.id().equals(id))
-                .findFirst()
-                .orElseThrow();
-        AgentProfile updated = new AgentProfile(id, current.revision() + 1, lifecycle, spec, current.createdAt(), NOW);
-        profiles.remove(current);
-        profiles.add(updated);
-        return completed(updated);
-    }
-
-    @Override
-    public CompletionStage<AgentProfile> archiveProfile(String id, CommandOptions options) {
-        AgentProfile current = profiles.stream()
-                .filter(candidate -> candidate.id().equals(id))
-                .findFirst()
-                .orElseThrow();
-        return updateProfile(id, current.spec(), ProfileLifecycle.ARCHIVED, options);
-    }
-
-    @Override
     public CompletionStage<List<PermissionProfile>> permissionProfiles() {
         return completed(List.copyOf(permissions));
     }
@@ -317,7 +269,7 @@ final class TestCoreSettingsGateway implements CoreSettingsGateway {
     public CompletionStage<ToolCatalogQueryResult> toolCatalog(
             WorkspaceId workspaceId,
             PermissionProfileRef permissionProfile,
-            Optional<AgentProfileRef> agentProfile,
+            Optional<AgentRoleRef> agentRole,
             String query,
             int limit) {
         ToolDescriptor descriptor = CoreTools.search();
@@ -353,17 +305,6 @@ final class TestCoreSettingsGateway implements CoreSettingsGateway {
     @Override
     public CompletionStage<Workspace> archiveWorkspace(Workspace workspace, CommandOptions options) {
         return completed(workspaceSettings.archive(workspace));
-    }
-
-    @Override
-    public CompletionStage<Optional<ProfileBinding>> workspaceProfileBinding(WorkspaceId workspaceId) {
-        return completed(workspaceSettings.binding);
-    }
-
-    @Override
-    public CompletionStage<ProfileBinding> bindWorkspaceProfile(
-            WorkspaceId workspaceId, AgentProfileRef profile, CommandOptions options) {
-        return completed(workspaceSettings.bind(workspaceId, profile, options));
     }
 
     @Override
@@ -567,7 +508,7 @@ final class TestCoreSettingsGateway implements CoreSettingsGateway {
         return diagnostics();
     }
 
-    static AgentProfileSpec profileSpec() {
+    static AgentRoleSpec profileSpec() {
         return TestCoreSettingsFixtures.profileSpec();
     }
 

@@ -38,7 +38,7 @@ public final class SecurityGrantRpcHandlers {
     }
 
     /**
-     * 注册全部安全授权 Protocol v2 方法。
+     * 注册全部安全授权 Protocol v3 方法。
      *
      * @param routes 组合根路由 Builder
      * @return 当前 Builder

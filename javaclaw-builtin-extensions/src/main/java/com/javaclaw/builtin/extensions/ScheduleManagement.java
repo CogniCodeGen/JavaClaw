@@ -7,12 +7,12 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-import com.javaclaw.api.AgentProfileRef;
 import com.javaclaw.api.CanonicalPayload;
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.builtin.contracts.ScheduleActionContracts;
 import com.javaclaw.builtin.contracts.ScheduleContracts;
 import com.javaclaw.builtin.contracts.ScheduleManagementContracts;
-import com.javaclaw.extension.spi.AutomationProfileOption;
+import com.javaclaw.extension.spi.AutomationRoleOption;
 import com.javaclaw.extension.spi.ExpectedRevisionBinding;
 import com.javaclaw.extension.spi.ExtensionContribution;
 import com.javaclaw.extension.spi.ExtensionContributions;
@@ -30,7 +30,7 @@ import com.javaclaw.extension.spi.ViewQueryResult;
 import com.javaclaw.extension.spi.ViewSchema;
 import com.javaclaw.extension.spi.ViewSelectionMode;
 
-/** Schedule 的强类型新建、权威 Profile 选择、乐观锁编辑与触发预览管理纵切。 */
+/** Schedule 的强类型新建、权威 Role 选择、乐观锁编辑与触发预览管理纵切。 */
 final class ScheduleManagement {
     static final String PREVIEW_VIEW = "preview/view.list";
     static final String OCCURRENCE_RUN = "occurrence/run";
@@ -39,11 +39,11 @@ final class ScheduleManagement {
     private static final String UPDATE = "definition/update";
     private static final String VIEW_NEW = "definition/view.new";
     private static final String VIEW_SELECTED = "definition/view.selected";
-    private static final String VIEW_PROFILES = "definition/view.profiles";
+    private static final String VIEW_ROLES = "definition/view.roles";
     private static final String VIEW_TARGETS = "definition/view.targets";
     private static final String NEW_SOURCE = "newDefinition";
     private static final String EDIT_SOURCE = "definitionEditor";
-    private static final String PROFILE_SOURCE = "profiles";
+    private static final String ROLE_SOURCE = "roles";
     private static final String TARGET_SOURCE = "scheduleTargets";
 
     private final ManagedDocumentResource<ScheduleContracts.Definition> documents;
@@ -61,17 +61,28 @@ final class ScheduleManagement {
         return List.of(
                 new ExtensionContributions.Query(
                         "schedule.management.query",
-                        Set.of(VIEW_NEW, VIEW_SELECTED, VIEW_PROFILES, VIEW_TARGETS),
+                        Set.of(
+                                VIEW_NEW,
+                                VIEW_SELECTED,
+                                VIEW_ROLES,
+                                VIEW_TARGETS,
+                                AutomationSelectionView.PROVIDERS,
+                                AutomationSelectionView.PERMISSIONS),
                         this::query),
-                new ExtensionContributions.Command("schedule.management.command", Set.of(CREATE, UPDATE), this::save),
+                new ExtensionContributions.Command(
+                        "schedule.management.command",
+                        Set.of(CREATE, UPDATE, "definition/form/create", "definition/form/update"),
+                        this::save),
                 new ExtensionContributions.View("schedule.management.view", view()));
     }
 
     private ExtensionResponse query(ExtensionRequest request, ExtensionExecutionContext context) throws Exception {
         return switch (request.operation()) {
+            case AutomationSelectionView.PROVIDERS, AutomationSelectionView.PERMISSIONS ->
+                AutomationSelectionView.query(request, context, documents.payloads());
             case VIEW_NEW -> support.newEditor(request, NEW_SOURCE);
             case VIEW_SELECTED -> support.selected(request, context, EDIT_SOURCE, this::editor);
-            case VIEW_PROFILES -> profiles(request, context);
+            case VIEW_ROLES -> roles(request, context);
             case VIEW_TARGETS -> targets(request, context);
             default -> throw new IllegalArgumentException("unknown Schedule management query");
         };
@@ -80,8 +91,8 @@ final class ScheduleManagement {
     private ExtensionResponse save(ExtensionRequest request, ExtensionExecutionContext context) throws Exception {
         SaveMode mode =
                 switch (request.operation()) {
-                    case CREATE -> SaveMode.CREATE;
-                    case UPDATE -> SaveMode.UPDATE;
+                    case CREATE, "definition/form/create" -> SaveMode.CREATE;
+                    case UPDATE, "definition/form/update" -> SaveMode.UPDATE;
                     default -> throw new IllegalArgumentException("unknown Schedule management command");
                 };
         String key = request.idempotencyKey()
@@ -106,9 +117,13 @@ final class ScheduleManagement {
             ExtensionTransaction transaction,
             SaveMode mode)
             throws Exception {
-        ScheduleManagementContracts.SaveRequest input =
-                documents.payloads().decode(request.payload(), ScheduleManagementContracts.SaveRequest.class);
-        requireProfile(input.profile(), request, context);
+        ScheduleManagementContracts.SaveRequest input = request.operation().contains("/form/")
+                ? documents
+                        .payloads()
+                        .decode(request.payload(), ScheduleFormSaveRequest.class)
+                        .toRequest()
+                : documents.payloads().decode(request.payload(), ScheduleManagementContracts.SaveRequest.class);
+        requireExecution(input.execution(), request, context);
         ScheduleContracts.Target target = target(input, request, context);
         ScheduleContracts.Definition definition = input.definition(
                 target,
@@ -144,8 +159,8 @@ final class ScheduleManagement {
                 || input.targetRevision() != 0) {
             throw new IllegalArgumentException("TurnTemplate target does not match the platform catalog");
         }
-        ScheduleContracts.TurnTemplate template =
-                new ScheduleContracts.TurnTemplate(input.profile(), input.title(), input.instruction(), input.budget());
+        ScheduleContracts.TurnTemplate template = new ScheduleContracts.TurnTemplate(
+                input.execution(), input.title(), input.instruction(), input.budget());
         return ScheduleContracts.Target.turn(template);
     }
 
@@ -157,7 +172,11 @@ final class ScheduleManagement {
                 .requireDefinition(
                         request.workspaceId(), input.targetExtensionId(), input.targetId(), input.targetRevision());
         ScheduleContracts.DefinitionTarget target = new ScheduleContracts.DefinitionTarget(
-                selected.extensionId(), selected.definitionId(), selected.revision(), input.profile(), input.budget());
+                selected.extensionId(),
+                selected.definitionId(),
+                selected.revision(),
+                input.execution(),
+                input.budget());
         return ScheduleContracts.Target.definition(target);
     }
 
@@ -179,12 +198,14 @@ final class ScheduleManagement {
         }
     }
 
-    private void requireProfile(AgentProfileRef selected, ExtensionRequest request, ExtensionExecutionContext context) {
-        boolean present = context.executionPolicies().profiles(request.workspaceId()).stream()
-                .map(AutomationProfileOption::profile)
-                .anyMatch(selected::equals);
+    private void requireExecution(
+            ExecutionOverrides selected, ExtensionRequest request, ExtensionExecutionContext context) {
+        boolean present = context.executionPolicies().roles(request.workspaceId()).stream()
+                .map(AutomationRoleOption::role)
+                .anyMatch(role -> selected.role().isEmpty()
+                        || selected.role().orElseThrow().equals(role));
         if (!present) {
-            throw new IllegalArgumentException("selected Agent Profile revision is not available");
+            throw new IllegalArgumentException("selected Agent Role revision is not available");
         }
     }
 
@@ -204,17 +225,17 @@ final class ScheduleManagement {
         }
     }
 
-    private ExtensionResponse profiles(ExtensionRequest request, ExtensionExecutionContext context) {
+    private ExtensionResponse roles(ExtensionRequest request, ExtensionExecutionContext context) {
         ViewQueryRequest query = documents.payloads().decode(request.payload(), ViewQueryRequest.class);
-        if (!PROFILE_SOURCE.equals(query.dataSourceId()) || !query.arguments().isEmpty()) {
-            throw new IllegalArgumentException("Schedule Profile view does not accept arguments");
+        if (!ROLE_SOURCE.equals(query.dataSourceId()) || !query.arguments().isEmpty()) {
+            throw new IllegalArgumentException("Schedule Role view does not accept arguments");
         }
-        List<ProfileRow> available = context.executionPolicies().profiles(request.workspaceId()).stream()
-                .map(ProfileRow::from)
+        List<RoleRow> available = context.executionPolicies().roles(request.workspaceId()).stream()
+                .map(RoleRow::from)
                 .toList();
         int start = pageStart(available, query.cursor());
         int end = Math.min(available.size(), Math.addExact(start, query.limit()));
-        List<ProfileRow> page = available.subList(start, end);
+        List<RoleRow> page = available.subList(start, end);
         boolean hasMore = end < available.size();
         ViewQueryResult result = new ViewQueryResult(
                 query.dataSourceId(),
@@ -222,7 +243,7 @@ final class ScheduleManagement {
                 documents.payloads().encode(Map.of()),
                 hasMore && !page.isEmpty() ? page.getLast().id() : "",
                 hasMore,
-                page.stream().mapToLong(ProfileRow::revision).max().orElse(0));
+                page.stream().mapToLong(RoleRow::revision).max().orElse(0));
         return new ExtensionResponse(documents.payloads().encode(result), result.revision());
     }
 
@@ -253,16 +274,16 @@ final class ScheduleManagement {
         return new ExtensionResponse(documents.payloads().encode(result), result.revision());
     }
 
-    private static int pageStart(List<ProfileRow> profiles, String cursor) {
+    private static int pageStart(List<RoleRow> roles, String cursor) {
         if (cursor.isEmpty()) {
             return 0;
         }
-        for (int index = 0; index < profiles.size(); index++) {
-            if (profiles.get(index).id().equals(cursor)) {
+        for (int index = 0; index < roles.size(); index++) {
+            if (roles.get(index).id().equals(cursor)) {
                 return index + 1;
             }
         }
-        throw new IllegalArgumentException("Schedule Profile view cursor is stale");
+        throw new IllegalArgumentException("Schedule Role view cursor is stale");
     }
 
     private static int targetPageStart(List<TargetRow> targets, String cursor) {
@@ -323,18 +344,18 @@ final class ScheduleManagement {
                 documents.extensionId().value() + ".management",
                 "定时任务管理",
                 sources(),
-                List.of(
+                AutomationSelectionView.withTables(List.of(
                         definitionsTable(),
                         targetTable(),
-                        profileTable(),
+                        roleTable(),
                         ScheduleManagementForm.create(
                                 "schedule-create", "新建 Schedule", NEW_SOURCE, TARGET_SOURCE, true),
                         ScheduleManagementForm.create("schedule-edit", "编辑 Schedule", EDIT_SOURCE, EDIT_SOURCE, false),
-                        previewTable()));
+                        previewTable())));
     }
 
     private List<ViewDataSource> sources() {
-        return List.of(
+        return AutomationSelectionView.withSources(List.of(
                 new ViewDataSource("documents", "view.list", Map.of(), List.of(), 100),
                 new ViewDataSource(NEW_SOURCE, VIEW_NEW, Map.of(), List.of(), 1),
                 new ViewDataSource(
@@ -345,7 +366,7 @@ final class ScheduleManagement {
                                 new ViewArgumentBinding("id", "documents", "id"),
                                 new ViewArgumentBinding("revision", "documents", "revision")),
                         1),
-                new ViewDataSource(PROFILE_SOURCE, VIEW_PROFILES, Map.of(), List.of(), 100),
+                new ViewDataSource(ROLE_SOURCE, VIEW_ROLES, Map.of(), List.of(), 100),
                 new ViewDataSource(TARGET_SOURCE, VIEW_TARGETS, Map.of(), List.of(), 100),
                 new ViewDataSource(
                         "preview",
@@ -354,7 +375,7 @@ final class ScheduleManagement {
                         List.of(
                                 new ViewArgumentBinding("scheduleId", "documents", "id"),
                                 new ViewArgumentBinding("scheduleRevision", "documents", "revision")),
-                        5));
+                        5)));
     }
 
     private ViewSchema.Table definitionsTable() {
@@ -381,14 +402,14 @@ final class ScheduleManagement {
                 List.of(run, delete));
     }
 
-    private ViewSchema.Table profileTable() {
+    private ViewSchema.Table roleTable() {
         return new ViewSchema.Table(
-                "profiles",
-                "选择权威 Agent Profile",
-                PROFILE_SOURCE,
+                "roles",
+                "选择权威 Agent Role",
+                ROLE_SOURCE,
                 "id",
                 List.of(
-                        new ViewSchema.Column("name", "Profile", Optional.of(220)),
+                        new ViewSchema.Column("name", "Agent", Optional.of(220)),
                         new ViewSchema.Column("id", "标识", Optional.of(200)),
                         new ViewSchema.Column("revision", "版本", Optional.of(80))),
                 ViewSelectionMode.SINGLE,
@@ -428,9 +449,9 @@ final class ScheduleManagement {
         UPDATE
     }
 
-    private record ProfileRow(String id, long revision, String name) {
-        private static ProfileRow from(AutomationProfileOption option) {
-            return new ProfileRow(option.profile().id(), option.profile().revision(), option.displayName());
+    private record RoleRow(String id, long revision, String name, com.javaclaw.api.AgentRoleRef role) {
+        private static RoleRow from(AutomationRoleOption option) {
+            return new RoleRow(option.role().id(), option.role().revision(), option.displayName(), option.role());
         }
     }
 

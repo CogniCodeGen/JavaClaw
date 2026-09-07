@@ -7,7 +7,7 @@ import com.javaclaw.api.CanonicalPayload;
 /**
  * 不要求响应的 JSON-RPC notification。
  *
- * @param method Protocol v2 方法名
+ * @param method Protocol v3 方法名
  * @param params 对象参数
  */
 public record JsonRpcNotification(String method, CanonicalPayload params) implements JsonRpcMessage {

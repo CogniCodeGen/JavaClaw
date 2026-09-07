@@ -8,7 +8,7 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.builtin.contracts.DocumentContracts;
 import com.javaclaw.builtin.contracts.OrchestrationContracts;
 import com.javaclaw.builtin.contracts.ScheduleContracts;
@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ScheduleAndKnowledgeExtensionTest {
-    private static final AgentProfileRef PROFILE = new AgentProfileRef("profile", 1);
+    private static final AgentRoleRef PROFILE = new AgentRoleRef("profile", 1);
     private static final OrchestrationContracts.ExecutionBudget BUDGET =
             new OrchestrationContracts.ExecutionBudget(10, 10_000, 10_000, 100);
 
@@ -132,8 +132,8 @@ class ScheduleAndKnowledgeExtensionTest {
     }
 
     private static ScheduleContracts.Definition schedule(String id, long revision, boolean enabled, Duration interval) {
-        ScheduleContracts.TurnTemplate target =
-                new ScheduleContracts.TurnTemplate(PROFILE, id + " Thread", "执行定时任务", BUDGET);
+        ScheduleContracts.TurnTemplate target = new ScheduleContracts.TurnTemplate(
+                AutomationV6Fixtures.selection(PROFILE), id + " Thread", "执行定时任务", BUDGET);
         return new ScheduleContracts.Definition(
                 id,
                 revision,
@@ -162,8 +162,7 @@ class ScheduleAndKnowledgeExtensionTest {
                 Optional.empty(),
                 Optional.of(interval.toMinutes()),
                 Optional.of(NOW.plusSeconds(600)),
-                PROFILE.id(),
-                PROFILE.revision(),
+                AutomationV6Fixtures.selection(new AgentRoleRef(PROFILE.id(), PROFILE.revision())),
                 id + " Thread",
                 "执行定时任务",
                 BUDGET.maximumTurns(),

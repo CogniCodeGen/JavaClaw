@@ -1,0 +1,25 @@
+{
+  "scope": "TurnCommandFactory.resolve; no Turn INSERT, Harness execution, paid model or network",
+  "maximumRegressionPercent": 10,
+  "passed": true,
+  "baseline": {
+    "sampleCount": 200,
+    "p50Millis": 502.831042,
+    "p95Millis": 607.917709
+  },
+  "candidate": {
+    "sampleCount": 200,
+    "p50Millis": 154.162292,
+    "p95Millis": 170.20425
+  },
+  "regression": {
+    "p50Percent": -69.3411346708384,
+    "p95Percent": -72.00209050004825
+  },
+  "baselineReport": "docs/evidence/v6-turn-preparation-before-batching.json",
+  "baselineReportSha256": "fa0c786c385dc630fefa426dbf3c0ee1bafbc3c2d04bf970989b90e7c1c22860",
+  "candidateReport": "docs/evidence/v6-review-fixes-performance.json",
+  "candidateReportSha256": "275e8411b97edbef49d2beb8e9f97aeabfd8c1ffecc1799e443cf5758da4fe57",
+  "referenceMeasuredAgain": false,
+  "paidModelCalls": 0
+}

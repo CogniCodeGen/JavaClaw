@@ -11,7 +11,7 @@ import com.javaclaw.extension.spi.ViewQueryResult;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.ExtensionRpcContracts;
 
-/** Protocol v2 通用 Extension 目录、调用、schema 与页面 facade。 */
+/** Protocol v3 通用 Extension 目录、调用、schema 与页面 facade。 */
 public final class ExtensionClient {
     private final RpcClientConnection connection;
     private final CanonicalJson json = new CanonicalJson();

@@ -59,9 +59,9 @@ class H2ConversationContextTest {
     private PermissionProfile profile;
 
     @BeforeEach
-    void initializeDataV5() {
+    void initializeDataV6() {
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         core = new CoreCommandService(database, json, clock);
@@ -243,10 +243,14 @@ class H2ConversationContextTest {
                 identity("turn/start", "turn-" + messageText, turnPayload),
                 new TurnStartRequest(
                         thread.id(),
-                        budget(),
-                        com.javaclaw.server.TurnContractFixtures.PROFILE,
-                        com.javaclaw.server.TurnContractFixtures.PROVIDER,
-                        com.javaclaw.server.TurnContractFixtures.PERMISSIONS,
+                        com.javaclaw.server.TurnContractFixtures.configuration(
+                                new com.javaclaw.server.TurnContractFixtures.Selection(
+                                        budget(),
+                                        com.javaclaw.server.TurnContractFixtures.ROLE,
+                                        com.javaclaw.server.TurnContractFixtures.PROVIDER,
+                                        com.javaclaw.server.TurnContractFixtures.PERMISSIONS),
+                                com.javaclaw.server.TurnContractFixtures.PROMPT_SNAPSHOT,
+                                toolCatalog),
                         temporaryDirectory,
                         com.javaclaw.server.TurnContractFixtures.PROMPT_SNAPSHOT,
                         toolCatalog,

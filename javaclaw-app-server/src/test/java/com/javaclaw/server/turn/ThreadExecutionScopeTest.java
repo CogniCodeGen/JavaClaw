@@ -51,7 +51,7 @@ class ThreadExecutionScopeTest {
     @BeforeEach
     void 初始化权威Thread数据() throws Exception {
         json = new CanonicalJson();
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         core = new CoreCommandService(database, json, CLOCK);
         Path root = Files.createDirectories(temporaryDirectory.resolve("workspace"));
@@ -92,7 +92,9 @@ class ThreadExecutionScopeTest {
         assertTrue(scope.root().isAbsolute());
         assertFalse(scope.root().toString().contains(".."));
         assertThrows(
-                NullPointerException.class, () -> new ThreadExecutionScope(null, workspace, workspace.root(), true));
+                NullPointerException.class,
+                () -> new ThreadExecutionScope(
+                        (com.javaclaw.api.ConversationThread) null, workspace, workspace.root(), true));
         assertThrows(
                 NullPointerException.class, () -> new ThreadExecutionScope(rootThread, null, workspace.root(), true));
         assertThrows(NullPointerException.class, () -> new ThreadExecutionScope(rootThread, workspace, null, true));

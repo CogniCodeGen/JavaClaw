@@ -8,7 +8,7 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.CancellationSource;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.CredentialRef;
@@ -217,7 +217,7 @@ class OperationalContractsTest {
                 workspaceId,
                 Optional.of(ThreadId.random()),
                 "  Workflow step  ",
-                SpiFixtures.executionSnapshot(new AgentProfileRef("profile", 2)),
+                SpiFixtures.executionSnapshot(new AgentRoleRef("profile", 2)),
                 "  job:unit  ");
         AutomationStepPort.ToolCommand tool =
                 new AutomationStepPort.ToolCommand(context, "  read  ", SpiFixtures.payload());
@@ -250,7 +250,7 @@ class OperationalContractsTest {
                 WorkspaceId.random(),
                 Optional.empty(),
                 "step",
-                SpiFixtures.executionSnapshot(new AgentProfileRef("profile", 2)),
+                SpiFixtures.executionSnapshot(new AgentRoleRef("profile", 2)),
                 "unit");
         AutomationStepPort.ToolCommand tool =
                 new AutomationStepPort.ToolCommand(context, "read", SpiFixtures.payload());

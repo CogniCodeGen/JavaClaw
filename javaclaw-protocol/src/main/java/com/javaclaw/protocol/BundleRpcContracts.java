@@ -8,7 +8,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-/** Protocol v2 第三方 Bundle、Trust Key 与 Trash 的强类型 wire 契约。 */
+/** Protocol v3 第三方 Bundle、Trust Key 与 Trash 的强类型 wire 契约。 */
 public final class BundleRpcContracts {
     /** Bundle ZIP 的唯一允许媒体类型。 */
     public static final String BUNDLE_MEDIA_TYPE = "application/vnd.javaclaw.bundle+zip";

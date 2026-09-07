@@ -51,7 +51,7 @@ class ThirdPartyBundleSecurityTest {
         json = new CanonicalJson();
         keys = ThirdPartyBundleTestFixtures.keyPair();
         directories = new ThirdPartyBundleDirectories(
-                temporaryDirectory.resolve("data-v5"),
+                temporaryDirectory.resolve("data-v6"),
                 Clock.fixed(Instant.parse("2026-09-01T03:00:00Z"), ZoneOffset.UTC));
         archives = new ThirdPartyBundleArchive(json, ThirdPartyBundleTestFixtures.trustedKeys(keys), directories);
     }
@@ -459,7 +459,7 @@ class ThirdPartyBundleSecurityTest {
 
     private ArchiveHarness archiveHarness(String name) {
         ThirdPartyBundleDirectories isolatedDirectories = new ThirdPartyBundleDirectories(
-                temporaryDirectory.resolve(name).resolve("data-v5"),
+                temporaryDirectory.resolve(name).resolve("data-v6"),
                 Clock.fixed(Instant.parse("2026-09-01T03:00:00Z"), ZoneOffset.UTC));
         ThirdPartyBundleArchive isolatedArchives =
                 new ThirdPartyBundleArchive(json, ThirdPartyBundleTestFixtures.trustedKeys(keys), isolatedDirectories);

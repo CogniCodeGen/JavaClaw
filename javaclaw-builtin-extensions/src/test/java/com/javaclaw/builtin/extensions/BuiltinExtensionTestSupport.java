@@ -13,7 +13,7 @@ import java.util.NavigableMap;
 import java.util.Optional;
 import java.util.TreeMap;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.AttachmentContent;
 import com.javaclaw.api.AttachmentMetadata;
 import com.javaclaw.api.AttachmentRef;
@@ -22,6 +22,7 @@ import com.javaclaw.api.CancellationSource;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.CredentialMetadata;
 import com.javaclaw.api.CredentialRef;
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.InputRequest;
 import com.javaclaw.api.InputRequestRecord;
 import com.javaclaw.api.ItemStatus;
@@ -40,7 +41,7 @@ import com.javaclaw.api.TurnStatus;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.extension.spi.AttachmentEvidencePort;
 import com.javaclaw.extension.spi.AutomationExecutionPolicyPort;
-import com.javaclaw.extension.spi.AutomationProfileOption;
+import com.javaclaw.extension.spi.AutomationRoleOption;
 import com.javaclaw.extension.spi.CredentialVaultPort;
 import com.javaclaw.extension.spi.DocumentRevision;
 import com.javaclaw.extension.spi.EmbeddingBatch;
@@ -74,22 +75,34 @@ final class BuiltinExtensionTestSupport {
     final TestPayloadCodec payloads = new TestPayloadCodec();
     final InMemoryManagedStore store = new InMemoryManagedStore();
     final RecordingTurns turns = new RecordingTurns(payloads);
+    final List<ExecutionOverrides> frozenSelections = new java.util.ArrayList<>();
     final AutomationExecutionPolicyPort executionPolicies = new AutomationExecutionPolicyPort() {
         @Override
-        public List<AutomationProfileOption> profiles(WorkspaceId workspace) {
+        public List<AutomationRoleOption> roles(WorkspaceId workspace) {
             if (!workspace.equals(workspaceId)) {
                 throw new IllegalArgumentException("unknown test Workspace");
             }
-            return List.of(new AutomationProfileOption(new AgentProfileRef("profile", 1), "默认 Profile"));
+            return List.of(new AutomationRoleOption(new AgentRoleRef("profile", 1), "默认 Role"));
+        }
+
+        @Override
+        public List<com.javaclaw.api.ProviderEndpoint> providers(WorkspaceId workspace) {
+            return List.of(AutomationV6Fixtures.provider());
+        }
+
+        @Override
+        public List<PermissionProfile> permissions(WorkspaceId workspace) {
+            return List.of(SitePermission.create());
         }
 
         @Override
         public AutomationExecutionSnapshot freeze(
-                WorkspaceId workspace, AgentProfileRef profile, com.javaclaw.api.CancellationToken ignored) {
+                WorkspaceId workspace, ExecutionOverrides execution, com.javaclaw.api.CancellationToken ignored) {
             if (!workspace.equals(workspaceId)) {
                 throw new IllegalArgumentException("unknown test Workspace");
             }
-            return executionSnapshot(profile);
+            frozenSelections.add(execution);
+            return executionSnapshot(execution.role().orElse(new AgentRoleRef("default", 1)));
         }
     };
     ScheduleTargetCatalogPort scheduleTargets = ScheduleTargetCatalogPort.unavailable();
@@ -179,6 +192,8 @@ final class BuiltinExtensionTestSupport {
             texts.stream()
                     .map(ignored -> new EmbeddingVector(List.of(1.0, 0.0)))
                     .toList());
+    com.javaclaw.extension.spi.WorkspaceExecutionPort workspaceExecution =
+            com.javaclaw.extension.spi.WorkspaceExecutionPort.denied();
     final Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
     final CancellationSource cancellation = new CancellationSource();
     boolean evidenceAvailable = true;
@@ -215,7 +230,8 @@ final class BuiltinExtensionTestSupport {
                 credentials,
                 networkGrants,
                 services,
-                embeddings);
+                embeddings,
+                workspaceExecution);
     }
 
     void claimAttachment(WorkspaceId workspace, AttachmentRef reference) {
@@ -286,9 +302,9 @@ final class BuiltinExtensionTestSupport {
         return payloads.decode(response.payload(), type);
     }
 
-    AutomationExecutionSnapshot executionSnapshot(AgentProfileRef profile) {
+    AutomationExecutionSnapshot executionSnapshot(AgentRoleRef profile) {
         PermissionProfile permission = SitePermission.create();
-        return new AutomationExecutionSnapshot(
+        return AutomationV6Fixtures.snapshot(
                 profile,
                 new ProviderRef("provider", 1, "model"),
                 new PermissionProfileRef(permission.id(), permission.version()),

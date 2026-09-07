@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.ApprovalRequirement;
 import com.javaclaw.api.AutomationExecutionSnapshot;
 import com.javaclaw.api.CancellationSource;
@@ -88,7 +88,8 @@ final class SpiFixtures {
                 CLOCK,
                 store,
                 (command, cancellation) -> null,
-                (workspaceId, profile, cancellation) -> executionSnapshot(profile),
+                (workspaceId, execution, cancellation) ->
+                        executionSnapshot(execution.role().orElse(new AgentRoleRef("default", 1))),
                 ScheduleTargetCatalogPort.unavailable(),
                 new EmptyInputPort(),
                 new EmptyJobPort(),
@@ -125,12 +126,13 @@ final class SpiFixtures {
                     }
                 },
                 invocation -> payload(),
-                EmbeddingPort.unavailable());
+                EmbeddingPort.unavailable(),
+                WorkspaceExecutionPort.denied());
     }
 
-    static AutomationExecutionSnapshot executionSnapshot(AgentProfileRef profile) {
+    static AutomationExecutionSnapshot executionSnapshot(AgentRoleRef profile) {
         PermissionProfile permission = permissions();
-        return new AutomationExecutionSnapshot(
+        return AutomationV6Fixtures.snapshot(
                 profile,
                 new ProviderRef("provider", 1, "model"),
                 new PermissionProfileRef(permission.id(), permission.version()),

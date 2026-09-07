@@ -1,4 +1,4 @@
-/** JavaClaw Protocol v2 Java SDK、CLI 与本地 Transport。 */
+/** JavaClaw Protocol v3 Java SDK、CLI 与本地 Transport。 */
 module com.javaclaw.client {
     requires transitive com.javaclaw.api;
     requires transitive com.javaclaw.builtin.contracts;

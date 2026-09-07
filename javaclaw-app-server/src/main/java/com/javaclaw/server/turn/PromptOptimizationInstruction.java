@@ -7,12 +7,12 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 
-/** 读取随 App Server 审阅和版本化的 Agent Profile 优化说明。 */
+/** 读取随 App Server 审阅和版本化的 Agent Role 优化说明。 */
 public final class PromptOptimizationInstruction {
     /** 持久化到优化任务 provenance 的稳定版本。 */
-    public static final String REVISION = "profile-optimization-v1";
+    public static final String REVISION = "role-optimization-v1";
 
-    private static final String RESOURCE = "/prompts/profile-optimization-v1.txt";
+    private static final String RESOURCE = "/prompts/role-optimization-v1.txt";
     private final String content;
     private final String digest;
 
@@ -42,14 +42,14 @@ public final class PromptOptimizationInstruction {
     }
 
     /**
-     * 构造只引用精确 Profile 的用户消息；源正文由正常 Prompt manifest 提供。
+     * 构造只引用精确 Role 的用户消息；源正文由正常 Prompt manifest 提供。
      *
-     * @param profileId Profile 标识
-     * @param profileRevision Profile revision
+     * @param roleId Role 标识
+     * @param roleRevision Role revision
      * @return 普通 Turn 用户消息
      */
-    public String message(String profileId, long profileRevision) {
-        return content + "\n\n目标 Agent Profile：" + profileId + "@" + profileRevision + "。";
+    public String message(String roleId, long roleRevision) {
+        return content + "\n\n目标 Agent Role：" + roleId + "@" + roleRevision + "。";
     }
 
     /** @return 内置说明 SHA-256 */

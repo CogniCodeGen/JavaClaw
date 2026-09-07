@@ -10,6 +10,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import com.javaclaw.nativehost.network.SandboxNetworkAccess;
+
 /** 使用 bubblewrap 的 mount、PID、user 与 network namespace 构造 Linux 隔离命令。 */
 final class LinuxSandboxCommandBuilder implements SandboxCommandBuilder {
     private static final List<Path> CANDIDATES = List.of(Path.of("/usr/bin/bwrap"), Path.of("/bin/bwrap"));
@@ -51,10 +53,52 @@ final class LinuxSandboxCommandBuilder implements SandboxCommandBuilder {
             result.add("--new-session");
         }
         appendMounts(result, command);
+        SandboxJavaRuntime runtime = helperRuntime();
+        appendHelperMounts(result, runtime);
         command.environment().forEach((name, value) -> result.addAll(List.of("--setenv", name, value)));
+        boolean proxy = command.networkAccess().mode() == SandboxNetworkAccess.Mode.PROXY_ONLY;
+        if (proxy) {
+            Path directory = command.networkAccess()
+                    .controlDirectory()
+                    .orElseThrow(() -> new SecurityException("Linux proxy namespace relay is not provisioned"));
+            if (!Files.exists(directory.resolve("p"))) {
+                throw new SecurityException("Linux proxy IPC socket is unavailable");
+            }
+            result.addAll(List.of("--ro-bind", directory.toString(), "/javaclaw-proxy"));
+        }
         result.addAll(List.of("--chdir", command.workingDirectory().toString(), "--"));
-        result.addAll(command.argv());
-        return new SandboxLaunchPlan(name(), SandboxHelperCommand.wrap(command, result), Map.of(), 1, false);
+        result.addAll(helperArguments(command, runtime, proxy));
+        return new SandboxLaunchPlan(
+                name(), SandboxHelperCommand.wrap(command, result), Map.of(), proxy ? 2 : 1, false);
+    }
+
+    private static SandboxJavaRuntime helperRuntime() {
+        try {
+            return SandboxJavaRuntime.forWorker(LinuxCommandExecMain.class);
+        } catch (java.io.IOException failure) {
+            throw new java.io.UncheckedIOException("cannot resolve Linux Sandbox helper runtime", failure);
+        }
+    }
+
+    private static void appendHelperMounts(List<String> result, SandboxJavaRuntime runtime) {
+        Set<Path> parents = new HashSet<>();
+        for (Path root : runtime.readRoots()) {
+            appendMount(result, root, false, parents);
+        }
+    }
+
+    private static List<String> helperArguments(
+            ValidatedSandboxCommand command, SandboxJavaRuntime runtime, boolean proxy) {
+        if (!proxy) {
+            return runtime.command(LinuxCommandExecMain.class, command.argv(), 32);
+        }
+        ArrayList<String> arguments = new ArrayList<>(List.of(
+                "/javaclaw-proxy/p",
+                Integer.toString(
+                        command.networkAccess().proxyEndpoint().orElseThrow().getPort()),
+                "--"));
+        arguments.addAll(command.argv());
+        return runtime.command(LinuxProxyExecMain.class, arguments, 32);
     }
 
     @Override

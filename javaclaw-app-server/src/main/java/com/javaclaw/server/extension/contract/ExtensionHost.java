@@ -45,6 +45,26 @@ public interface ExtensionHost extends AutoCloseable {
             throws Exception;
 
     /**
+     * 执行工具并返回平台产生的附加事实；第三方扩展默认没有平台事实权限。
+     *
+     * @param request 真实工具调用
+     * @param frozenDescriptor 冻结工具描述
+     * @param callerPermissions 实时有效权限
+     * @param cancellation 取消信号
+     * @return 扩展结果与平台事实
+     * @throws Exception 执行失败
+     */
+    default GovernedExtensionResponse executeToolWithFacts(
+            ToolCallRequest request,
+            ToolDescriptor frozenDescriptor,
+            PermissionProfile callerPermissions,
+            CancellationToken cancellation)
+            throws Exception {
+        return new GovernedExtensionResponse(
+                executeTool(request, frozenDescriptor, callerPermissions, cancellation), List.of());
+    }
+
+    /**
      * 执行无副作用查询。
      *
      * @param call 查询参数

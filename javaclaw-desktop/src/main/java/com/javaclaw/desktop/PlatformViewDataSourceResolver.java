@@ -7,10 +7,11 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.ProfileBinding;
-import com.javaclaw.api.ProfileLifecycle;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.ExecutionOverrides;
+import com.javaclaw.api.PromptManifestPreview;
+import com.javaclaw.api.RoleLifecycle;
 import com.javaclaw.api.ToolCatalogQueryResult;
 import com.javaclaw.api.ToolDescriptor;
 import com.javaclaw.api.WorkspaceId;
@@ -23,7 +24,7 @@ import com.javaclaw.protocol.CanonicalJson;
 /**
  * 解析 ViewSchema v2 可引用的平台只读数据源。
  *
- * <p>工具候选严格来自固定 Workspace 的默认 Agent Profile 精确版本及其 PermissionProfile；服务端 {@code tool/search} 仍负责 latest
+ * <p>工具候选严格来自固定 Workspace 的服务端解析出的 Agent Role 与独立 PermissionProfile 精确版本；服务端 {@code tool/search} 仍负责 latest
  * lifecycle、实时撤权和目录 revision 校验。未绑定或失效时直接失败，不退回全局工具目录。
  */
 final class PlatformViewDataSourceResolver {
@@ -66,16 +67,15 @@ final class PlatformViewDataSourceResolver {
         if (catalog != null) {
             return catalog;
         }
-        ProfileBinding binding = client.profiles()
-                .binding(workspaceId, Optional.empty())
-                .orElseThrow(() -> new IllegalStateException("当前工作区尚未绑定默认智能体，无法读取工具目录"));
-        AgentProfileRef profileRef = binding.profile();
-        AgentProfile profile = client.profiles().read(profileRef.id(), profileRef.revision());
-        if (profile.lifecycle() != ProfileLifecycle.ACTIVE) {
-            throw new IllegalStateException("当前工作区默认智能体已失效，无法读取工具目录");
+        PromptManifestPreview configuration =
+                client.prompts().preview(workspaceId, Optional.empty(), ExecutionOverrides.empty());
+        AgentRoleRef roleRef = configuration.role();
+        AgentRole role = client.roles().read(roleRef.id(), roleRef.revision());
+        if (role.lifecycle() != RoleLifecycle.ACTIVE) {
+            throw new IllegalStateException("当前工作区默认 Agent 已失效，无法读取工具目录");
         }
         catalog = client.tools()
-                .catalog(workspaceId, profile.spec().permissionProfile(), Optional.of(profileRef), "", TOOL_LIMIT);
+                .catalog(workspaceId, configuration.permissionProfile(), Optional.of(roleRef), "", TOOL_LIMIT);
         return catalog;
     }
 

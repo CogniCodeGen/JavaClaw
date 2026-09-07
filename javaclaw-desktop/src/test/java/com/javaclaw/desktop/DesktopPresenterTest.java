@@ -55,7 +55,7 @@ class DesktopPresenterTest {
             await(() -> latest.get().connection().status() == ConnectionState.Status.CONNECTED);
             await(() -> latest.get().transcript().nextSequence() == 1);
             assertEquals(
-                    "javaclaw-app-server 5.0.0-SNAPSHOT",
+                    "javaclaw-app-server 6.0.0-SNAPSHOT",
                     latest.get().connection().detail());
             assertEquals(
                     DesktopTestFixtures.NOW,
@@ -65,8 +65,8 @@ class DesktopPresenterTest {
                     latest.get().threads().selectedWorkspace().orElseThrow());
             assertEquals(
                     server.thread(), latest.get().threads().selectedThread().orElseThrow());
-            assertEquals(List.of(server.profile()), latest.get().interaction().profiles());
-            assertTrue(latest.get().interaction().selectedProfile().isEmpty());
+            assertEquals(List.of(server.profile()), latest.get().interaction().roles());
+            assertTrue(latest.get().interaction().selectedRole().isEmpty());
 
             presenter.selectWorkspace(server.workspace());
             await(() -> latest.get().threads().selectedThread().isPresent());
@@ -78,13 +78,12 @@ class DesktopPresenterTest {
             await(() -> server.threadCreates.get() == 1);
             assertEquals(0, server.lastThreadCreateExpectedRevision);
 
-            presenter.selectProfile(server.profile());
+            presenter.selectRole(server.profile());
             assertEquals(
-                    server.profile(),
-                    latest.get().interaction().selectedProfile().orElseThrow());
-            presenter.clearProfileSelection();
-            assertTrue(latest.get().interaction().selectedProfile().isEmpty());
-            presenter.selectProfile(server.profile());
+                    server.profile(), latest.get().interaction().selectedRole().orElseThrow());
+            presenter.clearRoleSelection();
+            assertTrue(latest.get().interaction().selectedRole().isEmpty());
+            presenter.selectRole(server.profile());
             server.completion = TurnStatus.COMPLETED;
             presenter.send("  执行升级  ");
             await(() ->
@@ -92,10 +91,10 @@ class DesktopPresenterTest {
             assertEquals(0, server.lastTurnStartExpectedRevision);
             assertEquals(
                     server.profile().id(),
-                    server.lastTurnStart.profile().orElseThrow().id());
+                    server.lastTurnStart.execution().role().orElseThrow().id());
             assertEquals(
                     server.profile().revision(),
-                    server.lastTurnStart.profile().orElseThrow().revision());
+                    server.lastTurnStart.execution().role().orElseThrow().revision());
             assertEquals("执行升级", server.lastTurnStart.message());
             assertEquals(2, latest.get().transcript().nextSequence());
             assertTrue(latest.get().threads().activeTurn().isEmpty());
@@ -280,14 +279,15 @@ class DesktopPresenterTest {
             assertEquals(9, loaded.source("tools").revision());
             assertEquals(server.workspace().id(), server.lastToolCatalog.workspaceId());
             assertEquals(
-                    server.profile().spec().permissionProfile().id(), server.lastToolCatalog.permissionProfileId());
+                    DesktopTestFixtures.resolved().permissionProfile().id(),
+                    server.lastToolCatalog.permissionProfileId());
             assertEquals(
-                    server.profile().spec().permissionProfile().version(),
+                    DesktopTestFixtures.resolved().permissionProfile().version(),
                     server.lastToolCatalog.permissionProfileVersion());
             assertEquals(
-                    new com.javaclaw.api.AgentProfileRef(
+                    new com.javaclaw.api.AgentRoleRef(
                             server.profile().id(), server.profile().revision()),
-                    server.lastToolCatalog.agentProfile().orElseThrow());
+                    server.lastToolCatalog.agentRole().orElseThrow());
             assertEquals(0, server.extensionQueries.get());
         } finally {
             presenter.close();
@@ -318,7 +318,7 @@ class DesktopPresenterTest {
                             .loadExtensionViewData(server.workspace().id(), document, schema, ViewLoadRequest.initial())
                             .join());
 
-            assertTrue(failure.getCause().getMessage().contains("尚未绑定默认智能体"));
+            assertTrue(failure.getCause().getMessage().contains("尚未配置默认执行参数"));
             assertEquals(0, server.extensionQueries.get());
         } finally {
             presenter.close();
@@ -338,7 +338,7 @@ class DesktopPresenterTest {
             server.completion = TurnStatus.RUNNING;
             presenter.send("等待取消");
             await(() -> latest.get().threads().activeTurn().isPresent());
-            assertTrue(server.lastTurnStart.profile().isEmpty());
+            assertTrue(server.lastTurnStart.execution().role().isEmpty());
             presenter.cancelActiveTurn();
             await(() ->
                     server.turnCancels.get() == 1 && !latest.get().interaction().busy());
@@ -386,7 +386,7 @@ class DesktopPresenterTest {
         try {
             assertThrows(NullPointerException.class, () -> presenter.selectWorkspace(null));
             assertThrows(NullPointerException.class, () -> presenter.selectThread(null));
-            assertThrows(NullPointerException.class, () -> presenter.selectProfile(null));
+            assertThrows(NullPointerException.class, () -> presenter.selectRole(null));
             assertThrows(
                     NullPointerException.class, () -> presenter.resolveApproval(null, ApprovalDecision.DENIED, "拒绝"));
             assertThrows(NullPointerException.class, () -> presenter.listExtensionViews(null));
@@ -459,7 +459,7 @@ class DesktopPresenterTest {
         try {
             presenter.connect();
             await(() -> latest.get().connection().status() == ConnectionState.Status.CONNECTED);
-            assertEquals("5.0.0-SNAPSHOT", presenter.reconnect().join().serverVersion());
+            assertEquals("6.0.0-SNAPSHOT", presenter.reconnect().join().serverVersion());
             await(() -> attempts.get() == 2 && latest.get().connection().status() == ConnectionState.Status.CONNECTED);
             assertTrue(first.closed);
             assertFalse(second.closed);

@@ -24,7 +24,7 @@ class TurnToolCatalogIntegrityTest {
 
     @Test
     void 冻结工具目录拒绝非法摘要Turn漂移和Payload篡改() throws Exception {
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         CanonicalJson json = new CanonicalJson();
         PermissionProfileService permissions =

@@ -1,4 +1,4 @@
-# JavaClaw 5 仓库与进程边界
+# JavaClaw 6 仓库与进程边界
 
 仓库只保留能表达编译边界、稳定契约或独立进程的模块。业务领域不得重新进入 Turn Harness。
 
@@ -7,7 +7,7 @@
 | 模块 | 唯一职责 | 允许的关键依赖 |
 |---|---|---|
 | `javaclaw-api` | 不可变 Core、安全与 Sandbox 契约 | JDK |
-| `javaclaw-protocol` | JSON-RPC 2.0、Protocol v2、Schema、framing、共享 codec | `api`、`extension-spi`、Jackson |
+| `javaclaw-protocol` | JSON-RPC 2.0、Protocol v3、Schema、framing、共享 codec | `api`、`extension-spi`、Jackson |
 | `javaclaw-extension-spi` | Bundle、贡献点、编排、定时、ViewSchema 契约 | `api` |
 | `javaclaw-agent-runtime` | 单 Turn Thin Harness | `api`、日志门面 |
 | `javaclaw-model-adapters` | Spring AI 与 Provider 原生扩展 | `api`、`agent-runtime`、`extension-spi`、Provider SDK |
@@ -40,7 +40,7 @@ Windows 本地传输依赖 `native-hosts`；这些依赖不能用于绕过 SDK �
 SDK 只能出现在 `javaclaw-model-adapters`；App Server 仍是唯一组合根。设置中心 Workspace 由独立 Desktop session
 冻结并显式传给 Gateway，不能在异步回调中读取主窗口当前选择。session 分开维护用于保留页面/草稿的 frozen selection
 与允许写入的 available selection；目录失败或目标失效时保留前者并清空后者，dirty/pending 时拒绝重载或切换，旧请求
-epoch 的响应一律丢弃。Profile/Provider/Permission 更新只产生新 revision，
+epoch 的响应一律丢弃。AgentRole/Provider/Permission 更新只产生新 revision，
 既有精确引用不自动跟随 latest；资源最新 lifecycle 仍作为新绑定、新 Turn 和后续模型调用的实时阻断条件。
 
 ## 进程
@@ -48,7 +48,7 @@ epoch 的响应一律丢弃。Profile/Provider/Permission 更新只产生新 rev
 ```mermaid
 flowchart TB
     CLIENT[Desktop / CLI] --> SERVER[App Server]
-    SERVER --> DB[(data-v5)]
+    SERVER --> DB[(data-v6)]
     SERVER --> BROWSER[Browser Worker]
     SERVER --> KNOWLEDGE[Knowledge Worker]
     SERVER -. supervised .-> THIRD[Third-party Extension Process]
@@ -63,13 +63,13 @@ Service Worker、WSS 与下载均拒绝。Knowledge Worker 无网络，只通过
 ## 根目录
 
 - `config/`：Checkstyle 与格式化规则，不放业务配置。
-- `docs/`：只描述 5.0 当前目标、事实、威胁与验收，不保存旧版本叙事。
+- `docs/`：描述 6.0 当前目标、事实、威胁与验收；被取代的 ADR 明确标记并保留决策依据。
 - `.run/`：共享 IDEA App Server、Desktop 与 Compound 调试配置；不保存凭据。
-- `.javaclaw/data-v5/`：本机数据库、Blob、Worktree 和日志；始终忽略。
-- `.javaclaw/idea/data-v5/`：共享 IDEA Compound 配置使用的隔离开发数据根；与发行数据互不读取。
+- `data-v6/`：程序目录下默认的数据库、Blob、Worktree 和日志；始终忽略，显式数据根可覆盖。
+- `.javaclaw/idea/data-v6/`：共享 IDEA Compound 配置使用的隔离开发数据根；与发行数据互不读取。
 - `docs/images/screenshots/settings-center/macos-reference/`：54 张设置中心生产 Scene 参考图及哈希清单。
 - `target/`、`*/target/`：可再生构建输出。
-- `.github/workflows/javaclaw-v5.yml`：唯一 CI / release workflow。
+- `.github/workflows/javaclaw-v6.yml`：唯一 CI / release workflow。
 
 `javaclaw-packaging/target/distribution` 是展开后的本地发行目录；其中主应用位于 `runtime/` 与 `lib/`，Browser、
 Knowledge、Skill 的隔离 image 位于 `workers/`。`target/release-evidence` 保存 SBOM 与许可证清单，`target/release`

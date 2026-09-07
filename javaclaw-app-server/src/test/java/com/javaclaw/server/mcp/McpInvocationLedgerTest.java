@@ -44,7 +44,7 @@ class McpInvocationLedgerTest {
     @BeforeEach
     void 初始化空白调用账本() {
         json = new CanonicalJson();
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         ledger = new McpInvocationLedger(database, json, Clock.fixed(NOW, ZoneOffset.UTC));
     }

@@ -7,7 +7,7 @@ import java.util.Optional;
 import com.javaclaw.api.CredentialMetadata;
 import com.javaclaw.api.CredentialRef;
 
-/** Secret Vault Protocol v2 方法的请求与响应 payload。 */
+/** Secret Vault Protocol v3 方法的请求与响应 payload。 */
 public final class CredentialRpcContracts {
     private CredentialRpcContracts() {}
 

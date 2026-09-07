@@ -199,7 +199,7 @@ class ProviderModelRegistryLifecycleTest {
     }
 
     private ProviderService providers(String suffix) {
-        H2Database database = new H2Database(temporaryDirectory.resolve(suffix).resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve(suffix).resolve("data-v6"));
         database.initialize();
         return new ProviderService(database, reference -> true, new CanonicalJson(), CLOCK);
     }

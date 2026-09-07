@@ -164,8 +164,11 @@ final class WindowsPseudoConsole implements AutoCloseable {
         WindowsSandboxNative.closeHandleQuietly(output);
         finishOutput();
         WindowsSandboxNative.closeHandleQuietly(process);
-        security.close();
-        scope.close();
+        try {
+            security.close();
+        } finally {
+            scope.close();
+        }
     }
 
     private void writeFully(byte[] bytes) throws IOException {

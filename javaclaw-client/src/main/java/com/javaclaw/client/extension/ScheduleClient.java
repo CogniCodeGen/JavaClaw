@@ -30,7 +30,7 @@ public final class ScheduleClient {
         return definitions.list(workspaceId, afterKey, limit);
     }
 
-    /** @return 由服务端确认 Profile、目标目录并生成 revision 的 Schedule */
+    /** @return 由服务端确认执行配置、目标目录并生成 revision 的 Schedule */
     public ScheduleContracts.Definition create(
             WorkspaceId workspaceId, ScheduleManagementContracts.SaveRequest request, CommandOptions options) {
         return save(workspaceId, "definition/create", request, requireRevision(options, true));

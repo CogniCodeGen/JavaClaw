@@ -6,7 +6,7 @@ import java.util.Optional;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.api.WorktreeId;
 
-/** 项目约定脱敏解析结果的 Protocol v2 DTO。 */
+/** 项目约定脱敏解析结果的 Protocol v3 DTO。 */
 public final class InstructionRpcContracts {
     private InstructionRpcContracts() {}
 

@@ -41,6 +41,18 @@ class WindowsSandboxIntegrationTest {
     Path temporaryDirectory;
 
     @Test
+    void targetExit73IsNotConfusedWithTrustedHelperRestorationFailure() throws Exception {
+        var result = new PlatformSandboxExecutor()
+                .execute(
+                        batch("exit /b 73", Duration.ofSeconds(5)), permission(false, false), new CancellationSource());
+        assertEquals(73, result.exitCode());
+        assertFalse(result.cancelled());
+        var next = new PlatformSandboxExecutor()
+                .execute(batch("exit /b 0", Duration.ofSeconds(5)), permission(false, false), new CancellationSource());
+        assertEquals(0, next.exitCode());
+    }
+
+    @Test
     void appContainerAllowsDeclaredWriteButDeniesDeleteAndEnforcesWallTimeout() throws Exception {
         assertTrue(WindowsSandbox.isSupported(), "required Windows Sandbox APIs must load on the release runner");
         Path protectedFile = temporaryDirectory.resolve("protected.txt");
@@ -74,13 +86,13 @@ class WindowsSandboxIntegrationTest {
                 new PlatformSandboxExecutor().open(command, permission, new CancellationSource())) {
             session.frames().subscribe(subscriber);
             session.resize(100, 36).toCompletableFuture().get(2, TimeUnit.SECONDS);
-            session.send("echo conpty-v5\r\nexit\r\n".getBytes(StandardCharsets.UTF_8))
+            session.send("echo conpty-v6\r\nexit\r\n".getBytes(StandardCharsets.UTF_8))
                     .toCompletableFuture()
                     .get(2, TimeUnit.SECONDS);
             var result = session.completion().toCompletableFuture().get(10, TimeUnit.SECONDS);
 
             assertEquals(0, result.exitCode(), subscriber.text());
-            assertTrue(subscriber.text().contains("conpty-v5"));
+            assertTrue(subscriber.text().contains("conpty-v6"));
         }
     }
 

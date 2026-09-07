@@ -10,14 +10,30 @@ import java.util.Optional;
  * @param messages 消息
  * @param providerState 可选 opaque state
  * @param estimatedInputTokens 当前估算 token
+ * @param fixedInputTokens 估算中已包含的固定指令与工具 Schema token；旧快照为 0
  */
 public record ConversationWindow(
-        List<ModelMessage> messages, Optional<ProviderState> providerState, long estimatedInputTokens) {
+        List<ModelMessage> messages,
+        Optional<ProviderState> providerState,
+        long estimatedInputTokens,
+        long fixedInputTokens) {
+    /**
+     * 从尚未核算固定内容的窗口创建快照。
+     *
+     * @param messages 有序消息
+     * @param providerState 可选原生状态
+     * @param estimatedInputTokens 输入估算
+     */
+    public ConversationWindow(
+            List<ModelMessage> messages, Optional<ProviderState> providerState, long estimatedInputTokens) {
+        this(messages, providerState, estimatedInputTokens, 0);
+    }
+
     /** 复制窗口并校验 token。 */
     public ConversationWindow {
         messages = List.copyOf(messages);
         providerState = Objects.requireNonNull(providerState, "providerState");
-        if (estimatedInputTokens < 0) {
+        if (estimatedInputTokens < 0 || fixedInputTokens < 0 || fixedInputTokens > estimatedInputTokens) {
             throw new IllegalArgumentException("estimatedInputTokens must not be negative");
         }
     }
@@ -33,7 +49,10 @@ public record ConversationWindow(
         java.util.ArrayList<ModelMessage> combined = new java.util.ArrayList<>(messages);
         combined.addAll(additional);
         return new ConversationWindow(
-                combined, providerState, Math.addExact(estimatedInputTokens, Math.max(0, additionalTokens)));
+                combined,
+                providerState,
+                Math.addExact(estimatedInputTokens, Math.max(0, additionalTokens)),
+                fixedInputTokens);
     }
 
     /**
@@ -43,6 +62,6 @@ public record ConversationWindow(
      * @return 新窗口
      */
     public ConversationWindow withProviderState(Optional<ProviderState> state) {
-        return new ConversationWindow(messages, state, estimatedInputTokens);
+        return new ConversationWindow(messages, state, estimatedInputTokens, fixedInputTokens);
     }
 }

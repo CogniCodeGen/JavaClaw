@@ -13,6 +13,54 @@ import com.javaclaw.api.TurnStatus;
 /** Harness 使用的事务持久化端口。 */
 public interface TurnJournal {
     /**
+     * 提交压缩意图；原生请求须与主 checkpoint 的 MODEL_IN_FLIGHT 同事务。
+     *
+     * @param request 精确输入
+     * @param nativeCall 是否调用外部 Provider
+     * @return 持久意图身份
+     */
+    default CompactionTicket recordCompactionIntent(CompactionRequest request, boolean nativeCall) {
+        if (nativeCall) {
+            throw new UnsupportedOperationException("native compaction requires a durable journal");
+        }
+        return new CompactionTicket(1, "0".repeat(64), false);
+    }
+
+    /**
+     * 原子提交压缩结果、真实用量、新窗口、审计与下一安全点。
+     *
+     * @param request 原请求
+     * @param ticket 已提交意图
+     * @param outcome 实际结果
+     * @param cumulativeUsage 含本次压缩的真实累计用量，允许超限以保留账单证据
+     */
+    default void commitCompaction(
+            CompactionRequest request, CompactionTicket ticket, CompactionOutcome outcome, ModelUsage cumulativeUsage) {
+        append(
+                request.command().turn().id(),
+                "compaction",
+                com.javaclaw.api.CoreSchemas.COMPACTION,
+                outcome.item(),
+                ItemStatus.COMPLETED);
+    }
+
+    /**
+     * 绑定活动预算账户，并在允许子任务前恢复已经持久化的预留。
+     *
+     * @param turnId 活动 Turn
+     * @param budget 当前唯一内存预算账户
+     */
+    default void activateBudget(TurnId turnId, BudgetAccount budget) {}
+
+    /**
+     * 解除活动账户绑定；持久预留继续保留用于恢复。
+     *
+     * @param turnId 离开 Harness 的 Turn
+     * @param budget 本次绑定的预算，避免移除后继执行账户
+     */
+    default void deactivateBudget(TurnId turnId, BudgetAccount budget) {}
+
+    /**
      * 原子进入 RUNNING，或读取硬崩溃前已经提交的恢复点。
      *
      * <p>新 Turn 必须在同一事务提交状态变化与初始 checkpoint；RUNNING Turn 缺少 checkpoint 属于数据损坏。

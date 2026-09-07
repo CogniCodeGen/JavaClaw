@@ -1,0 +1,1 @@
+{"$id":"javaclaw.coding/terminal-signal-input/v1","$schema":"https://json-schema.org/draft/2020-12/schema","additionalProperties":false,"properties":{"sessionId":{"pattern":"^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$","type":"string"},"signal":{"enum":["INTERRUPT","TERMINATE","KILL"],"type":"string"}},"required":["sessionId","signal"],"type":"object"}

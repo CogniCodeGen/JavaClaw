@@ -1,7 +1,7 @@
-# JavaClaw 5 发布与供应链
+# JavaClaw 6 发布与供应链
 
-本页描述当前发布流程。`5.0.0-SNAPSHOT` 只用于开发构建；正式发布前必须把 Reactor 版本改为与标签一致的非
-SNAPSHOT 版本。唯一工作流 `.github/workflows/javaclaw-v5.yml` 会拒绝版本不一致的 `v5.*` 标签。
+本页描述当前发布流程。`6.0.0-SNAPSHOT` 只用于开发构建；正式发布前必须把 Reactor 版本改为与标签一致的非
+SNAPSHOT 版本。唯一工作流 `.github/workflows/javaclaw-v6.yml` 会拒绝版本不一致的 `v6.*` 标签。
 
 ## 本地产物
 
@@ -74,16 +74,28 @@ java -cp javaclaw-packaging/target/classes com.javaclaw.release.ReleaseManifestM
 凭据只导入临时 Runner keychain、GPG home 或当前用户证书库，不进入 Maven 配置、日志、发行包或清单。工作流成功
 只能证明该次 Runner 结果；当前开发机不能替代 Linux/Windows 原生证据，也不能证明尚未执行的真实签名和公证。
 
+## 运行目录与升级
+
+程序默认使用安装目录下的 `data-v6/`，显式 `javaclaw.data.root` 优先，目标必须以 `data-v6` 结尾。只读安装位置需要用户明确指定可写数据根，
+启动器不得静默回退到 HOME。App Server 打开数据库前检查目录所有者、权限、符号链接和实际写入能力；错误必须明确。
+升级不会读取、迁移、修改或清理旧 `data-v5`。旧 Profile 和 Protocol v2 不能进入 v6，需使用新的 Role 和独立执行配置。
+
 ## 当前证据边界
 
-当前源码已配置五个原生 Runner、两类 Browser 原生能力回执和 fail-closed 安装门禁；MCP OAuth、Browser 登录、
-Worker image、清单与许可边界已有分模块自动测试。本机仓库还保存 54 张 macOS 设置中心生产 Scene Golden。上述证据
-只证明当前分模块与本机行为。
+2026-09-07 的 macOS aarch64、JDK 25 完整 `clean verify` 通过：15 个构建项目、1899 项测试，0 失败、
+0 错误、8 项条件跳过；[构建证据](evidence/v6-build-validation.md)记录命令、覆盖率与跳过范围。macOS 本机 jlink/Worker
+镜像、发行 ZIP、SBOM、许可和双层哈希生成与校验通过。CI 的五个原生 Runner、真实 Browser 能力与安装门禁仍须取得对应结果。
+本机 54 张 macOS 设置中心壳/外观页参考 Scene 已接纳经审阅的 Agent 导航文案更新；真实 JavaFX 产物逐图对照确认
+仅左侧标题/描述变化，框外像素完全一致。[差异记录](evidence/v6-settings-golden-review.md)保留前后哈希，逐字节比较
+门禁未变，最终独立 JVM Golden 已在完整门禁通过。Agent Studio 正文、新执行选择器及其余页面多状态需补充人工视觉验收。
 
-2026-09-02 的本机 macOS aarch64 工作树已通过完整 `mvn clean verify`，15 个 Reactor 模块全部成功；本机 jlink
-发行目录也已通过隔离 `data-v5` 的 Protocol v2 健康检查。Linux x64/arm64、macOS x64、Windows x64 的真实
-Chromium/Native Sandbox 回执，以及真实平台签名、时间戳和 macOS 公证仍未取得。缺少任一目标 Runner 产物、
-外层哈希、签名或 attestation 都会阻止 5.0 发布。
+本机门禁通过不代表跨平台发布就绪。安装后健康检查、三平台原生 Runner、真实 Chromium/Sandbox 回执、系统凭据、
+平台签名、时间戳、macOS 公证与 attestation 未完成前阻止发布。
+
+本机[配置与 Prompt 准备基准](evidence/v6-turn-preparation-performance.md)测得 v6 p50/p95 约 160/175 ms、
+Git v5 对照约 503/608 ms，所测准备路径满足不超过 10% 的增量目标。最终候选仅一个 JVM、100 个样本；该计时
+不包含 Turn 最终写入、Harness、模型完成、UI 或 Sandbox，不是完整 Turn 端到端或跨平台验收。
+也未通过付费模型或效果对照实验验收 Role 文本的质量提升。详见[验收矩阵](architecture/acceptance-matrix.md)。
 
 SBOM 由 [CycloneDX Maven Plugin](https://cyclonedx.github.io/cyclonedx-maven-plugin/) 生成；attestation 使用
 [GitHub artifact attestations](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations)。

@@ -8,7 +8,7 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.ExecutionState;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.WorkspaceId;
@@ -35,7 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class AutomationClientsTest {
     private static final WorkspaceId WORKSPACE = WorkspaceId.parse("114fdfd7-d4e7-42f4-9563-dd552b61f97d");
     private static final ThreadId PARENT = ThreadId.parse("dc914106-e26f-4ab1-a3c5-001c12cb9ec1");
-    private static final AgentProfileRef PROFILE = new AgentProfileRef("profile", 3);
+    private static final AgentRoleRef PROFILE = new AgentRoleRef("profile", 3);
     private static final OrchestrationContracts.ExecutionBudget BUDGET =
             new OrchestrationContracts.ExecutionBudget(5, 2_000, 1_000, 20);
     private static final Instant NOW = Instant.parse("2026-09-02T00:00:00Z");
@@ -285,7 +285,7 @@ class AutomationClientsTest {
     }
 
     private static OrchestrationContracts.StartRequest start(String definitionId) {
-        return new OrchestrationContracts.StartRequest(definitionId, PROFILE, BUDGET);
+        return new OrchestrationContracts.StartRequest(definitionId, AutomationV6Fixtures.selection(PROFILE), BUDGET);
     }
 
     private static PlanContracts.ManagementSaveRequest planRequest() {
@@ -455,8 +455,7 @@ class AutomationClientsTest {
                 Optional.empty(),
                 Optional.of(60L),
                 Optional.of(NOW.plusSeconds(60)),
-                PROFILE.id(),
-                PROFILE.revision(),
+                AutomationV6Fixtures.selection(new AgentRoleRef(PROFILE.id(), PROFILE.revision())),
                 "Scheduled task",
                 "run checks",
                 BUDGET.maximumTurns(),
@@ -467,8 +466,8 @@ class AutomationClientsTest {
     }
 
     private static ScheduleContracts.Definition schedule(long revision) {
-        ScheduleContracts.Target target = ScheduleContracts.Target.turn(
-                new ScheduleContracts.TurnTemplate(PROFILE, "Scheduled task", "run checks", BUDGET));
+        ScheduleContracts.Target target = ScheduleContracts.Target.turn(new ScheduleContracts.TurnTemplate(
+                AutomationV6Fixtures.selection(PROFILE), "Scheduled task", "run checks", BUDGET));
         return new ScheduleContracts.Definition(
                 "schedule",
                 revision,

@@ -12,13 +12,13 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.PermissionProfileRef;
-import com.javaclaw.api.ProfileLifecycle;
 import com.javaclaw.api.PromptSourceKind;
 import com.javaclaw.api.ProviderRef;
+import com.javaclaw.api.RoleLifecycle;
 import com.javaclaw.api.TurnBudget;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.server.instructions.ProjectInstructionResolver;
@@ -44,34 +44,54 @@ class PromptManifestAssemblerTest {
                 .resolve(workspaceRoot, workspaceRoot, Optional.empty());
         PromptManifestAssembler assembler = new PromptManifestAssembler("Core 模板");
         CanonicalJson json = new CanonicalJson();
-        AgentProfile profile = profile();
+        AgentRole role = role();
 
-        var preview = assembler.preview(profile, instructions, json);
+        var preview = assembler.preview(configuration(role), instructions, json);
 
-        assertEquals(json.encode(assembler.snapshot(profile, instructions)).sha256(), preview.manifestDigest());
-        assertEquals(new AgentProfileRef("profile", 2), preview.profile());
-        assertEquals(4, preview.sources().size());
         assertEquals(
-                PromptSourceKind.CORE_TEMPLATE, preview.sources().getFirst().kind());
+                json.encode(assembler.snapshot(configuration(role), instructions))
+                        .sha256(),
+                preview.manifestDigest());
+        assertEquals(new AgentRoleRef("profile", 2), preview.role());
+        assertEquals(6, preview.sources().size());
+        assertEquals(PromptSourceKind.MODEL_BASE, preview.sources().getFirst().kind());
         assertTrue(preview.estimatedInputTokens() > 0);
         String wire = json.encode(preview).json();
         assertFalse(wire.contains("全局正文"));
         assertFalse(wire.contains("项目正文"));
-        assertTrue(wire.contains("Profile 指令"));
+        assertTrue(wire.contains("Role 指令"));
     }
 
-    private static AgentProfile profile() {
-        return new AgentProfile(
+    private static ResolvedAgentConfiguration configuration(AgentRole role) {
+        return new ResolvedAgentConfiguration(
+                role,
+                new ProviderRef("provider", 3, "model"),
+                new PermissionProfileRef("standard", 1),
+                com.javaclaw.api.ApprovalPolicy.NONE,
+                new TurnBudget(8000, 2000, 16, 2, Duration.ofMinutes(5)),
+                com.javaclaw.server.TurnContractFixtures.TOOL_CATALOG.permissionCeiling(),
+                com.javaclaw.api.PermissionConstraint.INHERIT,
+                Optional.empty(),
+                Optional.empty(),
+                java.util.List.of());
+    }
+
+    private static AgentRole role() {
+        return new AgentRole(
                 "profile",
                 2,
-                ProfileLifecycle.ACTIVE,
-                new AgentProfileSpec(
+                RoleLifecycle.ACTIVE,
+                new AgentRoleSpec(
                         "预览 Profile",
-                        "Profile 指令",
-                        new ProviderRef("provider", 3, "model"),
-                        new PermissionProfileRef("standard", 1),
-                        java.util.Set.of("tool_search"),
-                        new TurnBudget(8_000, 2_000, 16, 2, Duration.ofMinutes(5))),
+                        "",
+                        "Role 指令",
+                        Optional.empty(),
+                        Optional.empty(),
+                        new com.javaclaw.api.CapabilityNarrowing(
+                                Optional.of(java.util.Set.of("tool_search")), Optional.empty()),
+                        com.javaclaw.api.PermissionConstraint.INHERIT,
+                        java.util.Map.of()),
+                false,
                 NOW,
                 NOW);
     }

@@ -42,7 +42,7 @@ public final class ProviderVerificationService implements AutoCloseable {
     /**
      * 创建服务并把上次进程遗留的 RUNNING 意图恢复为 UNKNOWN_OUTCOME。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      * @param providers Provider 权威版本服务
      * @param credentials Secret 实时可用性边界
      * @param models 生产环境中的 ProviderModelRegistry

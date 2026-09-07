@@ -6,7 +6,7 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ToolDescriptor;
@@ -40,12 +40,11 @@ class ToolClientTest {
             assertEquals(WORKSPACE, params.workspaceId());
             assertEquals("workspace-review", params.permissionProfileId());
             assertEquals(3, params.permissionProfileVersion());
-            if (params.agentProfile().isEmpty()) {
+            if (params.agentRole().isEmpty()) {
                 assertEquals("", params.query());
                 assertEquals(25, params.limit());
             } else {
-                assertEquals(
-                        new AgentProfileRef("worker", 4), params.agentProfile().orElseThrow());
+                assertEquals(new AgentRoleRef("worker", 4), params.agentRole().orElseThrow());
                 assertEquals("read", params.query());
                 assertEquals(10, params.limit());
             }
@@ -60,7 +59,7 @@ class ToolClientTest {
         var catalog = client.catalog(
                 WORKSPACE,
                 new PermissionProfileRef("workspace-review", 3),
-                Optional.of(new AgentProfileRef("worker", 4)),
+                Optional.of(new AgentRoleRef("worker", 4)),
                 "read",
                 10);
         assertEquals(17, catalog.catalogRevision());

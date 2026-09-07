@@ -39,11 +39,16 @@ public final class CoreCommandService {
     private final IdempotencyRepository idempotency = new IdempotencyRepository();
     private final CanonicalJson json;
     private final Clock clock;
+    private final LiveTurnBudgets liveBudgets = new LiveTurnBudgets();
+    private final ChildTurnService childTurns;
+    private final ConversationContextService contexts;
+    private final CodingEnvironmentService codingEnvironments;
+    private final WorkspaceSecurityRepository workspaceSecurity;
 
     /**
      * 创建 Core 服务。
      *
-     * @param database 已初始化或即将初始化的 data-v5 数据库
+     * @param database 已初始化或即将初始化的 data-v6 数据库
      * @param json 共享规范 JSON codec
      * @param clock 平台时钟
      */
@@ -51,6 +56,35 @@ public final class CoreCommandService {
         transactions = new H2Transactions(Objects.requireNonNull(database, "database"));
         this.json = Objects.requireNonNull(json, "json");
         this.clock = Objects.requireNonNull(clock, "clock");
+        childTurns = new ChildTurnService(database, liveBudgets, json, clock);
+        contexts = new ConversationContextService(database, json);
+        codingEnvironments = new CodingEnvironmentService(database, json, clock);
+        workspaceSecurity = new WorkspaceSecurityRepository(database, json, clock);
+    }
+
+    /** @return 持久 Workspace 原生权限恢复锁与内部审计；不提供普通解锁入口 */
+    public WorkspaceSecurityRepository workspaceSecurity() {
+        return workspaceSecurity;
+    }
+
+    /** @return 项目声明准备与内部精确工具链快照服务 */
+    public CodingEnvironmentService codingEnvironments() {
+        return codingEnvironments;
+    }
+
+    /** @return 服务端冻结窗口与政策查询边界 */
+    public ConversationContextService contexts() {
+        return contexts;
+    }
+
+    /** @return 仅属于本 App Server 的活动预算注册表，供组合根注入 Harness 日志 */
+    public LiveTurnBudgets liveBudgets() {
+        return liveBudgets;
+    }
+
+    /** @return 与当前 Harness 共用父预算账户的子任务预留服务 */
+    public ChildTurnService childTurns() {
+        return childTurns;
     }
 
     /**
@@ -62,11 +96,31 @@ public final class CoreCommandService {
      * @return 新快照
      */
     public Workspace createWorkspace(CommandIdentity identity, String name, Path root) {
+        return createWorkspace(identity, name, root, Optional.empty());
+    }
+
+    /**
+     * 创建 Workspace 并在同一事务保存独立执行选择。
+     *
+     * @param identity 幂等创建身份，expected revision 为 0
+     * @param name Workspace 名称
+     * @param root 绝对项目根
+     * @param execution 可选执行默认值；缺省继承安装级通用 default Role
+     * @return 已创建的 Workspace
+     */
+    public Workspace createWorkspace(
+            CommandIdentity identity, String name, Path root, Optional<com.javaclaw.api.ExecutionOverrides> execution) {
         requireCreate(identity);
+        Objects.requireNonNull(execution, "execution");
         return idempotent(identity, Workspace.class, connection -> {
             Instant createdAt = now();
             Workspace workspace = workspaces.insert(connection, name, root, createdAt);
             instructionSettings.insert(connection, workspace.id(), createdAt);
+            if (execution.isPresent()) {
+                var configuration = new com.javaclaw.api.ExecutionConfiguration(
+                        Optional.of(workspace.id()), Optional.empty(), execution.orElseThrow(), 1, createdAt);
+                new ExecutionConfigurationRepository(json).insert(connection, configuration);
+            }
             return workspace;
         });
     }
@@ -175,7 +229,7 @@ public final class CoreCommandService {
         requireCreate(identity);
         return idempotent(identity, ConversationThread.class, connection -> {
             requireActiveWorkspace(connection, workspaceId);
-            validateParent(connection, workspaceId, parentId);
+            threads.validateParent(connection, workspaceId, parentId);
             return threads.insert(connection, workspaceId, parentId, executionIntent, title, now());
         });
     }
@@ -225,33 +279,41 @@ public final class CoreCommandService {
      */
     public AgentTurn startTurn(CommandIdentity identity, TurnStartRequest request) {
         requireCreate(identity);
-        return idempotent(identity, AgentTurn.class, connection -> {
-            turns.lockThread(connection, request.threadId());
-            if (turns.hasActiveTurn(connection, request.threadId())) {
-                throw PersistenceException.revisionConflict("Thread 已有活动 Turn");
+        synchronized (CommandLocks.forKey(identity.idempotencyKey())) {
+            Optional<AgentTurn> existing = execute(connection -> idempotency
+                    .find(connection, identity.idempotencyKey())
+                    .map(stored -> recover(identity, AgentTurn.class, stored)));
+            if (existing.isPresent()) {
+                return existing.orElseThrow();
             }
-            Instant createdAt = now();
-            AgentTurn turn = turns.insert(connection, request, createdAt);
-            prompts.insert(connection, turn.id(), request.promptSnapshot());
-            toolCatalogs.insert(connection, turn.id(), request.toolCatalog(), json);
-            if (request.unattendedExecutionScope().isPresent()) {
-                unattendedScopes.insert(
-                        connection,
-                        turn.id(),
-                        request.unattendedExecutionScope().orElseThrow(),
-                        createdAt);
-            }
-            ItemRepository.ItemWrite item = new ItemRepository.ItemWrite(
-                    turn.id(),
-                    "message",
-                    CoreSchemas.MESSAGE,
-                    "core",
-                    ItemStatus.COMPLETED,
-                    json.encode(request.message()),
-                    createdAt);
-            items.append(connection, item);
-            return turn;
-        });
+            // 原生读取不持有 H2 连接；同一幂等身份仍串行，提交时再次恢复持久响应。
+            TurnStartRequest prepared = workspaceSecurity.prepare(
+                    workspaceForThread(request.threadId()).id(), request, codingEnvironments);
+            return idempotent(
+                    identity,
+                    AgentTurn.class,
+                    connection -> TurnCreationWrite.insert(connection, prepared, now(), json));
+        }
+    }
+
+    /**
+     * 恢复已提交的 turn/start 原始结果，不重新解析角色、Provider 或分配执行预算。
+     *
+     * @param identity 原始命令身份；请求摘要必须包含 expected revision 与 payload
+     * @return 首次请求尚未提交时为空；已提交时返回创建快照，身份冲突仍按幂等契约拒绝
+     */
+    public Optional<AgentTurn> recoverTurnStart(CommandIdentity identity) {
+        Objects.requireNonNull(identity, "identity");
+        if (!identity.method().equals("turn/start")) {
+            throw PersistenceException.invalidRequest("仅可恢复 turn/start 命令");
+        }
+        synchronized (CommandLocks.forKey(identity.idempotencyKey())) {
+            Optional<AgentTurn> result = execute(connection -> idempotency
+                    .find(connection, identity.idempotencyKey())
+                    .map(stored -> recover(identity, AgentTurn.class, stored)));
+            requireCreate(identity);
+            return result;
+        }
     }
 
     /**
@@ -262,6 +324,76 @@ public final class CoreCommandService {
      */
     public Optional<AgentTurn> findTurn(TurnId id) {
         return execute(connection -> turns.find(connection, id));
+    }
+
+    /**
+     * 在自动化 Execution 创建前冻结完整 Prompt，不执行模型或外部工具。
+     *
+     * @param snapshot 分层正文与来源，按 SHA-256 去重
+     */
+    public void freezePromptManifest(CanonicalPayload snapshot) {
+        execute(connection -> {
+            new ManifestSnapshotRepository().insert(connection, snapshot);
+            return null;
+        });
+    }
+
+    /**
+     * 读取已冻结的内容寻址 Prompt，供恢复使用；不重新访问当前角色或项目文件。
+     *
+     * @param digest 已保存的 SHA-256
+     * @return 校验摘要后的完整快照
+     */
+    public CanonicalPayload promptManifest(String digest) {
+        return execute(connection -> new ManifestSnapshotRepository()
+                .find(connection, digest)
+                .orElseThrow(() -> new PersistenceException("冻结 Prompt manifest 不存在")));
+    }
+
+    /**
+     * 读取由预算预留证明的父 Turn；普通根 Thread 与自动化根执行为空。
+     *
+     * @param threadId 子 Thread
+     * @return 父 Turn 当前状态
+     */
+    public Optional<AgentTurn> parentTurn(ThreadId threadId) {
+        return execute(connection -> {
+            Optional<TurnId> parent = new ChildTurnReservationRepository(json).parent(connection, threadId);
+            return parent.isPresent() ? turns.find(connection, parent.orElseThrow()) : Optional.empty();
+        });
+    }
+
+    /**
+     * 读取子 Thread 在预算事务中冻结的配置，重试不得重新解析角色。
+     *
+     * @param threadId 已预留的子 Thread
+     * @return 精确冻结配置
+     */
+    public com.javaclaw.api.AutomationExecutionSnapshot childSnapshot(ThreadId threadId) {
+        return execute(connection -> new ChildTurnReservationRepository(json)
+                .snapshot(connection, threadId)
+                .orElseThrow(() -> new PersistenceException("子任务缺少父预算预留")));
+    }
+
+    /**
+     * 查询持久取消意图，供子任务每次模型或工具边界传播取消。
+     *
+     * @param turnId Turn 身份
+     * @return 是否已请求取消
+     */
+    public boolean cancellationRequested(TurnId turnId) {
+        return execute(connection -> turns.hasCancellation(connection, turnId));
+    }
+
+    /**
+     * 读取 Turn 创建时冻结的完整解析结果，恢复时不重新解析当前 Role 或默认值。
+     *
+     * @param turnId 已持久化 Turn
+     * @return 精确配置快照；缺失表示损坏
+     */
+    public com.javaclaw.api.ResolvedTurnConfig resolvedConfig(TurnId turnId) {
+        return execute(connection ->
+                turns.configuration(connection, turnId).orElseThrow(() -> new PersistenceException("Turn 解析配置不存在")));
     }
 
     /**
@@ -297,6 +429,23 @@ public final class CoreCommandService {
                 .filter(message -> message.role() == com.javaclaw.api.MessageRole.USER)
                 .findFirst()
                 .orElseThrow(() -> new PersistenceException("Turn 缺少创建时用户消息")));
+    }
+
+    /**
+     * 读取指定 Turn 最后提交的助手消息，供子任务完成结果和审计展示使用。
+     *
+     * @param turnId 精确 Turn，不能读取同 Thread 的其他 Turn 内容
+     * @return 最近完成的助手消息；未生成时为空
+     */
+    public Optional<CorePayloads.Message> turnAssistantMessage(TurnId turnId) {
+        return execute(connection ->
+                items
+                        .listByTurnAndSchema(connection, Objects.requireNonNull(turnId, "turnId"), CoreSchemas.MESSAGE)
+                        .stream()
+                        .filter(item -> item.status() == ItemStatus.COMPLETED)
+                        .map(item -> json.decode(item.payload(), CorePayloads.Message.class))
+                        .filter(message -> message.role() == com.javaclaw.api.MessageRole.ASSISTANT)
+                        .reduce((previous, current) -> current));
     }
 
     /**
@@ -364,18 +513,6 @@ public final class CoreCommandService {
             throw new IllegalArgumentException("invalid item page");
         }
         return execute(connection -> items.listPage(connection, threadId, afterSequence, limit));
-    }
-
-    private void validateParent(java.sql.Connection connection, WorkspaceId workspaceId, Optional<ThreadId> parentId)
-            throws java.sql.SQLException {
-        if (parentId.isEmpty()) {
-            return;
-        }
-        ConversationThread parent = threads.find(connection, parentId.orElseThrow())
-                .orElseThrow(() -> new PersistenceException("父 Thread 不存在"));
-        if (!parent.workspaceId().equals(workspaceId)) {
-            throw new PersistenceException("父子 Thread 必须属于同一 Workspace");
-        }
     }
 
     private Workspace updateWorkspace(CommandIdentity identity, WorkspaceId workspaceId, WorkspaceUpdate update) {

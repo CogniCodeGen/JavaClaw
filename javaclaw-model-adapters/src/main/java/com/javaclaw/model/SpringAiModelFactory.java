@@ -96,29 +96,34 @@ final class SpringAiModelFactory {
     }
 
     private OpenAiChatOptions openAiOptions(SpringAiEndpointConfig config, ModelInvocation invocation) {
-        return OpenAiChatOptions.builder()
+        var builder = OpenAiChatOptions.builder()
                 .model(config.model())
                 .maxCompletionTokens(tokens(invocation))
                 .streamUsage(true)
-                .toolCallbacks(callbacks(invocation))
-                .build();
+                .toolCallbacks(callbacks(invocation));
+        invocation
+                .reasoning()
+                .ifPresent(preference -> builder.reasoningEffort(AdapterReasoningMapping.openAiCompatible(preference)));
+        return builder.build();
     }
 
     private AnthropicChatOptions anthropicOptions(SpringAiEndpointConfig config, ModelInvocation invocation) {
-        return AnthropicChatOptions.builder()
+        var builder = AnthropicChatOptions.builder()
                 .model(Model.of(config.model()))
                 .maxTokens(tokens(invocation))
-                .toolCallbacks(callbacks(invocation))
-                .build();
+                .toolCallbacks(callbacks(invocation));
+        invocation.reasoning().ifPresent(preference -> AdapterReasoningMapping.anthropic(builder, preference));
+        return builder.build();
     }
 
     private GoogleGenAiChatOptions googleOptions(SpringAiEndpointConfig config, ModelInvocation invocation) {
-        return GoogleGenAiChatOptions.builder()
+        var builder = GoogleGenAiChatOptions.builder()
                 .model(config.model())
                 .maxOutputTokens(tokens(invocation))
                 .includeExtendedUsageMetadata(true)
-                .toolCallbacks(callbacks(invocation))
-                .build();
+                .toolCallbacks(callbacks(invocation));
+        invocation.reasoning().ifPresent(preference -> AdapterReasoningMapping.google(builder, preference));
+        return builder.build();
     }
 
     private List<ToolCallback> callbacks(ModelInvocation invocation) {

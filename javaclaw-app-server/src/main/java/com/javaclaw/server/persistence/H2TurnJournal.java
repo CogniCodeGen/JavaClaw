@@ -42,6 +42,7 @@ import com.javaclaw.runtime.TurnVisibleTools;
  */
 public final class H2TurnJournal implements TurnJournal {
     private final H2Transactions transactions;
+    private final TurnCompactionJournal compactions;
     private final TurnRepository turns = new TurnRepository();
     private final ItemRepository items = new ItemRepository(turns);
     private final EffectReceiptRepository effects = new EffectReceiptRepository();
@@ -50,21 +51,65 @@ public final class H2TurnJournal implements TurnJournal {
     private final ItemSchemaRegistry schemas;
     private final CanonicalJson json;
     private final Clock clock;
+    private final LiveTurnBudgets budgets;
 
     /**
      * 创建事务日志。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      * @param schemas Core 与已启用扩展的 Item codec
      * @param json 共享规范 JSON codec
      * @param clock 平台时钟
      */
     public H2TurnJournal(H2Database database, ItemSchemaRegistry schemas, CanonicalJson json, Clock clock) {
+        this(database, schemas, json, clock, new LiveTurnBudgets());
+    }
+
+    /**
+     * 创建与子任务共享预算注册表的事务日志。
+     *
+     * @param database data-v6 数据库
+     * @param schemas 已启用 Item codec
+     * @param json 规范 JSON
+     * @param clock 平台时钟
+     * @param budgets 组合根拥有的活动预算注册表
+     */
+    public H2TurnJournal(
+            H2Database database, ItemSchemaRegistry schemas, CanonicalJson json, Clock clock, LiveTurnBudgets budgets) {
+        this.budgets = Objects.requireNonNull(budgets, "budgets");
+        compactions = new TurnCompactionJournal(database, json, clock, schemas);
         transactions = new H2Transactions(Objects.requireNonNull(database, "database"));
         this.schemas = Objects.requireNonNull(schemas, "schemas");
         this.json = Objects.requireNonNull(json, "json");
         checkpoints = new TurnExecutionCheckpointRepository(json);
         this.clock = Objects.requireNonNull(clock, "clock");
+    }
+
+    @Override
+    public com.javaclaw.runtime.CompactionTicket recordCompactionIntent(
+            com.javaclaw.runtime.CompactionRequest request, boolean nativeCall) {
+        return compactions.intent(request, nativeCall);
+    }
+
+    @Override
+    public void commitCompaction(
+            com.javaclaw.runtime.CompactionRequest request,
+            com.javaclaw.runtime.CompactionTicket ticket,
+            com.javaclaw.runtime.CompactionOutcome outcome,
+            ModelUsage cumulativeUsage) {
+        compactions.commit(request, ticket, outcome, cumulativeUsage);
+    }
+
+    @Override
+    public void activateBudget(TurnId turnId, com.javaclaw.runtime.BudgetAccount budget) {
+        var reservations =
+                execute(connection -> new ChildTurnReservationRepository(json).reservations(connection, turnId));
+        budgets.activate(turnId, budget, reservations);
+    }
+
+    @Override
+    public void deactivateBudget(TurnId turnId, com.javaclaw.runtime.BudgetAccount budget) {
+        budgets.deactivate(turnId, budget);
     }
 
     @Override
@@ -80,6 +125,7 @@ public final class H2TurnJournal implements TurnJournal {
             } else if (current.status() != TurnStatus.RUNNING) {
                 throw new PersistenceException("Turn 当前状态不能执行 Harness: " + current.status());
             }
+            TurnCompactionJournal.recoverLocal(connection, current.id());
             TurnExecutionCheckpointRepository.StoredCheckpoint checkpoint = checkpoints
                     .find(connection, current.id())
                     .orElseThrow(() -> new PersistenceException("RUNNING Turn 缺少执行 checkpoint"));
@@ -111,6 +157,7 @@ public final class H2TurnJournal implements TurnJournal {
             throw new IllegalArgumentException("invocationNumber must be positive");
         }
         execute(connection -> {
+            TurnCompactionJournal.requireNoActive(connection, turnId);
             checkpoints.recordModelIntent(connection, turnId, invocationNumber, intentDigest, now());
             return null;
         });
@@ -122,12 +169,18 @@ public final class H2TurnJournal implements TurnJournal {
         Objects.requireNonNull(result, "result");
         Objects.requireNonNull(cumulativeUsage, "cumulativeUsage");
         execute(connection -> {
+            TurnCompactionJournal.requireNoActive(connection, turnId);
             Instant committedAt = now();
             appendAssistant(connection, turnId, result, committedAt);
             appendCalls(connection, turnId, result.toolCalls(), committedAt);
             result.providerState()
                     .ifPresent(state -> saveProviderState(
-                            connection, turnId, state, result.usage().inputTokens(), committedAt));
+                            connection,
+                            turnId,
+                            state,
+                            Math.addExact(
+                                    result.usage().inputTokens(), result.usage().generatedTokens()),
+                            committedAt));
             checkpoints.commitModelResult(
                     connection,
                     turnId,
@@ -169,6 +222,10 @@ public final class H2TurnJournal implements TurnJournal {
             }
             CorePayloads.ToolResult item =
                     new CorePayloads.ToolResult(result.callId(), result.success(), result.output(), result.receipt());
+            for (var fact : outcome.facts()) {
+                appendItem(connection, turnId, fact.kind(), fact.schemaId(), fact.payload(), committedAt);
+            }
+            appendTerminalFacts(connection, turnId, committedAt);
             appendItem(connection, turnId, "tool-result", CoreSchemas.TOOL_RESULT, item, committedAt);
             if (result.receipt().isPresent()) {
                 appendItem(
@@ -179,6 +236,7 @@ public final class H2TurnJournal implements TurnJournal {
                         result.receipt().orElseThrow(),
                         committedAt);
             }
+            CodingOperationRepository.markJournaled(connection, turnId, request.callId(), result.output());
             checkpoints.commitToolResult(
                     connection,
                     turnId,
@@ -193,9 +251,17 @@ public final class H2TurnJournal implements TurnJournal {
     @Override
     public void transition(TurnId turnId, TurnStatus expected, TurnStatus next, Optional<String> errorCode) {
         execute(connection -> {
+            appendTerminalFacts(connection, turnId, now());
             turns.transition(connection, turnId, expected, next, errorCode, now());
             return null;
         });
+    }
+
+    private void appendTerminalFacts(java.sql.Connection connection, TurnId turnId, Instant instant)
+            throws java.sql.SQLException {
+        for (var fact : CodingTerminalRepository.drainFinalFacts(connection, turnId, json)) {
+            appendItem(connection, turnId, "command", CoreSchemas.COMMAND, fact, instant);
+        }
     }
 
     @Override

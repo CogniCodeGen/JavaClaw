@@ -16,6 +16,7 @@ import org.junit.jupiter.api.io.TempDir;
 import com.javaclaw.api.CancellationSource;
 import com.javaclaw.api.ResourceLimits;
 import com.javaclaw.api.SandboxMode;
+import com.javaclaw.nativehost.network.SandboxNetworkAccess;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -115,7 +116,8 @@ class SandboxProcessControlTest {
                 List.of(),
                 List.of(Path.of(process.info().command().orElse("/bin/true"))),
                 false,
-                Optional.empty());
+                Optional.empty(),
+                SandboxNetworkAccess.offline());
         SandboxLaunchPlan plan = new SandboxLaunchPlan("test", List.of("unused"), Map.of(), 0, false);
         return SandboxProcessMonitor.await(process, command, plan, cancellation);
     }

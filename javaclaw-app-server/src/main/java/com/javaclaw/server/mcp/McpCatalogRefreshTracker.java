@@ -26,7 +26,7 @@ final class McpCatalogRefreshTracker {
     /**
      * 创建进度协调器。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      * @param clock 平台时钟
      */
     McpCatalogRefreshTracker(H2Database database, Clock clock) {

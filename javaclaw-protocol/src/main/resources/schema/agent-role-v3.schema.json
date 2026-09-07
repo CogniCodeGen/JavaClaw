@@ -1,0 +1,545 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javaclaw.local/schema/agent-role-v3.schema.json",
+  "title": "JavaClaw Protocol v3 agent-role",
+  "$defs": {
+    "roleRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "revision"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "roleSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "description",
+        "developerInstructions",
+        "model",
+        "reasoning",
+        "narrowing",
+        "permissionConstraint",
+        "extensions"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "developerInstructions": {
+          "type": "string",
+          "maxLength": 1048576
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "provider"
+              ],
+              "properties": {
+                "provider": {
+                  "$ref": "core-interaction-v3.schema.json#/$defs/providerRef"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reasoning": {
+          "anyOf": [
+            {
+              "enum": [
+                "NONE",
+                "MINIMAL",
+                "LOW",
+                "MEDIUM",
+                "HIGH",
+                "XHIGH",
+                "MAX"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "narrowing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "capabilities",
+            "skills"
+          ],
+          "properties": {
+            "capabilities": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "skills": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "permissionConstraint": {
+          "enum": [
+            "INHERIT",
+            "READ_ONLY"
+          ]
+        },
+        "extensions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "role": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "revision",
+        "lifecycle",
+        "spec",
+        "builtin",
+        "createdAt",
+        "updatedAt"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lifecycle": {
+          "enum": [
+            "ACTIVE",
+            "DISABLED",
+            "ARCHIVED"
+          ]
+        },
+        "spec": {
+          "$ref": "#/$defs/roleSpec"
+        },
+        "builtin": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "empty": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {}
+    },
+    "readParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role"
+      ],
+      "properties": {
+        "role": {
+          "$ref": "#/$defs/roleRef"
+        }
+      }
+    },
+    "createCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "payload"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "spec"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "spec": {
+              "$ref": "#/$defs/roleSpec"
+            }
+          }
+        }
+      }
+    },
+    "updateCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "payload"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "spec",
+            "lifecycle"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "spec": {
+              "$ref": "#/$defs/roleSpec"
+            },
+            "lifecycle": {
+              "enum": [
+                "ACTIVE",
+                "DISABLED"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "archiveCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "payload"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "cloneCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "payload"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source",
+            "id",
+            "name"
+          ],
+          "properties": {
+            "source": {
+              "$ref": "#/$defs/roleRef"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "listResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "roles"
+      ],
+      "properties": {
+        "roles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/role"
+          }
+        }
+      }
+    },
+    "filePreviewParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "roleId",
+        "content",
+        "format"
+      ],
+      "properties": {
+        "roleId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 1048576
+        },
+        "format": {
+          "enum": [
+            "CODEX_PORTABLE",
+            "JAVACLAW_LOSSLESS"
+          ]
+        }
+      }
+    },
+    "fileCommitCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "payload"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "previewId",
+            "modelMapping"
+          ],
+          "properties": {
+            "previewId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "modelMapping": {
+              "anyOf": [
+                {
+                  "$ref": "core-interaction-v3.schema.json#/$defs/providerRef"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "fileExportParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "format"
+      ],
+      "properties": {
+        "role": {
+          "$ref": "#/$defs/roleRef"
+        },
+        "format": {
+          "enum": [
+            "CODEX_PORTABLE",
+            "JAVACLAW_LOSSLESS"
+          ]
+        }
+      }
+    },
+    "filePreview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "previewId",
+        "roleId",
+        "spec",
+        "contentDigest",
+        "unresolvedModel",
+        "changedFields",
+        "format"
+      ],
+      "properties": {
+        "previewId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "roleId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "spec": {
+          "$ref": "#/$defs/roleSpec"
+        },
+        "contentDigest": {
+          "$ref": "core-interaction-v3.schema.json#/$defs/digest"
+        },
+        "unresolvedModel": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "changedFields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "format": {
+          "enum": [
+            "CODEX_PORTABLE",
+            "JAVACLAW_LOSSLESS"
+          ]
+        }
+      }
+    },
+    "fileExport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "filename",
+        "content",
+        "contentDigest",
+        "format"
+      ],
+      "properties": {
+        "filename": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 1048576
+        },
+        "contentDigest": {
+          "$ref": "core-interaction-v3.schema.json#/$defs/digest"
+        },
+        "format": {
+          "enum": [
+            "CODEX_PORTABLE",
+            "JAVACLAW_LOSSLESS"
+          ]
+        }
+      }
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    }
+  }
+}

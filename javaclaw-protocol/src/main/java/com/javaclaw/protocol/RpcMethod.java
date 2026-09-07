@@ -4,7 +4,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Protocol v2 方法目录条目。
+ * Protocol v3 方法目录条目。
  *
  * @param name 方法名
  * @param kind 副作用类别

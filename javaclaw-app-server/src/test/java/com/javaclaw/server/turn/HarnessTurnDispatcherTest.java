@@ -20,8 +20,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfileRef;
-import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.CancellationSource;
 import com.javaclaw.api.ConversationThread;
@@ -42,10 +42,11 @@ import com.javaclaw.api.TurnStatus;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.nativehost.sandbox.PlatformSandboxExecutor;
+import com.javaclaw.protocol.AgentRoleRpcContracts;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.CoreItemCodecs;
 import com.javaclaw.protocol.CoreRpcContracts;
-import com.javaclaw.protocol.ProviderProfileRpcContracts;
+import com.javaclaw.protocol.ProviderRpcContracts;
 import com.javaclaw.protocol.WriteCommand;
 import com.javaclaw.runtime.ModelCapabilities;
 import com.javaclaw.runtime.ModelEventSink;
@@ -58,16 +59,16 @@ import com.javaclaw.runtime.TurnExecutionResult;
 import com.javaclaw.runtime.TurnHarness;
 import com.javaclaw.server.instructions.ProjectInstructionResolver;
 import com.javaclaw.server.lifecycle.LifecycleCoordinator;
-import com.javaclaw.server.persistence.AgentProfileService;
+import com.javaclaw.server.persistence.AgentRoleService;
 import com.javaclaw.server.persistence.AttachmentService;
 import com.javaclaw.server.persistence.CommandIdentity;
 import com.javaclaw.server.persistence.CoreCommandService;
+import com.javaclaw.server.persistence.ExecutionConfigurationService;
 import com.javaclaw.server.persistence.H2Database;
 import com.javaclaw.server.persistence.H2TurnJournal;
 import com.javaclaw.server.persistence.LifecycleLeaseRepository;
 import com.javaclaw.server.persistence.ManagedWorktreeService;
 import com.javaclaw.server.persistence.PermissionProfileService;
-import com.javaclaw.server.persistence.ProfileBindingService;
 import com.javaclaw.server.persistence.ProviderService;
 import com.javaclaw.server.persistence.TurnStartRequest;
 
@@ -90,16 +91,16 @@ class HarnessTurnDispatcherTest {
     private CoreCommandService core;
     private H2TurnJournal journal;
     private PermissionProfileService profiles;
-    private AgentProfileService agentProfiles;
-    private ProfileBindingService bindings;
+    private AgentRoleService agentRoles;
+    private ExecutionConfigurationService bindings;
     private ProviderRef provider;
-    private AgentProfileRef profile;
+    private AgentRoleRef role;
     private ToolCatalogPort catalogs;
     private ManagedWorktreeService worktrees;
 
     @BeforeEach
-    void initializeDataV5() {
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+    void initializeDataV6() {
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         clock = Clock.fixed(NOW, ZoneOffset.UTC);
@@ -107,42 +108,46 @@ class HarnessTurnDispatcherTest {
         journal = new H2TurnJournal(database, CoreItemCodecs.createRegistry(json), json, clock);
         profiles = new PermissionProfileService(database, json, clock);
         profiles.installStandardProfile();
-        initializeProviderAndProfile();
-        bindings = new ProfileBindingService(database, core, agentProfiles, json, clock);
+        agentRoles = initializeProviderAndRole();
+        bindings = new ExecutionConfigurationService(database, core, agentRoles, json, clock);
+        TurnV6Fixtures.defaults(bindings, role, provider, new PermissionProfileRef("standard", 1), budget(), Set.of());
         worktrees = new ManagedWorktreeService(
                 database, new AttachmentService(database, json, clock), json, clock, new PlatformSandboxExecutor());
         catalogs = emptyCatalogs();
     }
 
-    private void initializeProviderAndProfile() {
+    private AgentRoleService initializeProviderAndRole() {
         ProviderService providers = new ProviderService(database, reference -> true, json, clock);
         ProviderEndpointSpec providerSpec = chat("Test Provider", ProviderAdapter.OPENAI_COMPATIBLE, "test-model");
         providers.create(
                 identity(
                         "provider/create",
                         "test-provider",
-                        new ProviderProfileRpcContracts.ProviderCreatePayload(
+                        new ProviderRpcContracts.ProviderCreatePayload(
                                 "test-provider", providerSpec, ProviderLifecycle.ACTIVE)),
                 "test-provider",
                 providerSpec,
                 ProviderLifecycle.ACTIVE);
         provider = new ProviderRef("test-provider", 1, "test-model");
-        agentProfiles = new AgentProfileService(database, providers, profiles, json, clock);
-        AgentProfileSpec profileSpec = new AgentProfileSpec(
+        AgentRoleService roles = new AgentRoleService(database, providers, json, clock);
+        AgentRoleSpec roleSpec = new AgentRoleSpec(
                 "Test Profile",
+                "",
                 "测试说明",
-                provider,
-                new PermissionProfileRef(PermissionProfileService.STANDARD_PROFILE_ID, 1),
-                Set.of(),
-                budget());
-        agentProfiles.create(
+                Optional.empty(),
+                Optional.empty(),
+                new com.javaclaw.api.CapabilityNarrowing(Optional.of(Set.of()), Optional.empty()),
+                com.javaclaw.api.PermissionConstraint.INHERIT,
+                java.util.Map.of());
+        roles.create(
                 identity(
-                        "profile/create",
+                        "agent/role/create",
                         "test-profile",
-                        new ProviderProfileRpcContracts.AgentProfileCreatePayload("test-profile", profileSpec)),
+                        new AgentRoleRpcContracts.CreatePayload("test-profile", roleSpec)),
                 "test-profile",
-                profileSpec);
-        profile = new AgentProfileRef("test-profile", 1);
+                roleSpec);
+        role = new AgentRoleRef("test-profile", 1);
+        return roles;
     }
 
     private ToolCatalogPort emptyCatalogs() {
@@ -235,10 +240,10 @@ class HarnessTurnDispatcherTest {
     void completionDuringConcurrentResumeDoesNotStartSecondHarness() throws Exception {
         CountDownLatch firstStarted = new CountDownLatch(1);
         CountDownLatch completeFirst = new CountDownLatch(1);
-        CountDownLatch secondBindingStarted = new CountDownLatch(1);
-        CountDownLatch completeSecondBinding = new CountDownLatch(1);
+        CountDownLatch resumedWhileRunning = new CountDownLatch(1);
+        AtomicInteger catalogBindings = new AtomicInteger();
         AtomicInteger harnessInvocations = new AtomicInteger();
-        ToolCatalogPort blockingCatalogs = blockingSecondBinding(secondBindingStarted, completeSecondBinding);
+        ToolCatalogPort countedCatalogs = countingBindings(catalogBindings);
         TurnHarness completing = (command, cancellation) -> {
             harnessInvocations.incrementAndGet();
             journal.beginOrRecover(command);
@@ -257,7 +262,7 @@ class HarnessTurnDispatcherTest {
         LifecycleCoordinator turnLifecycle = lifecycle();
         try (turnLifecycle;
                 HarnessTurnDispatcher dispatcher =
-                        dispatcher(new ClosingModel(), completing, turnLifecycle, blockingCatalogs)) {
+                        dispatcher(new ClosingModel(), completing, turnLifecycle, countedCatalogs)) {
             Fixture fixture = fixture("terminal-resume-race", dispatcher);
             dispatcher.dispatch(fixture.turn(), fixture.request());
             assertTrue(firstStarted.await(2, TimeUnit.SECONDS));
@@ -265,28 +270,29 @@ class HarnessTurnDispatcherTest {
             AtomicReference<Throwable> resumeFailure = new AtomicReference<>();
             Thread resumeThread = Thread.ofVirtual().start(() -> {
                 try {
-                    dispatcher.resume(fixture.turn().id());
+                    resumeAcrossCompletion(dispatcher, fixture.turn().id(), resumedWhileRunning);
                 } catch (Throwable failure) {
                     resumeFailure.set(failure);
                 }
             });
             try {
-                assertTrue(secondBindingStarted.await(2, TimeUnit.SECONDS));
+                assertTrue(resumedWhileRunning.await(2, TimeUnit.SECONDS));
+                assertEquals(
+                        TurnStatus.RUNNING,
+                        core.findTurn(fixture.turn().id()).orElseThrow().status());
                 completeFirst.countDown();
-                awaitNoActiveLeases(turnLifecycle);
-                completeSecondBinding.countDown();
                 resumeThread.join(TimeUnit.SECONDS.toMillis(2));
                 awaitNoActiveLeases(turnLifecycle);
 
                 assertFalse(resumeThread.isAlive());
                 assertNull(resumeFailure.get());
                 assertEquals(1, harnessInvocations.get());
+                assertEquals(1, catalogBindings.get());
                 assertEquals(
                         TurnStatus.COMPLETED,
                         core.findTurn(fixture.turn().id()).orElseThrow().status());
             } finally {
                 completeFirst.countDown();
-                completeSecondBinding.countDown();
                 resumeThread.join(TimeUnit.SECONDS.toMillis(2));
             }
         }
@@ -331,7 +337,7 @@ class HarnessTurnDispatcherTest {
         Files.writeString(agents, "冻结前约定", StandardCharsets.UTF_8);
         AtomicReference<String> systemPrompt = new AtomicReference<>();
         TurnHarness capturing = (command, cancellation) -> {
-            systemPrompt.set(command.systemInstruction());
+            systemPrompt.set(command.instructions().developerInstructions());
             journal.beginOrRecover(command);
             journal.transition(command.turn().id(), TurnStatus.RUNNING, TurnStatus.COMPLETED, Optional.empty());
             return new TurnExecutionResult(
@@ -358,13 +364,13 @@ class HarnessTurnDispatcherTest {
     }
 
     @Test
-    void resolutionRejectsUnknownProfileMismatchedRequestAndNonDispatchableState() throws Exception {
+    void resolutionRejectsUnknownRoleMismatchedRequestAndNonDispatchableState() throws Exception {
         ClosingModel model = new ClosingModel();
         try (HarnessTurnDispatcher dispatcher = dispatcher(model, successfulHarness())) {
             Fixture fixture = fixture("validation", dispatcher);
             CoreRpcContracts.TurnStartPayload unknown = new CoreRpcContracts.TurnStartPayload(
                     fixture.thread().id(),
-                    Optional.of(new AgentProfileRef("unknown", 1)),
+                    TurnV6Fixtures.selection(new AgentRoleRef("unknown", 1)),
                     fixture.request().message());
             CorePayloads.Message unknownMessage =
                     new CorePayloads.Message(MessageRole.USER, unknown.message(), List.of(), Optional.empty());
@@ -372,7 +378,7 @@ class HarnessTurnDispatcherTest {
 
             CoreRpcContracts.TurnStartPayload mismatched = new CoreRpcContracts.TurnStartPayload(
                     fixture.thread().id(),
-                    Optional.of(new AgentProfileRef(profile.id(), 2)),
+                    TurnV6Fixtures.selection(new AgentRoleRef(role.id(), 2)),
                     fixture.request().message());
             assertThrows(IllegalArgumentException.class, () -> dispatcher.dispatch(fixture.turn(), mismatched));
 
@@ -425,7 +431,7 @@ class HarnessTurnDispatcherTest {
         return new HarnessTurnDispatcher(
                 new TurnPlatformServices(
                         core,
-                        agentProfiles,
+                        agentRoles,
                         bindings,
                         profiles,
                         new ProjectInstructionResolver(temporaryDirectory, clock),
@@ -436,8 +442,21 @@ class HarnessTurnDispatcherTest {
                 json);
     }
 
-    private ToolCatalogPort blockingSecondBinding(CountDownLatch started, CountDownLatch release) {
-        AtomicInteger bindings = new AtomicInteger();
+    /** 首次恢复确定发生在 RUNNING 状态，随后持续恢复直到跨过真实完成边界。 */
+    private void resumeAcrossCompletion(HarnessTurnDispatcher dispatcher, TurnId turnId, CountDownLatch resumed) {
+        dispatcher.resume(turnId);
+        resumed.countDown();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (core.findTurn(turnId).orElseThrow().status() != TurnStatus.COMPLETED) {
+            if (System.nanoTime() >= deadline) {
+                throw new AssertionError("并发恢复期间 Turn 未完成");
+            }
+            dispatcher.resume(turnId);
+        }
+        dispatcher.resume(turnId);
+    }
+
+    private ToolCatalogPort countingBindings(AtomicInteger bindings) {
         return new ToolCatalogPort() {
             @Override
             public ToolCatalogSnapshot freeze(
@@ -452,10 +471,7 @@ class HarnessTurnDispatcherTest {
                     ToolCatalogSnapshot frozen,
                     PermissionProfile currentPermissions,
                     com.javaclaw.api.CancellationToken cancellation) {
-                if (bindings.incrementAndGet() == 2) {
-                    started.countDown();
-                    awaitRequired(release, "并发恢复的目录绑定未获准继续");
-                }
+                bindings.incrementAndGet();
                 return catalogs.bindFrozen(turnId, workspaceId, frozen, currentPermissions, cancellation);
             }
 
@@ -524,7 +540,7 @@ class HarnessTurnDispatcherTest {
                 com.javaclaw.api.ThreadExecutionIntent.WORKSPACE,
                 suffix);
         CoreRpcContracts.TurnStartPayload request =
-                new CoreRpcContracts.TurnStartPayload(thread.id(), Optional.of(profile), suffix);
+                new CoreRpcContracts.TurnStartPayload(thread.id(), TurnV6Fixtures.selection(role), suffix);
         CorePayloads.Message message = new CorePayloads.Message(MessageRole.USER, suffix, List.of(), Optional.empty());
         TurnStartRequest resolved = dispatcher.resolve(request, message);
         AgentTurn turn = core.startTurn(identity("turn/start", "turn-" + suffix, request), resolved);

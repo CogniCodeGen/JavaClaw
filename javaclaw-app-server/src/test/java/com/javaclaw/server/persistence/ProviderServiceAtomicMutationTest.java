@@ -29,7 +29,7 @@ class ProviderServiceAtomicMutationTest {
 
     @Test
     void 多注册表预构造失败时配置不落库且候选资源会释放() {
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         CanonicalJson json = new CanonicalJson();
         ProviderService service =

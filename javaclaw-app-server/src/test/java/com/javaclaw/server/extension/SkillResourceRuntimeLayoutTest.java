@@ -35,7 +35,7 @@ class SkillResourceRuntimeLayoutTest {
     @ResourceLock(Resources.SYSTEM_PROPERTIES)
     void 完整发行镜像生成有界Java与JShell命令() throws Exception {
         Path image = prepareImage("valid-image", "worker-image-v1:skill");
-        Path data = Files.createDirectories(temporaryDirectory.resolve("data-v5"));
+        Path data = Files.createDirectories(temporaryDirectory.resolve("data-v6"));
         System.setProperty(SkillResourceRuntimeLayout.IMAGE_ROOT_PROPERTY, image.toString());
 
         SkillResourceRuntimeLayout layout =
@@ -75,7 +75,7 @@ class SkillResourceRuntimeLayoutTest {
     @ResourceLock(Resources.SYSTEM_PROPERTIES)
     void JShell拒绝命令行参数() throws Exception {
         Path image = prepareImage("jshell-image", "worker-image-v1:skill");
-        Path data = Files.createDirectories(temporaryDirectory.resolve("jshell-data-v5"));
+        Path data = Files.createDirectories(temporaryDirectory.resolve("jshell-data-v6"));
         System.setProperty(SkillResourceRuntimeLayout.IMAGE_ROOT_PROPERTY, image.toString());
         SkillResourceRuntimeLayout layout =
                 SkillResourceRuntimeLayout.discover(data).orElseThrow();
@@ -89,7 +89,7 @@ class SkillResourceRuntimeLayoutTest {
     @Test
     @ResourceLock(Resources.SYSTEM_PROPERTIES)
     void 缺失错误与符号链接回执均失败关闭() throws Exception {
-        Path data = Files.createDirectories(temporaryDirectory.resolve("invalid-data-v5"));
+        Path data = Files.createDirectories(temporaryDirectory.resolve("invalid-data-v6"));
         Path missing = prepareImage("missing-marker", null);
         System.setProperty(SkillResourceRuntimeLayout.IMAGE_ROOT_PROPERTY, missing.toString());
         assertThrows(java.io.IOException.class, () -> SkillResourceRuntimeLayout.discover(data));
@@ -117,7 +117,7 @@ class SkillResourceRuntimeLayoutTest {
         assertThrows(
                 java.io.IOException.class,
                 () -> SkillResourceRuntimeLayout.discover(
-                        Files.createDirectories(temporaryDirectory.resolve("non-executable-data-v5"))));
+                        Files.createDirectories(temporaryDirectory.resolve("non-executable-data-v6"))));
     }
 
     private Path prepareImage(String name, String marker) throws Exception {

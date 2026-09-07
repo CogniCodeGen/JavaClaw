@@ -1,4 +1,4 @@
-# JavaClaw 5 UI 设计系统
+# JavaClaw 6 UI 设计系统
 
 Desktop 沿用提交 `509f197` 的布局比例、CSS token 与交互语言。该提交只作为视觉基线；运行时状态、数据读取和
 业务调用全部来自 Java SDK，不复用其中的服务或持久化实现。
@@ -31,7 +31,7 @@ Desktop 沿用提交 `509f197` 的布局比例、CSS token 与交互语言。该
 
 `DesktopStylesheets.BASELINE_RESOURCES` 按固定级联顺序保留当前界面仍会命中的 `509f197` 视觉规则。审计已删除没有
 任何生产根节点的旧 Knowledge、MCP、Task、Attachment、Markdown/Loop 和 Conversation 领域分片；历史外观由 Git
-提供，不把不可达 selector 当作视觉基线继续加载。5.0 新增页面不得再增加领域专属 CSS；内置与第三方扩展共享平台
+提供，不把不可达 selector 当作视觉基线继续加载。6.0 新增页面不得再增加领域专属 CSS；内置与第三方扩展共享平台
 renderer 和同一组通用视觉语义，只有平台控件确实出现新的跨扩展语义时才增加 token。
 
 ## 组件复用边界

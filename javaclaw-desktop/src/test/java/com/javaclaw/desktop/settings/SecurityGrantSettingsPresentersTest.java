@@ -4,7 +4,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfile;
+import com.javaclaw.api.AgentRole;
 import com.javaclaw.api.CoreTools;
 import com.javaclaw.api.PrivateNetworkPurpose;
 import com.javaclaw.api.SecurityGrantState;
@@ -45,7 +45,7 @@ class SecurityGrantSettingsPresentersTest {
     @Test
     void 无人值守授权冻结Schedule工具目录Schema参数额度和期限() {
         TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
-        AgentProfile profile = gateway.createProfile(
+        AgentRole profile = gateway.createRole(
                         "schedule-agent", TestCoreSettingsGateway.profileSpec(), CommandOptions.create(0))
                 .toCompletableFuture()
                 .join();

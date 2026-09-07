@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javaclaw.local/schema/worktree-v3.schema.json",
+  "title": "JavaClaw Protocol v3 Managed Worktree methods",
+  "$defs": {
+    "uuid": {"type": "string", "format": "uuid"},
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "objectId": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+    "attachmentRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "mediaType", "filename", "sizeBytes"],
+      "properties": {
+        "digest": {"$ref": "#/$defs/digest"},
+        "mediaType": {"type": "string", "minLength": 1},
+        "filename": {"type": "string", "minLength": 1},
+        "sizeBytes": {"type": "integer", "minimum": 0, "maximum": 16777216}
+      }
+    },
+    "managedWorktree": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "workspaceId", "parentThreadId", "childThreadId", "executionRoot", "baseCommit",
+        "state", "revision", "backup", "createdAt", "updatedAt"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/uuid"},
+        "workspaceId": {"$ref": "#/$defs/uuid"},
+        "parentThreadId": {"$ref": "#/$defs/uuid"},
+        "childThreadId": {"$ref": "#/$defs/uuid"},
+        "executionRoot": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "baseCommit": {"$ref": "#/$defs/objectId"},
+        "state": {
+          "enum": [
+            "READY", "RUNNING", "INTERRUPTED", "COMPLETED", "CONFLICTED", "FAILED",
+            "APPLYING", "APPLIED", "UNKNOWN_OUTCOME", "CLEANING", "CLEANED"
+          ]
+        },
+        "revision": {"type": "integer", "minimum": 1},
+        "backup": {"anyOf": [{"$ref": "#/$defs/attachmentRef"}, {"type": "null"}]},
+        "createdAt": {"type": "string", "format": "date-time"},
+        "updatedAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["worktreeId", "sourceRevision", "kind", "attachment", "baseCommit", "createdAt"],
+      "properties": {
+        "worktreeId": {"$ref": "#/$defs/uuid"},
+        "sourceRevision": {"type": "integer", "minimum": 1},
+        "kind": {"enum": ["PATCH", "BACKUP"]},
+        "attachment": {"$ref": "#/$defs/attachmentRef"},
+        "baseCommit": {"$ref": "#/$defs/objectId"},
+        "createdAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "writeCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotencyKey", "expectedRevision", "payload"],
+      "properties": {
+        "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 200},
+        "expectedRevision": {"type": "integer", "minimum": 1},
+        "payload": {"type": "object"}
+      }
+    },
+    "listParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspaceId", "includeCleaned"],
+      "properties": {
+        "workspaceId": {"$ref": "#/$defs/uuid"},
+        "includeCleaned": {"type": "boolean"}
+      }
+    },
+    "listResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["worktrees"],
+      "properties": {"worktrees": {"type": "array", "items": {"$ref": "#/$defs/managedWorktree"}}}
+    },
+    "readParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["worktreeId"],
+      "properties": {"worktreeId": {"$ref": "#/$defs/uuid"}}
+    },
+    "interruptCommand": {
+      "allOf": [
+        {"$ref": "#/$defs/writeCommand"},
+        {"properties": {"payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["worktreeId", "reason"],
+          "properties": {
+            "worktreeId": {"$ref": "#/$defs/uuid"},
+            "reason": {"type": "string", "minLength": 1, "maxLength": 500}
+          }
+        }}}
+      ]
+    },
+    "artifactCommand": {
+      "allOf": [
+        {"$ref": "#/$defs/writeCommand"},
+        {"properties": {"payload": {"$ref": "#/$defs/readParams"}}}
+      ]
+    },
+    "cleanupCommand": {
+      "allOf": [
+        {"$ref": "#/$defs/writeCommand"},
+        {"properties": {"payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["worktreeId", "confirmation"],
+          "properties": {
+            "worktreeId": {"$ref": "#/$defs/uuid"},
+            "confirmation": {"const": "CLEANUP WORKTREE"}
+          }
+        }}}
+      ]
+    }
+  }
+}

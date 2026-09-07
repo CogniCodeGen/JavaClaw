@@ -22,8 +22,8 @@ class ExtensionJobServiceValidationBranchesTest {
     private ExtensionJobService jobs;
 
     @BeforeEach
-    void initializeDataV5() {
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+    void initializeDataV6() {
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         jobs = new ExtensionJobService(database, new CanonicalJson(), Clock.systemUTC());
     }

@@ -9,7 +9,7 @@ import com.javaclaw.protocol.WriteCommand;
 import com.javaclaw.server.persistence.CommandIdentity;
 import com.javaclaw.server.persistence.ExtensionCatalogRepository;
 
-/** 内置扩展状态查询与启停的薄 Protocol v2 registrar。 */
+/** 内置扩展状态查询与启停的薄 Protocol v3 registrar。 */
 public final class BuiltinExtensionRpcHandlers {
     private final ExtensionCatalogRepository catalog;
     private final CanonicalJson json;

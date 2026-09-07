@@ -1,6 +1,6 @@
 package com.javaclaw.server.persistence;
 
-/** data-v5 用例失败；显式类别避免 RPC 层从自然语言猜测错误语义。 */
+/** data-v6 用例失败；显式类别避免 RPC 层从自然语言猜测错误语义。 */
 public final class PersistenceException extends RuntimeException {
     private final Kind kind;
 

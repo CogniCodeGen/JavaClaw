@@ -6,7 +6,7 @@ import java.util.Optional;
 /** macOS Keychain 通用密码项实现；Secret 通过 stdin 传给 security，绝不进入 argv。 */
 final class MacKeychainMasterKeyProtector implements MasterKeyProtector {
     private static final String ACCOUNT = "JavaClaw";
-    private static final String SERVICE_PREFIX = "com.javaclaw.v5.master.";
+    private static final String SERVICE_PREFIX = "com.javaclaw.v6.master.";
     private static final int ITEM_NOT_FOUND = 44;
 
     private final CredentialCommandRunner runner;

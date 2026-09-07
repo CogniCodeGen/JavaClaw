@@ -86,7 +86,9 @@ class JavaClawClientTest {
             assertTrue(client.inputs() != null);
             assertTrue(client.attachments() != null);
             assertTrue(client.credentials() != null);
-            assertTrue(client.profiles() != null);
+            assertTrue(client.roles() != null);
+            assertTrue(client.executions() != null);
+            assertTrue(client.prompts() != null);
             assertTrue(client.providers() != null);
             assertTrue(client.permissionProfiles() != null);
             assertTrue(client.approvals() != null);
@@ -345,11 +347,11 @@ class JavaClawClientTest {
 
     private static JsonRpcResponse initialize(JsonRpcRequest request, Set<String> expectedExperimental) {
         InitializeParams params = JSON.decode(request.params(), InitializeParams.class);
-        assertEquals(2, params.appProtocolVersion());
+        assertEquals(3, params.appProtocolVersion());
         assertTrue(params.capabilities().stableCapabilities().contains("core.item-envelope"));
         assertEquals(expectedExperimental, params.capabilities().requestedExperimentalCapabilities());
         InitializeResult result = new InitializeResult(
-                2,
+                3,
                 "javaclaw-app-server",
                 "5.0.0-SNAPSHOT",
                 new NegotiatedCapabilities(params.capabilities().stableCapabilities(), Set.of("test.experimental")),

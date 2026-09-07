@@ -27,7 +27,6 @@ import com.javaclaw.api.ToolRisk;
 import com.javaclaw.api.UnattendedInvocationOutcome;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceId;
-import com.javaclaw.api.WorktreeId;
 import com.javaclaw.builtin.contracts.BuiltinExtensionIds;
 import com.javaclaw.extension.spi.ExtensionAccessDeniedException;
 import com.javaclaw.extension.spi.ExtensionId;
@@ -60,6 +59,8 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
     private final Clock clock;
     private final UnattendedToolGrantService unattendedGrants;
     private final Optional<McpService> mcp;
+    private final java.util.concurrent.atomic.AtomicReference<CollaborationToolExecutor> collaboration =
+            new java.util.concurrent.atomic.AtomicReference<>();
 
     /**
      * 创建工具平台。
@@ -117,6 +118,17 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
             Objects.requireNonNull(clock, "clock");
             Objects.requireNonNull(unattendedGrants, "unattendedGrants");
             mcp = Objects.requireNonNull(mcp, "mcp");
+        }
+    }
+
+    /**
+     * 在启动恢复前绑定唯一协作服务；未绑定时不公开协作工具。
+     *
+     * @param service 与 RPC 共用的权威协作用例
+     */
+    public void bindCollaboration(AgentCollaborationService service) {
+        if (!collaboration.compareAndSet(null, new CollaborationToolExecutor(service, core, json, clock))) {
+            throw new IllegalStateException("协作工具服务已经绑定");
         }
     }
 
@@ -191,7 +203,7 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
     }
 
     /**
-     * 按当前扩展状态与指定权限搜索目录，供 Protocol v2 {@code tool/search} 使用。
+     * 按当前扩展状态与指定权限搜索目录，供 Protocol v3 {@code tool/search} 使用。
      *
      * @param permissions 已按 Workspace 求交的权限
      * @param query 关键词
@@ -253,6 +265,7 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
         PermissionProfile current = currentPermissions(request, permissions, snapshot);
         requireAllowed(descriptor, current);
+        SkillTurnCeiling.requireAllowed(core, json, request);
         if (descriptor.identity().equals(CoreTools.search().identity())) {
             return searchFrozen(request, snapshot);
         }
@@ -284,15 +297,19 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
             throws Exception {
         try {
             ToolExecutionOutcome outcome;
-            if (isMcp(descriptor)) {
+            if (CollaborationTools.matches(descriptor)) {
+                outcome = collaboration.get().execute(request, cancellation);
+            } else if (isMcp(descriptor)) {
                 outcome = executeMcp(request, descriptor, cancellation);
             } else if (descriptor.identity().equals(CoreTools.worktreeApply().identity())) {
-                outcome = executeWorktreeApply(request);
+                outcome = new WorktreeToolExecutor(core, worktrees, json, clock).execute(request);
             } else {
-                ExtensionResponse response = extensions.executeTool(request, descriptor, current, cancellation);
+                var execution = extensions.executeToolWithFacts(request, descriptor, current, cancellation);
+                ExtensionResponse response = SkillTurnCeiling.filter(core, json, request, execution.response());
                 Optional<EffectReceipt> receipt = receipt(request, descriptor, response);
-                ToolCallResult result = new ToolCallResult(request.callId(), true, response.payload(), receipt);
-                outcome = ToolExecutionOutcome.resultOnly(result);
+                ToolCallResult result =
+                        new ToolCallResult(request.callId(), execution.success(), response.payload(), receipt);
+                outcome = new ToolExecutionOutcome(result, List.of(), execution.facts());
             }
             completeReservation(reservation, descriptor, outcome);
             return outcome;
@@ -374,7 +391,10 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
                 scope.workspace(),
                 scope.root(),
                 scope.writable());
-        return PermissionResolver.intersect(List.of(frozen, snapshot.permissionCeiling(), current));
+        return ParentTurnPermissions.intersect(
+                new ParentTurnPermissions.Sources(core, profiles, worktrees, json),
+                turn,
+                PermissionResolver.intersect(List.of(frozen, snapshot.permissionCeiling(), current)));
     }
 
     private List<ToolDescriptor> authorizedTools(PermissionProfile permissions) {
@@ -402,7 +422,9 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
                 Stream.concat(Stream.of(CoreTools.search(), CoreTools.worktreeApply()), extensions.tools().stream());
         Stream<ToolDescriptor> remote = workspaceId.filter(ignored -> mcpEnabled()).flatMap(ignored -> mcp).stream()
                 .flatMap(service -> service.toolDescriptors(workspaceId.orElseThrow()).stream());
-        return Stream.concat(platform, remote);
+        Stream<ToolDescriptor> agents =
+                collaboration.get() == null ? Stream.empty() : CollaborationTools.all().stream();
+        return Stream.concat(Stream.concat(platform, agents), remote);
     }
 
     private ToolExecutionOutcome executeMcp(
@@ -514,28 +536,6 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
                 || requirement == ApprovalRequirement.RISKY && descriptor.risk() != ToolRisk.READ_ONLY;
     }
 
-    private ToolExecutionOutcome executeWorktreeApply(ToolCallRequest request) {
-        WorktreeApplyArguments arguments = json.decode(request.arguments(), WorktreeApplyArguments.class);
-        AgentTurn turn = core.findTurn(request.turnId())
-                .orElseThrow(() -> new TurnFailureException("TURN_NOT_FOUND", "工具所属 Turn 不存在"));
-        com.javaclaw.api.ManagedWorktree applied = worktrees.apply(
-                request.idempotencyKey(), turn.id(), WorktreeId.parse(arguments.worktreeId()), arguments.patchDigest());
-        WorktreeApplyResult response = new WorktreeApplyResult(
-                applied.id().toString(),
-                arguments.patchDigest(),
-                applied.state().name(),
-                applied.revision());
-        com.javaclaw.api.CanonicalPayload payload = json.encode(response);
-        EffectReceipt receipt = new EffectReceipt(
-                request.idempotencyKey(),
-                CoreTools.WORKTREE_APPLY_NAME,
-                request.arguments().sha256(),
-                payload.sha256(),
-                Instant.now(clock));
-        ToolCallResult result = new ToolCallResult(request.callId(), true, payload, Optional.of(receipt));
-        return ToolExecutionOutcome.resultOnly(result);
-    }
-
     private ToolExecutionOutcome rejected(ToolCallRequest request, String code, String message) {
         ToolCallResult result = new ToolCallResult(
                 request.callId(), false, json.encode(new ApprovalFailure(code, message)), Optional.empty());
@@ -576,14 +576,4 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
             com.javaclaw.api.UnattendedExecutionScope scope, String toolCallIdempotencyKey) {}
 
     private record ApprovalFailure(String code, String message) {}
-
-    private record WorktreeApplyArguments(String worktreeId, String patchDigest) {
-        private WorktreeApplyArguments {
-            worktreeId = Objects.requireNonNull(worktreeId, "worktreeId").strip();
-            patchDigest =
-                    Objects.requireNonNull(patchDigest, "patchDigest").strip().toLowerCase(java.util.Locale.ROOT);
-        }
-    }
-
-    private record WorktreeApplyResult(String worktreeId, String patchDigest, String state, long revision) {}
 }

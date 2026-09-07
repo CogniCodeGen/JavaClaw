@@ -61,26 +61,29 @@ class OpenAiResponsesModelAdapterTest {
     }
 
     @Test
-    void resumesFromOpaqueItemsAndSendsOnlyMessagesAfterLastAssistant() throws Exception {
+    void resumesFromCompleteOpaqueStateAndAppendsOnlyUncoveredDelta() throws Exception {
         FakeTransport transport = new FakeTransport(response(), compacted());
         OpenAiResponsesModelAdapter adapter = new OpenAiResponsesModelAdapter(config(), transport);
         CancellationSource cancellation = new CancellationSource();
         var first = adapter.invoke(
                 TurnId.random(), invocation(List.of(message(MessageRole.USER, "第一问"))), noEvents(), cancellation);
-        List<ModelMessage> continued = List.of(
-                message(MessageRole.USER, "第一问"),
-                ModelMessage.assistant("完成", List.of()),
-                message(MessageRole.USER, "第二问"));
+        List<ModelMessage> continued = List.of(message(MessageRole.USER, "第二问"));
 
         adapter.invokeContinuing(
                 TurnId.random(), invocation(continued), first.providerState().orElseThrow(), noEvents(), cancellation);
 
         var input = transport.lastCreate().input().orElseThrow().asResponse();
-        assertEquals(3, input.size());
-        assertTrue(input.get(0).isReasoning());
-        assertTrue(input.get(1).isResponseOutputMessage());
-        assertTrue(input.get(2).isEasyInputMessage());
-        assertEquals("第二问", input.get(2).asEasyInputMessage().content().asTextInput());
+        assertEquals(4, input.size());
+        assertEquals(
+                "第一问",
+                ModelJsonMapper.create()
+                        .valueToTree(input.getFirst())
+                        .path("content")
+                        .asText());
+        assertTrue(input.get(1).isReasoning());
+        assertTrue(input.get(2).isResponseOutputMessage());
+        assertTrue(input.get(3).isEasyInputMessage());
+        assertEquals("第二问", input.get(3).asEasyInputMessage().content().asTextInput());
     }
 
     @Test
@@ -98,7 +101,7 @@ class OpenAiResponsesModelAdapterTest {
 
         assertEquals(10, compactedState.consumedTokens());
         assertEquals(
-                2,
+                3,
                 transport
                         .lastCompact()
                         .input()
@@ -109,6 +112,38 @@ class OpenAiResponsesModelAdapterTest {
         assertEquals(
                 "compacted",
                 new ProviderStateCodec().decode(compactedState.state()).kind());
+    }
+
+    @Test
+    void 旧状态使用可见历史补齐输入并保留原生推理输出() throws Exception {
+        FakeTransport transport = new FakeTransport(response(), compacted());
+        var adapter = new OpenAiResponsesModelAdapter(config(), transport);
+        var user = message(MessageRole.USER, "旧问题");
+        var result = adapter.invoke(TurnId.random(), invocation(List.of(user)), noEvents(), new CancellationSource());
+        var current = result.providerState().orElseThrow();
+        var legacy = new com.javaclaw.runtime.ProviderState(
+                current.providerId(),
+                "responses-state-v2",
+                new com.javaclaw.api.CanonicalPayload(
+                        current.payload().json().replace("\"formatVersion\":3", "\"formatVersion\":2")));
+        var restored = adapter.restoreCoveredState(
+                "responses-main", legacy, List.of(user, ModelMessage.assistant("完成", List.of())));
+        adapter.invokeContinuing(
+                TurnId.random(),
+                invocation(List.of(message(MessageRole.USER, "继续"))),
+                restored,
+                noEvents(),
+                new CancellationSource());
+        var input = transport.lastCreate().input().orElseThrow().asResponse();
+        assertEquals(4, input.size());
+        assertEquals(
+                "旧问题",
+                ModelJsonMapper.create()
+                        .valueToTree(input.getFirst())
+                        .path("content")
+                        .asText());
+        assertTrue(input.get(1).isReasoning());
+        assertEquals("responses-state-v3", restored.format());
     }
 
     @Test

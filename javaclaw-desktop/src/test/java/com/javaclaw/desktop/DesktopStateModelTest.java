@@ -6,10 +6,10 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfile;
+import com.javaclaw.api.AgentRole;
 import com.javaclaw.api.ApprovalState;
 import com.javaclaw.api.ConversationThread;
-import com.javaclaw.api.ProfileLifecycle;
+import com.javaclaw.api.RoleLifecycle;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.desktop.state.ConnectionState;
 import com.javaclaw.desktop.state.DesktopState;
@@ -118,10 +118,10 @@ class DesktopStateModelTest {
 
     @Test
     void interactionStateCopiesCollectionsAndKeepsOnlyPendingApprovals() {
-        AgentProfile profile = DesktopTestFixtures.profile();
-        ArrayList<AgentProfile> profiles = new ArrayList<>(List.of(profile));
+        AgentRole profile = DesktopTestFixtures.profile();
+        ArrayList<AgentRole> roles = new ArrayList<>(List.of(profile));
         InteractionState state = new InteractionState(
-                profiles,
+                roles,
                 Optional.of(profile),
                 List.of(DesktopTestFixtures.approval(ApprovalState.PENDING)),
                 new InputInteractionState(
@@ -131,13 +131,13 @@ class DesktopStateModelTest {
                         1),
                 true,
                 Optional.of("  错误  "));
-        profiles.clear();
+        roles.clear();
 
-        assertEquals(List.of(profile), state.profiles());
+        assertEquals(List.of(profile), state.roles());
         assertEquals(Optional.of("错误"), state.error());
         assertEquals(Optional.empty(), InteractionState.initial().error());
-        AgentProfile missing = new AgentProfile(
-                profile.id(), 2, ProfileLifecycle.ACTIVE, profile.spec(), profile.createdAt(), profile.updatedAt());
+        AgentRole missing = new AgentRole(
+                profile.id(), 2, RoleLifecycle.ACTIVE, profile.spec(), false, profile.createdAt(), profile.updatedAt());
         assertThrows(
                 IllegalArgumentException.class,
                 () -> new InteractionState(
@@ -147,11 +147,12 @@ class DesktopStateModelTest {
                         InputInteractionState.initial(),
                         false,
                         Optional.empty()));
-        AgentProfile disabled = new AgentProfile(
+        AgentRole disabled = new AgentRole(
                 profile.id(),
                 profile.revision(),
-                ProfileLifecycle.DISABLED,
+                RoleLifecycle.DISABLED,
                 profile.spec(),
+                false,
                 profile.createdAt(),
                 profile.updatedAt());
         assertThrows(

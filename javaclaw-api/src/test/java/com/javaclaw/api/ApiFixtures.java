@@ -4,6 +4,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 final class ApiFixtures {
@@ -29,6 +30,22 @@ final class ApiFixtures {
                 new ProcessPermission(Set.of("java", "git"), true, Duration.ofMinutes(2)),
                 new ToolPermission(Set.of("read", "write"), ToolRisk.EXTERNAL_EFFECT, ApprovalRequirement.NONE),
                 new ResourceLimits(1_024, 512, 4, 16));
+    }
+
+    static ResolvedTurnConfig config(String catalogDigest) {
+        return new ResolvedTurnConfig(
+                new AgentRoleRef("default", 1),
+                new ProviderRef("provider", 1, "model"),
+                new PermissionProfileRef("standard", 1),
+                ApprovalPolicy.RISKY,
+                budget(),
+                Set.of("read", "write"),
+                Optional.empty(),
+                PermissionConstraint.INHERIT,
+                Optional.empty(),
+                DIGEST,
+                catalogDigest,
+                List.of());
     }
 
     static ToolDescriptor tool(String name, String description, Set<String> tags) {

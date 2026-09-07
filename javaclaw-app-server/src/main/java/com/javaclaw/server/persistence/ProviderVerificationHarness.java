@@ -14,7 +14,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.ApprovalRequirement;
 import com.javaclaw.api.CancellationSource;
@@ -260,13 +260,28 @@ final class ProviderVerificationHarness implements AutoCloseable {
     private TurnExecutionCommand command(ProviderRef provider, Duration timeout) {
         TurnId turnId = TurnId.random();
         ToolCatalogSnapshot catalog = new ToolCatalogSnapshot(turnId, 1, List.of(), NO_PERMISSIONS, clock.instant());
+        TurnBudget budget = new TurnBudget(64, MAXIMUM_OUTPUT_TOKENS, 1, 0, timeout);
+        var role = new AgentRoleRef("provider-verification", 1);
+        var permission = new PermissionProfileRef(NO_PERMISSIONS.id(), NO_PERMISSIONS.version());
+        var summary = new com.javaclaw.api.ResolvedTurnConfigSummary(
+                role,
+                provider,
+                permission,
+                com.javaclaw.api.ApprovalPolicy.EVERY_CALL,
+                budget,
+                Set.of(),
+                Optional.empty(),
+                "0".repeat(64),
+                catalog.digest(),
+                false,
+                List.of());
         AgentTurn turn = new AgentTurn(
                 turnId,
                 ThreadId.random(),
                 TurnStatus.QUEUED,
                 1,
-                new TurnBudget(64, MAXIMUM_OUTPUT_TOKENS, 1, 0, timeout),
-                new AgentProfileRef("provider-verification", 1),
+                budget,
+                new AgentRoleRef("provider-verification", 1),
                 provider,
                 new PermissionProfileRef(NO_PERMISSIONS.id(), NO_PERMISSIONS.version()),
                 Path.of("."),
@@ -274,7 +289,8 @@ final class ProviderVerificationHarness implements AutoCloseable {
                 catalog.digest(),
                 Optional.empty(),
                 clock.instant(),
-                clock.instant());
+                clock.instant(),
+                summary);
         return new TurnExecutionCommand(turn, provider, SYSTEM_INSTRUCTION, USER_MESSAGE, NO_PERMISSIONS, catalog);
     }
 

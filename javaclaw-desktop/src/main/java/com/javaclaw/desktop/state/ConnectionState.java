@@ -59,7 +59,7 @@ public record ConnectionState(Status status, String detail, Optional<Instant> co
         DISCONNECTED,
         /** 连接与协议协商进行中。 */
         CONNECTING,
-        /** Protocol v2 已协商。 */
+        /** Protocol v3 已协商。 */
         CONNECTED,
         /** 最近一次连接失败。 */
         FAILED

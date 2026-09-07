@@ -15,6 +15,7 @@ import com.javaclaw.extension.spi.ExtensionResponse;
 import com.javaclaw.extension.spi.ExtensionSchema;
 import com.javaclaw.protocol.ExtensionRpcContracts;
 import com.javaclaw.server.extension.contract.ExtensionHost;
+import com.javaclaw.server.extension.contract.GovernedExtensionResponse;
 import com.javaclaw.server.extension.thirdparty.ThirdPartyExtensionHost;
 
 /** 将可信内置和进程外第三方 Extension 合并为唯一 Core 调用入口。 */
@@ -55,6 +56,17 @@ public final class PlatformExtensionHost implements ExtensionHost {
             throws Exception {
         return host(frozenDescriptor.identity().producerId())
                 .executeTool(request, frozenDescriptor, callerPermissions, cancellation);
+    }
+
+    @Override
+    public GovernedExtensionResponse executeToolWithFacts(
+            ToolCallRequest request,
+            ToolDescriptor frozenDescriptor,
+            PermissionProfile callerPermissions,
+            CancellationToken cancellation)
+            throws Exception {
+        return host(frozenDescriptor.identity().producerId())
+                .executeToolWithFacts(request, frozenDescriptor, callerPermissions, cancellation);
     }
 
     @Override

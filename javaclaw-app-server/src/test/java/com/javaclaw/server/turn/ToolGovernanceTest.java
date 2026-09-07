@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.ApprovalRequirement;
 import com.javaclaw.api.CanonicalPayload;
@@ -61,7 +61,7 @@ import com.javaclaw.runtime.ModelToolCall;
 import com.javaclaw.runtime.ModelUsage;
 import com.javaclaw.server.AppServerBootstrap;
 import com.javaclaw.server.BuiltinManagementFixtures;
-import com.javaclaw.server.ProviderProfileRpcFixtures;
+import com.javaclaw.server.ProviderRoleRpcFixtures;
 import com.javaclaw.server.rpc.AppServerSession;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -69,7 +69,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ToolGovernanceTest {
     private static final String PROFILE_ID = "tool-test";
-    private static final String AGENT_PROFILE_ID = "tool-agent";
+    private static final String AGENT_ROLE_ID = "tool-agent";
     private static final String PROVIDER_ID = "tool-provider";
     private static final String PLAN_READ = "plan_read";
 
@@ -81,7 +81,8 @@ class ToolGovernanceTest {
         ProgressiveModel model = new ProgressiveModel();
         try (AppServerBootstrap.Components components = create(model)) {
             Fixture fixture = fixture(components);
-            installProfile(fixture.session(), components, 1, Set.of(CoreTools.SEARCH_NAME, PLAN_READ), model.id());
+            installExecutionSettings(
+                    fixture.session(), components, 1, Set.of(CoreTools.SEARCH_NAME, PLAN_READ), model.id());
             createPlan(fixture, components);
             assertCatalogSearch(fixture, components);
 
@@ -109,7 +110,8 @@ class ToolGovernanceTest {
         DirectModel model = new DirectModel();
         try (AppServerBootstrap.Components components = create(model)) {
             Fixture fixture = fixture(components);
-            installProfile(fixture.session(), components, 1, Set.of(CoreTools.SEARCH_NAME, PLAN_READ), model.id());
+            installExecutionSettings(
+                    fixture.session(), components, 1, Set.of(CoreTools.SEARCH_NAME, PLAN_READ), model.id());
 
             AgentTurn terminal = awaitTerminal(
                     fixture.session(),
@@ -127,14 +129,15 @@ class ToolGovernanceTest {
         RevocationModel model = new RevocationModel();
         try (AppServerBootstrap.Components components = create(model)) {
             Fixture fixture = fixture(components);
-            installProfile(fixture.session(), components, 1, Set.of(CoreTools.SEARCH_NAME, PLAN_READ), model.id());
+            installExecutionSettings(
+                    fixture.session(), components, 1, Set.of(CoreTools.SEARCH_NAME, PLAN_READ), model.id());
             createPlan(fixture, components);
             AgentTurn accepted = startTurn(fixture, components);
             assertTrue(model.readyToCall.await(3, TimeUnit.SECONDS));
 
             AppServerSession administrator = components.newSession();
             initialize(administrator, components);
-            installProfile(administrator, components, 2, Set.of(CoreTools.SEARCH_NAME), model.id());
+            installExecutionSettings(administrator, components, 2, Set.of(CoreTools.SEARCH_NAME), model.id());
             model.continueAfterRevocation.countDown();
             AgentTurn terminal = awaitTerminal(fixture.session(), components, accepted.id());
 
@@ -148,7 +151,7 @@ class ToolGovernanceTest {
     }
 
     private AppServerBootstrap.Components create(ModelGateway model) {
-        return AppServerBootstrap.create(temporaryDirectory.resolve("data-v5"), Clock.systemUTC(), model);
+        return AppServerBootstrap.create(temporaryDirectory.resolve("data-v6"), Clock.systemUTC(), model);
     }
 
     private Fixture fixture(AppServerBootstrap.Components components) {
@@ -172,12 +175,7 @@ class ToolGovernanceTest {
         assertTrue(result.catalogRevision() > 0);
 
         ToolRpcContracts.CatalogQuery executableQuery = new ToolRpcContracts.CatalogQuery(
-                fixture.workspace().id(),
-                PROFILE_ID,
-                2,
-                Optional.of(new AgentProfileRef(AGENT_PROFILE_ID, 1)),
-                "plan",
-                10);
+                fixture.workspace().id(), PROFILE_ID, 2, Optional.of(new AgentRoleRef(AGENT_ROLE_ID, 1)), "plan", 10);
         ToolRpcContracts.SearchResult executable = decode(
                 fixture.session().handle(request(components, "tool-search-executable", "tool/search", executableQuery)),
                 components,
@@ -188,7 +186,7 @@ class ToolGovernanceTest {
                 executable.tools().stream().map(tool -> tool.identity().name()).toList());
     }
 
-    private void installProfile(
+    private void installExecutionSettings(
             AppServerSession session,
             AppServerBootstrap.Components components,
             long version,
@@ -219,13 +217,13 @@ class ToolGovernanceTest {
                 components,
                 PermissionProfile.class);
         if (version == 1) {
-            ProviderProfileRpcFixtures.install(
+            ProviderRoleRpcFixtures.install(
                     session,
                     components,
-                    new ProviderProfileRpcFixtures.Installation(
+                    new ProviderRoleRpcFixtures.Installation(
                             PROVIDER_ID,
                             modelId,
-                            AGENT_PROFILE_ID,
+                            AGENT_ROLE_ID,
                             new PermissionProfileRef(PROFILE_ID, 2),
                             allowedTools,
                             new TurnBudget(4_000, 1_000, 3, 0, Duration.ofSeconds(30))));
@@ -278,17 +276,18 @@ class ToolGovernanceTest {
 
     private AgentTurn startTurn(Fixture fixture, AppServerBootstrap.Components components) {
         CoreRpcContracts.TurnStartPayload payload = new CoreRpcContracts.TurnStartPayload(
-                fixture.thread().id(), Optional.of(new AgentProfileRef(AGENT_PROFILE_ID, 1)), "读取发布计划");
+                fixture.thread().id(), TurnV6Fixtures.selection(new AgentRoleRef(AGENT_ROLE_ID, 1)), "读取发布计划");
         return decode(
-                fixture.session()
-                        .handle(request(
-                                components,
-                                "turn-start",
-                                "turn/start",
-                                new WriteCommand(
-                                        "turn-key", 0, components.json().encode(payload)))),
-                components,
-                AgentTurn.class);
+                        fixture.session()
+                                .handle(request(
+                                        components,
+                                        "turn-start",
+                                        "turn/start",
+                                        new WriteCommand(
+                                                "turn-key", 0, components.json().encode(payload)))),
+                        components,
+                        CoreRpcContracts.TurnStartResult.class)
+                .turn();
     }
 
     private Workspace createWorkspace(AppServerSession session, AppServerBootstrap.Components components) {

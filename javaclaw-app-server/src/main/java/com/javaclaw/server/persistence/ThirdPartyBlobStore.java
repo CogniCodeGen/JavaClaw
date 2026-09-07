@@ -9,7 +9,7 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.Set;
 
-/** data-v5 中按扩展隔离的内容寻址 Blob 文件实现。 */
+/** data-v6 中按扩展隔离的内容寻址 Blob 文件实现。 */
 final class ThirdPartyBlobStore {
     private static final Set<PosixFilePermission> DIRECTORY_PERMISSIONS =
             Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE);
@@ -106,7 +106,7 @@ final class ThirdPartyBlobStore {
         try {
             Files.setPosixFilePermissions(path, permissions);
         } catch (UnsupportedOperationException ignored) {
-            // Windows 由 data-v5 ACL 管理；此处不扩大权限。
+            // Windows 由 data-v6 ACL 管理；此处不扩大权限。
         }
     }
 

@@ -313,7 +313,7 @@ final class ScheduleEngine {
                 .target()
                 .turnTemplate()
                 .map(target -> context.executionPolicies()
-                        .freeze(context.workspaceId(), target.profile(), context.cancellation())
+                        .freeze(context.workspaceId(), target.execution(), context.cancellation())
                         .withUnattendedExecutionScope(scope));
     }
 

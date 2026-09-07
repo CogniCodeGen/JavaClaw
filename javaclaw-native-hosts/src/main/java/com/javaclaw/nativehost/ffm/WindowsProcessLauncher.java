@@ -3,10 +3,11 @@ package com.javaclaw.nativehost.ffm;
 import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+
+import com.javaclaw.nativehost.network.SandboxNetworkAccess;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
@@ -29,15 +30,16 @@ final class WindowsProcessLauncher {
 
     static int run(WindowsSandboxPaths.Prepared request, WindowsAppContainerScope scope) throws IOException {
         try (Arena arena = Arena.ofConfined();
-                WindowsProcessSecurity security = WindowsProcessSecurity.open(request.limits(), arena)) {
+                WindowsProcessSecurity security =
+                        WindowsProcessSecurity.open(request.limits(), arena, guarded(request))) {
             List<MemorySegment> standardHandles = inheritedStandardHandles();
             ProcessHandles child = null;
             try (WindowsProcessAttributes attributes = WindowsProcessAttributes.create(arena, 2)) {
                 attributes.addHandleList(standardHandles);
-                attributes.addSecurityCapabilities(scope.sid());
+                attributes.addSecurityCapabilities(scope.sid(), guarded(request));
                 child = createProcess(request, security, attributes.startup(standardHandles), true, arena);
-                startContained(child, security);
-                return await(child.process(), security, request.timeout(), arena);
+                startContained(child, security, scope, request);
+                return await(child.process(), security, request, arena);
             } catch (IOException | RuntimeException failure) {
                 terminateFailedChild(child, security);
                 throw failure;
@@ -57,10 +59,10 @@ final class WindowsProcessLauncher {
         ProcessHandles child = null;
         boolean transferred = false;
         try {
-            security = WindowsProcessSecurity.open(request.limits(), arena);
+            security = WindowsProcessSecurity.open(request.limits(), arena, guarded(request));
             handles = createPseudoConsole(columns, rows, arena);
             child = createPseudoConsoleProcess(request, scope, security, handles.pseudoConsole(), arena);
-            startContained(child, security);
+            startContained(child, security, scope, request);
             closeAfterPseudoConsoleStart(handles, child);
             WindowsPseudoConsole session = new WindowsPseudoConsole(
                     handles.pseudoConsole(),
@@ -93,7 +95,7 @@ final class WindowsProcessLauncher {
             throws IOException {
         try (WindowsProcessAttributes attributes = WindowsProcessAttributes.create(arena, 2)) {
             attributes.addPseudoConsole(pseudoConsole);
-            attributes.addSecurityCapabilities(scope.sid());
+            attributes.addSecurityCapabilities(scope.sid(), guarded(request));
             return createProcess(request, security, attributes.startup(List.of()), false, arena);
         }
     }
@@ -174,8 +176,21 @@ final class WindowsProcessLauncher {
         }
     }
 
-    private static void startContained(ProcessHandles child, WindowsProcessSecurity security) throws IOException {
+    private static boolean guarded(WindowsSandboxPaths.Prepared request) {
+        return request.networkAccess().mode() == SandboxNetworkAccess.Mode.PROXY_ONLY;
+    }
+
+    private static void startContained(
+            ProcessHandles child,
+            WindowsProcessSecurity security,
+            WindowsAppContainerScope scope,
+            WindowsSandboxPaths.Prepared request)
+            throws IOException {
+        security.guard(child.process(), scope, request);
         security.assign(child.process());
+        if (terminationRequested(request)) {
+            throw new IOException("Windows Sandbox cancelled before target resume");
+        }
         var backend = WindowsSandboxNative.requireBackend();
         var resumed = backend.invoke(backend.resumeThread, child.thread());
         if (resumed.number() == -1) {
@@ -183,18 +198,24 @@ final class WindowsProcessLauncher {
         }
     }
 
-    private static int await(MemorySegment process, WindowsProcessSecurity security, Duration timeout, Arena arena)
+    private static int await(
+            MemorySegment process, WindowsProcessSecurity security, WindowsSandboxPaths.Prepared request, Arena arena)
             throws IOException {
         var backend = WindowsSandboxNative.requireBackend();
-        int waitMillis = Math.toIntExact(Math.max(1, timeout.toMillis()));
-        var waited = backend.invoke(backend.waitForSingleObject, process, waitMillis);
-        if (waited.number() == WAIT_TIMEOUT) {
-            security.terminate(TIMEOUT_EXIT);
-            backend.invoke(backend.waitForSingleObject, process, 5_000);
-            return TIMEOUT_EXIT;
-        }
-        if (waited.number() != WAIT_OBJECT_0) {
-            throw WindowsSandboxNative.error("WaitForSingleObject", waited.error());
+        long deadline = System.nanoTime() + request.timeout().toNanos();
+        while (true) {
+            var waited = backend.invoke(backend.waitForSingleObject, process, 20);
+            if (waited.number() == WAIT_OBJECT_0) {
+                break;
+            }
+            if (waited.number() != WAIT_TIMEOUT) {
+                throw WindowsSandboxNative.error("WaitForSingleObject", waited.error());
+            }
+            if (System.nanoTime() >= deadline || terminationRequested(request)) {
+                security.terminate(TIMEOUT_EXIT);
+                backend.invoke(backend.waitForSingleObject, process, 5_000);
+                return TIMEOUT_EXIT;
+            }
         }
         MemorySegment exitCode = arena.allocate(JAVA_INT);
         var loaded = backend.invoke(backend.getExitCodeProcess, process, exitCode);
@@ -202,6 +223,15 @@ final class WindowsProcessLauncher {
             throw WindowsSandboxNative.error("GetExitCodeProcess", loaded.error());
         }
         return exitCode.get(JAVA_INT, 0);
+    }
+
+    private static boolean terminationRequested(WindowsSandboxPaths.Prepared request) throws IOException {
+        return WindowsAclEvidence.terminationRequested()
+                || request.networkAccess()
+                        .controlDirectory()
+                        .map(directory -> java.nio.file.Files.isRegularFile(
+                                directory.resolve("terminate-request"), java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                        .orElse(false);
     }
 
     private static PseudoConsoleHandles createPseudoConsole(int columns, int rows, Arena arena) throws IOException {

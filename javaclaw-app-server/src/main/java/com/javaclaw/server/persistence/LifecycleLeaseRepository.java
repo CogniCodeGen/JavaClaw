@@ -17,7 +17,7 @@ public final class LifecycleLeaseRepository {
     /**
      * 创建仓储。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      * @param clock 平台时钟
      */
     public LifecycleLeaseRepository(H2Database database, Clock clock) {

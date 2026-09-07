@@ -53,8 +53,8 @@ class InputRequestServiceBranchesTest {
     private InputRequestService inputs;
 
     @BeforeEach
-    void initializeDataV5() {
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+    void initializeDataV6() {
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         clock = new MutableClock(NOW);
         json = new CanonicalJson();

@@ -288,7 +288,7 @@ class ViewSchemaCoverageTest {
                 Map.of("definitionId", "id"),
                 new ExpectedRevisionBinding.RowField("revision"),
                 false,
-                new ViewCommandBinding("profileId", new ViewBinding("profile", "id")));
+                new ViewCommandBinding("roleId", new ViewBinding("profile", "id")));
     }
 
     private static ViewAction actionLike(

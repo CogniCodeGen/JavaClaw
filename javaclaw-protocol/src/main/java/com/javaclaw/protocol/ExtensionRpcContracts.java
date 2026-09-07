@@ -10,7 +10,7 @@ import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.TurnId;
 import com.javaclaw.api.WorkspaceId;
 
-/** Protocol v2 Extension 通用方法的 wire 契约。 */
+/** Protocol v3 Extension 通用方法的 wire 契约。 */
 public final class ExtensionRpcContracts {
     private ExtensionRpcContracts() {}
 

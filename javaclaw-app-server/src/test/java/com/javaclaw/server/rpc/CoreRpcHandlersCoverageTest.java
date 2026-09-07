@@ -2,7 +2,6 @@ package com.javaclaw.server.rpc;
 
 import java.nio.file.Path;
 import java.time.Clock;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -14,24 +13,26 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileSpec;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.AgentRoleSpec;
 import com.javaclaw.api.AttachmentScope;
 import com.javaclaw.api.AttachmentUploadSession;
+import com.javaclaw.api.CapabilityNarrowing;
 import com.javaclaw.api.ConversationThread;
-import com.javaclaw.api.ProfileLifecycle;
+import com.javaclaw.api.PermissionConstraint;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
-import com.javaclaw.api.ProviderRef;
+import com.javaclaw.api.RoleLifecycle;
 import com.javaclaw.api.ThreadExecutionIntent;
 import com.javaclaw.api.ThreadId;
-import com.javaclaw.api.TurnBudget;
 import com.javaclaw.api.TurnId;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceLifecycle;
 import com.javaclaw.extension.spi.LoginStartupPort;
+import com.javaclaw.protocol.AgentRoleRpcContracts;
 import com.javaclaw.protocol.AttachmentRpcContracts;
 import com.javaclaw.protocol.CapabilityAdvertisement;
 import com.javaclaw.protocol.ClientInfo;
@@ -42,7 +43,7 @@ import com.javaclaw.protocol.JsonRpcRequest;
 import com.javaclaw.protocol.JsonRpcResponse;
 import com.javaclaw.protocol.ProtocolErrorCode;
 import com.javaclaw.protocol.ProtocolVersion;
-import com.javaclaw.protocol.ProviderProfileRpcContracts;
+import com.javaclaw.protocol.ProviderRpcContracts;
 import com.javaclaw.protocol.RpcId;
 import com.javaclaw.protocol.WorktreeRpcContracts;
 import com.javaclaw.protocol.WriteCommand;
@@ -55,7 +56,6 @@ import com.javaclaw.runtime.ModelInvocationResult;
 import com.javaclaw.runtime.ModelUsage;
 import com.javaclaw.server.AppServerBootstrap;
 import com.javaclaw.server.ProviderEndpointTestFixtures;
-import com.javaclaw.server.persistence.PermissionProfileService;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -73,7 +73,7 @@ class CoreRpcHandlersCoverageTest {
     void createServer() {
         LoginStartupPort startup = startupRequired::set;
         components = AppServerBootstrap.create(
-                temporaryDirectory.resolve("data-v5"), Clock.systemUTC(), new NoOpModel(), startup);
+                temporaryDirectory.resolve("data-v6"), Clock.systemUTC(), new NoOpModel(), startup);
         session = components.newSession();
         decode(invoke("initialize/session", initialization()), com.javaclaw.protocol.InitializeResult.class);
     }
@@ -121,58 +121,56 @@ class CoreRpcHandlersCoverageTest {
     }
 
     @Test
-    void profile和Provider完整更新后可归档且旧Revision仍可精确读取() {
+    void role和Provider完整更新后可归档且旧Revision仍可精确读取() {
         ProviderEndpointSpec providerSpec = providerSpec("Provider v1");
         ProviderEndpoint provider = write(
                 "provider/create",
                 "create-provider",
                 0,
-                new ProviderProfileRpcContracts.ProviderCreatePayload(
-                        "provider", providerSpec, ProviderLifecycle.ACTIVE),
+                new ProviderRpcContracts.ProviderCreatePayload("provider", providerSpec, ProviderLifecycle.ACTIVE),
                 ProviderEndpoint.class);
-        AgentProfileSpec profileSpec = profileSpec("Profile v1", provider);
-        AgentProfile profile = write(
-                "profile/create",
+        AgentRoleSpec profileSpec = roleSpec("Role v1");
+        AgentRole profile = write(
+                "agent/role/create",
                 "create-profile",
                 0,
-                new ProviderProfileRpcContracts.AgentProfileCreatePayload("profile", profileSpec),
-                AgentProfile.class);
-        AgentProfile updatedProfile = write(
-                "profile/update",
+                new AgentRoleRpcContracts.CreatePayload("profile", profileSpec),
+                AgentRole.class);
+        AgentRole updatedProfile = write(
+                "agent/role/update",
                 "update-profile",
                 profile.revision(),
-                new ProviderProfileRpcContracts.AgentProfileUpdatePayload(
-                        profile.id(), profileSpec("Profile v2", provider), ProfileLifecycle.DISABLED),
-                AgentProfile.class);
-        AgentProfile archivedProfile = write(
-                "profile/archive",
+                new AgentRoleRpcContracts.UpdatePayload(profile.id(), roleSpec("Role v2"), RoleLifecycle.DISABLED),
+                AgentRole.class);
+        AgentRole archivedProfile = write(
+                "agent/role/archive",
                 "archive-profile",
                 updatedProfile.revision(),
-                new ProviderProfileRpcContracts.AgentProfileArchivePayload(profile.id()),
-                AgentProfile.class);
+                new AgentRoleRpcContracts.ArchivePayload(profile.id()),
+                AgentRole.class);
         ProviderEndpoint updatedProvider = write(
                 "provider/update",
                 "update-provider",
                 provider.revision(),
-                new ProviderProfileRpcContracts.ProviderUpdatePayload(
+                new ProviderRpcContracts.ProviderUpdatePayload(
                         provider.id(), providerSpec("Provider v2"), ProviderLifecycle.DISABLED),
                 ProviderEndpoint.class);
         ProviderEndpoint archivedProvider = write(
                 "provider/archive",
                 "archive-provider",
                 updatedProvider.revision(),
-                new ProviderProfileRpcContracts.ProviderArchivePayload(provider.id()),
+                new ProviderRpcContracts.ProviderArchivePayload(provider.id()),
                 ProviderEndpoint.class);
 
-        AgentProfile original = decode(
-                invoke("profile/read", new ProviderProfileRpcContracts.AgentProfileReadPayload(profile.id(), 1)),
-                AgentProfile.class);
+        AgentRole original = decode(
+                invoke("agent/role/read", new AgentRoleRpcContracts.ReadPayload(new AgentRoleRef(profile.id(), 1))),
+                AgentRole.class);
         ProviderEndpoint originalProvider = decode(
-                invoke("provider/read", new ProviderProfileRpcContracts.ProviderReadPayload(provider.id(), 1)),
+                invoke("provider/read", new ProviderRpcContracts.ProviderReadPayload(provider.id(), 1)),
                 ProviderEndpoint.class);
-        assertEquals("Profile v1", original.spec().displayName());
+        assertEquals("Role v1", original.spec().name());
         assertEquals("Provider v1", originalProvider.spec().displayName());
-        assertEquals(ProfileLifecycle.ARCHIVED, archivedProfile.lifecycle());
+        assertEquals(RoleLifecycle.ARCHIVED, archivedProfile.lifecycle());
         assertEquals(ProviderLifecycle.ARCHIVED, archivedProvider.lifecycle());
     }
 
@@ -250,14 +248,16 @@ class CoreRpcHandlersCoverageTest {
         return ProviderEndpointTestFixtures.chat(displayName, ProviderAdapter.OPENAI_COMPATIBLE, "test-model");
     }
 
-    private AgentProfileSpec profileSpec(String displayName, ProviderEndpoint provider) {
-        return new AgentProfileSpec(
-                displayName,
-                "",
-                new ProviderRef(provider.id(), provider.revision(), "test-model"),
-                new com.javaclaw.api.PermissionProfileRef(PermissionProfileService.STANDARD_PROFILE_ID, 1),
-                Set.of(),
-                new TurnBudget(4_000, 1_000, 2, 0, Duration.ofMinutes(1)));
+    private AgentRoleSpec roleSpec(String name) {
+        return new AgentRoleSpec(
+                name,
+                "职责",
+                "指令",
+                Optional.empty(),
+                Optional.empty(),
+                CapabilityNarrowing.inherit(),
+                PermissionConstraint.INHERIT,
+                Map.of());
     }
 
     private InitializeParams initialization() {

@@ -20,13 +20,13 @@ import com.javaclaw.desktop.appearance.JavaPreferencesAppearanceStore;
 import com.javaclaw.desktop.settings.ManagementCenterWindow;
 import com.javaclaw.desktop.settings.SdkManagementSettingsGateways;
 
-/** JavaClaw 5 JavaFX 入口；Desktop 只创建 SDK Presenter 和平台视图。 */
+/** JavaClaw 6 JavaFX 入口；Desktop 只创建 SDK Presenter 和平台视图。 */
 public final class JavaClawDesktop extends Application {
     private DesktopPresenter presenter;
     private ManagementCenterWindow managementCenter;
 
     /**
-     * 加载 509f197 视觉语言的 v5 壳并建立 Protocol v2 连接。
+     * 加载 509f197 视觉语言的 v6 壳并建立 Protocol v3 连接。
      *
      * @param stage 主窗口
      * @throws IOException FXML 资源损坏
@@ -44,7 +44,7 @@ public final class JavaClawDesktop extends Application {
         appearance.register(scene);
         managementCenter = new ManagementCenterWindow(appearance, SdkManagementSettingsGateways.create(presenter));
         loader.<DesktopShellController>getController().attach(presenter, managementCenter);
-        stage.setTitle("JavaClaw 5");
+        stage.setTitle("JavaClaw 6");
         stage.setMinWidth(940);
         stage.setMinHeight(640);
         stage.setScene(scene);

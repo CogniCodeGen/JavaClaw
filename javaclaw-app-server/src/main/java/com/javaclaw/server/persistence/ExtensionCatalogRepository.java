@@ -33,7 +33,7 @@ public final class ExtensionCatalogRepository {
     /**
      * 创建目录仓储。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      * @param json 共享 JSON codec
      * @param clock 平台时钟
      */

@@ -107,8 +107,17 @@ public final class HarnessTurnDispatcher implements AwaitableTurnDispatcher, Aut
 
     @Override
     public AutomationExecutionSnapshot freeze(
-            WorkspaceId workspaceId, com.javaclaw.api.AgentProfileRef profile, CancellationToken cancellation) {
-        return commands.freezeAutomation(workspaceId, profile, cancellation);
+            WorkspaceId workspaceId, com.javaclaw.api.ExecutionOverrides execution, CancellationToken cancellation) {
+        return commands.freezeAutomation(workspaceId, execution, cancellation);
+    }
+
+    AutomationExecutionSnapshot freezeChild(AgentTurn parent, com.javaclaw.api.ExecutionOverrides selection) {
+        return commands.freezeChild(parent, selection);
+    }
+
+    void dispatchChild(
+            AgentTurn turn, CoreRpcContracts.TurnStartPayload request, AutomationExecutionSnapshot snapshot) {
+        ensureDispatched(turn, request, Optional.of(snapshot));
     }
 
     @Override
@@ -125,8 +134,8 @@ public final class HarnessTurnDispatcher implements AwaitableTurnDispatcher, Aut
             return;
         }
         CorePayloads.Message message = core.turnUserMessage(turn.id());
-        CoreRpcContracts.TurnStartPayload request =
-                new CoreRpcContracts.TurnStartPayload(turn.threadId(), Optional.of(turn.profile()), message.text());
+        CoreRpcContracts.TurnStartPayload request = new CoreRpcContracts.TurnStartPayload(
+                turn.threadId(), AgentConfigurationResolver.overrides(core.resolvedConfig(turn.id())), message.text());
         try {
             ensureDispatched(turn, request, Optional.empty());
         } catch (RuntimeException failure) {
@@ -197,11 +206,12 @@ public final class HarnessTurnDispatcher implements AwaitableTurnDispatcher, Aut
         Objects.requireNonNull(request, "request");
         AgentTurn current = core.findTurn(turn.id())
                 .orElseThrow(() -> new IllegalArgumentException("persisted Turn does not exist"));
+        // 已占用执行槽的重试沿用当前执行，不能因模型配置撤销而重新绑定或错误终结活动 Turn。
+        Execution active = executions.get(current.id());
+        if (active != null) {
+            return active;
+        }
         if (current.status() != TurnStatus.QUEUED && current.status() != TurnStatus.RUNNING) {
-            Execution active = executions.get(current.id());
-            if (active != null) {
-                return active;
-            }
             AgentTurn refreshed = core.findTurn(current.id()).orElseThrow();
             active = executions.get(current.id());
             if (active != null) {
@@ -311,7 +321,11 @@ public final class HarnessTurnDispatcher implements AwaitableTurnDispatcher, Aut
 
     private void run(TurnExecutionCommand command, Execution execution) {
         try {
-            TurnExecutionResult result = harness.execute(command, execution.cancellation());
+            CancellationToken cancellation = core.parentTurn(command.turn().threadId())
+                    .<CancellationToken>map(
+                            parent -> new ParentTurnCancellation(core, parent.id(), execution.cancellation(), clock))
+                    .orElse(execution.cancellation());
+            TurnExecutionResult result = harness.execute(command, cancellation);
             execution.completion().complete(result);
         } catch (Exception failure) {
             LOGGER.error("Turn {} escaped the Harness boundary", command.turn().id(), failure);

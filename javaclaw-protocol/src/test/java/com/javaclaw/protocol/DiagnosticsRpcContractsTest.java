@@ -46,13 +46,13 @@ class DiagnosticsRpcContractsTest {
 
     @Test
     void 逐方法Schema只包含白名单状态字段() throws IOException {
-        String schema = read("/schema/diagnostics-v2.schema.json");
-        String methods = read("/schema/methods-v2.json");
+        String schema = read("/schema/diagnostics-v3.schema.json");
+        String methods = read("/schema/methods-v3.json");
 
         new CanonicalJson().parse(schema);
-        assertTrue(methods.contains("diagnostics-v2.schema.json#/$defs/repairCommand"));
-        assertTrue(methods.contains("diagnostics-v2.schema.json#/$defs/launcherStatusParams"));
-        assertTrue(methods.contains("diagnostics-v2.schema.json#/$defs/serverStopCommand"));
+        assertTrue(methods.contains("diagnostics-v3.schema.json#/$defs/repairCommand"));
+        assertTrue(methods.contains("diagnostics-v3.schema.json#/$defs/launcherStatusParams"));
+        assertTrue(methods.contains("diagnostics-v3.schema.json#/$defs/serverStopCommand"));
         assertTrue(schema.contains("\"browserWorkerAvailable\""));
         assertTrue(schema.contains("\"skillExecutionAvailable\""));
         assertTrue(schema.contains("\"loginStartupInstalled\""));

@@ -125,6 +125,7 @@ final class ScriptedExtensionConnection implements RpcConnection {
         assertEquals(call.extensionId(), payload.extensionId());
         assertEquals(workspaceId, payload.workspaceId());
         assertEquals(call.threadId(), payload.threadId());
+        assertTrue(payload.turnId().isEmpty(), "管理请求不得通过客户端 Turn ID 声明授权");
         assertEquals(call.operation(), payload.operation());
         assertEquals(JSON.encode(call.request()), payload.payload());
         ExtensionRpcContracts.CallResult result =

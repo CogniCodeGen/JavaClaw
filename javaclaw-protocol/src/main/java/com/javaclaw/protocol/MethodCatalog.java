@@ -5,7 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** JavaClaw 5.0 的精简 Core 与通用 Extension 方法目录。 */
+/** JavaClaw 6.0 的精简 Core 与通用 Extension 方法目录。 */
 public final class MethodCatalog {
     private static final Map<String, RpcMethod> METHODS = create();
 
@@ -63,16 +63,11 @@ public final class MethodCatalog {
         add(methods, "item/list", RpcMethodKind.QUERY);
         addAttachmentMethods(methods);
         addCredentialMethods(methods);
-        add(methods, "profile/list", RpcMethodKind.QUERY);
-        add(methods, "profile/preset/list", RpcMethodKind.QUERY);
-        add(methods, "profile/read", RpcMethodKind.QUERY);
-        add(methods, "profile/create", RpcMethodKind.COMMAND);
-        add(methods, "profile/update", RpcMethodKind.COMMAND);
-        add(methods, "profile/archive", RpcMethodKind.COMMAND);
-        add(methods, "profile/prompt/preview", RpcMethodKind.QUERY);
+        addRoleAndExecutionMethods(methods);
+        add(methods, "agent/spawn", RpcMethodKind.COMMAND);
+        add(methods, "agent/wait", RpcMethodKind.QUERY);
+        add(methods, "agent/interrupt", RpcMethodKind.COMMAND);
         addPromptOptimizationMethods(methods);
-        add(methods, "profile/binding/read", RpcMethodKind.QUERY);
-        add(methods, "profile/binding/update", RpcMethodKind.COMMAND);
         add(methods, "provider/list", RpcMethodKind.QUERY);
         add(methods, "provider/read", RpcMethodKind.QUERY);
         add(methods, "provider/create", RpcMethodKind.COMMAND);
@@ -83,12 +78,48 @@ public final class MethodCatalog {
         add(methods, ProviderModelDiscoveryRpcContracts.CANCEL_METHOD, RpcMethodKind.COMMAND);
         add(methods, "provider/embeddingBinding/read", RpcMethodKind.QUERY);
         add(methods, "provider/embeddingBinding/update", RpcMethodKind.COMMAND);
+        addContextMethods(methods);
         add(methods, "provider/credential/set", RpcMethodKind.COMMAND);
         add(methods, "provider/credential/clear", RpcMethodKind.COMMAND);
         add(methods, "provider/status", RpcMethodKind.QUERY);
         add(methods, "provider/probe", RpcMethodKind.QUERY);
         add(methods, ProviderVerificationRpcContracts.METHOD, RpcMethodKind.COMMAND);
         addPermissionProfileMethods(methods);
+    }
+
+    private static void addContextMethods(Map<String, RpcMethod> methods) {
+        for (RpcMethod method : List.of(
+                new RpcMethod(
+                        ProviderContextRpcContracts.READ_METHOD,
+                        RpcMethodKind.QUERY,
+                        java.util.Optional.of(ProviderContextRpcContracts.CAPABILITY),
+                        false),
+                new RpcMethod(
+                        ProviderContextRpcContracts.UPDATE_METHOD,
+                        RpcMethodKind.COMMAND,
+                        java.util.Optional.of(ProviderContextRpcContracts.CAPABILITY),
+                        false))) {
+            methods.put(method.name(), method);
+        }
+    }
+
+    private static void addRoleAndExecutionMethods(Map<String, RpcMethod> methods) {
+        add(methods, "agent/role/list", RpcMethodKind.QUERY);
+        add(methods, "agent/role/read", RpcMethodKind.QUERY);
+        add(methods, "agent/role/create", RpcMethodKind.COMMAND);
+        add(methods, "agent/role/update", RpcMethodKind.COMMAND);
+        add(methods, "agent/role/archive", RpcMethodKind.COMMAND);
+        add(methods, "agent/role/clone", RpcMethodKind.COMMAND);
+        add(methods, "agent/role/import/preview", RpcMethodKind.QUERY);
+        add(methods, "agent/role/import/commit", RpcMethodKind.COMMAND);
+        add(methods, "agent/role/export", RpcMethodKind.QUERY);
+        add(methods, "execution/default/read", RpcMethodKind.QUERY);
+        add(methods, "execution/default/update", RpcMethodKind.COMMAND);
+        add(methods, "execution/subagent/read", RpcMethodKind.QUERY);
+        add(methods, "execution/subagent/update", RpcMethodKind.COMMAND);
+        add(methods, "thread/execution/read", RpcMethodKind.QUERY);
+        add(methods, "thread/execution/update", RpcMethodKind.COMMAND);
+        add(methods, "prompt/manifest/preview", RpcMethodKind.QUERY);
     }
 
     private static void addAttachmentMethods(Map<String, RpcMethod> methods) {
@@ -101,11 +132,11 @@ public final class MethodCatalog {
     }
 
     private static void addPromptOptimizationMethods(Map<String, RpcMethod> methods) {
-        add(methods, "profile/prompt/optimization/start", RpcMethodKind.COMMAND);
-        add(methods, "profile/prompt/optimization/read", RpcMethodKind.QUERY);
-        add(methods, "profile/prompt/optimization/list", RpcMethodKind.QUERY);
-        add(methods, "profile/prompt/optimization/cancel", RpcMethodKind.COMMAND);
-        add(methods, "profile/prompt/optimization/adopt", RpcMethodKind.COMMAND);
+        add(methods, "agent/role/prompt/optimization/start", RpcMethodKind.COMMAND);
+        add(methods, "agent/role/prompt/optimization/read", RpcMethodKind.QUERY);
+        add(methods, "agent/role/prompt/optimization/list", RpcMethodKind.QUERY);
+        add(methods, "agent/role/prompt/optimization/cancel", RpcMethodKind.COMMAND);
+        add(methods, "agent/role/prompt/optimization/adopt", RpcMethodKind.COMMAND);
     }
 
     private static void addInteractionAndExtensionMethods(Map<String, RpcMethod> methods) {

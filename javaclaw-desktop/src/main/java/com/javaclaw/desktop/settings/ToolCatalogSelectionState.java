@@ -3,7 +3,7 @@ package com.javaclaw.desktop.settings;
 import java.util.Objects;
 import java.util.Optional;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ToolCatalogQueryResult;
 import com.javaclaw.api.WorkspaceId;
@@ -14,7 +14,7 @@ import com.javaclaw.api.WorkspaceId;
  * @param phase 异步阶段
  * @param workspaceId 固定 Workspace
  * @param permissionProfile 精确权限版本
- * @param agentProfile 可选精确 Agent Profile
+ * @param agentRole 可选精确 Agent Role
  * @param result 权威目录版本和当前有界切片
  * @param query 当前查询词
  * @param message 用户可读状态
@@ -24,7 +24,7 @@ public record ToolCatalogSelectionState(
         SettingsLoadState phase,
         Optional<WorkspaceId> workspaceId,
         Optional<PermissionProfileRef> permissionProfile,
-        Optional<AgentProfileRef> agentProfile,
+        Optional<AgentRoleRef> agentRole,
         Optional<ToolCatalogQueryResult> result,
         String query,
         String message,
@@ -34,15 +34,15 @@ public record ToolCatalogSelectionState(
         phase = Objects.requireNonNull(phase, "phase");
         workspaceId = Objects.requireNonNull(workspaceId, "workspaceId");
         permissionProfile = Objects.requireNonNull(permissionProfile, "permissionProfile");
-        agentProfile = Objects.requireNonNull(agentProfile, "agentProfile");
+        agentRole = Objects.requireNonNull(agentRole, "agentRole");
         result = Objects.requireNonNull(result, "result");
         query = Objects.requireNonNullElse(query, "");
         message = Objects.requireNonNullElse(message, "");
         if (epoch < 0 || workspaceId.isPresent() != permissionProfile.isPresent()) {
             throw new IllegalArgumentException("工具目录状态的作用域或 epoch 不合法");
         }
-        if (agentProfile.isPresent() && permissionProfile.isEmpty()) {
-            throw new IllegalArgumentException("Agent Profile 查询必须同时绑定 PermissionProfile");
+        if (agentRole.isPresent() && permissionProfile.isEmpty()) {
+            throw new IllegalArgumentException("Agent Role 查询必须同时绑定 PermissionProfile");
         }
     }
 

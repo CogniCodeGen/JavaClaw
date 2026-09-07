@@ -44,7 +44,7 @@ final class SignedBundleMcpRemotePort implements McpRemotePort {
      * 创建生产 stdio 端口。
      *
      * @param bundles 已验签 Bundle 实时来源
-     * @param workerRoot data-v5 中的私有 Worker 目录
+     * @param workerRoot data-v6 中的私有 Worker 目录
      * @param json 严格 JSON codec
      * @param clock 平台时钟
      */
@@ -113,7 +113,7 @@ final class SignedBundleMcpRemotePort implements McpRemotePort {
         SignedBundleMcpLaunch launch = current(checked);
         Path directory = workerRoot.resolve(checked.id()).normalize();
         if (!directory.startsWith(workerRoot)) {
-            throw new SecurityException("MCP Worker directory escapes data-v5 root");
+            throw new SecurityException("MCP Worker directory escapes data-v6 root");
         }
         Files.createDirectories(directory);
         SandboxedWorkerCommand command = command(checked, launch, directory);

@@ -24,7 +24,7 @@ import java.util.UUID;
 
 import com.javaclaw.api.AttachmentUploadSession;
 
-/** data-v5 内分块上传 staging 的有界文件实现。 */
+/** data-v6 内分块上传 staging 的有界文件实现。 */
 final class AttachmentUploadStore {
     private static final int COPY_BUFFER_BYTES = 64 * 1024;
     private static final Set<PosixFilePermission> DIRECTORY_PERMISSIONS =

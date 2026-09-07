@@ -50,7 +50,7 @@ class DomainExtensionIntegrationTest {
     @Test
     void eachDomainAppliesItsOwnDiscoveryRulesAndWorkspaceIsolation() throws Exception {
         try (AppServerBootstrap.Components components = AppServerBootstrap.create(
-                temporaryDirectory.resolve("data-v5"), Clock.systemUTC(), new UnusedModel(), enabled -> {})) {
+                temporaryDirectory.resolve("data-v6"), Clock.systemUTC(), new UnusedModel(), enabled -> {})) {
             AppServerSession session = components.newSession();
             initialize(session, components);
             Workspace first = createWorkspace(session, components, "First");

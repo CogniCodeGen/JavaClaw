@@ -10,7 +10,6 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfilePreset;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.EmbeddingBinding;
 import com.javaclaw.api.ProviderAdapter;
@@ -27,7 +26,6 @@ import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.api.ProviderModelSpec;
 import com.javaclaw.api.ProviderReasoningSummary;
 import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.TurnBudget;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -77,25 +75,24 @@ class ProviderConfigurationRpcContractsTest {
                 1,
                 new ProviderAdapterOptions.OpenAiResponses(
                         Optional.of("org"), Optional.empty(), ProviderReasoningSummary.CONCISE));
-        ProviderProfileRpcContracts.ProviderCreatePayload payload =
-                new ProviderProfileRpcContracts.ProviderCreatePayload("provider", spec, ProviderLifecycle.DISABLED);
+        ProviderRpcContracts.ProviderCreatePayload payload =
+                new ProviderRpcContracts.ProviderCreatePayload("provider", spec, ProviderLifecycle.DISABLED);
 
-        ProviderProfileRpcContracts.ProviderCreatePayload decoded =
-                JSON.decode(JSON.encode(payload), ProviderProfileRpcContracts.ProviderCreatePayload.class);
+        ProviderRpcContracts.ProviderCreatePayload decoded =
+                JSON.decode(JSON.encode(payload), ProviderRpcContracts.ProviderCreatePayload.class);
 
         assertEquals(payload, decoded);
         assertTrue(JSON.encode(payload).json().contains("\"embeddingDimensions\":null"));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new ProviderProfileRpcContracts.ProviderCreatePayload(
-                        "provider", spec, ProviderLifecycle.ARCHIVED));
+                () -> new ProviderRpcContracts.ProviderCreatePayload("provider", spec, ProviderLifecycle.ARCHIVED));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new ProviderProfileRpcContracts.ProviderCreatePayload(
+                () -> new ProviderRpcContracts.ProviderCreatePayload(
                         "provider with space", spec, ProviderLifecycle.DISABLED));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new ProviderProfileRpcContracts.ProviderCreatePayload(
+                () -> new ProviderRpcContracts.ProviderCreatePayload(
                         "provider-active", spec, ProviderLifecycle.ACTIVE));
     }
 
@@ -112,18 +109,17 @@ class ProviderConfigurationRpcContractsTest {
                 0,
                 ProviderAdapterOptions.defaults(ProviderAdapter.OPENAI_COMPATIBLE));
 
-        ProviderProfileRpcContracts.ProviderCreatePayload disabled =
-                new ProviderProfileRpcContracts.ProviderCreatePayload(
-                        "provider-shell", emptySpec, ProviderLifecycle.DISABLED);
+        ProviderRpcContracts.ProviderCreatePayload disabled =
+                new ProviderRpcContracts.ProviderCreatePayload("provider-shell", emptySpec, ProviderLifecycle.DISABLED);
 
         assertEquals(ProviderLifecycle.DISABLED, disabled.lifecycle());
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new ProviderProfileRpcContracts.ProviderCreatePayload(
+                () -> new ProviderRpcContracts.ProviderCreatePayload(
                         "provider-active", emptySpec, ProviderLifecycle.ACTIVE));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new ProviderProfileRpcContracts.ProviderUpdatePayload(
+                () -> new ProviderRpcContracts.ProviderUpdatePayload(
                         "provider-active", emptySpec, ProviderLifecycle.ACTIVE));
     }
 
@@ -162,29 +158,15 @@ class ProviderConfigurationRpcContractsTest {
     }
 
     @Test
-    void Embedding绑定和Profile预设使用独立强类型结果() {
+    void Embedding绑定使用独立强类型结果() {
         EmbeddingBinding binding = new EmbeddingBinding(new ProviderRef("provider", 4, "embed"), 2, NOW);
-        AgentProfilePreset preset = new AgentProfilePreset(
-                "explorer",
-                1,
-                "Explorer",
-                "只读探索",
-                "读取并返回证据。",
-                "a".repeat(64),
-                new TurnBudget(32_000, 4_000, 24, 0, Duration.ofMinutes(5)));
-        ProviderProfileRpcContracts.EmbeddingBindingReadResult bindingResult =
-                new ProviderProfileRpcContracts.EmbeddingBindingReadResult(Optional.of(binding));
-        ProviderProfileRpcContracts.AgentProfilePresetListResult presetResult =
-                new ProviderProfileRpcContracts.AgentProfilePresetListResult(List.of(preset));
-
+        ProviderRpcContracts.EmbeddingBindingReadResult bindingResult =
+                new ProviderRpcContracts.EmbeddingBindingReadResult(Optional.of(binding));
         assertEquals(
                 bindingResult,
-                JSON.decode(JSON.encode(bindingResult), ProviderProfileRpcContracts.EmbeddingBindingReadResult.class));
-        assertEquals(
-                presetResult,
-                JSON.decode(JSON.encode(presetResult), ProviderProfileRpcContracts.AgentProfilePresetListResult.class));
+                JSON.decode(JSON.encode(bindingResult), ProviderRpcContracts.EmbeddingBindingReadResult.class));
         assertEquals(
                 binding.provider(),
-                new ProviderProfileRpcContracts.EmbeddingBindingUpdatePayload(binding.provider()).provider());
+                new ProviderRpcContracts.EmbeddingBindingUpdatePayload(binding.provider()).provider());
     }
 }

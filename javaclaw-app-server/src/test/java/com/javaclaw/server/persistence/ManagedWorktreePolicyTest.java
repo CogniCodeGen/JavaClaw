@@ -88,8 +88,9 @@ class ManagedWorktreePolicyTest {
 
     @Test
     void deterministicIdentifiersDigestsAndLocksAreStablePerResource() {
-        ThreadId first = ThreadId.random();
-        ThreadId second = ThreadId.random();
+        // 条带锁允许资源碰撞；这里使用已知不同条带的固定标识，避免把随机碰撞误判为锁退化。
+        ThreadId first = new ThreadId(new UUID(0, 1));
+        ThreadId second = new ThreadId(new UUID(0, 2));
         WorktreeId firstId = ManagedWorktreePolicy.deterministicId(first);
 
         assertEquals(firstId, ManagedWorktreePolicy.deterministicId(first));

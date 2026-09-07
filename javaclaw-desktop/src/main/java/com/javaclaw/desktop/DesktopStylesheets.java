@@ -7,7 +7,7 @@ import javafx.scene.Scene;
 
 import com.javaclaw.desktop.component.PlatformStylesheets;
 
-/** 按固定级联顺序加载 509f197 视觉基线与 v5 Desktop 壳样式。 */
+/** 按固定级联顺序加载 509f197 视觉基线与 v6 Desktop 壳样式。 */
 public final class DesktopStylesheets {
     static final List<String> BASELINE_RESOURCES = PlatformStylesheets.baselineResources();
 

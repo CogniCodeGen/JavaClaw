@@ -7,6 +7,7 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.ExecutionState;
 import com.javaclaw.builtin.contracts.OrchestrationContracts;
 import com.javaclaw.builtin.contracts.PlanContracts;
@@ -19,13 +20,12 @@ import com.javaclaw.extension.spi.ViewSchema;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AutomationExecutionManagementTest {
     @Test
-    void viewRequiresAuthoritativeDefinitionAndProfileSelections() throws Exception {
+    void viewRequiresIndependentAuthoritativeExecutionSelections() throws Exception {
         BuiltinExtensionTestSupport support = new BuiltinExtensionTestSupport();
         var started = support.start(new PlanExtension());
         started.command(support.request("definition/create", plan(), Optional.of("put"), 0));
@@ -38,12 +38,15 @@ class AutomationExecutionManagementTest {
                 .view();
 
         assertEquals(
-                List.of("documents", "executionDefinition", "profiles", "executions"),
+                List.of("documents", "executionDefinition", "roles", "executions", "providers", "permissions"),
                 view.dataSources().stream().map(source -> source.id()).toList());
-        ViewSchema.Form form =
-                assertInstanceOf(ViewSchema.Form.class, view.nodes().get(2));
+        ViewSchema.Form form = view.nodes().stream()
+                .filter(ViewSchema.Form.class::isInstance)
+                .map(ViewSchema.Form.class::cast)
+                .findFirst()
+                .orElseThrow();
         assertEquals(
-                List.of("definitionId", "profileId", "profileRevision"),
+                List.of("definitionId", "role", "provider", "permissionProfile"),
                 form.submit().commandBindings().stream()
                         .map(binding -> binding.argumentName())
                         .toList());
@@ -51,8 +54,8 @@ class AutomationExecutionManagementTest {
         assertFalse(form.fields().stream().anyMatch(field -> field.name().contains("definition")));
 
         ViewQueryResult profiles = support.decode(
-                started.query(support.request(
-                        "execution/profile/view.list", query("profiles", Map.of()), Optional.empty(), 0)),
+                started.query(
+                        support.request("execution/role/view.list", query("roles", Map.of()), Optional.empty(), 0)),
                 ViewQueryResult.class);
         assertEquals(1, profiles.rows().size());
 
@@ -73,7 +76,17 @@ class AutomationExecutionManagementTest {
         BuiltinExtensionTestSupport support = new BuiltinExtensionTestSupport();
         var started = support.start(new PlanExtension());
         started.command(support.request("definition/create", plan(), Optional.of("put"), 0));
-        var input = new OrchestrationContracts.ManagementStartRequest("plan", "profile", 1, 10, 10_000, 5_000, 50);
+        var input = new AutomationFormContracts.StartPayload(
+                "plan",
+                new AgentRoleRef("profile", 1),
+                new com.javaclaw.api.ProviderRef("provider", 1, "model"),
+                new com.javaclaw.api.PermissionProfileRef("extension-test", 1),
+                com.javaclaw.api.ApprovalPolicy.RISKY,
+                com.javaclaw.api.ReasoningPreference.MEDIUM,
+                10,
+                10_000,
+                5_000,
+                50);
 
         var response =
                 started.orchestrate(support.request("execution/management/start", input, Optional.of("start"), 1));
@@ -85,7 +98,11 @@ class AutomationExecutionManagementTest {
         assertTrue(support.turns.commands().isEmpty());
         OrchestrationContracts.FrozenExecution frozen =
                 support.payloads.decode(job.frozenInput(), OrchestrationContracts.FrozenExecution.class);
-        assertEquals("profile", frozen.platform().profile().id());
+        assertEquals("profile", frozen.platform().role().id());
+        assertEquals(List.of(input.toRequest().execution()), support.frozenSelections);
+        assertEquals(
+                frozen.platform().configuration().toolCatalogDigest(),
+                frozen.platform().toolCatalog().digest());
         assertEquals(10, frozen.budget().maximumTurns());
         ViewQueryResult executions = support.decode(
                 started.query(

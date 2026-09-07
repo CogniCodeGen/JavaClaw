@@ -12,7 +12,7 @@ public final class SystemMasterKeyProtector {
     /**
      * 创建当前平台实现。
      *
-     * @param dataRoot 规范化的 data-v5 根目录；Windows 只在其凭据子目录保存 DPAPI 密文
+     * @param dataRoot 规范化的 data-v6 根目录；Windows 只在其凭据子目录保存 DPAPI 密文
      * @return 当前用户级主密钥保护器
      */
     public static MasterKeyProtector create(Path dataRoot) {

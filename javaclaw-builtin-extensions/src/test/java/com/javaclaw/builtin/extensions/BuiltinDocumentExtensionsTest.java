@@ -56,7 +56,8 @@ class BuiltinDocumentExtensionsTest {
                 support.credentials,
                 support.networkGrants,
                 invocation -> invocation.request(),
-                support.embeddings);
+                support.embeddings,
+                com.javaclaw.extension.spi.WorkspaceExecutionPort.denied());
         ExtensionContributions.Tool snapshotTool = started.contributions().stream()
                 .filter(ExtensionContributions.Tool.class::isInstance)
                 .map(ExtensionContributions.Tool.class::cast)
@@ -128,7 +129,7 @@ class BuiltinDocumentExtensionsTest {
     @Test
     void builtinCatalogHasOneBundleForEveryPlannedDomainInStableOrder() {
         List<ExtensionBundle> bundles = BuiltinExtensions.create();
-        assertEquals(9, bundles.size());
+        assertEquals(10, bundles.size());
         assertEquals(
                 List.of(
                         BuiltinExtensionIds.PLAN,
@@ -139,7 +140,8 @@ class BuiltinDocumentExtensionsTest {
                         BuiltinExtensionIds.MEMORY,
                         BuiltinExtensionIds.KNOWLEDGE,
                         BuiltinExtensionIds.SKILL,
-                        BuiltinExtensionIds.SITE),
+                        BuiltinExtensionIds.SITE,
+                        BuiltinExtensionIds.CODING),
                 bundles.stream().map(bundle -> bundle.descriptor().id().value()).toList());
         assertEquals(
                 Set.of(ExtensionAvailability.OPTIONAL),

@@ -1,8 +1,10 @@
 package com.javaclaw.nativehost.ffm;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Objects;
+import java.util.Optional;
 
 /** Windows 64 位 AppContainer、Restricted Token、Job Object 与 ConPTY 的组合入口。 */
 public final class WindowsSandbox {
@@ -11,14 +13,14 @@ public final class WindowsSandbox {
     /**
      * 检查当前进程是否能加载全部必需的 Windows API。
      *
-     * @return 能尝试启动 v5 Windows Sandbox 时为 true
+     * @return 能尝试启动 v6 Windows Sandbox 时为 true
      */
     public static boolean isSupported() {
         return WindowsSandboxNative.isAvailable();
     }
 
     /**
-     * 在临时 AppContainer 中执行批处理命令，并在返回前恢复文件 ACL。
+     * 在临时 AppContainer 中执行批处理命令，并在返回前恢复文件 ACL。调用线程必须绑定可信 WindowsAclEvidence。
      *
      * @param request 已验证请求
      * @return 目标进程退出码；备用内部超时终止时为 124
@@ -32,7 +34,7 @@ public final class WindowsSandbox {
     }
 
     /**
-     * 打开由 AppContainer 与 Job Object 共同约束的 ConPTY 会话。
+     * 打开由 AppContainer 与 Job Object 共同约束的 ConPTY 会话。调用线程必须绑定可信 WindowsAclEvidence。
      *
      * @param request 已验证请求
      * @param columns 初始列数，20 到 1000
@@ -154,6 +156,7 @@ public final class WindowsSandbox {
 
     /** 临时 ACL 或 AppContainer profile 未能恢复；上层必须锁定对应 Workspace。 */
     public static final class AclRestorationException extends IOException {
+        private final Optional<Path> evidenceDirectory;
         /**
          * 保存不含凭据的诊断与清理根因。
          *
@@ -161,7 +164,25 @@ public final class WindowsSandbox {
          * @param cause 原生恢复失败
          */
         public AclRestorationException(String message, Throwable cause) {
+            this(message, cause, Optional.empty());
+        }
+
+        /**
+         * 绑定平台私有目录中的恢复凭据；路径只来自可信 helper 通道，不能由目标输出指定。
+         *
+         * @param message 清理说明
+         * @param cause 原始失败
+         * @param evidenceDirectory 原始 ACL 及对象身份凭据目录；无法确认时为空
+         */
+        public AclRestorationException(String message, Throwable cause, Optional<Path> evidenceDirectory) {
             super(message, cause);
+            this.evidenceDirectory = Objects.requireNonNull(evidenceDirectory, "evidenceDirectory")
+                    .map(path -> path.toAbsolutePath().normalize());
+        }
+
+        /** @return 可信恢复凭据目录；为空时不能自动解除隔离锁 */
+        public Optional<Path> evidenceDirectory() {
+            return evidenceDirectory;
         }
     }
 }

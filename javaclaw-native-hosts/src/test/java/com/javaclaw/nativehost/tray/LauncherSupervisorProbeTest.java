@@ -45,7 +45,7 @@ class LauncherSupervisorProbeTest {
     @Test
     void 仅可信Launcher与存活新鲜心跳同时存在时开放控制() throws Exception {
         Path launcher = Files.writeString(temporaryDirectory.resolve("javaclaw-service"), "launcher");
-        Path presence = temporaryDirectory.resolve("tray-v5.presence");
+        Path presence = temporaryDirectory.resolve("tray-v6.presence");
         Files.writeString(presence, "1\n42\n" + NOW.toEpochMilli() + "\n");
         TrayPresenceProbe tray =
                 new TrayPresenceProbe(presence, Clock.fixed(NOW, ZoneOffset.UTC), processId -> processId == 42);

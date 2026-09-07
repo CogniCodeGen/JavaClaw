@@ -50,7 +50,7 @@ class ThirdPartyWorkerActionHandlerTest {
     void initialize() throws Exception {
         json = new CanonicalJson();
         var keys = ThirdPartyBundleTestFixtures.keyPair();
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         ThirdPartyBundleDirectories directories =
                 new ThirdPartyBundleDirectories(database.dataRoot(), Clock.fixed(NOW, ZoneOffset.UTC));

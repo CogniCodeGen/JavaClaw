@@ -2,7 +2,7 @@ package com.javaclaw.client.extension;
 
 import java.util.Objects;
 
-/** 九个内置扩展的强类型领域 facade 集合。 */
+/** 十个内置扩展的强类型领域 facade 集合。 */
 public final class BuiltinExtensionClients {
     private final PlanClient plans;
     private final LoopClient loops;
@@ -13,6 +13,7 @@ public final class BuiltinExtensionClients {
     private final KnowledgeClient knowledge;
     private final SkillClient skills;
     private final SiteClient sites;
+    private final CodingExtensionClient coding;
 
     /**
      * 创建 facade 集合。
@@ -30,6 +31,12 @@ public final class BuiltinExtensionClients {
         knowledge = new KnowledgeClient(extensions);
         skills = new SkillClient(extensions);
         sites = new SiteClient(extensions);
+        coding = new CodingExtensionClient(extensions);
+    }
+
+    /** @return Coding 环境管理与执行事实 facade */
+    public CodingExtensionClient coding() {
+        return coding;
     }
 
     /** @return Plan facade */

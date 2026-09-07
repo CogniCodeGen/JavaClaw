@@ -12,6 +12,7 @@ import java.util.List;
 
 import com.javaclaw.client.transport.UnixDomainSocketTransport;
 import com.javaclaw.launcher.tray.TrayServerProcess;
+import com.javaclaw.nativehost.ManagedRuntimeDirectory;
 import com.javaclaw.protocol.LocalTransport;
 
 /** 启动或复用当前用户的 Unix Domain Socket App Server。 */
@@ -24,14 +25,12 @@ final class UnixServerSupervisor implements TrayServerProcess {
 
     UnixServerSupervisor(RuntimeLayout layout) {
         this.layout = layout;
-        Path stateRoot = Path.of(System.getProperty("user.home"), ".javaclaw")
-                .toAbsolutePath()
-                .normalize();
-        socketPath = stateRoot.resolve("run/app-server-v5.sock");
-        logFile = stateRoot.resolve("data-v5/logs/app-server.log");
+        socketPath = layout.dataDirectory().resolve("run/app-server-v6.sock");
+        logFile = layout.logDirectory().resolve("app-server.log");
     }
 
     Path ensureRunning() throws IOException, InterruptedException {
+        ManagedRuntimeDirectory.prepare(layout.dataDirectory());
         if (canConnect()) {
             return socketPath;
         }

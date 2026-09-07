@@ -1,0 +1,1 @@
+{"$id":"javaclaw.coding/file-read-input/v1","$schema":"https://json-schema.org/draft/2020-12/schema","additionalProperties":false,"properties":{"maxBytes":{"maximum":1048576,"minimum":1,"type":"integer"},"offsetBytes":{"minimum":0,"type":"integer"},"path":{"maxLength":4096,"minLength":1,"type":"string"}},"required":["path","offsetBytes","maxBytes"],"type":"object"}

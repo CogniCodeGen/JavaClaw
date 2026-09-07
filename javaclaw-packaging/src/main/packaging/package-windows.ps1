@@ -13,6 +13,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+if ([string]::IsNullOrWhiteSpace($env:JAVACLAW_WINDOWS_CERTIFICATE) -or
+    [string]::IsNullOrWhiteSpace($env:JAVACLAW_WINDOWS_TIMESTAMP_URL)) {
+    throw "Windows installers require Authenticode signing for the bounded network service"
+}
+
 if (Test-Path -LiteralPath $AppImageRoot) {
     Remove-Item -LiteralPath $AppImageRoot -Recurse -Force
 }
@@ -53,8 +58,27 @@ if (-not (Test-Path -LiteralPath (Join-Path $installedWorkers "browser\browser-o
     throw "the Windows app image does not contain verified OAuth Browser workers"
 }
 
-# Formal releases sign the executable inside the app image before WiX embeds it in
-# MSI/EXE installers. Runtime DLLs retain their upstream signatures.
+# 固定网络服务随安装器构建并签名；安装授权仅通过受保护安装路径中的固定入口取得。
+$guardSources = Join-Path $PSScriptRoot "..\..\..\..\javaclaw-native-hosts\src\main\native\windows-network-guard"
+$guardBuild = Join-Path $AppImageRoot "network-guard-build"
+& (Join-Path $PSScriptRoot "build-windows-network-guard.ps1") `
+    -SourceDirectory $guardSources -OutputDirectory $guardBuild -Sign
+$nativeDirectory = Join-Path $appImage "app\native"
+New-Item -ItemType Directory -Path $nativeDirectory -Force | Out-Null
+$guard = Join-Path $nativeDirectory "JavaClawNetworkGuard.exe"
+Copy-Item -LiteralPath (Join-Path $guardBuild "JavaClawNetworkGuard.exe") -Destination $guard
+
+# 服务校验其调用方为发行版 Java；保留有效上游签名，未签名 Java 由相同发行身份签署。
+$runtimeJava = Join-Path $appImage "runtime\bin\java.exe"
+if ((Get-AuthenticodeSignature -LiteralPath $runtimeJava).Status -ne "Valid") {
+    & signtool.exe sign /sha1 $env:JAVACLAW_WINDOWS_CERTIFICATE /fd SHA256 `
+        /tr $env:JAVACLAW_WINDOWS_TIMESTAMP_URL /td SHA256 $runtimeJava
+    if ($LASTEXITCODE -ne 0 -or (Get-AuthenticodeSignature -LiteralPath $runtimeJava).Status -ne "Valid") {
+        throw "the fixed service client runtime requires a valid Authenticode signature"
+    }
+}
+
+# WiX 嵌入前签署启动器；运行库 DLL 保留其有效上游签名。
 if (-not [string]::IsNullOrWhiteSpace($env:JAVACLAW_WINDOWS_CERTIFICATE)) {
     if ([string]::IsNullOrWhiteSpace($env:JAVACLAW_WINDOWS_TIMESTAMP_URL)) {
         throw "JAVACLAW_WINDOWS_TIMESTAMP_URL is required for Authenticode signing"
@@ -68,7 +92,11 @@ if (-not [string]::IsNullOrWhiteSpace($env:JAVACLAW_WINDOWS_CERTIFICATE)) {
     }
 }
 
-& $JPackage --type $PackageType --name JavaClaw --app-image $appImage --dest $Destination
+$guardResources = Join-Path $AppImageRoot "network-guard-resources"
+& (Join-Path $PSScriptRoot "prepare-windows-guard-msi.ps1") `
+    -JPackage $JPackage -GuardExecutable $guard -ResourceDirectory $guardResources
+& $JPackage --type $PackageType --name JavaClaw --app-image $appImage --dest $Destination `
+    --resource-dir $guardResources --install-dir JavaClaw
 if ($LASTEXITCODE -ne 0) { throw "jpackage failed while creating the Windows installer" }
 
 $installers = Get-ChildItem -LiteralPath $Destination -File |

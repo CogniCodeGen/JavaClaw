@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class IdeaRunConfigurationArchitectureTest {
-    private static final String SOCKET = "$PROJECT_DIR$/.javaclaw/idea/app-server-v5.sock";
+    private static final String SOCKET = "$PROJECT_DIR$/.javaclaw/idea/app-server-v6.sock";
 
     @Test
     void compoundLaunchesTheSharedAppServerAndDesktopConfigurations() throws Exception {
@@ -33,7 +33,7 @@ class IdeaRunConfigurationArchitectureTest {
     }
 
     @Test
-    void appServerConfigurationPinsModuleMainClassSocketAndDataV5() throws Exception {
+    void appServerConfigurationPinsModuleMainClassSocketAndDataV6() throws Exception {
         Element configuration = configuration("JavaClaw_App_Server.run.xml");
 
         assertApplication(
@@ -41,8 +41,8 @@ class IdeaRunConfigurationArchitectureTest {
         assertEquals("--socket \"" + SOCKET + "\"", option(configuration, "PROGRAM_PARAMETERS"));
         String virtualMachine = option(configuration, "VM_PARAMETERS");
         assertTrue(virtualMachine.contains("--enable-native-access=ALL-UNNAMED"));
-        assertTrue(virtualMachine.contains("-Djavaclaw.data.root=\"$PROJECT_DIR$/.javaclaw/idea/data-v5\""));
-        assertTrue(virtualMachine.contains("-Djavaclaw.log.dir=\"$PROJECT_DIR$/.javaclaw/idea/data-v5/logs\""));
+        assertTrue(virtualMachine.contains("-Djavaclaw.data.root=\"$PROJECT_DIR$/.javaclaw/idea/data-v6\""));
+        assertTrue(virtualMachine.contains("-Djavaclaw.log.dir=\"$PROJECT_DIR$/.javaclaw/idea/data-v6/logs\""));
     }
 
     @Test

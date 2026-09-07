@@ -1,42 +1,38 @@
 package com.javaclaw.server.persistence;
 
+import java.util.List;
 import java.util.Objects;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.InstructionResolution;
+import com.javaclaw.api.PromptSourceMetadata;
 import com.javaclaw.api.ProviderRef;
+import com.javaclaw.runtime.ModelInstructions;
 
 /**
- * Turn 创建时冻结并持久化的完整 system prompt 来源与正文。
+ * Turn 创建事务冻结的完整 Prompt；仅执行链读取正文，管理接口只返回来源元数据。
  *
- * <p>该类型只允许 Turn 执行链读取；Diagnostics、管理 RPC 和日志不得返回 {@code systemInstruction}。
- *
- * @param coreInstructionRevision 内置系统说明版本
- * @param profile 精确 Agent Profile 版本
- * @param provider 精确 Provider/model 版本
- * @param instructions 项目约定脱敏来源清单
- * @param systemInstruction 最终交给模型的完整 system prompt
+ * @param coreInstructionRevision 平台发行版本
+ * @param role 精确 Role 版本
+ * @param provider 精确 Provider/model
+ * @param instructions 项目约定来源快照
+ * @param sources 前五层按拼接顺序排列的来源、revision 与摘要
+ * @param modelInstructions 分层模型输入；不允许被外部上下文覆盖
  */
 public record TurnPromptSnapshot(
         String coreInstructionRevision,
-        AgentProfileRef profile,
+        AgentRoleRef role,
         ProviderRef provider,
         InstructionResolution instructions,
-        String systemInstruction) {
-    /** 校验来源身份和正文。 */
+        List<PromptSourceMetadata> sources,
+        ModelInstructions modelInstructions) {
+    /** 校验来源与正文并冻结来源集合。 */
     public TurnPromptSnapshot {
-        coreInstructionRevision = text(coreInstructionRevision, "coreInstructionRevision");
-        Objects.requireNonNull(profile, "profile");
+        Objects.requireNonNull(coreInstructionRevision, "coreInstructionRevision");
+        Objects.requireNonNull(role, "role");
         Objects.requireNonNull(provider, "provider");
         Objects.requireNonNull(instructions, "instructions");
-        systemInstruction = text(systemInstruction, "systemInstruction");
-    }
-
-    private static String text(String value, String name) {
-        String checked = Objects.requireNonNull(value, name).strip();
-        if (checked.isEmpty()) {
-            throw new IllegalArgumentException(name + " must not be blank");
-        }
-        return checked;
+        sources = List.copyOf(sources);
+        Objects.requireNonNull(modelInstructions, "modelInstructions");
     }
 }

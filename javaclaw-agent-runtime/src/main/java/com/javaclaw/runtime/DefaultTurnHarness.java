@@ -53,6 +53,7 @@ public final class DefaultTurnHarness implements TurnHarness {
         TurnRecoverySnapshot recovery = services.journal().beginOrRecover(command);
         TurnHarnessState state = new TurnHarnessState(command, recovery, clock);
         try {
+            services.journal().activateBudget(command.turn().id(), state.budget());
             if (recovery.phase().unknownAfterRestart()) {
                 return unknownOutcome(state, recovery);
             }
@@ -70,6 +71,8 @@ public final class DefaultTurnHarness implements TurnHarness {
             return fail(state, failure.code(), failure.getMessage(), failure);
         } catch (Exception failure) {
             return fail(state, "TURN_EXECUTION_FAILED", "Turn 执行失败", failure);
+        } finally {
+            services.journal().deactivateBudget(command.turn().id(), state.budget());
         }
     }
 
@@ -79,7 +82,7 @@ public final class DefaultTurnHarness implements TurnHarness {
         ModelCapabilities capabilities =
                 services.models().capabilities(state.command().modelRoute());
         ConversationWindow window = services.contexts().assemble(state.command(), cancellation);
-        state.window(prepareWindow(state, window, cancellation));
+        state.window(window);
         ToolCatalogSnapshot snapshot = state.command().toolCatalog();
         List<ToolDescriptor> initial = services.catalogs().initialTools(snapshot);
         requireCapabilities(capabilities, state.window());
@@ -105,43 +108,30 @@ public final class DefaultTurnHarness implements TurnHarness {
         }
     }
 
-    private ConversationWindow prepareWindow(
-            TurnHarnessState state, ConversationWindow window, CancellationToken cancellation) throws Exception {
-        if (window.estimatedInputTokens() <= state.command().turn().budget().inputTokens()) {
-            return window;
-        }
-        CompactionOutcome outcome =
-                services.compactor().compact(state.command(), window, services.models(), cancellation);
-        services.journal()
-                .append(
-                        state.command().turn().id(),
-                        "compaction",
-                        CoreSchemas.COMPACTION,
-                        outcome.item(),
-                        ItemStatus.COMPLETED);
-        if (outcome.window().estimatedInputTokens()
-                > state.command().turn().budget().inputTokens()) {
-            throw new BudgetExceededException("compacted context still exceeds input budget");
-        }
-        return outcome.window();
-    }
-
     private CommittedModelResult invokeModel(
             TurnHarnessState state,
             VisibleToolCatalog visibleTools,
             ModelCapabilities capabilities,
             CancellationToken cancellation)
             throws Exception {
-        long maximumOutput = state.budget().remainingOutputTokens();
+        new TurnContextPreparation(services)
+                .prepare(state, capabilities.toolCalls() ? visibleTools.list() : List.of(), cancellation);
+        state.budget().checkpoint(cancellation);
+        if (state.window().estimatedInputTokens() > state.budget().remainingInputTokens()) {
+            throw new BudgetExceededException("input token budget exhausted after usage and child reservations");
+        }
+        long maximumOutput =
+                state.command().contextPolicy().outputAllowance(state.budget().remainingOutputTokens());
         if (maximumOutput < 1) {
             throw new BudgetExceededException("output token budget exhausted");
         }
         ModelInvocation invocation = new ModelInvocation(
                 state.command().modelRoute(),
-                state.command().systemInstruction(),
+                state.command().instructions(),
                 state.window().messages(),
                 capabilities.toolCalls() ? visibleTools.list() : List.of(),
-                maximumOutput);
+                maximumOutput,
+                state.command().turn().resolvedConfig().reasoning());
         int invocationNumber = state.nextModelInvocation();
         services.journal()
                 .recordModelIntent(
@@ -183,13 +173,26 @@ public final class DefaultTurnHarness implements TurnHarness {
             }
             visibleTools.requireVisible(call.tool());
         }
-        state.consume(result.usage());
+        boolean withinBudget = state.observeUsage(result.usage());
         services.journal()
                 .commitModelResult(state.command().turn().id(), committed.invocationNumber(), result, state.usage());
-        state.window(state.window().withProviderState(result.providerState()));
         state.assistant().append(result.text());
-        state.appendMessages(List.of(ModelMessage.assistant(result.text(), result.toolCalls())));
+        if (result.providerState().isPresent()) {
+            long estimate =
+                    Math.addExact(result.usage().inputTokens(), result.usage().generatedTokens());
+            state.window(new ConversationWindow(
+                    List.of(),
+                    result.providerState(),
+                    Math.max(estimate, state.window().fixedInputTokens()),
+                    state.window().fixedInputTokens()));
+        } else {
+            state.window(state.window().withProviderState(result.providerState()));
+            state.appendMessages(List.of(ModelMessage.assistant(result.text(), result.toolCalls())));
+        }
         state.modelCommitted(result);
+        if (!withinBudget) {
+            throw new BudgetExceededException("Provider usage exceeded the frozen budget");
+        }
     }
 
     private void executeTools(
@@ -263,12 +266,18 @@ public final class DefaultTurnHarness implements TurnHarness {
     }
 
     private TurnExecutionResult complete(TurnHarnessState state) {
+        finishResources(state);
         services.journal()
                 .transition(state.command().turn().id(), TurnStatus.RUNNING, TurnStatus.COMPLETED, Optional.empty());
         return result(state, TurnStatus.COMPLETED, Optional.empty());
     }
 
     private TurnExecutionResult cancel(TurnHarnessState state) {
+        try {
+            finishResources(state);
+        } catch (TurnFailureException failure) {
+            return fail(state, failure.code(), failure.getMessage(), failure);
+        }
         services.journal()
                 .transition(state.command().turn().id(), TurnStatus.RUNNING, TurnStatus.CANCELLED, Optional.empty());
         return result(state, TurnStatus.CANCELLED, Optional.empty());
@@ -280,6 +289,13 @@ public final class DefaultTurnHarness implements TurnHarness {
 
     private TurnExecutionResult fail(
             TurnHarnessState state, String code, String message, Exception failure, Map<String, String> details) {
+        try {
+            finishResources(state);
+        } catch (TurnFailureException cleanupFailure) {
+            code = cleanupFailure.code();
+            message = cleanupFailure.getMessage();
+            failure.addSuppressed(cleanupFailure);
+        }
         LOGGER.warn(
                 "Turn {} failed with {} ({})",
                 state.command().turn().id(),
@@ -290,6 +306,17 @@ public final class DefaultTurnHarness implements TurnHarness {
         services.journal()
                 .transition(state.command().turn().id(), TurnStatus.RUNNING, TurnStatus.FAILED, Optional.of(code));
         return result(state, TurnStatus.FAILED, Optional.of(code));
+    }
+
+    private void finishResources(TurnHarnessState state) {
+        if (!state.beginFinalization()) {
+            return;
+        }
+        try {
+            services.resources().finish(state.command().turn().id());
+        } catch (Exception failure) {
+            throw new TurnFailureException("RESOURCE_FINALIZATION_UNKNOWN", "Turn 资源关闭或结束事实未能确认");
+        }
     }
 
     private TurnExecutionResult unknownOutcome(TurnHarnessState state, TurnRecoverySnapshot recovery) {

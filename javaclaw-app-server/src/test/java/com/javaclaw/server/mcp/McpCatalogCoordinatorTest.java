@@ -60,7 +60,7 @@ class McpCatalogCoordinatorTest {
 
     @BeforeEach
     void 初始化空白Catalog存储() {
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         workspace = new CoreCommandService(database, json, CLOCK)

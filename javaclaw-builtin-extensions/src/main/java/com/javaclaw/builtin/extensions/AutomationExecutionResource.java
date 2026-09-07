@@ -14,7 +14,7 @@ import java.util.function.Function;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.builtin.contracts.OrchestrationContracts;
 import com.javaclaw.builtin.contracts.VersionedExtensionDocument;
-import com.javaclaw.extension.spi.AutomationProfileOption;
+import com.javaclaw.extension.spi.AutomationRoleOption;
 import com.javaclaw.extension.spi.ExpectedRevisionBinding;
 import com.javaclaw.extension.spi.ExtensionContribution;
 import com.javaclaw.extension.spi.ExtensionContributions;
@@ -51,7 +51,7 @@ final class AutomationExecutionResource<T extends VersionedExtensionDocument> {
     static final String JOB_TYPE = "definition-execution";
     private static final String MANAGEMENT_START = "execution/management/start";
     private static final String DEFINITION_VIEW = "execution/definition/view.selected";
-    private static final String PROFILE_VIEW = "execution/profile/view.list";
+    private static final String ROLE_VIEW = "execution/role/view.list";
 
     private final ManagedDocumentResource<T> documents;
     private final String displayName;
@@ -106,7 +106,14 @@ final class AutomationExecutionResource<T extends VersionedExtensionDocument> {
         contributions.add(new ExtensionContributions.SchedulableDefinition(
                 "execution.definition.schedulable", displayName, this::schedulableDefinitions));
         contributions.add(new ExtensionContributions.Query(
-                "execution.query", Set.of("execution/view.list", DEFINITION_VIEW, PROFILE_VIEW), this::viewQuery));
+                "execution.query",
+                Set.of(
+                        "execution/view.list",
+                        DEFINITION_VIEW,
+                        ROLE_VIEW,
+                        AutomationSelectionView.PROVIDERS,
+                        AutomationSelectionView.PERMISSIONS),
+                this::viewQuery));
         contributions.add(new ExtensionContributions.View("execution.view", executionView(executionActions)));
         contributions.addAll(List.copyOf(additionalContributions));
         return List.copyOf(contributions);
@@ -125,36 +132,31 @@ final class AutomationExecutionResource<T extends VersionedExtensionDocument> {
     }
 
     List<ExtensionSchema> schemas() {
-        Map<String, Object> profile = ContractSchemaFactory.object(
-                Map.of(
-                        "id", ContractSchemaFactory.string(),
-                        "revision", ContractSchemaFactory.integer(1)),
-                List.of("id", "revision"));
         Map<String, Object> budget = ContractSchemaFactory.object(
                 Map.of(
                         "maximumTurns", ContractSchemaFactory.boundedInteger(1, 10_000),
                         "inputTokens", ContractSchemaFactory.integer(1),
                         "outputTokens", ContractSchemaFactory.integer(1),
-                        "toolCalls", ContractSchemaFactory.integer(1)),
+                        "toolCalls", ContractSchemaFactory.integer(0)),
                 List.of("maximumTurns", "inputTokens", "outputTokens", "toolCalls"));
         CanonicalPayload startSchema = payloads()
                 .encode(Map.of(
                         "$schema",
                         "https://json-schema.org/draft/2020-12/schema",
                         "$id",
-                        extensionId().value() + "/execution-start/v1",
+                        extensionId().value() + "/execution-start/v2",
                         "additionalProperties",
                         false,
                         "properties",
                         Map.of(
                                 "definitionId", Map.of("minLength", 1, "type", "string"),
-                                "profile", profile,
+                                "execution", ExecutionSelectionSchema.create(),
                                 "budget", budget),
                         "required",
-                        List.of("definitionId", "profile", "budget"),
+                        List.of("definitionId", "execution", "budget"),
                         "type",
                         "object"));
-        return List.of(new ExtensionSchema(extensionId().value() + "/execution-start/v1", startSchema));
+        return List.of(new ExtensionSchema(extensionId().value() + "/execution-start/v2", startSchema));
     }
 
     private ExtensionResponse startExecution(ExtensionRequest request, ExtensionExecutionContext context)
@@ -171,8 +173,8 @@ final class AutomationExecutionResource<T extends VersionedExtensionDocument> {
     private OrchestrationContracts.StartRequest decodeStart(ExtensionRequest request) {
         if (MANAGEMENT_START.equals(request.operation())) {
             return payloads()
-                    .decode(request.payload(), OrchestrationContracts.ManagementStartRequest.class)
-                    .toStartRequest();
+                    .decode(request.payload(), AutomationFormContracts.StartPayload.class)
+                    .toRequest();
         }
         return payloads().decode(request.payload(), OrchestrationContracts.StartRequest.class);
     }
@@ -183,7 +185,7 @@ final class AutomationExecutionResource<T extends VersionedExtensionDocument> {
         T definition = documents.requireDocument(request, start.definitionId(), context);
         startValidator.accept(definition);
         var platform =
-                context.executionPolicies().freeze(request.workspaceId(), start.profile(), context.cancellation());
+                context.executionPolicies().freeze(request.workspaceId(), start.execution(), context.cancellation());
         if (request.unattendedExecutionScope().isPresent()) {
             platform = platform.withUnattendedExecutionScope(
                     request.unattendedExecutionScope().orElseThrow());
@@ -204,9 +206,11 @@ final class AutomationExecutionResource<T extends VersionedExtensionDocument> {
 
     private ExtensionResponse viewQuery(ExtensionRequest request, ExtensionExecutionContext context) throws Exception {
         return switch (request.operation()) {
+            case AutomationSelectionView.PROVIDERS, AutomationSelectionView.PERMISSIONS ->
+                AutomationSelectionView.query(request, context, payloads());
             case "execution/view.list" -> viewExecutions(request, context);
             case DEFINITION_VIEW -> viewDefinition(request, context);
-            case PROFILE_VIEW -> viewProfiles(request, context);
+            case ROLE_VIEW -> viewRoles(request, context);
             default -> throw new IllegalArgumentException("unknown execution view operation");
         };
     }
@@ -258,17 +262,17 @@ final class AutomationExecutionResource<T extends VersionedExtensionDocument> {
         row.put(field, value);
     }
 
-    private ExtensionResponse viewProfiles(ExtensionRequest request, ExtensionExecutionContext context) {
+    private ExtensionResponse viewRoles(ExtensionRequest request, ExtensionExecutionContext context) {
         ViewQueryRequest query = payloads().decode(request.payload(), ViewQueryRequest.class);
-        if (!"profiles".equals(query.dataSourceId()) || !query.arguments().isEmpty()) {
-            throw new IllegalArgumentException("profile view does not accept arguments");
+        if (!"roles".equals(query.dataSourceId()) || !query.arguments().isEmpty()) {
+            throw new IllegalArgumentException("role view does not accept arguments");
         }
-        List<ProfileRow> available = context.executionPolicies().profiles(request.workspaceId()).stream()
-                .map(ProfileRow::from)
+        List<RoleRow> available = context.executionPolicies().roles(request.workspaceId()).stream()
+                .map(RoleRow::from)
                 .toList();
-        int start = profilePageStart(available, query.cursor());
+        int start = rolePageStart(available, query.cursor());
         int end = Math.min(available.size(), Math.addExact(start, query.limit()));
-        List<ProfileRow> rows = available.subList(start, end);
+        List<RoleRow> rows = available.subList(start, end);
         boolean hasMore = end < available.size();
         ViewQueryResult result = new ViewQueryResult(
                 query.dataSourceId(),
@@ -276,7 +280,7 @@ final class AutomationExecutionResource<T extends VersionedExtensionDocument> {
                 payloads().encode(Map.of()),
                 hasMore && !rows.isEmpty() ? rows.getLast().id() : "",
                 hasMore,
-                rows.stream().mapToLong(ProfileRow::revision).max().orElse(0));
+                rows.stream().mapToLong(RoleRow::revision).max().orElse(0));
         return new ExtensionResponse(payloads().encode(result), result.revision());
     }
 
@@ -312,16 +316,16 @@ final class AutomationExecutionResource<T extends VersionedExtensionDocument> {
         }
     }
 
-    private static int profilePageStart(List<ProfileRow> profiles, String cursor) {
+    private static int rolePageStart(List<RoleRow> roles, String cursor) {
         if (cursor.isEmpty()) {
             return 0;
         }
-        for (int index = 0; index < profiles.size(); index++) {
-            if (profiles.get(index).id().equals(cursor)) {
+        for (int index = 0; index < roles.size(); index++) {
+            if (roles.get(index).id().equals(cursor)) {
                 return index + 1;
             }
         }
-        throw new IllegalArgumentException("profile view cursor is stale");
+        throw new IllegalArgumentException("role view cursor is stale");
     }
 
     private ViewSchema executionView(List<ViewAction> actions) {
@@ -330,18 +334,19 @@ final class AutomationExecutionResource<T extends VersionedExtensionDocument> {
                 extensionId().value() + ".executions",
                 displayName + "执行",
                 executionSources(),
-                List.of(definitionTable(), profileTable(), startForm(), executionTable(actions)));
+                AutomationSelectionView.withTables(
+                        List.of(definitionTable(), roleTable(), startForm(), executionTable(actions))));
     }
 
     private List<ViewDataSource> executionSources() {
         List<ViewArgumentBinding> selection = List.of(
                 new ViewArgumentBinding("id", "documents", "id"),
                 new ViewArgumentBinding("revision", "documents", "revision"));
-        return List.of(
+        return AutomationSelectionView.withSources(List.of(
                 new ViewDataSource("documents", "view.list", Map.of(), List.of(), 100),
                 new ViewDataSource("executionDefinition", DEFINITION_VIEW, Map.of(), selection, 1),
-                new ViewDataSource("profiles", PROFILE_VIEW, Map.of(), List.of(), 100),
-                new ViewDataSource("executions", "execution/view.list", Map.of(), List.of(), 100));
+                new ViewDataSource("roles", ROLE_VIEW, Map.of(), List.of(), 100),
+                new ViewDataSource("executions", "execution/view.list", Map.of(), List.of(), 100)));
     }
 
     private ViewSchema.Table definitionTable() {
@@ -357,14 +362,14 @@ final class AutomationExecutionResource<T extends VersionedExtensionDocument> {
                 List.of());
     }
 
-    private ViewSchema.Table profileTable() {
+    private ViewSchema.Table roleTable() {
         return new ViewSchema.Table(
-                "executionProfiles",
-                "选择 Agent Profile",
-                "profiles",
+                "executionRoles",
+                "选择 Agent Role",
+                "roles",
                 "id",
                 List.of(
-                        new ViewSchema.Column("name", "Profile", Optional.of(240)),
+                        new ViewSchema.Column("name", "Agent", Optional.of(240)),
                         new ViewSchema.Column("id", "标识", Optional.of(220)),
                         new ViewSchema.Column("revision", "版本", Optional.of(90))),
                 ViewSelectionMode.SINGLE,
@@ -380,9 +385,14 @@ final class AutomationExecutionResource<T extends VersionedExtensionDocument> {
                 new ExpectedRevisionBinding.SourceRevision("executionDefinition"),
                 false,
                 new ViewCommandBinding("definitionId", new ViewBinding("executionDefinition", "id")),
-                new ViewCommandBinding("profileId", new ViewBinding("profiles", "id")),
-                new ViewCommandBinding("profileRevision", new ViewBinding("profiles", "revision")));
-        return new ViewSchema.Form("executionStart", "执行预算", budgetFields(), start);
+                new ViewCommandBinding("role", new ViewBinding("roles", "role")),
+                new ViewCommandBinding("provider", new ViewBinding("providers", "provider")),
+                new ViewCommandBinding("permissionProfile", new ViewBinding("permissions", "permissionProfile")));
+        return new ViewSchema.Form(
+                "executionStart",
+                "执行配置与预算",
+                AutomationSelectionView.withFields("executionDefinition", budgetFields()),
+                start);
     }
 
     private List<ViewField> budgetFields() {
@@ -390,7 +400,7 @@ final class AutomationExecutionResource<T extends VersionedExtensionDocument> {
                 budgetField("maximumTurns", "最大 Turn 数", "10", 1, 10_000),
                 budgetField("inputTokens", "输入 token 总上限", "100000", 1, 1_000_000_000),
                 budgetField("outputTokens", "输出 token 总上限", "50000", 1, 1_000_000_000),
-                budgetField("toolCalls", "Tool 调用总上限", "100", 1, 1_000_000));
+                budgetField("toolCalls", "Tool 调用总上限", "100", 0, 1_000_000));
     }
 
     private static ViewField budgetField(String name, String label, String initial, long minimum, long maximum) {
@@ -435,9 +445,9 @@ final class AutomationExecutionResource<T extends VersionedExtensionDocument> {
         return documents.extensionId();
     }
 
-    private record ProfileRow(String id, long revision, String name) {
-        private static ProfileRow from(AutomationProfileOption option) {
-            return new ProfileRow(option.profile().id(), option.profile().revision(), option.displayName());
+    private record RoleRow(String id, long revision, String name, com.javaclaw.api.AgentRoleRef role) {
+        private static RoleRow from(AutomationRoleOption option) {
+            return new RoleRow(option.role().id(), option.role().revision(), option.displayName(), option.role());
         }
     }
 }

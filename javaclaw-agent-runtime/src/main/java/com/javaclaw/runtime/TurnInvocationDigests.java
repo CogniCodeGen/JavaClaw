@@ -17,7 +17,10 @@ final class TurnInvocationDigests {
         update(digest, "model");
         update(digest, Integer.toString(invocationNumber));
         update(digest, invocation.modelId());
-        update(digest, invocation.systemInstruction());
+        update(digest, invocation.instructions().systemInstruction());
+        update(digest, invocation.instructions().developerInstructions());
+        update(digest, invocation.instructions().responseContract());
+        update(digest, invocation.reasoning().map(Enum::name).orElse(""));
         update(digest, Long.toString(invocation.maximumOutputTokens()));
         for (ModelMessage message : invocation.messages()) {
             update(digest, message.role().name());

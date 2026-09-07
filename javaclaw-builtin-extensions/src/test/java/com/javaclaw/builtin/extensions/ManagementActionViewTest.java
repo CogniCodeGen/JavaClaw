@@ -39,7 +39,17 @@ class ManagementActionViewTest {
             Set<String> operations = operations(started.contributions());
             List<ViewAction> actions = actions(started.contributions());
 
-            assertFalse(actions.isEmpty(), bundle.descriptor().id() + " management view is read-only");
+            boolean declaresView =
+                    started.contributions().stream().anyMatch(ExtensionContributions.View.class::isInstance);
+            if (declaresView) {
+                assertFalse(actions.isEmpty(), bundle.descriptor().id() + " management view is read-only");
+            } else {
+                // Coding 设置使用平台 typed SDK 页面，不宣告 ViewSchema 页面；其命令仍必须注册。
+                assertEquals(
+                        com.javaclaw.builtin.contracts.BuiltinExtensionIds.CODING,
+                        bundle.descriptor().id().value());
+                assertEquals(Set.of("environment/update", "toolchain/install"), operations);
+            }
             assertTrue(
                     actions.stream().allMatch(action -> operations.contains(action.command())),
                     bundle.descriptor().id() + " exposes an action without a handler");

@@ -154,7 +154,7 @@ class WorkerImageAssemblerValidationTest {
     private Path browserImage(String name) throws IOException {
         Path image = runtimeImage(name);
         Path app = Files.createDirectories(image.resolve("app"));
-        Files.createFile(app.resolve("javaclaw-browser-service-5.0.jar"));
+        Files.createFile(app.resolve("javaclaw-browser-service-6.0.jar"));
         Files.createFile(app.resolve("playwright-1.52.0.jar"));
         Files.createDirectory(image.resolve("browser"));
         return image;
@@ -164,7 +164,7 @@ class WorkerImageAssemblerValidationTest {
         Path image = runtimeImage("knowledge-" + failure);
         Path app = Files.createDirectories(image.resolve("app"));
         if (!"entry".equals(failure)) {
-            Files.createFile(app.resolve("javaclaw-knowledge-worker-5.0.jar"));
+            Files.createFile(app.resolve("javaclaw-knowledge-worker-6.0.jar"));
         }
         if (!"entry".equals(failure) && !"pdf".equals(failure)) {
             Files.createFile(app.resolve("pdfbox-3.0.jar"));
@@ -180,7 +180,7 @@ class WorkerImageAssemblerValidationTest {
         Path image = runtimeImage("browser-" + failure);
         Path app = Files.createDirectories(image.resolve("app"));
         if (!"entry".equals(failure)) {
-            Files.createFile(app.resolve("javaclaw-browser-service-5.0.jar"));
+            Files.createFile(app.resolve("javaclaw-browser-service-6.0.jar"));
         }
         if (!"entry".equals(failure) && !"playwright".equals(failure)) {
             Files.createFile(app.resolve("playwright-1.52.0.jar"));

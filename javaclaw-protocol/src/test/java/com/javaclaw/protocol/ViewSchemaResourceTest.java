@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ViewSchemaResourceTest {
     @Test
     void publishesStrictViewSchemaTwoResourceWithoutExecutableNodeTypes() throws IOException {
-        try (var stream = ViewSchemaResourceTest.class.getResourceAsStream("/schema/view-schema-v2.schema.json")) {
+        try (var stream = ViewSchemaResourceTest.class.getResourceAsStream("/schema/view-schema-v3.schema.json")) {
             assertNotNull(stream);
             String schema = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
 

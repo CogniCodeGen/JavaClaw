@@ -7,10 +7,12 @@ import java.util.Optional;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Consumer;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
+import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.PermissionDecisionTrace;
 import com.javaclaw.api.PermissionProfile;
+import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.SecurityGrantKind;
 import com.javaclaw.api.ToolCatalogQueryResult;
 import com.javaclaw.api.ToolDescriptor;
@@ -96,7 +98,7 @@ public final class UnattendedToolGrantSettingsPresenter {
     }
 
     /**
-     * 选择精确 Schedule，并沿其 Profile 引用读取实际可执行工具目录。
+     * 选择精确 Schedule，并沿其执行配置读取实际可执行工具目录。
      *
      * @param schedule 当前目录中的定义
      */
@@ -106,7 +108,7 @@ public final class UnattendedToolGrantSettingsPresenter {
             publish(copy(SettingsLoadState.READY, "请先创建或丢弃当前授权草稿", state.epoch()));
             return;
         }
-        Optional<AgentProfileRef> profile = profile(checked);
+        Optional<ExecutionOverrides> profile = execution(checked);
         if (profile.isEmpty()) {
             publish(copy(SettingsLoadState.ERROR, "该定时任务不启动 Agent Turn，不能创建工具授权", state.epoch()));
             return;
@@ -129,15 +131,15 @@ public final class UnattendedToolGrantSettingsPresenter {
     /** @param query 名称、说明或标签关键词 */
     public void searchTools(String query) {
         Workspace workspace = state.workspace().orElseThrow();
-        AgentProfile profile = state.binding().agentProfile().orElseThrow();
+        AgentRole profile = state.binding().agentRole().orElseThrow();
         PermissionProfile permission = state.binding().permissionProfile().orElseThrow();
         String normalized = Objects.requireNonNullElse(query, "").strip();
         long epoch = nextEpoch();
         publish(copy(SettingsLoadState.LOADING, "正在筛选实际可执行工具…", epoch));
         gateway.toolCatalog(
                         workspace.id(),
-                        profile.spec().permissionProfile(),
-                        Optional.of(new AgentProfileRef(profile.id(), profile.revision())),
+                        new PermissionProfileRef(permission.id(), permission.version()),
+                        Optional.of(new AgentRoleRef(profile.id(), profile.revision())),
                         normalized,
                         TOOL_LIMIT)
                 .whenComplete((catalog, failure) -> applyToolSearch(epoch, permission, catalog, failure));
@@ -151,7 +153,7 @@ public final class UnattendedToolGrantSettingsPresenter {
         UnattendedGrantBindingState selected = new UnattendedGrantBindingState(
                 binding.schedules(),
                 binding.schedule(),
-                binding.agentProfile(),
+                binding.agentRole(),
                 binding.permissionProfile(),
                 binding.catalog(),
                 Optional.of(checked));
@@ -210,7 +212,7 @@ public final class UnattendedToolGrantSettingsPresenter {
         UnattendedGrantBindingState cleared = new UnattendedGrantBindingState(
                 binding.schedules(),
                 binding.schedule(),
-                binding.agentProfile(),
+                binding.agentRole(),
                 binding.permissionProfile(),
                 binding.catalog(),
                 Optional.empty());
@@ -231,16 +233,17 @@ public final class UnattendedToolGrantSettingsPresenter {
         return grants.thenCombine(schedules.schedules(workspace.id()), WorkspaceCatalog::new);
     }
 
-    private CompletionStage<ResolvedCatalog> resolve(WorkspaceId workspaceId, AgentProfileRef reference) {
-        return gateway.profile(reference)
-                .thenCompose(profile -> gateway.permissionProfile(profile.spec().permissionProfile())
-                        .thenCompose(permission -> gateway.toolCatalog(
-                                        workspaceId,
-                                        profile.spec().permissionProfile(),
-                                        Optional.of(reference),
-                                        "",
-                                        TOOL_LIMIT)
-                                .thenApply(catalog -> new ResolvedCatalog(profile, permission, catalog))));
+    private CompletionStage<ResolvedCatalog> resolve(WorkspaceId workspaceId, ExecutionOverrides execution) {
+        return gateway.previewExecution(workspaceId, execution)
+                .thenCompose(preview -> gateway.role(preview.role())
+                        .thenCompose(role -> gateway.permissionProfile(preview.permissionProfile())
+                                .thenCompose(permission -> gateway.toolCatalog(
+                                                workspaceId,
+                                                preview.permissionProfile(),
+                                                Optional.of(preview.role()),
+                                                "",
+                                                TOOL_LIMIT)
+                                        .thenApply(catalog -> new ResolvedCatalog(role, permission, catalog)))));
     }
 
     private void execute(CompletionStage<?> operation, String success) {
@@ -333,7 +336,7 @@ public final class UnattendedToolGrantSettingsPresenter {
                 Optional.of(resolved.permission()),
                 Optional.of(resolved.catalog()),
                 Optional.empty());
-        String message = resolved.catalog().tools().isEmpty() ? "该定时任务的精确 Profile 当前没有可执行工具" : "请选择要授权的精确工具";
+        String message = resolved.catalog().tools().isEmpty() ? "该定时任务的精确执行配置 当前没有可执行工具" : "请选择要授权的精确工具";
         publish(withBinding(SettingsLoadState.READY, binding, UnattendedToolGrantForm.empty(), message, epoch));
     }
 
@@ -354,7 +357,7 @@ public final class UnattendedToolGrantSettingsPresenter {
         UnattendedGrantBindingState binding = new UnattendedGrantBindingState(
                 previous.schedules(),
                 previous.schedule(),
-                previous.agentProfile(),
+                previous.agentRole(),
                 Optional.of(permission),
                 Optional.of(catalog),
                 selected);
@@ -380,10 +383,10 @@ public final class UnattendedToolGrantSettingsPresenter {
                 .orElseThrow(() -> new IllegalArgumentException("定时任务不在当前工作区目录中"));
     }
 
-    private static Optional<AgentProfileRef> profile(ScheduleContracts.Definition schedule) {
+    private static Optional<ExecutionOverrides> execution(ScheduleContracts.Definition schedule) {
         return switch (schedule.target().kind()) {
-            case DEFINITION -> schedule.target().definition().map(ScheduleContracts.DefinitionTarget::profile);
-            case TURN_TEMPLATE -> schedule.target().turnTemplate().map(ScheduleContracts.TurnTemplate::profile);
+            case DEFINITION -> schedule.target().definition().map(ScheduleContracts.DefinitionTarget::execution);
+            case TURN_TEMPLATE -> schedule.target().turnTemplate().map(ScheduleContracts.TurnTemplate::execution);
             case ACTION -> Optional.empty();
         };
     }
@@ -434,7 +437,7 @@ public final class UnattendedToolGrantSettingsPresenter {
         }
     }
 
-    private record ResolvedCatalog(AgentProfile profile, PermissionProfile permission, ToolCatalogQueryResult catalog) {
+    private record ResolvedCatalog(AgentRole profile, PermissionProfile permission, ToolCatalogQueryResult catalog) {
         private ResolvedCatalog {
             Objects.requireNonNull(profile, "profile");
             Objects.requireNonNull(permission, "permission");

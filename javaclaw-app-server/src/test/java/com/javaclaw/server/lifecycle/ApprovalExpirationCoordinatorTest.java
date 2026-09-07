@@ -73,10 +73,10 @@ class ApprovalExpirationCoordinatorTest {
     private ApprovalService approvals;
 
     @BeforeEach
-    void initializeDataV5() {
+    void initializeDataV6() {
         clock = new MutableClock(NOW);
         json = new CanonicalJson();
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         core = new CoreCommandService(database, json, clock);
         journal = new H2TurnJournal(database, CoreItemCodecs.createRegistry(json), json, clock);

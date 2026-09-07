@@ -8,17 +8,10 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfile;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.PermissionLayerKind;
-import com.javaclaw.api.PermissionProfile;
-import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.PermissionSection;
-import com.javaclaw.api.ProfileLifecycle;
-import com.javaclaw.api.ProviderEndpoint;
-import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ProviderReadiness;
-import com.javaclaw.api.ProviderRef;
 import com.javaclaw.api.ToolRisk;
 import com.javaclaw.api.VaultManagementAction;
 import com.javaclaw.api.VaultState;
@@ -28,7 +21,6 @@ import com.javaclaw.protocol.JsonRpcError;
 import com.javaclaw.protocol.ProtocolErrorCode;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CoreSettingsPresentersTest {
@@ -117,74 +109,6 @@ class CoreSettingsPresentersTest {
     }
 
     @Test
-    void profile创建时冻结精确Provider权限与预算引用() {
-        TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
-        AgentProfileSettingsPresenter presenter = new AgentProfileSettingsPresenter(gateway);
-        AtomicReference<AgentProfileSettingsState> latest = new AtomicReference<>();
-        presenter.subscribe(latest::set);
-        presenter.reload();
-
-        presenter.createDraft();
-        ProviderEndpoint provider = gateway.providers.getFirst();
-        PermissionProfile permission = gateway.permissions.getFirst();
-        presenter.updateDraft(new AgentProfileDraft(
-                "reviewer",
-                "Reviewer",
-                "检查边界。",
-                Optional.of(new ProviderRef(
-                        provider.id(),
-                        provider.revision(),
-                        provider.spec().models().getFirst().modelId())),
-                Optional.of(new PermissionProfileRef(permission.id(), permission.version())),
-                "core/tool/search",
-                8_000,
-                2_000,
-                6,
-                1,
-                120,
-                ProfileLifecycle.ACTIVE));
-        presenter.save();
-
-        AgentProfile saved = latest.get().selected().orElseThrow();
-        assertEquals("reviewer", saved.id());
-        assertEquals(provider.revision(), saved.spec().provider().endpointRevision());
-        assertEquals(permission.version(), saved.spec().permissionProfile().version());
-        assertFalse(latest.get().dirty());
-    }
-
-    @Test
-    void provider新版本只在用户显式操作后更新旧智能体引用() {
-        TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
-        AgentProfile oldProfile = gateway.createProfile(
-                        "old-provider-profile",
-                        TestCoreSettingsGateway.profileSpec(),
-                        com.javaclaw.client.CommandOptions.create(0))
-                .toCompletableFuture()
-                .join();
-        ProviderEndpoint oldProvider = gateway.providers.getFirst();
-        ProviderEndpoint newProvider = gateway.updateProvider(
-                        oldProvider.id(),
-                        oldProvider.spec(),
-                        ProviderLifecycle.ACTIVE,
-                        com.javaclaw.client.CommandOptions.create(oldProvider.revision()))
-                .toCompletableFuture()
-                .join();
-        ProviderProfileReferencePresenter presenter = new ProviderProfileReferencePresenter(gateway);
-
-        presenter.bind(Optional.of(newProvider));
-
-        assertEquals(oldProfile.id(), presenter.state().selected().orElseThrow().id());
-        assertEquals(
-                oldProvider.revision(),
-                gateway.profiles.getFirst().spec().provider().endpointRevision());
-        presenter.updateSelected();
-        assertEquals(
-                newProvider.revision(),
-                gateway.profiles.getFirst().spec().provider().endpointRevision());
-        assertTrue(presenter.state().staleProfiles().isEmpty());
-    }
-
-    @Test
     void permission的standard只读且clone生成独立版本并显示本地差异() {
         TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
         PermissionProfileSettingsPresenter presenter = new PermissionProfileSettingsPresenter(gateway);
@@ -270,18 +194,12 @@ class CoreSettingsPresentersTest {
         assertEquals(
                 "javaclaw-app-server",
                 connectionState.get().summary().orElseThrow().serverName());
-        assertEquals(2, connectionState.get().summary().orElseThrow().protocolVersion());
+        assertEquals(3, connectionState.get().summary().orElseThrow().protocolVersion());
     }
 
     @Test
-    void workspace重命名归档和默认Profile绑定都使用权威对象与精确版本() {
+    void workspace重命名归档使用权威对象与精确版本() {
         TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
-        AgentProfile profile = gateway.createProfile(
-                        "workspace-profile",
-                        TestCoreSettingsGateway.profileSpec(),
-                        com.javaclaw.client.CommandOptions.create(0))
-                .toCompletableFuture()
-                .join();
         WorkspaceSettingsPresenter presenter = new WorkspaceSettingsPresenter(gateway);
         AtomicReference<WorkspaceSettingsState> latest = new AtomicReference<>();
         presenter.subscribe(latest::set);
@@ -292,10 +210,6 @@ class CoreSettingsPresentersTest {
         presenter.editName("  新工作区  ");
         presenter.saveName();
         assertEquals("新工作区", gateway.workspaceSettings.lastName);
-        presenter.chooseProfile(profile);
-        presenter.saveProfile();
-        assertEquals(profile.id(), gateway.workspaceSettings.lastProfile.id());
-        assertEquals(profile.revision(), gateway.workspaceSettings.lastProfile.revision());
         presenter.editName("临时草稿");
         presenter.discardDraft();
         assertEquals(workspace.name(), latest.get().draftName());

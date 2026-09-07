@@ -47,8 +47,8 @@ class CoreAndTurnRepositoryBranchesTest {
     private Workspace firstWorkspace;
 
     @BeforeEach
-    void initializeDataV5() {
-        database = new H2Database(temporaryDirectory.resolve("data-v5"));
+    void initializeDataV6() {
+        database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         json = new CanonicalJson();
         core = new CoreCommandService(database, json, Clock.fixed(NOW, ZoneOffset.UTC));

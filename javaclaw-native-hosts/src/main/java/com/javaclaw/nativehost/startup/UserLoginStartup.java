@@ -12,6 +12,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 import com.javaclaw.extension.spi.LoginStartupPort;
+import com.javaclaw.nativehost.LocalRuntimeDirectories;
 
 /** 在 macOS LaunchAgents、Linux systemd user 或 Windows Task Scheduler 中管理登录启动项。 */
 public final class UserLoginStartup implements LoginStartupPort {
@@ -38,7 +39,8 @@ public final class UserLoginStartup implements LoginStartupPort {
         Path launcher = configured.isEmpty()
                 ? null
                 : Path.of(configured).toAbsolutePath().normalize();
-        return new UserLoginStartup(platform(os, home, launcher, new ProcessCommandRunner()));
+        return new UserLoginStartup(
+                platform(os, home, launcher, LocalRuntimeDirectories.dataDirectory(), new ProcessCommandRunner()));
     }
 
     @Override
@@ -56,18 +58,20 @@ public final class UserLoginStartup implements LoginStartupPort {
     }
 
     static UserLoginStartup createForTest(String os, Path home, Path launcher, CommandRunner commands) {
-        return new UserLoginStartup(platform(os.toLowerCase(Locale.ROOT), home, launcher, commands));
+        return new UserLoginStartup(
+                platform(os.toLowerCase(Locale.ROOT), home, launcher, home.resolve("data-v6"), commands));
     }
 
-    private static PlatformRegistration platform(String os, Path home, Path launcher, CommandRunner commands) {
+    private static PlatformRegistration platform(
+            String os, Path home, Path launcher, Path dataRoot, CommandRunner commands) {
         if (os.contains("mac")) {
-            return new MacRegistration(home, launcher);
+            return new MacRegistration(home, launcher, dataRoot);
         }
         if (os.contains("win")) {
-            return new WindowsRegistration(launcher, commands);
+            return new WindowsRegistration(launcher, dataRoot, commands);
         }
         if (os.contains("linux")) {
-            return new LinuxRegistration(home, launcher, commands);
+            return new LinuxRegistration(home, launcher, dataRoot, commands);
         }
         return new UnsupportedRegistration(os);
     }
@@ -135,7 +139,7 @@ public final class UserLoginStartup implements LoginStartupPort {
         Status status(boolean required);
     }
 
-    private record MacRegistration(Path home, Path launcher) implements PlatformRegistration {
+    private record MacRegistration(Path home, Path launcher, Path dataRoot) implements PlatformRegistration {
         @Override
         public void install() {
             Path executable = requireLauncher(launcher);
@@ -144,11 +148,11 @@ public final class UserLoginStartup implements LoginStartupPort {
                     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
                     <plist version="1.0"><dict>
                       <key>Label</key><string>com.javaclaw.app-server</string>
-                      <key>ProgramArguments</key><array><string>%s</string></array>
+                      <key>ProgramArguments</key><array><string>%s</string><string>--data-root</string><string>%s</string></array>
                       <key>RunAtLoad</key><true/>
                       <key>ProcessType</key><string>Background</string>
                     </dict></plist>
-                    """.formatted(xml(executable.toString())));
+                    """.formatted(xml(executable.toString()), xml(dataRoot.toString())));
         }
 
         @Override
@@ -166,7 +170,8 @@ public final class UserLoginStartup implements LoginStartupPort {
         }
     }
 
-    private record LinuxRegistration(Path home, Path launcher, CommandRunner commands) implements PlatformRegistration {
+    private record LinuxRegistration(Path home, Path launcher, Path dataRoot, CommandRunner commands)
+            implements PlatformRegistration {
         @Override
         public void install() {
             Path executable = requireLauncher(launcher);
@@ -176,12 +181,12 @@ public final class UserLoginStartup implements LoginStartupPort {
 
                     [Service]
                     Type=simple
-                    ExecStart="%s"
+                    ExecStart="%s" --data-root "%s"
                     Restart=on-failure
 
                     [Install]
                     WantedBy=default.target
-                    """.formatted(systemd(executable.toString())));
+                    """.formatted(systemd(executable.toString()), systemd(dataRoot.toString())));
             requireSuccess(commands, List.of("systemctl", "--user", "daemon-reload"));
             requireSuccess(commands, List.of("systemctl", "--user", "enable", "javaclaw-app-server.service"));
         }
@@ -206,7 +211,8 @@ public final class UserLoginStartup implements LoginStartupPort {
         }
     }
 
-    private record WindowsRegistration(Path launcher, CommandRunner commands) implements PlatformRegistration {
+    private record WindowsRegistration(Path launcher, Path dataRoot, CommandRunner commands)
+            implements PlatformRegistration {
         @Override
         public void install() {
             Path executable = requireLauncher(launcher);
@@ -220,7 +226,7 @@ public final class UserLoginStartup implements LoginStartupPort {
                             "/SC",
                             "ONLOGON",
                             "/TR",
-                            "\"" + executable + "\"",
+                            "\"" + executable + "\" --data-root \"" + dataRoot + "\"",
                             "/F"));
         }
 

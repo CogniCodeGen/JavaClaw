@@ -17,10 +17,7 @@ final class SettingsPageRegistry {
         CoreSettingsGateway gateway = checked.core();
         register("appearance", new AppearanceSettingsPage(appearance, close));
         register("providers", new ProviderSettingsPage(gateway));
-        register(
-                "profiles",
-                new AgentProfileSettingsPage(
-                        gateway, checked.agentOnboarding(), checked.promptPreview(), checked.promptOptimization()));
+        register("roles", new AgentRoleSettingsPage(gateway, checked.promptPreview(), checked.promptOptimization()));
         registerExtension(
                 "learning",
                 "学习策略",
@@ -37,6 +34,7 @@ final class SettingsPageRegistry {
         register("diagnostics", new DiagnosticsSettingsPage(gateway));
         register("lifecycle", new LifecycleSettingsPage(gateway));
         register("workspace", new WorkspaceSettingsPage(gateway));
+        register("coding", new CodingSettingsPage(checked.coding()));
         register("instructions", new InstructionSettingsPage(checked.instructions()));
         register("worktrees", new ManagedWorktreeSettingsPage(gateway));
         register("bundles", new BundleSettingsPage(checked.bundles()));

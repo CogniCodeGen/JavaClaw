@@ -1,109 +1,63 @@
-# JavaClaw 5 实施清单
+# JavaClaw 6 实施与验收清单
 
-状态只依据当前源码与已取得的本机自动化证据更新。`[x]` 表示对应纵切已经进入当前实现并有聚焦测试或本机证据，
-不代表整个发行门禁已经通过；`[ ]` 表示仍缺目标平台或外部发布证据。完整 `clean verify`、外部 Runner、签名和公证
-与功能实现分开记录，不能用静态 mock 或设计文档替代。
+`[x]` 表示对应源码改造或明确注明范围的验证已完成；`[ ]` 表示仍需执行、补证或修复。验证结论见
+[验收矩阵](acceptance-matrix.md)和[本机构建证据](../evidence/v6-build-validation.md)：2026-09-07，macOS aarch64、
+JDK 25 的完整 `clean verify` 通过，1952 项测试，0 失败、0 错误、8 项条件跳过。v5 数字未转记为 v6 证据。
 
-## 平台基线
+## 架构与配置
 
-- [x] Reactor 收敛为 14 个子模块，版本统一为 `5.0.0-SNAPSHOT`；包含根聚合项目时 Maven Reactor 共 15 个 project，
-  Browser 与 Knowledge 各自拥有独立 Worker 模块。
-- [x] 建立 Thread / Turn / ItemEnvelope、Protocol v2 和 H2 `data-v5` 空库初始化。
-- [x] Protocol v2 catalog 的 147 个方法都有严格 params/result Schema；ID、时间和 Duration 只有一种 wire 表示。
-- [x] 建立 Thin Turn Harness、预算、取消、流事件、背压和 EffectReceipt 契约。
-- [x] Turn 在模型/工具边界前持久化 phase、intent digest、usage、冻结工具目录与 batch；结果和 checkpoint 同事务推进。
-- [x] Extension Job 使用持久化 intent/checkpoint 恢复活动工作单元；无法确认的在途副作用进入 `UNKNOWN_OUTCOME`。
-- [x] 输入与审批等待可在 App Server 重启后恢复，重建 lifecycle lease 时不机械拒绝原审批。
-- [x] 审批独立过期投影按绝对 `expiresAt` 调度、周期校正，并与 resolve 共用记录锁和 H2 行锁；过期、Item、checkpoint 与 Turn 恢复同事务提交。
-- [x] `agent-runtime` 不依赖 Jackson、Spring AI、H2、Quartz、PDFBox、POI 或 JavaFX。
-- [x] App Server 是 H2、Provider、Supervisor 与 RPC 的唯一组合根。
-- [x] 生产路径没有协议双栈、数据导入、deprecated facade 或复杂领域通用文档/自动化抽象基类。
-- [x] 5.0 不包含 Rust/Codex 后端或 Codex Plugin 兼容层，也不恢复 Ollama、本地模型、旧业务 mode、
-  SMTP/IMAP/Webhook、宿主鼠标键盘控制、Raw Cookie 导出或 `HOST_FULL_ACCESS` 配置。
+- [x] 维持 14 个子模块、App Server 单一组合根、Thin Turn Harness 与 SDK-only Desktop。
+- [x] 统一 `6.0.0-SNAPSHOT`、Protocol v3、data-v6 与新的 baseline；旧数据不探测、不迁移、不修改。
+- [x] 用 AgentRole/Spec/Ref 取代胖 AgentProfile；删除 ProfileBinding、旧 Role 预设实例化和旧 SDK/RPC 入口。
+- [x] 保持 Provider、PermissionProfile、Vault、审批与预算独立；Role 只保存职责、developer instructions 和收窄约束。
+- [x] ExecutionDefaults/Overrides/ResolvedTurnConfig 与字段来源贯通 API、服务端、SDK 和界面。
+- [x] Protocol v3 目录包含 157 个 RPC；子智能体默认 `execution/subagent/read/update` 与 SDK 独立管理 Provider/reasoning。
+- [x] 安装、Workspace、Thread 与调用逐级继承，Role 明确模型/推理约束最后应用。
+- [x] Turn、子任务与 Automation 使用服务端解析并冻结配置，恢复不重新解释 latest。
+- [x] 四个内置只读角色、default 创建默认、clone 和代码级 explorer 只读约束。
+- [x] Role 模板固定公开源码 commit、原文摘要、本地模板摘要与改编说明。
+- [x] portable/lossless 文件预览、确认、导出；未知模型要求明确映射，文件不成为实时配置源。
+- [x] 本机自动回归确认失效引用、父级权限/原子预算上限、幂等重放、重启恢复和旧目录 sentinel 不变。
 
-## 模型、工具与安全
+## Prompt 与模型
 
-- [x] Spring AI 通用 Adapter、Provider capability matrix 和 OpenAI Responses 原生扩展。
-- [x] OpenAI Responses reasoning summary、opaque state 与 native compaction 专用契约测试。
-- [x] 冻结工具目录、渐进发现、schema/revision 校验与实时撤权。
-- [x] Provider、Agent Profile、PermissionProfile、Secret Vault 的强类型 RPC、SDK、持久化和管理页面。
-- [x] Provider 逐模型声明 Chat/Embedding 用途；安装级 Embedding 使用精确 `ProviderRef` 绑定，不再按名称或隐藏选项选择。
-- [x] 四类 Provider 的有界模型目录发现贯通 Adapter、App Server、Protocol、SDK 与设置页；session-owned 的
-  start/read/cancel 操作最长 30 秒、最多 1000 条，关闭页面、session 或服务会取消真实 HTTP 调用，结果不持久化。
-- [x] Provider 首次设置按“禁用连接壳、凭据、模型用途、启用”使用确定性幂等命令恢复；中断后继续缺失步骤，ID 冲突不覆盖。
-- [x] `default/worker/explorer` Profile 预设和 Workspace review/developer 权限预设由服务端版本化目录提供；实例化后仍是
-  普通 Profile/PermissionProfile，不增加角色运行时。预设不进入 H2；向导复用普通 create/update/binding RPC，并以
-  Workspace 确定性 ID 和幂等键恢复。`standard` 技术模板在 UI 中显示为“受限对话”。
-- [x] 本机端到端测试已验证 Provider 配置、Vault Secret、Profile 精确引用驱动 Turn，并在关闭后从同一 `data-v5`
-  重建 App Server 再次完成 Turn。
-- [x] Provider 配置按不可变 revision 提交；`provider/credential/*` 先构造候选 Adapter，在同一 H2 事务提交 Vault
-  密文、Secret 元数据 revision、Provider 新 revision 和幂等回执，再同步交换 registry generation；数据库提交后的
-  激活或清理异常不能回滚 H2，运行时保持 fail closed。非计费探测与显式确认的计费 round-trip 分离。
-- [x] Prompt provenance 预览和受预算 Harness Turn 的 Prompt 优化 Draft/显式采纳闭环。
-- [x] PermissionProfile 标准模板、clone、历史、diff、五层有效权限预览与实时撤权。
-- [x] 审批、Sandbox、PTY 和 EffectReceipt 执行链。
-- [ ] Secret Vault 的 Linux/Windows 系统凭据设施真实 Runner 验证。`待验证`
-- [x] macOS Seatbelt、PTY 与 Git Worktree 真实本机测试。
-- [ ] Linux bubblewrap、PTY、资源和安装启动由 Linux x64/arm64 Runner 验证。`待验证`
-- [x] Windows AppContainer、Restricted Token、Job Object、ConPTY、ACL 恢复和进程树终止实现及跨平台契约测试。
-- [ ] Windows 原生实现由 Windows x64 Runner 验证；Job Object 不提供打开文件数硬限制。`待验证`
+- [x] ModelInstructions 分离 system、developer 与 response contract。
+- [x] Responses 独立 developer message；Spring AI 在 Adapter 边界固定顺序合并并保留全部内容。
+- [x] reasoning 按厂商显式映射，不支持的取值拒绝，不静默增大预算。
+- [x] Provider state 升级绑定完整指令层，保持原生 compaction 与 opaque item 语义。
+- [x] Prompt 预览展示来源与摘要；正常受预算 Turn 产生优化 Draft，显式采纳时复核 Role revision。
+- [x] 指令层、reasoning、Prompt 变更与 state、优化采纳、能力不匹配测试在统一门禁通过。
+- [ ] 真实模型对照效果评估；默认测试不得调用付费模型，未评估不得声明提升。
 
-## 扩展与客户端
+## Desktop 与扩展
 
-- [x] Plan、Loop、Workflow、SDD 与 Schedule 的 Definition/Execution、Outbox、checkpoint、恢复状态机和管理纵切。
-- [x] Memory、Knowledge 与 Skill 的历史、Proposal、Generation、Draft/Published、冻结目录和管理纵切。
-- [x] MCP `2026-07-28` Host、OAuth 2.1/PKCE、Catalog、实时复核、Broker、SDK 与管理页闭环。
-- [x] MCP Resource list/read、Prompt list/get、多帧 SSE、受控 progress，以及复用 InputRequest/Turn 的 elicitation/sampling 闭环。
-- [x] Site/Browser 的 Broker-only 网络、Vault 会话、十分钟人工登录、Secret 遮罩、SDK 与 ViewSchema 纵切；同一 Site
-  页面提供 Secret 脱敏目录、创建、轮换和永久清除，操作后按 revision 刷新权威视图。
-- [x] Site 的 CredentialRef、私网授权与精确 Origin 绑定 authority revision；变更后旧 Browser 会话立即失效。
-- [x] Browser 与 Knowledge Worker 使用独立 image、Native Sandbox、资源上限和 Broker/无网络边界。
-- [ ] 五个目标 Runner 的真实 Chromium 登录/OAuth 与 Native Sandbox 回执。`待验证`
-- [x] SDK typed facade、stdio/UDS 连接、CLI 与 SDK-only JavaFX Desktop。
-- [x] 三份 IDEA 共享运行配置支持 App Server、Desktop 与组合一键调试；自动架构测试锁定模块入口、主类、UDS 和隔离
-  `data-v5` 参数。
-- [x] `extension/event` 仅携带资源标识和 revision；SDK 持续接收，Desktop 合并失效并重新读取权威状态。
-- [x] ViewSchema v2 policy、受限 renderer、平台 Graph 控件及 dirty/revision conflict 草稿保护。
-- [x] 单实例设置与管理中心、九主题、四档字号、三档密度和共享组件。
-- [x] 29 个生产管理入口均接入强类型 SDK 或 ViewSchema v2；学习策略由 Memory 独立 ViewDocument 拥有，不保留重复
-  Desktop 表单；Desktop 覆盖率和 Golden 继续作为独立发布证据。
-- [x] Managed Worktree 的父子 Thread 绑定、隔离根、Patch、备份后 cleanup 和受治理 apply 管理纵切。
-- [x] 第三方 Bundle 的 digest staging、签名/信任审阅、原子升级、进程监督、配额、隔离和可恢复 Trash 管理纵切。
-- [x] lifecycle lease、固定 60 秒退出、Schedule 登录启动项协调和托盘控制实现。
-- [x] Plan 模型只能提交等待人工审阅的 Proposal；采纳原子复核候选 hash 与目标 Definition revision。
-- [x] Schedule Action 冻结参数、Catalog revision 与 schema hash；无人值守授权原子消费，`UNKNOWN_OUTCOME` 消耗额度且禁止重试。
-- [x] Skill v5 Markdown/确定性 Bundle 通过 Attachment 导入导出，旧 Bundle 与一般 ZIP 不进入兼容解析。
-- [x] Diagnostics 聚合 Extension 启停/隔离/信任层数量与 launcher/tray 真实可用状态，导出仍只包含协议白名单脱敏字段。
-- [x] Windows Named Pipe transport、当前用户安全描述符和 launcher 实现。
-- [ ] Windows Named Pipe、launcher、登录启动项与托盘由 Windows x64 Runner 验证。`待验证`
-- [ ] macOS/Linux 托盘与登录启动项的真实交互验证。`待验证`
+- [x] 复用 509f197 JavaFX/FXML/CSS 与共享控件，不恢复 Runtime、Spring Context 或数据库访问。
+- [x] Agent Studio 只管理 Role；移除旧胖 Profile、权限设置向导、Provider 回写和对应冗余夹具。
+- [x] Workspace 创建默认 default，Agent/Provider/模型/推理/Permission 独立选择。
+- [x] 显示继承值、来源、revision、模型 Agent 锁定原因和 Turn 配置摘要。
+- [x] Schedule 与其他自动化表单提交独立执行配置，使用权威目录。
+- [x] 审阅并更新 54 张 macOS 壳/外观页参考中的 Agent 导航文案；框外像素完全一致，比较门禁未变，
+  [差异与哈希记录](../evidence/v6-settings-golden-review.md)可追溯。
+- [x] Desktop 274 项单测和独立 JVM 的 54 图 Golden 全部通过，包含独立选择、锁定、草稿及真实 FXML 壳交互。
+- [ ] 完成 Agent 文件人工交互与错误态检查，以及 CLI/SDK/Desktop 同轮完整 transcript 对照。
+- [ ] 补足 Agent Studio/执行选择器/其余页面、多状态、字号以及 Linux/Windows 视觉证据。
 
 ## 质量与发布
 
-- [x] Checkstyle 落实 600/60/12/4/7、公共 Javadoc 与 TODO/FIXME 门禁。
-- [x] 架构测试将 600 行门禁覆盖到 Java、CSS、FXML 与发布脚本；样式按职责分片并锁定加载顺序。
-- [x] Maven Enforcer、dependency convergence 和 undeclared/unused dependency 检查。
-- [x] Surefire 在模块没有测试时 fail closed，避免 JaCoCo 因缺少 execution data 静默通过。
-- [x] 架构边界测试检查模块集合、关键依赖与历史运行路径。
-- [x] CycloneDX SBOM、第三方许可白名单、确定性 SHA-256 清单与篡改测试。
-- [x] Linux、macOS、Windows 原生安装脚本和正式标签 fail-closed 签名/公证配置。
-- [x] GitHub provenance 与 CycloneDX SBOM attestation 配置。
-- [x] 主运行时与 Browser/Knowledge/Skill image 完成依赖隔离；Browser 运行期不下载 Chromium，安装缺少两类真实
-  原生能力回执时 fail closed。
-- [x] macOS 设置中心壳和外观页已有 54 张生产 Scene Golden；矩阵锁定九主题、三密度、100% 字号和两种窗口，
-  并由独立 Failsafe JVM 执行逐字节回归，避免 JavaFX 进程级字形缓存造成测试顺序污染；导航目录另行断言 29 个入口。
-- [ ] 29 页正文、多状态和其余三档字号的 macOS 视觉 Golden。`阻断`
-- [x] 生产 import graph 无包循环，架构门禁使用最长包名归属解析，能检出父包与子包之间的真实边。
-- [x] API、Extension SPI、Protocol 与 Agent Runtime 已分别通过当前模块 90%/80% 覆盖率门禁。
-- [x] Model Adapter、Builtin Contracts/Extensions、Knowledge Worker、Native Host 与 Client 已分别通过当前模块
-  80%/70% 覆盖率门禁。
-- [x] Browser Service 的 47 个自动测试通过，覆盖率为行 81.62%、分支 71.45%，达到 80%/70% 门禁。
-- [x] Packaging 本机 `clean verify` 共 87 个测试，行覆盖率 82.58%、分支覆盖率 76.67%，达到 80%/70% 门禁。
-- [x] App Server 全量 667 个测试通过，行覆盖率 90.63%、分支覆盖率 80.00%，达到 90%/80% 门禁。
-- [x] Desktop 的 254 个单元测试和 1 个 Golden 集成测试通过；单元测试覆盖率为行 88.41%、分支 73.10%，
-  达到 80%/70% 门禁。
-- [x] 当前改造后的 macOS jlink 发行目录已通过隔离 `data-v5` 的 Protocol v2 initialize 与 Workspace 查询健康检查。
-- [x] 2026-09-02 当前 macOS aarch64 工作树通过 Spotless、Checkstyle、依赖分析、架构测试与完整
-  `mvn clean verify`；15 个 Reactor project 全部成功，共执行 1801 个测试，0 失败、0 错误，7 个按当前平台条件跳过。
-- [ ] 五个原生 Runner、性能/背压、安装启动和真实签名/公证全部通过。`阻断`
-- [ ] Linux/Windows 设置中心 Golden 上传，以及主聊天、审批和断线恢复等独立生产 Scene 参考集。`阻断`
+- [x] 完成六项审查修复：工作树命令身份、父权限重放、CLI 生命周期、Role 精确模型引用、导入草稿保护和主动配置刷新。
+- [x] CLI 前台等待、明确终端审批、受限单行 JSON、非交互拒绝审批后继续、必需输入取消及真实 stdio 子进程回归。
+- [x] macOS 真实 PTY Ctrl-C 验证退出 130 并明确报告取消未知；该记录不作为服务端取消落盘证明。
+- [ ] 真实 App Server 在 Ctrl-C 下的持久化取消，以及 Linux/Windows 终端和进程验收；详见[本轮记录](../evidence/v6-review-fixes-validation.md)。
+
+- [x] 现行文档、ADR、IDEA 配置与 CI 的 v6 入口更新；历史 ADR 标记取代关系。
+- [x] 安全、Sandbox、审批、预算、取消、EffectReceipt、Bundle、MCP 与 Worker 的现有执行边界继续复用。
+- [x] `mvn spotless:apply` 后检查 diff；完整门禁及另行全仓 `mvn spotless:check checkstyle:check` 均通过。
+- [x] 全仓 `mvn clean verify`、严格 Schema、依赖分析、包循环与架构门禁通过。
+- [x] Core 90%/80%、外围 80%/70% 最新覆盖率通过，不降低门槛或排除核心类。
+- [x] 本轮配置/Prompt 准备复测：v6 p50/p95 约 154/170 ms，Git v5 已记录对照约 503/608 ms；两轮共 200 样本的准备增量满足 ≤10%，
+  原始样本、断言与限制见[性能记录](../evidence/v6-review-fixes-performance.md)。
+- [ ] 完整普通 Turn 端到端 p50/p95、背压和三平台测量；准备基准不替代最终写入、Harness、模型与 Sandbox 成本。
+- [ ] macOS arm64/x64、Linux arm64/x64、Windows x64 原生安装、数据根和安全能力验收。
+- [ ] 五 Runner 的真实 Chromium 登录/OAuth、Sandbox 回执和系统凭据设施验收。
+- [x] 本机 macOS aarch64 jlink/Worker 镜像、发行 ZIP、SBOM、许可和双层哈希生成与校验通过。
+- [ ] 安装后健康检查、目标平台签名、时间戳、公证与 attestation。

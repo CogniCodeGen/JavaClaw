@@ -98,7 +98,7 @@ class LauncherLifecycleServiceTest {
 
     private Fixture fixture(LauncherSupervisorProbe.Status supervisor) {
         Path fixtureRoot = temporaryDirectory.resolve("fixture-" + System.nanoTime());
-        H2Database database = new H2Database(fixtureRoot.resolve("data-v5"));
+        H2Database database = new H2Database(fixtureRoot.resolve("data-v6"));
         database.initialize();
         LifecycleCoordinator lifecycle = new LifecycleCoordinator(
                 new LifecycleLeaseRepository(database, Clock.systemUTC()), Duration.ofSeconds(5));

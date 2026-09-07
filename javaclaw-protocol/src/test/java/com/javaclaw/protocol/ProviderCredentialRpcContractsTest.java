@@ -58,16 +58,16 @@ class ProviderCredentialRpcContractsTest {
     @Test
     void 方法目录逐方法引用严格ProviderCredentialSchema() throws Exception {
         CanonicalJson json = new CanonicalJson();
-        String schema = read("/schema/provider-credential-v2.schema.json");
-        String methods = read("/schema/methods-v2.json");
+        String schema = read("/schema/provider-credential-v3.schema.json");
+        String methods = read("/schema/methods-v3.json");
 
         json.parse(schema);
         assertFalse(schema.contains("\"roles\""));
-        assertTrue(schema.contains("provider-profile-v2.schema.json#/$defs/provider"));
-        assertTrue(methods.contains("provider-credential-v2.schema.json#/$defs/setCommand"));
-        assertTrue(methods.contains("provider-credential-v2.schema.json#/$defs/clearCommand"));
-        assertTrue(methods.contains("provider-credential-v2.schema.json#/$defs/bindingResult"));
-        assertTrue(methods.contains("provider-credential-v2.schema.json#/$defs/clearResult"));
+        assertTrue(schema.contains("provider-v3.schema.json#/$defs/provider"));
+        assertTrue(methods.contains("provider-credential-v3.schema.json#/$defs/setCommand"));
+        assertTrue(methods.contains("provider-credential-v3.schema.json#/$defs/clearCommand"));
+        assertTrue(methods.contains("provider-credential-v3.schema.json#/$defs/bindingResult"));
+        assertTrue(methods.contains("provider-credential-v3.schema.json#/$defs/clearResult"));
     }
 
     private static SealedSecret providerSecret() {

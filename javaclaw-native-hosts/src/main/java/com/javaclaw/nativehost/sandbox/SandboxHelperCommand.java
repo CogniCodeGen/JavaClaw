@@ -10,15 +10,14 @@ final class SandboxHelperCommand {
     private SandboxHelperCommand() {}
 
     static List<String> wrap(ValidatedSandboxCommand command, List<String> isolatedCommand) {
-        ArrayList<String> result = new ArrayList<>();
-        result.add(javaExecutable().toString());
-        result.add("--enable-native-access=ALL-UNNAMED");
-        result.add("-XX:-UsePerfData");
-        result.add("-cp");
-        result.add(System.getProperty("java.class.path"));
         Class<?> helper =
                 command.mode() == com.javaclaw.api.SandboxMode.PTY ? SandboxPtyExecMain.class : SandboxExecMain.class;
-        result.add(helper.getName());
+        ArrayList<String> result;
+        try {
+            result = new ArrayList<>(SandboxJavaRuntime.forWorker(helper).command(helper, List.of(), 32));
+        } catch (java.io.IOException failure) {
+            throw new java.io.UncheckedIOException("cannot resolve Sandbox helper runtime", failure);
+        }
         result.add(Long.toString(command.timeout().toMillis()));
         result.add(Long.toString(command.limits().memoryBytes()));
         result.add(Long.toString(command.limits().outputBytes()));

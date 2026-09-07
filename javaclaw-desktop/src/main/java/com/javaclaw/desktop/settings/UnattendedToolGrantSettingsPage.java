@@ -37,7 +37,7 @@ public final class UnattendedToolGrantSettingsPage extends VBox implements Manag
     private final ListDetailPane<UnattendedToolGrantStatus> grants = new ListDetailPane<>();
     private final ComboBox<ScheduleContracts.Definition> schedule = new ComboBox<>();
     private final Label scheduleReference = value();
-    private final Label agentProfileReference = value();
+    private final Label agentRoleReference = value();
     private final ComboBox<ToolDescriptor> tool = new ComboBox<>();
     private final Label producerId = value();
     private final Label toolRevision = value();
@@ -148,10 +148,10 @@ public final class UnattendedToolGrantSettingsPage extends VBox implements Manag
         FormSection section = new FormSection("定时任务绑定", "定时任务更新版本后，不会自动扩大或复用旧授权。");
         configureScheduleChoice();
         scheduleReference.setId("unattendedScheduleReference");
-        agentProfileReference.setId("unattendedAgentProfileReference");
+        agentRoleReference.setId("unattendedAgentRoleReference");
         section.addField("定时任务", schedule);
         section.addField("精确版本", scheduleReference);
-        section.addField("智能体方案", agentProfileReference);
+        section.addField("Agent", agentRoleReference);
         return section;
     }
 
@@ -359,7 +359,7 @@ public final class UnattendedToolGrantSettingsPage extends VBox implements Manag
         scheduleReference.setText(binding.schedule()
                 .map(value -> value.id() + " @ " + value.revision())
                 .orElse("—"));
-        agentProfileReference.setText(binding.agentProfile()
+        agentRoleReference.setText(binding.agentRole()
                 .map(value -> value.id() + " @ " + value.revision())
                 .orElse("—"));
         tool.getItems().setAll(binding.catalog().map(value -> value.tools()).orElse(java.util.List.of()));

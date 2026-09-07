@@ -4,14 +4,14 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Objects;
 
-/** data-v5 的显式事务协调器；跨 App Server 子系统共享同一事务边界实现。 */
+/** data-v6 的显式事务协调器；跨 App Server 子系统共享同一事务边界实现。 */
 public final class H2Transactions {
     private final H2Database database;
 
     /**
      * 创建事务协调器。
      *
-     * @param database data-v5 数据库
+     * @param database data-v6 数据库
      */
     public H2Transactions(H2Database database) {
         this.database = Objects.requireNonNull(database, "database");

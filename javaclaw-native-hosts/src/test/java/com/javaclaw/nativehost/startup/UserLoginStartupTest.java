@@ -26,6 +26,8 @@ class UserLoginStartupTest {
         Path plist = temporaryDirectory.resolve("Library/LaunchAgents/com.javaclaw.app-server.plist");
         String content = Files.readString(plist);
         assertTrue(content.contains("Java&amp;Claw"));
+        assertTrue(content.contains("<string>--data-root</string>"));
+        assertTrue(content.contains(temporaryDirectory.resolve("data-v6").toString()));
 
         startup.setRequired(false);
         assertFalse(Files.exists(plist));
@@ -43,6 +45,7 @@ class UserLoginStartupTest {
         startup.setRequired(true);
         Path unit = temporaryDirectory.resolve(".config/systemd/user/javaclaw-app-server.service");
         assertTrue(Files.readString(unit).contains(launcher.toString()));
+        assertTrue(Files.readString(unit).contains("--data-root \"" + temporaryDirectory.resolve("data-v6") + "\""));
         startup.setRequired(false);
 
         assertFalse(Files.exists(unit));
@@ -66,6 +69,8 @@ class UserLoginStartupTest {
         assertEquals(
                 List.of("schtasks.exe", "/Create", "/TN", "JavaClaw App Server"),
                 commands.getFirst().subList(0, 4));
+        assertTrue(commands.getFirst()
+                .contains("\"" + launcher + "\" --data-root \"" + temporaryDirectory.resolve("data-v6") + "\""));
         assertEquals(List.of("schtasks.exe", "/Delete", "/TN", "JavaClaw App Server", "/F"), commands.get(1));
     }
 

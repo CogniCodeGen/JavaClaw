@@ -243,14 +243,14 @@ final class WindowsSandboxNative {
         final MethodHandle deleteAppContainerProfile =
                 captured(userenv, "DeleteAppContainerProfile", FunctionDescriptor.of(JAVA_INT, ADDRESS));
 
-        final MethodHandle getNamedSecurityInfo = captured(
+        final MethodHandle getSecurityInfo = captured(
                 advapi32,
-                "GetNamedSecurityInfoW",
+                "GetSecurityInfo",
                 FunctionDescriptor.of(
                         JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
-        final MethodHandle setNamedSecurityInfo = captured(
+        final MethodHandle setSecurityInfo = captured(
                 advapi32,
-                "SetNamedSecurityInfoW",
+                "SetSecurityInfo",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
         final MethodHandle setEntriesInAcl = captured(
                 advapi32, "SetEntriesInAclW", FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS, ADDRESS, ADDRESS));

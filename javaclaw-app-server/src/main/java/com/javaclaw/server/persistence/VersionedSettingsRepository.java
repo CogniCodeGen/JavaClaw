@@ -13,7 +13,7 @@ import java.util.Optional;
 
 import com.javaclaw.api.CanonicalPayload;
 
-/** Provider 与 Agent Profile 不可变版本行的共享 SQL。 */
+/** Provider 与 Agent Role 不可变版本行的共享 SQL。 */
 final class VersionedSettingsRepository {
     List<StoredVersion> listAll(Connection connection, Table table) throws SQLException {
         String sql = "SELECT ID, REVISION, LIFECYCLE, PAYLOAD, CREATED_AT, UPDATED_AT FROM "
@@ -105,8 +105,8 @@ final class VersionedSettingsRepository {
     enum Table {
         /** Provider 历史。 */
         PROVIDER("CORE.PROVIDER"),
-        /** Agent Profile 历史。 */
-        PROFILE("CORE.PROFILE");
+        /** Agent Role 历史。 */
+        ROLE("CORE.AGENT_ROLE");
 
         private final String sqlName;
 

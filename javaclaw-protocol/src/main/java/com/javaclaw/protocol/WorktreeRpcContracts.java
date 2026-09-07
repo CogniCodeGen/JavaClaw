@@ -7,7 +7,7 @@ import com.javaclaw.api.ManagedWorktree;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.api.WorktreeId;
 
-/** Managed Worktree 恢复中心的 Protocol v2 payload。 */
+/** Managed Worktree 恢复中心的 Protocol v3 payload。 */
 public final class WorktreeRpcContracts {
     /** cleanup 的固定危险确认文本。 */
     public static final String CLEANUP_CONFIRMATION = "CLEANUP WORKTREE";

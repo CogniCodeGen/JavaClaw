@@ -7,8 +7,8 @@ import java.util.concurrent.CompletionStage;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfile;
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRole;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.PromptManifestPreview;
 import com.javaclaw.api.PromptSourceKind;
 import com.javaclaw.api.PromptSourceMetadata;
@@ -26,11 +26,11 @@ class PromptPreviewSettingsPresenterTest {
         PromptPreviewSettingsPresenter presenter = new PromptPreviewSettingsPresenter(gateway);
 
         presenter.reloadWorkspaces();
-        presenter.selectProfile(Optional.of(DesktopTestFixtures.profile()));
+        presenter.selectRole(Optional.of(DesktopTestFixtures.profile()));
         presenter.preview();
 
         assertEquals(DesktopTestFixtures.workspace().id(), gateway.workspaceId);
-        assertEquals(new AgentProfileRef("default", 1), gateway.profile);
+        assertEquals(new AgentRoleRef("default", 1), gateway.role);
         assertEquals("a".repeat(64), presenter.state().preview().orElseThrow().manifestDigest());
         assertEquals(SettingsLoadState.READY, presenter.state().phase());
     }
@@ -39,48 +39,49 @@ class PromptPreviewSettingsPresenterTest {
     void Profile切换后丢弃先前请求的迟到响应() {
         DeferredGateway gateway = new DeferredGateway();
         PromptPreviewSettingsPresenter presenter = new PromptPreviewSettingsPresenter(gateway);
-        AgentProfile first = DesktopTestFixtures.profile();
-        AgentProfile second = new AgentProfile(
+        AgentRole first = DesktopTestFixtures.profile();
+        AgentRole second = new AgentRole(
                 first.id(),
                 2,
                 first.lifecycle(),
                 first.spec(),
+                false,
                 first.createdAt(),
                 first.updatedAt().plusSeconds(1));
 
         presenter.reloadWorkspaces();
-        presenter.selectProfile(Optional.of(first));
+        presenter.selectRole(Optional.of(first));
         presenter.preview();
-        presenter.selectProfile(Optional.of(second));
+        presenter.selectRole(Optional.of(second));
         gateway.result.complete(preview(first));
 
-        assertEquals(Optional.of(second), presenter.state().profile());
+        assertEquals(Optional.of(second), presenter.state().role());
         assertTrue(presenter.state().preview().isEmpty());
     }
 
-    private static PromptManifestPreview preview(AgentProfile profile) {
+    private static PromptManifestPreview preview(AgentRole role) {
         PromptSourceMetadata source = new PromptSourceMetadata(
-                PromptSourceKind.CORE_TEMPLATE,
+                PromptSourceKind.MODEL_BASE,
                 "core/turn-system@5",
                 Optional.of("5"),
                 Optional.of("b".repeat(64)),
                 32,
                 List.of());
         return new PromptManifestPreview(
-                new AgentProfileRef(profile.id(), profile.revision()),
-                profile.spec().provider(),
-                profile.spec().permissionProfile(),
+                new AgentRoleRef(role.id(), role.revision()),
+                role.spec().model().orElseThrow().provider(),
+                DesktopTestFixtures.resolved().permissionProfile(),
                 List.of(source),
                 "a".repeat(64),
                 18,
                 "utf8-bytes-div-4-v1",
                 "你是 JavaClaw。",
-                profile.spec().systemInstruction());
+                role.spec().developerInstructions());
     }
 
     private static final class ImmediateGateway implements PromptPreviewSettingsGateway {
         private WorkspaceId workspaceId;
-        private AgentProfileRef profile;
+        private AgentRoleRef role;
 
         @Override
         public CompletionStage<List<Workspace>> workspaces() {
@@ -88,9 +89,9 @@ class PromptPreviewSettingsPresenterTest {
         }
 
         @Override
-        public CompletionStage<PromptManifestPreview> preview(WorkspaceId workspaceId, AgentProfileRef profile) {
+        public CompletionStage<PromptManifestPreview> preview(WorkspaceId workspaceId, AgentRoleRef role) {
             this.workspaceId = workspaceId;
-            this.profile = profile;
+            this.role = role;
             return CompletableFuture.completedFuture(
                     PromptPreviewSettingsPresenterTest.preview(DesktopTestFixtures.profile()));
         }
@@ -105,7 +106,7 @@ class PromptPreviewSettingsPresenterTest {
         }
 
         @Override
-        public CompletionStage<PromptManifestPreview> preview(WorkspaceId workspaceId, AgentProfileRef profile) {
+        public CompletionStage<PromptManifestPreview> preview(WorkspaceId workspaceId, AgentRoleRef role) {
             return result;
         }
     }

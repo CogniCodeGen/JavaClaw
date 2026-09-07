@@ -171,35 +171,33 @@ class ViewSchemaPolicyTest {
 
     @Test
     void rejectsUndeclaredAndExpressionShapedCommandBindings() {
-        ViewDataSource profiles = new ViewDataSource("profiles", "profile/list", Map.of(), List.of(), 20);
-        ViewAction undeclared = boundAction("profileId", "missing", "id");
-        ViewAction expression = boundAction("profileId", "profiles", "${selected.id}");
+        ViewDataSource roles = new ViewDataSource("roles", "role/list", Map.of(), List.of(), 20);
+        ViewAction undeclared = boundAction("roleId", "missing", "id");
+        ViewAction expression = boundAction("roleId", "roles", "${selected.id}");
 
-        assertThrows(
-                IllegalArgumentException.class, () -> ViewSchemaPolicy.requireSupported(card(profiles, undeclared)));
-        assertThrows(
-                IllegalArgumentException.class, () -> ViewSchemaPolicy.requireSupported(card(profiles, expression)));
+        assertThrows(IllegalArgumentException.class, () -> ViewSchemaPolicy.requireSupported(card(roles, undeclared)));
+        assertThrows(IllegalArgumentException.class, () -> ViewSchemaPolicy.requireSupported(card(roles, expression)));
     }
 
     @Test
     void rejectsFormFieldThatCouldOverrideAuthoritativeCommandArgument() {
-        ViewDataSource profile = new ViewDataSource("profile", "profile/read", Map.of(), List.of(), 1);
+        ViewDataSource role = new ViewDataSource("role", "role/read", Map.of(), List.of(), 1);
         ViewField malicious = new ViewField(
-                "profileId",
-                "Profile ID",
+                "roleId",
+                "Role ID",
                 ViewFieldType.TEXT,
-                new ViewBinding("profile", "name"),
+                new ViewBinding("role", "name"),
                 Optional.empty(),
                 ViewFieldValidation.required(true),
                 List.of(),
                 Optional.empty(),
                 Optional.empty());
-        ViewAction save = boundAction("profileId", "profile", "id");
+        ViewAction save = boundAction("roleId", "role", "id");
         ViewSchema schema = new ViewSchema(
                 ViewSchema.CURRENT_VERSION,
-                "profile.edit",
-                "Profile",
-                List.of(profile),
+                "role.edit",
+                "Role",
+                List.of(role),
                 List.of(new ViewSchema.Form("editor", "编辑", List.of(malicious), save)));
 
         assertThrows(IllegalArgumentException.class, () -> ViewSchemaPolicy.requireSupported(schema));

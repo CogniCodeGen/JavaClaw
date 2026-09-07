@@ -10,7 +10,7 @@ import com.javaclaw.client.sdk.JavaClawClient;
 @FunctionalInterface
 public interface DesktopClientConnector {
     /**
-     * 建立并完成 Protocol v2 协商。
+     * 建立并完成 Protocol v3 协商。
      *
      * @param notifications 当前连接的强类型通知处理器
      * @return Desktop 独占的 SDK 会话

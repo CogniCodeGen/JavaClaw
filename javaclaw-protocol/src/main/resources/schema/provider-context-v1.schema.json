@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "provider-context-v1.schema.json",
+  "$defs": {
+    "provider": {
+      "type": "object", "additionalProperties": false,
+      "required": ["endpointId", "endpointRevision", "model"],
+      "properties": {
+        "endpointId": {"type": "string", "minLength": 1, "maxLength": 240},
+        "endpointRevision": {"type": "integer", "minimum": 1},
+        "model": {"type": "string", "minLength": 1, "maxLength": 1000}
+      }
+    },
+    "read": {
+      "type": "object", "additionalProperties": false, "required": ["provider"],
+      "properties": {"provider": {"$ref": "#/$defs/provider"}}
+    },
+    "limits": {
+      "type": "object", "additionalProperties": false, "required": ["provider"],
+      "properties": {
+        "provider": {"$ref": "#/$defs/provider"},
+        "contextWindowTokens": {"type": ["integer", "null"], "minimum": 4},
+        "maximumOutputTokens": {"type": ["integer", "null"], "minimum": 1}
+      }
+    },
+    "update": {
+      "type": "object", "additionalProperties": false,
+      "required": ["idempotencyKey", "expectedRevision", "payload"],
+      "properties": {
+        "idempotencyKey": {"type": "string", "minLength": 1},
+        "expectedRevision": {"type": "integer", "minimum": 1},
+        "payload": {"$ref": "#/$defs/limits"}
+      }
+    }
+  }
+}

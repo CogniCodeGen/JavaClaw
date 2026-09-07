@@ -77,7 +77,7 @@ class BuiltinExtensionHostValidationTest {
     @BeforeEach
     void setUp() {
         json = new CanonicalJson();
-        H2Database database = new H2Database(temporaryDirectory.resolve("data-v5"));
+        H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
         core = new CoreCommandService(database, json, CLOCK);
         profiles = new PermissionProfileService(database, json, CLOCK);

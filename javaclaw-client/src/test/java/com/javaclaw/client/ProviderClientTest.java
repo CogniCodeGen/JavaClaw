@@ -59,6 +59,36 @@ class ProviderClientTest {
     private static final Instant NOW = Instant.parse("2026-09-01T08:00:00Z");
 
     @Test
+    void SDK容量契约保持精确版本且空值不伪装成无限窗口() {
+        var provider = new ProviderRef("provider-main", 1, "test-model");
+        var unknown = com.javaclaw.api.ModelContextLimits.unknown(provider);
+        var saved = new com.javaclaw.api.ModelContextLimits(
+                new ProviderRef("provider-main", 2, "test-model"),
+                java.util.OptionalLong.of(128000),
+                java.util.OptionalLong.empty());
+        try (SessionSecretChannel secrets = SessionSecretChannel.open()) {
+            ProviderClient client = client(secrets, request -> {
+                if (request.method().equals(com.javaclaw.protocol.ProviderContextRpcContracts.READ_METHOD)) {
+                    var query = JSON.decode(
+                            request.params(), com.javaclaw.protocol.ProviderContextRpcContracts.ReadPayload.class);
+                    assertEquals(provider, query.provider());
+                    return JsonRpcResponse.success(request.id(), JSON.encode(unknown));
+                }
+                assertEquals(com.javaclaw.protocol.ProviderContextRpcContracts.UPDATE_METHOD, request.method());
+                var command = JSON.decode(request.params(), WriteCommand.class);
+                assertEquals(1, command.expectedRevision());
+                assertEquals(
+                        provider,
+                        JSON.decode(command.payload(), com.javaclaw.api.ModelContextLimits.class)
+                                .provider());
+                return JsonRpcResponse.success(request.id(), JSON.encode(saved));
+            });
+            assertEquals(unknown, client.contextLimits(provider));
+            assertEquals(saved, client.updateContextLimits(unknown, new CommandOptions("capacity", 1)));
+        }
+    }
+
+    @Test
     void SDK密封Secret并分别携带Provider和CredentialRevision() {
         CredentialRef reference = new CredentialRef("provider", "credential-1");
         ProviderCredentialBinding binding = new ProviderCredentialBinding(
@@ -179,8 +209,7 @@ class ProviderClientTest {
                 case "provider/create" -> {
                     WriteCommand command = JSON.decode(request.params(), WriteCommand.class);
                     var payload = JSON.decode(
-                            command.payload(),
-                            com.javaclaw.protocol.ProviderProfileRpcContracts.ProviderCreatePayload.class);
+                            command.payload(), com.javaclaw.protocol.ProviderRpcContracts.ProviderCreatePayload.class);
                     assertEquals(ProviderLifecycle.DISABLED, payload.lifecycle());
                     yield JsonRpcResponse.success(request.id(), JSON.encode(disabled));
                 }
@@ -206,9 +235,8 @@ class ProviderClientTest {
                 case "provider/embeddingBinding/read" ->
                     JsonRpcResponse.success(
                             request.id(),
-                            JSON.encode(
-                                    new com.javaclaw.protocol.ProviderProfileRpcContracts.EmbeddingBindingReadResult(
-                                            Optional.of(binding))));
+                            JSON.encode(new com.javaclaw.protocol.ProviderRpcContracts.EmbeddingBindingReadResult(
+                                    Optional.of(binding))));
                 case "provider/embeddingBinding/update" -> JsonRpcResponse.success(request.id(), JSON.encode(binding));
                 default -> throw new AssertionError("unexpected method " + request.method());
             });

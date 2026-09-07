@@ -59,7 +59,7 @@ public final class ThirdPartyExtensionHost implements ExtensionHost, SignedBundl
     }
 
     /**
-     * 从 data-v5 管理员信任目录恢复并重新验签全部第三方 Bundle。
+     * 从 data-v6 管理员信任目录恢复并重新验签全部第三方 Bundle。
      *
      * @param database 已初始化数据库
      * @param json 共享 JSON codec

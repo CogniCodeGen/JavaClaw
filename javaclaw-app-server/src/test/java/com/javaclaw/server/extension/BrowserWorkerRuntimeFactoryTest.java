@@ -62,7 +62,7 @@ class BrowserWorkerRuntimeFactoryTest {
         String previousImage = System.getProperty(imageProperty);
         String previousOs = System.getProperty("os.name");
         Path image = temporaryDirectory.resolve("image");
-        Path data = Files.createDirectories(temporaryDirectory.resolve("data-v5"));
+        Path data = Files.createDirectories(temporaryDirectory.resolve("data-v6"));
         prepareImage(image, "java", "macos");
         try {
             System.setProperty(imageProperty, image.toString());
@@ -124,7 +124,7 @@ class BrowserWorkerRuntimeFactoryTest {
         String previousImage = System.getProperty(imageProperty);
         String previousOs = System.getProperty("os.name");
         Path image = temporaryDirectory.resolve("windows-image");
-        Path data = Files.createDirectories(temporaryDirectory.resolve("windows-data-v5"));
+        Path data = Files.createDirectories(temporaryDirectory.resolve("windows-data-v6"));
         prepareImage(image, "java.exe", "windows");
         try {
             System.setProperty(imageProperty, image.toString());
@@ -160,7 +160,7 @@ class BrowserWorkerRuntimeFactoryTest {
             assertThrows(
                     IllegalStateException.class,
                     () -> BrowserWorkerRuntimeFactory.create(
-                            Files.createDirectories(temporaryDirectory.resolve("invalid-image-data-v5"))));
+                            Files.createDirectories(temporaryDirectory.resolve("invalid-image-data-v6"))));
 
             Path invalidPlaywright = temporaryDirectory.resolve("invalid-playwright-marker");
             prepareImage(invalidPlaywright, "java", "macos");
@@ -172,7 +172,7 @@ class BrowserWorkerRuntimeFactoryTest {
             assertThrows(
                     IllegalStateException.class,
                     () -> BrowserWorkerRuntimeFactory.create(
-                            Files.createDirectories(temporaryDirectory.resolve("invalid-playwright-data-v5"))));
+                            Files.createDirectories(temporaryDirectory.resolve("invalid-playwright-data-v6"))));
         } finally {
             restore(imageProperty, previousImage);
             restore("os.name", previousOs);

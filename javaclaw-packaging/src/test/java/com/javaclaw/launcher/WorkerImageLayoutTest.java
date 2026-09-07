@@ -56,7 +56,7 @@ class WorkerImageLayoutTest {
         assertThrows(IllegalStateException.class, () -> WorkerImageLayout.discover(root, "browser"));
 
         Path knowledge = knowledgeImage(root);
-        Files.delete(knowledge.resolve("app/javaclaw-knowledge-worker-5.0.jar"));
+        Files.delete(knowledge.resolve("app/javaclaw-knowledge-worker-6.0.jar"));
         assertThrows(IllegalStateException.class, () -> WorkerImageLayout.discover(root, "knowledge"));
     }
 
@@ -149,7 +149,7 @@ class WorkerImageLayoutTest {
     private Path browserImage(Path root) throws IOException {
         Path image = image(root, "browser");
         Files.createDirectories(image.resolve("app"));
-        Files.createFile(image.resolve("app/javaclaw-browser-service-5.0.jar"));
+        Files.createFile(image.resolve("app/javaclaw-browser-service-6.0.jar"));
         Files.createFile(image.resolve("app/playwright-1.52.0.jar"));
         Path browser = Files.createDirectories(image.resolve("browser/chromium-1169"));
         executable(browser.resolve("chrome" + executableSuffix()));
@@ -161,7 +161,7 @@ class WorkerImageLayoutTest {
     private Path knowledgeImage(Path root) throws IOException {
         Path image = image(root, "knowledge");
         Files.createDirectories(image.resolve("app"));
-        Files.createFile(image.resolve("app/javaclaw-knowledge-worker-5.0.jar"));
+        Files.createFile(image.resolve("app/javaclaw-knowledge-worker-6.0.jar"));
         Files.createFile(image.resolve("app/pdfbox-3.0.jar"));
         Files.createFile(image.resolve("app/poi-ooxml-5.4.jar"));
         return image;

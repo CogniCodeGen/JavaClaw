@@ -27,6 +27,7 @@ import com.javaclaw.api.WorkspaceId;
  * @param privateNetworkGrants 私网授权绑定校验端口
  * @param services 进程外隔离服务端口
  * @param embeddings 向量嵌入端口
+ * @param workspaceExecution 平台绑定的单次 Coding 操作；其他调用为拒绝实现
  */
 public record ExtensionExecutionContext(
         ExtensionDescriptor extension,
@@ -45,7 +46,8 @@ public record ExtensionExecutionContext(
         CredentialVaultPort credentials,
         PrivateNetworkGrantPort privateNetworkGrants,
         IsolatedServicePort services,
-        EmbeddingPort embeddings) {
+        EmbeddingPort embeddings,
+        WorkspaceExecutionPort workspaceExecution) {
     /** 校验上下文端口。 */
     public ExtensionExecutionContext {
         Objects.requireNonNull(extension, "extension");
@@ -65,5 +67,6 @@ public record ExtensionExecutionContext(
         Objects.requireNonNull(privateNetworkGrants, "privateNetworkGrants");
         Objects.requireNonNull(services, "services");
         Objects.requireNonNull(embeddings, "embeddings");
+        Objects.requireNonNull(workspaceExecution, "workspaceExecution");
     }
 }

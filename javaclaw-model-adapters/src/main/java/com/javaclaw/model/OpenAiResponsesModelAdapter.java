@@ -29,7 +29,7 @@ import com.javaclaw.runtime.ProviderState;
  * <p>该路径补齐 Spring AI ChatModel 当前没有覆盖的 reasoning-summary stream、opaque output item 和原生 compaction。它只向模型注册
  * FunctionTool，工具仍由 Harness 治理。
  *
- * <p>实现不变量：Provider state 与 system instruction revision 绑定；隐藏 reasoning text 事件永不发布，只发布 Provider 明确标记的 summary。
+ * <p>实现不变量：Provider state 与完整指令层绑定，续接时比较平台、开发者与响应契约；隐藏 reasoning text 事件永不发布，只发布 Provider 明确标记的 summary。
  */
 public final class OpenAiResponsesModelAdapter
         implements ModelGateway, NativeConversationSupport, NativeCompactionSupport, AutoCloseable {
@@ -121,6 +121,16 @@ public final class OpenAiResponsesModelAdapter
         cancellation.throwIfCancelled();
         ModelInvocationResult result =
                 results.map(invocation, accumulator.response(), accumulator.text(), accumulator.summary());
+        ProviderState state = states.withInputs(
+                result.providerState().orElseThrow(),
+                request.input().orElseThrow().asResponse());
+        result = new ModelInvocationResult(
+                result.text(),
+                result.toolCalls(),
+                result.usage(),
+                result.reasoningSummary(),
+                java.util.Optional.of(state),
+                result.finishReason());
         publishTerminal(turnId, result, accumulator, events, cancellation);
         return result;
     }
@@ -146,16 +156,33 @@ public final class OpenAiResponsesModelAdapter
     }
 
     @Override
+    public ProviderState restoreCoveredState(
+            String modelId, ProviderState state, java.util.List<com.javaclaw.runtime.ModelMessage> coveredMessages) {
+        requireEndpoint(modelId);
+        return new ResponsesLegacyStateRestorer(states, requests).restore(state, coveredMessages);
+    }
+
+    @Override
     public NativeCompactionResult compact(NativeCompactionRequest request, CancellationToken cancellation) {
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(cancellation, "cancellation");
         requireEndpoint(request.modelId());
         cancellation.throwIfCancelled();
         ProviderStateCodec.DecodedState decoded = states.decode(request.state());
-        CompactedResponse response = transport.compact(requests.compact(config, decoded));
-        cancellation.throwIfCancelled();
+        CompactedResponse response = transport.compact(requests.compact(config, decoded, request.messages()));
+        // 已收到的实际 usage 必须交由 Harness 先持久化，取消只阻止下一次外部调用。
         ProviderState compacted = states.compacted(response, decoded.instructions());
-        return new NativeCompactionResult(compacted, response.usage().inputTokens());
+        com.javaclaw.runtime.ModelUsage usage = new com.javaclaw.runtime.ModelUsage(
+                response.usage().inputTokens(),
+                Math.max(
+                        0,
+                        response.usage().outputTokens()
+                                - response.usage().outputTokensDetails().reasoningTokens()),
+                response.usage().outputTokensDetails().reasoningTokens(),
+                response.usage().inputTokensDetails().cachedTokens());
+        long estimate = com.javaclaw.runtime.ContextTokenEstimator.text(
+                compacted.payload().json());
+        return new NativeCompactionResult(compacted, usage.inputTokens(), usage, estimate);
     }
 
     private void requireInvocation(

@@ -17,7 +17,7 @@ import com.javaclaw.api.McpResourcePage;
 import com.javaclaw.api.McpResourceReadResult;
 import com.javaclaw.api.WorkspaceId;
 
-/** MCP Endpoint、健康与 Catalog 的 Protocol v2 DTO。 */
+/** MCP Endpoint、健康与 Catalog 的 Protocol v3 DTO。 */
 public final class McpRpcContracts {
     private McpRpcContracts() {}
 

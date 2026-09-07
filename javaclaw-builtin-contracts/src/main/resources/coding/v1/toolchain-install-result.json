@@ -1,0 +1,1 @@
+{"$id":"javaclaw.coding/toolchain-install-result/v1","$schema":"https://json-schema.org/draft/2020-12/schema","additionalProperties":false,"properties":{"artifactSha256":{"pattern":"^[0-9a-f]{64}$","type":"string"},"jobId":{"pattern":"^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$","type":"string"}},"required":["jobId","artifactSha256"],"type":"object"}

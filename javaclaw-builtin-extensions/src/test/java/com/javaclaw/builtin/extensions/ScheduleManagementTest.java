@@ -7,7 +7,7 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.AgentProfileRef;
+import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.builtin.contracts.OrchestrationContracts;
 import com.javaclaw.builtin.contracts.ScheduleActionContracts;
 import com.javaclaw.builtin.contracts.ScheduleContracts;
@@ -28,7 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ScheduleManagementTest {
-    private static final AgentProfileRef PROFILE = new AgentProfileRef("profile", 1);
+    private static final AgentRoleRef PROFILE = new AgentRoleRef("profile", 1);
     private static final OrchestrationContracts.ExecutionBudget BUDGET =
             new OrchestrationContracts.ExecutionBudget(10, 10_000, 5_000, 100);
 
@@ -234,8 +234,9 @@ class ScheduleManagementTest {
         assertEquals(
                 List.of(
                         "id",
-                        "profileId",
-                        "profileRevision",
+                        "role",
+                        "provider",
+                        "permissionProfile",
                         "targetKind",
                         "targetExtensionId",
                         "targetId",
@@ -272,8 +273,7 @@ class ScheduleManagementTest {
                 Optional.empty(),
                 Optional.of(60L),
                 Optional.of(NOW.plusSeconds(600)),
-                PROFILE.id(),
-                PROFILE.revision(),
+                AutomationV6Fixtures.selection(new AgentRoleRef(PROFILE.id(), PROFILE.revision())),
                 id + " Thread",
                 "执行目标",
                 BUDGET.maximumTurns(),
@@ -298,8 +298,7 @@ class ScheduleManagementTest {
                 Optional.of(zone),
                 Optional.empty(),
                 Optional.empty(),
-                PROFILE.id(),
-                PROFILE.revision(),
+                AutomationV6Fixtures.selection(new AgentRoleRef(PROFILE.id(), PROFILE.revision())),
                 id + " Thread",
                 "执行目标",
                 BUDGET.maximumTurns(),
