@@ -1,0 +1,6 @@
+FAIL 重复选择正在运行的同一会话不释放订阅或丢失活动状态: org.opentest4j.AssertionFailedError: expected: <true> but was: <false>
+FAIL 切换到其他会话可操作且返回时恢复已有Turn而不重复启动: java.lang.AssertionError: 导航状态没有在截止前达到预期
+FAIL 启动回执晚于切换时不污染新会话并在返回时读取已启动Turn: java.lang.IllegalArgumentException: active turn is not in selected thread
+FAIL 离开后已完成的会话返回时恢复输入且不订阅终态: java.lang.AssertionError: 导航状态没有在截止前达到预期
+Exception in thread "main" java.lang.AssertionError: navigation regression failures=4
+	at com.javaclaw.desktop.NavigationRunner.main(NavigationRunner.java:17)

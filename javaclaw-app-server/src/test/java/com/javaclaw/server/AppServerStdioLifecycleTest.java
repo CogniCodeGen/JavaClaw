@@ -32,12 +32,15 @@ class AppServerStdioLifecycleTest {
         System.setIn(new ByteArrayInputStream(new byte[0]));
         System.setOut(new PrintStream(new ByteArrayOutputStream()));
         try {
+            Clock clock = Clock.fixed(Instant.parse("2026-09-02T05:00:00Z"), ZoneOffset.UTC);
+            AppServerBootstrap.Foundation foundation = PlatformFoundationFactory.create(
+                    temporaryDirectory.resolve("stdio/data-v6"), clock, new MemoryProtector(), required -> {});
+            AppServerBootstrap.Components components =
+                    ConfiguredProviderBootstrap.create(foundation, reference -> Optional.empty());
+            // 只度量 EOF 到运行时关闭；H2 与扩展冷启动不属于关停预算，默认 60 秒空闲窗口仍保持启用。
+            // 组件所有权交给断言线程，由其在 EOF 或中断后关闭，避免与测试线程并发释放资源。
             assertTimeoutPreemptively(Duration.ofSeconds(3), () -> {
-                Clock clock = Clock.fixed(Instant.parse("2026-09-02T05:00:00Z"), ZoneOffset.UTC);
-                AppServerBootstrap.Foundation foundation = PlatformFoundationFactory.create(
-                        temporaryDirectory.resolve("stdio/data-v6"), clock, new MemoryProtector(), required -> {});
-                try (AppServerBootstrap.Components components =
-                        ConfiguredProviderBootstrap.create(foundation, reference -> Optional.empty())) {
+                try (components) {
                     AppServerMain.serveStdio(components);
                 }
             });

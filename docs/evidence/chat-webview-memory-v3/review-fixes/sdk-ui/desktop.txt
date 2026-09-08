@@ -1,0 +1,29 @@
+9月 08, 2026 12:19:24 下午 com.sun.javafx.application.PlatformImpl startup
+警告: Unsupported JavaFX configuration: classes were loaded from 'unnamed module @7d6f77cc'
+SDK_UI_CAPTURE sdk-chat-history
+SDK_UI_CAPTURE sdk-history-execution-facts-standard
+SDK_UI_CAPTURE sdk-history-execution-facts-dark-minimum
+SDK_UI_CAPTURE sdk-chat-stream
+SDK_UI_CAPTURE sdk-chat-return-active-standard
+SDK_UI_CAPTURE sdk-chat-return-active-dark-minimum
+SDK_UI_CAPTURE sdk-chat-completed
+SDK_UI_CAPTURE sdk-document-reference
+SDK_UI_CAPTURE sdk-memory-graph-standard
+SDK_UI_CAPTURE sdk-memory-graph-detail-standard
+SDK_UI_CAPTURE sdk-memory-conflicts-standard
+SDK_UI_CAPTURE sdk-memory-conflicts-detail-standard
+SDK_UI_CAPTURE sdk-memory-background-learning-standard
+SDK_UI_CAPTURE sdk-memory-background-learning-detail-standard
+SDK_UI_CAPTURE sdk-learning-reopened-exact-selection-standard
+SDK_UI_CAPTURE sdk-schedule-standard
+SDK_UI_CAPTURE sdk-jobs-standard
+SDK_UI_CAPTURE sdk-memory-graph-dark-minimum
+SDK_UI_CAPTURE sdk-memory-graph-detail-dark-minimum
+SDK_UI_CAPTURE sdk-memory-conflicts-dark-minimum
+SDK_UI_CAPTURE sdk-memory-conflicts-detail-dark-minimum
+SDK_UI_CAPTURE sdk-memory-background-learning-dark-minimum
+SDK_UI_CAPTURE sdk-memory-background-learning-detail-dark-minimum
+SDK_UI_CAPTURE sdk-learning-reopened-exact-selection-dark-minimum
+SDK_UI_CAPTURE sdk-schedule-dark-minimum
+SDK_UI_CAPTURE sdk-jobs-dark-minimum
+SDK_UI_ACCEPTANCE_PASSED

@@ -13,6 +13,7 @@ import java.util.function.Consumer;
 
 import com.javaclaw.api.AttachmentRef;
 import com.javaclaw.api.AttachmentScope;
+import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.client.CommandOptions;
 import com.javaclaw.client.facade.AttachmentUploadOptions;
@@ -50,6 +51,14 @@ public final class SdkExtensionSettingsGateway implements ExtensionSettingsGatew
             ViewSchema schema,
             ViewLoadRequest request) {
         return presenter.loadExtensionViewData(workspaceId, document, schema, request);
+    }
+
+    @Override
+    public CompletableFuture<ExtensionRpcContracts.CallResult> query(
+            WorkspaceId workspaceId, String extensionId, String operation, CanonicalPayload arguments) {
+        var call = new ExtensionRpcContracts.CallPayload(
+                extensionId, workspaceId, Optional.empty(), Optional.empty(), operation, arguments);
+        return presenter.submitSettingsRequest(client -> client.extensions().query(call));
     }
 
     @Override

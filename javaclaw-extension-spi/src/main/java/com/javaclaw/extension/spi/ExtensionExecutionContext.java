@@ -18,6 +18,7 @@ import com.javaclaw.api.WorkspaceId;
  * @param managedStore 内置扩展托管存储
  * @param turns 单 Turn 编排端口
  * @param executionPolicies 自动化执行权威冻结端口
+ * @param scheduleBindings 仅维护调用扩展自身 Definition 的调度绑定端口
  * @param scheduleTargets Schedule 可选目标的权威目录
  * @param inputs 受治理用户输入请求端口
  * @param jobs 可恢复扩展作业端口
@@ -47,7 +48,8 @@ public record ExtensionExecutionContext(
         PrivateNetworkGrantPort privateNetworkGrants,
         IsolatedServicePort services,
         EmbeddingPort embeddings,
-        WorkspaceExecutionPort workspaceExecution) {
+        WorkspaceExecutionPort workspaceExecution,
+        ScheduleDefinitionBindingPort scheduleBindings) {
     /** 校验上下文端口。 */
     public ExtensionExecutionContext {
         Objects.requireNonNull(extension, "extension");
@@ -68,5 +70,6 @@ public record ExtensionExecutionContext(
         Objects.requireNonNull(services, "services");
         Objects.requireNonNull(embeddings, "embeddings");
         Objects.requireNonNull(workspaceExecution, "workspaceExecution");
+        Objects.requireNonNull(scheduleBindings, "scheduleBindings");
     }
 }

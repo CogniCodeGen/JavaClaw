@@ -247,7 +247,9 @@ class WorkflowJobExecutorCoverageTest {
                 support.embeddings,
                 steps,
                 ScheduledCommandPort.unavailable(),
-                com.javaclaw.extension.spi.ScheduleLifecyclePort.unavailable()));
+                com.javaclaw.extension.spi.ScheduleLifecyclePort.unavailable(),
+                com.javaclaw.extension.spi.ConversationEvidencePort.unavailable(),
+                com.javaclaw.extension.spi.ScheduleDefinitionBindingPort.unavailable()));
     }
 
     private static com.javaclaw.extension.spi.ExtensionJobStepResult execute(

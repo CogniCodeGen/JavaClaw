@@ -1,0 +1,61 @@
+JavaClaw V3 功能验收（测试数据）
+Scene 1280.0 x 820.0
+✦
+JavaClaw
+6.0
+界面功能验收
+＋
+＋ 新建对话
+对话
+对话记忆学习
+历史执行记录验收
+记忆事实：办公地点上海
+⚙  设置与管理
+App Server 未连接
+☰
+●
+历史执行记录验收
+选择工作区和权限配置后开始任务
+审批
+local RPC connection failed；请重新选择当前会话以重试
+无法连接到 JavaClaw 服务
+无法连接本地 App Server。IDEA 直接运行没有 launcher supervisor；请运行“JavaClaw Local Debug”或先启动 App Server。
+重新连接
+打开诊断
+启动 App Server
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+Agent · 继承
+模型 · 继承
+推理 · 继承
+权限 · 继承
+恢复继承
+查看继承来源与版本
+local RPC connection failed
+刷新配置
+停止
+发送 ↑
+待处理
+文档
+待处理事项
+×
+等待输入
+输入请求读取失败：local RPC connection failed
+工具审批
+当前没有等待审批的工具调用。
+拒绝
+批准

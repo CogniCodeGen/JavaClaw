@@ -43,6 +43,13 @@ public record CommandIdentity(String method, String idempotencyKey, long expecte
         return new CommandIdentity(method, command.idempotencyKey(), command.expectedRevision(), digestInput.sha256());
     }
 
+    /** 校验创建命令必须使用零版本；既有幂等恢复不能绕过该前置条件。 */
+    public void requireCreate() {
+        if (expectedRevision != 0) {
+            throw PersistenceException.invalidRequest("创建命令 expected revision 必须为 0");
+        }
+    }
+
     private static String text(String value, String name) {
         String normalized = Objects.requireNonNull(value, name).strip();
         if (normalized.isEmpty()) {

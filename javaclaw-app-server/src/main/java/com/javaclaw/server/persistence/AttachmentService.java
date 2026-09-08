@@ -232,11 +232,41 @@ public final class AttachmentService {
         return new AttachmentMetadata(digest, checkedMediaType, size, blob.createdAt());
     }
 
-    private AttachmentMetadata readMetadata(AttachmentScope scope, String digest) {
+    /**
+     * 仅读取权威元信息，每次都验证所有权，不把摘要视为授权。
+     *
+     * @param scope 显式所有权范围
+     * @param digest SHA-256 摘要
+     * @return 已声明且属于范围的元信息
+     */
+    public AttachmentMetadata readMetadata(AttachmentScope scope, String digest) {
         return execute(connection -> attachments
                 .findOwned(connection, scope, digest)
                 .orElseThrow(() -> PersistenceException.invalidRequest("Attachment 不属于请求的所有权范围"))
                 .metadata());
+    }
+
+    /**
+     * 用 channel 读取有界附件块；完整下载者必须校验返回的整体摘要。
+     *
+     * @param scope 每次核验的所有权范围
+     * @param digest 已提交内容摘要
+     * @param offsetBytes 非负字节位置
+     * @param maximumBytes 1 至 256 KiB
+     * @return 当前连续块，不分配整个附件
+     */
+    public com.javaclaw.api.DocumentChunk readChunk(
+            AttachmentScope scope, String digest, long offsetBytes, int maximumBytes) {
+        var attachment = execute(connection -> attachments
+                .findOwned(connection, scope, digest)
+                .orElseThrow(() -> PersistenceException.invalidRequest("Attachment 不属于请求的所有权范围")));
+        long size = attachment.metadata().sizeBytes();
+        if (offsetBytes < 0 || offsetBytes > size || maximumBytes < 1 || maximumBytes > 256 * 1024) {
+            throw PersistenceException.invalidRequest("附件读取必须在内容范围内且不超过 256 KiB");
+        }
+        byte[] bytes = blobs.readChunk(attachment, offsetBytes, maximumBytes);
+        long next = offsetBytes + bytes.length;
+        return new com.javaclaw.api.DocumentChunk(offsetBytes, bytes, next, next == size, digest);
     }
 
     private Optional<AttachmentMetadata> recover(

@@ -1,0 +1,13 @@
+PASS com.javaclaw.desktop.ViewSelectionProjectionTest.自动回显后同ID目录更新不能静默升级且新的服务端提示不覆盖首次引用
+PASS com.javaclaw.desktop.ViewSelectionProjectionTest.明确清空不发送空RPC选择也不重新套用初选或主表默认
+PASS com.javaclaw.desktop.ViewSelectionProjectionTest.没有初选的旧主从页面保留默认且非主表保留显式选择
+PASS com.javaclaw.desktop.ViewSelectionProjectionTest.非主表首次回显精确版本且用户重选优先
+PASS com.javaclaw.desktop.ViewSelectionProjectionTest.删除或失效引用与未加载分页均不替换成首行
+PASS com.javaclaw.desktop.ViewSelectionProjectionTest.非整数版本损坏及未来元数据保持未选
+PASS com.javaclaw.desktop.view.TranscriptPresenterTest.历史与原生展示共用错误审批及执行样式且兼容旧服务端摘要
+PASS com.javaclaw.desktop.view.TranscriptPresenterTest.mapsEveryCoreTranscriptPayloadAndPreservesUnknownPayload
+PASS com.javaclaw.desktop.view.TranscriptPresenterTest.mapsCoreMessageWithoutReconstructingSdkDto
+PASS com.javaclaw.desktop.view.TranscriptPresenterTest.虚拟化列表先绘制结果也根据完整快照中的冻结调用显示命令输出
+PASS com.javaclaw.desktop.settings.ViewPageCursorStateTest.损坏标量提示不能中断页面或在后续刷新自动换成有效引用
+PASS com.javaclaw.desktop.settings.ViewPageCursorStateTest.自动初选版本只记录一次并与明确清空分别保存
+TOTAL passed=12 failed=0

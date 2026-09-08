@@ -1,0 +1,1 @@
+{"height":712,"javafx":"26.0.2","observations":{"boundary":"Production FXML → SDK → UDS → App Server → H2","model":"固定模型，无外部请求"},"os":"Mac OS X aarch64","png":"sdk-memory-graph-standard.png","scene":"sdk-memory-graph-standard","sha256":"1e72bffe2e1cbb39452aefe692d0c5de80f020197274311b789db67d1794844c","width":1040}

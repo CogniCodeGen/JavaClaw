@@ -41,6 +41,10 @@ public final class RpcClientConnection implements AutoCloseable {
     private final AtomicReference<IOException> terminalFailure = new AtomicReference<>();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Object callLock = new Object();
+    private final java.util.concurrent.CopyOnWriteArrayList<Consumer<JsonRpcNotification>> observers =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+    private final java.util.concurrent.CopyOnWriteArrayList<Consumer<IOException>> failures =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
     private volatile Thread reader;
 
     /**
@@ -58,6 +62,32 @@ public final class RpcClientConnection implements AutoCloseable {
         this.json = Objects.requireNonNull(json, "json");
         this.notifications = Objects.requireNonNull(notifications, "notifications");
         reader = Thread.ofVirtual().name("javaclaw-sdk-rpc-reader").start(this::readLoop);
+    }
+
+    /**
+     * 登记 SDK 内部通知观察者，必须只校验和有界入队，禁止同步 RPC。
+     *
+     * @param observer 快速通知回调
+     * @return 释放登记的句柄
+     */
+    public AutoCloseable observe(Consumer<JsonRpcNotification> observer) {
+        observers.add(Objects.requireNonNull(observer, "observer"));
+        return () -> observers.remove(observer);
+    }
+
+    /**
+     * 登记连接失败观察者，主动通知连接 owner 重建 SDK；回调不得执行阻塞工作。
+     *
+     * @param observer 失败回调
+     * @return 释放登记的句柄
+     */
+    public AutoCloseable onFailure(Consumer<IOException> observer) {
+        failures.add(Objects.requireNonNull(observer, "observer"));
+        IOException failure = terminalFailure.get();
+        if (failure != null) {
+            observer.accept(failure);
+        }
+        return () -> failures.remove(observer);
     }
 
     /**
@@ -174,6 +204,7 @@ public final class RpcClientConnection implements AutoCloseable {
 
     private void deliver(JsonRpcNotification notification) throws IOException {
         FutureTask<Void> delivery = new FutureTask<>(() -> {
+            observers.forEach(observer -> observer.accept(notification));
             notifications.accept(notification);
             return null;
         });
@@ -212,6 +243,7 @@ public final class RpcClientConnection implements AutoCloseable {
             current.response().completeExceptionally(failure);
         }
         closeTransport();
+        failures.forEach(observer -> observer.accept(failure));
     }
 
     private void closeTransport() {

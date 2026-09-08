@@ -127,7 +127,8 @@ final class SpiFixtures {
                 },
                 invocation -> payload(),
                 EmbeddingPort.unavailable(),
-                WorkspaceExecutionPort.denied());
+                WorkspaceExecutionPort.denied(),
+                com.javaclaw.extension.spi.ScheduleDefinitionBindingPort.unavailable());
     }
 
     static AutomationExecutionSnapshot executionSnapshot(AgentRoleRef profile) {

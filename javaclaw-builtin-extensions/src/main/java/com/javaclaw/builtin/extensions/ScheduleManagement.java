@@ -130,6 +130,8 @@ final class ScheduleManagement {
                 Math.addExact(request.expectedRevision(), 1),
                 context.clock().instant());
         lifecycle.validateManaged(definition);
+        new ScheduleDefinitionBindings(documents, lifecycle)
+                .guardUserUpdate(transaction, request.workspaceId(), definition);
         requireRevision(transaction, request, definition.id(), mode);
         transaction.put(
                 documents.documentCollection(request.workspaceId()),

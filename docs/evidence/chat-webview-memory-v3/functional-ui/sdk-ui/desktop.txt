@@ -1,0 +1,25 @@
+9月 08, 2026 8:47:17 上午 com.sun.javafx.application.PlatformImpl startup
+警告: Unsupported JavaFX configuration: classes were loaded from 'unnamed module @123772c4'
+9月 08, 2026 8:47:18 上午 javafx.scene.control.skin.VirtualFlow addTrailingCells
+信息: index exceeds maxCellCount. Check size calculations for class com.javaclaw.desktop.shell.ShellWebSurfaces$SummaryCell
+SDK_UI_CAPTURE sdk-chat-history
+SDK_UI_CAPTURE sdk-chat-stream
+SDK_UI_CAPTURE sdk-chat-completed
+SDK_UI_CAPTURE sdk-document-reference
+SDK_UI_CAPTURE sdk-memory-graph-standard
+SDK_UI_CAPTURE sdk-memory-graph-detail-standard
+SDK_UI_CAPTURE sdk-memory-conflicts-standard
+SDK_UI_CAPTURE sdk-memory-conflicts-detail-standard
+SDK_UI_CAPTURE sdk-memory-background-learning-standard
+SDK_UI_CAPTURE sdk-memory-background-learning-detail-standard
+SDK_UI_CAPTURE sdk-schedule-standard
+SDK_UI_CAPTURE sdk-jobs-standard
+SDK_UI_CAPTURE sdk-memory-graph-dark-minimum
+SDK_UI_CAPTURE sdk-memory-graph-detail-dark-minimum
+SDK_UI_CAPTURE sdk-memory-conflicts-dark-minimum
+SDK_UI_CAPTURE sdk-memory-conflicts-detail-dark-minimum
+SDK_UI_CAPTURE sdk-memory-background-learning-dark-minimum
+SDK_UI_CAPTURE sdk-memory-background-learning-detail-dark-minimum
+SDK_UI_CAPTURE sdk-schedule-dark-minimum
+SDK_UI_CAPTURE sdk-jobs-dark-minimum
+SDK_UI_ACCEPTANCE_PASSED

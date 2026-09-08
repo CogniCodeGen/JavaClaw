@@ -5,6 +5,7 @@ import java.util.Objects;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
@@ -17,20 +18,37 @@ import com.javaclaw.desktop.component.PlatformComponentFactory.FeedbackKind;
 /** ViewSchema 页面的加载、空状态、重试和草稿遮罩容器。 */
 final class ViewSchemaFeedbackPane extends StackPane {
     private final PlatformComponentFactory components;
+    private Node blocked;
+    private boolean previouslyDisabled;
+    private ViewPageFocus focus;
+    private final javafx.event.EventHandler<KeyEvent> blockedKeys = KeyEvent::consume;
 
     ViewSchemaFeedbackPane(PlatformComponentFactory components) {
         this.components = Objects.requireNonNull(components, "components");
     }
 
     void showContent(Node rendered) {
-        getChildren().setAll(Objects.requireNonNull(rendered, "rendered"));
+        keepContent(Objects.requireNonNull(rendered, "rendered"));
+        restoreInteraction();
+    }
+
+    boolean interactionBlocked() {
+        return blocked != null;
     }
 
     void showLoading(String detail) {
+        restoreInteraction();
         getChildren().setAll(components.feedback(FeedbackKind.LOADING, "正在加载", detail));
     }
 
+    void showLoading(Node rendered, String detail) {
+        VBox loading = components.feedback(FeedbackKind.LOADING, "正在加载", detail);
+        loading.getStyleClass().add("platform-conflict-overlay");
+        showOverlay(rendered, loading);
+    }
+
     void showEmpty(String heading, String detail) {
+        restoreInteraction();
         getChildren().setAll(components.feedback(FeedbackKind.EMPTY, heading, detail));
     }
 
@@ -41,6 +59,7 @@ final class ViewSchemaFeedbackPane extends StackPane {
     }
 
     void showRetry(String heading, String detail, Runnable retryAction) {
+        restoreInteraction();
         Button retry = components.action("重试", ActionStyle.PRIMARY, ActionSize.NORMAL);
         retry.setOnAction(
                 event -> Objects.requireNonNull(retryAction, "retryAction").run());
@@ -68,14 +87,46 @@ final class ViewSchemaFeedbackPane extends StackPane {
     }
 
     void showFatal(String heading, String detail) {
+        restoreInteraction();
         getChildren().setAll(components.feedback(FeedbackKind.ERROR, heading, detail));
     }
 
+    private void keepContent(Node rendered) {
+        if (!getChildren().isEmpty() && getChildren().getFirst() == rendered) {
+            getChildren().remove(1, getChildren().size());
+        } else {
+            getChildren().setAll(rendered);
+        }
+    }
+
     private void showOverlay(Node rendered, Node overlay) {
+        restoreInteraction();
         if (rendered == null) {
             getChildren().setAll(overlay);
         } else {
-            getChildren().setAll(rendered, overlay);
+            keepContent(rendered);
+            blocked = rendered;
+            previouslyDisabled = rendered.isDisable();
+            focus = ViewPageFocus.capture(rendered);
+            // 遮罩必须同时阻止已聚焦控件的键盘输入；仅覆盖鼠标命中区域不足以保护待提交草稿。
+            rendered.addEventFilter(KeyEvent.ANY, blockedKeys);
+            rendered.setDisable(true);
+            getChildren().add(overlay);
+            overlay.setFocusTraversable(true);
+            overlay.requestFocus();
+        }
+    }
+
+    /** 加载完成、失败或取消后归还原交互状态；不能把原本禁用的内容错误启用。 */
+    void restoreInteraction() {
+        if (blocked != null) {
+            blocked.removeEventFilter(KeyEvent.ANY, blockedKeys);
+            blocked.setDisable(previouslyDisabled);
+            if (focus != null) {
+                focus.restore(blocked);
+            }
+            blocked = null;
+            focus = null;
         }
     }
 }

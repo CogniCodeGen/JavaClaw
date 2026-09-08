@@ -66,6 +66,12 @@ final class TurnRepository {
         }
     }
 
+    /** 写入 Item 或 checkpoint 的事务统一先 Thread 后 Turn，锁保持到外层事务结束。 */
+    AgentTurn lockForJournal(Connection connection, TurnId turnId) throws SQLException {
+        lockThread(connection, threadId(connection, turnId));
+        return lock(connection, turnId);
+    }
+
     boolean hasActiveTurn(Connection connection, ThreadId threadId) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
                 SELECT COUNT(*) FROM CORE.AGENT_TURN
@@ -122,6 +128,7 @@ final class TurnRepository {
             Optional<String> errorCode,
             Instant now)
             throws SQLException {
+        new TurnStreamRepository(json).lockJournal(connection, turnId);
         if (next == TurnStatus.COMPLETED && hasCancellation(connection, turnId)) {
             throw new TurnCancelledException("Turn 已收到持久化取消请求");
         }
@@ -138,6 +145,10 @@ final class TurnRepository {
             if (statement.executeUpdate() != 1) {
                 throw new PersistenceException("Turn revision 或状态已经改变");
             }
+        }
+        new TurnStreamJournal(json).finished(connection, turnId, next, now);
+        if (next == TurnStatus.COMPLETED) {
+            ConversationCompletionIndex.record(connection, turnId, now);
         }
     }
 

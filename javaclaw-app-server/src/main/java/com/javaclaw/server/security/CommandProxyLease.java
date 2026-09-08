@@ -17,6 +17,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import com.javaclaw.api.CancellationToken;
 
@@ -35,6 +36,7 @@ public final class CommandProxyLease implements AutoCloseable {
     private final CommandProxyBroker.SocketFactory socketFactory;
     private final BrokerDeadline lifetime;
     private final Object lifecycle = new Object();
+    private final ReentrantReadWriteLock authorizationUse = new ReentrantReadWriteLock(true);
     private final Semaphore slots;
     private final Set<Socket> sockets = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean closed = new AtomicBoolean();
@@ -231,12 +233,17 @@ public final class CommandProxyLease implements AutoCloseable {
     }
 
     private void check() throws Exception {
-        cancellation.throwIfCancelled();
-        if (closed.get() || !clock.instant().isBefore(grant.expiresAt())) {
-            throw new SecurityException("命令网络租约已结束");
+        authorizationUse.readLock().lock();
+        try {
+            cancellation.throwIfCancelled();
+            if (closed.get() || !clock.instant().isBefore(grant.expiresAt())) {
+                throw new SecurityException("命令网络租约已结束");
+            }
+            lifetime.remaining(cancellation);
+            authorization.check();
+        } finally {
+            authorizationUse.readLock().unlock();
         }
-        lifetime.remaining(cancellation);
-        authorization.check();
     }
 
     private void register(Socket socket) throws IOException {
@@ -271,15 +278,31 @@ public final class CommandProxyLease implements AutoCloseable {
     }
 
     /**
-     * 先关闭入口再关闭全部隧道；重复调用等待同一清理完成。
+     * 先关闭入口与全部隧道，再等待已经开始的只读权限检查退出；重复调用等待同一清理完成。
      *
-     * <p>登记连接和关闭共享生命周期锁，关闭快照后不能出现逃离租约的晚到 Socket。
+     * <p>登记连接和关闭共享生命周期锁，关闭快照后不能出现逃离租约的晚到 Socket。 权限检查共享读锁，关闭屏障使用写锁；不持有 Socket 生命周期锁等待 JDBC，不中断共享文件通道。 权限回调内重入关闭仅撤销入口，外层
+     * owner 的关闭仍等待该回调退出，避免等待自身导致死锁。
      */
     @Override
     public void close() {
+        boolean first = closeSockets();
+        if (authorizationUse.getReadHoldCount() == 0) {
+            authorizationUse.writeLock().lock();
+            try {
+                // 此后所有检查先观察 closed，不会在 owner 释放数据库后重新打开 H2。
+            } finally {
+                authorizationUse.writeLock().unlock();
+            }
+        }
+        if (first) {
+            onClose.run();
+        }
+    }
+
+    private boolean closeSockets() {
         synchronized (lifecycle) {
             if (!closed.compareAndSet(false, true)) {
-                return;
+                return false;
             }
             try {
                 listener.close();
@@ -288,7 +311,7 @@ public final class CommandProxyLease implements AutoCloseable {
             for (Socket socket : Set.copyOf(sockets)) {
                 closeSocket(socket);
             }
-            onClose.run();
+            return true;
         }
     }
 }

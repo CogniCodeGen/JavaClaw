@@ -26,10 +26,21 @@ public final class DeferredTurnOrchestrationPort implements TurnOrchestrationPor
     @Override
     public OrchestratedTurnResult execute(OrchestratedTurnCommand command, CancellationToken cancellation)
             throws Exception {
+        return requireBound().execute(command, cancellation);
+    }
+
+    /** 派生对话必须保持独立入口，不能退回普通 execute 而丢失学习来源排除标记。 */
+    @Override
+    public OrchestratedTurnResult executeDerived(OrchestratedTurnCommand command, CancellationToken cancellation)
+            throws Exception {
+        return requireBound().executeDerived(command, cancellation);
+    }
+
+    private TurnOrchestrationPort requireBound() {
         TurnOrchestrationPort current = delegate.get();
         if (current == null) {
             throw new IllegalStateException("Turn orchestration port is not bound");
         }
-        return current.execute(command, cancellation);
+        return current;
     }
 }

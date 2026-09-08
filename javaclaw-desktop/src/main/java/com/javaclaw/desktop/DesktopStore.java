@@ -10,7 +10,7 @@ import com.javaclaw.desktop.state.DesktopState;
 /** 仅在 JavaFX 调度器上提交状态的轻量 Store；监听者永远接收完整不可变快照。 */
 final class DesktopStore {
     private final CopyOnWriteArrayList<Consumer<DesktopState>> listeners = new CopyOnWriteArrayList<>();
-    private DesktopState state = DesktopState.initial();
+    private volatile DesktopState state = DesktopState.initial();
 
     DesktopState state() {
         return state;

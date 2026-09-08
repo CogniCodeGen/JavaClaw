@@ -1,6 +1,5 @@
 package com.javaclaw.builtin.extensions;
 
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -33,10 +32,12 @@ final class MemoryQueryHandler {
 
     private final ExtensionPayloadCodec payloads;
     private final MemoryStoreAccess store;
+    private final MemorySemantics semantics;
 
     MemoryQueryHandler(ExtensionPayloadCodec payloads, MemoryStoreAccess store) {
         this.payloads = java.util.Objects.requireNonNull(payloads, "payloads");
         this.store = java.util.Objects.requireNonNull(store, "store");
+        semantics = new MemorySemantics(payloads, store);
     }
 
     ExtensionResponse query(ExtensionRequest request, ExtensionExecutionContext context) throws Exception {
@@ -48,6 +49,8 @@ final class MemoryQueryHandler {
             case "list" -> list(request, context, memories(request));
             case "history" -> history(request, context);
             case "search" -> search(request, context);
+            case "search/v2" -> searchV2(request, context);
+            case "graph/read" -> graph(request, context);
             case "proposal/read" -> readProposal(request, context);
             case "proposal/list" -> list(request, context, proposals(request));
             case "settings/read" -> settings(context);
@@ -84,21 +87,48 @@ final class MemoryQueryHandler {
 
     ExtensionResponse search(ExtensionRequest request, ExtensionExecutionContext context) throws Exception {
         MemoryContracts.SearchRequest search = payloads.decode(request.payload(), MemoryContracts.SearchRequest.class);
-        List<MemoryContracts.Memory> matches = context
-                .managedStore()
-                .inTransaction(MemoryStoreAccess.ID, transaction -> store.allMemories(transaction, memories(request)))
-                .stream()
-                .filter(memory -> ExtensionSearch.matchesValue(search.scopes(), memory.scope()))
-                .filter(memory -> ExtensionSearch.containsAll(memory.tags(), search.tags()))
-                .filter(memory -> ExtensionSearch.contains(search.query(), memory.scope(), memory.content())
-                        || ExtensionSearch.contains(search.query(), memory.tags()))
-                .sorted(Comparator.comparing(MemoryContracts.Memory::pinned)
-                        .reversed()
-                        .thenComparing(MemoryContracts.Memory::updatedAt, Comparator.reverseOrder())
-                        .thenComparing(MemoryContracts.Memory::id))
-                .limit(search.limit())
-                .toList();
+        List<MemoryContracts.Memory> matches = context.managedStore()
+                .inTransaction(
+                        MemoryStoreAccess.ID,
+                        transaction ->
+                                semantics
+                                        .search(
+                                                transaction,
+                                                request.workspaceId(),
+                                                search,
+                                                context.clock().instant(),
+                                                true)
+                                        .stream()
+                                        .map(com.javaclaw.builtin.contracts.MemoryV3Contracts.SearchMatch::memory)
+                                        .toList());
         return new ExtensionResponse(payloads.encode(new MemoryContracts.SearchResult(matches)), 0);
+    }
+
+    ExtensionResponse searchV2(ExtensionRequest request, ExtensionExecutionContext context) throws Exception {
+        MemoryContracts.SearchRequest search = payloads.decode(request.payload(), MemoryContracts.SearchRequest.class);
+        var now = context.clock().instant();
+        var result = context.managedStore()
+                .inTransaction(
+                        MemoryStoreAccess.ID,
+                        transaction -> new com.javaclaw.builtin.contracts.MemoryV3Contracts.SearchResult(
+                                semantics.search(transaction, request.workspaceId(), search, now, false),
+                                now,
+                                semantics.head(transaction, request.workspaceId())));
+        return new ExtensionResponse(payloads.encode(result), result.memoryRevision());
+    }
+
+    private ExtensionResponse graph(ExtensionRequest request, ExtensionExecutionContext context) throws Exception {
+        var query =
+                payloads.decode(request.payload(), com.javaclaw.builtin.contracts.MemoryV3Contracts.GraphRequest.class);
+        var graph = context.managedStore()
+                .inTransaction(
+                        MemoryStoreAccess.ID,
+                        transaction -> semantics.graph(
+                                transaction,
+                                request.workspaceId(),
+                                query,
+                                context.clock().instant()));
+        return new ExtensionResponse(payloads.encode(graph), graph.memoryRevision());
     }
 
     private ExtensionResponse read(ExtensionRequest request, ExtensionExecutionContext context) throws Exception {

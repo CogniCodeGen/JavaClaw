@@ -90,6 +90,29 @@ class DistributionScriptsTest {
     }
 
     @Test
+    void 三平台安装器在签名或封装前复制完整许可证与发布证据() throws IOException {
+        String linux = source("src/main/packaging/package-linux.sh");
+        String macos = source("src/main/packaging/package-macos.sh");
+        String windows = source("src/main/packaging/package-windows.ps1");
+
+        for (String script : List.of(linux, macos)) {
+            assertTrue(script.contains("for DIRECTORY in legal evidence; do"));
+            assertTrue(script.contains("test -d \"$DISTRIBUTION_ROOT/$DIRECTORY\""));
+            assertTrue(script.contains("cp -R \"$DISTRIBUTION_ROOT/$DIRECTORY\""));
+        }
+        assertTrue(linux.contains("\"$APP_IMAGE/lib/app/$DIRECTORY\""));
+        assertTrue(macos.contains("\"$APP_IMAGE/Contents/app/$DIRECTORY\""));
+        assertBefore(linux, "cp -R \"$DISTRIBUTION_ROOT/$DIRECTORY\"", "\"$JPACKAGE\" --type \"$TYPE\"");
+        assertBefore(macos, "cp -R \"$DISTRIBUTION_ROOT/$DIRECTORY\"", "/usr/bin/codesign --force");
+
+        assertTrue(windows.contains("foreach ($directory in @(\"legal\", \"evidence\"))"));
+        assertTrue(windows.contains("Test-Path -LiteralPath $evidenceSource -PathType Container"));
+        assertTrue(windows.contains("Join-Path $appImage \"app\\$directory\""));
+        assertBefore(windows, "Copy-Item -LiteralPath $evidenceSource", "& signtool.exe sign");
+        assertBefore(windows, "Copy-Item -LiteralPath $evidenceSource", "& $JPackage --type $PackageType");
+    }
+
+    @Test
     void 构建将私有依赖分配到独立镜像并锁定Chromium来源() throws IOException {
         String pom = source("pom.xml");
         String workflow = source("../.github/workflows/javaclaw-v6.yml");
@@ -103,6 +126,12 @@ class DistributionScriptsTest {
         assertTrue(workflow.contains("macos-15-intel"));
         assertTrue(workflow.contains("ubuntu-24.04-arm"));
         assertTrue(workflow.contains("windows-2025"));
+    }
+
+    private static void assertBefore(String script, String earlier, String later) {
+        int first = script.indexOf(earlier);
+        int second = script.indexOf(later);
+        assertTrue(first >= 0 && second > first, () -> earlier + " 必须在 " + later + " 之前执行");
     }
 
     private static Path sourceBin() {

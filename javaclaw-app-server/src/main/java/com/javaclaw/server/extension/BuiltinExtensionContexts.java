@@ -37,6 +37,7 @@ final class BuiltinExtensionContexts {
                 ports.privateNetworkGrants(),
                 ports.services(),
                 ports.embeddings(),
-                execution);
+                execution,
+                ports.scheduleBindings().apply(extension.descriptor().id()));
     }
 }

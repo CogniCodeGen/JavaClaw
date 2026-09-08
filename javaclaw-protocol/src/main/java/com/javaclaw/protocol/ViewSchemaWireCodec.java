@@ -1,11 +1,13 @@
 package com.javaclaw.protocol;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.extension.spi.ExpectedRevisionBinding;
+import com.javaclaw.extension.spi.GraphBrowsing;
 import com.javaclaw.extension.spi.ViewAction;
 import com.javaclaw.extension.spi.ViewBinding;
 import com.javaclaw.extension.spi.ViewCommandBinding;
@@ -15,6 +17,9 @@ import com.javaclaw.extension.spi.ViewSelectionMode;
 
 /** ViewSchema v2 的显式 wire codec；每个 sealed 节点都携带稳定 {@code type}，未知类型直接拒绝。 */
 public final class ViewSchemaWireCodec {
+    /** 显式协商的通用图谱浏览元数据能力。 */
+    public static final String GRAPH_BROWSING_CAPABILITY = "core.view-graph-browsing-v1";
+
     private final CanonicalJson json;
     private final ViewFormFieldWireCodec formFields;
 
@@ -38,6 +43,15 @@ public final class ViewSchemaWireCodec {
         Objects.requireNonNull(schema, "schema");
         List<CanonicalPayload> nodes =
                 schema.nodes().stream().map(this::encodeNode).toList();
+        if (!schema.graphBrowsing().isEmpty()) {
+            return json.encode(new BrowsingWireView(
+                    schema.schemaVersion(),
+                    schema.viewId(),
+                    schema.title(),
+                    schema.dataSources(),
+                    nodes,
+                    schema.graphBrowsing()));
+        }
         return json.encode(
                 new WireView(schema.schemaVersion(), schema.viewId(), schema.title(), schema.dataSources(), nodes));
     }
@@ -49,6 +63,13 @@ public final class ViewSchemaWireCodec {
      * @return 强类型页面
      */
     public ViewSchema decode(CanonicalPayload payload) {
+        if (json.objectField(payload, "graphBrowsing").isPresent()) {
+            BrowsingWireView wire = json.decode(payload, BrowsingWireView.class);
+            List<ViewSchema.Node> nodes =
+                    wire.nodes().stream().map(this::decodeNode).toList();
+            return new ViewSchema(
+                    wire.schemaVersion(), wire.viewId(), wire.title(), wire.dataSources(), nodes, wire.graphBrowsing());
+        }
         WireView wire = json.decode(payload, WireView.class);
         List<ViewSchema.Node> nodes =
                 wire.nodes().stream().map(this::decodeNode).toList();
@@ -309,6 +330,14 @@ public final class ViewSchemaWireCodec {
     private static ProtocolException invalid(String message) {
         return new ProtocolException(ProtocolErrorCode.INVALID_PARAMS, message);
     }
+
+    private record BrowsingWireView(
+            int schemaVersion,
+            String viewId,
+            String title,
+            List<ViewDataSource> dataSources,
+            List<CanonicalPayload> nodes,
+            Map<String, GraphBrowsing> graphBrowsing) {}
 
     private record WireView(
             int schemaVersion,

@@ -31,6 +31,7 @@ final class AppServerExtensionBootstrap {
         Objects.requireNonNull(foundation, "foundation");
         RuntimeDependencies runtime = Objects.requireNonNull(dependencies, "dependencies");
         CanonicalExtensionPayloadCodec payloads = new CanonicalExtensionPayloadCodec(foundation.json());
+        var bindings = new com.javaclaw.server.extension.ServerScheduleDefinitionBindings(foundation.json());
         BuiltinExtensionRuntimePorts ports = new BuiltinExtensionRuntimePorts(
                 foundation.clock(),
                 payloads,
@@ -48,14 +49,19 @@ final class AppServerExtensionBootstrap {
                 runtime.automationSteps(),
                 runtime.scheduledCommands(),
                 runtime.scheduleLifecycle(),
-                foundation.extensionCatalog());
+                foundation.extensionCatalog(),
+                new com.javaclaw.server.persistence.ServerConversationEvidencePort(
+                        foundation.database(), foundation.json()),
+                bindings::forOwner);
         try {
-            return BuiltinExtensionHost.start(
+            BuiltinExtensionHost host = BuiltinExtensionHost.start(
                     BuiltinExtensions.create(),
                     foundation.core(),
                     foundation.permissionProfiles(),
                     ports,
                     java.util.Optional.of(runtime.coding()));
+            bindings.bindHost(host);
+            return host;
         } catch (Exception failure) {
             throw new IllegalStateException("内置扩展启动失败", failure);
         }

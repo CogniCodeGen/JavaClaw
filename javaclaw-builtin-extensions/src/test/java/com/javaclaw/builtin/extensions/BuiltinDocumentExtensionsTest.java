@@ -57,7 +57,8 @@ class BuiltinDocumentExtensionsTest {
                 support.networkGrants,
                 invocation -> invocation.request(),
                 support.embeddings,
-                com.javaclaw.extension.spi.WorkspaceExecutionPort.denied());
+                com.javaclaw.extension.spi.WorkspaceExecutionPort.denied(),
+                com.javaclaw.extension.spi.ScheduleDefinitionBindingPort.unavailable());
         ExtensionContributions.Tool snapshotTool = started.contributions().stream()
                 .filter(ExtensionContributions.Tool.class::isInstance)
                 .map(ExtensionContributions.Tool.class::cast)

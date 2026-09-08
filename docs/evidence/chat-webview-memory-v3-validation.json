@@ -1,0 +1,635 @@
+{
+  "recorded_at": "2026-09-07T16:52:12.037450+00:00",
+  "baseline_commit": "ff03b878d76ed23ee53e7f3882039285c8ce046c",
+  "working_tree": "未提交工作树；不包含用户既有 scripts/__pycache__ 的生成内容",
+  "compatibility": {
+    "protocol_version": 3,
+    "rpc_methods": 172,
+    "data_directory": "data-v6",
+    "modules": 14
+  },
+  "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "command": "mvn -s /private/tmp/javaclaw-webview-maven-settings.xml spotless:apply clean verify spotless:check checkstyle:check",
+  "temporary_settings": "<settings xmlns=\"http://maven.apache.org/SETTINGS/1.2.0\"><mirrors><mirror><id>javaclaw-central-check</id><mirrorOf>*</mirrorOf><url>https://repo.maven.apache.org/maven2</url></mirror></mirrors></settings>",
+  "maven_settings_note": "临时仅指定官方 Maven Central 镜像以避免缓存仓库身份差异；未修改个人或全局配置",
+  "result": "BUILD SUCCESS",
+  "reactor_projects": 15,
+  "build_finished": "2026-09-08T00:51:46+08:00",
+  "build_time": " 14:37 min",
+  "log": {
+    "path": "/private/tmp/javaclaw-v3-final-clean-verify-20260908-final.log",
+    "bytes": 279581,
+    "sha256": "cc889dd307f2659bfa8993f83732bcdfddcdf0561f5f775e692e658863ea7b5a"
+  },
+  "totals": {
+    "tests": 2505,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 25
+  },
+  "modules": [
+    {
+      "module": "javaclaw-agent-runtime",
+      "tests": 42,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 255,
+          "missed": 61,
+          "percent": 80.6962
+        },
+        "line": {
+          "covered": 803,
+          "missed": 57,
+          "percent": 93.3721
+        }
+      }
+    },
+    {
+      "module": "javaclaw-api",
+      "tests": 105,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 925,
+          "missed": 198,
+          "percent": 82.3687
+        },
+        "line": {
+          "covered": 2191,
+          "missed": 153,
+          "percent": 93.4727
+        }
+      }
+    },
+    {
+      "module": "javaclaw-app-server",
+      "tests": 1029,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 6,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 7343,
+          "missed": 1789,
+          "percent": 80.4095
+        },
+        "line": {
+          "covered": 25204,
+          "missed": 2375,
+          "percent": 91.3884
+        }
+      }
+    },
+    {
+      "module": "javaclaw-browser-service",
+      "tests": 47,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 396,
+          "missed": 161,
+          "percent": 71.0952
+        },
+        "line": {
+          "covered": 1230,
+          "missed": 276,
+          "percent": 81.6733
+        }
+      }
+    },
+    {
+      "module": "javaclaw-builtin-contracts",
+      "tests": 67,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 771,
+          "missed": 273,
+          "percent": 73.8506
+        },
+        "line": {
+          "covered": 1960,
+          "missed": 393,
+          "percent": 83.2979
+        }
+      }
+    },
+    {
+      "module": "javaclaw-builtin-extensions",
+      "tests": 201,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 1662,
+          "missed": 663,
+          "percent": 71.4839
+        },
+        "line": {
+          "covered": 8512,
+          "missed": 885,
+          "percent": 90.5821
+        }
+      }
+    },
+    {
+      "module": "javaclaw-client",
+      "tests": 122,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 559,
+          "missed": 222,
+          "percent": 71.5749
+        },
+        "line": {
+          "covered": 2092,
+          "missed": 302,
+          "percent": 87.3851
+        }
+      }
+    },
+    {
+      "module": "javaclaw-desktop",
+      "tests": 317,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 1,
+      "coverage": {
+        "branch": {
+          "covered": 4206,
+          "missed": 1734,
+          "percent": 70.8081
+        },
+        "line": {
+          "covered": 15402,
+          "missed": 2256,
+          "percent": 87.2239
+        }
+      }
+    },
+    {
+      "module": "javaclaw-extension-spi",
+      "tests": 66,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 562,
+          "missed": 111,
+          "percent": 83.5067
+        },
+        "line": {
+          "covered": 1282,
+          "missed": 66,
+          "percent": 95.1039
+        }
+      }
+    },
+    {
+      "module": "javaclaw-knowledge-worker",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 23,
+          "missed": 7,
+          "percent": 76.6667
+        },
+        "line": {
+          "covered": 75,
+          "missed": 6,
+          "percent": 92.5926
+        }
+      }
+    },
+    {
+      "module": "javaclaw-model-adapters",
+      "tests": 63,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 376,
+          "missed": 133,
+          "percent": 73.8703
+        },
+        "line": {
+          "covered": 1334,
+          "missed": 169,
+          "percent": 88.7558
+        }
+      }
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "tests": 201,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 17,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 1163,
+          "missed": 478,
+          "percent": 70.8714
+        },
+        "line": {
+          "covered": 3166,
+          "missed": 678,
+          "percent": 82.3621
+        }
+      }
+    },
+    {
+      "module": "javaclaw-packaging",
+      "tests": 89,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 2,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 299,
+          "missed": 91,
+          "percent": 76.6667
+        },
+        "line": {
+          "covered": 766,
+          "missed": 161,
+          "percent": 82.6321
+        }
+      }
+    },
+    {
+      "module": "javaclaw-protocol",
+      "tests": 149,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 661,
+          "missed": 141,
+          "percent": 82.419
+        },
+        "line": {
+          "covered": 2269,
+          "missed": 211,
+          "percent": 91.4919
+        }
+      }
+    }
+  ],
+  "skipped_tests": [
+    {
+      "module": "javaclaw-app-server",
+      "class": "com.javaclaw.server.LocalProviderAcceptanceTest",
+      "test": "本地兼容Provider贯通默认Profile对话Embedding记忆与Skill审核",
+      "reason": "System property [javaclaw.live.local] does not exist"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "class": "com.javaclaw.server.coding.PublishedCodingExecutionTest",
+      "test": "真实五类发行工具链在断网沙箱中执行并运行Gradle项目任务",
+      "reason": "System property [javaclaw.toolchainArchives] does not exist"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "class": "com.javaclaw.server.coding.PublishedCodingHarnessTest",
+      "test": "同一会话聊天准备真实NPM依赖修改断网失败修复成功保留Diff再继续聊天",
+      "reason": "System property [javaclaw.codingHarnessNetworkAcceptance] does not exist"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "class": "com.javaclaw.server.coding.PublishedDependenciesPreparationTest",
+      "test": "nativePackageManagersPreparePublicDependenciesBeforeSeparateOfflineRuns",
+      "reason": "System property [javaclaw.codingNetworkAcceptance] does not exist"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "class": "com.javaclaw.server.coding.PublishedToolchainArchiveTest",
+      "test": "真实归档通过流式解包完整性证据和目录入口校验",
+      "reason": "System property [javaclaw.toolchainArchives] does not exist"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "class": "com.javaclaw.server.coding.PublishedToolchainArchiveTest",
+      "test": "WindowsPython归档在任意宿主解包后同时满足Python和Pip真实入口",
+      "reason": "System property [javaclaw.toolchainArchives] does not exist"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.credential.SystemMasterKeyProtectorNativeTest",
+      "test": "currentUserCredentialFacilityStoresLoadsReplacesAndDeletesMasterKey",
+      "reason": "org.opentest4j.TestAbortedException: Assumption failed: assumption is not true"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclLeaseTest",
+      "test": "anotherProcessWaitsUntilRestorationCompletesBeforeTakingSharedRootLease",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclLeaseTest",
+      "test": "deadHelperReleasesKernelLockButItsPendingMarkerPreventsSilentAclBaselineAdoption",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclManagerTest",
+      "test": "failedRestoreEvidenceRetainsOriginalIdentityAndNeverOffersPathBasedRestore",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclManagerTest",
+      "test": "baselineIsDurableBeforeGrantAndOutlivesThreadScopeUntilAsynchronousRestore",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclManagerTest",
+      "test": "originalAclIsRestoredOnSameObjectBeforeRenameHandlesAreReleased",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclManagerTest",
+      "test": "laterGrantFailureRestoresEarlierAclAndReleasesAllAncestorPins",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsWorkspaceDirectoryTest",
+      "test": "directoryCapabilityBlocksRenameAndCannotFollowInsertedJunction",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsWorkspaceDirectoryTest",
+      "test": "realNativeChannelRenamesWithoutReplacementCopiesAclAndDeletesByHandle",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsWorkspaceDirectoryTest",
+      "test": "independentChildRemainsOwnedAfterParentClosesAndTruncationIsDurable",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.sandbox.LinuxProxyIsolationTest",
+      "test": "realNamespaceRelayAllowsProxyAndSeccompRejectsMountedHostUnixSocket",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.sandbox.WindowsProxyIsolationTest",
+      "test": "realAppContainerAllowsOnlyExactProxyTcpAndClosesItsLease",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.sandbox.WindowsSandboxIntegrationTest",
+      "test": "targetExit73IsNotConfusedWithTrustedHelperRestorationFailure",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.sandbox.WindowsSandboxIntegrationTest",
+      "test": "conPtySupportsBackpressuredOutputResizeAndInput",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.sandbox.WindowsSandboxIntegrationTest",
+      "test": "appContainerAllowsDeclaredWriteButDeniesDeleteAndEnforcesWallTimeout",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.transport.WindowsNamedPipeIntegrationTest",
+      "test": "closeWakesPendingAcceptAndIsIdempotent",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.transport.WindowsNamedPipeIntegrationTest",
+      "test": "exchangesFramedProtocolMessagesAndOwnsBothHandles",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-packaging",
+      "class": "com.javaclaw.launcher.WindowsServerSupervisorTest",
+      "test": "reusesReachableCurrentUserPipeWithoutStartingProcess",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-packaging",
+      "class": "com.javaclaw.release.BrowserNativeSandboxSmokeTest",
+      "test": "五平台Runner只在原生Sandbox登录和OAuth私有回调成功后分别发布能力",
+      "reason": "org.opentest4j.TestAbortedException: Assumption failed: assumption is not true"
+    }
+  ],
+  "unchanged_historical_migrations": [
+    {
+      "path": "javaclaw-app-server/src/main/resources/db/core/V001__v6_baseline.sql",
+      "sha256": "a90d5cd6010ad472c2cf026e9e9a6f4d507a88167395ca7d663f098bf665fcef",
+      "unchanged": true
+    },
+    {
+      "path": "javaclaw-app-server/src/main/resources/db/core/V001__v6_collaboration.sql",
+      "sha256": "2d7d0e9ba9c3b015737066ddb69eb43b4b624e81e3c166ec7dcae5bce82bdd91",
+      "unchanged": true
+    },
+    {
+      "path": "javaclaw-app-server/src/main/resources/db/core/V001__v6_configuration.sql",
+      "sha256": "96e4b4b8f1316a81c96baa585437ce7c64c8c1be07ddc7733d886e054db4546c",
+      "unchanged": true
+    },
+    {
+      "path": "javaclaw-app-server/src/main/resources/db/core/V001__v6_extensions.sql",
+      "sha256": "0e7b7e681476390651f7f581389b6973f969f303f2030861243eb29a7b4773f0",
+      "unchanged": true
+    },
+    {
+      "path": "javaclaw-app-server/src/main/resources/db/core/V001__v6_mcp.sql",
+      "sha256": "d6c2b3babf73355e02067d8a1966c6f53af6c42577b21adf5fbeb8686f8a99e1",
+      "unchanged": true
+    },
+    {
+      "path": "javaclaw-app-server/src/main/resources/db/core/V002__v6_context_runtime.sql",
+      "sha256": "b105776787c98b0c29d53f420b282c7fc7bda52eb2cffd5323940e7404fde5bc",
+      "unchanged": true
+    },
+    {
+      "path": "javaclaw-app-server/src/main/resources/db/core/V003__v6_coding_execution.sql",
+      "sha256": "4c354df4ad1f925141da74e68af6c10aa657ebf86495e041d3982683cb09f2a8",
+      "unchanged": true
+    },
+    {
+      "path": "javaclaw-app-server/src/main/resources/db/core/V004__v6_command_stream.sql",
+      "sha256": "034d4960fb04a7cb8433f742f58a73c55d9edd6b1f52864019628fe3a7044540",
+      "unchanged": true
+    },
+    {
+      "path": "javaclaw-app-server/src/main/resources/db/extension/V001__managed_store.sql",
+      "sha256": "48f31daf602a73230e825db3a71bd033eeb94cd242d45571f2a63d4d797e50e1",
+      "unchanged": true
+    }
+  ],
+  "local_release_artifacts": [
+    {
+      "path": "javaclaw-packaging/target/distribution/MANIFEST.json",
+      "bytes": 102494,
+      "sha256": "b1e08cb91d079aea4ef637d2bf9b53a7968b81e88cb5ad12fc580bd43bb00308"
+    },
+    {
+      "path": "javaclaw-packaging/target/distribution/evidence/web-bom.json",
+      "bytes": 1236,
+      "sha256": "7e18bc50982000dac05183352d2b27eb85bafe4821813d09777585656c83f1ac"
+    },
+    {
+      "path": "javaclaw-packaging/target/release/RELEASE-MANIFEST.json",
+      "bytes": 240,
+      "sha256": "cb799889df2b1f34aaec0f3760f873af1d2d187c296ecd6148dba3737ef35052"
+    },
+    {
+      "path": "javaclaw-packaging/target/release/javaclaw-6.0.0-SNAPSHOT-mac-aarch64.zip",
+      "bytes": 485224333,
+      "sha256": "f469aa80cc98786e0423c61e316bd13b0cb98f62d0352c299531872f93877df4"
+    },
+    {
+      "path": "javaclaw-packaging/target/release-evidence/bom.json",
+      "bytes": 363904,
+      "sha256": "dbe69ac12a190cc8e3248816a66a419f9e571df7c8a76fb13016e5d62a8754e4"
+    }
+  ],
+  "limits": [
+    "仅 macOS arm64 本机；其他四个 Runner 尚未执行",
+    "没有运行付费模型或真实学习质量评估",
+    "未进行五平台安装、签名、登录启动与输入法/DPI/焦点验收",
+    "WebKit 彩色 emoji 本机存在字形异常，可切换原生简版",
+    "真实 WebKit 重放仅测展示层，没有旧 UI 对照或全链路性能结论"
+  ],
+  "packaged_checks": {
+    "recorded_at": "2026-09-07T16:53:54.385702+00:00",
+    "health": {
+      "command": "javaclaw-packaging/target/distribution/bin/javaclaw-health",
+      "exit_code": 0,
+      "data": "独立mktemp data-v6；退出时回收，不接触现有用户数据",
+      "log": {
+        "path": "/private/tmp/javaclaw-v3-packaged-health-final.log",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    "webview": {
+      "command": "javaclaw-packaging/target/distribution/runtime/bin/java --enable-native-access=ALL-UNNAMED -cp 'javaclaw-packaging/target/distribution/lib/*:javaclaw-desktop/target/test-classes' com.javaclaw.desktop.web.WebSurfaceReplayBenchmark /private/tmp/javaclaw-v3-packaged-final",
+      "exit_code": 0,
+      "production_classpath": "仅发行包lib/*；额外test-classes仅提供重放入口和FX夹具，未加入Maven或target/classes生产依赖",
+      "log": {
+        "path": "/private/tmp/javaclaw-v3-packaged-final.log",
+        "bytes": 944,
+        "sha256": "942456c97c19524b7a3ac18d8090d71dd6ba05f0bd87b643514ce72c49463485"
+      },
+      "results": {
+        "arch": "aarch64",
+        "cacheWindowCount": 500,
+        "emittedUpdates": 120,
+        "firstPageCount": 100,
+        "firstSnapshotMs": 1798.687,
+        "fxQueueRoundTripP95Ms": 15.272166,
+        "heapUsedBytes": 72468048,
+        "historyFixtureCount": 10000,
+        "java": "25",
+        "javafx": "26.0.2",
+        "limitations": [
+          "本机真实 Stage/WebKit，不代表五平台",
+          "入口为展示层，不含 SDK/服务器延迟",
+          "snapshot 佐证渲染，不是 OS 屏幕光学可见时刻",
+          "未与旧 JavaFX UI 对照；RSS 包含 WebKit/JVM/夹具"
+        ],
+        "mountedArticles": 1,
+        "os": "Mac OS X 26.5.2",
+        "processCpuOneCorePercent": 79.64594572449474,
+        "processRssKiB": 935568,
+        "receiveToSnapshotP50Ms": 44.232458,
+        "receiveToSnapshotP95Ms": 65.814458,
+        "recordedAt": "2026-09-07T16:52:33.465990Z",
+        "scrollCommandToSnapshotP95Ms": 90.362042,
+        "streamWallMs": 6946.127458,
+        "visibleSamples": 120
+      },
+      "files": [
+        {
+          "path": "docs/evidence/chat-webview-memory-v3/packaged-replay/results.json",
+          "bytes": 776,
+          "sha256": "705ee72f9e16221c9662e2f14635242bca57b64d4280e779021439ac6ea2ae43"
+        },
+        {
+          "path": "docs/evidence/chat-webview-memory-v3/packaged-replay/first.png",
+          "bytes": 39500,
+          "sha256": "9e6adb69e9b3f33dd309e559fd0537d746d0eb9db6f040d162cd9889b1b5e1d6"
+        },
+        {
+          "path": "docs/evidence/chat-webview-memory-v3/packaged-replay/stream.png",
+          "bytes": 94035,
+          "sha256": "aea9a563e2c8dc9fdaf50b991bb7372a7b237091e8c9700fdb4c13d4585b0f2c"
+        }
+      ]
+    }
+  },
+  "visual_baseline_review": {
+    "path": "docs/evidence/chat-webview-memory-v3-golden-diff.json",
+    "bytes": 31410,
+    "sha256": "1e4d64874849f4ab50f24d2e62894b145fb5c2395a0eda1beedaa3400d527522"
+  },
+  "desktop_replay_files": [
+    {
+      "path": "docs/evidence/chat-webview-memory-v3/desktop-replay/results.json",
+      "bytes": 777,
+      "sha256": "45181fd9047a45a5d70ba3e1ff4dcff8c4e42bf24fbff011e05b30a4a8922ad2"
+    },
+    {
+      "path": "docs/evidence/chat-webview-memory-v3/desktop-replay/first.png",
+      "bytes": 39500,
+      "sha256": "9e6adb69e9b3f33dd309e559fd0537d746d0eb9db6f040d162cd9889b1b5e1d6"
+    },
+    {
+      "path": "docs/evidence/chat-webview-memory-v3/desktop-replay/stream.png",
+      "bytes": 94035,
+      "sha256": "aea9a563e2c8dc9fdaf50b991bb7372a7b237091e8c9700fdb4c13d4585b0f2c"
+    }
+  ]
+}

@@ -1,0 +1,326 @@
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by org.fusesource.jansi.internal.JansiLoader in an unnamed module (file:/Users/fengs/Documents/profile/apache-maven-3.9.0/lib/jansi-2.4.0.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper (file:/Users/fengs/Documents/profile/apache-maven-3.9.0/lib/guava-30.1-jre.jar)
+WARNING: Please consider reporting this to the maintainers of class com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[WARNING] 
+[WARNING] Some problems were encountered while building the effective settings
+[WARNING] 'profiles.profile[rdc].repositories.repository.id' must be unique but found duplicate repository with id central @ /Users/fengs/Documents/profile/apache-maven-3.9.0/conf/settings.xml
+[WARNING] 
+[INFO] Scanning for projects...
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Build Order:
+[INFO] 
+[INFO] JavaClaw 6                                                         [pom]
+[INFO] JavaClaw Immutable API                                             [jar]
+[INFO] JavaClaw Extension SPI                                             [jar]
+[INFO] JavaClaw App Protocol v3                                           [jar]
+[INFO] JavaClaw Thin Turn Harness                                         [jar]
+[INFO] JavaClaw Model Adapters                                            [jar]
+[INFO] JavaClaw Built-in Extension Contracts                              [jar]
+[INFO] JavaClaw Built-in Extensions                                       [jar]
+[INFO] JavaClaw Native Hosts                                              [jar]
+[INFO] JavaClaw Isolated Browser Worker                                   [jar]
+[INFO] JavaClaw App Server                                                [jar]
+[INFO] JavaClaw Isolated Knowledge Worker                                 [jar]
+[INFO] JavaClaw Java SDK and CLI                                          [jar]
+[INFO] JavaClaw JavaFX SDK Client                                         [jar]
+[INFO] JavaClaw Packaging                                                 [jar]
+[INFO] 
+[INFO] --------------------< com.javaclaw:javaclaw-parent >--------------------
+[INFO] Building JavaClaw 6 6.0.0-SNAPSHOT                                [1/15]
+[INFO]   from pom.xml
+[INFO] --------------------------------[ pom ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:apply (default-cli) @ javaclaw-parent ---
+[INFO] Spotless.Format is keeping 3 files clean - 0 were changed to be clean, 0 were already clean, 3 were skipped because caching determined they were already clean
+[INFO] Spotless.Format is keeping 49 files clean - 0 were changed to be clean, 3 were already clean, 46 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- spotless:3.10.0:check (default-cli) @ javaclaw-parent ---
+[INFO] Spotless.Format is keeping 3 files clean - 0 needs changes to be clean, 0 were already clean, 3 were skipped because caching determined they were already clean
+[INFO] Spotless.Format is keeping 49 files clean - 0 needs changes to be clean, 0 were already clean, 49 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (default-cli) @ javaclaw-parent ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] ---------------------< com.javaclaw:javaclaw-api >----------------------
+[INFO] Building JavaClaw Immutable API 6.0.0-SNAPSHOT                    [2/15]
+[INFO]   from javaclaw-api/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:apply (default-cli) @ javaclaw-api ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 were changed to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 233 files clean - 0 were changed to be clean, 0 were already clean, 233 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- spotless:3.10.0:check (default-cli) @ javaclaw-api ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 233 files clean - 0 needs changes to be clean, 0 were already clean, 233 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (default-cli) @ javaclaw-api ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] ----------------< com.javaclaw:javaclaw-extension-spi >-----------------
+[INFO] Building JavaClaw Extension SPI 6.0.0-SNAPSHOT                    [3/15]
+[INFO]   from javaclaw-extension-spi/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:apply (default-cli) @ javaclaw-extension-spi ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 were changed to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 124 files clean - 0 were changed to be clean, 0 were already clean, 124 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- spotless:3.10.0:check (default-cli) @ javaclaw-extension-spi ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 124 files clean - 0 needs changes to be clean, 0 were already clean, 124 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (default-cli) @ javaclaw-extension-spi ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] -------------------< com.javaclaw:javaclaw-protocol >-------------------
+[INFO] Building JavaClaw App Protocol v3 6.0.0-SNAPSHOT                  [4/15]
+[INFO]   from javaclaw-protocol/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:apply (default-cli) @ javaclaw-protocol ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 were changed to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 104 files clean - 0 were changed to be clean, 0 were already clean, 104 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- spotless:3.10.0:check (default-cli) @ javaclaw-protocol ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 104 files clean - 0 needs changes to be clean, 0 were already clean, 104 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (default-cli) @ javaclaw-protocol ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] ----------------< com.javaclaw:javaclaw-agent-runtime >-----------------
+[INFO] Building JavaClaw Thin Turn Harness 6.0.0-SNAPSHOT                [5/15]
+[INFO]   from javaclaw-agent-runtime/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:apply (default-cli) @ javaclaw-agent-runtime ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 were changed to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 56 files clean - 0 were changed to be clean, 0 were already clean, 56 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- spotless:3.10.0:check (default-cli) @ javaclaw-agent-runtime ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 56 files clean - 0 needs changes to be clean, 0 were already clean, 56 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (default-cli) @ javaclaw-agent-runtime ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] ----------------< com.javaclaw:javaclaw-model-adapters >----------------
+[INFO] Building JavaClaw Model Adapters 6.0.0-SNAPSHOT                   [6/15]
+[INFO]   from javaclaw-model-adapters/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:apply (default-cli) @ javaclaw-model-adapters ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 were changed to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 48 files clean - 0 were changed to be clean, 0 were already clean, 48 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- spotless:3.10.0:check (default-cli) @ javaclaw-model-adapters ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 48 files clean - 0 needs changes to be clean, 0 were already clean, 48 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (default-cli) @ javaclaw-model-adapters ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] --------------< com.javaclaw:javaclaw-builtin-contracts >---------------
+[INFO] Building JavaClaw Built-in Extension Contracts 6.0.0-SNAPSHOT     [7/15]
+[INFO]   from javaclaw-builtin-contracts/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:apply (default-cli) @ javaclaw-builtin-contracts ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 were changed to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 47 files clean - 0 were changed to be clean, 0 were already clean, 47 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- spotless:3.10.0:check (default-cli) @ javaclaw-builtin-contracts ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 47 files clean - 0 needs changes to be clean, 0 were already clean, 47 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (default-cli) @ javaclaw-builtin-contracts ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] --------------< com.javaclaw:javaclaw-builtin-extensions >--------------
+[INFO] Building JavaClaw Built-in Extensions 6.0.0-SNAPSHOT              [8/15]
+[INFO]   from javaclaw-builtin-extensions/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:apply (default-cli) @ javaclaw-builtin-extensions ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 were changed to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 143 files clean - 0 were changed to be clean, 0 were already clean, 143 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- spotless:3.10.0:check (default-cli) @ javaclaw-builtin-extensions ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 143 files clean - 0 needs changes to be clean, 0 were already clean, 143 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (default-cli) @ javaclaw-builtin-extensions ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] -----------------< com.javaclaw:javaclaw-native-hosts >-----------------
+[INFO] Building JavaClaw Native Hosts 6.0.0-SNAPSHOT                     [9/15]
+[INFO]   from javaclaw-native-hosts/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:apply (default-cli) @ javaclaw-native-hosts ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 were changed to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 168 files clean - 0 were changed to be clean, 0 were already clean, 168 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- spotless:3.10.0:check (default-cli) @ javaclaw-native-hosts ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 168 files clean - 0 needs changes to be clean, 0 were already clean, 168 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (default-cli) @ javaclaw-native-hosts ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] ---------------< com.javaclaw:javaclaw-browser-service >----------------
+[INFO] Building JavaClaw Isolated Browser Worker 6.0.0-SNAPSHOT         [10/15]
+[INFO]   from javaclaw-browser-service/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:apply (default-cli) @ javaclaw-browser-service ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 were changed to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 38 files clean - 0 were changed to be clean, 0 were already clean, 38 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- spotless:3.10.0:check (default-cli) @ javaclaw-browser-service ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 38 files clean - 0 needs changes to be clean, 0 were already clean, 38 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (default-cli) @ javaclaw-browser-service ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] ------------------< com.javaclaw:javaclaw-app-server >------------------
+[INFO] Building JavaClaw App Server 6.0.0-SNAPSHOT                      [11/15]
+[INFO]   from javaclaw-app-server/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:apply (default-cli) @ javaclaw-app-server ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 were changed to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 667 files clean - 0 were changed to be clean, 0 were already clean, 667 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- spotless:3.10.0:check (default-cli) @ javaclaw-app-server ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 667 files clean - 0 needs changes to be clean, 0 were already clean, 667 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (default-cli) @ javaclaw-app-server ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] ---------------< com.javaclaw:javaclaw-knowledge-worker >---------------
+[INFO] Building JavaClaw Isolated Knowledge Worker 6.0.0-SNAPSHOT       [12/15]
+[INFO]   from javaclaw-knowledge-worker/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:apply (default-cli) @ javaclaw-knowledge-worker ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 were changed to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 5 files clean - 0 were changed to be clean, 0 were already clean, 5 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- spotless:3.10.0:check (default-cli) @ javaclaw-knowledge-worker ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 5 files clean - 0 needs changes to be clean, 0 were already clean, 5 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (default-cli) @ javaclaw-knowledge-worker ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] --------------------< com.javaclaw:javaclaw-client >--------------------
+[INFO] Building JavaClaw Java SDK and CLI 6.0.0-SNAPSHOT                [13/15]
+[INFO]   from javaclaw-client/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:apply (default-cli) @ javaclaw-client ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 were changed to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 111 files clean - 0 were changed to be clean, 0 were already clean, 111 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- spotless:3.10.0:check (default-cli) @ javaclaw-client ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 111 files clean - 0 needs changes to be clean, 0 were already clean, 111 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (default-cli) @ javaclaw-client ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] -------------------< com.javaclaw:javaclaw-desktop >--------------------
+[INFO] Building JavaClaw JavaFX SDK Client 6.0.0-SNAPSHOT               [14/15]
+[INFO]   from javaclaw-desktop/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:apply (default-cli) @ javaclaw-desktop ---
+[INFO] Spotless.Format is keeping 2 files clean - 0 were changed to be clean, 0 were already clean, 2 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 403 files clean - 0 were changed to be clean, 0 were already clean, 403 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- spotless:3.10.0:check (default-cli) @ javaclaw-desktop ---
+[INFO] Spotless.Format is keeping 2 files clean - 0 needs changes to be clean, 0 were already clean, 2 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 403 files clean - 0 needs changes to be clean, 0 were already clean, 403 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (default-cli) @ javaclaw-desktop ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] ------------------< com.javaclaw:javaclaw-packaging >-------------------
+[INFO] Building JavaClaw Packaging 6.0.0-SNAPSHOT                       [15/15]
+[INFO]   from javaclaw-packaging/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:apply (default-cli) @ javaclaw-packaging ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 were changed to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 40 files clean - 0 were changed to be clean, 0 were already clean, 40 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- spotless:3.10.0:check (default-cli) @ javaclaw-packaging ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 40 files clean - 0 needs changes to be clean, 0 were already clean, 40 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (default-cli) @ javaclaw-packaging ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Summary for JavaClaw 6 6.0.0-SNAPSHOT:
+[INFO] 
+[INFO] JavaClaw 6 ......................................... SUCCESS [  0.618 s]
+[INFO] JavaClaw Immutable API ............................. SUCCESS [  0.076 s]
+[INFO] JavaClaw Extension SPI ............................. SUCCESS [  0.060 s]
+[INFO] JavaClaw App Protocol v3 ........................... SUCCESS [  0.044 s]
+[INFO] JavaClaw Thin Turn Harness ......................... SUCCESS [  0.040 s]
+[INFO] JavaClaw Model Adapters ............................ SUCCESS [  0.025 s]
+[INFO] JavaClaw Built-in Extension Contracts .............. SUCCESS [  0.040 s]
+[INFO] JavaClaw Built-in Extensions ....................... SUCCESS [  0.029 s]
+[INFO] JavaClaw Native Hosts .............................. SUCCESS [  0.031 s]
+[INFO] JavaClaw Isolated Browser Worker ................... SUCCESS [  0.040 s]
+[INFO] JavaClaw App Server ................................ SUCCESS [  0.054 s]
+[INFO] JavaClaw Isolated Knowledge Worker ................. SUCCESS [  0.019 s]
+[INFO] JavaClaw Java SDK and CLI .......................... SUCCESS [  0.027 s]
+[INFO] JavaClaw JavaFX SDK Client ......................... SUCCESS [  0.039 s]
+[INFO] JavaClaw Packaging ................................. SUCCESS [  0.021 s]
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  1.276 s
+[INFO] Finished at: 2026-09-08T12:48:04+08:00
+[INFO] ------------------------------------------------------------------------

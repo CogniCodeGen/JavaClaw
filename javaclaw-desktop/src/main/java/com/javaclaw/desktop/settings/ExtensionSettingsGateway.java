@@ -5,6 +5,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
 import com.javaclaw.api.AttachmentRef;
+import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.desktop.DesktopNotificationSubscription;
 import com.javaclaw.desktop.view.ViewAttachmentUploadRequest;
@@ -38,6 +39,20 @@ public interface ExtensionSettingsGateway {
             ExtensionRpcContracts.ViewDocument document,
             ViewSchema schema,
             ViewLoadRequest request);
+
+    /**
+     * 执行 GraphBrowsing 声明的只读查询，不创建 Turn 或扩大文件权限。
+     *
+     * @param workspaceId 用户动作冻结的工作区
+     * @param extensionId 已启用扩展
+     * @param operation schema 中的固定查询标识
+     * @param arguments 受限图谱参数
+     * @return 查询结果；旧边界默认拒绝
+     */
+    default CompletableFuture<ExtensionRpcContracts.CallResult> query(
+            WorkspaceId workspaceId, String extensionId, String operation, CanonicalPayload arguments) {
+        return CompletableFuture.failedFuture(new IllegalStateException("当前边界不支持图谱浏览"));
+    }
 
     /**
      * 执行页面声明的受限命令。

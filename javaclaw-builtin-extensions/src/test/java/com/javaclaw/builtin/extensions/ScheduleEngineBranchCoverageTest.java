@@ -478,7 +478,8 @@ class ScheduleEngineBranchCoverageTest {
                 source.privateNetworkGrants(),
                 source.services(),
                 source.embeddings(),
-                com.javaclaw.extension.spi.WorkspaceExecutionPort.denied());
+                com.javaclaw.extension.spi.WorkspaceExecutionPort.denied(),
+                com.javaclaw.extension.spi.ScheduleDefinitionBindingPort.unavailable());
     }
 
     private static Object invoke(Object target, String methodName, Class<?>[] parameterTypes, Object... arguments)

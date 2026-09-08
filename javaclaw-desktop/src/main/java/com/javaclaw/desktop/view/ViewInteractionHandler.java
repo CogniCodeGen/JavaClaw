@@ -22,6 +22,15 @@ public interface ViewInteractionHandler {
      */
     void execute(ViewCommandInvocation invocation);
 
+    /**
+     * 请求平台执行页面局部图谱浏览；该动作不修改扩展业务状态。
+     *
+     * @param action 受限筛选或邻接展开
+     */
+    default void graph(ViewGraphAction action) {
+        // 没有 GraphBrowsing 的旧页面无需实现局部浏览。
+    }
+
     /** 请求重新读取全部权威数据。 */
     void reload();
 

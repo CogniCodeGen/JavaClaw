@@ -42,6 +42,9 @@ public final class AppServerSession implements AutoCloseable {
     private final SessionSecretChannel secrets;
     private final ExtensionEventHub events;
     private NegotiatedCapabilities capabilities;
+    private final com.javaclaw.server.persistence.TurnStreamService streams;
+    private TurnStreamSession streamSession;
+    private final com.javaclaw.server.preview.DocumentPreviewSession previewSession;
 
     /**
      * 创建会话。
@@ -58,6 +61,50 @@ public final class AppServerSession implements AutoCloseable {
             CanonicalJson json,
             LifecycleCoordinator lifecycle,
             ExtensionEventHub events) {
+        this(negotiator, router, json, lifecycle, events, null);
+    }
+
+    /**
+     * 创建包含持久聊天流的连接会话。
+     *
+     * @param negotiator 能力协商
+     * @param router 业务路由
+     * @param json codec
+     * @param lifecycle 生命周期
+     * @param events 扩展失效通知
+     * @param streams 公开流服务；兼容无流测试会话时可空
+     */
+    public AppServerSession(
+            ProtocolNegotiator negotiator,
+            RpcRouter router,
+            CanonicalJson json,
+            LifecycleCoordinator lifecycle,
+            ExtensionEventHub events,
+            com.javaclaw.server.persistence.TurnStreamService streams) {
+        this(negotiator, router, json, lifecycle, events, streams, null);
+    }
+
+    /**
+     * 创建聊天流与文档句柄均属于当前连接的会话。
+     *
+     * @param negotiator 能力协商
+     * @param router 业务路由
+     * @param json codec
+     * @param lifecycle 生命周期
+     * @param events 扩展失效通知
+     * @param streams 持久流，兼容测试时可空
+     * @param previews 文档快照服务，兼容测试时可空
+     */
+    public AppServerSession(
+            ProtocolNegotiator negotiator,
+            RpcRouter router,
+            CanonicalJson json,
+            LifecycleCoordinator lifecycle,
+            ExtensionEventHub events,
+            com.javaclaw.server.persistence.TurnStreamService streams,
+            com.javaclaw.server.preview.DocumentPreviewService previews) {
+        this.previewSession = previews == null ? null : previews.openSession();
+        this.streams = streams;
         this.negotiator = Objects.requireNonNull(negotiator, "negotiator");
         this.router = Objects.requireNonNull(router, "router");
         this.json = Objects.requireNonNull(json, "json");
@@ -82,7 +129,9 @@ public final class AppServerSession implements AutoCloseable {
             RpcMethod method = MethodCatalog.require(request.method(), capabilities);
             requireClientCallable(method);
             requireWriteEnvelope(method, request.params());
-            return JsonRpcResponse.success(request.id(), router.route(request.method(), request.params(), secrets));
+            CanonicalPayload result =
+                    ViewCapabilityProjection.project(request.method(), route(request), capabilities, json);
+            return JsonRpcResponse.success(request.id(), result);
         } catch (ProtocolException failure) {
             return failure(request, failure.code(), failure.getMessage());
         } catch (SecurityException failure) {
@@ -97,6 +146,17 @@ public final class AppServerSession implements AutoCloseable {
         }
     }
 
+    private CanonicalPayload route(JsonRpcRequest request) throws Exception {
+        if ((request.method().startsWith("turn/stream/") || request.method().equals("item/history"))
+                && streamSession != null) {
+            return streamSession.handle(request.method(), request.params());
+        }
+        if (request.method().startsWith("document/preview/") && previewSession != null) {
+            return previewSession.handle(request.method(), request.params());
+        }
+        return router.route(request.method(), request.params(), secrets);
+    }
+
     /**
      * 在当前线程服务连接直至 EOF。
      *
@@ -106,6 +166,9 @@ public final class AppServerSession implements AutoCloseable {
     public void serve(RpcConnection connection) throws IOException {
         Objects.requireNonNull(connection, "connection");
         ExtensionEventHub.Subscription eventSubscription = null;
+        if (streams != null) {
+            streamSession = new TurnStreamSession(streams, connection, json);
+        }
         try (LifecycleCoordinator.Lease ignored = lifecycle.clientConnected();
                 SessionSecretChannel ignoredSecrets = secrets) {
             while (true) {
@@ -122,6 +185,7 @@ public final class AppServerSession implements AutoCloseable {
                             && "initialize/session".equals(request.method())
                             && response.error().isEmpty()) {
                         eventSubscription = events.subscribe(connection);
+                        bindPreviewNotifications(eventSubscription);
                     }
                 } else if (message instanceof JsonRpcNotification notification) {
                     rejectClientNotification(notification);
@@ -130,9 +194,21 @@ public final class AppServerSession implements AutoCloseable {
                 }
             }
         } finally {
-            if (eventSubscription != null) {
-                eventSubscription.close();
+            try {
+                close();
+            } finally {
+                if (eventSubscription != null) {
+                    eventSubscription.close();
+                }
             }
+        }
+    }
+
+    private void bindPreviewNotifications(ExtensionEventHub.Subscription subscription) {
+        if (previewSession != null
+                && capabilities.allows(com.javaclaw.protocol.DocumentPreviewRpcContracts.CAPABILITY)) {
+            previewSession.notifications(event -> subscription.send(new JsonRpcNotification(
+                    com.javaclaw.protocol.DocumentPreviewRpcContracts.INVALIDATED, json.encode(event))));
         }
     }
 
@@ -147,10 +223,22 @@ public final class AppServerSession implements AutoCloseable {
         return JsonRpcResponse.success(request.id(), json.encode(result));
     }
 
-    /** 关闭当前连接的 Secret 私钥；重复关闭安全。 */
+    /** 关闭当前连接的预览、消息流与 Secret 私钥；缓存回收失败仍释放其余资源，重复关闭安全。 */
     @Override
-    public void close() {
-        secrets.close();
+    public void close() throws IOException {
+        try {
+            if (previewSession != null) {
+                previewSession.close();
+            }
+        } finally {
+            try {
+                if (streamSession != null) {
+                    streamSession.close();
+                }
+            } finally {
+                secrets.close();
+            }
+        }
     }
 
     private void requireInitialized() {

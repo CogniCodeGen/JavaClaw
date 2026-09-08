@@ -128,6 +128,8 @@ final class PlatformFoundationFactory {
         return new AppServerBootstrap.Foundation(
                 json,
                 database,
+                new com.javaclaw.server.persistence.TurnStreamService(database, json),
+                previews(database, json, clock, core, management),
                 core.commands(),
                 core.permissions(),
                 core.approvals(),
@@ -154,6 +156,19 @@ final class PlatformFoundationFactory {
                 loginStartup,
                 clock,
                 clock.instant());
+    }
+
+    private static com.javaclaw.server.preview.DocumentPreviewService previews(
+            H2Database database, CanonicalJson json, Clock clock, CoreServices core, ManagementServices management) {
+        var items = new com.javaclaw.server.persistence.CoreItemReader(database, json);
+        var authority = new com.javaclaw.server.turn.PreviewReadAuthority(
+                core.commands(), items, management.worktrees(), core.permissions(), json);
+        try {
+            return new com.javaclaw.server.preview.DocumentPreviewService(
+                    database.dataRoot(), items, core.attachments(), authority, json, clock);
+        } catch (java.io.IOException failure) {
+            throw new IllegalStateException("文档预览缓存初始化失败", failure);
+        }
     }
 
     private record CoreServices(

@@ -40,6 +40,13 @@ rm -rf -- "$APP_IMAGE/Contents/app/workers"
 cp -R "$WORKERS" "$APP_IMAGE/Contents/app/workers"
 test -f "$APP_IMAGE/Contents/app/workers/browser/browser-login-v1.capability"
 test -f "$APP_IMAGE/Contents/app/workers/browser/browser-oauth-v1.capability"
+# 许可证与发布证据必须进入最终安装镜像，并在签名前完成复制。
+DISTRIBUTION_ROOT=$(CDPATH= cd -- "$INPUT/.." && pwd)
+for DIRECTORY in legal evidence; do
+    test -d "$DISTRIBUTION_ROOT/$DIRECTORY"
+    rm -rf -- "$APP_IMAGE/Contents/app/$DIRECTORY"
+    cp -R "$DISTRIBUTION_ROOT/$DIRECTORY" "$APP_IMAGE/Contents/app/$DIRECTORY"
+done
 if [ -n "${JAVACLAW_APPLE_SIGN_IDENTITY:-}" ]; then
     /usr/bin/codesign --force --deep --options runtime --timestamp \
         --sign "$JAVACLAW_APPLE_SIGN_IDENTITY" "$APP_IMAGE"

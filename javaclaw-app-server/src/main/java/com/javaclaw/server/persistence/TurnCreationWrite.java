@@ -12,6 +12,16 @@ import com.javaclaw.protocol.CanonicalJson;
 final class TurnCreationWrite {
     private TurnCreationWrite() {}
 
+    static AgentTurn insert(
+            Connection connection, TurnStartRequest request, Instant now, CanonicalJson json, boolean evidenceEligible)
+            throws Exception {
+        AgentTurn created = insert(connection, request, now, json);
+        if (!evidenceEligible) {
+            ConversationCompletionIndex.exclude(connection, created.id());
+        }
+        return created;
+    }
+
     static AgentTurn insert(Connection connection, TurnStartRequest request, Instant now, CanonicalJson json)
             throws Exception {
         TurnRepository turns = new TurnRepository();

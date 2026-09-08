@@ -52,6 +52,8 @@ public final class H2TurnJournal implements TurnJournal {
     private final CanonicalJson json;
     private final Clock clock;
     private final LiveTurnBudgets budgets;
+    private final TurnStreamService streams;
+    private final TurnStreamJournal streamJournal;
 
     /**
      * 创建事务日志。
@@ -76,6 +78,28 @@ public final class H2TurnJournal implements TurnJournal {
      */
     public H2TurnJournal(
             H2Database database, ItemSchemaRegistry schemas, CanonicalJson json, Clock clock, LiveTurnBudgets budgets) {
+        this(database, schemas, json, clock, budgets, new TurnStreamService(database, json));
+    }
+
+    /**
+     * 创建共享公开流提交唤醒的事务日志。
+     *
+     * @param database 数据库
+     * @param schemas Item codec
+     * @param json JSON codec
+     * @param clock 时钟
+     * @param budgets 活动预算
+     * @param streams 组合根共享流服务
+     */
+    public H2TurnJournal(
+            H2Database database,
+            ItemSchemaRegistry schemas,
+            CanonicalJson json,
+            Clock clock,
+            LiveTurnBudgets budgets,
+            TurnStreamService streams) {
+        this.streams = Objects.requireNonNull(streams, "streams");
+        streamJournal = new TurnStreamJournal(json);
         this.budgets = Objects.requireNonNull(budgets, "budgets");
         compactions = new TurnCompactionJournal(database, json, clock, schemas);
         transactions = new H2Transactions(Objects.requireNonNull(database, "database"));
@@ -157,10 +181,13 @@ public final class H2TurnJournal implements TurnJournal {
             throw new IllegalArgumentException("invocationNumber must be positive");
         }
         execute(connection -> {
+            streamJournal.lock(connection, turnId);
             TurnCompactionJournal.requireNoActive(connection, turnId);
             checkpoints.recordModelIntent(connection, turnId, invocationNumber, intentDigest, now());
+            streamJournal.intent(connection, turnId, invocationNumber, now());
             return null;
         });
+        streams.committed(turnId);
     }
 
     @Override
@@ -169,9 +196,11 @@ public final class H2TurnJournal implements TurnJournal {
         Objects.requireNonNull(result, "result");
         Objects.requireNonNull(cumulativeUsage, "cumulativeUsage");
         execute(connection -> {
+            streamJournal.lock(connection, turnId);
             TurnCompactionJournal.requireNoActive(connection, turnId);
             Instant committedAt = now();
-            appendAssistant(connection, turnId, result, committedAt);
+            var messageId = streamJournal.messageId(connection, turnId, invocationNumber);
+            var assistant = appendAssistant(connection, turnId, result, committedAt, messageId);
             appendCalls(connection, turnId, result.toolCalls(), committedAt);
             result.providerState()
                     .ifPresent(state -> saveProviderState(
@@ -188,8 +217,10 @@ public final class H2TurnJournal implements TurnJournal {
                     cumulativeUsage,
                     new TurnToolBatch(result.toolCalls()),
                     committedAt);
+            streamJournal.committed(connection, turnId, assistant, committedAt);
             return null;
         });
+        streams.committed(turnId);
     }
 
     @Override
@@ -251,10 +282,12 @@ public final class H2TurnJournal implements TurnJournal {
     @Override
     public void transition(TurnId turnId, TurnStatus expected, TurnStatus next, Optional<String> errorCode) {
         execute(connection -> {
+            streamJournal.lock(connection, turnId);
             appendTerminalFacts(connection, turnId, now());
             turns.transition(connection, turnId, expected, next, errorCode, now());
             return null;
         });
+        streams.committed(turnId);
     }
 
     private void appendTerminalFacts(java.sql.Connection connection, TurnId turnId, Instant instant)
@@ -327,15 +360,22 @@ public final class H2TurnJournal implements TurnJournal {
                 checkpoint.activeIntentDigest());
     }
 
-    private void appendAssistant(
-            java.sql.Connection connection, TurnId turnId, ModelInvocationResult result, Instant committedAt)
+    private Optional<com.javaclaw.api.ItemEnvelope> appendAssistant(
+            java.sql.Connection connection,
+            TurnId turnId,
+            ModelInvocationResult result,
+            Instant committedAt,
+            com.javaclaw.api.ItemId messageId)
             throws java.sql.SQLException {
         if (result.text().isEmpty()) {
-            return;
+            return Optional.empty();
         }
         CorePayloads.Message message = new CorePayloads.Message(
                 com.javaclaw.api.MessageRole.ASSISTANT, result.text(), List.of(), Optional.empty());
-        appendItem(connection, turnId, "message", CoreSchemas.MESSAGE, message, committedAt);
+        EncodedItemPayload encoded = schemas.encode(message);
+        var write = new ItemRepository.ItemWrite(
+                turnId, "message", CoreSchemas.MESSAGE, "core", ItemStatus.COMPLETED, encoded.payload(), committedAt);
+        return Optional.of(items.append(connection, write, messageId));
     }
 
     private void appendCalls(

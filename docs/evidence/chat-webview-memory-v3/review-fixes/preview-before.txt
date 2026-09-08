@@ -1,0 +1,75 @@
+9月 08, 2026 10:48:02 上午 com.sun.javafx.application.PlatformImpl startup
+警告: Unsupported JavaFX configuration: classes were loaded from 'unnamed module @7e6cbb7a'
+FAIL com.javaclaw.desktop.settings.ViewSchemaRefreshTest#主动加载遮罩阻止底层键盘输入且失败与取消归还交互
+org.opentest4j.AssertionFailedError: expected: <true> but was: <false>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertTrue.failNotTrue(AssertTrue.java:63)
+	at org.junit.jupiter.api.AssertTrue.assertTrue(AssertTrue.java:36)
+	at org.junit.jupiter.api.AssertTrue.assertTrue(AssertTrue.java:31)
+	at org.junit.jupiter.api.Assertions.assertTrue(Assertions.java:183)
+	at com.javaclaw.desktop.settings.ViewSchemaRefreshTest.lambda$主动加载遮罩阻止底层键盘输入且失败与取消归还交互$0(ViewSchemaRefreshTest.java:105)
+	at com.javaclaw.desktop.FxTestSupport.lambda$run$0(FxTestSupport.java:35)
+	at com.sun.javafx.application.PlatformImpl.lambda$runLater$0(PlatformImpl.java:424)
+	at com.sun.glass.ui.InvokeLaterDispatcher$Future.run(InvokeLaterDispatcher.java:95)
+FAIL com.javaclaw.desktop.settings.ViewSchemaRefreshTest#自动刷新返回前输入的草稿不能被新权威数据覆盖
+org.opentest4j.AssertionFailedError: expected: <TextField@481ba42[styleClass=text-input text-field settings-field]> but was: <TextField@5238471e[styleClass=text-input text-field settings-field]>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertSame.failNotSame(AssertSame.java:50)
+	at org.junit.jupiter.api.AssertSame.assertSame(AssertSame.java:35)
+	at org.junit.jupiter.api.AssertSame.assertSame(AssertSame.java:30)
+	at org.junit.jupiter.api.Assertions.assertSame(Assertions.java:2860)
+	at com.javaclaw.desktop.settings.ViewSchemaRefreshTest.lambda$自动刷新返回前输入的草稿不能被新权威数据覆盖$0(ViewSchemaRefreshTest.java:40)
+	at com.javaclaw.desktop.FxTestSupport.lambda$run$0(FxTestSupport.java:35)
+	at com.sun.javafx.application.PlatformImpl.lambda$runLater$0(PlatformImpl.java:424)
+	at com.sun.glass.ui.InvokeLaterDispatcher$Future.run(InvokeLaterDispatcher.java:95)
+FAIL com.javaclaw.desktop.settings.ViewSchemaRefreshTest#对账数据相同时保留控件焦点和文本选择
+org.opentest4j.AssertionFailedError: expected: <TextField@3dbb9197[styleClass=text-input text-field settings-field]> but was: <TextField@40cef980[styleClass=text-input text-field settings-field]>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertSame.failNotSame(AssertSame.java:50)
+	at org.junit.jupiter.api.AssertSame.assertSame(AssertSame.java:35)
+	at org.junit.jupiter.api.AssertSame.assertSame(AssertSame.java:30)
+	at org.junit.jupiter.api.Assertions.assertSame(Assertions.java:2860)
+	at com.javaclaw.desktop.settings.ViewSchemaRefreshTest.lambda$对账数据相同时保留控件焦点和文本选择$0(ViewSchemaRefreshTest.java:61)
+	at com.javaclaw.desktop.FxTestSupport.lambda$run$0(FxTestSupport.java:35)
+	at com.sun.javafx.application.PlatformImpl.lambda$runLater$0(PlatformImpl.java:424)
+	at com.sun.glass.ui.InvokeLaterDispatcher$Future.run(InvokeLaterDispatcher.java:95)
+FAIL com.javaclaw.desktop.settings.ViewSchemaRefreshTest#查询期间编辑再撤回仍按编辑代次丢弃旧自动刷新
+org.opentest4j.AssertionFailedError: expected: <TextField@348206e8[styleClass=text-input text-field settings-field]> but was: <TextField@2b386604[styleClass=text-input text-field settings-field]>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertSame.failNotSame(AssertSame.java:50)
+	at org.junit.jupiter.api.AssertSame.assertSame(AssertSame.java:35)
+	at org.junit.jupiter.api.AssertSame.assertSame(AssertSame.java:30)
+	at org.junit.jupiter.api.Assertions.assertSame(Assertions.java:2860)
+	at com.javaclaw.desktop.settings.ViewSchemaRefreshTest.lambda$查询期间编辑再撤回仍按编辑代次丢弃旧自动刷新$0(ViewSchemaRefreshTest.java:86)
+	at com.javaclaw.desktop.FxTestSupport.lambda$run$0(FxTestSupport.java:35)
+	at com.sun.javafx.application.PlatformImpl.lambda$runLater$0(PlatformImpl.java:424)
+	at com.sun.glass.ui.InvokeLaterDispatcher$Future.run(InvokeLaterDispatcher.java:95)
+FAIL com.javaclaw.desktop.document.DocumentPreviewLeaseTest#相对资源读取未完成时不能用新代次续租旧父句柄
+org.opentest4j.AssertionFailedError: expected: <[]> but was: <[223d531a-543c-4889-a8e2-11e24ed71de8]>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertEquals.failNotEqual(AssertEquals.java:197)
+	at org.junit.jupiter.api.AssertEquals.assertEquals(AssertEquals.java:182)
+	at org.junit.jupiter.api.AssertEquals.assertEquals(AssertEquals.java:177)
+	at org.junit.jupiter.api.Assertions.assertEquals(Assertions.java:1145)
+	at com.javaclaw.desktop.document.DocumentPreviewLeaseTest.lambda$相对资源读取未完成时不能用新代次续租旧父句柄$0(DocumentPreviewLeaseTest.java:56)
+	at com.javaclaw.desktop.FxTestSupport.lambda$run$0(FxTestSupport.java:35)
+	at com.sun.javafx.application.PlatformImpl.lambda$runLater$0(PlatformImpl.java:424)
+	at com.sun.glass.ui.InvokeLaterDispatcher$Future.run(InvokeLaterDispatcher.java:95)
+FAIL com.javaclaw.desktop.document.DocumentPreviewLeaseTest#相对导航后旧父续租不能阻止子版本续租或覆盖子版本
+org.opentest4j.AssertionFailedError: expected: <[06c4338c-3086-487b-869a-b31a31e9525c, 5f515a8f-c3ea-4baf-850f-470cba264242]> but was: <[06c4338c-3086-487b-869a-b31a31e9525c]>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertEquals.failNotEqual(AssertEquals.java:197)
+	at org.junit.jupiter.api.AssertEquals.assertEquals(AssertEquals.java:182)
+	at org.junit.jupiter.api.AssertEquals.assertEquals(AssertEquals.java:177)
+	at org.junit.jupiter.api.Assertions.assertEquals(Assertions.java:1145)
+	at com.javaclaw.desktop.document.DocumentPreviewLeaseTest.lambda$相对导航后旧父续租不能阻止子版本续租或覆盖子版本$1(DocumentPreviewLeaseTest.java:43)
+	at com.javaclaw.desktop.FxTestSupport.lambda$run$0(FxTestSupport.java:35)
+	at com.sun.javafx.application.PlatformImpl.lambda$runLater$0(PlatformImpl.java:424)
+	at com.sun.glass.ui.InvokeLaterDispatcher$Future.run(InvokeLaterDispatcher.java:95)
+RESULT passed=0 failed=6

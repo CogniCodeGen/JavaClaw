@@ -1,0 +1,29 @@
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by org.fusesource.jansi.internal.JansiLoader in an unnamed module (file:/Users/fengs/Documents/profile/apache-maven-3.9.0/lib/jansi-2.4.0.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper (file:/Users/fengs/Documents/profile/apache-maven-3.9.0/lib/guava-30.1-jre.jar)
+WARNING: Please consider reporting this to the maintainers of class com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[WARNING] 
+[WARNING] Some problems were encountered while building the effective settings
+[WARNING] 'profiles.profile[rdc].repositories.repository.id' must be unique but found duplicate repository with id central @ /Users/fengs/Documents/profile/apache-maven-3.9.0/conf/settings.xml
+[WARNING] 
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] -------------------< com.javaclaw:javaclaw-desktop >--------------------
+[INFO] Building JavaClaw JavaFX SDK Client 6.0.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:apply (default-cli) @ javaclaw-desktop ---
+[INFO] Spotless.Format is keeping 2 files clean - 0 were changed to be clean, 0 were already clean, 2 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 406 files clean - 0 were changed to be clean, 1 were already clean, 405 were skipped because caching determined they were already clean
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  0.752 s
+[INFO] Finished at: 2026-09-08T13:53:12+08:00
+[INFO] ------------------------------------------------------------------------

@@ -287,8 +287,15 @@ public final class AutomationJobSettingsPresenter {
                 state.filter(),
                 page,
                 detail,
-                feedback(SettingsLoadState.LOADING, action.label() + "成功，正在刷新工作单元…", epoch)));
-        readDetail(epoch, checked, action.label() + " 后台任务已提交");
+                feedback(SettingsLoadState.LOADING, mutationMessage(action, checked), epoch)));
+        readDetail(epoch, checked, mutationMessage(action, checked));
+    }
+
+    private static String mutationMessage(JobAction action, ExtensionExecutionReceipt receipt) {
+        if (action == JobAction.CANCEL && !receipt.state().terminal()) {
+            return "已请求取消，等待当前步骤结束";
+        }
+        return action.label() + "成功，正在刷新工作单元…";
     }
 
     private void fail(long epoch, Throwable failure, boolean conflict) {

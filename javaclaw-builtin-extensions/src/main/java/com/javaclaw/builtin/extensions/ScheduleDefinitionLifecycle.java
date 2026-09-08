@@ -64,6 +64,15 @@ final class ScheduleDefinitionLifecycle implements ManagedDocumentBehavior<Sched
     }
 
     @Override
+    public void deleteRelated(
+            ManagedDocumentResource<ScheduleContracts.Definition> documents,
+            ExtensionRequest request,
+            String documentId,
+            ExtensionTransaction transaction) {
+        new ScheduleDefinitionBindings(documents, this).detach(transaction, request.workspaceId(), documentId);
+    }
+
+    @Override
     public void afterMutation(
             ManagedDocumentResource<ScheduleContracts.Definition> documents,
             ExtensionRequest request,

@@ -29,10 +29,12 @@ final class MemoryCommandHandler {
 
     private final ExtensionPayloadCodec payloads;
     private final MemoryStoreAccess store;
+    private final MemorySemantics semantics;
 
     MemoryCommandHandler(ExtensionPayloadCodec payloads, MemoryStoreAccess store) {
         this.payloads = java.util.Objects.requireNonNull(payloads, "payloads");
         this.store = java.util.Objects.requireNonNull(store, "store");
+        semantics = new MemorySemantics(payloads, store);
     }
 
     ExtensionResponse command(ExtensionRequest request, ExtensionExecutionContext context) throws Exception {
@@ -47,6 +49,8 @@ final class MemoryCommandHandler {
     private ExtensionResponse domainCommand(
             ExtensionRequest request, ExtensionExecutionContext context, ExtensionTransaction transaction) {
         return switch (request.operation()) {
+            case "effectivity/update" -> semantics.updateEffectivity(request, context, transaction);
+            case "conflict/resolve" -> semantics.resolve(request, context, transaction);
             case "create" -> create(request, context, transaction);
             case "update" -> update(request, context, transaction);
             case "pin" -> pin(request, context, transaction);
@@ -119,7 +123,7 @@ final class MemoryCommandHandler {
                 input.source(),
                 now,
                 now);
-        transaction.put(memories(request), memory.id(), 0, payloads.encode(memory));
+        store.putMemory(transaction, request.workspaceId(), memory, 0);
         return store.response(memory);
     }
 
@@ -139,6 +143,7 @@ final class MemoryCommandHandler {
     private ExtensionResponse update(
             ExtensionRequest request, ExtensionExecutionContext context, ExtensionTransaction transaction) {
         MemoryContracts.UpdateRequest input = payloads.decode(request.payload(), MemoryContracts.UpdateRequest.class);
+        semantics.requireLegacyWritable(transaction, request.workspaceId(), input.id());
         MemoryContracts.Memory current = store.requireMemory(transaction, memories(request), input.id());
         requireExpected(request, current.revision());
         MemoryStoreAccess.validateSource(input.source(), context);
@@ -153,7 +158,7 @@ final class MemoryCommandHandler {
                 input.source(),
                 current.createdAt(),
                 context.clock().instant());
-        transaction.put(memories(request), updated.id(), request.expectedRevision(), payloads.encode(updated));
+        store.putMemory(transaction, request.workspaceId(), updated, request.expectedRevision());
         return store.response(updated);
     }
 
@@ -182,7 +187,7 @@ final class MemoryCommandHandler {
         requireExpected(request, current.revision());
         MemoryContracts.Memory updated = MemoryStoreAccess.copy(
                 current, next(request), pinned, context.clock().instant());
-        transaction.put(memories(request), updated.id(), request.expectedRevision(), payloads.encode(updated));
+        store.putMemory(transaction, request.workspaceId(), updated, request.expectedRevision());
         return store.response(updated);
     }
 
@@ -190,6 +195,7 @@ final class MemoryCommandHandler {
             ExtensionRequest request, ExtensionExecutionContext context, ExtensionTransaction transaction) {
         MemoryContracts.ContentUpdateRequest input =
                 payloads.decode(request.payload(), MemoryContracts.ContentUpdateRequest.class);
+        semantics.requireLegacyWritable(transaction, request.workspaceId(), input.id());
         MemoryContracts.Memory current = store.requireMemory(transaction, memories(request), input.id());
         requireExpected(request, current.revision());
         MemoryContracts.Memory updated = new MemoryContracts.Memory(
@@ -203,13 +209,15 @@ final class MemoryCommandHandler {
                 current.source(),
                 current.createdAt(),
                 context.clock().instant());
-        transaction.put(memories(request), updated.id(), request.expectedRevision(), payloads.encode(updated));
+        store.putMemory(transaction, request.workspaceId(), updated, request.expectedRevision());
         return store.response(updated);
     }
 
     private ExtensionResponse tombstone(ExtensionRequest request, ExtensionTransaction transaction) {
         MemoryContracts.Key key = payloads.decode(request.payload(), MemoryContracts.Key.class);
         store.requireMemory(transaction, memories(request), key.id());
+        // 删除不隐含拒绝其他候选；在同一 head 事务内阻止制造新的悬空冲突。
+        semantics.requireNoPendingReference(transaction, request.workspaceId(), key.id());
         transaction.delete(memories(request), key.id(), request.expectedRevision());
         return new ExtensionResponse(
                 payloads.encode(new DocumentContracts.Deleted(key.id())), Math.addExact(request.expectedRevision(), 1));
@@ -218,6 +226,7 @@ final class MemoryCommandHandler {
     private ExtensionResponse restore(
             ExtensionRequest request, ExtensionExecutionContext context, ExtensionTransaction transaction) {
         MemoryContracts.RestoreRequest input = payloads.decode(request.payload(), MemoryContracts.RestoreRequest.class);
+        semantics.requireLegacyWritable(transaction, request.workspaceId(), input.id());
         DocumentRevision source =
                 transaction.history(memories(request), input.id(), input.sourceRevision() - 1, 1).stream()
                         .filter(value -> value.revision() == input.sourceRevision() && !value.tombstone())
@@ -226,7 +235,7 @@ final class MemoryCommandHandler {
         MemoryContracts.Memory historical = payloads.decode(source.payload(), MemoryContracts.Memory.class);
         MemoryContracts.Memory restored = MemoryStoreAccess.copy(
                 historical, next(request), historical.pinned(), context.clock().instant());
-        transaction.put(memories(request), input.id(), request.expectedRevision(), payloads.encode(restored));
+        store.putMemory(transaction, request.workspaceId(), restored, request.expectedRevision());
         return store.response(restored);
     }
 
@@ -254,7 +263,7 @@ final class MemoryCommandHandler {
         if (learning.policy() == MemoryContracts.LearningPolicy.OFF) {
             return ignoredLearningResult();
         }
-        List<MemoryContracts.Memory> current = store.allMemories(transaction, memories(request));
+        List<MemoryContracts.Memory> current = semantics.activeMemories(transaction, request.workspaceId());
         Set<MemoryContracts.ProposalConcern> concerns = MemoryLearningRules.classify(input, current, context);
         boolean automatic = learning.policy() == MemoryContracts.LearningPolicy.AUTO_LOW_RISK && concerns.isEmpty();
         Instant now = context.clock().instant();
@@ -271,6 +280,7 @@ final class MemoryCommandHandler {
                 now,
                 now);
         transaction.put(proposals(request), proposal.id(), 0, payloads.encode(proposal));
+        semantics.registerConflict(transaction, request.workspaceId(), proposal, current, now);
         MemoryContracts.LearningAction action =
                 automatic ? MemoryContracts.LearningAction.AUTO_ACCEPTED : MemoryContracts.LearningAction.PROPOSED;
         MemoryContracts.LearningResult result =
@@ -287,6 +297,7 @@ final class MemoryCommandHandler {
                 payloads.decode(request.payload(), MemoryContracts.ProposalDecision.class);
         MemoryContracts.Proposal current = store.requireProposal(transaction, proposals(request), decision.id());
         requireExpected(request, current.revision());
+        semantics.requireNoPendingConflict(transaction, request.workspaceId(), current.id());
         if (current.state() != MemoryContracts.ProposalState.PENDING) {
             throw new IllegalArgumentException("only pending Memory Proposal can be decided");
         }
@@ -330,7 +341,7 @@ final class MemoryCommandHandler {
                 Optional.of(input.source()),
                 now,
                 now);
-        transaction.put(collection, id, 0, payloads.encode(memory));
+        store.putMemory(transaction, input.source().workspaceId(), memory, 0);
         return memory;
     }
 
@@ -343,7 +354,11 @@ final class MemoryCommandHandler {
                 .orElseThrow(() -> new IllegalArgumentException("Memory command requires idempotency key"));
         CanonicalPayload digest = payloads.encode(new CommandDigest(
                 request.workspaceId().toString(), request.operation(), request.expectedRevision(), request.payload()));
-        return context.managedStore().inCommand(MemoryStoreAccess.ID, request.operation(), key, digest.sha256(), work);
+        return context.managedStore()
+                .inCommand(MemoryStoreAccess.ID, request.operation(), key, digest.sha256(), transaction -> {
+                    semantics.lock(transaction, request.workspaceId());
+                    return work.execute(transaction);
+                });
     }
 
     private static void requireExpected(ExtensionRequest request, long actual) {

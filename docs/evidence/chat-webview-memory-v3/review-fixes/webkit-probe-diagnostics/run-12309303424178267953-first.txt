@@ -1,0 +1,9 @@
+pid=54905，elapsedMs=4，启动，java.home=/Users/fengs/Documents/profile/jdk-25.jdk/Contents/Home
+9月 08, 2026 12:41:36 下午 com.sun.javafx.application.PlatformImpl startup
+警告: Unsupported JavaFX configuration: classes were loaded from 'unnamed module @123772c4'
+pid=54905，elapsedMs=666，等待页面确认
+pid=54905，elapsedMs=1525，已写入 ready，profile=/var/folders/9v/3prcp9093n398n9_k00n7wk17cfv1k/T/javaclaw-webview-54905-10419270124297691260
+pid=54905，elapsedMs=3134，收到 release
+pid=54905，elapsedMs=3134，开始关闭页面
+pid=54905，elapsedMs=3171，关闭完成
+pid=54905，elapsedMs=3171，JVM shutdown hook

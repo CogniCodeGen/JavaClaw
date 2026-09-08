@@ -56,6 +56,7 @@ public final class ExtensionJobService implements ExtensionJobPort {
     private final IdempotentCommandStore commands = new IdempotentCommandStore();
     private final CanonicalJson json;
     private final Clock clock;
+    private final ExtensionJobCancellations cancellations = new ExtensionJobCancellations();
 
     /**
      * 创建 Job 服务。
@@ -224,7 +225,8 @@ public final class ExtensionJobService implements ExtensionJobPort {
     /** {@inheritDoc} */
     @Override
     public ExtensionJob cancel(String jobId, ExtensionJobMutation mutation) {
-        return mutate("extension/job/cancel", jobId, mutation, CANCELLABLE, ExecutionState.CANCELLED, false);
+        var payload = new InputJobRpcContracts.JobMutationPayload(jobId);
+        return cancel(identity("extension/job/cancel", mutation, payload), payload.jobId());
     }
 
     /**
@@ -254,10 +256,43 @@ public final class ExtensionJobService implements ExtensionJobPort {
      *
      * @param identity 完整 RPC 命令身份
      * @param jobId Job ID
-     * @return 已取消 Job
+     * @return 无活动单元时已取消；活动单元仍运行时表示取消意图已持久化
      */
     public ExtensionJob cancel(CommandIdentity identity, String jobId) {
-        return mutate(identity, jobId, CANCELLABLE, ExecutionState.CANCELLED, false);
+        String id = identifier(jobId);
+        ExtensionJob result = command(identity, connection -> {
+            ExtensionJob current =
+                    jobs.lock(connection, id).orElseThrow(() -> PersistenceException.invalidRequest("Job 不存在"));
+            if (current.revision() != identity.expectedRevision()) {
+                throw PersistenceException.revisionConflict("Job revision 已改变");
+            }
+            if (!CANCELLABLE.contains(current.state())) {
+                throw PersistenceException.invalidRequest("Job 当前状态不允许取消");
+            }
+            cancellations.request(connection, id, clock.instant());
+            return current.activeUnitSequence().isPresent()
+                    ? current
+                    : jobs.transition(connection, current, CANCELLABLE, ExecutionState.CANCELLED, clock.instant());
+        });
+        // 只有意图事务提交后才发送信号；幂等重试也再次发布，恢复提交后进程退出的窗口。
+        cancellations.publish(id);
+        return result;
+    }
+
+    void bindCancellation(String jobId, com.javaclaw.api.CancellationSource cancellation) {
+        cancellations.register(jobId, cancellation);
+        try {
+            if (execute(connection -> cancellations.requested(connection, jobId))) {
+                cancellations.publish(jobId);
+            }
+        } catch (RuntimeException failure) {
+            cancellations.remove(jobId, cancellation);
+            throw failure;
+        }
+    }
+
+    void unbindCancellation(String jobId, com.javaclaw.api.CancellationSource cancellation) {
+        cancellations.remove(jobId, cancellation);
     }
 
     Optional<ClaimedJob> claimNext() {
@@ -305,10 +340,11 @@ public final class ExtensionJobService implements ExtensionJobPort {
         return execute(connection -> {
             ExtensionJob current = requireCurrent(connection, claimed.job());
             ExtensionJobUnit unit = claimed.unit().orElseThrow();
-            validateInputWait(connection, step);
-            ExtensionJob completed = jobs.completeUnit(connection, current, unit, step, clock.instant());
-            if (step.inputWait().isPresent()) {
-                inputWaits.bind(connection, completed.id(), step.inputWait().orElseThrow(), clock.instant());
+            ExtensionJobStepResult applied = cancellations.afterStep(connection, current.id(), step);
+            validateInputWait(connection, applied);
+            ExtensionJob completed = jobs.completeUnit(connection, current, unit, applied, clock.instant());
+            if (applied.inputWait().isPresent()) {
+                inputWaits.bind(connection, completed.id(), applied.inputWait().orElseThrow(), clock.instant());
             }
             outbox.delivered(connection, claimed.deliveryId());
             if (completed.state() == ExecutionState.RUNNING) {

@@ -1,0 +1,19 @@
+PASS com.javaclaw.desktop.web.MarkdownLinkTargetTest#空格编码不把远程危险协议或锚点变成相对资源
+PASS com.javaclaw.desktop.web.MarkdownLinkTargetTest#CommonMark尖括号目标中的空格编码一次且原始目标保持可用于来源校验
+PASS com.javaclaw.desktop.document.DocumentPreviewLoaderTest#含空格的真实Markdown图片按原始目标加载且闭合资源句柄
+PASS com.javaclaw.desktop.document.DocumentPreviewLoaderTest#Markdown转义原始HTML并仅通过受限相对引用读取图片且释放资源
+PASS com.javaclaw.desktop.document.DocumentPreviewLoaderTest#引用行号定位真实分页并提供代码语言且上一页仍保持源行号
+PASS com.javaclaw.desktop.document.DocumentPreviewLoaderTest#缺失可选图片不阻断正文且不尝试外链图片
+9月 08, 2026 1:28:12 下午 com.sun.javafx.application.PlatformImpl startup
+警告: Unsupported JavaFX configuration: classes were loaded from 'unnamed module @6f539caf'
+PASS com.javaclaw.desktop.document.DocumentPreviewPaneTest#不支持格式保留已验证名称和大小并释放句柄且不读取正文
+PASS com.javaclaw.desktop.document.DocumentPreviewPaneTest#旧读取占用worker时新解析已完成但未开始读取也必须关闭句柄
+PASS com.javaclaw.desktop.document.DocumentPreviewPaneTest#点击含空格的Markdown相对链接向服务端保留原始目标并释放父版本
+PASS com.javaclaw.desktop.document.DocumentPreviewPaneTest#关闭后迟到的版本必须释放且不能重新展示正文
+PASS com.javaclaw.desktop.document.DocumentPreviewPaneTest#解析完成且版本接收已排队时切换仍释放旧句柄
+PASS com.javaclaw.desktop.document.DocumentPreviewPaneTest#服务端撤权立即清空正文而不会影响不同句柄
+2026-09-08 13:28:14.314 java[78221:5788624] error messaging the mach port for IMKCFRunLoopWakeUpReliable
+PASS com.javaclaw.desktop.view.ChatSurfaceTest#历史摘要的围栏附件和相对链接都保留来源身份且危险链接没有业务目标
+PASS com.javaclaw.desktop.view.ChatSurfaceTest#暂态按最终身份去重且尾部不作为完整Markdown并保留未完成标志
+PASS com.javaclaw.desktop.view.ChatSurfaceTest#完整消息附件和大正文入口可点击且缓存重放不改变来源
+RESULT passed=15 failed=0

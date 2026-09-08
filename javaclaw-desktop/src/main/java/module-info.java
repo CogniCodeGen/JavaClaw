@@ -7,7 +7,14 @@ module com.javaclaw.desktop {
     requires com.javaclaw.protocol;
     requires javafx.controls;
     requires javafx.fxml;
+    requires javafx.web;
+    requires jdk.jsobject;
+    requires org.commonmark;
+    requires org.commonmark.ext.gfm.tables;
+    requires org.commonmark.ext.gfm.strikethrough;
+    requires org.commonmark.ext.autolink;
     requires java.prefs;
+    requires java.desktop;
 
     exports com.javaclaw.desktop;
     exports com.javaclaw.desktop.shell;
@@ -18,4 +25,7 @@ module com.javaclaw.desktop {
             javafx.fxml;
     opens com.javaclaw.desktop.shell to
             javafx.fxml;
+    opens com.javaclaw.desktop.web to
+            javafx.web,
+            com.fasterxml.jackson.databind;
 }

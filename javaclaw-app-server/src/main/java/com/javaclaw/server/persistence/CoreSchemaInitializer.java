@@ -49,7 +49,10 @@ final class CoreSchemaInitializer {
             if (installedChecksum == null) {
                 apply(connection, baseline, checksum);
             } else if (!installedChecksum.equals(checksum)) {
-                throw new PersistenceException("data-v6 baseline checksum 不一致");
+                throw new PersistenceException("data-v6 baseline checksum 不一致；数据目录=" + database.dataRoot()
+                        + "；数据库摘要=" + installedChecksum + "；程序摘要=" + checksum
+                        + "。已停止迁移；请使用匹配此数据库的程序版本，或备份完整数据目录后使用空的 data-v6。"
+                        + "不要手动修改 CORE.SCHEMA_HISTORY 或跳过 checksum 校验。");
             }
             connection.commit();
             new CoreMigrationRunner().migrate(connection);

@@ -99,6 +99,31 @@ class DeferredPortsTest {
     }
 
     @Test
+    void 派生Turn通过延迟绑定保留来源排除语义且不降级为普通调用() throws Exception {
+        var deferred = new DeferredTurnOrchestrationPort();
+        var command = turnCommand();
+        var expected = new OrchestratedTurnResult(
+                ThreadId.random(), TurnId.random(), TurnStatus.COMPLETED, json.encode(Map.of("derived", true)));
+        assertThrows(IllegalStateException.class, () -> deferred.executeDerived(command, cancellation));
+        deferred.bind(new TurnOrchestrationPort() {
+            @Override
+            public OrchestratedTurnResult execute(
+                    OrchestratedTurnCommand received, com.javaclaw.api.CancellationToken token) {
+                throw new AssertionError("派生 Turn 不得调用普通执行入口");
+            }
+
+            @Override
+            public OrchestratedTurnResult executeDerived(
+                    OrchestratedTurnCommand received, com.javaclaw.api.CancellationToken token) {
+                assertSame(command, received);
+                assertSame(cancellation, token);
+                return expected;
+            }
+        });
+        assertSame(expected, deferred.executeDerived(command, cancellation));
+    }
+
+    @Test
     void Schedule端口绑定后保留所有命令身份() throws Exception {
         DeferredScheduledCommandPort deferred = new DeferredScheduledCommandPort();
         WorkspaceId workspaceId = WorkspaceId.random();

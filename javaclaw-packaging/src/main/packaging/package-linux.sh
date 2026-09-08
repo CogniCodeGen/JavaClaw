@@ -40,6 +40,14 @@ cp -R "$WORKERS" "$APP_IMAGE/lib/app/workers"
 test -f "$APP_IMAGE/lib/app/workers/browser/browser-login-v1.capability"
 test -f "$APP_IMAGE/lib/app/workers/browser/browser-oauth-v1.capability"
 
+# 许可证与发布证据必须进入最终安装镜像，不能只保留在 ZIP 发行目录。
+DISTRIBUTION_ROOT=$(CDPATH= cd -- "$INPUT/.." && pwd)
+for DIRECTORY in legal evidence; do
+    test -d "$DISTRIBUTION_ROOT/$DIRECTORY"
+    rm -rf -- "$APP_IMAGE/lib/app/$DIRECTORY"
+    cp -R "$DISTRIBUTION_ROOT/$DIRECTORY" "$APP_IMAGE/lib/app/$DIRECTORY"
+done
+
 "$JPACKAGE" --type "$TYPE" --name JavaClaw --app-image "$APP_IMAGE" \
     --linux-package-name javaclaw --dest "$DESTINATION"
 

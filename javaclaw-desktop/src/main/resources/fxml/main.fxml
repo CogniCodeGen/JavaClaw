@@ -99,16 +99,18 @@
                     </VBox>
                 </top>
                 <center>
-                    <ListView fx:id="transcriptList" accessibleText="当前对话内容"
-                        styleClass="message-scroll,transcript-list">
-                        <placeholder>
-                            <VBox alignment="CENTER" spacing="12" styleClass="welcome-panel">
-                                <Label text="✦" styleClass="welcome-mark" />
-                                <Label text="有什么我可以帮你的？" styleClass="welcome-title" />
-                                <Label text="对话、规划与执行，都从这里开始。" styleClass="chat-top-meta" />
-                            </VBox>
-                        </placeholder>
-                    </ListView>
+                    <StackPane fx:id="transcriptHost">
+                        <ListView fx:id="transcriptList" accessibleText="当前对话内容"
+                            styleClass="message-scroll,transcript-list">
+                            <placeholder>
+                                <VBox alignment="CENTER" spacing="12" styleClass="welcome-panel">
+                                    <Label text="✦" styleClass="welcome-mark" />
+                                    <Label text="有什么我可以帮你的？" styleClass="welcome-title" />
+                                    <Label text="对话、规划与执行，都从这里开始。" styleClass="chat-top-meta" />
+                                </VBox>
+                            </placeholder>
+                        </ListView>
+                    </StackPane>
                 </center>
                 <bottom>
                     <VBox styleClass="input-bar">

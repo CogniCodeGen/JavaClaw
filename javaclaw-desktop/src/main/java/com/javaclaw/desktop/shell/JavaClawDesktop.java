@@ -19,11 +19,14 @@ import com.javaclaw.desktop.appearance.DesktopAppearanceManager;
 import com.javaclaw.desktop.appearance.JavaPreferencesAppearanceStore;
 import com.javaclaw.desktop.settings.ManagementCenterWindow;
 import com.javaclaw.desktop.settings.SdkManagementSettingsGateways;
+import com.javaclaw.desktop.web.WebSurfaceRuntime;
 
 /** JavaClaw 6 JavaFX 入口；Desktop 只创建 SDK Presenter 和平台视图。 */
 public final class JavaClawDesktop extends Application {
     private DesktopPresenter presenter;
     private ManagementCenterWindow managementCenter;
+    private DesktopShellController controller;
+    private static java.util.function.Consumer<java.net.URI> external = ignored -> {};
 
     /**
      * 加载 509f197 视觉语言的 v6 壳并建立 Protocol v3 连接。
@@ -43,7 +46,9 @@ public final class JavaClawDesktop extends Application {
         DesktopAppearanceManager appearance = new DesktopAppearanceManager(new JavaPreferencesAppearanceStore());
         appearance.register(scene);
         managementCenter = new ManagementCenterWindow(appearance, SdkManagementSettingsGateways.create(presenter));
-        loader.<DesktopShellController>getController().attach(presenter, managementCenter);
+        controller = loader.getController();
+        external = uri -> getHostServices().showDocument(uri.toString());
+        controller.attach(presenter, managementCenter);
         stage.setTitle("JavaClaw 6");
         stage.setMinWidth(940);
         stage.setMinHeight(640);
@@ -51,14 +56,21 @@ public final class JavaClawDesktop extends Application {
         stage.show();
     }
 
-    /** 关闭 SDK、App Server stdio 子进程和后台虚拟线程。 */
+    /** 关闭页面、SDK、App Server stdio 子进程和后台线程，随后清理本进程 WebKit 临时 profile。 */
     @Override
     public void stop() throws Exception {
-        if (presenter != null) {
-            if (managementCenter != null) {
-                managementCenter.dispose();
+        try {
+            if (presenter != null) {
+                if (controller != null) {
+                    controller.close();
+                }
+                if (managementCenter != null) {
+                    managementCenter.dispose();
+                }
+                presenter.close();
             }
-            presenter.close();
+        } finally {
+            WebSurfaceRuntime.close();
         }
     }
 
@@ -69,6 +81,10 @@ public final class JavaClawDesktop extends Application {
      */
     public static void main(String[] arguments) {
         launch(arguments);
+    }
+
+    static void openExternal(java.net.URI uri) {
+        external.accept(uri);
     }
 
     private static DesktopClientConnector connector() {

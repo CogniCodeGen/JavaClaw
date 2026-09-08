@@ -1,0 +1,2 @@
+Browsing metadata after downgrade: 0
+OLD_CLIENT_ACCEPTED

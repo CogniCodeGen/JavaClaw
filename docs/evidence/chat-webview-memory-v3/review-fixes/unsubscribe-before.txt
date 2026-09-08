@@ -1,0 +1,10 @@
+org.opentest4j.AssertionFailedError: 释放单个订阅不能中断并关闭借用的共享 SocketChannel ==> expected: <null> but was: <java.nio.channels.ClosedByInterruptException>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertNull.failNotNull(AssertNull.java:50)
+	at org.junit.jupiter.api.AssertNull.assertNull(AssertNull.java:35)
+	at org.junit.jupiter.api.Assertions.assertNull(Assertions.java:287)
+	at com.javaclaw.server.rpc.TurnStreamUnsubscribeTest.通知即将写入真实Uds时退订仍可使用同连接查询(TurnStreamUnsubscribeTest.java:102)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:565)
+	at com.javaclaw.server.rpc.UnsubscribeRunner.main(UnsubscribeRunner.java:10)

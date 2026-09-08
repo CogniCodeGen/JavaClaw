@@ -39,8 +39,58 @@ public final class MethodCatalog {
     private static Map<String, RpcMethod> create() {
         LinkedHashMap<String, RpcMethod> methods = new LinkedHashMap<>();
         addPlatformMethods(methods);
+        addStreamAndPreviewMethods(methods);
         addInteractionAndExtensionMethods(methods);
         return Collections.unmodifiableMap(new LinkedHashMap<>(methods));
+    }
+
+    private static void addStreamAndPreviewMethods(Map<String, RpcMethod> methods) {
+        for (String name : List.of(
+                TurnStreamRpcContracts.SUBSCRIBE,
+                TurnStreamRpcContracts.UNSUBSCRIBE,
+                TurnStreamRpcContracts.LIST,
+                TurnStreamRpcContracts.EVENT)) {
+            RpcMethodKind kind = name.equals(TurnStreamRpcContracts.LIST)
+                    ? RpcMethodKind.QUERY
+                    : name.equals(TurnStreamRpcContracts.EVENT) ? RpcMethodKind.NOTIFICATION : RpcMethodKind.COMMAND;
+            methods.put(
+                    name, new RpcMethod(name, kind, java.util.Optional.of(TurnStreamRpcContracts.CAPABILITY), false));
+        }
+        methods.put(
+                TurnStreamRpcContracts.ITEM_HISTORY,
+                new RpcMethod(
+                        TurnStreamRpcContracts.ITEM_HISTORY,
+                        RpcMethodKind.QUERY,
+                        java.util.Optional.of(TurnStreamRpcContracts.CAPABILITY),
+                        false));
+        methods.put(
+                DocumentPreviewRpcContracts.INVALIDATED,
+                new RpcMethod(
+                        DocumentPreviewRpcContracts.INVALIDATED,
+                        RpcMethodKind.NOTIFICATION,
+                        java.util.Optional.of(DocumentPreviewRpcContracts.CAPABILITY),
+                        false));
+        for (String name : List.of(
+                DocumentPreviewRpcContracts.RESOLVE,
+                DocumentPreviewRpcContracts.READ,
+                DocumentPreviewRpcContracts.RESOURCE,
+                DocumentPreviewRpcContracts.RENEW,
+                DocumentPreviewRpcContracts.CLOSE)) {
+            RpcMethodKind kind =
+                    name.equals(DocumentPreviewRpcContracts.READ) ? RpcMethodKind.QUERY : RpcMethodKind.COMMAND;
+            methods.put(
+                    name,
+                    new RpcMethod(name, kind, java.util.Optional.of(DocumentPreviewRpcContracts.CAPABILITY), false));
+        }
+        for (String name : List.of("attachment/metadata", "attachment/readChunk")) {
+            methods.put(
+                    name,
+                    new RpcMethod(
+                            name,
+                            RpcMethodKind.QUERY,
+                            java.util.Optional.of(DocumentPreviewRpcContracts.CAPABILITY),
+                            false));
+        }
     }
 
     private static void addPlatformMethods(Map<String, RpcMethod> methods) {

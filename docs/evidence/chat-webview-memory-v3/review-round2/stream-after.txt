@@ -1,0 +1,12 @@
+PASS 终态已到但最终事实尚未到时重连仍从原游标补齐且不重启Turn 0
+PASS 用户切换后迟到的权威查询不写入新页面游标或活动Turn 0
+PASS 突发正文在一个UI提交中合并且排队的旧提交不会清除新选择 0
+PASS 迟到对账不能覆盖已显示的新正文 0
+PASS 迟到对账不能覆盖已显示的终态流快照 0
+PASS 历史超过五百条时向前浏览保留锚点而新事实仍推进最大水位 0
+PASS 新事实跨过一页时保持连续尾窗口并可向前补齐所有遗漏消息 0
+PASS 重叠或紧邻的尾页正常合并而无需重新加载已有历史 0
+PASS 旧完整Item窗口同时受字节预算限制且保留最新合法消息 0
+PASS appendRequiresStrictNonOverlappingSequence 0
+PASS 暂停跟随时不把不连续尾页拼入当前阅读窗口 0
+TOTAL passed=11 failed=0

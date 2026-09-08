@@ -39,6 +39,7 @@ import com.javaclaw.protocol.AttachmentRpcContracts;
 import com.javaclaw.protocol.CapabilityAdvertisement;
 import com.javaclaw.protocol.ClientInfo;
 import com.javaclaw.protocol.CoreRpcContracts;
+import com.javaclaw.protocol.DocumentPreviewRpcContracts;
 import com.javaclaw.protocol.ExecutionRpcContracts;
 import com.javaclaw.protocol.InitializeParams;
 import com.javaclaw.protocol.JsonRpcRequest;
@@ -49,6 +50,7 @@ import com.javaclaw.protocol.ProtocolVersion;
 import com.javaclaw.protocol.ProviderRpcContracts;
 import com.javaclaw.protocol.RpcId;
 import com.javaclaw.protocol.RpcMethodKind;
+import com.javaclaw.protocol.TurnStreamRpcContracts;
 import com.javaclaw.protocol.WriteCommand;
 import com.javaclaw.runtime.ModelCapabilities;
 import com.javaclaw.runtime.ModelEventSink;
@@ -232,7 +234,22 @@ class TypedSettingsRpcTest {
 
         assertTrue(diagnostics.health().databaseHealthy());
         assertEquals(10, diagnostics.health().extensionCount());
-        assertEquals(callableCatalog, components.router().implementedMethods());
+        Set<String> connectionMethods = Set.of(
+                TurnStreamRpcContracts.SUBSCRIBE,
+                TurnStreamRpcContracts.UNSUBSCRIBE,
+                TurnStreamRpcContracts.LIST,
+                TurnStreamRpcContracts.ITEM_HISTORY,
+                DocumentPreviewRpcContracts.RESOLVE,
+                DocumentPreviewRpcContracts.RESOURCE,
+                DocumentPreviewRpcContracts.READ,
+                DocumentPreviewRpcContracts.RENEW,
+                DocumentPreviewRpcContracts.CLOSE);
+        assertTrue(java.util.Collections.disjoint(
+                connectionMethods, components.router().implementedMethods()));
+        Set<String> implemented = java.util.stream.Stream.concat(
+                        components.router().implementedMethods().stream(), connectionMethods.stream())
+                .collect(Collectors.toUnmodifiableSet());
+        assertEquals(callableCatalog, implemented);
     }
 
     private void initialize() {

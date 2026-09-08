@@ -110,10 +110,10 @@ public final class CoreCommandService {
      */
     public Workspace createWorkspace(
             CommandIdentity identity, String name, Path root, Optional<com.javaclaw.api.ExecutionOverrides> execution) {
-        requireCreate(identity);
+        Objects.requireNonNull(identity, "identity").requireCreate();
         Objects.requireNonNull(execution, "execution");
         return idempotent(identity, Workspace.class, connection -> {
-            Instant createdAt = now();
+            Instant createdAt = clock.instant();
             Workspace workspace = workspaces.insert(connection, name, root, createdAt);
             instructionSettings.insert(connection, workspace.id(), createdAt);
             if (execution.isPresent()) {
@@ -160,7 +160,7 @@ public final class CoreCommandService {
             if (current.revision() != checked.expectedRevision()) {
                 throw PersistenceException.revisionConflict("项目约定设置 revision 已改变");
             }
-            return instructionSettings.update(connection, current, checkedFallback, now());
+            return instructionSettings.update(connection, current, checkedFallback, clock.instant());
         });
     }
 
@@ -195,7 +195,7 @@ public final class CoreCommandService {
         return updateWorkspace(
                 identity,
                 workspaceId,
-                current -> workspaces.rename(current.connection(), current.workspace(), name, now()));
+                current -> workspaces.rename(current.connection(), current.workspace(), name, clock.instant()));
     }
 
     /**
@@ -207,7 +207,9 @@ public final class CoreCommandService {
      */
     public Workspace archiveWorkspace(CommandIdentity identity, WorkspaceId workspaceId) {
         return updateWorkspace(
-                identity, workspaceId, current -> workspaces.archive(current.connection(), current.workspace(), now()));
+                identity,
+                workspaceId,
+                current -> workspaces.archive(current.connection(), current.workspace(), clock.instant()));
     }
 
     /**
@@ -226,11 +228,11 @@ public final class CoreCommandService {
             Optional<ThreadId> parentId,
             ThreadExecutionIntent executionIntent,
             String title) {
-        requireCreate(identity);
+        Objects.requireNonNull(identity, "identity").requireCreate();
         return idempotent(identity, ConversationThread.class, connection -> {
             requireActiveWorkspace(connection, workspaceId);
             threads.validateParent(connection, workspaceId, parentId);
-            return threads.insert(connection, workspaceId, parentId, executionIntent, title, now());
+            return threads.insert(connection, workspaceId, parentId, executionIntent, title, clock.instant());
         });
     }
 
@@ -278,7 +280,20 @@ public final class CoreCommandService {
      * @return 新快照
      */
     public AgentTurn startTurn(CommandIdentity identity, TurnStartRequest request) {
-        requireCreate(identity);
+        return startTurn(identity, request, true);
+    }
+
+    /**
+     * 原子创建 Turn、首条消息及通用证据资格，不允许崩溃窗口重新学习机器整理输出。
+     *
+     * @param identity 幂等身份
+     * @param request 冻结输入
+     * @param conversationEvidenceEligible 是否允许作为后续对话证据
+     * @return 已创建或幂等恢复的 Turn
+     */
+    public AgentTurn startTurn(
+            CommandIdentity identity, TurnStartRequest request, boolean conversationEvidenceEligible) {
+        Objects.requireNonNull(identity, "identity").requireCreate();
         synchronized (CommandLocks.forKey(identity.idempotencyKey())) {
             Optional<AgentTurn> existing = execute(connection -> idempotency
                     .find(connection, identity.idempotencyKey())
@@ -292,7 +307,8 @@ public final class CoreCommandService {
             return idempotent(
                     identity,
                     AgentTurn.class,
-                    connection -> TurnCreationWrite.insert(connection, prepared, now(), json));
+                    connection -> TurnCreationWrite.insert(
+                            connection, prepared, clock.instant(), json, conversationEvidenceEligible));
         }
     }
 
@@ -311,7 +327,7 @@ public final class CoreCommandService {
             Optional<AgentTurn> result = execute(connection -> idempotency
                     .find(connection, identity.idempotencyKey())
                     .map(stored -> recover(identity, AgentTurn.class, stored)));
-            requireCreate(identity);
+            Objects.requireNonNull(identity, "identity").requireCreate();
             return result;
         }
     }
@@ -486,8 +502,8 @@ public final class CoreCommandService {
         return idempotent(
                 identity,
                 AgentTurn.class,
-                connection ->
-                        turns.requestCancellation(connection, turnId, identity.expectedRevision(), reason, now()));
+                connection -> turns.requestCancellation(
+                        connection, turnId, identity.expectedRevision(), reason, clock.instant()));
     }
 
     /**
@@ -551,7 +567,7 @@ public final class CoreCommandService {
                     return recover(identity, resultType, stored.orElseThrow());
                 }
                 T result = work.execute(connection);
-                idempotency.insert(connection, identity, json.encode(result), now());
+                idempotency.insert(connection, identity, json.encode(result), clock.instant());
                 return result;
             });
         }
@@ -563,16 +579,6 @@ public final class CoreCommandService {
             throw PersistenceException.idempotencyConflict("幂等键已被不同命令使用");
         }
         return json.decode(stored.response(), resultType);
-    }
-
-    private static void requireCreate(CommandIdentity identity) {
-        if (Objects.requireNonNull(identity, "identity").expectedRevision() != 0) {
-            throw PersistenceException.invalidRequest("创建命令 expected revision 必须为 0");
-        }
-    }
-
-    private Instant now() {
-        return Instant.now(clock);
     }
 
     private <T> T execute(H2Transactions.SqlWork<T> work) {

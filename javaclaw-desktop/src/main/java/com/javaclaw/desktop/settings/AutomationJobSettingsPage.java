@@ -92,6 +92,7 @@ public final class AutomationJobSettingsPage extends VBox implements ManagedSett
         conflict = new RevisionConflictPane(presenter::refreshSelected, this::describeConflict);
         configurePage();
         presenter.subscribe(this::render);
+        ViewPageReconciler.install(this, () -> scopedWorkspace.isPresent() && !pending(), presenter::reload);
     }
 
     @Override

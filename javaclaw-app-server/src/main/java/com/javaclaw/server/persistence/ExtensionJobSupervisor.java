@@ -152,6 +152,7 @@ public final class ExtensionJobSupervisor implements AutoCloseable, ExtensionJob
             throw new IllegalStateException("Supervisor already owns an active unit");
         }
         try {
+            jobs.bindCancellation(claimed.job().id(), cancellation);
             ExtensionJobExecution execution =
                     new ExtensionJobExecution(claimed.job(), claimed.unit().orElseThrow());
             ExtensionJobStepResult result = executor.execute(execution, cancellation);
@@ -165,6 +166,7 @@ public final class ExtensionJobSupervisor implements AutoCloseable, ExtensionJob
         } catch (Exception failure) {
             fail(claimed, cancellation.isCancelled() ? "JOB_CANCELLED_DURING_UNIT" : "JOB_UNIT_FAILED", failure);
         } finally {
+            jobs.unbindCancellation(claimed.job().id(), cancellation);
             activeCancellation.compareAndSet(cancellation, null);
             closeActivity(claimed, activity);
         }

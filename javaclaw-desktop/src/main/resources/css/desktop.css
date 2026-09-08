@@ -541,3 +541,23 @@
     -fx-padding: 24 16;
     -fx-text-alignment: center;
 }
+
+/* WebView只读取现有主题令牌的计算结果，不引入独立调色板。 */
+.web-theme-page { -fx-text-fill: -jc-surface-page; }
+.web-theme-card { -fx-text-fill: -jc-surface-card; }
+.web-theme-panel { -fx-text-fill: -jc-surface-panel; }
+.web-theme-sunken { -fx-text-fill: -jc-surface-sunken; }
+.web-theme-body { -fx-text-fill: -jc-text-body; }
+.web-theme-title { -fx-text-fill: -jc-text-title; }
+.web-theme-muted { -fx-text-fill: -jc-text-muted; }
+.web-theme-border { -fx-text-fill: -jc-border; }
+.web-theme-primary { -fx-text-fill: -jc-primary-500; }
+.web-theme-warning { -fx-text-fill: -jc-warning; }
+.web-theme-danger { -fx-text-fill: -jc-danger; }
+.web-surface-host { -fx-background-color: -jc-surface-page; }
+
+.web-theme-user { -fx-text-fill: -jc-primary-50; }
+.web-theme-userBorder { -fx-text-fill: -jc-primary-100; }
+.web-theme-assistantBorder { -fx-text-fill: -jc-neutral-200; }
+.web-theme-warningBg { -fx-text-fill: -jc-warning-bg; }
+.web-theme-dangerBg { -fx-text-fill: -jc-danger-bg; }

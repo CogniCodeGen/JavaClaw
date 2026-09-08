@@ -108,6 +108,7 @@ final class ViewFormRenderer {
                 };
         Label label = new Label(field.label() + (required ? " *" : ""));
         label.getStyleClass().addAll("settings-label", "platform-field-label");
+        label.setWrapText(true);
         return label;
     }
 

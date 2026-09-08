@@ -106,6 +106,32 @@ final class AttachmentBlobStore {
         return resolved;
     }
 
+    byte[] readChunk(AttachmentRepository.StoredAttachment attachment, long offset, int maximum) {
+        Path path = resolve(Path.of(attachment.relativePath()));
+        try {
+            requireContained(path.toRealPath());
+            if (Files.isSymbolicLink(path)
+                    || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+                    || Files.size(path) != attachment.metadata().sizeBytes()) {
+                throw new IOException("附件 Blob 类型或大小不一致");
+            }
+            try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+                channel.position(offset);
+                var buffer = java.nio.ByteBuffer.allocate(
+                        Math.toIntExact(Math.min(maximum, attachment.metadata().sizeBytes() - offset)));
+                while (buffer.hasRemaining() && channel.read(buffer) >= 0) {
+                    // 只分配当前页；完整内容摘要在消费全部块后核验，避免逐页重复扫描全部 Blob。
+                }
+                if (buffer.hasRemaining()) {
+                    throw new IOException("附件 Blob 在分块读取时变短");
+                }
+                return buffer.array();
+            }
+        } catch (IOException failure) {
+            throw new PersistenceException("附件分块读取失败", failure);
+        }
+    }
+
     private static Path relativePath(String digest) {
         return Path.of("blobs", "core", digest.substring(0, 2), digest + ".blob");
     }

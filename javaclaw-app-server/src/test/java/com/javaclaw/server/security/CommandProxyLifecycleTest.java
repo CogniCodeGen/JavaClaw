@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 
@@ -163,6 +164,46 @@ class CommandProxyLifecycleTest {
             assertFalse(first.active());
             assertFalse(second.active());
             assertThrows(IllegalStateException.class, () -> fixture.lease(100, 1, Duration.ofSeconds(5), () -> {}));
+        }
+    }
+
+    @Test
+    void 关闭先撤销入口再等待权限数据库读取退出且不中断读取线程() throws Exception {
+        var entered = new CountDownLatch(1);
+        var resume = new CountDownLatch(1);
+        var returned = new CountDownLatch(1);
+        var calls = new AtomicInteger();
+        var interrupted = new AtomicBoolean();
+        try (var fixture = new CommandProxyFixture()) {
+            var lease = fixture.lease(100, 1, Duration.ofSeconds(5), () -> {
+                if (calls.incrementAndGet() > 1) {
+                    entered.countDown();
+                    try {
+                        assertTrue(resume.await(3, TimeUnit.SECONDS));
+                    } catch (InterruptedException failure) {
+                        interrupted.set(true);
+                        throw failure;
+                    }
+                }
+            });
+            assertTrue(entered.await(2, TimeUnit.SECONDS));
+            Thread closing = Thread.ofVirtual().start(() -> {
+                lease.close();
+                returned.countDown();
+            });
+            try {
+                CommandProxyFixture.await(() -> !lease.active());
+                assertFalse(returned.await(100, TimeUnit.MILLISECONDS));
+                assertFalse(interrupted.get());
+            } finally {
+                resume.countDown();
+            }
+            assertTrue(returned.await(2, TimeUnit.SECONDS));
+            closing.join();
+            lease.close();
+            assertFalse(interrupted.get());
+        } finally {
+            resume.countDown();
         }
     }
 

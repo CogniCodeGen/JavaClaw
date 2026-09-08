@@ -1,0 +1,80 @@
+[
+  {
+    "module": "javaclaw-parent",
+    "artifact": "/Users/fengs/Documents/openProject/JavaClaw/pom.xml",
+    "sha256": "2cdbab7e9fe2e337e440b58b57e13d97c0c738c4fa69f6ac7916208aed46e8d8",
+    "pomSha256": "2cdbab7e9fe2e337e440b58b57e13d97c0c738c4fa69f6ac7916208aed46e8d8"
+  },
+  {
+    "module": "javaclaw-api",
+    "artifact": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-api/target/javaclaw-api-6.0.0-SNAPSHOT.jar",
+    "sha256": "09a431e5d77c95ab5a5013fd666392090ed70bcc40bde717622afdcc7eb7d3ba",
+    "pomSha256": "a36295f7ba23d036fe42ac66868895e16f3803ea9237bd40562afb3e0a7b0db4"
+  },
+  {
+    "module": "javaclaw-protocol",
+    "artifact": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-protocol/target/javaclaw-protocol-6.0.0-SNAPSHOT.jar",
+    "sha256": "418deb5cf5cd1ccbf798a9298507839a0414efeca84bc59ee40dd0bc7af17e3f",
+    "pomSha256": "6829346f681ca543546ae057ee452e7fe072fe5da62f029537db7f6d630a0768"
+  },
+  {
+    "module": "javaclaw-extension-spi",
+    "artifact": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-extension-spi/target/javaclaw-extension-spi-6.0.0-SNAPSHOT.jar",
+    "sha256": "d253ba0f26cc5be68b118482e48c4ad5dd5d51fab0e5cc0b900640ea448d788d",
+    "pomSha256": "49c2a736348b0e058df329daed9490713c18259ad5366c7a3ddeaaf8423ea705"
+  },
+  {
+    "module": "javaclaw-agent-runtime",
+    "artifact": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-agent-runtime/target/javaclaw-agent-runtime-6.0.0-SNAPSHOT.jar",
+    "sha256": "30f606d4a3f0e42ed564612d3c31f8933922a8321a1e6b4d958b6a98d74e9531",
+    "pomSha256": "a3e0eb87bcbc809e8866e028b5ddba3b3d143d52d538f36ac5e8b6df25bc0c35"
+  },
+  {
+    "module": "javaclaw-model-adapters",
+    "artifact": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-model-adapters/target/javaclaw-model-adapters-6.0.0-SNAPSHOT.jar",
+    "sha256": "4aed45012f32191bf0c18f7c3747d535b5247767e50407a74ed8427f1e034500",
+    "pomSha256": "794d622ec15eab2ec796831185119c743d57cfd7991e82536286f348a543de11"
+  },
+  {
+    "module": "javaclaw-builtin-contracts",
+    "artifact": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-builtin-contracts/target/javaclaw-builtin-contracts-6.0.0-SNAPSHOT.jar",
+    "sha256": "9e95839f62257ebb7d8c263c99e926174af50cf07f370e0e2b5cabc14ed65636",
+    "pomSha256": "385b84e122e50716e58f3487775d6a0e6bc355cabb82415c76c4b4f428d6c8fd"
+  },
+  {
+    "module": "javaclaw-builtin-extensions",
+    "artifact": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-builtin-extensions/target/javaclaw-builtin-extensions-6.0.0-SNAPSHOT.jar",
+    "sha256": "006ca4a86c2550c45e71e42e1c78f1b83e9950be687edea4a2ce18653f808073",
+    "pomSha256": "fc7a7cfde097ff1e0fb008b252916cc3882d8d2589ae5003fd918f3b48a0eaee"
+  },
+  {
+    "module": "javaclaw-app-server",
+    "artifact": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-app-server/target/javaclaw-app-server-6.0.0-SNAPSHOT.jar",
+    "sha256": "c0a76dc904752cf1a9d5c4b790fac7b611446aa952c19fe01eb055afdf021812",
+    "pomSha256": "b26fd9fed58bfad7d8840c41958b64a45b84f2599592e7ad622e6e05b2af05b5"
+  },
+  {
+    "module": "javaclaw-native-hosts",
+    "artifact": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-native-hosts/target/javaclaw-native-hosts-6.0.0-SNAPSHOT.jar",
+    "sha256": "105a8ed26abe18d2cd31d0f1c0ae2c62c90e0a2283a5fa94200b5bda621b0e76",
+    "pomSha256": "bee518302ef5313fe7a47671feed74da74a4dfb410a81e8df4a03d26e04fc778"
+  },
+  {
+    "module": "javaclaw-browser-service",
+    "artifact": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-browser-service/target/javaclaw-browser-service-6.0.0-SNAPSHOT.jar",
+    "sha256": "8891dbb0d50aeb721382ba6a9a1a47d8934c0dab963f5796b5c69a8802ea4f06",
+    "pomSha256": "2df1a8a073fd76b3b4242c2c444a9a90365085f77d459269c1fc56d43ec30914"
+  },
+  {
+    "module": "javaclaw-knowledge-worker",
+    "artifact": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-knowledge-worker/target/javaclaw-knowledge-worker-6.0.0-SNAPSHOT.jar",
+    "sha256": "db172ddefdfa1387e53decbad2f39879fae4893344e90c0a9d737093539a0b88",
+    "pomSha256": "a9327883eb4ac1ce219a73f183d3a00d73c49872f7202de2a6e9e918fa468591"
+  },
+  {
+    "module": "javaclaw-client",
+    "artifact": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-client/target/javaclaw-client-6.0.0-SNAPSHOT.jar",
+    "sha256": "46b2ca6d8b4341cfd4e5d1a27865b560dacca1768d48ae13f754ba094a67dd43",
+    "pomSha256": "808561eba48e48d923f458037e6235ff657602185fc3932b94ba218ed424ab21"
+  }
+]

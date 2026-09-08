@@ -15,7 +15,6 @@ import java.util.function.Function;
 
 import com.javaclaw.api.AgentRole;
 import com.javaclaw.api.AgentRoleRef;
-import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.ApprovalDecision;
 import com.javaclaw.api.ApprovalRecord;
 import com.javaclaw.api.ConversationThread;
@@ -32,7 +31,6 @@ import com.javaclaw.desktop.view.ViewCommandInvocation;
 import com.javaclaw.desktop.view.ViewData;
 import com.javaclaw.desktop.view.ViewLoadRequest;
 import com.javaclaw.extension.spi.ViewSchema;
-import com.javaclaw.protocol.CoreRpcContracts;
 import com.javaclaw.protocol.ExtensionRpcContracts;
 import com.javaclaw.protocol.InitializeResult;
 
@@ -48,6 +46,8 @@ public final class DesktopPresenter implements AutoCloseable {
     private final AtomicLong connectionEpoch = new AtomicLong();
     private final DesktopInputCoordinator inputCoordinator;
     private final DesktopInputActions inputActions;
+    private final DesktopTurnStreamCoordinator streams;
+    private final DesktopConversationCoordinator conversations;
     private volatile JavaClawClient client;
     private volatile boolean closed;
 
@@ -68,6 +68,8 @@ public final class DesktopPresenter implements AutoCloseable {
                 ui,
                 (epoch, candidate) -> !closed && connectionEpoch.get() == epoch && client == candidate);
         inputActions = new DesktopInputActions(inputCoordinator, connectionEpoch::get, this::requireClient);
+        streams = new DesktopTurnStreamCoordinator(store, ui, workers);
+        conversations = new DesktopConversationCoordinator(store, ui, workers, streams, () -> client);
     }
 
     /**
@@ -143,8 +145,7 @@ public final class DesktopPresenter implements AutoCloseable {
      */
     public void selectWorkspace(Workspace workspace) {
         Objects.requireNonNull(workspace, "workspace");
-        update(state -> DesktopStateProjection.selectWorkspace(state, workspace));
-        workers.submit(() -> runGuarded(() -> loadThreads(workspace)));
+        conversations.selectWorkspace(workspace);
     }
 
     /**
@@ -154,8 +155,7 @@ public final class DesktopPresenter implements AutoCloseable {
      */
     public void selectThread(ConversationThread thread) {
         Objects.requireNonNull(thread, "thread");
-        update(state -> DesktopStateProjection.selectThread(state, thread));
-        workers.submit(() -> runGuarded(() -> loadTranscript(thread)));
+        conversations.selectThread(thread);
     }
 
     /**
@@ -166,9 +166,7 @@ public final class DesktopPresenter implements AutoCloseable {
      */
     public CompletableFuture<ConversationThread> navigateToThread(ThreadId threadId) {
         ThreadId checked = Objects.requireNonNull(threadId, "threadId");
-        CompletableFuture<ConversationThread> result = new CompletableFuture<>();
-        workers.submit(() -> navigateToThread(checked, result));
-        return result;
+        return conversations.navigate(checked);
     }
 
     /**
@@ -184,10 +182,7 @@ public final class DesktopPresenter implements AutoCloseable {
     /** @param name 名称 @param root 绝对根目录 @param execution 独立角色、模型与权限选择 */
     public void createWorkspace(String name, Path root, ExecutionOverrides execution) {
         Objects.requireNonNull(execution, "execution");
-        workers.submit(() -> runGuarded(() -> {
-            Workspace created = requireClient().workspaces().create(name, root, execution, CommandOptions.create(0));
-            reloadCatalog(created);
-        }));
+        conversations.createWorkspace(name, root, execution);
     }
 
     /**
@@ -196,13 +191,7 @@ public final class DesktopPresenter implements AutoCloseable {
      * @param title 标题
      */
     public void createThread(String title) {
-        Workspace workspace = store.state().threads().selectedWorkspace().orElseThrow();
-        workers.submit(() -> runGuarded(() -> {
-            ConversationThread created =
-                    requireClient().threads().create(workspace.id(), title, CommandOptions.create(0));
-            List<ConversationThread> threads = requireClient().threads().list(workspace.id());
-            publishThreads(workspace, threads, Optional.of(created));
-        }));
+        conversations.createThread(title);
     }
 
     /**
@@ -240,20 +229,14 @@ public final class DesktopPresenter implements AutoCloseable {
 
     /** @param message 用户消息 @param execution 当前显式独立选择，服务端负责解析与冻结 */
     public void send(String message, ExecutionOverrides execution) {
-        ConversationThread thread = store.state().threads().selectedThread().orElseThrow();
         String prompt = DesktopFailures.requireText(message, "message");
         ExecutionOverrides selection = Objects.requireNonNull(execution, "execution");
-        setBusy(true);
-        workers.submit(() -> runGuarded(() -> startAndObserve(thread, selection, prompt)));
+        conversations.send(prompt, selection);
     }
 
     /** 请求取消当前活动 Turn。 */
     public void cancelActiveTurn() {
-        AgentTurn selected = store.state().threads().activeTurn().orElseThrow();
-        workers.submit(() -> runGuarded(() -> {
-            AgentTurn current = requireClient().turns().read(selected.id());
-            requireClient().turns().cancel(current.id(), "Desktop 用户请求停止", CommandOptions.create(current.revision()));
-        }));
+        conversations.cancel();
     }
 
     /**
@@ -350,22 +333,13 @@ public final class DesktopPresenter implements AutoCloseable {
      * @return 在 UI 调度器上完成的 Future
      */
     public <T> CompletableFuture<T> submitSettingsRequest(Function<JavaClawClient, T> request) {
-        Function<JavaClawClient, T> checked = Objects.requireNonNull(request, "request");
-        CompletableFuture<T> result = new CompletableFuture<>();
-        workers.submit(() -> {
-            try {
-                T value = checked.apply(requireClient());
-                ui.accept(() -> result.complete(value));
-            } catch (Exception failure) {
-                ui.accept(() -> result.completeExceptionally(failure));
-            }
-        });
-        return result;
+        return DesktopRequests.submit(workers, ui, this::requireClient, request);
     }
 
     private CompletableFuture<InitializeResult> beginConnection(boolean replaceCurrent) {
         long epoch = connectionEpoch.incrementAndGet();
         inputCoordinator.invalidate();
+        conversations.reconnecting();
         CompletableFuture<InitializeResult> result = new CompletableFuture<>();
         update(state -> DesktopStateProjection.connection(state, ConnectionState.connecting()));
         workers.submit(() -> connect(epoch, replaceCurrent, result));
@@ -376,39 +350,53 @@ public final class DesktopPresenter implements AutoCloseable {
         JavaClawClient connected = null;
         try {
             if (replaceCurrent) {
-                closeQuietly(detachClient());
+                DesktopRequests.closeQuietly(detachClient());
             }
             connected = connector.connect(notification -> acceptNotification(epoch, notification));
             if (!installClient(epoch, connected)) {
-                closeQuietly(connected);
+                DesktopRequests.closeQuietly(connected);
                 completeFailure(result, new IllegalStateException("连接结果已失效"));
                 return;
             }
-            loadConnectedCatalog(connected);
+            loadConnectedCatalog(epoch, connected);
             inputCoordinator.connected(epoch, connected);
             InitializeResult initialized = connected.server();
             ui.accept(() -> result.complete(initialized));
         } catch (Exception failure) {
             discardClient(connected);
-            fail(DesktopFailures.safeMessage(failure));
+            if (!closed && connectionEpoch.get() == epoch) {
+                fail(DesktopFailures.safeMessage(failure));
+            }
             completeFailure(result, failure);
         }
     }
 
-    private void loadConnectedCatalog(JavaClawClient connected) {
+    private void loadConnectedCatalog(long epoch, JavaClawClient connected) {
         List<Workspace> workspaces = connected.workspaces().list();
         List<AgentRole> roles = connected.roles().list().stream()
                 .filter(role -> role.lifecycle() == RoleLifecycle.ACTIVE)
                 .toList();
-        Optional<Workspace> selected = workspaces.stream().findFirst();
+        Optional<Workspace> selected = store.state()
+                .threads()
+                .selectedWorkspace()
+                .flatMap(previous -> workspaces.stream()
+                        .filter(value -> value.id().equals(previous.id()))
+                        .findFirst())
+                .or(() -> workspaces.stream().findFirst());
         List<ConversationThread> threads = selected.map(
                         workspace -> connected.threads().list(workspace.id()))
                 .orElse(List.of());
-        Optional<ConversationThread> thread = threads.stream().findFirst();
+        Optional<ConversationThread> thread = store.state()
+                .threads()
+                .selectedThread()
+                .flatMap(previous -> threads.stream()
+                        .filter(value -> value.id().equals(previous.id()))
+                        .findFirst())
+                .or(() -> threads.stream().findFirst());
         String detail =
                 connected.server().serverName() + " " + connected.server().serverVersion();
-        publishConnected(detail, workspaces, selected, threads, thread, roles);
-        thread.ifPresent(this::loadTranscript);
+        publishConnected(
+                epoch, connected, detail, new DesktopConnectionCatalog(workspaces, selected, threads, thread, roles));
     }
 
     private synchronized boolean installClient(long epoch, JavaClawClient connected) {
@@ -427,6 +415,9 @@ public final class DesktopPresenter implements AutoCloseable {
 
     private void acceptNotification(long epoch, ServerNotification notification) {
         ServerNotification checked = Objects.requireNonNull(notification, "notification");
+        if (checked instanceof ServerNotification.TurnStream) {
+            return;
+        }
         ui.accept(() -> {
             if (!closed && connectionEpoch.get() == epoch && client != null) {
                 notifications.publish(checked);
@@ -443,107 +434,31 @@ public final class DesktopPresenter implements AutoCloseable {
                 client = null;
             }
         }
-        closeQuietly(candidate);
+        DesktopRequests.closeQuietly(candidate);
     }
 
     private void completeFailure(CompletableFuture<?> result, Exception failure) {
         ui.accept(() -> result.completeExceptionally(failure));
     }
 
-    private static void closeQuietly(JavaClawClient value) {
-        if (value == null) {
-            return;
-        }
-        try {
-            value.close();
-        } catch (Exception ignored) {
-            // 重连和失败清理必须保留原始失败；旧会话关闭错误不覆盖新连接结果。
-        }
+    /** @param following 是否跟随最新消息；返回最新端时重新读取被分页窗口淘汰的摘要 */
+    public void followTranscript(boolean following) {
+        conversations.following(following);
     }
 
-    private void startAndObserve(ConversationThread thread, ExecutionOverrides execution, String message)
-            throws InterruptedException {
-        CoreRpcContracts.TurnStartPayload payload =
-                new CoreRpcContracts.TurnStartPayload(thread.id(), execution, message);
-        AgentTurn turn =
-                requireClient().turns().start(payload, CommandOptions.create(0)).turn();
-        AgentTurn started = turn;
-        update(state -> DesktopStateProjection.activeTurn(state, started));
-        long cursor = store.state().transcript().nextSequence();
-        while (!DesktopStateProjection.terminal(turn.status()) && !closed) {
-            Thread.sleep(150);
-            CoreRpcContracts.ItemListResult page = requireClient().items().list(thread.id(), cursor, 500);
-            cursor = page.nextSequence();
-            turn = requireClient().turns().read(turn.id());
-            List<ApprovalRecord> approvals = requireClient().approvals().list(Optional.of(turn.id()), false);
-            AgentTurn observed = turn;
-            update(state -> DesktopStateProjection.observation(state, observed, page, approvals));
-        }
-        setBusy(false);
-    }
-
-    private void loadThreads(Workspace workspace) {
-        List<ConversationThread> threads = requireClient().threads().list(workspace.id());
-        publishThreads(workspace, threads, threads.stream().findFirst());
-    }
-
-    private void loadTranscript(ConversationThread thread) {
-        CoreRpcContracts.ItemListResult page = requireClient().items().list(thread.id(), 0, 500);
-        update(state -> DesktopStateProjection.transcript(state, thread, page));
-    }
-
-    private void navigateToThread(ThreadId threadId, CompletableFuture<ConversationThread> result) {
-        try {
-            JavaClawClient connected = requireClient();
-            ConversationThread thread = connected.threads().read(threadId);
-            Workspace workspace = connected.workspaces().list().stream()
-                    .filter(candidate -> candidate.id().equals(thread.workspaceId()))
-                    .findFirst()
-                    .orElseThrow(() -> new IllegalStateException("Thread 所属 Workspace 不可用"));
-            List<ConversationThread> threads = connected.threads().list(workspace.id());
-            CoreRpcContracts.ItemListResult transcript = connected.items().list(thread.id(), 0, 500);
-            ui.accept(() -> applyThreadNavigation(workspace, threads, thread, transcript, result));
-        } catch (Exception failure) {
-            ui.accept(() -> result.completeExceptionally(failure));
-        }
-    }
-
-    private void applyThreadNavigation(
-            Workspace workspace,
-            List<ConversationThread> threads,
-            ConversationThread thread,
-            CoreRpcContracts.ItemListResult transcript,
-            CompletableFuture<ConversationThread> result) {
-        store.update(state -> DesktopStateProjection.threadCatalog(state, workspace, threads, Optional.of(thread)));
-        store.update(state -> DesktopStateProjection.transcript(state, thread, transcript));
-        result.complete(thread);
-    }
-
-    private void reloadCatalog(Workspace selected) {
-        List<Workspace> workspaces = requireClient().workspaces().list();
-        List<ConversationThread> threads = requireClient().threads().list(selected.id());
-        update(state -> DesktopStateProjection.catalog(state, workspaces, selected, threads));
+    /** 按来源 sequence 向前读取100条；重复点击由当前窗口边界自然幂等归并。 */
+    public void loadEarlierTranscript() {
+        conversations.earlier();
     }
 
     private void publishConnected(
-            String detail,
-            List<Workspace> workspaces,
-            Optional<Workspace> selected,
-            List<ConversationThread> threads,
-            Optional<ConversationThread> thread,
-            List<AgentRole> roles) {
-        DesktopConnectionCatalog catalog = new DesktopConnectionCatalog(workspaces, selected, threads, thread, roles);
-        update(state -> DesktopStateProjection.connected(state, detail, Instant.now(clock), catalog));
-    }
-
-    private void publishThreads(
-            Workspace workspace, List<ConversationThread> threads, Optional<ConversationThread> selected) {
-        update(state -> DesktopStateProjection.threadCatalog(state, workspace, threads, selected));
-        selected.ifPresent(this::loadTranscript);
-    }
-
-    private void setBusy(boolean busy) {
-        update(state -> DesktopStateProjection.busy(state, busy));
+            long epoch, JavaClawClient connected, String detail, DesktopConnectionCatalog catalog) {
+        ui.accept(() -> {
+            if (!closed && connectionEpoch.get() == epoch && client == connected) {
+                store.update(state -> DesktopStateProjection.connected(state, detail, Instant.now(clock), catalog));
+                catalog.selectedThread().ifPresent(conversations::load);
+            }
+        });
     }
 
     private void runGuarded(CheckedAction action) {
@@ -582,6 +497,8 @@ public final class DesktopPresenter implements AutoCloseable {
         connectionEpoch.incrementAndGet();
         inputCoordinator.invalidate();
         notifications.close();
+        conversations.close();
+        streams.close();
         workers.shutdownNow();
         JavaClawClient current = detachClient();
         if (current != null) {

@@ -111,6 +111,7 @@ public final class ViewSchemaPolicy {
             switch (node) {
                 case ViewSchema.ListView list -> addSelectable(selectable, list.sourceId(), list.selection());
                 case ViewSchema.Table table -> addSelectable(selectable, table.sourceId(), table.selection());
+                case ViewSchema.Graph graph -> selectable.add(graph.nodeSourceId());
                 default -> {
                     // 其他节点不产生行选择。
                 }

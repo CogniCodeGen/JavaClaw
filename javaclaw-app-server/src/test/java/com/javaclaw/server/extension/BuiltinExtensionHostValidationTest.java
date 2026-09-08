@@ -107,7 +107,9 @@ class BuiltinExtensionHostValidationTest {
                 AutomationStepPort.unavailable(),
                 ScheduledCommandPort.unavailable(),
                 ScheduleLifecyclePort.unavailable(),
-                new ExtensionCatalogRepository(database, json, CLOCK));
+                new ExtensionCatalogRepository(database, json, CLOCK),
+                com.javaclaw.extension.spi.ConversationEvidencePort.unavailable(),
+                owner -> com.javaclaw.extension.spi.ScheduleDefinitionBindingPort.unavailable());
     }
 
     @Test
@@ -372,7 +374,9 @@ class BuiltinExtensionHostValidationTest {
                 ports.automationSteps(),
                 ports.scheduledCommands(),
                 ports.scheduleLifecycle(),
-                ports.catalog());
+                ports.catalog(),
+                com.javaclaw.extension.spi.ConversationEvidencePort.unavailable(),
+                owner -> com.javaclaw.extension.spi.ScheduleDefinitionBindingPort.unavailable());
     }
 
     private static CredentialVaultPort emptyCredentials() {

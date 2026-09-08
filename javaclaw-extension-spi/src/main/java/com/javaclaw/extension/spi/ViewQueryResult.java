@@ -10,7 +10,7 @@ import com.javaclaw.api.CanonicalPayload;
  *
  * @param dataSourceId 请求中的数据源标识
  * @param rows 规范 JSON 行
- * @param values 表单和标量节点使用的规范 JSON 对象
+ * @param values 表单和标量节点使用的规范 JSON 对象；可在 {@link ViewInitialSelection#VALUES_KEY} 中携带声明式初选
  * @param nextCursor 下一页游标；没有下一页为空字符串
  * @param hasMore 是否存在下一页
  * @param revision 数据源资源版本；无单资源版本时为 0

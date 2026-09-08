@@ -499,7 +499,8 @@ class KnowledgeExtensionBranchCoverageTest {
                 source.privateNetworkGrants(),
                 source.services(),
                 source.embeddings(),
-                com.javaclaw.extension.spi.WorkspaceExecutionPort.denied());
+                com.javaclaw.extension.spi.WorkspaceExecutionPort.denied(),
+                com.javaclaw.extension.spi.ScheduleDefinitionBindingPort.unavailable());
     }
 
     private static com.javaclaw.extension.spi.ExtensionJobRuntimeContext runtime(BuiltinExtensionTestSupport support) {
@@ -512,7 +513,9 @@ class KnowledgeExtensionBranchCoverageTest {
                 support.embeddings,
                 com.javaclaw.extension.spi.AutomationStepPort.unavailable(),
                 com.javaclaw.extension.spi.ScheduledCommandPort.unavailable(),
-                com.javaclaw.extension.spi.ScheduleLifecyclePort.unavailable());
+                com.javaclaw.extension.spi.ScheduleLifecyclePort.unavailable(),
+                com.javaclaw.extension.spi.ConversationEvidencePort.unavailable(),
+                com.javaclaw.extension.spi.ScheduleDefinitionBindingPort.unavailable());
     }
 
     private static String digest(String value) {

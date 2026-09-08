@@ -1,6 +1,7 @@
 package com.javaclaw.extension.spi;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -14,11 +15,31 @@ import java.util.Optional;
  * @param title 页面标题
  * @param dataSources 页面使用的数据源
  * @param nodes 顶层平台节点
+ * @param graphBrowsing Graph.id 对应的浏览声明；空Map维持旧页面wire形状
  */
 public record ViewSchema(
-        int schemaVersion, String viewId, String title, List<ViewDataSource> dataSources, List<Node> nodes) {
+        int schemaVersion,
+        String viewId,
+        String title,
+        List<ViewDataSource> dataSources,
+        List<Node> nodes,
+        Map<String, GraphBrowsing> graphBrowsing) {
     /** 当前唯一支持的 ViewSchema 版本。 */
     public static final int CURRENT_VERSION = 2;
+
+    /**
+     * 创建不声明增量图谱浏览的兼容页面。
+     *
+     * @param schemaVersion 固定版本2
+     * @param viewId 页面标识
+     * @param title 标题
+     * @param dataSources 标准数据源
+     * @param nodes 原有节点，包括未修改的Graph构造
+     */
+    public ViewSchema(
+            int schemaVersion, String viewId, String title, List<ViewDataSource> dataSources, List<Node> nodes) {
+        this(schemaVersion, viewId, title, dataSources, nodes, Map.of());
+    }
 
     /** 校验版本和页面结构。 */
     public ViewSchema {
@@ -29,8 +50,25 @@ public record ViewSchema(
         title = ViewSchemaText.required(title, "title");
         dataSources = List.copyOf(Objects.requireNonNull(dataSources, "dataSources"));
         nodes = List.copyOf(Objects.requireNonNull(nodes, "nodes"));
+        graphBrowsing = Map.copyOf(Objects.requireNonNull(graphBrowsing, "graphBrowsing"));
+        validateGraphBrowsing(nodes, graphBrowsing);
         if (nodes.isEmpty()) {
             throw new IllegalArgumentException("nodes must not be empty");
+        }
+    }
+
+    private static void validateGraphBrowsing(List<Node> nodes, Map<String, GraphBrowsing> browsing) {
+        if (browsing.size() > 32) {
+            throw new IllegalArgumentException("too many graph browsing declarations");
+        }
+        var graphs = nodes.stream()
+                .filter(Graph.class::isInstance)
+                .map(Node::id)
+                .collect(java.util.stream.Collectors.toSet());
+        for (String id : browsing.keySet()) {
+            if (!id.matches("[A-Za-z][A-Za-z0-9._-]{0,127}") || !graphs.contains(id)) {
+                throw new IllegalArgumentException("graph browsing declaration must reference an existing Graph");
+            }
         }
     }
 

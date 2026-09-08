@@ -33,4 +33,19 @@ public final class ItemClient {
                 new CoreRpcContracts.ItemList(threadId, afterSequence, limit),
                 CoreRpcContracts.ItemListResult.class);
     }
+
+    /**
+     * 从当前末尾向前读取历史，避免首屏扫描整个 Thread。
+     *
+     * @param threadId Thread
+     * @param beforeSequence 排他上界，0 表示最新
+     * @param limit 页大小，1 至 100
+     * @return 升序有界展示摘要与最新水位，不包含截断的 ItemEnvelope
+     */
+    public com.javaclaw.api.ItemHistoryResult history(ThreadId threadId, long beforeSequence, int limit) {
+        return connection.query(
+                com.javaclaw.protocol.TurnStreamRpcContracts.ITEM_HISTORY,
+                new com.javaclaw.protocol.TurnStreamRpcContracts.ItemHistoryRequest(threadId, beforeSequence, limit),
+                com.javaclaw.api.ItemHistoryResult.class);
+    }
 }

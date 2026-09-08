@@ -81,6 +81,16 @@ final class MemoryStoreAccess {
                 revision.revision(), normalized, revision.tombstone(), revision.updatedAt());
     }
 
+    void putMemory(
+            ExtensionTransaction transaction,
+            WorkspaceId workspaceId,
+            MemoryContracts.Memory memory,
+            long expectedRevision) {
+        transaction.put(
+                MemoryCollectionNames.memories(workspaceId), memory.id(), expectedRevision, payloads.encode(memory));
+        new MemoryGraphProjection(payloads, this).project(transaction, workspaceId, memory);
+    }
+
     ExtensionResponse response(MemoryContracts.Memory memory) {
         return new ExtensionResponse(payloads.encode(memory), memory.revision());
     }

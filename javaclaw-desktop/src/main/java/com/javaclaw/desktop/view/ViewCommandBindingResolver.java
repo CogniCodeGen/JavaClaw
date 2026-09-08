@@ -151,8 +151,10 @@ final class ViewCommandBindingResolver {
                     addSelectable(keys, list.sourceId(), list.keyField(), list.selection());
                 case ViewSchema.Table table ->
                     addSelectable(keys, table.sourceId(), table.keyField(), table.selection());
+                case ViewSchema.Graph graph ->
+                    addSelectable(keys, graph.nodeSourceId(), graph.nodeIdField(), ViewSelectionMode.SINGLE);
                 default -> {
-                    // 只有单选列表和表格能够提供权威选中行。
+                    // 只有声明式单选控件能够提供权威选中行。
                 }
             }
         }

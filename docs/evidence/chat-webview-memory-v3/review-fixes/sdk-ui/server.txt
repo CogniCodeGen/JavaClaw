@@ -1,0 +1,2 @@
+UI_LEARNING_JOB f9dbb47b-7111-479a-a257-006ce2162b4f
+UI_ACCEPTANCE_READY /private/tmp/javaclaw-sdk-ui-41fw4s1i/fixture/rpc/server.sock

@@ -106,11 +106,13 @@ public interface ExtensionJobPort {
             ExtensionJobMutation mutation);
 
     /**
-     * 取消 Job；已经开始的副作用仍必须依赖 EffectReceipt 收敛未知结果。
+     * 持久化 Job 的取消请求，并通知正在执行的单元协作退出。
+     *
+     * <p>没有活动单元时立即进入 CANCELLED；活动单元先保存其回执与 checkpoint，再收敛状态。 已完成或未知的副作用不会因取消请求而被改写，仍必须依据 EffectReceipt 处理。
      *
      * @param jobId Job ID
      * @param mutation 幂等身份与当前 revision
-     * @return 已取消快照
+     * @return 当前快照；活动单元尚未收敛时仍可能为 RUNNING
      */
     ExtensionJob cancel(String jobId, ExtensionJobMutation mutation);
 }

@@ -1,0 +1,6 @@
+PASS sample=0 totalWithStartup=4167.9ms
+PASS sample=1 totalWithStartup=3096.7ms
+PASS sample=2 totalWithStartup=2510.9ms
+PASS sample=3 totalWithStartup=2449.0ms
+PASS sample=4 totalWithStartup=2452.4ms
+PASS sample=5 totalWithStartup=2967.0ms

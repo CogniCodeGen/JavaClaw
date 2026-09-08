@@ -291,7 +291,7 @@ class ViewSchemaSettingsPageTest {
         });
     }
 
-    private static ViewSchemaSettingsPage page(FakeGateway gateway) {
+    static ViewSchemaSettingsPage page(FakeGateway gateway) {
         ViewSchemaSettingsPage page = new ViewSchemaSettingsPage("plan", "计划", "测试页面", gateway);
         page.workspaceChanged(Optional.of(WORKSPACE_VALUE));
         return page;
@@ -358,7 +358,7 @@ class ViewSchemaSettingsPageTest {
                         List.of(open))));
     }
 
-    private static ViewData data(String name, long revision) {
+    static ViewData data(String name, long revision) {
         return new ViewData(Map.of(
                 "editor",
                 new ViewData.Source(List.of(), Map.of("name", name), "", "", false, revision, 0, Optional.empty())));
@@ -383,7 +383,7 @@ class ViewSchemaSettingsPageTest {
                 "plan", viewId, new ViewSchemaWireCodec(new CanonicalJson()).encode(viewSchema));
     }
 
-    private static TextField field(Node root) {
+    static TextField field(Node root) {
         return descendants(root).stream()
                 .filter(TextField.class::isInstance)
                 .map(TextField.class::cast)
@@ -412,7 +412,7 @@ class ViewSchemaSettingsPageTest {
                 .orElseThrow();
     }
 
-    private static Button button(Node root, String text) {
+    static Button button(Node root, String text) {
         return descendants(root).stream()
                 .filter(Button.class::isInstance)
                 .map(Button.class::cast)
@@ -452,24 +452,24 @@ class ViewSchemaSettingsPageTest {
                 .ifPresent(Button::fire));
     }
 
-    private static final class FakeGateway implements ExtensionSettingsGateway {
+    static final class FakeGateway implements ExtensionSettingsGateway {
         private static final ExtensionRpcContracts.ViewDocument DOCUMENT = new ExtensionRpcContracts.ViewDocument(
                 "plan", "plan.editor", new ViewSchemaWireCodec(new CanonicalJson()).encode(schema()));
 
-        private final Deque<CompletableFuture<ViewData>> loadsToReturn = new ArrayDeque<>();
+        final Deque<CompletableFuture<ViewData>> loadsToReturn = new ArrayDeque<>();
         private final List<ViewLoadRequest> loadRequests = new ArrayList<>();
         private final Deque<CompletableFuture<List<ExtensionRpcContracts.ViewDocument>>> catalogsToReturn =
                 new ArrayDeque<>();
         private final AtomicBoolean subscriptionClosed = new AtomicBoolean();
         private List<ExtensionRpcContracts.ViewDocument> catalog = List.of(DOCUMENT);
-        private ViewData authoritative;
+        ViewData authoritative;
         private CompletableFuture<ExtensionRpcContracts.CallResult> command =
                 CompletableFuture.completedFuture(new ExtensionRpcContracts.CallResult(new CanonicalPayload("{}"), 1));
         private Consumer<ExtensionRpcContracts.ExtensionEvent> listener = ignored -> {};
-        private int loads;
+        int loads;
         private int executions;
 
-        private FakeGateway(ViewData authoritative) {
+        FakeGateway(ViewData authoritative) {
             this.authoritative = authoritative;
         }
 

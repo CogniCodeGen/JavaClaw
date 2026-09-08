@@ -6,6 +6,8 @@ import java.util.Objects;
 import com.javaclaw.api.CorePayloads;
 import com.javaclaw.api.CoreSchemas;
 import com.javaclaw.api.ItemEnvelope;
+import com.javaclaw.api.ItemHistoryEntry;
+import com.javaclaw.api.MessageRole;
 import com.javaclaw.client.extension.CodingToolResultIndex;
 import com.javaclaw.client.extension.CodingTranscriptFormatter;
 import com.javaclaw.protocol.CanonicalJson;
@@ -56,6 +58,37 @@ public final class TranscriptPresenter {
             case CoreSchemas.ERROR -> error(item);
             default -> fallback(item);
         };
+    }
+
+    /**
+     * 将服务端有界历史摘要映射到与完整事实相同的标题和样式；不把摘要还原为完整 Item。
+     *
+     * @param entry 保留身份和来源的历史条目
+     * @return WebView 与原生简版共用的纯文本展示
+     */
+    public static PresentedItem presentHistory(ItemHistoryEntry entry) {
+        Objects.requireNonNull(entry, "entry");
+        if (entry.role().isPresent()) {
+            MessageRole role = entry.role().orElseThrow();
+            String style =
+                    switch (role) {
+                        case USER -> "message-user";
+                        case ASSISTANT -> "message-assistant";
+                        case SYSTEM, TOOL -> "transcript-execution-block";
+                    };
+            return new PresentedItem(role.name(), entry.summary(), style);
+        }
+        String style =
+                switch (entry.kind()) {
+                    case "error" -> "transcript-error-block";
+                    case "approval", "input" -> "transcript-interaction-block";
+                    default -> "transcript-execution-block";
+                };
+        int newline = entry.summary().indexOf('\n');
+        return newline < 0
+                ? new PresentedItem(entry.kind(), entry.summary(), style)
+                : new PresentedItem(
+                        entry.summary().substring(0, newline), entry.summary().substring(newline + 1), style);
     }
 
     private PresentedItem fallback(ItemEnvelope item) {

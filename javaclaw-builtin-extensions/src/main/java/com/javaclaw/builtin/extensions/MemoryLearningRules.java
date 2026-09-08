@@ -44,6 +44,10 @@ final class MemoryLearningRules {
         }
         if (conflicts(request, current)) {
             concerns.add(MemoryContracts.ProposalConcern.CONFLICT);
+        } else if (current.stream()
+                .anyMatch(memory -> memory.scope().equals(request.scope())
+                        && !memory.content().equals(request.content()))) {
+            concerns.add(MemoryContracts.ProposalConcern.UNCERTAIN_EVIDENCE);
         }
         return Set.copyOf(concerns);
     }
@@ -53,6 +57,7 @@ final class MemoryLearningRules {
         MemoryContracts.Source source = request.source();
         return source.workspaceId().equals(context.workspaceId())
                 && request.content().equals(source.verbatim())
+                && context.evidence().isUserText(context.workspaceId(), source.threadId(), source.itemId())
                 && context.evidence()
                         .containsVerbatim(context.workspaceId(), source.threadId(), source.itemId(), source.verbatim());
     }

@@ -263,6 +263,139 @@ class TurnJournalBranchesTest {
         assertTrue(failure.getCause() instanceof java.sql.SQLException);
     }
 
+    @Test
+    void 公开流同步落盘且最终Item使用预留身份并可跨实例重放() throws Exception {
+        Fixture fixture = fixture("public-stream", 0);
+        var turnId = fixture.turn().id();
+        journal.beginOrRecover(fixture.command());
+        journal.recordModelIntent(turnId, 1, "1".repeat(64));
+        var sink = new H2ModelEventSink(database, json, Clock.fixed(NOW, ZoneOffset.UTC)).forInvocation(1);
+        var cancellation = new com.javaclaw.api.CancellationSource();
+        String body = "a".repeat(2047) + "😀" + "重复重复";
+        sink.publish(turnId, new com.javaclaw.runtime.ModelStreamEvent.TextDelta(body), cancellation);
+        sink.publish(turnId, new com.javaclaw.runtime.ModelStreamEvent.ReasoningSummaryDelta("不公开内部内容"), cancellation);
+        var streams = new TurnStreamService(database, json);
+        var before = streams.list(new com.javaclaw.protocol.TurnStreamRpcContracts.ListRequest(turnId, "START", 128));
+        assertEquals(3, before.events().size());
+        assertEquals(
+                body,
+                before.events().stream()
+                        .map(event -> event.data().text())
+                        .collect(java.util.stream.Collectors.joining()));
+        assertTrue(
+                before.events().stream().noneMatch(event -> event.data().text().contains("不公开")));
+        var expectedId = before.events().getFirst().data().call().orElseThrow().messageItemId();
+        journal.commitModelResult(
+                turnId,
+                1,
+                new ModelInvocationResult(
+                        body, List.of(), USAGE, Optional.empty(), Optional.empty(), ModelFinishReason.COMPLETE),
+                USAGE);
+        journal.transition(turnId, TurnStatus.RUNNING, TurnStatus.COMPLETED, Optional.empty());
+        var after = new TurnStreamService(new H2Database(temporaryDirectory.resolve("data-v6")), json)
+                .list(new com.javaclaw.protocol.TurnStreamRpcContracts.ListRequest(turnId, before.nextCursor(), 128));
+        assertEquals(
+                List.of(com.javaclaw.api.TurnStreamKind.COMMITTED, com.javaclaw.api.TurnStreamKind.TURN_FINISHED),
+                after.events().stream().map(event -> event.data().kind()).toList());
+        assertEquals(before.nextCursor(), after.events().getFirst().previousCursor());
+        assertEquals(
+                expectedId, core.listItems(fixture.turn().threadId()).getLast().id());
+        assertTrue(streams.watermark(turnId).terminal());
+        assertThrows(
+                PersistenceException.class,
+                () -> sink.publish(turnId, new com.javaclaw.runtime.ModelStreamEvent.TextDelta("迟到"), cancellation));
+    }
+
+    @Test
+    void 首次模型调用前取消具有终态但不伪造调用身份() {
+        Fixture fixture = fixture("early-cancel", 0);
+        journal.transition(fixture.turn().id(), TurnStatus.QUEUED, TurnStatus.CANCELLED, Optional.empty());
+        var page = new TurnStreamService(database, json)
+                .list(new com.javaclaw.protocol.TurnStreamRpcContracts.ListRequest(
+                        fixture.turn().id(), "START", 128));
+        assertEquals(1, page.events().size());
+        assertEquals(
+                com.javaclaw.api.TurnStreamKind.TURN_FINISHED,
+                page.events().getFirst().data().kind());
+        assertTrue(page.events().getFirst().data().call().isEmpty());
+    }
+
+    @Test
+    void 公开游标拒绝跨Turn伪造与不存在的已提交位置() {
+        Fixture first = fixture("cursor-first", 0);
+        Fixture second = fixture("cursor-second", 0);
+        journal.transition(first.turn().id(), TurnStatus.QUEUED, TurnStatus.CANCELLED, Optional.empty());
+        var streams = new TurnStreamService(database, json);
+        var page = streams.list(new com.javaclaw.protocol.TurnStreamRpcContracts.ListRequest(
+                first.turn().id(), "START", 1));
+        assertThrows(
+                PersistenceException.class,
+                () -> streams.list(new com.javaclaw.protocol.TurnStreamRpcContracts.ListRequest(
+                        second.turn().id(), page.nextCursor(), 1)));
+        assertThrows(
+                PersistenceException.class,
+                () -> streams.list(new com.javaclaw.protocol.TurnStreamRpcContracts.ListRequest(
+                        first.turn().id(), "not-a-cursor", 1)));
+        var next = streams.list(new com.javaclaw.protocol.TurnStreamRpcContracts.ListRequest(
+                first.turn().id(), page.nextCursor(), 1));
+        assertTrue(next.events().isEmpty());
+        assertEquals(page.nextCursor(), next.nextCursor());
+    }
+
+    @Test
+    void 最终消息后续Checkpoint失败回滚Item和公开提交事件() throws Exception {
+        Fixture fixture = fixture("rollback", 0);
+        var turnId = fixture.turn().id();
+        journal.beginOrRecover(fixture.command());
+        journal.recordModelIntent(turnId, 1, "1".repeat(64));
+        var streams = new TurnStreamService(database, json);
+        var before = streams.list(new com.javaclaw.protocol.TurnStreamRpcContracts.ListRequest(turnId, "START", 128));
+        int count = core.listItems(fixture.turn().threadId()).size();
+        // 制造 Item 已插入后才触发的 checkpoint 条件更新失败，检查整个事务回滚。
+        try (var connection = database.open();
+                var statement = connection.prepareStatement(
+                        "UPDATE CORE.TURN_EXECUTION_CHECKPOINT SET PHASE='READY_FOR_MODEL', ACTIVE_INTENT_DIGEST=NULL WHERE TURN_ID=?")) {
+            statement.setString(1, turnId.toString());
+            statement.executeUpdate();
+        }
+        var result = new ModelInvocationResult(
+                "不能部分提交", List.of(), USAGE, Optional.empty(), Optional.empty(), ModelFinishReason.COMPLETE);
+        assertThrows(PersistenceException.class, () -> journal.commitModelResult(turnId, 1, result, USAGE));
+        assertEquals(count, core.listItems(fixture.turn().threadId()).size());
+        assertEquals(
+                before,
+                streams.list(new com.javaclaw.protocol.TurnStreamRpcContracts.ListRequest(turnId, "START", 128)));
+    }
+
+    @Test
+    void 分片末尾非法Unicode回滚整个publish且正文不重复写内部topic() throws Exception {
+        Fixture fixture = fixture("delta-rollback", 0);
+        var turnId = fixture.turn().id();
+        journal.beginOrRecover(fixture.command());
+        journal.recordModelIntent(turnId, 1, "1".repeat(64));
+        var sink = new H2ModelEventSink(database, json, Clock.fixed(NOW, ZoneOffset.UTC)).forInvocation(1);
+        var token = new com.javaclaw.api.CancellationSource();
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> sink.publish(
+                        turnId,
+                        new com.javaclaw.runtime.ModelStreamEvent.TextDelta("x".repeat(2048) + "\uDC00"),
+                        token));
+        var streams = new TurnStreamService(database, json);
+        var page = streams.list(new com.javaclaw.protocol.TurnStreamRpcContracts.ListRequest(turnId, "START", 128));
+        assertEquals(1, page.events().size());
+        sink.publish(turnId, new com.javaclaw.runtime.ModelStreamEvent.TextDelta("唯一正文"), token);
+        try (var connection = database.open();
+                var statement = connection.prepareStatement(
+                        "SELECT COUNT(*) FROM CORE.EVENT WHERE TURN_ID=? AND TOPIC='turn.stream.text'")) {
+            statement.setString(1, turnId.toString());
+            try (var rows = statement.executeQuery()) {
+                rows.next();
+                assertEquals(0, rows.getInt(1));
+            }
+        }
+    }
+
     private void commitBatch(Fixture fixture) {
         journal.beginOrRecover(fixture.command());
         journal.recordModelIntent(fixture.turn().id(), 1, "1".repeat(64));

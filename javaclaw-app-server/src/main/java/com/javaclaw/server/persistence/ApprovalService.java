@@ -33,7 +33,8 @@ import com.javaclaw.protocol.CoreRpcContracts;
 /**
  * 持久化 Approval 状态机；等待使用虚拟线程短轮询，以同时响应决议、超时和 Turn 取消。
  *
- * <p><strong>并发不变量：</strong>同一审批的所有写事务先获取进程级审批锁。客户端命令先获取幂等键锁，再获取独立的 审批锁，固定顺序可避免 H2 行锁竞争和进程锁反转；数据库条件更新仍是最终一致性防线。
+ * <p><strong>并发不变量：</strong>同一审批的所有写事务先获取进程级审批锁。客户端命令先获取幂等键锁，再获取独立的 审批锁，固定顺序可避免 H2 行锁竞争和进程锁反转；数据库条件更新仍是最终一致性防线。涉及 Item
+ * 和 checkpoint 的事务在审批锁之后统一按 Thread、Turn、checkpoint 顺序持锁。
  *
  * <p><strong>中断不变量：</strong>可被调用方中断的等待线程不直接执行 JDBC。申请、轮询和终态写入由服务拥有的短生命周期虚拟线程完成，防止线程中断关闭 H2 MVStore 的共享文件通道。
  */
@@ -248,8 +249,7 @@ public final class ApprovalService implements AutoCloseable {
                 if (existing.isPresent()) {
                     return requireSameRequest(existing.orElseThrow(), request);
                 }
-                AgentTurn turn = turns.find(connection, request.turnId())
-                        .orElseThrow(() -> new PersistenceException("审批所属 Turn 不存在"));
+                AgentTurn turn = turns.lockForJournal(connection, request.turnId());
                 if (turn.status() != TurnStatus.RUNNING) {
                     throw new PersistenceException("只有运行中的 Turn 可以申请审批");
                 }
@@ -301,8 +301,8 @@ public final class ApprovalService implements AutoCloseable {
         }
         ApprovalRecord result =
                 approvals.resolve(connection, current.request().id(), expectedRevision, state, reason, resolvedAt);
+        AgentTurn turn = turns.lockForJournal(connection, current.request().turnId());
         append(connection, result, ItemStatus.COMPLETED);
-        AgentTurn turn = turns.find(connection, current.request().turnId()).orElseThrow();
         if (turn.status() == TurnStatus.WAITING) {
             checkpoints.markApprovalResolved(connection, current.request(), resolvedAt);
             turns.transition(

@@ -64,8 +64,43 @@ final class MemoryExtensionPresentation {
                         "limit", ContractSchemaFactory.boundedInteger(1, 100)),
                 List.of("query", "scopes", "tags", "limit")));
         CanonicalPayload output = codec.encode(ContractSchemaFactory.object(
-                Map.of("matches", ContractSchemaFactory.array(memorySchema())), List.of("matches")));
-        return tool(extensionRevision, "memory_search", "检索当前 Workspace 中已确认的记忆", ToolRisk.READ_ONLY, input, output);
+                Map.of(
+                        "matches",
+                        ContractSchemaFactory.array(ContractSchemaFactory.object(
+                                Map.of("memory", memorySchema(), "effectivity", effectivitySchema()),
+                                List.of("memory", "effectivity"))),
+                        "evaluatedAt",
+                        ContractSchemaFactory.instant(),
+                        "memoryRevision",
+                        ContractSchemaFactory.integer(0)),
+                List.of("matches", "evaluatedAt", "memoryRevision")));
+        return tool(
+                extensionRevision,
+                "memory_search",
+                "检索当前有效且已确认的记忆；必须保留结果中的有效时间条件，不把限时事实解释为永久事实",
+                ToolRisk.READ_ONLY,
+                input,
+                output);
+    }
+
+    private static Map<String, Object> effectivitySchema() {
+        return ContractSchemaFactory.object(
+                Map.of(
+                        "memoryId",
+                        ContractSchemaFactory.string(),
+                        "revision",
+                        ContractSchemaFactory.integer(0),
+                        "state",
+                        ContractSchemaFactory.enumStrings("ACTIVE", "SUPERSEDED"),
+                        "validFrom",
+                        nullable(ContractSchemaFactory.instant()),
+                        "validUntil",
+                        nullable(ContractSchemaFactory.instant()),
+                        "condition",
+                        ContractSchemaFactory.string(),
+                        "replacements",
+                        ContractSchemaFactory.uniqueStrings()),
+                List.of("memoryId", "revision", "state", "validFrom", "validUntil", "condition", "replacements"));
     }
 
     static ToolDescriptor proposeTool(ExtensionPayloadCodec codec, long extensionRevision) {

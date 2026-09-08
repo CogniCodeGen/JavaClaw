@@ -290,7 +290,9 @@ class ScheduleOccurrenceCoverageTest {
                 support.embeddings,
                 AutomationStepPort.unavailable(),
                 commands,
-                (workspaceId, required) -> {}));
+                (workspaceId, required) -> {},
+                com.javaclaw.extension.spi.ConversationEvidencePort.unavailable(),
+                com.javaclaw.extension.spi.ScheduleDefinitionBindingPort.unavailable()));
     }
 
     private static ExtensionJobStepResult execute(ScheduleOccurrenceJobExecutor executor, ExtensionJob job)

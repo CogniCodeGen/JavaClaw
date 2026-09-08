@@ -43,7 +43,9 @@ final class BuiltinExtensionRegistry {
                             ports.embeddings(),
                             ports.automationSteps(),
                             ports.scheduledCommands(),
-                            ports.scheduleLifecycle())));
+                            ports.scheduleLifecycle(),
+                            ports.conversationEvidence(),
+                            ports.scheduleBindings().apply(descriptor.id()))));
             requireUniqueJobTypes(jobExecutors);
             return new RegisteredExtension(
                     descriptor,

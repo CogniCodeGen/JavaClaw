@@ -1,0 +1,1342 @@
+{
+  "recorded_at": "2026-09-08T04:46:32.555311+00:00",
+  "baseline_commit": "ff03b878d76ed23ee53e7f3882039285c8ce046c",
+  "working_tree": "未提交工作树；不包含用户既有 scripts/__pycache__ 的生成内容",
+  "compatibility": {
+    "protocol_version": 3,
+    "rpc_methods": 172,
+    "data_directory": "data-v6",
+    "modules": 14
+  },
+  "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "command": "mvn -s /private/tmp/javaclaw-webview-maven-settings.xml -rf :javaclaw-desktop spotless:apply clean verify spotless:check checkstyle:check",
+  "full_attempt_command": "mvn -s /private/tmp/javaclaw-webview-maven-settings.xml spotless:apply clean verify spotless:check checkstyle:check",
+  "temporary_settings": "<settings xmlns=\"http://maven.apache.org/SETTINGS/1.2.0\"><mirrors><mirror><id>javaclaw-central-check</id><mirrorOf>*</mirrorOf><url>https://repo.maven.apache.org/maven2</url></mirror></mirrors></settings>",
+  "maven_settings_note": "临时仅指定官方 Maven Central 镜像以避免缓存仓库身份差异；未修改个人或全局配置",
+  "result": "VERIFY_PASSED_AFTER_RESUME",
+  "reactor_projects": 15,
+  "verification_method": "全仓 clean verify 的父项目及12上游模块通过；Desktop多进程探针失败后仅补测试诊断，使用原哈希上游产物恢复Desktop与Packaging的完整clean verify，未关闭门禁",
+  "full_attempt_result": "BUILD FAILURE at Desktop WebSurfaceRuntimeTest",
+  "resume_result": "BUILD SUCCESS",
+  "build_finished": "2026-09-08T12:45:49+08:00",
+  "build_time": {
+    "full_attempt": " 15:56 min",
+    "resume": " 01:20 min"
+  },
+  "log": {
+    "path": "/private/tmp/javaclaw-review-fixes-resumed-verify.log",
+    "bytes": 45671,
+    "sha256": "93f1e43d8e366920b6860c92cd01f877e3e9e7dc02861b9601462a15d054cfd9"
+  },
+  "full_attempt_log": {
+    "path": "/private/tmp/javaclaw-review-fixes-fourth-verify-webkit-failure.log",
+    "bytes": 279449,
+    "sha256": "fbe58c231c42fd8f9ce36263933162668d932783143b696d256e5b5253427ffc"
+  },
+  "verified_upstream_artifacts": [
+    {
+      "artifact": "javaclaw-parent",
+      "file": "/Users/fengs/Documents/openProject/JavaClaw/pom.xml",
+      "sha256": "2cdbab7e9fe2e337e440b58b57e13d97c0c738c4fa69f6ac7916208aed46e8d8",
+      "pom": "/Users/fengs/Documents/openProject/JavaClaw/pom.xml",
+      "pom_sha256": "2cdbab7e9fe2e337e440b58b57e13d97c0c738c4fa69f6ac7916208aed46e8d8"
+    },
+    {
+      "artifact": "javaclaw-api",
+      "file": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-api/target/javaclaw-api-6.0.0-SNAPSHOT.jar",
+      "sha256": "09a431e5d77c95ab5a5013fd666392090ed70bcc40bde717622afdcc7eb7d3ba",
+      "pom": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-api/pom.xml",
+      "pom_sha256": "a36295f7ba23d036fe42ac66868895e16f3803ea9237bd40562afb3e0a7b0db4"
+    },
+    {
+      "artifact": "javaclaw-protocol",
+      "file": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-protocol/target/javaclaw-protocol-6.0.0-SNAPSHOT.jar",
+      "sha256": "418deb5cf5cd1ccbf798a9298507839a0414efeca84bc59ee40dd0bc7af17e3f",
+      "pom": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-protocol/pom.xml",
+      "pom_sha256": "6829346f681ca543546ae057ee452e7fe072fe5da62f029537db7f6d630a0768"
+    },
+    {
+      "artifact": "javaclaw-extension-spi",
+      "file": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-extension-spi/target/javaclaw-extension-spi-6.0.0-SNAPSHOT.jar",
+      "sha256": "d253ba0f26cc5be68b118482e48c4ad5dd5d51fab0e5cc0b900640ea448d788d",
+      "pom": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-extension-spi/pom.xml",
+      "pom_sha256": "49c2a736348b0e058df329daed9490713c18259ad5366c7a3ddeaaf8423ea705"
+    },
+    {
+      "artifact": "javaclaw-agent-runtime",
+      "file": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-agent-runtime/target/javaclaw-agent-runtime-6.0.0-SNAPSHOT.jar",
+      "sha256": "30f606d4a3f0e42ed564612d3c31f8933922a8321a1e6b4d958b6a98d74e9531",
+      "pom": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-agent-runtime/pom.xml",
+      "pom_sha256": "a3e0eb87bcbc809e8866e028b5ddba3b3d143d52d538f36ac5e8b6df25bc0c35"
+    },
+    {
+      "artifact": "javaclaw-model-adapters",
+      "file": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-model-adapters/target/javaclaw-model-adapters-6.0.0-SNAPSHOT.jar",
+      "sha256": "4aed45012f32191bf0c18f7c3747d535b5247767e50407a74ed8427f1e034500",
+      "pom": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-model-adapters/pom.xml",
+      "pom_sha256": "794d622ec15eab2ec796831185119c743d57cfd7991e82536286f348a543de11"
+    },
+    {
+      "artifact": "javaclaw-builtin-contracts",
+      "file": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-builtin-contracts/target/javaclaw-builtin-contracts-6.0.0-SNAPSHOT.jar",
+      "sha256": "9e95839f62257ebb7d8c263c99e926174af50cf07f370e0e2b5cabc14ed65636",
+      "pom": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-builtin-contracts/pom.xml",
+      "pom_sha256": "385b84e122e50716e58f3487775d6a0e6bc355cabb82415c76c4b4f428d6c8fd"
+    },
+    {
+      "artifact": "javaclaw-builtin-extensions",
+      "file": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-builtin-extensions/target/javaclaw-builtin-extensions-6.0.0-SNAPSHOT.jar",
+      "sha256": "9891170165ff807d9c658c69157812176dee43f478deb0e58e3dd96280de6a62",
+      "pom": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-builtin-extensions/pom.xml",
+      "pom_sha256": "fc7a7cfde097ff1e0fb008b252916cc3882d8d2589ae5003fd918f3b48a0eaee"
+    },
+    {
+      "artifact": "javaclaw-app-server",
+      "file": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-app-server/target/javaclaw-app-server-6.0.0-SNAPSHOT.jar",
+      "sha256": "917275843761c90857185314f958b0c0b2ecf43d076f9b47d2a268a9026c6112",
+      "pom": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-app-server/pom.xml",
+      "pom_sha256": "b26fd9fed58bfad7d8840c41958b64a45b84f2599592e7ad622e6e05b2af05b5"
+    },
+    {
+      "artifact": "javaclaw-native-hosts",
+      "file": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-native-hosts/target/javaclaw-native-hosts-6.0.0-SNAPSHOT.jar",
+      "sha256": "105a8ed26abe18d2cd31d0f1c0ae2c62c90e0a2283a5fa94200b5bda621b0e76",
+      "pom": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-native-hosts/pom.xml",
+      "pom_sha256": "bee518302ef5313fe7a47671feed74da74a4dfb410a81e8df4a03d26e04fc778"
+    },
+    {
+      "artifact": "javaclaw-browser-service",
+      "file": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-browser-service/target/javaclaw-browser-service-6.0.0-SNAPSHOT.jar",
+      "sha256": "8891dbb0d50aeb721382ba6a9a1a47d8934c0dab963f5796b5c69a8802ea4f06",
+      "pom": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-browser-service/pom.xml",
+      "pom_sha256": "2df1a8a073fd76b3b4242c2c444a9a90365085f77d459269c1fc56d43ec30914"
+    },
+    {
+      "artifact": "javaclaw-knowledge-worker",
+      "file": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-knowledge-worker/target/javaclaw-knowledge-worker-6.0.0-SNAPSHOT.jar",
+      "sha256": "db172ddefdfa1387e53decbad2f39879fae4893344e90c0a9d737093539a0b88",
+      "pom": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-knowledge-worker/pom.xml",
+      "pom_sha256": "a9327883eb4ac1ce219a73f183d3a00d73c49872f7202de2a6e9e918fa468591"
+    },
+    {
+      "artifact": "javaclaw-client",
+      "file": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-client/target/javaclaw-client-6.0.0-SNAPSHOT.jar",
+      "sha256": "46b2ca6d8b4341cfd4e5d1a27865b560dacca1768d48ae13f754ba094a67dd43",
+      "pom": "/Users/fengs/Documents/openProject/JavaClaw/javaclaw-client/pom.xml",
+      "pom_sha256": "808561eba48e48d923f458037e6235ff657602185fc3932b94ba218ed424ab21"
+    }
+  ],
+  "totals": {
+    "tests": 2582,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 25,
+    "passed": 2557
+  },
+  "modules": [
+    {
+      "module": "javaclaw-agent-runtime",
+      "tests": 42,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 255,
+          "missed": 61,
+          "percent": 80.6962
+        },
+        "line": {
+          "covered": 803,
+          "missed": 57,
+          "percent": 93.3721
+        }
+      }
+    },
+    {
+      "module": "javaclaw-api",
+      "tests": 105,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 925,
+          "missed": 198,
+          "percent": 82.3687
+        },
+        "line": {
+          "covered": 2191,
+          "missed": 153,
+          "percent": 93.4727
+        }
+      }
+    },
+    {
+      "module": "javaclaw-app-server",
+      "tests": 1043,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 6,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 7406,
+          "missed": 1777,
+          "percent": 80.649
+        },
+        "line": {
+          "covered": 25322,
+          "missed": 2329,
+          "percent": 91.5772
+        }
+      }
+    },
+    {
+      "module": "javaclaw-browser-service",
+      "tests": 47,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 398,
+          "missed": 159,
+          "percent": 71.4542
+        },
+        "line": {
+          "covered": 1230,
+          "missed": 276,
+          "percent": 81.6733
+        }
+      }
+    },
+    {
+      "module": "javaclaw-builtin-contracts",
+      "tests": 67,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 771,
+          "missed": 273,
+          "percent": 73.8506
+        },
+        "line": {
+          "covered": 1960,
+          "missed": 393,
+          "percent": 83.2979
+        }
+      }
+    },
+    {
+      "module": "javaclaw-builtin-extensions",
+      "tests": 212,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 1692,
+          "missed": 663,
+          "percent": 71.8471
+        },
+        "line": {
+          "covered": 8642,
+          "missed": 865,
+          "percent": 90.9014
+        }
+      }
+    },
+    {
+      "module": "javaclaw-client",
+      "tests": 122,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 559,
+          "missed": 222,
+          "percent": 71.5749
+        },
+        "line": {
+          "covered": 2092,
+          "missed": 302,
+          "percent": 87.3851
+        }
+      }
+    },
+    {
+      "module": "javaclaw-desktop",
+      "tests": 367,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 1,
+      "coverage": {
+        "branch": {
+          "covered": 4516,
+          "missed": 1790,
+          "percent": 71.6143
+        },
+        "line": {
+          "covered": 16091,
+          "missed": 2151,
+          "percent": 88.2085
+        }
+      }
+    },
+    {
+      "module": "javaclaw-extension-spi",
+      "tests": 68,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 568,
+          "missed": 111,
+          "percent": 83.6524
+        },
+        "line": {
+          "covered": 1293,
+          "missed": 66,
+          "percent": 95.1435
+        }
+      }
+    },
+    {
+      "module": "javaclaw-knowledge-worker",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 23,
+          "missed": 7,
+          "percent": 76.6667
+        },
+        "line": {
+          "covered": 75,
+          "missed": 6,
+          "percent": 92.5926
+        }
+      }
+    },
+    {
+      "module": "javaclaw-model-adapters",
+      "tests": 63,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 376,
+          "missed": 133,
+          "percent": 73.8703
+        },
+        "line": {
+          "covered": 1334,
+          "missed": 169,
+          "percent": 88.7558
+        }
+      }
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "tests": 201,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 17,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 1159,
+          "missed": 482,
+          "percent": 70.6277
+        },
+        "line": {
+          "covered": 3163,
+          "missed": 681,
+          "percent": 82.2841
+        }
+      }
+    },
+    {
+      "module": "javaclaw-packaging",
+      "tests": 89,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 2,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 299,
+          "missed": 91,
+          "percent": 76.6667
+        },
+        "line": {
+          "covered": 766,
+          "missed": 161,
+          "percent": 82.6321
+        }
+      }
+    },
+    {
+      "module": "javaclaw-protocol",
+      "tests": 149,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "integration_tests": 0,
+      "coverage": {
+        "branch": {
+          "covered": 661,
+          "missed": 141,
+          "percent": 82.419
+        },
+        "line": {
+          "covered": 2269,
+          "missed": 211,
+          "percent": 91.4919
+        }
+      }
+    }
+  ],
+  "skipped_tests": [
+    {
+      "module": "javaclaw-app-server",
+      "class": "com.javaclaw.server.LocalProviderAcceptanceTest",
+      "test": "本地兼容Provider贯通默认Profile对话Embedding记忆与Skill审核",
+      "reason": "System property [javaclaw.live.local] does not exist"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "class": "com.javaclaw.server.coding.PublishedCodingExecutionTest",
+      "test": "真实五类发行工具链在断网沙箱中执行并运行Gradle项目任务",
+      "reason": "System property [javaclaw.toolchainArchives] does not exist"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "class": "com.javaclaw.server.coding.PublishedCodingHarnessTest",
+      "test": "同一会话聊天准备真实NPM依赖修改断网失败修复成功保留Diff再继续聊天",
+      "reason": "System property [javaclaw.codingHarnessNetworkAcceptance] does not exist"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "class": "com.javaclaw.server.coding.PublishedDependenciesPreparationTest",
+      "test": "nativePackageManagersPreparePublicDependenciesBeforeSeparateOfflineRuns",
+      "reason": "System property [javaclaw.codingNetworkAcceptance] does not exist"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "class": "com.javaclaw.server.coding.PublishedToolchainArchiveTest",
+      "test": "真实归档通过流式解包完整性证据和目录入口校验",
+      "reason": "System property [javaclaw.toolchainArchives] does not exist"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "class": "com.javaclaw.server.coding.PublishedToolchainArchiveTest",
+      "test": "WindowsPython归档在任意宿主解包后同时满足Python和Pip真实入口",
+      "reason": "System property [javaclaw.toolchainArchives] does not exist"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.credential.SystemMasterKeyProtectorNativeTest",
+      "test": "currentUserCredentialFacilityStoresLoadsReplacesAndDeletesMasterKey",
+      "reason": "org.opentest4j.TestAbortedException: Assumption failed: assumption is not true"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclLeaseTest",
+      "test": "anotherProcessWaitsUntilRestorationCompletesBeforeTakingSharedRootLease",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclLeaseTest",
+      "test": "deadHelperReleasesKernelLockButItsPendingMarkerPreventsSilentAclBaselineAdoption",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclManagerTest",
+      "test": "failedRestoreEvidenceRetainsOriginalIdentityAndNeverOffersPathBasedRestore",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclManagerTest",
+      "test": "baselineIsDurableBeforeGrantAndOutlivesThreadScopeUntilAsynchronousRestore",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclManagerTest",
+      "test": "originalAclIsRestoredOnSameObjectBeforeRenameHandlesAreReleased",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclManagerTest",
+      "test": "laterGrantFailureRestoresEarlierAclAndReleasesAllAncestorPins",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsWorkspaceDirectoryTest",
+      "test": "directoryCapabilityBlocksRenameAndCannotFollowInsertedJunction",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsWorkspaceDirectoryTest",
+      "test": "realNativeChannelRenamesWithoutReplacementCopiesAclAndDeletesByHandle",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsWorkspaceDirectoryTest",
+      "test": "independentChildRemainsOwnedAfterParentClosesAndTruncationIsDurable",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.sandbox.LinuxProxyIsolationTest",
+      "test": "realNamespaceRelayAllowsProxyAndSeccompRejectsMountedHostUnixSocket",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.sandbox.WindowsProxyIsolationTest",
+      "test": "realAppContainerAllowsOnlyExactProxyTcpAndClosesItsLease",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.sandbox.WindowsSandboxIntegrationTest",
+      "test": "targetExit73IsNotConfusedWithTrustedHelperRestorationFailure",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.sandbox.WindowsSandboxIntegrationTest",
+      "test": "conPtySupportsBackpressuredOutputResizeAndInput",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.sandbox.WindowsSandboxIntegrationTest",
+      "test": "appContainerAllowsDeclaredWriteButDeniesDeleteAndEnforcesWallTimeout",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.transport.WindowsNamedPipeIntegrationTest",
+      "test": "closeWakesPendingAcceptAndIsIdempotent",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.transport.WindowsNamedPipeIntegrationTest",
+      "test": "exchangesFramedProtocolMessagesAndOwnsBothHandles",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-packaging",
+      "class": "com.javaclaw.launcher.WindowsServerSupervisorTest",
+      "test": "reusesReachableCurrentUserPipeWithoutStartingProcess",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "module": "javaclaw-packaging",
+      "class": "com.javaclaw.release.BrowserNativeSandboxSmokeTest",
+      "test": "五平台Runner只在原生Sandbox登录和OAuth私有回调成功后分别发布能力",
+      "reason": "org.opentest4j.TestAbortedException: Assumption failed: assumption is not true"
+    }
+  ],
+  "unchanged_historical_migrations": [
+    {
+      "path": "javaclaw-app-server/src/main/resources/db/core/V001__v6_baseline.sql",
+      "sha256": "a90d5cd6010ad472c2cf026e9e9a6f4d507a88167395ca7d663f098bf665fcef",
+      "unchanged": true
+    },
+    {
+      "path": "javaclaw-app-server/src/main/resources/db/core/V001__v6_collaboration.sql",
+      "sha256": "2d7d0e9ba9c3b015737066ddb69eb43b4b624e81e3c166ec7dcae5bce82bdd91",
+      "unchanged": true
+    },
+    {
+      "path": "javaclaw-app-server/src/main/resources/db/core/V001__v6_configuration.sql",
+      "sha256": "96e4b4b8f1316a81c96baa585437ce7c64c8c1be07ddc7733d886e054db4546c",
+      "unchanged": true
+    },
+    {
+      "path": "javaclaw-app-server/src/main/resources/db/core/V001__v6_extensions.sql",
+      "sha256": "0e7b7e681476390651f7f581389b6973f969f303f2030861243eb29a7b4773f0",
+      "unchanged": true
+    },
+    {
+      "path": "javaclaw-app-server/src/main/resources/db/core/V001__v6_mcp.sql",
+      "sha256": "d6c2b3babf73355e02067d8a1966c6f53af6c42577b21adf5fbeb8686f8a99e1",
+      "unchanged": true
+    },
+    {
+      "path": "javaclaw-app-server/src/main/resources/db/core/V002__v6_context_runtime.sql",
+      "sha256": "b105776787c98b0c29d53f420b282c7fc7bda52eb2cffd5323940e7404fde5bc",
+      "unchanged": true
+    },
+    {
+      "path": "javaclaw-app-server/src/main/resources/db/core/V003__v6_coding_execution.sql",
+      "sha256": "4c354df4ad1f925141da74e68af6c10aa657ebf86495e041d3982683cb09f2a8",
+      "unchanged": true
+    },
+    {
+      "path": "javaclaw-app-server/src/main/resources/db/core/V004__v6_command_stream.sql",
+      "sha256": "034d4960fb04a7cb8433f742f58a73c55d9edd6b1f52864019628fe3a7044540",
+      "unchanged": true
+    },
+    {
+      "path": "javaclaw-app-server/src/main/resources/db/extension/V001__managed_store.sql",
+      "sha256": "48f31daf602a73230e825db3a71bd033eeb94cd242d45571f2a63d4d797e50e1",
+      "unchanged": true
+    }
+  ],
+  "local_release_artifacts": [
+    {
+      "path": "javaclaw-packaging/target/distribution/MANIFEST.json",
+      "bytes": 102494,
+      "sha256": "850fb58e3fd38d9e0185c05a9a2ffa688ed0ab2e973b311a26cdeb17435425aa"
+    },
+    {
+      "path": "javaclaw-packaging/target/distribution/evidence/web-bom.json",
+      "bytes": 1236,
+      "sha256": "7e18bc50982000dac05183352d2b27eb85bafe4821813d09777585656c83f1ac"
+    },
+    {
+      "path": "javaclaw-packaging/target/release/RELEASE-MANIFEST.json",
+      "bytes": 240,
+      "sha256": "7fa2d5ca927e0d4a0ab42181734ba80ddf9ff26a3e40f1ffc7477b49f3f4ed9d"
+    },
+    {
+      "path": "javaclaw-packaging/target/release/javaclaw-6.0.0-SNAPSHOT-mac-aarch64.zip",
+      "bytes": 485278403,
+      "sha256": "ab0a827ad3d584bfa1aa29076be7d576b72b40888e4388363a4843fff70a6d23"
+    },
+    {
+      "path": "javaclaw-packaging/target/release-evidence/bom.json",
+      "bytes": 363981,
+      "sha256": "bdbf1b83b5614b3039385abea365bbe8545c34e9bcd91ed500093cad59350ada"
+    }
+  ],
+  "limits": [
+    "仅 macOS arm64 本机；其他四个 Runner 尚未执行",
+    "没有运行付费模型或真实学习质量评估",
+    "未进行五平台安装、签名、登录启动与输入法/DPI/焦点验收",
+    "WebKit 彩色 emoji 本机存在字形异常，可切换原生简版",
+    "本轮补充真实SDK功能闭环和同内容原生/UI对照；没有端到端性能提升结论"
+  ],
+  "sdk_ui_failure_before_unsubscribe_fix": {
+    "result": "exit 1，第二次生成中切换会话后共享 SDK 连接失败；不计入通过截图",
+    "files": [
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui-unsubscribe-failure/capture-1-1.png",
+        "bytes": 91845,
+        "sha256": "08322ccf910251755be8b7395be668fed9ceceb2cba0d1d4f612589cbad94f41"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui-unsubscribe-failure/capture-1-1.txt",
+        "bytes": 990,
+        "sha256": "11f6718333b8bcd154ff0c09618d40394cf6c8cc642a5ca23fa5d83f2a2e0b81"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui-unsubscribe-failure/server.txt",
+        "bytes": 135,
+        "sha256": "e298e64491fee4771409a96fe07a01aba9e4d80474d2b42156661e952d3f8415"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui-unsubscribe-failure/desktop.txt",
+        "bytes": 1105,
+        "sha256": "2d7b8b2f629183de6e702e2f9818f6ad3730f4f90fdd793dd0b975185c9a39c0"
+      }
+    ],
+    "root_cause_evidence_limit": "该次旧回放未记录底层 IOException；受控回归单独证明退订中断可关闭共享 UDS，不能据此声称排除所有其他断线原因"
+  },
+  "webkit_probe_initial_failure": {
+    "observed": "Desktop多进程探针first进程在已ready后约3秒检查时不再存活；原临时日志已被JUnit清理，未取得对应native crash证据",
+    "root_cause": "未确认，不宣称已修复原生崩溃；只增强失败诊断，原存活/目录隔离/退出码断言及十秒期限不变",
+    "isolated_validation": "两项测试连续五轮通过，十个子进程均release后exit 0；最终恢复的Desktop verify再次通过",
+    "logs": [
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/webkit-probe-diagnostics/run-5517053750223328372-first.txt",
+        "bytes": 649,
+        "sha256": "48b304286deea88570e5f6d1cc3f92c82abe3fb9aa44275efc52683ed6e6a7ac"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/webkit-probe-diagnostics/run-5517053750223328372-second.txt",
+        "bytes": 648,
+        "sha256": "7de5cee08dbffc50c3505b40d791106b1d161a318ae4a8d4c5d6e2e66e085793"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/webkit-probe-diagnostics/run-12309303424178267953-first.txt",
+        "bytes": 649,
+        "sha256": "7ba3482564584f9ffa9d343d9fa22354a3c5de54c3a5419a40b1b83cf6f72282"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/webkit-probe-diagnostics/run-12309303424178267953-second.txt",
+        "bytes": 648,
+        "sha256": "5023d2a7d926628260303ad348d7c2e32da9a1c7d6c2775d3d434118e265f32e"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/webkit-probe-diagnostics/run-15163175858306818721-first.txt",
+        "bytes": 648,
+        "sha256": "f88be23cbdf35373f72a0999e7f7d8498ed27db69713994a60cd7dbc61354112"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/webkit-probe-diagnostics/run-15163175858306818721-second.txt",
+        "bytes": 649,
+        "sha256": "97d5a746e4a2821957e520ad3c04e4ee9cc9e225262783f7c4cc5452447e5165"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/webkit-probe-diagnostics/run-7473347720643490378-first.txt",
+        "bytes": 649,
+        "sha256": "88aee7c3f85ef37032b848560744db85bb8c37931ba02cdb5fc8a5aba4f34361"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/webkit-probe-diagnostics/run-7473347720643490378-second.txt",
+        "bytes": 649,
+        "sha256": "206c9ed8b5a93ea27fd6b46741445f5dd31d3d08c5168c96b9446f8fd2152c06"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/webkit-probe-diagnostics/run-18348145310008166006-first.txt",
+        "bytes": 648,
+        "sha256": "fa873f07d653bc5ae49effc99c1c34d5f213de3090283e95bacd877af972051a"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/webkit-probe-diagnostics/run-18348145310008166006-second.txt",
+        "bytes": 648,
+        "sha256": "70a913ceba6aaa4a938826e5e56e414c3d59c34289136e2aa52e19029db44acd"
+      }
+    ]
+  },
+  "archived_logs": {
+    "full_verify_attempt": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/full-verify-attempt.txt",
+      "bytes": 279449,
+      "sha256": "fbe58c231c42fd8f9ce36263933162668d932783143b696d256e5b5253427ffc"
+    },
+    "resumed_verify": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/resumed-verify.txt",
+      "bytes": 45671,
+      "sha256": "93f1e43d8e366920b6860c92cd01f877e3e9e7dc02861b9601462a15d054cfd9"
+    },
+    "reactor_install": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/reactor-install.txt",
+      "bytes": 11288,
+      "sha256": "72d0cba1245a615ec4957baf78e40c22782abf4d770cd04759d3158dc6531002"
+    },
+    "webkit_probe_isolated": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/webkit-probe-isolated.txt",
+      "bytes": 463,
+      "sha256": "e8af749bf222290b7cb205d958f5ed7b26d0f0faf548c9833167dbf1e1f3122f"
+    },
+    "chat_document_replay": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document-replay.txt",
+      "bytes": 266,
+      "sha256": "6324d4513a7b376ecdbfc7106a7725ca138926fc43cef9ccf907df252ca84020"
+    },
+    "packaged_health": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/packaged-health.txt",
+      "bytes": 29,
+      "sha256": "91654dec745f73d9e8532a207c6c4943a32aa43a283ae65da07301baaad629ac"
+    },
+    "history_before": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/history-before.txt",
+      "bytes": 12670,
+      "sha256": "5eceed11e7d72fe73ada714e4275aec763e99add62a8d700d083d013c22f7461"
+    },
+    "history_after": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/history-after.txt",
+      "bytes": 12346,
+      "sha256": "f132e3b42c3aac1cc2a28f8aba68ccbe14f0ee36dd2c17449ee222170e40a8be"
+    },
+    "memory_before": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/memory-before.txt",
+      "bytes": 964,
+      "sha256": "1bbfed440a2f12fd96630d3cf13be10435ad67104d1139082978508d7aaa39d7"
+    },
+    "memory_after": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/memory-after.txt",
+      "bytes": 6090,
+      "sha256": "f5a95876183a511e56b683c32f7e24f1b1a70bb53e9c8e4505d5922730348387"
+    },
+    "learning_selection_before": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/learning-selection-before.txt",
+      "bytes": 1366,
+      "sha256": "fae1a57a8e4ff9884ea78e3ff585d133bca6f2ebfd6fc11c6e798821d9da6431"
+    },
+    "source_gates": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/source-gates.txt",
+      "bytes": 23597,
+      "sha256": "ff1fa653f8a6f262053a46e0bb7148f958ee19618d71d621727dc2163e8b370f"
+    },
+    "first_full_failure": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/first-full-failure.txt",
+      "bytes": 246290,
+      "sha256": "96c30ef7663c3fe19771f543c985b38a55b427c11c38a783c98112918e69586d"
+    },
+    "unsubscribe_before": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/unsubscribe-before.txt",
+      "bytes": 978,
+      "sha256": "8d7230cb13bbb708d11231441221a49c91309cde42088230a21fbaa24d158ebe"
+    },
+    "unsubscribe_after": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/unsubscribe-after.txt",
+      "bytes": 432,
+      "sha256": "a277cbcdfd25ec092b6ab67761620b4f57770b8779e9d9303ca5e168b80addaf"
+    },
+    "unsubscribe_deadline": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/unsubscribe-deadline.txt",
+      "bytes": 39,
+      "sha256": "41e40c39d21f602d8c564dbb2e097979a235e99b43bb4806bf0018a8f62c8946"
+    },
+    "pre_ui_compile": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/pre-ui-compile.txt",
+      "bytes": 53485,
+      "sha256": "eda94a34ac95d5a6fbbbfdc4391239d2c8fb2ac396a9c3acd42d906248f7290a"
+    },
+    "pre_stream_cancel_full_success": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/pre-stream-cancel-full-success.txt",
+      "bytes": 292800,
+      "sha256": "4a984630d78ed2042c76de12be149c068707dbac45570a2c4eafa744d820d890"
+    },
+    "dependency_failure": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/dependency-failure.txt",
+      "bytes": 231077,
+      "sha256": "b5111c853facdeea4f82881866c594f2911876e058882a00a35e5d0f2f84b072"
+    },
+    "compile_preflight": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/compile-preflight.txt",
+      "bytes": 58906,
+      "sha256": "8308b0a1750c22b5fb60aa5a6b38ddab0bd55880fb8c567f0ae7ba3c59d347b1"
+    },
+    "first_desktop_failure": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/first-desktop-failure.txt",
+      "bytes": 86691,
+      "sha256": "40a8bdbfa546f0380cbcef732e4e3dd0be066e51f6ac0cff9fbd3ba5dfa58917"
+    },
+    "thread_activation_before": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/thread-activation-before.txt",
+      "bytes": 1791,
+      "sha256": "fcb3c78532d416ea06d9f7f1bf111f12b0ea2d72184393e43c0f573da10aee4e"
+    },
+    "thread_activation_after": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/thread-activation-after.txt",
+      "bytes": 487,
+      "sha256": "846c6b30e6cceb078c8a1c07a74b85ef8b7268e0c2c565b116aeeb1ff6f840a7"
+    },
+    "navigation_await_after": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/navigation-await-after.txt",
+      "bytes": 1495,
+      "sha256": "cdd3c3fc802edbda0dfc808d67ad2075d573cea123326bd304cc81608bc9d7d2"
+    },
+    "stdio_timing": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/stdio-timing.txt",
+      "bytes": 501,
+      "sha256": "1b0811a307d6a5cd382b78f6ad673d6f605282bde10cb0f77cafda6200a0f353"
+    },
+    "stdio_fixed": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/stdio-fixed.txt",
+      "bytes": 240,
+      "sha256": "6e1e63a914a28b8d57fab786a4e88c7068436bef81476e2d83808f271c2fbf43"
+    },
+    "stdio_mutant_rejected": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/stdio-mutant-rejected.txt",
+      "bytes": 2908,
+      "sha256": "d5ca4fe1f765fb68c3d5430339f23baa43732c3ff1b05a0e4ccfafc32da09649"
+    },
+    "navigation_before": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/navigation-before.txt",
+      "bytes": 766,
+      "sha256": "ad820db25bf03026b3590eccab875649ce300e1230ce9e647284cc29c35a819e"
+    },
+    "navigation_after": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/navigation-after.txt",
+      "bytes": 865,
+      "sha256": "9b1df971812105473eae260cf586e23246678bdfe1fc1aacd6a90d0642a7c4c7"
+    },
+    "legacy_navigation": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/legacy-navigation.txt",
+      "bytes": 332,
+      "sha256": "c3793e4cb96611b863fa7355b73d4dd8995522fa5c7650104800c28fb9cacea3"
+    },
+    "preview_before": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/preview-before.txt",
+      "bytes": 7165,
+      "sha256": "4c3bb31c928f9d0a79453a52909f2529c99b56ef3d9c2a92d82b04fa153c88b4"
+    },
+    "preview_after": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/preview-after.txt",
+      "bytes": 2851,
+      "sha256": "75b4e05758433fd87342b56c395503e3c28648daaf9edcae30c61f6a57013179"
+    },
+    "selection_and_history": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/selection-and-history.txt",
+      "bytes": 1510,
+      "sha256": "cdf974d4a2822bfe6144fb0a0b264557ed455d2635af70abac067360190c4697"
+    }
+  },
+  "replays": [
+    {
+      "command": "python3 scripts/replay-chat-document-acceptance.py /private/tmp/javaclaw-review-fixes-chat-document",
+      "exit_code": 0,
+      "scenarios_passed": 8,
+      "raw_png_count": 21,
+      "boundary": "真实 JavaFX Scene / WebKit；文档 Gateway 为确定性组件夹具"
+    },
+    {
+      "command": "python3 scripts/replay-sdk-ui-acceptance.py /private/tmp/javaclaw-review-fixes-sdk-ui",
+      "exit_code": 0,
+      "raw_png_count": 26,
+      "boundary": "生产 FXML / Presenter → SDK → UDS → App Server → H2；固定模型；新的临时工作区"
+    }
+  ],
+  "packaged_health": {
+    "command": "javaclaw-packaging/target/distribution/bin/javaclaw-health",
+    "exit_code": 0,
+    "runtime": "本轮 distribution 内置运行时",
+    "data": "脚本创建及清理的独立临时 data-v6"
+  },
+  "ui_evidence": {
+    "capture_count": 47,
+    "captures": [
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-completed-references.png",
+        "bytes": 13845,
+        "sha256": "fbc58782af5818daaa4c2f78bdd4d7cb44c4532bf980dfaab271c577c5408be3",
+        "width": 760,
+        "height": 500,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-completed-references.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-history-after-recovery.png",
+        "bytes": 68266,
+        "sha256": "cb9d9a48a80f83c30a2cbf8ccff3add195b862f58a4d74536b519287e7a5fec7",
+        "width": 760,
+        "height": 500,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-history-after-recovery.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-history-after-retry.png",
+        "bytes": 68266,
+        "sha256": "cb9d9a48a80f83c30a2cbf8ccff3add195b862f58a4d74536b519287e7a5fec7",
+        "width": 760,
+        "height": 500,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-history-after-retry.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-history-anchor.png",
+        "bytes": 68276,
+        "sha256": "4225618bfa4def177b7425f3b24237ff4b127965cadb571368d7fcc50455194e",
+        "width": 760,
+        "height": 500,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-history-anchor.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-history-prepended.png",
+        "bytes": 68270,
+        "sha256": "17abb6489b9e00a21226a7ebd7035fc8e9131f4340046e12a35f2e219a68562b",
+        "width": 760,
+        "height": 500,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-history-prepended.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-large-body.png",
+        "bytes": 26077,
+        "sha256": "f5083cd3362f63e39b5620e6dd9f526bb5c74845e4ff2c3caf4ff902ebc99cf8",
+        "width": 760,
+        "height": 500,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-large-body.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-native-reference.png",
+        "bytes": 18180,
+        "sha256": "92e460438c026435f1f8dd38ffc95a85f1d3114f4e96e0ded6669765673bf398",
+        "width": 760,
+        "height": 500,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-native-reference.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-native-welcome.png",
+        "bytes": 11287,
+        "sha256": "8399b1ceb3c1b506850e4557182acce53c64bb14d53d516df57df065180455db",
+        "width": 760,
+        "height": 500,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-native-welcome.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-streaming.png",
+        "bytes": 7053,
+        "sha256": "2ad7477f3aba9d9738355c2673c4a57b248fc39f7e25f2155e8569bf70454333",
+        "width": 760,
+        "height": 500,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-streaming.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-web-comparison.png",
+        "bytes": 18211,
+        "sha256": "2c6e8b2286b61df2982fb79f66fce1649dab6f1aef1a411ea4d0eaeecb8eaabf",
+        "width": 760,
+        "height": 500,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-web-comparison.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-web-welcome.png",
+        "bytes": 12583,
+        "sha256": "19c186ec38ca04bfc35a118187898f4e0e4a70fe81198c4212be691d31cccb9d",
+        "width": 760,
+        "height": 500,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/chat-web-welcome.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/document-code-native.png",
+        "bytes": 35843,
+        "sha256": "1d08ea99798c0f5f188a3714b64d08c6f0bf03aebac129a4ee63daf0d2c6d14d",
+        "width": 520,
+        "height": 620,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/document-code-native.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/document-code-recovered.png",
+        "bytes": 50208,
+        "sha256": "b92f08e12cbb1a4c67f424782e22ab5ac762a9944095f669f458951d8c81c7d6",
+        "width": 520,
+        "height": 620,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/document-code-recovered.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/document-code-target.png",
+        "bytes": 50208,
+        "sha256": "b92f08e12cbb1a4c67f424782e22ab5ac762a9944095f669f458951d8c81c7d6",
+        "width": 520,
+        "height": 620,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/document-code-target.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/document-image-gif.png",
+        "bytes": 11000,
+        "sha256": "a5a0431edda22922137c6ed39703bab96fce61ef8f570f4388fc0eb45c36ec5e",
+        "width": 520,
+        "height": 620,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/document-image-gif.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/document-image-png.png",
+        "bytes": 11214,
+        "sha256": "9dbab63e965af0946611c98e73e6a15aa975197db803dee382b475273e38b983",
+        "width": 520,
+        "height": 620,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/document-image-png.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/document-markdown.png",
+        "bytes": 25839,
+        "sha256": "ffee34951f2502f221371d5c56c66c8b00f9452da8d83a80045c0284ddc31a8a",
+        "width": 520,
+        "height": 620,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/document-markdown.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/document-narrow-toolbar.png",
+        "bytes": 11632,
+        "sha256": "a30e808888dd9487c2e8da52ccd6b7039ac39d29265221efe579c80eead5dfc6",
+        "width": 340,
+        "height": 620,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/document-narrow-toolbar.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/document-relative-text.png",
+        "bytes": 25453,
+        "sha256": "6c45f2e6e112d0dae69a154e9b06a67738af842122818d8e370e7edf3d614010",
+        "width": 520,
+        "height": 620,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/document-relative-text.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/document-revoked.png",
+        "bytes": 9569,
+        "sha256": "379ed91ada2611a6380472e6f1ffbae9cf277d6eaf98f2e473566ae97f2c0836",
+        "width": 520,
+        "height": 620,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/document-revoked.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/document-unsupported.png",
+        "bytes": 11443,
+        "sha256": "192ca333d219ac0e5ded3c6138e89988bd48d2ad3853f220a43bd1bf06649695",
+        "width": 520,
+        "height": 620,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/chat-document/document-unsupported.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-chat-completed.png",
+        "bytes": 104630,
+        "sha256": "b42516b086e919e6fc13eaf8215579ade49ff9fb6f7f691347af22885eac7bbb",
+        "width": 1280,
+        "height": 820,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-chat-completed.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-chat-history.png",
+        "bytes": 86434,
+        "sha256": "9192bc4ba378e350eef2016c6fe3ec001cd9548a8e91dc5dc5a45ff22b4eeaf4",
+        "width": 1280,
+        "height": 820,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-chat-history.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-chat-return-active-dark-minimum.png",
+        "bytes": 95098,
+        "sha256": "71fc9101c27f93fdba3f8f3aa2ed7f66c14006f4ce792957d7c63649cb224fe6",
+        "width": 1280,
+        "height": 820,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-chat-return-active-dark-minimum.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-chat-return-active-standard.png",
+        "bytes": 93530,
+        "sha256": "dd28dd07744a51a54024f52310bb08d3ce3a72564c45d94d31be60d5c15eb29b",
+        "width": 1280,
+        "height": 820,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-chat-return-active-standard.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-chat-stream.png",
+        "bytes": 90895,
+        "sha256": "7d30137397e572729433b9900b8d1af0171dd68752e841c0289a4524f22dcf69",
+        "width": 1280,
+        "height": 820,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-chat-stream.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-document-reference.png",
+        "bytes": 121948,
+        "sha256": "8dda3a6bc48dca0d125df86b6767450b33074c2168a854d100bc047743433939",
+        "width": 1280,
+        "height": 820,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-document-reference.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-history-execution-facts-dark-minimum.png",
+        "bytes": 110484,
+        "sha256": "2645688d568b73dca01aafe727efe5c5075ce87c0de8bb81a2505b7c95d9e046",
+        "width": 1280,
+        "height": 820,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-history-execution-facts-dark-minimum.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-history-execution-facts-standard.png",
+        "bytes": 108099,
+        "sha256": "106b5ec381ffab83a7d5e8b9b65e07b5a0dfaae4a8b68f54811d7006b51e8b5d",
+        "width": 1280,
+        "height": 820,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-history-execution-facts-standard.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-jobs-dark-minimum.png",
+        "bytes": 97330,
+        "sha256": "9a09c3a68d541858f962048212353fa12c0d299c5648cf228079467ef46f8404",
+        "width": 880,
+        "height": 592,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-jobs-dark-minimum.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-jobs-standard.png",
+        "bytes": 110147,
+        "sha256": "ce49d43f0dbc332de8381d61a82f3041682aaa50eedd78c31f9cee6346f0143a",
+        "width": 1040,
+        "height": 712,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-jobs-standard.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-learning-reopened-exact-selection-dark-minimum.png",
+        "bytes": 74635,
+        "sha256": "2210828c23021a25fbe7eec9bec6f51e4d0c1979f32d5a520be9035b54338bf3",
+        "width": 880,
+        "height": 592,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-learning-reopened-exact-selection-dark-minimum.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-learning-reopened-exact-selection-standard.png",
+        "bytes": 91331,
+        "sha256": "1acac9f4c1e1ee9c286bbe8e5da4911f6590936d68edb21508252fe0fab52590",
+        "width": 1040,
+        "height": 712,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-learning-reopened-exact-selection-standard.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-background-learning-dark-minimum.png",
+        "bytes": 88967,
+        "sha256": "5dace9f0b4e8379f84c9221eb572275addce752ec0bd5cb515a9727b31c9e2be",
+        "width": 880,
+        "height": 592,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-background-learning-dark-minimum.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-background-learning-detail-dark-minimum.png",
+        "bytes": 73308,
+        "sha256": "251ea3ca6ff8aa9ca1101400e21ba23d91c539c862ed50bfd79a96c9925ba1c4",
+        "width": 880,
+        "height": 592,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-background-learning-detail-dark-minimum.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-background-learning-detail-standard.png",
+        "bytes": 91331,
+        "sha256": "1acac9f4c1e1ee9c286bbe8e5da4911f6590936d68edb21508252fe0fab52590",
+        "width": 1040,
+        "height": 712,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-background-learning-detail-standard.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-background-learning-standard.png",
+        "bytes": 104821,
+        "sha256": "1b8f24be6821a640dcfeaba8e0265a42e738b21882f8b1c9c95c099f0781d79b",
+        "width": 1040,
+        "height": 712,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-background-learning-standard.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-conflicts-dark-minimum.png",
+        "bytes": 71444,
+        "sha256": "7293bb654d6945cfc09b2b3f55e9bc8a1de94705f3007d68b09d371ef77dba0d",
+        "width": 880,
+        "height": 592,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-conflicts-dark-minimum.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-conflicts-detail-dark-minimum.png",
+        "bytes": 72324,
+        "sha256": "e597023d56c5d87480e9d314058a1db71dbd4651a515938708219d4d517411ac",
+        "width": 880,
+        "height": 592,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-conflicts-detail-dark-minimum.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-conflicts-detail-standard.png",
+        "bytes": 91448,
+        "sha256": "725d07a3cc88bf49af11df209a927c02de588159105db544b762d8e7cf207456",
+        "width": 1040,
+        "height": 712,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-conflicts-detail-standard.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-conflicts-standard.png",
+        "bytes": 87478,
+        "sha256": "2d0fb774cf32beab399d9efd9f9268f823e8e5be946895161831da60767871ba",
+        "width": 1040,
+        "height": 712,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-conflicts-standard.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-graph-dark-minimum.png",
+        "bytes": 85925,
+        "sha256": "7777239f4509a6d2421ca0c930e64cd4fb18563d775c2f5e7334cbbc35c0edee",
+        "width": 880,
+        "height": 592,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-graph-dark-minimum.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-graph-detail-dark-minimum.png",
+        "bytes": 54634,
+        "sha256": "051142f873cffa29ac0802d08fea564824c6944666d757b7c0a9a18db954beb7",
+        "width": 880,
+        "height": 592,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-graph-detail-dark-minimum.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-graph-detail-standard.png",
+        "bytes": 69197,
+        "sha256": "7e04be046a106eeea0a48dc62a31e61eeb6569516531bbb618b79f69ec669344",
+        "width": 1040,
+        "height": 712,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-graph-detail-standard.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-graph-standard.png",
+        "bytes": 97332,
+        "sha256": "1e72bffe2e1cbb39452aefe692d0c5de80f020197274311b789db67d1794844c",
+        "width": 1040,
+        "height": 712,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-memory-graph-standard.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-schedule-dark-minimum.png",
+        "bytes": 79755,
+        "sha256": "a5cd137cca2171e016df9ddd3fd14e5dc95947c69726638798e13197c0c7340a",
+        "width": 880,
+        "height": 592,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-schedule-dark-minimum.json"
+      },
+      {
+        "path": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-schedule-standard.png",
+        "bytes": 89947,
+        "sha256": "5bf7a6971f73858fd144fac1a11a711b00914aa2f7b81a882e8b2a53cda0083e",
+        "width": 1040,
+        "height": 712,
+        "metadata": "docs/evidence/chat-webview-memory-v3/review-fixes/sdk-ui/sdk-schedule-standard.json"
+      }
+    ],
+    "capture_kind": "原始 JavaFX Scene snapshot，未修图；不等于 OS 合成后光学观测",
+    "golden": {
+      "passed": true,
+      "count": 54,
+      "scope": "appearance 页；9主题 × 3密度 × 2尺寸；固定标准字号",
+      "baseline_updated_this_turn": false
+    },
+    "sdk_management_center_combinations": [
+      "Emerald / STANDARD / 100% / 1040×740 外框",
+      "Midnight / COMPACT / 120% / 880×620 外框"
+    ],
+    "sdk_chat_scene": "两组主题均为 1280×820 Scene；chat 文件名 dark-minimum 为复用的用例标识，不代表主壳已缩至最小窗口",
+    "comparison_base": [
+      "509f197",
+      "ff03b878d76ed23ee53e7f3882039285c8ce046c"
+    ],
+    "visual_limitations": [
+      "后台 Job 左侧列表在详情出现后被压窄，长名称裁切；详情提供完整值",
+      "最小窗口的宽表格及长详情需滚动，单图不代表全部字段已可见",
+      "macOS WebKit 彩色 emoji 字形异常仍存在"
+    ]
+  },
+  "migration_recheck": "本轮最终产物后重新逐字节比较 9 份历史 SQL 与 HEAD，全部一致",
+  "historical_native_failure_from_previous_validation": {
+    "test": "SandboxedWorkerContractsTest.macOS原生Worker仅通过管道交换且调用方拥有进程",
+    "observed": "前一轮功能验证首次定向运行回显预期 11 字节、实际 0；其后完整门禁该类 6 项通过，本轮未针对该历史现象宣称根因修复",
+    "root_cause": "尚未查明；未修改该断言、跳过测试或降低门槛，不声称确定性修复"
+  },
+  "source_verification": {
+    "git_diff_check": "staged 与 unstaged 均通过",
+    "maintained_replay_python_syntax": "通过",
+    "golden_baseline_files_unchanged": 55,
+    "ui_production_source_files": 1627,
+    "ui_production_source_manifest": {
+      "path": "docs/evidence/chat-webview-memory-v3/review-fixes/ui-production-source-sha256.json",
+      "bytes": 256896,
+      "sha256": "f314fac659c9d5e2d4e8c4bbe2f07a65c0093f2ff5d5c516f7815bb792448bc4"
+    },
+    "ui_replay_source_matches_final": true
+  }
+}

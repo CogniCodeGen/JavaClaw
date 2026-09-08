@@ -20,7 +20,10 @@ final class CoreMigrationRunner {
     private static final List<Migration> MIGRATIONS = List.of(
             new Migration(2, "context runtime", "/db/core/V002__v6_context_runtime.sql"),
             new Migration(3, "coding execution", "/db/core/V003__v6_coding_execution.sql"),
-            new Migration(4, "command stream", "/db/core/V004__v6_command_stream.sql"));
+            new Migration(4, "command stream", "/db/core/V004__v6_command_stream.sql"),
+            new Migration(5, "turn stream", "/db/core/V005__v6_turn_stream.sql"),
+            new Migration(6, "conversation evidence", "/db/core/V006__v6_completion_evidence.sql"),
+            new Migration(7, "job cancellation", "/db/core/V007__v6_job_cancellation.sql"));
 
     void migrate(Connection connection) throws SQLException {
         Map<Integer, String> installed = installed(connection);
@@ -79,6 +82,7 @@ final class CoreMigrationRunner {
         if (migration.version() == 4) {
             validateCommandStreams(connection);
         }
+        new ConversationSchemaValidation().validate(connection, migration.version());
         try (var statement = connection.prepareStatement("""
             INSERT INTO CORE.SCHEMA_HISTORY (VERSION, DESCRIPTION, CHECKSUM, INSTALLED_AT)
             VALUES (?, ?, ?, CURRENT_TIMESTAMP)

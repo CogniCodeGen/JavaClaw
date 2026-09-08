@@ -40,11 +40,13 @@ final class DesktopStateProjection {
     }
 
     static DesktopState selectRole(DesktopState state, AgentRole role) {
-        return interaction(state, interaction(state, Optional.of(role), false));
+        return interaction(
+                state, interaction(state, Optional.of(role), state.interaction().busy()));
     }
 
     static DesktopState clearRoleSelection(DesktopState state) {
-        return interaction(state, interaction(state, Optional.empty(), false));
+        return interaction(
+                state, interaction(state, Optional.empty(), state.interaction().busy()));
     }
 
     static DesktopState connected(
@@ -70,12 +72,12 @@ final class DesktopStateProjection {
 
     static DesktopState catalog(
             DesktopState state, List<Workspace> workspaces, Workspace selected, List<ConversationThread> threads) {
-        return new DesktopState(
+        return clearObservation(new DesktopState(
                 state.connection(),
                 state.navigation(),
                 new ThreadState(workspaces, Optional.of(selected), threads, Optional.empty(), Optional.empty()),
                 TranscriptState.empty(),
-                state.interaction());
+                state.interaction()));
     }
 
     static DesktopState threadCatalog(
@@ -105,13 +107,21 @@ final class DesktopStateProjection {
     }
 
     static DesktopState activeTurn(DesktopState state, AgentTurn turn) {
+        if (state.threads()
+                .selectedThread()
+                .map(ConversationThread::id)
+                .filter(turn.threadId()::equals)
+                .isEmpty()) {
+            return state;
+        }
+        boolean running = !terminal(turn.status());
         ThreadState threads = new ThreadState(
                 state.threads().workspaces(),
                 state.threads().selectedWorkspace(),
                 state.threads().threads(),
                 state.threads().selectedThread(),
-                Optional.of(turn));
-        return threadsOnly(state, threads);
+                running ? Optional.of(turn) : Optional.empty());
+        return busy(threadsOnly(state, threads), running);
     }
 
     static DesktopState observation(
@@ -161,7 +171,24 @@ final class DesktopStateProjection {
                         state.interaction().selectedRole(),
                         state.interaction().pendingApprovals(),
                         state.interaction().inputs(),
-                        false,
+                        state.threads()
+                                .activeTurn()
+                                .filter(turn -> !terminal(turn.status()))
+                                .isPresent(),
+                        Optional.of(message)));
+    }
+
+    /** 恢复未能确认活动状态时保留错误并封锁发送，用户可通过明确重选重试。 */
+    static DesktopState recoveryFailure(DesktopState state, String message) {
+        var current = state.interaction();
+        return interaction(
+                state,
+                new InteractionState(
+                        current.roles(),
+                        current.selectedRole(),
+                        current.pendingApprovals(),
+                        current.inputs(),
+                        true,
                         Optional.of(message)));
     }
 
@@ -245,7 +272,31 @@ final class DesktopStateProjection {
     }
 
     private static DesktopState threads(DesktopState state, ThreadState threads, TranscriptState transcript) {
-        return new DesktopState(state.connection(), state.navigation(), threads, transcript, state.interaction());
+        return clearObservation(
+                new DesktopState(state.connection(), state.navigation(), threads, transcript, state.interaction()));
+    }
+
+    /** 导航只清理当前会话的临时交互；全局输入请求和用户显式角色选择继续保留。 */
+    static DesktopState clearObservation(DesktopState state) {
+        var threads = state.threads();
+        var interaction = state.interaction();
+        return new DesktopState(
+                state.connection(),
+                state.navigation(),
+                new ThreadState(
+                        threads.workspaces(),
+                        threads.selectedWorkspace(),
+                        threads.threads(),
+                        threads.selectedThread(),
+                        Optional.empty()),
+                state.transcript(),
+                new InteractionState(
+                        interaction.roles(),
+                        interaction.selectedRole(),
+                        List.of(),
+                        interaction.inputs(),
+                        false,
+                        Optional.empty()));
     }
 
     private static DesktopState threadsOnly(DesktopState state, ThreadState threads) {
@@ -253,7 +304,7 @@ final class DesktopStateProjection {
                 state.connection(), state.navigation(), threads, state.transcript(), state.interaction());
     }
 
-    private static DesktopState transcript(DesktopState state, TranscriptState transcript) {
+    static DesktopState transcript(DesktopState state, TranscriptState transcript) {
         return new DesktopState(
                 state.connection(), state.navigation(), state.threads(), transcript, state.interaction());
     }

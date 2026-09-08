@@ -238,7 +238,9 @@ class ScheduleAndExecutionContractsTest {
                 execution.embeddings(),
                 AutomationStepPort.unavailable(),
                 ScheduledCommandPort.unavailable(),
-                ScheduleLifecyclePort.unavailable());
+                ScheduleLifecyclePort.unavailable(),
+                com.javaclaw.extension.spi.ConversationEvidencePort.unavailable(),
+                com.javaclaw.extension.spi.ScheduleDefinitionBindingPort.unavailable());
 
         assertEquals(SpiFixtures.CLOCK, runtime.clock());
         assertEquals(SpiFixtures.payload(), runtime.payloads().encode("value"));

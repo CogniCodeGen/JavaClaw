@@ -12,6 +12,7 @@ import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.CorePayloads;
 import com.javaclaw.api.CoreSchemas;
 import com.javaclaw.api.ItemEnvelope;
+import com.javaclaw.api.ItemHistoryEntry;
 import com.javaclaw.api.ItemId;
 import com.javaclaw.api.ItemStatus;
 import com.javaclaw.api.MessageRole;
@@ -27,6 +28,47 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class TranscriptPresenterTest {
     private final CanonicalJson json = new CanonicalJson();
     private final TranscriptPresenter presenter = new TranscriptPresenter(json);
+
+    @Test
+    void 历史与原生展示共用错误审批及执行样式且兼容旧服务端摘要() {
+        var error = history("error", Optional.empty(), "MODEL_ENDPOINT_INVALID\n模型不可用");
+        assertEquals(
+                new PresentedItem("MODEL_ENDPOINT_INVALID", "模型不可用", "transcript-error-block"),
+                TranscriptPresenter.presentHistory(error));
+        assertEquals(
+                "transcript-interaction-block",
+                TranscriptPresenter.presentHistory(history("approval", Optional.empty(), "审批 · read\nDENIED"))
+                        .styleClass());
+        assertEquals(
+                "transcript-execution-block",
+                TranscriptPresenter.presentHistory(history("tool-result", Optional.empty(), "工具结果 · 成功\n结果"))
+                        .styleClass());
+        assertEquals(
+                "error",
+                TranscriptPresenter.presentHistory(history("error", Optional.empty(), "error"))
+                        .body());
+        for (MessageRole role : MessageRole.values()) {
+            assertEquals(
+                    role.name(),
+                    TranscriptPresenter.presentHistory(history("message", Optional.of(role), "正文"))
+                            .title());
+        }
+    }
+
+    private ItemHistoryEntry history(String kind, Optional<MessageRole> role, String body) {
+        return new ItemHistoryEntry(
+                ItemId.random(),
+                TurnId.random(),
+                1,
+                kind,
+                role,
+                body,
+                Optional.empty(),
+                false,
+                Instant.EPOCH,
+                List.of(),
+                List.of());
+    }
 
     @Test
     void mapsCoreMessageWithoutReconstructingSdkDto() {

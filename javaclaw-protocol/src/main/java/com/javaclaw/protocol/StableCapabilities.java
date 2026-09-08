@@ -10,6 +10,9 @@ public final class StableCapabilities {
 
     private static final Set<String> BASE = Set.of(
             "core.input-request",
+            TurnStreamRpcContracts.CAPABILITY,
+            ViewSchemaWireCodec.GRAPH_BROWSING_CAPABILITY,
+            DocumentPreviewRpcContracts.CAPABILITY,
             "core.item-envelope",
             "core.rollout-hash-chain",
             "core.secret-vault",

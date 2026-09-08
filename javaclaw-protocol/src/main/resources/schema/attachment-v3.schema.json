@@ -3,6 +3,7 @@
   "$id": "https://javaclaw.local/schema/attachment-v3.schema.json",
   "title": "JavaClaw Protocol v3 chunked Attachment methods",
   "$defs": {
+    "downloadChunkPayload": {"type": "object", "additionalProperties": false, "required": ["scope", "digest", "offsetBytes", "maximumBytes"], "properties": {"scope": {"$ref": "#/$defs/scope"}, "digest": {"$ref": "#/$defs/digest"}, "offsetBytes": {"type": "integer", "minimum": 0}, "maximumBytes": {"type": "integer", "minimum": 1, "maximum": 262144}}},
     "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "uploadId": {"type": "string", "format": "uuid"},
     "workspaceId": {"type": "string", "format": "uuid"},

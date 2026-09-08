@@ -175,6 +175,22 @@ jobs:
               clean verify
           '
 
+      - name: Replay real WebKit rendering without a model
+        if: matrix.platform != 'linux'
+        run: python scripts/replay-desktop-webview.py
+
+      - name: Replay real WebKit rendering under Xvfb without a model
+        if: matrix.platform == 'linux'
+        run: xvfb-run --auto-servernum python scripts/replay-desktop-webview.py
+
+      - name: Upload WebKit replay measurements and rendered frames
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: javaclaw-webview-replay-${{ matrix.platform }}-${{ matrix.arch }}
+          if-no-files-found: warn
+          path: javaclaw-desktop/target/webview-replay/*
+
       - name: Remove Windows guard fixture and test trust before release packaging
         if: always() && matrix.platform == 'windows'
         shell: pwsh

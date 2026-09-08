@@ -1,0 +1,6 @@
+sample=0 foundation=1212.8ms runtime=2757.2ms EOF=49.2ms close=134.6ms total=4153.8ms
+sample=1 foundation=401.6ms runtime=1934.8ms EOF=1.1ms close=21.0ms total=2358.5ms
+sample=2 foundation=333.4ms runtime=1902.7ms EOF=0.6ms close=46.9ms total=2283.6ms
+sample=3 foundation=331.4ms runtime=1917.1ms EOF=0.7ms close=90.5ms total=2339.7ms
+sample=4 foundation=329.6ms runtime=1942.3ms EOF=0.8ms close=22.0ms total=2294.7ms
+sample=5 foundation=329.5ms runtime=1956.4ms EOF=0.6ms close=65.7ms total=2352.2ms

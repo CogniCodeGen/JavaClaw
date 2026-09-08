@@ -1,0 +1,44 @@
+/* 颜色及字号由原生 CSS 计算值注入，结构沿用现有聊天与平台卡片。 */
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 100%; height: 100%; background: var(--page); color: var(--body); }
+body { font-family: var(--fontFamily), "SF Pro Text", "Segoe UI", "Inter", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; font-size: var(--fontSize); line-height: 1.6; }
+#surface { min-height: 100%; }
+a, button.link { color: var(--primary); cursor: pointer; }
+button { font: inherit; background: var(--panel); color: var(--body); border: 1px solid var(--border); border-radius: 6px; padding: 3px 9px; cursor: pointer; }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+pre, code { font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Consolas", "Menlo", monospace; }
+pre { margin: 10px 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--sunken); overflow: auto; tab-size: 4; }
+code { font-size: .94em; }
+p { margin: 8px 0; }
+h1, h2, h3, h4 { color: var(--title); line-height: 1.35; margin: 18px 0 10px; }
+blockquote { margin: 10px 0; padding: 0 14px; border-left: 3px solid var(--border); color: var(--muted); }
+table { border-collapse: collapse; max-width: 100%; display: block; overflow-x: auto; margin: 10px 0; }
+th, td { padding: 6px 10px; border: 1px solid var(--border); text-align: left; }
+th { background: var(--panel); color: var(--title); }
+img { max-width: 100%; height: auto; }
+.muted, .role { color: var(--muted); }
+.role { font-size: 11px; font-weight: bold; margin-bottom: 6px; }
+.message { margin: 16px 28px; padding: 12px 16px; border-radius: 14px; overflow-wrap: anywhere; }
+.message-user { background: var(--user); border: 1px solid var(--userBorder); color: var(--title); border-radius: 14px 14px 4px 14px; }
+.message-assistant { background: var(--card); border: 1px solid var(--assistantBorder); border-radius: 14px 14px 14px 4px; }
+.transcript-execution-block { background: var(--panel); border: 1px solid var(--border); }
+.transcript-interaction-block { background: var(--warningBg); border: 1px solid var(--warning); }
+.transcript-error-block { background: var(--dangerBg); border: 1px solid var(--danger); }
+.plain { white-space: pre-wrap; overflow-wrap: anywhere; }
+.attachments { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.attachment { text-align: left; padding: 8px 10px; background: var(--sunken); }
+.welcome { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 12px; }
+.welcome strong { font-size: 24px; color: var(--title); }
+.welcome span:first-child { font-size: 44px; color: var(--primary); }
+.history { display: block; margin: 12px auto; }
+.document { padding: 14px; }
+.source-line { white-space: pre; display: flex; min-height: 1.6em; }
+.line-number { flex: 0 0 4em; padding-right: 1em; text-align: right; color: var(--muted); user-select: none; }
+.source-code { min-width: 0; white-space: pre; }
+.target-line { background: var(--panel); }
+#graph { width: 100%; height: 420px; min-height: 220px; background: var(--page); }
+.hljs-keyword, .hljs-selector-tag, .hljs-title { color: var(--primary); }
+.hljs-string, .hljs-number, .hljs-literal { color: var(--body); }
+.hljs-comment, .hljs-quote { color: var(--muted); font-style: italic; }
+
+.new-messages { position: fixed; right: 20px; bottom: 16px; border: 1px solid var(--border); background: var(--card); color: var(--body); border-radius: 8px; padding: 7px 12px; cursor: pointer; }

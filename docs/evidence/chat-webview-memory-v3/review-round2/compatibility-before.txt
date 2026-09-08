@@ -1,0 +1,13 @@
+Exception in thread "main" java.lang.reflect.InvocationTargetException
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:119)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:565)
+	at com.javaclaw.server.rpc.RunCompatibility.main(RunCompatibility.java:8)
+Caused by: org.opentest4j.AssertionFailedError: Unexpected type, expected: <com.javaclaw.extension.spi.ViewSchema.ListView> but was: <com.javaclaw.extension.spi.ViewSchema.Graph>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertInstanceOf.assertInstanceOf(AssertInstanceOf.java:49)
+	at org.junit.jupiter.api.AssertInstanceOf.assertInstanceOf(AssertInstanceOf.java:31)
+	at org.junit.jupiter.api.Assertions.assertInstanceOf(Assertions.java:3614)
+	at com.javaclaw.server.rpc.ViewCapabilityProjectionTest.真实记忆页面降级后仍能选择权威行并保留详情和命令绑定(ViewCapabilityProjectionTest.java:39)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104)
+	... 2 more

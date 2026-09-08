@@ -1,0 +1,386 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "document-preview-v1.schema.json",
+  "$defs": {
+    "attachment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "digest",
+        "mediaType",
+        "fileName",
+        "sizeBytes"
+      ],
+      "properties": {
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "mediaType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fileName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 67108864
+        }
+      }
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "workspaceId",
+        "sourceItemId",
+        "selector",
+        "attachment"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "ATTACHMENT",
+            "WORKSPACE_FILE",
+            "MESSAGE_CONTENT"
+          ]
+        },
+        "workspaceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "sourceItemId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selector": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "attachment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/attachment"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "resolve": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reference"
+      ],
+      "properties": {
+        "reference": {
+          "$ref": "#/$defs/reference"
+        }
+      }
+    },
+    "handle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "handleId"
+      ],
+      "properties": {
+        "handleId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "parentHandleId",
+        "href"
+      ],
+      "properties": {
+        "parentHandleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "href": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      }
+    },
+    "read": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "handleId",
+        "offsetBytes",
+        "maxBytes"
+      ],
+      "properties": {
+        "handleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "offsetBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 262144
+        }
+      }
+    },
+    "resolveCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "payload"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "const": 0,
+          "type": "integer"
+        },
+        "payload": {
+          "$ref": "#/$defs/resolve"
+        }
+      }
+    },
+    "resourceCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "payload"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "const": 0,
+          "type": "integer"
+        },
+        "payload": {
+          "$ref": "#/$defs/resource"
+        }
+      }
+    },
+    "renewCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "payload"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "const": 0,
+          "type": "integer"
+        },
+        "payload": {
+          "$ref": "#/$defs/handle"
+        }
+      }
+    },
+    "closeCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "payload"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "const": 0,
+          "type": "integer"
+        },
+        "payload": {
+          "$ref": "#/$defs/handle"
+        }
+      }
+    },
+    "preview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "handleId",
+        "workspaceId",
+        "fileName",
+        "mediaType",
+        "sizeBytes",
+        "digest",
+        "origin",
+        "expiresAt",
+        "startLine",
+        "changed"
+      ],
+      "properties": {
+        "handleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "workspaceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "fileName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "mediaType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 67108864
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "origin": {
+          "enum": [
+            "CURRENT_FILE",
+            "REFERENCED_VERSION"
+          ]
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "startLine": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "changed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "chunk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "offsetBytes",
+        "content",
+        "nextOffsetBytes",
+        "complete",
+        "digest"
+      ],
+      "properties": {
+        "offsetBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "content": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "maxLength": 349528
+        },
+        "nextOffsetBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "closed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "handleId",
+        "closed"
+      ],
+      "properties": {
+        "handleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "closed": {
+          "const": true,
+          "type": "boolean"
+        }
+      }
+    },
+    "invalidated": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "handleId",
+        "reasonCode"
+      ],
+      "properties": {
+        "handleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "reasonCode": {
+          "enum": [
+            "EXPIRED",
+            "REVOKED",
+            "CLOSED",
+            "CORRUPT"
+          ]
+        }
+      }
+    }
+  }
+}

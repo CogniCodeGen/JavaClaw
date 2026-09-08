@@ -131,6 +131,25 @@ public final class AttachmentRpcContracts {
         }
     }
 
+    /**
+     * 分块下载读取参数；每次独立验证附件所有权。
+     *
+     * @param scope 声明范围
+     * @param digest 内容摘要
+     * @param offsetBytes 非负字节偏移
+     * @param maximumBytes 单次上限，1 至 256 KiB
+     */
+    public record DownloadChunkPayload(AttachmentScope scope, String digest, long offsetBytes, int maximumBytes) {
+        /** 校验下载边界。 */
+        public DownloadChunkPayload {
+            Objects.requireNonNull(scope, "scope");
+            digest = sha256Digest(digest, "digest");
+            if (offsetBytes < 0 || maximumBytes < 1 || maximumBytes > MAX_ATTACHMENT_CHUNK_BYTES) {
+                throw new IllegalArgumentException("invalid attachment download chunk");
+            }
+        }
+    }
+
     private static String text(String value, String name) {
         String normalized = Objects.requireNonNull(value, name).strip();
         if (normalized.isEmpty()) {

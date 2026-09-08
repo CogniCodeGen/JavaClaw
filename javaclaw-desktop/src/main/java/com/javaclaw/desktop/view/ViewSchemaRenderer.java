@@ -49,7 +49,7 @@ public final class ViewSchemaRenderer {
         ViewCommandBindingResolver bindings = new ViewCommandBindingResolver(checked, data);
         VBox page = components.page(checked.title());
         checked.nodes().stream()
-                .map(node -> render(node, data, interactions, bindings))
+                .map(node -> renderNode(node, data, interactions, bindings))
                 .forEach(page.getChildren()::add);
         return page;
     }
@@ -68,7 +68,7 @@ public final class ViewSchemaRenderer {
         }
     }
 
-    private Node render(
+    Node renderNode(
             ViewSchema.Node node,
             ViewData data,
             ViewInteractionHandler interactions,
@@ -84,8 +84,14 @@ public final class ViewSchemaRenderer {
                 textBlock(markdown.title(), Objects.toString(data.value(markdown.source()), ""));
             case ViewSchema.Code code -> code(code, data);
             case ViewSchema.Artifact artifact -> artifact(artifact, data);
-            case ViewSchema.Graph graph -> graphs.render(graph, data);
+            case ViewSchema.Graph graph -> graph(graph, data, interactions);
         };
+    }
+
+    private Node graph(ViewSchema.Graph graph, ViewData data, ViewInteractionHandler interactions) {
+        var view = graphs.create(graph);
+        view.apply(data, interactions);
+        return view.node();
     }
 
     private Node list(

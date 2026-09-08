@@ -14,4 +14,17 @@ public interface TurnOrchestrationPort {
      * @throws Exception 启动或执行失败
      */
     OrchestratedTurnResult execute(OrchestratedTurnCommand command, CancellationToken cancellation) throws Exception;
+
+    /**
+     * 执行机器整理等派生 Turn，平台须原子标记为不进入后续原始对话证据。
+     *
+     * @param command 冻结 Turn 输入
+     * @param cancellation 父级取消
+     * @return Turn 终态
+     * @throws Exception 不支持来源标记或执行失败
+     */
+    default OrchestratedTurnResult executeDerived(OrchestratedTurnCommand command, CancellationToken cancellation)
+            throws Exception {
+        throw new UnsupportedOperationException("derived Turn provenance is unavailable");
+    }
 }

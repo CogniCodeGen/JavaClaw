@@ -1,0 +1,1010 @@
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by org.fusesource.jansi.internal.JansiLoader in an unnamed module (file:/Users/fengs/Documents/profile/apache-maven-3.9.0/lib/jansi-2.4.0.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper (file:/Users/fengs/Documents/profile/apache-maven-3.9.0/lib/guava-30.1-jre.jar)
+WARNING: Please consider reporting this to the maintainers of class com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[WARNING] 
+[WARNING] Some problems were encountered while building the effective settings
+[WARNING] 'profiles.profile[rdc].repositories.repository.id' must be unique but found duplicate repository with id central @ /Users/fengs/Documents/profile/apache-maven-3.9.0/conf/settings.xml
+[WARNING] 
+[INFO] Scanning for projects...
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Build Order:
+[INFO] 
+[INFO] JavaClaw 6                                                         [pom]
+[INFO] JavaClaw Immutable API                                             [jar]
+[INFO] JavaClaw Extension SPI                                             [jar]
+[INFO] JavaClaw App Protocol v3                                           [jar]
+[INFO] JavaClaw Built-in Extension Contracts                              [jar]
+[INFO] JavaClaw Native Hosts                                              [jar]
+[INFO] JavaClaw Java SDK and CLI                                          [jar]
+[INFO] JavaClaw JavaFX SDK Client                                         [jar]
+[INFO] 
+[INFO] --------------------< com.javaclaw:javaclaw-parent >--------------------
+[INFO] Building JavaClaw 6 6.0.0-SNAPSHOT                                 [1/8]
+[INFO]   from pom.xml
+[INFO] --------------------------------[ pom ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:check (verify-source-format) @ javaclaw-parent ---
+[INFO] Spotless.Format is keeping 3 files clean - 0 needs changes to be clean, 0 were already clean, 3 were skipped because caching determined they were already clean
+[INFO] Spotless.Format is keeping 49 files clean - 0 needs changes to be clean, 0 were already clean, 49 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (verify-source-contracts) @ javaclaw-parent ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] --- enforcer:3.5.0:enforce (verify-dependency-graph) @ javaclaw-parent ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- jacoco:0.8.13:prepare-agent (prepare-coverage-agent) @ javaclaw-parent ---
+[INFO] argLine set to -javaagent:/Users/fengs/.m2/repository/org/jacoco/org.jacoco.agent/0.8.13/org.jacoco.agent-0.8.13-runtime.jar=destfile=/Users/fengs/Documents/openProject/JavaClaw/target/jacoco.exec
+[INFO] 
+[INFO] ---------------------< com.javaclaw:javaclaw-api >----------------------
+[INFO] Building JavaClaw Immutable API 6.0.0-SNAPSHOT                     [2/8]
+[INFO]   from javaclaw-api/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:check (verify-source-format) @ javaclaw-api ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 233 files clean - 0 needs changes to be clean, 0 were already clean, 233 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (verify-source-contracts) @ javaclaw-api ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] --- enforcer:3.5.0:enforce (verify-dependency-graph) @ javaclaw-api ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- jacoco:0.8.13:prepare-agent (prepare-coverage-agent) @ javaclaw-api ---
+[INFO] argLine set to -javaagent:/Users/fengs/.m2/repository/org/jacoco/org.jacoco.agent/0.8.13/org.jacoco.agent-0.8.13-runtime.jar=destfile=/Users/fengs/Documents/openProject/JavaClaw/javaclaw-api/target/jacoco.exec
+[INFO] 
+[INFO] --- resources:3.3.0:resources (default-resources) @ javaclaw-api ---
+[INFO] skip non existing resourceDirectory /Users/fengs/Documents/openProject/JavaClaw/javaclaw-api/src/main/resources
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ javaclaw-api ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- resources:3.3.0:testResources (default-testResources) @ javaclaw-api ---
+[INFO] skip non existing resourceDirectory /Users/fengs/Documents/openProject/JavaClaw/javaclaw-api/src/test/resources
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ javaclaw-api ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- surefire:3.5.2:test (default-test) @ javaclaw-api ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running com.javaclaw.api.CodingRuntimeContractsTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.032 s -- in com.javaclaw.api.CodingRuntimeContractsTest
+[INFO] Running com.javaclaw.api.PermissionManagementContractsTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.009 s -- in com.javaclaw.api.PermissionManagementContractsTest
+[INFO] Running com.javaclaw.api.McpContractsTest
+[INFO] Tests run: 10, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.048 s -- in com.javaclaw.api.McpContractsTest
+[INFO] Running com.javaclaw.api.AttachmentUploadSessionTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.javaclaw.api.AttachmentUploadSessionTest
+[INFO] Running com.javaclaw.api.AgentRoleContractsTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.015 s -- in com.javaclaw.api.AgentRoleContractsTest
+[INFO] Running com.javaclaw.api.PromptOptimizationContractsTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.api.PromptOptimizationContractsTest
+[INFO] Running com.javaclaw.api.ProviderVerificationContractsTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.api.ProviderVerificationContractsTest
+[INFO] Running com.javaclaw.api.IdentifierAndSnapshotContractsTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.020 s -- in com.javaclaw.api.IdentifierAndSnapshotContractsTest
+[INFO] Running com.javaclaw.api.InteractionExecutionContractsTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.api.InteractionExecutionContractsTest
+[INFO] Running com.javaclaw.api.PermissionContractsTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.006 s -- in com.javaclaw.api.PermissionContractsTest
+[INFO] Running com.javaclaw.api.VaultContractsTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.api.VaultContractsTest
+[INFO] Running com.javaclaw.api.ApprovalAndSandboxContractsTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.006 s -- in com.javaclaw.api.ApprovalAndSandboxContractsTest
+[INFO] Running com.javaclaw.api.ProviderCredentialContractsTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.api.ProviderCredentialContractsTest
+[INFO] Running com.javaclaw.api.TurnStreamContractsTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.006 s -- in com.javaclaw.api.TurnStreamContractsTest
+[INFO] Running com.javaclaw.api.SecurityGrantContractsTest
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.015 s -- in com.javaclaw.api.SecurityGrantContractsTest
+[INFO] Running com.javaclaw.api.ProviderModelAndPresetContractsTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.014 s -- in com.javaclaw.api.ProviderModelAndPresetContractsTest
+[INFO] Running com.javaclaw.api.ConfigurationProvenanceContractsTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.017 s -- in com.javaclaw.api.ConfigurationProvenanceContractsTest
+[INFO] Running com.javaclaw.api.ProviderEndpointTransportSecurityTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.api.ProviderEndpointTransportSecurityTest
+[INFO] Running com.javaclaw.api.BrokerContractsTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.api.BrokerContractsTest
+[INFO] Running com.javaclaw.api.ItemAndToolContractsTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.012 s -- in com.javaclaw.api.ItemAndToolContractsTest
+[INFO] Running com.javaclaw.api.DocumentPreviewContractsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.api.DocumentPreviewContractsTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[INFO] Tests run: 105, Failures: 0, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] 
+[INFO] ----------------< com.javaclaw:javaclaw-extension-spi >-----------------
+[INFO] Building JavaClaw Extension SPI 6.0.0-SNAPSHOT                     [3/8]
+[INFO]   from javaclaw-extension-spi/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:check (verify-source-format) @ javaclaw-extension-spi ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 124 files clean - 0 needs changes to be clean, 0 were already clean, 124 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (verify-source-contracts) @ javaclaw-extension-spi ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] --- enforcer:3.5.0:enforce (verify-dependency-graph) @ javaclaw-extension-spi ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- jacoco:0.8.13:prepare-agent (prepare-coverage-agent) @ javaclaw-extension-spi ---
+[INFO] argLine set to -javaagent:/Users/fengs/.m2/repository/org/jacoco/org.jacoco.agent/0.8.13/org.jacoco.agent-0.8.13-runtime.jar=destfile=/Users/fengs/Documents/openProject/JavaClaw/javaclaw-extension-spi/target/jacoco.exec
+[INFO] 
+[INFO] --- resources:3.3.0:resources (default-resources) @ javaclaw-extension-spi ---
+[INFO] skip non existing resourceDirectory /Users/fengs/Documents/openProject/JavaClaw/javaclaw-extension-spi/src/main/resources
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ javaclaw-extension-spi ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- resources:3.3.0:testResources (default-testResources) @ javaclaw-extension-spi ---
+[INFO] skip non existing resourceDirectory /Users/fengs/Documents/openProject/JavaClaw/javaclaw-extension-spi/src/test/resources
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ javaclaw-extension-spi ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- surefire:3.5.2:test (default-test) @ javaclaw-extension-spi ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running com.javaclaw.extension.spi.ScheduleAndExecutionContractsTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.115 s -- in com.javaclaw.extension.spi.ScheduleAndExecutionContractsTest
+[INFO] Running com.javaclaw.extension.spi.GraphBrowsingContractsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.012 s -- in com.javaclaw.extension.spi.GraphBrowsingContractsTest
+[INFO] Running com.javaclaw.extension.spi.ViewSchemaCoverageTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.028 s -- in com.javaclaw.extension.spi.ViewSchemaCoverageTest
+[INFO] Running com.javaclaw.extension.spi.ViewStructuredListFieldTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.011 s -- in com.javaclaw.extension.spi.ViewStructuredListFieldTest
+[INFO] Running com.javaclaw.extension.spi.OperationalContractsTest
+[INFO] Tests run: 10, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.039 s -- in com.javaclaw.extension.spi.OperationalContractsTest
+[INFO] Running com.javaclaw.extension.spi.ExtensionContractsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.011 s -- in com.javaclaw.extension.spi.ExtensionContractsTest
+[INFO] Running com.javaclaw.extension.spi.ViewCommandBindingTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.extension.spi.ViewCommandBindingTest
+[INFO] Running com.javaclaw.extension.spi.ContributionContractsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.008 s -- in com.javaclaw.extension.spi.ContributionContractsTest
+[INFO] Running com.javaclaw.extension.spi.MemorySchedulingPortsTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s -- in com.javaclaw.extension.spi.MemorySchedulingPortsTest
+[INFO] Running com.javaclaw.extension.spi.ViewInitialSelectionTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.extension.spi.ViewInitialSelectionTest
+[INFO] Running com.javaclaw.extension.spi.ViewStructuredSchemaCoverageTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.008 s -- in com.javaclaw.extension.spi.ViewStructuredSchemaCoverageTest
+[INFO] Running com.javaclaw.extension.spi.AutomationExecutionPolicyPortTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.extension.spi.AutomationExecutionPolicyPortTest
+[INFO] Running com.javaclaw.extension.spi.ExtensionJobContractsTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.008 s -- in com.javaclaw.extension.spi.ExtensionJobContractsTest
+[INFO] Running com.javaclaw.extension.spi.ViewSchemaTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.008 s -- in com.javaclaw.extension.spi.ViewSchemaTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[INFO] Tests run: 68, Failures: 0, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] 
+[INFO] -------------------< com.javaclaw:javaclaw-protocol >-------------------
+[INFO] Building JavaClaw App Protocol v3 6.0.0-SNAPSHOT                   [4/8]
+[INFO]   from javaclaw-protocol/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:check (verify-source-format) @ javaclaw-protocol ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 104 files clean - 0 needs changes to be clean, 0 were already clean, 104 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (verify-source-contracts) @ javaclaw-protocol ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] --- enforcer:3.5.0:enforce (verify-dependency-graph) @ javaclaw-protocol ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- jacoco:0.8.13:prepare-agent (prepare-coverage-agent) @ javaclaw-protocol ---
+[INFO] argLine set to -javaagent:/Users/fengs/.m2/repository/org/jacoco/org.jacoco.agent/0.8.13/org.jacoco.agent-0.8.13-runtime.jar=destfile=/Users/fengs/Documents/openProject/JavaClaw/javaclaw-protocol/target/jacoco.exec
+[INFO] 
+[INFO] --- resources:3.3.0:resources (default-resources) @ javaclaw-protocol ---
+[INFO] Copying 30 resources
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ javaclaw-protocol ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- resources:3.3.0:testResources (default-testResources) @ javaclaw-protocol ---
+[INFO] skip non existing resourceDirectory /Users/fengs/Documents/openProject/JavaClaw/javaclaw-protocol/src/test/resources
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ javaclaw-protocol ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- surefire:3.5.2:test (default-test) @ javaclaw-protocol ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running com.javaclaw.protocol.ViewStructuredListWireCodecTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.486 s -- in com.javaclaw.protocol.ViewStructuredListWireCodecTest
+[INFO] Running com.javaclaw.protocol.ProviderCredentialRpcContractsTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.018 s -- in com.javaclaw.protocol.ProviderCredentialRpcContractsTest
+[INFO] Running com.javaclaw.protocol.CanonicalJsonTest
+[INFO] Tests run: 10, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.040 s -- in com.javaclaw.protocol.CanonicalJsonTest
+[INFO] Running com.javaclaw.protocol.BuiltinExtensionRpcContractsTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.protocol.BuiltinExtensionRpcContractsTest
+[INFO] Running com.javaclaw.protocol.DocumentPreviewRpcContractsTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.026 s -- in com.javaclaw.protocol.DocumentPreviewRpcContractsTest
+[INFO] Running com.javaclaw.protocol.CredentialRpcContractsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.011 s -- in com.javaclaw.protocol.CredentialRpcContractsTest
+[INFO] Running com.javaclaw.protocol.ProviderSchemaContractTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.023 s -- in com.javaclaw.protocol.ProviderSchemaContractTest
+[INFO] Running com.javaclaw.protocol.ProviderConfigurationRpcContractsTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.023 s -- in com.javaclaw.protocol.ProviderConfigurationRpcContractsTest
+[INFO] Running com.javaclaw.protocol.JsonRpcCodecTest
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.012 s -- in com.javaclaw.protocol.JsonRpcCodecTest
+[INFO] Running com.javaclaw.protocol.BundleWireContractsCoverageTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.025 s -- in com.javaclaw.protocol.BundleWireContractsCoverageTest
+[INFO] Running com.javaclaw.protocol.GraphBrowsingWireCodecTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.011 s -- in com.javaclaw.protocol.GraphBrowsingWireCodecTest
+[INFO] Running com.javaclaw.protocol.ViewSchemaResourceTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.protocol.ViewSchemaResourceTest
+[INFO] Running com.javaclaw.protocol.ViewCommandBindingWireCodecTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.017 s -- in com.javaclaw.protocol.ViewCommandBindingWireCodecTest
+[INFO] Running com.javaclaw.protocol.ProtocolV3Test
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.032 s -- in com.javaclaw.protocol.ProtocolV3Test
+[INFO] Running com.javaclaw.protocol.PromptPreviewRpcContractsTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s -- in com.javaclaw.protocol.PromptPreviewRpcContractsTest
+[INFO] Running com.javaclaw.protocol.ProtocolMethodSchemaSamplesTest
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.033 s -- in com.javaclaw.protocol.ProtocolMethodSchemaSamplesTest
+[INFO] Running com.javaclaw.protocol.AgentRoleRpcContractsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.018 s -- in com.javaclaw.protocol.AgentRoleRpcContractsTest
+[INFO] Running com.javaclaw.protocol.CoreItemCodecsTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.019 s -- in com.javaclaw.protocol.CoreItemCodecsTest
+[INFO] Running com.javaclaw.protocol.McpWireContractsCoverageTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.039 s -- in com.javaclaw.protocol.McpWireContractsCoverageTest
+[INFO] Running com.javaclaw.protocol.BundleRpcContractsTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.protocol.BundleRpcContractsTest
+[INFO] Running com.javaclaw.protocol.SessionSecretChannelTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.045 s -- in com.javaclaw.protocol.SessionSecretChannelTest
+[INFO] Running com.javaclaw.protocol.AttachmentSchemaResourceTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in com.javaclaw.protocol.AttachmentSchemaResourceTest
+[INFO] Running com.javaclaw.protocol.TurnStreamRpcContractsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.016 s -- in com.javaclaw.protocol.TurnStreamRpcContractsTest
+[INFO] Running com.javaclaw.protocol.DiagnosticsRpcContractsTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.012 s -- in com.javaclaw.protocol.DiagnosticsRpcContractsTest
+[INFO] Running com.javaclaw.protocol.McpRpcContractsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s -- in com.javaclaw.protocol.McpRpcContractsTest
+[INFO] Running com.javaclaw.protocol.SecurityGrantRpcContractsTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.019 s -- in com.javaclaw.protocol.SecurityGrantRpcContractsTest
+[INFO] Running com.javaclaw.protocol.CanonicalJsonFieldContractTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.010 s -- in com.javaclaw.protocol.CanonicalJsonFieldContractTest
+[INFO] Running com.javaclaw.protocol.InputJobRpcContractsTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s -- in com.javaclaw.protocol.InputJobRpcContractsTest
+[INFO] Running com.javaclaw.protocol.PromptOptimizationRpcContractsTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.013 s -- in com.javaclaw.protocol.PromptOptimizationRpcContractsTest
+[INFO] Running com.javaclaw.protocol.ExtensionRpcContractsTest
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.008 s -- in com.javaclaw.protocol.ExtensionRpcContractsTest
+[INFO] Running com.javaclaw.protocol.ProtocolInitializationTest
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.protocol.ProtocolInitializationTest
+[INFO] Running com.javaclaw.protocol.WorktreeRpcContractsTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.protocol.WorktreeRpcContractsTest
+[INFO] Running com.javaclaw.protocol.ProtocolMethodSchemaCatalogTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.053 s -- in com.javaclaw.protocol.ProtocolMethodSchemaCatalogTest
+[INFO] Running com.javaclaw.protocol.CoreRpcContractsTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.021 s -- in com.javaclaw.protocol.CoreRpcContractsTest
+[INFO] Running com.javaclaw.protocol.PermissionProfileRpcContractsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.019 s -- in com.javaclaw.protocol.PermissionProfileRpcContractsTest
+[INFO] Running com.javaclaw.protocol.InstructionRpcContractsTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.protocol.InstructionRpcContractsTest
+[INFO] Running com.javaclaw.protocol.ProviderVerificationRpcContractsTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.protocol.ProviderVerificationRpcContractsTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[INFO] Tests run: 149, Failures: 0, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] 
+[INFO] --------------< com.javaclaw:javaclaw-builtin-contracts >---------------
+[INFO] Building JavaClaw Built-in Extension Contracts 6.0.0-SNAPSHOT      [5/8]
+[INFO]   from javaclaw-builtin-contracts/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:check (verify-source-format) @ javaclaw-builtin-contracts ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 47 files clean - 0 needs changes to be clean, 0 were already clean, 47 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (verify-source-contracts) @ javaclaw-builtin-contracts ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] --- enforcer:3.5.0:enforce (verify-dependency-graph) @ javaclaw-builtin-contracts ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- jacoco:0.8.13:prepare-agent (prepare-coverage-agent) @ javaclaw-builtin-contracts ---
+[INFO] argLine set to -javaagent:/Users/fengs/.m2/repository/org/jacoco/org.jacoco.agent/0.8.13/org.jacoco.agent-0.8.13-runtime.jar=destfile=/Users/fengs/Documents/openProject/JavaClaw/javaclaw-builtin-contracts/target/jacoco.exec
+[INFO] 
+[INFO] --- resources:3.3.0:resources (default-resources) @ javaclaw-builtin-contracts ---
+[INFO] Copying 31 resources
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ javaclaw-builtin-contracts ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- resources:3.3.0:testResources (default-testResources) @ javaclaw-builtin-contracts ---
+[INFO] skip non existing resourceDirectory /Users/fengs/Documents/openProject/JavaClaw/javaclaw-builtin-contracts/src/test/resources
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ javaclaw-builtin-contracts ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- surefire:3.5.2:test (default-test) @ javaclaw-builtin-contracts ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running com.javaclaw.builtin.contracts.MemoryV3ContractsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.047 s -- in com.javaclaw.builtin.contracts.MemoryV3ContractsTest
+[INFO] Running com.javaclaw.builtin.contracts.MemoryLifecycleContractsCoverageTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.018 s -- in com.javaclaw.builtin.contracts.MemoryLifecycleContractsCoverageTest
+[INFO] Running com.javaclaw.builtin.contracts.DocumentAndOrchestrationContractsTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.023 s -- in com.javaclaw.builtin.contracts.DocumentAndOrchestrationContractsTest
+[INFO] Running com.javaclaw.builtin.contracts.MemorySkillScheduleContractsTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.010 s -- in com.javaclaw.builtin.contracts.MemorySkillScheduleContractsTest
+[INFO] Running com.javaclaw.builtin.contracts.CodingContractsTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.011 s -- in com.javaclaw.builtin.contracts.CodingContractsTest
+[INFO] Running com.javaclaw.builtin.contracts.ToolchainEvidenceContractsTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.builtin.contracts.ToolchainEvidenceContractsTest
+[INFO] Running com.javaclaw.builtin.contracts.WorkflowScheduleContractsCoverageTest
+[INFO] Tests run: 10, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.025 s -- in com.javaclaw.builtin.contracts.WorkflowScheduleContractsCoverageTest
+[INFO] Running com.javaclaw.builtin.contracts.SkillLifecycleContractsCoverageTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s -- in com.javaclaw.builtin.contracts.SkillLifecycleContractsCoverageTest
+[INFO] Running com.javaclaw.builtin.contracts.DependencyEvidenceContractsTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.builtin.contracts.DependencyEvidenceContractsTest
+[INFO] Running com.javaclaw.builtin.contracts.AutomationKnowledgeContractsCoverageTest
+[INFO] Tests run: 10, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.023 s -- in com.javaclaw.builtin.contracts.AutomationKnowledgeContractsCoverageTest
+[INFO] Running com.javaclaw.builtin.contracts.SiteContractsTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.022 s -- in com.javaclaw.builtin.contracts.SiteContractsTest
+[INFO] Running com.javaclaw.builtin.contracts.KnowledgeContractsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.builtin.contracts.KnowledgeContractsTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[INFO] Tests run: 67, Failures: 0, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] 
+[INFO] -----------------< com.javaclaw:javaclaw-native-hosts >-----------------
+[INFO] Building JavaClaw Native Hosts 6.0.0-SNAPSHOT                      [6/8]
+[INFO]   from javaclaw-native-hosts/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:check (verify-source-format) @ javaclaw-native-hosts ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 168 files clean - 0 needs changes to be clean, 0 were already clean, 168 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (verify-source-contracts) @ javaclaw-native-hosts ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] --- enforcer:3.5.0:enforce (verify-dependency-graph) @ javaclaw-native-hosts ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- jacoco:0.8.13:prepare-agent (prepare-coverage-agent) @ javaclaw-native-hosts ---
+[INFO] argLine set to -javaagent:/Users/fengs/.m2/repository/org/jacoco/org.jacoco.agent/0.8.13/org.jacoco.agent-0.8.13-runtime.jar=destfile=/Users/fengs/Documents/openProject/JavaClaw/javaclaw-native-hosts/target/jacoco.exec
+[INFO] 
+[INFO] --- resources:3.3.0:resources (default-resources) @ javaclaw-native-hosts ---
+[INFO] skip non existing resourceDirectory /Users/fengs/Documents/openProject/JavaClaw/javaclaw-native-hosts/src/main/resources
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ javaclaw-native-hosts ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- resources:3.3.0:testResources (default-testResources) @ javaclaw-native-hosts ---
+[INFO] skip non existing resourceDirectory /Users/fengs/Documents/openProject/JavaClaw/javaclaw-native-hosts/src/test/resources
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ javaclaw-native-hosts ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- surefire:3.5.2:test (default-test) @ javaclaw-native-hosts ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running com.javaclaw.nativehost.credential.SystemMasterKeyProtectorTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.069 s -- in com.javaclaw.nativehost.credential.SystemMasterKeyProtectorTest
+[INFO] Running com.javaclaw.nativehost.credential.SystemMasterKeyProtectorNativeTest
+[WARNING] Tests run: 1, Failures: 0, Errors: 0, Skipped: 1, Time elapsed: 0.006 s -- in com.javaclaw.nativehost.credential.SystemMasterKeyProtectorNativeTest
+[INFO] Running com.javaclaw.nativehost.ffm.WindowsAclLeaseTest
+[WARNING] Tests run: 2, Failures: 0, Errors: 0, Skipped: 2, Time elapsed: 0 s -- in com.javaclaw.nativehost.ffm.WindowsAclLeaseTest
+[INFO] Running com.javaclaw.nativehost.ffm.WindowsCommandLineTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.nativehost.ffm.WindowsCommandLineTest
+[INFO] Running com.javaclaw.nativehost.ffm.WindowsFileAclPolicyTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.nativehost.ffm.WindowsFileAclPolicyTest
+[INFO] Running com.javaclaw.nativehost.ffm.WindowsGuardConnectionTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in com.javaclaw.nativehost.ffm.WindowsGuardConnectionTest
+[INFO] Running com.javaclaw.nativehost.ffm.LinuxSocketPolicyTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.nativehost.ffm.LinuxSocketPolicyTest
+[INFO] Running com.javaclaw.nativehost.ffm.WindowsWorkspaceDirectoryTest
+[WARNING] Tests run: 3, Failures: 0, Errors: 0, Skipped: 3, Time elapsed: 0 s -- in com.javaclaw.nativehost.ffm.WindowsWorkspaceDirectoryTest
+[INFO] Running com.javaclaw.nativehost.ffm.WindowsWorkspaceListingTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.012 s -- in com.javaclaw.nativehost.ffm.WindowsWorkspaceListingTest
+[INFO] Running com.javaclaw.nativehost.ffm.PosixPtyTest
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.042 s -- in com.javaclaw.nativehost.ffm.PosixPtyTest
+[INFO] Running com.javaclaw.nativehost.ffm.WindowsAclManagerTest
+[WARNING] Tests run: 4, Failures: 0, Errors: 0, Skipped: 4, Time elapsed: 0 s -- in com.javaclaw.nativehost.ffm.WindowsAclManagerTest
+[INFO] Running com.javaclaw.nativehost.ffm.WindowsNetworkLeaseTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.117 s -- in com.javaclaw.nativehost.ffm.WindowsNetworkLeaseTest
+[INFO] Running com.javaclaw.nativehost.transport.WindowsNamedPipeIntegrationTest
+[WARNING] Tests run: 2, Failures: 0, Errors: 0, Skipped: 2, Time elapsed: 0 s -- in com.javaclaw.nativehost.transport.WindowsNamedPipeIntegrationTest
+[INFO] Running com.javaclaw.nativehost.transport.WindowsPipeNameTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s -- in com.javaclaw.nativehost.transport.WindowsPipeNameTest
+[INFO] Running com.javaclaw.nativehost.tray.TrayPresenceLeaseTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.016 s -- in com.javaclaw.nativehost.tray.TrayPresenceLeaseTest
+[INFO] Running com.javaclaw.nativehost.tray.LauncherSupervisorProbeTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.javaclaw.nativehost.tray.LauncherSupervisorProbeTest
+[INFO] Running com.javaclaw.nativehost.tray.TrayBoundaryContractsTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.010 s -- in com.javaclaw.nativehost.tray.TrayBoundaryContractsTest
+[INFO] Running com.javaclaw.nativehost.tray.SystemTrayFeatureTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.nativehost.tray.SystemTrayFeatureTest
+[INFO] Running com.javaclaw.nativehost.RuntimeDirectoryAclTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.009 s -- in com.javaclaw.nativehost.RuntimeDirectoryAclTest
+[INFO] Running com.javaclaw.nativehost.LocalRuntimeDirectoriesTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.nativehost.LocalRuntimeDirectoriesTest
+[INFO] Running com.javaclaw.nativehost.ManagedRuntimeDirectoryTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.015 s -- in com.javaclaw.nativehost.ManagedRuntimeDirectoryTest
+[INFO] Running com.javaclaw.nativehost.sandbox.SandboxBatchObservationTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 10.84 s -- in com.javaclaw.nativehost.sandbox.SandboxBatchObservationTest
+[INFO] Running com.javaclaw.nativehost.sandbox.LinuxProxyBridgeTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.023 s -- in com.javaclaw.nativehost.sandbox.LinuxProxyBridgeTest
+[INFO] Running com.javaclaw.nativehost.sandbox.WindowsHelperControlTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.010 s -- in com.javaclaw.nativehost.sandbox.WindowsHelperControlTest
+[INFO] Running com.javaclaw.nativehost.sandbox.PtyFramePublisherTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.063 s -- in com.javaclaw.nativehost.sandbox.PtyFramePublisherTest
+[INFO] Running com.javaclaw.nativehost.sandbox.MacRuntimeFcntlTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.182 s -- in com.javaclaw.nativehost.sandbox.MacRuntimeFcntlTest
+[INFO] Running com.javaclaw.nativehost.sandbox.SandboxProcessControlTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.385 s -- in com.javaclaw.nativehost.sandbox.SandboxProcessControlTest
+[INFO] Running com.javaclaw.nativehost.sandbox.MacWriteRootIsolationTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.137 s -- in com.javaclaw.nativehost.sandbox.MacWriteRootIsolationTest
+[INFO] Running com.javaclaw.nativehost.sandbox.SandboxNetworkAccessTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.nativehost.sandbox.SandboxNetworkAccessTest
+[INFO] Running com.javaclaw.nativehost.sandbox.MacProxyIsolationTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.943 s -- in com.javaclaw.nativehost.sandbox.MacProxyIsolationTest
+[INFO] Running com.javaclaw.nativehost.sandbox.SandboxedWorkerContractsTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.213 s -- in com.javaclaw.nativehost.sandbox.SandboxedWorkerContractsTest
+[INFO] Running com.javaclaw.nativehost.sandbox.WindowsProxyHelperTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.006 s -- in com.javaclaw.nativehost.sandbox.WindowsProxyHelperTest
+[INFO] Running com.javaclaw.nativehost.sandbox.SandboxHelperAndBuilderTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.016 s -- in com.javaclaw.nativehost.sandbox.SandboxHelperAndBuilderTest
+[INFO] Running com.javaclaw.nativehost.sandbox.PlatformSandboxExecutorTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.001 s -- in com.javaclaw.nativehost.sandbox.PlatformSandboxExecutorTest
+[INFO] Running com.javaclaw.nativehost.sandbox.SandboxOutputObservationTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.nativehost.sandbox.SandboxOutputObservationTest
+[INFO] Running com.javaclaw.nativehost.sandbox.WindowsProxyIsolationTest
+[WARNING] Tests run: 1, Failures: 0, Errors: 0, Skipped: 1, Time elapsed: 0 s -- in com.javaclaw.nativehost.sandbox.WindowsProxyIsolationTest
+[INFO] Running com.javaclaw.nativehost.sandbox.SandboxPolicyValidatorTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.011 s -- in com.javaclaw.nativehost.sandbox.SandboxPolicyValidatorTest
+[INFO] Running com.javaclaw.nativehost.sandbox.WindowsSandboxIntegrationTest
+[WARNING] Tests run: 3, Failures: 0, Errors: 0, Skipped: 3, Time elapsed: 0 s -- in com.javaclaw.nativehost.sandbox.WindowsSandboxIntegrationTest
+[INFO] Running com.javaclaw.nativehost.sandbox.LinuxProxyIsolationTest
+[WARNING] Tests run: 1, Failures: 0, Errors: 0, Skipped: 1, Time elapsed: 0 s -- in com.javaclaw.nativehost.sandbox.LinuxProxyIsolationTest
+[INFO] Running com.javaclaw.nativehost.coding.WorkspaceFilePagingTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.031 s -- in com.javaclaw.nativehost.coding.WorkspaceFilePagingTest
+[INFO] Running com.javaclaw.nativehost.coding.WorkspaceFileFacadeTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.755 s -- in com.javaclaw.nativehost.coding.WorkspaceFileFacadeTest
+[INFO] Running com.javaclaw.nativehost.coding.WorkspaceInventoryScannerTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.024 s -- in com.javaclaw.nativehost.coding.WorkspaceInventoryScannerTest
+[INFO] Running com.javaclaw.nativehost.coding.WorkspaceFileAccessIntegrationTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.177 s -- in com.javaclaw.nativehost.coding.WorkspaceFileAccessIntegrationTest
+[INFO] Running com.javaclaw.nativehost.coding.WorkspaceAtomicPatchTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.421 s -- in com.javaclaw.nativehost.coding.WorkspaceAtomicPatchTest
+[INFO] Running com.javaclaw.nativehost.coding.WorkspacePreviewSnapshotTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.423 s -- in com.javaclaw.nativehost.coding.WorkspacePreviewSnapshotTest
+[INFO] Running com.javaclaw.nativehost.coding.WorkspaceFileTreeTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.073 s -- in com.javaclaw.nativehost.coding.WorkspaceFileTreeTest
+[INFO] Running com.javaclaw.nativehost.coding.WorkspaceFileWorkerContractTest
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.149 s -- in com.javaclaw.nativehost.coding.WorkspaceFileWorkerContractTest
+[INFO] Running com.javaclaw.nativehost.coding.WorkspaceDirectoryBoundaryTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.069 s -- in com.javaclaw.nativehost.coding.WorkspaceDirectoryBoundaryTest
+[INFO] Running com.javaclaw.nativehost.startup.UserLoginStartupTest
+[INFO] Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.053 s -- in com.javaclaw.nativehost.startup.UserLoginStartupTest
+[INFO] Running com.javaclaw.nativehost.process.SupervisedWorkerProcessTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.498 s -- in com.javaclaw.nativehost.process.SupervisedWorkerProcessTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[WARNING] Tests run: 201, Failures: 0, Errors: 0, Skipped: 17
+[INFO] 
+[INFO] 
+[INFO] --------------------< com.javaclaw:javaclaw-client >--------------------
+[INFO] Building JavaClaw Java SDK and CLI 6.0.0-SNAPSHOT                  [7/8]
+[INFO]   from javaclaw-client/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:check (verify-source-format) @ javaclaw-client ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 111 files clean - 0 needs changes to be clean, 0 were already clean, 111 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (verify-source-contracts) @ javaclaw-client ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] --- enforcer:3.5.0:enforce (verify-dependency-graph) @ javaclaw-client ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- jacoco:0.8.13:prepare-agent (prepare-coverage-agent) @ javaclaw-client ---
+[INFO] argLine set to -javaagent:/Users/fengs/.m2/repository/org/jacoco/org.jacoco.agent/0.8.13/org.jacoco.agent-0.8.13-runtime.jar=destfile=/Users/fengs/Documents/openProject/JavaClaw/javaclaw-client/target/jacoco.exec
+[INFO] 
+[INFO] --- resources:3.3.0:resources (default-resources) @ javaclaw-client ---
+[INFO] skip non existing resourceDirectory /Users/fengs/Documents/openProject/JavaClaw/javaclaw-client/src/main/resources
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ javaclaw-client ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- resources:3.3.0:testResources (default-testResources) @ javaclaw-client ---
+[INFO] skip non existing resourceDirectory /Users/fengs/Documents/openProject/JavaClaw/javaclaw-client/src/test/resources
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ javaclaw-client ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- surefire:3.5.2:test (default-test) @ javaclaw-client ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running com.javaclaw.client.transport.LocalTransportTest
+java version "25" 2025-09-16 LTS
+Java(TM) SE Runtime Environment (build 25+37-LTS-3491)
+Java HotSpot(TM) 64-Bit Server VM (build 25+37-LTS-3491, mixed mode, sharing)
+java version "25" 2025-09-16 LTS
+Java(TM) SE Runtime Environment (build 25+37-LTS-3491)
+Java HotSpot(TM) 64-Bit Server VM (build 25+37-LTS-3491, mixed mode, sharing)
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.334 s -- in com.javaclaw.client.transport.LocalTransportTest
+[INFO] Running com.javaclaw.client.extension.CodingExecutionPollerTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.151 s -- in com.javaclaw.client.extension.CodingExecutionPollerTest
+[INFO] Running com.javaclaw.client.extension.BuiltinExtensionClientsTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.201 s -- in com.javaclaw.client.extension.BuiltinExtensionClientsTest
+[INFO] Running com.javaclaw.client.extension.CodingToolResultTranscriptTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.043 s -- in com.javaclaw.client.extension.CodingToolResultTranscriptTest
+[INFO] Running com.javaclaw.client.extension.ScheduleClientValidationTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.039 s -- in com.javaclaw.client.extension.ScheduleClientValidationTest
+[INFO] Running com.javaclaw.client.extension.AutomationClientsTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.119 s -- in com.javaclaw.client.extension.AutomationClientsTest
+[INFO] Running com.javaclaw.client.extension.CodingTranscriptFormatterTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.011 s -- in com.javaclaw.client.extension.CodingTranscriptFormatterTest
+[INFO] Running com.javaclaw.client.extension.CodingExtensionClientTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.030 s -- in com.javaclaw.client.extension.CodingExtensionClientTest
+[INFO] Running com.javaclaw.client.ProviderClientTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.080 s -- in com.javaclaw.client.ProviderClientTest
+[INFO] Running com.javaclaw.client.SecurityGrantClientTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.028 s -- in com.javaclaw.client.SecurityGrantClientTest
+[INFO] Running com.javaclaw.client.PromptOptimizationClientTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.011 s -- in com.javaclaw.client.PromptOptimizationClientTest
+[INFO] Running com.javaclaw.client.CredentialClientTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.016 s -- in com.javaclaw.client.CredentialClientTest
+[INFO] Running com.javaclaw.client.DiagnosticsClientTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.client.DiagnosticsClientTest
+[INFO] Running com.javaclaw.client.facade.DocumentPreviewClientTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.031 s -- in com.javaclaw.client.facade.DocumentPreviewClientTest
+[INFO] Running com.javaclaw.client.facade.TurnStreamClientTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.027 s -- in com.javaclaw.client.facade.TurnStreamClientTest
+[INFO] Running com.javaclaw.client.facade.TurnStreamStateTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.023 s -- in com.javaclaw.client.facade.TurnStreamStateTest
+[INFO] Running com.javaclaw.client.cli.CliCodingTranscriptTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.031 s -- in com.javaclaw.client.cli.CliCodingTranscriptTest
+[INFO] Running com.javaclaw.client.cli.CliTurnRunnerTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.183 s -- in com.javaclaw.client.cli.CliTurnRunnerTest
+[INFO] Running com.javaclaw.client.cli.JavaClawCliTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.733 s -- in com.javaclaw.client.cli.JavaClawCliTest
+[INFO] Running com.javaclaw.client.cli.CliCodingOutputTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.013 s -- in com.javaclaw.client.cli.CliCodingOutputTest
+[INFO] Running com.javaclaw.client.cli.CliTurnRequestTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.client.cli.CliTurnRequestTest
+[INFO] Running com.javaclaw.client.cli.CliInteractionsTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.075 s -- in com.javaclaw.client.cli.CliInteractionsTest
+[INFO] Running com.javaclaw.client.cli.CliInputReaderTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.009 s -- in com.javaclaw.client.cli.CliInputReaderTest
+[INFO] Running com.javaclaw.client.cli.CliCodingCommandTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.client.cli.CliCodingCommandTest
+[INFO] Running com.javaclaw.client.RpcClientConnectionTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.086 s -- in com.javaclaw.client.RpcClientConnectionTest
+[INFO] Running com.javaclaw.client.ManagementFacadesTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.056 s -- in com.javaclaw.client.ManagementFacadesTest
+[INFO] Running com.javaclaw.client.ToolClientTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.javaclaw.client.ToolClientTest
+[INFO] Running com.javaclaw.client.BuiltinExtensionManagementClientTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.008 s -- in com.javaclaw.client.BuiltinExtensionManagementClientTest
+[INFO] Running com.javaclaw.client.AttachmentClientTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.082 s -- in com.javaclaw.client.AttachmentClientTest
+[INFO] Running com.javaclaw.client.JavaClawClientTest
+[INFO] Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.029 s -- in com.javaclaw.client.JavaClawClientTest
+[INFO] Running com.javaclaw.client.AgentClientTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.016 s -- in com.javaclaw.client.AgentClientTest
+[INFO] Running com.javaclaw.client.ExecutionClientTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.010 s -- in com.javaclaw.client.ExecutionClientTest
+[INFO] Running com.javaclaw.client.RpcClientConnectionFailureTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.javaclaw.client.RpcClientConnectionFailureTest
+[INFO] Running com.javaclaw.client.AgentRoleClientTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.020 s -- in com.javaclaw.client.AgentRoleClientTest
+[INFO] Running com.javaclaw.client.PermissionProfileClientTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.026 s -- in com.javaclaw.client.PermissionProfileClientTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[INFO] Tests run: 122, Failures: 0, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] 
+[INFO] -------------------< com.javaclaw:javaclaw-desktop >--------------------
+[INFO] Building JavaClaw JavaFX SDK Client 6.0.0-SNAPSHOT                 [8/8]
+[INFO]   from javaclaw-desktop/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:check (verify-source-format) @ javaclaw-desktop ---
+[INFO] Spotless.Format is keeping 2 files clean - 0 needs changes to be clean, 0 were already clean, 2 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 401 files clean - 0 needs changes to be clean, 0 were already clean, 401 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (verify-source-contracts) @ javaclaw-desktop ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] --- enforcer:3.5.0:enforce (verify-dependency-graph) @ javaclaw-desktop ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- jacoco:0.8.13:prepare-agent (prepare-coverage-agent) @ javaclaw-desktop ---
+[INFO] argLine set to -javaagent:/Users/fengs/.m2/repository/org/jacoco/org.jacoco.agent/0.8.13/org.jacoco.agent-0.8.13-runtime.jar=destfile=/Users/fengs/Documents/openProject/JavaClaw/javaclaw-desktop/target/jacoco.exec
+[INFO] 
+[INFO] --- resources:3.3.0:resources (default-resources) @ javaclaw-desktop ---
+[INFO] Copying 21 resources
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ javaclaw-desktop ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 259 source files with javac [debug parameters release 25 module-path] to target/classes
+[INFO] JDK-8318913 workaround: patched module-info.class requires version from [25] to [25] on 4 JDK modules [java.base, jdk.jsobject, java.prefs, java.desktop]
+[WARNING] /Users/fengs/Documents/openProject/JavaClaw/javaclaw-desktop/src/main/java/module-info.java:[11,17] 模块 jdk.jsobject 已过时, 且标记为待删除
+[WARNING] /Users/fengs/Documents/openProject/JavaClaw/javaclaw-desktop/src/main/java/com/javaclaw/desktop/web/WebSurfaceHost.java:[284,19] netscape.javascript 中的 netscape.javascript.JSObject 已过时, 且标记为待删除
+[INFO] 
+[INFO] --- resources:3.3.0:testResources (default-testResources) @ javaclaw-desktop ---
+[INFO] skip non existing resourceDirectory /Users/fengs/Documents/openProject/JavaClaw/javaclaw-desktop/src/test/resources
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ javaclaw-desktop ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 142 source files with javac [debug parameters release 25 module-path] to target/test-classes
+[INFO] 
+[INFO] --- surefire:3.5.2:test (default-test) @ javaclaw-desktop ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running com.javaclaw.desktop.settings.CodingSettingsPageTest
+9月 08, 2026 11:28:58 上午 com.sun.javafx.application.PlatformImpl startup
+警告: Unsupported JavaFX configuration: classes were loaded from 'unnamed module @4a8355dd'
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.142 s -- in com.javaclaw.desktop.settings.CodingSettingsPageTest
+[INFO] Running com.javaclaw.desktop.settings.ProviderReferencePresentersTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.013 s -- in com.javaclaw.desktop.settings.ProviderReferencePresentersTest
+[INFO] Running com.javaclaw.desktop.settings.SettingsLabelsTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s -- in com.javaclaw.desktop.settings.SettingsLabelsTest
+[INFO] Running com.javaclaw.desktop.settings.ManagementScopeSessionFxTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.510 s -- in com.javaclaw.desktop.settings.ManagementScopeSessionFxTest
+[INFO] Running com.javaclaw.desktop.settings.McpSettingsPageTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.105 s -- in com.javaclaw.desktop.settings.McpSettingsPageTest
+[INFO] Running com.javaclaw.desktop.settings.ProviderModelDiscoveryPresenterTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.006 s -- in com.javaclaw.desktop.settings.ProviderModelDiscoveryPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.McpOAuthSettingsPresenterTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.desktop.settings.McpOAuthSettingsPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.AppearanceSettingsPageTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.033 s -- in com.javaclaw.desktop.settings.AppearanceSettingsPageTest
+[INFO] Running com.javaclaw.desktop.settings.ExecutionSelectionControlTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.034 s -- in com.javaclaw.desktop.settings.ExecutionSelectionControlTest
+[INFO] Running com.javaclaw.desktop.settings.ManagementScopePresenterTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.javaclaw.desktop.settings.ManagementScopePresenterTest
+[INFO] Running com.javaclaw.desktop.settings.ExecutionSelectionPageRefreshTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.122 s -- in com.javaclaw.desktop.settings.ExecutionSelectionPageRefreshTest
+[INFO] Running com.javaclaw.desktop.settings.AutomationJobSettingsPresenterTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.011 s -- in com.javaclaw.desktop.settings.AutomationJobSettingsPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.ProviderContextPresenterTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.desktop.settings.ProviderContextPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.ProviderVerificationPresenterTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.008 s -- in com.javaclaw.desktop.settings.ProviderVerificationPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.ViewPageCursorStateTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.221 s -- in com.javaclaw.desktop.settings.ViewPageCursorStateTest
+[INFO] Running com.javaclaw.desktop.settings.ExtensionManagementSettingsPagesTest
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.344 s -- in com.javaclaw.desktop.settings.ExtensionManagementSettingsPagesTest
+[INFO] Running com.javaclaw.desktop.settings.AgentRoleDraftProtectionTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.018 s -- in com.javaclaw.desktop.settings.AgentRoleDraftProtectionTest
+[INFO] Running com.javaclaw.desktop.settings.PromptPreviewSettingsPresenterTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.javaclaw.desktop.settings.PromptPreviewSettingsPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.ProviderModelCatalogEditorTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.desktop.settings.ProviderModelCatalogEditorTest
+[INFO] Running com.javaclaw.desktop.settings.ViewGraphBrowsingPageTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.096 s -- in com.javaclaw.desktop.settings.ViewGraphBrowsingPageTest
+[INFO] Running com.javaclaw.desktop.settings.ManagementCenterWindowTest
+2026-09-08 11:29:01.833 java[16719:4978808] error messaging the mach port for IMKCFRunLoopWakeUpReliable
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.927 s -- in com.javaclaw.desktop.settings.ManagementCenterWindowTest
+[INFO] Running com.javaclaw.desktop.settings.BuiltinExtensionSettingsPresenterTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.desktop.settings.BuiltinExtensionSettingsPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.ExecutionSelectionPanelTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.255 s -- in com.javaclaw.desktop.settings.ExecutionSelectionPanelTest
+[INFO] Running com.javaclaw.desktop.settings.McpSettingsPresenterTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s -- in com.javaclaw.desktop.settings.McpSettingsPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.FxStateDispatcherTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.042 s -- in com.javaclaw.desktop.settings.FxStateDispatcherTest
+[INFO] Running com.javaclaw.desktop.settings.CodingPreparationStatusTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.006 s -- in com.javaclaw.desktop.settings.CodingPreparationStatusTest
+[INFO] Running com.javaclaw.desktop.settings.ToolCatalogSelectionPresenterTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.desktop.settings.ToolCatalogSelectionPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.AutomationJobSettingsPageTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.025 s -- in com.javaclaw.desktop.settings.AutomationJobSettingsPageTest
+[INFO] Running com.javaclaw.desktop.settings.SiteCredentialSettingsPresenterTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s -- in com.javaclaw.desktop.settings.SiteCredentialSettingsPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.OtherManagementSettingsPagesTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.085 s -- in com.javaclaw.desktop.settings.OtherManagementSettingsPagesTest
+[INFO] Running com.javaclaw.desktop.settings.CoreSettingsPresentersTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.030 s -- in com.javaclaw.desktop.settings.CoreSettingsPresentersTest
+[INFO] Running com.javaclaw.desktop.settings.SdkExtensionSettingsGatewayTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.021 s -- in com.javaclaw.desktop.settings.SdkExtensionSettingsGatewayTest
+[INFO] Running com.javaclaw.desktop.settings.CoreSettingsPagesTest
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.286 s -- in com.javaclaw.desktop.settings.CoreSettingsPagesTest
+[INFO] Running com.javaclaw.desktop.settings.ManagedWorktreeSettingsPresenterTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.javaclaw.desktop.settings.ManagedWorktreeSettingsPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.ProviderSettingsPresenterStateTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.javaclaw.desktop.settings.ProviderSettingsPresenterStateTest
+[INFO] Running com.javaclaw.desktop.settings.ViewSchemaRefreshTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.203 s -- in com.javaclaw.desktop.settings.ViewSchemaRefreshTest
+[INFO] Running com.javaclaw.desktop.settings.ProviderSetupPresenterTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.desktop.settings.ProviderSetupPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.SecurityGrantSettingsPresentersTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.desktop.settings.SecurityGrantSettingsPresentersTest
+[INFO] Running com.javaclaw.desktop.settings.PromptOptimizationSettingsPresenterTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.desktop.settings.PromptOptimizationSettingsPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.InstructionSettingsPresenterTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.desktop.settings.InstructionSettingsPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.McpExternalDataPresenterTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.desktop.settings.McpExternalDataPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.ProviderDraftTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.desktop.settings.ProviderDraftTest
+[INFO] Running com.javaclaw.desktop.settings.AsyncSystemSettingsPageTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.024 s -- in com.javaclaw.desktop.settings.AsyncSystemSettingsPageTest
+[INFO] Running com.javaclaw.desktop.settings.ProviderEndpointPreviewTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.desktop.settings.ProviderEndpointPreviewTest
+[INFO] Running com.javaclaw.desktop.settings.ViewSchemaSettingsPageTest
+[INFO] Tests run: 10, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.274 s -- in com.javaclaw.desktop.settings.ViewSchemaSettingsPageTest
+[INFO] Running com.javaclaw.desktop.settings.PermissionSettingsEdgeCasesTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.javaclaw.desktop.settings.PermissionSettingsEdgeCasesTest
+[INFO] Running com.javaclaw.desktop.settings.BundleSettingsPresentersTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.javaclaw.desktop.settings.BundleSettingsPresentersTest
+[INFO] Running com.javaclaw.desktop.settings.SystemSettingsPagesTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.015 s -- in com.javaclaw.desktop.settings.SystemSettingsPagesTest
+[INFO] Running com.javaclaw.desktop.settings.AgentRoleFilePanelTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.010 s -- in com.javaclaw.desktop.settings.AgentRoleFilePanelTest
+[INFO] Running com.javaclaw.desktop.settings.PromptOptimizationPanelTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.091 s -- in com.javaclaw.desktop.settings.PromptOptimizationPanelTest
+[INFO] Running com.javaclaw.desktop.settings.AgentRoleSettingsPageTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.322 s -- in com.javaclaw.desktop.settings.AgentRoleSettingsPageTest
+[INFO] Running com.javaclaw.desktop.settings.AgentRoleSettingsPresenterTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.desktop.settings.AgentRoleSettingsPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.JavaPreferencesManagementWindowStoreTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.desktop.settings.JavaPreferencesManagementWindowStoreTest
+[INFO] Running com.javaclaw.desktop.settings.ManagedWorktreeSettingsPageTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.020 s -- in com.javaclaw.desktop.settings.ManagedWorktreeSettingsPageTest
+[INFO] Running com.javaclaw.desktop.DesktopLegacyHistoryTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.158 s -- in com.javaclaw.desktop.DesktopLegacyHistoryTest
+[INFO] Running com.javaclaw.desktop.DesktopStateModelTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.javaclaw.desktop.DesktopStateModelTest
+[INFO] Running com.javaclaw.desktop.LauncherSessionTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in com.javaclaw.desktop.LauncherSessionTest
+[INFO] Running com.javaclaw.desktop.StartupWaitingConnectorTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.008 s -- in com.javaclaw.desktop.StartupWaitingConnectorTest
+[INFO] Running com.javaclaw.desktop.ViewSelectionProjectionTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.javaclaw.desktop.ViewSelectionProjectionTest
+[INFO] Running com.javaclaw.desktop.ComboBoxPopupStyleTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 6.884 s -- in com.javaclaw.desktop.ComboBoxPopupStyleTest
+[INFO] Running com.javaclaw.desktop.shell.ShellChatFallbackTest
+[ERROR] Tests run: 3, Failures: 2, Errors: 0, Skipped: 0, Time elapsed: 0.191 s <<< FAILURE! -- in com.javaclaw.desktop.shell.ShellChatFallbackTest
+[ERROR] com.javaclaw.desktop.shell.ShellChatFallbackTest.原生键盘和滚动条阅读暂停跟随但程序定位不会 -- Time elapsed: 0.053 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: expected: <false> but was: <true>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertFalse.failNotFalse(AssertFalse.java:63)
+	at org.junit.jupiter.api.AssertFalse.assertFalse(AssertFalse.java:36)
+	at org.junit.jupiter.api.AssertFalse.assertFalse(AssertFalse.java:31)
+	at org.junit.jupiter.api.Assertions.assertFalse(Assertions.java:231)
+	at com.javaclaw.desktop.shell.ShellChatFallbackTest.lambda$原生键盘和滚动条阅读暂停跟随但程序定位不会$0(ShellChatFallbackTest.java:85)
+	at com.javaclaw.desktop.FxTestSupport.lambda$run$0(FxTestSupport.java:35)
+	at com.sun.javafx.application.PlatformImpl.lambda$runLater$0(PlatformImpl.java:424)
+	at com.sun.glass.ui.InvokeLaterDispatcher$Future.run(InvokeLaterDispatcher.java:95)
+
+[ERROR] com.javaclaw.desktop.shell.ShellChatFallbackTest.原生向上滚动暂停跟随且新分片保留位置直到用户返回最新 -- Time elapsed: 0.063 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: expected: <false> but was: <true>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertFalse.failNotFalse(AssertFalse.java:63)
+	at org.junit.jupiter.api.AssertFalse.assertFalse(AssertFalse.java:36)
+	at org.junit.jupiter.api.AssertFalse.assertFalse(AssertFalse.java:31)
+	at org.junit.jupiter.api.Assertions.assertFalse(Assertions.java:231)
+	at com.javaclaw.desktop.shell.ShellChatFallbackTest.lambda$原生向上滚动暂停跟随且新分片保留位置直到用户返回最新$0(ShellChatFallbackTest.java:61)
+	at com.javaclaw.desktop.FxTestSupport.lambda$run$0(FxTestSupport.java:35)
+	at com.sun.javafx.application.PlatformImpl.lambda$runLater$0(PlatformImpl.java:424)
+	at com.sun.glass.ui.InvokeLaterDispatcher$Future.run(InvokeLaterDispatcher.java:95)
+
+[INFO] Running com.javaclaw.desktop.shell.DesktopCodingOutputControllerTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.desktop.shell.DesktopCodingOutputControllerTest
+[INFO] Running com.javaclaw.desktop.shell.CodingExecutionPanelTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.010 s -- in com.javaclaw.desktop.shell.CodingExecutionPanelTest
+[INFO] Running com.javaclaw.desktop.appearance.JavaPreferencesAppearanceStoreTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in com.javaclaw.desktop.appearance.JavaPreferencesAppearanceStoreTest
+[INFO] Running com.javaclaw.desktop.appearance.DesktopAppearanceManagerTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.011 s -- in com.javaclaw.desktop.appearance.DesktopAppearanceManagerTest
+[INFO] Running com.javaclaw.desktop.web.WebSurfaceRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 6.142 s -- in com.javaclaw.desktop.web.WebSurfaceRecoveryTest
+[INFO] Running com.javaclaw.desktop.web.WebSurfaceHostTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.992 s -- in com.javaclaw.desktop.web.WebSurfaceHostTest
+[INFO] Running com.javaclaw.desktop.web.WebSurfaceMenuTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.479 s -- in com.javaclaw.desktop.web.WebSurfaceMenuTest
+[INFO] Running com.javaclaw.desktop.web.WebSurfaceRuntimeTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.741 s -- in com.javaclaw.desktop.web.WebSurfaceRuntimeTest
+[INFO] Running com.javaclaw.desktop.web.SafeMarkdownTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.011 s -- in com.javaclaw.desktop.web.SafeMarkdownTest
+[INFO] Running com.javaclaw.desktop.web.GraphAppearanceAcceptanceTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.325 s -- in com.javaclaw.desktop.web.GraphAppearanceAcceptanceTest
+[INFO] Running com.javaclaw.desktop.web.WebResourceIntegrityTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.desktop.web.WebResourceIntegrityTest
+[INFO] Running com.javaclaw.desktop.component.PlatformDialogsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.094 s -- in com.javaclaw.desktop.component.PlatformDialogsTest
+[INFO] Running com.javaclaw.desktop.component.InputResponseSchemaTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.013 s -- in com.javaclaw.desktop.component.InputResponseSchemaTest
+[INFO] Running com.javaclaw.desktop.component.ManagementComponentsTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.javaclaw.desktop.component.ManagementComponentsTest
+[INFO] Running com.javaclaw.desktop.component.PlatformComponentFactoryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.desktop.component.PlatformComponentFactoryTest
+[INFO] Running com.javaclaw.desktop.document.DocumentTextPagesTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.015 s -- in com.javaclaw.desktop.document.DocumentTextPagesTest
+[INFO] Running com.javaclaw.desktop.document.PreviewImageDecoderTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.049 s -- in com.javaclaw.desktop.document.PreviewImageDecoderTest
+[INFO] Running com.javaclaw.desktop.document.DocumentPreviewPaneTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.083 s -- in com.javaclaw.desktop.document.DocumentPreviewPaneTest
+[INFO] Running com.javaclaw.desktop.document.DocumentPreviewLeaseTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.100 s -- in com.javaclaw.desktop.document.DocumentPreviewLeaseTest
+[INFO] Running com.javaclaw.desktop.document.DocumentPreviewLoaderTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.026 s -- in com.javaclaw.desktop.document.DocumentPreviewLoaderTest
+[INFO] Running com.javaclaw.desktop.DesktopShellControllerTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.803 s -- in com.javaclaw.desktop.DesktopShellControllerTest
+[INFO] Running com.javaclaw.desktop.state.TranscriptStateTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s -- in com.javaclaw.desktop.state.TranscriptStateTest
+[INFO] Running com.javaclaw.desktop.DesktopPresenterTest
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.465 s -- in com.javaclaw.desktop.DesktopPresenterTest
+[INFO] Running com.javaclaw.desktop.acceptance.chatdocument.ChatDocumentAcceptanceTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.734 s -- in com.javaclaw.desktop.acceptance.chatdocument.ChatDocumentAcceptanceTest
+[INFO] Running com.javaclaw.desktop.acceptance.chatdocument.DocumentVisualAcceptanceTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.992 s -- in com.javaclaw.desktop.acceptance.chatdocument.DocumentVisualAcceptanceTest
+[INFO] Running com.javaclaw.desktop.DesktopTurnStreamCoordinatorTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.049 s -- in com.javaclaw.desktop.DesktopTurnStreamCoordinatorTest
+[INFO] Running com.javaclaw.desktop.DesktopLaunchOptionsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.021 s -- in com.javaclaw.desktop.DesktopLaunchOptionsTest
+[INFO] Running com.javaclaw.desktop.view.ViewDynamicOptionsTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in com.javaclaw.desktop.view.ViewDynamicOptionsTest
+[INFO] Running com.javaclaw.desktop.view.ViewRenderSessionTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.397 s -- in com.javaclaw.desktop.view.ViewRenderSessionTest
+[INFO] Running com.javaclaw.desktop.view.ViewSchemaRendererBoundaryTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.008 s -- in com.javaclaw.desktop.view.ViewSchemaRendererBoundaryTest
+[INFO] Running com.javaclaw.desktop.view.ViewFormRendererBoundaryTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.008 s -- in com.javaclaw.desktop.view.ViewFormRendererBoundaryTest
+[INFO] Running com.javaclaw.desktop.view.ViewAttachmentFieldControlTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.008 s -- in com.javaclaw.desktop.view.ViewAttachmentFieldControlTest
+[INFO] Running com.javaclaw.desktop.view.ViewCommandBindingResolverTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in com.javaclaw.desktop.view.ViewCommandBindingResolverTest
+[INFO] Running com.javaclaw.desktop.view.ViewStructuredListControlBoundaryTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.010 s -- in com.javaclaw.desktop.view.ViewStructuredListControlBoundaryTest
+[INFO] Running com.javaclaw.desktop.view.ViewStructuredListRendererTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.008 s -- in com.javaclaw.desktop.view.ViewStructuredListRendererTest
+[INFO] Running com.javaclaw.desktop.view.ViewDynamicOptionsRendererTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.desktop.view.ViewDynamicOptionsRendererTest
+[INFO] Running com.javaclaw.desktop.view.ViewDynamicOptionsPolicyTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.desktop.view.ViewDynamicOptionsPolicyTest
+[INFO] Running com.javaclaw.desktop.view.ViewGraphWindowTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.012 s -- in com.javaclaw.desktop.view.ViewGraphWindowTest
+[INFO] Running com.javaclaw.desktop.view.ChatSurfaceTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.625 s -- in com.javaclaw.desktop.view.ChatSurfaceTest
+[INFO] Running com.javaclaw.desktop.view.ViewSchemaRendererTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.022 s -- in com.javaclaw.desktop.view.ViewSchemaRendererTest
+[INFO] Running com.javaclaw.desktop.view.ViewSchemaPolicyTest
+[INFO] Tests run: 14, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.006 s -- in com.javaclaw.desktop.view.ViewSchemaPolicyTest
+[INFO] Running com.javaclaw.desktop.view.TranscriptPresenterTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.027 s -- in com.javaclaw.desktop.view.TranscriptPresenterTest
+[INFO] Running com.javaclaw.desktop.view.ViewCommandBindingRendererTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.012 s -- in com.javaclaw.desktop.view.ViewCommandBindingRendererTest
+[INFO] Running com.javaclaw.desktop.view.ViewStructuredListValidationTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.desktop.view.ViewStructuredListValidationTest
+[INFO] Running com.javaclaw.desktop.view.ViewRequestEpochTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in com.javaclaw.desktop.view.ViewRequestEpochTest
+[INFO] Running com.javaclaw.desktop.DesktopConversationNavigationTest
+[ERROR] Tests run: 11, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 0.936 s <<< FAILURE! -- in com.javaclaw.desktop.DesktopConversationNavigationTest
+[ERROR] com.javaclaw.desktop.DesktopConversationNavigationTest.导航到另一工作区并返回原会话仍保持真实作用域 -- Time elapsed: 0.090 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: expected: <2> but was: <1>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertEquals.failNotEqual(AssertEquals.java:197)
+	at org.junit.jupiter.api.AssertEquals.assertEquals(AssertEquals.java:150)
+	at org.junit.jupiter.api.AssertEquals.assertEquals(AssertEquals.java:145)
+	at org.junit.jupiter.api.Assertions.assertEquals(Assertions.java:531)
+	at com.javaclaw.desktop.DesktopConversationNavigationTest.导航到另一工作区并返回原会话仍保持真实作用域(DesktopConversationNavigationTest.java:136)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:565)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+
+[INFO] Running com.javaclaw.desktop.AutomationJobSdkGatewayTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.016 s -- in com.javaclaw.desktop.AutomationJobSdkGatewayTest
+[INFO] Running com.javaclaw.desktop.InputRequestPanelTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.042 s -- in com.javaclaw.desktop.InputRequestPanelTest
+[INFO] Running com.javaclaw.desktop.SelectedControlContrastTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.119 s -- in com.javaclaw.desktop.SelectedControlContrastTest
+[INFO] Running com.javaclaw.desktop.DesktopStylesheetsTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.006 s -- in com.javaclaw.desktop.DesktopStylesheetsTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[ERROR] Failures: 
+[ERROR]   DesktopConversationNavigationTest.导航到另一工作区并返回原会话仍保持真实作用域:136 expected: <2> but was: <1>
+[ERROR]   ShellChatFallbackTest.lambda$原生向上滚动暂停跟随且新分片保留位置直到用户返回最新$0:61 expected: <false> but was: <true>
+[ERROR]   ShellChatFallbackTest.lambda$原生键盘和滚动条阅读暂停跟随但程序定位不会$0:85 expected: <false> but was: <true>
+[INFO] 
+[ERROR] Tests run: 364, Failures: 3, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Summary for JavaClaw 6 6.0.0-SNAPSHOT:
+[INFO] 
+[INFO] JavaClaw 6 ......................................... SUCCESS [  0.822 s]
+[INFO] JavaClaw Immutable API ............................. SUCCESS [  1.050 s]
+[INFO] JavaClaw Extension SPI ............................. SUCCESS [  0.875 s]
+[INFO] JavaClaw App Protocol v3 ........................... SUCCESS [  1.737 s]
+[INFO] JavaClaw Built-in Extension Contracts .............. SUCCESS [  0.751 s]
+[INFO] JavaClaw Native Hosts .............................. SUCCESS [ 22.847 s]
+[INFO] JavaClaw Java SDK and CLI .......................... SUCCESS [  4.622 s]
+[INFO] JavaClaw JavaFX SDK Client ......................... FAILURE [ 41.482 s]
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  01:14 min
+[INFO] Finished at: 2026-09-08T11:29:35+08:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.5.2:test (default-test) on project javaclaw-desktop: There are test failures.
+[ERROR] 
+[ERROR] See /Users/fengs/Documents/openProject/JavaClaw/javaclaw-desktop/target/surefire-reports for the individual test results.
+[ERROR] See dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException
+[ERROR] 
+[ERROR] After correcting the problems, you can resume the build with the command
+[ERROR]   mvn <args> -rf :javaclaw-desktop

@@ -1,0 +1,80 @@
+
+✦
+JavaClaw
+6.0
+界面功能验收
+＋
+＋ 新建对话
+对话
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+记忆事实：办公地点上海
+对话记忆学习
+⚙  设置与管理
+JavaClaw App Server 6.0.0-SNAPSHOT
+☰
+●
+记忆事实：办公地点上海
+选择工作区和权限配置后开始任务
+审批
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+Agent · 继承
+模型 · 继承
+推理 · 继承
+权限 · 继承
+恢复继承
+查看继承来源与版本
+Agent 固定模型优先；有效权限和预算由服务端在新任务开始时计算。
+刷新配置
+停止
+发送 ↑
+待处理
+文档
+待处理事项
+×
+等待输入
+当前没有等待输入的任务。
+工具审批
+当前没有等待审批的工具调用。
+拒绝
+批准

@@ -68,7 +68,8 @@ final class AppServerRuntimeBootstrap {
                 schemas,
                 foundation.json(),
                 foundation.clock(),
-                foundation.core().liveBudgets());
+                foundation.core().liveBudgets(),
+                foundation.streams());
         DeferredPorts deferred = new DeferredPorts();
         ScheduleLifecycleCoordinator scheduleLifecycle =
                 startup.own(new ScheduleLifecycleCoordinator(foundation.lifecycle(), foundation.loginStartup()));
@@ -340,7 +341,8 @@ final class AppServerRuntimeBootstrap {
                 tools,
                 tools,
                 journal,
-                new H2ModelEventSink(foundation.database(), foundation.json(), foundation.clock()),
+                new H2ModelEventSink(
+                        foundation.database(), foundation.json(), foundation.clock(), foundation.streams()),
                 coding);
         return new DefaultTurnHarness(services, foundation.clock());
     }

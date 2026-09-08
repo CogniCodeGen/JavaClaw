@@ -14,6 +14,12 @@
       "maxItems": 32,
       "items": {"$ref": "#/$defs/dataSource"}
     },
+    "graphBrowsing": {
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": {"$ref": "#/$defs/identifier"},
+      "additionalProperties": {"$ref": "#/$defs/graphBrowsing"}
+    },
     "nodes": {
       "type": "array",
       "minItems": 1,
@@ -22,6 +28,18 @@
     }
   },
   "$defs": {
+    "graphBrowsing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["neighborsQuery", "windowParameter", "queryField", "includeInactiveField", "admittedIdsField"],
+      "properties": {
+        "neighborsQuery": {"$ref": "#/$defs/operation"},
+        "windowParameter": {"$ref": "#/$defs/fieldName"},
+        "queryField": {"$ref": "#/$defs/fieldName"},
+        "includeInactiveField": {"$ref": "#/$defs/fieldName"},
+        "admittedIdsField": {"$ref": "#/$defs/fieldName"}
+      }
+    },
     "identifier": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,127}$"},
     "operation": {
       "type": "string",

@@ -1,0 +1,7 @@
+FAIL MemoryConflictRecoveryTest.laterProposalCanReplaceCurrentMemoryWithoutReintroducingSupersededParticipants org.opentest4j.AssertionFailedError: expected: <{resolved-office=1}> but was: <{old=2, resolved-office=1}>
+FAIL MemoryConflictRecoveryTest.historicalTombstoneCanBeInspectedAndExplicitlyClosedWithoutRestoringMemory java.lang.IllegalArgumentException: Memory does not exist
+PASS MemoryConflictRecoveryTest.tombstoneRequiresItsStorageRevisionAndCannotParticipateInReplacement
+PASS MemoryConflictRecoveryTest.restoringAfterEditorReadInvalidatesTheDecisionAndRefreshPreservesRestoredMemory
+FAIL MemoryConflictRecoveryTest.pendingConflictBlocksDeletionWithoutChangingEitherRevision org.opentest4j.AssertionFailedError: Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.
+FAIL MemoryConflictRecoveryTest.tombstoneLookupReadsPastTheFirstHistoryPage java.lang.IllegalArgumentException: Memory does not exist
+TOTAL passed=2 failed=4

@@ -240,7 +240,9 @@ class BuiltinOrchestrationTest {
                 support.embeddings,
                 AutomationStepPort.unavailable(),
                 ScheduledCommandPort.unavailable(),
-                com.javaclaw.extension.spi.ScheduleLifecyclePort.unavailable());
+                com.javaclaw.extension.spi.ScheduleLifecyclePort.unavailable(),
+                com.javaclaw.extension.spi.ConversationEvidencePort.unavailable(),
+                com.javaclaw.extension.spi.ScheduleDefinitionBindingPort.unavailable());
     }
 
     private static ExtensionJob job(

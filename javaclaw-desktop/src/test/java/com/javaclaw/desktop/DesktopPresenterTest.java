@@ -401,7 +401,9 @@ class DesktopPresenterTest {
 
             presenter.connect();
             await(() -> latest.get().connection().status() == ConnectionState.Status.CONNECTED
-                    && latest.get().threads().selectedThread().isPresent());
+                    && latest.get().threads().selectedThread().isPresent()
+                    && latest.get().transcript().nextSequence() == 1
+                    && !latest.get().interaction().busy());
             assertThrows(IllegalArgumentException.class, () -> presenter.send(" "));
             assertThrows(NullPointerException.class, () -> presenter.send(null));
             assertThrows(IllegalArgumentException.class, () -> new ViewCommandInvocation("put", Map.of(), -1, false));

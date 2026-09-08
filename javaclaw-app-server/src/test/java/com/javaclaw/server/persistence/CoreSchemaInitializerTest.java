@@ -27,7 +27,7 @@ class CoreSchemaInitializerTest {
         assertSingleBaseline(database);
         try (Connection connection = database.open();
                 var statement = connection.createStatement()) {
-            assertEquals(72, count(connection, "INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'CORE'"));
+            assertEquals(77, count(connection, "INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'CORE'"));
             for (String table : List.of(
                     "AGENT_TURN",
                     "AGENT_ROLE",
@@ -36,10 +36,15 @@ class CoreSchemaInitializerTest {
                     "CREDENTIAL_SECRET",
                     "PRIVATE_NETWORK_GRANT",
                     "MCP_ENDPOINT",
-                    "CHILD_TURN_RESERVATION")) {
+                    "CHILD_TURN_RESERVATION",
+                    "CONVERSATION_COMPLETION_HEAD",
+                    "CONVERSATION_COMPLETION",
+                    "CONVERSATION_EVIDENCE_EXCLUSION",
+                    "EXTENSION_JOB_CANCELLATION")) {
                 assertEquals(0, count(connection, "CORE." + table));
             }
             assertEquals(1, count(connection, "CORE.ATTACHMENT_UPLOAD_QUOTA"));
+            assertEquals(1, count(connection, "CORE.CONVERSATION_COMPLETION_INIT"));
             statement.executeUpdate("""
                     INSERT INTO CORE.COMMAND_RESULT
                         (IDEMPOTENCY_KEY, METHOD_NAME, REQUEST_DIGEST, RESPONSE_PAYLOAD, CREATED_AT)
@@ -71,13 +76,17 @@ class CoreSchemaInitializerTest {
         }
         PersistenceException failure = assertThrows(PersistenceException.class, database::initialize);
         assertTrue(failure.getMessage().contains("baseline checksum"));
+        assertTrue(failure.getMessage().contains(database.dataRoot().toString()));
+        assertTrue(failure.getMessage().contains("数据库摘要=" + "f".repeat(64)));
+        assertTrue(failure.getMessage().contains("程序摘要=" + BASELINE_CHECKSUM));
+        assertTrue(failure.getMessage().contains("备份完整数据目录"));
         try (Connection connection = database.open();
                 var statement = connection.createStatement();
                 var result = statement.executeQuery("SELECT CHECKSUM FROM CORE.SCHEMA_HISTORY WHERE VERSION = 1")) {
             assertTrue(result.next());
             assertEquals("f".repeat(64), result.getString(1));
             assertFalse(result.next());
-            assertEquals(72, count(connection, "INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'CORE'"));
+            assertEquals(77, count(connection, "INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'CORE'"));
         }
     }
 

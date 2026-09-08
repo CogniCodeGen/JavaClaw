@@ -1,0 +1,104 @@
+10:50:25,780 |-INFO in ch.qos.logback.classic.LoggerContext[default] - This is logback-classic version 1.5.16
+10:50:25,780 |-INFO in ch.qos.logback.classic.util.ContextInitializer@7fcff1b9 - No custom configurators were discovered as a service.
+10:50:25,780 |-INFO in ch.qos.logback.classic.util.ContextInitializer@7fcff1b9 - Trying to configure with ch.qos.logback.classic.joran.SerializedModelConfigurator
+10:50:25,781 |-INFO in ch.qos.logback.classic.util.ContextInitializer@7fcff1b9 - Constructed configurator of type class ch.qos.logback.classic.joran.SerializedModelConfigurator
+10:50:25,781 |-INFO in ch.qos.logback.classic.LoggerContext[default] - Could NOT find resource [logback-test.scmo]
+10:50:25,781 |-INFO in ch.qos.logback.classic.LoggerContext[default] - Could NOT find resource [logback.scmo]
+10:50:25,782 |-INFO in ch.qos.logback.classic.util.ContextInitializer@7fcff1b9 - ch.qos.logback.classic.joran.SerializedModelConfigurator.configure() call lasted 1 milliseconds. ExecutionStatus=INVOKE_NEXT_IF_ANY
+10:50:25,782 |-INFO in ch.qos.logback.classic.util.ContextInitializer@7fcff1b9 - Trying to configure with ch.qos.logback.classic.util.DefaultJoranConfigurator
+10:50:25,782 |-INFO in ch.qos.logback.classic.util.ContextInitializer@7fcff1b9 - Constructed configurator of type class ch.qos.logback.classic.util.DefaultJoranConfigurator
+10:50:25,782 |-INFO in ch.qos.logback.classic.LoggerContext[default] - Could NOT find resource [logback-test.xml]
+10:50:25,782 |-INFO in ch.qos.logback.classic.LoggerContext[default] - Found resource [logback.xml] at [file:/Users/fengs/Documents/openProject/JavaClaw/javaclaw-app-server/target/classes/logback.xml]
+10:50:25,820 |-INFO in ch.qos.logback.core.model.processor.ModelInterpretationContext@697446d4 - value "/Users/fengs/.javaclaw/data-v6/logs" substituted for "${javaclaw.log.dir:-${user.home}/.javaclaw/data-v6/logs}"
+10:50:25,821 |-INFO in ch.qos.logback.core.model.processor.ModelInterpretationContext@697446d4 - value "process" substituted for "${javaclaw.log.process:-process}"
+10:50:25,821 |-INFO in ch.qos.logback.core.model.processor.ShutdownHookModelHandler - About to instantiate shutdown hook of type [ch.qos.logback.core.hook.DefaultShutdownHook]
+10:50:25,821 |-INFO in ch.qos.logback.core.util.ContextUtil@76adb233 - Registering shutdown hook with JVM runtime.
+10:50:25,821 |-INFO in ch.qos.logback.core.model.processor.AppenderModelHandler - Processing appender named [ROLLING_FILE]
+10:50:25,821 |-INFO in ch.qos.logback.core.model.processor.AppenderModelHandler - About to instantiate appender of type [ch.qos.logback.core.rolling.RollingFileAppender]
+10:50:25,825 |-INFO in ch.qos.logback.core.model.processor.ModelInterpretationContext@697446d4 - value "/Users/fengs/.javaclaw/data-v6/logs/process.log" substituted for "${LOG_DIR}/${PROCESS}.log"
+10:50:25,826 |-INFO in ch.qos.logback.core.model.processor.ImplicitModelHandler - Assuming default type [ch.qos.logback.classic.encoder.PatternLayoutEncoder] for [encoder] property
+10:50:25,839 |-INFO in ch.qos.logback.core.model.processor.ModelInterpretationContext@697446d4 - value "/Users/fengs/.javaclaw/data-v6/logs/process.%d{yyyy-MM-dd}.%i.log.gz" substituted for "${LOG_DIR}/${PROCESS}.%d{yyyy-MM-dd}.%i.log.gz"
+10:50:25,841 |-INFO in c.q.l.core.rolling.SizeAndTimeBasedRollingPolicy@906448455 - setting totalSizeCap to 30 MB
+10:50:25,842 |-INFO in c.q.l.core.rolling.SizeAndTimeBasedRollingPolicy@906448455 - Archive files will be limited to [5 MB] each.
+10:50:25,843 |-INFO in c.q.l.core.rolling.SizeAndTimeBasedRollingPolicy@906448455 - Will use gz compression
+10:50:25,843 |-INFO in c.q.l.core.rolling.SizeAndTimeBasedRollingPolicy@906448455 - Will use the pattern /Users/fengs/.javaclaw/data-v6/logs/process.%d{yyyy-MM-dd}.%i.log for the active file
+10:50:25,847 |-INFO in ch.qos.logback.core.rolling.SizeAndTimeBasedFileNamingAndTriggeringPolicy@36453307 - The date pattern is 'yyyy-MM-dd' from file name pattern '/Users/fengs/.javaclaw/data-v6/logs/process.%d{yyyy-MM-dd}.%i.log.gz'.
+10:50:25,847 |-INFO in ch.qos.logback.core.rolling.SizeAndTimeBasedFileNamingAndTriggeringPolicy@36453307 - Roll-over at midnight.
+10:50:25,850 |-INFO in ch.qos.logback.core.rolling.SizeAndTimeBasedFileNamingAndTriggeringPolicy@36453307 - Setting initial period to 2026-09-07T08:53:51.238Z
+10:50:25,852 |-INFO in ch.qos.logback.core.rolling.RollingFileAppender[ROLLING_FILE] - Active log file name: /Users/fengs/.javaclaw/data-v6/logs/process.log
+10:50:25,853 |-INFO in ch.qos.logback.core.rolling.RollingFileAppender[ROLLING_FILE] - Setting currentFileLength to 0 for /Users/fengs/.javaclaw/data-v6/logs/process.log
+10:50:25,853 |-INFO in ch.qos.logback.core.rolling.RollingFileAppender[ROLLING_FILE] - File property is set to [/Users/fengs/.javaclaw/data-v6/logs/process.log]
+10:50:25,854 |-ERROR in ch.qos.logback.core.rolling.RollingFileAppender[ROLLING_FILE] - openFile(/Users/fengs/.javaclaw/data-v6/logs/process.log,true) call failed. java.io.FileNotFoundException: /Users/fengs/.javaclaw/data-v6/logs/process.log (Operation not permitted)
+	at java.io.FileNotFoundException: /Users/fengs/.javaclaw/data-v6/logs/process.log (Operation not permitted)
+	at 	at java.base/java.io.FileOutputStream.open0(Native Method)
+	at 	at java.base/java.io.FileOutputStream.open(FileOutputStream.java:255)
+	at 	at java.base/java.io.FileOutputStream.<init>(FileOutputStream.java:210)
+	at 	at ch.qos.logback.core.recovery.ResilientFileOutputStream.<init>(ResilientFileOutputStream.java:26)
+	at 	at ch.qos.logback.core.FileAppender.openFile(FileAppender.java:206)
+	at 	at ch.qos.logback.core.FileAppender.start(FileAppender.java:126)
+	at 	at ch.qos.logback.core.rolling.RollingFileAppender.start(RollingFileAppender.java:104)
+	at 	at ch.qos.logback.core.model.processor.AppenderModelHandler.postHandle(AppenderModelHandler.java:84)
+	at 	at ch.qos.logback.core.model.processor.DefaultProcessor.secondPhaseTraverse(DefaultProcessor.java:257)
+	at 	at ch.qos.logback.core.model.processor.DefaultProcessor.secondPhaseTraverse(DefaultProcessor.java:253)
+	at 	at ch.qos.logback.core.model.processor.DefaultProcessor.traversalLoop(DefaultProcessor.java:90)
+	at 	at ch.qos.logback.core.model.processor.DefaultProcessor.process(DefaultProcessor.java:106)
+	at 	at ch.qos.logback.core.joran.GenericXMLConfigurator.processModel(GenericXMLConfigurator.java:222)
+	at 	at ch.qos.logback.core.joran.GenericXMLConfigurator.doConfigure(GenericXMLConfigurator.java:178)
+	at 	at ch.qos.logback.core.joran.GenericXMLConfigurator.doConfigure(GenericXMLConfigurator.java:123)
+	at 	at ch.qos.logback.core.joran.GenericXMLConfigurator.doConfigure(GenericXMLConfigurator.java:66)
+	at 	at ch.qos.logback.classic.util.DefaultJoranConfigurator.configureByResource(DefaultJoranConfigurator.java:68)
+	at 	at ch.qos.logback.classic.util.DefaultJoranConfigurator.configure(DefaultJoranConfigurator.java:35)
+	at 	at ch.qos.logback.classic.util.ContextInitializer.invokeConfigure(ContextInitializer.java:142)
+	at 	at ch.qos.logback.classic.util.ContextInitializer.autoConfig(ContextInitializer.java:101)
+	at 	at ch.qos.logback.classic.util.ContextInitializer.autoConfig(ContextInitializer.java:67)
+	at 	at ch.qos.logback.classic.spi.LogbackServiceProvider.initializeLoggerContext(LogbackServiceProvider.java:52)
+	at 	at ch.qos.logback.classic.spi.LogbackServiceProvider.initialize(LogbackServiceProvider.java:41)
+	at 	at org.slf4j.LoggerFactory.bind(LoggerFactory.java:199)
+	at 	at org.slf4j.LoggerFactory.performInitialization(LoggerFactory.java:186)
+	at 	at org.slf4j.LoggerFactory.getProvider(LoggerFactory.java:496)
+	at 	at org.slf4j.LoggerFactory.getILoggerFactory(LoggerFactory.java:482)
+	at 	at org.slf4j.LoggerFactory.getLogger(LoggerFactory.java:431)
+	at 	at org.slf4j.LoggerFactory.getLogger(LoggerFactory.java:457)
+	at 	at com.javaclaw.server.persistence.TurnStreamService.<clinit>(TurnStreamService.java:16)
+	at 	at com.javaclaw.server.persistence.H2TurnJournal.<init>(H2TurnJournal.java:81)
+	at 	at com.javaclaw.server.persistence.H2TurnJournal.<init>(H2TurnJournal.java:67)
+	at 	at com.javaclaw.server.persistence.ItemHistoryRepositoryTest.创建具有真实Item序号的H2历史(ItemHistoryRepositoryTest.java:65)
+	at 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104)
+	at 	at java.base/java.lang.reflect.Method.invoke(Method.java:565)
+	at 	at FixTests.main(FixTests.java:8)
+10:50:25,854 |-INFO in ch.qos.logback.core.model.processor.AppenderModelHandler - Processing appender named [ASYNC_FILE]
+10:50:25,854 |-INFO in ch.qos.logback.core.model.processor.AppenderModelHandler - About to instantiate appender of type [ch.qos.logback.classic.AsyncAppender]
+10:50:25,855 |-INFO in ch.qos.logback.core.model.processor.AppenderRefModelHandler - Attaching appender named [ROLLING_FILE] to ch.qos.logback.classic.AsyncAppender[ASYNC_FILE]
+10:50:25,855 |-INFO in ch.qos.logback.classic.AsyncAppender[ASYNC_FILE] - Attaching appender named [ROLLING_FILE] to AsyncAppender.
+10:50:25,855 |-INFO in ch.qos.logback.classic.AsyncAppender[ASYNC_FILE] - Setting discardingThreshold to 20
+10:50:25,855 |-INFO in ch.qos.logback.core.model.processor.AppenderModelHandler - Processing appender named [STDERR]
+10:50:25,855 |-INFO in ch.qos.logback.core.model.processor.AppenderModelHandler - About to instantiate appender of type [ch.qos.logback.core.ConsoleAppender]
+10:50:25,856 |-INFO in ch.qos.logback.core.model.processor.ImplicitModelHandler - Assuming default type [ch.qos.logback.classic.encoder.PatternLayoutEncoder] for [encoder] property
+10:50:25,856 |-INFO in ch.qos.logback.core.ConsoleAppender[STDERR] - BEWARE: Writing to the console can be very slow. Avoid logging to the 
+10:50:25,856 |-INFO in ch.qos.logback.core.ConsoleAppender[STDERR] - console in production environments, especially in high volume systems.
+10:50:25,856 |-INFO in ch.qos.logback.core.ConsoleAppender[STDERR] - See also https://logback.qos.ch/codes.html#slowConsole
+10:50:25,856 |-INFO in ch.qos.logback.classic.model.processor.LoggerModelHandler - Setting level of logger [org.quartz] to WARN
+10:50:25,856 |-INFO in ch.qos.logback.classic.model.processor.LoggerModelHandler - Setting level of logger [org.springframework] to WARN
+10:50:25,857 |-INFO in ch.qos.logback.classic.model.processor.RootLoggerModelHandler - Setting level of ROOT logger to INFO
+10:50:25,857 |-INFO in ch.qos.logback.core.model.processor.AppenderRefModelHandler - Attaching appender named [ASYNC_FILE] to Logger[ROOT]
+10:50:25,857 |-INFO in ch.qos.logback.core.model.processor.AppenderRefModelHandler - Attaching appender named [STDERR] to Logger[ROOT]
+10:50:25,857 |-INFO in ch.qos.logback.core.model.processor.DefaultProcessor@6c8a68c1 - End of configuration.
+10:50:25,857 |-INFO in ch.qos.logback.classic.joran.JoranConfigurator@56193c7d - Registering current configuration as safe fallback point
+10:50:25,857 |-INFO in ch.qos.logback.classic.util.ContextInitializer@7fcff1b9 - ch.qos.logback.classic.util.DefaultJoranConfigurator.configure() call lasted 75 milliseconds. ExecutionStatus=DO_NOT_INVOKE_NEXT_IF_ANY
+
+PASS com.javaclaw.server.persistence.ItemHistoryRepositoryTest.超过单帧的消息只返回摘要且保留精确全文来源和附件
+PASS com.javaclaw.server.persistence.ItemHistoryRepositoryTest.摘要保留JSON转义且不可公开的角色不签发正文引用
+PASS com.javaclaw.server.persistence.ItemHistoryRepositoryTest.倒序查询翻页后呈升序且每条只出现一次
+FAIL com.javaclaw.server.persistence.ItemHistoryRepositoryTest.持久化工具审批和错误通过历史查询保留状态原因且不伪造正文引用 org.opentest4j.AssertionFailedError: expected: <true> but was: <false>
+org.opentest4j.AssertionFailedError: expected: <true> but was: <false>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertTrue.failNotTrue(AssertTrue.java:63)
+	at org.junit.jupiter.api.AssertTrue.assertTrue(AssertTrue.java:36)
+	at org.junit.jupiter.api.AssertTrue.assertTrue(AssertTrue.java:31)
+	at org.junit.jupiter.api.Assertions.assertTrue(Assertions.java:183)
+	at com.javaclaw.server.persistence.ItemHistoryRepositoryTest.持久化工具审批和错误通过历史查询保留状态原因且不伪造正文引用(ItemHistoryRepositoryTest.java:168)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:565)
+	at FixTests.main(FixTests.java:9)
+TOTAL passed=3 failed=1

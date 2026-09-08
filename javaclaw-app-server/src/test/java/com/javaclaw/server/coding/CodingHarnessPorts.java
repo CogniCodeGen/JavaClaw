@@ -53,7 +53,9 @@ final class CodingHarnessPorts {
                 AutomationStepPort.unavailable(),
                 ScheduledCommandPort.unavailable(),
                 ScheduleLifecyclePort.unavailable(),
-                catalog);
+                catalog,
+                com.javaclaw.extension.spi.ConversationEvidencePort.unavailable(),
+                owner -> com.javaclaw.extension.spi.ScheduleDefinitionBindingPort.unavailable());
     }
 
     private static final class NoCredentials implements CredentialVaultPort {

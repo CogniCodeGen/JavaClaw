@@ -17,6 +17,8 @@ import java.util.Objects;
  * @param automationSteps Workflow 精确工具与输入步骤端口
  * @param scheduledCommands Schedule 显式命令端口
  * @param scheduleLifecycle Schedule 后台 lease 与登录启动项端口
+ * @param conversationEvidence 有界公开对话证据
+ * @param scheduleBindings 仅允许所属扩展 Definition 的内部调度绑定
  */
 public record ExtensionJobRuntimeContext(
         Clock clock,
@@ -27,7 +29,9 @@ public record ExtensionJobRuntimeContext(
         EmbeddingPort embeddings,
         AutomationStepPort automationSteps,
         ScheduledCommandPort scheduledCommands,
-        ScheduleLifecyclePort scheduleLifecycle) {
+        ScheduleLifecyclePort scheduleLifecycle,
+        ConversationEvidencePort conversationEvidence,
+        ScheduleDefinitionBindingPort scheduleBindings) {
     /** 校验所有端口。 */
     public ExtensionJobRuntimeContext {
         Objects.requireNonNull(clock, "clock");
@@ -39,5 +43,7 @@ public record ExtensionJobRuntimeContext(
         Objects.requireNonNull(automationSteps, "automationSteps");
         Objects.requireNonNull(scheduledCommands, "scheduledCommands");
         Objects.requireNonNull(scheduleLifecycle, "scheduleLifecycle");
+        Objects.requireNonNull(conversationEvidence, "conversationEvidence");
+        Objects.requireNonNull(scheduleBindings, "scheduleBindings");
     }
 }

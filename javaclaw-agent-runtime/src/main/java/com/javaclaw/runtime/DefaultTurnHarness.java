@@ -140,15 +140,23 @@ public final class DefaultTurnHarness implements TurnHarness {
                         TurnInvocationDigests.model(invocation, invocationNumber));
         Optional<ProviderState> providerState = state.window().providerState();
         if (providerState.isEmpty()) {
-            ModelInvocationResult result =
-                    services.models().invoke(state.command().turn().id(), invocation, services.events(), cancellation);
+            ModelInvocationResult result = services.models()
+                    .invoke(
+                            state.command().turn().id(),
+                            invocation,
+                            services.events().forInvocation(invocationNumber),
+                            cancellation);
             return new CommittedModelResult(invocationNumber, result);
         }
         if (!(services.models() instanceof NativeConversationSupport nativeSupport)) {
             throw new TurnFailureException("PROVIDER_STATE_UNSUPPORTED", "当前模型端点不能恢复原生会话状态");
         }
         ModelInvocationResult result = nativeSupport.invokeContinuing(
-                state.command().turn().id(), invocation, providerState.orElseThrow(), services.events(), cancellation);
+                state.command().turn().id(),
+                invocation,
+                providerState.orElseThrow(),
+                services.events().forInvocation(invocationNumber),
+                cancellation);
         return new CommittedModelResult(invocationNumber, result);
     }
 

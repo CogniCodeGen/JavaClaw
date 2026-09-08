@@ -339,8 +339,8 @@ final class ManagedDocumentResource<T extends VersionedExtensionDocument> {
         }
         ExtensionPayloadCodec codec = requireStarted();
         DocumentContracts.Key key = codec.decode(request.payload(), DocumentContracts.Key.class);
-        transaction.delete(collection(request), key.id(), request.expectedRevision());
         behavior.deleteRelated(this, request, key.id(), transaction);
+        transaction.delete(collection(request), key.id(), request.expectedRevision());
         return new ExtensionResponse(
                 codec.encode(new DocumentContracts.Deleted(key.id())), Math.addExact(request.expectedRevision(), 1));
     }

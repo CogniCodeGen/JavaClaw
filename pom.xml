@@ -42,7 +42,8 @@
         <xz.version>1.12</xz.version>
         <commons-codec.version>1.18.0</commons-codec.version>
         <commons-logging.version>1.3.5</commons-logging.version>
-        <javafx.version>25</javafx.version>
+        <javafx.version>26.0.2</javafx.version>
+        <commonmark.version>0.30.0</commonmark.version>
         <playwright.version>1.52.0</playwright.version>
         <kotlin.version>1.9.10</kotlin.version>
         <victools.version>5.0.0</victools.version>
@@ -84,6 +85,26 @@
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>org.commonmark</groupId>
+                <artifactId>commonmark</artifactId>
+                <version>${commonmark.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.commonmark</groupId>
+                <artifactId>commonmark-ext-gfm-tables</artifactId>
+                <version>${commonmark.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.commonmark</groupId>
+                <artifactId>commonmark-ext-gfm-strikethrough</artifactId>
+                <version>${commonmark.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.commonmark</groupId>
+                <artifactId>commonmark-ext-autolink</artifactId>
+                <version>${commonmark.version}</version>
+            </dependency>
             <dependency>
                 <groupId>org.apache.commons</groupId>
                 <artifactId>commons-compress</artifactId>

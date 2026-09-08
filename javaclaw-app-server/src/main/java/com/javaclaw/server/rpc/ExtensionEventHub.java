@@ -58,7 +58,7 @@ public final class ExtensionEventHub implements AutoCloseable {
         }
         JsonRpcNotification notification =
                 new JsonRpcNotification("extension/event", json.encode(Objects.requireNonNull(event, "event")));
-        streams.forEach(stream -> stream.offer(notification));
+        streams.forEach(stream -> stream.send(notification));
     }
 
     /** 停止全部通知线程并断开现有连接。 */
@@ -71,6 +71,9 @@ public final class ExtensionEventHub implements AutoCloseable {
     }
 
     interface Subscription extends AutoCloseable {
+        /** 非阻塞发送仅属于当前连接的已协商通知，复用既有有界队列。 */
+        void send(JsonRpcNotification notification);
+
         /** 停止当前连接的通知流，但不关闭由会话持有的连接。 */
         @Override
         void close();
@@ -90,7 +93,8 @@ public final class ExtensionEventHub implements AutoCloseable {
             writer = Thread.ofVirtual().name("javaclaw-extension-events").start(this::writeLoop);
         }
 
-        private void offer(JsonRpcNotification notification) {
+        @Override
+        public void send(JsonRpcNotification notification) {
             if (!streamClosed.get() && !queue.offer(notification)) {
                 LOGGER.warn("Extension event queue reached its bounded capacity; disconnecting slow client");
                 abort();

@@ -26,13 +26,29 @@ final class ItemRepository {
         this.turns = turns;
     }
 
+    Optional<ItemEnvelope> find(Connection connection, ItemId id) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT ID, TURN_ID, SEQUENCE, KIND, SCHEMA_ID, PRODUCER_ID, STATUS, PAYLOAD, CREATED_AT, COMPLETED_AT
+                FROM CORE.ITEM WHERE ID = ?
+                """)) {
+            statement.setString(1, id.toString());
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? Optional.of(map(result)) : Optional.empty();
+            }
+        }
+    }
+
     ItemEnvelope append(Connection connection, ItemWrite write) throws SQLException {
+        return append(connection, write, ItemId.random());
+    }
+
+    ItemEnvelope append(Connection connection, ItemWrite write, ItemId itemId) throws SQLException {
         ThreadId threadId = turns.threadId(connection, write.turnId());
         long sequence = reserveSequence(connection, threadId);
         Optional<Instant> completedAt =
                 write.status() == ItemStatus.IN_PROGRESS ? Optional.empty() : Optional.of(write.createdAt());
         ItemEnvelope item = new ItemEnvelope(
-                ItemId.random(),
+                itemId,
                 write.turnId(),
                 sequence,
                 write.kind(),
@@ -79,6 +95,12 @@ final class ItemRepository {
                 return List.copyOf(values);
             }
         }
+    }
+
+    com.javaclaw.api.ItemHistoryResult history(
+            Connection connection, com.javaclaw.protocol.TurnStreamRpcContracts.ItemHistoryRequest request)
+            throws SQLException {
+        return new ItemHistoryRepository().history(connection, request);
     }
 
     List<ItemEnvelope> listByTurnAndSchema(Connection connection, TurnId turnId, String schemaId) throws SQLException {

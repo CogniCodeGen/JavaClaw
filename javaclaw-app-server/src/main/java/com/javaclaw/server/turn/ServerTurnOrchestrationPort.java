@@ -126,6 +126,18 @@ public final class ServerTurnOrchestrationPort implements TurnOrchestrationPort,
     @Override
     public OrchestratedTurnResult execute(OrchestratedTurnCommand command, CancellationToken cancellation)
             throws Exception {
+        return execute(command, cancellation, true);
+    }
+
+    @Override
+    public OrchestratedTurnResult executeDerived(OrchestratedTurnCommand command, CancellationToken cancellation)
+            throws Exception {
+        return execute(command, cancellation, false);
+    }
+
+    private OrchestratedTurnResult execute(
+            OrchestratedTurnCommand command, CancellationToken cancellation, boolean evidenceEligible)
+            throws Exception {
         Objects.requireNonNull(command, "command");
         Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
         requireWorkspace(command);
@@ -133,7 +145,7 @@ public final class ServerTurnOrchestrationPort implements TurnOrchestrationPort,
                 quota.acquire(command.parentThreadId().orElse(null))) {
             ConversationThread thread = createThread(command);
             CoreRpcContracts.TurnStartPayload payload = startPayload(command, thread);
-            AgentTurn turn = createTurn(command, payload);
+            AgentTurn turn = createTurn(command, payload, evidenceEligible);
             TurnExecutionResult execution =
                     dispatcher.dispatchOrchestratedAndAwait(turn, payload, command.executionSnapshot(), cancellation);
             if (execution.status() != com.javaclaw.api.TurnStatus.COMPLETED) {
@@ -179,12 +191,18 @@ public final class ServerTurnOrchestrationPort implements TurnOrchestrationPort,
         return thread;
     }
 
-    private AgentTurn createTurn(OrchestratedTurnCommand command, CoreRpcContracts.TurnStartPayload payload) {
+    private AgentTurn createTurn(
+            OrchestratedTurnCommand command, CoreRpcContracts.TurnStartPayload payload, boolean evidenceEligible) {
         CorePayloads.Message message =
                 new CorePayloads.Message(MessageRole.USER, payload.message(), List.of(), Optional.empty());
         TurnStartRequest request = dispatcher.resolveOrchestrated(payload, message, command.executionSnapshot());
         return core.startTurn(
-                identity("orchestration/turn/start", command.idempotencyKey() + ":turn", payload), request);
+                identity(
+                        "orchestration/turn/start",
+                        command.idempotencyKey() + ":turn",
+                        evidenceEligible ? payload : new DerivedTurnInput(payload, false)),
+                request,
+                evidenceEligible);
     }
 
     private CoreRpcContracts.TurnStartPayload startPayload(OrchestratedTurnCommand command, ConversationThread thread) {
@@ -240,4 +258,6 @@ public final class ServerTurnOrchestrationPort implements TurnOrchestrationPort,
                 .map(item -> json.decode(item.payload(), EffectReceipt.class).idempotencyKey())
                 .reduce((left, right) -> right);
     }
+
+    private record DerivedTurnInput(CoreRpcContracts.TurnStartPayload payload, boolean conversationEvidenceEligible) {}
 }

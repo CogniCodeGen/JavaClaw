@@ -16,7 +16,10 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.Tooltip;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.MouseButton;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 
@@ -43,7 +46,7 @@ import com.javaclaw.desktop.view.TranscriptPresenter;
 import com.javaclaw.protocol.CanonicalJson;
 
 /** JavaFX 壳控制器；只绑定控件和转发用户意图，不保存领域状态。 */
-public final class DesktopShellController {
+public final class DesktopShellController implements AutoCloseable {
     private final TranscriptPresenter transcriptPresenter = new TranscriptPresenter(new CanonicalJson());
     private final PlatformComponentFactory components = new PlatformComponentFactory();
 
@@ -64,6 +67,9 @@ public final class DesktopShellController {
 
     @FXML
     private ListView<ItemEnvelope> transcriptList;
+
+    @FXML
+    private StackPane transcriptHost;
 
     @FXML
     private VBox executionHost;
@@ -111,6 +117,8 @@ public final class DesktopShellController {
     private Button denyButton;
 
     private DesktopPresenter presenter;
+    private ShellWebSurfaces surfaces;
+    private java.util.List<ItemEnvelope> displayedItems = java.util.List.of();
     private ManagementCenterWindow managementCenter;
     private InputRequestPanel inputRequests;
     private CodingExecutionPanel codingOutput;
@@ -123,7 +131,22 @@ public final class DesktopShellController {
     public void initialize() {
         workspaceBox.setCellFactory(ignored -> components.textCell(Workspace::name));
         workspaceBox.setButtonCell(components.textCell(Workspace::name));
-        threadList.setCellFactory(ignored -> components.textCell(ConversationThread::title));
+        threadList.setCellFactory(ignored -> {
+            ListCell<ConversationThread> cell = components.textCell(ConversationThread::title);
+            // 选中项不变时也转发明确激活，让恢复失败的会话可重试；运行中的同会话由 Presenter 保持幂等。
+            cell.setOnMouseClicked(event -> {
+                if (event.getButton() == MouseButton.PRIMARY && !cell.isEmpty()) {
+                    selectThread(cell.getItem());
+                }
+            });
+            return cell;
+        });
+        threadList.setOnKeyPressed(event -> {
+            if (event.getCode() == KeyCode.ENTER) {
+                selectThread(threadList.getSelectionModel().getSelectedItem());
+                event.consume();
+            }
+        });
         transcriptList.setCellFactory(ignored -> new TranscriptCell(transcriptPresenter));
         approvalList.setCellFactory(ignored -> components.detailCell(
                 approval -> approval.request().tool().name() + " · "
@@ -174,6 +197,7 @@ public final class DesktopShellController {
         inputRequestHost.getChildren().setAll(inputRequests);
         codingOutput = new CodingExecutionPanel(value);
         progressPanel.getChildren().add(2, codingOutput);
+        surfaces = new ShellWebSurfaces(value, progressPanel, transcriptHost, transcriptList);
         managementCenter.installShortcut(root.getScene());
         presenter.subscribe(this::render);
         presenter.connect();
@@ -310,8 +334,7 @@ public final class DesktopShellController {
             threadList
                     .getSelectionModel()
                     .select(state.threads().selectedThread().orElse(null));
-            transcriptPresenter.replaceItems(state.transcript().items());
-            transcriptList.getItems().setAll(state.transcript().items());
+            renderTranscript(state);
             approvalList.getItems().setAll(state.interaction().pendingApprovals());
             inputRequests.render(state.interaction().inputs());
             codingOutput.bind(state);
@@ -323,6 +346,15 @@ public final class DesktopShellController {
         } finally {
             rendering = false;
         }
+    }
+
+    private void renderTranscript(DesktopState state) {
+        if (!displayedItems.equals(state.transcript().items())) {
+            displayedItems = state.transcript().items();
+            transcriptPresenter.replaceItems(displayedItems);
+            transcriptList.getItems().setAll(displayedItems);
+        }
+        surfaces.render(state);
     }
 
     private void refreshExecutionConnection(DesktopState state) {
@@ -370,6 +402,7 @@ public final class DesktopShellController {
     private void renderActions(DesktopState state) {
         boolean ready = state.connection().status() == ConnectionState.Status.CONNECTED
                 && state.threads().selectedThread().isPresent()
+                && state.threads().activeTurn().isEmpty()
                 && !state.interaction().busy();
         sendButton.setDisable(!ready);
         interruptButton.setDisable(state.threads().activeTurn().isEmpty());
@@ -416,11 +449,24 @@ public final class DesktopShellController {
         node.setManaged(value);
     }
 
+    /** 释放三个页面中的主壳页面、预览租约与后台转换任务。 */
+    @Override
+    public void close() {
+        if (surfaces != null) {
+            surfaces.close();
+        }
+    }
+
     private static final class TranscriptCell extends ListCell<ItemEnvelope> {
         private final TranscriptPresenter presenter;
+        private final Label title = new Label();
+        private final Label body = new Label();
+        private final VBox box = new VBox(6, title, body);
 
         private TranscriptCell(TranscriptPresenter presenter) {
             this.presenter = presenter;
+            title.getStyleClass().add("message-role");
+            body.setWrapText(true);
         }
 
         @Override
@@ -431,12 +477,9 @@ public final class DesktopShellController {
                 return;
             }
             PresentedItem presented = presenter.present(item);
-            Label title = new Label(presented.title());
-            title.getStyleClass().add("message-role");
-            Label body = new Label(presented.body());
-            body.setWrapText(true);
-            VBox box = new VBox(6, title, body);
-            box.getStyleClass().add(presented.styleClass());
+            title.setText(presented.title());
+            body.setText(presented.body().length() > 65_536 ? presented.body().substring(0, 65_536) : presented.body());
+            box.getStyleClass().setAll(presented.styleClass());
             setGraphic(box);
         }
     }

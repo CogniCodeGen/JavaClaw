@@ -48,6 +48,12 @@ public final class WorkspaceFileWorker {
     private static void dispatch(DataInputStream request, DataOutputStream response, WorkspaceFileTree tree)
             throws Exception {
         switch (request.readUTF()) {
+            case "preview-snapshot" -> {
+                var snapshot = WorkspacePreviewSnapshot.copy(
+                        tree, request.readUTF(), Path.of(request.readUTF()), request.readLong());
+                response.writeLong(snapshot.sizeBytes());
+                response.writeUTF(snapshot.digest());
+            }
             case "stat" ->
                 WorkspaceFileProtocol.writeEntries(
                         response,

@@ -128,7 +128,9 @@ class ScheduleAndKnowledgeExtensionTest {
                 support.embeddings,
                 AutomationStepPort.unavailable(),
                 ScheduledCommandPort.unavailable(),
-                (workspaceId, required) -> {});
+                (workspaceId, required) -> {},
+                com.javaclaw.extension.spi.ConversationEvidencePort.unavailable(),
+                com.javaclaw.extension.spi.ScheduleDefinitionBindingPort.unavailable());
     }
 
     private static ScheduleContracts.Definition schedule(String id, long revision, boolean enabled, Duration interval) {

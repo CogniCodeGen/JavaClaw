@@ -52,10 +52,30 @@ class CoreMigrationRecoveryTest {
         future.initialize();
         try (var connection = future.open();
                 var statement = connection.createStatement()) {
-            statement.execute(
-                    "INSERT INTO CORE.SCHEMA_HISTORY VALUES (5, 'future', REPEAT('a', 64), CURRENT_TIMESTAMP)");
+            statement.execute("INSERT INTO CORE.SCHEMA_HISTORY VALUES ("
+                    + (H2Database.CORE_SCHEMA_VERSION + 1)
+                    + ", 'future', REPEAT('a', 64), CURRENT_TIMESTAMP)");
         }
         assertThrows(PersistenceException.class, future::initialize);
+    }
+
+    @Test
+    void 新取消迁移已有表但缺少关键列时不提交完成记录() throws Exception {
+        H2Database database = new H2Database(directory.resolve("data-v6"));
+        database.initialize();
+        try (var connection = database.open();
+                var statement = connection.createStatement()) {
+            statement.execute("DELETE FROM CORE.SCHEMA_HISTORY WHERE VERSION = 7");
+            statement.execute("DROP TABLE CORE.EXTENSION_JOB_CANCELLATION");
+            statement.execute("CREATE TABLE CORE.EXTENSION_JOB_CANCELLATION (JOB_ID VARCHAR(240) PRIMARY KEY)");
+        }
+        assertThrows(PersistenceException.class, database::initialize);
+        try (var connection = database.open();
+                var statement = connection.createStatement();
+                var rows = statement.executeQuery("SELECT MAX(VERSION) FROM CORE.SCHEMA_HISTORY")) {
+            assertTrue(rows.next());
+            assertEquals(6, rows.getInt(1));
+        }
     }
 
     private static String contextChecksum() throws Exception {

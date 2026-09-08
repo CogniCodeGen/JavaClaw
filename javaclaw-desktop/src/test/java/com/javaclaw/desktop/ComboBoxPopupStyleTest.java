@@ -31,30 +31,38 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ComboBoxPopupStyleTest {
     @Test
     void 所有主题字号密度和下拉语义都使用不透明弹层且选项不重叠() {
-        FxTestSupport.run(() -> {
-            List<ComboBox<String>> choices = choices();
-            VBox root = new VBox(36);
-            root.getChildren().addAll(choices);
-            Scene scene = new Scene(root, 520, 520);
-            DesktopStylesheets.apply(scene);
-            Stage stage = new Stage();
-            stage.setScene(scene);
-            stage.show();
-            try {
-                for (AppearanceTheme theme : AppearanceTheme.values()) {
-                    for (InterfaceDensity density : InterfaceDensity.values()) {
-                        for (FontScale fontScale : FontScale.values()) {
-                            AppearancePreferences preferences = new AppearancePreferences(theme, fontScale, density);
-                            DesktopAppearanceManager.apply(scene, preferences);
-                            choices.forEach(choice -> assertPopup(choice, preferences));
-                        }
+        Fixture fixture = FxTestSupport.call(ComboBoxPopupStyleTest::fixture);
+        try {
+            for (AppearanceTheme theme : AppearanceTheme.values()) {
+                for (InterfaceDensity density : InterfaceDensity.values()) {
+                    for (FontScale fontScale : FontScale.values()) {
+                        AppearancePreferences preferences = new AppearancePreferences(theme, fontScale, density);
+                        // 调度期限约束单个外观场景；完整矩阵不应占住一个 FX Runnable，且每个原始断言仍执行。
+                        FxTestSupport.run(() -> {
+                            DesktopAppearanceManager.apply(fixture.scene(), preferences);
+                            fixture.choices().forEach(choice -> assertPopup(choice, preferences));
+                        });
                     }
                 }
-            } finally {
-                choices.forEach(ComboBox::hide);
-                stage.hide();
             }
-        });
+        } finally {
+            FxTestSupport.run(() -> {
+                fixture.choices().forEach(ComboBox::hide);
+                fixture.stage().hide();
+            });
+        }
+    }
+
+    private static Fixture fixture() {
+        List<ComboBox<String>> choices = choices();
+        VBox root = new VBox(36);
+        root.getChildren().addAll(choices);
+        Scene scene = new Scene(root, 520, 520);
+        DesktopStylesheets.apply(scene);
+        Stage stage = new Stage();
+        stage.setScene(scene);
+        stage.show();
+        return new Fixture(choices, scene, stage);
     }
 
     private static List<ComboBox<String>> choices() {
@@ -137,4 +145,6 @@ class ComboBoxPopupStyleTest {
     private static boolean opaque(Paint paint) {
         return paint instanceof Color color && color.getOpacity() == 1.0;
     }
+
+    private record Fixture(List<ComboBox<String>> choices, Scene scene, Stage stage) {}
 }

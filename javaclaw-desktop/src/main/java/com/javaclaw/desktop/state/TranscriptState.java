@@ -3,8 +3,12 @@ package com.javaclaw.desktop.state;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 import com.javaclaw.api.ItemEnvelope;
+import com.javaclaw.api.ItemHistoryEntry;
+import com.javaclaw.api.ItemHistoryResult;
+import com.javaclaw.client.facade.TurnStreamSnapshot;
 
 /**
  * 当前 Thread 的 ItemEnvelope 投影与分页游标。
@@ -12,11 +16,31 @@ import com.javaclaw.api.ItemEnvelope;
  * @param items 按 sequence 严格递增的 Item
  * @param nextSequence 已接收的最大 sequence；空列表时为零
  * @param following 是否在新 Item 到达后自动滚动到底部
+ * @param stream SDK 已顺序归并的活动正文；没有活动流时为空
+ * @param hasEarlier 有更早历史可按100条分页读取
+ * @param history 带来源身份的摘要缓存，与完整 Item 分开保存
  */
-public record TranscriptState(List<ItemEnvelope> items, long nextSequence, boolean following) {
+public record TranscriptState(
+        List<ItemEnvelope> items,
+        long nextSequence,
+        boolean following,
+        Optional<TurnStreamSnapshot> stream,
+        boolean hasEarlier,
+        List<ItemHistoryEntry> history) {
+    /**
+     * @param items 已提交消息
+     * @param nextSequence 最大游标
+     * @param following 是否跟随；兼容无流调用方
+     */
+    public TranscriptState(List<ItemEnvelope> items, long nextSequence, boolean following) {
+        this(items, nextSequence, following, Optional.empty(), false, List.of());
+    }
+
     /** 复制 Item 并校验严格递增 sequence。 */
     public TranscriptState {
-        items = List.copyOf(items);
+        items = bounded(items);
+        stream = Objects.requireNonNull(stream, "stream");
+        history = List.copyOf(history.size() > 500 ? history.subList(history.size() - 500, history.size()) : history);
         if (nextSequence < 0) {
             throw new IllegalArgumentException("nextSequence must not be negative");
         }
@@ -50,6 +74,80 @@ public record TranscriptState(List<ItemEnvelope> items, long nextSequence, boole
         ArrayList<ItemEnvelope> merged = new ArrayList<>(items.size() + copy.size());
         merged.addAll(items);
         merged.addAll(copy);
-        return new TranscriptState(merged, cursor, following);
+        return new TranscriptState(merged, cursor, following, stream, hasEarlier || merged.size() > 500, history);
+    }
+
+    /**
+     * @param value 已应用 cursor 对应的暂态消息
+     * @return 保留持久事实的流快照
+     */
+    public TranscriptState stream(TurnStreamSnapshot value) {
+        return new TranscriptState(items, nextSequence, following, Optional.of(value), hasEarlier, history);
+    }
+
+    /**
+     * @param value 是否跟随最新消息
+     * @return 保留当前读取位置策略的新状态
+     */
+    public TranscriptState following(boolean value) {
+        return new TranscriptState(items, nextSequence, value, stream, hasEarlier, history);
+    }
+
+    /**
+     * @param result 更早摘要页
+     * @return 保持升序、至多500条的历史窗口，向前翻页时从最新端淘汰
+     */
+    public TranscriptState earlier(ItemHistoryResult result) {
+        var merged = new java.util.TreeMap<Long, ItemHistoryEntry>();
+        history.forEach(item -> merged.put(item.sequence(), item));
+        result.items().forEach(item -> merged.put(item.sequence(), item));
+        List<ItemHistoryEntry> window = merged.values().stream().limit(500).toList();
+        return new TranscriptState(
+                items, Math.max(nextSequence, result.latestSequence()), false, stream, result.hasEarlier(), window);
+    }
+
+    /**
+     * @param result 最近摘要事实
+     * @return 已提交正文替换相同消息身份后的状态；尾页断开时保留连续窗口，避免旧缓存遮住中间缺页
+     */
+    public TranscriptState committed(ItemHistoryResult result) {
+        if (!history.isEmpty()
+                && !result.items().isEmpty()
+                && result.items().getFirst().sequence() - 1 > history.getLast().sequence()) {
+            // 跟随时从新尾页继续向前翻；暂停跟随时只更新末端水位，保留当前阅读锚点与其分页入口。
+            return new TranscriptState(
+                    items,
+                    Math.max(nextSequence, result.latestSequence()),
+                    following,
+                    stream,
+                    following || hasEarlier,
+                    following ? result.items() : history);
+        }
+        var merged = new java.util.TreeMap<Long, ItemHistoryEntry>();
+        history.forEach(item -> merged.put(item.sequence(), item));
+        result.items().forEach(item -> merged.put(item.sequence(), item));
+        var values = new ArrayList<>(merged.values());
+        return new TranscriptState(
+                items,
+                Math.max(nextSequence, result.latestSequence()),
+                following,
+                stream,
+                hasEarlier || result.hasEarlier(),
+                following ? values : values.stream().limit(500).toList());
+    }
+
+    private static List<ItemEnvelope> bounded(List<ItemEnvelope> input) {
+        ArrayList<ItemEnvelope> result = new ArrayList<>();
+        long bytes = 0;
+        for (int index = input.size() - 1; index >= 0 && result.size() < 500; index--) {
+            ItemEnvelope item = Objects.requireNonNull(input.get(index), "item");
+            long weight = item.payload().json().length() * 2L + 1024;
+            if (bytes + weight > 8L * 1024 * 1024) {
+                break;
+            }
+            bytes += weight;
+            result.addFirst(item);
+        }
+        return List.copyOf(result);
     }
 }

@@ -49,11 +49,13 @@ class ProtocolMethodSchemaCatalogTest {
         }
 
         assertEquals(javaMethods, resourceMethods);
-        assertEquals(159, resourceOrder.size());
+        assertEquals(172, resourceOrder.size());
         assertEquals(
                 resourceOrder,
                 MethodCatalog.methods().stream().map(RpcMethod::name).toList());
-        assertEquals(Set.of("extension/event"), notificationNames(resourceMethods));
+        assertEquals(
+                Set.of("extension/event", "turn/stream/event", "document/preview/invalidated"),
+                notificationNames(resourceMethods));
     }
 
     @Test

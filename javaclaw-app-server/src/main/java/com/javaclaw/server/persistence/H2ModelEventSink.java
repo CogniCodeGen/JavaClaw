@@ -18,6 +18,8 @@ public final class H2ModelEventSink implements ModelEventSink {
     private final EventRepository events = new EventRepository();
     private final CanonicalJson json;
     private final Clock clock;
+    private final TurnStreamService streams;
+    private final TurnStreamRepository publicEvents;
 
     /**
      * 创建事件 sink。
@@ -29,9 +31,43 @@ public final class H2ModelEventSink implements ModelEventSink {
      * @param clock 平台时钟
      */
     public H2ModelEventSink(H2Database database, CanonicalJson json, Clock clock) {
+        this(database, json, clock, new TurnStreamService(database, json));
+    }
+
+    /**
+     * 创建带共享提交唤醒的同步持久 sink。
+     *
+     * @param database 唯一数据库
+     * @param json codec
+     * @param clock 时钟
+     * @param streams 组合根共享公开流
+     */
+    public H2ModelEventSink(H2Database database, CanonicalJson json, Clock clock, TurnStreamService streams) {
+        this.streams = Objects.requireNonNull(streams, "streams");
+        publicEvents = new TurnStreamRepository(json);
         transactions = new H2Transactions(Objects.requireNonNull(database, "database"));
         this.json = Objects.requireNonNull(json, "json");
         this.clock = Objects.requireNonNull(clock, "clock");
+    }
+
+    @Override
+    public ModelEventSink forInvocation(int invocationNumber) {
+        if (invocationNumber < 1) {
+            throw new IllegalArgumentException("invocationNumber must be positive");
+        }
+        return (turnId, event, cancellation) -> {
+            if (event instanceof ModelStreamEvent.TextDelta delta) {
+                cancellation.throwIfCancelled();
+                execute(connection -> {
+                    publicEvents.text(connection, turnId, invocationNumber, delta.text(), now());
+                    return null;
+                });
+                streams.committed(turnId);
+                cancellation.throwIfCancelled();
+            } else {
+                publish(turnId, event, cancellation);
+            }
+        };
     }
 
     @Override

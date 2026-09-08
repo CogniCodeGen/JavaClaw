@@ -62,6 +62,7 @@ sequenceDiagram
 - [统一聊天与编程智能体](unified-coding-agent.md)
 - [Agent Role、Protocol v3 与 data-v6 决策](adr/0009-agent-role-v6.md)
 - [程序目录与运行数据](adr/0010-runtime-directories.md)
+- [受控 WebView 与记忆学习](adr/0011-web-surfaces-and-memory-learning.md)
 - [完整设计](full-design.md)
 - [实施清单](implementation-checklist.md)
 - [威胁模型](threat-model.md)

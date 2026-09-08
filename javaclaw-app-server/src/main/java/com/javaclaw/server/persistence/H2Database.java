@@ -21,7 +21,7 @@ import com.javaclaw.nativehost.ManagedRuntimeDirectory;
  */
 public final class H2Database {
     /** 当前 data-v6 Core schema 版本。 */
-    public static final int CORE_SCHEMA_VERSION = 4;
+    public static final int CORE_SCHEMA_VERSION = 7;
 
     private static final List<String> DATABASE_FILES = List.of(
             "javaclaw.mv.db",

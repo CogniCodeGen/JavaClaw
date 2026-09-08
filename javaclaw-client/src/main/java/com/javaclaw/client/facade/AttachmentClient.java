@@ -162,6 +162,35 @@ public final class AttachmentClient {
         return advanced;
     }
 
+    /**
+     * 读取附件元信息，不下载正文。
+     *
+     * @param scope 所有权范围
+     * @param digest 内容摘要
+     * @return 已确认所有权的元信息
+     */
+    public AttachmentMetadata metadata(AttachmentScope scope, String digest) {
+        return connection.query(
+                "attachment/metadata", new AttachmentRpcContracts.ReadPayload(scope, digest), AttachmentMetadata.class);
+    }
+
+    /**
+     * 下载有界块；调用方须以返回整体 digest 校验完整版本。
+     *
+     * @param scope 所有权范围
+     * @param digest 内容摘要
+     * @param offsetBytes 起始字节
+     * @param maximumBytes 最多 256 KiB
+     * @return 连续内容块
+     */
+    public com.javaclaw.api.DocumentChunk readChunk(
+            AttachmentScope scope, String digest, long offsetBytes, int maximumBytes) {
+        return connection.query(
+                "attachment/readChunk",
+                new AttachmentRpcContracts.DownloadChunkPayload(scope, digest, offsetBytes, maximumBytes),
+                com.javaclaw.api.DocumentChunk.class);
+    }
+
     private AttachmentUploadSession current(AttachmentScope scope, String uploadId) {
         return connection.query(
                 "attachment/upload/read",

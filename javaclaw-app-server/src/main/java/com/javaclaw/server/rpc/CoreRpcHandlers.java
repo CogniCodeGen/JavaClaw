@@ -31,6 +31,7 @@ import com.javaclaw.server.persistence.PersistenceException;
 import com.javaclaw.server.persistence.ProviderService;
 import com.javaclaw.server.persistence.RolloutCommandService;
 import com.javaclaw.server.persistence.TurnStartRequest;
+import com.javaclaw.server.persistence.TurnStreamService;
 import com.javaclaw.server.turn.TurnDispatcher;
 
 /** Core RPC 方法到平台用例的薄映射。 */
@@ -44,6 +45,7 @@ public final class CoreRpcHandlers {
     private final ProviderService providers;
     private final ManagedWorktreeService worktrees;
     private final DiagnosticsService diagnostics;
+    private final Optional<TurnStreamService> streams;
 
     /**
      * 创建 Core handlers。
@@ -53,6 +55,23 @@ public final class CoreRpcHandlers {
      * @param interactions Turn 与人工交互用例
      */
     public CoreRpcHandlers(PlatformServices platform, CanonicalJson json, InteractionServices interactions) {
+        this(platform, json, interactions, Optional.empty());
+    }
+
+    /**
+     * 创建具有公开流提交唤醒的 Core handlers。
+     *
+     * @param platform Core 平台用例
+     * @param json 共享 JSON codec
+     * @param interactions Turn 与人工交互用例
+     * @param streams 组合根共享流；旧宿主为空时依靠持久水位兜底
+     */
+    public CoreRpcHandlers(
+            PlatformServices platform,
+            CanonicalJson json,
+            InteractionServices interactions,
+            Optional<TurnStreamService> streams) {
+        this.streams = Objects.requireNonNull(streams, "streams");
         PlatformServices checkedPlatform = Objects.requireNonNull(platform, "platform");
         InteractionServices checkedInteractions = Objects.requireNonNull(interactions, "interactions");
         core = checkedPlatform.core();
@@ -84,6 +103,8 @@ public final class CoreRpcHandlers {
                 .register("turn/cancel", this::cancelTurn)
                 .register("item/list", this::listItems)
                 .register("attachment/read", this::readAttachment)
+                .register("attachment/metadata", this::attachmentMetadata)
+                .register("attachment/readChunk", this::attachmentChunk)
                 .register("provider/list", this::listProviders)
                 .register("provider/read", this::readProvider)
                 .register("provider/create", this::createProvider)
@@ -224,6 +245,8 @@ public final class CoreRpcHandlers {
                 json.decode(command.payload(), CoreRpcContracts.TurnCancelPayload.class);
         AgentTurn turn = core.requestTurnCancellation(
                 CommandIdentity.from("turn/cancel", command, json), payload.turnId(), payload.reason());
+        // 仅在用例事务成功返回后唤醒；发送仍在连接 drain 中进行。
+        streams.ifPresent(value -> value.committed(turn.id()));
         turns.cancel(turn.id(), payload.reason());
         return json.encode(turn);
     }
@@ -284,6 +307,17 @@ public final class CoreRpcHandlers {
         AttachmentRpcContracts.UploadReadPayload payload =
                 json.decode(params, AttachmentRpcContracts.UploadReadPayload.class);
         return json.encode(attachments.readUpload(payload.scope(), payload.uploadId()));
+    }
+
+    private CanonicalPayload attachmentMetadata(CanonicalPayload params) {
+        var payload = json.decode(params, AttachmentRpcContracts.ReadPayload.class);
+        return json.encode(attachments.readMetadata(payload.scope(), payload.digest()));
+    }
+
+    private CanonicalPayload attachmentChunk(CanonicalPayload params) {
+        var payload = json.decode(params, AttachmentRpcContracts.DownloadChunkPayload.class);
+        return json.encode(attachments.readChunk(
+                payload.scope(), payload.digest(), payload.offsetBytes(), payload.maximumBytes()));
     }
 
     private CanonicalPayload readAttachment(CanonicalPayload params) {
@@ -380,7 +414,10 @@ public final class CoreRpcHandlers {
                 json.decode(command.payload(), WorktreeRpcContracts.InterruptPayload.class);
         com.javaclaw.server.persistence.ManagedWorktreeInterruptResult result = worktrees.interrupt(
                 CommandIdentity.from("worktree/interrupt", command, json), payload.worktreeId(), payload.reason());
-        result.turnId().ifPresent(turnId -> turns.cancel(turnId, payload.reason()));
+        result.turnId().ifPresent(turnId -> {
+            streams.ifPresent(value -> value.committed(turnId));
+            turns.cancel(turnId, payload.reason());
+        });
         return json.encode(result.worktree());
     }
 

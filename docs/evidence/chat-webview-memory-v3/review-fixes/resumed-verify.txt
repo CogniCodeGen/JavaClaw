@@ -1,0 +1,536 @@
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by org.fusesource.jansi.internal.JansiLoader in an unnamed module (file:/Users/fengs/Documents/profile/apache-maven-3.9.0/lib/jansi-2.4.0.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper (file:/Users/fengs/Documents/profile/apache-maven-3.9.0/lib/guava-30.1-jre.jar)
+WARNING: Please consider reporting this to the maintainers of class com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[WARNING] 
+[WARNING] Some problems were encountered while building the effective settings
+[WARNING] 'profiles.profile[rdc].repositories.repository.id' must be unique but found duplicate repository with id central @ /Users/fengs/Documents/profile/apache-maven-3.9.0/conf/settings.xml
+[WARNING] 
+[INFO] Scanning for projects...
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Build Order:
+[INFO] 
+[INFO] JavaClaw JavaFX SDK Client                                         [jar]
+[INFO] JavaClaw Packaging                                                 [jar]
+[INFO] 
+[INFO] -------------------< com.javaclaw:javaclaw-desktop >--------------------
+[INFO] Building JavaClaw JavaFX SDK Client 6.0.0-SNAPSHOT                 [1/2]
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:apply (default-cli) @ javaclaw-desktop ---
+[INFO] Spotless.Format is keeping 2 files clean - 0 were changed to be clean, 0 were already clean, 2 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 403 files clean - 0 were changed to be clean, 2 were already clean, 401 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- clean:3.2.0:clean (default-clean) @ javaclaw-desktop ---
+[INFO] Deleting /Users/fengs/Documents/openProject/JavaClaw/javaclaw-desktop/target
+[INFO] 
+[INFO] --- spotless:3.10.0:check (verify-source-format) @ javaclaw-desktop ---
+[INFO] Index file does not exist. Fallback to an empty index
+[INFO] Spotless.Format is keeping 2 files clean - 0 needs changes to be clean, 2 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 403 files clean - 0 needs changes to be clean, 403 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (verify-source-contracts) @ javaclaw-desktop ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] --- enforcer:3.5.0:enforce (verify-dependency-graph) @ javaclaw-desktop ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- jacoco:0.8.13:prepare-agent (prepare-coverage-agent) @ javaclaw-desktop ---
+[INFO] argLine set to -javaagent:/Users/fengs/.m2/repository/org/jacoco/org.jacoco.agent/0.8.13/org.jacoco.agent-0.8.13-runtime.jar=destfile=/Users/fengs/Documents/openProject/JavaClaw/javaclaw-desktop/target/jacoco.exec
+[INFO] 
+[INFO] --- resources:3.3.0:resources (default-resources) @ javaclaw-desktop ---
+[INFO] Copying 21 resources
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ javaclaw-desktop ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 259 source files with javac [debug parameters release 25 module-path] to target/classes
+[INFO] JDK-8318913 workaround: patched module-info.class requires version from [25] to [25] on 4 JDK modules [java.base, jdk.jsobject, java.prefs, java.desktop]
+[WARNING] /Users/fengs/Documents/openProject/JavaClaw/javaclaw-desktop/src/main/java/module-info.java:[11,17] 模块 jdk.jsobject 已过时, 且标记为待删除
+[WARNING] /Users/fengs/Documents/openProject/JavaClaw/javaclaw-desktop/src/main/java/com/javaclaw/desktop/web/WebSurfaceHost.java:[284,19] netscape.javascript 中的 netscape.javascript.JSObject 已过时, 且标记为待删除
+[INFO] 
+[INFO] --- resources:3.3.0:testResources (default-testResources) @ javaclaw-desktop ---
+[INFO] skip non existing resourceDirectory /Users/fengs/Documents/openProject/JavaClaw/javaclaw-desktop/src/test/resources
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ javaclaw-desktop ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 144 source files with javac [debug parameters release 25 module-path] to target/test-classes
+[INFO] 
+[INFO] --- surefire:3.5.2:test (default-test) @ javaclaw-desktop ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running com.javaclaw.desktop.settings.CodingSettingsPageTest
+9月 08, 2026 12:44:41 下午 com.sun.javafx.application.PlatformImpl startup
+警告: Unsupported JavaFX configuration: classes were loaded from 'unnamed module @71075444'
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.956 s -- in com.javaclaw.desktop.settings.CodingSettingsPageTest
+[INFO] Running com.javaclaw.desktop.settings.ProviderReferencePresentersTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.019 s -- in com.javaclaw.desktop.settings.ProviderReferencePresentersTest
+[INFO] Running com.javaclaw.desktop.settings.SettingsLabelsTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.008 s -- in com.javaclaw.desktop.settings.SettingsLabelsTest
+[INFO] Running com.javaclaw.desktop.settings.ManagementScopeSessionFxTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.464 s -- in com.javaclaw.desktop.settings.ManagementScopeSessionFxTest
+[INFO] Running com.javaclaw.desktop.settings.McpSettingsPageTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.104 s -- in com.javaclaw.desktop.settings.McpSettingsPageTest
+[INFO] Running com.javaclaw.desktop.settings.ProviderModelDiscoveryPresenterTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.006 s -- in com.javaclaw.desktop.settings.ProviderModelDiscoveryPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.McpOAuthSettingsPresenterTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.desktop.settings.McpOAuthSettingsPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.AppearanceSettingsPageTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.026 s -- in com.javaclaw.desktop.settings.AppearanceSettingsPageTest
+[INFO] Running com.javaclaw.desktop.settings.ExecutionSelectionControlTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.032 s -- in com.javaclaw.desktop.settings.ExecutionSelectionControlTest
+[INFO] Running com.javaclaw.desktop.settings.ManagementScopePresenterTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.desktop.settings.ManagementScopePresenterTest
+[INFO] Running com.javaclaw.desktop.settings.ExecutionSelectionPageRefreshTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.105 s -- in com.javaclaw.desktop.settings.ExecutionSelectionPageRefreshTest
+[INFO] Running com.javaclaw.desktop.settings.AutomationJobSettingsPresenterTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.011 s -- in com.javaclaw.desktop.settings.AutomationJobSettingsPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.ProviderContextPresenterTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.desktop.settings.ProviderContextPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.ProviderVerificationPresenterTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s -- in com.javaclaw.desktop.settings.ProviderVerificationPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.ViewPageCursorStateTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.208 s -- in com.javaclaw.desktop.settings.ViewPageCursorStateTest
+[INFO] Running com.javaclaw.desktop.settings.ExtensionManagementSettingsPagesTest
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.265 s -- in com.javaclaw.desktop.settings.ExtensionManagementSettingsPagesTest
+[INFO] Running com.javaclaw.desktop.settings.AgentRoleDraftProtectionTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.013 s -- in com.javaclaw.desktop.settings.AgentRoleDraftProtectionTest
+[INFO] Running com.javaclaw.desktop.settings.PromptPreviewSettingsPresenterTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.javaclaw.desktop.settings.PromptPreviewSettingsPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.ProviderModelCatalogEditorTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.desktop.settings.ProviderModelCatalogEditorTest
+[INFO] Running com.javaclaw.desktop.settings.ViewGraphBrowsingPageTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.109 s -- in com.javaclaw.desktop.settings.ViewGraphBrowsingPageTest
+[INFO] Running com.javaclaw.desktop.settings.ManagementCenterWindowTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.783 s -- in com.javaclaw.desktop.settings.ManagementCenterWindowTest
+[INFO] Running com.javaclaw.desktop.settings.BuiltinExtensionSettingsPresenterTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.desktop.settings.BuiltinExtensionSettingsPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.ExecutionSelectionPanelTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.184 s -- in com.javaclaw.desktop.settings.ExecutionSelectionPanelTest
+[INFO] Running com.javaclaw.desktop.settings.McpSettingsPresenterTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.008 s -- in com.javaclaw.desktop.settings.McpSettingsPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.FxStateDispatcherTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.017 s -- in com.javaclaw.desktop.settings.FxStateDispatcherTest
+[INFO] Running com.javaclaw.desktop.settings.CodingPreparationStatusTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.desktop.settings.CodingPreparationStatusTest
+[INFO] Running com.javaclaw.desktop.settings.ToolCatalogSelectionPresenterTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.desktop.settings.ToolCatalogSelectionPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.AutomationJobSettingsPageTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.024 s -- in com.javaclaw.desktop.settings.AutomationJobSettingsPageTest
+[INFO] Running com.javaclaw.desktop.settings.SiteCredentialSettingsPresenterTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.desktop.settings.SiteCredentialSettingsPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.OtherManagementSettingsPagesTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.058 s -- in com.javaclaw.desktop.settings.OtherManagementSettingsPagesTest
+[INFO] Running com.javaclaw.desktop.settings.CoreSettingsPresentersTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.013 s -- in com.javaclaw.desktop.settings.CoreSettingsPresentersTest
+[INFO] Running com.javaclaw.desktop.settings.SdkExtensionSettingsGatewayTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.018 s -- in com.javaclaw.desktop.settings.SdkExtensionSettingsGatewayTest
+[INFO] Running com.javaclaw.desktop.settings.CoreSettingsPagesTest
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.262 s -- in com.javaclaw.desktop.settings.CoreSettingsPagesTest
+[INFO] Running com.javaclaw.desktop.settings.ManagedWorktreeSettingsPresenterTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.desktop.settings.ManagedWorktreeSettingsPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.ProviderSettingsPresenterStateTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.desktop.settings.ProviderSettingsPresenterStateTest
+[INFO] Running com.javaclaw.desktop.settings.ViewSchemaRefreshTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.154 s -- in com.javaclaw.desktop.settings.ViewSchemaRefreshTest
+[INFO] Running com.javaclaw.desktop.settings.ProviderSetupPresenterTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.desktop.settings.ProviderSetupPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.SecurityGrantSettingsPresentersTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.desktop.settings.SecurityGrantSettingsPresentersTest
+[INFO] Running com.javaclaw.desktop.settings.PromptOptimizationSettingsPresenterTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.desktop.settings.PromptOptimizationSettingsPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.InstructionSettingsPresenterTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in com.javaclaw.desktop.settings.InstructionSettingsPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.McpExternalDataPresenterTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.desktop.settings.McpExternalDataPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.ProviderDraftTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in com.javaclaw.desktop.settings.ProviderDraftTest
+[INFO] Running com.javaclaw.desktop.settings.AsyncSystemSettingsPageTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.018 s -- in com.javaclaw.desktop.settings.AsyncSystemSettingsPageTest
+[INFO] Running com.javaclaw.desktop.settings.ProviderEndpointPreviewTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.desktop.settings.ProviderEndpointPreviewTest
+[INFO] Running com.javaclaw.desktop.settings.ViewSchemaSettingsPageTest
+[INFO] Tests run: 10, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.247 s -- in com.javaclaw.desktop.settings.ViewSchemaSettingsPageTest
+[INFO] Running com.javaclaw.desktop.settings.PermissionSettingsEdgeCasesTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.desktop.settings.PermissionSettingsEdgeCasesTest
+[INFO] Running com.javaclaw.desktop.settings.BundleSettingsPresentersTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.desktop.settings.BundleSettingsPresentersTest
+[INFO] Running com.javaclaw.desktop.settings.SystemSettingsPagesTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.017 s -- in com.javaclaw.desktop.settings.SystemSettingsPagesTest
+[INFO] Running com.javaclaw.desktop.settings.AgentRoleFilePanelTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s -- in com.javaclaw.desktop.settings.AgentRoleFilePanelTest
+[INFO] Running com.javaclaw.desktop.settings.PromptOptimizationPanelTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.079 s -- in com.javaclaw.desktop.settings.PromptOptimizationPanelTest
+[INFO] Running com.javaclaw.desktop.settings.AgentRoleSettingsPageTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.264 s -- in com.javaclaw.desktop.settings.AgentRoleSettingsPageTest
+[INFO] Running com.javaclaw.desktop.settings.AgentRoleSettingsPresenterTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.desktop.settings.AgentRoleSettingsPresenterTest
+[INFO] Running com.javaclaw.desktop.settings.JavaPreferencesManagementWindowStoreTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.desktop.settings.JavaPreferencesManagementWindowStoreTest
+[INFO] Running com.javaclaw.desktop.settings.ManagedWorktreeSettingsPageTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.017 s -- in com.javaclaw.desktop.settings.ManagedWorktreeSettingsPageTest
+[INFO] Running com.javaclaw.desktop.DesktopLegacyHistoryTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.132 s -- in com.javaclaw.desktop.DesktopLegacyHistoryTest
+[INFO] Running com.javaclaw.desktop.DesktopStateModelTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.javaclaw.desktop.DesktopStateModelTest
+[INFO] Running com.javaclaw.desktop.LauncherSessionTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.desktop.LauncherSessionTest
+[INFO] Running com.javaclaw.desktop.StartupWaitingConnectorTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.008 s -- in com.javaclaw.desktop.StartupWaitingConnectorTest
+[INFO] Running com.javaclaw.desktop.ViewSelectionProjectionTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.javaclaw.desktop.ViewSelectionProjectionTest
+[INFO] Running com.javaclaw.desktop.ComboBoxPopupStyleTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 6.374 s -- in com.javaclaw.desktop.ComboBoxPopupStyleTest
+[INFO] Running com.javaclaw.desktop.shell.ShellChatFallbackTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.203 s -- in com.javaclaw.desktop.shell.ShellChatFallbackTest
+[INFO] Running com.javaclaw.desktop.shell.DesktopCodingOutputControllerTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.006 s -- in com.javaclaw.desktop.shell.DesktopCodingOutputControllerTest
+[INFO] Running com.javaclaw.desktop.shell.CodingExecutionPanelTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.053 s -- in com.javaclaw.desktop.shell.CodingExecutionPanelTest
+[INFO] Running com.javaclaw.desktop.appearance.JavaPreferencesAppearanceStoreTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in com.javaclaw.desktop.appearance.JavaPreferencesAppearanceStoreTest
+[INFO] Running com.javaclaw.desktop.appearance.DesktopAppearanceManagerTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.011 s -- in com.javaclaw.desktop.appearance.DesktopAppearanceManagerTest
+[INFO] Running com.javaclaw.desktop.web.WebSurfaceRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 6.086 s -- in com.javaclaw.desktop.web.WebSurfaceRecoveryTest
+[INFO] Running com.javaclaw.desktop.web.WebSurfaceHostTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.744 s -- in com.javaclaw.desktop.web.WebSurfaceHostTest
+[INFO] Running com.javaclaw.desktop.web.WebSurfaceMenuTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.394 s -- in com.javaclaw.desktop.web.WebSurfaceMenuTest
+[INFO] Running com.javaclaw.desktop.web.WebSurfaceRuntimeTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.462 s -- in com.javaclaw.desktop.web.WebSurfaceRuntimeTest
+[INFO] Running com.javaclaw.desktop.web.SafeMarkdownTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s -- in com.javaclaw.desktop.web.SafeMarkdownTest
+[INFO] Running com.javaclaw.desktop.web.GraphAppearanceAcceptanceTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.323 s -- in com.javaclaw.desktop.web.GraphAppearanceAcceptanceTest
+[INFO] Running com.javaclaw.desktop.web.WebResourceIntegrityTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.desktop.web.WebResourceIntegrityTest
+[INFO] Running com.javaclaw.desktop.component.PlatformDialogsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.064 s -- in com.javaclaw.desktop.component.PlatformDialogsTest
+[INFO] Running com.javaclaw.desktop.component.InputResponseSchemaTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.013 s -- in com.javaclaw.desktop.component.InputResponseSchemaTest
+[INFO] Running com.javaclaw.desktop.component.ManagementComponentsTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.desktop.component.ManagementComponentsTest
+[INFO] Running com.javaclaw.desktop.component.PlatformComponentFactoryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.desktop.component.PlatformComponentFactoryTest
+[INFO] Running com.javaclaw.desktop.document.DocumentTextPagesTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.013 s -- in com.javaclaw.desktop.document.DocumentTextPagesTest
+[INFO] Running com.javaclaw.desktop.document.PreviewImageDecoderTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.032 s -- in com.javaclaw.desktop.document.PreviewImageDecoderTest
+[INFO] Running com.javaclaw.desktop.document.DocumentPreviewPaneTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.079 s -- in com.javaclaw.desktop.document.DocumentPreviewPaneTest
+[INFO] Running com.javaclaw.desktop.document.DocumentPreviewLeaseTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.107 s -- in com.javaclaw.desktop.document.DocumentPreviewLeaseTest
+[INFO] Running com.javaclaw.desktop.document.DocumentPreviewLoaderTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.019 s -- in com.javaclaw.desktop.document.DocumentPreviewLoaderTest
+[INFO] Running com.javaclaw.desktop.DesktopShellControllerTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.741 s -- in com.javaclaw.desktop.DesktopShellControllerTest
+[INFO] Running com.javaclaw.desktop.state.TranscriptStateTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.javaclaw.desktop.state.TranscriptStateTest
+[INFO] Running com.javaclaw.desktop.DesktopShellThreadActivationTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.560 s -- in com.javaclaw.desktop.DesktopShellThreadActivationTest
+[INFO] Running com.javaclaw.desktop.DesktopPresenterTest
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.491 s -- in com.javaclaw.desktop.DesktopPresenterTest
+[INFO] Running com.javaclaw.desktop.acceptance.chatdocument.ChatDocumentAcceptanceTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.779 s -- in com.javaclaw.desktop.acceptance.chatdocument.ChatDocumentAcceptanceTest
+[INFO] Running com.javaclaw.desktop.acceptance.chatdocument.DocumentVisualAcceptanceTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.107 s -- in com.javaclaw.desktop.acceptance.chatdocument.DocumentVisualAcceptanceTest
+[INFO] Running com.javaclaw.desktop.DesktopTurnStreamCoordinatorTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.047 s -- in com.javaclaw.desktop.DesktopTurnStreamCoordinatorTest
+[INFO] Running com.javaclaw.desktop.DesktopLaunchOptionsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.012 s -- in com.javaclaw.desktop.DesktopLaunchOptionsTest
+[INFO] Running com.javaclaw.desktop.view.ViewDynamicOptionsTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in com.javaclaw.desktop.view.ViewDynamicOptionsTest
+[INFO] Running com.javaclaw.desktop.view.ViewRenderSessionTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.374 s -- in com.javaclaw.desktop.view.ViewRenderSessionTest
+[INFO] Running com.javaclaw.desktop.view.ViewSchemaRendererBoundaryTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s -- in com.javaclaw.desktop.view.ViewSchemaRendererBoundaryTest
+[INFO] Running com.javaclaw.desktop.view.ViewFormRendererBoundaryTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.desktop.view.ViewFormRendererBoundaryTest
+[INFO] Running com.javaclaw.desktop.view.ViewAttachmentFieldControlTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.desktop.view.ViewAttachmentFieldControlTest
+[INFO] Running com.javaclaw.desktop.view.ViewCommandBindingResolverTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in com.javaclaw.desktop.view.ViewCommandBindingResolverTest
+[INFO] Running com.javaclaw.desktop.view.ViewStructuredListControlBoundaryTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s -- in com.javaclaw.desktop.view.ViewStructuredListControlBoundaryTest
+[INFO] Running com.javaclaw.desktop.view.ViewStructuredListRendererTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.javaclaw.desktop.view.ViewStructuredListRendererTest
+[INFO] Running com.javaclaw.desktop.view.ViewDynamicOptionsRendererTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in com.javaclaw.desktop.view.ViewDynamicOptionsRendererTest
+[INFO] Running com.javaclaw.desktop.view.ViewDynamicOptionsPolicyTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in com.javaclaw.desktop.view.ViewDynamicOptionsPolicyTest
+[INFO] Running com.javaclaw.desktop.view.ViewGraphWindowTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s -- in com.javaclaw.desktop.view.ViewGraphWindowTest
+[INFO] Running com.javaclaw.desktop.view.ChatSurfaceTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.678 s -- in com.javaclaw.desktop.view.ChatSurfaceTest
+[INFO] Running com.javaclaw.desktop.view.ViewSchemaRendererTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.016 s -- in com.javaclaw.desktop.view.ViewSchemaRendererTest
+[INFO] Running com.javaclaw.desktop.view.ViewSchemaPolicyTest
+[INFO] Tests run: 14, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.javaclaw.desktop.view.ViewSchemaPolicyTest
+[INFO] Running com.javaclaw.desktop.view.TranscriptPresenterTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.013 s -- in com.javaclaw.desktop.view.TranscriptPresenterTest
+[INFO] Running com.javaclaw.desktop.view.ViewCommandBindingRendererTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.javaclaw.desktop.view.ViewCommandBindingRendererTest
+[INFO] Running com.javaclaw.desktop.view.ViewStructuredListValidationTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in com.javaclaw.desktop.view.ViewStructuredListValidationTest
+[INFO] Running com.javaclaw.desktop.view.ViewRequestEpochTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0 s -- in com.javaclaw.desktop.view.ViewRequestEpochTest
+[INFO] Running com.javaclaw.desktop.DesktopConversationNavigationTest
+[INFO] Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.046 s -- in com.javaclaw.desktop.DesktopConversationNavigationTest
+[INFO] Running com.javaclaw.desktop.AutomationJobSdkGatewayTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.014 s -- in com.javaclaw.desktop.AutomationJobSdkGatewayTest
+[INFO] Running com.javaclaw.desktop.InputRequestPanelTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.045 s -- in com.javaclaw.desktop.InputRequestPanelTest
+[INFO] Running com.javaclaw.desktop.SelectedControlContrastTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.104 s -- in com.javaclaw.desktop.SelectedControlContrastTest
+[INFO] Running com.javaclaw.desktop.DesktopStylesheetsTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.javaclaw.desktop.DesktopStylesheetsTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[INFO] Tests run: 366, Failures: 0, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] 
+[INFO] --- jar:3.4.2:jar (default-jar) @ javaclaw-desktop ---
+[INFO] Building jar: /Users/fengs/Documents/openProject/JavaClaw/javaclaw-desktop/target/javaclaw-desktop-6.0.0-SNAPSHOT.jar
+[INFO] 
+[INFO] --- failsafe:3.5.2:integration-test (verify-ui-golden) @ javaclaw-desktop ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running com.javaclaw.desktop.golden.ManagementCenterGoldenIT
+9月 08, 2026 12:45:17 下午 com.sun.javafx.application.PlatformImpl startup
+警告: Unsupported JavaFX configuration: classes were loaded from 'unnamed module @1d29cf23'
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 8.124 s -- in com.javaclaw.desktop.golden.ManagementCenterGoldenIT
+[INFO] 
+[INFO] Results:
+[INFO] 
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] 
+[INFO] --- dependency:3.11.0:analyze-only (verify-declared-dependencies) @ javaclaw-desktop ---
+[INFO] No dependency problems found
+[INFO] 
+[INFO] --- jacoco:0.8.13:report (verify-coverage) @ javaclaw-desktop ---
+[INFO] Loading execution data file /Users/fengs/Documents/openProject/JavaClaw/javaclaw-desktop/target/jacoco.exec
+[INFO] Analyzed bundle 'JavaClaw JavaFX SDK Client' with 330 classes
+[INFO] 
+[INFO] --- jacoco:0.8.13:check (verify-coverage) @ javaclaw-desktop ---
+[INFO] Loading execution data file /Users/fengs/Documents/openProject/JavaClaw/javaclaw-desktop/target/jacoco.exec
+[INFO] Analyzed bundle 'javaclaw-desktop' with 330 classes
+[INFO] All coverage checks have been met.
+[INFO] 
+[INFO] --- failsafe:3.5.2:verify (verify-ui-golden) @ javaclaw-desktop ---
+[INFO] 
+[INFO] --- spotless:3.10.0:check (default-cli) @ javaclaw-desktop ---
+[INFO] Spotless.Format is keeping 2 files clean - 0 needs changes to be clean, 0 were already clean, 2 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 403 files clean - 0 needs changes to be clean, 0 were already clean, 403 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (default-cli) @ javaclaw-desktop ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] ------------------< com.javaclaw:javaclaw-packaging >-------------------
+[INFO] Building JavaClaw Packaging 6.0.0-SNAPSHOT                         [2/2]
+[INFO]   from ../javaclaw-packaging/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:3.10.0:apply (default-cli) @ javaclaw-packaging ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 were changed to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 40 files clean - 0 were changed to be clean, 0 were already clean, 40 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- clean:3.2.0:clean (default-clean) @ javaclaw-packaging ---
+[INFO] Deleting /Users/fengs/Documents/openProject/JavaClaw/javaclaw-packaging/target
+[INFO] 
+[INFO] --- spotless:3.10.0:check (verify-source-format) @ javaclaw-packaging ---
+[INFO] Index file does not exist. Fallback to an empty index
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 1 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 40 files clean - 0 needs changes to be clean, 40 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (verify-source-contracts) @ javaclaw-packaging ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] --- enforcer:3.5.0:enforce (verify-dependency-graph) @ javaclaw-packaging ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- antrun:3.1.0:run (reset-package-output) @ javaclaw-packaging ---
+[INFO] Executing tasks
+[INFO] Executed tasks
+[INFO] 
+[INFO] --- jacoco:0.8.13:prepare-agent (prepare-coverage-agent) @ javaclaw-packaging ---
+[INFO] argLine set to -javaagent:/Users/fengs/.m2/repository/org/jacoco/org.jacoco.agent/0.8.13/org.jacoco.agent-0.8.13-runtime.jar=destfile=/Users/fengs/Documents/openProject/JavaClaw/javaclaw-packaging/target/jacoco.exec
+[INFO] 
+[INFO] --- resources:3.3.0:resources (default-resources) @ javaclaw-packaging ---
+[INFO] skip non existing resourceDirectory /Users/fengs/Documents/openProject/JavaClaw/javaclaw-packaging/src/main/resources
+[INFO] 
+[INFO] --- antrun:3.1.0:run (build-isolated-runtime-images) @ javaclaw-packaging ---
+[INFO] Executing tasks
+[INFO]     [mkdir] Created dir: /Users/fengs/Documents/openProject/JavaClaw/javaclaw-packaging/target/distribution/workers/browser/app
+[INFO]     [mkdir] Created dir: /Users/fengs/Documents/openProject/JavaClaw/javaclaw-packaging/target/distribution/workers/browser/browser
+[INFO]     [mkdir] Created dir: /Users/fengs/Documents/openProject/JavaClaw/javaclaw-packaging/target/distribution/workers/knowledge/app
+[INFO]      [copy] Copying 11 files to /Users/fengs/Documents/openProject/JavaClaw/javaclaw-packaging/target/distribution
+[INFO]      [copy] Copying 1 file to /Users/fengs/Documents/openProject/JavaClaw/javaclaw-packaging/target/distribution/legal
+[INFO]      [copy] Copying 3 files to /Users/fengs/Documents/openProject/JavaClaw/javaclaw-packaging/target/distribution/legal/web
+[INFO]     [mkdir] Created dir: /Users/fengs/Documents/openProject/JavaClaw/javaclaw-packaging/target/distribution/evidence
+[INFO]      [copy] Copying 1 file to /Users/fengs/Documents/openProject/JavaClaw/javaclaw-packaging/target/distribution/evidence
+[INFO] Executed tasks
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ javaclaw-packaging ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 19 source files with javac [debug parameters release 25] to target/classes
+[INFO] 
+[INFO] --- jar:3.4.2:jar (default-jar) @ javaclaw-packaging ---
+[INFO] Building jar: /Users/fengs/Documents/openProject/JavaClaw/javaclaw-packaging/target/javaclaw-packaging-6.0.0-SNAPSHOT.jar
+[INFO] 
+[INFO] --- resources:3.3.0:testResources (default-testResources) @ javaclaw-packaging ---
+[INFO] Copying 1 resource
+[INFO] 
+[INFO] --- dependency:3.11.0:copy-dependencies (copy-main-runtime-dependencies) @ javaclaw-packaging ---
+[INFO] 
+[INFO] --- dependency:3.11.0:copy-dependencies (copy-browser-worker-dependencies) @ javaclaw-packaging ---
+[INFO] 
+[INFO] --- dependency:3.11.0:copy-dependencies (copy-knowledge-worker-dependencies) @ javaclaw-packaging ---
+[INFO] 
+[INFO] --- antrun:3.1.0:run (copy-launcher-artifact) @ javaclaw-packaging ---
+[INFO] Executing tasks
+[INFO]      [copy] Copying 1 file to /Users/fengs/Documents/openProject/JavaClaw/javaclaw-packaging/target/distribution/lib
+[INFO] Executed tasks
+[INFO] 
+[INFO] --- exec:3.5.0:java (mark-knowledge-worker-image) @ javaclaw-packaging ---
+[INFO] 
+[INFO] --- exec:3.5.0:java (mark-skill-worker-image) @ javaclaw-packaging ---
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ javaclaw-packaging ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 21 source files with javac [debug parameters release 25] to target/test-classes
+[INFO] 
+[INFO] --- surefire:3.5.2:test (default-test) @ javaclaw-packaging ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running com.javaclaw.launcher.WindowsServerSupervisorTest
+[WARNING] Tests run: 1, Failures: 0, Errors: 0, Skipped: 1, Time elapsed: 0.001 s -- in com.javaclaw.launcher.WindowsServerSupervisorTest
+[INFO] Running com.javaclaw.launcher.DesktopProcessSupervisorTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.663 s -- in com.javaclaw.launcher.DesktopProcessSupervisorTest
+[INFO] Running com.javaclaw.launcher.UnixServerSupervisorTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.093 s -- in com.javaclaw.launcher.UnixServerSupervisorTest
+[INFO] Running com.javaclaw.launcher.WindowsServerSupervisorContractTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.010 s -- in com.javaclaw.launcher.WindowsServerSupervisorContractTest
+[INFO] Running com.javaclaw.launcher.tray.AwtSystemTrayViewTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.209 s -- in com.javaclaw.launcher.tray.AwtSystemTrayViewTest
+[INFO] Running com.javaclaw.launcher.tray.TrayApplicationControllerTest
+[INFO] Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.009 s -- in com.javaclaw.launcher.tray.TrayApplicationControllerTest
+[INFO] Running com.javaclaw.launcher.tray.ProtocolTrayServerControlTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.javaclaw.launcher.tray.ProtocolTrayServerControlTest
+[INFO] Running com.javaclaw.launcher.AppServerLauncherTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.890 s -- in com.javaclaw.launcher.AppServerLauncherTest
+[INFO] Running com.javaclaw.launcher.JavaClawLauncherTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.159 s -- in com.javaclaw.launcher.JavaClawLauncherTest
+[INFO] Running com.javaclaw.launcher.RuntimeLayoutTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.028 s -- in com.javaclaw.launcher.RuntimeLayoutTest
+[INFO] Running com.javaclaw.launcher.WorkerImageLayoutTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.088 s -- in com.javaclaw.launcher.WorkerImageLayoutTest
+[INFO] Running com.javaclaw.release.BrowserNativeSandboxSmokeTest
+[WARNING] Tests run: 1, Failures: 0, Errors: 0, Skipped: 1, Time elapsed: 0.004 s -- in com.javaclaw.release.BrowserNativeSandboxSmokeTest
+[INFO] Running com.javaclaw.release.DistributionRuntimeClasspathTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.011 s -- in com.javaclaw.release.DistributionRuntimeClasspathTest
+[INFO] Running com.javaclaw.release.BrowserNativeCapabilityTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.008 s -- in com.javaclaw.release.BrowserNativeCapabilityTest
+[INFO] Running com.javaclaw.release.WorkerImageAssemblerMainTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.021 s -- in com.javaclaw.release.WorkerImageAssemblerMainTest
+[INFO] Running com.javaclaw.release.DistributionScriptsTest
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.008 s -- in com.javaclaw.release.DistributionScriptsTest
+[INFO] Running com.javaclaw.release.ReleaseManifestMainTest
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.047 s -- in com.javaclaw.release.ReleaseManifestMainTest
+[INFO] Running com.javaclaw.release.WorkerImageAssemblerValidationTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.039 s -- in com.javaclaw.release.WorkerImageAssemblerValidationTest
+[INFO] Running com.javaclaw.architecture.IdeaRunConfigurationArchitectureTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.017 s -- in com.javaclaw.architecture.IdeaRunConfigurationArchitectureTest
+[INFO] Running com.javaclaw.architecture.ProductionPackageCycleTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.145 s -- in com.javaclaw.architecture.ProductionPackageCycleTest
+[INFO] Running com.javaclaw.architecture.ArchitectureBoundaryTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.541 s -- in com.javaclaw.architecture.ArchitectureBoundaryTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[WARNING] Tests run: 89, Failures: 0, Errors: 0, Skipped: 2
+[INFO] 
+[INFO] 
+[INFO] --- cyclonedx:2.9.3:makeBom (create-runtime-sbom) @ javaclaw-packaging ---
+[INFO] CycloneDX: Resolving Dependencies
+[INFO] CycloneDX: Creating BOM version 1.6 with 142 component(s)
+[INFO] CycloneDX: Writing and validating BOM (JSON): /Users/fengs/Documents/openProject/JavaClaw/javaclaw-packaging/target/release-evidence/bom.json
+[WARNING] Unknown keyword meta:enum - you should define your own Meta Schema. If the keyword is irrelevant for validation, just use a NonValidationKeyword or if it should generate annotations AnnotationKeyword
+[WARNING] Unknown keyword deprecated - you should define your own Meta Schema. If the keyword is irrelevant for validation, just use a NonValidationKeyword or if it should generate annotations AnnotationKeyword
+[INFO] 
+[INFO] --- license:2.7.1:add-third-party (verify-runtime-licenses) @ javaclaw-packaging ---
+[INFO] Included licenses (whitelist): [0BSD, Apache-2.0, BSD-2-Clause, BSD-3-Clause, CDDL + GPLv2 with classpath exception, EDL-1.0, EPL-1.0, GNU Lesser General Public License, GPL-2.0-with-classpath-exception, MIT, MIT-0, MPL 2.0, Public Domain, per Creative Commons CC0]
+[INFO] Writing third-party file to /Users/fengs/Documents/openProject/JavaClaw/javaclaw-packaging/target/release-evidence/THIRD-PARTY.txt
+[INFO] 
+[INFO] --- antrun:3.1.0:run (copy-release-evidence) @ javaclaw-packaging ---
+[INFO] Executing tasks
+[INFO]      [copy] Copying 2 files to /Users/fengs/Documents/openProject/JavaClaw/javaclaw-packaging/target/distribution/evidence
+[INFO] Executed tasks
+[INFO] 
+[INFO] --- exec:3.5.0:java (create-distribution-manifest) @ javaclaw-packaging ---
+[INFO] 
+[INFO] --- exec:3.5.0:java (verify-distribution-manifest) @ javaclaw-packaging ---
+[INFO] 
+[INFO] --- assembly:3.7.1:single (assemble-local-distribution) @ javaclaw-packaging ---
+[INFO] Reading assembly descriptor: src/assembly/distribution.xml
+[INFO] Building zip: /Users/fengs/Documents/openProject/JavaClaw/javaclaw-packaging/target/release/javaclaw-6.0.0-SNAPSHOT-mac-aarch64.zip
+[INFO] 
+[INFO] --- dependency:3.11.0:analyze-only (verify-declared-dependencies) @ javaclaw-packaging ---
+[INFO] No dependency problems found
+[INFO] 
+[INFO] --- exec:3.5.0:java (create-release-manifest) @ javaclaw-packaging ---
+[INFO] 
+[INFO] --- exec:3.5.0:java (verify-release-manifest) @ javaclaw-packaging ---
+[INFO] 
+[INFO] --- jacoco:0.8.13:report (verify-coverage) @ javaclaw-packaging ---
+[INFO] Loading execution data file /Users/fengs/Documents/openProject/JavaClaw/javaclaw-packaging/target/jacoco.exec
+[INFO] Analyzed bundle 'JavaClaw Packaging' with 20 classes
+[INFO] 
+[INFO] --- jacoco:0.8.13:check (verify-coverage) @ javaclaw-packaging ---
+[INFO] Loading execution data file /Users/fengs/Documents/openProject/JavaClaw/javaclaw-packaging/target/jacoco.exec
+[INFO] Analyzed bundle 'javaclaw-packaging' with 20 classes
+[INFO] All coverage checks have been met.
+[INFO] 
+[INFO] --- spotless:3.10.0:check (default-cli) @ javaclaw-packaging ---
+[INFO] Spotless.Format is keeping 1 files clean - 0 needs changes to be clean, 0 were already clean, 1 were skipped because caching determined they were already clean
+[INFO] Spotless.Java is keeping 40 files clean - 0 needs changes to be clean, 0 were already clean, 40 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (default-cli) @ javaclaw-packaging ---
+[INFO] 开始检查……
+检查完成。
+[INFO] You have 0 Checkstyle violations.
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Summary for JavaClaw JavaFX SDK Client 6.0.0-SNAPSHOT:
+[INFO] 
+[INFO] JavaClaw JavaFX SDK Client ......................... SUCCESS [ 56.989 s]
+[INFO] JavaClaw Packaging ................................. SUCCESS [ 22.908 s]
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  01:20 min
+[INFO] Finished at: 2026-09-08T12:45:49+08:00
+[INFO] ------------------------------------------------------------------------

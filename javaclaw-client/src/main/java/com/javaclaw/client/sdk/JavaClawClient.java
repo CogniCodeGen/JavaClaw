@@ -54,6 +54,8 @@ public final class JavaClawClient implements AutoCloseable {
     private final WorkspaceClient workspaces;
     private final ThreadClient threads;
     private final TurnClient turns;
+    private final com.javaclaw.client.facade.TurnStreamClient streams;
+    private final com.javaclaw.client.facade.DocumentPreviewClient documents;
     private final ItemClient items;
     private final InputClient inputs;
     private final AttachmentClient attachments;
@@ -85,6 +87,8 @@ public final class JavaClawClient implements AutoCloseable {
         workspaces = new WorkspaceClient(connection);
         threads = new ThreadClient(connection);
         turns = new TurnClient(connection);
+        streams = new com.javaclaw.client.facade.TurnStreamClient(connection, server.capabilities());
+        documents = new com.javaclaw.client.facade.DocumentPreviewClient(connection);
         items = new ItemClient(connection);
         inputs = new InputClient(connection);
         attachments = new AttachmentClient(connection);
@@ -184,6 +188,16 @@ public final class JavaClawClient implements AutoCloseable {
     /** @return Turn facade */
     public TurnClient turns() {
         return turns;
+    }
+
+    /** @return 复用当前连接并保留恢复快照的公开聊天流 */
+    public com.javaclaw.client.facade.TurnStreamClient streams() {
+        return streams;
+    }
+
+    /** @return 当前连接拥有的受控文档预览 */
+    public com.javaclaw.client.facade.DocumentPreviewClient documents() {
+        return documents;
     }
 
     /** @return Item facade */
@@ -309,6 +323,7 @@ public final class JavaClawClient implements AutoCloseable {
     /** 关闭 SDK 连接。 */
     @Override
     public void close() throws IOException {
+        streams.close();
         connection.close();
     }
 }

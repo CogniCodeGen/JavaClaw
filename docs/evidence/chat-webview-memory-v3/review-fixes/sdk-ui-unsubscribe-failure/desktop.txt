@@ -1,0 +1,15 @@
+9月 08, 2026 12:11:19 下午 com.sun.javafx.application.PlatformImpl startup
+警告: Unsupported JavaFX configuration: classes were loaded from 'unnamed module @123772c4'
+SDK_UI_CAPTURE sdk-chat-history
+SDK_UI_CAPTURE sdk-history-execution-facts-standard
+SDK_UI_CAPTURE sdk-history-execution-facts-dark-minimum
+SDK_UI_CAPTURE sdk-chat-stream
+SDK_UI_CAPTURE sdk-chat-return-active-standard
+UI_CAPTURE 1-1
+Exception in thread "main" java.lang.AssertionError: 验收未到达：切换后历史加载 历史执行记录验收
+	at com.javaclaw.desktop.settings.SdkUiAcceptanceReplay.await(SdkUiAcceptanceReplay.java:318)
+	at com.javaclaw.desktop.settings.SdkUiReviewAcceptance.select(SdkUiReviewAcceptance.java:161)
+	at com.javaclaw.desktop.settings.SdkUiReviewAcceptance.returnWhileRunning(SdkUiReviewAcceptance.java:68)
+	at com.javaclaw.desktop.settings.SdkUiAcceptanceReplay.sendAndPreview(SdkUiAcceptanceReplay.java:82)
+	at com.javaclaw.desktop.settings.SdkUiAcceptanceReplay.run(SdkUiAcceptanceReplay.java:68)
+	at com.javaclaw.desktop.settings.SdkUiAcceptanceDesktop.main(SdkUiAcceptanceDesktop.java:59)

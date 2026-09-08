@@ -107,6 +107,35 @@ class BuiltinExtensionHostScheduleValidationTest {
         }
     }
 
+    @Test
+    void 公共调用不能伪造内部绑定所有者且端口拒绝修改注册身份() throws Exception {
+        Workspace workspace = createWorkspace();
+        try (BuiltinExtensionHost host =
+                BuiltinExtensionHost.start(List.of(new TestScheduleBundle()), core, profiles, ports)) {
+            var read = new ExtensionRpcContracts.CallPayload(
+                    com.javaclaw.builtin.contracts.BuiltinExtensionIds.SCHEDULE,
+                    workspace.id(),
+                    Optional.empty(),
+                    Optional.empty(),
+                    "binding/read",
+                    json.parse("{}"));
+            var write = new ExtensionRpcContracts.CallPayload(
+                    read.extensionId(),
+                    workspace.id(),
+                    Optional.empty(),
+                    Optional.empty(),
+                    "binding/apply",
+                    json.parse("{}"));
+            assertThrows(SecurityException.class, () -> host.query(read));
+            assertThrows(SecurityException.class, () -> host.command(write, "forged-owner", 0));
+        }
+        var adapter = new ServerScheduleDefinitionBindings(json);
+        var owner = new ExtensionId("com.javaclaw.memory");
+        assertThrows(
+                SecurityException.class,
+                () -> adapter.forOwner(owner).read(new ExtensionId("com.javaclaw.workflow"), workspace.id(), "other"));
+    }
+
     private BuiltinExtensionRuntimePorts ports(H2Database database) {
         return new BuiltinExtensionRuntimePorts(
                 CLOCK,
@@ -133,7 +162,9 @@ class BuiltinExtensionHostScheduleValidationTest {
                 AutomationStepPort.unavailable(),
                 ScheduledCommandPort.unavailable(),
                 ScheduleLifecyclePort.unavailable(),
-                new ExtensionCatalogRepository(database, json, CLOCK));
+                new ExtensionCatalogRepository(database, json, CLOCK),
+                com.javaclaw.extension.spi.ConversationEvidencePort.unavailable(),
+                owner -> com.javaclaw.extension.spi.ScheduleDefinitionBindingPort.unavailable());
     }
 
     private Workspace createWorkspace() {

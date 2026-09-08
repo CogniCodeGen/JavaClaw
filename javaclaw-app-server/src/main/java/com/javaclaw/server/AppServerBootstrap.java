@@ -4,6 +4,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 import com.javaclaw.extension.spi.EmbeddingPort;
@@ -258,6 +259,7 @@ public final class AppServerBootstrap {
     }
 
     static void ownFoundation(StartupCloseStack startup, Foundation foundation) {
+        startup.own(foundation.previews());
         startup.own(foundation.vault());
         startup.own(foundation.approvals());
         startup.own(foundation.approvalLifecycle());
@@ -276,7 +278,14 @@ public final class AppServerBootstrap {
                 runtime.management().mcpAvailable() ? StableCapabilities.withMcp() : StableCapabilities.all();
         ProtocolNegotiator negotiator = new ProtocolNegotiator(stableCapabilities, Set.of());
         return new Components(
-                foundation.json(), routes.build(), negotiator, foundation.lifecycle(), events, runtime.resources());
+                foundation.json(),
+                routes.build(),
+                negotiator,
+                foundation.lifecycle(),
+                events,
+                foundation.streams(),
+                foundation.previews(),
+                runtime.resources());
     }
 
     private static DiagnosticsService diagnostics(
@@ -316,7 +325,8 @@ public final class AppServerBootstrap {
                 runtime.dispatcher(),
                 new RolloutCommandService(foundation.database(), foundation.json(), foundation.clock()),
                 foundation.approvals());
-        new CoreRpcHandlers(platform, foundation.json(), interactions).register(routes);
+        new CoreRpcHandlers(platform, foundation.json(), interactions, Optional.of(foundation.streams()))
+                .register(routes);
         new PermissionProfileRpcHandlers(foundation.core(), foundation.permissionProfiles(), foundation.json())
                 .register(routes);
         new PermissionPresetRpcHandlers(
@@ -458,6 +468,8 @@ public final class AppServerBootstrap {
      * @param negotiator 能力协商器
      * @param lifecycle 客户端、Turn 与后台任务生命周期
      * @param events Extension 状态失效通知
+     * @param streams 持久聊天流与提交唤醒
+     * @param previews 连接隔离的文档快照服务
      * @param resources Turn 执行器与 Provider 客户端
      */
     public record Components(
@@ -466,6 +478,8 @@ public final class AppServerBootstrap {
             ProtocolNegotiator negotiator,
             LifecycleCoordinator lifecycle,
             ExtensionEventHub events,
+            com.javaclaw.server.persistence.TurnStreamService streams,
+            com.javaclaw.server.preview.DocumentPreviewService previews,
             AutoCloseable resources)
             implements AutoCloseable {
         /** 校验组件。 */
@@ -484,7 +498,7 @@ public final class AppServerBootstrap {
          * @return 会话
          */
         public AppServerSession newSession() {
-            return new AppServerSession(negotiator, router, json, lifecycle, events);
+            return new AppServerSession(negotiator, router, json, lifecycle, events, streams, previews);
         }
 
         /**
@@ -499,23 +513,15 @@ public final class AppServerBootstrap {
         /** 关闭 Turn 执行器和 Provider 客户端。 */
         @Override
         public void close() throws Exception {
-            Exception failure = null;
-            try {
-                resources.close();
-            } catch (Exception closeFailure) {
-                failure = closeFailure;
-            }
-            events.close();
-            lifecycle.close();
-            if (failure != null) {
-                throw failure;
-            }
+            AppServerResources.closeInOrder(previews, resources, events, lifecycle);
         }
     }
 
     record Foundation(
             CanonicalJson json,
             H2Database database,
+            com.javaclaw.server.persistence.TurnStreamService streams,
+            com.javaclaw.server.preview.DocumentPreviewService previews,
             CoreCommandService core,
             PermissionProfileService permissionProfiles,
             ApprovalService approvals,

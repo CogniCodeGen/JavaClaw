@@ -1,6 +1,20 @@
 # JavaClaw 6 验收矩阵
 
-## 统一 Coding 本轮验收
+## 聊天、文档与后台记忆 V3 当前验收
+
+2026-09-08，WebView 聊天、文档预览、后台任务与工作空间记忆图谱已实现，七项审查修复及退订竞争修复完成本机 `verify` 门禁。
+全仓尝试的上游模块通过后，从 Desktop 恢复两个下游项目，覆盖 15 个 Reactor project；
+2582 项最终测试记录中 2557 项通过、25 项条件跳过，0 失败、0 错误；
+桌面 366 项单测及包含 54 张 appearance 页截图的 Golden 均通过，打包产物健康检查退出码为 0。
+新增真实 H2 学习闭环与 47 张生产 SDK / 组件 UI 重放单独记录，不用设置页 Golden 代替新增页面验收。
+全仓尝试中多进程 WebKit 探针曾提前退出，根因未确认；仅增强失败诊断，恢复门禁已通过，详见证据。
+其他四个 Runner 和跨平台安装、签名仍未验收，完整命令、覆盖率、产物与限制见
+[审查修复验收](../evidence/chat-webview-memory-v3-review-fixes-validation.md)；此前 2527 条记录保留在
+[历史功能与 UI 对比验收](../evidence/chat-webview-memory-v3-functional-ui-validation.md)。
+[使用说明](../chat-documents-memory.md) 和 [ADR 0011](adr/0011-web-surfaces-and-memory-learning.md)
+分别记录操作入口与架构边界。下方统一 Coding 计数属于本轮改动前的历史结果，不能代替 V3 验收。
+
+## 统一 Coding 历史验收
 
 2026-09-07，在 macOS arm64、JDK 25 上从 clean 执行全部门禁：15 个 Reactor project 全部通过，
 2316 项测试，0 失败、0 错误、25 项条件跳过。完整命令、模块覆盖率、跳过清单与日志摘要见

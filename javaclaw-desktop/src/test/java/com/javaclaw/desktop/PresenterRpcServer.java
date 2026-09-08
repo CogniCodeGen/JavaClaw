@@ -81,6 +81,12 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
     final AtomicInteger extensionViewLists = new AtomicInteger();
     final List<ViewQueryRequest> viewQueries = new CopyOnWriteArrayList<>();
 
+    volatile boolean streamEnabled;
+    volatile com.javaclaw.protocol.TurnStreamRpcContracts.Subscribe streamSubscription;
+    volatile java.util.function.Supplier<com.javaclaw.api.ItemHistoryResult> history =
+            () -> new com.javaclaw.api.ItemHistoryResult(List.of(), 0, false);
+    final AtomicInteger historyReads = new AtomicInteger();
+    final AtomicInteger streamReleases = new AtomicInteger();
     volatile TurnStatus completion = TurnStatus.COMPLETED;
     volatile boolean cancelRequested;
     volatile boolean closed;
@@ -96,6 +102,8 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
     volatile ToolRpcContracts.CatalogQuery lastToolCatalog;
     volatile long lastThreadCreateExpectedRevision = -1;
     volatile long lastTurnStartExpectedRevision = -1;
+    volatile java.util.function.Function<JsonRpcRequest, Optional<Object>> requestOverride =
+            ignored -> Optional.empty();
 
     JavaClawClient client(Consumer<ServerNotification> notifications) throws IOException {
         return JavaClawClient.connect(this, new ClientInfo("desktop-test", "6.0"), Set.of(), notifications);
@@ -156,7 +164,8 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
     }
 
     private JsonRpcResponse response(JsonRpcRequest request) {
-        return JsonRpcResponse.success(request.id(), json.encode(catalogResult(request)));
+        return JsonRpcResponse.success(
+                request.id(), json.encode(requestOverride.apply(request).orElseGet(() -> catalogResult(request))));
     }
 
     private Object catalogResult(JsonRpcRequest request) {
@@ -166,7 +175,11 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
                         3,
                         "javaclaw-app-server",
                         "6.0.0-SNAPSHOT",
-                        new NegotiatedCapabilities(Set.of("core.item-envelope"), Set.of()),
+                        new NegotiatedCapabilities(
+                                streamEnabled
+                                        ? Set.of("core.item-envelope", "core.turn-stream-v1")
+                                        : Set.of("core.item-envelope"),
+                                Set.of()),
                         secrets.publicKey());
             case "workspace/list" -> new CoreRpcContracts.WorkspaceListResult(List.of(workspace));
             case "workspace/create" -> createdWorkspace(request);
@@ -181,6 +194,33 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
             case "thread/create" -> createdThread(request);
             default -> executionResult(request);
         };
+    }
+
+    void emitStream(List<com.javaclaw.api.TurnStreamEvent> events) {
+        inbound.add(new JsonRpcNotification(
+                com.javaclaw.protocol.TurnStreamRpcContracts.EVENT,
+                json.encode(new com.javaclaw.protocol.TurnStreamRpcContracts.Notification(
+                        streamSubscription.subscriptionId(), events, Optional.empty()))));
+    }
+
+    private Object readHistory() {
+        historyReads.incrementAndGet();
+        return history.get();
+    }
+
+    private Object subscribeStream(JsonRpcRequest request) {
+        WriteCommand command = json.decode(request.params(), WriteCommand.class);
+        streamSubscription =
+                json.decode(command.payload(), com.javaclaw.protocol.TurnStreamRpcContracts.Subscribe.class);
+        return new com.javaclaw.protocol.TurnStreamRpcContracts.Receipt(
+                streamSubscription.subscriptionId(), streamSubscription.turnId(), streamSubscription.afterCursor());
+    }
+
+    private Object releaseStream(JsonRpcRequest request) {
+        WriteCommand command = json.decode(request.params(), WriteCommand.class);
+        var value = json.decode(command.payload(), com.javaclaw.protocol.TurnStreamRpcContracts.Unsubscribe.class);
+        streamReleases.incrementAndGet();
+        return new com.javaclaw.protocol.TurnStreamRpcContracts.Released(value.subscriptionId());
     }
 
     private PromptManifestPreview promptPreview() {
@@ -209,6 +249,9 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
             case "permissionProfile/list" ->
                 new com.javaclaw.protocol.PermissionProfileRpcContracts.ListResult(List.of());
             case "item/list" -> items(request);
+            case "item/history" -> readHistory();
+            case "turn/stream/subscribe" -> subscribeStream(request);
+            case "turn/stream/unsubscribe" -> releaseStream(request);
             case "turn/start" -> startedTurn(request);
             case "turn/read" -> currentTurn();
             case "turn/cancel" -> cancelledTurn(request);

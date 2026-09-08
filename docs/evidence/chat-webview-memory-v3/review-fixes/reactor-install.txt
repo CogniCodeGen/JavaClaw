@@ -1,0 +1,90 @@
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by org.fusesource.jansi.internal.JansiLoader in an unnamed module (file:/Users/fengs/Documents/profile/apache-maven-3.9.0/lib/jansi-2.4.0.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper (file:/Users/fengs/Documents/profile/apache-maven-3.9.0/lib/guava-30.1-jre.jar)
+WARNING: Please consider reporting this to the maintainers of class com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[WARNING] 
+[WARNING] Some problems were encountered while building the effective settings
+[WARNING] 'profiles.profile[rdc].repositories.repository.id' must be unique but found duplicate repository with id central @ /Users/fengs/Documents/profile/apache-maven-3.9.0/conf/settings.xml
+[WARNING] 
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] ------------< com.javaclaw.build:verified-reactor-install >-------------
+[INFO] Building verified-reactor-install 1
+[INFO]   from pom.xml
+[INFO] --------------------------------[ pom ]---------------------------------
+Downloading from javaclaw-central-check: https://repo.maven.apache.org/maven2/org/apache/maven/plugins/maven-install-plugin/3.1.4/maven-install-plugin-3.1.4.pom
+Downloaded from javaclaw-central-check: https://repo.maven.apache.org/maven2/org/apache/maven/plugins/maven-install-plugin/3.1.4/maven-install-plugin-3.1.4.pom (0 B at 0 B/s)
+Downloading from javaclaw-central-check: https://repo.maven.apache.org/maven2/org/apache/maven/plugins/maven-install-plugin/3.1.4/maven-install-plugin-3.1.4.jar
+Downloaded from javaclaw-central-check: https://repo.maven.apache.org/maven2/org/apache/maven/plugins/maven-install-plugin/3.1.4/maven-install-plugin-3.1.4.jar (0 B at 0 B/s)
+[INFO] 
+[INFO] --- install:3.1.4:install-file (javaclaw-parent) @ verified-reactor-install ---
+Downloading from javaclaw-central-check: https://repo.maven.apache.org/maven2/org/apache/maven/resolver/maven-resolver-util/1.9.22/maven-resolver-util-1.9.22.pom
+Downloaded from javaclaw-central-check: https://repo.maven.apache.org/maven2/org/apache/maven/resolver/maven-resolver-util/1.9.22/maven-resolver-util-1.9.22.pom (0 B at 0 B/s)
+Downloading from javaclaw-central-check: https://repo.maven.apache.org/maven2/org/apache/maven/resolver/maven-resolver/1.9.22/maven-resolver-1.9.22.pom
+Downloaded from javaclaw-central-check: https://repo.maven.apache.org/maven2/org/apache/maven/resolver/maven-resolver/1.9.22/maven-resolver-1.9.22.pom (0 B at 0 B/s)
+Downloading from javaclaw-central-check: https://repo.maven.apache.org/maven2/org/apache/maven/resolver/maven-resolver-api/1.9.22/maven-resolver-api-1.9.22.pom
+Downloaded from javaclaw-central-check: https://repo.maven.apache.org/maven2/org/apache/maven/resolver/maven-resolver-api/1.9.22/maven-resolver-api-1.9.22.pom (0 B at 0 B/s)
+Downloading from javaclaw-central-check: https://repo.maven.apache.org/maven2/org/apache/maven/resolver/maven-resolver-util/1.9.22/maven-resolver-util-1.9.22.jar
+Downloading from javaclaw-central-check: https://repo.maven.apache.org/maven2/org/apache/maven/resolver/maven-resolver-api/1.9.22/maven-resolver-api-1.9.22.jar
+Downloaded from javaclaw-central-check: https://repo.maven.apache.org/maven2/org/apache/maven/resolver/maven-resolver-util/1.9.22/maven-resolver-util-1.9.22.jar (0 B at 0 B/s)
+Downloaded from javaclaw-central-check: https://repo.maven.apache.org/maven2/org/apache/maven/resolver/maven-resolver-api/1.9.22/maven-resolver-api-1.9.22.jar (0 B at 0 B/s)
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/pom.xml to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-parent/6.0.0-SNAPSHOT/javaclaw-parent-6.0.0-SNAPSHOT.pom
+[INFO] 
+[INFO] --- install:3.1.4:install-file (javaclaw-api) @ verified-reactor-install ---
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-api/target/javaclaw-api-6.0.0-SNAPSHOT.jar to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-api/6.0.0-SNAPSHOT/javaclaw-api-6.0.0-SNAPSHOT.jar
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-api/pom.xml to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-api/6.0.0-SNAPSHOT/javaclaw-api-6.0.0-SNAPSHOT.pom
+[INFO] 
+[INFO] --- install:3.1.4:install-file (javaclaw-protocol) @ verified-reactor-install ---
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-protocol/target/javaclaw-protocol-6.0.0-SNAPSHOT.jar to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-protocol/6.0.0-SNAPSHOT/javaclaw-protocol-6.0.0-SNAPSHOT.jar
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-protocol/pom.xml to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-protocol/6.0.0-SNAPSHOT/javaclaw-protocol-6.0.0-SNAPSHOT.pom
+[INFO] 
+[INFO] --- install:3.1.4:install-file (javaclaw-extension-spi) @ verified-reactor-install ---
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-extension-spi/target/javaclaw-extension-spi-6.0.0-SNAPSHOT.jar to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-extension-spi/6.0.0-SNAPSHOT/javaclaw-extension-spi-6.0.0-SNAPSHOT.jar
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-extension-spi/pom.xml to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-extension-spi/6.0.0-SNAPSHOT/javaclaw-extension-spi-6.0.0-SNAPSHOT.pom
+[INFO] 
+[INFO] --- install:3.1.4:install-file (javaclaw-agent-runtime) @ verified-reactor-install ---
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-agent-runtime/target/javaclaw-agent-runtime-6.0.0-SNAPSHOT.jar to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-agent-runtime/6.0.0-SNAPSHOT/javaclaw-agent-runtime-6.0.0-SNAPSHOT.jar
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-agent-runtime/pom.xml to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-agent-runtime/6.0.0-SNAPSHOT/javaclaw-agent-runtime-6.0.0-SNAPSHOT.pom
+[INFO] 
+[INFO] --- install:3.1.4:install-file (javaclaw-model-adapters) @ verified-reactor-install ---
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-model-adapters/target/javaclaw-model-adapters-6.0.0-SNAPSHOT.jar to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-model-adapters/6.0.0-SNAPSHOT/javaclaw-model-adapters-6.0.0-SNAPSHOT.jar
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-model-adapters/pom.xml to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-model-adapters/6.0.0-SNAPSHOT/javaclaw-model-adapters-6.0.0-SNAPSHOT.pom
+[INFO] 
+[INFO] --- install:3.1.4:install-file (javaclaw-builtin-contracts) @ verified-reactor-install ---
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-builtin-contracts/target/javaclaw-builtin-contracts-6.0.0-SNAPSHOT.jar to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-builtin-contracts/6.0.0-SNAPSHOT/javaclaw-builtin-contracts-6.0.0-SNAPSHOT.jar
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-builtin-contracts/pom.xml to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-builtin-contracts/6.0.0-SNAPSHOT/javaclaw-builtin-contracts-6.0.0-SNAPSHOT.pom
+[INFO] 
+[INFO] --- install:3.1.4:install-file (javaclaw-builtin-extensions) @ verified-reactor-install ---
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-builtin-extensions/target/javaclaw-builtin-extensions-6.0.0-SNAPSHOT.jar to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-builtin-extensions/6.0.0-SNAPSHOT/javaclaw-builtin-extensions-6.0.0-SNAPSHOT.jar
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-builtin-extensions/pom.xml to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-builtin-extensions/6.0.0-SNAPSHOT/javaclaw-builtin-extensions-6.0.0-SNAPSHOT.pom
+[INFO] 
+[INFO] --- install:3.1.4:install-file (javaclaw-app-server) @ verified-reactor-install ---
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-app-server/target/javaclaw-app-server-6.0.0-SNAPSHOT.jar to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-app-server/6.0.0-SNAPSHOT/javaclaw-app-server-6.0.0-SNAPSHOT.jar
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-app-server/pom.xml to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-app-server/6.0.0-SNAPSHOT/javaclaw-app-server-6.0.0-SNAPSHOT.pom
+[INFO] 
+[INFO] --- install:3.1.4:install-file (javaclaw-native-hosts) @ verified-reactor-install ---
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-native-hosts/target/javaclaw-native-hosts-6.0.0-SNAPSHOT.jar to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-native-hosts/6.0.0-SNAPSHOT/javaclaw-native-hosts-6.0.0-SNAPSHOT.jar
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-native-hosts/pom.xml to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-native-hosts/6.0.0-SNAPSHOT/javaclaw-native-hosts-6.0.0-SNAPSHOT.pom
+[INFO] 
+[INFO] --- install:3.1.4:install-file (javaclaw-browser-service) @ verified-reactor-install ---
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-browser-service/target/javaclaw-browser-service-6.0.0-SNAPSHOT.jar to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-browser-service/6.0.0-SNAPSHOT/javaclaw-browser-service-6.0.0-SNAPSHOT.jar
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-browser-service/pom.xml to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-browser-service/6.0.0-SNAPSHOT/javaclaw-browser-service-6.0.0-SNAPSHOT.pom
+[INFO] 
+[INFO] --- install:3.1.4:install-file (javaclaw-knowledge-worker) @ verified-reactor-install ---
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-knowledge-worker/target/javaclaw-knowledge-worker-6.0.0-SNAPSHOT.jar to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-knowledge-worker/6.0.0-SNAPSHOT/javaclaw-knowledge-worker-6.0.0-SNAPSHOT.jar
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-knowledge-worker/pom.xml to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-knowledge-worker/6.0.0-SNAPSHOT/javaclaw-knowledge-worker-6.0.0-SNAPSHOT.pom
+[INFO] 
+[INFO] --- install:3.1.4:install-file (javaclaw-client) @ verified-reactor-install ---
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-client/target/javaclaw-client-6.0.0-SNAPSHOT.jar to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-client/6.0.0-SNAPSHOT/javaclaw-client-6.0.0-SNAPSHOT.jar
+[INFO] Installing /Users/fengs/Documents/openProject/JavaClaw/javaclaw-client/pom.xml to /Users/fengs/.m2/repository/com/javaclaw/javaclaw-client/6.0.0-SNAPSHOT/javaclaw-client-6.0.0-SNAPSHOT.pom
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  2.334 s
+[INFO] Finished at: 2026-09-08T12:44:06+08:00
+[INFO] ------------------------------------------------------------------------

@@ -42,6 +42,8 @@ import com.javaclaw.server.persistence.ExtensionCatalogRepository;
  * @param scheduledCommands Schedule 显式命令端口
  * @param scheduleLifecycle Schedule 后台 lease 与登录启动项端口
  * @param catalog 持久扩展目录
+ * @param conversationEvidence 已完成对话的有界证据端口
+ * @param scheduleBindings 为扩展绑定所有者身份的调度端口工厂
  */
 public record BuiltinExtensionRuntimePorts(
         Clock clock,
@@ -60,7 +62,10 @@ public record BuiltinExtensionRuntimePorts(
         AutomationStepPort automationSteps,
         ScheduledCommandPort scheduledCommands,
         ScheduleLifecyclePort scheduleLifecycle,
-        ExtensionCatalogRepository catalog) {
+        ExtensionCatalogRepository catalog,
+        com.javaclaw.extension.spi.ConversationEvidencePort conversationEvidence,
+        Function<com.javaclaw.extension.spi.ExtensionId, com.javaclaw.extension.spi.ScheduleDefinitionBindingPort>
+                scheduleBindings) {
     /** 校验所有端口。 */
     public BuiltinExtensionRuntimePorts {
         Objects.requireNonNull(clock, "clock");
@@ -80,5 +85,7 @@ public record BuiltinExtensionRuntimePorts(
         Objects.requireNonNull(scheduledCommands, "scheduledCommands");
         Objects.requireNonNull(scheduleLifecycle, "scheduleLifecycle");
         Objects.requireNonNull(catalog, "catalog");
+        Objects.requireNonNull(conversationEvidence, "conversationEvidence");
+        Objects.requireNonNull(scheduleBindings, "scheduleBindings");
     }
 }

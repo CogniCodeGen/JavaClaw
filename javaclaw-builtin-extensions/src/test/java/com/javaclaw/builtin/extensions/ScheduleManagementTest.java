@@ -329,7 +329,9 @@ class ScheduleManagementTest {
                 support.embeddings,
                 AutomationStepPort.unavailable(),
                 ScheduledCommandPort.unavailable(),
-                (workspaceId, required) -> {});
+                (workspaceId, required) -> {},
+                com.javaclaw.extension.spi.ConversationEvidencePort.unavailable(),
+                com.javaclaw.extension.spi.ScheduleDefinitionBindingPort.unavailable());
     }
 
     private static final class MutableCatalog implements ScheduleTargetCatalogPort {

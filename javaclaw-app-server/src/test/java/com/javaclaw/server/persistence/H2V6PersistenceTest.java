@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import com.javaclaw.api.AgentTurn;
+import com.javaclaw.api.AttachmentRef;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.ConversationThread;
 import com.javaclaw.api.CorePayloads;
@@ -112,6 +113,21 @@ class H2V6PersistenceTest {
                 aggregate.workspace().id(), aggregate.thread().id(), item.id(), "不存在的正文"));
         assertFalse(evidence.isUncertainOutcome(
                 aggregate.workspace().id(), aggregate.thread().id(), item.id()));
+        assertTrue(evidence.isUserText(
+                aggregate.workspace().id(), aggregate.thread().id(), item.id()));
+        assertFalse(evidence.isUserText(WorkspaceId.random(), aggregate.thread().id(), item.id()));
+        assertFalse(evidence.isUserText(
+                aggregate.workspace().id(), aggregate.thread().id(), ItemId.random()));
+        journal.append(
+                aggregate.turn().id(),
+                "message",
+                CoreSchemas.MESSAGE,
+                new CorePayloads.Message(MessageRole.ASSISTANT, "助手声称的事实", List.of(), Optional.empty()),
+                ItemStatus.COMPLETED);
+        assertFalse(evidence.isUserText(
+                aggregate.workspace().id(),
+                aggregate.thread().id(),
+                core.listItems(aggregate.thread().id()).getLast().id()));
 
         journal.append(
                 aggregate.turn().id(),
@@ -122,8 +138,37 @@ class H2V6PersistenceTest {
         ItemEnvelope failed = core.listItems(aggregate.thread().id()).getLast();
         assertTrue(evidence.isUncertainOutcome(
                 aggregate.workspace().id(), aggregate.thread().id(), failed.id()));
+        assertFalse(evidence.isUserText(
+                aggregate.workspace().id(), aggregate.thread().id(), failed.id()));
         assertTrue(evidence.isUncertainOutcome(
                 aggregate.workspace().id(), aggregate.thread().id(), ItemId.random()));
+    }
+
+    @Test
+    void messageEvidenceExcludesRoleAndAttachmentMetadata() {
+        Aggregate aggregate = createAggregate();
+        journal.append(
+                aggregate.turn().id(),
+                "message",
+                CoreSchemas.MESSAGE,
+                new CorePayloads.Message(
+                        MessageRole.USER,
+                        "请看附件",
+                        List.of(new AttachmentRef("a".repeat(64), "text/plain", "使用PostgreSQL.txt", 0)),
+                        Optional.empty()),
+                ItemStatus.COMPLETED);
+        ItemEnvelope item = core.listItems(aggregate.thread().id()).getLast();
+        CoreItemEvidencePort evidence = new CoreItemEvidencePort(core, json);
+        assertTrue(evidence.isUserText(
+                aggregate.workspace().id(), aggregate.thread().id(), item.id()));
+        assertTrue(evidence.containsVerbatim(
+                aggregate.workspace().id(), aggregate.thread().id(), item.id(), "请看附件"));
+        assertFalse(evidence.containsVerbatim(
+                aggregate.workspace().id(), aggregate.thread().id(), item.id(), "使用PostgreSQL"));
+        assertFalse(evidence.containsVerbatim(
+                aggregate.workspace().id(), aggregate.thread().id(), item.id(), "USER"));
+        assertFalse(evidence.containsVerbatim(
+                aggregate.workspace().id(), aggregate.thread().id(), item.id(), "text/plain"));
     }
 
     @Test

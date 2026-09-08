@@ -58,6 +58,20 @@ if (-not (Test-Path -LiteralPath (Join-Path $installedWorkers "browser\browser-o
     throw "the Windows app image does not contain verified OAuth Browser workers"
 }
 
+# 许可证与发布证据必须在签名及生成安装器前复制；缺少发行输入时终止发布。
+$distributionRoot = Split-Path -Parent (Resolve-Path -LiteralPath $InputDirectory).Path
+foreach ($directory in @("legal", "evidence")) {
+    $evidenceSource = Join-Path $distributionRoot $directory
+    if (-not (Test-Path -LiteralPath $evidenceSource -PathType Container)) {
+        throw "required distribution directory is missing: $directory"
+    }
+    $installedEvidence = Join-Path $appImage "app\$directory"
+    if (Test-Path -LiteralPath $installedEvidence) {
+        Remove-Item -LiteralPath $installedEvidence -Recurse -Force
+    }
+    Copy-Item -LiteralPath $evidenceSource -Destination $installedEvidence -Recurse
+}
+
 # 固定网络服务随安装器构建并签名；安装授权仅通过受保护安装路径中的固定入口取得。
 $guardSources = Join-Path $PSScriptRoot "..\..\..\..\javaclaw-native-hosts\src\main\native\windows-network-guard"
 $guardBuild = Join-Path $AppImageRoot "network-guard-build"

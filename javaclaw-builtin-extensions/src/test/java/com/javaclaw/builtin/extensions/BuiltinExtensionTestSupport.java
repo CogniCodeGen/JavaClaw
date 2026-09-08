@@ -9,9 +9,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.NavigableMap;
 import java.util.Optional;
-import java.util.TreeMap;
 
 import com.javaclaw.api.AgentRoleRef;
 import com.javaclaw.api.AttachmentContent;
@@ -25,7 +23,6 @@ import com.javaclaw.api.CredentialRef;
 import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.InputRequest;
 import com.javaclaw.api.InputRequestRecord;
-import com.javaclaw.api.ItemStatus;
 import com.javaclaw.api.PermissionProfile;
 import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.PrivateNetworkGrant;
@@ -43,7 +40,6 @@ import com.javaclaw.extension.spi.AttachmentEvidencePort;
 import com.javaclaw.extension.spi.AutomationExecutionPolicyPort;
 import com.javaclaw.extension.spi.AutomationRoleOption;
 import com.javaclaw.extension.spi.CredentialVaultPort;
-import com.javaclaw.extension.spi.DocumentRevision;
 import com.javaclaw.extension.spi.EmbeddingBatch;
 import com.javaclaw.extension.spi.EmbeddingPort;
 import com.javaclaw.extension.spi.EmbeddingVector;
@@ -56,17 +52,14 @@ import com.javaclaw.extension.spi.ExtensionId;
 import com.javaclaw.extension.spi.ExtensionPayloadCodec;
 import com.javaclaw.extension.spi.ExtensionRequest;
 import com.javaclaw.extension.spi.ExtensionResponse;
-import com.javaclaw.extension.spi.ExtensionTransaction;
 import com.javaclaw.extension.spi.InputRequestPort;
 import com.javaclaw.extension.spi.IsolatedServicePort;
 import com.javaclaw.extension.spi.ItemEvidencePort;
-import com.javaclaw.extension.spi.ManagedExtensionStore;
 import com.javaclaw.extension.spi.OrchestratedTurnCommand;
 import com.javaclaw.extension.spi.OrchestratedTurnResult;
 import com.javaclaw.extension.spi.OrchestratedTurnSummary;
 import com.javaclaw.extension.spi.PrivateNetworkGrantPort;
 import com.javaclaw.extension.spi.ScheduleTargetCatalogPort;
-import com.javaclaw.extension.spi.VersionedDocument;
 import com.javaclaw.protocol.CanonicalJson;
 
 final class BuiltinExtensionTestSupport {
@@ -197,6 +190,7 @@ final class BuiltinExtensionTestSupport {
     final Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
     final CancellationSource cancellation = new CancellationSource();
     boolean evidenceAvailable = true;
+    boolean userEvidence = true;
     boolean uncertainEvidence;
     ServiceHandler service = (caller, serviceId, request) -> {
         if (com.javaclaw.builtin.contracts.SiteContracts.BROWSER_INVALIDATE_SERVICE.equals(serviceId)) {
@@ -231,7 +225,8 @@ final class BuiltinExtensionTestSupport {
                 networkGrants,
                 services,
                 embeddings,
-                workspaceExecution);
+                workspaceExecution,
+                com.javaclaw.extension.spi.ScheduleDefinitionBindingPort.unavailable());
     }
 
     void claimAttachment(WorkspaceId workspace, AttachmentRef reference) {
@@ -262,6 +257,11 @@ final class BuiltinExtensionTestSupport {
             public boolean containsVerbatim(
                     WorkspaceId workspace, ThreadId thread, com.javaclaw.api.ItemId item, String verbatim) {
                 return evidenceAvailable && workspace.equals(workspaceId);
+            }
+
+            @Override
+            public boolean isUserText(WorkspaceId workspace, ThreadId thread, com.javaclaw.api.ItemId item) {
+                return userEvidence && workspace.equals(workspaceId);
             }
 
             @Override
@@ -411,151 +411,7 @@ final class BuiltinExtensionTestSupport {
         }
     }
 
-    static final class InMemoryManagedStore implements ManagedExtensionStore, ExtensionTransaction {
-        private final Map<String, NavigableMap<String, VersionedDocument>> collections = new HashMap<>();
-        private final Map<String, VersionedDocument> heads = new HashMap<>();
-        private final Map<String, List<DocumentRevision>> histories = new HashMap<>();
-        private final Map<String, CommandRecord> commands = new HashMap<>();
-        private Instant now = NOW;
-
-        @Override
-        public synchronized <T> T inTransaction(ExtensionId extensionId, TransactionWork<T> work) throws Exception {
-            return work.execute(this);
-        }
-
-        @Override
-        public ExtensionResponse inCommand(
-                ExtensionId extensionId,
-                String operation,
-                String idempotencyKey,
-                String requestDigest,
-                TransactionWork<ExtensionResponse> work)
-                throws Exception {
-            String key = extensionId.value() + ":" + idempotencyKey;
-            CommandRecord existing = commands.get(key);
-            if (existing != null) {
-                existing.require(operation, requestDigest);
-                return existing.response();
-            }
-            ExtensionResponse response = work.execute(this);
-            commands.put(key, new CommandRecord(operation, requestDigest, response));
-            return response;
-        }
-
-        @Override
-        public Optional<ExtensionResponse> recoverCommand(
-                ExtensionId extensionId, String operation, String idempotencyKey, String requestDigest) {
-            CommandRecord existing = commands.get(extensionId.value() + ":" + idempotencyKey);
-            if (existing == null) {
-                return Optional.empty();
-            }
-            existing.require(operation, requestDigest);
-            return Optional.of(existing.response());
-        }
-
-        @Override
-        public Optional<VersionedDocument> get(String collection, String key) {
-            return Optional.ofNullable(collection(collection).get(key));
-        }
-
-        @Override
-        public List<VersionedDocument> list(String collection, String afterKey, int limit) {
-            return collection(collection).tailMap(afterKey, false).values().stream()
-                    .limit(limit)
-                    .toList();
-        }
-
-        @Override
-        public List<DocumentRevision> history(String collection, String key, long afterRevision, int limit) {
-            return histories.getOrDefault(documentKey(collection, key), List.of()).stream()
-                    .filter(revision -> revision.revision() > afterRevision)
-                    .limit(limit)
-                    .toList();
-        }
-
-        @Override
-        public List<DocumentRevision> listTombstones(String collection, String afterKey, int limit) {
-            return heads.entrySet().stream()
-                    .filter(entry -> entry.getKey().startsWith(collection + "\u0000"))
-                    .filter(entry -> entry.getValue().key().compareTo(afterKey) > 0)
-                    .filter(entry ->
-                            !collection(collection).containsKey(entry.getValue().key()))
-                    .sorted(java.util.Map.Entry.comparingByKey())
-                    .limit(limit)
-                    .map(entry -> new DocumentRevision(
-                            entry.getValue().key(),
-                            entry.getValue().revision(),
-                            entry.getValue().payload(),
-                            true,
-                            entry.getValue().updatedAt()))
-                    .toList();
-        }
-
-        @Override
-        public long put(String collection, String key, long expectedRevision, CanonicalPayload payload) {
-            NavigableMap<String, VersionedDocument> documents = collection(collection);
-            long actual = Optional.ofNullable(heads.get(documentKey(collection, key)))
-                    .map(VersionedDocument::revision)
-                    .orElse(0L);
-            if (actual != expectedRevision) {
-                throw new IllegalArgumentException("document revision changed");
-            }
-            long revision = Math.addExact(actual, 1);
-            VersionedDocument document = new VersionedDocument(key, revision, payload, now);
-            documents.put(key, document);
-            heads.put(documentKey(collection, key), document);
-            appendHistory(collection, key, revision, payload, false);
-            now = now.plusMillis(1);
-            return revision;
-        }
-
-        @Override
-        public void delete(String collection, String key, long expectedRevision) {
-            NavigableMap<String, VersionedDocument> documents = collection(collection);
-            VersionedDocument document = heads.get(documentKey(collection, key));
-            if (document == null || document.revision() != expectedRevision) {
-                throw new IllegalArgumentException("document revision changed");
-            }
-            documents.remove(key);
-            long revision = Math.addExact(expectedRevision, 1);
-            heads.put(documentKey(collection, key), new VersionedDocument(key, revision, document.payload(), now));
-            appendHistory(collection, key, revision, document.payload(), true);
-            now = now.plusMillis(1);
-        }
-
-        @Override
-        public void appendItem(
-                TurnId turnId, String kind, String schemaId, CanonicalPayload payload, ItemStatus status) {}
-
-        @Override
-        public void appendEvent(String topic, CanonicalPayload payload) {}
-
-        @Override
-        public void enqueueOutbox(String destination, String idempotencyKey, CanonicalPayload payload) {}
-
-        private NavigableMap<String, VersionedDocument> collection(String name) {
-            return collections.computeIfAbsent(name, ignored -> new TreeMap<>());
-        }
-
-        private void appendHistory(
-                String collection, String key, long revision, CanonicalPayload payload, boolean tombstone) {
-            histories
-                    .computeIfAbsent(documentKey(collection, key), ignored -> new ArrayList<>())
-                    .add(new DocumentRevision(key, revision, payload, tombstone, now));
-        }
-
-        private static String documentKey(String collection, String key) {
-            return collection + "\u0000" + key;
-        }
-
-        private record CommandRecord(String operation, String digest, ExtensionResponse response) {
-            private void require(String actualOperation, String actualDigest) {
-                if (!operation.equals(actualOperation) || !digest.equals(actualDigest)) {
-                    throw new IllegalArgumentException("idempotency identity changed");
-                }
-            }
-        }
-    }
+    static final class InMemoryManagedStore extends TransactionalTestManagedStore {}
 
     private static final class UnavailableInputPort implements InputRequestPort {
         @Override

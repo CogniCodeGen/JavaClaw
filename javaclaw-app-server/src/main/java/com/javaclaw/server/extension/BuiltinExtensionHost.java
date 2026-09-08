@@ -335,6 +335,7 @@ public final class BuiltinExtensionHost implements ExtensionHost, ScheduleTarget
      * @throws Exception Handler 失败
      */
     public ExtensionResponse query(ExtensionRpcContracts.CallPayload call) throws Exception {
+        ServerScheduleDefinitionBindings.requirePublicOperation(call);
         return invoke(call, Optional.empty(), 0, ContributionKind.QUERY, Optional.empty());
     }
 
@@ -349,7 +350,14 @@ public final class BuiltinExtensionHost implements ExtensionHost, ScheduleTarget
      */
     public ExtensionResponse command(
             ExtensionRpcContracts.CallPayload call, String idempotencyKey, long expectedRevision) throws Exception {
+        ServerScheduleDefinitionBindings.requirePublicOperation(call);
         return invoke(call, Optional.of(idempotencyKey), expectedRevision, ContributionKind.COMMAND, Optional.empty());
+    }
+
+    // 内部入口仅供具有组合根绑定身份的适配器调用；禁止把 payload 中的 owner 当作调用权限。
+    ExtensionResponse scheduleBinding(ExtensionRpcContracts.CallPayload call, Optional<String> key) throws Exception {
+        return invoke(
+                call, key, 0, key.isPresent() ? ContributionKind.COMMAND : ContributionKind.QUERY, Optional.empty());
     }
 
     /**

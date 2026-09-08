@@ -1,0 +1,24 @@
+9月 08, 2026 11:02:46 上午 com.sun.javafx.application.PlatformImpl startup
+警告: Unsupported JavaFX configuration: classes were loaded from 'unnamed module @7e6cbb7a'
+PASS com.javaclaw.desktop.settings.ViewSchemaRefreshTest#无草稿时新权威值可以更新但保留同一字段的焦点和选区
+PASS com.javaclaw.desktop.settings.ViewSchemaRefreshTest#显式丢弃草稿时即使服务端数据未变化也必须恢复原值
+PASS com.javaclaw.desktop.settings.ViewSchemaRefreshTest#主动加载遮罩阻止底层键盘输入且失败与取消归还交互
+PASS com.javaclaw.desktop.settings.ViewSchemaRefreshTest#自动刷新返回前输入的草稿不能被新权威数据覆盖
+PASS com.javaclaw.desktop.settings.ViewSchemaRefreshTest#对账数据相同时保留控件焦点和文本选择
+PASS com.javaclaw.desktop.settings.ViewSchemaRefreshTest#查询期间编辑再撤回仍按编辑代次丢弃旧自动刷新
+PASS com.javaclaw.desktop.document.DocumentPreviewLeaseTest#相对导航后旧父续租不能阻止子版本续租或覆盖子版本
+PASS com.javaclaw.desktop.document.DocumentPreviewLeaseTest#相对资源读取未完成时不能用新代次续租旧父句柄
+PASS com.javaclaw.desktop.document.DocumentPreviewPaneTest#不支持格式保留已验证名称和大小并释放句柄且不读取正文
+PASS com.javaclaw.desktop.document.DocumentPreviewPaneTest#旧读取占用worker时新解析已完成但未开始读取也必须关闭句柄
+PASS com.javaclaw.desktop.document.DocumentPreviewPaneTest#关闭后迟到的版本必须释放且不能重新展示正文
+PASS com.javaclaw.desktop.document.DocumentPreviewPaneTest#解析完成且版本接收已排队时切换仍释放旧句柄
+PASS com.javaclaw.desktop.document.DocumentPreviewPaneTest#服务端撤权立即清空正文而不会影响不同句柄
+PASS com.javaclaw.desktop.settings.ViewPageCursorStateTest#损坏标量提示不能中断页面或在后续刷新自动换成有效引用
+PASS com.javaclaw.desktop.settings.ViewPageCursorStateTest#自动初选版本只记录一次并与明确清空分别保存
+PASS com.javaclaw.desktop.ViewSelectionProjectionTest#自动回显后同ID目录更新不能静默升级且新的服务端提示不覆盖首次引用
+PASS com.javaclaw.desktop.ViewSelectionProjectionTest#明确清空不发送空RPC选择也不重新套用初选或主表默认
+PASS com.javaclaw.desktop.ViewSelectionProjectionTest#没有初选的旧主从页面保留默认且非主表保留显式选择
+PASS com.javaclaw.desktop.ViewSelectionProjectionTest#非主表首次回显精确版本且用户重选优先
+PASS com.javaclaw.desktop.ViewSelectionProjectionTest#删除或失效引用与未加载分页均不替换成首行
+PASS com.javaclaw.desktop.ViewSelectionProjectionTest#非整数版本损坏及未来元数据保持未选
+RESULT passed=21 failed=0

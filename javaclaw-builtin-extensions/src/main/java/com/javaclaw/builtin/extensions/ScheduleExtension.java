@@ -48,6 +48,7 @@ final class ScheduleExtension implements ExtensionBundle {
             Set.of(ContributionKind.TIMER, ContributionKind.SCHEDULABLE_ACTION),
             BuiltinStoragePermission.create(BuiltinExtensionIds.SCHEDULE),
             lifecycle);
+    private final ScheduleDefinitionBindings bindings = new ScheduleDefinitionBindings(documents, lifecycle);
     private final ScheduleManagement management = new ScheduleManagement(documents, lifecycle);
 
     @Override
@@ -59,14 +60,15 @@ final class ScheduleExtension implements ExtensionBundle {
     public List<ExtensionContribution> start(ExtensionContext context) {
         List<ExtensionContribution> contributions = new ArrayList<>(documents.startWithManagedWrites(context));
         contributions.addAll(management.contributions());
+        contributions.addAll(new ManagedScheduleView(documents, lifecycle).contributions());
         contributions.addAll(List.of(
                 new ExtensionContributions.Query(
                         "schedule.query",
-                        Set.of(PREVIEW, PREVIEW_VIEW, OCCURRENCE_LIST, OCCURRENCE_VIEW),
+                        Set.of(PREVIEW, PREVIEW_VIEW, OCCURRENCE_LIST, OCCURRENCE_VIEW, "binding/read"),
                         this::querySchedule),
                 new ExtensionContributions.Command(
                         "schedule.command",
-                        Set.of(OCCURRENCE_RUN, ScheduleEngine.DELIVERY_OPERATION),
+                        Set.of(OCCURRENCE_RUN, ScheduleEngine.DELIVERY_OPERATION, "binding/apply"),
                         this::commandSchedule),
                 new ExtensionContributions.SchedulableAction(
                         "schedule.delivery.schedulable",
@@ -129,6 +131,7 @@ final class ScheduleExtension implements ExtensionBundle {
     private ExtensionResponse querySchedule(ExtensionRequest request, ExtensionExecutionContext context)
             throws Exception {
         return switch (request.operation()) {
+            case "binding/read" -> bindings.read(request, context);
             case PREVIEW -> preview(request, context);
             case PREVIEW_VIEW -> previewViewRows(request, context);
             case OCCURRENCE_LIST -> occurrences(request, context);
@@ -204,6 +207,9 @@ final class ScheduleExtension implements ExtensionBundle {
 
     private ExtensionResponse commandSchedule(ExtensionRequest request, ExtensionExecutionContext context)
             throws Exception {
+        if ("binding/apply".equals(request.operation())) {
+            return bindings.apply(request, context);
+        }
         String key = request.idempotencyKey()
                 .orElseThrow(() -> new IllegalArgumentException("Schedule command requires idempotency key"));
         CanonicalPayload digest = documents

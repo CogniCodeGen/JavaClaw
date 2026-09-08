@@ -10,13 +10,14 @@ import com.javaclaw.api.CoreSchemas;
 import com.javaclaw.api.ItemSchemaRegistry;
 import com.javaclaw.api.ItemStatus;
 import com.javaclaw.api.TurnId;
+import com.javaclaw.api.TurnStatus;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.runtime.CompactionOutcome;
 import com.javaclaw.runtime.CompactionRequest;
 import com.javaclaw.runtime.CompactionTicket;
 import com.javaclaw.runtime.ModelUsage;
 
-/** 压缩外部调用的独立账本；与主 checkpoint 使用同一行锁及事务，禁止将压缩误提交为普通生成。 */
+/** 压缩外部调用的独立账本；统一按 Thread、Turn、checkpoint 顺序持锁，禁止将压缩误提交为普通生成。 */
 final class TurnCompactionJournal {
     private final H2Transactions transactions;
     private final CanonicalJson json;
@@ -35,6 +36,7 @@ final class TurnCompactionJournal {
     CompactionTicket intent(CompactionRequest request, boolean nativeCall) {
         return execute(connection -> {
             TurnId turnId = request.command().turn().id();
+            lockRunning(connection, turnId);
             lockReady(connection, turnId);
             requireNoActive(connection, turnId);
             contexts.freeze(connection, turnId, request.command().provider());
@@ -55,6 +57,7 @@ final class TurnCompactionJournal {
         }
         execute(connection -> {
             TurnId turnId = request.command().turn().id();
+            lockRunning(connection, turnId);
             lock(connection, turnId);
             long sequence = requireIntent(connection, turnId, ticket);
             Instant now = clock.instant();
@@ -116,6 +119,12 @@ final class TurnCompactionJournal {
                 """)) {
             statement.setString(1, turnId.toString());
             statement.executeUpdate();
+        }
+    }
+
+    private void lockRunning(Connection connection, TurnId turnId) throws SQLException {
+        if (new TurnRepository().lockForJournal(connection, turnId).status() != TurnStatus.RUNNING) {
+            throw PersistenceException.revisionConflict("终态 Turn 不能开始或提交压缩");
         }
     }
 

@@ -23,7 +23,7 @@ class CommandStreamMigrationTest {
         Map<Integer, String> before = checksums(database);
         try (var connection = database.open();
                 var statement = connection.createStatement()) {
-            statement.execute("DELETE FROM CORE.SCHEMA_HISTORY WHERE VERSION=4");
+            statement.execute("DELETE FROM CORE.SCHEMA_HISTORY WHERE VERSION>=4");
             statement.execute("DROP TABLE CORE.CODING_COMMAND_CHUNK");
         }
         database.initialize();
@@ -44,7 +44,7 @@ class CommandStreamMigrationTest {
         database.initialize();
         try (var connection = database.open();
                 var statement = connection.createStatement()) {
-            statement.execute("DELETE FROM CORE.SCHEMA_HISTORY WHERE VERSION=4");
+            statement.execute("DELETE FROM CORE.SCHEMA_HISTORY WHERE VERSION>=4");
             statement.execute("INSERT INTO CORE.SCHEMA_MIGRATION_PENDING VALUES(4,REPEAT('f',64))");
         }
         assertThrows(PersistenceException.class, database::initialize);

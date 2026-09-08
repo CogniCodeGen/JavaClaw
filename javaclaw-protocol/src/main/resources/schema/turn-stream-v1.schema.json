@@ -1,0 +1,619 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "turn-stream-v1.schema.json",
+  "$defs": {
+    "call": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "invocationNumber",
+        "attemptId",
+        "messageItemId"
+      ],
+      "properties": {
+        "invocationNumber": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "attemptId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "messageItemId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "call",
+        "text",
+        "offsetUtf16",
+        "itemSequence",
+        "status"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "STARTED",
+            "TEXT_DELTA",
+            "COMMITTED",
+            "CLOSED",
+            "TURN_FINISHED"
+          ]
+        },
+        "call": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/call"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "offsetUtf16": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "itemSequence": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "anyOf": [
+            {
+              "enum": [
+                "COMPLETED",
+                "FAILED",
+                "CANCELLED"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "TURN_FINISHED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "call": {
+                "type": "null"
+              },
+              "status": {
+                "enum": [
+                  "COMPLETED",
+                  "FAILED",
+                  "CANCELLED"
+                ]
+              },
+              "itemSequence": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "call": {
+                "$ref": "#/$defs/call"
+              },
+              "status": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "COMMITTED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "itemSequence": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "STARTED",
+                  "TEXT_DELTA",
+                  "CLOSED"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "itemSequence": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "STARTED",
+                  "COMMITTED",
+                  "CLOSED",
+                  "TURN_FINISHED"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "text": {
+                "const": ""
+              },
+              "offsetUtf16": {
+                "const": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "turnId",
+        "cursor",
+        "previousCursor",
+        "data"
+      ],
+      "properties": {
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "cursor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "previousCursor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "data": {
+          "$ref": "#/$defs/data"
+        }
+      }
+    },
+    "subscribe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subscriptionId",
+        "turnId",
+        "afterCursor"
+      ],
+      "properties": {
+        "subscriptionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "afterCursor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      }
+    },
+    "subscribeCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "payload"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "const": 0,
+          "type": "integer"
+        },
+        "payload": {
+          "$ref": "#/$defs/subscribe"
+        }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subscriptionId",
+        "turnId",
+        "acceptedAfterCursor"
+      ],
+      "properties": {
+        "subscriptionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "acceptedAfterCursor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      }
+    },
+    "unsubscribe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subscriptionId"
+      ],
+      "properties": {
+        "subscriptionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      }
+    },
+    "unsubscribeCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "payload"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "const": 0,
+          "type": "integer"
+        },
+        "payload": {
+          "$ref": "#/$defs/unsubscribe"
+        }
+      }
+    },
+    "released": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subscriptionId"
+      ],
+      "properties": {
+        "subscriptionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      }
+    },
+    "list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "turnId",
+        "afterCursor",
+        "limit"
+      ],
+      "properties": {
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "afterCursor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 128
+        }
+      }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "events",
+        "nextCursor",
+        "hasMore"
+      ],
+      "properties": {
+        "events": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "$ref": "#/$defs/event"
+          }
+        },
+        "nextCursor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "hasMore": {
+          "type": "boolean"
+        }
+      }
+    },
+    "watermark": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lastCursor",
+        "terminal",
+        "finalItemSequence"
+      ],
+      "properties": {
+        "lastCursor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "terminal": {
+          "type": "boolean"
+        },
+        "finalItemSequence": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "notification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subscriptionId",
+        "events",
+        "watermark"
+      ],
+      "properties": {
+        "subscriptionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "events": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "$ref": "#/$defs/event"
+          }
+        },
+        "watermark": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/watermark"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "events": {
+              "minItems": 1
+            },
+            "watermark": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "properties": {
+            "events": {
+              "maxItems": 0
+            },
+            "watermark": {
+              "$ref": "#/$defs/watermark"
+            }
+          }
+        }
+      ]
+    },
+    "itemHistoryRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "threadId",
+        "beforeSequence",
+        "limit"
+      ],
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "beforeSequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "itemHistoryEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "turnId",
+        "sequence",
+        "kind",
+        "role",
+        "summary",
+        "bodyReference",
+        "truncated",
+        "createdAt",
+        "attachments",
+        "fileReferences"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "anyOf": [
+            {
+              "enum": [
+                "SYSTEM",
+                "USER",
+                "ASSISTANT",
+                "TOOL"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "bodyReference": {
+          "anyOf": [
+            {
+              "$ref": "document-preview-v1.schema.json#/$defs/reference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "attachments": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "document-preview-v1.schema.json#/$defs/attachment"
+          }
+        },
+        "fileReferences": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "document-preview-v1.schema.json#/$defs/reference"
+          }
+        }
+      }
+    },
+    "itemHistoryResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "items",
+        "latestSequence",
+        "hasEarlier"
+      ],
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/itemHistoryEntry"
+          }
+        },
+        "latestSequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hasEarlier": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

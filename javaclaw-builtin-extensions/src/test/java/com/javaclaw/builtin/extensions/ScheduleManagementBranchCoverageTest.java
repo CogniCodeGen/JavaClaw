@@ -520,7 +520,8 @@ class ScheduleManagementBranchCoverageTest {
                 source.privateNetworkGrants(),
                 source.services(),
                 source.embeddings(),
-                com.javaclaw.extension.spi.WorkspaceExecutionPort.denied());
+                com.javaclaw.extension.spi.WorkspaceExecutionPort.denied(),
+                com.javaclaw.extension.spi.ScheduleDefinitionBindingPort.unavailable());
     }
 
     private static ExtensionJobRuntimeContext runtime(BuiltinExtensionTestSupport support) {
@@ -535,7 +536,9 @@ class ScheduleManagementBranchCoverageTest {
                 support.embeddings,
                 AutomationStepPort.unavailable(),
                 ScheduledCommandPort.unavailable(),
-                (workspaceId, required) -> {});
+                (workspaceId, required) -> {},
+                com.javaclaw.extension.spi.ConversationEvidencePort.unavailable(),
+                com.javaclaw.extension.spi.ScheduleDefinitionBindingPort.unavailable());
     }
 
     private static <T extends ExtensionContribution> T contribution(

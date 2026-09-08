@@ -68,4 +68,15 @@ record AppServerResources(
             return prior;
         }
     }
+
+    // 会话层先停止文档 Worker，再关闭领域资源；任何清理失败都不能跳过后续资源。
+    static void closeInOrder(AutoCloseable... resources) throws Exception {
+        Exception failure = null;
+        for (AutoCloseable resource : resources) {
+            failure = close(resource, failure);
+        }
+        if (failure != null) {
+            throw failure;
+        }
+    }
 }
