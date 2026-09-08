@@ -20,6 +20,27 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ManagementScopePresenterTest {
     @Test
+    void 自动目录失效在当前读取完成后合并补读() {
+        TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
+        Workspace original = gateway.workspaceSettings.catalog.getFirst();
+        Workspace next = workspace("新增工作区", "92e52883-b048-4459-90c8-ed7ee568d550");
+        ManagementScopePresenter presenter = new ManagementScopePresenter(gateway, () -> Optional.of(original.id()));
+        CompletableFuture<List<Workspace>> pending = new CompletableFuture<>();
+        gateway.workspaceSettings.nextResponse = pending;
+        presenter.refresh();
+        gateway.workspaceSettings.catalog.add(next);
+
+        presenter.refresh();
+        presenter.refresh();
+        assertEquals(1, gateway.workspaceSettings.reads);
+        pending.complete(List.of(original));
+
+        assertEquals(2, gateway.workspaceSettings.reads);
+        assertEquals(2, presenter.state().workspaces().size());
+        assertEquals(original.id(), presenter.state().selected().orElseThrow().id());
+    }
+
+    @Test
     void 主窗口切换后重新读取仍保留设置中心已冻结作用域() {
         TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
         Workspace original = gateway.workspaceSettings.catalog.getFirst();

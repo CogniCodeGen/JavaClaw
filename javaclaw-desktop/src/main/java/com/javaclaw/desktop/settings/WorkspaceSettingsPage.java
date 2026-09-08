@@ -13,6 +13,8 @@ import javafx.scene.layout.VBox;
 
 import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceLifecycle;
+import com.javaclaw.desktop.DesktopConfigurationChange;
+import com.javaclaw.desktop.DesktopNotificationSubscription;
 import com.javaclaw.desktop.component.AsyncActionBar;
 import com.javaclaw.desktop.component.AsyncActionBar.ActionState;
 import com.javaclaw.desktop.component.FormSection;
@@ -37,9 +39,11 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
     private final Button saveExecution;
     private final Button archive;
     private final AsyncActionBar actions;
+    private final DesktopNotificationSubscription configurationSubscription;
     private WorkspaceSettingsState state = WorkspaceSettingsState.initial();
     private Node editor;
     private boolean rendering;
+    private boolean active;
 
     /**
      * 创建工作区设置页。
@@ -59,6 +63,7 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
         configurePage();
         execution.onStateChanged(this::updateActions);
         presenter.subscribe(this::render);
+        configurationSubscription = gateway.onConfigurationChanged(this::configurationChanged);
     }
 
     @Override
@@ -73,20 +78,35 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
 
     @Override
     public void activate() {
-        if (dirty()) {
-            warnUnsavedChanges();
-            return;
-        }
+        active = true;
         if (state.selected().isPresent()) {
             execution.refresh();
         }
-        presenter.reload();
+        presenter.refresh();
+    }
+
+    @Override
+    public void deactivate() {
+        active = false;
+    }
+
+    @Override
+    public void dispose() {
+        active = false;
+        configurationSubscription.close();
     }
 
     /** 连接恢复时只刷新执行配置；具体草稿保护由执行面板统一判断。 */
     void refreshExecutionConfiguration() {
+        presenter.refresh();
         if (state.selected().isPresent()) {
             execution.refresh();
+        }
+    }
+
+    private void configurationChanged(DesktopConfigurationChange change) {
+        if (active && change.kind() == DesktopConfigurationChange.Kind.WORKSPACES) {
+            presenter.refresh();
         }
     }
 
@@ -185,12 +205,16 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
         rendering = true;
         try {
             masterDetail.list().getItems().setAll(snapshot.workspaces());
-            masterDetail.list().getSelectionModel().select(snapshot.selected().orElse(null));
+            masterDetail.list().getSelectionModel().select(snapshot.selected()
+                    .flatMap(selected -> snapshot.workspaces().stream()
+                            .filter(candidate -> candidate.id().equals(selected.id())).findFirst())
+                    .orElse(null));
             if (snapshot.selected().isPresent()) {
                 renderSelected(snapshot);
             } else {
                 masterDetail.showDetail(components.feedback(FeedbackKind.EMPTY, "暂无工作区", "请先在主窗口创建工作区。"));
             }
+            updateActions();
         } finally {
             rendering = false;
         }
@@ -227,7 +251,7 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
         } else if (snapshot.phase() == SettingsLoadState.ERROR) {
             actions.show(ActionState.ERROR, snapshot.message());
         } else if (snapshot.dirty() || execution.dirty()) {
-            actions.show(ActionState.DIRTY, "工作区草稿尚未保存");
+            actions.show(ActionState.DIRTY, snapshot.message().isBlank() ? "工作区草稿尚未保存" : snapshot.message());
         } else {
             actions.show(snapshot.message().isBlank() ? ActionState.IDLE : ActionState.SUCCESS, snapshot.message());
         }

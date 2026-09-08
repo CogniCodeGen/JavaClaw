@@ -24,6 +24,8 @@ import javafx.stage.Stage;
 import javafx.stage.Window;
 
 import com.javaclaw.desktop.DesktopStylesheets;
+import com.javaclaw.desktop.DesktopConfigurationChange;
+import com.javaclaw.desktop.DesktopNotificationSubscription;
 import com.javaclaw.desktop.appearance.DesktopAppearanceManager;
 import com.javaclaw.desktop.component.ManagementPageShell;
 
@@ -59,6 +61,7 @@ public final class ManagementCenterWindow {
     private final DesktopAppearanceManager appearance;
     private final ManagementSettingsGateways gateways;
     private final ManagementWindowPreferenceStore preferences;
+    private final DesktopNotificationSubscription configurationSubscription;
     private final ObservableList<Destination> filtered = FXCollections.observableArrayList();
     private Stage stage;
     private ManagementPageShell shell;
@@ -88,6 +91,11 @@ public final class ManagementCenterWindow {
         this.appearance = Objects.requireNonNull(appearance, "appearance");
         this.gateways = Objects.requireNonNull(gateways, "gateways");
         this.preferences = Objects.requireNonNull(preferences, "preferences");
+        configurationSubscription = gateways.core().onConfigurationChanged(change -> {
+            if (isShowing() && change.kind() == DesktopConfigurationChange.Kind.WORKSPACES) {
+                scope.refresh();
+            }
+        });
     }
 
     /**
@@ -109,10 +117,16 @@ public final class ManagementCenterWindow {
         show(owner, null);
     }
 
-    /** 服务连接恢复后刷新正在显示的 Workspace 执行配置；隐藏页面在下次激活时加载，未保存草稿保持原样。 */
+    /** 重验可见设置中心的目录与配置，保持独立工作区和未保存草稿；隐藏页在下次激活时读取。 */
     public void refreshExecutionConfiguration() {
-        if (stage != null && stage.isShowing() && activePage instanceof WorkspaceSettingsPage workspacePage) {
+        if (!isShowing()) {
+            return;
+        }
+        scope.refresh();
+        if (activePage instanceof WorkspaceSettingsPage workspacePage) {
             workspacePage.refreshExecutionConfiguration();
+        } else if (activePage != null && !activePage.dirty() && !activePage.pending()) {
+            activePage.activate();
         }
     }
 
@@ -136,6 +150,7 @@ public final class ManagementCenterWindow {
             stage.requestFocus();
             return;
         }
+        scope.refresh();
         activatePage();
         stage.show();
         stage.toFront();
@@ -171,6 +186,7 @@ public final class ManagementCenterWindow {
 
     /** 释放页面订阅并销毁窗口；仅由 Desktop 进程关闭调用。 */
     public void dispose() {
+        configurationSubscription.close();
         deactivatePage();
         if (pages != null) {
             pages.dispose();
@@ -212,8 +228,12 @@ public final class ManagementCenterWindow {
             deactivatePage();
             savePreferences();
         });
+        stage.focusedProperty().addListener((observable, previous, focused) -> {
+            if (focused) {
+                refreshExecutionConfiguration();
+            }
+        });
         select(restoreDestination(restored.lastPageKey()));
-        scope.activate();
     }
 
     private VBox createNavigation() {

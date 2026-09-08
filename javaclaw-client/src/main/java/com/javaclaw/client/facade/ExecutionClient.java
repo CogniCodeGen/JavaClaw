@@ -5,6 +5,7 @@ import java.util.Optional;
 
 import com.javaclaw.api.ExecutionConfiguration;
 import com.javaclaw.api.ExecutionOverrides;
+import com.javaclaw.api.ExecutionPreview;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.client.CommandOptions;
@@ -22,6 +23,22 @@ public final class ExecutionClient {
      */
     public ExecutionClient(RpcClientConnection connection) {
         this.connection = Objects.requireNonNull(connection, "connection");
+    }
+
+    /**
+     * 只读解析下一 Turn 的有效模型、思考、锁定状态与配置阻塞项，不调用模型。
+     *
+     * @param workspaceId 固定的目标 Workspace
+     * @param threadId 可选已有 Thread，由服务端校验归属
+     * @param execution 本次临时选择；缺省字段沿用已保存配置
+     * @return 轻量本地配置快照；实际启动仍由服务端重新校验
+     */
+    public ExecutionPreview preview(
+            WorkspaceId workspaceId, Optional<ThreadId> threadId, ExecutionOverrides execution) {
+        return connection.query(
+                "execution/preview",
+                new ExecutionRpcContracts.PreviewPayload(workspaceId, threadId, execution),
+                ExecutionPreview.class);
     }
 
     /**

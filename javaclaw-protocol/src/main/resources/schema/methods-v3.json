@@ -45,6 +45,7 @@
     {"name": "agent/role/import/commit", "kind": "command", "paramsSchema": "agent-role-v3.schema.json#/$defs/fileCommitCommand", "resultSchema": "agent-role-v3.schema.json#/$defs/role"},
     {"name": "agent/role/export", "kind": "query", "paramsSchema": "agent-role-v3.schema.json#/$defs/fileExportParams", "resultSchema": "agent-role-v3.schema.json#/$defs/fileExport"},
     {"name": "execution/default/read", "kind": "query", "paramsSchema": "execution-v3.schema.json#/$defs/defaultReadParams", "resultSchema": "execution-v3.schema.json#/$defs/readResult"},
+    {"name": "execution/preview", "kind": "query", "paramsSchema": "execution-preview-v3.schema.json#/$defs/previewParams", "resultSchema": "execution-preview-v3.schema.json#/$defs/preview"},
     {"name": "execution/default/update", "kind": "command", "paramsSchema": "execution-v3.schema.json#/$defs/defaultUpdateCommand", "resultSchema": "execution-v3.schema.json#/$defs/configuration"},
     {"name": "execution/subagent/read", "kind": "query", "paramsSchema": "execution-v3.schema.json#/$defs/defaultReadParams", "resultSchema": "execution-v3.schema.json#/$defs/readResult"},
     {"name": "execution/subagent/update", "kind": "command", "paramsSchema": "execution-v3.schema.json#/$defs/subagentUpdateCommand", "resultSchema": "execution-v3.schema.json#/$defs/configuration"},

@@ -164,6 +164,7 @@ public final class MethodCatalog {
         add(methods, "agent/role/import/commit", RpcMethodKind.COMMAND);
         add(methods, "agent/role/export", RpcMethodKind.QUERY);
         add(methods, "execution/default/read", RpcMethodKind.QUERY);
+        add(methods, "execution/preview", RpcMethodKind.QUERY);
         add(methods, "execution/default/update", RpcMethodKind.COMMAND);
         add(methods, "execution/subagent/read", RpcMethodKind.QUERY);
         add(methods, "execution/subagent/update", RpcMethodKind.COMMAND);

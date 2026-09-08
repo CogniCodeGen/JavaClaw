@@ -42,6 +42,9 @@ public final class DesktopPresenter implements AutoCloseable {
     private final DesktopStore store = new DesktopStore();
     private final DesktopExtensionCoordinator extensions = new DesktopExtensionCoordinator();
     private final DesktopNotificationRegistry notifications = new DesktopNotificationRegistry();
+    private final DesktopConfigurationEvents configurationEvents = new DesktopConfigurationEvents();
+    private final DesktopChatActions chatActions = new DesktopChatActions(this, store::state);
+    private final DesktopCatalogRefresh catalogRefresh = new DesktopCatalogRefresh(this, store);
     private final ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
     private final AtomicLong connectionEpoch = new AtomicLong();
     private final DesktopInputCoordinator inputCoordinator;
@@ -70,6 +73,42 @@ public final class DesktopPresenter implements AutoCloseable {
         inputActions = new DesktopInputActions(inputCoordinator, connectionEpoch::get, this::requireClient);
         streams = new DesktopTurnStreamCoordinator(store, ui, workers);
         conversations = new DesktopConversationCoordinator(store, ui, workers, streams, () -> client);
+        configurationEvents.subscribe(change -> {
+            if (change.kind() == DesktopConfigurationChange.Kind.WORKSPACES) {
+                catalogRefresh.request();
+            }
+        });
+    }
+
+    /** @return 当前 Desktop 共享的配置失效通知源，随 Presenter 关闭 */
+    public DesktopConfigurationEvents configurationEvents() {
+        return configurationEvents;
+    }
+
+    /** 重新读取工作区目录，不改变当前选择或对话。 */
+    public void refreshWorkspaceCatalog() {
+        catalogRefresh.request();
+    }
+
+    /** @param workspace 固定目标工作区 @param thread 可复用对话 @param model 精确模型 @return 应用完成 */
+    public java.util.concurrent.CompletionStage<Void> useModel(
+            Optional<com.javaclaw.api.WorkspaceId> workspace, Optional<ThreadId> thread, com.javaclaw.api.ProviderRef model) {
+        return chatActions.useModel(workspace, thread, model);
+    }
+
+    /**
+     * @param workspace 固定工作区 @param thread 固定对话 @param selected 对话覆盖
+     * @param options 原始版本 @param remember 是否同时记为日常默认 @return 权威对话配置
+     */
+    public java.util.concurrent.CompletionStage<com.javaclaw.api.ExecutionConfiguration> rememberChatSelection(
+            com.javaclaw.api.WorkspaceId workspace, ThreadId thread, ExecutionOverrides selected,
+            CommandOptions options, boolean remember) {
+        return chatActions.remember(workspace, thread, selected, options, remember);
+    }
+
+    /** @param name 工作区名称 @param root 用户选择的绝对目录 @return 创建完成并通知目录刷新 */
+    public java.util.concurrent.CompletionStage<Workspace> createModelWorkspace(String name, Path root) {
+        return chatActions.createWorkspace(name, root);
     }
 
     /**
@@ -228,10 +267,10 @@ public final class DesktopPresenter implements AutoCloseable {
     }
 
     /** @param message 用户消息 @param execution 当前显式独立选择，服务端负责解析与冻结 */
-    public void send(String message, ExecutionOverrides execution) {
+    public CompletableFuture<com.javaclaw.api.AgentTurn> send(String message, ExecutionOverrides execution) {
         String prompt = DesktopFailures.requireText(message, "message");
         ExecutionOverrides selection = Objects.requireNonNull(execution, "execution");
-        conversations.send(prompt, selection);
+        return conversations.send(prompt, selection);
     }
 
     /** 请求取消当前活动 Turn。 */
@@ -497,6 +536,7 @@ public final class DesktopPresenter implements AutoCloseable {
         connectionEpoch.incrementAndGet();
         inputCoordinator.invalidate();
         notifications.close();
+        configurationEvents.close();
         conversations.close();
         streams.close();
         workers.shutdownNow();

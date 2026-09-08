@@ -86,7 +86,7 @@ class ProtocolInitializationTest {
     @Test
     void 方法目录稳定且未知或未协商能力被拒绝() {
         NegotiatedCapabilities none = new NegotiatedCapabilities(Set.of(), Set.of());
-        assertEquals(172, MethodCatalog.methods().size());
+        assertEquals(173, MethodCatalog.methods().size());
         assertEquals(
                 RpcMethodKind.QUERY, MethodCatalog.require("thread/read", none).kind());
         assertEquals(

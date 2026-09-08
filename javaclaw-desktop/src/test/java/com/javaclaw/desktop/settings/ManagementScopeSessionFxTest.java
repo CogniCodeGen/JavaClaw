@@ -27,6 +27,33 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class ManagementScopeSessionFxTest {
     @Test
+    void 自动刷新目录可更新工作区名称但不能重绑脏页面() {
+        FxTestSupport.run(() -> {
+            TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
+            Workspace original = gateway.workspaceSettings.catalog.getFirst();
+            CapturingPage page = new CapturingPage();
+            ManagementScopeSession session = new ManagementScopeSession(
+                    gateway, () -> Optional.of(original.id()), () -> page, ignored -> {});
+            session.bind(page);
+            session.activate();
+            page.dirty = true;
+            page.draft = "未保存草稿";
+            Workspace renamed = new Workspace(original.id(), "更新后的名称", original.root(), original.lifecycle(),
+                    original.revision() + 1, original.createdAt(), original.updatedAt());
+            gateway.workspaceSettings.catalog.set(0, renamed);
+
+            session.refresh();
+
+            assertEquals(renamed, workspaceSelector(session.content()).getValue());
+            assertEquals(2, page.received.size());
+            assertEquals("未保存草稿", page.draft);
+            page.dirty = false;
+            session.refresh();
+            assertEquals(renamed, page.received.getLast().orElseThrow());
+        });
+    }
+
+    @Test
     void 目录Loading和失败时页面保留冻结作用域与草稿但关闭写入门() {
         FxTestSupport.run(() -> {
             TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();

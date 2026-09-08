@@ -12,8 +12,10 @@ import com.javaclaw.api.ApprovalPolicy;
 import com.javaclaw.api.ApprovalRequirement;
 import com.javaclaw.api.ConfigurationProvenance;
 import com.javaclaw.api.ConfigurationSource;
+import com.javaclaw.api.ExecutionBlocker;
 import com.javaclaw.api.ExecutionConfiguration;
 import com.javaclaw.api.ExecutionOverrides;
+import com.javaclaw.api.ExecutionPreview;
 import com.javaclaw.api.FilePermission;
 import com.javaclaw.api.NetworkPermission;
 import com.javaclaw.api.PermissionConstraint;
@@ -62,10 +64,57 @@ public final class AgentConfigurationResolver {
 
     ResolvedAgentConfiguration resolve(
             ThreadExecutionScope scope, Optional<ThreadId> thread, ExecutionOverrides explicit) {
+        return finish(select(scope, thread, explicit), scope, Optional.empty(), Optional.empty());
+    }
+
+    private ConfigurationSelection select(
+            ThreadExecutionScope scope, Optional<ThreadId> thread, ExecutionOverrides explicit) {
         ConfigurationSelection selection = new ConfigurationSelection();
         configurations.findForTurn(scope.workspace().id(), thread).forEach(value -> apply(selection, value, ""));
         selection.apply(explicit, ConfigurationSource.TURN, "explicit-selection", 0);
-        return finish(selection, scope, Optional.empty(), Optional.empty());
+        return selection;
+    }
+
+    ExecutionPreview preview(ThreadExecutionScope scope, Optional<ThreadId> thread, ExecutionOverrides explicit) {
+        ConfigurationSelection selection = select(scope, thread, explicit);
+        AgentRole role;
+        try {
+            role = applyRole(selection);
+        } catch (PersistenceException failure) {
+            return blockedPreview(selection, Optional.empty(), ExecutionBlocker.Code.ROLE_UNAVAILABLE, failure);
+        }
+        if (selection.provider == null) {
+            return preview(selection, Optional.of(role), List.of(new ExecutionBlocker(
+                    ExecutionBlocker.Code.MODEL_REQUIRED, "选择一个模型，或添加新的模型连接")));
+        }
+        try {
+            ResolvedAgentConfiguration resolved =
+                    finish(selection, role, scope, Optional.empty(), Optional.empty());
+            return new ExecutionPreview(
+                    Optional.of(role.ref()), Optional.of(resolved.provider()), resolved.reasoning(),
+                    role.spec().model().isPresent(), role.spec().reasoning().isPresent(),
+                    resolved.provenance(), List.of());
+        } catch (PersistenceException failure) {
+            return blockedPreview(selection, Optional.of(role), ExecutionBlocker.Code.CONFIGURATION_INVALID, failure);
+        }
+    }
+
+    private static ExecutionPreview blockedPreview(
+            ConfigurationSelection selection, Optional<AgentRole> role,
+            ExecutionBlocker.Code code, PersistenceException failure) {
+        if (failure.kind() != PersistenceException.Kind.INVALID_REQUEST) {
+            throw failure;
+        }
+        return preview(selection, role, List.of(new ExecutionBlocker(code, failure.getMessage())));
+    }
+
+    private static ExecutionPreview preview(
+            ConfigurationSelection selection, Optional<AgentRole> role, List<ExecutionBlocker> blockers) {
+        return new ExecutionPreview(
+                Optional.of(selection.role), Optional.ofNullable(selection.provider), selection.reasoning,
+                role.filter(value -> value.spec().model().isPresent()).isPresent(),
+                role.filter(value -> value.spec().reasoning().isPresent()).isPresent(),
+                selection.provenance, blockers);
     }
 
     ResolvedAgentConfiguration resolveChild(
@@ -173,6 +222,10 @@ public final class AgentConfigurationResolver {
             ThreadExecutionScope scope,
             Optional<PermissionProfile> parent,
             Optional<Set<String>> parentSkills) {
+        return finish(selection, applyRole(selection), scope, parent, parentSkills);
+    }
+
+    private AgentRole applyRole(ConfigurationSelection selection) {
         AgentRole role = roles.requireAvailable(selection.role.id(), selection.role.revision());
         role.spec().model().ifPresent(value -> {
             selection.provider = value.provider();
@@ -184,6 +237,15 @@ public final class AgentConfigurationResolver {
             selection.provenance.add(
                     new ConfigurationProvenance("reasoning", ConfigurationSource.ROLE, role.id(), role.revision()));
         });
+        return role;
+    }
+
+    private ResolvedAgentConfiguration finish(
+            ConfigurationSelection selection,
+            AgentRole role,
+            ThreadExecutionScope scope,
+            Optional<PermissionProfile> parent,
+            Optional<Set<String>> parentSkills) {
         if (selection.provider == null) {
             throw PersistenceException.invalidRequest("尚未选择模型，请先配置执行默认值或在本次 Turn 中选择 Provider/模型");
         }

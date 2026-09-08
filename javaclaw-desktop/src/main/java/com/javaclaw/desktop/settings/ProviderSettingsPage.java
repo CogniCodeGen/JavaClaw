@@ -10,7 +10,6 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
-import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 
@@ -37,6 +36,7 @@ import com.javaclaw.desktop.component.RevisionConflictPane;
 public final class ProviderSettingsPage implements ManagedSettingsPage {
     private final PlatformComponentFactory components = new PlatformComponentFactory();
     private final ProviderSettingsPresenter presenter;
+    private final ProviderSettingsActions setupActions;
     private final ProviderVerificationPresenter chatVerification;
     private final ProviderVerificationPresenter embeddingVerification;
     private final ProviderModelDiscoveryPresenter discovery;
@@ -89,6 +89,7 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
         embeddingBinding = new ProviderEmbeddingBindingPresenter(gateway);
         modelCatalog =
                 new ProviderModelCatalogEditor(this::discoverModels, this::replaceModels, this::bindEmbeddingModel);
+        setupActions = new ProviderSettingsActions(gateway, presenter, modelCatalog, content);
         contextEditor = new ProviderContextEditor(gateway, presenter::reload);
         modelCatalog.onModelSelected(ignored -> bindModelContext());
         save = components.action("保存模型服务", ActionStyle.PRIMARY, ActionSize.NORMAL);
@@ -143,6 +144,7 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
 
     @Override
     public void workspaceChanged(Optional<com.javaclaw.api.Workspace> workspace) {
+        setupActions.workspaceChanged(workspace);
         discovery.reset();
     }
 
@@ -201,14 +203,6 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
         Label hint = new Label("配置模型连接、逐模型用途和访问密钥。读取模型目录不会执行推理，也不会产生模型费用。");
         hint.setWrapText(true);
         hint.getStyleClass().add("sec-hint");
-        Button create = components.action("新建", ActionStyle.PRIMARY, ActionSize.COMPACT);
-        create.setId("providerCreateButton");
-        create.setOnAction(event -> {
-            discovery.reset();
-            presenter.createDraft();
-        });
-        Button reload = components.action("刷新", ActionStyle.GHOST, ActionSize.COMPACT);
-        reload.setOnAction(event -> presenter.reload());
         configureMasterList();
         form.getChildren()
                 .addAll(
@@ -224,7 +218,7 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
                         dangerZone);
         masterDetail.showDetail(form);
         VBox.setVgrow(masterDetail, Priority.ALWAYS);
-        content.getChildren().addAll(hint, setupProgress, new HBox(8, create, reload), masterDetail);
+        content.getChildren().addAll(hint, setupProgress, setupActions.content(), masterDetail);
     }
 
     private void configureMasterList() {
@@ -232,9 +226,8 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
                 .list()
                 .setCellFactory(ignored -> components.detailCell(
                         endpoint -> endpoint.spec().displayName(),
-                        endpoint -> endpoint.id()
-                                + " · 版本 "
-                                + endpoint.revision()
+                        endpoint -> endpoint.spec().models().size()
+                                + " 个模型"
                                 + " · "
                                 + SettingsLabels.providerLifecycle(endpoint.lifecycle())));
     }
@@ -385,6 +378,7 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
     }
 
     private void renderStatus(ProviderSettingsState state) {
+        setupActions.render();
         boolean archived = state.selected()
                 .map(endpoint -> endpoint.lifecycle() == ProviderLifecycle.ARCHIVED)
                 .orElse(false);
@@ -505,6 +499,7 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
     }
 
     private void bindModelContext() {
+        setupActions.render();
         ProviderSettingsState state = presenter.state();
         var selected = Optional.ofNullable(modelCatalog.selectedModel())
                 .filter(model -> model.supports(ProviderModelPurpose.CHAT));

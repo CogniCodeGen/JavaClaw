@@ -390,6 +390,12 @@ public final class AppServerBootstrap {
         new com.javaclaw.server.rpc.AgentRoleRpcHandlers(foundation.agentRoles(), foundation.json()).register(routes);
         new com.javaclaw.server.rpc.ExecutionRpcHandlers(foundation.executionConfigurations(), foundation.json())
                 .register(routes);
+        new com.javaclaw.server.rpc.ExecutionPreviewRpcHandlers(
+                        new com.javaclaw.server.turn.ExecutionPreviewService(
+                                foundation.core(), foundation.agentRoles(), foundation.executionConfigurations(),
+                                foundation.permissionProfiles(), foundation.worktrees(), foundation.providers()),
+                        foundation.json())
+                .register(routes);
         new com.javaclaw.server.rpc.AgentRoleFileRpcHandlers(
                         new com.javaclaw.server.persistence.AgentRoleFileService(
                                 foundation.database(),

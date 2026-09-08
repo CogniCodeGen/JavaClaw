@@ -13,6 +13,23 @@ public final class ExecutionRpcContracts {
     private ExecutionRpcContracts() {}
 
     /**
+     * 轻量执行配置预览参数，不携带消息或项目资料。
+     *
+     * @param workspaceId 固定目标 Workspace，不可空
+     * @param threadId 可选已有 Thread，服务端校验归属
+     * @param execution 临时执行覆盖，不可空
+     */
+    public record PreviewPayload(
+            WorkspaceId workspaceId, Optional<ThreadId> threadId, ExecutionOverrides execution) {
+        /** 校验参数容器；不存在或不可用的引用由服务端返回阻塞项。 */
+        public PreviewPayload {
+            Objects.requireNonNull(workspaceId, "workspaceId");
+            threadId = Objects.requireNonNull(threadId, "threadId");
+            Objects.requireNonNull(execution, "execution");
+        }
+    }
+
+    /**
      * 默认配置查询范围。
      *
      * @param workspaceId 空值读取安装默认，有值读取 Workspace 直接覆盖

@@ -17,6 +17,7 @@ final class ManagementScopePresenter {
     private final Supplier<Optional<WorkspaceId>> preferredWorkspace;
     private Consumer<ManagementScopeState> listener = ignored -> {};
     private ManagementScopeState state = ManagementScopeState.initial();
+    private boolean refreshPending;
 
     ManagementScopePresenter(CoreSettingsGateway gateway, Supplier<Optional<WorkspaceId>> preferredWorkspace) {
         this.gateway = Objects.requireNonNull(gateway, "gateway");
@@ -29,10 +30,20 @@ final class ManagementScopePresenter {
     }
 
     void reload() {
+        refreshPending = false;
         long epoch = state.epoch() + 1;
         publish(new ManagementScopeState(
                 SettingsLoadState.LOADING, state.workspaces(), state.selected(), "正在读取工作区…", epoch));
         gateway.workspaces().whenComplete((workspaces, failure) -> completeReload(epoch, workspaces, failure));
+    }
+
+    /** 合并在途自动刷新；当前读取结束后至少再取一次权威目录。 */
+    void refresh() {
+        if (state.loading()) {
+            refreshPending = true;
+            return;
+        }
+        reload();
     }
 
     void select(Workspace workspace) {
@@ -64,6 +75,7 @@ final class ManagementScopePresenter {
                     state.selected(),
                     "工作区读取失败，已保留固定作用域并暂停写入：" + SettingsFailures.message(failure),
                     epoch));
+            refreshAgain();
             return;
         }
         List<Workspace> active = Objects.requireNonNull(workspaces, "workspaces").stream()
@@ -74,6 +86,13 @@ final class ManagementScopePresenter {
         Optional<Workspace> selected = retainSelection(active);
         publish(new ManagementScopeState(
                 SettingsLoadState.READY, active, selected, selectionMessage(active, selected), epoch));
+        refreshAgain();
+    }
+
+    private void refreshAgain() {
+        if (refreshPending) {
+            reload();
+        }
     }
 
     private Optional<Workspace> retainSelection(List<Workspace> candidates) {

@@ -43,6 +43,11 @@ final class ManagementScopeSession {
         presenter.reload();
     }
 
+    /** 自动更新目录并保留固定工作区；目录读取不丢弃页面草稿。 */
+    void refresh() {
+        presenter.refresh();
+    }
+
     void bind(ManagedSettingsPage page) {
         Objects.requireNonNull(page, "page").workspaceChanged(presenter.state().frozenSelection());
         writeAvailability.accept(presenter.state().availableSelection().isPresent());
@@ -88,8 +93,12 @@ final class ManagementScopeSession {
         if (applied.equals(frozen)) {
             return;
         }
-        applied = frozen;
         ManagedSettingsPage page = activePage.get();
+        boolean sameWorkspace = applied.map(Workspace::id).equals(frozen.map(Workspace::id));
+        if (sameWorkspace && page != null && (page.dirty() || page.pending())) {
+            return;
+        }
+        applied = frozen;
         if (page != null) {
             page.workspaceChanged(applied);
         }

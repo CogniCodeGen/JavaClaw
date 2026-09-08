@@ -7,6 +7,8 @@ import org.junit.jupiter.api.Test;
 
 import com.javaclaw.api.ExecutionConfiguration;
 import com.javaclaw.api.ExecutionOverrides;
+import com.javaclaw.api.ExecutionBlocker;
+import com.javaclaw.api.ExecutionPreview;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.client.facade.ExecutionClient;
@@ -19,6 +21,26 @@ import com.javaclaw.protocol.WriteCommand;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class ExecutionClientTest {
+    @Test
+    void 预览直接读取固定工作区和对话且不发送写命令() {
+        CanonicalJson json = new CanonicalJson();
+        WorkspaceId workspace = WorkspaceId.random();
+        ThreadId thread = ThreadId.random();
+        ExecutionOverrides overrides = ExecutionOverrides.empty();
+        ExecutionPreview preview = new ExecutionPreview(
+                Optional.empty(), Optional.empty(), Optional.empty(), false, false, java.util.List.of(),
+                java.util.List.of(new ExecutionBlocker(ExecutionBlocker.Code.MODEL_REQUIRED, "请选择模型")));
+        ScriptedRpcConnection rpc = new ScriptedRpcConnection(request -> {
+            assertEquals("execution/preview", request.method());
+            assertEquals(new ExecutionRpcContracts.PreviewPayload(workspace, Optional.of(thread), overrides),
+                    json.decode(request.params(), ExecutionRpcContracts.PreviewPayload.class));
+            return JsonRpcResponse.success(request.id(), json.encode(preview));
+        });
+        ExecutionClient client = new ExecutionClient(new RpcClientConnection(rpc, json, ignored -> {}));
+
+        assertEquals(preview, client.preview(workspace, Optional.of(thread), overrides));
+    }
+
     @Test
     void 直接配置读写使用各自Scope与Revision() {
         CanonicalJson json = new CanonicalJson();

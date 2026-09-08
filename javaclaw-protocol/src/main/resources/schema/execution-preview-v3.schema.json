@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javaclaw.local/schema/execution-preview-v3.schema.json",
+  "title": "JavaClaw execution configuration preview v3",
+  "$defs": {
+    "previewParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspaceId", "threadId", "execution"],
+      "properties": {
+        "workspaceId": {"type": "string", "format": "uuid"},
+        "threadId": {"type": ["string", "null"], "format": "uuid"},
+        "execution": {"$ref": "execution-v3.schema.json#/$defs/overrides"}
+      }
+    },
+    "blocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {"enum": ["WORKSPACE_UNAVAILABLE", "THREAD_UNAVAILABLE", "MODEL_REQUIRED", "MODEL_UNAVAILABLE", "ROLE_UNAVAILABLE", "CONFIGURATION_INVALID", "CREDENTIAL_UNVERIFIED", "CREDENTIAL_REQUIRED", "CREDENTIAL_UNAVAILABLE", "DISABLED", "ARCHIVED", "INVALID_CONFIGURATION"]},
+        "message": {"type": "string", "minLength": 1, "maxLength": 2000}
+      }
+    },
+    "preview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "provider", "reasoning", "modelLocked", "reasoningLocked", "provenance", "blockers"],
+      "properties": {
+        "role": {"anyOf": [{"$ref": "agent-role-v3.schema.json#/$defs/roleRef"}, {"type": "null"}]},
+        "provider": {"anyOf": [{"$ref": "core-interaction-v3.schema.json#/$defs/providerRef"}, {"type": "null"}]},
+        "reasoning": {"enum": [null, "NONE", "MINIMAL", "LOW", "MEDIUM", "HIGH", "XHIGH", "MAX"]},
+        "modelLocked": {"type": "boolean"},
+        "reasoningLocked": {"type": "boolean"},
+        "provenance": {"type": "array", "items": {"$ref": "execution-v3.schema.json#/$defs/provenance"}},
+        "blockers": {"type": "array", "items": {"$ref": "#/$defs/blocker"}}
+      }
+    }
+  }
+}

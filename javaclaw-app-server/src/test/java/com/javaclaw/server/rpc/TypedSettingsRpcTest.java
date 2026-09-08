@@ -23,6 +23,7 @@ import com.javaclaw.api.CapabilityNarrowing;
 import com.javaclaw.api.DiagnosticsSnapshot;
 import com.javaclaw.api.ExecutionConfiguration;
 import com.javaclaw.api.ExecutionOverrides;
+import com.javaclaw.api.ExecutionPreview;
 import com.javaclaw.api.ModelPreference;
 import com.javaclaw.api.PermissionConstraint;
 import com.javaclaw.api.PermissionProfile;
@@ -221,6 +222,13 @@ class TypedSettingsRpcTest {
                         new ExecutionRpcContracts.DefaultReadPayload(Optional.of(workspace.id())))),
                 ExecutionRpcContracts.ReadResult.class);
         assertEquals(configured, read.configuration().orElseThrow());
+        ExecutionPreview preview = decodeSuccess(session.handle(request(
+                "execution-preview", "execution/preview", new ExecutionRpcContracts.PreviewPayload(
+                        workspace.id(), Optional.empty(), ExecutionOverrides.empty()))), ExecutionPreview.class);
+        assertTrue(preview.ready());
+        assertTrue(preview.modelLocked());
+        assertEquals(Optional.of(profile.ref()), preview.role());
+        assertEquals(profile.spec().model().map(ModelPreference::provider), preview.provider());
     }
 
     private void assertDiagnosticsAndCatalog() {

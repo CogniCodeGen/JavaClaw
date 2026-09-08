@@ -59,6 +59,7 @@ import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.client.CommandOptions;
 import com.javaclaw.desktop.DesktopPresenter;
+import com.javaclaw.desktop.DesktopConfigurationChange;
 import com.javaclaw.protocol.DiagnosticsRpcContracts;
 import com.javaclaw.protocol.InitializeResult;
 
@@ -85,7 +86,8 @@ public final class SdkCoreSettingsGateway extends SdkRoleExecutionSettingsGatewa
     @Override
     public CompletionStage<com.javaclaw.api.ModelContextLimits> updateModelContextLimits(
             com.javaclaw.api.ModelContextLimits limits, CommandOptions options) {
-        return desktop.submitSettingsRequest(client -> client.providers().updateContextLimits(limits, options));
+        return changed(desktop.submitSettingsRequest(client -> client.providers().updateContextLimits(limits, options)),
+                DesktopConfigurationChange.Kind.PROVIDERS);
     }
 
     @Override
@@ -96,18 +98,21 @@ public final class SdkCoreSettingsGateway extends SdkRoleExecutionSettingsGatewa
     @Override
     public CompletionStage<ProviderEndpoint> createProvider(
             String id, ProviderEndpointSpec spec, ProviderLifecycle lifecycle, CommandOptions options) {
-        return desktop.submitSettingsRequest(client -> client.providers().create(id, spec, lifecycle, options));
+        return changed(desktop.submitSettingsRequest(client -> client.providers().create(id, spec, lifecycle, options)),
+                DesktopConfigurationChange.Kind.PROVIDERS);
     }
 
     @Override
     public CompletionStage<ProviderEndpoint> updateProvider(
             String id, ProviderEndpointSpec spec, ProviderLifecycle lifecycle, CommandOptions options) {
-        return desktop.submitSettingsRequest(client -> client.providers().update(id, spec, lifecycle, options));
+        return changed(desktop.submitSettingsRequest(client -> client.providers().update(id, spec, lifecycle, options)),
+                DesktopConfigurationChange.Kind.PROVIDERS);
     }
 
     @Override
     public CompletionStage<ProviderEndpoint> archiveProvider(String id, CommandOptions options) {
-        return desktop.submitSettingsRequest(client -> client.providers().archive(id, options));
+        return changed(desktop.submitSettingsRequest(client -> client.providers().archive(id, options)),
+                DesktopConfigurationChange.Kind.PROVIDERS);
     }
 
     @Override
@@ -146,22 +151,23 @@ public final class SdkCoreSettingsGateway extends SdkRoleExecutionSettingsGatewa
     public CompletionStage<ProviderCredentialBinding> setProviderCredential(
             ProviderEndpoint provider, long credentialExpectedRevision, char[] secret, CommandOptions options) {
         char[] owned = Arrays.copyOf(Objects.requireNonNull(secret, "secret"), secret.length);
-        return desktop.submitSettingsRequest(client -> {
+        return changed(desktop.submitSettingsRequest(client -> {
             try {
                 return client.providers()
                         .setCredential(provider.id(), provider.revision(), credentialExpectedRevision, owned, options);
             } finally {
                 Arrays.fill(owned, '\0');
             }
-        });
+        }), DesktopConfigurationChange.Kind.PROVIDERS);
     }
 
     @Override
     public CompletionStage<ProviderCredentialClearResult> clearProviderCredential(
             ProviderEndpoint provider, CredentialMetadata credential, CommandOptions options) {
-        return desktop.submitSettingsRequest(client -> client.providers()
+        return changed(desktop.submitSettingsRequest(client -> client.providers()
                 .clearCredential(
-                        provider.id(), provider.revision(), credential.reference(), credential.revision(), options));
+                        provider.id(), provider.revision(), credential.reference(), credential.revision(), options)),
+                DesktopConfigurationChange.Kind.PROVIDERS);
     }
 
     @Override
@@ -207,12 +213,14 @@ public final class SdkCoreSettingsGateway extends SdkRoleExecutionSettingsGatewa
 
     @Override
     public CompletionStage<Workspace> renameWorkspace(Workspace workspace, String name, CommandOptions options) {
-        return desktop.submitSettingsRequest(client -> client.workspaces().rename(workspace, name, options));
+        return changed(desktop.submitSettingsRequest(client -> client.workspaces().rename(workspace, name, options)),
+                DesktopConfigurationChange.Kind.WORKSPACES, Optional.of(workspace.id()), Optional.empty());
     }
 
     @Override
     public CompletionStage<Workspace> archiveWorkspace(Workspace workspace, CommandOptions options) {
-        return desktop.submitSettingsRequest(client -> client.workspaces().archive(workspace, options));
+        return changed(desktop.submitSettingsRequest(client -> client.workspaces().archive(workspace, options)),
+                DesktopConfigurationChange.Kind.WORKSPACES, Optional.of(workspace.id()), Optional.empty());
     }
 
     @Override
@@ -364,15 +372,17 @@ public final class SdkCoreSettingsGateway extends SdkRoleExecutionSettingsGatewa
     @Override
     public CompletionStage<PermissionProfile> clonePermissionProfile(
             PermissionProfileRef source, String newId, CommandOptions options) {
-        return desktop.submitSettingsRequest(
-                client -> client.permissionProfiles().cloneProfile(source, newId, options));
+        return changed(desktop.submitSettingsRequest(
+                client -> client.permissionProfiles().cloneProfile(source, newId, options)),
+                DesktopConfigurationChange.Kind.PERMISSIONS);
     }
 
     @Override
     public CompletionStage<PermissionProfile> updatePermissionProfile(
             PermissionProfile profile, CommandOptions options) {
-        return desktop.submitSettingsRequest(
-                client -> client.permissionProfiles().update(profile, options));
+        return changed(desktop.submitSettingsRequest(
+                client -> client.permissionProfiles().update(profile, options)),
+                DesktopConfigurationChange.Kind.PERMISSIONS);
     }
 
     @Override
@@ -445,17 +455,20 @@ public final class SdkCoreSettingsGateway extends SdkRoleExecutionSettingsGatewa
 
     @Override
     public CompletionStage<VaultStatus> refreshVault() {
-        return desktop.submitSettingsRequest(client -> client.credentials().refresh());
+        return changed(desktop.submitSettingsRequest(client -> client.credentials().refresh()),
+                DesktopConfigurationChange.Kind.PROVIDERS);
     }
 
     @Override
     public CompletionStage<VaultManagementReceipt> rotateVaultMasterKey(CommandOptions options) {
-        return desktop.submitSettingsRequest(client -> client.credentials().rotateMasterKey(options));
+        return changed(desktop.submitSettingsRequest(client -> client.credentials().rotateMasterKey(options)),
+                DesktopConfigurationChange.Kind.PROVIDERS);
     }
 
     @Override
     public CompletionStage<VaultManagementReceipt> resetVault(String confirmation, CommandOptions options) {
-        return desktop.submitSettingsRequest(client -> client.credentials().reset(confirmation, options));
+        return changed(desktop.submitSettingsRequest(client -> client.credentials().reset(confirmation, options)),
+                DesktopConfigurationChange.Kind.PROVIDERS);
     }
 
     @Override
@@ -472,31 +485,32 @@ public final class SdkCoreSettingsGateway extends SdkRoleExecutionSettingsGatewa
     public CompletionStage<CredentialMetadata> createCredential(
             String namespace, char[] secret, CommandOptions options) {
         char[] owned = Arrays.copyOf(Objects.requireNonNull(secret, "secret"), secret.length);
-        return desktop.submitSettingsRequest(client -> {
+        return changed(desktop.submitSettingsRequest(client -> {
             try {
                 return client.credentials().create(namespace, owned, options);
             } finally {
                 Arrays.fill(owned, '\0');
             }
-        });
+        }), DesktopConfigurationChange.Kind.PROVIDERS);
     }
 
     @Override
     public CompletionStage<CredentialMetadata> rotateCredential(
             CredentialRef reference, char[] secret, CommandOptions options) {
         char[] owned = Arrays.copyOf(Objects.requireNonNull(secret, "secret"), secret.length);
-        return desktop.submitSettingsRequest(client -> {
+        return changed(desktop.submitSettingsRequest(client -> {
             try {
                 return client.credentials().rotate(reference, owned, options);
             } finally {
                 Arrays.fill(owned, '\0');
             }
-        });
+        }), DesktopConfigurationChange.Kind.PROVIDERS);
     }
 
     @Override
     public CompletionStage<CredentialClearReceipt> clearCredential(CredentialRef reference, CommandOptions options) {
-        return desktop.submitSettingsRequest(client -> client.credentials().clear(reference, options));
+        return changed(desktop.submitSettingsRequest(client -> client.credentials().clear(reference, options)),
+                DesktopConfigurationChange.Kind.PROVIDERS);
     }
 
     @Override

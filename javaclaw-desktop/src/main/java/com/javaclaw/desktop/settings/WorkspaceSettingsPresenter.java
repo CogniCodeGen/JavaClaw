@@ -17,6 +17,8 @@ public final class WorkspaceSettingsPresenter {
     private Consumer<WorkspaceSettingsState> listener = ignored -> {};
     private WorkspaceSettingsState state = WorkspaceSettingsState.initial();
     private Optional<WorkspaceId> scope = Optional.empty();
+    private boolean writing;
+    private boolean refreshPending;
 
     /** @param gateway 强类型 SDK 设置边界 */
     public WorkspaceSettingsPresenter(CoreSettingsGateway gateway) {
@@ -29,8 +31,14 @@ public final class WorkspaceSettingsPresenter {
         listener.accept(state);
     }
 
-    /** 读取当前固定 Workspace 的登记。 */
+    /** 读取当前固定 Workspace 的登记；有名称草稿时只更新目录，保留原始写入版本。 */
     public void reload() {
+        if (writing) {
+            refreshPending = true;
+            return;
+        }
+        refreshPending = false;
+        Optional<WorkspaceId> requestedScope = scope;
         long epoch = state.epoch() + 1;
         publish(copy(SettingsLoadState.LOADING, "正在读取工作区…", epoch));
         gateway.workspaces().whenComplete((catalog, failure) -> {
@@ -39,32 +47,39 @@ public final class WorkspaceSettingsPresenter {
             }
             if (failure != null) {
                 publish(copy(SettingsLoadState.ERROR, SettingsFailures.message(failure), epoch));
+                refreshAgain();
                 return;
             }
             List<Workspace> workspaces = catalog.stream()
-                    .filter(value -> scope.map(value.id()::equals).orElse(true))
+                    .filter(value -> requestedScope.map(value.id()::equals).orElse(true))
                     .sorted(Comparator.comparing(Workspace::name))
                     .toList();
-            Optional<Workspace> selected = state.selected()
-                    .flatMap(previous -> workspaces.stream()
-                            .filter(value -> value.id().equals(previous.id()))
-                            .findFirst())
-                    .or(() -> workspaces.stream().findFirst());
-            publish(new WorkspaceSettingsState(
-                    SettingsLoadState.READY,
-                    workspaces,
-                    selected,
-                    selected.map(Workspace::name).orElse(""),
-                    "",
-                    epoch));
+            applyCatalog(workspaces, epoch);
+            refreshAgain();
         });
+    }
+
+    /** 合并写入或读取期间收到的失效，结束后自动补读，不静默丢失刷新请求。 */
+    public void refresh() {
+        if (writing || state.phase() == SettingsLoadState.LOADING) {
+            refreshPending = true;
+            return;
+        }
+        reload();
     }
 
     /** @param workspace 管理中心固定作用域，缺失时禁止操作 */
     public void bindWorkspace(Optional<Workspace> workspace) {
-        scope = Objects.requireNonNull(workspace, "workspace").map(Workspace::id);
+        Optional<WorkspaceId> next = Objects.requireNonNull(workspace, "workspace").map(Workspace::id);
+        boolean same = scope.equals(next) && state.selected().isPresent();
+        scope = next;
         if (workspace.isPresent()) {
-            select(workspace.orElseThrow());
+            if (same && (state.dirty() || writing)) {
+                publish(new WorkspaceSettingsState(state.phase(), List.of(workspace.orElseThrow()), state.selected(),
+                        state.draftName(), "工作区登记已更新；名称草稿及原版本已保留", state.epoch()));
+            } else {
+                select(workspace.orElseThrow());
+            }
         } else {
             publish(new WorkspaceSettingsState(
                     SettingsLoadState.READY, List.of(), Optional.empty(), "", "当前没有可用工作区", state.epoch() + 1));
@@ -76,7 +91,7 @@ public final class WorkspaceSettingsPresenter {
         Workspace checked = Objects.requireNonNull(workspace, "workspace");
         publish(new WorkspaceSettingsState(
                 SettingsLoadState.READY,
-                state.workspaces(),
+                List.of(checked),
                 Optional.of(checked),
                 checked.name(),
                 "",
@@ -115,22 +130,44 @@ public final class WorkspaceSettingsPresenter {
                 state.selected().map(Workspace::name).orElse(""),
                 "",
                 state.epoch()));
+        refresh();
     }
 
-    private void execute(CompletionStage<?> operation, String success) {
+    private void execute(CompletionStage<Workspace> operation, String success) {
         long epoch = state.epoch() + 1;
+        writing = true;
         publish(copy(SettingsLoadState.LOADING, "正在保存…", epoch));
-        operation.whenComplete((ignored, failure) -> {
+        operation.whenComplete((saved, failure) -> {
             if (epoch != state.epoch()) {
                 return;
             }
+            writing = false;
             if (failure != null) {
                 publish(copy(SettingsLoadState.ERROR, SettingsFailures.message(failure), epoch));
             } else {
-                publish(copy(SettingsLoadState.READY, success, epoch));
-                reload();
+                publish(new WorkspaceSettingsState(SettingsLoadState.READY, List.of(saved), Optional.of(saved),
+                        saved.name(), success, epoch));
             }
+            refreshAgain();
         });
+    }
+
+    private void applyCatalog(List<Workspace> workspaces, long epoch) {
+        Optional<Workspace> remote = state.selected()
+                .flatMap(previous -> workspaces.stream().filter(value -> value.id().equals(previous.id())).findFirst())
+                .or(() -> state.selected().isEmpty() ? workspaces.stream().findFirst() : Optional.empty());
+        boolean preserve = state.dirty();
+        Optional<Workspace> selected = preserve ? state.selected() : remote.or(() -> state.selected());
+        String message = preserve && !remote.equals(state.selected())
+                ? "工作区登记已更新；名称草稿及原版本已保留" : "";
+        publish(new WorkspaceSettingsState(SettingsLoadState.READY, workspaces, selected,
+                preserve ? state.draftName() : selected.map(Workspace::name).orElse(""), message, epoch));
+    }
+
+    private void refreshAgain() {
+        if (refreshPending) {
+            reload();
+        }
     }
 
     private WorkspaceSettingsState copy(SettingsLoadState phase, String message, long epoch) {

@@ -64,6 +64,12 @@ public final class ExecutionSelectionControl extends VBox {
         reasoning.valueProperty().addListener((ignored, previous, selected) -> changed(Field.REASONING));
     }
 
+    /** 聊天区的更多设置仅呈现 Agent、权限与来源，模型和思考由主工具栏控制。 */
+    void showAdvancedOnly() {
+        FlowPane choices = (FlowPane) getChildren().getFirst();
+        choices.getChildren().setAll(role, permission);
+    }
+
     /** @param callback 显式选择变更监听器 */
     public void onChanged(Consumer<ExecutionOverrides> callback) {
         listener = Objects.requireNonNull(callback, "callback");
