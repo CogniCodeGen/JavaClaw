@@ -8,4 +8,8 @@ module com.javaclaw.protocol {
     requires com.fasterxml.jackson.datatype.jsr310;
 
     exports com.javaclaw.protocol;
+
+    // ViewSchema 的私有 wire record 由 Jackson 构造；仅向 codec 开放反射，保持其他模块的封装边界。
+    opens com.javaclaw.protocol to
+            com.fasterxml.jackson.databind;
 }
