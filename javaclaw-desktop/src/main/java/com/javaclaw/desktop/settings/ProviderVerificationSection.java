@@ -32,6 +32,8 @@ final class ProviderVerificationSection {
     private final Label embeddingStatus = hint();
     private final Button verifyChat;
     private final Button verifyEmbedding;
+    private boolean renderingModels;
+    private boolean confirming;
 
     ProviderVerificationSection(
             PlatformComponentFactory components,
@@ -42,10 +44,14 @@ final class ProviderVerificationSection {
         this.embeddingVerifier = embeddingVerifier;
         verifyChat = components.action("发送测试对话", ActionStyle.DANGER, ActionSize.NORMAL);
         verifyEmbedding = components.action("发送测试向量请求", ActionStyle.DANGER, ActionSize.NORMAL);
+        verifyChat.setId("providerVerifyChatButton");
+        verifyEmbedding.setId("providerVerifyEmbeddingButton");
+        chatStatus.setId("providerChatVerificationStatus");
+        embeddingStatus.setId("providerEmbeddingVerificationStatus");
         verifyChat.setOnAction(event -> confirmRoundTrip(ProviderModelPurpose.CHAT));
         verifyEmbedding.setOnAction(event -> confirmRoundTrip(ProviderModelPurpose.EMBEDDING));
-        chatModel.valueProperty().addListener((ignored, previous, value) -> bindingChanged.run());
-        embeddingModel.valueProperty().addListener((ignored, previous, value) -> bindingChanged.run());
+        chatModel.valueProperty().addListener((ignored, previous, value) -> selectionChanged(bindingChanged));
+        embeddingModel.valueProperty().addListener((ignored, previous, value) -> selectionChanged(bindingChanged));
         content = new FormSection("运行状态", "本地检查只验证配置。测试对话和测试向量都会真实调用所选模型，可能产生少量费用。");
         content.addField("最近检查", probeStatus);
         content.addField("测试对话模型", chatModel);
@@ -60,13 +66,30 @@ final class ProviderVerificationSection {
         return content;
     }
 
+    /** 确认交互计入页面等待状态，但不能作为本次验证自身的配置阻塞条件。 */
+    boolean confirming() {
+        return confirming;
+    }
+
     Optional<String> modelId(ProviderModelPurpose purpose) {
         return Optional.ofNullable(model(purpose).getValue());
     }
 
     void renderModels(List<ProviderModelSpec> models) {
-        renderModels(chatModel, models, ProviderModelPurpose.CHAT);
-        renderModels(embeddingModel, models, ProviderModelPurpose.EMBEDDING);
+        renderingModels = true;
+        try {
+            // 目录替换的中间空选择不是用户意图，页面在完整渲染后统一绑定精确模型。
+            renderModels(chatModel, models, ProviderModelPurpose.CHAT);
+            renderModels(embeddingModel, models, ProviderModelPurpose.EMBEDDING);
+        } finally {
+            renderingModels = false;
+        }
+    }
+
+    private void selectionChanged(Runnable bindingChanged) {
+        if (!renderingModels) {
+            bindingChanged.run();
+        }
     }
 
     void renderProbe(Optional<ProviderStatus> status) {
@@ -81,16 +104,22 @@ final class ProviderVerificationSection {
         Label status = status(state.purpose());
         action.setDisable(state.pending() || !state.available());
         selector.setDisable(state.pending());
-        status.setText(state.result()
-                .map(result -> SettingsLabels.providerVerificationState(result.state())
-                        + " · 耗时 "
-                        + result.latencyMillis()
-                        + " 毫秒"
-                        + usage(result))
-                .orElse(state.message()));
+        status.setText(
+                state.pending() || state.phase() == SettingsLoadState.ERROR || !state.available()
+                        ? state.message()
+                        : state.result()
+                                .map(result -> SettingsLabels.providerVerificationState(result.state())
+                                        + " · 耗时 "
+                                        + result.latencyMillis()
+                                        + " 毫秒"
+                                        + usage(result))
+                                .orElse(state.message()));
     }
 
     private void confirmRoundTrip(ProviderModelPurpose purpose) {
+        if (confirming) {
+            return;
+        }
         String consequence = purpose == ProviderModelPurpose.CHAT ? "此操作会发送一次真实测试对话，可能产生费用" : "此操作会发送一次真实测试向量请求，可能产生费用";
         String actionLabel = purpose == ProviderModelPurpose.CHAT ? "验证对话模型" : "验证向量模型";
         TextInputDialog dialog = PlatformDialogs.exactText(
@@ -99,7 +128,13 @@ final class ProviderVerificationSection {
                 consequence,
                 ProviderVerificationRpcContracts.BILLING_CONFIRMATION,
                 actionLabel);
-        dialog.showAndWait().ifPresent(value -> verifier(purpose).accept(true, value));
+        // 持续保护至确认回调提交完成；关闭弹窗恢复焦点时，页面刷新不能抢先使模型绑定不可用。
+        confirming = true;
+        try {
+            dialog.showAndWait().ifPresent(value -> verifier(purpose).accept(true, value));
+        } finally {
+            confirming = false;
+        }
     }
 
     private BiConsumer<Boolean, String> verifier(ProviderModelPurpose purpose) {
@@ -125,7 +160,9 @@ final class ProviderVerificationSection {
                 .filter(candidate -> candidate.supports(purpose))
                 .map(ProviderModelSpec::modelId)
                 .toList();
-        selector.getItems().setAll(available);
+        if (!selector.getItems().equals(available)) {
+            selector.getItems().setAll(available);
+        }
         selector.setValue(Optional.ofNullable(previous)
                 .filter(available::contains)
                 .orElseGet(() -> available.stream().findFirst().orElse(null)));

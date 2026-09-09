@@ -62,6 +62,12 @@
             <artifactId>junit-jupiter-engine</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.apache.ant</groupId>
+            <artifactId>ant</artifactId>
+            <version>1.10.12</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
     <build>
         <plugins>
@@ -216,10 +222,33 @@
                 <version>3.1.0</version>
                 <executions>
                     <execution>
+                        <id>protect-package-data-before-clean</id>
+                        <phase>pre-clean</phase>
+                        <configuration>
+                            <target>
+                                <fail
+                                    message="发行构建目录中存在运行数据：${project.build.directory}/distribution/data-v6。已停止清理，未删除数据。请先退出 JavaClaw 并将完整 data-v6 备份到 target 外，再移出构建目录；开发验收请使用 IDEA 一键启动或显式 JAVACLAW_DATA_ROOT 指向稳定数据目录。">
+                                    <condition>
+                                        <available file="${project.build.directory}/distribution/data-v6" />
+                                    </condition>
+                                </fail>
+                            </target>
+                        </configuration>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                    </execution>
+                    <execution>
                         <id>reset-package-output</id>
                         <phase>initialize</phase>
                         <configuration>
                             <target>
+                                <fail
+                                    message="发行构建目录中存在运行数据：${project.build.directory}/distribution/data-v6。已停止重建，未删除数据。请先退出 JavaClaw 并将完整 data-v6 备份到 target 外，再移出构建目录；开发验收请使用 IDEA 一键启动或显式 JAVACLAW_DATA_ROOT 指向稳定数据目录。">
+                                    <condition>
+                                        <available file="${project.build.directory}/distribution/data-v6" />
+                                    </condition>
+                                </fail>
                                 <delete dir="${project.build.directory}/distribution" />
                                 <delete dir="${project.build.directory}/release" />
                                 <delete dir="${project.build.directory}/release-evidence" />

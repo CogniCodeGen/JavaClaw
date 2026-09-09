@@ -10,11 +10,28 @@ import javafx.scene.layout.VBox;
 import org.junit.jupiter.api.Test;
 
 import com.javaclaw.desktop.FxTestSupport;
+import com.javaclaw.protocol.ProtocolVersion;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SystemSettingsPagesTest {
+    @Test
+    void 连接页恢复说明与当前协商协议常量一致() {
+        FxTestSupport.run(() -> {
+            ConnectionSettingsPage page = new ConnectionSettingsPage(new TestCoreSettingsGateway());
+            VBox root = attach(page);
+            page.activate();
+            root.applyCss();
+
+            List<String> displayed = labels(root);
+            assertTrue(displayed.contains("应用协议 v" + ProtocolVersion.CURRENT + " / JSON-RPC 2.0"));
+            assertTrue(displayed.stream()
+                    .anyMatch(text -> text.startsWith("“重新连接”会关闭旧会话，并重新协商第 " + ProtocolVersion.CURRENT + " 版协议。")));
+            assertFalse(displayed.stream().anyMatch(text -> text.contains("重新协商第 2 版协议")));
+        });
+    }
+
     @Test
     void 诊断页渲染全部脱敏子系统且刷新保留可用操作() {
         FxTestSupport.run(() -> {

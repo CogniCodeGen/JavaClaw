@@ -25,12 +25,14 @@ final class SkillResourceRuntimeLayout {
     private final Path imageRoot;
     private final Path java;
     private final Path jshell;
+    private final Path libraries;
     private final Path workRoot;
 
-    private SkillResourceRuntimeLayout(Path imageRoot, Path java, Path jshell, Path workRoot) {
+    private SkillResourceRuntimeLayout(Path imageRoot, Path java, Path jshell, Path libraries, Path workRoot) {
         this.imageRoot = imageRoot;
         this.java = java;
         this.jshell = jshell;
+        this.libraries = libraries;
         this.workRoot = workRoot;
     }
 
@@ -43,9 +45,11 @@ final class SkillResourceRuntimeLayout {
         String executableSuffix = isWindows() ? ".exe" : "";
         Path java = imageRoot.resolve("bin/java" + executableSuffix).toRealPath();
         Path jshell = imageRoot.resolve("bin/jshell" + executableSuffix).toRealPath();
+        Path libraries = imageRoot.resolve("lib").toRealPath();
         requireInside(imageRoot, java, "Java runtime");
         requireInside(imageRoot, jshell, "JShell runtime");
-        if (!Files.isExecutable(java) || !Files.isExecutable(jshell)) {
+        requireInside(imageRoot, libraries, "Java runtime libraries");
+        if (!Files.isExecutable(java) || !Files.isExecutable(jshell) || !Files.isDirectory(libraries)) {
             throw new IOException("Skill runtime image does not contain executable Java and JShell launchers");
         }
         requireMarker(imageRoot.resolve("worker-image-v1.capability"), "worker-image-v1:skill");
@@ -54,7 +58,7 @@ final class SkillResourceRuntimeLayout {
         Files.createDirectories(work);
         work = work.toRealPath();
         requireInside(data, work, "Skill Worker temporary directory");
-        return Optional.of(new SkillResourceRuntimeLayout(imageRoot, java, jshell, work));
+        return Optional.of(new SkillResourceRuntimeLayout(imageRoot, java, jshell, libraries, work));
     }
 
     Path createTaskDirectory() throws IOException {
@@ -84,9 +88,11 @@ final class SkillResourceRuntimeLayout {
                 Map.of("TMPDIR", workingDirectory.toString()),
                 List.of(imageRoot, workingDirectory),
                 List.of(workingDirectory),
-                List.of(java, jshell),
+                // 独立 jlink 镜像只为只读运行库补可执行映射，不允许执行任务目录内的原生文件。
+                List.of(java, jshell, libraries),
                 lifetime,
-                new ResourceLimits(512L * 1024 * 1024, MAXIMUM_OUTPUT_BYTES, 4, 128));
+                new ResourceLimits(512L * 1024 * 1024, MAXIMUM_OUTPUT_BYTES, 4, 128),
+                Optional.empty());
     }
 
     private List<String> javaCommand(Path source, List<String> arguments) {

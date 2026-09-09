@@ -22,6 +22,7 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.VBox;
+import javafx.stage.PopupWindow;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 import org.junit.jupiter.api.Test;
@@ -35,6 +36,7 @@ import com.javaclaw.api.ReasoningPreference;
 import com.javaclaw.api.TurnStatus;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.client.sdk.JavaClawClient;
+import com.javaclaw.desktop.settings.ChatConfigurationPanel;
 import com.javaclaw.desktop.shell.DesktopShellController;
 import com.javaclaw.desktop.shell.JavaClawDesktop;
 import com.javaclaw.desktop.state.ConnectionState;
@@ -99,6 +101,7 @@ class DesktopShellControllerTest {
             assertTrue(card.isManaged());
             assertFalse(detail.getText().contains("Connection refused"));
             assertFalse(detail.getText().contains("/private/user/socket"));
+            assertEquals("选择工作区，开始聊天", ((Label) controls.get().get("threadMeta")).getText());
             assertTrue(start.isDisabled());
             assertFalse(start.getAccessibleText().isBlank());
         });
@@ -113,6 +116,7 @@ class DesktopShellControllerTest {
             shell.start();
             FxTestSupport.await(() -> shell.latest.get().connection().status() == ConnectionState.Status.CONNECTED
                     && shell.latest.get().transcript().nextSequence() == 1);
+            shell.awaitConfigurationReady();
             shell.assertConnectedControls();
             shell.exerciseInputRequest();
             shell.exerciseTogglesSelectionsAndCells();
@@ -164,12 +168,22 @@ class DesktopShellControllerTest {
                         "javaclaw-app-server 6.0.0-SNAPSHOT",
                         label("connectionLabel").getText());
                 assertEquals("架构升级", label("threadTitle").getText());
+                assertEquals("工作区", label("threadMeta").getText());
                 assertEquals(1, list("transcriptList").getItems().size());
+                assertTrue(button("sendButton").isDisabled());
+                assertTrue(configuration().ready());
+                assertNotNull(button("chatModel"));
+                assertNotNull(combo("chatReasoning"));
+                assertTrue(combo("chatReasoning").getItems().contains(null));
+                assertTrue(combo("chatReasoning").getItems().contains(ReasoningPreference.NONE));
+                control("composer", TextArea.class).setText("发送就绪检查");
                 assertFalse(button("sendButton").isDisabled());
+                control("composer", TextArea.class).clear();
+                assertTrue(button("sendButton").isDisabled());
+                openMore();
                 assertNotNull(combo("executionRole"));
-                assertNotNull(combo("executionModel"));
                 assertNotNull(combo("executionPermission"));
-                assertNotNull(combo("executionReasoning"));
+                closeMore();
                 assertTrue(button("interruptButton").isDisabled());
                 assertFalse(label("errorLabel").isVisible());
                 assertTrue(button("approveButton").getStyleClass().contains("jc-btn-primary"));
@@ -225,57 +239,65 @@ class DesktopShellControllerTest {
                 assertFalse(progress.isManaged());
                 controller.toggleSidebar();
                 controller.toggleProgress();
-
                 ComboBox<Workspace> workspaces = combo("workspaceBox");
                 workspaces.setValue(null);
                 workspaces.setValue(server.workspace());
-                assertCellRendering(workspaces, list("threadList"), combo("executionRole"));
             });
             FxTestSupport.await(() -> !latest.get().threads().threads().isEmpty()
                     && latest.get().threads().selectedThread().isPresent());
+            awaitConfigurationReady();
             FxTestSupport.run(() -> {
+                openMore();
+                assertCellRendering(combo("workspaceBox"), list("threadList"), combo("executionRole"));
                 ListView<ConversationThread> threads = list("threadList");
                 threads.getSelectionModel().clearSelection();
                 threads.getSelectionModel().select(server.thread());
-                ComboBox<AgentRole> roles = combo("executionRole");
-                roles.setValue(null);
-                roles.setValue(server.profile());
+                combo("executionRole").setValue(server.profile());
             });
-            FxTestSupport.await(() -> latest.get().threads().selectedThread().isPresent());
-            FxTestSupport.run(controller::useDefaultRole);
-            FxTestSupport.await(() -> latest.get().interaction().selectedRole().isEmpty());
-            FxTestSupport.run(() -> assertNull(combo("executionRole").getValue()));
+            awaitConfigurationReady();
+            FxTestSupport.run(() -> {
+                assertEquals(server.profile(), combo("executionRole").getValue());
+                combo("executionRole").setValue(null);
+            });
+            awaitConfigurationReady();
+            FxTestSupport.run(() -> {
+                assertNull(combo("executionRole").getValue());
+                closeMore();
+                controller.useDefaultRole();
+            });
+            awaitConfigurationReady();
+            assertTrue(latest.get().interaction().selectedRole().isEmpty());
         }
 
         private void exerciseSendApprovalAndCancellation() {
+            awaitConfigurationReady();
             FxTestSupport.run(() -> {
                 controller.approve();
-                TextArea composer = control("composer", TextArea.class);
-                composer.setText("  ");
+                control("composer", TextArea.class).setText("  ");
                 controller.send();
                 assertTrue(label("errorLabel").isVisible());
                 assertFalse(label("errorLabel").getText().isBlank());
             });
             server.completion = TurnStatus.RUNNING;
-            FxTestSupport.await(
-                    () -> FxTestSupport.call(() -> !combo("executionRole").isDisabled()
-                            && !combo("executionRole").getItems().isEmpty()));
+            selectExecutionForSend();
             FxTestSupport.run(() -> {
-                combo("executionRole").setValue(server.profile());
-                combo("executionReasoning").setValue(ReasoningPreference.HIGH);
                 control("composer", TextArea.class).setText("执行并等待审批");
+                assertFalse(button("sendButton").isDisabled());
                 controller.send();
-                assertEquals("", control("composer", TextArea.class).getText());
             });
             FxTestSupport.await(() -> latest.get().threads().activeTurn().isPresent()
                     && !latest.get().interaction().pendingApprovals().isEmpty());
+            FxTestSupport.await(() -> FxTestSupport.call(
+                    () -> control("composer", TextArea.class).getText().isEmpty()));
             assertEquals(
                     new AgentRoleRef(server.profile().id(), server.profile().revision()),
                     server.lastTurnStart.execution().role().orElseThrow());
             assertEquals(
                     ReasoningPreference.HIGH,
                     server.lastTurnStart.execution().reasoning().orElseThrow());
-            assertTrue(server.lastTurnStart.execution().provider().isEmpty());
+            assertEquals(
+                    server.profile().spec().model().orElseThrow().provider(),
+                    server.lastTurnStart.execution().provider().orElseThrow());
             assertTrue(server.lastTurnStart.execution().permissionProfile().isEmpty());
             FxTestSupport.run(() -> {
                 assertFalse(button("interruptButton").isDisabled());
@@ -286,16 +308,40 @@ class DesktopShellControllerTest {
             });
             FxTestSupport.await(() -> server.approvalResolutions.get() == 1);
             FxTestSupport.run(() -> {
-                ListView<ApprovalRecord> approvals = list("approvalList");
-                approvals.getSelectionModel().selectFirst();
+                list("approvalList").getSelectionModel().selectFirst();
                 controller.deny();
                 controller.interrupt();
             });
             FxTestSupport.await(() -> server.approvalResolutions.get() == 2
                     && server.turnCancels.get() == 1
                     && !latest.get().interaction().busy());
-
             assertThrows(IllegalArgumentException.class, () -> new ViewCommandInvocation("put", Map.of(), -1, false));
+        }
+
+        private void selectExecutionForSend() {
+            awaitConfigurationReady();
+            FxTestSupport.run(() -> {
+                openMore();
+                combo("executionRole").setValue(server.profile());
+            });
+            awaitConfigurationReady();
+            FxTestSupport.run(() -> {
+                closeMore();
+                combo("chatReasoning").setValue(ReasoningPreference.NONE);
+            });
+            awaitConfigurationReady();
+            FxTestSupport.run(() -> {
+                assertEquals(
+                        ReasoningPreference.NONE,
+                        configuration().execution().reasoning().orElseThrow());
+                combo("chatReasoning").setValue(null);
+            });
+            awaitConfigurationReady();
+            FxTestSupport.run(() -> {
+                assertTrue(configuration().execution().reasoning().isEmpty());
+                combo("chatReasoning").setValue(ReasoningPreference.HIGH);
+            });
+            awaitConfigurationReady();
         }
 
         private void exerciseManagementCenter() {
@@ -361,6 +407,32 @@ class DesktopShellControllerTest {
             assertNull(transcriptCell.getGraphic());
         }
 
+        private void awaitConfigurationReady() {
+            FxTestSupport.await(() -> FxTestSupport.call(() -> configuration().ready()));
+        }
+
+        private ChatConfigurationPanel configuration() {
+            return (ChatConfigurationPanel)
+                    control("executionHost", VBox.class).getChildren().getFirst();
+        }
+
+        private void openMore() {
+            configuration().lookupAll(".sidebar-manage-btn").stream()
+                    .filter(Button.class::isInstance)
+                    .map(Button.class::cast)
+                    .filter(button -> button.getText().startsWith("更多"))
+                    .findFirst()
+                    .orElseThrow()
+                    .fire();
+        }
+
+        private void closeMore() {
+            Window.getWindows().stream()
+                    .filter(PopupWindow.class::isInstance)
+                    .toList()
+                    .forEach(Window::hide);
+        }
+
         private void close() throws Exception {
             presenter.close();
             FxTestSupport.run(() -> Window.getWindows().stream().toList().forEach(Window::hide));
@@ -388,7 +460,11 @@ class DesktopShellControllerTest {
             return type.cast(
                     controls.containsKey(id)
                             ? controls.get(id)
-                            : stage.getScene().lookup("#" + id));
+                            : Window.getWindows().stream()
+                                    .map(window -> window.getScene().lookup("#" + id))
+                                    .filter(java.util.Objects::nonNull)
+                                    .findFirst()
+                                    .orElse(null));
         }
 
         private static void update(ListCell<?> cell, Object item, boolean empty) {

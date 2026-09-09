@@ -148,6 +148,10 @@ class WorkerImageLayoutTest {
 
     private Path browserImage(Path root) throws IOException {
         Path image = image(root, "browser");
+        Files.createDirectories(image.resolve("lib"));
+        executable(image.resolve("driver/node" + executableSuffix()));
+        Files.createDirectories(image.resolve("driver/package"));
+        Files.writeString(image.resolve("driver/package/cli.js"), "cli");
         Files.createDirectories(image.resolve("app"));
         Files.createFile(image.resolve("app/javaclaw-browser-service-6.0.jar"));
         Files.createFile(image.resolve("app/playwright-1.52.0.jar"));

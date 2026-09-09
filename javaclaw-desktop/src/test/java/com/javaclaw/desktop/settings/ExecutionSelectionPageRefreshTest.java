@@ -64,7 +64,7 @@ class ExecutionSelectionPageRefreshTest {
 
             page.refreshExecutionConfiguration();
 
-            assertEquals(1, gateway.catalogReads, "恢复连接不能覆盖脏执行配置而自动刷新其基线");
+            assertEquals(2, gateway.catalogReads, "恢复连接只更新脏执行配置的选择目录，不能刷新其基线");
             assertEquals(complete(ReasoningPreference.HIGH), selection(root).value());
             assertEquals("尚未保存的工作区名称", name(root).getText());
             assertTrue(page.dirty());

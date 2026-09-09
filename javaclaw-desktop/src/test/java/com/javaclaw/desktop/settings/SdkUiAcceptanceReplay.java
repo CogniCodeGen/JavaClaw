@@ -71,11 +71,7 @@ final class SdkUiAcceptanceReplay {
     }
 
     private static void sendAndPreview(SdkUiAcceptanceDesktop desktop, Path output) throws Exception {
-        FxTestSupport.run(() -> {
-            Scene scene = desktop.stage.getScene();
-            ((TextArea) scene.lookup("#composer")).setText("请展示代码与验收文档");
-            ((Button) scene.lookup("#sendButton")).fire();
-        });
+        sendMessage(desktop.stage.getScene());
         await(() -> desktop.state.transcript().stream().isPresent(), "App Server 增量通知");
         ready(desktop.stage.getScene());
         save(desktop.stage.getScene(), "sdk-chat-stream", output);
@@ -118,6 +114,21 @@ final class SdkUiAcceptanceReplay {
                 "文档正文与相对图片实际加载");
         ready(desktop.stage.getScene());
         save(desktop.stage.getScene(), "sdk-document-reference", output);
+    }
+
+    private static void sendMessage(Scene scene) throws Exception {
+        FxTestSupport.run(() -> ((TextArea) scene.lookup("#composer")).setText("请展示代码与验收文档"));
+        // 历史绘制与配置预览独立完成；同一 FX 事件中检查并点击，避免对禁用按钮空操作或重复提交。
+        await(
+                () -> FxTestSupport.call(() -> {
+                    Button send = (Button) scene.lookup("#sendButton");
+                    if (send.isDisabled() || !send.isVisible()) {
+                        return false;
+                    }
+                    send.fire();
+                    return true;
+                }),
+                "配置预览就绪后提交一次消息");
     }
 
     private static void pages(SdkUiAcceptanceDesktop desktop, Path output) throws Exception {

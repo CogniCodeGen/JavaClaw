@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javaclaw.local/schema/execution-recent-v3.schema.json",
+  "title": "JavaClaw recent model selection v3",
+  "$defs": {
+    "readParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "updateCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotencyKey", "expectedRevision", "payload"],
+      "properties": {
+        "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 200},
+        "expectedRevision": {"type": "integer", "minimum": 0},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["execution"],
+          "properties": {"execution": {"$ref": "execution-v3.schema.json#/$defs/subagentOverrides"}}
+        }
+      }
+    }
+  }
+}

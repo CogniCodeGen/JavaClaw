@@ -99,6 +99,59 @@ class TypedSettingsRpcTest {
         assertDiagnosticsAndCatalog();
     }
 
+    @Test
+    void recentSelectionRoundTripDoesNotReplaceInstallationDefaults() {
+        ExecutionRpcContracts.ReadResult before = decodeSuccess(
+                session.handle(request(
+                        "installation-before",
+                        "execution/default/read",
+                        new ExecutionRpcContracts.DefaultReadPayload(Optional.empty()))),
+                ExecutionRpcContracts.ReadResult.class);
+        assertTrue(decodeSuccess(
+                        session.handle(request(
+                                "recent-empty",
+                                "execution/recent/read",
+                                new ExecutionRpcContracts.RecentReadPayload())),
+                        ExecutionRpcContracts.ReadResult.class)
+                .configuration()
+                .isEmpty());
+        var selection = new ExecutionOverrides(
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.of(com.javaclaw.api.ReasoningPreference.NONE));
+        ExecutionConfiguration saved = decodeSuccess(
+                session.handle(request(
+                        "recent-update",
+                        "execution/recent/update",
+                        command("recent-key", new ExecutionRpcContracts.RecentUpdatePayload(selection)))),
+                ExecutionConfiguration.class);
+
+        assertEquals(
+                Optional.of(saved),
+                decodeSuccess(
+                                session.handle(request(
+                                        "recent-read",
+                                        "execution/recent/read",
+                                        new ExecutionRpcContracts.RecentReadPayload())),
+                                ExecutionRpcContracts.ReadResult.class)
+                        .configuration());
+        assertEquals(
+                before,
+                decodeSuccess(
+                        session.handle(request(
+                                "installation-after",
+                                "execution/default/read",
+                                new ExecutionRpcContracts.DefaultReadPayload(Optional.empty()))),
+                        ExecutionRpcContracts.ReadResult.class));
+        assertEquals(selection, saved.overrides());
+        assertTrue(saved.workspaceId().isEmpty());
+        assertTrue(saved.threadId().isEmpty());
+    }
+
     private void assertAttachmentRoundTrip() {
         byte[] bytes = "protocol-v2".getBytes(StandardCharsets.UTF_8);
         AttachmentMetadata attachment = AttachmentRpcTestClient.upload(
@@ -222,9 +275,13 @@ class TypedSettingsRpcTest {
                         new ExecutionRpcContracts.DefaultReadPayload(Optional.of(workspace.id())))),
                 ExecutionRpcContracts.ReadResult.class);
         assertEquals(configured, read.configuration().orElseThrow());
-        ExecutionPreview preview = decodeSuccess(session.handle(request(
-                "execution-preview", "execution/preview", new ExecutionRpcContracts.PreviewPayload(
-                        workspace.id(), Optional.empty(), ExecutionOverrides.empty()))), ExecutionPreview.class);
+        ExecutionPreview preview = decodeSuccess(
+                session.handle(request(
+                        "execution-preview",
+                        "execution/preview",
+                        new ExecutionRpcContracts.PreviewPayload(
+                                workspace.id(), Optional.empty(), ExecutionOverrides.empty()))),
+                ExecutionPreview.class);
         assertTrue(preview.ready());
         assertTrue(preview.modelLocked());
         assertEquals(Optional.of(profile.ref()), preview.role());

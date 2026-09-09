@@ -92,6 +92,18 @@ final class WorkerImageLayout {
     }
 
     private static void verifyBrowser(Path root) throws IOException {
+        Path libraries = root.resolve("lib").toRealPath();
+        requireInside(root, libraries, "Worker Java libraries");
+        if (!Files.isDirectory(libraries)) {
+            throw new IOException("Worker Java libraries are missing");
+        }
+        String suffix = RuntimeLayout.isWindows() ? ".exe" : "";
+        requireExecutable(root, root.resolve("driver/node" + suffix), "Playwright Node");
+        Path cli = root.resolve("driver/package/cli.js").toRealPath();
+        requireInside(root, cli, "Playwright CLI");
+        if (!Files.isRegularFile(cli)) {
+            throw new IOException("Playwright preinstalled CLI is missing");
+        }
         Path browser = root.resolve("browser").toRealPath(LinkOption.NOFOLLOW_LINKS);
         requireInside(root, browser, "Browser runtime");
         requireMarker(browser, browser.resolve(".javaclaw-playwright-version"), "playwright:1.52.0");

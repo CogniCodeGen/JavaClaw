@@ -12,11 +12,19 @@ final class SettingsPageRegistry {
     private final Map<String, ManagedSettingsPage> pages = new HashMap<>();
 
     SettingsPageRegistry(DesktopAppearanceManager appearance, ManagementSettingsGateways gateways, Runnable close) {
+        this(appearance, gateways, close, close);
+    }
+
+    SettingsPageRegistry(
+            DesktopAppearanceManager appearance,
+            ManagementSettingsGateways gateways,
+            Runnable close,
+            Runnable returnToChat) {
         Objects.requireNonNull(appearance, "appearance");
         ManagementSettingsGateways checked = Objects.requireNonNull(gateways, "gateways");
         CoreSettingsGateway gateway = checked.core();
         register("appearance", new AppearanceSettingsPage(appearance, close));
-        register("providers", new ProviderSettingsPage(gateway));
+        register("providers", new ProviderSettingsPage(gateway, returnToChat));
         register("roles", new AgentRoleSettingsPage(gateway, checked.promptPreview(), checked.promptOptimization()));
         registerExtension(
                 "learning",

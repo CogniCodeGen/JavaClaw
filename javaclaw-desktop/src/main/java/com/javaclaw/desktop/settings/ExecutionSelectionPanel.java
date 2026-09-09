@@ -18,6 +18,8 @@ import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceLifecycle;
 import com.javaclaw.client.CommandOptions;
+import com.javaclaw.desktop.DesktopConfigurationChange;
+import com.javaclaw.desktop.DesktopNotificationSubscription;
 import com.javaclaw.desktop.component.PlatformComponentFactory;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
@@ -30,13 +32,14 @@ import com.javaclaw.protocol.CanonicalJson;
  *
  * <p>相同作用域的渲染不触发读取；主动刷新完整成功后才替换基线。epoch 隔离跨作用域的旧响应， 保存冲突始终保留草稿及其原 revision，只有用户明确丢弃后才能采用服务端新版本。
  */
-public final class ExecutionSelectionPanel extends VBox {
+public final class ExecutionSelectionPanel extends VBox implements AutoCloseable {
     private final CoreSettingsGateway gateway;
     private final ExecutionSelectionLoader loader;
     private final ExecutionSelectionControl choices = new ExecutionSelectionControl();
     private final Label status = new Label();
     private final Button refresh;
     private final RevisionConflictPane conflict;
+    private final DesktopNotificationSubscription configurationSubscription;
     private ExecutionSelectionLoader.Scope scope =
             new ExecutionSelectionLoader.Scope(Optional.empty(), Optional.empty(), false);
     private ExecutionOverrides baseline = ExecutionOverrides.empty();
@@ -47,6 +50,10 @@ public final class ExecutionSelectionPanel extends VBox {
     private boolean creating;
     private long revision;
     private long epoch;
+    private boolean refreshPending;
+    private boolean closed;
+    private boolean baselineStale;
+    private boolean refreshActive = true;
 
     /** @param gateway 所有目录与配置只通过 SDK 读取，异步完成由网关调度到 JavaFX 线程 */
     public ExecutionSelectionPanel(CoreSettingsGateway gateway) {
@@ -65,6 +72,7 @@ public final class ExecutionSelectionPanel extends VBox {
         getChildren().addAll(choices, footer, conflict);
         choices.onChanged(ignored -> changed());
         changed();
+        configurationSubscription = gateway.onConfigurationChanged(this::configurationChanged);
     }
 
     /**
@@ -75,6 +83,9 @@ public final class ExecutionSelectionPanel extends VBox {
      * @param defaults 是否编辑 Workspace 直接默认配置
      */
     public void bind(Optional<Workspace> workspace, Optional<ConversationThread> thread, boolean defaults) {
+        if (closed) {
+            return;
+        }
         ExecutionSelectionLoader.Scope next = new ExecutionSelectionLoader.Scope(workspace, thread, defaults);
         boolean same = scope.sameBinding(next) && epoch > 0;
         scope = next;
@@ -83,11 +94,21 @@ public final class ExecutionSelectionPanel extends VBox {
         }
         creating = false;
         resetBinding();
+        if (!refreshActive) {
+            epoch++;
+            pending = false;
+            refreshPending = true;
+            changed();
+            return;
+        }
         reload();
     }
 
     /** 读取创建向导目录，首次成功加载时选择通用 default。 */
     public void prepareWorkspaceCreation() {
+        if (closed) {
+            return;
+        }
         creating = true;
         resetBinding();
         reload();
@@ -95,7 +116,7 @@ public final class ExecutionSelectionPanel extends VBox {
 
     /** 主动刷新当前作用域；默认配置的未保存草稿保持原样，输入区的临时选择跨刷新保留。 */
     public void refresh() {
-        if (pending) {
+        if (closed || pending) {
             return;
         }
         if (dirty()) {
@@ -103,6 +124,64 @@ public final class ExecutionSelectionPanel extends VBox {
             return;
         }
         reload();
+    }
+
+    /**
+     * 自动重验当前作用域；在途失效合并补读，脏草稿只更新可选目录，保留原始配置和冲突版本。
+     *
+     * <p>目录中的新 Provider revision 只作为新选择展示，不能静默替换已有精确引用。
+     */
+    public void refreshAutomatically() {
+        if (closed || epoch == 0) {
+            return;
+        }
+        refreshPending = true;
+        refreshAfterChange();
+    }
+
+    /**
+     * 设置可见页面的自动刷新状态；隐藏时只累计失效，恢复显示后重验当前作用域。
+     *
+     * @param active 当前页面是否允许后台刷新
+     */
+    public void setRefreshActive(boolean active) {
+        refreshActive = active;
+        if (active) {
+            refreshAutomatically();
+        }
+    }
+
+    /** 取消配置订阅并废弃在途读写回调；不关闭共享 SDK 会话。 */
+    @Override
+    public void close() {
+        if (closed) {
+            return;
+        }
+        closed = true;
+        refreshActive = false;
+        pending = false;
+        refreshPending = false;
+        epoch++;
+        configurationSubscription.close();
+    }
+
+    private void configurationChanged(DesktopConfigurationChange change) {
+        if (change.workspaceId().isPresent()
+                && !change.workspaceId().equals(scope.workspace().map(Workspace::id))) {
+            return;
+        }
+        if (change.threadId().isPresent()
+                && !change.threadId().equals(scope.thread().map(ConversationThread::id))) {
+            return;
+        }
+        refreshAutomatically();
+    }
+
+    private void refreshAfterChange() {
+        if (!closed && refreshActive && refreshPending && !pending) {
+            refreshPending = false;
+            reload(dirty() || conflicted);
+        }
     }
 
     /** @param callback 加载、保存或选择变化时的通知；注册后立即通知当前状态 */
@@ -134,6 +213,7 @@ public final class ExecutionSelectionPanel extends VBox {
     /** @return 已加载且无冲突、无在途请求的活动 Workspace 草稿是否可以保存 */
     public boolean canSave() {
         return loaded
+                && !closed
                 && !pending
                 && !conflicted
                 && dirty()
@@ -144,9 +224,12 @@ public final class ExecutionSelectionPanel extends VBox {
 
     /** 无在途请求时丢弃选择，恢复最近成功读取的基线；冲突仍需重新读取权威版本。 */
     public void discard() {
-        if (!pending) {
+        if (!closed && !pending) {
             choices.setValue(baseline);
             changed();
+            if (baselineStale && !conflicted) {
+                refreshAutomatically();
+            }
         }
     }
 
@@ -181,9 +264,12 @@ public final class ExecutionSelectionPanel extends VBox {
             conflict.hide();
         }
         changed();
+        refreshAfterChange();
     }
 
     private void resetBinding() {
+        refreshPending = false;
+        baselineStale = false;
         loaded = false;
         conflicted = false;
         baseline = ExecutionOverrides.empty();
@@ -194,6 +280,14 @@ public final class ExecutionSelectionPanel extends VBox {
     }
 
     private void reload() {
+        reload(false);
+    }
+
+    private void reload(boolean preserveDraft) {
+        if (preserveDraft) {
+            reloadCatalog();
+            return;
+        }
         ExecutionSelectionLoader.Scope requestedScope = scope;
         ExecutionOverrides retained = choices.value();
         boolean chooseDefault = creating && !loaded;
@@ -203,12 +297,42 @@ public final class ExecutionSelectionPanel extends VBox {
                 return;
             }
             pending = false;
+            if (refreshPending) {
+                refreshAfterChange();
+                return;
+            }
             if (failure != null) {
                 status.setText(SettingsFailures.message(failure));
             } else {
                 apply(snapshot, retained, chooseDefault);
             }
             changed();
+            refreshAfterChange();
+        });
+    }
+
+    private void reloadCatalog() {
+        baselineStale = true;
+        ExecutionOverrides retained = choices.value();
+        long request = begin("正在更新可选目录；未保存选择及原版本保持不变…");
+        loader.loadCatalog().whenComplete((catalog, failure) -> {
+            if (request != epoch) {
+                return;
+            }
+            pending = false;
+            if (refreshPending) {
+                refreshAfterChange();
+                return;
+            }
+            if (failure != null) {
+                status.setText("可选目录读取失败；未保存选择仍保留：" + SettingsFailures.message(failure));
+            } else {
+                choices.setCatalog(catalog.roles(), catalog.providers(), catalog.permissions());
+                choices.setValue(retained);
+                status.setText("配置已更新；可选目录已刷新，未保存选择及原版本已保留。");
+            }
+            changed();
+            refreshAfterChange();
         });
     }
 
@@ -227,6 +351,7 @@ public final class ExecutionSelectionPanel extends VBox {
         choices.showSource(snapshot.sources().description());
         choices.showInheritedRole(snapshot.inheritedRole());
         loaded = true;
+        baselineStale = false;
         conflicted = false;
         conflict.hide();
         status.setText("Agent 固定模型优先；有效权限和预算由服务端在新任务开始时计算。");
@@ -265,6 +390,7 @@ public final class ExecutionSelectionPanel extends VBox {
                 showComparison(local, localRevision, remote);
             }
             changed();
+            refreshAfterChange();
         });
     }
 

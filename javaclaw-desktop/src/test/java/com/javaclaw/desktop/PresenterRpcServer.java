@@ -64,6 +64,7 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
     private final Workspace workspace = DesktopTestFixtures.workspace();
     private final ConversationThread thread = DesktopTestFixtures.thread(workspace);
     private final AgentRole profile = DesktopTestFixtures.profile();
+    private final PresenterExecutionRpcFixture execution = new PresenterExecutionRpcFixture(profile);
 
     final AtomicInteger workspaceCreates = new AtomicInteger();
     final AtomicInteger threadCreates = new AtomicInteger();
@@ -165,7 +166,11 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
 
     private JsonRpcResponse response(JsonRpcRequest request) {
         return JsonRpcResponse.success(
-                request.id(), json.encode(requestOverride.apply(request).orElseGet(() -> catalogResult(request))));
+                request.id(),
+                json.encode(requestOverride
+                        .apply(request)
+                        .or(() -> execution.respond(request))
+                        .orElseGet(() -> catalogResult(request))));
     }
 
     private Object catalogResult(JsonRpcRequest request) {
@@ -186,8 +191,7 @@ final class PresenterRpcServer implements LocalTransport, RpcConnection {
             case "agent/role/list" -> new AgentRoleRpcContracts.ListResult(List.of(profile));
             case "agent/role/read" -> profile;
             case "prompt/manifest/preview" -> promptPreview();
-            case "execution/default/read", "thread/execution/read" ->
-                new ExecutionRpcContracts.ReadResult(Optional.empty());
+            case "execution/default/read" -> new ExecutionRpcContracts.ReadResult(Optional.empty());
 
             case "tool/search" -> toolCatalog(request);
             case "thread/list" -> new CoreRpcContracts.ThreadListResult(List.of(thread));

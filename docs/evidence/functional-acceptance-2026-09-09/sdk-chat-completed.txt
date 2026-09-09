@@ -1,0 +1,74 @@
+
+✦
+JavaClaw
+6.0
+界面功能验收
+＋
+＋ 新建对话
+对话
+对话记忆学习
+历史执行记录验收
+记忆事实：办公地点上海
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+null
+⚙  设置与管理
+JavaClaw App Server 6.0.0-SNAPSHOT
+☰
+●
+记忆事实：办公地点上海
+界面功能验收
+审批
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+M
+memory-model ▾
+思考：跟随设置
+更多 ⋯
+发送 ↑
+待处理
+文档
+待处理事项
+×
+等待输入
+当前没有等待输入的任务。
+工具审批
+当前没有等待审批的工具调用。
+拒绝
+批准

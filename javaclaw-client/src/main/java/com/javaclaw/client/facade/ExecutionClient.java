@@ -26,6 +26,35 @@ public final class ExecutionClient {
     }
 
     /**
+     * 读取只用于初始化新 Thread 的最近模型和思考；不读取安装默认。
+     *
+     * @return 最近选择的独立版本；缺失时新 Thread 应继承项目设置
+     */
+    public Optional<ExecutionConfiguration> readRecent() {
+        return connection
+                .query(
+                        "execution/recent/read",
+                        new ExecutionRpcContracts.RecentReadPayload(),
+                        ExecutionRpcContracts.ReadResult.class)
+                .configuration();
+    }
+
+    /**
+     * 保存最近模型和思考，不改变安装默认或已有 Thread 的继承配置。
+     *
+     * @param execution 仅 provider 和 reasoning 可填写，其他字段必须为空
+     * @param options 最近选择自身的 revision 与幂等键
+     * @return 已提交的独立最近选择版本，作用域字段均为空
+     */
+    public ExecutionConfiguration updateRecent(ExecutionOverrides execution, CommandOptions options) {
+        return connection.command(
+                "execution/recent/update",
+                new ExecutionRpcContracts.RecentUpdatePayload(execution),
+                options,
+                ExecutionConfiguration.class);
+    }
+
+    /**
      * 只读解析下一 Turn 的有效模型、思考、锁定状态与配置阻塞项，不调用模型。
      *
      * @param workspaceId 固定的目标 Workspace

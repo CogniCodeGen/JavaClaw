@@ -392,8 +392,12 @@ public final class AppServerBootstrap {
                 .register(routes);
         new com.javaclaw.server.rpc.ExecutionPreviewRpcHandlers(
                         new com.javaclaw.server.turn.ExecutionPreviewService(
-                                foundation.core(), foundation.agentRoles(), foundation.executionConfigurations(),
-                                foundation.permissionProfiles(), foundation.worktrees(), foundation.providers()),
+                                foundation.core(),
+                                foundation.agentRoles(),
+                                foundation.executionConfigurations(),
+                                foundation.permissionProfiles(),
+                                foundation.worktrees(),
+                                foundation.providers()),
                         foundation.json())
                 .register(routes);
         new com.javaclaw.server.rpc.AgentRoleFileRpcHandlers(

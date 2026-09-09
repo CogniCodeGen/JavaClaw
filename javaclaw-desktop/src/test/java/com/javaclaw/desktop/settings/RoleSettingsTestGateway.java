@@ -11,6 +11,7 @@ import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.function.Consumer;
 
 import com.javaclaw.api.AgentRole;
 import com.javaclaw.api.AgentRoleFileFormat;
@@ -22,12 +23,16 @@ import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.RoleLifecycle;
 import com.javaclaw.client.CommandOptions;
 import com.javaclaw.client.RemoteRpcException;
+import com.javaclaw.desktop.DesktopConfigurationChange;
+import com.javaclaw.desktop.DesktopConfigurationEvents;
+import com.javaclaw.desktop.DesktopNotificationSubscription;
 import com.javaclaw.desktop.DesktopTestFixtures;
 import com.javaclaw.protocol.JsonRpcError;
 import com.javaclaw.protocol.ProtocolErrorCode;
 
 /** Role 专用可控 SDK 夹具；延迟响应与乐观锁只用于验证草稿和请求代次，不调用模型。 */
 final class RoleSettingsTestGateway {
+    final DesktopConfigurationEvents configurationEvents = new DesktopConfigurationEvents();
     final List<AgentRole> roles = new ArrayList<>();
     final List<ProviderEndpoint> providers = new ArrayList<>();
     final Queue<CompletableFuture<List<AgentRole>>> roleReads = new ArrayDeque<>();
@@ -57,6 +62,7 @@ final class RoleSettingsTestGateway {
 
     private Object coreRequest(Method method, Object[] args) {
         return switch (method.getName()) {
+            case "onConfigurationChanged" -> subscribe(args[0]);
             case "roles" -> readRoles();
             case "providers" -> completed(List.copyOf(providers));
             case "createRole" ->
@@ -67,6 +73,11 @@ final class RoleSettingsTestGateway {
             case "commitRoleImport" -> commit((String) args[0], (CommandOptions) args[2]);
             default -> throw new AssertionError("未预期的 Role SDK 调用：" + method.getName());
         };
+    }
+
+    @SuppressWarnings("unchecked")
+    private DesktopNotificationSubscription subscribe(Object listener) {
+        return configurationEvents.subscribe((Consumer<DesktopConfigurationChange>) listener);
     }
 
     private CompletionStage<List<AgentRole>> readRoles() {

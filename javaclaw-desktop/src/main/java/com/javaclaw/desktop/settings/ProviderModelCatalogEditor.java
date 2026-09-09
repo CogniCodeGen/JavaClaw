@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.OptionalInt;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 import javafx.beans.property.ReadOnlyStringWrapper;
@@ -52,7 +53,9 @@ final class ProviderModelCatalogEditor extends VBox {
     private final Button bindEmbedding;
     private ProviderModelCatalogState state;
     private boolean canBind;
+    private boolean renderingSelection;
     private Consumer<ProviderModelSpec> selectionChanged = ignored -> {};
+    private BooleanSupplier selectionAllowed = () -> true;
 
     ProviderModelCatalogEditor(
             Runnable discover,
@@ -83,15 +86,8 @@ final class ProviderModelCatalogEditor extends VBox {
     void render(ProviderModelCatalogState value, boolean canDiscover, boolean canEdit, boolean bindingAvailable) {
         state = Objects.requireNonNull(value, "value");
         canBind = bindingAvailable;
-        ProviderModelSpec selected = models.getSelectionModel().getSelectedItem();
-        models.getItems().setAll(state.models());
+        renderModels();
         models.refresh();
-        if (selected != null) {
-            state.models().stream()
-                    .filter(model -> model.modelId().equals(selected.modelId()))
-                    .findFirst()
-                    .ifPresent(model -> models.getSelectionModel().select(model));
-        }
         candidates.getItems().setAll(state.candidates());
         candidates.setVisible(!state.candidates().isEmpty());
         candidates.setManaged(!state.candidates().isEmpty());
@@ -103,8 +99,29 @@ final class ProviderModelCatalogEditor extends VBox {
         updateSelectionActions(canEdit);
     }
 
-    void onModelSelected(Consumer<ProviderModelSpec> listener) {
+    private void renderModels() {
+        if (models.getItems().equals(state.models())) {
+            return;
+        }
+        ProviderModelSpec selected = models.getSelectionModel().getSelectedItem();
+        renderingSelection = true;
+        try {
+            // 目录渲染先恢复选择，再由页面统一绑定容量；中间空选择不能重启正在读取的请求。
+            models.getItems().setAll(state.models());
+            if (selected != null) {
+                state.models().stream()
+                        .filter(model -> model.modelId().equals(selected.modelId()))
+                        .findFirst()
+                        .ifPresent(model -> models.getSelectionModel().select(model));
+            }
+        } finally {
+            renderingSelection = false;
+        }
+    }
+
+    void onModelSelected(Consumer<ProviderModelSpec> listener, BooleanSupplier allowed) {
         selectionChanged = Objects.requireNonNull(listener, "listener");
+        selectionAllowed = Objects.requireNonNull(allowed, "allowed");
     }
 
     ProviderModelSpec selectedModel() {
@@ -127,8 +144,30 @@ final class ProviderModelCatalogEditor extends VBox {
         models.getColumns().add(column("验证状态", this::validationStatus));
         models.getSelectionModel().selectedItemProperty().addListener((ignored, previous, selected) -> {
             updateSelectionActions(canEdit());
-            selectionChanged.accept(selected);
+            if (!renderingSelection) {
+                if (!selectionAllowed.getAsBoolean()) {
+                    restoreSelection(previous);
+                    return;
+                }
+                selectionChanged.accept(selected);
+            }
         });
+    }
+
+    private void restoreSelection(ProviderModelSpec previous) {
+        renderingSelection = true;
+        try {
+            // TableView 会先因索引变化、再显式发布 selectedItem；select(item) 可能因旧行仍已选中而跳过恢复。
+            // clearAndSelect 同步修复单值属性与所选行集合，不让同一次选择的第二个通知重新留下目标模型。
+            int index = models.getItems().indexOf(previous);
+            if (index < 0) {
+                models.getSelectionModel().clearSelection();
+            } else {
+                models.getSelectionModel().clearAndSelect(index);
+            }
+        } finally {
+            renderingSelection = false;
+        }
     }
 
     private void configureCandidates() {

@@ -1,5 +1,6 @@
 package com.javaclaw.desktop.settings;
 
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 
@@ -23,6 +24,7 @@ final class ProviderContextEditor extends VBox {
     private final Label model = new Label();
     private final Button save;
     private Optional<com.javaclaw.api.ModelContextLimits> rendered = Optional.empty();
+    private Runnable stateChanged = () -> {};
 
     ProviderContextEditor(ProviderContextSettingsGateway gateway, Runnable saved) {
         presenter = new ProviderContextPresenter(gateway, saved);
@@ -40,7 +42,7 @@ final class ProviderContextEditor extends VBox {
         status.getStyleClass().add("sec-hint");
         status.setWrapText(true);
         Button discard = new PlatformComponentFactory().action("放弃容量更改", ActionStyle.GHOST, ActionSize.COMPACT);
-        discard.setOnAction(event -> resetFields());
+        discard.setOnAction(event -> discardDraft());
         getChildren().addAll(model, section, new javafx.scene.layout.HBox(8, save, discard), status);
         setSpacing(8);
         presenter.subscribe(this::render);
@@ -64,8 +66,29 @@ final class ProviderContextEditor extends VBox {
         return presenter.state().pending();
     }
 
+    void onStateChanged(Runnable listener) {
+        stateChanged = Objects.requireNonNull(listener, "listener");
+    }
+
     void warnUnsavedChanges() {
         status.setText("请先保存或放弃当前模型的容量更改");
+    }
+
+    /** 模型表格先询问容量草稿是否允许切换，拒绝时保留原模型和输入字段。 */
+    boolean allowModelChange() {
+        if (dirty()) {
+            warnUnsavedChanges();
+            return false;
+        }
+        return true;
+    }
+
+    /** 与设置中心的离页丢弃动作同步清理容量草稿，不发送保存请求。 */
+    void discardDraft() {
+        if (!pending()) {
+            resetFields();
+            stateChanged.run();
+        }
     }
 
     private void resetFields() {
@@ -91,6 +114,7 @@ final class ProviderContextEditor extends VBox {
                 .map(value -> value.model() + " · 版本 " + value.endpointRevision())
                 .orElse(""));
         status.setText(state.message());
+        stateChanged.run();
     }
 
     private static String text(OptionalLong value) {

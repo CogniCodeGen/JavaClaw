@@ -12,11 +12,12 @@ import javafx.scene.control.CustomMenuItem;
 import javafx.scene.control.Label;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.FlowPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.util.StringConverter;
 
 import com.javaclaw.api.ConversationThread;
-import com.javaclaw.api.ExecutionBlocker;
 import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.ExecutionPreview;
 import com.javaclaw.api.ProviderAdapter;
@@ -25,10 +26,7 @@ import com.javaclaw.api.ReasoningPreference;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.desktop.component.PlatformStylesheets;
 
-/**
- * 聊天区仅常驻模型、思考和更多设置；选择先保存并预览，再允许发送。
- * 模型新增和使用捕获当前工作区及对话，后台完成不会改写其他页面的草稿。
- */
+/** 聊天区仅常驻模型、思考和更多设置；选择先保存并预览，再允许发送。 模型新增和使用捕获当前工作区及对话，后台完成不会改写其他页面的草稿。 */
 public final class ChatConfigurationPanel extends VBox implements AutoCloseable {
     private final CoreSettingsGateway gateway;
     private final ChatConfigurationPresenter presenter;
@@ -41,6 +39,7 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
     private final Button repair = new Button();
     private final Button retry = new Button("重试");
     private final Button discard = new Button("放弃更改");
+    private final HBox toolbar = new HBox(8);
     private final Runnable manage;
     private final Runnable chooseWorkspace;
     private final Runnable createThread;
@@ -48,10 +47,15 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
     private boolean rendering;
 
     /**
-     * @param gateway 共享 SDK 配置边界 @param manage 打开模型管理 @param chooseWorkspace 工作区选择入口
+     * 创建复用现有样式的聊天配置工具栏，并订阅共享配置变更。
+     *
+     * @param gateway 共享 SDK 配置边界
+     * @param manage 打开模型管理
+     * @param chooseWorkspace 工作区选择入口
      * @param createThread 在当前工作区创建空对话
      */
-    public ChatConfigurationPanel(CoreSettingsGateway gateway, Runnable manage, Runnable chooseWorkspace, Runnable createThread) {
+    public ChatConfigurationPanel(
+            CoreSettingsGateway gateway, Runnable manage, Runnable chooseWorkspace, Runnable createThread) {
         super(6);
         this.gateway = gateway;
         this.manage = manage;
@@ -63,7 +67,12 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
         presenter.subscribe(this::render);
     }
 
-    /** @param workspace 聊天工作区 @param thread 聊天对话；缺省时显示创建入口 */
+    /**
+     * 绑定聊天作用域；相同工作区和对话只更新对象，不重置选择。
+     *
+     * @param workspace 聊天工作区
+     * @param thread 聊天对话；缺省时显示创建入口
+     */
     public void bind(Optional<Workspace> workspace, Optional<ConversationThread> thread) {
         presenter.bind(workspace, thread);
     }
@@ -73,20 +82,42 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
         presenter.refresh();
     }
 
-    /** @return 只有已保存且服务端预览就绪时为 true */
+    /**
+     * 返回当前配置是否具备发送条件。
+     *
+     * @return 只有已保存且服务端预览就绪时为 true
+     */
     public boolean ready() {
         return presenter.scope().thread().isPresent() && presenter.state().ready();
     }
 
-    /** @return 当前对话的完整显式覆盖；未编辑限制原样保留 */
+    /**
+     * 读取输入区选中的完整执行覆盖。
+     *
+     * @return 当前对话的完整显式覆盖；未编辑限制原样保留
+     */
     public ExecutionOverrides execution() {
         return presenter.state().selection();
     }
 
-    /** @param callback 预览、保存或读取变化时更新发送按钮 */
+    /**
+     * 注册状态监听，并立即同步一次状态。
+     *
+     * @param callback 预览、保存或读取变化时更新发送按钮
+     */
     public void onStateChanged(Runnable callback) {
         listener = callback;
         listener.run();
+    }
+
+    /**
+     * 将发送动作放到配置工具栏右侧；按钮显示由主壳按 Turn 状态控制。
+     *
+     * @param stop 运行时显示的停止按钮
+     * @param send 空闲时显示的发送按钮
+     */
+    public void setActions(Button stop, Button send) {
+        toolbar.getChildren().add(new HBox(8, stop, send));
     }
 
     /** 仅清除模型和思考覆盖，恢复项目规则，不修改其他执行字段或日常默认。 */
@@ -121,7 +152,11 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
         retry.setOnAction(event -> presenter.retry());
         discard.setOnAction(event -> presenter.discard());
         repair.setOnAction(event -> repair());
-        FlowPane toolbar = new FlowPane(8, 6, model, reasoning, more);
+        FlowPane choices = new FlowPane(8, 6, model, reasoning, more);
+        choices.setMinWidth(0);
+        HBox.setHgrow(choices, Priority.ALWAYS);
+        toolbar.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        toolbar.getChildren().add(choices);
         toolbar.getStyleClass().add("composer-toolbar");
         getChildren().addAll(toolbar, new FlowPane(8, 4, status, repair, retry, discard));
     }
@@ -132,7 +167,9 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
             var resolved = state.preview();
             var provider = resolved.flatMap(ExecutionPreview::provider).or(state.selection()::provider);
             var catalog = state.snapshot().map(ExecutionSelectionLoader.Snapshot::catalog);
-            model.render(catalog.map(ExecutionSelectionLoader.Catalog::providers).orElse(List.of()), provider,
+            model.render(
+                    catalog.map(ExecutionSelectionLoader.Catalog::providers).orElse(List.of()),
+                    provider,
                     resolved.map(ExecutionPreview::modelLocked).orElse(false));
             catalog.ifPresent(value -> advanced.setCatalog(value.roles(), value.providers(), value.permissions()));
             advanced.setValue(state.selection());
@@ -141,15 +178,26 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
                 advanced.showInheritedRole(value.inheritedRole());
             });
             renderReasoning(state, provider);
-            model.setDisable(state.pending());
+            model.setDisable(state.pending() || state.dirty());
             more.setDisable(state.pending() || presenter.scope().thread().isEmpty());
-            more.setText(state.selection().role().isPresent() || state.selection().permissionProfile().isPresent()
-                    ? "更多 · 自定义" : "更多 ⋯");
+            more.setText(
+                    state.selection().role().isPresent()
+                                    || state.selection().permissionProfile().isPresent()
+                            ? "更多 · 自定义"
+                            : "更多 ⋯");
             status.setText(state.message());
             visible(status, !state.message().isBlank());
-            visible(repair, !state.pending() && !state.dirty() && (!state.ready() || presenter.scope().thread().isEmpty()));
+            visible(
+                    repair,
+                    !state.pending()
+                            && !state.dirty()
+                            && (!state.ready() || presenter.scope().thread().isEmpty()));
             repair.setText(repairLabel(state));
-            visible(retry, !state.pending() && (state.dirty() || state.preview().isEmpty()) && presenter.scope().workspace().isPresent());
+            visible(
+                    retry,
+                    !state.pending()
+                            && (state.dirty() || state.preview().isEmpty())
+                            && presenter.scope().workspace().isPresent());
             visible(discard, state.dirty() && !state.pending());
         } finally {
             rendering = false;
@@ -158,45 +206,63 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
     }
 
     private void renderReasoning(ChatConfigurationState state, Optional<ProviderRef> provider) {
-        var adapter = state.snapshot().stream().flatMap(value -> value.catalog().providers().stream())
-                .filter(endpoint -> provider.map(ref -> ref.endpointId().equals(endpoint.id())).orElse(false))
-                .map(endpoint -> endpoint.spec().adapter()).findFirst();
+        var adapter = state.snapshot().stream()
+                .flatMap(value -> value.catalog().providers().stream())
+                .filter(endpoint -> provider.map(ref -> ref.endpointId().equals(endpoint.id()))
+                        .orElse(false))
+                .map(endpoint -> endpoint.spec().adapter())
+                .findFirst();
         reasoning.getItems().clear();
         reasoning.getItems().add(null);
         reasoning.getItems().addAll(allowed(adapter));
-        state.selection().reasoning().filter(value -> !reasoning.getItems().contains(value)).ifPresent(reasoning.getItems()::add);
+        state.selection()
+                .reasoning()
+                .filter(value -> !reasoning.getItems().contains(value))
+                .ifPresent(reasoning.getItems()::add);
         reasoning.setValue(state.selection().reasoning().orElse(null));
         var actual = state.preview().flatMap(ExecutionPreview::reasoning);
-        reasoning.setPromptText("思考：" + actual.map(ChatConfigurationPanel::reasoningLabel).orElse("跟随设置"));
+        reasoning.setPromptText(
+                "思考：" + actual.map(ChatConfigurationPanel::reasoningLabel).orElse("跟随设置"));
         boolean locked = state.preview().map(ExecutionPreview::reasoningLocked).orElse(false);
         if (locked) {
             reasoning.setValue(actual.orElse(null));
         }
-        reasoning.setDisable(state.pending() || locked || presenter.scope().thread().isEmpty());
-        reasoning.setTooltip(new Tooltip(locked ? "思考强度由 Agent 固定，可在更多设置中更换 Agent"
-                : "跟随设置会继承项目配置；关闭则明确请求不推理。具体档位由服务商接受情况决定。"));
+        reasoning.setDisable(
+                state.pending() || locked || presenter.scope().thread().isEmpty());
+        reasoning.setTooltip(
+                new Tooltip(locked ? "思考强度由 Agent 固定，可在更多设置中更换 Agent" : "跟随设置会继承项目配置；关闭则明确请求不推理。具体档位由服务商接受情况决定。"));
     }
 
     private void selectModel(ProviderRef selected) {
         if (presenter.scope().thread().isEmpty()) {
             ProviderSetupWizard.useModel(getScene().getWindow(), gateway, target(), selected, presenter::refresh);
         } else {
-            presenter.edit(replace(selected, presenter.state().selection().reasoning().orElse(null)), true);
+            presenter.selectModel(selected);
         }
     }
 
     private void selectReasoning(ReasoningPreference selected) {
         if (!rendering) {
-            ProviderRef provider = presenter.state().preview().flatMap(ExecutionPreview::provider)
-                    .or(presenter.state().selection()::provider).orElse(null);
+            ProviderRef provider = presenter
+                    .state()
+                    .preview()
+                    .flatMap(ExecutionPreview::provider)
+                    .or(presenter.state().selection()::provider)
+                    .orElse(null);
             presenter.edit(replace(provider, selected), true);
         }
     }
 
     private ExecutionOverrides replace(ProviderRef provider, ReasoningPreference reasoning) {
         var previous = presenter.state().selection();
-        return new ExecutionOverrides(previous.role(), Optional.ofNullable(provider), previous.permissionProfile(),
-                previous.approvalPolicy(), previous.budget(), previous.visibleCapabilities(), Optional.ofNullable(reasoning));
+        return new ExecutionOverrides(
+                previous.role(),
+                Optional.ofNullable(provider),
+                previous.permissionProfile(),
+                previous.approvalPolicy(),
+                previous.budget(),
+                previous.visibleCapabilities(),
+                Optional.ofNullable(reasoning));
     }
 
     private void restoreProject() {
@@ -209,7 +275,9 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
 
     private ProviderSetupTarget target() {
         var scope = presenter.scope();
-        return new ProviderSetupTarget(scope.workspace().map(Workspace::id), scope.thread().map(ConversationThread::id),
+        return new ProviderSetupTarget(
+                scope.workspace().map(Workspace::id),
+                scope.thread().map(ConversationThread::id),
                 scope.workspace().map(Workspace::name).orElse(""));
     }
 
@@ -217,15 +285,19 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
         if (presenter.scope().workspace().isEmpty()) {
             return "选择工作区";
         }
-        if (state.preview().filter(ExecutionPreview::ready).isPresent() && presenter.scope().thread().isEmpty()) {
+        if (state.preview().filter(ExecutionPreview::ready).isPresent()
+                && presenter.scope().thread().isEmpty()) {
             return "开始新对话";
         }
-        return state.preview().flatMap(value -> value.blockers().stream().findFirst()).map(blocker -> switch (blocker.code()) {
-            case MODEL_REQUIRED, MODEL_UNAVAILABLE -> "选择模型";
-            case WORKSPACE_UNAVAILABLE, THREAD_UNAVAILABLE -> "选择工作区";
-            case ROLE_UNAVAILABLE, CONFIGURATION_INVALID -> "调整更多设置";
-            default -> "修复连接";
-        }).orElse("添加模型");
+        return state.preview()
+                .flatMap(value -> value.blockers().stream().findFirst())
+                .map(blocker -> switch (blocker.code()) {
+                    case MODEL_REQUIRED, MODEL_UNAVAILABLE -> "选择模型";
+                    case WORKSPACE_UNAVAILABLE, THREAD_UNAVAILABLE -> "选择工作区";
+                    case ROLE_UNAVAILABLE, CONFIGURATION_INVALID -> "调整更多设置";
+                    default -> "修复连接";
+                })
+                .orElse("添加模型");
     }
 
     private void repair() {
@@ -258,11 +330,13 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
     }
 
     private static List<ReasoningPreference> allowed(Optional<ProviderAdapter> adapter) {
-        return List.of(ReasoningPreference.values()).stream().filter(value -> switch (adapter.orElse(ProviderAdapter.OPENAI_COMPATIBLE)) {
-            case OPENAI_COMPATIBLE, OPENAI_RESPONSES -> value != ReasoningPreference.MAX;
-            case ANTHROPIC -> value != ReasoningPreference.MINIMAL && value != ReasoningPreference.XHIGH;
-            case GOOGLE_GENAI -> value != ReasoningPreference.XHIGH && value != ReasoningPreference.MAX;
-        }).toList();
+        return List.of(ReasoningPreference.values()).stream()
+                .filter(value -> switch (adapter.orElse(ProviderAdapter.OPENAI_COMPATIBLE)) {
+                    case OPENAI_COMPATIBLE, OPENAI_RESPONSES -> value != ReasoningPreference.MAX;
+                    case ANTHROPIC -> value != ReasoningPreference.MINIMAL && value != ReasoningPreference.XHIGH;
+                    case GOOGLE_GENAI -> value != ReasoningPreference.XHIGH && value != ReasoningPreference.MAX;
+                })
+                .toList();
     }
 
     private static String reasoningLabel(ReasoningPreference value) {

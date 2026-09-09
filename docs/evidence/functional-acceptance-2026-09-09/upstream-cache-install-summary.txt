@@ -1,0 +1,16 @@
+[INFO] JavaClaw 6 ......................................... SUCCESS [  1.115 s]
+[INFO] JavaClaw Immutable API ............................. SUCCESS [  0.877 s]
+[INFO] JavaClaw Extension SPI ............................. SUCCESS [  0.368 s]
+[INFO] JavaClaw App Protocol v3 ........................... SUCCESS [  0.506 s]
+[INFO] JavaClaw Thin Turn Harness ......................... SUCCESS [  0.168 s]
+[INFO] JavaClaw Model Adapters ............................ SUCCESS [  0.776 s]
+[INFO] JavaClaw Built-in Extension Contracts .............. SUCCESS [  0.316 s]
+[INFO] JavaClaw Built-in Extensions ....................... SUCCESS [  0.391 s]
+[INFO] JavaClaw Native Hosts .............................. SUCCESS [  0.264 s]
+[INFO] JavaClaw Isolated Browser Worker ................... SUCCESS [  0.207 s]
+[INFO] JavaClaw App Server ................................ SUCCESS [  1.300 s]
+[INFO] JavaClaw Isolated Knowledge Worker ................. SUCCESS [  0.132 s]
+[INFO] JavaClaw Java SDK and CLI .......................... SUCCESS [  0.177 s]
+[INFO] BUILD SUCCESS
+[INFO] Total time:  6.698 s
+[INFO] Finished at: 2026-09-09T11:27:20+08:00

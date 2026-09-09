@@ -27,19 +27,79 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class ManagementScopeSessionFxTest {
     @Test
+    void 首次出现工作区不会打断全局页面草稿或在途模型配置() {
+        FxTestSupport.run(() -> {
+            TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
+            Workspace first = gateway.workspaceSettings.catalog.getFirst();
+            gateway.workspaceSettings.catalog.clear();
+            CapturingPage page = new CapturingPage();
+            ManagementScopeSession session =
+                    new ManagementScopeSession(gateway, Optional::empty, () -> page, ignored -> {});
+            session.bind(page);
+            session.activate();
+            page.dirty = true;
+            page.draft = "尚未保存的模型服务";
+            gateway.workspaceSettings.catalog.add(first);
+
+            session.refresh();
+
+            assertEquals(first, workspaceSelector(session.content()).getValue());
+            assertEquals(List.of(Optional.empty()), page.received, "自动目录更新不能调用会重置模型发现的工作区绑定");
+            assertEquals("尚未保存的模型服务", page.draft);
+            page.dirty = false;
+            page.pending = true;
+            session.refresh();
+            assertEquals(1, page.received.size());
+            page.pending = false;
+            session.refresh();
+            assertEquals(List.of(Optional.empty(), Optional.of(first)), page.received);
+        });
+    }
+
+    @Test
+    void 用户确认丢弃后切换不被旧页补读阻断() {
+        FxTestSupport.run(() -> {
+            TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
+            Workspace original = gateway.workspaceSettings.catalog.getFirst();
+            Workspace other = workspace("另一个工作区", "9595b5a3-c70a-4b88-9568-39bcfffc3878");
+            gateway.workspaceSettings.catalog.add(other);
+            CapturingPage page = new CapturingPage();
+            ManagementScopeSession session =
+                    new ManagementScopeSession(gateway, () -> Optional.of(original.id()), () -> page, ignored -> {});
+            session.bind(page);
+            session.activate();
+            page.dirty = true;
+            page.pendingAfterDiscard = true;
+            ComboBox<?> selector = workspaceSelector(session.content());
+
+            closeNextDialog("丢弃并切换");
+            selector.getSelectionModel().select(selector.getItems().indexOf(other));
+
+            assertEquals(1, page.discards);
+            assertEquals(other, page.received.getLast().orElseThrow());
+        });
+    }
+
+    @Test
     void 自动刷新目录可更新工作区名称但不能重绑脏页面() {
         FxTestSupport.run(() -> {
             TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
             Workspace original = gateway.workspaceSettings.catalog.getFirst();
             CapturingPage page = new CapturingPage();
-            ManagementScopeSession session = new ManagementScopeSession(
-                    gateway, () -> Optional.of(original.id()), () -> page, ignored -> {});
+            ManagementScopeSession session =
+                    new ManagementScopeSession(gateway, () -> Optional.of(original.id()), () -> page, ignored -> {});
             session.bind(page);
             session.activate();
             page.dirty = true;
             page.draft = "未保存草稿";
-            Workspace renamed = new Workspace(original.id(), "更新后的名称", original.root(), original.lifecycle(),
-                    original.revision() + 1, original.createdAt(), original.updatedAt());
+            Workspace renamed = new Workspace(
+                    original.id(),
+                    "更新后的名称",
+                    original.root(),
+                    original.lifecycle(),
+                    original.revision() + 1,
+                    original.createdAt(),
+                    original.updatedAt());
             gateway.workspaceSettings.catalog.set(0, renamed);
 
             session.refresh();
@@ -246,6 +306,7 @@ class ManagementScopeSessionFxTest {
         private String draft = "未保存草稿";
         private boolean dirty;
         private boolean pending;
+        private boolean pendingAfterDiscard;
         private int warnings;
         private int discards;
 
@@ -284,6 +345,7 @@ class ManagementScopeSessionFxTest {
         public void discardDraft() {
             discards++;
             dirty = false;
+            pending = pendingAfterDiscard;
         }
     }
 }

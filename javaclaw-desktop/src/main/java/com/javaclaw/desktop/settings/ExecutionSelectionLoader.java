@@ -23,12 +23,24 @@ final class ExecutionSelectionLoader {
     }
 
     CompletionStage<Snapshot> load(Scope scope) {
-        CompletionStage<Catalog> catalog = gateway.roles()
-                .thenCombine(gateway.providers(), Catalog::new)
-                .thenCombine(gateway.permissionProfiles(), Catalog::withPermissions);
-        return catalog.thenCombine(configuration(scope), Loaded::new)
+        return loadCatalog()
+                .thenCombine(configuration(scope), Loaded::new)
                 .thenCompose(loaded -> inherited(scope, loaded)
                         .thenApply(role -> new Snapshot(loaded.catalog(), loaded.sources(), role)));
+    }
+
+    /** 聊天锁定信息由服务端预览独立解析，失效的精确角色引用不能阻断修复目录。 */
+    CompletionStage<Snapshot> loadForChat(Scope scope) {
+        return loadCatalog()
+                .thenCombine(
+                        configuration(scope), (catalog, sources) -> new Snapshot(catalog, sources, Optional.empty()));
+    }
+
+    /** 脏草稿只重读选择目录，不触碰配置基线和继承来源。 */
+    CompletionStage<Catalog> loadCatalog() {
+        return gateway.roles()
+                .thenCombine(gateway.providers(), Catalog::new)
+                .thenCombine(gateway.permissionProfiles(), Catalog::withPermissions);
     }
 
     private CompletionStage<Sources> configuration(Scope scope) {

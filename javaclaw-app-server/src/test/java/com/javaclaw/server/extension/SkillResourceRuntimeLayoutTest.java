@@ -69,6 +69,18 @@ class SkillResourceRuntimeLayoutTest {
         assertEquals("skill-resource-probe", probe.id());
         assertTrue(javaCommand.readRoots().contains(image.toRealPath()));
         assertTrue(javaCommand.writeRoots().contains(task.toRealPath()));
+        for (SandboxedWorkerCommand command : List.of(javaCommand, jshellCommand, probe)) {
+            assertEquals(
+                    List.of(
+                            image.resolve("bin").resolve(executableName("java")).toRealPath(),
+                            image.resolve("bin")
+                                    .resolve(executableName("jshell"))
+                                    .toRealPath(),
+                            image.resolve("lib").toRealPath()),
+                    command.executableRoots());
+            assertTrue(
+                    command.executableRoots().stream().noneMatch(path -> path.startsWith(command.workingDirectory())));
+        }
     }
 
     @Test
@@ -120,9 +132,29 @@ class SkillResourceRuntimeLayoutTest {
                         Files.createDirectories(temporaryDirectory.resolve("non-executable-data-v6"))));
     }
 
+    @Test
+    @ResourceLock(Resources.SYSTEM_PROPERTIES)
+    void 运行库缺失非目录或链接到镜像外时拒绝授权() throws Exception {
+        Path data = Files.createDirectories(temporaryDirectory.resolve("unsafe-library-data-v6"));
+        Path outside = Files.createDirectories(temporaryDirectory.resolve("outside-library"));
+        for (String kind : List.of("missing", "file", "outside")) {
+            Path image = prepareImage("library-" + kind, "worker-image-v1:skill");
+            Path libraries = image.resolve("lib");
+            Files.delete(libraries);
+            if (kind.equals("file")) {
+                Files.writeString(libraries, "not a directory");
+            } else if (kind.equals("outside")) {
+                Files.createSymbolicLink(libraries, outside);
+            }
+            System.setProperty(SkillResourceRuntimeLayout.IMAGE_ROOT_PROPERTY, image.toString());
+            assertThrows(java.io.IOException.class, () -> SkillResourceRuntimeLayout.discover(data));
+        }
+    }
+
     private Path prepareImage(String name, String marker) throws Exception {
         Path image = Files.createDirectories(temporaryDirectory.resolve(name));
         Path bin = Files.createDirectories(image.resolve("bin"));
+        Files.createDirectories(image.resolve("lib"));
         createExecutable(bin.resolve(executableName("java")));
         createExecutable(bin.resolve(executableName("jshell")));
         if (marker != null) {

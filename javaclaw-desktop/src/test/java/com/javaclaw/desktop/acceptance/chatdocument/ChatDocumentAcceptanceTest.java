@@ -1,16 +1,21 @@
 package com.javaclaw.desktop.acceptance.chatdocument;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import javafx.stage.Stage;
 import org.junit.jupiter.api.Test;
 
 import com.javaclaw.api.AttachmentRef;
+import com.javaclaw.api.DocumentReference;
 import com.javaclaw.api.ItemEnvelope;
+import com.javaclaw.api.ItemHistoryEntry;
 import com.javaclaw.api.ItemId;
 import com.javaclaw.api.MessageRole;
+import com.javaclaw.api.TurnId;
 import com.javaclaw.desktop.FxTestSupport;
 import com.javaclaw.desktop.view.ChatSurface;
 
@@ -19,6 +24,39 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ChatDocumentAcceptanceTest {
+    @Test
+    void 普通历史对话不显示文档按钮而真实文档保留可点击超链接并保存截图() {
+        try (ChatAcceptanceFixture fixture = new ChatAcceptanceFixture()) {
+            AttachmentRef attachment = new AttachmentRef("d".repeat(64), "text/markdown", "交互说明.md", 120);
+            ItemHistoryEntry user = history(fixture, 1, MessageRole.USER, "请解释配置完成后怎样开始聊天。", List.of());
+            ItemHistoryEntry assistant = history(fixture, 2, MessageRole.ASSISTANT, "保存模型后，回到对话即可开始输入。", List.of());
+            ItemHistoryEntry document =
+                    history(fixture, 3, MessageRole.ASSISTANT, "交互说明已经生成，可以查看下方文档。", List.of(attachment));
+            fixture.chat.show(
+                    "history-document-links",
+                    fixture.workspace,
+                    List.of(),
+                    List.of(user, assistant, document),
+                    List.of(),
+                    false);
+            fixture.await("交互说明.md");
+            assertEquals("1", fixture.script("String(document.querySelectorAll('article a.attachment').length)"));
+            assertEquals("0", fixture.script("String(document.querySelectorAll('article button.attachment').length)"));
+            assertFalse(fixture.script("document.getElementById('surface').textContent")
+                    .contains("打开文档"));
+            assertFalse(fixture.script("document.getElementById('surface').textContent")
+                    .contains("查看完整消息"));
+            fixture.script("document.querySelector('a.attachment').click()");
+            assertEquals(
+                    List.of(DocumentReference.attachment(fixture.workspace, document.id(), attachment)),
+                    fixture.previews);
+            AcceptanceCapture.save(
+                    fixture.stage.getScene(),
+                    "chat-history-document-links",
+                    Map.of("ordinaryMessages", 2, "documentHyperlinks", 1, "typedDocumentClick", true));
+        }
+    }
+
     @Test
     void 同一内容复用原生单元格与WebView并保存样式对照() {
         List<ItemEnvelope> items = List.of(
@@ -115,8 +153,8 @@ class ChatDocumentAcceptanceTest {
             fixture.await("查看代码 1");
             assertEquals("1", fixture.script("String(document.querySelectorAll('article').length)"));
             assertFalse(fixture.script("document.body.textContent").contains("旧暂态"));
-            fixture.script("[...document.querySelectorAll('button')].find(n=>n.textContent==='查看代码 1').click()");
-            fixture.script("[...document.querySelectorAll('button')].find(n=>n.textContent==='说明.md').click()");
+            fixture.script("[...document.querySelectorAll('a.attachment')].find(n=>n.textContent==='查看代码 1').click()");
+            fixture.script("[...document.querySelectorAll('a.attachment')].find(n=>n.textContent==='说明.md').click()");
             assertEquals(2, fixture.previews.size());
             assertTrue(fixture.previews.stream()
                     .allMatch(ref -> ref.sourceItemId().orElseThrow().equals(id)));
@@ -127,8 +165,8 @@ class ChatDocumentAcceptanceTest {
             ItemEnvelope large =
                     ChatAcceptanceFixture.message(id, 1, MessageRole.ASSISTANT, "长正文".repeat(350_000), List.of());
             fixture.show("flow", List.of(large), List.of());
-            fixture.await("打开完整正文");
-            fixture.script("[...document.querySelectorAll('button')].find(n=>n.textContent==='打开完整正文').click()");
+            fixture.await("查看完整消息");
+            fixture.script("[...document.querySelectorAll('a.attachment')].find(n=>n.textContent==='查看完整消息').click()");
             assertEquals("body", fixture.previews.getLast().selector());
             assertTrue(Integer.parseInt(fixture.script("String(document.getElementById('surface').textContent.length)"))
                     < 66_000);
@@ -182,6 +220,27 @@ class ChatDocumentAcceptanceTest {
                     List.of()));
         }
         return result;
+    }
+
+    private static ItemHistoryEntry history(
+            ChatAcceptanceFixture fixture,
+            long sequence,
+            MessageRole role,
+            String text,
+            List<AttachmentRef> attachments) {
+        ItemId id = ItemId.random();
+        return new ItemHistoryEntry(
+                id,
+                TurnId.random(),
+                sequence,
+                "message",
+                Optional.of(role),
+                text,
+                Optional.of(DocumentReference.message(fixture.workspace, id, "body")),
+                false,
+                Instant.EPOCH,
+                attachments,
+                List.of());
     }
 
     private static void verifyRecovery(ChatAcceptanceFixture fixture, String anchor, double offset) {

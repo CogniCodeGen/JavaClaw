@@ -23,6 +23,15 @@ final class SystemCredentialCommandRunner implements CredentialCommandRunner {
         List<String> checkedCommand = List.copyOf(Objects.requireNonNull(command, "command"));
         byte[] checkedInput =
                 Objects.requireNonNull(standardInput, "standardInput").clone();
+        try {
+            return runProcess(checkedCommand, checkedInput);
+        } finally {
+            // 输入副本的所有权覆盖进程启动，启动失败也必须清零。
+            java.util.Arrays.fill(checkedInput, (byte) 0);
+        }
+    }
+
+    private Result runProcess(List<String> checkedCommand, byte[] checkedInput) {
         Process process = start(checkedCommand);
         CompletableFuture<byte[]> output = read(process.getInputStream());
         CompletableFuture<byte[]> error = read(process.getErrorStream());
@@ -48,7 +57,6 @@ final class SystemCredentialCommandRunner implements CredentialCommandRunner {
             if (process.isAlive()) {
                 process.destroyForcibly();
             }
-            java.util.Arrays.fill(checkedInput, (byte) 0);
         }
     }
 

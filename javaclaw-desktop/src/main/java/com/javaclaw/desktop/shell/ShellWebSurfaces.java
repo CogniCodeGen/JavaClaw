@@ -7,9 +7,11 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 
+import javafx.beans.value.ChangeListener;
 import javafx.geometry.Orientation;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.Hyperlink;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
@@ -35,6 +37,7 @@ import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 import com.javaclaw.desktop.document.DocumentPreviewPane;
 import com.javaclaw.desktop.document.SdkDocumentPreviewGateway;
 import com.javaclaw.desktop.state.DesktopState;
+import com.javaclaw.desktop.state.TranscriptState;
 import com.javaclaw.desktop.view.ChatSurface;
 import com.javaclaw.desktop.view.TranscriptPresenter;
 import com.javaclaw.protocol.CanonicalJson;
@@ -45,8 +48,15 @@ final class ShellWebSurfaces implements AutoCloseable {
     private final DocumentPreviewPane documents;
     private final VBox progress;
     private final VBox pending = new VBox();
+    private final VBox nativeTranscript = new VBox();
     private final ListView<SummaryRow> summary = new ListView<>();
     private final ListView<ItemEnvelope> legacy;
+    private final TranscriptPresenter nativeFormatter = new TranscriptPresenter(new CanonicalJson());
+    private final ChangeListener<Boolean> nativeVisibility = (observable, before, showing) -> {
+        if (showing) {
+            renderNative(true);
+        }
+    };
     private final Button earlier =
             new PlatformComponentFactory().action("加载更早消息", ActionStyle.GHOST, ActionSize.COMPACT);
     private final Button latest =
@@ -54,6 +64,13 @@ final class ShellWebSurfaces implements AutoCloseable {
     private final com.javaclaw.desktop.DesktopNotificationSubscription invalidations;
     private Optional<WorkspaceId> workspace = Optional.empty();
     private Optional<Instant> connection = Optional.empty();
+    private TranscriptState transcript = TranscriptState.empty();
+    private List<ChatSurface.TemporaryMessage> temporary = List.of();
+    private List<ItemEnvelope> nativeItems = List.of();
+    private List<ItemHistoryEntry> nativeHistory = List.of();
+    private List<SummaryRow> committedRows = List.of();
+    private final HashSet<String> committedIds = new HashSet<>();
+    private boolean nativeFollowing = true;
 
     ShellWebSurfaces(DesktopPresenter presenter, VBox progress, StackPane host, ListView<ItemEnvelope> legacy) {
         this.progress = progress;
@@ -83,7 +100,7 @@ final class ShellWebSurfaces implements AutoCloseable {
         earlier.setOnAction(event -> presenter.loadEarlierTranscript());
         installNativeFollowing(presenter);
         StackPane nativeMessages = new StackPane(legacy, summary);
-        VBox nativeTranscript = new VBox(new HBox(8, earlier, latest), nativeMessages);
+        nativeTranscript.getChildren().setAll(new HBox(8, earlier, latest), nativeMessages);
         VBox.setVgrow(nativeMessages, Priority.ALWAYS);
         chat = new ChatSurface(
                 nativeTranscript,
@@ -91,6 +108,8 @@ final class ShellWebSurfaces implements AutoCloseable {
                 this::external,
                 presenter::loadEarlierTranscript,
                 presenter::followTranscript);
+        // Host 同步显露简版时补入最新快照；健康 WebView 不维护隐藏列表，也不依赖下一次服务端通知。
+        nativeTranscript.visibleProperty().addListener(nativeVisibility);
         host.getChildren().add(chat.node());
     }
 
@@ -98,8 +117,8 @@ final class ShellWebSurfaces implements AutoCloseable {
         visible(latest, false);
         latest.setOnAction(event -> {
             presenter.followTranscript(true);
-            summary.scrollTo(summary.getItems().size() - 1);
-            legacy.scrollTo(legacy.getItems().size() - 1);
+            ListView<?> selected = summary.isVisible() ? summary : legacy;
+            selected.scrollTo(selected.getItems().size() - 1);
         });
         for (ListView<?> list : List.of(summary, legacy)) {
             // 只观察真实输入事件，不监听 value/scrollTo；布局与程序跟随不得反向切换阅读策略。
@@ -132,6 +151,7 @@ final class ShellWebSurfaces implements AutoCloseable {
     }
 
     void render(DesktopState state) {
+        transcript = state.transcript();
         Optional<WorkspaceId> next = state.threads().selectedWorkspace().map(Workspace::id);
         if (!workspace.equals(next) || !connection.equals(state.connection().connectedAt())) {
             documents.clear();
@@ -139,7 +159,7 @@ final class ShellWebSurfaces implements AutoCloseable {
             connection = state.connection().connectedAt();
         }
         if (next.isPresent()) {
-            var temporary = state.transcript().stream().stream()
+            temporary = transcript.stream().stream()
                     .flatMap(stream -> stream.messages().stream())
                     .filter(message -> message.state() != TurnStreamKind.COMMITTED
                             || message.itemSequence()
@@ -152,7 +172,9 @@ final class ShellWebSurfaces implements AutoCloseable {
                             message.state() == TurnStreamKind.CLOSED,
                             message.textOffsetUtf16()))
                     .toList();
-            renderNative(state, temporary);
+            if (nativeTranscript.isVisible()) {
+                renderNative(false);
+            }
             chat.show(
                     state.threads()
                             .selectedThread()
@@ -164,48 +186,83 @@ final class ShellWebSurfaces implements AutoCloseable {
                     temporary,
                     state.transcript().hasEarlier());
         } else {
-            summary.getItems().clear();
-            visible(earlier, false);
-            visible(latest, false);
-            chat.node().show("empty", "{}");
+            temporary = List.of();
+            clearNative();
+            chat.clear();
         }
     }
 
-    private void renderNative(DesktopState state, List<ChatSurface.TemporaryMessage> temporary) {
-        ArrayList<SummaryRow> rows = new ArrayList<>();
-        HashSet<String> committed = new HashSet<>();
-        TranscriptPresenter formatter = new TranscriptPresenter(new CanonicalJson());
-        formatter.replaceItems(state.transcript().items());
-        state.transcript().items().forEach(item -> {
-            committed.add(item.id().toString());
-            var presented = formatter.present(item);
-            rows.add(new SummaryRow(presented.title(), presented.body(), presented.styleClass(), Optional.empty()));
-        });
-        state.transcript().history().forEach(item -> {
-            if (committed.add(item.id().toString())) {
-                var presented = TranscriptPresenter.presentHistory(item);
-                rows.add(
-                        new SummaryRow(presented.title(), presented.body(), presented.styleClass(), Optional.of(item)));
+    private void renderNative(boolean revealed) {
+        if (workspace.isEmpty()) {
+            clearNative();
+            return;
+        }
+        boolean itemsChanged = !nativeItems.equals(transcript.items());
+        List<SummaryRow> rows = nativeRows();
+        boolean projected = !transcript.history().isEmpty() || !temporary.isEmpty();
+        boolean changed = !summary.getItems().equals(rows);
+        if (changed) {
+            summary.getItems().setAll(rows);
+        }
+        visible(summary, projected);
+        visible(legacy, !projected);
+        if (transcript.following() && (revealed || !nativeFollowing || (projected ? changed : itemsChanged))) {
+            ListView<?> selected = projected ? summary : legacy;
+            if (!selected.getItems().isEmpty()) {
+                selected.scrollTo(selected.getItems().size() - 1);
             }
-        });
+        }
+        nativeFollowing = transcript.following();
+        visible(earlier, transcript.hasEarlier());
+        visible(latest, !transcript.following());
+    }
+
+    private List<SummaryRow> nativeRows() {
+        if (!nativeItems.equals(transcript.items()) || !nativeHistory.equals(transcript.history())) {
+            rebuildCommittedRows();
+        }
+        ArrayList<SummaryRow> rows = new ArrayList<>(committedRows);
         temporary.stream()
-                .filter(item -> !item.text().isEmpty() && !committed.contains(item.id()))
+                .filter(item -> !item.text().isEmpty() && !committedIds.contains(item.id()))
                 .map(ShellWebSurfaces::temporaryRow)
                 .forEach(rows::add);
         if (rows.size() > 500) {
             rows.subList(0, rows.size() - 500).clear();
         }
-        boolean projected = !state.transcript().history().isEmpty() || !temporary.isEmpty();
-        if (!summary.getItems().equals(rows)) {
-            summary.getItems().setAll(rows);
-            if (state.transcript().following() && !rows.isEmpty()) {
-                summary.scrollTo(rows.size() - 1);
+        return rows;
+    }
+
+    private void rebuildCommittedRows() {
+        // 暂态正文变化不重新解码已提交内容；缓存只保留上次原生展示的有界历史，内容替换时整体失效。
+        nativeItems = transcript.items();
+        nativeHistory = transcript.history();
+        ArrayList<SummaryRow> rows = new ArrayList<>();
+        committedIds.clear();
+        nativeFormatter.replaceItems(nativeItems);
+        nativeItems.forEach(item -> {
+            committedIds.add(item.id().toString());
+            var presented = nativeFormatter.present(item);
+            rows.add(new SummaryRow(presented.title(), presented.body(), presented.styleClass(), Optional.empty()));
+        });
+        nativeHistory.forEach(item -> {
+            if (committedIds.add(item.id().toString())) {
+                var presented = TranscriptPresenter.presentHistory(item);
+                rows.add(
+                        new SummaryRow(presented.title(), presented.body(), presented.styleClass(), Optional.of(item)));
             }
-        }
-        visible(summary, projected);
-        visible(legacy, !projected);
-        visible(earlier, state.transcript().hasEarlier());
-        visible(latest, !state.transcript().following());
+        });
+        committedRows = List.copyOf(rows);
+    }
+
+    private void clearNative() {
+        nativeItems = List.of();
+        nativeHistory = List.of();
+        committedRows = List.of();
+        committedIds.clear();
+        nativeFormatter.replaceItems(List.of());
+        summary.getItems().clear();
+        visible(earlier, false);
+        visible(latest, false);
     }
 
     private static SummaryRow temporaryRow(ChatSurface.TemporaryMessage item) {
@@ -246,6 +303,7 @@ final class ShellWebSurfaces implements AutoCloseable {
 
     @Override
     public void close() {
+        nativeTranscript.visibleProperty().removeListener(nativeVisibility);
         invalidations.close();
         chat.close();
         documents.close();
@@ -254,8 +312,7 @@ final class ShellWebSurfaces implements AutoCloseable {
     private final class SummaryCell extends ListCell<SummaryRow> {
         private final Label title = new Label();
         private final Label body = new Label();
-        private final Button open =
-                new PlatformComponentFactory().action("打开文档", ActionStyle.GHOST, ActionSize.COMPACT);
+        private final Hyperlink open = documentLink("查看完整消息");
         private final VBox files = new VBox(4);
         private final VBox card = new VBox(6, title, body, open, files);
 
@@ -266,6 +323,7 @@ final class ShellWebSurfaces implements AutoCloseable {
                 if (getItem() != null) {
                     getItem()
                             .source()
+                            .filter(ItemHistoryEntry::truncated)
                             .flatMap(ItemHistoryEntry::bodyReference)
                             .ifPresent(ShellWebSurfaces.this::preview);
                 }
@@ -273,9 +331,15 @@ final class ShellWebSurfaces implements AutoCloseable {
         }
 
         private void addFile(String label, DocumentReference reference) {
-            Button button = new PlatformComponentFactory().action(label, ActionStyle.GHOST, ActionSize.COMPACT);
-            button.setOnAction(event -> preview(reference));
-            files.getChildren().add(button);
+            Hyperlink link = documentLink(label);
+            link.setOnAction(event -> preview(reference));
+            files.getChildren().add(link);
+        }
+
+        private static Hyperlink documentLink(String label) {
+            Hyperlink link = new Hyperlink(label);
+            link.getStyleClass().add("transcript-document-link");
+            return link;
         }
 
         @Override
@@ -288,7 +352,12 @@ final class ShellWebSurfaces implements AutoCloseable {
             title.setText(row.title());
             body.setText(row.body().length() > 65_536 ? row.body().substring(0, 65_536) : row.body());
             card.getStyleClass().setAll(row.style());
-            visible(open, row.source().flatMap(ItemHistoryEntry::bodyReference).isPresent());
+            visible(
+                    open,
+                    row.source()
+                            .filter(ItemHistoryEntry::truncated)
+                            .flatMap(ItemHistoryEntry::bodyReference)
+                            .isPresent());
             files.getChildren().clear();
             row.source().ifPresent(item -> {
                 workspace.ifPresent(scope -> item.attachments()

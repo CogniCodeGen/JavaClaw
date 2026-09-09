@@ -13,6 +13,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.scene.control.TextField;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.VBox;
 
 import com.javaclaw.api.ProviderEndpoint;
@@ -32,11 +33,14 @@ final class ChatModelPicker extends Button {
     private Optional<ProviderRef> value = Optional.empty();
     private boolean locked;
 
-    ChatModelPicker(Consumer<ProviderRef> selected, Runnable add, Runnable manage, Runnable restore, Runnable lockedAction) {
+    ChatModelPicker(
+            Consumer<ProviderRef> selected, Runnable add, Runnable manage, Runnable restore, Runnable lockedAction) {
         this.selected = selected;
         this.lockedAction = lockedAction;
         setId("chatModel");
         setAccessibleText("选择聊天模型");
+        setMinWidth(0);
+        setMaxWidth(220);
         getStyleClass().add("composer-select");
         search.setPromptText("搜索模型或服务…");
         search.setAccessibleText("搜索已配置模型");
@@ -50,12 +54,13 @@ final class ChatModelPicker extends Button {
             }
         });
         search.textProperty().addListener((ignored, before, after) -> filter());
-        VBox content = new VBox(8, search, choices, action("＋ 添加模型", add), action("管理模型与连接", manage),
-                action("恢复项目设置", restore));
+        VBox content = new VBox(
+                8, search, choices, action("＋ 添加模型", add), action("管理模型与连接", manage), action("恢复项目设置", restore));
         content.setPrefWidth(340);
         content.setMaxWidth(340);
-        PlatformStylesheets.applyTo(content);
         menu.getItems().add(new CustomMenuItem(content, false));
+        // ContextMenu 属于独立 Scene；令牌必须挂在其 .root，不能只加载到菜单内容子树。
+        PlatformStylesheets.apply(menu.getScene());
         setOnAction(event -> open());
         render(List.of(), Optional.empty(), false);
     }
@@ -65,14 +70,18 @@ final class ChatModelPicker extends Button {
         value = selected;
         this.locked = locked;
         setText(selected.map(this::name).orElse("选择模型") + (locked ? " · Agent 固定" : " ▾"));
+        setTooltip(new Tooltip(getText()));
         filter();
     }
 
     String name(ProviderRef reference) {
-        return catalog.stream().filter(endpoint -> endpoint.id().equals(reference.endpointId()))
+        return catalog.stream()
+                .filter(endpoint -> endpoint.id().equals(reference.endpointId()))
                 .flatMap(endpoint -> endpoint.spec().models().stream())
-                .filter(model -> model.modelId().equals(reference.model())).findFirst()
-                .map(model -> model.displayName()).orElse(reference.model());
+                .filter(model -> model.modelId().equals(reference.model()))
+                .findFirst()
+                .map(model -> model.displayName())
+                .orElse(reference.model());
     }
 
     void close() {
@@ -83,9 +92,28 @@ final class ChatModelPicker extends Button {
         if (locked) {
             lockedAction.run();
         } else {
+            applyOwnerAppearance();
             menu.show(this, Side.TOP, 0, 0);
             search.requestFocus();
         }
+    }
+
+    private void applyOwnerAppearance() {
+        if (getScene() == null) {
+            return;
+        }
+        var root = menu.getScene().getRoot();
+        root.getStyleClass().removeIf(ChatModelPicker::isAppearanceClass);
+        // 每次打开都继承当前预览，避免独立菜单残留上次主题、字号或密度。
+        root.getStyleClass()
+                .addAll(getScene().getRoot().getStyleClass().stream()
+                        .filter(ChatModelPicker::isAppearanceClass)
+                        .toList());
+        root.applyCss();
+    }
+
+    private static boolean isAppearanceClass(String value) {
+        return value.startsWith("theme-") || value.startsWith("font-scale-") || value.startsWith("density-");
     }
 
     private Button action(String text, Runnable action) {
@@ -100,12 +128,19 @@ final class ChatModelPicker extends Button {
 
     private void filter() {
         String query = search.getText().strip().toLowerCase(Locale.ROOT);
-        List<Entry> entries = catalog.stream().flatMap(endpoint -> endpoint.spec().models().stream()
-                .filter(model -> model.supports(ProviderModelPurpose.CHAT))
-                .map(model -> new Entry(new ProviderRef(endpoint.id(), endpoint.revision(), model.modelId()),
-                        model.displayName(), endpoint.spec().displayName(), endpoint.lifecycle())))
-                .filter(entry -> (entry.name() + " " + entry.service() + " " + entry.reference().model())
-                        .toLowerCase(Locale.ROOT).contains(query)).toList();
+        List<Entry> entries = catalog.stream()
+                .flatMap(endpoint -> endpoint.spec().models().stream()
+                        .filter(model -> model.supports(ProviderModelPurpose.CHAT))
+                        .map(model -> new Entry(
+                                new ProviderRef(endpoint.id(), endpoint.revision(), model.modelId()),
+                                model.displayName(),
+                                endpoint.spec().displayName(),
+                                endpoint.lifecycle())))
+                .filter(entry -> (entry.name() + " " + entry.service() + " "
+                                + entry.reference().model())
+                        .toLowerCase(Locale.ROOT)
+                        .contains(query))
+                .toList();
         choices.getItems().setAll(entries);
     }
 

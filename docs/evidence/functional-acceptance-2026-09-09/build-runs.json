@@ -1,0 +1,45 @@
+{
+  "countsSource": "Latest per-module Surefire and Failsafe reports: second-clean-verify upstream modules plus desktop-packaging-verify-resume. Not represented as one uninterrupted successful second clean build.",
+  "runs": [
+    {
+      "name": "first-clean-verify",
+      "log": "/tmp/javaclaw-functional-final-verify.log",
+      "summary": "first-clean-verify-summary.txt",
+      "note": "All 15 reactor modules passed before adding the popup CSS regression.",
+      "outcome": "PASS",
+      "finished": "2026-09-09T10:48:08+08:00"
+    },
+    {
+      "name": "second-clean-verify",
+      "log": "/tmp/javaclaw-functional-final-verify2.log",
+      "summary": "second-clean-verify-summary.txt",
+      "note": "All pre-Desktop modules passed. One new popup test fixture assertion failed; Desktop and Packaging subsequently rerun.",
+      "outcome": "FAIL",
+      "finished": "2026-09-09T11:21:31+08:00"
+    },
+    {
+      "name": "upstream-cache-install",
+      "log": "/tmp/javaclaw-functional-final-upstream-install.log",
+      "summary": "upstream-cache-install-summary.txt",
+      "note": "Install already-verified current upstream artifacts with -DskipTests for the resume; build preparation, not test validation.",
+      "outcome": "PASS",
+      "finished": "2026-09-09T11:27:20+08:00"
+    },
+    {
+      "name": "desktop-packaging-verify-resume",
+      "log": "/tmp/javaclaw-functional-final-verify-resume.log",
+      "summary": "desktop-packaging-verify-resume-summary.txt",
+      "note": "After fixing only the popup test fixture to use production appearance preview, both remaining reactor modules passed.",
+      "outcome": "PASS",
+      "finished": "2026-09-09T11:29:33+08:00"
+    },
+    {
+      "name": "final-desktop-style",
+      "log": "/tmp/javaclaw-functional-final-style6.log",
+      "summary": "final-desktop-style-summary.txt",
+      "note": "Spotless apply/check and Checkstyle passed for final fixture; prior full-tree style5 passed before this fixture-only correction.",
+      "outcome": "PASS",
+      "finished": "2026-09-09T11:27:01+08:00"
+    }
+  ]
+}

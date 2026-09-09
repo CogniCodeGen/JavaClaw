@@ -47,8 +47,12 @@ public final class ExecutionPreviewService {
      * @param providers 本地连接可用性服务
      */
     public ExecutionPreviewService(
-            CoreCommandService core, AgentRoleService roles, ExecutionConfigurationService configurations,
-            PermissionProfileService permissions, ManagedWorktreeService worktrees, ProviderService providers) {
+            CoreCommandService core,
+            AgentRoleService roles,
+            ExecutionConfigurationService configurations,
+            PermissionProfileService permissions,
+            ManagedWorktreeService worktrees,
+            ProviderService providers) {
         this.core = Objects.requireNonNull(core, "core");
         this.worktrees = Objects.requireNonNull(worktrees, "worktrees");
         this.providers = Objects.requireNonNull(providers, "providers");
@@ -84,7 +88,9 @@ public final class ExecutionPreviewService {
             return blocked(ExecutionBlocker.Code.THREAD_UNAVAILABLE, failure.getMessage());
         }
         ExecutionPreview preview = resolver.preview(scope, threadId, execution);
-        return preview.provider().map(provider -> inspectProvider(preview, provider)).orElse(preview);
+        return preview.provider()
+                .map(provider -> inspectProvider(preview, provider))
+                .orElse(preview);
     }
 
     private boolean belongsToWorkspace(ThreadId threadId, WorkspaceId workspaceId) {
@@ -108,8 +114,13 @@ public final class ExecutionPreviewService {
             blockers.add(new ExecutionBlocker(ExecutionBlocker.Code.MODEL_UNAVAILABLE, "模型的指定版本不可用，请重新选择模型"));
         }
         return new ExecutionPreview(
-                preview.role(), preview.provider(), preview.reasoning(), preview.modelLocked(),
-                preview.reasoningLocked(), preview.provenance(), blockers);
+                preview.role(),
+                preview.provider(),
+                preview.reasoning(),
+                preview.modelLocked(),
+                preview.reasoningLocked(),
+                preview.provenance(),
+                blockers);
     }
 
     private static void requireInvalidRequest(PersistenceException failure) {
@@ -120,7 +131,12 @@ public final class ExecutionPreviewService {
 
     private static ExecutionPreview blocked(ExecutionBlocker.Code code, String message) {
         return new ExecutionPreview(
-                Optional.empty(), Optional.empty(), Optional.empty(), false, false,
-                List.of(), List.of(new ExecutionBlocker(code, message)));
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                false,
+                false,
+                List.of(),
+                List.of(new ExecutionBlocker(code, message)));
     }
 }

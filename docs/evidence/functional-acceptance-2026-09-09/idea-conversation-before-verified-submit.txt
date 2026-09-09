@@ -1,0 +1,3 @@
+Exception in thread "main" java.util.NoSuchElementException: No value present
+	at java.base/java.util.Optional.orElseThrow(Optional.java:377)
+	at ReadFunctionalConversation.main(ReadFunctionalConversation.java:30)

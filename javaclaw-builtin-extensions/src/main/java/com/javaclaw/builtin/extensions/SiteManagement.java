@@ -32,12 +32,16 @@ final class SiteManagement {
     static final String UPDATE = "site/update";
     static final String CREDENTIAL_BIND = "site/credential/bind";
     static final String CREDENTIAL_CLEAR = "site/credential/clear";
-    static final String PRIVATE_NETWORK_BIND = "site/privateNetwork/bind";
-    static final String PRIVATE_NETWORK_CLEAR = "site/privateNetwork/clear";
+    static final String PRIVATE_NETWORK_BIND = "site/private-network/bind";
+    static final String PRIVATE_NETWORK_CLEAR = "site/private-network/clear";
     static final String VIEW_NEW = "site/view.new";
     static final String VIEW_SELECTED = "site/view.selected";
     static final String VIEW_CREDENTIALS = "site/view.credentials";
-    static final String VIEW_PRIVATE_NETWORK = "site/view.privateNetworkGrants";
+    static final String VIEW_PRIVATE_NETWORK = "site/view.private-network-grants";
+    // ViewSchema 只发布协议允许的小写名称；已有 SDK operation 保留为别名，不改变其幂等键语义。
+    private static final String LEGACY_PRIVATE_NETWORK_BIND = "site/privateNetwork/bind";
+    private static final String LEGACY_PRIVATE_NETWORK_CLEAR = "site/privateNetwork/clear";
+    private static final String LEGACY_VIEW_PRIVATE_NETWORK = "site/view.privateNetworkGrants";
     static final String NEW_SOURCE = "newSite";
     static final String EDIT_SOURCE = "siteEditor";
     static final String CREDENTIAL_SOURCE = "siteCredentials";
@@ -57,7 +61,12 @@ final class SiteManagement {
         return List.of(
                 new ExtensionContributions.Query(
                         "site.management.query",
-                        Set.of(VIEW_NEW, VIEW_SELECTED, VIEW_CREDENTIALS, VIEW_PRIVATE_NETWORK),
+                        Set.of(
+                                VIEW_NEW,
+                                VIEW_SELECTED,
+                                VIEW_CREDENTIALS,
+                                VIEW_PRIVATE_NETWORK,
+                                LEGACY_VIEW_PRIVATE_NETWORK),
                         this::query),
                 new ExtensionContributions.Command(
                         "site.management.command",
@@ -67,7 +76,9 @@ final class SiteManagement {
                                 CREDENTIAL_BIND,
                                 CREDENTIAL_CLEAR,
                                 PRIVATE_NETWORK_BIND,
-                                PRIVATE_NETWORK_CLEAR),
+                                PRIVATE_NETWORK_CLEAR,
+                                LEGACY_PRIVATE_NETWORK_BIND,
+                                LEGACY_PRIVATE_NETWORK_CLEAR),
                         this::command),
                 new ExtensionContributions.View(
                         "site.management.view",
@@ -79,7 +90,7 @@ final class SiteManagement {
             case VIEW_NEW -> support.newEditor(request, NEW_SOURCE);
             case VIEW_SELECTED -> support.selected(request, context, EDIT_SOURCE, SiteManagementView::editor);
             case VIEW_CREDENTIALS -> credentialOptions(request, context);
-            case VIEW_PRIVATE_NETWORK -> privateNetworkOptions(request, context);
+            case VIEW_PRIVATE_NETWORK, LEGACY_VIEW_PRIVATE_NETWORK -> privateNetworkOptions(request, context);
             default -> throw new IllegalArgumentException("unknown Site management query");
         };
     }
@@ -89,8 +100,8 @@ final class SiteManagement {
             case CREATE, UPDATE -> save(request, context);
             case CREDENTIAL_BIND -> bindCredential(request, context);
             case CREDENTIAL_CLEAR -> clearCredential(request, context);
-            case PRIVATE_NETWORK_BIND -> bindPrivateNetwork(request, context);
-            case PRIVATE_NETWORK_CLEAR -> clearPrivateNetwork(request, context);
+            case PRIVATE_NETWORK_BIND, LEGACY_PRIVATE_NETWORK_BIND -> bindPrivateNetwork(request, context);
+            case PRIVATE_NETWORK_CLEAR, LEGACY_PRIVATE_NETWORK_CLEAR -> clearPrivateNetwork(request, context);
             default -> throw new IllegalArgumentException("unknown Site management command");
         };
     }

@@ -8,20 +8,19 @@ import com.javaclaw.api.ConversationThread;
 import com.javaclaw.api.ExecutionConfiguration;
 import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.ExecutionPreview;
+import com.javaclaw.api.ProviderRef;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.client.CommandOptions;
 import com.javaclaw.desktop.DesktopConfigurationChange;
 import com.javaclaw.desktop.DesktopNotificationSubscription;
 
-/**
- * 聊天配置先持久化再显示可发送；服务端是实际模型、思考和阻塞原因的唯一解析者。
- * 自动刷新不会推进失败草稿的写入版本；在途失效合并补读，迟到响应按作用域代次丢弃。
- */
+/** 聊天配置先持久化再显示可发送；服务端是实际模型、思考和阻塞原因的唯一解析者。 自动刷新不会推进失败草稿的写入版本；在途失效合并补读，迟到响应按作用域代次丢弃。 */
 final class ChatConfigurationPresenter implements AutoCloseable {
     private final CoreSettingsGateway gateway;
     private final ExecutionSelectionLoader loader;
     private final DesktopNotificationSubscription subscription;
-    private ExecutionSelectionLoader.Scope scope = new ExecutionSelectionLoader.Scope(Optional.empty(), Optional.empty(), false);
+    private ExecutionSelectionLoader.Scope scope =
+            new ExecutionSelectionLoader.Scope(Optional.empty(), Optional.empty(), false);
     private Optional<ExecutionSelectionLoader.Snapshot> snapshot = Optional.empty();
     private Optional<ExecutionPreview> preview = Optional.empty();
     private ExecutionOverrides baseline = ExecutionOverrides.empty();
@@ -33,6 +32,7 @@ final class ChatConfigurationPresenter implements AutoCloseable {
     private boolean closed;
     private long revision;
     private long epoch;
+    private CommandOptions writeOptions;
     private String message = "选择工作区，开始聊天";
 
     ChatConfigurationPresenter(CoreSettingsGateway gateway) {
@@ -61,6 +61,7 @@ final class ChatConfigurationPresenter implements AutoCloseable {
         baseline = ExecutionOverrides.empty();
         draft = baseline;
         revision = 0;
+        writeOptions = null;
         refresh();
     }
 
@@ -81,7 +82,7 @@ final class ChatConfigurationPresenter implements AutoCloseable {
         boolean retained = dirty();
         long request = begin("正在更新聊天配置…");
         var frozen = scope;
-        loader.load(frozen).whenComplete((loaded, failure) -> {
+        loader.loadForChat(frozen).whenComplete((loaded, failure) -> {
             if (!current(request)) {
                 return;
             }
@@ -104,9 +105,31 @@ final class ChatConfigurationPresenter implements AutoCloseable {
         if (pending || scope.thread().isEmpty()) {
             return;
         }
-        draft = Objects.requireNonNull(selected, "selected");
+        if (!draft.equals(Objects.requireNonNull(selected, "selected"))) {
+            writeOptions = null;
+        }
+        draft = selected;
         this.remember = remember;
         save();
+    }
+
+    void selectModel(ProviderRef model) {
+        if (pending || dirty()) {
+            return;
+        }
+        long request = begin("正在应用模型…");
+        gateway.useModel(scope.workspace().map(Workspace::id), scope.thread().map(ConversationThread::id), model)
+                .whenComplete((ignored, failure) -> {
+                    if (!current(request)) {
+                        return;
+                    }
+                    if (failure != null) {
+                        finishFailure(failure);
+                    } else {
+                        pending = false;
+                        refresh();
+                    }
+                });
     }
 
     void retry() {
@@ -120,6 +143,7 @@ final class ChatConfigurationPresenter implements AutoCloseable {
     void discard() {
         if (!pending) {
             draft = baseline;
+            writeOptions = null;
             refresh();
         }
     }
@@ -138,7 +162,10 @@ final class ChatConfigurationPresenter implements AutoCloseable {
         }
         long request = begin("正在保存选择…");
         var thread = scope.thread().orElseThrow();
-        gateway.rememberChatSelection(thread.workspaceId(), thread.id(), draft, CommandOptions.create(revision), remember)
+        if (writeOptions == null) {
+            writeOptions = CommandOptions.create(revision);
+        }
+        gateway.rememberChatSelection(thread.workspaceId(), thread.id(), draft, writeOptions, remember)
                 .whenComplete((saved, failure) -> {
                     if (!current(request)) {
                         return;
@@ -149,13 +176,15 @@ final class ChatConfigurationPresenter implements AutoCloseable {
                         baseline = saved.overrides();
                         draft = baseline;
                         revision = saved.revision();
+                        writeOptions = null;
                         readPreview(request, remember ? "已记住，新对话将继续使用" : "已更新当前对话");
                     }
                 });
     }
 
     private void readPreview(long request, String success) {
-        gateway.previewChatExecution(scope.workspace().orElseThrow().id(), scope.thread().map(ConversationThread::id), draft)
+        gateway.previewChatExecution(
+                        scope.workspace().orElseThrow().id(), scope.thread().map(ConversationThread::id), draft)
                 .whenComplete((resolved, failure) -> {
                     if (!current(request)) {
                         return;
@@ -166,7 +195,9 @@ final class ChatConfigurationPresenter implements AutoCloseable {
                     }
                     preview = Optional.of(resolved);
                     pending = false;
-                    message = resolved.ready() ? success : resolved.blockers().getFirst().message();
+                    message = resolved.ready()
+                            ? success
+                            : resolved.blockers().getFirst().message();
                     publish();
                     drain();
                 });
@@ -192,7 +223,7 @@ final class ChatConfigurationPresenter implements AutoCloseable {
 
     private long begin(String text) {
         pending = true;
-        preview = Optional.empty();
+        // 同一作用域刷新保留实际模型和锁定信息；pending 仍阻止发送，失败后再移除失效预览。
         message = text;
         long request = ++epoch;
         publish();

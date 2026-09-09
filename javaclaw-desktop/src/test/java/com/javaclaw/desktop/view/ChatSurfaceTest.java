@@ -35,6 +35,116 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ChatSurfaceTest {
     @Test
+    void 清空页面撤销旧链接并允许同一实例显示另一工作区的精确附件() {
+        try (Harness fixture = new Harness()) {
+            AttachmentRef attachment = new AttachmentRef("f".repeat(64), "text/markdown", "切换说明.md", 20);
+            ItemEnvelope previous = message("[旧站点](https://old.example.test)", List.of(attachment));
+            fixture.show(List.of(previous), List.of(), List.of());
+            fixture.await("切换说明.md");
+            FxTestSupport.run(fixture.chat::clear);
+            fixture.await("有什么我可以帮你的");
+            FxTestSupport.run(() -> {
+                fixture.post("preview", previous.id() + ":attachment:" + attachment.digest());
+                fixture.post("link", previous.id() + ":link:0");
+                assertTrue(fixture.previews.isEmpty());
+                assertTrue(fixture.external.isEmpty());
+            });
+            WorkspaceId workspace = WorkspaceId.random();
+            ItemEnvelope next = message("新的工作区消息", List.of(attachment));
+            fixture.chat.show("thread", workspace, List.of(next), List.of(), List.of(), false);
+            fixture.await("新的工作区消息");
+            FxTestSupport.run(() -> {
+                fixture.clickPreview(attachment.fileName());
+                assertEquals(List.of(DocumentReference.attachment(workspace, next.id(), attachment)), fixture.previews);
+            });
+        }
+    }
+
+    @Test
+    void 普通用户和助手历史正文不因全文引用而出现文档入口() {
+        try (Harness fixture = new Harness()) {
+            ItemHistoryEntry user = history(fixture.workspace, MessageRole.USER, "你好，请介绍这个项目。", false);
+            ItemHistoryEntry assistant = history(fixture.workspace, MessageRole.ASSISTANT, "这是普通对话的完整回答。", false);
+            fixture.show(List.of(), List.of(user, assistant), List.of());
+            fixture.await("普通对话的完整回答");
+            FxTestSupport.run(() -> {
+                assertEquals("0", fixture.script("String(document.querySelectorAll('article .attachment').length)"));
+                assertFalse(fixture.script("document.getElementById('surface').textContent")
+                        .contains("打开文档"));
+                assertFalse(fixture.script("document.getElementById('surface').textContent")
+                        .contains("查看完整消息"));
+                fixture.post("preview", user.id() + ":body");
+                fixture.post("preview", assistant.id() + ":body");
+                assertTrue(fixture.previews.isEmpty());
+            });
+        }
+    }
+
+    @Test
+    void 截断历史通过查看完整消息超链接打开原始正文引用() {
+        try (Harness fixture = new Harness()) {
+            ItemHistoryEntry entry = history(fixture.workspace, MessageRole.ASSISTANT, "历史正文摘要", true);
+            fixture.show(List.of(), List.of(entry), List.of());
+            fixture.await("查看完整消息");
+            FxTestSupport.run(() -> {
+                assertEquals("1", fixture.script("String(document.querySelectorAll('article a.attachment').length)"));
+                assertEquals(
+                        "0", fixture.script("String(document.querySelectorAll('article button.attachment').length)"));
+                fixture.clickPreview("查看完整消息");
+                assertEquals(List.of(entry.bodyReference().orElseThrow()), fixture.previews);
+            });
+        }
+    }
+
+    @Test
+    void 生成文件和消息附件保留超链接并分别打开精确来源() {
+        try (Harness fixture = new Harness()) {
+            AttachmentRef attachment = new AttachmentRef("c".repeat(64), "text/markdown", "报告.md", 12);
+            ItemId message = ItemId.random();
+            ItemId generated = ItemId.random();
+            DocumentReference file = DocumentReference.file(fixture.workspace, generated, "file:0");
+            ItemHistoryEntry attached = new ItemHistoryEntry(
+                    message,
+                    TurnId.random(),
+                    1,
+                    "message",
+                    Optional.of(MessageRole.ASSISTANT),
+                    "报告已经生成。",
+                    Optional.of(DocumentReference.message(fixture.workspace, message, "body")),
+                    false,
+                    Instant.EPOCH,
+                    List.of(attachment),
+                    List.of());
+            ItemHistoryEntry created = new ItemHistoryEntry(
+                    generated,
+                    TurnId.random(),
+                    2,
+                    "file-change",
+                    Optional.empty(),
+                    "已生成报告文件",
+                    Optional.empty(),
+                    false,
+                    Instant.EPOCH,
+                    List.of(),
+                    List.of(file));
+            fixture.show(List.of(), List.of(attached, created), List.of());
+            fixture.await("已生成报告文件");
+            FxTestSupport.run(() -> {
+                assertEquals("2", fixture.script("String(document.querySelectorAll('article a.attachment').length)"));
+                assertFalse(fixture.script("document.getElementById('surface').textContent")
+                        .contains("打开文档"));
+                fixture.clickPreview("报告.md");
+                fixture.clickPreview("查看引用文件 1");
+                assertEquals(
+                        List.of(DocumentReference.attachment(fixture.workspace, message, attachment), file),
+                        fixture.previews);
+                fixture.post("preview", message + ":body");
+                assertEquals(2, fixture.previews.size());
+            });
+        }
+    }
+
+    @Test
     void 历史摘要的围栏附件和相对链接都保留来源身份且危险链接没有业务目标() {
         try (Harness fixture = new Harness()) {
             ItemId id = ItemId.random();
@@ -60,11 +170,7 @@ class ChatSurfaceTest {
             fixture.await("查看代码 1");
             FxTestSupport.run(() -> {
                 for (String target : List.of(
-                        id + ":fence:0",
-                        id + ":attachment:" + attachment.digest(),
-                        id + ":file:0",
-                        id + ":link:0",
-                        id + ":body")) {
+                        id + ":fence:0", id + ":attachment:" + attachment.digest(), id + ":file:0", id + ":link:0")) {
                     fixture.post("preview", target);
                 }
                 fixture.post("link", id + ":link:1");
@@ -73,7 +179,8 @@ class ChatSurfaceTest {
                 fixture.post("preview", "伪造句柄");
                 fixture.post("history", "");
                 fixture.post("following", "false");
-                assertEquals(5, fixture.previews.size());
+                fixture.post("preview", id + ":body");
+                assertEquals(4, fixture.previews.size());
                 assertTrue(fixture.previews.stream()
                         .allMatch(ref -> ref.sourceItemId().orElseThrow().equals(id)));
                 assertEquals(List.of(URI.create("https://example.com/reference%20guide")), fixture.external);
@@ -147,7 +254,8 @@ class ChatSurfaceTest {
             fixture.await("查看代码 1");
             fixture.show(List.of(shortItem), List.of(), List.of());
             FxTestSupport.run(() -> {
-                fixture.post("preview", shortItem.id() + ":fence:0");
+                fixture.clickPreview("查看代码 1");
+                fixture.clickPreview(attachment.fileName());
                 // 真实 DOM 点击经过 WebView bridge，再按原始 Link 索引解析服务端来源。
                 fixture.engine()
                         .executeScript(
@@ -155,14 +263,17 @@ class ChatSurfaceTest {
                 fixture.engine()
                         .executeScript(
                                 "document.querySelector('[data-link=\"" + shortItem.id() + ":link:1\"]').click()");
-                assertEquals(2, fixture.previews.size());
+                assertEquals(3, fixture.previews.size());
+                assertEquals(
+                        DocumentReference.attachment(fixture.workspace, shortItem.id(), attachment),
+                        fixture.previews.get(1));
                 assertEquals(List.of(URI.create("http://example.com/reference%20guide")), fixture.external);
             });
             ItemEnvelope large = message("大".repeat(1_048_577), List.of());
             fixture.show(List.of(large), List.of(), List.of());
-            fixture.await("打开完整正文");
+            fixture.await("查看完整消息");
             FxTestSupport.run(() -> {
-                fixture.post("preview", large.id() + ":body");
+                fixture.clickPreview("查看完整消息");
                 assertEquals(
                         DocumentReference.message(fixture.workspace, large.id(), "body"), fixture.previews.getLast());
                 assertTrue(fixture.engine()
@@ -172,6 +283,22 @@ class ChatSurfaceTest {
                         < 66_000);
             });
         }
+    }
+
+    private static ItemHistoryEntry history(WorkspaceId workspace, MessageRole role, String text, boolean truncated) {
+        ItemId id = ItemId.random();
+        return new ItemHistoryEntry(
+                id,
+                TurnId.random(),
+                1,
+                "message",
+                Optional.of(role),
+                text,
+                Optional.of(DocumentReference.message(workspace, id, "body")),
+                truncated,
+                Instant.EPOCH,
+                List.of(),
+                List.of());
     }
 
     private static ItemEnvelope message(String text, List<AttachmentRef> attachments) {
@@ -227,6 +354,15 @@ class ChatSurfaceTest {
 
         private void post(String action, String value) {
             engine().executeScript("window.JavaClawSurface.post('" + action + "','" + value + "')");
+        }
+
+        private void clickPreview(String label) {
+            engine().executeScript("[...document.querySelectorAll('a.attachment')].find(n=>n.textContent==='" + label
+                    + "').click()");
+        }
+
+        private String script(String source) {
+            return String.valueOf(engine().executeScript(source));
         }
 
         private WebEngine engine() {

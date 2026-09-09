@@ -1,6 +1,7 @@
 package com.javaclaw.desktop.settings;
 
 import java.io.File;
+import java.nio.file.Path;
 import java.util.Optional;
 import java.util.function.Consumer;
 
@@ -9,6 +10,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Window;
@@ -31,22 +33,25 @@ final class ProviderSetupWorkspacePicker extends VBox {
 
     ProviderSetupWorkspacePicker(Window owner, CoreSettingsGateway gateway, ProviderSetupTarget original) {
         super(8);
+        setMinWidth(0);
         this.owner = owner;
         this.gateway = gateway;
         this.original = original;
         PlatformComponentFactory components = new PlatformComponentFactory();
         choices.setPromptText("选择工作区");
         choices.setId("providerWizardWorkspace");
-        choices.setMaxWidth(Double.MAX_VALUE);
-        choices.setConverter(SettingsLabels.converter(Workspace::name));
+        ProviderSetupChoices.configure(choices, Workspace::name);
         choices.valueProperty().addListener((ignored, before, value) -> listener.accept(target()));
         Button create = components.action("创建工作区", ActionStyle.SOFT, ActionSize.COMPACT);
+        create.setMinWidth(Region.USE_PREF_SIZE);
         create.setOnAction(event -> createWorkspace());
         Button reload = components.action("刷新工作区", ActionStyle.GHOST, ActionSize.COMPACT);
+        reload.setMinWidth(Region.USE_PREF_SIZE);
         reload.setOnAction(event -> reload());
         HBox actions = new HBox(8, choices, create, reload);
         HBox.setHgrow(choices, Priority.ALWAYS);
         status.setWrapText(true);
+        status.setMinWidth(0);
         status.getStyleClass().add("sec-hint");
         getChildren().addAll(new Label("选择在哪里使用此模型"), actions, status);
         boolean missing = original.workspaceId().isEmpty();
@@ -76,12 +81,10 @@ final class ProviderSetupWorkspacePicker extends VBox {
         if (pending) {
             return;
         }
-        pending = true;
-        setDisable(true);
+        setPending(true);
         status.setText("正在读取工作区…");
         gateway.workspaces().whenComplete((workspaces, failure) -> {
-            pending = false;
-            setDisable(false);
+            setPending(false);
             if (failure != null) {
                 status.setText("读取失败：" + SettingsFailures.message(failure));
                 return;
@@ -102,6 +105,12 @@ final class ProviderSetupWorkspacePicker extends VBox {
         });
     }
 
+    private void setPending(boolean value) {
+        pending = value;
+        setDisable(value);
+        listener.accept(target());
+    }
+
     private void createWorkspace() {
         if (pending) {
             return;
@@ -112,12 +121,18 @@ final class ProviderSetupWorkspacePicker extends VBox {
         if (directory == null) {
             return;
         }
-        pending = true;
-        setDisable(true);
+        createWorkspace(directory.toPath());
+    }
+
+    void createWorkspace(Path root) {
+        if (pending) {
+            return;
+        }
+        setPending(true);
         status.setText("正在创建工作区…");
-        gateway.createModelWorkspace(directory.getName(), directory.toPath()).whenComplete((workspace, failure) -> {
-            pending = false;
-            setDisable(false);
+        String name = root.getFileName() == null ? "工作区" : root.getFileName().toString();
+        gateway.createModelWorkspace(name, root).whenComplete((workspace, failure) -> {
+            setPending(false);
             if (failure != null) {
                 status.setText("创建工作区失败：" + SettingsFailures.message(failure));
                 return;

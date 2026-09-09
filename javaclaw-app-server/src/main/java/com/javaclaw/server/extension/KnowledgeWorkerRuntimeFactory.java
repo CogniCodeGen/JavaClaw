@@ -26,8 +26,7 @@ final class KnowledgeWorkerRuntimeFactory {
         }
         try {
             Path imageRoot = Path.of(configured).toRealPath();
-            Layout layout = layout(imageRoot, dataRoot);
-            return Optional.of(new KnowledgeWorkerClient(command(layout), TIMEOUT));
+            return Optional.of(new KnowledgeWorkerClient(command(imageRoot, dataRoot), TIMEOUT));
         } catch (IOException failure) {
             throw new IllegalStateException("Knowledge Worker packaged runtime layout is invalid", failure);
         }
@@ -41,9 +40,11 @@ final class KnowledgeWorkerRuntimeFactory {
                 : "java";
         Path java = imageRoot.resolve("bin").resolve(javaName).toRealPath();
         Path app = imageRoot.resolve("app").toRealPath();
+        Path libraries = imageRoot.resolve("lib").toRealPath();
         requireInside(imageRoot, java, "Java runtime");
         requireInside(imageRoot, app, "Worker classpath");
-        if (!Files.isExecutable(java) || !Files.isDirectory(app)) {
+        requireInside(imageRoot, libraries, "Java runtime libraries");
+        if (!Files.isExecutable(java) || !Files.isDirectory(app) || !Files.isDirectory(libraries)) {
             throw new IOException("Knowledge Worker image is incomplete");
         }
         requireMarker(imageRoot.resolve("worker-image-v1.capability"), "worker-image-v1:knowledge");
@@ -52,10 +53,11 @@ final class KnowledgeWorkerRuntimeFactory {
         Files.createDirectories(work);
         work = work.toRealPath();
         requireInside(data, work, "Worker temporary directory");
-        return new Layout(imageRoot, java, app, work);
+        return new Layout(imageRoot, java, app, libraries, work);
     }
 
-    private static SandboxedWorkerCommand command(Layout layout) {
+    static SandboxedWorkerCommand command(Path imageRoot, Path dataRoot) throws IOException {
+        Layout layout = layout(imageRoot.toRealPath(), dataRoot);
         List<String> argv = List.of(
                 layout.java().toString(),
                 "-XX:-UsePerfData",
@@ -69,9 +71,11 @@ final class KnowledgeWorkerRuntimeFactory {
                 Map.of("TMPDIR", layout.work().toString()),
                 List.of(layout.imageRoot()),
                 List.of(layout.work()),
-                List.of(layout.java()),
+                // 独立 jlink 镜像不在宿主 java.home 下；只读运行库也需要可执行映射，临时目录不授权。
+                List.of(layout.java(), layout.libraries()),
                 TIMEOUT,
-                new ResourceLimits(1536L * 1024 * 1024, 20L * 1024 * 1024, 4, 512));
+                new ResourceLimits(1536L * 1024 * 1024, 20L * 1024 * 1024, 4, 512),
+                Optional.empty());
     }
 
     private static void requireInside(Path root, Path candidate, String name) throws IOException {
@@ -91,5 +95,5 @@ final class KnowledgeWorkerRuntimeFactory {
         }
     }
 
-    private record Layout(Path imageRoot, Path java, Path app, Path work) {}
+    private record Layout(Path imageRoot, Path java, Path app, Path libraries, Path work) {}
 }

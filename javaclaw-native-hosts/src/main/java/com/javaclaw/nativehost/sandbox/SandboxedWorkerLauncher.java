@@ -66,7 +66,11 @@ public final class SandboxedWorkerLauncher {
         PermissionProfile permission = new PermissionProfile(
                 "worker-sandbox",
                 1,
-                new FilePermission(worker.readRoots(), worker.writeRoots(), false, false),
+                new FilePermission(
+                        worker.readRoots(),
+                        worker.writeRoots(),
+                        worker.privateScratch().isPresent(),
+                        false),
                 new NetworkPermission(Set.of(), Set.of(), true),
                 new ProcessPermission(Set.of(executable.getFileName().toString()), false, worker.lifetime()),
                 new ToolPermission(Set.of(), ToolRisk.PROCESS, ApprovalRequirement.EVERY_CALL),
@@ -80,7 +84,18 @@ public final class SandboxedWorkerLauncher {
                 SandboxMode.BATCH,
                 worker.lifetime());
         ValidatedSandboxCommand validated = SandboxPolicyValidator.validate(command, permission, SandboxMode.BATCH);
-        return validated.withExecutableRoots(realExecutableRoots(worker.executableRoots(), validated.readRoots()));
+        List<Path> executables = realExecutableRoots(worker.executableRoots(), validated.readRoots());
+        if (worker.privateScratch().isPresent()) {
+            worker.privateScratch()
+                    .orElseThrow()
+                    .verify(
+                            validated.workingDirectory(),
+                            validated.readRoots(),
+                            validated.writeRoots(),
+                            java.util.stream.Stream.concat(executables.stream(), java.util.stream.Stream.of(executable))
+                                    .toList());
+        }
+        return validated.withExecutableRoots(executables);
     }
 
     private static List<String> replaceExecutable(List<String> argv, Path executable) {

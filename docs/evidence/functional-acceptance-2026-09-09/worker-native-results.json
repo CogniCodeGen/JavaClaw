@@ -1,0 +1,48 @@
+{
+  "command": "mvn -pl javaclaw-browser-service -am verify -Djavaclaw.require.native.sandbox=true -Djavaclaw.require.native.credential=true",
+  "modules": [
+    {
+      "module": "javaclaw-api",
+      "tests": 106,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "javaclaw-extension-spi",
+      "tests": 68,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "javaclaw-protocol",
+      "tests": 155,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "javaclaw-builtin-contracts",
+      "tests": 67,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "tests": 214,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 16
+    },
+    {
+      "module": "javaclaw-browser-service",
+      "tests": 55,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "limitations": "不包含 Packaging 的 Chromium 原生交互登录与 OAuth smoke；其他平台测试按实际条件跳过。"
+}

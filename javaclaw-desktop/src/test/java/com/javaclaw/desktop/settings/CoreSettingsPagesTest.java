@@ -36,6 +36,7 @@ import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.CoreTools;
 import com.javaclaw.api.PrivateNetworkPurpose;
 import com.javaclaw.api.ProviderAdapter;
+import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ToolIdentity;
 import com.javaclaw.api.ToolRisk;
@@ -64,22 +65,40 @@ class CoreSettingsPagesTest {
             ProviderSettingsPage page = new ProviderSettingsPage(gateway);
             Parent root = attach(page);
 
-            button(root, "新建").fire();
-            assertTrue(labels(root).stream().anyMatch(value -> value.startsWith("provider-")));
             assertTrue(button(root, "手工添加模型").isDisabled());
+            createProviderThroughWizard(root, gateway);
+            assertEquals(2, gateway.providers.size());
+            assertFalse(page.dirty());
+            assertEquals(ProviderLifecycle.ACTIVE, gateway.providers.getLast().lifecycle());
+            assertEquals(1, gateway.providerCredentialSetCalls);
+            assertEquals(
+                    "initial-chat-model",
+                    gateway.providers.getLast().spec().models().getFirst().modelId());
+            nodes(root, ListView.class).stream()
+                    .filter(list -> list.getItems().contains(gateway.providers.getLast()))
+                    .findFirst()
+                    .orElseThrow()
+                    .getSelectionModel()
+                    .selectLast();
+            assertTrue(labels(root).stream().anyMatch(value -> value.startsWith("provider-")));
+            assertTrue(labels(root).contains("已安全配置"));
             fieldByPrompt(root, "用户可见名称").setText("Secondary");
             combo(root, ProviderAdapter.class).setValue(ProviderAdapter.OPENAI_COMPATIBLE);
             fieldByPrompt(root, "官方默认地址可留空；自定义地址必须是 HTTP(S)").setText("https://secondary.example.test/v1");
             button(root, "保存模型服务").fire();
-
-            assertEquals(2, gateway.providers.size());
             assertFalse(page.dirty());
-            assertTrue(button(root, "手工添加模型").isDisabled());
-            button(root, "配置").fire();
+            ProviderEndpoint saved = gateway.providers.getLast();
+            assertEquals("Secondary", saved.spec().displayName());
+            assertEquals(
+                    URI.create("https://secondary.example.test/v1"),
+                    saved.spec().baseUri().orElseThrow());
+            button(root, "轮换").fire();
             PasswordField secret = password(root, "providerSecretInput");
+            assertTrue(secret.getText().isEmpty());
             secret.setText("temporary-secret");
             button(root, "写入密钥").fire();
-            assertEquals(1, gateway.providerCredentialSetCalls);
+            assertEquals(2, gateway.providerCredentialSetCalls);
+            assertTrue(secret.getText().isEmpty());
             assertTrue(labels(root).contains("已安全配置"));
             assertFalse(button(root, "手工添加模型").isDisabled());
             completeModelDialog("chat-model", "Chat Model");
@@ -376,6 +395,29 @@ class CoreSettingsPagesTest {
         page.activate();
         root.applyCss();
         return root;
+    }
+
+    private static void createProviderThroughWizard(Parent root, TestCoreSettingsGateway gateway) {
+        button(root, "添加模型").fire();
+        Window window = Window.getWindows().stream()
+                .filter(value -> value.getScene().lookup("#providerWizardAddress") != null)
+                .findFirst()
+                .orElseThrow();
+        Parent wizard = window.getScene().getRoot();
+        try {
+            ((TextField) wizard.lookup("#providerWizardAddress")).setText("https://initial.example.test/v1");
+            PasswordField secret = (PasswordField) wizard.lookup("#providerWizardSecret");
+            secret.setText("initial-secret");
+            ((Button) wizard.lookup("#providerWizardContinue")).fire();
+            assertEquals(ProviderLifecycle.DISABLED, gateway.lastProviderCreateLifecycle);
+            assertTrue(secret.getText().isEmpty());
+            ((TextField) wizard.lookup("#providerWizardManualModel")).setText("initial-chat-model");
+            ((Button) wizard.lookup("#providerWizardAddManual")).fire();
+            ((Button) wizard.lookup("#providerWizardSaveOnly")).fire();
+            assertFalse(window.isShowing());
+        } finally {
+            window.hide();
+        }
     }
 
     private static void confirmNextDangerDialog(String actionLabel) {

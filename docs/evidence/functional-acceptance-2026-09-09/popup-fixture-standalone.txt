@@ -1,0 +1,4 @@
+CHAT_MODEL_POPUP_STYLE_PASS
+9月 09, 2026 11:23:45 上午 com.sun.javafx.application.PlatformImpl startup
+警告: Unsupported JavaFX configuration: classes were loaded from 'unnamed module @762efe5d'
+2026-09-09 11:23:46.196 java[3317:9480424] error messaging the mach port for IMKCFRunLoopWakeUpReliable

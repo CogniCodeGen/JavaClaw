@@ -33,6 +33,7 @@ import com.javaclaw.desktop.component.RevisionConflictPane;
 
 /** 权限方案版本编辑、内置方案复制、本地差异和有效权限说明页面。 */
 public final class PermissionProfileSettingsPage implements ManagedSettingsPage {
+    private final SettingsPageRefresh configurationRefresh;
     private final PlatformComponentFactory components = new PlatformComponentFactory();
     private final PermissionProfileSettingsPresenter presenter;
     private final PermissionPreviewPresenter previewPresenter;
@@ -96,6 +97,7 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
         configureControls();
         buildLayout();
         bindEvents();
+        configurationRefresh = SettingsPageRefresh.permissions(gateway, this, presenter);
         presenter.subscribe(this::render);
         previewPresenter.subscribe(this::renderPreview);
         historyPresenter.subscribe(this::renderHistory);
@@ -113,8 +115,18 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
 
     @Override
     public void activate() {
-        presenter.reload();
+        configurationRefresh.activate();
         scopedWorkspace.ifPresent(previewPresenter::selectWorkspace);
+    }
+
+    @Override
+    public void deactivate() {
+        configurationRefresh.deactivate();
+    }
+
+    @Override
+    public void dispose() {
+        configurationRefresh.close();
     }
 
     @Override

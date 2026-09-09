@@ -3,8 +3,10 @@ package com.javaclaw.nativehost.credential;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Deque;
 import java.util.List;
@@ -49,16 +51,56 @@ class SystemMasterKeyProtectorTest {
         MacKeychainMasterKeyProtector protector = new MacKeychainMasterKeyProtector(runner);
         runner.reply(0, new byte[0]);
         runner.reply(0, Base64.getEncoder().encode(KEY));
+        runner.reply(0, Base64.getEncoder().encode(KEY));
         runner.reply(44, new byte[0]);
 
         protector.store("installation", KEY);
-        assertArrayEquals(KEY, decodeLine(runner.inputs().getFirst()));
-        assertFalse(runner.commands().getFirst().contains(Base64.getEncoder().encodeToString(KEY)));
+        assertMacStoreRequest(runner);
         assertArrayEquals(KEY, protector.load("installation").orElseThrow());
         protector.delete("installation");
 
-        assertEquals("/usr/bin/security", runner.commands().getFirst().getFirst());
-        assertEquals("-w", runner.commands().getFirst().getLast());
+        assertEquals(runner.commands().get(1), runner.commands().get(2), "写后校验只允许读取同一条目");
+    }
+
+    @Test
+    void macOS写入失败不继续读取且清零交互命令缓冲() {
+        RecordingRunner runner = new RecordingRunner();
+        MacKeychainMasterKeyProtector protector = new MacKeychainMasterKeyProtector(runner);
+        runner.reply(1, new byte[0]);
+
+        MasterKeyProtectionException failure =
+                assertThrows(MasterKeyProtectionException.class, () -> protector.store("installation", KEY));
+
+        assertEquals("系统凭据设施拒绝了主密钥操作", failure.getMessage());
+        assertEquals(1, runner.commands().size());
+        assertTrue(allZero(runner.submittedInputs.getFirst()), "失败后必须清零完整交互命令");
+    }
+
+    @Test
+    void macOS命令成功但读回不一致时拒绝报告保存成功() {
+        RecordingRunner runner = new RecordingRunner();
+        MacKeychainMasterKeyProtector protector = new MacKeychainMasterKeyProtector(runner);
+        runner.reply(0, new byte[0]);
+        runner.reply(0, Base64.getEncoder().encode(bytes(32, 9)));
+
+        MasterKeyProtectionException failure =
+                assertThrows(MasterKeyProtectionException.class, () -> protector.store("installation", KEY));
+
+        assertEquals("macOS Keychain 主密钥写入校验失败", failure.getMessage());
+        assertEquals(2, runner.commands().size());
+        assertTrue(allZero(runner.submittedInputs.getFirst()));
+    }
+
+    @Test
+    void macOS交互输入拒绝额外命令和无效密钥长度() {
+        RecordingRunner runner = new RecordingRunner();
+        MacKeychainMasterKeyProtector protector = new MacKeychainMasterKeyProtector(runner);
+
+        assertThrows(IllegalArgumentException.class, () -> protector.store("entry\nhelp", KEY));
+        assertThrows(IllegalArgumentException.class, () -> protector.store("entry;help", KEY));
+        assertThrows(IllegalArgumentException.class, () -> protector.store("entry", new byte[31]));
+
+        assertTrue(runner.commands().isEmpty());
     }
 
     @Test
@@ -143,8 +185,48 @@ class SystemMasterKeyProtectorTest {
         }
     }
 
+    @Test
+    void 真实命令启动失败保持异常语义且不修改调用方输入() {
+        SystemCredentialCommandRunner runner = new SystemCredentialCommandRunner();
+        byte[] input = bytes(32, 11);
+
+        MasterKeyProtectionException failure = assertThrows(
+                MasterKeyProtectionException.class,
+                () -> runner.run(
+                        List.of(temporaryDirectory.resolve("missing-command").toString()), input));
+
+        assertEquals("无法启动系统凭据设施", failure.getMessage());
+        assertArrayEquals(bytes(32, 11), input);
+    }
+
     private static byte[] decodeLine(byte[] line) {
         return Base64.getDecoder().decode(new String(line, StandardCharsets.US_ASCII).strip());
+    }
+
+    private static void assertMacStoreRequest(RecordingRunner runner) {
+        assertTrue(runner.commands().getFirst().equals(List.of("/usr/bin/security", "-q", "-i")), "Secret 只能进入 stdin");
+        byte[] prefix = "add-generic-password -a JavaClaw -s com.javaclaw.v6.master.installation -U -w "
+                .getBytes(StandardCharsets.US_ASCII);
+        byte[] input = runner.inputs().getFirst();
+        assertTrue(MessageDigest.isEqual(prefix, Arrays.copyOf(input, prefix.length)), "命令必须保持默认 Keychain ACL");
+        byte[] actual = decodeLine(Arrays.copyOfRange(input, prefix.length, input.length));
+        try {
+            assertTrue(MessageDigest.isEqual(KEY, actual), "stdin 必须包含完整编码密钥");
+            assertEquals(prefix.length + 45, input.length, "只能发送一条带换行命令，不追加 quit");
+            assertEquals((byte) '\n', input[input.length - 1]);
+            assertTrue(allZero(runner.submittedInputs.getFirst()), "成功后必须清零完整交互命令");
+        } finally {
+            Arrays.fill(actual, (byte) 0);
+        }
+    }
+
+    private static boolean allZero(byte[] value) {
+        for (byte element : value) {
+            if (element != 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static byte[] bytes(int length, int seed) {
@@ -159,11 +241,13 @@ class SystemMasterKeyProtectorTest {
         private final Deque<Result> replies = new ArrayDeque<>();
         private final List<List<String>> commands = new ArrayList<>();
         private final List<byte[]> inputs = new ArrayList<>();
+        private final List<byte[]> submittedInputs = new ArrayList<>();
 
         @Override
         public Result run(List<String> command, byte[] standardInput) {
             commands.add(List.copyOf(command));
             inputs.add(standardInput.clone());
+            submittedInputs.add(standardInput);
             return replies.removeFirst();
         }
 

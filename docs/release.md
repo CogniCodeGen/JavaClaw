@@ -26,7 +26,9 @@ CycloneDX 清单只收集发行运行时的 compile/runtime 依赖。许可证�
 
 - `runtime/`：Desktop、CLI 与 App Server；不包含 Playwright、Chromium、PDFBox、POI、Knowledge Worker 或
   `jdk.compiler`/`jdk.jshell`。
-- `workers/browser/`：最小 Java runtime、Browser Worker/Playwright 依赖和构建时固定的 Chromium 目录。
+- `workers/browser/`：最小 Java runtime、Browser Worker/Playwright 依赖、从锁定 driver-bundle 提取的当前平台
+  `driver/` 和构建时固定的 Chromium 目录。Worker 仅从镜像的只读 `lib/`、`driver/` 和 `browser/` 执行或映射代码，
+  不允许从可写临时目录启动动态解压的 Node。
 - `workers/knowledge/`：最小 Java runtime、Knowledge Worker、PDFBox 与 POI 依赖；不包含 Playwright。
 - `workers/skill/`：只供已发布 Skill 使用的签名 runtime，明确包含 `java.compiler`、`jdk.compiler` 与
   `jdk.jshell`。

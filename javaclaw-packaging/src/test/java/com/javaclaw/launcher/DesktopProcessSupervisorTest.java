@@ -39,7 +39,7 @@ class DesktopProcessSupervisorTest {
 
         assertTrue(supervisor.running());
         assertEquals(1, commands.size());
-        assertTrue(commands.getFirst().contains("com.javaclaw.desktop.shell.JavaClawDesktop"));
+        assertTrue(commands.getFirst().contains("com.javaclaw.desktop.shell.JavaClawDesktopMain"));
         child.exit();
         assertTrue(exited.await(1, TimeUnit.SECONDS));
         assertFalse(supervisor.running());

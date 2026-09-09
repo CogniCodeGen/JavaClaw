@@ -215,6 +215,57 @@ class ExecutionConfigurationBoundaryTest {
                 configurations.findSubagentDefaultsForTurn(workspace("scope").id(), Optional.empty()));
     }
 
+    @Test
+    void recentSelectionKeepsItsOwnRevisionAndNeverJoinsExecutionInheritance() {
+        Workspace workspace = workspace("recent-scope");
+        ConversationThread thread = thread(workspace);
+        ExecutionConfiguration installed =
+                configurations.ensureInstallationDefaults(reasoning(ReasoningPreference.HIGH));
+        assertTrue(configurations.findRecent().isEmpty());
+        ExecutionOverrides recent = reasoning(ReasoningPreference.LOW);
+        CommandIdentity identity = identity("recent-create", 0, recent);
+        ExecutionConfiguration first = configurations.updateRecent(identity, recent);
+
+        assertEquals(1, first.revision());
+        assertTrue(first.workspaceId().isEmpty());
+        assertTrue(first.threadId().isEmpty());
+        assertEquals(Optional.of(first), configurations.findRecent());
+        assertEquals(List.of(installed), configurations.findForTurn(workspace.id(), Optional.of(thread.id())));
+        assertTrue(configurations
+                .findSubagentDefaultsForTurn(workspace.id(), Optional.of(thread.id()))
+                .isEmpty());
+        ExecutionConfiguration cleared = configurations.updateRecent(
+                identity("recent-clear", 1, ExecutionOverrides.empty()), ExecutionOverrides.empty());
+        assertEquals(2, cleared.revision());
+        assertEquals(
+                ExecutionOverrides.empty(),
+                configurations.findRecent().orElseThrow().overrides());
+        assertEquals(first, configurations.updateRecent(identity, recent));
+        assertEquals(Optional.of(cleared), configurations.findRecent());
+        assertEquals(Optional.of(installed), configurations.find(Optional.empty(), Optional.empty()));
+        assertEquals(
+                PersistenceException.Kind.REVISION_CONFLICT,
+                assertThrows(
+                                PersistenceException.class,
+                                () -> configurations.updateRecent(identity("recent-stale", 1, recent), recent))
+                        .kind());
+    }
+
+    @Test
+    void recentSelectionRejectsEveryNonModelFieldWithoutChangingStoredDefaults() {
+        for (ExecutionOverrides prohibited : prohibitedSubagentOverrides()) {
+            assertEquals(
+                    PersistenceException.Kind.INVALID_REQUEST,
+                    assertThrows(
+                                    PersistenceException.class,
+                                    () -> configurations.updateRecent(
+                                            identity("prohibited-recent", 0, prohibited), prohibited))
+                            .kind());
+        }
+        assertTrue(configurations.findRecent().isEmpty());
+        assertTrue(configurations.find(Optional.empty(), Optional.empty()).isEmpty());
+    }
+
     private static List<ExecutionOverrides> prohibitedSubagentOverrides() {
         // 每个安全字段单独检查，避免前一个字段的拒绝掩盖后续约束。
         return List.of(

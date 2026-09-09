@@ -51,7 +51,7 @@ final class BrowserWorkerRuntimeFactory {
         }
     }
 
-    private static Layout layout(Path imageRoot, Path dataRoot) throws IOException {
+    static Layout layout(Path imageRoot, Path dataRoot) throws IOException {
         String javaName = System.getProperty("os.name", "")
                         .toLowerCase(java.util.Locale.ROOT)
                         .contains("windows")
@@ -59,13 +59,22 @@ final class BrowserWorkerRuntimeFactory {
                 : "java";
         Path java = imageRoot.resolve("bin").resolve(javaName).toRealPath();
         Path app = imageRoot.resolve("app").toRealPath();
+        Path runtimeLibraries = imageRoot.resolve("lib").toRealPath();
+        Path driver = imageRoot.resolve("driver").toRealPath();
         Path browser = imageRoot.resolve("browser").toRealPath();
         requireInside(imageRoot, java, "Java runtime");
         requireInside(imageRoot, app, "Worker classpath");
+        requireInside(imageRoot, runtimeLibraries, "Java runtime libraries");
+        requireInside(imageRoot, driver, "Playwright driver");
         requireInside(imageRoot, browser, "Browser runtime");
-        if (!Files.isExecutable(java) || !Files.isDirectory(app) || !Files.isDirectory(browser)) {
+        if (!Files.isExecutable(java)
+                || !Files.isDirectory(app)
+                || !Files.isDirectory(browser)
+                || !Files.isDirectory(runtimeLibraries)
+                || !Files.isDirectory(driver)) {
             throw new IOException("Browser Worker image is incomplete");
         }
+        requireDriver(driver, javaName.equals("java.exe"));
         requireMarker(imageRoot.resolve(IMAGE_CAPABILITY_FILE), "worker-image-v1:browser");
         requireMarker(browser.resolve(PLAYWRIGHT_VERSION_FILE), "playwright:1.52.0");
         Path data = dataRoot.toRealPath();
@@ -77,14 +86,16 @@ final class BrowserWorkerRuntimeFactory {
         control = control.toRealPath();
         requireInside(data, work, "Worker temporary directory");
         requireInside(data, control, "Browser login control directory");
-        return new Layout(imageRoot, java, app, browser, work, control, displayAccess());
+        return new Layout(imageRoot, java, app, runtimeLibraries, driver, browser, work, control, displayAccess());
     }
 
-    private static SandboxedWorkerCommand command(Layout layout) {
+    static SandboxedWorkerCommand command(Layout layout) throws IOException {
         String classpath = layout.app().resolve("*").toString();
         List<String> argv = List.of(
                 layout.java().toString(),
                 "-XX:-UsePerfData",
+                "-Dplaywright.cli.dir=" + layout.driver(),
+                "-Djava.io.tmpdir=" + layout.work(),
                 "-cp",
                 classpath,
                 "com.javaclaw.browser.worker.BrowserWorkerMain");
@@ -97,15 +108,27 @@ final class BrowserWorkerRuntimeFactory {
         ArrayList<Path> readRoots = new ArrayList<>(List.of(layout.imageRoot(), layout.control()));
         readRoots.addAll(layout.display().readRoots());
         return new SandboxedWorkerCommand(
-                "browser-worker",
-                argv,
-                layout.work(),
-                environment,
-                readRoots,
-                List.of(layout.work()),
-                List.of(layout.java(), layout.browser()),
-                WORKER_LIFETIME,
-                new ResourceLimits(1024L * 1024 * 1024, 16L * 1024 * 1024, 16, 512));
+                        "browser-worker",
+                        argv,
+                        layout.work(),
+                        environment,
+                        readRoots,
+                        List.of(layout.work()),
+                        List.of(layout.java(), layout.runtimeLibraries(), layout.driver(), layout.browser()),
+                        WORKER_LIFETIME,
+                        new ResourceLimits(1024L * 1024 * 1024, 16L * 1024 * 1024, 16, 512),
+                        Optional.empty())
+                .withPrivateScratch(layout.work());
+    }
+
+    private static void requireDriver(Path driver, boolean windows) throws IOException {
+        Path node = driver.resolve(windows ? "node.exe" : "node").toRealPath();
+        Path cli = driver.resolve("package/cli.js").toRealPath();
+        requireInside(driver, node, "Playwright Node");
+        requireInside(driver, cli, "Playwright CLI");
+        if (!Files.isRegularFile(node) || !Files.isExecutable(node) || !Files.isRegularFile(cli)) {
+            throw new IOException("Browser Worker preinstalled driver is incomplete");
+        }
     }
 
     static boolean capabilityVerified(Path imageRoot, String fileName, String prefix) {
@@ -180,8 +203,16 @@ final class BrowserWorkerRuntimeFactory {
         }
     }
 
-    private record Layout(
-            Path imageRoot, Path java, Path app, Path browser, Path work, Path control, DisplayAccess display) {}
+    record Layout(
+            Path imageRoot,
+            Path java,
+            Path app,
+            Path runtimeLibraries,
+            Path driver,
+            Path browser,
+            Path work,
+            Path control,
+            DisplayAccess display) {}
 
     /** Linux 仅转交本地 X11 socket 与可选 authority；其他平台由原生窗口系统和 Sandbox 负责。 */
     private record DisplayAccess(Map<String, String> environment, List<Path> readRoots, boolean loginAvailable) {

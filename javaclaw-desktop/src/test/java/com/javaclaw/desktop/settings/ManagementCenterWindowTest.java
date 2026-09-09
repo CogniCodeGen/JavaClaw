@@ -41,8 +41,10 @@ class ManagementCenterWindowTest {
             Stage main = new Stage();
             main.setScene(new Scene(new VBox(), 600, 400));
             main.show();
-            ManagementCenterWindow center =
-                    new ManagementCenterWindow(new DesktopAppearanceManager(new MemoryStore()), disconnectedGateways());
+            ManagementCenterWindow center = new ManagementCenterWindow(
+                    new DesktopAppearanceManager(new MemoryStore()),
+                    disconnectedGateways(),
+                    new MemoryWindowStore(ManagementWindowPreferences.defaults()));
             try {
                 center.show(main);
                 Stage management = managementStage();
@@ -111,7 +113,8 @@ class ManagementCenterWindowTest {
             main.show();
             DesktopAppearanceManager appearance = new DesktopAppearanceManager(new MemoryStore());
             appearance.register(scene);
-            ManagementCenterWindow window = new ManagementCenterWindow(appearance, disconnectedGateways());
+            ManagementCenterWindow window = new ManagementCenterWindow(
+                    appearance, disconnectedGateways(), new MemoryWindowStore(ManagementWindowPreferences.defaults()));
             window.installShortcut(scene);
             owner.set(main);
             center.set(window);
@@ -146,8 +149,10 @@ class ManagementCenterWindowTest {
 
     @Test
     void 未创建窗口时关闭安全且无owner不能首次显示() {
-        ManagementCenterWindow center =
-                new ManagementCenterWindow(new DesktopAppearanceManager(new MemoryStore()), disconnectedGateways());
+        ManagementCenterWindow center = new ManagementCenterWindow(
+                new DesktopAppearanceManager(new MemoryStore()),
+                disconnectedGateways(),
+                new MemoryWindowStore(ManagementWindowPreferences.defaults()));
         center.close();
         assertFalse(center.isShowing());
         FxTestSupport.run(() -> {
@@ -275,7 +280,15 @@ class ManagementCenterWindowTest {
     }
 
     private static final class MemoryWindowStore implements ManagementWindowPreferenceStore {
-        private ManagementWindowPreferences value = new ManagementWindowPreferences("diagnostics", Optional.empty());
+        private ManagementWindowPreferences value;
+
+        private MemoryWindowStore() {
+            this(new ManagementWindowPreferences("diagnostics", Optional.empty()));
+        }
+
+        private MemoryWindowStore(ManagementWindowPreferences initial) {
+            value = initial;
+        }
 
         @Override
         public ManagementWindowPreferences load() {

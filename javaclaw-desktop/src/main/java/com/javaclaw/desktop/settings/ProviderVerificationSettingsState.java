@@ -13,7 +13,7 @@ import com.javaclaw.api.ProviderVerificationResult;
  * @param phase 异步阶段
  * @param provider 当前精确 Provider 与模型
  * @param purpose 此状态机负责的模型用途
- * @param available 当前是否满足 ACTIVE、凭据可用和无草稿条件
+ * @param available 当前是否满足 ACTIVE、精确模型、凭据可用、无草稿且无其他配置命令条件；在途验证由 phase 单独表示
  * @param result 最近一次脱敏验证结果
  * @param message 可读状态或失败说明
  * @param epoch 丢弃旧异步响应的请求代次

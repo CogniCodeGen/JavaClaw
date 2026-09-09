@@ -62,6 +62,31 @@ class BrowserWorkerClientTest {
     }
 
     @Test
+    void 启动期间客户端关闭仍终止尚未登记的Worker() {
+        AtomicReference<BrowserWorkerClient> owner = new AtomicReference<>();
+        AtomicReference<Process> started = new AtomicReference<>();
+        BrowserWorkerClient.WorkerLauncher delegate = command();
+        try (BrowserWorkerClient client = new BrowserWorkerClient(
+                () -> {
+                    Process process = delegate.start();
+                    started.set(process);
+                    owner.get().close();
+                    return process;
+                },
+                Duration.ofSeconds(3))) {
+            owner.set(client);
+
+            assertThrows(
+                    BrowserWorkerException.class, () -> invoke(client, "closed-during-start", new AtomicInteger()));
+            assertFalse(started.get().isAlive());
+        } finally {
+            if (started.get() != null) {
+                started.get().destroyForcibly();
+            }
+        }
+    }
+
+    @Test
     void validatesSensitiveStateAgainstCredentialKind() {
         try (BrowserWorkerClient client = new BrowserWorkerClient(command(), Duration.ofSeconds(2))) {
             SiteContracts.SnapshotTask noCredential = task("plain", SiteContracts.SiteCredential.none());

@@ -12,6 +12,24 @@ import com.javaclaw.api.WorkspaceId;
 public final class ExecutionRpcContracts {
     private ExecutionRpcContracts() {}
 
+    /** 最近选择的全局只读查询；不存在时不返回安装默认值。 */
+    public record RecentReadPayload() {
+        /** 创建不携带作用域的查询。 */
+        public RecentReadPayload {}
+    }
+
+    /**
+     * 最近模型与思考选择的替换请求；它只用于初始化新 Thread。
+     *
+     * @param execution 模型与思考覆盖，不可空；服务端拒绝角色、权限、审批、预算和能力字段
+     */
+    public record RecentUpdatePayload(ExecutionOverrides execution) {
+        /** 校验覆盖容器。 */
+        public RecentUpdatePayload {
+            Objects.requireNonNull(execution, "execution");
+        }
+    }
+
     /**
      * 轻量执行配置预览参数，不携带消息或项目资料。
      *
@@ -19,8 +37,7 @@ public final class ExecutionRpcContracts {
      * @param threadId 可选已有 Thread，服务端校验归属
      * @param execution 临时执行覆盖，不可空
      */
-    public record PreviewPayload(
-            WorkspaceId workspaceId, Optional<ThreadId> threadId, ExecutionOverrides execution) {
+    public record PreviewPayload(WorkspaceId workspaceId, Optional<ThreadId> threadId, ExecutionOverrides execution) {
         /** 校验参数容器；不存在或不可用的引用由服务端返回阻塞项。 */
         public PreviewPayload {
             Objects.requireNonNull(workspaceId, "workspaceId");

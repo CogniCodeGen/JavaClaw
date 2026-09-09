@@ -17,6 +17,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
 import com.javaclaw.api.ExecutionState;
@@ -177,12 +178,8 @@ public final class AutomationJobSettingsPage extends VBox implements ManagedSett
 
     private void configureList() {
         jobs.list().setId("automationJobList");
-        jobs.list()
-                .setCellFactory(ignored -> components.detailCell(
-                        job -> job.definitionId() + " · " + SettingsLabels.executionState(job.state()),
-                        job -> job.extensionId().value() + " · "
-                                + SettingsLabels.automationJobType(job.jobType()) + " · 版本 "
-                                + job.revision()));
+        jobs.list().setMinWidth(220);
+        jobs.list().setCellFactory(ignored -> new AutomationJobCell());
         jobs.list().getSelectionModel().selectedItemProperty().addListener((observable, previousValue, selected) -> {
             if (!rendering && selected != null) {
                 presenter.select(selected);
@@ -446,6 +443,8 @@ public final class AutomationJobSettingsPage extends VBox implements ManagedSett
     private static Label value() {
         Label label = new Label("—");
         label.setWrapText(true);
+        // 值列变窄时保留完整换行高度；不能让表单压缩尾行并显示省略号。
+        label.setMinHeight(Region.USE_PREF_SIZE);
         label.getStyleClass().add("platform-detail-text");
         return label;
     }

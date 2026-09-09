@@ -13,6 +13,7 @@ import com.javaclaw.desktop.component.FormSection;
 import com.javaclaw.desktop.component.PlatformComponentFactory;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
+import com.javaclaw.protocol.ProtocolVersion;
 
 /** 当前本地 JavaClaw 服务客户端会话和协议协商状态页面。 */
 public final class ConnectionSettingsPage implements ManagedSettingsPage {
@@ -79,7 +80,8 @@ public final class ConnectionSettingsPage implements ManagedSettingsPage {
         Button start = components.action(launcher.controlLabel(), ActionStyle.PRIMARY, ActionSize.NORMAL);
         start.setDisable(true);
         start.setTooltip(new Tooltip(launcher.recoveryInstruction()));
-        Label unavailable = new Label("“重新连接”会关闭旧会话，并重新协商第 2 版协议。" + launcher.recoveryInstruction());
+        Label unavailable =
+                new Label("“重新连接”会关闭旧会话，并重新协商第 " + ProtocolVersion.CURRENT + " 版协议。" + launcher.recoveryInstruction());
         unavailable.setWrapText(true);
         unavailable.getStyleClass().addAll("sec-hint", "platform-action-error");
         recovery.addFullWidth(new javafx.scene.layout.HBox(8, reconnect, start));

@@ -61,6 +61,7 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
     private final ProviderVerificationSection verificationSection;
     private final ProviderModelCatalogEditor modelCatalog;
     private final ProviderContextEditor contextEditor;
+    private final SettingsPageRefresh configurationRefresh;
     private final Button save;
     private final Button discard;
     private final Button probe;
@@ -82,6 +83,11 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
      * @param gateway SDK 异步边界
      */
     public ProviderSettingsPage(CoreSettingsGateway gateway) {
+        this(gateway, () -> {});
+    }
+
+    /** @param gateway SDK 异步边界 @param used 模型成功应用后的返回聊天回调，失败或仅保存时不调用 */
+    public ProviderSettingsPage(CoreSettingsGateway gateway, Runnable used) {
         presenter = new ProviderSettingsPresenter(gateway);
         chatVerification = new ProviderVerificationPresenter(gateway, ProviderModelPurpose.CHAT);
         embeddingVerification = new ProviderVerificationPresenter(gateway, ProviderModelPurpose.EMBEDDING);
@@ -89,9 +95,9 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
         embeddingBinding = new ProviderEmbeddingBindingPresenter(gateway);
         modelCatalog =
                 new ProviderModelCatalogEditor(this::discoverModels, this::replaceModels, this::bindEmbeddingModel);
-        setupActions = new ProviderSettingsActions(gateway, presenter, modelCatalog, content);
+        setupActions = new ProviderSettingsActions(gateway, presenter, modelCatalog, content, used);
         contextEditor = new ProviderContextEditor(gateway, presenter::reload);
-        modelCatalog.onModelSelected(ignored -> bindModelContext());
+        modelCatalog.onModelSelected(ignored -> bindModelContext(), contextEditor::allowModelChange);
         save = components.action("保存模型服务", ActionStyle.PRIMARY, ActionSize.NORMAL);
         discard = components.action("放弃更改", ActionStyle.GHOST, ActionSize.NORMAL);
         probe = components.action("本地检查", ActionStyle.SOFT, ActionSize.NORMAL);
@@ -109,11 +115,13 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
         configureControls();
         buildLayout();
         bindEvents();
+        configurationRefresh = SettingsPageRefresh.provider(gateway, this, presenter);
         presenter.subscribe(this::render);
         chatVerification.subscribe(this::renderVerification);
         embeddingVerification.subscribe(this::renderVerification);
         discovery.subscribe(this::renderDiscovery);
         embeddingBinding.subscribe(this::renderEmbeddingBinding);
+        contextEditor.onStateChanged(this::bindVerifications);
     }
 
     @Override
@@ -128,17 +136,19 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
 
     @Override
     public void activate() {
-        presenter.reload();
+        configurationRefresh.activate();
         embeddingBinding.reload();
     }
 
     @Override
     public void deactivate() {
+        configurationRefresh.deactivate();
         discovery.reset();
     }
 
     @Override
     public void dispose() {
+        configurationRefresh.close();
         discovery.reset();
     }
 
@@ -156,6 +166,7 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
     @Override
     public boolean pending() {
         return presenter.state().pending()
+                || verificationSection.confirming()
                 || chatVerificationState.pending()
                 || embeddingVerificationState.pending()
                 || discoveryState.pending()
@@ -171,6 +182,7 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
 
     @Override
     public void discardDraft() {
+        contextEditor.discardDraft();
         presenter.discardDraft();
     }
 
@@ -274,6 +286,7 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
     private void bindEvents() {
         masterDetail.list().getSelectionModel().selectedItemProperty().addListener((ignored, previous, selected) -> {
             if (!rendering && selected != null && contextEditor.dirty()) {
+                render(presenter.state());
                 contextEditor.warnUnsavedChanges();
                 return;
             }
@@ -313,7 +326,9 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
                 displayName.getText(),
                 selectedAdapter,
                 baseUri.getText(),
-                authenticationFor(selectedAdapter),
+                selectedAdapter == ProviderAdapter.OPENAI_COMPATIBLE
+                        ? authentication.getValue()
+                        : ProviderAuthentication.API_KEY,
                 previous.models(),
                 previous.credential(),
                 integer(timeout.getText()),
@@ -327,12 +342,6 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
                 lifecycle.getValue()));
     }
 
-    private ProviderAuthentication authenticationFor(ProviderAdapter selectedAdapter) {
-        return selectedAdapter == ProviderAdapter.OPENAI_COMPATIBLE
-                ? authentication.getValue()
-                : ProviderAuthentication.API_KEY;
-    }
-
     private void render(ProviderSettingsState state) {
         rendering = true;
         try {
@@ -344,6 +353,8 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
             verificationSection.renderModels(
                     state.selected().map(endpoint -> endpoint.spec().models()).orElse(List.of()));
             renderModelCatalog();
+            // 验证结果重绘不重绑容量，避免回退尚未同步到父页的新容量版本。
+            bindModelContext();
             bindVerifications();
         } finally {
             rendering = false;
@@ -382,7 +393,7 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
         boolean archived = state.selected()
                 .map(endpoint -> endpoint.lifecycle() == ProviderLifecycle.ARCHIVED)
                 .orElse(false);
-        form.setDisable(state.phase() == SettingsLoadState.LOADING);
+        masterDetail.setDisable(state.pending());
         save.setDisable(pending() || archived || !state.dirty());
         discard.setDisable(pending() || !state.dirty());
         dangerZone.setActionDisabled(pending() || state.selected().isEmpty() || archived || state.dirty());
@@ -429,16 +440,21 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
 
     private void bindVerifications() {
         ProviderSettingsState state = presenter.state();
+        boolean busy =
+                state.pending() || discoveryState.pending() || embeddingState.pending() || contextEditor.pending();
         chatVerification.bind(
                 state.selected(),
                 verificationSection.modelId(ProviderModelPurpose.CHAT),
                 state.credential().isPresent() || state.draft().authentication() == ProviderAuthentication.NONE,
-                pending() || state.dirty());
+                state.dirty(),
+                busy);
         embeddingVerification.bind(
                 state.selected(),
                 verificationSection.modelId(ProviderModelPurpose.EMBEDDING),
                 state.credential().isPresent() || state.draft().authentication() == ProviderAuthentication.NONE,
-                pending() || state.dirty());
+                state.dirty(),
+                busy);
+        renderStatus(state);
     }
 
     private void renderVerification(ProviderVerificationSettingsState state) {
@@ -455,13 +471,13 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
     private void renderDiscovery(ProviderModelDiscoveryState state) {
         discoveryState = state;
         renderModelCatalog();
-        renderStatus(presenter.state());
+        bindVerifications();
     }
 
     private void renderEmbeddingBinding(ProviderEmbeddingBindingState state) {
         embeddingState = state;
         renderModelCatalog();
-        renderStatus(presenter.state());
+        bindVerifications();
     }
 
     private void renderModelCatalog() {
@@ -495,7 +511,6 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
                 canDiscover(provider),
                 canEditCatalog(provider),
                 exactSaved);
-        bindModelContext();
     }
 
     private void bindModelContext() {

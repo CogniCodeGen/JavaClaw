@@ -106,7 +106,7 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>com.javaclaw.desktop.shell.JavaClawDesktop</mainClass>
+                            <mainClass>com.javaclaw.desktop.shell.JavaClawDesktopMain</mainClass>
                         </manifest>
                     </archive>
                 </configuration>

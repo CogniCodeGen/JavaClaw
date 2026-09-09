@@ -32,7 +32,11 @@ final class DesktopConversationCoordinator implements AutoCloseable {
     private final ExecutorService workers;
     private final DesktopTurnStreamCoordinator streams;
     private final Supplier<JavaClawClient> client;
+    private final Consumer<Workspace> workspaceCreated;
     private final AtomicLong epoch = new AtomicLong();
+    private final AtomicLong historyEpoch = new AtomicLong();
+    private final DesktopModelPreferences.ThreadCreations threadCreations =
+            new DesktopModelPreferences.ThreadCreations();
     private volatile boolean closed;
     private RecoveryFailure recoveryFailure;
 
@@ -41,12 +45,14 @@ final class DesktopConversationCoordinator implements AutoCloseable {
             Consumer<Runnable> ui,
             ExecutorService workers,
             DesktopTurnStreamCoordinator streams,
-            Supplier<JavaClawClient> client) {
+            Supplier<JavaClawClient> client,
+            Consumer<Workspace> workspaceCreated) {
         this.store = store;
         this.ui = ui;
         this.workers = workers;
         this.streams = streams;
         this.client = client;
+        this.workspaceCreated = workspaceCreated;
     }
 
     void reconnecting() {
@@ -124,7 +130,8 @@ final class DesktopConversationCoordinator implements AutoCloseable {
         }
     }
 
-    void send(String message, ExecutionOverrides execution) {
+    CompletableFuture<AgentTurn> send(String message, ExecutionOverrides execution, CommandOptions options) {
+        CompletableFuture<AgentTurn> result = new CompletableFuture<>();
         ui.accept(() -> {
             var state = store.state();
             if (!connected()
@@ -132,27 +139,45 @@ final class DesktopConversationCoordinator implements AutoCloseable {
                     || state.threads().activeTurn().isPresent()
                     || recoveryFailure != null && recoveryFailure.epoch() == epoch.get()
                     || state.threads().selectedThread().isEmpty()) {
+                result.completeExceptionally(new IllegalStateException("当前对话尚未就绪，请等待加载完成后重试"));
                 return;
             }
             ConversationThread thread = state.threads().selectedThread().orElseThrow();
             Scope scope = beginSelection();
             store.update(value -> DesktopStateProjection.busy(value, true));
-            workers.submit(() -> execute(scope, () -> {
-                if (!current(scope, thread.id())) {
-                    return;
-                }
-                var payload = new CoreRpcContracts.TurnStartPayload(thread.id(), execution, message);
-                AgentTurn started = scope.client()
-                        .turns()
-                        .start(payload, CommandOptions.create(0))
-                        .turn();
-                ui.accept(() -> {
-                    if (current(scope, thread.id())) {
-                        observe(scope, thread, started);
-                    }
-                });
-            }));
+            workers.submit(() -> startTurn(scope, thread, message, execution, options, result));
         });
+        return result;
+    }
+
+    private void startTurn(
+            Scope scope,
+            ConversationThread thread,
+            String message,
+            ExecutionOverrides execution,
+            CommandOptions options,
+            CompletableFuture<AgentTurn> result) {
+        try {
+            if (!current(scope, thread.id())) {
+                throw new IllegalStateException("对话已切换，消息尚未发送");
+            }
+            var payload = new CoreRpcContracts.TurnStartPayload(thread.id(), execution, message);
+            AgentTurn started = scope.client().turns().start(payload, options).turn();
+            ui.accept(() -> {
+                // 回执属于原始发送；页面是否仍选中只影响展示，不改变已被服务端接受的事实。
+                result.complete(started);
+                if (current(scope, thread.id())) {
+                    observe(scope, thread, started);
+                }
+            });
+        } catch (Exception failure) {
+            ui.accept(() -> {
+                if (current(scope, thread.id())) {
+                    store.update(state -> DesktopStateProjection.failure(state, DesktopFailures.safeMessage(failure)));
+                }
+                result.completeExceptionally(failure);
+            });
+        }
     }
 
     private void observe(Scope scope, ConversationThread thread, AgentTurn turn) {
@@ -163,19 +188,28 @@ final class DesktopConversationCoordinator implements AutoCloseable {
         if (DesktopStateProjection.terminal(turn.status()) || streams.restore(scope.client(), thread, turn)) {
             return;
         }
-        workers.submit(() -> execute(
-                scope,
-                () -> DesktopLegacyTurnObserver.observe(
-                        scope.client(),
-                        thread,
-                        turn,
-                        store,
-                        change -> ui.accept(() -> {
-                            if (current(scope, thread.id())) {
-                                store.update(change);
-                            }
-                        }),
-                        () -> !current(scope, thread.id()))));
+        workers.submit(() -> observeLegacy(scope, thread, turn));
+    }
+
+    /** 追尾失败仍表示正文及活动状态尚未复核完整，必须允许重选当前会话恢复，而不是永久停在 busy。 */
+    private void observeLegacy(Scope scope, ConversationThread thread, AgentTurn turn) {
+        try {
+            DesktopLegacyTurnObserver.observe(
+                    scope.client(),
+                    thread,
+                    turn,
+                    store,
+                    change -> ui.accept(() -> {
+                        if (current(scope, thread.id())) {
+                            store.update(change);
+                        }
+                    }),
+                    () -> !current(scope, thread.id()));
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        } catch (Exception failure) {
+            ui.accept(() -> failedRecovery(scope, failure));
+        }
     }
 
     void cancel() {
@@ -186,18 +220,36 @@ final class DesktopConversationCoordinator implements AutoCloseable {
             }
             AgentTurn turn = selected.orElseThrow();
             Scope scope = scope();
-            workers.submit(() -> execute(scope, () -> {
-                AgentTurn current = scope.client().turns().read(turn.id());
-                if (current(scope, turn.threadId())
-                        && current.id().equals(turn.id())
-                        && current.threadId().equals(turn.threadId())
-                        && !DesktopStateProjection.terminal(current.status())) {
-                    scope.client()
-                            .turns()
-                            .cancel(current.id(), "Desktop 用户请求停止", CommandOptions.create(current.revision()));
-                }
-            }));
+            workers.submit(() -> cancel(scope, turn));
         });
+    }
+
+    /** 停止意图属于点击时的 Turn；导航只撤销展示归属，关闭或替换连接才阻止尚未提交的取消。 */
+    private void cancel(Scope scope, AgentTurn turn) {
+        try {
+            if (!sameConnection(scope)) {
+                return;
+            }
+            AgentTurn current = scope.client().turns().read(turn.id());
+            if (sameConnection(scope)
+                    && current.id().equals(turn.id())
+                    && current.threadId().equals(turn.threadId())
+                    && !DesktopStateProjection.terminal(current.status())) {
+                scope.client()
+                        .turns()
+                        .cancel(current.id(), "Desktop 用户请求停止", CommandOptions.create(current.revision()));
+            }
+        } catch (Exception failure) {
+            ui.accept(() -> {
+                if (current(scope)) {
+                    store.update(state -> DesktopStateProjection.failure(state, DesktopFailures.safeMessage(failure)));
+                }
+            });
+        }
+    }
+
+    private boolean sameConnection(Scope scope) {
+        return connected() && client.get() == scope.client();
     }
 
     CompletableFuture<ConversationThread> navigate(ThreadId threadId) {
@@ -251,8 +303,7 @@ final class DesktopConversationCoordinator implements AutoCloseable {
             }
             Scope scope = scope();
             workers.submit(() -> execute(scope, () -> {
-                ConversationThread created =
-                        scope.client().threads().create(workspace.id(), title, CommandOptions.create(0));
+                ConversationThread created = threadCreations.create(scope.client(), workspace.id(), title);
                 var threads = scope.client().threads().list(workspace.id());
                 ui.accept(() -> {
                     if (current(scope)) {
@@ -274,6 +325,7 @@ final class DesktopConversationCoordinator implements AutoCloseable {
                 var workspaces = scope.client().workspaces().list();
                 var threads = scope.client().threads().list(created.id());
                 ui.accept(() -> {
+                    workspaceCreated.accept(created);
                     if (current(scope)) {
                         beginSelection();
                         store.update(state -> DesktopStateProjection.catalog(state, workspaces, created, threads));
@@ -304,10 +356,19 @@ final class DesktopConversationCoordinator implements AutoCloseable {
             }
             return;
         }
+        if (changeFollowing && !value && !store.state().transcript().following()) {
+            return;
+        }
+        // 阅读意图单独换代，不能因翻页或回到最新释放正在运行的 Turn 订阅。
+        long historyRequest = historyEpoch.incrementAndGet();
+        // 立即提交意图，避免后续暂停回调在旧 false 状态上被去重，再被已排队的 true 更新覆盖。
+        store.update(state ->
+                DesktopStateProjection.transcript(state, state.transcript().following(changeFollowing && value)));
         Scope scope = scope();
         Consumer<java.util.function.UnaryOperator<com.javaclaw.desktop.state.DesktopState>> update =
                 change -> ui.accept(() -> {
-                    if (current(scope, selected.orElseThrow().id())) {
+                    if (currentHistory(
+                            historyRequest, scope, selected.orElseThrow().id())) {
                         store.update(change);
                     }
                 });
@@ -318,10 +379,15 @@ final class DesktopConversationCoordinator implements AutoCloseable {
                     store,
                     update,
                     workers,
-                    () -> !current(scope, selected.orElseThrow().id()));
+                    () -> !currentHistory(
+                            historyRequest, scope, selected.orElseThrow().id()));
         } else {
             DesktopTranscriptHistory.earlier(scope::client, store, update, workers);
         }
+    }
+
+    private boolean currentHistory(long request, Scope scope, ThreadId thread) {
+        return request == historyEpoch.get() && current(scope, thread);
     }
 
     private void applyCatalog(

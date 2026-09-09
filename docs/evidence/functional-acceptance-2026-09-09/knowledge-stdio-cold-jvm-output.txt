@@ -1,0 +1,2 @@
+PASS cold DOCX success: exactly one frame
+PASS cold DOCX failure: exactly one stable error frame

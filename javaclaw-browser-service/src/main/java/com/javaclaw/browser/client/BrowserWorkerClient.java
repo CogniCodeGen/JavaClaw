@@ -70,7 +70,7 @@ public final class BrowserWorkerClient implements BrowserWorkerPort {
             BrowserWorkerCapabilities capabilities) {
         SandboxedWorkerLauncher sandbox = new SandboxedWorkerLauncher();
         SandboxedWorkerCommand checked = Objects.requireNonNull(command, "command");
-        launcher = () -> sandbox.start(checked);
+        launcher = new BrowserWorkerLauncher(checked, sandbox::start);
         this.timeout = timeout(timeout);
         this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
         logins = capabilities.interactiveLogin()
@@ -250,8 +250,8 @@ public final class BrowserWorkerClient implements BrowserWorkerPort {
             throws Exception {
         Process process = launcher.start();
         pending.set(process);
-        register(authority, process);
         try {
+            register(authority, process);
             sendCommand(process, commandId, task, storageState);
             return readMessages(process, commandId, network, cancellation);
         } finally {

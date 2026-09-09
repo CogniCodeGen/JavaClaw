@@ -15,6 +15,7 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
 import com.javaclaw.api.ProviderModelDiscoveryCandidate;
@@ -36,34 +37,50 @@ final class ProviderSetupModelForm extends VBox {
     private final Label error = new Label();
 
     ProviderSetupModelForm(PlatformComponentFactory components, Runnable discover) {
-        super(12);
+        super(8);
+        setMinWidth(0);
         Label instruction = new Label("选择要用于对话的模型；名称不代表能力验证，未知用途请按服务说明确认。");
+        instruction.setMinWidth(0);
         instruction.setWrapText(true);
         instruction.getStyleClass().add("sec-hint");
         search.setId("providerWizardSearch");
+        search.setMinWidth(0);
         search.setPromptText("搜索模型名称或 ID…");
         search.textProperty().addListener((ignored, before, value) -> renderRows());
         Button retry = components.action("重新获取列表", ActionStyle.GHOST, ActionSize.COMPACT);
+        retry.setId("providerWizardDiscoverModels");
+        retry.setMinWidth(Region.USE_PREF_SIZE);
         retry.setOnAction(event -> discover.run());
         HBox filter = new HBox(8, search, retry);
         HBox.setHgrow(search, Priority.ALWAYS);
         ScrollPane scroll = new ScrollPane(rows);
+        scroll.setMinWidth(0);
+        rows.setMinWidth(0);
         scroll.setFitToWidth(true);
-        scroll.setPrefViewportHeight(180);
+        scroll.setPrefViewportHeight(120);
         manual.setId("providerWizardManualModel");
+        manual.setMinWidth(0);
         manual.setPromptText("手动输入模型 ID");
         Button add = components.action("添加", ActionStyle.SOFT, ActionSize.COMPACT);
         add.setId("providerWizardAddManual");
+        add.setMinWidth(Region.USE_PREF_SIZE);
         add.setOnAction(event -> addManual());
         manual.setOnAction(event -> addManual());
         HBox input = new HBox(8, manual, add);
         HBox.setHgrow(manual, Priority.ALWAYS);
         current.setId("providerWizardCurrentModel");
-        current.setMaxWidth(Double.MAX_VALUE);
-        current.setConverter(SettingsLabels.converter(model -> model.displayName() + " · " + model.modelId()));
+        ProviderSetupChoices.configure(current, ProviderSetupModelForm::modelLabel);
+        error.setMinWidth(0);
         error.setWrapText(true);
+        error.setManaged(false);
+        error.setVisible(false);
         error.getStyleClass().add("status-error");
-        getChildren().addAll(instruction, filter, scroll, input, error, new Label("当前使用"), current);
+        Label currentLabel = new Label("当前使用");
+        currentLabel.setMinWidth(Region.USE_PREF_SIZE);
+        HBox currentRow = new HBox(12, currentLabel, current);
+        currentRow.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        HBox.setHgrow(current, Priority.ALWAYS);
+        getChildren().addAll(instruction, filter, scroll, input, error, currentRow);
     }
 
     void candidates(List<ProviderModelDiscoveryCandidate> candidates) {
@@ -94,9 +111,13 @@ final class ProviderSetupModelForm extends VBox {
             select(models.get(id), true);
             manual.clear();
             error.setText("");
+            error.setManaged(false);
+            error.setVisible(false);
             renderRows();
         } catch (RuntimeException invalid) {
             error.setText("请输入有效的模型 ID：" + SettingsFailures.message(invalid));
+            error.setManaged(true);
+            error.setVisible(true);
         }
     }
 
@@ -108,14 +129,20 @@ final class ProviderSetupModelForm extends VBox {
                         .toLowerCase(Locale.ROOT)
                         .contains(query))
                 .forEach(model -> {
-                    CheckBox choice = new CheckBox(model.displayName() + " · " + model.modelId()
-                            + purposeHints.getOrDefault(model.modelId(), ""));
+                    CheckBox choice = new CheckBox(modelLabel(model) + purposeHints.getOrDefault(model.modelId(), ""));
+                    choice.setMinWidth(0);
+                    choice.setMaxWidth(Double.MAX_VALUE);
+                    choice.setWrapText(true);
+                    choice.setTooltip(ProviderSetupChoices.tooltip(choice.getText()));
                     choice.setSelected(selected.containsKey(model.modelId()));
                     choice.setOnAction(event -> select(model, choice.isSelected()));
                     rows.getChildren().add(choice);
                 });
         if (rows.getChildren().isEmpty()) {
-            rows.getChildren().add(new Label("暂无匹配模型，可以在下方手动输入模型 ID。"));
+            Label empty = new Label("暂无匹配模型，可以在下方手动输入模型 ID。");
+            empty.setMinWidth(0);
+            empty.setWrapText(true);
+            rows.getChildren().add(empty);
         }
     }
 
@@ -138,5 +165,11 @@ final class ProviderSetupModelForm extends VBox {
 
     private static ProviderModelSpec chat(String id, String name) {
         return new ProviderModelSpec(id, name, Set.of(ProviderModelPurpose.CHAT), OptionalInt.empty());
+    }
+
+    private static String modelLabel(ProviderModelSpec model) {
+        return model.displayName().equals(model.modelId())
+                ? model.modelId()
+                : model.displayName() + " · " + model.modelId();
     }
 }

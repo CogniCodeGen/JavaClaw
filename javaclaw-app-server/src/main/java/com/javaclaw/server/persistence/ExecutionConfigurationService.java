@@ -17,6 +17,7 @@ public final class ExecutionConfigurationService {
     private final H2Transactions transactions;
     private final ExecutionConfigurationRepository configurations;
     private final ExecutionConfigurationRepository subagentConfigurations;
+    private final ExecutionConfigurationRepository recentSelections;
     private final IdempotencyRepository idempotency = new IdempotencyRepository();
     private final CoreCommandService core;
     private final AgentRoleService roles;
@@ -40,7 +41,10 @@ public final class ExecutionConfigurationService {
         this.json = Objects.requireNonNull(json, "json");
         this.clock = Objects.requireNonNull(clock, "clock");
         configurations = new ExecutionConfigurationRepository(json);
-        subagentConfigurations = new ExecutionConfigurationRepository(json, true);
+        subagentConfigurations =
+                new ExecutionConfigurationRepository(json, ExecutionConfigurationRepository.Namespace.SUBAGENT);
+        recentSelections =
+                new ExecutionConfigurationRepository(json, ExecutionConfigurationRepository.Namespace.RECENT);
     }
 
     /**
@@ -53,6 +57,29 @@ public final class ExecutionConfigurationService {
     public Optional<ExecutionConfiguration> find(Optional<WorkspaceId> workspaceId, Optional<ThreadId> threadId) {
         validateScope(workspaceId, threadId);
         return execute(connection -> configurations.find(connection, workspaceId, threadId, false));
+    }
+
+    /**
+     * 读取仅用于初始化新 Thread 的最近模型与思考选择，不回退安装默认。
+     *
+     * <p>该记录使用独立命名空间，永远不参与已有 Thread 的执行配置继承链。
+     *
+     * @return 最近选择的独立版本；缺失时新 Thread 应按正常规则继承项目设置
+     */
+    public Optional<ExecutionConfiguration> findRecent() {
+        return execute(connection -> recentSelections.find(connection, Optional.empty(), Optional.empty(), false));
+    }
+
+    /**
+     * 保存最近模型与思考，不修改安装默认、项目默认或任何已有 Thread。
+     *
+     * @param identity 最近选择自身的版本和幂等身份
+     * @param overrides 只允许 Provider 和 reasoning；空字段表示新 Thread 继承正常设置
+     * @return 最近选择的已提交版本，作用域字段均为空
+     */
+    public ExecutionConfiguration updateRecent(CommandIdentity identity, ExecutionOverrides overrides) {
+        requireModelFields(overrides, "最近选择只能设置 Provider 和推理偏好");
+        return update(identity, Optional.empty(), Optional.empty(), overrides, recentSelections);
     }
 
     /**
@@ -154,14 +181,19 @@ public final class ExecutionConfigurationService {
             Optional<WorkspaceId> workspaceId,
             Optional<ThreadId> threadId,
             ExecutionOverrides overrides) {
+        requireModelFields(overrides, "子任务默认值只能设置 Provider 和推理偏好");
+        return update(identity, workspaceId, threadId, overrides, subagentConfigurations);
+    }
+
+    private static void requireModelFields(ExecutionOverrides overrides, String message) {
+        Objects.requireNonNull(overrides, "overrides");
         if (overrides.role().isPresent()
                 || overrides.permissionProfile().isPresent()
                 || overrides.approvalPolicy().isPresent()
                 || overrides.budget().isPresent()
                 || overrides.visibleCapabilities().isPresent()) {
-            throw PersistenceException.invalidRequest("子任务默认值只能设置 Provider 和推理偏好");
+            throw PersistenceException.invalidRequest(message);
         }
-        return update(identity, workspaceId, threadId, overrides, subagentConfigurations);
     }
 
     private ExecutionConfiguration update(

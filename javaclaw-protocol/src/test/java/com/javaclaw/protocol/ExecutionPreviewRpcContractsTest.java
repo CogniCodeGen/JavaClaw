@@ -29,21 +29,33 @@ class ExecutionPreviewRpcContractsTest {
         var payload = new ExecutionRpcContracts.PreviewPayload(
                 WorkspaceId.random(), Optional.of(ThreadId.random()), ExecutionOverrides.empty());
         var preview = new ExecutionPreview(
-                Optional.of(new AgentRoleRef("default", 1)), Optional.of(new ProviderRef("connection", 3, "model")),
-                Optional.of(ReasoningPreference.NONE), true, true, List.of(), List.of());
+                Optional.of(new AgentRoleRef("default", 1)),
+                Optional.of(new ProviderRef("connection", 3, "model")),
+                Optional.of(ReasoningPreference.NONE),
+                true,
+                true,
+                List.of(),
+                List.of());
 
         assertEquals(payload, json.decode(json.encode(payload), ExecutionRpcContracts.PreviewPayload.class));
         assertEquals(preview, json.decode(json.encode(preview), ExecutionPreview.class));
         assertTrue(preview.ready());
-        assertEquals(RpcMethodKind.QUERY, MethodCatalog.require(
-                "execution/preview", new NegotiatedCapabilities(Set.of(), Set.of())).kind());
+        assertEquals(
+                RpcMethodKind.QUERY,
+                MethodCatalog.require("execution/preview", new NegotiatedCapabilities(Set.of(), Set.of()))
+                        .kind());
     }
 
     @Test
     void 各阻塞原因可往返且空配置不会被误报为就绪() {
         for (ExecutionBlocker.Code code : ExecutionBlocker.Code.values()) {
             var preview = new ExecutionPreview(
-                    Optional.empty(), Optional.empty(), Optional.empty(), false, false, List.of(),
+                    Optional.empty(),
+                    Optional.empty(),
+                    Optional.empty(),
+                    false,
+                    false,
+                    List.of(),
                     List.of(new ExecutionBlocker(code, "配置需要更新")));
             assertEquals(preview, json.decode(json.encode(preview), ExecutionPreview.class));
             assertFalse(preview.ready());
@@ -58,7 +70,12 @@ class ExecutionPreviewRpcContractsTest {
             Set<String> fields = new HashSet<>();
             schema.at("/$defs/preview/required").forEach(field -> fields.add(field.textValue()));
             var preview = new ExecutionPreview(
-                    Optional.empty(), Optional.empty(), Optional.empty(), false, false, List.of(),
+                    Optional.empty(),
+                    Optional.empty(),
+                    Optional.empty(),
+                    false,
+                    false,
+                    List.of(),
                     List.of(new ExecutionBlocker(ExecutionBlocker.Code.MODEL_REQUIRED, "请选择模型")));
             assertEquals(fields, json.fieldNames(json.encode(preview)));
             assertFalse(schema.at("/$defs/preview/additionalProperties").asBoolean());

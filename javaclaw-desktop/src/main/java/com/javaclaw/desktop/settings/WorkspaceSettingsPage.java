@@ -79,28 +79,28 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
     @Override
     public void activate() {
         active = true;
-        if (state.selected().isPresent()) {
-            execution.refresh();
-        }
+        execution.setRefreshActive(true);
         presenter.refresh();
     }
 
     @Override
     public void deactivate() {
         active = false;
+        execution.setRefreshActive(false);
     }
 
     @Override
     public void dispose() {
         active = false;
         configurationSubscription.close();
+        execution.close();
     }
 
-    /** 连接恢复时只刷新执行配置；具体草稿保护由执行面板统一判断。 */
+    /** 重验登记与执行目录；各编辑基线及草稿由对应状态机保护。 */
     void refreshExecutionConfiguration() {
         presenter.refresh();
         if (state.selected().isPresent()) {
-            execution.refresh();
+            execution.refreshAutomatically();
         }
     }
 
@@ -205,10 +205,14 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
         rendering = true;
         try {
             masterDetail.list().getItems().setAll(snapshot.workspaces());
-            masterDetail.list().getSelectionModel().select(snapshot.selected()
-                    .flatMap(selected -> snapshot.workspaces().stream()
-                            .filter(candidate -> candidate.id().equals(selected.id())).findFirst())
-                    .orElse(null));
+            masterDetail
+                    .list()
+                    .getSelectionModel()
+                    .select(snapshot.selected()
+                            .flatMap(selected -> snapshot.workspaces().stream()
+                                    .filter(candidate -> candidate.id().equals(selected.id()))
+                                    .findFirst())
+                            .orElse(null));
             if (snapshot.selected().isPresent()) {
                 renderSelected(snapshot);
             } else {

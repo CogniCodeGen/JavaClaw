@@ -1,0 +1,33 @@
+[INFO] Tests run: 106, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 68, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 155, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 42, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 63, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 67, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 218, Failures: 0, Errors: 0, Skipped: 0
+[WARNING] Tests run: 214, Failures: 0, Errors: 0, Skipped: 16
+[INFO] Tests run: 55, Failures: 0, Errors: 0, Skipped: 0
+[WARNING] Tests run: 1066, Failures: 0, Errors: 0, Skipped: 5
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 124, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 555, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0
+[WARNING] Tests run: 97, Failures: 0, Errors: 0, Skipped: 2
+[INFO] JavaClaw 6 ......................................... SUCCESS [  1.253 s]
+[INFO] JavaClaw Immutable API ............................. SUCCESS [  4.229 s]
+[INFO] JavaClaw Extension SPI ............................. SUCCESS [  1.711 s]
+[INFO] JavaClaw App Protocol v3 ........................... SUCCESS [  3.100 s]
+[INFO] JavaClaw Thin Turn Harness ......................... SUCCESS [  1.196 s]
+[INFO] JavaClaw Model Adapters ............................ SUCCESS [  4.141 s]
+[INFO] JavaClaw Built-in Extension Contracts .............. SUCCESS [  1.693 s]
+[INFO] JavaClaw Built-in Extensions ....................... SUCCESS [ 10.754 s]
+[INFO] JavaClaw Native Hosts .............................. SUCCESS [ 24.270 s]
+[INFO] JavaClaw Isolated Browser Worker ................... SUCCESS [ 10.730 s]
+[INFO] JavaClaw App Server ................................ SUCCESS [14:38 min]
+[INFO] JavaClaw Isolated Knowledge Worker ................. SUCCESS [  2.687 s]
+[INFO] JavaClaw Java SDK and CLI .......................... SUCCESS [  5.619 s]
+[INFO] JavaClaw JavaFX SDK Client ......................... SUCCESS [01:25 min]
+[INFO] JavaClaw Packaging ................................. SUCCESS [ 28.634 s]
+[INFO] BUILD SUCCESS
+[INFO] Total time:  17:44 min
+[INFO] Finished at: 2026-09-09T10:48:08+08:00

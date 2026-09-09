@@ -3,6 +3,7 @@ package com.javaclaw.server.extension;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
@@ -10,6 +11,9 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.api.parallel.Resources;
 
+import com.javaclaw.nativehost.sandbox.SandboxedWorkerCommand;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -98,14 +102,59 @@ class KnowledgeWorkerRuntimeFactoryTest {
                 () -> assertThrows(IllegalStateException.class, () -> KnowledgeWorkerRuntimeFactory.create(data)));
     }
 
+    @Test
+    @ResourceLock(Resources.SYSTEM_PROPERTIES)
+    void 独立镜像仅为启动器和只读运行库授予执行权限() throws Exception {
+        Path image = prepareImage(temporaryDirectory.resolve("library-image"), javaName());
+        Path data = Files.createDirectories(temporaryDirectory.resolve("library-data-v6"));
+
+        SandboxedWorkerCommand command = KnowledgeWorkerRuntimeFactory.command(image, data);
+
+        assertEquals(
+                List.of(
+                        image.resolve("bin").resolve(javaName()).toRealPath(),
+                        image.resolve("lib").toRealPath()),
+                command.executableRoots());
+        assertEquals(List.of(image.toRealPath()), command.readRoots());
+        assertEquals(List.of(command.workingDirectory()), command.writeRoots());
+        assertTrue(command.executableRoots().stream().noneMatch(path -> path.startsWith(command.workingDirectory())));
+    }
+
+    @Test
+    @ResourceLock(Resources.SYSTEM_PROPERTIES)
+    void 运行库缺失非目录或链接到镜像外时拒绝授权() throws Exception {
+        Path data = Files.createDirectories(temporaryDirectory.resolve("unsafe-library-data-v6"));
+        Path outside = Files.createDirectories(temporaryDirectory.resolve("outside-library"));
+        for (String kind : List.of("missing", "file", "outside")) {
+            Path image = prepareImage(temporaryDirectory.resolve("library-" + kind), javaName());
+            Path libraries = image.resolve("lib");
+            Files.delete(libraries);
+            if (kind.equals("file")) {
+                Files.writeString(libraries, "not a directory");
+            } else if (kind.equals("outside")) {
+                Files.createSymbolicLink(libraries, outside);
+            }
+            assertThrows(java.io.IOException.class, () -> KnowledgeWorkerRuntimeFactory.command(image, data));
+        }
+    }
+
     private static Path prepareImage(Path image, String javaName) throws Exception {
         Path bin = Files.createDirectories(image.resolve("bin"));
         Files.createDirectories(image.resolve("app"));
+        Files.createDirectories(image.resolve("lib"));
         Path java = Files.writeString(bin.resolve(javaName), "#!/bin/sh\nexit 0\n", StandardCharsets.US_ASCII);
         assertTrue(java.toFile().setExecutable(true, true) || Files.isExecutable(java));
         Files.writeString(
                 image.resolve("worker-image-v1.capability"), "worker-image-v1:knowledge", StandardCharsets.US_ASCII);
         return image;
+    }
+
+    private static String javaName() {
+        return System.getProperty("os.name", "")
+                        .toLowerCase(java.util.Locale.ROOT)
+                        .contains("windows")
+                ? "java.exe"
+                : "java";
     }
 
     private static void withProperties(Path image, String osName, Runnable assertion) {

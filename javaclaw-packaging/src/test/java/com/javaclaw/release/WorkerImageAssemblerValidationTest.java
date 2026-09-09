@@ -156,6 +156,7 @@ class WorkerImageAssemblerValidationTest {
         Path app = Files.createDirectories(image.resolve("app"));
         Files.createFile(app.resolve("javaclaw-browser-service-6.0.jar"));
         Files.createFile(app.resolve("playwright-1.52.0.jar"));
+        BrowserDriverFixture.bundle(image);
         Files.createDirectory(image.resolve("browser"));
         return image;
     }

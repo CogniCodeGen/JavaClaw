@@ -40,6 +40,7 @@ import com.javaclaw.desktop.component.RevisionConflictPane;
 
 /** 沿用管理中心控件和布局的 Agent Studio；角色只编辑行为、可选模型偏好与能力收窄。 */
 public final class AgentRoleSettingsPage implements ManagedSettingsPage {
+    private final SettingsPageRefresh configurationRefresh;
     private final PlatformComponentFactory components = new PlatformComponentFactory();
     private final AgentRoleSettingsPresenter presenter;
     private final VBox content = components.page("Agent Studio");
@@ -102,6 +103,7 @@ public final class AgentRoleSettingsPage implements ManagedSettingsPage {
         configureControls();
         buildLayout();
         bindEvents();
+        configurationRefresh = SettingsPageRefresh.roles(gateway, this, presenter);
         files.onPendingChanged(this::updateInteractionState);
         promptOptimization.onPendingChanged(this::updateInteractionState);
         presenter.subscribe(this::render);
@@ -119,7 +121,7 @@ public final class AgentRoleSettingsPage implements ManagedSettingsPage {
 
     @Override
     public void activate() {
-        requestReload();
+        configurationRefresh.activate();
         promptPreview.activate();
         promptOptimization.activate();
     }
@@ -152,9 +154,15 @@ public final class AgentRoleSettingsPage implements ManagedSettingsPage {
 
     @Override
     public void dispose() {
+        configurationRefresh.close();
         presenter.dispose();
         files.dispose();
         promptOptimization.onPendingChanged(() -> {});
+    }
+
+    @Override
+    public void deactivate() {
+        configurationRefresh.deactivate();
     }
 
     private void configureControls() {

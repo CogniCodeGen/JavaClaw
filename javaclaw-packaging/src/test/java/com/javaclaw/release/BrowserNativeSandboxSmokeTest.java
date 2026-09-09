@@ -99,6 +99,8 @@ class BrowserNativeSandboxSmokeTest {
         String executableSuffix = BrowserNativeCapability.platformId().equals("windows") ? ".exe" : "";
         Path java = image.resolve("bin/java" + executableSuffix).toRealPath();
         Path app = image.resolve("app").toRealPath();
+        Path runtimeLibraries = image.resolve("lib").toRealPath();
+        Path driver = image.resolve("driver").toRealPath();
         Path browser = image.resolve("browser").toRealPath();
         DisplayAccess display = displayAccess();
         LinkedHashMap<String, String> environment = new LinkedHashMap<>();
@@ -112,19 +114,23 @@ class BrowserNativeSandboxSmokeTest {
         List<String> argv = List.of(
                 java.toString(),
                 "-XX:-UsePerfData",
+                "-Dplaywright.cli.dir=" + driver,
+                "-Djava.io.tmpdir=" + work,
                 "-cp",
                 app.resolve("*").toString(),
                 "com.javaclaw.browser.worker.BrowserWorkerMain");
         return new SandboxedWorkerCommand(
-                "browser-native-smoke",
-                argv,
-                work,
-                environment,
-                readRoots,
-                List.of(work),
-                List.of(java, browser),
-                Duration.ofMinutes(2),
-                new ResourceLimits(1024L * 1024 * 1024, 16L * 1024 * 1024, 16, 512));
+                        "browser-native-smoke",
+                        argv,
+                        work,
+                        environment,
+                        readRoots,
+                        List.of(work),
+                        List.of(java, runtimeLibraries, driver, browser),
+                        Duration.ofMinutes(2),
+                        new ResourceLimits(1024L * 1024 * 1024, 16L * 1024 * 1024, 16, 512),
+                        Optional.empty())
+                .withPrivateScratch(work);
     }
 
     private static DisplayAccess displayAccess() throws Exception {

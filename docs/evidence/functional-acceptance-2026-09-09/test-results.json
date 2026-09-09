@@ -1,0 +1,241 @@
+{
+  "totals": {
+    "tests": 2841,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 23,
+    "passed": 2818
+  },
+  "modules": [
+    {
+      "module": "javaclaw-agent-runtime",
+      "suites": 6,
+      "tests": 42,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "javaclaw-api",
+      "suites": 22,
+      "tests": 106,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "javaclaw-app-server",
+      "suites": 230,
+      "tests": 1066,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 5
+    },
+    {
+      "module": "javaclaw-browser-service",
+      "suites": 9,
+      "tests": 55,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "javaclaw-builtin-contracts",
+      "suites": 12,
+      "tests": 67,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "javaclaw-builtin-extensions",
+      "suites": 47,
+      "tests": 218,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "javaclaw-client",
+      "suites": 35,
+      "tests": 124,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "javaclaw-desktop",
+      "suites": 156,
+      "tests": 557,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "javaclaw-extension-spi",
+      "suites": 14,
+      "tests": 68,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "javaclaw-knowledge-worker",
+      "suites": 2,
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "javaclaw-model-adapters",
+      "suites": 13,
+      "tests": 63,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "suites": 51,
+      "tests": 214,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 16
+    },
+    {
+      "module": "javaclaw-packaging",
+      "suites": 23,
+      "tests": 97,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 2
+    },
+    {
+      "module": "javaclaw-protocol",
+      "suites": 39,
+      "tests": 155,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "skipped": [
+    {
+      "class": "com.javaclaw.server.coding.PublishedCodingExecutionTest",
+      "name": "真实五类发行工具链在断网沙箱中执行并运行Gradle项目任务",
+      "reason": "System property [javaclaw.toolchainArchives] does not exist"
+    },
+    {
+      "class": "com.javaclaw.server.coding.PublishedCodingHarnessTest",
+      "name": "同一会话聊天准备真实NPM依赖修改断网失败修复成功保留Diff再继续聊天",
+      "reason": "System property [javaclaw.codingHarnessNetworkAcceptance] does not exist"
+    },
+    {
+      "class": "com.javaclaw.server.coding.PublishedDependenciesPreparationTest",
+      "name": "nativePackageManagersPreparePublicDependenciesBeforeSeparateOfflineRuns",
+      "reason": "System property [javaclaw.codingNetworkAcceptance] does not exist"
+    },
+    {
+      "class": "com.javaclaw.server.coding.PublishedToolchainArchiveTest",
+      "name": "真实归档通过流式解包完整性证据和目录入口校验",
+      "reason": "System property [javaclaw.toolchainArchives] does not exist"
+    },
+    {
+      "class": "com.javaclaw.server.coding.PublishedToolchainArchiveTest",
+      "name": "WindowsPython归档在任意宿主解包后同时满足Python和Pip真实入口",
+      "reason": "System property [javaclaw.toolchainArchives] does not exist"
+    },
+    {
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclLeaseTest",
+      "name": "anotherProcessWaitsUntilRestorationCompletesBeforeTakingSharedRootLease",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclLeaseTest",
+      "name": "deadHelperReleasesKernelLockButItsPendingMarkerPreventsSilentAclBaselineAdoption",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclManagerTest",
+      "name": "failedRestoreEvidenceRetainsOriginalIdentityAndNeverOffersPathBasedRestore",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclManagerTest",
+      "name": "baselineIsDurableBeforeGrantAndOutlivesThreadScopeUntilAsynchronousRestore",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclManagerTest",
+      "name": "originalAclIsRestoredOnSameObjectBeforeRenameHandlesAreReleased",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclManagerTest",
+      "name": "laterGrantFailureRestoresEarlierAclAndReleasesAllAncestorPins",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "class": "com.javaclaw.nativehost.ffm.WindowsWorkspaceDirectoryTest",
+      "name": "directoryCapabilityBlocksRenameAndCannotFollowInsertedJunction",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "class": "com.javaclaw.nativehost.ffm.WindowsWorkspaceDirectoryTest",
+      "name": "realNativeChannelRenamesWithoutReplacementCopiesAclAndDeletesByHandle",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "class": "com.javaclaw.nativehost.ffm.WindowsWorkspaceDirectoryTest",
+      "name": "independentChildRemainsOwnedAfterParentClosesAndTruncationIsDurable",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "class": "com.javaclaw.nativehost.sandbox.LinuxProxyIsolationTest",
+      "name": "realNamespaceRelayAllowsProxyAndSeccompRejectsMountedHostUnixSocket",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "class": "com.javaclaw.nativehost.sandbox.WindowsProxyIsolationTest",
+      "name": "realAppContainerAllowsOnlyExactProxyTcpAndClosesItsLease",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "class": "com.javaclaw.nativehost.sandbox.WindowsSandboxIntegrationTest",
+      "name": "targetExit73IsNotConfusedWithTrustedHelperRestorationFailure",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "class": "com.javaclaw.nativehost.sandbox.WindowsSandboxIntegrationTest",
+      "name": "conPtySupportsBackpressuredOutputResizeAndInput",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "class": "com.javaclaw.nativehost.sandbox.WindowsSandboxIntegrationTest",
+      "name": "appContainerAllowsDeclaredWriteButDeniesDeleteAndEnforcesWallTimeout",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "class": "com.javaclaw.nativehost.transport.WindowsNamedPipeIntegrationTest",
+      "name": "closeWakesPendingAcceptAndIsIdempotent",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "class": "com.javaclaw.nativehost.transport.WindowsNamedPipeIntegrationTest",
+      "name": "exchangesFramedProtocolMessagesAndOwnsBothHandles",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "class": "com.javaclaw.launcher.WindowsServerSupervisorTest",
+      "name": "reusesReachableCurrentUserPipeWithoutStartingProcess",
+      "reason": "Disabled on operating system: Mac OS X"
+    },
+    {
+      "class": "com.javaclaw.release.BrowserNativeSandboxSmokeTest",
+      "name": "五平台Runner只在原生Sandbox登录和OAuth私有回调成功后分别发布能力",
+      "reason": ""
+    }
+  ],
+  "failed": []
+}

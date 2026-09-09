@@ -43,7 +43,7 @@ public record LauncherSession(boolean supervised, boolean trayActive) {
         if (supervised) {
             return "发行 launcher 已在打开 Desktop 前启动 App Server。当前平台没有可用托盘，请重新启动 JavaClaw 后再连接。";
         }
-        return "IDEA 直接运行没有 launcher supervisor；请运行“JavaClaw Local Debug”或先启动 App Server。";
+        return "IDEA 直接运行没有 launcher supervisor；请运行“JavaClaw 一键启动（前后端）”或先启动 App Server。";
     }
 
     /**

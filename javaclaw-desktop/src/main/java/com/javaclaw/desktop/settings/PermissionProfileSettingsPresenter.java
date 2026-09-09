@@ -51,6 +51,43 @@ public final class PermissionProfileSettingsPresenter {
         gateway.permissionProfiles().whenComplete((profiles, failure) -> completeReload(epoch, profiles, failure));
     }
 
+    /** 配置失效只重验脏表单目录，保留复制来源、权限草稿和原始保存版本。 */
+    void refreshForConfigurationChange(boolean preserveDraft) {
+        PermissionProfileSettingsState before = state;
+        long epoch = before.epoch() + 1;
+        publish(new PermissionProfileSettingsState(
+                SettingsLoadState.LOADING,
+                before.profiles(),
+                before.selected(),
+                before.baseline(),
+                before.draft(),
+                before.cloneSource(),
+                "正在更新权限目录；草稿保持不变…",
+                before.revisionConflict(),
+                epoch));
+        gateway.permissionProfiles().whenComplete((catalog, error) -> {
+            if (state.epoch() != epoch) {
+                return;
+            }
+            if (!preserveDraft && !state.dirty() && !state.revisionConflict() && !state.cloning()) {
+                completeReload(epoch, catalog, error);
+                return;
+            }
+            publish(new PermissionProfileSettingsState(
+                    error == null ? SettingsLoadState.READY : SettingsLoadState.ERROR,
+                    error == null ? catalog : state.profiles(),
+                    state.selected(),
+                    state.baseline(),
+                    state.draft(),
+                    state.cloneSource(),
+                    error == null
+                            ? "权限方案已更新；目录已刷新，当前草稿和保存版本保持不变。"
+                            : "权限目录读取失败；草稿仍保留：" + SettingsFailures.message(error),
+                    state.revisionConflict(),
+                    epoch));
+        });
+    }
+
     /**
      * 选择权威配置；内置“受限对话”会以只读方式呈现。
      *
@@ -200,9 +237,13 @@ public final class PermissionProfileSettingsPresenter {
             return;
         }
         List<PermissionProfile> catalog = List.copyOf(profiles);
-        Optional<PermissionProfile> selected = catalog.stream()
-                .filter(profile -> profile.id().equals("standard"))
-                .findFirst()
+        Optional<PermissionProfile> selected = state.selected()
+                .flatMap(previous -> catalog.stream()
+                        .filter(profile -> profile.id().equals(previous.id()))
+                        .findFirst())
+                .or(() -> catalog.stream()
+                        .filter(profile -> profile.id().equals("standard"))
+                        .findFirst())
                 .or(() -> catalog.stream().findFirst());
         PermissionProfileDraft draft =
                 selected.map(PermissionProfileDraft::from).orElse(state.baseline());

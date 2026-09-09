@@ -22,6 +22,7 @@ final class ManagementScopeSession {
     private final Supplier<ManagedSettingsPage> activePage;
     private final Consumer<Boolean> writeAvailability;
     private Optional<Workspace> applied = Optional.empty();
+    private boolean applyingUserSelection;
 
     ManagementScopeSession(
             CoreSettingsGateway gateway,
@@ -49,7 +50,8 @@ final class ManagementScopeSession {
     }
 
     void bind(ManagedSettingsPage page) {
-        Objects.requireNonNull(page, "page").workspaceChanged(presenter.state().frozenSelection());
+        applied = presenter.state().frozenSelection();
+        Objects.requireNonNull(page, "page").workspaceChanged(applied);
         writeAvailability.accept(presenter.state().availableSelection().isPresent());
     }
 
@@ -83,7 +85,13 @@ final class ManagementScopeSession {
         if (page != null && page.dirty()) {
             page.discardDraft();
         }
-        presenter.select(requested);
+        // 用户已经确认离开旧作用域；丢弃草稿触发的旧页重读不能阻止这次明确选择。
+        applyingUserSelection = true;
+        try {
+            presenter.select(requested);
+        } finally {
+            applyingUserSelection = false;
+        }
     }
 
     private void render(ManagementScopeState state) {
@@ -94,8 +102,9 @@ final class ManagementScopeSession {
             return;
         }
         ManagedSettingsPage page = activePage.get();
-        boolean sameWorkspace = applied.map(Workspace::id).equals(frozen.map(Workspace::id));
-        if (sameWorkspace && page != null && (page.dirty() || page.pending())) {
+        // 首次出现工作区也属于自动绑定，不能重置全局 Provider 页的草稿或模型发现。
+        // 保留 applied，待下次安全重验或页面导航时补交付，不阻止目录和可用状态更新。
+        if (!applyingUserSelection && page != null && (page.dirty() || page.pending())) {
             return;
         }
         applied = frozen;

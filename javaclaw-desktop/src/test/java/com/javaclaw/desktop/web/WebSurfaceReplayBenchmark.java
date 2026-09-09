@@ -92,7 +92,13 @@ public final class WebSurfaceReplayBenchmark {
         report.put("firstSnapshotMs", millis(opened));
         save(first, directory.resolve("first.png"));
         FxTestSupport.run(() -> chat.show("replay", workspace, List.of(), window, List.of(), true));
-        FxTestSupport.await(() -> FxTestSupport.call(() -> chat.node().acknowledged()));
+        // show 会先异步投影；旧首屏的 ack 不能证明扩展历史窗口已经显示。
+        FxTestSupport.await(() -> FxTestSupport.call(() -> chat.node().acknowledged()
+                && ((Number) web.getEngine()
+                                        .executeScript(
+                                                "Number(document.getElementById('surface').dataset.messageCacheSize)"))
+                                .intValue()
+                        == window.size()));
         scroll(directory);
         long cpu = cpuNanos();
         long started = System.nanoTime();

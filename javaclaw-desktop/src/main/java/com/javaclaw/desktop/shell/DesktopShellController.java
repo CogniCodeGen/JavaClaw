@@ -35,6 +35,7 @@ import com.javaclaw.desktop.appearance.JavaPreferencesAppearanceStore;
 import com.javaclaw.desktop.component.InputRequestPanel;
 import com.javaclaw.desktop.component.PlatformComponentFactory;
 import com.javaclaw.desktop.component.PlatformDialogs;
+import com.javaclaw.desktop.settings.ChatConfigurationPanel;
 import com.javaclaw.desktop.settings.ExecutionSelectionPanel;
 import com.javaclaw.desktop.settings.ManagementCenterWindow;
 import com.javaclaw.desktop.settings.SdkCoreSettingsGateway;
@@ -117,13 +118,20 @@ public final class DesktopShellController implements AutoCloseable {
     private Button denyButton;
 
     private DesktopPresenter presenter;
+    private ShellCatalogBindings catalogs;
     private ShellWebSurfaces surfaces;
     private java.util.List<ItemEnvelope> displayedItems = java.util.List.of();
     private ManagementCenterWindow managementCenter;
     private InputRequestPanel inputRequests;
     private CodingExecutionPanel codingOutput;
     private boolean rendering;
-    private ExecutionSelectionPanel executionSelection;
+    private ChatConfigurationPanel executionSelection;
+    private ShellWindowFocus windowFocus;
+    private final ComposerDrafts drafts = new ComposerDrafts();
+    private DesktopState latestState = DesktopState.initial();
+    private DesktopState renderedState;
+    private boolean localError;
+    private boolean bindingDraft;
     private Optional<Instant> executionConnection = Optional.empty();
 
     /** 配置单元格与选择事件。 */
@@ -162,6 +170,14 @@ public final class DesktopShellController implements AutoCloseable {
                 .selectedItemProperty()
                 .addListener((observable, previous, value) -> renderApprovalButtons(value));
         configureLauncherRecovery();
+        composer.textProperty().addListener((ignored, previous, text) -> {
+            if (!bindingDraft) {
+                drafts.edited(text);
+            }
+            if (executionSelection != null) {
+                renderActions(latestState);
+            }
+        });
     }
 
     /**
@@ -176,7 +192,7 @@ public final class DesktopShellController implements AutoCloseable {
     }
 
     /**
-     * 绑定 Presenter、管理中心并开始连接。
+     * 绑定 Presenter、管理中心并开始连接；根节点必须已有 Scene，Scene 可尚未挂载到窗口。
      *
      * @param value Desktop Presenter
      * @param center 单实例设置与管理中心
@@ -186,9 +202,25 @@ public final class DesktopShellController implements AutoCloseable {
             throw new IllegalStateException("controller is already attached");
         }
         presenter = Objects.requireNonNull(value, "presenter");
-        executionSelection = new ExecutionSelectionPanel(new SdkCoreSettingsGateway(value));
-        executionHost.getChildren().setAll(executionSelection);
+        catalogs = new ShellCatalogBindings(workspaceBox, threadList, approvalList);
         managementCenter = Objects.requireNonNull(center, "center");
+        executionSelection = new ChatConfigurationPanel(
+                new SdkCoreSettingsGateway(value),
+                () -> managementCenter.show(root.getScene().getWindow(), "providers"),
+                this::chooseChatWorkspace,
+                () -> presenter.createThread("新对话"));
+        executionHost.getChildren().setAll(executionSelection);
+        javafx.scene.layout.HBox previousActions = (javafx.scene.layout.HBox) sendButton.getParent();
+        previousActions.getChildren().removeAll(interruptButton, sendButton);
+        ((VBox) previousActions.getParent()).getChildren().remove(previousActions);
+        executionSelection.setActions(interruptButton, sendButton);
+        executionSelection.onStateChanged(() -> renderActions(latestState));
+        windowFocus = new ShellWindowFocus(root.getScene(), () -> {
+            if (latestState.connection().status() == ConnectionState.Status.CONNECTED) {
+                presenter.refreshWorkspaceCatalog();
+                executionSelection.refresh();
+            }
+        });
         inputRequests = new InputRequestPanel(
                 new CanonicalJson(),
                 components,
@@ -256,6 +288,7 @@ public final class DesktopShellController implements AutoCloseable {
         dialog.showAndWait()
                 .ifPresent(execution -> presenter.createWorkspace(
                         name, directory.toPath().toAbsolutePath().normalize(), execution));
+        selection.close();
     }
 
     /** 创建当前 Workspace 的 Thread。 */
@@ -273,9 +306,25 @@ public final class DesktopShellController implements AutoCloseable {
     @FXML
     public void send() {
         try {
-            presenter.send(composer.getText(), executionSelection.execution());
-            composer.clear();
+            if (!executionSelection.ready()) {
+                return;
+            }
+            ComposerDrafts.Submission submitted = drafts.submission(composer.getText());
+            var execution = executionSelection.execution();
+            presenter
+                    .send(submitted.text(), execution, drafts.options(submitted, execution))
+                    .thenAccept(started -> {
+                        if (submitted
+                                        .scope()
+                                        .thread()
+                                        .filter(started.threadId()::equals)
+                                        .isPresent()
+                                && drafts.acknowledged(submitted)) {
+                            composer.clear();
+                        }
+                    });
         } catch (RuntimeException failure) {
+            localError = true;
             errorLabel.setText(failure.getMessage());
             errorLabel.setVisible(true);
             errorLabel.setManaged(true);
@@ -326,23 +375,34 @@ public final class DesktopShellController implements AutoCloseable {
     }
 
     private void render(DesktopState state) {
+        ShellRenderChanges changes = ShellRenderChanges.between(renderedState, state);
+        latestState = state;
         rendering = true;
         try {
-            workspaceBox.getItems().setAll(state.threads().workspaces());
-            workspaceBox.setValue(state.threads().selectedWorkspace().orElse(null));
-            threadList.getItems().setAll(state.threads().threads());
-            threadList
-                    .getSelectionModel()
-                    .select(state.threads().selectedThread().orElse(null));
-            renderTranscript(state);
-            approvalList.getItems().setAll(state.interaction().pendingApprovals());
-            inputRequests.render(state.interaction().inputs());
-            codingOutput.bind(state);
-            executionSelection.bind(
-                    state.threads().selectedWorkspace(), state.threads().selectedThread(), false);
-            refreshExecutionConnection(state);
-            renderLabels(state);
-            renderActions(state);
+            catalogs.render(state);
+            if (changes.transcript()) {
+                renderTranscript(state);
+            }
+            if (changes.inputs()) {
+                inputRequests.render(state.interaction().inputs());
+            }
+            if (changes.scope()) {
+                bindDraft(state);
+                executionSelection.bind(
+                        state.threads().selectedWorkspace(), state.threads().selectedThread());
+            }
+            if (changes.scope() || changes.connection()) {
+                codingOutput.bind(state);
+                refreshExecutionConnection(state);
+            }
+            if (changes.labels() || localError) {
+                renderLabels(state);
+                localError = false;
+            }
+            if (changes.actions()) {
+                renderActions(state);
+            }
+            renderedState = state;
         } finally {
             rendering = false;
         }
@@ -380,7 +440,8 @@ public final class DesktopShellController implements AutoCloseable {
         threadMeta.setText(state.threads()
                 .activeTurn()
                 .map(turn -> "Turn " + turn.status())
-                .orElse("选择工作区和权限配置后开始任务"));
+                .orElseGet(() ->
+                        state.threads().selectedWorkspace().map(Workspace::name).orElse("选择工作区，开始聊天")));
         threadMeta.setTooltip(state.threads()
                 .activeTurn()
                 .map(turn -> new Tooltip(
@@ -403,12 +464,36 @@ public final class DesktopShellController implements AutoCloseable {
         boolean ready = state.connection().status() == ConnectionState.Status.CONNECTED
                 && state.threads().selectedThread().isPresent()
                 && state.threads().activeTurn().isEmpty()
-                && !state.interaction().busy();
+                && !state.interaction().busy()
+                && executionSelection.ready()
+                && !composer.getText().isBlank();
         sendButton.setDisable(!ready);
         interruptButton.setDisable(state.threads().activeTurn().isEmpty());
+        visible(interruptButton, state.threads().activeTurn().isPresent());
+        visible(sendButton, state.threads().activeTurn().isEmpty());
         renderApprovalButtons(approvalList.getSelectionModel().getSelectedItem());
-        if (state.transcript().following() && !transcriptList.getItems().isEmpty()) {
-            transcriptList.scrollTo(transcriptList.getItems().size() - 1);
+    }
+
+    private void bindDraft(DesktopState state) {
+        var scope = new ComposerDrafts.Scope(
+                state.threads().selectedWorkspace().map(Workspace::id),
+                state.threads().selectedThread().map(ConversationThread::id));
+        String text = drafts.bind(scope, composer.getText());
+        bindingDraft = true;
+        try {
+            if (!composer.getText().equals(text)) {
+                composer.setText(text);
+            }
+        } finally {
+            bindingDraft = false;
+        }
+    }
+
+    private void chooseChatWorkspace() {
+        if (workspaceBox.getItems().isEmpty()) {
+            newWorkspace();
+        } else {
+            workspaceBox.show();
         }
     }
 
@@ -449,9 +534,15 @@ public final class DesktopShellController implements AutoCloseable {
         node.setManaged(value);
     }
 
-    /** 释放三个页面中的主壳页面、预览租约与后台转换任务。 */
+    /** 释放窗口监听、主壳页面、预览租约与后台转换任务。 */
     @Override
     public void close() {
+        if (windowFocus != null) {
+            windowFocus.close();
+        }
+        if (executionSelection != null) {
+            executionSelection.close();
+        }
         if (surfaces != null) {
             surfaces.close();
         }

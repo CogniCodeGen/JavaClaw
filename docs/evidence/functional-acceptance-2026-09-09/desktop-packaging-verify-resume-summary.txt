@@ -1,0 +1,8 @@
+[INFO] Tests run: 556, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0
+[WARNING] Tests run: 97, Failures: 0, Errors: 0, Skipped: 2
+[INFO] JavaClaw JavaFX SDK Client ......................... SUCCESS [01:19 min]
+[INFO] JavaClaw Packaging ................................. SUCCESS [ 36.013 s]
+[INFO] BUILD SUCCESS
+[INFO] Total time:  01:55 min
+[INFO] Finished at: 2026-09-09T11:29:33+08:00

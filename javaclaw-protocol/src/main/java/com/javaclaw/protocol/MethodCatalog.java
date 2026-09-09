@@ -166,6 +166,8 @@ public final class MethodCatalog {
         add(methods, "execution/default/read", RpcMethodKind.QUERY);
         add(methods, "execution/preview", RpcMethodKind.QUERY);
         add(methods, "execution/default/update", RpcMethodKind.COMMAND);
+        add(methods, "execution/recent/read", RpcMethodKind.QUERY);
+        add(methods, "execution/recent/update", RpcMethodKind.COMMAND);
         add(methods, "execution/subagent/read", RpcMethodKind.QUERY);
         add(methods, "execution/subagent/update", RpcMethodKind.COMMAND);
         add(methods, "thread/execution/read", RpcMethodKind.QUERY);

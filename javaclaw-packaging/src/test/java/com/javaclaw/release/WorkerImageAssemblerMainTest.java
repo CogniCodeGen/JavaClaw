@@ -32,6 +32,8 @@ class WorkerImageAssemblerMainTest {
                 Files.readString(marker, StandardCharsets.US_ASCII).strip());
         assertTrue(BrowserNativeCapability.isReadOnly(marker));
         assertTrue(Files.isRegularFile(image.resolve("browser/chromium-1169/chrome" + executableSuffix())));
+        assertTrue(Files.isExecutable(image.resolve("driver/node" + executableSuffix())));
+        assertTrue(Files.isRegularFile(image.resolve("driver/package/cli.js")));
     }
 
     @Test
@@ -96,6 +98,7 @@ class WorkerImageAssemblerMainTest {
         Files.createDirectories(image.resolve("app"));
         Files.createFile(image.resolve("app/javaclaw-browser-service-6.0.jar"));
         Files.createFile(image.resolve("app/playwright-1.52.0.jar"));
+        BrowserDriverFixture.bundle(image);
         Files.createDirectories(image.resolve("browser"));
         return image;
     }

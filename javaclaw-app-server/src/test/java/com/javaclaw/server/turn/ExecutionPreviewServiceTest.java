@@ -81,7 +81,9 @@ class ExecutionPreviewServiceTest {
                 database, new AttachmentService(database, json, clock), json, clock, new UnusedSandbox());
         previews = new ExecutionPreviewService(core, roles, configurations, permissions, worktrees, providers);
         workspace = core.createWorkspace(identity("workspace", 0), "项目", directory.resolve("project"));
-        endpoint = providers.create(identity("provider", 0), "models",
+        endpoint = providers.create(
+                identity("provider", 0),
+                "models",
                 ProviderEndpointTestFixtures.chat("本地接口", ProviderAdapter.OPENAI_COMPATIBLE, "a", "b"),
                 ProviderLifecycle.ACTIVE);
     }
@@ -93,40 +95,105 @@ class ExecutionPreviewServiceTest {
         assertEquals(Optional.of(new AgentRoleRef("default", 1)), result.role());
         assertTrue(result.provider().isEmpty());
         assertBlocked(result, ExecutionBlocker.Code.MODEL_REQUIRED);
-        assertTrue(configurations.find(Optional.of(workspace.id()), Optional.empty()).isEmpty());
+        assertTrue(configurations
+                .find(Optional.of(workspace.id()), Optional.empty())
+                .isEmpty());
+    }
+
+    @Test
+    void 最近选择只初始化新对话而手改项目默认仍影响继承中的旧对话() {
+        configurations.ensureInstallationDefaults(selection(null, provider("a"), ReasoningPreference.HIGH));
+        var existing = core.createThread(
+                identity("existing-thread", 0),
+                workspace.id(),
+                Optional.empty(),
+                ThreadExecutionIntent.WORKSPACE,
+                "没有覆盖的旧对话");
+        ExecutionPreview before =
+                previews.preview(workspace.id(), Optional.of(existing.id()), ExecutionOverrides.empty());
+        configurations.updateRecent(
+                identity("recent-model", 0), selection(null, provider("b"), ReasoningPreference.LOW));
+
+        assertEquals(before, previews.preview(workspace.id(), Optional.of(existing.id()), ExecutionOverrides.empty()));
+        assertEquals(
+                Optional.of(provider("a")), preview(ExecutionOverrides.empty()).provider());
+        var created = core.createThread(
+                identity("new-thread", 0),
+                workspace.id(),
+                Optional.empty(),
+                ThreadExecutionIntent.WORKSPACE,
+                "使用最近选择的新对话");
+        configurations.update(
+                identity("initialize-recent", 0),
+                Optional.of(workspace.id()),
+                Optional.of(created.id()),
+                configurations.findRecent().orElseThrow().overrides());
+        ExecutionPreview fresh =
+                previews.preview(workspace.id(), Optional.of(created.id()), ExecutionOverrides.empty());
+        assertEquals(Optional.of(provider("b")), fresh.provider());
+        assertEquals(Optional.of(ReasoningPreference.LOW), fresh.reasoning());
+
+        configurations.update(
+                identity("manual-project-default", 0),
+                Optional.of(workspace.id()),
+                Optional.empty(),
+                selection(null, provider("b"), ReasoningPreference.NONE));
+        ExecutionPreview inherited =
+                previews.preview(workspace.id(), Optional.of(existing.id()), ExecutionOverrides.empty());
+        assertEquals(Optional.of(provider("b")), inherited.provider());
+        assertEquals(Optional.of(ReasoningPreference.NONE), inherited.reasoning());
+        assertEquals(
+                Optional.of(ReasoningPreference.LOW),
+                previews.preview(workspace.id(), Optional.of(created.id()), ExecutionOverrides.empty())
+                        .reasoning());
     }
 
     @Test
     void 来源优先级与正式执行一致且关闭思考不变为继承() {
         configurations.ensureInstallationDefaults(selection(null, provider("a"), ReasoningPreference.HIGH));
-        configurations.update(identity("workspace-defaults", 0), Optional.of(workspace.id()), Optional.empty(),
+        configurations.update(
+                identity("workspace-defaults", 0),
+                Optional.of(workspace.id()),
+                Optional.empty(),
                 selection(null, provider("b"), ReasoningPreference.LOW));
-        var thread = core.createThread(identity("thread", 0), workspace.id(), Optional.empty(),
-                ThreadExecutionIntent.WORKSPACE, "对话");
-        configurations.update(identity("thread-defaults", 0), Optional.of(workspace.id()), Optional.of(thread.id()),
+        var thread = core.createThread(
+                identity("thread", 0), workspace.id(), Optional.empty(), ThreadExecutionIntent.WORKSPACE, "对话");
+        configurations.update(
+                identity("thread-defaults", 0),
+                Optional.of(workspace.id()),
+                Optional.of(thread.id()),
                 selection(null, provider("a"), ReasoningPreference.NONE));
 
-        ExecutionPreview inherited = previews.preview(workspace.id(), Optional.of(thread.id()), ExecutionOverrides.empty());
-        ExecutionPreview explicit = previews.preview(workspace.id(), Optional.of(thread.id()),
-                selection(null, provider("b"), ReasoningPreference.MEDIUM));
+        ExecutionPreview inherited =
+                previews.preview(workspace.id(), Optional.of(thread.id()), ExecutionOverrides.empty());
+        ExecutionPreview explicit = previews.preview(
+                workspace.id(), Optional.of(thread.id()), selection(null, provider("b"), ReasoningPreference.MEDIUM));
 
         assertTrue(inherited.ready());
         assertFalse(inherited.modelLocked());
         assertFalse(inherited.reasoningLocked());
         assertEquals(Optional.of(provider("a")), inherited.provider());
         assertEquals(Optional.of(ReasoningPreference.NONE), inherited.reasoning());
-        assertTrue(inherited.provenance().stream().anyMatch(value ->
-                value.field().equals("provider") && value.source() == ConfigurationSource.THREAD));
+        assertTrue(inherited.provenance().stream()
+                .anyMatch(value -> value.field().equals("provider") && value.source() == ConfigurationSource.THREAD));
         assertEquals(Optional.of(provider("b")), explicit.provider());
         assertEquals(Optional.of(ReasoningPreference.MEDIUM), explicit.reasoning());
     }
 
     @Test
     void 固定Agent覆盖模型和思考且停用后返回原因() {
-        AgentRole role = roles.create(identity("role", 0), "fixed", new AgentRoleSpec(
-                "编程助手", "说明", "仅执行明确任务。", Optional.of(new ModelPreference(provider("a"))),
-                Optional.of(ReasoningPreference.HIGH), CapabilityNarrowing.inherit(),
-                PermissionConstraint.INHERIT, Map.of()));
+        AgentRole role = roles.create(
+                identity("role", 0),
+                "fixed",
+                new AgentRoleSpec(
+                        "编程助手",
+                        "说明",
+                        "仅执行明确任务。",
+                        Optional.of(new ModelPreference(provider("a"))),
+                        Optional.of(ReasoningPreference.HIGH),
+                        CapabilityNarrowing.inherit(),
+                        PermissionConstraint.INHERIT,
+                        Map.of()));
         ExecutionOverrides selection = selection(role.ref(), provider("b"), ReasoningPreference.LOW);
 
         ExecutionPreview result = preview(selection);
@@ -144,7 +211,9 @@ class ExecutionPreviewServiceTest {
 
     @Test
     void 普通预览保留历史模型版本并实时检查连接停用() {
-        providers.update(identity("provider-update", 1), endpoint.id(),
+        providers.update(
+                identity("provider-update", 1),
+                endpoint.id(),
                 ProviderEndpointTestFixtures.chat("新名称", ProviderAdapter.OPENAI_COMPATIBLE, "b"),
                 ProviderLifecycle.ACTIVE);
         ExecutionPreview unchanged = preview(selection(null, provider("a"), null));
@@ -159,21 +228,30 @@ class ExecutionPreviewServiceTest {
 
     @Test
     void 缺失精确版本和不支持聊天的模型不会变成就绪() {
-        assertBlocked(preview(selection(null, new ProviderRef("models", 99, "a"), null)),
+        assertBlocked(
+                preview(selection(null, new ProviderRef("models", 99, "a"), null)),
                 ExecutionBlocker.Code.MODEL_UNAVAILABLE);
         assertBlocked(preview(selection(null, provider("missing"), null)), ExecutionBlocker.Code.INVALID_CONFIGURATION);
-        ProviderEndpoint embeddings = providers.create(identity("embedding", 0), "embeddings",
+        ProviderEndpoint embeddings = providers.create(
+                identity("embedding", 0),
+                "embeddings",
                 ProviderEndpointTestFixtures.embedding("向量接口", ProviderAdapter.OPENAI_COMPATIBLE, "embed"),
                 ProviderLifecycle.ACTIVE);
-        assertBlocked(preview(selection(null, new ProviderRef(embeddings.id(), 1, "embed"), null)),
+        assertBlocked(
+                preview(selection(null, new ProviderRef(embeddings.id(), 1, "embed"), null)),
                 ExecutionBlocker.Code.MODEL_UNAVAILABLE);
     }
 
     @Test
     void 权限配置不可用时保留已解析模型和阻塞原因() {
-        ExecutionOverrides invalid = new ExecutionOverrides(Optional.empty(), Optional.of(provider("a")),
-                Optional.of(new PermissionProfileRef("missing", 1)), Optional.empty(), Optional.empty(),
-                Optional.empty(), Optional.empty());
+        ExecutionOverrides invalid = new ExecutionOverrides(
+                Optional.empty(),
+                Optional.of(provider("a")),
+                Optional.of(new PermissionProfileRef("missing", 1)),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
 
         ExecutionPreview result = preview(invalid);
 
@@ -183,19 +261,21 @@ class ExecutionPreviewServiceTest {
 
     @Test
     void 工作区不可用和跨工作区对话不泄漏任何执行配置() {
-        assertBlocked(previews.preview(WorkspaceId.random(), Optional.empty(), ExecutionOverrides.empty()),
+        assertBlocked(
+                previews.preview(WorkspaceId.random(), Optional.empty(), ExecutionOverrides.empty()),
                 ExecutionBlocker.Code.WORKSPACE_UNAVAILABLE);
         Workspace other = core.createWorkspace(identity("other", 0), "另一个项目", directory.resolve("other"));
-        var foreign = core.createThread(identity("foreign", 0), other.id(), Optional.empty(),
-                ThreadExecutionIntent.WORKSPACE, "其他项目对话");
+        var foreign = core.createThread(
+                identity("foreign", 0), other.id(), Optional.empty(), ThreadExecutionIntent.WORKSPACE, "其他项目对话");
 
-        ExecutionPreview result = previews.preview(workspace.id(), Optional.of(foreign.id()),
-                selection(null, provider("a"), null));
+        ExecutionPreview result =
+                previews.preview(workspace.id(), Optional.of(foreign.id()), selection(null, provider("a"), null));
 
         assertBlocked(result, ExecutionBlocker.Code.THREAD_UNAVAILABLE);
         assertTrue(result.provider().isEmpty());
         assertTrue(result.provenance().isEmpty());
-        assertBlocked(previews.preview(workspace.id(), Optional.of(ThreadId.random()), ExecutionOverrides.empty()),
+        assertBlocked(
+                previews.preview(workspace.id(), Optional.of(ThreadId.random()), ExecutionOverrides.empty()),
                 ExecutionBlocker.Code.THREAD_UNAVAILABLE);
         core.archiveWorkspace(identity("archive-workspace", 1), workspace.id());
         assertBlocked(preview(ExecutionOverrides.empty()), ExecutionBlocker.Code.WORKSPACE_UNAVAILABLE);
@@ -203,13 +283,18 @@ class ExecutionPreviewServiceTest {
 
     @Test
     void 隔离写对话未准备执行根时仅返回阻塞而不运行进程() {
-        var root = core.createThread(identity("root-thread", 0), workspace.id(), Optional.empty(),
-                ThreadExecutionIntent.WORKSPACE, "根对话");
-        var isolated = core.createThread(identity("isolated-thread", 0), workspace.id(), Optional.of(root.id()),
-                ThreadExecutionIntent.ISOLATED_WRITE, "隔离对话");
+        var root = core.createThread(
+                identity("root-thread", 0), workspace.id(), Optional.empty(), ThreadExecutionIntent.WORKSPACE, "根对话");
+        var isolated = core.createThread(
+                identity("isolated-thread", 0),
+                workspace.id(),
+                Optional.of(root.id()),
+                ThreadExecutionIntent.ISOLATED_WRITE,
+                "隔离对话");
 
-        assertBlocked(previews.preview(workspace.id(), Optional.of(isolated.id()),
-                selection(null, provider("a"), null)), ExecutionBlocker.Code.THREAD_UNAVAILABLE);
+        assertBlocked(
+                previews.preview(workspace.id(), Optional.of(isolated.id()), selection(null, provider("a"), null)),
+                ExecutionBlocker.Code.THREAD_UNAVAILABLE);
     }
 
     private ExecutionPreview preview(ExecutionOverrides execution) {
@@ -218,12 +303,21 @@ class ExecutionPreviewServiceTest {
 
     private static void assertBlocked(ExecutionPreview result, ExecutionBlocker.Code code) {
         assertFalse(result.ready());
-        assertEquals(List.of(code), result.blockers().stream().map(ExecutionBlocker::code).toList());
+        assertEquals(
+                List.of(code),
+                result.blockers().stream().map(ExecutionBlocker::code).toList());
     }
 
-    private static ExecutionOverrides selection(AgentRoleRef role, ProviderRef provider, ReasoningPreference reasoning) {
-        return new ExecutionOverrides(Optional.ofNullable(role), Optional.ofNullable(provider), Optional.empty(),
-                Optional.empty(), Optional.empty(), Optional.empty(), Optional.ofNullable(reasoning));
+    private static ExecutionOverrides selection(
+            AgentRoleRef role, ProviderRef provider, ReasoningPreference reasoning) {
+        return new ExecutionOverrides(
+                Optional.ofNullable(role),
+                Optional.ofNullable(provider),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.ofNullable(reasoning));
     }
 
     private static ProviderRef provider(String model) {
@@ -231,7 +325,8 @@ class ExecutionPreviewServiceTest {
     }
 
     private CommandIdentity identity(String key, long revision) {
-        return new CommandIdentity("test/preview", key, revision, json.encode(Map.of("key", key)).sha256());
+        return new CommandIdentity(
+                "test/preview", key, revision, json.encode(Map.of("key", key)).sha256());
     }
 
     private static final class UnusedSandbox implements SandboxExecutor {

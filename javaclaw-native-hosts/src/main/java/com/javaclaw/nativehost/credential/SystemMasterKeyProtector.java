@@ -57,10 +57,10 @@ public final class SystemMasterKeyProtector {
 
     static byte[] encode(byte[] key) {
         byte[] checked = Objects.requireNonNull(key, "key").clone();
-        if (checked.length != 32) {
-            throw new IllegalArgumentException("master key must contain 32 bytes");
-        }
         try {
+            if (checked.length != 32) {
+                throw new IllegalArgumentException("master key must contain 32 bytes");
+            }
             byte[] encoded = java.util.Base64.getEncoder().encode(checked);
             byte[] line = java.util.Arrays.copyOf(encoded, encoded.length + 1);
             line[line.length - 1] = '\n';

@@ -50,13 +50,16 @@ class DesktopConfigurationEventsTest {
 
     @Test
     void Thread失效不能缺少所属工作区() {
-        assertThrows(IllegalArgumentException.class, () -> new DesktopConfigurationChange(
-                DesktopConfigurationChange.Kind.EXECUTION, Optional.empty(),
-                Optional.of(DesktopTestFixtures.thread().id())));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new DesktopConfigurationChange(
+                        DesktopConfigurationChange.Kind.EXECUTION,
+                        Optional.empty(),
+                        Optional.of(DesktopTestFixtures.thread().id())));
     }
 
     private static DesktopConfigurationChange globalChange() {
-        return new DesktopConfigurationChange(DesktopConfigurationChange.Kind.PROVIDERS,
-                Optional.empty(), Optional.empty());
+        return new DesktopConfigurationChange(
+                DesktopConfigurationChange.Kind.PROVIDERS, Optional.empty(), Optional.empty());
     }
 }

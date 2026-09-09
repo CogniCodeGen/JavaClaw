@@ -1,0 +1,23 @@
+{
+  "checkedAt": "2026-09-09T11:34:57.190503+08:00",
+  "sourceLog": "/tmp/javaclaw-functional-live-recheck-desktop.log",
+  "startOffset": 11144,
+  "newLogBytes": 409,
+  "cssOrUnhandledFailures": [],
+  "observedUi": [
+    "Final distribution with IDEA data-v6",
+    "Restored JAVACLAW_RESTART_VERIFY_1054 42 user and assistant messages",
+    "Selected qwen model with original Provider@2 verified by SDK",
+    "Ordinary messages have no document action",
+    "Model menu opens and searches service name LM Studio",
+    "Escape returns to same conversation",
+    "Settings exact search 定时任务 selects schedule page and loads real table data",
+    "Settings exact search 记忆 selects memory page",
+    "Settings exact search 技能 selects skills page",
+    "Settings workspace remains 功能验收 2026-09-09 throughout navigation",
+    "Own acceptance UI closed after final review"
+  ],
+  "sdkComparison": "byte-identical to before-controlled-restart",
+  "serverSessionExitCode": 0,
+  "serverShutdown": "Own final-review AppServer exited normally after UI close and idle timeout; no acceptance server left on IDEA socket."
+}

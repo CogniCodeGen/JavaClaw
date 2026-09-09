@@ -48,6 +48,44 @@ public final class AgentRoleSettingsPresenter {
                 .whenComplete((catalog, failure) -> completeReload(epoch, catalog, failure));
     }
 
+    /** 配置失效只重验脏表单的目录，保留原角色版本及完整草稿。 */
+    void refreshForConfigurationChange(boolean preserveDraft) {
+        if (operationPending()) {
+            return;
+        }
+        AgentRoleSettingsState before = state;
+        long epoch = before.epoch() + 1;
+        status(SettingsLoadState.LOADING, "正在更新角色与模型目录；草稿保持不变…", before.revisionConflict(), epoch);
+        gateway.roles().thenCombine(gateway.providers(), Catalog::new).whenComplete((catalog, error) -> {
+            if (!current(epoch)) {
+                return;
+            }
+            if (!preserveDraft && !state.dirty() && !state.revisionConflict()) {
+                completeReload(epoch, catalog, error);
+                return;
+            }
+            if (error != null) {
+                status(
+                        SettingsLoadState.ERROR,
+                        "目录读取失败；草稿仍保留：" + SettingsFailures.message(error),
+                        state.revisionConflict(),
+                        epoch);
+                return;
+            }
+            publish(new AgentRoleSettingsState(
+                    SettingsLoadState.READY,
+                    catalog.roles(),
+                    catalog.providers(),
+                    state.selected(),
+                    state.creating(),
+                    state.baseline(),
+                    state.draft(),
+                    "角色或模型已更新；目录已刷新，当前草稿和保存版本保持不变。",
+                    state.revisionConflict(),
+                    epoch));
+        });
+    }
+
     /** @param role 要读取的权威角色，存在草稿时拒绝切换 */
     public void select(AgentRole role) {
         if (!canReplaceDraft()) {

@@ -34,6 +34,8 @@ public final class ExecutionRpcHandlers {
     public void register(RpcRouter.Builder routes) {
         routes.register("execution/default/read", this::readDefault)
                 .register("execution/default/update", this::updateDefault)
+                .register("execution/recent/read", this::readRecent)
+                .register("execution/recent/update", this::updateRecent)
                 .register("execution/subagent/read", this::readSubagent)
                 .register("execution/subagent/update", this::updateSubagent)
                 .register("thread/execution/read", this::readThread)
@@ -45,6 +47,19 @@ public final class ExecutionRpcHandlers {
                 json.decode(params, ExecutionRpcContracts.DefaultReadPayload.class);
         return json.encode(
                 new ExecutionRpcContracts.ReadResult(configurations.find(payload.workspaceId(), Optional.empty())));
+    }
+
+    private CanonicalPayload readRecent(CanonicalPayload params) {
+        json.decode(params, ExecutionRpcContracts.RecentReadPayload.class);
+        return json.encode(new ExecutionRpcContracts.ReadResult(configurations.findRecent()));
+    }
+
+    private CanonicalPayload updateRecent(CanonicalPayload params) {
+        WriteCommand command = json.decode(params, WriteCommand.class);
+        ExecutionRpcContracts.RecentUpdatePayload payload =
+                json.decode(command.payload(), ExecutionRpcContracts.RecentUpdatePayload.class);
+        return json.encode(configurations.updateRecent(
+                CommandIdentity.from("execution/recent/update", command, json), payload.execution()));
     }
 
     private CanonicalPayload updateDefault(CanonicalPayload params) {

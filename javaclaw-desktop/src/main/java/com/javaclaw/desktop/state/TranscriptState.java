@@ -90,6 +90,9 @@ public record TranscriptState(
      * @return 保留当前读取位置策略的新状态
      */
     public TranscriptState following(boolean value) {
+        if (following == value) {
+            return this;
+        }
         return new TranscriptState(items, nextSequence, value, stream, hasEarlier, history);
     }
 
@@ -137,17 +140,18 @@ public record TranscriptState(
     }
 
     private static List<ItemEnvelope> bounded(List<ItemEnvelope> input) {
-        ArrayList<ItemEnvelope> result = new ArrayList<>();
+        int start = input.size();
         long bytes = 0;
-        for (int index = input.size() - 1; index >= 0 && result.size() < 500; index--) {
-            ItemEnvelope item = Objects.requireNonNull(input.get(index), "item");
+        while (start > 0 && input.size() - start < 500) {
+            ItemEnvelope item = Objects.requireNonNull(input.get(start - 1), "item");
             long weight = item.payload().json().length() * 2L + 1024;
             if (bytes + weight > 8L * 1024 * 1024) {
                 break;
             }
             bytes += weight;
-            result.addFirst(item);
+            start--;
         }
-        return List.copyOf(result);
+        // 已有不可变窗口无需因每个正文片段重新复制；截断仍保留连续尾部及原有字节上限。
+        return List.copyOf(start == 0 ? input : input.subList(start, input.size()));
     }
 }

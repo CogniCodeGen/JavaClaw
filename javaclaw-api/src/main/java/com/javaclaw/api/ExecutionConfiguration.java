@@ -5,10 +5,12 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * H2 中带乐观锁的执行配置；安装级两个标识都为空，Thread 级必须同时指定 Workspace。
+ * 服务端带乐观锁的执行配置；全局记录的两个标识均为空，Thread 级必须同时指定 Workspace。
  *
- * @param workspaceId Workspace 作用域；安装级为空
- * @param threadId Thread 作用域；安装或 Workspace 级为空
+ * <p>正常执行、子任务默认和最近选择使用各自独立的存储命名空间及版本；用途由所调用的 SDK 方法确定。
+ *
+ * @param workspaceId Workspace 作用域；全局记录为空
+ * @param threadId Thread 作用域；全局或 Workspace 级为空
  * @param overrides 当前作用域的显式执行选择
  * @param revision 当前配置版本，从 1 开始
  * @param updatedAt 最近更新时间

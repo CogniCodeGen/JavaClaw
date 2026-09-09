@@ -218,3 +218,8 @@
 .settings-scroll-pane .platform-page {
     -fx-min-width: 620;
 }
+
+/* 主从详情沿用页面间距，但不能再次索要整页最小宽度并挤走左侧列表。 */
+.settings-scroll-pane .platform-detail-pane .platform-page {
+    -fx-min-width: 0;
+}

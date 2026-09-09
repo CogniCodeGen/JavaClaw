@@ -22,8 +22,14 @@ class WorkspaceSettingsPresenterRefreshTest {
     void 切换顶部工作区立即同步列表与详情并隔离迟到响应() {
         TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
         Workspace original = gateway.workspaceSettings.catalog.getFirst();
-        Workspace next = new Workspace(WorkspaceId.parse("de78974c-336d-4362-af94-01ca2238a402"), "另一个工作区",
-                Path.of("/tmp/another-workspace"), original.lifecycle(), 1, original.createdAt(), original.updatedAt());
+        Workspace next = new Workspace(
+                WorkspaceId.parse("de78974c-336d-4362-af94-01ca2238a402"),
+                "另一个工作区",
+                Path.of("/tmp/another-workspace"),
+                original.lifecycle(),
+                1,
+                original.createdAt(),
+                original.updatedAt());
         AtomicReference<WorkspaceSettingsState> state = new AtomicReference<>();
         WorkspaceSettingsPresenter presenter = presenter(gateway, state, original);
         CompletableFuture<List<Workspace>> pending = new CompletableFuture<>();
@@ -43,7 +49,8 @@ class WorkspaceSettingsPresenterRefreshTest {
         AtomicReference<CommandOptions> write = new AtomicReference<>();
         TestCoreSettingsGateway gateway = new TestCoreSettingsGateway() {
             @Override
-            public CompletionStage<Workspace> renameWorkspace(Workspace workspace, String name, CommandOptions options) {
+            public CompletionStage<Workspace> renameWorkspace(
+                    Workspace workspace, String name, CommandOptions options) {
                 write.set(options);
                 return CompletableFuture.failedFuture(new IllegalStateException("版本冲突"));
             }
@@ -95,7 +102,8 @@ class WorkspaceSettingsPresenterRefreshTest {
         CompletableFuture<Workspace> saving = new CompletableFuture<>();
         TestCoreSettingsGateway gateway = new TestCoreSettingsGateway() {
             @Override
-            public CompletionStage<Workspace> renameWorkspace(Workspace workspace, String name, CommandOptions options) {
+            public CompletionStage<Workspace> renameWorkspace(
+                    Workspace workspace, String name, CommandOptions options) {
                 return saving;
             }
         };
@@ -117,8 +125,8 @@ class WorkspaceSettingsPresenterRefreshTest {
         assertEquals(saved.name(), state.get().draftName());
     }
 
-    private static WorkspaceSettingsPresenter presenter(TestCoreSettingsGateway gateway,
-            AtomicReference<WorkspaceSettingsState> state, Workspace workspace) {
+    private static WorkspaceSettingsPresenter presenter(
+            TestCoreSettingsGateway gateway, AtomicReference<WorkspaceSettingsState> state, Workspace workspace) {
         WorkspaceSettingsPresenter presenter = new WorkspaceSettingsPresenter(gateway);
         presenter.subscribe(state::set);
         presenter.bindWorkspace(Optional.of(workspace));
@@ -126,7 +134,13 @@ class WorkspaceSettingsPresenterRefreshTest {
     }
 
     private static Workspace renamed(Workspace workspace, String name, long revision) {
-        return new Workspace(workspace.id(), name, workspace.root(), workspace.lifecycle(), revision,
-                workspace.createdAt(), DesktopTestFixtures.NOW);
+        return new Workspace(
+                workspace.id(),
+                name,
+                workspace.root(),
+                workspace.lifecycle(),
+                revision,
+                workspace.createdAt(),
+                DesktopTestFixtures.NOW);
     }
 }

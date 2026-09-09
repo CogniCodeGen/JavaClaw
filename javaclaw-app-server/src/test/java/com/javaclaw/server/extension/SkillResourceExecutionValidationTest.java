@@ -200,6 +200,7 @@ class SkillResourceExecutionValidationTest {
     private SkillResourceRuntimeLayout layout(Path dataRoot, String name) throws Exception {
         Path image = Files.createDirectories(temporaryDirectory.resolve(name));
         Path bin = Files.createDirectories(image.resolve("bin"));
+        Files.createDirectories(image.resolve("lib"));
         executable(bin.resolve(executableName("java")));
         executable(bin.resolve(executableName("jshell")));
         Files.writeString(

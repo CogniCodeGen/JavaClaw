@@ -42,9 +42,16 @@ class DesktopTurnStreamCoordinatorTest {
         };
         DesktopStore store = selected();
         ConcurrentLinkedQueue<Runnable> ui = new ConcurrentLinkedQueue<>();
+        AtomicInteger completedUiTasks = new AtomicInteger();
         try (var workers = Executors.newVirtualThreadPerTaskExecutor();
                 var client = server.client(ignored -> {});
-                var owner = new DesktopTurnStreamCoordinator(store, ui::add, workers)) {
+                var owner = new DesktopTurnStreamCoordinator(
+                        store,
+                        action -> ui.add(() -> {
+                            action.run();
+                            completedUiTasks.incrementAndGet();
+                        }),
+                        workers)) {
             owner.observe(client, server.thread(), DesktopTestFixtures.turn());
             FxTestSupport.await(() -> server.streamSubscription != null && gate.reads.get() >= 1);
             TurnStreamCall call = new TurnStreamCall(1, "attempt", ItemId.random());
@@ -59,11 +66,14 @@ class DesktopTurnStreamCoordinatorTest {
             AtomicInteger updates = new AtomicInteger();
             store.subscribe(ignored -> updates.incrementAndGet());
             int before = updates.get();
+            int completedBefore = completedUiTasks.get();
             gate.release.countDown();
+            // 等待迟到对账实际执行；相同事实不再通知 Store，不能用多余重绘证明回调已经到达。
             FxTestSupport.await(() -> {
                 drain(ui);
-                return updates.get() > before;
+                return completedUiTasks.get() > completedBefore;
             });
+            assertEquals(before, updates.get());
             var observed = store.state().transcript().stream().orElseThrow();
             assertEquals(cursor, observed.cursor());
             assertEquals("此前新字", observed.messages().getFirst().text());

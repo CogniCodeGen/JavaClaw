@@ -72,7 +72,14 @@ public final class DesktopPresenter implements AutoCloseable {
                 (epoch, candidate) -> !closed && connectionEpoch.get() == epoch && client == candidate);
         inputActions = new DesktopInputActions(inputCoordinator, connectionEpoch::get, this::requireClient);
         streams = new DesktopTurnStreamCoordinator(store, ui, workers);
-        conversations = new DesktopConversationCoordinator(store, ui, workers, streams, () -> client);
+        conversations = new DesktopConversationCoordinator(
+                store,
+                ui,
+                workers,
+                streams,
+                () -> client,
+                created -> configurationEvents.publish(new DesktopConfigurationChange(
+                        DesktopConfigurationChange.Kind.WORKSPACES, Optional.of(created.id()), Optional.empty())));
         configurationEvents.subscribe(change -> {
             if (change.kind() == DesktopConfigurationChange.Kind.WORKSPACES) {
                 catalogRefresh.request();
@@ -92,7 +99,9 @@ public final class DesktopPresenter implements AutoCloseable {
 
     /** @param workspace 固定目标工作区 @param thread 可复用对话 @param model 精确模型 @return 应用完成 */
     public java.util.concurrent.CompletionStage<Void> useModel(
-            Optional<com.javaclaw.api.WorkspaceId> workspace, Optional<ThreadId> thread, com.javaclaw.api.ProviderRef model) {
+            Optional<com.javaclaw.api.WorkspaceId> workspace,
+            Optional<ThreadId> thread,
+            com.javaclaw.api.ProviderRef model) {
         return chatActions.useModel(workspace, thread, model);
     }
 
@@ -101,8 +110,11 @@ public final class DesktopPresenter implements AutoCloseable {
      * @param options 原始版本 @param remember 是否同时记为日常默认 @return 权威对话配置
      */
     public java.util.concurrent.CompletionStage<com.javaclaw.api.ExecutionConfiguration> rememberChatSelection(
-            com.javaclaw.api.WorkspaceId workspace, ThreadId thread, ExecutionOverrides selected,
-            CommandOptions options, boolean remember) {
+            com.javaclaw.api.WorkspaceId workspace,
+            ThreadId thread,
+            ExecutionOverrides selected,
+            CommandOptions options,
+            boolean remember) {
         return chatActions.remember(workspace, thread, selected, options, remember);
     }
 
@@ -268,9 +280,22 @@ public final class DesktopPresenter implements AutoCloseable {
 
     /** @param message 用户消息 @param execution 当前显式独立选择，服务端负责解析与冻结 */
     public CompletableFuture<com.javaclaw.api.AgentTurn> send(String message, ExecutionOverrides execution) {
+        return send(message, execution, CommandOptions.create(0));
+    }
+
+    /**
+     * 使用冻结的提交身份启动或恢复同一次发送，回执丢失后的重试不会重复创建 Turn。
+     *
+     * @param message 用户消息，同一幂等身份下保持不变
+     * @param execution 当前执行覆盖，同一幂等身份下保持不变
+     * @param options 创建命令选项，重试必须复用且 expectedRevision 为零
+     * @return 服务端接受的原始 Turn；失败以异常完成且不确认清理草稿
+     */
+    public CompletableFuture<com.javaclaw.api.AgentTurn> send(
+            String message, ExecutionOverrides execution, CommandOptions options) {
         String prompt = DesktopFailures.requireText(message, "message");
         ExecutionOverrides selection = Objects.requireNonNull(execution, "execution");
-        return conversations.send(prompt, selection);
+        return conversations.send(prompt, selection, Objects.requireNonNull(options, "options"));
     }
 
     /** 请求取消当前活动 Turn。 */

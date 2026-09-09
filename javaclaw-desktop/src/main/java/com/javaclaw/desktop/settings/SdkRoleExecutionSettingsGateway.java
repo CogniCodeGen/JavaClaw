@@ -20,9 +20,9 @@ import com.javaclaw.api.RoleLifecycle;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.client.CommandOptions;
-import com.javaclaw.desktop.DesktopPresenter;
 import com.javaclaw.desktop.DesktopConfigurationChange;
 import com.javaclaw.desktop.DesktopNotificationSubscription;
+import com.javaclaw.desktop.DesktopPresenter;
 
 /** 角色与独立执行配置的 SDK 委托，共享管理中心会话和已有 Bundle 网关。 */
 abstract class SdkRoleExecutionSettingsGateway extends SdkChatConfigurationGateway implements CoreSettingsGateway {
@@ -84,20 +84,23 @@ abstract class SdkRoleExecutionSettingsGateway extends SdkChatConfigurationGatew
 
     @Override
     public CompletionStage<AgentRole> createRole(String id, AgentRoleSpec spec, CommandOptions options) {
-        return changed(desktop.submitSettingsRequest(client -> client.roles().create(id, spec, options)),
+        return changed(
+                desktop.submitSettingsRequest(client -> client.roles().create(id, spec, options)),
                 DesktopConfigurationChange.Kind.ROLES);
     }
 
     @Override
     public CompletionStage<AgentRole> updateRole(
             String id, AgentRoleSpec spec, RoleLifecycle lifecycle, CommandOptions options) {
-        return changed(desktop.submitSettingsRequest(client -> client.roles().update(id, spec, lifecycle, options)),
+        return changed(
+                desktop.submitSettingsRequest(client -> client.roles().update(id, spec, lifecycle, options)),
                 DesktopConfigurationChange.Kind.ROLES);
     }
 
     @Override
     public CompletionStage<AgentRole> archiveRole(String id, CommandOptions options) {
-        return changed(desktop.submitSettingsRequest(client -> client.roles().archive(id, options)),
+        return changed(
+                desktop.submitSettingsRequest(client -> client.roles().archive(id, options)),
                 DesktopConfigurationChange.Kind.ROLES);
     }
 
@@ -110,7 +113,8 @@ abstract class SdkRoleExecutionSettingsGateway extends SdkChatConfigurationGatew
     @Override
     public CompletionStage<AgentRole> commitRoleImport(
             String previewId, Optional<ProviderRef> mapping, CommandOptions options) {
-        return changed(desktop.submitSettingsRequest(client -> client.roles().importCommit(previewId, mapping, options)),
+        return changed(
+                desktop.submitSettingsRequest(client -> client.roles().importCommit(previewId, mapping, options)),
                 DesktopConfigurationChange.Kind.ROLES);
     }
 
@@ -127,9 +131,12 @@ abstract class SdkRoleExecutionSettingsGateway extends SdkChatConfigurationGatew
     @Override
     public CompletionStage<ExecutionConfiguration> updateExecutionDefaults(
             Optional<WorkspaceId> workspaceId, ExecutionOverrides execution, CommandOptions options) {
-        return changed(desktop.submitSettingsRequest(
-                client -> client.executions().updateDefaults(workspaceId, execution, options)),
-                DesktopConfigurationChange.Kind.EXECUTION, workspaceId, Optional.empty());
+        return changed(
+                desktop.submitSettingsRequest(
+                        client -> client.executions().updateDefaults(workspaceId, execution, options)),
+                DesktopConfigurationChange.Kind.EXECUTION,
+                workspaceId,
+                Optional.empty());
     }
 
     @Override
@@ -141,9 +148,12 @@ abstract class SdkRoleExecutionSettingsGateway extends SdkChatConfigurationGatew
     @Override
     public CompletionStage<ExecutionConfiguration> updateThreadExecution(
             WorkspaceId workspaceId, ThreadId threadId, ExecutionOverrides execution, CommandOptions options) {
-        return changed(desktop.submitSettingsRequest(
-                client -> client.executions().updateThread(workspaceId, threadId, execution, options)),
-                DesktopConfigurationChange.Kind.EXECUTION, Optional.of(workspaceId), Optional.of(threadId));
+        return changed(
+                desktop.submitSettingsRequest(
+                        client -> client.executions().updateThread(workspaceId, threadId, execution, options)),
+                DesktopConfigurationChange.Kind.EXECUTION,
+                Optional.of(workspaceId),
+                Optional.of(threadId));
     }
 
     @Override
@@ -155,7 +165,8 @@ abstract class SdkRoleExecutionSettingsGateway extends SdkChatConfigurationGatew
 
     @Override
     public CompletionStage<AgentRole> cloneRole(AgentRoleRef source, String id, String name, CommandOptions options) {
-        return changed(desktop.submitSettingsRequest(client -> client.roles().clone(source, id, name, options)),
+        return changed(
+                desktop.submitSettingsRequest(client -> client.roles().clone(source, id, name, options)),
                 DesktopConfigurationChange.Kind.ROLES);
     }
 }

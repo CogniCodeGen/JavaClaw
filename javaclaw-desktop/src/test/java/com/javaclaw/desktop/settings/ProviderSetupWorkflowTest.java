@@ -28,8 +28,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProviderSetupWorkflowTest {
-    private static final ProviderSetupTarget TARGET = new ProviderSetupTarget(
-            Optional.of(new WorkspaceId("workspace-a")), Optional.of(new ThreadId("thread-a")), "项目 A");
+    private static final ProviderSetupTarget TARGET =
+            new ProviderSetupTarget(Optional.of(WorkspaceId.random()), Optional.of(ThreadId.random()), "项目 A");
     private static final List<ProviderModelSpec> MODELS = List.of(model("model-a"), model("model-b"));
 
     @Test

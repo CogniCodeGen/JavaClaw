@@ -23,6 +23,7 @@ final class ProviderSettingsActions {
     private final ProviderSettingsPresenter presenter;
     private final ProviderModelCatalogEditor catalog;
     private final Node owner;
+    private final Runnable used;
     private final Button use;
     private final HBox content;
     private Optional<Workspace> workspace = Optional.empty();
@@ -31,11 +32,13 @@ final class ProviderSettingsActions {
             CoreSettingsGateway gateway,
             ProviderSettingsPresenter presenter,
             ProviderModelCatalogEditor catalog,
-            Node owner) {
+            Node owner,
+            Runnable used) {
         this.gateway = gateway;
         this.presenter = presenter;
         this.catalog = catalog;
         this.owner = owner;
+        this.used = used;
         PlatformComponentFactory components = new PlatformComponentFactory();
         Button create = components.action("添加模型", ActionStyle.PRIMARY, ActionSize.COMPACT);
         create.setId("providerCreateButton");
@@ -44,7 +47,7 @@ final class ProviderSettingsActions {
                 presenter.warnUnsavedChanges();
                 return;
             }
-            ProviderSetupWizard.show(owner.getScene().getWindow(), gateway, target(), presenter::reload);
+            ProviderSetupWizard.show(owner.getScene().getWindow(), gateway, target(), presenter::reload, used);
         });
         use = components.action("使用此模型", ActionStyle.SOFT, ActionSize.COMPACT);
         use.setId("providerUseModelButton");
@@ -76,7 +79,7 @@ final class ProviderSettingsActions {
     private void useModel() {
         selectedReference()
                 .ifPresent(reference -> ProviderSetupWizard.useModel(
-                        owner.getScene().getWindow(), gateway, target(), reference, presenter::reload));
+                        owner.getScene().getWindow(), gateway, target(), reference, presenter::reload, used));
     }
 
     private Optional<ProviderRef> selectedReference() {

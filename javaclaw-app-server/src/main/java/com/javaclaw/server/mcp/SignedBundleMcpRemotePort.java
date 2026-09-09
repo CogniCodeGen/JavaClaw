@@ -137,7 +137,8 @@ final class SignedBundleMcpRemotePort implements McpRemotePort {
                 List.of(directory),
                 List.of(launch.bundleRoot()),
                 minimum(launch.lifetime(), MAXIMUM_LIFETIME),
-                bounded);
+                bounded,
+                Optional.empty());
     }
 
     private SignedBundleMcpLaunch current(McpEndpoint endpoint) {

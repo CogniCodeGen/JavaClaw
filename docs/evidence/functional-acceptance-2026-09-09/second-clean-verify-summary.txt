@@ -1,0 +1,31 @@
+[INFO] Tests run: 106, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 68, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 155, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 42, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 63, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 67, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 218, Failures: 0, Errors: 0, Skipped: 0
+[WARNING] Tests run: 214, Failures: 0, Errors: 0, Skipped: 16
+[INFO] Tests run: 55, Failures: 0, Errors: 0, Skipped: 0
+[WARNING] Tests run: 1066, Failures: 0, Errors: 0, Skipped: 5
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 124, Failures: 0, Errors: 0, Skipped: 0
+[ERROR] Tests run: 556, Failures: 1, Errors: 0, Skipped: 0
+[INFO] JavaClaw 6 ......................................... SUCCESS [  1.449 s]
+[INFO] JavaClaw Immutable API ............................. SUCCESS [  4.833 s]
+[INFO] JavaClaw Extension SPI ............................. SUCCESS [  1.913 s]
+[INFO] JavaClaw App Protocol v3 ........................... SUCCESS [  3.517 s]
+[INFO] JavaClaw Thin Turn Harness ......................... SUCCESS [  1.358 s]
+[INFO] JavaClaw Model Adapters ............................ SUCCESS [  4.664 s]
+[INFO] JavaClaw Built-in Extension Contracts .............. SUCCESS [  2.048 s]
+[INFO] JavaClaw Built-in Extensions ....................... SUCCESS [ 11.478 s]
+[INFO] JavaClaw Native Hosts .............................. SUCCESS [ 25.529 s]
+[INFO] JavaClaw Isolated Browser Worker ................... SUCCESS [ 11.784 s]
+[INFO] JavaClaw App Server ................................ SUCCESS [17:38 min]
+[INFO] JavaClaw Isolated Knowledge Worker ................. SUCCESS [  3.163 s]
+[INFO] JavaClaw Java SDK and CLI .......................... SUCCESS [  5.964 s]
+[INFO] JavaClaw JavaFX SDK Client ......................... FAILURE [01:12 min]
+[INFO] JavaClaw Packaging ................................. SKIPPED
+[INFO] BUILD FAILURE
+[INFO] Total time:  20:09 min
+[INFO] Finished at: 2026-09-09T11:21:31+08:00

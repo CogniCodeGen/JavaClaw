@@ -166,6 +166,23 @@ class ProtocolMethodSchemaSamplesTest {
     }
 
     @Test
+    void 最近选择读写使用无作用域契约与模型专用Schema() throws Exception {
+        assertClosedShape(
+                json.encode(new ExecutionRpcContracts.RecentReadPayload()),
+                "execution-recent-v3.schema.json",
+                "/$defs/readParams");
+        assertCommand(
+                new ExecutionRpcContracts.RecentUpdatePayload(ExecutionOverrides.empty()),
+                1,
+                "execution-recent-v3.schema.json",
+                "/$defs/updateCommand");
+        var payload = schema("execution-recent-v3.schema.json").at("/$defs/updateCommand/properties/payload");
+        assertEquals(
+                "execution-v3.schema.json#/$defs/subagentOverrides",
+                payload.at("/properties/execution/$ref").textValue());
+    }
+
+    @Test
     void 子智能体请求使用父Revision与独立执行覆盖() throws Exception {
         assertCommand(
                 new CollaborationRpcContracts.SpawnPayload(

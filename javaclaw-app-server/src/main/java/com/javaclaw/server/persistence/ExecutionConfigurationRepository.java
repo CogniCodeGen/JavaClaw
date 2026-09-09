@@ -6,6 +6,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Objects;
 import java.util.Optional;
 
 import com.javaclaw.api.CanonicalPayload;
@@ -18,15 +19,22 @@ import com.javaclaw.protocol.CanonicalJson;
 /** 安装、Workspace 与 Thread 执行配置 SQL；调用者持有事务并负责作用域授权。 */
 final class ExecutionConfigurationRepository {
     private final CanonicalJson json;
-    private final boolean subagent;
+    private final Namespace namespace;
 
-    ExecutionConfigurationRepository(CanonicalJson json) {
-        this(json, false);
+    /** 独立配置用途不能互相参与继承；最近选择仅用于客户端初始化新的 Thread。 */
+    enum Namespace {
+        EXECUTION,
+        SUBAGENT,
+        RECENT
     }
 
-    ExecutionConfigurationRepository(CanonicalJson json, boolean subagent) {
+    ExecutionConfigurationRepository(CanonicalJson json) {
+        this(json, Namespace.EXECUTION);
+    }
+
+    ExecutionConfigurationRepository(CanonicalJson json, Namespace namespace) {
         this.json = json;
-        this.subagent = subagent;
+        this.namespace = Objects.requireNonNull(namespace, "namespace");
     }
 
     Optional<ExecutionConfiguration> find(
@@ -85,7 +93,13 @@ final class ExecutionConfigurationRepository {
     }
 
     private String scopeKey(Optional<WorkspaceId> workspaceId, Optional<ThreadId> threadId) {
-        return (subagent ? "subagent:" : "")
+        String prefix =
+                switch (namespace) {
+                    case EXECUTION -> "";
+                    case SUBAGENT -> "subagent:";
+                    case RECENT -> "recent:";
+                };
+        return prefix
                 + threadId.map(value -> "thread:" + value)
                         .orElseGet(() ->
                                 workspaceId.map(value -> "workspace:" + value).orElse("installation"));

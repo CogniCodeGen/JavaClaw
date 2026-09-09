@@ -1,0 +1,19 @@
+Read-only database copy: /var/folders/9v/3prcp9093n398n9_k00n7wk17cfv1k/T/javaclaw-persistence-audit-k8edbsyo/javaclaw.mv.db
+Options: IFEXISTS=TRUE;ACCESS_MODE_DATA=r;AUTO_SERVER=FALSE;DB_CLOSE_ON_EXIT=FALSE
+Only METHOD_NAME, COUNT(*), MIN/MAX(CREATED_AT); no payload or credential query.
+Windows use Asia/Shanghai (+08:00); raw H2 timestamps below are UTC (+00).
+
+initial_1021_to_1025
+METHOD_NAME     | COMMAND_COUNT | FIRST_COMMITTED_AT            | LAST_COMMITTED_AT
+provider/update | 1             | 2026-09-09 02:21:44.26981+00  | 2026-09-09 02:21:44.26981+00
+thread/create   | 1             | 2026-09-09 02:21:44.893843+00 | 2026-09-09 02:21:44.893843+00
+(2 rows, 6 ms)
+
+
+controlled_1054_onward
+METHOD_NAME             | COMMAND_COUNT | FIRST_COMMITTED_AT            | LAST_COMMITTED_AT
+thread/execution/update | 1             | 2026-09-09 02:54:07.641243+00 | 2026-09-09 02:54:07.641243+00
+execution/recent/update | 1             | 2026-09-09 02:54:07.986027+00 | 2026-09-09 02:54:07.986027+00
+turn/start              | 1             | 2026-09-09 02:54:36.360411+00 | 2026-09-09 02:54:36.360411+00
+(3 rows, 6 ms)
+

@@ -8,8 +8,7 @@ import java.util.function.Consumer;
 /**
  * 单个 Desktop Presenter 拥有的配置失效订阅，不持有全局静态状态。
  *
- * <p>成功的 SDK 写操作在 UI 调度器上发布；读取和失败写操作不能发布事件。事件只使快照失效，
- * 接收方必须重新读取权威配置，并自行保护草稿、合并在途失效及隔离旧作用域响应。
+ * <p>成功的 SDK 写操作在 UI 调度器上发布；读取和失败写操作不能发布事件。事件只使快照失效， 接收方必须重新读取权威配置，并自行保护草稿、合并在途失效及隔离旧作用域响应。
  */
 public final class DesktopConfigurationEvents implements AutoCloseable {
     private final CopyOnWriteArrayList<Entry> entries = new CopyOnWriteArrayList<>();

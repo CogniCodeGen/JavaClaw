@@ -82,6 +82,7 @@ class JavaClawLauncherTest {
         assertTrue(command.contains("-Djavaclaw.server.pipe=javaclaw-test"));
         assertTrue(command.contains("-Djavaclaw.launcher.supervised=true"));
         assertTrue(command.contains("-Djavaclaw.launcher.tray-active=true"));
+        assertEquals("com.javaclaw.desktop.shell.JavaClawDesktopMain", command.get(command.indexOf("-cp") + 2));
         assertEquals(List.of("--role", "test"), command.subList(command.size() - 2, command.size()));
     }
 

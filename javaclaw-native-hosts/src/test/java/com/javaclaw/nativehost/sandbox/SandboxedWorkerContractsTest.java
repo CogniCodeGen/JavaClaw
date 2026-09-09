@@ -8,6 +8,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Assumptions;
@@ -45,7 +46,8 @@ class SandboxedWorkerContractsTest {
                 writeRoots,
                 executableRoots,
                 Duration.ofMinutes(1),
-                LIMITS);
+                LIMITS,
+                Optional.empty());
         readRoots.clear();
         writeRoots.clear();
         executableRoots.clear();
@@ -81,7 +83,8 @@ class SandboxedWorkerContractsTest {
                 List.of(),
                 List.of(root),
                 Duration.ofSeconds(1),
-                LIMITS));
+                LIMITS,
+                Optional.empty()));
         assertThrows(
                 NullPointerException.class,
                 () -> new SandboxedWorkerCommand(
@@ -93,7 +96,8 @@ class SandboxedWorkerContractsTest {
                         List.of(temporaryDirectory),
                         java.util.Arrays.asList(root, null),
                         Duration.ofSeconds(1),
-                        LIMITS));
+                        LIMITS,
+                        Optional.empty()));
     }
 
     @Test
@@ -191,7 +195,8 @@ class SandboxedWorkerContractsTest {
                 List.of(temporaryDirectory),
                 executableRoots,
                 Duration.ofSeconds(10),
-                LIMITS);
+                LIMITS,
+                Optional.empty());
     }
 
     private SandboxedWorkerCommand commandWithLifetime(
@@ -205,7 +210,8 @@ class SandboxedWorkerContractsTest {
                 List.of(temporaryDirectory),
                 List.of(root),
                 lifetime,
-                limits);
+                limits,
+                Optional.empty());
     }
 
     private static void assertWorkerEcho(SandboxedWorkerCommand command, SandboxErrorMode errorMode, byte[] input)

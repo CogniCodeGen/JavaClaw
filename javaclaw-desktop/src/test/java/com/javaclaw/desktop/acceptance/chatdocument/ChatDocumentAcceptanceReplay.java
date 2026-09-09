@@ -24,6 +24,7 @@ public final class ChatDocumentAcceptanceReplay {
         System.setProperty("javaclaw.acceptance.output", output.toString());
         try {
             ChatDocumentAcceptanceTest chat = new ChatDocumentAcceptanceTest();
+            chat.普通历史对话不显示文档按钮而真实文档保留可点击超链接并保存截图();
             chat.同一内容复用原生单元格与WebView并保存样式对照();
             chat.欢迎区居中及角色字号字重沿用原生语义并保存空态对照();
             chat.流式完成替换同一消息且真实代码文件入口长正文和切换均可操作();
@@ -45,7 +46,7 @@ public final class ChatDocumentAcceptanceReplay {
                                         "scenes",
                                         index,
                                         "functionalScenariosPassed",
-                                        8,
+                                        9,
                                         "capture",
                                         "真实JavaFX Scene原始像素；不是OS光学观测",
                                         "limitations",

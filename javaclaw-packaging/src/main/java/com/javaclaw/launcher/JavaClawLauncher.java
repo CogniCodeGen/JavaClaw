@@ -128,7 +128,7 @@ public final class JavaClawLauncher {
         command.add("-D" + TRAY_ACTIVE_PROPERTY + "=" + trayActive);
         command.add("-cp");
         command.add(layout.classpath());
-        command.add("com.javaclaw.desktop.shell.JavaClawDesktop");
+        command.add("com.javaclaw.desktop.shell.JavaClawDesktopMain");
         command.addAll(List.of(arguments));
         return List.copyOf(command);
     }

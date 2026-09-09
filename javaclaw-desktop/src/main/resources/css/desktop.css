@@ -46,6 +46,12 @@
     -fx-text-fill: -jc-text-title;
 }
 
+.transcript-document-link {
+    -fx-text-fill: -jc-primary-500;
+    -fx-padding: 2 0;
+    -fx-underline: true;
+}
+
 .transcript-execution-block,
 .transcript-interaction-block,
 .transcript-error-block {

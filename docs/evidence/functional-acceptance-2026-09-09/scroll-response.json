@@ -1,0 +1,56 @@
+[
+  {
+    "baseline": {
+      "added": 0,
+      "articles": 0,
+      "remounted": 0,
+      "removed": 0,
+      "scrollBy": 0,
+      "scrollY": 1462,
+      "wheels": 24
+    },
+    "baselineDistancePixels": 288,
+    "chat": {
+      "added": 0,
+      "articles": 32,
+      "remounted": 0,
+      "removed": 0,
+      "scrollBy": 0,
+      "scrollY": 1462,
+      "wheels": 24
+    },
+    "chatDistancePixels": 288,
+    "deltaPixels": 12,
+    "distanceRatio": 1,
+    "eventCount": 24,
+    "eventPeriodMillis": 16,
+    "messageCount": 32
+  },
+  {
+    "baseline": {
+      "added": 0,
+      "articles": 0,
+      "remounted": 0,
+      "removed": 0,
+      "scrollBy": 0,
+      "scrollY": 33502,
+      "wheels": 24
+    },
+    "baselineDistancePixels": 288,
+    "chat": {
+      "added": 0,
+      "articles": 128,
+      "remounted": 0,
+      "removed": 0,
+      "scrollBy": 0,
+      "scrollY": 33502,
+      "wheels": 24
+    },
+    "chatDistancePixels": 288,
+    "deltaPixels": 12,
+    "distanceRatio": 1,
+    "eventCount": 24,
+    "eventPeriodMillis": 16,
+    "messageCount": 500
+  }
+]

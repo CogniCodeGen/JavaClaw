@@ -5,9 +5,9 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
+import com.javaclaw.api.ExecutionBlocker;
 import com.javaclaw.api.ExecutionConfiguration;
 import com.javaclaw.api.ExecutionOverrides;
-import com.javaclaw.api.ExecutionBlocker;
 import com.javaclaw.api.ExecutionPreview;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.WorkspaceId;
@@ -22,17 +22,54 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class ExecutionClientTest {
     @Test
+    void 最近选择使用独立Rpc和Revision不查询安装默认() {
+        CanonicalJson json = new CanonicalJson();
+        ExecutionOverrides selection = ExecutionOverrides.empty();
+        ExecutionConfiguration recent = new ExecutionConfiguration(
+                Optional.empty(), Optional.empty(), selection, 5, Instant.parse("2026-09-07T00:00:00Z"));
+        java.util.List<String> methods = new java.util.ArrayList<>();
+        ScriptedRpcConnection rpc = new ScriptedRpcConnection(request -> {
+            methods.add(request.method());
+            if (request.method().equals("execution/recent/read")) {
+                assertEquals(
+                        new ExecutionRpcContracts.RecentReadPayload(),
+                        json.decode(request.params(), ExecutionRpcContracts.RecentReadPayload.class));
+                return JsonRpcResponse.success(
+                        request.id(), json.encode(new ExecutionRpcContracts.ReadResult(Optional.of(recent))));
+            }
+            WriteCommand command = json.decode(request.params(), WriteCommand.class);
+            assertEquals(4, command.expectedRevision());
+            assertEquals(
+                    selection,
+                    json.decode(command.payload(), ExecutionRpcContracts.RecentUpdatePayload.class)
+                            .execution());
+            return JsonRpcResponse.success(request.id(), json.encode(recent));
+        });
+        ExecutionClient client = new ExecutionClient(new RpcClientConnection(rpc, json, ignored -> {}));
+
+        assertEquals(Optional.of(recent), client.readRecent());
+        assertEquals(recent, client.updateRecent(selection, new CommandOptions("recent-selection", 4)));
+        assertEquals(java.util.List.of("execution/recent/read", "execution/recent/update"), methods);
+    }
+
+    @Test
     void 预览直接读取固定工作区和对话且不发送写命令() {
         CanonicalJson json = new CanonicalJson();
         WorkspaceId workspace = WorkspaceId.random();
         ThreadId thread = ThreadId.random();
         ExecutionOverrides overrides = ExecutionOverrides.empty();
         ExecutionPreview preview = new ExecutionPreview(
-                Optional.empty(), Optional.empty(), Optional.empty(), false, false, java.util.List.of(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                false,
+                false,
+                java.util.List.of(),
                 java.util.List.of(new ExecutionBlocker(ExecutionBlocker.Code.MODEL_REQUIRED, "请选择模型")));
         ScriptedRpcConnection rpc = new ScriptedRpcConnection(request -> {
             assertEquals("execution/preview", request.method());
-            assertEquals(new ExecutionRpcContracts.PreviewPayload(workspace, Optional.of(thread), overrides),
+            assertEquals(
+                    new ExecutionRpcContracts.PreviewPayload(workspace, Optional.of(thread), overrides),
                     json.decode(request.params(), ExecutionRpcContracts.PreviewPayload.class));
             return JsonRpcResponse.success(request.id(), json.encode(preview));
         });

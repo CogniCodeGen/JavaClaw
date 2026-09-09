@@ -20,7 +20,7 @@ import com.javaclaw.api.ProviderRef;
 import com.javaclaw.api.ProviderStatus;
 import com.javaclaw.client.CommandOptions;
 
-/** Provider 设置页的异步状态机；不持有 JavaFX 控件。 */
+/** Provider 设置页的异步状态机；不持有 JavaFX 控件，在途写请求确认前冻结编辑与选择，防止旧回执覆盖新草稿。 */
 public final class ProviderSettingsPresenter {
     private final CoreSettingsGateway gateway;
     private final Supplier<String> providerIds;
@@ -53,6 +53,9 @@ public final class ProviderSettingsPresenter {
 
     /** 异步重新读取 Provider 目录；旧响应会按 epoch 丢弃。 */
     public void reload() {
+        if (state.phase() == SettingsLoadState.SAVING) {
+            return;
+        }
         if (state.dirty() && state.phase() != SettingsLoadState.ERROR) {
             warnUnsavedChanges();
             return;
@@ -72,12 +75,31 @@ public final class ProviderSettingsPresenter {
         gateway.providers().whenComplete((providers, failure) -> completeReload(epoch, providers, failure));
     }
 
+    /** 自动重验时，编辑草稿或冲突存在则只替换目录，不推进保存版本。 */
+    void refreshForConfigurationChange(boolean preserveDraft) {
+        boolean preserve = preserveDraft || state.revisionConflict();
+        ProviderSettingsState loading = ProviderCatalogRefresh.loading(state);
+        publish(loading);
+        gateway.providers().whenComplete((catalog, failure) -> {
+            if (state.epoch() == loading.epoch()) {
+                if (preserve || state.dirty() || state.revisionConflict()) {
+                    publish(ProviderCatalogRefresh.complete(state, catalog, failure));
+                } else {
+                    completeReload(loading.epoch(), catalog, failure);
+                }
+            }
+        });
+    }
+
     /**
      * 选择权威 Provider；脏草稿存在时拒绝切换。
      *
      * @param endpoint 目录项
      */
     public void select(ProviderEndpoint endpoint) {
+        if (state.phase() == SettingsLoadState.SAVING) {
+            return;
+        }
         ProviderEndpoint checked = Objects.requireNonNull(endpoint, "endpoint");
         if (state.dirty()) {
             warnUnsavedChanges();
@@ -105,6 +127,9 @@ public final class ProviderSettingsPresenter {
 
     /** 开始填写一个新 Provider。 */
     public void createDraft() {
+        if (state.phase() == SettingsLoadState.SAVING) {
+            return;
+        }
         if (state.dirty()) {
             warnUnsavedChanges();
             return;
@@ -129,6 +154,9 @@ public final class ProviderSettingsPresenter {
      * @param draft 页面控件投影
      */
     public void updateDraft(ProviderDraft draft) {
+        if (state.phase() == SettingsLoadState.SAVING) {
+            return;
+        }
         publish(new ProviderSettingsState(
                 SettingsLoadState.READY,
                 state.providers(),
@@ -144,6 +172,9 @@ public final class ProviderSettingsPresenter {
 
     /** 保存新建或更新 Provider。 */
     public void save() {
+        if (state.phase() == SettingsLoadState.SAVING) {
+            return;
+        }
         ProviderEndpointSpec requested;
         try {
             requested = state.draft().toSpec();
@@ -252,6 +283,9 @@ public final class ProviderSettingsPresenter {
 
     /** 丢弃表单草稿。 */
     public void discardDraft() {
+        if (state.phase() == SettingsLoadState.SAVING) {
+            return;
+        }
         publish(new ProviderSettingsState(
                 SettingsLoadState.READY,
                 state.providers(),

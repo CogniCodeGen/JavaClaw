@@ -1,0 +1,15 @@
+9月 09, 2026 11:22:46 上午 com.sun.javafx.application.PlatformImpl startup
+警告: Unsupported JavaFX configuration: classes were loaded from 'unnamed module @5fcfe4b2'
+2026-09-09 11:22:47.347 java[2575:9477516] error messaging the mach port for IMKCFRunLoopWakeUpReliable
+Exception in thread "main" org.opentest4j.AssertionFailedError: expected: <true> but was: <false>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertTrue.failNotTrue(AssertTrue.java:63)
+	at org.junit.jupiter.api.AssertTrue.assertTrue(AssertTrue.java:36)
+	at org.junit.jupiter.api.AssertTrue.assertTrue(AssertTrue.java:31)
+	at org.junit.jupiter.api.Assertions.assertTrue(Assertions.java:183)
+	at com.javaclaw.desktop.settings.ChatModelPickerPopupStyleTest.assertPopup(ChatModelPickerPopupStyleTest.java:92)
+	at com.javaclaw.desktop.settings.ChatModelPickerPopupStyleTest.lambda$模型菜单首次打开和切换外观后重开均解析令牌且继承当前预览$0(ChatModelPickerPopupStyleTest.java:49)
+	at com.javaclaw.desktop.FxTestSupport.lambda$run$0(FxTestSupport.java:35)
+	at com.sun.javafx.application.PlatformImpl.lambda$runLater$0(PlatformImpl.java:424)
+	at com.sun.glass.ui.InvokeLaterDispatcher$Future.run(InvokeLaterDispatcher.java:95)

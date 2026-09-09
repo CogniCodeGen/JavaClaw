@@ -58,6 +58,7 @@ public final class WorkerImageAssemblerMain {
         if (!containsChromiumExecutable(destination)) {
             throw new IOException("Playwright source does not contain a Chromium executable");
         }
+        BrowserDriverAssembler.install(checkedImage, playwrightVersion);
         mark(checkedImage, "browser");
     }
 
@@ -105,6 +106,7 @@ public final class WorkerImageAssemblerMain {
         }
         if ("browser".equals(type)) {
             requireArtifact(app, "playwright-1.52.0", "Browser Worker Playwright");
+            BrowserDriverAssembler.verify(imageRoot);
             rejectArtifacts(app, Set.of("pdfbox-", "poi-", "javaclaw-knowledge-worker-"), "Browser Worker");
             Path browser = realDirectory(imageRoot.resolve("browser"), "Browser runtime directory");
             if (!containsChromiumExecutable(browser)) {

@@ -2,13 +2,17 @@ package com.javaclaw.desktop.settings;
 
 import java.util.Objects;
 
+import javafx.application.Platform;
 import javafx.event.ActionEvent;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonBar.ButtonData;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import javafx.stage.Stage;
 import javafx.stage.Window;
 
 import com.javaclaw.api.ProviderRef;
@@ -29,26 +33,31 @@ public final class ProviderSetupWizard {
     private final VBox modelStep;
     private final Label status = new Label();
     private final Runnable completed;
+    private final Runnable used;
     private final Button primary;
     private final Button secondary;
     private final Button back;
     private boolean modelStage;
 
     private ProviderSetupWizard(
-            Window owner, CoreSettingsGateway gateway, ProviderSetupTarget target, Runnable completed) {
+            Window owner, CoreSettingsGateway gateway, ProviderSetupTarget target, Runnable completed, Runnable used) {
+        this.used = Objects.requireNonNull(used, "used");
         this.completed = Objects.requireNonNull(completed, "completed");
         workflow = new ProviderSetupWorkflow(gateway);
         workflow.onProgress(status::setText);
         models = new ProviderSetupModelForm(new PlatformComponentFactory(), this::discover);
         workspace = new ProviderSetupWorkspacePicker(owner, gateway, target);
         modelStep = new VBox(12, models, workspace);
+        modelStep.setMinWidth(0);
         modelStep.setVisible(false);
         modelStep.setManaged(false);
         status.setWrapText(true);
+        status.setMinWidth(0);
         status.getStyleClass().add("sec-hint");
         dialog.setTitle("添加模型");
         dialog.setHeaderText("① 连接服务 ───── ② 选择模型");
         VBox body = new VBox(12, connection, modelStep, status);
+        body.setMinWidth(0);
         body.setPrefWidth(580);
         dialog.getDialogPane().setContent(body);
         ButtonType primaryType = new ButtonType("继续：选择模型", ButtonData.OK_DONE);
@@ -72,7 +81,21 @@ public final class ProviderSetupWizard {
      * @param completed 完成时的页面刷新回调，不负责发消息
      */
     public static void show(Window owner, CoreSettingsGateway gateway, ProviderSetupTarget target, Runnable completed) {
-        new ProviderSetupWizard(owner, gateway, target, completed).dialog.show();
+        show(owner, gateway, target, completed, () -> {});
+    }
+
+    /**
+     * 打开配置窗口并在模型成功应用后通知调用窗口返回聊天；仅保存或失败不触发使用回调。
+     *
+     * @param owner 所属窗口；可空
+     * @param gateway SDK 边界
+     * @param target 入口固定目标
+     * @param completed 模型保存或使用完成后的刷新回调
+     * @param used 成功使用后的导航回调；向导关闭后调用
+     */
+    public static void show(
+            Window owner, CoreSettingsGateway gateway, ProviderSetupTarget target, Runnable completed, Runnable used) {
+        new ProviderSetupWizard(owner, gateway, target, completed, used).dialog.show();
     }
 
     /**
@@ -90,10 +113,43 @@ public final class ProviderSetupWizard {
             ProviderSetupTarget target,
             ProviderRef model,
             Runnable completed) {
-        ProviderModelUseDialog.show(owner, gateway, target, model, completed);
+        useModel(owner, gateway, target, model, completed, () -> {});
+    }
+
+    /**
+     * 使用已保存模型，并在成功应用后关闭配置窗口、返回聊天；失败保留窗口供重试。
+     *
+     * @param owner 所属窗口；可空
+     * @param gateway SDK 边界
+     * @param target 固定入口作用域
+     * @param model 精确模型引用
+     * @param completed 成功后的页面刷新回调
+     * @param used 关闭窗口后的返回聊天回调
+     */
+    public static void useModel(
+            Window owner,
+            CoreSettingsGateway gateway,
+            ProviderSetupTarget target,
+            ProviderRef model,
+            Runnable completed,
+            Runnable used) {
+        ProviderModelUseDialog.show(owner, gateway, target, model, completed, used);
     }
 
     private void bindEvents() {
+        // ButtonBarSkin 创建时会覆盖各按钮的 minWidth，必须从按钮栏指定完整文字所需的首选宽度。
+        ButtonBar buttonBar = (ButtonBar) dialog.getDialogPane().lookup(".button-bar");
+        buttonBar.setButtonMinWidth(Region.USE_PREF_SIZE);
+        for (ButtonType type : dialog.getDialogPane().getButtonTypes()) {
+            Button button = (Button) dialog.getDialogPane().lookupButton(type);
+            ButtonBar.setButtonUniformSize(button, false);
+        }
+        primary.setWrapText(true);
+        // 长目标名完整换行；不能把其单行测量宽度升级为整个 Dialog 的最小宽度。
+        primary.setMinWidth(0);
+        primary.setPrefWidth(300);
+        primary.setMaxWidth(300);
+        primary.widthProperty().addListener((ignored, before, width) -> fitPrimaryHeight());
         primary.setId("providerWizardContinue");
         secondary.setId("providerWizardSaveOnly");
         primary.addEventFilter(ActionEvent.ACTION, event -> {
@@ -112,7 +168,10 @@ public final class ProviderSetupWizard {
             event.consume();
             showStep(false);
         });
-        workspace.onTargetChanged(ignored -> updateButtons());
+        workspace.onTargetChanged(ignored -> {
+            updateButtons();
+            Platform.runLater(this::fitDialog);
+        });
         dialog.setOnCloseRequest(event -> {
             if (workflow.pending() || workspace.pending()) {
                 event.consume();
@@ -170,6 +229,9 @@ public final class ProviderSetupWizard {
             }
             completed.run();
             dialog.close();
+            if (use) {
+                used.run();
+            }
         });
     }
 
@@ -181,6 +243,24 @@ public final class ProviderSetupWizard {
         modelStep.setManaged(second);
         dialog.setHeaderText(second ? "✓ 连接服务 ───── ② 选择模型" : "① 连接服务 ───── ② 选择模型");
         updateButtons();
+        Platform.runLater(this::fitDialog);
+    }
+
+    private void fitDialog() {
+        if (!dialog.isShowing()) {
+            return;
+        }
+        dialog.getDialogPane().applyCss();
+        fitPrimaryHeight();
+        if (dialog.getDialogPane().getScene().getWindow() instanceof Stage stage) {
+            stage.sizeToScene();
+        }
+    }
+
+    private void fitPrimaryHeight() {
+        double width = primary.getWidth() > 0 ? primary.getWidth() : primary.getPrefWidth();
+        // ButtonBar 的首选高度计算不传递宽度；显式保留实际换行高度，避免只分配一行而省略目标名。
+        primary.setMinHeight(Math.ceil(primary.prefHeight(width)));
     }
 
     private void fail(Throwable failure) {
@@ -189,13 +269,16 @@ public final class ProviderSetupWizard {
     }
 
     private void updateButtons() {
-        boolean pending = workflow.pending();
+        boolean pending = workflow.pending() || (modelStage && workspace.pending());
         primary.setDisable(pending);
         secondary.setDisable(pending);
         back.setDisable(pending);
         connection.setDisable(pending);
         models.setDisable(pending);
+        workspace.setDisable(pending);
         primary.setText(modelStage ? workspace.target().saveLabel() : "继续：选择模型");
+        primary.setTooltip(ProviderSetupChoices.tooltip(primary.getText()));
+        fitPrimaryHeight();
         secondary.setVisible(modelStage);
         secondary.setManaged(modelStage);
         back.setVisible(modelStage);

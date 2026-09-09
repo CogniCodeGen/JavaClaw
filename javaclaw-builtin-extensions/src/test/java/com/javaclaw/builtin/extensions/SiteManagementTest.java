@@ -205,6 +205,49 @@ class SiteManagementTest {
     }
 
     @Test
+    void 页面私网操作使用协议名称且保留精确权限版本校验() throws Exception {
+        BuiltinExtensionTestSupport support = new BuiltinExtensionTestSupport();
+        var started = support.start(new SiteExtension());
+        create(started, support, "view-authority");
+        PrivateNetworkGrant grant = activeGrant(support, "view-network", 4, OLD_ORIGIN);
+        support.claimPrivateNetworkGrant(grant);
+
+        ViewQueryResult grants = support.decode(
+                started.query(support.request(
+                        "site/view.private-network-grants",
+                        new ViewQueryRequest("sitePrivateNetworkGrants", Map.of(), "", 10, Optional.empty()),
+                        Optional.empty(),
+                        0)),
+                ViewQueryResult.class);
+        assertEquals(1, grants.rows().size());
+        SiteContracts.Projection bound = support.decode(
+                started.command(support.request(
+                        "site/private-network/bind",
+                        new SiteManagementContracts.PrivateNetworkBindRequest("view-authority", 1, grant.id()),
+                        Optional.of("view-bind"),
+                        1)),
+                SiteContracts.Projection.class);
+        assertTrue(bound.hasPrivateGrant());
+        assertEquals(2, bound.authorityRevision());
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> started.command(support.request(
+                        "site/private-network/clear",
+                        new SiteManagementContracts.AuthorityClearRequest("view-authority", 1),
+                        Optional.of("view-clear-stale"),
+                        2)));
+        SiteContracts.Projection cleared = support.decode(
+                started.command(support.request(
+                        "site/private-network/clear",
+                        new SiteManagementContracts.AuthorityClearRequest("view-authority", 2),
+                        Optional.of("view-clear"),
+                        2)),
+                SiteContracts.Projection.class);
+        assertFalse(cleared.hasPrivateGrant());
+        assertEquals(3, cleared.authorityRevision());
+    }
+
+    @Test
     void managementOptionsExposeOnlyRedactedMetadata() throws Exception {
         BuiltinExtensionTestSupport support = new BuiltinExtensionTestSupport();
         SiteExtension bundle = new SiteExtension();

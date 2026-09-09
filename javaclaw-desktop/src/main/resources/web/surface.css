@@ -26,7 +26,7 @@ img { max-width: 100%; height: auto; }
 .transcript-error-block { background: var(--dangerBg); border: 1px solid var(--danger); }
 .plain { white-space: pre-wrap; overflow-wrap: anywhere; }
 .attachments { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-.attachment { text-align: left; padding: 8px 10px; background: var(--sunken); }
+.attachment { text-align: left; text-decoration: underline; text-underline-offset: 3px; }
 .welcome { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 12px; }
 .welcome strong { font-size: 24px; color: var(--title); }
 .welcome span:first-child { font-size: 44px; color: var(--primary); }

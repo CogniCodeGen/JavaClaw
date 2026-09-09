@@ -70,13 +70,23 @@ public final class WorkspaceSettingsPresenter {
 
     /** @param workspace 管理中心固定作用域，缺失时禁止操作 */
     public void bindWorkspace(Optional<Workspace> workspace) {
-        Optional<WorkspaceId> next = Objects.requireNonNull(workspace, "workspace").map(Workspace::id);
+        Optional<WorkspaceId> next =
+                Objects.requireNonNull(workspace, "workspace").map(Workspace::id);
         boolean same = scope.equals(next) && state.selected().isPresent();
+        if (!same) {
+            writing = false;
+            refreshPending = false;
+        }
         scope = next;
         if (workspace.isPresent()) {
             if (same && (state.dirty() || writing)) {
-                publish(new WorkspaceSettingsState(state.phase(), List.of(workspace.orElseThrow()), state.selected(),
-                        state.draftName(), "工作区登记已更新；名称草稿及原版本已保留", state.epoch()));
+                publish(new WorkspaceSettingsState(
+                        state.phase(),
+                        List.of(workspace.orElseThrow()),
+                        state.selected(),
+                        state.draftName(),
+                        "工作区登记已更新；名称草稿及原版本已保留",
+                        state.epoch()));
             } else {
                 select(workspace.orElseThrow());
             }
@@ -145,8 +155,8 @@ public final class WorkspaceSettingsPresenter {
             if (failure != null) {
                 publish(copy(SettingsLoadState.ERROR, SettingsFailures.message(failure), epoch));
             } else {
-                publish(new WorkspaceSettingsState(SettingsLoadState.READY, List.of(saved), Optional.of(saved),
-                        saved.name(), success, epoch));
+                publish(new WorkspaceSettingsState(
+                        SettingsLoadState.READY, List.of(saved), Optional.of(saved), saved.name(), success, epoch));
             }
             refreshAgain();
         });
@@ -154,14 +164,20 @@ public final class WorkspaceSettingsPresenter {
 
     private void applyCatalog(List<Workspace> workspaces, long epoch) {
         Optional<Workspace> remote = state.selected()
-                .flatMap(previous -> workspaces.stream().filter(value -> value.id().equals(previous.id())).findFirst())
+                .flatMap(previous -> workspaces.stream()
+                        .filter(value -> value.id().equals(previous.id()))
+                        .findFirst())
                 .or(() -> state.selected().isEmpty() ? workspaces.stream().findFirst() : Optional.empty());
         boolean preserve = state.dirty();
         Optional<Workspace> selected = preserve ? state.selected() : remote.or(() -> state.selected());
-        String message = preserve && !remote.equals(state.selected())
-                ? "工作区登记已更新；名称草稿及原版本已保留" : "";
-        publish(new WorkspaceSettingsState(SettingsLoadState.READY, workspaces, selected,
-                preserve ? state.draftName() : selected.map(Workspace::name).orElse(""), message, epoch));
+        String message = preserve && !remote.equals(state.selected()) ? "工作区登记已更新；名称草稿及原版本已保留" : "";
+        publish(new WorkspaceSettingsState(
+                SettingsLoadState.READY,
+                workspaces,
+                selected,
+                preserve ? state.draftName() : selected.map(Workspace::name).orElse(""),
+                message,
+                epoch));
     }
 
     private void refreshAgain() {

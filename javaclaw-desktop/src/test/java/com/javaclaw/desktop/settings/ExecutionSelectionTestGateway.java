@@ -10,6 +10,7 @@ import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.function.Consumer;
 
 import com.javaclaw.api.AgentRole;
 import com.javaclaw.api.AgentRoleRef;
@@ -24,6 +25,9 @@ import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.client.CommandOptions;
 import com.javaclaw.client.RemoteRpcException;
+import com.javaclaw.desktop.DesktopConfigurationChange;
+import com.javaclaw.desktop.DesktopConfigurationEvents;
+import com.javaclaw.desktop.DesktopNotificationSubscription;
 import com.javaclaw.desktop.DesktopTestFixtures;
 import com.javaclaw.protocol.JsonRpcError;
 import com.javaclaw.protocol.ProtocolErrorCode;
@@ -39,12 +43,20 @@ final class ExecutionSelectionTestGateway extends TestCoreSettingsGateway {
     CompletableFuture<ExecutionConfiguration> writeResponse;
     RuntimeException readFailure;
     int catalogReads;
+    int executionReads;
+    long providerRevision = 1;
+    final DesktopConfigurationEvents configurationEvents = new DesktopConfigurationEvents();
     ExecutionOverrides submitted;
     Workspace workspace = DesktopTestFixtures.workspace();
 
     ExecutionSelectionTestGateway() {
         profiles.add(new AgentRole(
                 "default", 1, RoleLifecycle.ACTIVE, TestCoreSettingsFixtures.profileSpec(), false, NOW, NOW));
+    }
+
+    @Override
+    public DesktopNotificationSubscription onConfigurationChanged(Consumer<DesktopConfigurationChange> listener) {
+        return configurationEvents.subscribe(listener);
     }
 
     @Override
@@ -71,7 +83,7 @@ final class ExecutionSelectionTestGateway extends TestCoreSettingsGateway {
     @Override
     public CompletionStage<List<ProviderEndpoint>> providers() {
         return CompletableFuture.completedFuture(List.of(TestCoreSettingsFixtures.provider(
-                1, TestCoreSettingsFixtures.providerSpec(Optional.empty()), ProviderLifecycle.ACTIVE)));
+                providerRevision, TestCoreSettingsFixtures.providerSpec(Optional.empty()), ProviderLifecycle.ACTIVE)));
     }
 
     @Override
@@ -99,6 +111,7 @@ final class ExecutionSelectionTestGateway extends TestCoreSettingsGateway {
 
     @Override
     public CompletionStage<Optional<ExecutionConfiguration>> executionDefaults(Optional<WorkspaceId> workspaceId) {
+        executionReads++;
         if (workspaceId.isPresent() && !workspaceReads.isEmpty()) {
             return workspaceReads.remove();
         }

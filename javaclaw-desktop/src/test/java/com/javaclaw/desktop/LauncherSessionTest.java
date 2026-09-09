@@ -16,12 +16,14 @@ class LauncherSessionTest {
     }
 
     @Test
-    void Idea直跑明确报告缺少Supervisor() {
+    void Idea直跑展示当前一键启动入口() {
         LauncherSession session = LauncherSession.current();
 
         assertFalse(session.supervised());
         assertFalse(session.trayActive());
-        assertTrue(session.recoveryInstruction().contains("IDEA"));
+        assertEquals(
+                "IDEA 直接运行没有 launcher supervisor；请运行“JavaClaw 一键启动（前后端）”或先启动 App Server。",
+                session.recoveryInstruction());
     }
 
     @Test

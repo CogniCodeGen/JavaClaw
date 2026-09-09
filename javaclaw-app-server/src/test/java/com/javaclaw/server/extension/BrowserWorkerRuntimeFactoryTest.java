@@ -3,6 +3,7 @@ package com.javaclaw.server.extension;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
@@ -20,6 +21,42 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class BrowserWorkerRuntimeFactoryTest {
     @TempDir
     Path temporaryDirectory;
+
+    @Test
+    void 驱动和运行库只从镜像执行且临时目录没有执行权限() throws Exception {
+        Path image = temporaryDirectory.resolve("isolated-image");
+        String suffix = platformId().equals("windows") ? ".exe" : "";
+        prepareImage(image, "java" + suffix, platformId());
+        Path data = Files.createDirectories(temporaryDirectory.resolve("isolated-data"));
+        var layout = BrowserWorkerRuntimeFactory.layout(image.toRealPath(), data);
+
+        var command = BrowserWorkerRuntimeFactory.command(layout);
+
+        assertEquals(
+                List.of(layout.java(), layout.runtimeLibraries(), layout.driver(), layout.browser()),
+                command.executableRoots());
+        assertEquals(List.of(layout.work()), command.writeRoots());
+        assertTrue(command.privateScratch().isPresent());
+        assertTrue(command.argv().contains("-Dplaywright.cli.dir=" + layout.driver()));
+        assertTrue(command.argv().contains("-Djava.io.tmpdir=" + layout.work()));
+        assertTrue(command.executableRoots().stream().noneMatch(path -> path.startsWith(layout.work())));
+        assertFalse(command.environment().containsKey("HOME"));
+    }
+
+    @Test
+    void 缺失或越界驱动不能形成Browser运行命令() throws Exception {
+        Path image = temporaryDirectory.resolve("unsafe-driver-image");
+        String suffix = platformId().equals("windows") ? ".exe" : "";
+        prepareImage(image, "java" + suffix, platformId());
+        Path data = Files.createDirectories(temporaryDirectory.resolve("unsafe-driver-data"));
+        Path cli = image.resolve("driver/package/cli.js");
+        Files.delete(cli);
+        assertThrows(java.io.IOException.class, () -> BrowserWorkerRuntimeFactory.layout(image.toRealPath(), data));
+        org.junit.jupiter.api.Assumptions.assumeFalse(platformId().equals("windows"));
+        Path outside = Files.writeString(temporaryDirectory.resolve("outside-cli.js"), "outside");
+        Files.createSymbolicLink(cli, outside);
+        assertThrows(java.io.IOException.class, () -> BrowserWorkerRuntimeFactory.layout(image.toRealPath(), data));
+    }
 
     @Test
     @ResourceLock(Resources.SYSTEM_PROPERTIES)
@@ -280,6 +317,12 @@ class BrowserWorkerRuntimeFactoryTest {
     private static void prepareImage(Path image, String javaName, String platform) throws Exception {
         Path bin = Files.createDirectories(image.resolve("bin"));
         Files.createDirectories(image.resolve("app"));
+        Files.createDirectories(image.resolve("lib"));
+        Files.createDirectories(image.resolve("driver/package"));
+        Path node =
+                Files.writeString(image.resolve("driver/" + (javaName.endsWith(".exe") ? "node.exe" : "node")), "node");
+        assertTrue(node.toFile().setExecutable(true, true) || Files.isExecutable(node));
+        Files.writeString(image.resolve("driver/package/cli.js"), "cli");
         Path browser = Files.createDirectories(image.resolve("browser"));
         Path java = Files.writeString(bin.resolve(javaName), "#!/bin/sh\nexit 0\n", StandardCharsets.US_ASCII);
         assertTrue(java.toFile().setExecutable(true, true) || Files.isExecutable(java));

@@ -42,12 +42,17 @@ final class DesktopCatalogRefresh {
 
     private static DesktopState apply(DesktopState state, List<Workspace> catalog) {
         var before = state.threads();
-        Optional<Workspace> selected = before.selectedWorkspace().map(previous -> catalog.stream()
-                .filter(value -> value.id().equals(previous.id())).findFirst().orElse(previous));
+        Optional<Workspace> selected = before.selectedWorkspace()
+                .map(previous -> catalog.stream()
+                        .filter(value -> value.id().equals(previous.id()))
+                        .findFirst()
+                        .orElse(previous));
         List<Workspace> visible = new ArrayList<>(catalog);
         selected.filter(value -> visible.stream().noneMatch(item -> item.id().equals(value.id())))
                 .ifPresent(visible::add);
-        ThreadState threads = new ThreadState(visible, selected, before.threads(), before.selectedThread(), before.activeTurn());
-        return new DesktopState(state.connection(), state.navigation(), threads, state.transcript(), state.interaction());
+        ThreadState threads =
+                new ThreadState(visible, selected, before.threads(), before.selectedThread(), before.activeTurn());
+        return new DesktopState(
+                state.connection(), state.navigation(), threads, state.transcript(), state.interaction());
     }
 }

@@ -84,24 +84,31 @@ public final class AgentConfigurationResolver {
             return blockedPreview(selection, Optional.empty(), ExecutionBlocker.Code.ROLE_UNAVAILABLE, failure);
         }
         if (selection.provider == null) {
-            return preview(selection, Optional.of(role), List.of(new ExecutionBlocker(
-                    ExecutionBlocker.Code.MODEL_REQUIRED, "选择一个模型，或添加新的模型连接")));
+            return preview(
+                    selection,
+                    Optional.of(role),
+                    List.of(new ExecutionBlocker(ExecutionBlocker.Code.MODEL_REQUIRED, "选择一个模型，或添加新的模型连接")));
         }
         try {
-            ResolvedAgentConfiguration resolved =
-                    finish(selection, role, scope, Optional.empty(), Optional.empty());
+            ResolvedAgentConfiguration resolved = finish(selection, role, scope, Optional.empty(), Optional.empty());
             return new ExecutionPreview(
-                    Optional.of(role.ref()), Optional.of(resolved.provider()), resolved.reasoning(),
-                    role.spec().model().isPresent(), role.spec().reasoning().isPresent(),
-                    resolved.provenance(), List.of());
+                    Optional.of(role.ref()),
+                    Optional.of(resolved.provider()),
+                    resolved.reasoning(),
+                    role.spec().model().isPresent(),
+                    role.spec().reasoning().isPresent(),
+                    resolved.provenance(),
+                    List.of());
         } catch (PersistenceException failure) {
             return blockedPreview(selection, Optional.of(role), ExecutionBlocker.Code.CONFIGURATION_INVALID, failure);
         }
     }
 
     private static ExecutionPreview blockedPreview(
-            ConfigurationSelection selection, Optional<AgentRole> role,
-            ExecutionBlocker.Code code, PersistenceException failure) {
+            ConfigurationSelection selection,
+            Optional<AgentRole> role,
+            ExecutionBlocker.Code code,
+            PersistenceException failure) {
         if (failure.kind() != PersistenceException.Kind.INVALID_REQUEST) {
             throw failure;
         }
@@ -111,10 +118,13 @@ public final class AgentConfigurationResolver {
     private static ExecutionPreview preview(
             ConfigurationSelection selection, Optional<AgentRole> role, List<ExecutionBlocker> blockers) {
         return new ExecutionPreview(
-                Optional.of(selection.role), Optional.ofNullable(selection.provider), selection.reasoning,
+                Optional.of(selection.role),
+                Optional.ofNullable(selection.provider),
+                selection.reasoning,
                 role.filter(value -> value.spec().model().isPresent()).isPresent(),
                 role.filter(value -> value.spec().reasoning().isPresent()).isPresent(),
-                selection.provenance, blockers);
+                selection.provenance,
+                blockers);
     }
 
     ResolvedAgentConfiguration resolveChild(

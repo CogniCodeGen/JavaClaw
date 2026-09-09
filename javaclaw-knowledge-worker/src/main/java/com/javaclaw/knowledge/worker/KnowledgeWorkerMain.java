@@ -16,6 +16,8 @@ public final class KnowledgeWorkerMain {
     /**
      * 读取一个命令与原始附件，写入一个脱敏结果后退出。
      *
+     * <p>先独占原 stdout，再把解析库的标准输出转到 stderr；第三方库的初始化日志不能混入协议帧。宿主默认丢弃 stderr， 避免解析器诊断携带原始文档信息。
+     *
      * @param args 不接受参数
      * @throws Exception framing 或管道写入失败
      */
@@ -23,7 +25,9 @@ public final class KnowledgeWorkerMain {
         if (args.length != 0) {
             throw new IllegalArgumentException("Knowledge Worker does not accept arguments");
         }
-        run(System.in, System.out);
+        OutputStream protocolOutput = System.out;
+        System.setOut(System.err);
+        run(System.in, protocolOutput);
     }
 
     static void run(InputStream input, OutputStream output) throws Exception {

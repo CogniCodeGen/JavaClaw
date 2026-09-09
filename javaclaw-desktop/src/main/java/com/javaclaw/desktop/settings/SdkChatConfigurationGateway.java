@@ -37,8 +37,11 @@ abstract class SdkChatConfigurationGateway extends SdkBundleSettingsGateway impl
 
     @Override
     public CompletionStage<ExecutionConfiguration> rememberChatSelection(
-            WorkspaceId workspaceId, ThreadId threadId, ExecutionOverrides execution,
-            CommandOptions options, boolean remember) {
+            WorkspaceId workspaceId,
+            ThreadId threadId,
+            ExecutionOverrides execution,
+            CommandOptions options,
+            boolean remember) {
         return desktop.rememberChatSelection(workspaceId, threadId, execution, options, remember);
     }
 

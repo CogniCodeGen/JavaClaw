@@ -46,11 +46,13 @@ mvn clean verify
 `-Djavaclaw.log.dir=<absolute-data-v6>/logs`。数据根不可写、所有者不匹配或存在不安全路径时启动失败，不会静默改用 HOME
 或旧数据目录。Provider 凭据不得直接写入配置 payload，只能保存 Vault `CredentialRef`。
 
-### IntelliJ IDEA 一键调试
+### IntelliJ IDEA 一键启动与调试
 
-使用 JDK 25 从根 `pom.xml` 导入 Maven Reactor 后，在运行配置下拉框选择 `JavaClaw Local Debug`，点击
-Debug 即可同时调试 App Server 与 JavaFX Desktop；两个进程中的断点都会生效。Compound 配置会并行启动进程，
-Desktop 最多等待 App Server 15 秒，不依赖人工控制启动顺序。
+使用 JDK 25 从根 `pom.xml` 导入 Maven Reactor 后，在 IDEA 顶部运行配置下拉框选择
+`JavaClaw 一键启动（前后端）`，点击 **Run** 即可同时启动 App Server 后端与 JavaFX Desktop 前端。
+点击 **Debug** 则同时调试两个进程，两端的断点都会生效。该入口由原 `JavaClaw Local Debug` 更名，
+对应共享配置 [.run/JavaClaw_Local_Debug.run.xml](.run/JavaClaw_Local_Debug.run.xml)。
+Compound 配置会并行启动进程，Desktop 在连接未就绪时自动重试 15 秒，不依赖人工控制启动顺序。
 
 共享配置只使用 macOS / Linux 的 Unix Domain Socket，开发数据和日志隔离在项目内的
 `.javaclaw/idea/data-v6`。`JavaClaw App Server` 与 `JavaClaw Desktop` 可用于分别调试单个进程。Provider 与凭据
@@ -61,6 +63,10 @@ API key 写入或提交到 `.run` 配置。
 IDEA 一键调试链随模块重构失效。
 
 IDEA 直接调试没有发行启动器 supervisor，因此“修复登录启动项”会明确显示不可用原因，不会伪造成功。
+该入口也不装配独立 Worker 镜像：知识库文件导入及重建索引、网站快照/登录、由 Browser 承载的 MCP OAuth，
+以及已发布 Skill 的 Java/JShell 资源执行，需要通过发行启动器使用经过校验的 `workers/`。
+已有知识索引查询、网站配置和 Skill 内容管理不受这一启动方式限制；不会为开发调试回退到宿主 JDK、PATH
+或开发 classpath。镜像布局与验收要求见[发行说明](docs/release.md)。
 
 若启动报 `data-v6 baseline checksum 不一致`，表示数据库记录的基线与当前程序资源不匹配；
 相同的 `data-v6` 目录名不保证开发期间的不同基线兼容。错误会列出数据目录、数据库摘要与程序摘要。

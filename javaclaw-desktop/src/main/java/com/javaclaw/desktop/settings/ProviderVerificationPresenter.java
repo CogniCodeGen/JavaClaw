@@ -13,12 +13,18 @@ import com.javaclaw.api.ProviderVerificationResult;
 import com.javaclaw.client.CommandOptions;
 import com.javaclaw.protocol.ProviderVerificationRpcContracts;
 
-/** Provider 显式计费验证的独立异步状态机。 */
+/**
+ * Provider 显式计费验证的独立异步状态机。
+ *
+ * <p>绑定条件与请求阶段分别保存；同一绑定的页面重绘不重置在途请求或失败；配置读取造成的 busy 变化只影响可用性，模型、凭据或草稿变化才使旧响应失效。
+ */
 public final class ProviderVerificationPresenter {
     private final CoreSettingsGateway gateway;
     private final ProviderModelPurpose purpose;
     private Consumer<ProviderVerificationSettingsState> listener = ignored -> {};
     private ProviderVerificationSettingsState state;
+    private Binding binding;
+    private boolean busy;
 
     /**
      * 创建 Presenter。
@@ -48,10 +54,30 @@ public final class ProviderVerificationPresenter {
      * @param endpoint 当前 Provider；未选择时为空
      * @param model 当前模型；未选择时为空
      * @param credentialAvailable Vault 元数据是否可用
-     * @param blocked 是否因草稿或其他设置命令阻止验证
+     * @param blocked 兼容旧调用方的草稿阻塞标记；更新中的状态应改用五参数重载
      */
     public void bind(
             Optional<ProviderEndpoint> endpoint, Optional<String> model, boolean credentialAvailable, boolean blocked) {
+        bind(endpoint, model, credentialAvailable, blocked, false);
+    }
+
+    /**
+     * 绑定已保存的精确模型，分别说明未保存草稿与其他配置命令造成的暂时阻塞。
+     *
+     * <p>相同绑定不重置请求；仅 busy 变化更新可用性，保留原请求阶段、结果、失败说明和代次。
+     *
+     * @param endpoint 当前 Provider；未选择时为空
+     * @param model 当前模型；未选择时为空
+     * @param credentialAvailable Vault 元数据是否可用
+     * @param dirty 是否存在未保存草稿
+     * @param busy 是否正在更新模型配置
+     */
+    public void bind(
+            Optional<ProviderEndpoint> endpoint,
+            Optional<String> model,
+            boolean credentialAvailable,
+            boolean dirty,
+            boolean busy) {
         Optional<ProviderRef> reference =
                 endpoint.flatMap(value -> model.filter(selected -> value.spec().models().stream()
                                 .anyMatch(candidate ->
@@ -65,18 +91,47 @@ public final class ProviderVerificationPresenter {
                         .isPresent()
                 && authenticationAvailable
                 && credentialAvailable
-                && !blocked
+                && !dirty
+                && !busy
                 && reference.isPresent();
-        boolean changed = !reference.equals(state.provider()) || available != state.available();
-        String message = unavailableMessage(endpoint, credentialAvailable, blocked, reference);
+        String message = unavailableMessage(endpoint, credentialAvailable, dirty, busy, reference);
+        Binding next = new Binding(
+                reference,
+                endpoint.map(ProviderEndpoint::lifecycle),
+                authenticationAvailable,
+                credentialAvailable,
+                dirty);
+        boolean sameConfiguration = next.equals(binding);
+        if (sameConfiguration && this.busy == busy) {
+            return;
+        }
+        binding = next;
+        this.busy = busy;
+        publishBound(reference, available, message, sameConfiguration);
+    }
+
+    private void publishBound(
+            Optional<ProviderRef> reference, boolean available, String message, boolean sameConfiguration) {
+        if (!sameConfiguration) {
+            publish(new ProviderVerificationSettingsState(
+                    SettingsLoadState.READY,
+                    reference,
+                    purpose,
+                    available,
+                    Optional.empty(),
+                    message,
+                    state.epoch() + 1));
+            return;
+        }
+        boolean keepMessage = state.pending() || state.phase() == SettingsLoadState.ERROR;
         publish(new ProviderVerificationSettingsState(
-                SettingsLoadState.READY,
+                state.phase(),
                 reference,
                 purpose,
                 available,
-                changed ? Optional.empty() : state.result(),
-                message,
-                changed ? state.epoch() + 1 : state.epoch()));
+                state.result(),
+                keepMessage ? state.message() : message,
+                state.epoch()));
     }
 
     /**
@@ -86,6 +141,9 @@ public final class ProviderVerificationPresenter {
      * @param confirmation 精确固定确认文本
      */
     public void verify(boolean billingConfirmed, String confirmation) {
+        if (state.pending()) {
+            return;
+        }
         if (!state.available()) {
             publishFailure("模型服务当前不满足计费验证条件");
             return;
@@ -120,17 +178,25 @@ public final class ProviderVerificationPresenter {
             publishFailure(SettingsFailures.message(failure));
             return;
         }
+        if (result == null) {
+            publishFailure("模型服务未返回验证结果");
+            return;
+        }
         if (result.purpose() != purpose) {
             publishFailure("模型服务返回了不匹配的验证用途");
+            return;
+        }
+        if (!Optional.of(result.provider()).equals(state.provider())) {
+            publishFailure("模型服务返回了不匹配的模型版本");
             return;
         }
         publish(new ProviderVerificationSettingsState(
                 SettingsLoadState.READY,
                 state.provider(),
                 purpose,
-                true,
+                state.available(),
                 Optional.of(result),
-                result.state() + " · " + result.latencyMillis() + " ms",
+                busy ? "正在更新模型配置，请稍候…" : result.state() + " · " + result.latencyMillis() + " ms",
                 epoch));
     }
 
@@ -148,7 +214,8 @@ public final class ProviderVerificationPresenter {
     private static String unavailableMessage(
             Optional<ProviderEndpoint> endpoint,
             boolean credentialAvailable,
-            boolean blocked,
+            boolean dirty,
+            boolean busy,
             Optional<ProviderRef> reference) {
         if (endpoint.isEmpty()) {
             return "请选择已保存的模型服务";
@@ -156,19 +223,38 @@ public final class ProviderVerificationPresenter {
         if (endpoint.orElseThrow().lifecycle() != ProviderLifecycle.ACTIVE) {
             return "只有已启用的模型服务可以执行可能计费的验证";
         }
+        if (busy) {
+            return "正在更新模型配置，请稍候…";
+        }
+        if (dirty) {
+            return "请先保存或放弃模型服务草稿";
+        }
         if ((endpoint.orElseThrow().spec().authentication() != ProviderAuthentication.NONE
                         && endpoint.orElseThrow().spec().credential().isEmpty())
                 || !credentialAvailable) {
             return "CredentialRef 不可用，计费验证已关闭";
-        }
-        if (blocked) {
-            return "请先保存或放弃模型服务草稿";
         }
         if (reference.isEmpty()) {
             return "请选择精确模型";
         }
         return "验证会发送最小无工具调用，可能产生真实模型费用";
     }
+
+    /**
+     * 决定验证身份和安全条件的页面绑定；临时 busy 不属于身份，不使在途响应失效。
+     *
+     * @param provider 已保存的精确模型引用；缺少模型时为空
+     * @param lifecycle 服务生命周期；未选择服务时为空
+     * @param authenticationAvailable 已满足当前鉴权配置要求
+     * @param credentialAvailable Vault 元数据是否可用
+     * @param dirty 是否存在未保存草稿
+     */
+    private record Binding(
+            Optional<ProviderRef> provider,
+            Optional<ProviderLifecycle> lifecycle,
+            boolean authenticationAvailable,
+            boolean credentialAvailable,
+            boolean dirty) {}
 
     private void publish(ProviderVerificationSettingsState next) {
         state = next;

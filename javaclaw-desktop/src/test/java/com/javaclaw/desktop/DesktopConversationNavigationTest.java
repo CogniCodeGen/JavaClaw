@@ -237,6 +237,31 @@ class DesktopConversationNavigationTest {
     }
 
     @Test
+    void 旧协议活动观察失败后重选同一会话可补齐已完成Turn并恢复发送() throws Exception {
+        try (Fixture fixture = new Fixture(false)) {
+            var original = fixture.server.requestOverride;
+            fixture.server.requestOverride = request -> {
+                if (request.method().equals("item/list")) {
+                    throw new IllegalStateException("活动正文追尾失败");
+                }
+                return original.apply(request);
+            };
+            fixture.presenter.send("只启动一次");
+            fixture.await(() -> fixture.state().interaction().error().isPresent());
+            assertTrue(fixture.state().interaction().busy());
+            assertTrue(fixture.state().interaction().error().orElseThrow().contains("重新选择"));
+            fixture.server.requestOverride = original;
+            fixture.turns.put(fixture.first.id(), fixture.turn(fixture.first, TurnStatus.COMPLETED));
+            fixture.presenter.selectThread(fixture.first);
+            fixture.await(() -> !fixture.state().interaction().busy());
+            assertTrue(fixture.state().interaction().error().isEmpty());
+            assertTrue(fixture.state().threads().activeTurn().isEmpty());
+            assertEquals(1, fixture.state().transcript().nextSequence());
+            assertEquals(1, fixture.server.turnStarts.get());
+        }
+    }
+
+    @Test
     void 跨会话导航读取失败不误解锁原会话且重选原会话能恢复观察() throws Exception {
         try (Fixture fixture = new Fixture()) {
             fixture.start();

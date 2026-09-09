@@ -13,7 +13,6 @@ import java.util.stream.Collectors;
 import javafx.scene.image.WritableImage;
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.desktop.FxTestSupport;
 import com.javaclaw.desktop.appearance.AppearanceTheme;
 import com.javaclaw.desktop.appearance.InterfaceDensity;
 
@@ -38,7 +37,9 @@ class ManagementCenterGoldenIT {
                 updating ? "" : Files.readString(REFERENCE_DIRECTORY.resolve(UiGoldenManifest.FILE_NAME));
         assertMatrix(cases);
         prepareArtifactDirectory();
-        renderArtifacts(cases);
+        try (GoldenAsyncFailures failures = new GoldenAsyncFailures()) {
+            renderArtifacts(cases);
+        }
         writeManifest(ARTIFACT_DIRECTORY, platform(), cases);
         if (updating) {
             updateMacOsReferences(cases);
@@ -69,7 +70,7 @@ class ManagementCenterGoldenIT {
         ManagementCenterGoldenFixture fixture = new ManagementCenterGoldenFixture();
         AtomicReference<List<String>> navigationEntries = new AtomicReference<>();
         for (UiGoldenCase golden : cases) {
-            var rendered = FxTestSupport.call(() -> fixture.render(golden));
+            var rendered = fixture.render(golden);
             WritableImage image = rendered.image();
             navigationEntries.compareAndSet(null, rendered.navigationEntries());
             assertEquals(navigationEntries.get(), rendered.navigationEntries(), "主题与密度不能改变生产导航目录");

@@ -1,5 +1,6 @@
 package com.javaclaw.desktop.settings;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -23,9 +24,9 @@ import javafx.stage.Screen;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 
-import com.javaclaw.desktop.DesktopStylesheets;
 import com.javaclaw.desktop.DesktopConfigurationChange;
 import com.javaclaw.desktop.DesktopNotificationSubscription;
+import com.javaclaw.desktop.DesktopStylesheets;
 import com.javaclaw.desktop.appearance.DesktopAppearanceManager;
 import com.javaclaw.desktop.component.ManagementPageShell;
 
@@ -198,6 +199,21 @@ public final class ManagementCenterWindow {
         activePage = null;
     }
 
+    private void returnToChat() {
+        if (stage == null) {
+            return;
+        }
+        Window owner = stage.getOwner();
+        // 成功应用模型后只隐藏窗口，保留其他页面的草稿；再次打开时按原独立作用域刷新。
+        stage.hide();
+        if (owner instanceof Stage mainStage) {
+            mainStage.toFront();
+        }
+        if (owner != null) {
+            owner.requestFocus();
+        }
+    }
+
     private void createStage(Window owner) {
         stage = new Stage();
         stage.initOwner(owner);
@@ -207,7 +223,7 @@ public final class ManagementCenterWindow {
         stage.setMinHeight(MINIMUM_HEIGHT);
         shell = new ManagementPageShell("设置与管理");
         shell.setNavigationContent(createNavigation());
-        pages = new SettingsPageRegistry(appearance, gateways, this::close);
+        pages = new SettingsPageRegistry(appearance, gateways, this::close, this::returnToChat);
         scope = new ManagementScopeSession(
                 gateways.core(), gateways.preferredWorkspace(), () -> activePage, this::scopeAvailabilityChanged);
         shell.setScopeContent(scope.content());
@@ -259,15 +275,27 @@ public final class ManagementCenterWindow {
 
     private void filter(String query) {
         String normalized = Objects.requireNonNullElse(query, "").strip().toLowerCase(Locale.ROOT);
-        filtered.setAll(DESTINATIONS.stream()
-                .filter(destination -> destination.searchText().contains(normalized))
-                .toList());
-        if (pages != null
-                && !filtered.isEmpty()
-                && !filtered.contains(selected)
-                && (activePage == null || !activePage.dirty())) {
-            navigation.getSelectionModel().selectFirst();
+        restoringSelection = true;
+        try {
+            // 排序只改变候选展示；屏蔽 ListView 替换目录时的中间选择，避免误切页或触发草稿离页提示。
+            filtered.setAll(DESTINATIONS.stream()
+                    .filter(destination -> destination.searchText().contains(normalized))
+                    .sorted(Comparator.comparingInt(destination -> destination.searchRank(normalized)))
+                    .toList());
+        } finally {
+            restoringSelection = false;
         }
+        if (pages == null || filtered.isEmpty() || (activePage != null && activePage.dirty())) {
+            restoreSelection();
+            return;
+        }
+        Destination target = filtered.stream()
+                .filter(destination ->
+                        destination.title().toLowerCase(Locale.ROOT).equals(normalized))
+                .findFirst()
+                .orElse(filtered.contains(selected) ? selected : filtered.getFirst());
+        select(target);
+        restoreSelection();
     }
 
     private void select(Destination destination) {
@@ -428,6 +456,17 @@ public final class ManagementCenterWindow {
 
         private String searchText() {
             return (group + " " + title + " " + description).toLowerCase(Locale.ROOT);
+        }
+
+        private int searchRank(String query) {
+            String normalizedTitle = title.toLowerCase(Locale.ROOT);
+            if (query.isEmpty() || normalizedTitle.equals(query)) {
+                return 0;
+            }
+            if (normalizedTitle.startsWith(query)) {
+                return 1;
+            }
+            return normalizedTitle.contains(query) ? 2 : 3;
         }
     }
 

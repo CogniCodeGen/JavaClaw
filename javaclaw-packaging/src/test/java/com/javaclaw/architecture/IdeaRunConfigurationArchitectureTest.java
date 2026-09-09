@@ -2,8 +2,11 @@ package com.javaclaw.architecture;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -27,7 +30,7 @@ class IdeaRunConfigurationArchitectureTest {
             targetTypes.put(target.getAttribute("name"), target.getAttribute("type"));
         }
 
-        assertEquals("JavaClaw Local Debug", configuration.getAttribute("name"));
+        assertEquals("JavaClaw 一键启动（前后端）", configuration.getAttribute("name"));
         assertEquals("CompoundRunConfigurationType", configuration.getAttribute("type"));
         assertEquals(Map.of("JavaClaw App Server", "Application", "JavaClaw Desktop", "Application"), targetTypes);
     }
@@ -50,11 +53,25 @@ class IdeaRunConfigurationArchitectureTest {
         Element configuration = configuration("JavaClaw_Desktop.run.xml");
 
         assertApplication(
-                configuration, "JavaClaw Desktop", "javaclaw-desktop", "com.javaclaw.desktop.shell.JavaClawDesktop");
+                configuration,
+                "JavaClaw Desktop",
+                "javaclaw-desktop",
+                "com.javaclaw.desktop.shell.JavaClawDesktopMain");
         String virtualMachine = option(configuration, "VM_PARAMETERS");
-        assertTrue(virtualMachine.contains("--enable-native-access=ALL-UNNAMED"));
+        assertEquals(
+                Set.of("ALL-UNNAMED", "javafx.graphics", "javafx.media", "javafx.web"),
+                nativeAccessModules(virtualMachine));
         assertTrue(virtualMachine.contains("-Djavaclaw.server.socket=\"" + SOCKET + "\""));
         assertTrue(virtualMachine.contains("-Djavaclaw.server.startup-timeout=PT15S"));
+    }
+
+    private static Set<String> nativeAccessModules(String virtualMachine) {
+        String prefix = "--enable-native-access=";
+        return Arrays.stream(virtualMachine.split("\\s+"))
+                .filter(argument -> argument.startsWith(prefix))
+                .flatMap(argument ->
+                        Arrays.stream(argument.substring(prefix.length()).split(",")))
+                .collect(Collectors.toUnmodifiableSet());
     }
 
     private static void assertApplication(Element configuration, String name, String moduleName, String mainClass) {

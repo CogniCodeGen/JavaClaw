@@ -1,7 +1,9 @@
 package com.javaclaw.desktop.web;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 
 import javafx.application.Platform;
 import javafx.scene.Scene;
@@ -40,8 +42,7 @@ public final class WebProfileIsolationProbe {
         try {
             log("等待页面确认");
             FxTestSupport.await(() -> FxTestSupport.call(host::acknowledged));
-            Files.writeString(
-                    Path.of(arguments[0]), WebSurfaceRuntime.directory().toString());
+            publishReady(Path.of(arguments[0]), WebSurfaceRuntime.directory());
             log("已写入 ready，profile=" + WebSurfaceRuntime.directory());
             long deadline = System.nanoTime() + 10_000_000_000L;
             while (!Files.exists(Path.of(arguments[1])) && System.nanoTime() < deadline) {
@@ -57,6 +58,19 @@ public final class WebProfileIsolationProbe {
             WebSurfaceRuntime.close();
             Platform.exit();
             log("关闭完成");
+        }
+    }
+
+    private static void publishReady(Path ready, Path profile) throws IOException {
+        Path target = ready.toAbsolutePath();
+        Path pending =
+                Files.createTempFile(target.getParent(), target.getFileName().toString(), ".pending");
+        try {
+            Files.writeString(pending, profile.toString());
+            // 父进程用文件存在作为就绪信号；同目录原子发布保证观察到信号时内容已经完整写入并关闭。
+            Files.move(pending, target, StandardCopyOption.ATOMIC_MOVE);
+        } finally {
+            Files.deleteIfExists(pending);
         }
     }
 

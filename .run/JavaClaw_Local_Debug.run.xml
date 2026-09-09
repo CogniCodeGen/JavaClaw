@@ -1,5 +1,5 @@
 <component name="ProjectRunConfigurationManager">
-    <configuration default="false" name="JavaClaw Local Debug" type="CompoundRunConfigurationType">
+    <configuration default="false" name="JavaClaw 一键启动（前后端）" type="CompoundRunConfigurationType">
         <toRun name="JavaClaw App Server" type="Application" />
         <toRun name="JavaClaw Desktop" type="Application" />
         <method v="2" />
