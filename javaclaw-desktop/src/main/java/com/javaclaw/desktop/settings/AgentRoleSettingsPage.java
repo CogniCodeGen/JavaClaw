@@ -161,8 +161,15 @@ public final class AgentRoleSettingsPage implements ManagedSettingsPage {
     }
 
     @Override
+    public void invalidateCache() {
+        configurationRefresh.invalidate();
+        promptOptimization.invalidateCache();
+    }
+
+    @Override
     public void deactivate() {
         configurationRefresh.deactivate();
+        promptOptimization.deactivate();
     }
 
     private void configureControls() {

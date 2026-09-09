@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
 
 import javafx.application.Platform;
 import javafx.scene.Parent;
@@ -35,6 +36,32 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ExecutionSelectionPanelTest {
+    @Test
+    void 重新显示复用目录而期限和失效触发补读() {
+        FxTestSupport.run(() -> {
+            ExecutionSelectionTestGateway gateway = new ExecutionSelectionTestGateway();
+            AtomicLong clock = new AtomicLong();
+            ExecutionSelectionPanel panel =
+                    new ExecutionSelectionPanel(gateway, new SettingsCacheFreshness(clock::get));
+            try {
+                panel.bind(Optional.of(gateway.workspace), Optional.empty(), true);
+                panel.setRefreshActive(false);
+                panel.setRefreshActive(true);
+                assertEquals(1, gateway.catalogReads);
+                clock.set(Duration.ofMinutes(5).toNanos());
+                panel.setRefreshActive(true);
+                assertEquals(2, gateway.catalogReads);
+                panel.setRefreshActive(false);
+                panel.invalidateCache();
+                assertEquals(2, gateway.catalogReads);
+                panel.setRefreshActive(true);
+                assertEquals(3, gateway.catalogReads);
+            } finally {
+                panel.close();
+            }
+        });
+    }
+
     @Test
     void 保存工作区名称不会刷新或替换执行配置草稿() {
         FxTestSupport.run(() -> {
@@ -253,7 +280,7 @@ class ExecutionSelectionPanelTest {
     }
 
     @Test
-    void 创建向导完整加载前不可用且重新打开设置刷新当前作用域() {
+    void 创建向导加载默认角色且设置缓存失效后更新当前作用域() {
         FxTestSupport.run(() -> {
             ExecutionSelectionTestGateway gateway = new ExecutionSelectionTestGateway();
             ExecutionSelectionPanel creation = new ExecutionSelectionPanel(gateway);
@@ -266,6 +293,7 @@ class ExecutionSelectionPanelTest {
             new Scene((Parent) page.content());
             page.workspaceChanged(Optional.of(workspace));
             put(gateway, workspace, reasoning(ReasoningPreference.HIGH), 2);
+            page.invalidateCache();
             page.activate();
             page.applyCss();
             page.layout();

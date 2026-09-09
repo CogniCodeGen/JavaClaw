@@ -20,6 +20,9 @@ import com.javaclaw.protocol.PromptOptimizationRpcContracts;
 /** Prompt 优化面板的异步状态机；所有旧响应按 epoch 丢弃。 */
 public final class PromptOptimizationSettingsPresenter {
     private final PromptOptimizationSettingsGateway gateway;
+    private final SettingsCacheFreshness freshness = new SettingsCacheFreshness();
+    private boolean active;
+    private boolean refreshPending;
     private final Runnable adoptedCallback;
     private Consumer<PromptOptimizationSettingsState> listener = ignored -> {};
     private PromptOptimizationSettingsState state = PromptOptimizationSettingsState.initial();
@@ -75,6 +78,16 @@ public final class PromptOptimizationSettingsPresenter {
      */
     public void selectWorkspace(Workspace workspace) {
         Optional<Workspace> selected = Optional.ofNullable(workspace);
+        if (state.selection().workspace().equals(selected)) {
+            if (state.pending()) {
+                return;
+            }
+            if (refreshPending || !freshness.fresh() || hasActiveDraft()) {
+                loadDrafts();
+            }
+            return;
+        }
+        freshness.invalidate();
         List<Workspace> catalog = selected.map(List::of).orElseGet(List::of);
         PromptOptimizationSelection selection = new PromptOptimizationSelection(
                 catalog, selected, state.selection().role(), List.of(), Optional.empty());
@@ -176,7 +189,24 @@ public final class PromptOptimizationSettingsPresenter {
         return state;
     }
 
+    void invalidateCache() {
+        freshness.invalidate();
+        refreshPending = true;
+    }
+
+    void setActive(boolean value) {
+        active = value;
+    }
+
+    private boolean hasActiveDraft() {
+        return state.selection().drafts().stream()
+                .map(draft -> draft.result().state())
+                .anyMatch(value -> value == PromptOptimizationState.QUEUED || value == PromptOptimizationState.RUNNING);
+    }
+
     private void loadDrafts() {
+        refreshPending = false;
+        freshness.invalidate();
         Optional<Workspace> workspace = state.selection().workspace();
         if (workspace.isEmpty() || state.selection().role().isEmpty()) {
             publish(state(SettingsLoadState.READY, state.selection(), "请先保存Agent并选择工作区", false, nextEpoch()));
@@ -229,7 +259,9 @@ public final class PromptOptimizationSettingsPresenter {
                 state.selection().role(),
                 filtered,
                 selected);
+        completeFreshness();
         publish(state(SettingsLoadState.READY, selection, filtered.isEmpty() ? "尚无提示词优化草稿" : "", false, epoch));
+        refreshAfterInvalidation();
     }
 
     private void completeDraft(long epoch, PromptOptimizationDraft draft, Throwable failure, String successMessage) {
@@ -248,7 +280,21 @@ public final class PromptOptimizationSettingsPresenter {
                 state.selection().role(),
                 drafts,
                 Optional.of(checked));
+        completeFreshness();
         publish(state(SettingsLoadState.READY, selection, successMessage, false, epoch));
+        refreshAfterInvalidation();
+    }
+
+    private void completeFreshness() {
+        if (!refreshPending) {
+            freshness.markFresh();
+        }
+    }
+
+    private void refreshAfterInvalidation() {
+        if (active && refreshPending) {
+            loadDrafts();
+        }
     }
 
     private void completeAdoption(long epoch, PromptOptimizationAdoption adoption, Throwable failure) {
@@ -308,7 +354,9 @@ public final class PromptOptimizationSettingsPresenter {
     }
 
     private void fail(long epoch, Throwable failure) {
+        freshness.invalidate();
         publish(state(SettingsLoadState.ERROR, state.selection(), SettingsFailures.message(failure), false, epoch));
+        refreshAfterInvalidation();
     }
 
     private static boolean exactConfirmation(boolean confirmed, String actual, String expected) {

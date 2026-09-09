@@ -25,6 +25,13 @@ record ShellRenderChanges(
         boolean labels = connection
                 || scope
                 || turn
+                || !previous.interaction()
+                        .pendingApprovals()
+                        .equals(next.interaction().pendingApprovals())
+                || !previous.interaction()
+                        .inputs()
+                        .pendingRequests()
+                        .equals(next.interaction().inputs().pendingRequests())
                 || !previous.interaction().error().equals(next.interaction().error());
         boolean actions = connection
                 || scope

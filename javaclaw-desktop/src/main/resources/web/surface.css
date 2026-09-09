@@ -3,6 +3,9 @@
 html, body { margin: 0; width: 100%; height: 100%; background: var(--page); color: var(--body); }
 body { font-family: var(--fontFamily), "SF Pro Text", "Segoe UI", "Inter", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; font-size: var(--fontSize); line-height: 1.6; }
 #surface { min-height: 100%; }
+#surface.chat { display: flex; flex-direction: column; }
+#surface.chat > * { flex-shrink: 0; }
+.chat-spacer { width: 100%; }
 a, button.link { color: var(--primary); cursor: pointer; }
 button { font: inherit; background: var(--panel); color: var(--body); border: 1px solid var(--border); border-radius: 6px; padding: 3px 9px; cursor: pointer; }
 button:focus-visible, a:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
@@ -17,8 +20,10 @@ th, td { padding: 6px 10px; border: 1px solid var(--border); text-align: left; }
 th { background: var(--panel); color: var(--title); }
 img { max-width: 100%; height: auto; }
 .muted, .role { color: var(--muted); }
-.role { font-size: 11px; font-weight: bold; margin-bottom: 6px; }
-.message { margin: 16px 28px; padding: 12px 16px; border-radius: 14px; overflow-wrap: anywhere; }
+.role { font-size: 11px; font-weight: bold; margin-bottom: 4px; }
+.message { min-width: 0; margin: 6px 20px; padding: 10px 14px; border-radius: 14px; overflow-wrap: anywhere; }
+.message-body > :first-child, .message-body > div > :first-child { margin-top: 0; }
+.message-body > :last-child, .message-body > div > :last-child { margin-bottom: 0; }
 .message-user { background: var(--user); border: 1px solid var(--userBorder); color: var(--title); border-radius: 14px 14px 4px 14px; }
 .message-assistant { background: var(--card); border: 1px solid var(--assistantBorder); border-radius: 14px 14px 14px 4px; }
 .transcript-execution-block { background: var(--panel); border: 1px solid var(--border); }
@@ -42,3 +47,9 @@ img { max-width: 100%; height: auto; }
 .hljs-comment, .hljs-quote { color: var(--muted); font-style: italic; }
 
 .new-messages { position: fixed; right: 20px; bottom: 16px; border: 1px solid var(--border); background: var(--card); color: var(--body); border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+/* 字素保持可选择的真实文字；仅 macOS 使用系统字体生成的透明背景位图覆盖绘制。 */
+.emoji-glyph { display: inline-block; font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; font-weight: normal; font-style: normal; white-space: nowrap; }
+.emoji-native { position: relative; background-repeat: no-repeat; background-position: center; background-size: 100% 100%; }
+.emoji-native > .emoji-original { display: inline-block; width: 100%; height: 100%; opacity: 0; overflow: hidden; vertical-align: top; }
+.emoji-native.emoji-selected { border-radius: 2px; background-color: var(--user); box-shadow: 0 0 0 1px var(--primary); }
+.emoji-original::selection { background: var(--user); }

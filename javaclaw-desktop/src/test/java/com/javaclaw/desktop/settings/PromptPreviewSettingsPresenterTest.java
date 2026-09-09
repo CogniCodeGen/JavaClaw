@@ -21,6 +21,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PromptPreviewSettingsPresenterTest {
     @Test
+    void 相同工作区重新绑定保留已生成预览与请求代次() {
+        ImmediateGateway gateway = new ImmediateGateway();
+        PromptPreviewSettingsPresenter presenter = new PromptPreviewSettingsPresenter(gateway);
+        presenter.reloadWorkspaces();
+        presenter.selectRole(Optional.of(DesktopTestFixtures.profile()));
+        presenter.preview();
+        PromptPreviewSettingsState before = presenter.state();
+        presenter.selectWorkspace(DesktopTestFixtures.workspace());
+        assertEquals(before, presenter.state());
+    }
+
+    @Test
     void 预览使用当前Workspace和精确ProfileRevision() {
         ImmediateGateway gateway = new ImmediateGateway();
         PromptPreviewSettingsPresenter presenter = new PromptPreviewSettingsPresenter(gateway);

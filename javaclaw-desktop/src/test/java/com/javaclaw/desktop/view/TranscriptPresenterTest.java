@@ -47,9 +47,11 @@ class TranscriptPresenterTest {
                 "error",
                 TranscriptPresenter.presentHistory(history("error", Optional.empty(), "error"))
                         .body());
+        Map<MessageRole, String> titles = Map.of(
+                MessageRole.USER, "你", MessageRole.ASSISTANT, "助手", MessageRole.SYSTEM, "系统", MessageRole.TOOL, "工具");
         for (MessageRole role : MessageRole.values()) {
             assertEquals(
-                    role.name(),
+                    titles.get(role),
                     TranscriptPresenter.presentHistory(history("message", Optional.of(role), "正文"))
                             .title());
         }
@@ -77,7 +79,7 @@ class TranscriptPresenterTest {
 
         PresentedItem presented = presenter.present(item(CoreSchemas.MESSAGE, json.encode(message)));
 
-        assertEquals("ASSISTANT", presented.title());
+        assertEquals("助手", presented.title());
         assertEquals("架构已更新", presented.body());
         assertEquals("message-assistant", presented.styleClass());
     }
@@ -135,7 +137,7 @@ class TranscriptPresenterTest {
                                 new CorePayloads.Message(MessageRole.SYSTEM, "策略", List.of(), Optional.empty()))
                         .styleClass());
         assertEquals(
-                "TOOL",
+                "工具",
                 present(
                                 CoreSchemas.MESSAGE,
                                 new CorePayloads.Message(MessageRole.TOOL, "结果", List.of(), Optional.of("call-1")))

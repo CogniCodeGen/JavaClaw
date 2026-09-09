@@ -224,7 +224,7 @@ class ChatSurfaceTest {
                 assertFalse(text.contains("不得重复"));
                 assertTrue(text.contains("正文较长；显示末尾"));
                 assertTrue(text.contains("**末尾**"));
-                assertTrue(text.contains("ASSISTANT · 未完成"));
+                assertTrue(text.contains("助手 · 未完成"));
                 assertEquals(
                         "3", fixture.engine().executeScript("String(document.querySelectorAll('article').length)"));
                 assertEquals(

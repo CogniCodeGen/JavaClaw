@@ -34,6 +34,7 @@ import com.javaclaw.protocol.CanonicalJson;
  */
 public final class ExecutionSelectionPanel extends VBox implements AutoCloseable {
     private final CoreSettingsGateway gateway;
+    private final SettingsCacheFreshness freshness;
     private final ExecutionSelectionLoader loader;
     private final ExecutionSelectionControl choices = new ExecutionSelectionControl();
     private final Label status = new Label();
@@ -57,7 +58,12 @@ public final class ExecutionSelectionPanel extends VBox implements AutoCloseable
 
     /** @param gateway 所有目录与配置只通过 SDK 读取，异步完成由网关调度到 JavaFX 线程 */
     public ExecutionSelectionPanel(CoreSettingsGateway gateway) {
+        this(gateway, new SettingsCacheFreshness());
+    }
+
+    ExecutionSelectionPanel(CoreSettingsGateway gateway, SettingsCacheFreshness freshness) {
         super(4);
+        this.freshness = Objects.requireNonNull(freshness, "freshness");
         this.gateway = Objects.requireNonNull(gateway, "gateway");
         loader = new ExecutionSelectionLoader(gateway);
         status.setWrapText(true);
@@ -135,19 +141,28 @@ public final class ExecutionSelectionPanel extends VBox implements AutoCloseable
         if (closed || epoch == 0) {
             return;
         }
-        refreshPending = true;
+        invalidateCache();
         refreshAfterChange();
     }
 
+    /** 使当前展示快照失效；隐藏页面和在途请求只记录失效，激活后再读取。 */
+    public void invalidateCache() {
+        freshness.invalidate();
+        refreshPending = true;
+    }
+
     /**
-     * 设置可见页面的自动刷新状态；隐藏时只累计失效，恢复显示后重验当前作用域。
+     * 设置可见页面的自动刷新状态；隐藏时只累计失效，恢复显示后复用未过期的成功快照。
      *
      * @param active 当前页面是否允许后台刷新
      */
     public void setRefreshActive(boolean active) {
         refreshActive = active;
-        if (active) {
-            refreshAutomatically();
+        if (active && !closed && epoch > 0) {
+            if (!freshness.fresh() && !pending) {
+                refreshPending = true;
+            }
+            refreshAfterChange();
         }
     }
 
@@ -268,6 +283,7 @@ public final class ExecutionSelectionPanel extends VBox implements AutoCloseable
     }
 
     private void resetBinding() {
+        freshness.invalidate();
         refreshPending = false;
         baselineStale = false;
         loaded = false;
@@ -284,6 +300,7 @@ public final class ExecutionSelectionPanel extends VBox implements AutoCloseable
     }
 
     private void reload(boolean preserveDraft) {
+        freshness.invalidate();
         if (preserveDraft) {
             reloadCatalog();
             return;
@@ -327,6 +344,7 @@ public final class ExecutionSelectionPanel extends VBox implements AutoCloseable
             if (failure != null) {
                 status.setText("可选目录读取失败；未保存选择仍保留：" + SettingsFailures.message(failure));
             } else {
+                freshness.markFresh();
                 choices.setCatalog(catalog.roles(), catalog.providers(), catalog.permissions());
                 choices.setValue(retained);
                 status.setText("配置已更新；可选目录已刷新，未保存选择及原版本已保留。");
@@ -351,6 +369,7 @@ public final class ExecutionSelectionPanel extends VBox implements AutoCloseable
         choices.showSource(snapshot.sources().description());
         choices.showInheritedRole(snapshot.inheritedRole());
         loaded = true;
+        freshness.markFresh();
         baselineStale = false;
         conflicted = false;
         conflict.hide();

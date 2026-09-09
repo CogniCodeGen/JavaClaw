@@ -67,9 +67,18 @@ public final class PromptOptimizationPanel {
         return content;
     }
 
-    /** 激活面板并刷新当前固定 Workspace 的草稿目录。 */
+    /** 激活面板并复用当前固定 Workspace 的草稿目录；活动任务仍重验状态。 */
     public void activate() {
+        presenter.setActive(true);
         scopedWorkspace.ifPresent(presenter::selectWorkspace);
+    }
+
+    void deactivate() {
+        presenter.setActive(false);
+    }
+
+    void invalidateCache() {
+        presenter.invalidateCache();
     }
 
     /**

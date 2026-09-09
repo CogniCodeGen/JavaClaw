@@ -1,8 +1,10 @@
 package com.javaclaw.desktop.settings;
 
+import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 
 import com.javaclaw.api.ConversationThread;
 import com.javaclaw.api.ExecutionConfiguration;
@@ -14,10 +16,11 @@ import com.javaclaw.client.CommandOptions;
 import com.javaclaw.desktop.DesktopConfigurationChange;
 import com.javaclaw.desktop.DesktopNotificationSubscription;
 
-/** 聊天配置先持久化再显示可发送；服务端是实际模型、思考和阻塞原因的唯一解析者。 自动刷新不会推进失败草稿的写入版本；在途失效合并补读，迟到响应按作用域代次丢弃。 */
+/** 聊天配置先持久化再显示可发送；同一连接复用有界作用域缓存，配置变更立即失效。 失败草稿不入缓存、不推进写入版本；在途失效合并补读，迟到响应按作用域代次丢弃。 */
 final class ChatConfigurationPresenter implements AutoCloseable {
     private final CoreSettingsGateway gateway;
     private final ExecutionSelectionLoader loader;
+    private final ChatConfigurationCache cache;
     private final DesktopNotificationSubscription subscription;
     private ExecutionSelectionLoader.Scope scope =
             new ExecutionSelectionLoader.Scope(Optional.empty(), Optional.empty(), false);
@@ -32,10 +35,16 @@ final class ChatConfigurationPresenter implements AutoCloseable {
     private boolean closed;
     private long revision;
     private long epoch;
+    private Optional<Instant> connection = Optional.empty();
     private CommandOptions writeOptions;
     private String message = "选择工作区，开始聊天";
 
     ChatConfigurationPresenter(CoreSettingsGateway gateway) {
+        this(gateway, System::nanoTime);
+    }
+
+    ChatConfigurationPresenter(CoreSettingsGateway gateway, LongSupplier clock) {
+        cache = new ChatConfigurationCache(clock);
         this.gateway = Objects.requireNonNull(gateway, "gateway");
         loader = new ExecutionSelectionLoader(gateway);
         subscription = gateway.onConfigurationChanged(this::invalidated);
@@ -47,11 +56,30 @@ final class ChatConfigurationPresenter implements AutoCloseable {
     }
 
     void bind(Optional<Workspace> workspace, Optional<ConversationThread> thread) {
+        bindScope(workspace, thread);
+    }
+
+    void bind(Optional<Workspace> workspace, Optional<ConversationThread> thread, Optional<Instant> connectedAt) {
+        boolean reconnected = !connection.equals(connectedAt) && connectedAt.isPresent();
+        connection = connectedAt;
+        if (reconnected) {
+            cache.clear();
+        }
+        // 作用域绑定已经开始权威读取时，同一状态中的连接建立不是新的失效；真实配置通知仍走 refresh 补读。
+        if (!bindScope(workspace, thread) && reconnected) {
+            refresh();
+        }
+    }
+
+    private boolean bindScope(Optional<Workspace> workspace, Optional<ConversationThread> thread) {
+        if (closed) {
+            return false;
+        }
         var next = new ExecutionSelectionLoader.Scope(workspace, thread, false);
         boolean same = scope.sameBinding(next) && epoch > 0;
         scope = next;
         if (same) {
-            return;
+            return false;
         }
         epoch++;
         pending = false;
@@ -62,13 +90,36 @@ final class ChatConfigurationPresenter implements AutoCloseable {
         draft = baseline;
         revision = 0;
         writeOptions = null;
-        refresh();
+        var cached = cache.get(scope);
+        if (cached.isPresent()) {
+            restore(cached.orElseThrow());
+        } else {
+            refresh();
+        }
+        return true;
+    }
+
+    void activate() {
+        if (!closed && !pending && !dirty() && cache.get(scope).isEmpty()) {
+            refresh();
+        }
+    }
+
+    private void restore(ChatConfigurationCache.Entry entry) {
+        snapshot = Optional.of(entry.snapshot());
+        preview = Optional.of(entry.preview());
+        baseline = entry.selection();
+        draft = baseline;
+        revision = entry.revision();
+        message = entry.message();
+        publish();
     }
 
     void refresh() {
         if (closed) {
             return;
         }
+        cache.remove(scope);
         requested = true;
         if (pending) {
             return;
@@ -117,6 +168,7 @@ final class ChatConfigurationPresenter implements AutoCloseable {
         if (pending || dirty()) {
             return;
         }
+        cache.clear();
         long request = begin("正在应用模型…");
         gateway.useModel(scope.workspace().map(Workspace::id), scope.thread().map(ConversationThread::id), model)
                 .whenComplete((ignored, failure) -> {
@@ -160,14 +212,27 @@ final class ChatConfigurationPresenter implements AutoCloseable {
         if (pending || scope.thread().isEmpty()) {
             return;
         }
+        if (remember) {
+            cache.clear();
+        } else {
+            cache.remove(scope);
+        }
+        var frozen = scope;
+        boolean rememberSelection = remember;
         long request = begin("正在保存选择…");
         var thread = scope.thread().orElseThrow();
         if (writeOptions == null) {
             writeOptions = CommandOptions.create(revision);
         }
-        gateway.rememberChatSelection(thread.workspaceId(), thread.id(), draft, writeOptions, remember)
+        gateway.rememberChatSelection(thread.workspaceId(), thread.id(), draft, writeOptions, rememberSelection)
                 .whenComplete((saved, failure) -> {
+                    if (failure == null) {
+                        invalidateSavedScope(frozen, rememberSelection);
+                    }
                     if (!current(request)) {
+                        if (failure == null && (rememberSelection || frozen.sameBinding(scope))) {
+                            refresh();
+                        }
                         return;
                     }
                     if (failure != null) {
@@ -176,10 +241,27 @@ final class ChatConfigurationPresenter implements AutoCloseable {
                         baseline = saved.overrides();
                         draft = baseline;
                         revision = saved.revision();
+                        snapshot = snapshot.map(value -> new ExecutionSelectionLoader.Snapshot(
+                                value.catalog(),
+                                new ExecutionSelectionLoader.Sources(
+                                        value.sources().installation(),
+                                        value.sources().workspace(),
+                                        Optional.of(saved)),
+                                value.inheritedRole()));
+                        requested |= rememberSelection;
                         writeOptions = null;
-                        readPreview(request, remember ? "已记住，新对话将继续使用" : "已更新当前对话");
+                        readPreview(request, rememberSelection ? "已记住，新对话将继续使用" : "已更新当前对话");
                     }
                 });
+    }
+
+    private void invalidateSavedScope(ExecutionSelectionLoader.Scope savedScope, boolean rememberSelection) {
+        // 写入属于捕获的作用域；即使已切换页面，迟到成功仍必须清除之后重建的旧缓存。
+        if (rememberSelection) {
+            cache.clear();
+        } else {
+            cache.remove(savedScope);
+        }
     }
 
     private void readPreview(long request, String success) {
@@ -193,22 +275,24 @@ final class ChatConfigurationPresenter implements AutoCloseable {
                         finishFailure(failure);
                         return;
                     }
-                    preview = Optional.of(resolved);
                     pending = false;
+                    // 已收到失效时不能短暂发布旧预览的 ready，也不能把它重新放回缓存。
+                    if (requested) {
+                        refresh();
+                        return;
+                    }
+                    preview = Optional.of(resolved);
                     message = resolved.ready()
                             ? success
                             : resolved.blockers().getFirst().message();
+                    cache.put(scope, state(), revision);
                     publish();
-                    drain();
                 });
     }
 
     private void invalidated(DesktopConfigurationChange change) {
-        boolean sameWorkspace = change.workspaceId().isEmpty()
-                || change.workspaceId().equals(scope.workspace().map(Workspace::id));
-        boolean sameThread = change.threadId().isEmpty()
-                || change.threadId().equals(scope.thread().map(ConversationThread::id));
-        if (change.kind() != DesktopConfigurationChange.Kind.EXECUTION || sameWorkspace && sameThread) {
+        cache.invalidate(change);
+        if (ChatConfigurationCache.affected(scope, change)) {
             refresh();
         }
     }
@@ -252,6 +336,7 @@ final class ChatConfigurationPresenter implements AutoCloseable {
     public void close() {
         closed = true;
         epoch++;
+        cache.clear();
         subscription.close();
     }
 }

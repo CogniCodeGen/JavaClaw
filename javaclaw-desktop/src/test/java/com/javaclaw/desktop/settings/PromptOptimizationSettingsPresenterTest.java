@@ -44,6 +44,54 @@ class PromptOptimizationSettingsPresenterTest {
     private static final String DIGEST = "a".repeat(64);
 
     @Test
+    void 相同工作区复用已完成草稿目录而失效和活动任务仍读取() {
+        FakeGateway gateway = new FakeGateway();
+        PromptOptimizationSettingsPresenter presenter = new PromptOptimizationSettingsPresenter(gateway, () -> {});
+        presenter.selectWorkspace(gateway.workspace);
+        presenter.selectRole(Optional.of(gateway.role));
+        presenter.selectWorkspace(gateway.workspace);
+        assertEquals(1, gateway.listCalls.get());
+        assertEquals(0, gateway.readCalls.get());
+        presenter.invalidateCache();
+        presenter.selectWorkspace(gateway.workspace);
+        assertEquals(2, gateway.listCalls.get());
+        presenter.start(true, PromptOptimizationRpcContracts.BILLING_CONFIRMATION);
+        presenter.selectWorkspace(gateway.workspace);
+        assertEquals(3, gateway.listCalls.get());
+        assertEquals(0, gateway.readCalls.get());
+    }
+
+    @Test
+    void 选中已完成草稿时仍重验目录中其他排队或运行任务() {
+        for (PromptOptimizationState active :
+                List.of(PromptOptimizationState.QUEUED, PromptOptimizationState.RUNNING)) {
+            FakeGateway gateway = new FakeGateway();
+            PromptOptimizationDraft original = gateway.draft(active, Optional.empty());
+            PromptOptimizationRef source = original.ref();
+            PromptOptimizationRef reference = new PromptOptimizationRef(
+                    PromptOptimizationId.parse("00000000-0000-0000-0000-000000000005"),
+                    source.workspaceId(),
+                    source.sourceRole(),
+                    source.threadId(),
+                    source.turnId());
+            PromptOptimizationDraft running =
+                    new PromptOptimizationDraft(reference, original.result(), original.provenance(), Optional.empty());
+            gateway.catalog = List.of(gateway.ready, running);
+            PromptOptimizationSettingsPresenter presenter = new PromptOptimizationSettingsPresenter(gateway, () -> {});
+            presenter.selectWorkspace(gateway.workspace);
+            presenter.selectRole(Optional.of(gateway.role));
+            presenter.selectDraft(gateway.ready);
+            gateway.catalog = List.of(gateway.ready);
+            presenter.selectWorkspace(gateway.workspace);
+            assertEquals(2, gateway.listCalls.get());
+            assertEquals(0, gateway.readCalls.get());
+            assertEquals(List.of(gateway.ready), presenter.state().selection().drafts());
+            assertEquals(
+                    Optional.of(gateway.ready), presenter.state().selection().selected());
+        }
+    }
+
+    @Test
     void 固定Workspace可在独立目录尚未加载时直接绑定() {
         FakeGateway gateway = new FakeGateway();
         PromptOptimizationSettingsPresenter presenter = new PromptOptimizationSettingsPresenter(gateway, () -> {});
@@ -118,6 +166,9 @@ class PromptOptimizationSettingsPresenterTest {
                 NOW);
         private final AgentRole role = role();
         private final PromptOptimizationDraft ready = draft(PromptOptimizationState.READY, Optional.empty());
+        private List<PromptOptimizationDraft> catalog = List.of(ready);
+        private final AtomicInteger listCalls = new AtomicInteger();
+        private final AtomicInteger readCalls = new AtomicInteger();
         private final AtomicInteger startCalls = new AtomicInteger();
         private final AtomicInteger adoptCalls = new AtomicInteger();
         private boolean conflict;
@@ -140,11 +191,13 @@ class PromptOptimizationSettingsPresenterTest {
 
         @Override
         public CompletionStage<List<PromptOptimizationDraft>> list(WorkspaceId workspaceId) {
-            return CompletableFuture.completedFuture(List.of(ready));
+            listCalls.incrementAndGet();
+            return CompletableFuture.completedFuture(catalog);
         }
 
         @Override
         public CompletionStage<PromptOptimizationDraft> read(PromptOptimizationId id) {
+            readCalls.incrementAndGet();
             return CompletableFuture.completedFuture(ready);
         }
 

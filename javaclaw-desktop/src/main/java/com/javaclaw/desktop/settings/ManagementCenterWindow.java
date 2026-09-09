@@ -1,8 +1,10 @@
 package com.javaclaw.desktop.settings;
 
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -64,6 +66,7 @@ public final class ManagementCenterWindow {
     private final ManagementWindowPreferenceStore preferences;
     private final DesktopNotificationSubscription configurationSubscription;
     private final ObservableList<Destination> filtered = FXCollections.observableArrayList();
+    private final Map<String, ScrollPane> pageScrollers = new HashMap<>();
     private Stage stage;
     private ManagementPageShell shell;
     private SettingsPageRegistry pages;
@@ -93,8 +96,11 @@ public final class ManagementCenterWindow {
         this.gateways = Objects.requireNonNull(gateways, "gateways");
         this.preferences = Objects.requireNonNull(preferences, "preferences");
         configurationSubscription = gateways.core().onConfigurationChanged(change -> {
-            if (isShowing() && change.kind() == DesktopConfigurationChange.Kind.WORKSPACES) {
-                scope.refresh();
+            if (scope != null && change.kind() == DesktopConfigurationChange.Kind.WORKSPACES) {
+                scope.invalidate();
+                if (isShowing()) {
+                    scope.activate();
+                }
             }
         });
     }
@@ -118,12 +124,16 @@ public final class ManagementCenterWindow {
         show(owner, null);
     }
 
-    /** 重验可见设置中心的目录与配置，保持独立工作区和未保存草稿；隐藏页在下次激活时读取。 */
+    /** 服务重连时使页面缓存失效并重验可见页面；隐藏页延至下次激活读取，保留独立工作区和草稿。 */
     public void refreshExecutionConfiguration() {
+        if (pages != null) {
+            pages.invalidateCaches();
+            scope.invalidate();
+        }
         if (!isShowing()) {
             return;
         }
-        scope.refresh();
+        scope.activate();
         if (activePage instanceof WorkspaceSettingsPage workspacePage) {
             workspacePage.refreshExecutionConfiguration();
         } else if (activePage != null && !activePage.dirty() && !activePage.pending()) {
@@ -151,7 +161,7 @@ public final class ManagementCenterWindow {
             stage.requestFocus();
             return;
         }
-        scope.refresh();
+        scope.activate();
         activatePage();
         stage.show();
         stage.toFront();
@@ -192,6 +202,7 @@ public final class ManagementCenterWindow {
         if (pages != null) {
             pages.dispose();
         }
+        pageScrollers.clear();
         scope = null;
         if (stage != null) {
             stage.hide();
@@ -204,7 +215,7 @@ public final class ManagementCenterWindow {
             return;
         }
         Window owner = stage.getOwner();
-        // 成功应用模型后只隐藏窗口，保留其他页面的草稿；再次打开时按原独立作用域刷新。
+        // 成功应用模型后只隐藏窗口，保留其他页面的草稿；再次打开时按原独立作用域恢复有效缓存。
         stage.hide();
         if (owner instanceof Stage mainStage) {
             mainStage.toFront();
@@ -241,12 +252,15 @@ public final class ManagementCenterWindow {
             }
         });
         stage.setOnHidden(event -> {
+            if (scope != null) {
+                scope.deactivate();
+            }
             deactivatePage();
             savePreferences();
         });
         stage.focusedProperty().addListener((observable, previous, focused) -> {
             if (focused) {
-                refreshExecutionConfiguration();
+                scope.activate();
             }
         });
         select(restoreDestination(restored.lastPageKey()));
@@ -312,7 +326,8 @@ public final class ManagementCenterWindow {
         navigation.getSelectionModel().select(destination);
         activePage = pages.resolve(destination.key());
         scope.bind(activePage);
-        shell.showPage(destination.title(), scroll(activePage.content()));
+        ScrollPane scroller = pageScrollers.computeIfAbsent(destination.key(), ignored -> scroll(activePage.content()));
+        shell.showPage(destination.title(), scroller);
         shell.setActionContent(activePage.actionContent());
         updatePageInteraction();
         if (stage.isShowing()) {

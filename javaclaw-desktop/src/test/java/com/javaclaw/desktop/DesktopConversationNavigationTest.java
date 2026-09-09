@@ -85,12 +85,17 @@ class DesktopConversationNavigationTest {
             fixture.presenter.send("迟到启动");
             fixture.drain();
             assertTrue(entered.await(3, TimeUnit.SECONDS));
+            assertEquals(
+                    "迟到启动",
+                    fixture.state().transcript().outgoing().orElseThrow().text());
             fixture.presenter.selectThread(fixture.second);
             fixture.drain();
+            assertTrue(fixture.state().transcript().outgoing().isEmpty());
             released.countDown();
             fixture.await(() -> fixture.selected(fixture.second) && fixture.server.historyReads.get() >= 2);
             assertFalse(fixture.state().interaction().busy());
             assertTrue(fixture.state().threads().activeTurn().isEmpty());
+            assertTrue(fixture.state().transcript().outgoing().isEmpty());
             assertEquals(0, fixture.subscriptions.get());
             fixture.presenter.selectThread(fixture.first);
             fixture.await(() -> fixture.subscriptions.get() == 1);

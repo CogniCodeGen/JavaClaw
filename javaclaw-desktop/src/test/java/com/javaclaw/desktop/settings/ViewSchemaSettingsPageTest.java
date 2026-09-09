@@ -143,7 +143,7 @@ class ViewSchemaSettingsPageTest {
             button(page.content(), "重试").fire();
             assertEquals(1, gateway.loads);
             gateway.loadsToReturn.add(CompletableFuture.failedFuture(new IllegalStateException("数据暂不可用")));
-            page.activate();
+            page.discardDraft();
             assertTrue(labels(page.content()).contains("页面数据读取失败"));
             button(page.content(), "重试").fire();
             assertEquals("恢复后", field(page.content()).getText());
@@ -159,6 +159,9 @@ class ViewSchemaSettingsPageTest {
             ViewSchemaSettingsPage emptyPage = page(empty);
             emptyPage.activate();
             assertTrue(labels(emptyPage.content()).contains("扩展当前不可用"));
+            emptyPage.deactivate();
+            emptyPage.activate();
+            assertEquals(1, empty.catalogs);
             emptyPage.dispose();
 
             FakeGateway invalid = new FakeGateway(data("无关", 0));
@@ -467,6 +470,7 @@ class ViewSchemaSettingsPageTest {
                 CompletableFuture.completedFuture(new ExtensionRpcContracts.CallResult(new CanonicalPayload("{}"), 1));
         private Consumer<ExtensionRpcContracts.ExtensionEvent> listener = ignored -> {};
         int loads;
+        int catalogs;
         private int executions;
 
         FakeGateway(ViewData authoritative) {
@@ -475,6 +479,7 @@ class ViewSchemaSettingsPageTest {
 
         @Override
         public CompletableFuture<List<ExtensionRpcContracts.ViewDocument>> list(String extensionId) {
+            catalogs++;
             if (!catalogsToReturn.isEmpty()) {
                 return catalogsToReturn.removeFirst();
             }

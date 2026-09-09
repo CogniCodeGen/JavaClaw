@@ -24,6 +24,7 @@ import com.javaclaw.api.ItemStatus;
 import com.javaclaw.api.MessageRole;
 import com.javaclaw.api.TurnId;
 import com.javaclaw.api.WorkspaceId;
+import com.javaclaw.desktop.state.OutgoingMessage;
 import com.javaclaw.desktop.view.ChatProjectionRenderer.Rendered;
 import com.javaclaw.desktop.view.ChatProjectionRenderer.Scope;
 import com.javaclaw.desktop.view.ChatProjectionRenderer.Snapshot;
@@ -37,6 +38,126 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ChatProjectionRendererTest {
+    @Test
+    void 上一回合未提交尾文在本地发送之前而本回合回复在用户之后() {
+        ChatProjectionRenderer renderer = new ChatProjectionRenderer();
+        Scope scope = new Scope("ordered-sending", WorkspaceId.random());
+        TurnId previous = TurnId.random();
+        TurnId current = TurnId.random();
+        var oldTail = new TemporaryMessage("old-tail", "上一回合尾文", true, 0, Optional.of(previous));
+        var newReply = new TemporaryMessage("new-reply", "本回合回复", false, 0, Optional.of(current));
+        var sending = new OutgoingMessage("local:send", "下一条问题", Optional.empty(), OutgoingMessage.Status.SENDING);
+        Rendered waiting = renderer.render(
+                new Snapshot(scope, List.of(), List.of(), List.of(oldTail), false, 1, Optional.of(sending)),
+                () -> true);
+        assertEquals(
+                List.of("old-tail", "local:send"),
+                frame(waiting).items().stream().map(row -> row.get("id")).toList());
+
+        var accepted = new OutgoingMessage(
+                sending.id(), sending.text(), Optional.of(current), OutgoingMessage.Status.ACCEPTED);
+        Rendered replying = renderer.render(
+                new Snapshot(scope, List.of(), List.of(), List.of(oldTail, newReply), false, 2, Optional.of(accepted)),
+                () -> true);
+        assertEquals(
+                List.of("old-tail", "local:send", "new-reply"),
+                frame(replying).items().stream().map(row -> row.get("id")).toList());
+        assertTrue(frame(replying).items().getFirst().get("title").toString().contains("未完成"));
+        assertEquals("你 · 已发送", frame(replying).items().get(1).get("title"));
+    }
+
+    @Test
+    void 相同正文仍在发送时新的尝试代次推进用户行版本() {
+        ChatProjectionRenderer renderer = new ChatProjectionRenderer();
+        Scope scope = new Scope("retry", WorkspaceId.random());
+        var initial = new OutgoingMessage("local:retry", "重试同一消息", Optional.empty(), OutgoingMessage.Status.SENDING);
+        var retry =
+                new OutgoingMessage(initial.id(), initial.text(), Optional.empty(), OutgoingMessage.Status.SENDING, 1);
+        Rendered first = renderer.render(
+                new Snapshot(scope, List.of(), List.of(), List.of(), false, 1, Optional.of(initial)), () -> true);
+        Rendered second = renderer.render(
+                new Snapshot(scope, List.of(), List.of(), List.of(), false, 2, Optional.of(retry)), () -> true);
+        Map<String, Object> original = frame(first).items().getFirst();
+        Map<String, Object> retried = frame(second).items().getFirst();
+        assertEquals(0, initial.attempt());
+        assertEquals(original.get("id"), retried.get("id"));
+        assertEquals(original.get("text"), retried.get("text"));
+        assertEquals(original.get("title"), retried.get("title"));
+        assertNotEquals(original.get("version"), retried.get("version"));
+        assertNotEquals(first.json(), second.json());
+    }
+
+    @Test
+    void 本地发送占用用户行且不生成持久引用并为旧回合尾文保留顺序和窗口预算() {
+        ChatProjectionRenderer renderer = new ChatProjectionRenderer();
+        Scope scope = new Scope("sending", WorkspaceId.random());
+        List<ItemHistoryEntry> history = IntStream.range(0, 500)
+                .mapToObj(index -> history(scope, ItemId.random(), "历史 " + index, List.of(), List.of()))
+                .toList();
+        String text = "<script>unsafe()</script>\n[本地文件](private.txt)";
+        var outgoing = new OutgoingMessage("local:send", text, Optional.empty(), OutgoingMessage.Status.SENDING);
+        List<TemporaryMessage> temporary =
+                List.of(new TemporaryMessage("assistant", "先前回复的尾文", true, 0, Optional.of(TurnId.random())));
+        Rendered first = renderer.render(
+                new Snapshot(scope, List.of(), history, temporary, true, 1, Optional.of(outgoing)), () -> true);
+        List<Map<String, Object>> rows = frame(first).items();
+        assertEquals(500, rows.size());
+        Map<String, Object> user = rows.getLast();
+        assertEquals("local:send", user.get("id"));
+        assertEquals("你 · 正在发送…", user.get("title"));
+        assertEquals("message-user", user.get("style"));
+        assertEquals(text, user.get("text"));
+        assertEquals("", user.get("html"));
+        assertEquals(false, user.get("streaming"));
+        assertEquals("assistant", rows.get(498).get("id"));
+        assertTrue(first.references().isEmpty());
+        assertTrue(first.links().isEmpty());
+        var accepted =
+                new OutgoingMessage("local:send", text, Optional.of(TurnId.random()), OutgoingMessage.Status.ACCEPTED);
+        Rendered second = renderer.render(
+                new Snapshot(scope, List.of(), history, temporary, true, 2, Optional.of(accepted)), () -> true);
+        Map<String, Object> confirmed = frame(second).items().getLast();
+        assertEquals(user.get("id"), confirmed.get("id"));
+        assertEquals("你 · 已发送", confirmed.get("title"));
+        assertNotEquals(user.get("version"), confirmed.get("version"));
+        assertEquals(498, renderer.statistics().projections());
+    }
+
+    @Test
+    void 跨流式分块的代理对肤色国旗与连接符不会被拆入已解析正文和尾部() {
+        for (List<String> parts : List.of(
+                List.of("你好\uD83D", "\uDE0A"),
+                List.of("你好👍", "🏽"),
+                List.of("你好🇨", "🇳"),
+                List.of("你好👨", "‍👩‍👧‍👦"),
+                List.of("你好1", "️⃣"))) {
+            ChatProjectionRenderer renderer = new ChatProjectionRenderer();
+            Scope scope = new Scope("emoji", WorkspaceId.random());
+            renderer.render(
+                    new Snapshot(
+                            scope,
+                            List.of(),
+                            List.of(),
+                            List.of(new TemporaryMessage("live", parts.getFirst(), false)),
+                            false,
+                            1),
+                    () -> true);
+            String complete = String.join("", parts);
+            Rendered rendered = renderer.render(
+                    new Snapshot(
+                            scope,
+                            List.of(),
+                            List.of(),
+                            List.of(new TemporaryMessage("live", complete, false)),
+                            false,
+                            2),
+                    () -> true);
+            Map<String, Object> row = frame(rendered).items().getFirst();
+            assertTrue(row.get("streamHtml").toString().contains(complete));
+            assertEquals("", row.get("streamSuffix"));
+        }
+    }
+
     @Test
     void 五百条历史加暂态连续二十四次更新只投影可见历史一次() {
         ChatProjectionRenderer renderer = new ChatProjectionRenderer();
@@ -232,5 +353,5 @@ class ChatProjectionRendererTest {
         return new CanonicalJson().decode(new CanonicalPayload(value.json()), Frame.class);
     }
 
-    private record Frame(List<Map<String, Object>> items, boolean hasEarlier) {}
+    private record Frame(String mode, List<Map<String, Object>> items, boolean hasEarlier) {}
 }

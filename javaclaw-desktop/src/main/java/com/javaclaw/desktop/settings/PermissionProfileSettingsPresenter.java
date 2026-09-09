@@ -5,6 +5,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CompletionStage;
 import java.util.function.Consumer;
 
 import com.javaclaw.api.PermissionProfile;
@@ -52,7 +53,7 @@ public final class PermissionProfileSettingsPresenter {
     }
 
     /** 配置失效只重验脏表单目录，保留复制来源、权限草稿和原始保存版本。 */
-    void refreshForConfigurationChange(boolean preserveDraft) {
+    CompletionStage<Boolean> refreshForConfigurationChange(boolean preserveDraft) {
         PermissionProfileSettingsState before = state;
         long epoch = before.epoch() + 1;
         publish(new PermissionProfileSettingsState(
@@ -65,13 +66,13 @@ public final class PermissionProfileSettingsPresenter {
                 "正在更新权限目录；草稿保持不变…",
                 before.revisionConflict(),
                 epoch));
-        gateway.permissionProfiles().whenComplete((catalog, error) -> {
+        return gateway.permissionProfiles().handle((catalog, error) -> {
             if (state.epoch() != epoch) {
-                return;
+                return false;
             }
             if (!preserveDraft && !state.dirty() && !state.revisionConflict() && !state.cloning()) {
                 completeReload(epoch, catalog, error);
-                return;
+                return error == null;
             }
             publish(new PermissionProfileSettingsState(
                     error == null ? SettingsLoadState.READY : SettingsLoadState.ERROR,
@@ -85,6 +86,7 @@ public final class PermissionProfileSettingsPresenter {
                             : "权限目录读取失败；草稿仍保留：" + SettingsFailures.message(error),
                     state.revisionConflict(),
                     epoch));
+            return error == null;
         });
     }
 

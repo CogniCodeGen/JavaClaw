@@ -61,6 +61,27 @@ final class ThreadRepository {
         return thread;
     }
 
+    /** 调用者持有 Thread 行锁；仅首条消息已经提交到本事务的默认根对话可以自动命名。 */
+    void titleFromFirstMessage(Connection connection, ConversationThread thread, String text, Instant now)
+            throws SQLException {
+        if (thread.parentThreadId().isPresent() || !thread.title().equals("新对话")) {
+            return;
+        }
+        Optional<String> title = ThreadTitle.fromMessage(text).filter(value -> !value.equals(thread.title()));
+        if (title.isEmpty()) {
+            return;
+        }
+        try (PreparedStatement statement = connection.prepareStatement("""
+                UPDATE CORE.AGENT_THREAD SET TITLE = ?, REVISION = REVISION + 1, UPDATED_AT = ?
+                WHERE ID = ? AND TITLE = '新对话' AND PARENT_THREAD_ID IS NULL AND NEXT_SEQUENCE = 2
+                """)) {
+            statement.setString(1, title.orElseThrow());
+            statement.setObject(2, at(now));
+            statement.setString(3, thread.id().toString());
+            statement.executeUpdate();
+        }
+    }
+
     Optional<ConversationThread> find(Connection connection, ThreadId id) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
                 SELECT ID, WORKSPACE_ID, PARENT_THREAD_ID, EXECUTION_INTENT, TITLE, STATUS, REVISION,

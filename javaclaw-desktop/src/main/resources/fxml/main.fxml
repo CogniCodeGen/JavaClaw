@@ -6,11 +6,13 @@
 <?import javafx.scene.control.ListView?>
 <?import javafx.scene.control.Separator?>
 <?import javafx.scene.control.TextArea?>
+<?import javafx.scene.control.Tooltip?>
 <?import javafx.scene.layout.BorderPane?>
 <?import javafx.scene.layout.HBox?>
 <?import javafx.scene.layout.Region?>
 <?import javafx.scene.layout.StackPane?>
 <?import javafx.scene.layout.VBox?>
+<?import javafx.scene.shape.SVGPath?>
 <!-- v6 JavaFX 壳沿用 509f197 的布局比例、CSS 令牌和交互语言；所有数据只来自 SDK。 -->
 <BorderPane fx:id="root" styleClass="chat-root" xmlns:fx="http://javafx.com/fxml/1"
     fx:controller="com.javaclaw.desktop.shell.DesktopShellController">
@@ -31,9 +33,19 @@
                     <Insets right="16" bottom="10" left="16" />
                 </padding>
                 <HBox spacing="6" alignment="CENTER_LEFT">
-                    <ComboBox fx:id="workspaceBox" promptText="选择工作区" accessibleText="选择工作区"
+                    <ComboBox fx:id="workspaceBox" promptText="选择工作区" accessibleText="选择工作区" minWidth="0"
                         maxWidth="Infinity" styleClass="sidebar-workspace-combo" HBox.hgrow="ALWAYS" />
-                    <Button text="＋" onAction="#newWorkspace" accessibleText="新建工作区" styleClass="sidebar-ws-btn" />
+                    <Button fx:id="newWorkspaceButton" onAction="#newWorkspace" accessibleText="新建工作区"
+                        minWidth="32" prefWidth="32" maxWidth="32" minHeight="32" prefHeight="32" maxHeight="32"
+                        contentDisplay="GRAPHIC_ONLY" styleClass="sidebar-ws-btn">
+                        <graphic>
+                            <SVGPath content="M 6 0 H 8 V 6 H 14 V 8 H 8 V 14 H 6 V 8 H 0 V 6 H 6 Z"
+                                mouseTransparent="true" styleClass="sidebar-ws-icon" />
+                        </graphic>
+                        <tooltip>
+                            <Tooltip text="新建工作区（设置名称和本地目录）" />
+                        </tooltip>
+                    </Button>
                 </HBox>
                 <Button text="＋ 新建对话" onAction="#newThread" accessibleText="新建对话" maxWidth="Infinity"
                     styleClass="sb-new-btn" />
@@ -68,14 +80,14 @@
                         <HBox alignment="CENTER_LEFT" spacing="8" styleClass="chat-top-bar">
                             <Button text="☰" onAction="#toggleSidebar" accessibleText="显示或隐藏会话侧栏"
                                 styleClass="shell-toggle-button" />
-                            <Label text="●" styleClass="chat-top-status-dot,status-idle" />
+                            <Label fx:id="statusDot" text="●" styleClass="chat-top-status-dot,status-idle" />
                             <VBox spacing="4">
                                 <Label fx:id="threadTitle" text="新对话" styleClass="chat-top-title" />
                                 <Label fx:id="threadMeta" text="选择工作区，开始你的任务" styleClass="chat-top-meta" />
                             </VBox>
                             <Region HBox.hgrow="ALWAYS" />
-                            <Button text="审批" onAction="#toggleProgress" accessibleText="显示或隐藏审批面板"
-                                styleClass="shell-toggle-button" />
+                            <Button fx:id="pendingButton" text="待处理" onAction="#toggleProgress"
+                                accessibleText="打开待处理事项" styleClass="shell-toggle-button" />
                         </HBox>
                         <Label fx:id="errorLabel" visible="false" managed="false" wrapText="true"
                             maxWidth="Infinity" styleClass="error-banner" />
@@ -114,7 +126,7 @@
                 </center>
                 <bottom>
                     <VBox styleClass="input-bar">
-                        <VBox accessibleText="消息输入与运行配置" styleClass="composer-card">
+                        <VBox fx:id="composerCard" accessibleText="消息输入与运行配置" styleClass="composer-card">
                             <TextArea fx:id="composer" promptText="输入消息…" accessibleText="消息输入框"
                                 prefRowCount="2" wrapText="true" minHeight="56" maxHeight="240"
                                 styleClass="input-field,composer-input" />
@@ -133,7 +145,7 @@
         </StackPane>
     </center>
     <right>
-        <VBox fx:id="progressPanel" prefWidth="340" accessibleText="等待用户输入与审批"
+        <VBox fx:id="progressPanel" prefWidth="340" visible="false" managed="false" accessibleText="等待用户输入与审批"
             styleClass="thinking-panel-root,desktop-progress-panel">
             <HBox alignment="CENTER_LEFT" spacing="8">
                 <padding>
@@ -144,16 +156,16 @@
                 <Button text="×" onAction="#toggleProgress" accessibleText="关闭审批面板"
                     styleClass="sidebar-manage-btn" />
             </HBox>
+            <Label fx:id="pendingEmpty" text="当前没有待处理事项。" wrapText="true" styleClass="progress-empty" />
             <VBox fx:id="inputRequestHost" spacing="8" accessibleText="等待用户输入" styleClass="input-request-host" />
-            <Separator />
-            <Label text="工具审批" styleClass="thinking-panel-title,approval-section-title" />
+            <Label fx:id="approvalTitle" text="工具审批" styleClass="thinking-panel-title,approval-section-title" />
             <ListView fx:id="approvalList" accessibleText="等待决策的工具调用" styleClass="progress-list"
                 VBox.vgrow="ALWAYS">
                 <placeholder>
                     <Label text="当前没有等待审批的工具调用。" wrapText="true" styleClass="progress-empty" />
                 </placeholder>
             </ListView>
-            <HBox spacing="8" alignment="CENTER_RIGHT" styleClass="progress-metrics">
+            <HBox fx:id="approvalActions" spacing="8" alignment="CENTER_RIGHT" styleClass="progress-metrics">
                 <Button fx:id="denyButton" text="拒绝" onAction="#deny" accessibleText="拒绝选中调用"
                     styleClass="jc-btn,jc-btn-danger" />
                 <Button fx:id="approveButton" text="批准" onAction="#approve" accessibleText="批准选中调用"

@@ -2,7 +2,6 @@ package com.javaclaw.server.persistence;
 
 import java.nio.file.Path;
 import java.time.Clock;
-import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -28,6 +27,7 @@ import com.javaclaw.protocol.CanonicalJson;
 public final class CoreCommandService {
     private final H2Transactions transactions;
     private final WorkspaceRepository workspaces = new WorkspaceRepository();
+    private final WorkspaceCreation workspaceCreation;
     private final WorkspaceInstructionSettingsRepository instructionSettings =
             new WorkspaceInstructionSettingsRepository();
     private final ThreadRepository threads = new ThreadRepository();
@@ -56,6 +56,7 @@ public final class CoreCommandService {
         transactions = new H2Transactions(Objects.requireNonNull(database, "database"));
         this.json = Objects.requireNonNull(json, "json");
         this.clock = Objects.requireNonNull(clock, "clock");
+        workspaceCreation = new WorkspaceCreation(database, json);
         childTurns = new ChildTurnService(database, liveBudgets, json, clock);
         contexts = new ConversationContextService(database, json);
         codingEnvironments = new CodingEnvironmentService(database, json, clock);
@@ -112,17 +113,12 @@ public final class CoreCommandService {
             CommandIdentity identity, String name, Path root, Optional<com.javaclaw.api.ExecutionOverrides> execution) {
         Objects.requireNonNull(identity, "identity").requireCreate();
         Objects.requireNonNull(execution, "execution");
-        return idempotent(identity, Workspace.class, connection -> {
-            Instant createdAt = clock.instant();
-            Workspace workspace = workspaces.insert(connection, name, root, createdAt);
-            instructionSettings.insert(connection, workspace.id(), createdAt);
-            if (execution.isPresent()) {
-                var configuration = new com.javaclaw.api.ExecutionConfiguration(
-                        Optional.of(workspace.id()), Optional.empty(), execution.orElseThrow(), 1, createdAt);
-                new ExecutionConfigurationRepository(json).insert(connection, configuration);
-            }
-            return workspace;
-        });
+        return workspaceCreation.execute(
+                root,
+                () -> idempotent(
+                        identity,
+                        Workspace.class,
+                        connection -> workspaceCreation.insert(connection, name, root, execution, clock.instant())));
     }
 
     /**

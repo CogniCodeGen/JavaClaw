@@ -1,5 +1,7 @@
 package com.javaclaw.desktop.settings;
 
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -40,6 +42,7 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
     private final Button retry = new Button("重试");
     private final Button discard = new Button("放弃更改");
     private final HBox toolbar = new HBox(8);
+    private final FlowPane feedback = new FlowPane(8, 4, status, repair, retry, discard);
     private final Runnable manage;
     private final Runnable chooseWorkspace;
     private final Runnable createThread;
@@ -77,7 +80,24 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
         presenter.bind(workspace, thread);
     }
 
-    /** 重连或重新获得焦点后补读；多次请求合并，不丢弃在途失效。 */
+    /**
+     * 合并同一次状态提交中的作用域绑定与连接恢复，不重复读取初始化配置。
+     *
+     * @param workspace 当前工作区
+     * @param thread 当前对话
+     * @param connectedAt 当前连接身份，断线时为空；相同作用域的新连接仍补读权威配置
+     */
+    public void bind(
+            Optional<Workspace> workspace, Optional<ConversationThread> thread, Optional<Instant> connectedAt) {
+        presenter.bind(workspace, thread, connectedAt);
+    }
+
+    /** 页面重新显示或获得焦点时复用有效配置；过期或失败才补读，不覆盖未保存草稿。 */
+    public void activate() {
+        presenter.activate();
+    }
+
+    /** 显式强制补读当前配置；多次请求合并，不丢弃在途失效。 */
     public void refresh() {
         presenter.refresh();
     }
@@ -158,7 +178,8 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
         toolbar.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
         toolbar.getChildren().add(choices);
         toolbar.getStyleClass().add("composer-toolbar");
-        getChildren().addAll(toolbar, new FlowPane(8, 4, status, repair, retry, discard));
+        feedback.setId("chatConfigurationFeedback");
+        getChildren().addAll(toolbar, feedback);
     }
 
     private void render(ChatConfigurationState state) {
@@ -199,6 +220,7 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
                             && (state.dirty() || state.preview().isEmpty())
                             && presenter.scope().workspace().isPresent());
             visible(discard, state.dirty() && !state.pending());
+            visible(feedback, feedback.getChildren().stream().anyMatch(Node::isManaged));
         } finally {
             rendering = false;
         }
@@ -212,13 +234,13 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
                         .orElse(false))
                 .map(endpoint -> endpoint.spec().adapter())
                 .findFirst();
-        reasoning.getItems().clear();
-        reasoning.getItems().add(null);
-        reasoning.getItems().addAll(allowed(adapter));
-        state.selection()
-                .reasoning()
-                .filter(value -> !reasoning.getItems().contains(value))
-                .ifPresent(reasoning.getItems()::add);
+        List<ReasoningPreference> choices = new ArrayList<>();
+        choices.add(null);
+        choices.addAll(allowed(adapter));
+        state.selection().reasoning().filter(value -> !choices.contains(value)).ifPresent(choices::add);
+        if (!reasoning.getItems().equals(choices)) {
+            reasoning.getItems().setAll(choices);
+        }
         reasoning.setValue(state.selection().reasoning().orElse(null));
         var actual = state.preview().flatMap(ExecutionPreview::reasoning);
         reasoning.setPromptText(

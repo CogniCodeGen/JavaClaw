@@ -22,6 +22,7 @@ import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.input.ScrollEvent;
+import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
@@ -158,7 +159,9 @@ class ShellChatFallbackTest {
                 Clock.systemUTC());
         FxTestSupport.run(() -> {
             StackPane host = new StackPane();
-            ShellWebSurfaces surfaces = new ShellWebSurfaces(presenter, new VBox(), host, new ListView<>());
+            VBox progress = new VBox();
+            ShellSidePanels panels = new ShellSidePanels(new BorderPane(), new VBox(), progress, new Button());
+            ShellWebSurfaces surfaces = new ShellWebSurfaces(presenter, progress, host, new ListView<>(), panels);
             Stage stage = new Stage();
             Scene scene = new Scene(host, 760, 500);
             DesktopStylesheets.apply(scene);
@@ -184,6 +187,7 @@ class ShellChatFallbackTest {
                         .anyMatch(label -> label.getText().contains("未完成")));
             } finally {
                 surfaces.close();
+                panels.close();
                 stage.close();
                 try {
                     presenter.close();
@@ -294,7 +298,11 @@ class ShellChatFallbackTest {
                 Runnable::run,
                 Clock.systemUTC());
         private final StackPane host = new StackPane();
-        private final ShellWebSurfaces surfaces = new ShellWebSurfaces(presenter, new VBox(), host, new ListView<>());
+        private final VBox progress = new VBox();
+        private final ShellSidePanels panels =
+                new ShellSidePanels(new BorderPane(), new VBox(), progress, new Button());
+        private final ShellWebSurfaces surfaces =
+                new ShellWebSurfaces(presenter, progress, host, new ListView<>(), panels);
         private final Stage stage = new Stage();
 
         private ReadingFixture() {
@@ -354,6 +362,7 @@ class ShellChatFallbackTest {
         @Override
         public void close() {
             surfaces.close();
+            panels.close();
             stage.close();
             try {
                 presenter.close();

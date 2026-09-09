@@ -2,8 +2,8 @@ package com.javaclaw.desktop.view;
 
 import java.net.URI;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 
@@ -13,10 +13,13 @@ import javafx.scene.Node;
 import com.javaclaw.api.DocumentReference;
 import com.javaclaw.api.ItemEnvelope;
 import com.javaclaw.api.ItemHistoryEntry;
+import com.javaclaw.api.TurnId;
 import com.javaclaw.api.WorkspaceId;
+import com.javaclaw.desktop.state.OutgoingMessage;
 import com.javaclaw.desktop.view.ChatProjectionRenderer.Rendered;
 import com.javaclaw.desktop.view.ChatProjectionRenderer.Scope;
 import com.javaclaw.desktop.view.ChatProjectionRenderer.Snapshot;
+import com.javaclaw.desktop.web.WebSurfaceContent;
 import com.javaclaw.desktop.web.WebSurfaceHost;
 
 /**
@@ -31,9 +34,6 @@ public final class ChatSurface implements AutoCloseable {
     private final Consumer<URI> external;
     private final Runnable history;
     private final Consumer<Boolean> following;
-    private Map<String, DocumentReference> references = Map.of();
-    private Map<String, URI> links = Map.of();
-    private Scope appliedScope;
     private boolean closed;
     private long requestVersion;
 
@@ -54,7 +54,7 @@ public final class ChatSurface implements AutoCloseable {
         this.external = Objects.requireNonNull(external, "external");
         this.history = Objects.requireNonNull(history, "history");
         this.following = Objects.requireNonNull(following, "following");
-        host = new WebSurfaceHost("chat", fallback, this::action);
+        host = new WebSurfaceHost("chat", fallback, (action, value) -> {});
         ChatProjectionRenderer renderer = new ChatProjectionRenderer();
         work = new ChatProjectionWork(
                 Executors.newSingleThreadExecutor(Thread.ofVirtual().factory()),
@@ -86,6 +86,28 @@ public final class ChatSurface implements AutoCloseable {
             List<ItemHistoryEntry> summaries,
             List<TemporaryMessage> temporary,
             boolean hasEarlier) {
+        show(identity, workspace, items, summaries, temporary, hasEarlier, Optional.empty());
+    }
+
+    /**
+     * 提交包含本地发送回显的展示快照；本地消息不生成持久 Item 或文件引用。
+     *
+     * @param identity 当前 Thread 或空态身份
+     * @param workspace 当前 Workspace
+     * @param items 已提交 Item
+     * @param summaries 有来源身份的历史摘要
+     * @param temporary 助手尚未提交的公开正文
+     * @param hasEarlier 是否仍有更早历史
+     * @param outgoing 本地提交及确认状态，可缺省；由状态层与权威消息去重
+     */
+    public synchronized void show(
+            String identity,
+            WorkspaceId workspace,
+            List<ItemEnvelope> items,
+            List<ItemHistoryEntry> summaries,
+            List<TemporaryMessage> temporary,
+            boolean hasEarlier,
+            Optional<OutgoingMessage> outgoing) {
         if (closed) {
             return;
         }
@@ -95,24 +117,20 @@ public final class ChatSurface implements AutoCloseable {
                 List.copyOf(summaries),
                 List.copyOf(temporary),
                 hasEarlier,
-                ++requestVersion));
+                ++requestVersion,
+                Objects.requireNonNull(outgoing, "outgoing")));
     }
 
     private void apply(Rendered rendered) {
-        appliedScope = rendered.scope();
-        references = rendered.references();
-        links = rendered.links();
-        host.show(rendered.scope().identity(), rendered.json());
+        host.show(rendered.scope().identity(), rendered.content(), (action, value) -> action(rendered, action, value));
     }
 
     private void failed() {
-        references = Map.of();
-        links = Map.of();
         host.useFallback();
     }
 
-    private void action(String action, String value) {
-        if (!work.matchesScope(appliedScope)) {
+    private void action(Rendered rendered, String action, String value) {
+        if (!work.matchesScope(rendered.scope())) {
             return;
         }
         if (action.equals("history")) {
@@ -120,10 +138,10 @@ public final class ChatSurface implements AutoCloseable {
         } else if (action.equals("following")) {
             following.accept(Boolean.parseBoolean(value));
         } else if (action.equals("link") || action.equals("preview")) {
-            if (references.containsKey(value)) {
-                previews.accept(references.get(value));
-            } else if (links.containsKey(value)) {
-                external.accept(links.get(value));
+            if (rendered.references().containsKey(value)) {
+                previews.accept(rendered.references().get(value));
+            } else if (rendered.links().containsKey(value)) {
+                external.accept(rendered.links().get(value));
             }
         }
     }
@@ -134,18 +152,13 @@ public final class ChatSurface implements AutoCloseable {
             return;
         }
         work.clear();
-        appliedScope = null;
-        references = Map.of();
-        links = Map.of();
-        host.show("empty", "{}");
+        host.show("empty", WebSurfaceContent.chat(List.of(), false), (action, value) -> {});
     }
 
     /** 停止后台投影并释放页面；FX线程调用。 */
     @Override
     public synchronized void close() {
         closed = true;
-        references = Map.of();
-        links = Map.of();
         work.close();
         host.close();
     }
@@ -155,8 +168,25 @@ public final class ChatSurface implements AutoCloseable {
      * @param text 公开正文
      * @param incomplete 是否未完成
      * @param textOffsetUtf16 尾部开始的 UTF-16 位置，正值不能按全文解析
+     * @param turnId 来源 Turn，旧调用方未提供时为空，不能当作新发送的回复
      */
-    public record TemporaryMessage(String id, String text, boolean incomplete, long textOffsetUtf16) {
+    public record TemporaryMessage(
+            String id, String text, boolean incomplete, long textOffsetUtf16, Optional<TurnId> turnId) {
+        /** 校验来源容器非空；缺少身份不推测为当前发送的回复。 */
+        public TemporaryMessage {
+            turnId = Objects.requireNonNull(turnId, "turnId");
+        }
+
+        /**
+         * @param id 最终消息身份
+         * @param text 公开正文
+         * @param incomplete 是否未完成
+         * @param textOffsetUtf16 尾部开始的 UTF-16 位置
+         */
+        public TemporaryMessage(String id, String text, boolean incomplete, long textOffsetUtf16) {
+            this(id, text, incomplete, textOffsetUtf16, Optional.empty());
+        }
+
         /**
          * @param id 最终消息身份
          * @param text 尚未截断的公开正文
@@ -164,6 +194,14 @@ public final class ChatSurface implements AutoCloseable {
          */
         public TemporaryMessage(String id, String text, boolean incomplete) {
             this(id, text, incomplete, 0);
+        }
+
+        /**
+         * @param message 非空的当前发送回显
+         * @return 已有权威 Turn 身份且与该发送一致时为 true，才可排在该用户消息之后
+         */
+        public boolean belongsTo(OutgoingMessage message) {
+            return turnId.isPresent() && turnId.equals(message.turnId());
         }
     }
 }

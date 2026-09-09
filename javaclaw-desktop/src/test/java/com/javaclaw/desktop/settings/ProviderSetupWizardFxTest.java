@@ -14,6 +14,7 @@ import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.PasswordField;
@@ -253,11 +254,37 @@ class ProviderSetupWizardFxTest {
                     null, gateway, new ProviderSetupTarget(Optional.empty(), Optional.empty(), ""));
             Path root = Path.of("/tmp/wizard-workspace-test");
 
-            picker.createWorkspace(root);
+            var name = picker.nameDialog(root);
+            assertEquals("wizard-workspace-test", name.getEditor().getText());
+            name.show();
+            name.getEditor().setText("  自定义研究项目  ");
+            ((Button) name.getDialogPane().lookupButton(ButtonType.OK)).fire();
+            picker.createWorkspace(name.getResult(), root);
 
-            assertEquals("wizard-workspace-test", picker.target().workspaceName());
+            assertEquals("自定义研究项目", picker.target().workspaceName());
+            assertEquals(root, gateway.created.root());
             assertEquals(gateway.created.id(), picker.target().workspaceId().orElseThrow());
             assertTrue(picker.target().threadId().isEmpty());
+            assertFalse(picker.pending());
+        });
+    }
+
+    @Test
+    void 创建工作区取消命名或输入空白不会采用目录名悄悄创建() {
+        FxTestSupport.run(() -> {
+            ApplyingGateway gateway = new ApplyingGateway();
+            ProviderSetupWorkspacePicker picker = new ProviderSetupWorkspacePicker(
+                    null, gateway, new ProviderSetupTarget(Optional.empty(), Optional.empty(), ""));
+            Path root = Path.of("/tmp/wizard-workspace-test");
+            var name = picker.nameDialog(root);
+            name.show();
+            name.getEditor().setText("   ");
+            assertTrue(name.getDialogPane().lookupButton(ButtonType.OK).isDisable());
+            ((Button) name.getDialogPane().lookupButton(ButtonType.CANCEL)).fire();
+            assertTrue(Optional.ofNullable(name.getResult()).isEmpty());
+            picker.createWorkspace("   ", root);
+            assertTrue(picker.target().workspaceId().isEmpty());
+            assertTrue(Optional.ofNullable(gateway.created).isEmpty());
             assertFalse(picker.pending());
         });
     }

@@ -183,7 +183,7 @@ class ViewSchemaRefreshTest {
             TextField editor = field(page.content());
             CompletableFuture<ViewData> delayed = new CompletableFuture<>();
             gateway.loadsToReturn.add(delayed);
-            page.activate();
+            page.discardDraft();
             assertTrue(editor.isDisabled());
             editor.fireEvent(new KeyEvent(KeyEvent.KEY_TYPED, "x", "x", KeyCode.UNDEFINED, false, false, false, false));
             assertEquals("初值", editor.getText());
@@ -192,7 +192,7 @@ class ViewSchemaRefreshTest {
             button(page.content(), "重试").fire();
             CompletableFuture<ViewData> cancelled = new CompletableFuture<>();
             gateway.loadsToReturn.add(cancelled);
-            page.activate();
+            page.discardDraft();
             assertTrue(editor.isDisabled());
             page.deactivate();
             assertFalse(editor.isDisabled());

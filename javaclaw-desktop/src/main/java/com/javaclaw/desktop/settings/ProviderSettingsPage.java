@@ -77,11 +77,7 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
             ProviderVerificationSettingsState.initial(ProviderModelPurpose.EMBEDDING);
     private boolean rendering;
 
-    /**
-     * 创建 Provider 设置页。
-     *
-     * @param gateway SDK 异步边界
-     */
+    /** @param gateway 创建 Provider 设置页使用的 SDK 异步边界 */
     public ProviderSettingsPage(CoreSettingsGateway gateway) {
         this(gateway, () -> {});
     }
@@ -115,7 +111,7 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
         configureControls();
         buildLayout();
         bindEvents();
-        configurationRefresh = SettingsPageRefresh.provider(gateway, this, presenter);
+        configurationRefresh = SettingsPageRefresh.provider(gateway, this, presenter, embeddingBinding);
         presenter.subscribe(this::render);
         chatVerification.subscribe(this::renderVerification);
         embeddingVerification.subscribe(this::renderVerification);
@@ -137,7 +133,11 @@ public final class ProviderSettingsPage implements ManagedSettingsPage {
     @Override
     public void activate() {
         configurationRefresh.activate();
-        embeddingBinding.reload();
+    }
+
+    @Override
+    public void invalidateCache() {
+        configurationRefresh.invalidate();
     }
 
     @Override

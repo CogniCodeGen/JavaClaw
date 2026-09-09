@@ -97,13 +97,44 @@ final class DesktopStateProjection {
         return threads(state, projected, TranscriptState.empty());
     }
 
+    /** 仅合并同工作区的较新会话快照，保留正文、发送回显、活动 Turn 和交互状态。 */
+    static DesktopState threadMetadata(DesktopState state, ConversationThread refreshed) {
+        ThreadState before = state.threads();
+        if (before.selectedWorkspace()
+                .filter(workspace -> workspace.id().equals(refreshed.workspaceId()))
+                .isEmpty()) {
+            return state;
+        }
+        java.util.function.UnaryOperator<ConversationThread> merge = current ->
+                current.id().equals(refreshed.id()) && refreshed.revision() >= current.revision() ? refreshed : current;
+        return threadsOnly(
+                state,
+                new ThreadState(
+                        before.workspaces(),
+                        before.selectedWorkspace(),
+                        before.threads().stream().map(merge).toList(),
+                        before.selectedThread().map(merge),
+                        before.activeTurn()));
+    }
+
     static DesktopState transcript(
             DesktopState state, ConversationThread thread, CoreRpcContracts.ItemListResult page) {
         boolean selected = state.threads()
                 .selectedThread()
                 .map(current -> current.id().equals(thread.id()))
                 .orElse(false);
-        return selected ? transcript(state, new TranscriptState(page.items(), page.nextSequence(), true)) : state;
+        return selected
+                ? transcript(
+                        state,
+                        new TranscriptState(
+                                page.items(),
+                                page.nextSequence(),
+                                true,
+                                Optional.empty(),
+                                false,
+                                List.of(),
+                                state.transcript().outgoing()))
+                : state;
     }
 
     static DesktopState activeTurn(DesktopState state, AgentTurn turn) {

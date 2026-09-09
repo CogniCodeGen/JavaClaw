@@ -20,7 +20,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DesktopStylesheetsTest {
-    private static final String BASELINE_SHA256 = "6b34838c5bc9401637da32c0ae143128dabc4ba069f5dacb98ee5d883a41fac9";
+    // 已审阅 chat-surface.css 的执行、等待和失败状态令牌变更；其余六份基线资源字节保持不变。
+    private static final String BASELINE_SHA256 = "ad98fce3c056f03c6e76c93a1b80412f03f181ddf8d65eea07b93bff5a5e093c";
 
     @Test
     void 可达视觉基线保持固定字节和级联顺序() throws Exception {

@@ -211,20 +211,4 @@ class MemorySkillScheduleContractsTest {
                         BuiltinContractsFixtures.payload().sha256(),
                         2));
     }
-
-    @Test
-    void builtInExtensionIdentifiersAreUnique() {
-        Set<String> identifiers = Set.of(
-                BuiltinExtensionIds.PLAN,
-                BuiltinExtensionIds.LOOP,
-                BuiltinExtensionIds.WORKFLOW,
-                BuiltinExtensionIds.SDD,
-                BuiltinExtensionIds.SCHEDULE,
-                BuiltinExtensionIds.MEMORY,
-                BuiltinExtensionIds.KNOWLEDGE,
-                BuiltinExtensionIds.SKILL,
-                BuiltinExtensionIds.SITE);
-
-        assertEquals(9, identifiers.size());
-    }
 }

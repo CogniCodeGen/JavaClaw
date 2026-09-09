@@ -8,6 +8,7 @@ import java.util.function.Consumer;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.TextInputDialog;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
@@ -20,6 +21,7 @@ import com.javaclaw.api.WorkspaceLifecycle;
 import com.javaclaw.desktop.component.PlatformComponentFactory;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
+import com.javaclaw.desktop.component.PlatformDialogs;
 
 /** 无目标工作区时在当前流程内选择或创建工作区，不丢失已经保存的模型。 */
 final class ProviderSetupWorkspacePicker extends VBox {
@@ -121,17 +123,31 @@ final class ProviderSetupWorkspacePicker extends VBox {
         if (directory == null) {
             return;
         }
-        createWorkspace(directory.toPath());
+        Path root = directory.toPath().toAbsolutePath().normalize();
+        nameDialog(root).showAndWait().ifPresent(name -> createWorkspace(name, root));
     }
 
-    void createWorkspace(Path root) {
+    TextInputDialog nameDialog(Path root) {
+        String suggested =
+                root.getFileName() == null ? "工作区" : root.getFileName().toString();
+        TextInputDialog dialog = PlatformDialogs.requiredText(
+                this, "创建工作区", "设置工作区名称", "名称用于在 JavaClaw 中识别工作区，可与所选文件夹名称不同。", "例如：我的研究项目", suggested, "创建工作区");
+        dialog.setOnShown(event -> dialog.getEditor().selectAll());
+        return dialog;
+    }
+
+    void createWorkspace(String name, Path root) {
         if (pending) {
+            return;
+        }
+        String selectedName = name.strip();
+        if (selectedName.isEmpty()) {
+            status.setText("请输入工作区名称。");
             return;
         }
         setPending(true);
         status.setText("正在创建工作区…");
-        String name = root.getFileName() == null ? "工作区" : root.getFileName().toString();
-        gateway.createModelWorkspace(name, root).whenComplete((workspace, failure) -> {
+        gateway.createModelWorkspace(selectedName, root).whenComplete((workspace, failure) -> {
             setPending(false);
             if (failure != null) {
                 status.setText("创建工作区失败：" + SettingsFailures.message(failure));

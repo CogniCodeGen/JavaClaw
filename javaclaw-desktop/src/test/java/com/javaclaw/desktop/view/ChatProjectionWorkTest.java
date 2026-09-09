@@ -15,6 +15,7 @@ import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.desktop.view.ChatProjectionRenderer.Rendered;
 import com.javaclaw.desktop.view.ChatProjectionRenderer.Scope;
 import com.javaclaw.desktop.view.ChatProjectionRenderer.Snapshot;
+import com.javaclaw.desktop.web.WebSurfaceContent;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -187,7 +188,8 @@ class ChatProjectionWorkTest {
     }
 
     private static Rendered result(Snapshot snapshot) {
-        return new Rendered(snapshot.scope(), snapshot.version(), "{}", Map.of(), Map.of());
+        return new Rendered(
+                snapshot.scope(), snapshot.version(), WebSurfaceContent.serialized("{}"), Map.of(), Map.of());
     }
 
     /** 确定性推进后台队列，测试无需阻塞 JavaFX 或依赖线程调度速度。 */

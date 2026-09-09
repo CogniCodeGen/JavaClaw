@@ -18,7 +18,7 @@ final class WebSurfaceResources {
                 + "connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'\">"
                 + "<style>" + read("surface.css") + "</style></head><body>"
                 + "<main id=\"surface\" role=\"main\"></main>"
-                + script(nonce, read(library)) + script(nonce, read("surface.js"))
+                + script(nonce, read(library)) + script(nonce, read("emoji.js")) + script(nonce, read("surface.js"))
                 + script(nonce, read(kind + ".js")) + "</body></html>";
     }
 

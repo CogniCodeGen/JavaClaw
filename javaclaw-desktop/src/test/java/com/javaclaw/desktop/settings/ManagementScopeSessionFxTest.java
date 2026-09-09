@@ -27,6 +27,28 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class ManagementScopeSessionFxTest {
     @Test
+    void 草稿结束后再次激活会交付被延迟的缓存作用域而不重复查询() {
+        FxTestSupport.run(() -> {
+            TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
+            Workspace original = gateway.workspaceSettings.catalog.getFirst();
+            CapturingPage page = new CapturingPage();
+            ManagementScopeSession session =
+                    new ManagementScopeSession(gateway, () -> Optional.of(original.id()), () -> page, ignored -> {});
+            session.bind(page);
+            page.dirty = true;
+            session.activate();
+            assertEquals(Optional.empty(), page.received.getLast());
+            assertEquals(1, gateway.workspaceSettings.reads);
+            page.dirty = false;
+
+            session.activate();
+
+            assertEquals(Optional.of(original), page.received.getLast());
+            assertEquals(1, gateway.workspaceSettings.reads);
+        });
+    }
+
+    @Test
     void 首次出现工作区不会打断全局页面草稿或在途模型配置() {
         FxTestSupport.run(() -> {
             TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
@@ -128,6 +150,7 @@ class ManagementScopeSessionFxTest {
             CompletableFuture<List<Workspace>> pending = new CompletableFuture<>();
             gateway.workspaceSettings.nextResponse = pending;
 
+            session.invalidate();
             session.activate();
 
             assertEquals(original.id(), page.received.get(1).orElseThrow().id());

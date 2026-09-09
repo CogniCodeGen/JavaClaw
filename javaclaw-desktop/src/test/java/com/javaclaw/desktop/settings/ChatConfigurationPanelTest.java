@@ -42,6 +42,7 @@ class ChatConfigurationPanelTest {
             PanelGateway gateway = new PanelGateway();
             try (ChatConfigurationPanel panel = panel(gateway)) {
                 assertTrue(panel.ready());
+                assertFalse(panel.lookup("#chatConfigurationFeedback").isManaged(), "就绪时空反馈行不占输入区高度");
                 assertEquals("Fake model ▾", ((Button) panel.lookup("#chatModel")).getText());
                 assertTrue(reasoning(panel).getItems().contains(null));
                 assertTrue(reasoning(panel).getItems().contains(ReasoningPreference.NONE));
@@ -59,6 +60,24 @@ class ChatConfigurationPanelTest {
                         .filter(Label.class::isInstance)
                         .map(Label.class::cast)
                         .anyMatch(label -> label.isVisible() && label.getText().contains("继承来源")));
+            }
+        });
+    }
+
+    @Test
+    void 重复显示和聚焦复用配置但手动刷新仍读取() {
+        FxTestSupport.run(() -> {
+            PanelGateway gateway = new PanelGateway();
+            try (ChatConfigurationPanel panel = panel(gateway)) {
+                for (int index = 0; index < 5; index++) {
+                    panel.activate();
+                    panel.bind(Optional.of(DesktopTestFixtures.workspace()), Optional.of(DesktopTestFixtures.thread()));
+                }
+                assertEquals(1, gateway.previewReads);
+                assertTrue(panel.ready());
+                panel.refresh();
+                assertEquals(2, gateway.previewReads);
+                assertTrue(panel.ready());
             }
         });
     }
@@ -93,6 +112,7 @@ class ChatConfigurationPanelTest {
                         Optional.of(ReasoningPreference.NONE), panel.execution().reasoning());
                 assertTrue(visibleButtons(panel).stream()
                         .anyMatch(button -> button.getText().equals("重试")));
+                assertTrue(panel.lookup("#chatConfigurationFeedback").isManaged(), "失败时仍显示可操作反馈");
                 gateway.revision = 9;
                 panel.refresh();
                 assertEquals(
@@ -226,6 +246,7 @@ class ChatConfigurationPanelTest {
         final List<CommandOptions> savedOptions = new ArrayList<>();
         ExecutionOverrides saved = ExecutionOverrides.empty();
         long revision = 7;
+        int previewReads;
         boolean locked;
         boolean failSave;
         boolean remembered;
@@ -239,6 +260,7 @@ class ChatConfigurationPanelTest {
         @Override
         public CompletionStage<ExecutionPreview> previewChatExecution(
                 WorkspaceId workspace, Optional<ThreadId> thread, ExecutionOverrides execution) {
+            previewReads++;
             return CompletableFuture.completedFuture(new ExecutionPreview(
                     Optional.of(new AgentRoleRef("default", 1)),
                     Optional.of(model),

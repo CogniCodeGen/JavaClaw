@@ -6,12 +6,15 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.IntStream;
 
 import javafx.collections.ListChangeListener;
 import javafx.scene.Scene;
+import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollToEvent;
+import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.web.WebView;
@@ -37,6 +40,7 @@ import com.javaclaw.desktop.DesktopPresenter;
 import com.javaclaw.desktop.DesktopStylesheets;
 import com.javaclaw.desktop.FxTestSupport;
 import com.javaclaw.desktop.state.DesktopState;
+import com.javaclaw.desktop.state.OutgoingMessage;
 import com.javaclaw.desktop.state.ThreadState;
 import com.javaclaw.desktop.state.TranscriptState;
 import com.javaclaw.desktop.web.WebSurfaceHost;
@@ -47,6 +51,34 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ShellChatProjectionTest {
+    @Test
+    void 五百条未提交尾文的原生窗口仍保留最新用户回显且不超过预算() {
+        FxTestSupport.run(() -> {
+            try (Fixture fixture = new Fixture()) {
+                fixture.web().useFallback();
+                List<TurnStreamSnapshot.Message> messages = IntStream.range(0, 500)
+                        .mapToObj(index -> new TurnStreamSnapshot.Message(
+                                new TurnStreamCall(index + 1, "previous", ItemId.random()),
+                                "旧回合尾文 " + index,
+                                TurnStreamKind.CLOSED,
+                                Optional.empty()))
+                        .toList();
+                TurnStreamSnapshot stream =
+                        new TurnStreamSnapshot(fixture.turn, "500", messages, Optional.empty(), Optional.empty());
+                var outgoing = new OutgoingMessage(
+                        "local:latest", "本地发送必须留在窗口中", Optional.empty(), OutgoingMessage.Status.SENDING);
+                fixture.show(new TranscriptState(
+                        List.of(), 1, true, Optional.of(stream), true, fixture.history, Optional.of(outgoing)));
+                ListView<?> summary = fixture.summary();
+                assertEquals(500, summary.getItems().size());
+                assertTrue(summary.getItems().getLast().toString().contains(outgoing.text()));
+                assertTrue(summary.getItems().get(498).toString().contains("旧回合尾文 499"));
+                fixture.assertText(outgoing.text());
+                fixture.assertText("你 · 正在发送…");
+            }
+        });
+    }
+
     @Test
     void 健康Web不更新隐藏列表且切换简版立即显示最新分片并复用历史投影() {
         Fixture fixture = FxTestSupport.call(Fixture::new);
@@ -163,7 +195,10 @@ class ShellChatProjectionTest {
         private final List<ItemHistoryEntry> history = history();
         private final ListView<ItemEnvelope> legacy = new ListView<>();
         private final StackPane host = new StackPane();
-        private final ShellWebSurfaces surfaces = new ShellWebSurfaces(presenter, new VBox(), host, legacy);
+        private final VBox progress = new VBox();
+        private final ShellSidePanels panels =
+                new ShellSidePanels(new BorderPane(), new VBox(), progress, new Button());
+        private final ShellWebSurfaces surfaces = new ShellWebSurfaces(presenter, progress, host, legacy, panels);
         private final Stage stage = new Stage();
 
         private Fixture() {
@@ -256,6 +291,7 @@ class ShellChatProjectionTest {
         @Override
         public void close() {
             surfaces.close();
+            panels.close();
             stage.close();
             try {
                 presenter.close();

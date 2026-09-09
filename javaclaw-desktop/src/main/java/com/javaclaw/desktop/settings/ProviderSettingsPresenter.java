@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletionStage;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -27,11 +28,7 @@ public final class ProviderSettingsPresenter {
     private Consumer<ProviderSettingsState> listener = ignored -> {};
     private ProviderSettingsState state = ProviderSettingsState.initial();
 
-    /**
-     * 创建 Presenter。
-     *
-     * @param gateway SDK 异步边界
-     */
+    /** @param gateway 承担目录与配置读写的 SDK 异步边界 */
     public ProviderSettingsPresenter(CoreSettingsGateway gateway) {
         this(gateway, () -> "provider-" + UUID.randomUUID());
     }
@@ -76,18 +73,20 @@ public final class ProviderSettingsPresenter {
     }
 
     /** 自动重验时，编辑草稿或冲突存在则只替换目录，不推进保存版本。 */
-    void refreshForConfigurationChange(boolean preserveDraft) {
+    CompletionStage<Boolean> refreshForConfigurationChange(boolean preserveDraft) {
         boolean preserve = preserveDraft || state.revisionConflict();
         ProviderSettingsState loading = ProviderCatalogRefresh.loading(state);
         publish(loading);
-        gateway.providers().whenComplete((catalog, failure) -> {
-            if (state.epoch() == loading.epoch()) {
+        return gateway.providers().handle((catalog, failure) -> {
+            boolean current = state.epoch() == loading.epoch();
+            if (current) {
                 if (preserve || state.dirty() || state.revisionConflict()) {
                     publish(ProviderCatalogRefresh.complete(state, catalog, failure));
                 } else {
                     completeReload(loading.epoch(), catalog, failure);
                 }
             }
+            return current && failure == null;
         });
     }
 

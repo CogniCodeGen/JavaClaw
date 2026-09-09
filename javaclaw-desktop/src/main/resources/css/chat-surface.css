@@ -24,7 +24,15 @@
 }
 
 .chat-top-status-dot.status-executing {
-    -fx-text-fill: #2FA17C;
+    -fx-text-fill: -jc-primary-500;
+}
+
+.chat-top-status-dot.status-waiting {
+    -fx-text-fill: -jc-warning;
+}
+
+.chat-top-status-dot.status-failed {
+    -fx-text-fill: -jc-danger;
 }
 
 .chat-top-status-dot.status-thinking {
@@ -490,4 +498,3 @@
     -fx-background-color: -jc-neutral-200;
     -fx-text-fill: -jc-neutral-900;
 }
-

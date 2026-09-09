@@ -3,12 +3,14 @@ package com.javaclaw.desktop.settings;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 import com.javaclaw.builtin.contracts.BuiltinExtensionIds;
 import com.javaclaw.desktop.appearance.DesktopAppearanceManager;
 
-/** 管理中心页面注册表；窗口只按 key 路由，不识别领域页面类型。 */
+/** 按首次访问创建并复用管理页；未打开页面不创建控件或订阅，缓存随管理窗口释放。 */
 final class SettingsPageRegistry {
+    private final Map<String, Supplier<ManagedSettingsPage>> factories = new HashMap<>();
     private final Map<String, ManagedSettingsPage> pages = new HashMap<>();
 
     SettingsPageRegistry(DesktopAppearanceManager appearance, ManagementSettingsGateways gateways, Runnable close) {
@@ -23,9 +25,11 @@ final class SettingsPageRegistry {
         Objects.requireNonNull(appearance, "appearance");
         ManagementSettingsGateways checked = Objects.requireNonNull(gateways, "gateways");
         CoreSettingsGateway gateway = checked.core();
-        register("appearance", new AppearanceSettingsPage(appearance, close));
-        register("providers", new ProviderSettingsPage(gateway, returnToChat));
-        register("roles", new AgentRoleSettingsPage(gateway, checked.promptPreview(), checked.promptOptimization()));
+        register("appearance", () -> new AppearanceSettingsPage(appearance, close));
+        register("providers", () -> new ProviderSettingsPage(gateway, returnToChat));
+        register(
+                "roles",
+                () -> new AgentRoleSettingsPage(gateway, checked.promptPreview(), checked.promptOptimization()));
         registerExtension(
                 "learning",
                 "学习策略",
@@ -33,24 +37,24 @@ final class SettingsPageRegistry {
                 BuiltinExtensionIds.MEMORY,
                 "memory.learning",
                 checked.extensions());
-        register("permissions", new PermissionProfileSettingsPage(gateway));
-        register("vault", new VaultSettingsPage(gateway));
-        register("unattended-grants", new UnattendedToolGrantSettingsPage(gateway, checked.schedules()));
-        register("network-grants", new PrivateNetworkGrantSettingsPage(gateway));
-        register("mcp", new McpSettingsPage(checked.mcp()));
-        register("connection", new ConnectionSettingsPage(gateway));
-        register("diagnostics", new DiagnosticsSettingsPage(gateway));
-        register("lifecycle", new LifecycleSettingsPage(gateway));
-        register("workspace", new WorkspaceSettingsPage(gateway));
-        register("coding", new CodingSettingsPage(checked.coding()));
-        register("instructions", new InstructionSettingsPage(checked.instructions()));
-        register("worktrees", new ManagedWorktreeSettingsPage(gateway));
-        register("bundles", new BundleSettingsPage(checked.bundles()));
-        register("trust", new TrustKeySettingsPage(checked.bundles()));
-        register("trash", new BundleTrashSettingsPage(checked.bundles()));
-        register("builtins", new BuiltinExtensionSettingsPage(checked.builtins()));
-        register("jobs", new AutomationJobSettingsPage(checked.jobs()));
-        register("site", new SiteSettingsPage(gateway, checked.extensions()));
+        register("permissions", () -> new PermissionProfileSettingsPage(gateway));
+        register("vault", () -> new VaultSettingsPage(gateway));
+        register("unattended-grants", () -> new UnattendedToolGrantSettingsPage(gateway, checked.schedules()));
+        register("network-grants", () -> new PrivateNetworkGrantSettingsPage(gateway));
+        register("mcp", () -> new McpSettingsPage(checked.mcp()));
+        register("connection", () -> new ConnectionSettingsPage(gateway));
+        register("diagnostics", () -> new DiagnosticsSettingsPage(gateway));
+        register("lifecycle", () -> new LifecycleSettingsPage(gateway));
+        register("workspace", () -> new WorkspaceSettingsPage(gateway));
+        register("coding", () -> new CodingSettingsPage(checked.coding()));
+        register("instructions", () -> new InstructionSettingsPage(checked.instructions()));
+        register("worktrees", () -> new ManagedWorktreeSettingsPage(gateway));
+        register("bundles", () -> new BundleSettingsPage(checked.bundles()));
+        register("trust", () -> new TrustKeySettingsPage(checked.bundles()));
+        register("trash", () -> new BundleTrashSettingsPage(checked.bundles()));
+        register("builtins", () -> new BuiltinExtensionSettingsPage(checked.builtins()));
+        register("jobs", () -> new AutomationJobSettingsPage(checked.jobs()));
+        register("site", () -> new SiteSettingsPage(gateway, checked.extensions()));
         registerExtension("plan", "计划", "结构化计划、决策与执行", BuiltinExtensionIds.PLAN, checked.extensions());
         registerExtension("loop", "循环任务", "迭代目标、验证和停止条件", BuiltinExtensionIds.LOOP, checked.extensions());
         registerExtension("workflow", "工作流", "安全编排和持久执行", BuiltinExtensionIds.WORKFLOW, checked.extensions());
@@ -62,20 +66,25 @@ final class SettingsPageRegistry {
     }
 
     ManagedSettingsPage resolve(String key) {
-        ManagedSettingsPage page = pages.get(Objects.requireNonNull(key, "key"));
-        if (page == null) {
+        Supplier<ManagedSettingsPage> factory = factories.get(Objects.requireNonNull(key, "key"));
+        if (factory == null) {
             throw new IllegalArgumentException("未知设置页面: " + key);
         }
-        return page;
+        return pages.computeIfAbsent(key, ignored -> factory.get());
+    }
+
+    void invalidateCaches() {
+        pages.values().forEach(ManagedSettingsPage::invalidateCache);
     }
 
     void dispose() {
         pages.values().forEach(ManagedSettingsPage::dispose);
         pages.clear();
+        factories.clear();
     }
 
-    private void register(String key, ManagedSettingsPage page) {
-        if (pages.putIfAbsent(key, Objects.requireNonNull(page, "page")) != null) {
+    private void register(String key, Supplier<ManagedSettingsPage> factory) {
+        if (factories.putIfAbsent(key, Objects.requireNonNull(factory, "factory")) != null) {
             throw new IllegalStateException("重复设置页面: " + key);
         }
     }
@@ -86,7 +95,7 @@ final class SettingsPageRegistry {
             String description,
             String extensionId,
             ExtensionSettingsGateway extensionGateway) {
-        register(key, new ViewSchemaSettingsPage(extensionId, title, description, extensionGateway));
+        register(key, () -> new ViewSchemaSettingsPage(extensionId, title, description, extensionGateway));
     }
 
     private void registerExtension(
@@ -96,6 +105,8 @@ final class SettingsPageRegistry {
             String extensionId,
             String preferredViewId,
             ExtensionSettingsGateway extensionGateway) {
-        register(key, new ViewSchemaSettingsPage(extensionId, title, description, preferredViewId, extensionGateway));
+        register(
+                key,
+                () -> new ViewSchemaSettingsPage(extensionId, title, description, preferredViewId, extensionGateway));
     }
 }

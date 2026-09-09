@@ -57,6 +57,9 @@ public final class PromptPreviewSettingsPresenter {
      * @param workspace Workspace；清除选择时为空
      */
     public void selectWorkspace(Workspace workspace) {
+        if (state.workspace().equals(Optional.ofNullable(workspace))) {
+            return;
+        }
         publish(new PromptPreviewSettingsState(
                 SettingsLoadState.READY,
                 state.workspaces(),

@@ -18,6 +18,7 @@ import com.javaclaw.api.Workspace;
 import com.javaclaw.client.CommandOptions;
 import com.javaclaw.client.sdk.JavaClawClient;
 import com.javaclaw.desktop.state.ConnectionState;
+import com.javaclaw.desktop.state.OutgoingMessage;
 import com.javaclaw.desktop.state.TranscriptState;
 import com.javaclaw.protocol.CoreRpcContracts;
 
@@ -120,9 +121,22 @@ final class DesktopConversationCoordinator implements AutoCloseable {
             ui.accept(() -> {
                 if (current(scope, thread.id())) {
                     recoveryFailure = null;
-                    store.update(state -> DesktopTranscriptHistory.apply(state, thread, transcript));
+                    store.update(state -> DesktopTranscriptHistory.apply(
+                            state,
+                            thread,
+                            new TranscriptState(
+                                    transcript.items(),
+                                    transcript.nextSequence(),
+                                    transcript.following(),
+                                    transcript.stream(),
+                                    transcript.hasEarlier(),
+                                    transcript.history(),
+                                    state.transcript().outgoing())));
                     store.update(state -> DesktopStateProjection.busy(state, false));
                     active.ifPresent(turn -> observe(scope, thread, turn));
+                    if (transcript.nextSequence() > 0) {
+                        refreshThreadTitle(scope, thread);
+                    }
                 }
             });
         } catch (Exception failure) {
@@ -144,7 +158,12 @@ final class DesktopConversationCoordinator implements AutoCloseable {
             }
             ConversationThread thread = state.threads().selectedThread().orElseThrow();
             Scope scope = beginSelection();
-            store.update(value -> DesktopStateProjection.busy(value, true));
+            OutgoingMessage outgoing = new OutgoingMessage(
+                    outgoingId(options), message, Optional.empty(), OutgoingMessage.Status.SENDING, scope.epoch());
+            // 用户正文与发送状态同次发布，不让 RPC 排队、配置冻结或历史对账决定首次可见时间。
+            // 尝试号保留每次主动重试的跟随意图；即使失败中间帧被合并，也不能将重试视为相同内容而吞掉。
+            store.update(value -> DesktopStateProjection.busy(
+                    DesktopStateProjection.transcript(value, value.transcript().outgoing(outgoing)), true));
             workers.submit(() -> startTurn(scope, thread, message, execution, options, result));
         });
         return result;
@@ -163,21 +182,67 @@ final class DesktopConversationCoordinator implements AutoCloseable {
             }
             var payload = new CoreRpcContracts.TurnStartPayload(thread.id(), execution, message);
             AgentTurn started = scope.client().turns().start(payload, options).turn();
+            if (!started.threadId().equals(thread.id())) {
+                throw new IllegalStateException("启动回执不属于发送消息的对话");
+            }
             ui.accept(() -> {
                 // 回执属于原始发送；页面是否仍选中只影响展示，不改变已被服务端接受的事实。
-                result.complete(started);
                 if (current(scope, thread.id())) {
-                    observe(scope, thread, started);
+                    store.update(state -> DesktopStateProjection.transcript(
+                            state, state.transcript().acknowledged(outgoingId(options), started.id())));
+                    if (DesktopStateProjection.terminal(started.status())) {
+                        // 幂等恢复可能直接返回终态；仍需补齐权威用户消息，否则回显没有机会被历史替换。
+                        load(scope, thread);
+                    } else {
+                        observe(scope, thread, started);
+                    }
+                }
+                result.complete(started);
+                if (!DesktopStateProjection.terminal(started.status())) {
+                    refreshThreadTitle(scope, thread);
                 }
             });
         } catch (Exception failure) {
             ui.accept(() -> {
                 if (current(scope, thread.id())) {
-                    store.update(state -> DesktopStateProjection.failure(state, DesktopFailures.safeMessage(failure)));
+                    store.update(state -> DesktopStateProjection.failure(
+                            DesktopStateProjection.transcript(
+                                    state, state.transcript().unconfirmed(outgoingId(options))),
+                            DesktopFailures.safeMessage(failure)));
                 }
                 result.completeExceptionally(failure);
             });
         }
+    }
+
+    private static String outgoingId(CommandOptions options) {
+        return "outgoing:" + options.idempotencyKey();
+    }
+
+    /** 标题是发送后的独立刷新，不能延迟确认、清除正文或把已接受的消息标成失败；导航失效时丢弃迟到结果。 */
+    private void refreshThreadTitle(Scope scope, ConversationThread thread) {
+        if (!thread.title().equals("新对话") || !current(scope, thread.id())) {
+            return;
+        }
+        workers.submit(() -> {
+            try {
+                if (!current(scope, thread.id())) {
+                    return;
+                }
+                ConversationThread refreshed = scope.client().threads().read(thread.id());
+                if (!refreshed.id().equals(thread.id())
+                        || !refreshed.workspaceId().equals(thread.workspaceId())) {
+                    return;
+                }
+                ui.accept(() -> {
+                    if (current(scope, thread.id())) {
+                        store.update(state -> DesktopStateProjection.threadMetadata(state, refreshed));
+                    }
+                });
+            } catch (RuntimeException ignored) {
+                // 下次导航或重连可从持久目录恢复标题；辅助读取失败不改变发送回执与流订阅状态。
+            }
+        });
     }
 
     private void observe(Scope scope, ConversationThread thread, AgentTurn turn) {

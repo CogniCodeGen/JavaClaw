@@ -8,6 +8,7 @@ import javafx.application.Platform;
 import javafx.scene.Scene;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.layout.VBox;
@@ -26,6 +27,22 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ManagementCenterSearchTest {
+    @Test
+    void 返回设置页面复用滚动容器并保留阅读位置() {
+        FxTestSupport.run(() -> {
+            try (Fixture fixture = new Fixture()) {
+                ScrollPane original = (ScrollPane) fixture.window.getScene().lookup(".settings-scroll-pane");
+                original.setVvalue(0.65);
+                fixture.center.show(fixture.owner, "connection");
+                fixture.center.show(fixture.owner, "appearance");
+
+                ScrollPane restored = (ScrollPane) fixture.window.getScene().lookup(".settings-scroll-pane");
+                assertSame(original, restored);
+                assertEquals(0.65, restored.getVvalue(), 0.001);
+            }
+        });
+    }
+
     @Test
     void 搜索标题优先于说明且清空后恢复原目录顺序() {
         FxTestSupport.run(() -> {

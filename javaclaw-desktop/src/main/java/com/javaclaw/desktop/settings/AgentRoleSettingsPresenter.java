@@ -5,6 +5,8 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.function.Consumer;
 
 import com.javaclaw.api.AgentRole;
@@ -49,20 +51,20 @@ public final class AgentRoleSettingsPresenter {
     }
 
     /** 配置失效只重验脏表单的目录，保留原角色版本及完整草稿。 */
-    void refreshForConfigurationChange(boolean preserveDraft) {
+    CompletionStage<Boolean> refreshForConfigurationChange(boolean preserveDraft) {
         if (operationPending()) {
-            return;
+            return CompletableFuture.completedFuture(false);
         }
         AgentRoleSettingsState before = state;
         long epoch = before.epoch() + 1;
         status(SettingsLoadState.LOADING, "正在更新角色与模型目录；草稿保持不变…", before.revisionConflict(), epoch);
-        gateway.roles().thenCombine(gateway.providers(), Catalog::new).whenComplete((catalog, error) -> {
+        return gateway.roles().thenCombine(gateway.providers(), Catalog::new).handle((catalog, error) -> {
             if (!current(epoch)) {
-                return;
+                return false;
             }
             if (!preserveDraft && !state.dirty() && !state.revisionConflict()) {
                 completeReload(epoch, catalog, error);
-                return;
+                return error == null;
             }
             if (error != null) {
                 status(
@@ -70,7 +72,7 @@ public final class AgentRoleSettingsPresenter {
                         "目录读取失败；草稿仍保留：" + SettingsFailures.message(error),
                         state.revisionConflict(),
                         epoch);
-                return;
+                return false;
             }
             publish(new AgentRoleSettingsState(
                     SettingsLoadState.READY,
@@ -83,6 +85,7 @@ public final class AgentRoleSettingsPresenter {
                     "角色或模型已更新；目录已刷新，当前草稿和保存版本保持不变。",
                     state.revisionConflict(),
                     epoch));
+            return true;
         });
     }
 

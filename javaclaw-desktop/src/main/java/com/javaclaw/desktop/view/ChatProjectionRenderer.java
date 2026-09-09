@@ -7,8 +7,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
+import java.util.regex.Pattern;
 
 import com.javaclaw.api.CorePayloads;
 import com.javaclaw.api.CoreSchemas;
@@ -16,14 +18,17 @@ import com.javaclaw.api.DocumentReference;
 import com.javaclaw.api.ItemEnvelope;
 import com.javaclaw.api.ItemHistoryEntry;
 import com.javaclaw.api.WorkspaceId;
+import com.javaclaw.desktop.state.OutgoingMessage;
 import com.javaclaw.desktop.view.ChatSurface.TemporaryMessage;
 import com.javaclaw.desktop.web.MarkdownLinkTarget;
 import com.javaclaw.desktop.web.SafeMarkdown;
+import com.javaclaw.desktop.web.WebSurfaceContent;
 import com.javaclaw.protocol.CanonicalJson;
 
 /** 单个后台 worker 拥有的有界聊天投影缓存；缓存来源、JSON 与引用表一起更新，禁止跨作用域复用。 */
 final class ChatProjectionRenderer {
     private static final long MAX_CACHE_BYTES = 8L * 1024 * 1024;
+    private static final Pattern GRAPHEME = Pattern.compile("\\X");
     private final CanonicalJson json = new CanonicalJson();
     private final TranscriptPresenter presenter = new TranscriptPresenter(json);
     private final Map<String, CachedRow> cache = new LinkedHashMap<>();
@@ -51,23 +56,35 @@ final class ChatProjectionRenderer {
             requireCurrent(current);
             rows.add(summary(snapshot.scope(), entry));
         }
-        addTemporary(visible.temporary(), rows, current);
+        if (snapshot.outgoing().isPresent()) {
+            OutgoingMessage message = snapshot.outgoing().orElseThrow();
+            addTemporary(
+                    visible.temporary().stream()
+                            .filter(value -> !value.belongsTo(message))
+                            .toList(),
+                    rows,
+                    current);
+            rows.add(outgoing(message));
+            addTemporary(
+                    visible.temporary().stream()
+                            .filter(value -> value.belongsTo(message))
+                            .toList(),
+                    rows,
+                    current);
+        } else {
+            addTemporary(visible.temporary(), rows, current);
+        }
         requireCurrent(current);
         Map<String, DocumentReference> targets = new LinkedHashMap<>();
         Map<String, URI> links = new LinkedHashMap<>();
-        StringBuilder payload = new StringBuilder("{\"hasEarlier\":" + snapshot.hasEarlier() + ",\"items\":[");
         for (ProjectedRow row : rows) {
-            if (payload.charAt(payload.length() - 1) != '[') {
-                payload.append(',');
-            }
-            payload.append(row.json());
             targets.putAll(row.references());
             links.putAll(row.links());
         }
         return new Rendered(
                 snapshot.scope(),
                 snapshot.version(),
-                payload.append("]}").toString(),
+                WebSurfaceContent.chat(rows.stream().map(ProjectedRow::content).toList(), snapshot.hasEarlier()),
                 Map.copyOf(targets),
                 Map.copyOf(links));
     }
@@ -94,7 +111,8 @@ final class ChatProjectionRenderer {
         List<TemporaryMessage> temporary = snapshot.temporary().stream()
                 .filter(item -> !committed.contains(item.id()) && !item.text().isEmpty())
                 .toList();
-        int skipped = Math.max(0, snapshot.items().size() + snapshot.summaries().size() + temporary.size() - 500);
+        int capacity = snapshot.outgoing().isPresent() ? 499 : 500;
+        int skipped = Math.max(0, snapshot.items().size() + snapshot.summaries().size() + temporary.size() - capacity);
         int items = Math.min(skipped, snapshot.items().size());
         skipped -= items;
         int summaries = Math.min(skipped, snapshot.summaries().size());
@@ -232,7 +250,10 @@ final class ChatProjectionRenderer {
         String version = encoded.sha256() + ":"
                 + json.encode(Map.of("documents", references, "links", links)).sha256();
         String serialized = "{\"version\":\"" + version + "\"," + encoded.json().substring(1);
-        return new ProjectedRow(serialized, Map.copyOf(references), Map.copyOf(links));
+        return new ProjectedRow(
+                new WebSurfaceContent.Row((String) values.get("id"), version, serialized),
+                Map.copyOf(references),
+                Map.copyOf(links));
     }
 
     private ProjectedRow remember(String key, Object source, long generation, ProjectedRow row, long sourceBytes) {
@@ -352,27 +373,46 @@ final class ChatProjectionRenderer {
         for (TemporaryMessage temporary : temporaryMessages) {
             requireCurrent(current);
             String html = activeMarkdown(temporary);
-            messages.add(row(
-                    Map.of(
-                            "id",
-                            temporary.id(),
-                            "title",
-                            temporary.incomplete() ? "ASSISTANT · 未完成" : "ASSISTANT",
-                            "style",
-                            "message-assistant",
-                            "text",
-                            temporary.textOffsetUtf16() > 0 && temporary.text().length() <= 32_768
-                                    ? "[正文较长；显示末尾，完成后可打开全文]\n" + temporary.text()
-                                    : tail(temporary.text()),
-                            "html",
-                            html,
-                            "references",
-                            List.of(),
-                            "streaming",
-                            true),
-                    Map.of(),
-                    Map.of()));
+            Map<String, Object> values = new LinkedHashMap<>();
+            values.put("id", temporary.id());
+            values.put("title", temporary.incomplete() ? "助手 · 未完成" : "助手");
+            values.put("style", "message-assistant");
+            values.put(
+                    "text",
+                    temporary.textOffsetUtf16() > 0 && temporary.text().length() <= 32_768
+                            ? "[正文较长；显示末尾，完成后可打开全文]\n" + temporary.text()
+                            : tail(temporary.text()));
+            values.put("html", html);
+            values.put("references", List.of());
+            values.put("streaming", true);
+            if (!html.isEmpty()) {
+                values.put("streamHtml", activeHtml);
+                values.put("streamSuffix", temporary.text().substring(activeText.length()));
+            }
+            messages.add(row(values, Map.of(), Map.of()));
         }
+    }
+
+    private ProjectedRow outgoing(OutgoingMessage message) {
+        var presented = TranscriptPresenter.presentOutgoing(message);
+        String text = presented.body();
+        int limit = Math.min(65_536, text.length());
+        if (limit < text.length() && Character.isLowSurrogate(text.charAt(limit))) {
+            limit--;
+        }
+        return row(
+                Map.of(
+                        "id", message.id(),
+                        "title", presented.title(),
+                        "style", presented.styleClass(),
+                        "text", text.substring(0, limit) + (limit < text.length() ? "\n[消息较长；确认后可查看完整消息]" : ""),
+                        "html", "",
+                        "references", List.of(),
+                        "streaming", false,
+                        "outgoing", message.status().name(),
+                        "sendAttempt", message.attempt()),
+                Map.of(),
+                Map.of());
     }
 
     private String activeMarkdown(TemporaryMessage message) {
@@ -382,7 +422,7 @@ final class ChatProjectionRenderer {
             return "";
         }
         long now = System.nanoTime();
-        if (!activeId.equals(message.id()) || now - parsedAt >= 200_000_000L) {
+        if (!activeId.equals(message.id()) || now - parsedAt >= 200_000_000L || joinsParsedGrapheme(message.text())) {
             activeId = message.id();
             activeHtml = new SafeMarkdown()
                     .render(message.text(), "active:", Map.of())
@@ -399,6 +439,33 @@ final class ChatProjectionRenderer {
                 ? activeHtml
                 : activeHtml + "<span class=\"plain\">"
                         + suffix.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") + "</span>";
+    }
+
+    /** 新片段若扩展已解析末簇，立即重新解析，避免把代理对、肤色或 ZWJ 组合拆在两个 DOM 区域。 */
+    private boolean joinsParsedGrapheme(String text) {
+        int boundary = activeText.length();
+        if (boundary == 0 || text.length() <= boundary || !text.startsWith(activeText)) {
+            return false;
+        }
+        int next = text.codePointAt(boundary);
+        int previous = text.codePointBefore(boundary);
+        int category = Character.getType(next);
+        boolean continuation = Character.isSurrogate(text.charAt(boundary))
+                || next == 0x200D
+                || previous == 0x200D
+                || category == Character.NON_SPACING_MARK
+                || category == Character.COMBINING_SPACING_MARK
+                || category == Character.ENCLOSING_MARK;
+        if (!continuation) {
+            return false;
+        }
+        var matcher = GRAPHEME.matcher(text);
+        while (matcher.find()) {
+            if (matcher.end() >= boundary) {
+                return matcher.end() > boundary;
+            }
+        }
+        return false;
     }
 
     private static String tail(String text) {
@@ -448,6 +515,7 @@ final class ChatProjectionRenderer {
      * @param temporary 非空的暂态正文列表
      * @param hasEarlier 是否还有更早历史
      * @param version 在页面实例内递增的请求版本，非时间戳
+     * @param outgoing 非空的本地用户发送状态，尚未进入持久历史时存在
      */
     record Snapshot(
             Scope scope,
@@ -455,23 +523,38 @@ final class ChatProjectionRenderer {
             List<ItemHistoryEntry> summaries,
             List<TemporaryMessage> temporary,
             boolean hasEarlier,
-            long version) {}
+            long version,
+            Optional<OutgoingMessage> outgoing) {
+        Snapshot(
+                Scope scope,
+                List<ItemEnvelope> items,
+                List<ItemHistoryEntry> summaries,
+                List<TemporaryMessage> temporary,
+                boolean hasEarlier,
+                long version) {
+            this(scope, items, summaries, temporary, hasEarlier, version, Optional.empty());
+        }
+    }
 
     /**
      * 一次完整投影；JSON 与引用映射必须同时提交，所有对象组件均非空。
      *
      * @param scope 输入的显示作用域
      * @param version 输入请求版本
-     * @param json 最终窗口的合法 JSON 对象
+     * @param content 最终窗口的不可变展示内容
      * @param references 窗口内文档动作及其精确目标
      * @param links 窗口内可打开的外部链接
      */
     record Rendered(
             Scope scope,
             long version,
-            String json,
+            WebSurfaceContent content,
             Map<String, DocumentReference> references,
-            Map<String, URI> links) {}
+            Map<String, URI> links) {
+        String json() {
+            return content.fullPayload();
+        }
+    }
 
     /**
      * 缓存诊断计数。
@@ -486,8 +569,13 @@ final class ChatProjectionRenderer {
     private record Window(
             List<ItemEnvelope> items, List<ItemHistoryEntry> summaries, List<TemporaryMessage> temporary) {}
 
-    /** json 是单行消息的合法 JSON；references 与 links 是其非空、不可变的精确动作映射。 */
-    private record ProjectedRow(String json, Map<String, DocumentReference> references, Map<String, URI> links) {}
+    /** content 是单行编码内容；references 与 links 是其非空、不可变的精确动作映射。 */
+    private record ProjectedRow(
+            WebSurfaceContent.Row content, Map<String, DocumentReference> references, Map<String, URI> links) {
+        private String json() {
+            return content.json();
+        }
+    }
 
     /** source 为非空原始事实，generation 为工具关联代次，row 为非空投影，bytes 为估算缓存字节数。 */
     private record CachedRow(Object source, long generation, ProjectedRow row, long bytes) {

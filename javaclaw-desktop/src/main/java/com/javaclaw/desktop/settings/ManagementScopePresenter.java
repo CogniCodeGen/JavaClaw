@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
 import com.javaclaw.api.Workspace;
@@ -13,13 +14,21 @@ import com.javaclaw.api.WorkspaceLifecycle;
 
 /** 读取并固定设置中心 Workspace；不持有 JavaFX 控件。 */
 final class ManagementScopePresenter {
+    private final SettingsCacheFreshness freshness;
     private final CoreSettingsGateway gateway;
     private final Supplier<Optional<WorkspaceId>> preferredWorkspace;
     private Consumer<ManagementScopeState> listener = ignored -> {};
     private ManagementScopeState state = ManagementScopeState.initial();
     private boolean refreshPending;
+    private boolean suspended;
 
     ManagementScopePresenter(CoreSettingsGateway gateway, Supplier<Optional<WorkspaceId>> preferredWorkspace) {
+        this(gateway, preferredWorkspace, System::nanoTime);
+    }
+
+    ManagementScopePresenter(
+            CoreSettingsGateway gateway, Supplier<Optional<WorkspaceId>> preferredWorkspace, LongSupplier nanoTime) {
+        freshness = new SettingsCacheFreshness(nanoTime);
         this.gateway = Objects.requireNonNull(gateway, "gateway");
         this.preferredWorkspace = Objects.requireNonNull(preferredWorkspace, "preferredWorkspace");
     }
@@ -29,7 +38,31 @@ final class ManagementScopePresenter {
         listener.accept(state);
     }
 
+    /** 仅复用成功目录；使用单调时钟按需过期，不在空闲时轮询。 */
+    void activate() {
+        suspended = false;
+        if (state.loading()) {
+            return;
+        }
+        if (freshness.fresh() && state.phase() == SettingsLoadState.READY) {
+            return;
+        }
+        reload();
+    }
+
+    void deactivate() {
+        suspended = true;
+    }
+
+    void invalidate() {
+        freshness.invalidate();
+        if (state.loading()) {
+            refreshPending = true;
+        }
+    }
+
     void reload() {
+        freshness.invalidate();
         refreshPending = false;
         long epoch = state.epoch() + 1;
         publish(new ManagementScopeState(
@@ -39,6 +72,7 @@ final class ManagementScopePresenter {
 
     /** 合并在途自动刷新；当前读取结束后至少再取一次权威目录。 */
     void refresh() {
+        invalidate();
         if (state.loading()) {
             refreshPending = true;
             return;
@@ -83,6 +117,9 @@ final class ManagementScopePresenter {
                 .sorted(Comparator.comparing(Workspace::name)
                         .thenComparing(workspace -> workspace.id().value()))
                 .toList();
+        if (!refreshPending) {
+            freshness.markFresh();
+        }
         Optional<Workspace> selected = retainSelection(active);
         publish(new ManagementScopeState(
                 SettingsLoadState.READY, active, selected, selectionMessage(active, selected), epoch));
@@ -90,7 +127,7 @@ final class ManagementScopePresenter {
     }
 
     private void refreshAgain() {
-        if (refreshPending) {
+        if (refreshPending && !suspended) {
             reload();
         }
     }

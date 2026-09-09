@@ -56,6 +56,7 @@ public final class DocumentPreviewPane extends VBox implements AutoCloseable {
     private boolean busy;
     private Renewal renewal;
     private long lastRenewed;
+    private Runnable closedAction = () -> {};
 
     /**
      * 创建可复用面板；调用者在 Workspace 或连接改变时调用 clear。
@@ -83,7 +84,10 @@ public final class DocumentPreviewPane extends VBox implements AutoCloseable {
         next.setOnAction(event -> page(true));
         reload.setOnAction(event -> openRoute(route));
         simple.setOnAction(event -> surface.useFallback());
-        close.setOnAction(event -> clear());
+        close.setOnAction(event -> {
+            clear();
+            closedAction.run();
+        });
         FlowPane actions = new FlowPane(4, 4, previous, next, reload, simple, close);
         // 窄侧栏按原控件样式换行，不能把操作名称压成省略号。
         actions.getChildren().forEach(node -> ((Button) node).setMinWidth(Region.USE_PREF_SIZE));
@@ -103,6 +107,15 @@ public final class DocumentPreviewPane extends VBox implements AutoCloseable {
             return;
         }
         openRoute(new DocumentPreviewRoute(source, java.util.List.of()));
+    }
+
+    /**
+     * 注册用户关闭预览后的壳动作；内部失效与作用域切换只清理内容，不触发导航。
+     *
+     * @param action 用户明确关闭后执行的动作，不可为 null
+     */
+    public void onClosed(Runnable action) {
+        closedAction = java.util.Objects.requireNonNull(action, "action");
     }
 
     private void openRoute(DocumentPreviewRoute target) {

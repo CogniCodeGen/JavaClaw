@@ -10,6 +10,7 @@ import com.javaclaw.api.ItemHistoryEntry;
 import com.javaclaw.api.MessageRole;
 import com.javaclaw.client.extension.CodingToolResultIndex;
 import com.javaclaw.client.extension.CodingTranscriptFormatter;
+import com.javaclaw.desktop.state.OutgoingMessage;
 import com.javaclaw.protocol.CanonicalJson;
 
 /** 按 Core 与 Coding 版本化 schema 呈现 Transcript；未知扩展 payload 原样保留但不执行。 */
@@ -76,7 +77,7 @@ public final class TranscriptPresenter {
                         case ASSISTANT -> "message-assistant";
                         case SYSTEM, TOOL -> "transcript-execution-block";
                     };
-            return new PresentedItem(role.name(), entry.summary(), style);
+            return new PresentedItem(roleLabel(role), entry.summary(), style);
         }
         String style =
                 switch (entry.kind()) {
@@ -89,6 +90,31 @@ public final class TranscriptPresenter {
                 ? new PresentedItem(entry.kind(), entry.summary(), style)
                 : new PresentedItem(
                         entry.summary().substring(0, newline), entry.summary().substring(newline + 1), style);
+    }
+
+    private static String roleLabel(MessageRole role) {
+        return switch (role) {
+            case USER -> "你";
+            case ASSISTANT -> "助手";
+            case SYSTEM -> "系统";
+            case TOOL -> "工具";
+        };
+    }
+
+    /**
+     * 呈现尚未被权威历史接替的本地用户消息，不将回执丢失解释为发送成功或确定失败。
+     *
+     * @param message 当前会话的非空发送状态
+     * @return 保留原文、用户样式和确认状态的纯文本展示
+     */
+    public static PresentedItem presentOutgoing(OutgoingMessage message) {
+        String status =
+                switch (message.status()) {
+                    case SENDING -> "正在发送…";
+                    case ACCEPTED -> "已发送";
+                    case UNCONFIRMED -> "发送未确认";
+                };
+        return new PresentedItem("你 · " + status, message.text(), "message-user");
     }
 
     private PresentedItem fallback(ItemEnvelope item) {
@@ -104,7 +130,7 @@ public final class TranscriptPresenter {
                     case ASSISTANT -> "message-assistant";
                     case SYSTEM, TOOL -> "transcript-execution-block";
                 };
-        return new PresentedItem(payload.role().name(), payload.text(), style);
+        return new PresentedItem(roleLabel(payload.role()), payload.text(), style);
     }
 
     private PresentedItem toolCall(ItemEnvelope item) {

@@ -68,6 +68,7 @@ class ProviderVerificationPageTest {
                             assertSame(fixture.owner.orElseThrow(), ((Stage) dialog).getOwner());
                             dialog.addEventHandler(WindowEvent.WINDOW_HIDING, event -> {
                                 refreshTriggered.set(true);
+                                fixture.page.invalidateCache();
                                 fixture.page.activate();
                             });
                         },
@@ -103,9 +104,10 @@ class ProviderVerificationPageTest {
                 fixture.gateway.nextProviderRead = refreshedCatalog;
                 fixture.confirmAndSend(ProviderModelPurpose.CHAT, dialog -> {
                     assertSame(fixture.owner.orElseThrow(), ((Stage) dialog).getOwner());
-                    // 模拟所属窗口恢复焦点时的刷新，不依赖操作系统的实际焦点调度。
+                    // 模拟缓存失效后所属窗口恢复显示的刷新，不依赖操作系统的实际焦点调度。
                     dialog.addEventHandler(WindowEvent.WINDOW_HIDING, event -> {
                         refreshTriggered.set(true);
+                        fixture.page.invalidateCache();
                         fixture.page.activate();
                     });
                 });

@@ -1,0 +1,101 @@
+{
+  "commands": [
+    "mvn spotless:apply",
+    "mvn spotless:check checkstyle:check verify",
+    "mvn spotless:check checkstyle:check verify -rf :javaclaw-desktop",
+    "mvn -pl javaclaw-desktop spotless:apply spotless:check checkstyle:check test -Dtest=DesktopChatLayoutTest"
+  ],
+  "gate": "上游完整 verify 通过；桌面修复后续跑完整 verify 成功，最后测试夹具复核通过",
+  "totals": {
+    "tests": 2872,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 25
+  },
+  "modules": {
+    "javaclaw-protocol": {
+      "tests": 156,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-knowledge-worker": {
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-browser-service": {
+      "tests": 55,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-packaging": {
+      "tests": 97,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 2
+    },
+    "javaclaw-extension-spi": {
+      "tests": 68,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-agent-runtime": {
+      "tests": 42,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-api": {
+      "tests": 106,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-desktop": {
+      "tests": 587,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-builtin-extensions": {
+      "tests": 219,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-client": {
+      "tests": 124,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-builtin-contracts": {
+      "tests": 66,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-model-adapters": {
+      "tests": 63,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-native-hosts": {
+      "tests": 214,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 17
+    },
+    "javaclaw-app-server": {
+      "tests": 1066,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 6
+    }
+  }
+}

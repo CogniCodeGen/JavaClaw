@@ -4,8 +4,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.BiConsumer;
 
-import javafx.animation.KeyFrame;
-import javafx.animation.Timeline;
+import javafx.animation.Animation;
+import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.concurrent.Worker;
 import javafx.scene.Node;
@@ -41,19 +41,27 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
     private final Label status = new Label("正在准备显示…");
     private final VBox feedback = new VBox(8);
     private final ContextMenu recoveryMenu = new ContextMenu();
-    private final Timeline pulse;
+    private final PauseTransition pulse = new PauseTransition();
+    private final WebSurfaceVisibility visibility;
     private WebView web;
     private WebSurfaceBridge bridge;
+    private WebEmojiSupport emoji;
     private String context = "empty";
-    private String payload = "{}";
+    private WebSurfaceContent content = WebSurfaceContent.serialized("{}");
+    private BiConsumer<String, String> desiredActions;
+    private boolean desiredActionsBound;
+    private Submission submitted;
     // 仅保存同一上下文的有界阅读锚点；不包含正文、SDK 句柄或可执行代码。
     private String viewState = "";
     private long revision;
     private long applied = -1;
-    private long submitted = -1;
     private long generation;
     private long pendingSince;
-    private long lastPulse;
+    private long scheduledAt;
+    private long hiddenAt;
+    private long lastSubmitted;
+    private boolean themeDirty = true;
+    private boolean forceFull;
     private int recoveries;
     private boolean ready;
     private boolean closed;
@@ -76,6 +84,7 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
         this.kind = kind;
         this.fallback = Objects.requireNonNull(fallback, "fallback");
         this.actions = Objects.requireNonNull(actions, "actions");
+        desiredActions = actions;
         getStyleClass().add("web-surface-host");
         PlatformComponentFactory components = new PlatformComponentFactory();
         Button retry = components.action("重试显示", ActionStyle.GHOST, ActionSize.COMPACT);
@@ -86,11 +95,15 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
         feedback.getStyleClass().add("platform-feedback");
         feedback.getChildren().addAll(status, retry, simple);
         getChildren().addAll(fallback, feedback, theme);
-        fallback.setVisible(false);
+        visible(fallback, false);
         installRecoveryMenu();
-        pulse = new Timeline(new KeyFrame(Duration.millis(50), event -> tick()));
-        pulse.setCycleCount(Timeline.INDEFINITE);
-        pulse.play();
+        pulse.setOnFinished(event -> tick());
+        visibility = new WebSurfaceVisibility(this, this::schedule);
+        theme.onChange(() -> {
+            themeDirty = true;
+            schedule();
+        });
+        visibility.watch();
     }
 
     private void installRecoveryMenu() {
@@ -118,33 +131,56 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
     /**
      * 合并最新展示；允许跳过中间绘制，不允许调用方跳过业务事件归并。
      *
+     * <p>原有回调可能读取调用方当前状态；等待新内容提交期间继续拒绝旧版本动作，避免用新映射解释旧 DOM。
+     *
      * @param identity 当前会话、文档或图谱身份
      * @param serialized 已在后台序列化的 JSON 对象
      */
     public void show(String identity, String serialized) {
+        show(identity, WebSurfaceContent.serialized(serialized), actions, false);
+    }
+
+    /**
+     * 合并后台聊天投影；动作解析器和内容一起保留，只有实际提交的映射可以响应当前 DOM。
+     *
+     * @param identity 当前显示作用域，非空
+     * @param next 后台产生的不可变内容，非空
+     * @param snapshotActions 只解析这份投影精确引用的动作接收器，非空
+     */
+    public void show(String identity, WebSurfaceContent next, BiConsumer<String, String> snapshotActions) {
+        show(identity, next, snapshotActions, true);
+    }
+
+    private void show(
+            String identity, WebSurfaceContent next, BiConsumer<String, String> snapshotActions, boolean actionsBound) {
         requireFx();
         if (closed) {
             return;
         }
         String checked = Objects.requireNonNull(identity, "identity");
-        String data = Objects.requireNonNull(serialized, "serialized");
-        if (context.equals(checked) && payload.equals(data)) {
+        Objects.requireNonNull(next, "next");
+        Objects.requireNonNull(snapshotActions, "snapshotActions");
+        if (context.equals(checked) && content.sameAs(next)) {
             return;
         }
         if (!context.equals(checked)) {
             viewState = "";
+            submitted = null;
             if (web != null) {
                 web.setVisible(false);
             }
-            fallback.setVisible(simplified);
-            feedback.setVisible(!simplified);
+            visible(fallback, simplified);
+            visible(feedback, !simplified);
             pendingSince = 0;
             applied = -1;
         }
         context = checked;
-        payload = data;
+        content = next;
+        desiredActions = snapshotActions;
+        desiredActionsBound = actionsBound;
         revision++;
         pending = true;
+        schedule();
     }
 
     /** 切换为同一 Java 展示状态的原生简版，不重新发送消息或业务命令。 */
@@ -152,8 +188,9 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
         requireFx();
         simplified = true;
         dropWeb();
-        fallback.setVisible(true);
-        feedback.setVisible(false);
+        visible(fallback, true);
+        visible(feedback, false);
+        schedule();
     }
 
     /** 显式重试页面，保留当前数据和上下文；重新允许一次自动恢复。 */
@@ -163,8 +200,9 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
             simplified = false;
             recoveries = 0;
             dropWeb();
-            feedback.setVisible(true);
+            visible(feedback, true);
             status.setText("正在恢复显示…");
+            schedule();
         }
     }
 
@@ -176,7 +214,7 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
             suspended = true;
             pulse.stop();
             dropWeb();
-            feedback.setVisible(!simplified);
+            visible(feedback, !simplified);
             status.setText("正在恢复显示…");
         }
     }
@@ -186,8 +224,7 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
         requireFx();
         if (!closed && suspended) {
             suspended = false;
-            lastPulse = 0;
-            pulse.play();
+            schedule();
         }
     }
 
@@ -201,20 +238,56 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
         return generation;
     }
 
+    boolean wakeScheduled() {
+        return pulse.getStatus() == Animation.Status.RUNNING;
+    }
+
     private void tick() {
+        scheduledAt = 0;
+        if (!closed && !simplified && !suspended && actuallyVisible()) {
+            tickVisible(System.nanoTime());
+        }
+        schedule();
+    }
+
+    private void schedule() {
         long now = System.nanoTime();
-        long elapsed = lastPulse == 0 ? 0 : now - lastPulse;
-        lastPulse = now;
-        if (closed || simplified) {
-            return;
-        }
-        if (!actuallyVisible()) {
-            if (pendingSince != 0) {
-                pendingSince += elapsed;
+        if (closed || suspended || simplified || !actuallyVisible()) {
+            if (hiddenAt == 0) {
+                hiddenAt = now;
             }
+            pulse.stop();
+            scheduledAt = 0;
             return;
         }
-        tickVisible(now);
+        if (hiddenAt != 0) {
+            if (pendingSince != 0) {
+                pendingSince += now - hiddenAt;
+            }
+            hiddenAt = 0;
+        }
+        long due = nextWake(now);
+        if (due == 0) {
+            pulse.stop();
+            scheduledAt = 0;
+        } else if (scheduledAt == 0 || due < scheduledAt || pulse.getStatus() != Animation.Status.RUNNING) {
+            scheduledAt = due;
+            pulse.setDuration(Duration.millis(Math.max(1, (due - now) / 1_000_000.0)));
+            pulse.playFromStart();
+        }
+    }
+
+    private long nextWake(long now) {
+        if (web == null) {
+            return now + 50_000_000L;
+        }
+        if (pendingSince != 0) {
+            return pendingSince + TIMEOUT_NANOS + 1;
+        }
+        if (ready && (pending || themeDirty)) {
+            return Math.max(now + 1_000_000L, lastSubmitted + 50_000_000L);
+        }
+        return 0;
     }
 
     private void tickVisible(long now) {
@@ -224,7 +297,9 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
             fail("页面未及时确认显示");
         } else if (ready) {
             try {
-                applyTheme();
+                if (themeDirty) {
+                    applyTheme();
+                }
                 if (pending && pendingSince == 0) {
                     applySnapshot(now);
                 }
@@ -235,24 +310,13 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
     }
 
     private boolean actuallyVisible() {
-        if (getScene() == null
-                || getScene().getWindow() == null
-                || !getScene().getWindow().isShowing()
-                || getWidth() <= 0
-                || getHeight() <= 0) {
-            return false;
-        }
-        for (Node node = this; node != null; node = node.getParent()) {
-            if (!node.isVisible()) {
-                return false;
-            }
-        }
-        return true;
+        return visibility != null && visibility.visible();
     }
 
     private void createWeb(long now) {
         try {
             web = new WebView();
+            emoji = WebEmojiSupport.supported() ? new WebEmojiSupport() : null;
             // 必须在首次 load 前绑定进程目录；默认 java/webview 会被其他 JavaFX 进程独占。
             web.getEngine().setUserDataDirectory(WebSurfaceRuntime.directory().toFile());
             web.setContextMenuEnabled(false);
@@ -282,7 +346,9 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
             try {
                 bridge = new WebSurfaceBridge(this::receive);
                 ((JSObject) web.getEngine().executeScript("window")).setMember("javaClawBridge", bridge);
-                web.getEngine().executeScript("window.JavaClawSurface.bootstrap(" + generation + ")");
+                web.getEngine()
+                        .executeScript("window.JavaClawSurface.bootstrap(" + generation + ','
+                                + WebEmojiSupport.supported() + ")");
             } catch (RuntimeException failure) {
                 fail("页面初始化失败");
             }
@@ -297,10 +363,7 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
             if (!currentGeneration(incoming)) {
                 return;
             }
-            if (incoming.action().equals("ready")) {
-                ready = true;
-                pendingSince = 0;
-                pending = true;
+            if (acceptHostMessage(incoming)) {
                 return;
             }
             if (!context.equals(incoming.context())) {
@@ -309,17 +372,18 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
             if (acceptViewState(incoming)) {
                 return;
             }
-            if (incoming.action().equals("ack") && incoming.revision() == submitted) {
-                applied = submitted;
+            if (incoming.action().equals("ack") && matchesSubmitted(incoming)) {
+                applied = submitted.revision();
                 pendingSince = 0;
                 web.setVisible(true);
-                fallback.setVisible(false);
-                feedback.setVisible(false);
+                visible(fallback, false);
+                visible(feedback, false);
+                schedule();
             } else if (actuallyVisible()
-                    && incoming.revision() == revision
+                    && acceptsAction(incoming)
                     && java.util.Set.of("link", "preview", "copy", "history", "following", "select")
                             .contains(incoming.action())) {
-                actions.accept(incoming.action(), incoming.value());
+                submitted.actions().accept(incoming.action(), incoming.value());
             } else if (incoming.action().equals("error")) {
                 fail("页面内容无法显示");
             }
@@ -332,10 +396,51 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
         return !closed && incoming.generation() == generation;
     }
 
+    private boolean acceptHostMessage(Message incoming) {
+        if (incoming.action().equals("emoji")) {
+            requestEmoji(incoming);
+            return true;
+        }
+        if (incoming.action().equals("ready")) {
+            ready = true;
+            pendingSince = 0;
+            pending = true;
+            schedule();
+            return true;
+        }
+        return false;
+    }
+
+    /** 字形不含业务引用；同一页面内可跨正文版本复用，旧页面的后台结果必须丢弃。 */
+    private void requestEmoji(Message incoming) {
+        if (emoji == null || !ready || kind.equals("graph")) {
+            return;
+        }
+        WebView target = web;
+        long expected = generation;
+        emoji.request(incoming.value(), result -> {
+            if (!closed && expected == generation && target == web) {
+                try {
+                    target.getEngine().executeScript("window.JavaClawEmoji.install(" + result + ')');
+                } catch (RuntimeException unavailable) {
+                    // 页面释放或恢复期间的字形回执不可升级成业务失败。
+                }
+            }
+        });
+    }
+
+    private boolean matchesSubmitted(Message incoming) {
+        return submitted != null && submitted.revision() == incoming.revision();
+    }
+
+    private boolean acceptsAction(Message incoming) {
+        return matchesSubmitted(incoming) && (submitted.actionsBound() || incoming.revision() == revision);
+    }
+
     private boolean acceptViewState(Message incoming) {
         if (incoming.action().equals("viewState")
                 && kind.equals("chat")
-                && incoming.revision() == revision
+                && matchesSubmitted(incoming)
                 && incoming.value().length() <= 2048) {
             viewState = incoming.value();
             return true;
@@ -344,21 +449,42 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
     }
 
     private void applySnapshot(long now) {
+        Submission previous = submitted;
+        Submission candidate = new Submission(revision, content, desiredActions, desiredActionsBound);
+        WebSurfaceContent baseline = previous == null || forceFull ? null : previous.content();
+        long baseRevision = previous == null ? -1 : previous.revision();
+        String payload = content.payload(baseline, baseRevision);
         pending = false;
         pendingSince = now;
-        submitted = revision;
+        lastSubmitted = now;
+        // apply 同步修改 DOM；ack 晚两帧，仅用于背压。期间的动作必须使用 candidate 的精确引用映射。
+        submitted = candidate;
+        long expectedGeneration = generation;
         try {
             String identity = "(" + json.encode(Map.of("value", context)).json() + ").value";
             String restore = "(" + json.encode(Map.of("value", viewState)).json() + ").value";
-            web.getEngine()
+            Object accepted = web.getEngine()
                     .executeScript("window.JavaClawSurface.apply(" + identity + ',' + revision + ',' + payload + ','
                             + restore + ')');
+            if (generation == expectedGeneration && Boolean.FALSE.equals(accepted)) {
+                submitted = previous;
+                pending = true;
+                pendingSince = 0;
+                if (forceFull) {
+                    fail("页面快照无法恢复");
+                } else {
+                    forceFull = true;
+                }
+            } else if (generation == expectedGeneration) {
+                forceFull = false;
+            }
         } catch (RuntimeException failure) {
             fail("页面内容无法显示");
         }
     }
 
     private void applyTheme() {
+        themeDirty = false;
         Map<String, String> values = theme.values();
         if (!values.equals(lastTheme)) {
             lastTheme = values;
@@ -376,19 +502,27 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
         status.setText(detail);
         if (recoveries++ == 0) {
             dropWeb();
-            feedback.setVisible(true);
+            visible(feedback, true);
         } else {
             useFallback();
         }
+        schedule();
     }
 
     private void dropWeb() {
+        if (emoji != null) {
+            emoji.close();
+            emoji = null;
+        }
         generation++;
         ready = false;
         pending = true;
         pendingSince = 0;
         applied = -1;
+        submitted = null;
+        forceFull = false;
         bridge = null;
+        themeDirty = true;
         lastTheme = Map.of();
         WebView previous = web;
         web = null;
@@ -398,6 +532,15 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
             getChildren().remove(previous);
         }
     }
+
+    private static void visible(Node node, boolean value) {
+        node.setVisible(value);
+        node.setManaged(value);
+    }
+
+    /** revision 是已提交绘制版本；content 和 actions 均非空，actionsBound 表示动作映射随快照冻结，不另存历史版本。 */
+    private record Submission(
+            long revision, WebSurfaceContent content, BiConsumer<String, String> actions, boolean actionsBound) {}
 
     private static void requireFx() {
         if (!Platform.isFxApplicationThread()) {
@@ -412,6 +555,7 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
         closed = true;
         recoveryMenu.hide();
         pulse.stop();
+        visibility.close();
         dropWeb();
     }
 

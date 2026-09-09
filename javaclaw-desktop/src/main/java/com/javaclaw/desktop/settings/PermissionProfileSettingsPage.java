@@ -120,6 +120,11 @@ public final class PermissionProfileSettingsPage implements ManagedSettingsPage 
     }
 
     @Override
+    public void invalidateCache() {
+        configurationRefresh.invalidate();
+    }
+
+    @Override
     public void deactivate() {
         configurationRefresh.deactivate();
     }

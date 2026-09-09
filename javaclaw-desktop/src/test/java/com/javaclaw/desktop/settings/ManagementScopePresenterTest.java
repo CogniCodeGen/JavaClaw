@@ -1,9 +1,11 @@
 package com.javaclaw.desktop.settings;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
@@ -19,6 +21,65 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ManagementScopePresenterTest {
+    @Test
+    void 隐藏后在途响应不触发补读且失效保留到下次打开() {
+        TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
+        ManagementScopePresenter presenter = new ManagementScopePresenter(gateway, Optional::empty);
+        CompletableFuture<List<Workspace>> pending = new CompletableFuture<>();
+        gateway.workspaceSettings.nextResponse = pending;
+        presenter.activate();
+        presenter.invalidate();
+        presenter.deactivate();
+        pending.complete(List.copyOf(gateway.workspaceSettings.catalog));
+        assertEquals(1, gateway.workspaceSettings.reads);
+
+        presenter.activate();
+        assertEquals(2, gateway.workspaceSettings.reads);
+        presenter.activate();
+        assertEquals(2, gateway.workspaceSettings.reads);
+    }
+
+    @Test
+    void 激活复用成功目录并合并首次在途读取直到缓存过期() {
+        TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
+        AtomicLong time = new AtomicLong();
+        ManagementScopePresenter presenter = new ManagementScopePresenter(gateway, Optional::empty, time::get);
+        CompletableFuture<List<Workspace>> pending = new CompletableFuture<>();
+        gateway.workspaceSettings.nextResponse = pending;
+        presenter.activate();
+        presenter.activate();
+        assertEquals(1, gateway.workspaceSettings.reads);
+
+        pending.complete(List.copyOf(gateway.workspaceSettings.catalog));
+        presenter.activate();
+        time.set(Duration.ofMinutes(5).toNanos() - 1);
+        presenter.activate();
+        assertEquals(1, gateway.workspaceSettings.reads);
+
+        time.incrementAndGet();
+        presenter.activate();
+        assertEquals(2, gateway.workspaceSettings.reads);
+    }
+
+    @Test
+    void 隐藏失效不查询且下次激活重读失败结果不缓存() {
+        TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
+        ManagementScopePresenter presenter = new ManagementScopePresenter(gateway, Optional::empty);
+        presenter.activate();
+        presenter.invalidate();
+        assertEquals(1, gateway.workspaceSettings.reads);
+        gateway.workspaceSettings.nextResponse = CompletableFuture.failedFuture(new IllegalStateException("离线"));
+        presenter.activate();
+        assertEquals(SettingsLoadState.ERROR, presenter.state().phase());
+        assertEquals(2, gateway.workspaceSettings.reads);
+
+        presenter.activate();
+        assertEquals(SettingsLoadState.READY, presenter.state().phase());
+        assertEquals(3, gateway.workspaceSettings.reads);
+        presenter.activate();
+        assertEquals(3, gateway.workspaceSettings.reads);
+    }
+
     @Test
     void 自动目录失效在当前读取完成后合并补读() {
         TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();

@@ -125,7 +125,8 @@ final class DesktopTranscriptHistory {
                             true,
                             state.transcript().stream(),
                             latest.hasEarlier(),
-                            latest.history());
+                            latest.history(),
+                            state.transcript().outgoing());
                     return apply(state, selected, next);
                 });
             } catch (RuntimeException failure) {

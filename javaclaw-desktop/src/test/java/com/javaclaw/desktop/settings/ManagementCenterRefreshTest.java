@@ -51,6 +51,13 @@ class ManagementCenterRefreshTest {
                     center.show(owner, "appearance");
                     ComboBox<?> selector = selector();
                     assertEquals(1, selector.getItems().size());
+                    assertEquals(1, core.subscriptions, "打开外观页不能创建其他配置页的订阅");
+                    int initialReads = core.workspaceSettings.reads;
+                    center.close();
+                    center.show(owner, "appearance");
+                    center.show(owner, "providers");
+                    center.show(owner, "appearance");
+                    assertEquals(initialReads, core.workspaceSettings.reads, "有效目录在重开和切页时复用");
                     Workspace other = new Workspace(
                             WorkspaceId.parse("740a130c-806e-4c2d-a7c1-b636580f7429"),
                             "新增工作区",
@@ -102,6 +109,12 @@ class ManagementCenterRefreshTest {
 
         assertTrue(core.workspaceSettings.reads > before);
         assertEquals(renamed, selector.getValue());
+        center.close();
+        int beforeReconnect = core.workspaceSettings.reads;
+        center.refreshExecutionConfiguration();
+        assertEquals(beforeReconnect, core.workspaceSettings.reads, "隐藏重连只标记失效");
+        center.show(owner);
+        assertEquals(beforeReconnect + 1, core.workspaceSettings.reads, "重连后不能复用旧目录");
     }
 
     private static ManagementSettingsGateways gateways(
@@ -152,9 +165,11 @@ class ManagementCenterRefreshTest {
 
     private static final class EventGateway extends TestCoreSettingsGateway {
         private final DesktopConfigurationEvents events = new DesktopConfigurationEvents();
+        private int subscriptions;
 
         @Override
         public DesktopNotificationSubscription onConfigurationChanged(Consumer<DesktopConfigurationChange> listener) {
+            subscriptions++;
             return events.subscribe(listener);
         }
 

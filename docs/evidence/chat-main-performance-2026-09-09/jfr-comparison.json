@@ -1,0 +1,195 @@
+{
+  "baseline": "/tmp/javaclaw-chat-final-before/jfr-summary.json",
+  "current": "/tmp/javaclaw-chat-final-after/jfr-summary.json",
+  "aggregate": {
+    "baseline": {
+      "measuredSeconds": 34.760511,
+      "javaSamples": 168,
+      "nativeSamples": 279,
+      "fxJavaSamples": 60,
+      "fxNativeSamples": 135,
+      "layoutInclusiveJavaSamples": 13,
+      "executeScriptNativeSamples": 127,
+      "textureUploadNativeSamples": 73,
+      "gcCount": 19,
+      "gcPauseMs": 72.649956,
+      "gcMaxPauseMs": 11.54089,
+      "estimatedAllocationMiBPerSecond": 38.358
+    },
+    "current": {
+      "measuredSeconds": 33.599288,
+      "javaSamples": 154,
+      "nativeSamples": 248,
+      "fxJavaSamples": 51,
+      "fxNativeSamples": 110,
+      "layoutInclusiveJavaSamples": 8,
+      "executeScriptNativeSamples": 93,
+      "textureUploadNativeSamples": 87,
+      "gcCount": 3,
+      "gcPauseMs": 13.560057,
+      "gcMaxPauseMs": 5.503416,
+      "estimatedAllocationMiBPerSecond": 16.514
+    }
+  },
+  "metrics": [
+    {
+      "scenario": "short-idle",
+      "baseline": {
+        "inputQueueToLayoutP95Ms": 10.765625,
+        "activeCpuOneCorePercent": 43.41146515150389,
+        "idleCpuOneCorePercent": 11.29977303216705,
+        "pulseP95Ms": 9.327917,
+        "pulseMaxMs": 17.97925,
+        "mountedArticles": 2,
+        "visitedWindows": 1
+      },
+      "current": {
+        "inputQueueToLayoutP95Ms": 9.296542,
+        "activeCpuOneCorePercent": 30.713844600273017,
+        "idleCpuOneCorePercent": 14.866434471397664,
+        "pulseP95Ms": 9.280125,
+        "pulseMaxMs": 17.409708,
+        "mountedArticles": 2,
+        "visitedWindows": 0
+      }
+    },
+    {
+      "scenario": "markdown-32-20hz",
+      "baseline": {
+        "inputQueueToLayoutP95Ms": 20.627917,
+        "activeCpuOneCorePercent": 85.10373965809066,
+        "idleCpuOneCorePercent": 13.238420472217667,
+        "pulseP95Ms": 16.680792,
+        "pulseMaxMs": 17.950833,
+        "mountedArticles": 33,
+        "visitedWindows": 1
+      },
+      "current": {
+        "inputQueueToLayoutP95Ms": 16.23875,
+        "activeCpuOneCorePercent": 79.29283435228778,
+        "idleCpuOneCorePercent": 9.838825515822705,
+        "pulseP95Ms": 16.688375,
+        "pulseMaxMs": 27.708708,
+        "mountedArticles": 33,
+        "visitedWindows": 1
+      }
+    },
+    {
+      "scenario": "history-500-20hz",
+      "baseline": {
+        "inputQueueToLayoutP95Ms": 20.182958,
+        "activeCpuOneCorePercent": 71.58353561780862,
+        "idleCpuOneCorePercent": 10.652612275997795,
+        "pulseP95Ms": 16.694625,
+        "pulseMaxMs": 24.57475,
+        "mountedArticles": 33,
+        "visitedWindows": 2
+      },
+      "current": {
+        "inputQueueToLayoutP95Ms": 18.707833,
+        "activeCpuOneCorePercent": 66.15653240441158,
+        "idleCpuOneCorePercent": 12.466588424941477,
+        "pulseP95Ms": 16.677583,
+        "pulseMaxMs": 17.580542,
+        "mountedArticles": 128,
+        "visitedWindows": 1
+      }
+    },
+    {
+      "scenario": "code-32-60hz",
+      "baseline": {
+        "inputQueueToLayoutP95Ms": 16.395875,
+        "activeCpuOneCorePercent": 72.61460008528735,
+        "idleCpuOneCorePercent": 8.62109174823784,
+        "pulseP95Ms": 16.735166,
+        "pulseMaxMs": 25.093708,
+        "mountedArticles": 33,
+        "visitedWindows": 1
+      },
+      "current": {
+        "inputQueueToLayoutP95Ms": 20.288458,
+        "activeCpuOneCorePercent": 71.56730371515307,
+        "idleCpuOneCorePercent": 10.010582150003025,
+        "pulseP95Ms": 16.696625,
+        "pulseMaxMs": 25.108125,
+        "mountedArticles": 33,
+        "visitedWindows": 1
+      }
+    },
+    {
+      "scenario": "history-500-60hz",
+      "baseline": {
+        "inputQueueToLayoutP95Ms": 17.89,
+        "activeCpuOneCorePercent": 73.80753625341019,
+        "idleCpuOneCorePercent": 7.828147804947184,
+        "pulseP95Ms": 16.695292,
+        "pulseMaxMs": 28.25625,
+        "mountedArticles": 33,
+        "visitedWindows": 2
+      },
+      "current": {
+        "inputQueueToLayoutP95Ms": 18.950084,
+        "activeCpuOneCorePercent": 75.15712218135543,
+        "idleCpuOneCorePercent": 10.770198099110083,
+        "pulseP95Ms": 16.701416,
+        "pulseMaxMs": 25.05825,
+        "mountedArticles": 128,
+        "visitedWindows": 1
+      }
+    },
+    {
+      "scenario": "history-500-traverse",
+      "baseline": {
+        "inputQueueToLayoutP95Ms": 9.364667,
+        "activeCpuOneCorePercent": 46.07193179694087,
+        "idleCpuOneCorePercent": 6.85397055462162,
+        "pulseP95Ms": 9.105041,
+        "pulseMaxMs": 16.656959,
+        "mountedArticles": 128,
+        "visitedWindows": 3
+      },
+      "current": {
+        "inputQueueToLayoutP95Ms": 9.725958,
+        "activeCpuOneCorePercent": 48.2899792764634,
+        "idleCpuOneCorePercent": 6.009284352320935,
+        "pulseP95Ms": 9.062958,
+        "pulseMaxMs": 16.809459,
+        "mountedArticles": 128,
+        "visitedWindows": 5
+      }
+    }
+  ],
+  "findings": [
+    "这是单轮本机阶段过滤结果；GC、分配估计与调用栈只表示此轮观察，不能外推稳定提升百分比或跨平台结果。",
+    "ExecutionSample、NativeMethodSample 计数分开报告；inclusive 分类可重叠，采样率不是 CPU 占比。",
+    "ObjectAllocationSample.weight 是统计估计；topFirstApplicationFrameByWeight 是最靠近分配点的应用帧归因，不是方法保留堆大小。",
+    "Prism/Marlin、WebKit native 边界不能进一步解释为 GPU、JavaScript、DOM layout 的精确耗时；普通 profile 的 PulsePhase 没有启用，阶段时长由另一次相同开关的 PulsePhase 专用对照记录。",
+    "500条流式场景末尾 DOM 数及 visitedWindows 分别列出；稳定缓冲窗口与频繁缩到尾部的窗口策略承载工作量不同，必须和操作行为一起解释。",
+    "最终夹具将空 coding 输出目录视为合法响应，避免旧夹具错误状态干扰。本报告替代此前 accepted 目录的性能结论。"
+  ],
+  "pulsePhaseDiagnosis": {
+    "reason": "JFR事件默认@Enabled(false)，不是平台不支持；profile.jfc未启用这两个第三方事件。",
+    "sourceArchive": "/Users/fengs/.m2/repository/org/openjfx/javafx-base/26.0.2/javafx-base-26.0.2-sources.jar",
+    "sourceFiles": [
+      "com/sun/javafx/logging/jfr/JFRPulsePhaseEvent.java",
+      "com/sun/javafx/logging/jfr/JFRInputEvent.java",
+      "com/sun/javafx/logging/jfr/JFRPulseLogger.java",
+      "com/sun/javafx/logging/PrintLogger.java"
+    ],
+    "settings": "/tmp/javaclaw-pulse-profile.jfc",
+    "startup": "-XX:StartFlightRecording=settings=/tmp/javaclaw-pulse-profile.jfc,filename=<output>/replay.jfr",
+    "note": "启动已有JFR使JFRPulseLogger自动初始化；不要为此额外开启javafx.pulseLogger，它同时开启PrintLogger。事件关闭栈和阈值过滤，仍存在每阶段创建事件的观察开销。"
+  },
+  "limitations": [
+    "仅取 results.json 的 idle/input/scroll StartedAt <= 样本时间 < EndedAt；启动、每次场景预热、收尾和截图均排除。暂停/等待按与时间窗的交集裁剪。",
+    "ExecutionSample 与 NativeMethodSample 分开统计。采样数/频率均不是线程 CPU 百分比；两类采样不可简单相加后解释为 CPU 占比。",
+    "inclusiveCategories 按任意栈帧匹配，存在重叠，例如 WebKit 执行可同时归入 FX；不能相加为总量。",
+    "JFR 只能显示 WebKit/Prism 的 Java 到 native 边界，不能分解 JavaScript、DOM layout、GPU、驱动等待或原生 JSC GC 内部成本。",
+    "本记录 javafx.PulsePhase/javafx.Input 均为 0；不能从 JFR 直接声称精确 layout duration。回放 JSON 的 Pulse 是 JavaFX 脉冲间隔，输入延迟是入队到布局，均非光学帧。",
+    "ObjectAllocationSample.weight 是统计估计，不是完整分配追踪，单个阶段切边界及采样权重可使估计偏差；不等于保留堆大小或内存泄漏。",
+    "仅一次本机 macOS aarch64/JDK 25/JavaFX 26.0.2 合成 SDK 回放；输入阶段约 1–1.5 秒、滚动约 1.7–2.1 秒，少样本或零样本不足以证明无开销。",
+    "Idle 窗口先于流开始；20/60 Hz 只在 input/scroll 活动阶段运行。activeCpuOneCorePercent 的计时还包含 stream.join 收尾，不与 input+scroll JFR 窗口完全等长。",
+    "jdk.ThreadCPULoad/CPULoad 周期事件跨阶段平均，未把记录时间落入窗口解释成该阶段精确 CPU；CPU 指标以 results.json 的独立计时值为准。"
+  ],
+  "pulseComparison": "/tmp/javaclaw-chat-final-phase-after/pulse-comparison.json"
+}

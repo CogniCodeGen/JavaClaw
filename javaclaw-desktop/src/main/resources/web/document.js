@@ -34,6 +34,7 @@ window.JavaClawSurface.register(data => {
         }
         root.append(code);
     }
+    window.JavaClawEmoji.decorate(root);
     const target = root.querySelector(".target-line");
     if (target) { target.scrollIntoView({block: "center"}); }
 });

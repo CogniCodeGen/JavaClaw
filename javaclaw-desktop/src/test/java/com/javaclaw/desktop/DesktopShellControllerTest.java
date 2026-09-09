@@ -37,6 +37,8 @@ import com.javaclaw.api.TurnStatus;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.client.sdk.JavaClawClient;
 import com.javaclaw.desktop.settings.ChatConfigurationPanel;
+import com.javaclaw.desktop.settings.ManagementCenterWindow;
+import com.javaclaw.desktop.settings.MemoryManagementCenterFixture;
 import com.javaclaw.desktop.shell.DesktopShellController;
 import com.javaclaw.desktop.shell.JavaClawDesktop;
 import com.javaclaw.desktop.state.ConnectionState;
@@ -53,60 +55,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DesktopShellControllerTest {
     @Test
     void 断线时真实壳显示可操作错误卡且不泄漏传输层原文() throws Exception {
-        AtomicReference<DesktopPresenter> presenter = new AtomicReference<>();
-        AtomicReference<Stage> stage = new AtomicReference<>();
-        AtomicReference<Map<String, Object>> controls = new AtomicReference<>();
-        FxTestSupport.run(() -> {
-            try {
-                FXMLLoader loader = new FXMLLoader(JavaClawDesktop.class.getResource("/fxml/main.fxml"));
-                Parent root = loader.load();
-                Stage window = new Stage();
-                Scene scene = new Scene(root, 1_280, 820);
-                DesktopStylesheets.apply(scene);
-                window.setScene(scene);
-                window.show();
-                DesktopPresenter disconnected = new DesktopPresenter(
-                        notifications -> {
-                            throw new IOException("Connection refused: /private/user/socket");
-                        },
-                        Platform::runLater,
-                        Clock.systemUTC());
-                var appearance = new com.javaclaw.desktop.appearance.DesktopAppearanceManager(
-                        new com.javaclaw.desktop.appearance.AppearancePreferenceStore() {
-                            @Override
-                            public com.javaclaw.desktop.appearance.AppearancePreferences load() {
-                                return com.javaclaw.desktop.appearance.AppearancePreferences.defaults();
-                            }
-
-                            @Override
-                            public void save(com.javaclaw.desktop.appearance.AppearancePreferences preferences) {}
-                        });
-                var center = new com.javaclaw.desktop.settings.ManagementCenterWindow(
-                        appearance, com.javaclaw.desktop.settings.SdkManagementSettingsGateways.create(disconnected));
-                loader.<DesktopShellController>getController().attach(disconnected, center);
-                presenter.set(disconnected);
-                stage.set(window);
-                controls.set(new HashMap<>(loader.getNamespace()));
-            } catch (IOException failure) {
-                throw new AssertionError(failure);
-            }
-        });
-
-        FxTestSupport.await(
-                () -> FxTestSupport.call(() -> ((VBox) controls.get().get("connectionErrorCard")).isVisible()));
-        FxTestSupport.run(() -> {
-            VBox card = (VBox) controls.get().get("connectionErrorCard");
-            Label detail = (Label) controls.get().get("connectionErrorDetail");
-            Button start = (Button) controls.get().get("connectionStartButton");
-            assertTrue(card.isManaged());
-            assertFalse(detail.getText().contains("Connection refused"));
-            assertFalse(detail.getText().contains("/private/user/socket"));
-            assertEquals("选择工作区，开始聊天", ((Label) controls.get().get("threadMeta")).getText());
-            assertTrue(start.isDisabled());
-            assertFalse(start.getAccessibleText().isBlank());
-        });
-        presenter.get().close();
-        FxTestSupport.run(stage.get()::hide);
+        try (ShellHarness shell = new ShellHarness(true)) {
+            shell.start();
+            FxTestSupport.await(() -> FxTestSupport.call(
+                    () -> shell.control("connectionErrorCard", VBox.class).isVisible()));
+            FxTestSupport.run(() -> {
+                VBox card = shell.control("connectionErrorCard", VBox.class);
+                Label detail = shell.label("connectionErrorDetail");
+                Button start = shell.button("connectionStartButton");
+                assertTrue(card.isManaged());
+                assertFalse(detail.getText().contains("Connection refused"));
+                assertFalse(detail.getText().contains("/private/user/socket"));
+                assertEquals("服务连接失败", shell.label("threadMeta").getText());
+                assertTrue(start.isDisabled());
+                assertFalse(start.getAccessibleText().isBlank());
+            });
+        }
     }
 
     @Test
@@ -127,18 +91,28 @@ class DesktopShellControllerTest {
         }
     }
 
-    private static final class ShellHarness {
+    private static final class ShellHarness implements AutoCloseable {
         private final PresenterRpcServer server = new PresenterRpcServer();
         private final DesktopPresenter presenter;
         private final AtomicReference<DesktopState> latest = new AtomicReference<>();
         private DesktopShellController controller;
         private Map<String, Object> controls;
         private Stage stage;
+        private ManagementCenterWindow center;
 
         private ShellHarness() throws IOException {
-            JavaClawClient client = server.client(ignored -> {});
+            this(false);
+        }
+
+        private ShellHarness(boolean disconnected) throws IOException {
+            JavaClawClient client = disconnected ? null : server.client(ignored -> {});
             presenter = new DesktopPresenter(
-                    notifications -> client,
+                    notifications -> {
+                        if (disconnected) {
+                            throw new IOException("Connection refused: /private/user/socket");
+                        }
+                        return client;
+                    },
                     ShellHarness::dispatch,
                     Clock.fixed(DesktopTestFixtures.NOW, ZoneOffset.UTC));
             presenter.subscribe(latest::set);
@@ -152,10 +126,13 @@ class DesktopShellControllerTest {
                     controller = loader.getController();
                     controls = new HashMap<>(loader.getNamespace());
                     stage = new Stage();
-                    stage.setScene(new Scene(root, 1_280, 820));
+                    Scene scene = new Scene(root, 1_280, 820);
+                    DesktopStylesheets.apply(scene);
+                    stage.setScene(scene);
+                    center = MemoryManagementCenterFixture.create(presenter, scene);
                     stage.show();
-                    controller.attach(presenter);
-                    assertThrows(IllegalStateException.class, () -> controller.attach(presenter));
+                    controller.attach(presenter, center);
+                    assertThrows(IllegalStateException.class, () -> controller.attach(presenter, center));
                 } catch (IOException failure) {
                     throw new AssertionError(failure);
                 }
@@ -231,12 +208,13 @@ class DesktopShellControllerTest {
             FxTestSupport.run(() -> {
                 VBox sidebar = control("sidebar", VBox.class);
                 VBox progress = control("progressPanel", VBox.class);
+                boolean shown = progress.isVisible();
                 controller.toggleSidebar();
                 controller.toggleProgress();
                 assertFalse(sidebar.isVisible());
                 assertFalse(sidebar.isManaged());
-                assertFalse(progress.isVisible());
-                assertFalse(progress.isManaged());
+                assertEquals(!shown, progress.isVisible());
+                assertEquals(!shown, progress.isManaged());
                 controller.toggleSidebar();
                 controller.toggleProgress();
                 ComboBox<Workspace> workspaces = combo("workspaceBox");
@@ -256,11 +234,14 @@ class DesktopShellControllerTest {
             });
             awaitConfigurationReady();
             FxTestSupport.run(() -> {
+                // 异步保存期间弹层可能因原生焦点切换自动关闭，读取控件前重新打开真实入口。
+                openMore();
                 assertEquals(server.profile(), combo("executionRole").getValue());
                 combo("executionRole").setValue(null);
             });
             awaitConfigurationReady();
             FxTestSupport.run(() -> {
+                openMore();
                 assertNull(combo("executionRole").getValue());
                 closeMore();
                 controller.useDefaultRole();
@@ -325,22 +306,27 @@ class DesktopShellControllerTest {
                 combo("executionRole").setValue(server.profile());
             });
             awaitConfigurationReady();
-            FxTestSupport.run(() -> {
-                closeMore();
-                combo("chatReasoning").setValue(ReasoningPreference.NONE);
-            });
-            awaitConfigurationReady();
-            FxTestSupport.run(() -> {
-                assertEquals(
-                        ReasoningPreference.NONE,
-                        configuration().execution().reasoning().orElseThrow());
-                combo("chatReasoning").setValue(null);
-            });
-            awaitConfigurationReady();
-            FxTestSupport.run(() -> {
-                assertTrue(configuration().execution().reasoning().isEmpty());
-                combo("chatReasoning").setValue(ReasoningPreference.HIGH);
-            });
+            FxTestSupport.run(this::closeMore);
+            selectReasoningWhenReady(ReasoningPreference.NONE);
+            FxTestSupport.run(() -> assertEquals(
+                    ReasoningPreference.NONE,
+                    configuration().execution().reasoning().orElseThrow()));
+            selectReasoningWhenReady(null);
+            FxTestSupport.run(
+                    () -> assertTrue(configuration().execution().reasoning().isEmpty()));
+            selectReasoningWhenReady(ReasoningPreference.HIGH);
+        }
+
+        private void selectReasoningWhenReady(ReasoningPreference value) {
+            // 弹层归还焦点可能触发补读；同一个 FX 回调确认控件可交互后再选择，不能用 setValue 绕过禁用态。
+            FxTestSupport.await(() -> FxTestSupport.call(() -> {
+                ComboBox<ReasoningPreference> choices = combo("chatReasoning");
+                if (!configuration().ready() || choices.isDisabled()) {
+                    return false;
+                }
+                choices.setValue(value);
+                return true;
+            }));
             awaitConfigurationReady();
         }
 
@@ -433,9 +419,17 @@ class DesktopShellControllerTest {
                     .forEach(Window::hide);
         }
 
-        private void close() throws Exception {
+        @Override
+        public void close() throws Exception {
+            FxTestSupport.run(() -> {
+                if (controller != null) {
+                    controller.close();
+                    center.dispose();
+                    stage.close();
+                }
+            });
             presenter.close();
-            FxTestSupport.run(() -> Window.getWindows().stream().toList().forEach(Window::hide));
+            server.close();
         }
 
         @SuppressWarnings("unchecked")

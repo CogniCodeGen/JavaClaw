@@ -7,10 +7,20 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 import com.javaclaw.api.CanonicalPayload;
+import com.javaclaw.api.CorePayloads;
+import com.javaclaw.api.CoreSchemas;
 import com.javaclaw.api.ItemEnvelope;
+import com.javaclaw.api.ItemHistoryEntry;
+import com.javaclaw.api.ItemHistoryResult;
 import com.javaclaw.api.ItemId;
 import com.javaclaw.api.ItemStatus;
+import com.javaclaw.api.MessageRole;
 import com.javaclaw.api.TurnId;
+import com.javaclaw.api.TurnStatus;
+import com.javaclaw.api.TurnStreamCall;
+import com.javaclaw.api.TurnStreamKind;
+import com.javaclaw.client.facade.TurnStreamSnapshot;
+import com.javaclaw.protocol.CanonicalJson;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -106,6 +116,126 @@ class TranscriptStateTest {
                 .sum();
         org.junit.jupiter.api.Assertions.assertTrue(bytes <= 8L * 1024 * 1024);
         assertEquals(10, value.items().getLast().sequence());
+    }
+
+    @Test
+    void 本地回显不伪造持久序号且确认失败均保留正文和阅读策略() {
+        TranscriptState sending = TranscriptState.empty().following(false).outgoing(outgoing());
+        assertTrue(sending.following());
+        assertEquals(0, sending.nextSequence());
+        assertTrue(sending.items().isEmpty());
+        TranscriptState accepted = sending.following(false).acknowledged("outgoing:one", turnId);
+        assertEquals(
+                OutgoingMessage.Status.ACCEPTED,
+                accepted.outgoing().orElseThrow().status());
+        assertFalse(accepted.following());
+        TranscriptState failed = accepted.unconfirmed("outgoing:one");
+        assertEquals(
+                OutgoingMessage.Status.UNCONFIRMED,
+                failed.outgoing().orElseThrow().status());
+        assertEquals("本地完整正文", failed.outgoing().orElseThrow().text());
+        assertEquals(7, accepted.outgoing().orElseThrow().attempt());
+        assertEquals(7, failed.outgoing().orElseThrow().attempt());
+        assertEquals(failed, failed.acknowledged("outgoing:stale", TurnId.random()));
+        assertEquals(failed, failed.unconfirmed("outgoing:stale"));
+    }
+
+    @Test
+    void 摘要按Turn和用户角色替换回显而非根据文本或摘要长度() {
+        TranscriptState accepted = TranscriptState.empty().outgoing(outgoing()).acknowledged("outgoing:one", turnId);
+        var unrelated = summary(TurnId.random(), 1, MessageRole.USER, "本地完整正文");
+        var assistant = summary(turnId, 2, MessageRole.ASSISTANT, "本地完整正文");
+        TranscriptState waiting = accepted.committed(new ItemHistoryResult(List.of(unrelated, assistant), 2, false));
+        assertTrue(waiting.outgoing().isPresent());
+        var truncated = summary(turnId, 3, MessageRole.USER, "截断摘要");
+        TranscriptState confirmed = waiting.committed(new ItemHistoryResult(List.of(truncated), 3, false));
+        assertTrue(confirmed.outgoing().isEmpty());
+        assertEquals(3, confirmed.nextSequence());
+        assertEquals(3, confirmed.history().size());
+    }
+
+    @Test
+    void 权威用户消息先到时回执绑定立即去重且旧协议也按角色确认() {
+        ItemEnvelope source = item(1);
+        ItemEnvelope user = new ItemEnvelope(
+                source.id(),
+                turnId,
+                1,
+                "message",
+                CoreSchemas.MESSAGE,
+                "core",
+                ItemStatus.COMPLETED,
+                new CanonicalJson()
+                        .encode(new CorePayloads.Message(MessageRole.USER, "实际权威正文", List.of(), Optional.empty())),
+                source.createdAt(),
+                source.completedAt());
+        TranscriptState waiting = TranscriptState.empty().outgoing(outgoing()).append(List.of(user), 1);
+        assertTrue(waiting.outgoing().isPresent());
+        assertTrue(waiting.acknowledged("outgoing:one", turnId).outgoing().isEmpty());
+    }
+
+    @Test
+    void 分页和暂停跟随仍保留待发送身份且尾页确认不会留下重复回显() {
+        TranscriptState accepted = new TranscriptState(List.of(), 100, true, Optional.empty(), false, history(1, 101))
+                .outgoing(outgoing())
+                .acknowledged("outgoing:one", TurnId.random());
+        TranscriptState earlier = accepted.earlier(new ItemHistoryResult(List.of(), 100, false));
+        assertEquals(accepted.outgoing(), earlier.outgoing());
+        TurnId acceptedTurn = accepted.outgoing().orElseThrow().turnId().orElseThrow();
+        var confirmed = summary(acceptedTurn, 151, MessageRole.USER, "权威消息");
+        TranscriptState updated = earlier.committed(new ItemHistoryResult(List.of(confirmed), 151, true));
+        assertFalse(updated.following());
+        assertEquals(earlier.history(), updated.history());
+        assertTrue(updated.outgoing().isEmpty());
+    }
+
+    @Test
+    void 主动提交尝试号必须非负且兼容构造不制造新重试() {
+        OutgoingMessage compatible =
+                new OutgoingMessage("outgoing:old", "正文", Optional.empty(), OutgoingMessage.Status.SENDING);
+        assertEquals(0, compatible.attempt());
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new OutgoingMessage(
+                        "outgoing:invalid", "正文", Optional.empty(), OutgoingMessage.Status.SENDING, -1));
+    }
+
+    @Test
+    void 新Turn回执才结束旧轮尾文展示且保留已到达的同轮正文() {
+        TurnStreamSnapshot previous = closedStream(TurnId.random());
+        TranscriptState sending = TranscriptState.empty().stream(previous).outgoing(outgoing());
+        assertEquals(Optional.of(previous), sending.stream());
+        assertEquals(Optional.of(previous), sending.unconfirmed("outgoing:one").stream());
+        assertEquals(sending, sending.acknowledged("outgoing:stale", turnId));
+        assertTrue(sending.acknowledged("outgoing:one", turnId).stream().isEmpty());
+        TurnStreamSnapshot current = closedStream(turnId);
+        assertEquals(Optional.of(current), sending.stream(current).acknowledged("outgoing:one", turnId).stream());
+    }
+
+    private TurnStreamSnapshot closedStream(TurnId turn) {
+        var call = new TurnStreamCall(1, "closed-call", ItemId.random());
+        var message = new TurnStreamSnapshot.Message(call, "取消前保留的尾文", TurnStreamKind.CLOSED, Optional.empty());
+        return new TurnStreamSnapshot(
+                turn, "cursor", List.of(message), Optional.of(TurnStatus.CANCELLED), Optional.of(0L));
+    }
+
+    private OutgoingMessage outgoing() {
+        return new OutgoingMessage("outgoing:one", "本地完整正文", Optional.empty(), OutgoingMessage.Status.SENDING, 7);
+    }
+
+    private ItemHistoryEntry summary(TurnId turn, long sequence, MessageRole role, String text) {
+        return new ItemHistoryEntry(
+                ItemId.random(),
+                turn,
+                sequence,
+                "message",
+                Optional.of(role),
+                text,
+                Optional.empty(),
+                true,
+                Instant.EPOCH,
+                List.of(),
+                List.of());
     }
 
     private List<com.javaclaw.api.ItemHistoryEntry> history(int first, int end) {

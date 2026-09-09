@@ -30,6 +30,11 @@ final class SiteSettingsPage implements ManagedSettingsPage {
     }
 
     @Override
+    public void invalidateCache() {
+        views.invalidateCache();
+    }
+
+    @Override
     public void deactivate() {
         views.deactivate();
     }

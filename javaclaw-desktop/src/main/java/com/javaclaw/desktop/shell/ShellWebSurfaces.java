@@ -46,7 +46,7 @@ import com.javaclaw.protocol.CanonicalJson;
 final class ShellWebSurfaces implements AutoCloseable {
     private final ChatSurface chat;
     private final DocumentPreviewPane documents;
-    private final VBox progress;
+    private final ShellSidePanels sidePanels;
     private final VBox pending = new VBox();
     private final VBox nativeTranscript = new VBox();
     private final ListView<SummaryRow> summary = new ListView<>();
@@ -72,10 +72,19 @@ final class ShellWebSurfaces implements AutoCloseable {
     private final HashSet<String> committedIds = new HashSet<>();
     private boolean nativeFollowing = true;
 
-    ShellWebSurfaces(DesktopPresenter presenter, VBox progress, StackPane host, ListView<ItemEnvelope> legacy) {
-        this.progress = progress;
+    ShellWebSurfaces(
+            DesktopPresenter presenter,
+            VBox progress,
+            StackPane host,
+            ListView<ItemEnvelope> legacy,
+            ShellSidePanels sidePanels) {
+        this.sidePanels = sidePanels;
         this.legacy = legacy;
         documents = new DocumentPreviewPane(new SdkDocumentPreviewGateway(presenter), this::external);
+        documents.onClosed(() -> {
+            selectDocument(false);
+            sidePanels.documentClosed();
+        });
         invalidations = presenter.subscribeNotifications(notification -> {
             if (notification instanceof com.javaclaw.client.ServerNotification.DocumentInvalidated event) {
                 documents.invalidate(event.event().handleId(), event.event().reasonCode());
@@ -93,6 +102,7 @@ final class ShellWebSurfaces implements AutoCloseable {
         VBox.setVgrow(pending, Priority.ALWAYS);
         VBox.setVgrow(documents, Priority.ALWAYS);
         selectDocument(false);
+        sidePanels.onPending(() -> selectDocument(false));
         summary.setId("transcriptSummary");
         summary.getStyleClass().addAll("message-scroll", "transcript-list");
         summary.setCellFactory(ignored -> new SummaryCell());
@@ -160,17 +170,18 @@ final class ShellWebSurfaces implements AutoCloseable {
         }
         if (next.isPresent()) {
             temporary = transcript.stream().stream()
-                    .flatMap(stream -> stream.messages().stream())
-                    .filter(message -> message.state() != TurnStreamKind.COMMITTED
-                            || message.itemSequence()
-                                    .filter(sequence ->
-                                            sequence > state.transcript().nextSequence())
-                                    .isPresent())
-                    .map(message -> new ChatSurface.TemporaryMessage(
-                            message.call().messageItemId().toString(),
-                            message.text(),
-                            message.state() == TurnStreamKind.CLOSED,
-                            message.textOffsetUtf16()))
+                    .flatMap(stream -> stream.messages().stream()
+                            .filter(message -> message.state() != TurnStreamKind.COMMITTED
+                                    || message.itemSequence()
+                                            .filter(sequence -> sequence
+                                                    > state.transcript().nextSequence())
+                                            .isPresent())
+                            .map(message -> new ChatSurface.TemporaryMessage(
+                                    message.call().messageItemId().toString(),
+                                    message.text(),
+                                    message.state() == TurnStreamKind.CLOSED,
+                                    message.textOffsetUtf16(),
+                                    Optional.of(stream.turnId()))))
                     .toList();
             if (nativeTranscript.isVisible()) {
                 renderNative(false);
@@ -184,7 +195,8 @@ final class ShellWebSurfaces implements AutoCloseable {
                     state.transcript().items(),
                     state.transcript().history(),
                     temporary,
-                    state.transcript().hasEarlier());
+                    state.transcript().hasEarlier(),
+                    state.transcript().outgoing());
         } else {
             temporary = List.of();
             clearNative();
@@ -199,7 +211,9 @@ final class ShellWebSurfaces implements AutoCloseable {
         }
         boolean itemsChanged = !nativeItems.equals(transcript.items());
         List<SummaryRow> rows = nativeRows();
-        boolean projected = !transcript.history().isEmpty() || !temporary.isEmpty();
+        boolean projected = !transcript.history().isEmpty()
+                || !temporary.isEmpty()
+                || transcript.outgoing().isPresent();
         boolean changed = !summary.getItems().equals(rows);
         if (changed) {
             summary.getItems().setAll(rows);
@@ -221,13 +235,29 @@ final class ShellWebSurfaces implements AutoCloseable {
         if (!nativeItems.equals(transcript.items()) || !nativeHistory.equals(transcript.history())) {
             rebuildCommittedRows();
         }
-        ArrayList<SummaryRow> rows = new ArrayList<>(committedRows);
-        temporary.stream()
+        List<ChatSurface.TemporaryMessage> visibleTemporary = temporary.stream()
                 .filter(item -> !item.text().isEmpty() && !committedIds.contains(item.id()))
-                .map(ShellWebSurfaces::temporaryRow)
-                .forEach(rows::add);
-        if (rows.size() > 500) {
-            rows.subList(0, rows.size() - 500).clear();
+                .toList();
+        int capacity = transcript.outgoing().isPresent() ? 499 : 500;
+        int skipped = Math.max(0, committedRows.size() + visibleTemporary.size() - capacity);
+        int committedSkipped = Math.min(skipped, committedRows.size());
+        ArrayList<SummaryRow> rows = new ArrayList<>(committedRows.subList(committedSkipped, committedRows.size()));
+        visibleTemporary = visibleTemporary.subList(skipped - committedSkipped, visibleTemporary.size());
+        if (transcript.outgoing().isPresent()) {
+            var message = transcript.outgoing().orElseThrow();
+            // 上轮未提交尾文保留在新用户消息之前，只有相同 Turn 的分片才能成为它的回复。
+            visibleTemporary.stream()
+                    .filter(item -> !item.belongsTo(message))
+                    .map(ShellWebSurfaces::temporaryRow)
+                    .forEach(rows::add);
+            var presented = TranscriptPresenter.presentOutgoing(message);
+            rows.add(new SummaryRow(presented.title(), presented.body(), presented.styleClass(), Optional.empty()));
+            visibleTemporary.stream()
+                    .filter(item -> item.belongsTo(message))
+                    .map(ShellWebSurfaces::temporaryRow)
+                    .forEach(rows::add);
+        } else {
+            visibleTemporary.stream().map(ShellWebSurfaces::temporaryRow).forEach(rows::add);
         }
         return rows;
     }
@@ -280,7 +310,7 @@ final class ShellWebSurfaces implements AutoCloseable {
     }
 
     private void preview(DocumentReference reference) {
-        visible(progress, true);
+        sidePanels.openDocument();
         selectDocument(true);
         documents.open(reference);
     }
@@ -288,6 +318,7 @@ final class ShellWebSurfaces implements AutoCloseable {
     private void selectDocument(boolean selected) {
         visible(documents, selected);
         visible(pending, !selected);
+        sidePanels.selectDocument(selected);
     }
 
     private void external(URI uri) {

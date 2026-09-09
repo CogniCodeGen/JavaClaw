@@ -10,6 +10,7 @@ import javafx.scene.control.ListView;
 import javafx.scene.layout.BorderPane;
 import org.junit.jupiter.api.Test;
 
+import com.javaclaw.api.EmbeddingBinding;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.desktop.DesktopConfigurationChange;
@@ -45,6 +46,26 @@ class ProviderSettingsPageConfigurationRefreshTest {
         FxTestSupport.run(() -> assertEquals(3, fixture.gateway.reads));
     }
 
+    @Test
+    void 重开模型页同时复用目录和默认向量模型绑定() {
+        Fixture fixture = FxTestSupport.call(Fixture::new);
+        try {
+            FxTestSupport.run(() -> {
+                fixture.page.deactivate();
+                fixture.page.activate();
+                fixture.page.activate();
+                assertEquals(1, fixture.gateway.reads);
+                assertEquals(1, fixture.gateway.embeddingReads);
+                fixture.page.invalidateCache();
+                fixture.page.activate();
+                assertEquals(2, fixture.gateway.reads);
+                assertEquals(2, fixture.gateway.embeddingReads);
+            });
+        } finally {
+            FxTestSupport.run(fixture.page::dispose);
+        }
+    }
+
     private static final class Fixture {
         private final Gateway gateway = new Gateway();
         private final ProviderSettingsPage page = new ProviderSettingsPage(gateway);
@@ -67,6 +88,7 @@ class ProviderSettingsPageConfigurationRefreshTest {
     private static final class Gateway extends TestCoreSettingsGateway {
         private final DesktopConfigurationEvents events = new DesktopConfigurationEvents();
         private int reads;
+        private int embeddingReads;
 
         @Override
         public DesktopNotificationSubscription onConfigurationChanged(Consumer<DesktopConfigurationChange> listener) {
@@ -77,6 +99,12 @@ class ProviderSettingsPageConfigurationRefreshTest {
         public CompletionStage<List<ProviderEndpoint>> providers() {
             reads++;
             return super.providers();
+        }
+
+        @Override
+        public CompletionStage<Optional<EmbeddingBinding>> embeddingBinding() {
+            embeddingReads++;
+            return super.embeddingBinding();
         }
 
         private void changed(long revision) {

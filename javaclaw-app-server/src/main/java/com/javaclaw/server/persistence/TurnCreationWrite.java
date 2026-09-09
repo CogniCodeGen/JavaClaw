@@ -6,6 +6,7 @@ import java.time.Instant;
 import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.CoreSchemas;
 import com.javaclaw.api.ItemStatus;
+import com.javaclaw.api.MessageRole;
 import com.javaclaw.protocol.CanonicalJson;
 
 /** Core 创建事务中的持久写入；调用者已经恢复幂等结果并完成事务外准备。 */
@@ -26,7 +27,8 @@ final class TurnCreationWrite {
             throws Exception {
         TurnRepository turns = new TurnRepository();
         turns.lockThread(connection, request.threadId());
-        var thread = new ThreadRepository().find(connection, request.threadId()).orElseThrow();
+        ThreadRepository threads = new ThreadRepository();
+        var thread = threads.find(connection, request.threadId()).orElseThrow();
         WorkspaceSecurityRepository.requireUnlocked(connection, thread.workspaceId(), request.executionRoot());
         new ChildTurnReservationRepository(json).requireReservedStart(connection, request);
         if (turns.hasActiveTurn(connection, request.threadId())) {
@@ -52,7 +54,10 @@ final class TurnCreationWrite {
                 ItemStatus.COMPLETED,
                 json.encode(request.message()),
                 now);
-        new ItemRepository(turns).append(connection, item);
+        var appended = new ItemRepository(turns).append(connection, item);
+        if (appended.sequence() == 1 && request.message().role() == MessageRole.USER) {
+            threads.titleFromFirstMessage(connection, thread, request.message().text(), now);
+        }
         return turn;
     }
 }

@@ -1,27 +1,23 @@
 package com.javaclaw.desktop.shell;
 
-import java.io.File;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 
 import javafx.fxml.FXML;
 import javafx.scene.control.Button;
-import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
-import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.scene.control.TextArea;
-import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
-import javafx.stage.DirectoryChooser;
 
 import com.javaclaw.api.ApprovalDecision;
 import com.javaclaw.api.ApprovalRecord;
@@ -34,15 +30,12 @@ import com.javaclaw.desktop.appearance.DesktopAppearanceManager;
 import com.javaclaw.desktop.appearance.JavaPreferencesAppearanceStore;
 import com.javaclaw.desktop.component.InputRequestPanel;
 import com.javaclaw.desktop.component.PlatformComponentFactory;
-import com.javaclaw.desktop.component.PlatformDialogs;
 import com.javaclaw.desktop.settings.ChatConfigurationPanel;
-import com.javaclaw.desktop.settings.ExecutionSelectionPanel;
 import com.javaclaw.desktop.settings.ManagementCenterWindow;
 import com.javaclaw.desktop.settings.SdkCoreSettingsGateway;
 import com.javaclaw.desktop.settings.SdkManagementSettingsGateways;
 import com.javaclaw.desktop.state.ConnectionState;
 import com.javaclaw.desktop.state.DesktopState;
-import com.javaclaw.desktop.view.PresentedItem;
 import com.javaclaw.desktop.view.TranscriptPresenter;
 import com.javaclaw.protocol.CanonicalJson;
 
@@ -74,6 +67,24 @@ public final class DesktopShellController implements AutoCloseable {
 
     @FXML
     private VBox executionHost;
+
+    @FXML
+    private VBox composerCard;
+
+    @FXML
+    private Button pendingButton;
+
+    @FXML
+    private Label statusDot;
+
+    @FXML
+    private Label pendingEmpty;
+
+    @FXML
+    private Label approvalTitle;
+
+    @FXML
+    private HBox approvalActions;
 
     @FXML
     private TextArea composer;
@@ -120,6 +131,9 @@ public final class DesktopShellController implements AutoCloseable {
     private DesktopPresenter presenter;
     private ShellCatalogBindings catalogs;
     private ShellWebSurfaces surfaces;
+    private ShellSidePanels sidePanels;
+    private ShellComposerBehavior composerBehavior;
+    private ShellStatusLabels statusLabels;
     private java.util.List<ItemEnvelope> displayedItems = java.util.List.of();
     private ManagementCenterWindow managementCenter;
     private InputRequestPanel inputRequests;
@@ -155,7 +169,7 @@ public final class DesktopShellController implements AutoCloseable {
                 event.consume();
             }
         });
-        transcriptList.setCellFactory(ignored -> new TranscriptCell(transcriptPresenter));
+        transcriptList.setCellFactory(ignored -> new ShellTranscriptCell(transcriptPresenter));
         approvalList.setCellFactory(ignored -> components.detailCell(
                 approval -> approval.request().tool().name() + " · "
                         + approval.request().risk(),
@@ -170,9 +184,18 @@ public final class DesktopShellController implements AutoCloseable {
                 .selectedItemProperty()
                 .addListener((observable, previous, value) -> renderApprovalButtons(value));
         configureLauncherRecovery();
-        composer.textProperty().addListener((ignored, previous, text) -> {
+        sidePanels = new ShellSidePanels(root, sidebar, progressPanel, pendingButton);
+        statusLabels = new ShellStatusLabels(
+                connectionLabel,
+                threadTitle,
+                threadMeta,
+                errorLabel,
+                connectionErrorCard,
+                connectionErrorDetail,
+                statusDot);
+        composerBehavior = new ShellComposerBehavior(composer, composerCard, sendButton, () -> {
             if (!bindingDraft) {
-                drafts.edited(text);
+                drafts.edited(composer.getText());
             }
             if (executionSelection != null) {
                 renderActions(latestState);
@@ -208,7 +231,7 @@ public final class DesktopShellController implements AutoCloseable {
                 new SdkCoreSettingsGateway(value),
                 () -> managementCenter.show(root.getScene().getWindow(), "providers"),
                 this::chooseChatWorkspace,
-                () -> presenter.createThread("新对话"));
+                this::newThread);
         executionHost.getChildren().setAll(executionSelection);
         javafx.scene.layout.HBox previousActions = (javafx.scene.layout.HBox) sendButton.getParent();
         previousActions.getChildren().removeAll(interruptButton, sendButton);
@@ -218,7 +241,7 @@ public final class DesktopShellController implements AutoCloseable {
         windowFocus = new ShellWindowFocus(root.getScene(), () -> {
             if (latestState.connection().status() == ConnectionState.Status.CONNECTED) {
                 presenter.refreshWorkspaceCatalog();
-                executionSelection.refresh();
+                executionSelection.activate();
             }
         });
         inputRequests = new InputRequestPanel(
@@ -229,7 +252,7 @@ public final class DesktopShellController implements AutoCloseable {
         inputRequestHost.getChildren().setAll(inputRequests);
         codingOutput = new CodingExecutionPanel(value);
         progressPanel.getChildren().add(2, codingOutput);
-        surfaces = new ShellWebSurfaces(value, progressPanel, transcriptHost, transcriptList);
+        surfaces = new ShellWebSurfaces(value, progressPanel, transcriptHost, transcriptList, sidePanels);
         managementCenter.installShortcut(root.getScene());
         presenter.subscribe(this::render);
         presenter.connect();
@@ -238,68 +261,27 @@ public final class DesktopShellController implements AutoCloseable {
     /** 切换会话侧栏。 */
     @FXML
     public void toggleSidebar() {
-        visible(sidebar, !sidebar.isVisible());
+        sidePanels.toggleSidebar();
     }
 
     /** 切换审批与进度侧栏。 */
     @FXML
     public void toggleProgress() {
-        visible(progressPanel, !progressPanel.isVisible());
+        sidePanels.toggleProgress();
     }
 
-    /** 创建 Workspace。 */
+    /** 创建工作区；已登记目录可直接打开，不重复提交创建请求。 */
     @FXML
     public void newWorkspace() {
-        TextInputDialog nameDialog = PlatformDialogs.requiredText(
-                root,
-                "创建 Workspace",
-                "设置 Workspace 名称",
-                "该名称用于在 JavaClaw 中识别工作区；下一步将选择对应的本地根目录。",
-                "例如：JavaClaw 开发",
-                "新工作区",
-                "继续");
-        Optional<String> name = nameDialog.showAndWait().map(String::strip).filter(value -> !value.isEmpty());
-        if (name.isEmpty()) {
-            return;
-        }
-        DirectoryChooser chooser = new DirectoryChooser();
-        chooser.setTitle("选择 Workspace 根目录");
-        File selected = chooser.showDialog(root.getScene().getWindow());
-        if (selected != null) {
-            chooseWorkspaceExecution(name.orElseThrow(), selected);
-        }
+        ShellWorkspaceCreation.show(root, presenter, () -> latestState.threads().workspaces());
     }
 
-    private void chooseWorkspaceExecution(String name, File directory) {
-        ExecutionSelectionPanel selection = new ExecutionSelectionPanel(new SdkCoreSettingsGateway(presenter));
-        Dialog<com.javaclaw.api.ExecutionOverrides> dialog = new Dialog<>();
-        dialog.setTitle("创建 Workspace");
-        dialog.setHeaderText("分别选择 Agent、模型与权限");
-        dialog.getDialogPane().setContent(selection);
-        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.CANCEL, ButtonType.OK);
-        PlatformDialogs.style(dialog, root);
-        selection.prepareWorkspaceCreation();
-        dialog.setResultConverter(button -> button == ButtonType.OK ? selection.execution() : null);
-        dialog.getDialogPane().lookupButton(ButtonType.OK).addEventFilter(javafx.event.ActionEvent.ACTION, event -> {
-            if (selection.pending() || !selection.ready()) {
-                event.consume();
-            }
-        });
-        dialog.showAndWait()
-                .ifPresent(execution -> presenter.createWorkspace(
-                        name, directory.toPath().toAbsolutePath().normalize(), execution));
-        selection.close();
-    }
-
-    /** 创建当前 Workspace 的 Thread。 */
+    /** 直接创建当前工作区的空对话，首条消息提交后再生成标题。 */
     @FXML
     public void newThread() {
-        TextInputDialog dialog = PlatformDialogs.requiredText(
-                root, "创建对话", "设置对话标题", "标题用于在当前 Workspace 的对话列表中识别本次任务。", "例如：排查模型连接", "新对话", "创建对话");
-        dialog.showAndWait()
-                .map(String::strip)
-                .filter(value -> !value.isEmpty())
-                .ifPresent(presenter::createThread);
+        presenter.createThread("新对话");
+        // 仅响应本次用户操作；异步创建结果不改变用户后来选择的焦点。
+        composer.requestFocus();
     }
 
     /** 发送当前输入。 */
@@ -380,6 +362,8 @@ public final class DesktopShellController implements AutoCloseable {
         rendering = true;
         try {
             catalogs.render(state);
+            sidePanels.render(state);
+            renderPendingRegions(state);
             if (changes.transcript()) {
                 renderTranscript(state);
             }
@@ -388,10 +372,12 @@ public final class DesktopShellController implements AutoCloseable {
             }
             if (changes.scope()) {
                 bindDraft(state);
-                executionSelection.bind(
-                        state.threads().selectedWorkspace(), state.threads().selectedThread());
             }
             if (changes.scope() || changes.connection()) {
+                executionSelection.bind(
+                        state.threads().selectedWorkspace(),
+                        state.threads().selectedThread(),
+                        state.connection().connectedAt());
                 codingOutput.bind(state);
                 refreshExecutionConnection(state);
             }
@@ -422,42 +408,13 @@ public final class DesktopShellController implements AutoCloseable {
         if (!executionConnection.equals(connectedAt)) {
             executionConnection = connectedAt;
             if (connectedAt.isPresent()) {
-                executionSelection.refresh();
                 managementCenter.refreshExecutionConfiguration();
             }
         }
     }
 
     private void renderLabels(DesktopState state) {
-        boolean connectionFailed = state.connection().status() == ConnectionState.Status.FAILED;
-        connectionLabel.setText(
-                connectionFailed ? "App Server 未连接" : state.connection().detail());
-        connectionErrorDetail.setText(
-                "无法连接本地 App Server。" + LauncherSession.current().recoveryInstruction());
-        visible(connectionErrorCard, connectionFailed);
-        threadTitle.setText(
-                state.threads().selectedThread().map(ConversationThread::title).orElse("新对话"));
-        threadMeta.setText(state.threads()
-                .activeTurn()
-                .map(turn -> "Turn " + turn.status())
-                .orElseGet(() ->
-                        state.threads().selectedWorkspace().map(Workspace::name).orElse("选择工作区，开始聊天")));
-        threadMeta.setTooltip(state.threads()
-                .activeTurn()
-                .map(turn -> new Tooltip(
-                        "Agent " + turn.role().id() + "@" + turn.role().revision()
-                                + " · 模型 " + turn.provider().model()
-                                + (turn.resolvedConfig().modelLocked() ? "（由 Agent 锁定）" : "")
-                                + " · 权限 " + turn.permissionProfile().id() + "@"
-                                + turn.permissionProfile().version()
-                                + "\n"
-                                + turn.resolvedConfig().provenance().stream()
-                                        .map(source -> source.field() + " ← " + source.source() + " / "
-                                                + source.sourceId() + "@" + source.revision())
-                                        .collect(java.util.stream.Collectors.joining("\n"))))
-                .orElse(null));
-        errorLabel.setText(state.interaction().error().orElse(""));
-        visible(errorLabel, state.interaction().error().isPresent());
+        statusLabels.render(state);
     }
 
     private void renderActions(DesktopState state) {
@@ -519,6 +476,18 @@ public final class DesktopShellController implements AutoCloseable {
     private void renderApprovalButtons(ApprovalRecord selected) {
         approveButton.setDisable(selected == null);
         denyButton.setDisable(selected == null);
+        visible(approvalActions, selected != null);
+    }
+
+    private void renderPendingRegions(DesktopState state) {
+        boolean approvals = !state.interaction().pendingApprovals().isEmpty();
+        boolean inputs = !state.interaction().inputs().pendingRequests().isEmpty()
+                || state.interaction().inputs().error().isPresent();
+        visible(approvalTitle, approvals);
+        visible(approvalList, approvals);
+        visible(inputRequestHost, inputs);
+        visible(pendingEmpty, !approvals && !inputs);
+        renderApprovalButtons(approvalList.getSelectionModel().getSelectedItem());
     }
 
     private void configureLauncherRecovery() {
@@ -537,6 +506,8 @@ public final class DesktopShellController implements AutoCloseable {
     /** 释放窗口监听、主壳页面、预览租约与后台转换任务。 */
     @Override
     public void close() {
+        sidePanels.close();
+        composerBehavior.close();
         if (windowFocus != null) {
             windowFocus.close();
         }
@@ -545,33 +516,6 @@ public final class DesktopShellController implements AutoCloseable {
         }
         if (surfaces != null) {
             surfaces.close();
-        }
-    }
-
-    private static final class TranscriptCell extends ListCell<ItemEnvelope> {
-        private final TranscriptPresenter presenter;
-        private final Label title = new Label();
-        private final Label body = new Label();
-        private final VBox box = new VBox(6, title, body);
-
-        private TranscriptCell(TranscriptPresenter presenter) {
-            this.presenter = presenter;
-            title.getStyleClass().add("message-role");
-            body.setWrapText(true);
-        }
-
-        @Override
-        protected void updateItem(ItemEnvelope item, boolean empty) {
-            super.updateItem(item, empty);
-            if (empty || item == null) {
-                setGraphic(null);
-                return;
-            }
-            PresentedItem presented = presenter.present(item);
-            title.setText(presented.title());
-            body.setText(presented.body().length() > 65_536 ? presented.body().substring(0, 65_536) : presented.body());
-            box.getStyleClass().setAll(presented.styleClass());
-            setGraphic(box);
         }
     }
 }

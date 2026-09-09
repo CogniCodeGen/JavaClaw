@@ -13,12 +13,14 @@ import com.javaclaw.client.CommandOptions;
 
 /** 只管理 Workspace 登记；独立执行配置使用相同 SDK 边界的执行面板。 */
 public final class WorkspaceSettingsPresenter {
+    private final SettingsCacheFreshness freshness = new SettingsCacheFreshness();
     private final CoreSettingsGateway gateway;
     private Consumer<WorkspaceSettingsState> listener = ignored -> {};
     private WorkspaceSettingsState state = WorkspaceSettingsState.initial();
     private Optional<WorkspaceId> scope = Optional.empty();
     private boolean writing;
     private boolean refreshPending;
+    private boolean suspended;
 
     /** @param gateway 强类型 SDK 设置边界 */
     public WorkspaceSettingsPresenter(CoreSettingsGateway gateway) {
@@ -31,8 +33,28 @@ public final class WorkspaceSettingsPresenter {
         listener.accept(state);
     }
 
+    /** 有效的登记在页面重开时直接复用；读取期间的激活不制造补读。 */
+    void activate() {
+        suspended = false;
+        if (!writing && state.phase() != SettingsLoadState.LOADING && !freshness.fresh()) {
+            reload();
+        }
+    }
+
+    void deactivate() {
+        suspended = true;
+    }
+
+    void invalidateCache() {
+        freshness.invalidate();
+        if (writing || state.phase() == SettingsLoadState.LOADING) {
+            refreshPending = true;
+        }
+    }
+
     /** 读取当前固定 Workspace 的登记；有名称草稿时只更新目录，保留原始写入版本。 */
     public void reload() {
+        freshness.invalidate();
         if (writing) {
             refreshPending = true;
             return;
@@ -54,6 +76,9 @@ public final class WorkspaceSettingsPresenter {
                     .filter(value -> requestedScope.map(value.id()::equals).orElse(true))
                     .sorted(Comparator.comparing(Workspace::name))
                     .toList();
+            if (!refreshPending) {
+                freshness.markFresh();
+            }
             applyCatalog(workspaces, epoch);
             refreshAgain();
         });
@@ -61,6 +86,7 @@ public final class WorkspaceSettingsPresenter {
 
     /** 合并写入或读取期间收到的失效，结束后自动补读，不静默丢失刷新请求。 */
     public void refresh() {
+        freshness.invalidate();
         if (writing || state.phase() == SettingsLoadState.LOADING) {
             refreshPending = true;
             return;
@@ -73,6 +99,10 @@ public final class WorkspaceSettingsPresenter {
         Optional<WorkspaceId> next =
                 Objects.requireNonNull(workspace, "workspace").map(Workspace::id);
         boolean same = scope.equals(next) && state.selected().isPresent();
+        if (same && state.selected().equals(workspace)) {
+            return;
+        }
+        freshness.invalidate();
         if (!same) {
             writing = false;
             refreshPending = false;
@@ -144,6 +174,7 @@ public final class WorkspaceSettingsPresenter {
     }
 
     private void execute(CompletionStage<Workspace> operation, String success) {
+        freshness.invalidate();
         long epoch = state.epoch() + 1;
         writing = true;
         publish(copy(SettingsLoadState.LOADING, "正在保存…", epoch));
@@ -181,7 +212,7 @@ public final class WorkspaceSettingsPresenter {
     }
 
     private void refreshAgain() {
-        if (refreshPending) {
+        if (refreshPending && !suspended) {
             reload();
         }
     }

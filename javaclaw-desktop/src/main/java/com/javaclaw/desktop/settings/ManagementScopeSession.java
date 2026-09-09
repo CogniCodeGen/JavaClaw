@@ -41,7 +41,16 @@ final class ManagementScopeSession {
     }
 
     void activate() {
-        presenter.reload();
+        presenter.activate();
+        render(presenter.state());
+    }
+
+    void deactivate() {
+        presenter.deactivate();
+    }
+
+    void invalidate() {
+        presenter.invalidate();
     }
 
     /** 自动更新目录并保留固定工作区；目录读取不丢弃页面草稿。 */

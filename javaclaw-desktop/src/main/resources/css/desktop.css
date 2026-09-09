@@ -15,12 +15,26 @@
 }
 
 /* ListView 只负责虚拟化，内容卡片自行表达状态。 */
-.sidebar-list-scroll .list-cell,
-.sidebar-list-scroll .list-cell:filled:hover,
-.sidebar-list-scroll .list-cell:filled:selected,
-.sidebar-list-scroll .list-cell:filled:selected:focused {
+.sidebar-list-scroll .list-cell {
     -fx-background-color: transparent;
-    -fx-padding: 0 0 3 0;
+    -fx-padding: 8 12;
+    -fx-background-radius: 8;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+    -fx-border-color: transparent;
+}
+
+.sidebar-list-scroll .list-cell:filled:hover {
+    -fx-background-color: -jc-neutral-100;
+}
+
+.sidebar-list-scroll .list-cell:filled:selected {
+    -fx-background-color: -jc-primary-50;
+    -fx-text-fill: -jc-text-title;
+}
+
+.sidebar-list-scroll .list-cell:filled:selected:focused {
+    -fx-border-color: -jc-primary-500;
 }
 
 .transcript-list {
@@ -425,7 +439,8 @@
     -fx-cursor: hand;
 }
 
-.shell-toggle-button:hover {
+.shell-toggle-button:hover,
+.shell-toggle-button:selected {
     -fx-background-color: -jc-primary-50;
     -fx-border-color: -jc-primary-300;
 }
@@ -447,6 +462,10 @@
     -fx-border-color: -jc-border-strong;
 }
 
+.composer-card:composer-focused {
+    -fx-border-color: -jc-primary-500;
+}
+
 .composer-card .composer-input,
 .composer-card .composer-input:focused,
 .composer-card .composer-input .scroll-pane,
@@ -458,8 +477,8 @@
 }
 
 .composer-card .composer-input {
-    -fx-min-height: 72;
-    -fx-pref-height: 88;
+    -fx-min-height: 60;
+    -fx-pref-height: 60;
     -fx-max-height: 240;
     -fx-padding: 12 14 4 14;
     -fx-background-insets: 0;
@@ -468,8 +487,8 @@
 }
 
 .composer-toolbar {
-    -fx-min-height: 48;
-    -fx-padding: 4 10 10 10;
+    -fx-min-height: 44;
+    -fx-padding: 2 10 8 10;
     -fx-background-color: transparent;
 }
 

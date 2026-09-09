@@ -19,6 +19,49 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorkspaceSettingsPresenterRefreshTest {
     @Test
+    void 隐藏后的过时响应不续期也不立即查询() {
+        TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
+        Workspace original = gateway.workspaceSettings.catalog.getFirst();
+        WorkspaceSettingsPresenter presenter = presenter(gateway, new AtomicReference<>(), original);
+        CompletableFuture<List<Workspace>> pending = new CompletableFuture<>();
+        gateway.workspaceSettings.nextResponse = pending;
+        presenter.activate();
+        presenter.deactivate();
+        presenter.invalidateCache();
+        pending.complete(List.of(original));
+        assertEquals(1, gateway.workspaceSettings.reads);
+
+        presenter.activate();
+        assertEquals(2, gateway.workspaceSettings.reads);
+    }
+
+    @Test
+    void 重开和同作用域绑定复用目录并保留草稿失效后才补读() {
+        TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
+        Workspace original = gateway.workspaceSettings.catalog.getFirst();
+        AtomicReference<WorkspaceSettingsState> state = new AtomicReference<>();
+        WorkspaceSettingsPresenter presenter = presenter(gateway, state, original);
+        CompletableFuture<List<Workspace>> pending = new CompletableFuture<>();
+        gateway.workspaceSettings.nextResponse = pending;
+        presenter.activate();
+        presenter.bindWorkspace(Optional.of(original));
+        presenter.activate();
+        assertEquals(1, gateway.workspaceSettings.reads);
+        pending.complete(List.of(original));
+        presenter.editName("待保存名称");
+        presenter.activate();
+        assertEquals(1, gateway.workspaceSettings.reads);
+        assertEquals("待保存名称", state.get().draftName());
+
+        presenter.invalidateCache();
+        assertEquals(1, gateway.workspaceSettings.reads);
+        presenter.activate();
+        assertEquals(2, gateway.workspaceSettings.reads);
+        assertEquals("待保存名称", state.get().draftName());
+        assertEquals(original.revision(), state.get().selected().orElseThrow().revision());
+    }
+
+    @Test
     void 切换顶部工作区立即同步列表与详情并隔离迟到响应() {
         TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
         Workspace original = gateway.workspaceSettings.catalog.getFirst();

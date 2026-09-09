@@ -1,0 +1,30 @@
+{
+  "date": "2026-09-09",
+  "platform": "macOS arm64",
+  "java": "25",
+  "javafx": "26.0.2",
+  "command": "mvn -pl javaclaw-desktop spotless:apply spotless:check checkstyle:check verify",
+  "build": "SUCCESS",
+  "surefireTests": 596,
+  "failsafeTests": 1,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "nativeModuleProbe": {
+    "namedModule": true,
+    "passed": true,
+    "checks": [
+      "chat-light-and-dark-pixels",
+      "UTF16-stream-graphemes",
+      "document-markdown-and-code-pixels"
+    ]
+  },
+  "clipboard": "Real WebView Meta+C preserved exact Unicode; previous clipboard formats restored.",
+  "limits": [
+    "Windows/Linux native rendering unverified",
+    "Performance replay uses synthetic SDK without model calls; not physical input-to-photon latency",
+    "Actual send latency not measured by this fix"
+  ],
+  "finishedAt": "2026-09-09T16:42:03+08:00",
+  "buildDurationSeconds": 88
+}

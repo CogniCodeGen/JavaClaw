@@ -3,6 +3,7 @@ package com.javaclaw.desktop.web;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import javafx.beans.InvalidationListener;
 import javafx.scene.control.Label;
 import javafx.scene.layout.Pane;
 import javafx.scene.paint.Color;
@@ -40,6 +41,12 @@ final class WebThemeProbe extends Pane {
             labels.put(name, label);
             getChildren().add(label);
         }
+    }
+
+    void onChange(Runnable changed) {
+        InvalidationListener listener = ignored -> changed.run();
+        labels.values().forEach(label -> label.textFillProperty().addListener(listener));
+        labels.get("body").fontProperty().addListener(listener);
     }
 
     Map<String, String> values() {

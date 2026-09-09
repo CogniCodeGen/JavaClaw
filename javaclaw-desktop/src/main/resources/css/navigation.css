@@ -264,23 +264,27 @@
 
 .sidebar-ws-btn {
     -fx-background-color: -jc-surface-card;
-    -fx-text-fill: -jc-neutral-600;
     -fx-background-radius: 8;
-    -fx-padding: 4 8 4 8;
+    -fx-padding: 0;
+    -fx-alignment: center;
     -fx-cursor: hand;
-    -fx-font-size: 12px;
-    -fx-font-weight: 600;
     -fx-border-color: -jc-neutral-300;
     -fx-border-radius: 8;
     -fx-border-width: 1;
-    -fx-min-width: 28;
-    -fx-min-height: 28;
 }
 
 .sidebar-ws-btn:hover {
-    -fx-background-color: -jc-neutral-100;
-    -fx-text-fill: -jc-primary-500;
+    -fx-background-color: -jc-primary-50;
     -fx-border-color: -jc-primary-300;
+}
+
+.sidebar-ws-btn:pressed {
+    -fx-background-color: -jc-primary-100;
+    -fx-border-color: -jc-primary-500;
+}
+
+.sidebar-ws-icon {
+    -fx-fill: -jc-primary-500;
 }
 
 .sidebar-action-btn {

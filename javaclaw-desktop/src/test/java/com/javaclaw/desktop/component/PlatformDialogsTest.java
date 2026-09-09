@@ -97,6 +97,19 @@ class PlatformDialogsTest {
     }
 
     @Test
+    void 工作区名称确认读取当前输入而不是初始名称() {
+        FxTestSupport.run(() -> {
+            TextInputDialog dialog = PlatformDialogs.requiredText(
+                    owner(), "创建 Workspace", "设置 Workspace 名称", "名称用于识别工作区。", "例如：JavaClaw 开发", "新工作区", "继续");
+            dialog.show();
+            dialog.getEditor().setText("自定义中文项目 Alpha 2026");
+            ((Button) dialog.getDialogPane().lookupButton(ButtonType.OK)).fire();
+            assertEquals("自定义中文项目 Alpha 2026", dialog.getResult());
+            assertFalse(dialog.isShowing());
+        });
+    }
+
+    @Test
     void 提示和自定义弹窗移除系统图标并为正文提供滚动边界() {
         FxTestSupport.run(() -> {
             VBox owner = owner();

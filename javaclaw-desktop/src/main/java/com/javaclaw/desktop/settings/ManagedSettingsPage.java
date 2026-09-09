@@ -22,11 +22,14 @@ public interface ManagedSettingsPage {
         return Optional.empty();
     }
 
-    /** 页面进入前刷新所需状态；实现不得阻塞 JavaFX Thread。 */
+    /** 页面进入时恢复显示并按需读取失效状态；实现不得阻塞 JavaFX Thread。 */
     void activate();
 
     /** 页面离开或窗口隐藏时停止非必要刷新。 */
     default void deactivate() {}
+
+    /** 服务重连后标记缓存失效；不得丢弃草稿或在隐藏时发起查询。 */
+    default void invalidateCache() {}
 
     /** @return 当前是否存在未保存草稿 */
     boolean dirty();

@@ -80,13 +80,20 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
     public void activate() {
         active = true;
         execution.setRefreshActive(true);
-        presenter.refresh();
+        presenter.activate();
     }
 
     @Override
     public void deactivate() {
         active = false;
+        presenter.deactivate();
         execution.setRefreshActive(false);
+    }
+
+    @Override
+    public void invalidateCache() {
+        presenter.invalidateCache();
+        execution.invalidateCache();
     }
 
     @Override
@@ -105,8 +112,11 @@ public final class WorkspaceSettingsPage extends VBox implements ManagedSettings
     }
 
     private void configurationChanged(DesktopConfigurationChange change) {
-        if (active && change.kind() == DesktopConfigurationChange.Kind.WORKSPACES) {
-            presenter.refresh();
+        if (change.kind() == DesktopConfigurationChange.Kind.WORKSPACES) {
+            presenter.invalidateCache();
+            if (active) {
+                presenter.activate();
+            }
         }
     }
 

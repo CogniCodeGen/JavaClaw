@@ -2,6 +2,7 @@ package com.javaclaw.desktop.settings;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CompletionStage;
 import java.util.function.Consumer;
 
 import com.javaclaw.api.EmbeddingBinding;
@@ -14,6 +15,7 @@ import com.javaclaw.client.CommandOptions;
 /** 管理本地安装唯一的精确 Embedding ProviderRef 绑定。 */
 final class ProviderEmbeddingBindingPresenter {
     private final CoreSettingsGateway gateway;
+    private boolean loaded;
     private Consumer<ProviderEmbeddingBindingState> listener = ignored -> {};
     private ProviderEmbeddingBindingState state = ProviderEmbeddingBindingState.initial();
 
@@ -26,10 +28,14 @@ final class ProviderEmbeddingBindingPresenter {
         listener.accept(state);
     }
 
-    void reload() {
+    CompletionStage<Boolean> reload() {
         long epoch = state.epoch() + 1;
         publish(new ProviderEmbeddingBindingState(state.binding(), true, "正在读取默认向量模型…", epoch));
-        gateway.embeddingBinding().whenComplete((binding, failure) -> completeReload(epoch, binding, failure));
+        return gateway.embeddingBinding().handle((binding, failure) -> {
+            boolean current = epoch == state.epoch();
+            completeReload(epoch, binding, failure);
+            return current && failure == null;
+        });
     }
 
     void bind(ProviderEndpoint endpoint, ProviderModelSpec model) {
@@ -46,6 +52,10 @@ final class ProviderEmbeddingBindingPresenter {
                 .whenComplete((binding, failure) -> completeBind(epoch, binding, failure));
     }
 
+    boolean ready() {
+        return loaded;
+    }
+
     ProviderEmbeddingBindingState state() {
         return state;
     }
@@ -54,6 +64,7 @@ final class ProviderEmbeddingBindingPresenter {
         if (epoch != state.epoch()) {
             return;
         }
+        loaded = failure == null;
         if (failure != null) {
             publish(new ProviderEmbeddingBindingState(
                     Optional.empty(), false, "向量模型绑定读取失败：" + SettingsFailures.message(failure), epoch));

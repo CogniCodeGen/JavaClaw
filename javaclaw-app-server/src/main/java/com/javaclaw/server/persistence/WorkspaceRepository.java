@@ -20,6 +20,11 @@ import com.javaclaw.api.WorkspaceLifecycle;
 final class WorkspaceRepository {
     Workspace insert(Connection connection, String name, Path root, Instant now) throws SQLException {
         Workspace workspace = new Workspace(WorkspaceId.random(), name, root, WorkspaceLifecycle.ACTIVE, 1, now, now);
+        validateFields(workspace);
+        Optional<Workspace> existing = findByRoot(connection, workspace.root());
+        if (existing.isPresent()) {
+            throw rootConflict(existing.orElseThrow());
+        }
         try (PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO CORE.WORKSPACE (ID, NAME, ROOT_PATH, STATE, REVISION, CREATED_AT, UPDATED_AT)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -31,9 +36,45 @@ final class WorkspaceRepository {
             statement.setLong(5, workspace.revision());
             statement.setObject(6, at(now));
             statement.setObject(7, at(now));
-            statement.executeUpdate();
+            try {
+                statement.executeUpdate();
+            } catch (SQLException failure) {
+                if ("23505".equals(failure.getSQLState())) {
+                    throw new RootInsertConflict(failure);
+                }
+                throw failure;
+            }
         }
         return workspace;
+    }
+
+    Optional<Workspace> findByRoot(Connection connection, Path root) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT ID, NAME, ROOT_PATH, STATE, REVISION, CREATED_AT, UPDATED_AT
+                FROM CORE.WORKSPACE WHERE ROOT_PATH = ?
+                """)) {
+            statement.setString(1, root.toAbsolutePath().normalize().toString());
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? Optional.of(map(result)) : Optional.empty();
+            }
+        }
+    }
+
+    PersistenceException rootConflict(Workspace existing) {
+        if (existing.lifecycle() == WorkspaceLifecycle.ARCHIVED) {
+            return PersistenceException.invalidRequest("该目录已登记为已归档工作区“" + existing.name() + "”，不会自动重新启用。请选择其他目录。");
+        }
+        return PersistenceException.invalidRequest(
+                "该目录已登记为工作区“" + existing.name() + "”。请在工作区列表打开已有工作区；如需改名请在设置中修改名称，或选择其他目录。");
+    }
+
+    private void validateFields(Workspace workspace) {
+        if (workspace.name().length() > 240) {
+            throw PersistenceException.invalidRequest("工作区名称不能超过 240 个字符，请缩短名称后重试。");
+        }
+        if (workspace.root().toString().length() > 4096) {
+            throw PersistenceException.invalidRequest("工作区根目录路径不能超过 4096 个字符，请选择更短的目录路径。");
+        }
     }
 
     Optional<Workspace> find(Connection connection, WorkspaceId id) throws SQLException {
@@ -81,6 +122,7 @@ final class WorkspaceRepository {
                 Math.addExact(current.revision(), 1),
                 current.createdAt(),
                 now);
+        validateFields(next);
         replace(connection, current, next);
         return next;
     }
@@ -136,5 +178,14 @@ final class WorkspaceRepository {
 
     private static Instant instant(ResultSet result, String column) throws SQLException {
         return result.getObject(column, OffsetDateTime.class).toInstant();
+    }
+
+    /** 只标记 WORKSPACE 行插入阶段的唯一冲突，防止后续副写入故障被误解释为根目录重复。 */
+    static final class RootInsertConflict extends SQLException {
+        private static final long serialVersionUID = 1L;
+
+        RootInsertConflict(SQLException cause) {
+            super("工作区登记插入发生唯一冲突", cause.getSQLState(), cause.getErrorCode(), cause);
+        }
     }
 }

@@ -27,7 +27,7 @@ class WebChatScrollResponsivenessTest {
     }
 
     @Test
-    void 阅读时追加末尾回复只替换变化消息且不校正未移动的锚点() {
+    void 阅读时追加末尾回复保留消息节点且不校正未移动的锚点() {
         var fixture = open(32);
         try {
             double before = FxTestSupport.call(fixture::positions).chat();
@@ -37,8 +37,8 @@ class WebChatScrollResponsivenessTest {
             var metrics = FxTestSupport.call(fixture::chatMetrics);
             assertAll(
                     () -> assertEquals(before, metrics.scrollY(), 1),
-                    () -> assertEquals(1, metrics.added()),
-                    () -> assertEquals(1, metrics.removed()),
+                    () -> assertEquals(0, metrics.added()),
+                    () -> assertEquals(0, metrics.removed()),
                     () -> assertEquals(0, metrics.remounted()),
                     () -> assertEquals(0, metrics.scrollBy()));
         } finally {

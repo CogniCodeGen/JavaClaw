@@ -132,7 +132,9 @@ public final class SdkCoreSettingsGateway extends SdkRoleExecutionSettingsGatewa
 
     @Override
     public CompletionStage<EmbeddingBinding> bindEmbedding(ProviderRef provider, CommandOptions options) {
-        return desktop.submitSettingsRequest(client -> client.providers().bindEmbedding(provider, options));
+        return changed(
+                desktop.submitSettingsRequest(client -> client.providers().bindEmbedding(provider, options)),
+                DesktopConfigurationChange.Kind.PROVIDERS);
     }
 
     @Override
