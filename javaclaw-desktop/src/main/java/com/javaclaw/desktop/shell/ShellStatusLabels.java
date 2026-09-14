@@ -33,12 +33,19 @@ record ShellStatusLabels(
         Label dot) {
     void render(DesktopState state) {
         boolean failed = state.connection().status() == ConnectionState.Status.FAILED;
-        connection.setText(failed ? "App Server 未连接" : state.connection().detail());
+        connection.setText(
+                switch (state.connection().status()) {
+                    case CONNECTED -> "服务已连接";
+                    case CONNECTING -> "正在连接服务…";
+                    case DISCONNECTED, FAILED -> "服务未连接";
+                });
+        connection.setTooltip(new Tooltip(state.connection().detail()));
         connectionDetail.setText(
                 "无法连接本地 App Server。" + LauncherSession.current().recoveryInstruction());
         visible(connectionCard, failed);
         title.setText(
                 state.threads().selectedThread().map(ConversationThread::title).orElse("新对话"));
+        title.setTooltip(new Tooltip(title.getText()));
         meta.setText(headline(state));
         meta.setTooltip(
                 state.threads().activeTurn().map(ShellStatusLabels::details).orElse(null));

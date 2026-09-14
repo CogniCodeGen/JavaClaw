@@ -23,11 +23,31 @@ import com.javaclaw.builtin.contracts.CodingResults;
 import com.javaclaw.protocol.CanonicalJson;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TranscriptPresenterTest {
     private final CanonicalJson json = new CanonicalJson();
     private final TranscriptPresenter presenter = new TranscriptPresenter(json);
+
+    @Test
+    void 历史只折叠明确成功的工具并始终保留失败及交互原因() {
+        PresentedItem success = TranscriptPresenter.presentHistory(
+                history("tool-result", Optional.empty(), "工具结果 · 成功\n调用：opaque\n{\"count\":1}"));
+        assertTrue(success.collapsible());
+        assertEquals("", success.body());
+        assertTrue(success.details().contains("opaque"));
+        PresentedItem failure =
+                TranscriptPresenter.presentHistory(history("tool-result", Optional.empty(), "工具结果 · 失败或未完成\n访问被拒绝"));
+        assertEquals("访问被拒绝", failure.body());
+        assertEquals("transcript-error-block", failure.styleClass());
+        for (String kind : List.of("error", "approval", "input")) {
+            PresentedItem action =
+                    TranscriptPresenter.presentHistory(history(kind, Optional.empty(), "工具 · 不能按标题猜测\n需要用户处理"));
+            assertFalse(action.collapsible());
+            assertEquals("需要用户处理", action.body());
+        }
+    }
 
     @Test
     void 历史与原生展示共用错误审批及执行样式且兼容旧服务端摘要() {
@@ -116,10 +136,12 @@ class TranscriptPresenterTest {
                 Optional.of(Instant.EPOCH));
         presenter.replaceItems(List.of(call, result));
         PresentedItem shown = presenter.present(result);
-        assertEquals("命令 · COMPLETED", shown.title());
-        assertTrue(shown.body().contains("PASS\nstderr:\ndiagnostic"));
+        assertEquals("command_run · 成功", shown.title());
+        assertTrue(shown.collapsible());
+        assertEquals("", shown.body());
+        assertTrue(shown.details().contains("PASS\nstderr:\ndiagnostic"));
         presenter.replaceItems(List.of(result));
-        assertEquals("工具结果", presenter.present(result).title());
+        assertEquals("工具结果 · 成功", presenter.present(result).title());
     }
 
     @Test
@@ -146,8 +168,10 @@ class TranscriptPresenterTest {
         PresentedItem call = present(
                 CoreSchemas.TOOL_CALL,
                 new CorePayloads.ToolCall("call-1", "core", "read_file", 2, new CanonicalPayload("{}")));
-        assertEquals("工具 · read_file", call.title());
-        assertEquals("来源 core · revision 2", call.body());
+        assertEquals("工具 · read_file · 已调用", call.title());
+        assertEquals("", call.body());
+        assertTrue(call.details().contains("来源 core · revision 2"));
+        assertTrue(call.collapsible());
 
         PresentedItem success = present(
                 CoreSchemas.TOOL_RESULT,
@@ -155,7 +179,11 @@ class TranscriptPresenterTest {
         PresentedItem failure = present(
                 CoreSchemas.TOOL_RESULT,
                 new CorePayloads.ToolResult("call-2", false, new CanonicalPayload("{\"ok\":false}"), Optional.empty()));
-        assertEquals("工具结果", success.title());
+        assertEquals("工具结果 · 成功", success.title());
+        assertEquals("", success.body());
+        assertTrue(success.details().contains("{\"ok\":true}"));
+        assertTrue(failure.body().contains("{\"ok\":false}"));
+        assertEquals("transcript-error-block", failure.styleClass());
         assertEquals("工具结果 · 失败或未完成", failure.title());
 
         PresentedItem approval = present(

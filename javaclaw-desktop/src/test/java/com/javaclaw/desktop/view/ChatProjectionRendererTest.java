@@ -28,6 +28,7 @@ import com.javaclaw.desktop.state.OutgoingMessage;
 import com.javaclaw.desktop.view.ChatProjectionRenderer.Rendered;
 import com.javaclaw.desktop.view.ChatProjectionRenderer.Scope;
 import com.javaclaw.desktop.view.ChatProjectionRenderer.Snapshot;
+import com.javaclaw.desktop.view.ChatSurface.Activity;
 import com.javaclaw.desktop.view.ChatSurface.TemporaryMessage;
 import com.javaclaw.protocol.CanonicalJson;
 
@@ -38,6 +39,87 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ChatProjectionRendererTest {
+    @Test
+    void 较新已入库Turn的流式正文不被旧失败消息移到前面() {
+        ChatProjectionRenderer renderer = new ChatProjectionRenderer();
+        Scope scope = new Scope("failed-then-streaming", WorkspaceId.random());
+        var before = sequencedHistory(5, "之前的消息");
+        var later = sequencedHistory(6, "新问题已入库");
+        var failed = new OutgoingMessage(
+                "local:failed", "较早失败原文", Optional.empty(), OutgoingMessage.Status.UNCONFIRMED, 1, 5);
+        var temporary = new TemporaryMessage("new-stream", "新问题的回复", false, 0, Optional.of(later.turnId()));
+        Rendered result = renderer.render(
+                new Snapshot(scope, List.of(), List.of(before, later), List.of(temporary), false, 1, List.of(failed)),
+                () -> true);
+        assertEquals(
+                List.of("之前的消息", "较早失败原文", "新问题已入库", "新问题的回复"),
+                frame(result).items().stream().map(row -> row.get("text")).toList());
+    }
+
+    @Test
+    void 新消息入库后旧未确认原文仍留在首次发送的序号位置() {
+        ChatProjectionRenderer renderer = new ChatProjectionRenderer();
+        Scope scope = new Scope("failed-then-committed", WorkspaceId.random());
+        var before = sequencedHistory(5, "之前的消息");
+        var later = sequencedHistory(6, "后发送并已入库的消息");
+        var first = new OutgoingMessage(
+                "local:failed-first", "较早失败原文", Optional.empty(), OutgoingMessage.Status.UNCONFIRMED, 1, 5);
+        var second = new OutgoingMessage(
+                "local:failed-second", "同位置失败原文", Optional.empty(), OutgoingMessage.Status.UNCONFIRMED, 2, 5);
+        Rendered initial = renderer.render(
+                new Snapshot(scope, List.of(), List.of(before), List.of(), false, 1, List.of(first, second)),
+                () -> true);
+        assertEquals(
+                List.of("之前的消息", "较早失败原文", "同位置失败原文"),
+                frame(initial).items().stream().map(row -> row.get("text")).toList());
+        Rendered refreshed = renderer.render(
+                new Snapshot(scope, List.of(), List.of(before, later), List.of(), false, 2, List.of(first, second)),
+                () -> true);
+        assertEquals(
+                List.of("之前的消息", "较早失败原文", "同位置失败原文", "后发送并已入库的消息"),
+                frame(refreshed).items().stream().map(row -> row.get("text")).toList());
+    }
+
+    private static ItemHistoryEntry sequencedHistory(long sequence, String text) {
+        return new ItemHistoryEntry(
+                ItemId.random(),
+                TurnId.random(),
+                sequence,
+                "message",
+                Optional.of(MessageRole.USER),
+                text,
+                Optional.empty(),
+                false,
+                Instant.EPOCH,
+                List.of(),
+                List.of());
+    }
+
+    @Test
+    void 多条失败原文均保留且页面动作身份不泄漏幂等键() {
+        ChatProjectionRenderer renderer = new ChatProjectionRenderer();
+        Scope scope = new Scope("multiple-unconfirmed", WorkspaceId.random());
+        var first =
+                new OutgoingMessage("local:secret-one", "第一条原文", Optional.empty(), OutgoingMessage.Status.UNCONFIRMED);
+        var second =
+                new OutgoingMessage("local:secret-two", "第二条原文", Optional.empty(), OutgoingMessage.Status.UNCONFIRMED);
+        var sending =
+                new OutgoingMessage("local:secret-three", "第三条原文", Optional.empty(), OutgoingMessage.Status.SENDING);
+        Rendered result = renderer.render(
+                new Snapshot(scope, List.of(), List.of(), List.of(), false, 1, List.of(first, second, sending)),
+                () -> true);
+        assertEquals(
+                List.of(first.text(), second.text(), sending.text()),
+                frame(result).items().stream().map(value -> value.get("text")).toList());
+        assertEquals(
+                Map.of(sendId(first.id()), first.id(), sendId(second.id()), second.id()), result.outgoingActions());
+        assertFalse(result.json().contains("secret"));
+    }
+
+    private static String sendId(String id) {
+        return "send:" + new CanonicalJson().encode(Map.of("send", id)).sha256();
+    }
+
     @Test
     void 上一回合未提交尾文在本地发送之前而本回合回复在用户之后() {
         ChatProjectionRenderer renderer = new ChatProjectionRenderer();
@@ -51,7 +133,7 @@ class ChatProjectionRendererTest {
                 new Snapshot(scope, List.of(), List.of(), List.of(oldTail), false, 1, Optional.of(sending)),
                 () -> true);
         assertEquals(
-                List.of("old-tail", "local:send"),
+                List.of("old-tail", sendId("local:send")),
                 frame(waiting).items().stream().map(row -> row.get("id")).toList());
 
         var accepted = new OutgoingMessage(
@@ -60,7 +142,7 @@ class ChatProjectionRendererTest {
                 new Snapshot(scope, List.of(), List.of(), List.of(oldTail, newReply), false, 2, Optional.of(accepted)),
                 () -> true);
         assertEquals(
-                List.of("old-tail", "local:send", "new-reply"),
+                List.of("old-tail", sendId("local:send"), "new-reply"),
                 frame(replying).items().stream().map(row -> row.get("id")).toList());
         assertTrue(frame(replying).items().getFirst().get("title").toString().contains("未完成"));
         assertEquals("你 · 已发送", frame(replying).items().get(1).get("title"));
@@ -103,7 +185,7 @@ class ChatProjectionRendererTest {
         List<Map<String, Object>> rows = frame(first).items();
         assertEquals(500, rows.size());
         Map<String, Object> user = rows.getLast();
-        assertEquals("local:send", user.get("id"));
+        assertEquals(sendId("local:send"), user.get("id"));
         assertEquals("你 · 正在发送…", user.get("title"));
         assertEquals("message-user", user.get("style"));
         assertEquals(text, user.get("text"));
@@ -121,6 +203,60 @@ class ChatProjectionRendererTest {
         assertEquals("你 · 已发送", confirmed.get("title"));
         assertNotEquals(user.get("version"), confirmed.get("version"));
         assertEquals(498, renderer.statistics().projections());
+    }
+
+    @Test
+    void 等待空行可见且活动阶段变化推进版本而普通空行仍过滤() {
+        ChatProjectionRenderer renderer = new ChatProjectionRenderer();
+        Scope scope = new Scope("activity", WorkspaceId.random());
+        TurnId turn = TurnId.random();
+        var waiting = new TemporaryMessage("assistant", "", false, 0, Optional.of(turn), Activity.WAITING);
+        Rendered waitingResult =
+                renderer.render(new Snapshot(scope, List.of(), List.of(), List.of(waiting), false, 1), () -> true);
+        Map<String, Object> waitingRow = frame(waitingResult).items().getFirst();
+        assertEquals("WAITING", waitingRow.get("activity"));
+        assertEquals(false, waitingRow.get("streaming"));
+        assertEquals("", waitingRow.get("text"));
+
+        var streaming = new TemporaryMessage(waiting.id(), "正在回复", false, 0, Optional.of(turn), Activity.STREAMING);
+        Rendered streamingResult =
+                renderer.render(new Snapshot(scope, List.of(), List.of(), List.of(streaming), false, 2), () -> true);
+        Map<String, Object> streamingRow = frame(streamingResult).items().getFirst();
+        assertEquals(waitingRow.get("id"), streamingRow.get("id"));
+        assertEquals("STREAMING", streamingRow.get("activity"));
+        assertEquals(true, streamingRow.get("streaming"));
+        assertNotEquals(waitingRow.get("version"), streamingRow.get("version"));
+
+        var settled =
+                new TemporaryMessage(waiting.id(), streaming.text(), false, 0, Optional.of(turn), Activity.SETTLED);
+        Rendered settledResult =
+                renderer.render(new Snapshot(scope, List.of(), List.of(), List.of(settled), false, 3), () -> true);
+        Map<String, Object> settledRow = frame(settledResult).items().getFirst();
+        assertEquals("SETTLED", settledRow.get("activity"));
+        assertEquals(false, settledRow.get("streaming"));
+        assertNotEquals(streamingRow.get("version"), settledRow.get("version"));
+
+        var emptySettled = new TemporaryMessage("empty", "", false, 0, Optional.of(turn), Activity.SETTLED);
+        Rendered filtered =
+                renderer.render(new Snapshot(scope, List.of(), List.of(), List.of(emptySettled), false, 4), () -> true);
+        assertTrue(frame(filtered).items().isEmpty());
+    }
+
+    @Test
+    void 等待空行仍占用五百条可见窗口预算() {
+        ChatProjectionRenderer renderer = new ChatProjectionRenderer();
+        Scope scope = new Scope("waiting-window", WorkspaceId.random());
+        List<ItemHistoryEntry> history = IntStream.range(0, 500)
+                .mapToObj(index -> history(scope, ItemId.random(), "历史 " + index, List.of(), List.of()))
+                .toList();
+        var waiting = new TemporaryMessage("activity", "", false, 0, Optional.of(TurnId.random()), Activity.WAITING);
+        Rendered rendered =
+                renderer.render(new Snapshot(scope, List.of(), history, List.of(waiting), true, 1), () -> true);
+        List<Map<String, Object>> rows = frame(rendered).items();
+        assertEquals(500, rows.size());
+        assertEquals(history.get(1).id().toString(), rows.getFirst().get("id"));
+        assertEquals("activity", rows.getLast().get("id"));
+        assertEquals("WAITING", rows.getLast().get("activity"));
     }
 
     @Test

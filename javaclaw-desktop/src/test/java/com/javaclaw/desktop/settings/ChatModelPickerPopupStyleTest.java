@@ -110,6 +110,13 @@ class ChatModelPickerPopupStyleTest {
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("模型目录必须正常显示"));
         assertEquals(fixture.body().getTextFill(), row.getTextFill(), "模型名称应继承当前主题正文色");
+        Label service = (Label) row.lookup(".composer-model-service");
+        assertEquals("Local fake", service.getText());
+        assertTrue(row.getTooltip().getText().contains("Fake model\n服务：Local fake"));
+        assertTrue(
+                service.localToScene(service.getBoundsInLocal()).getMaxX()
+                        <= row.localToScene(row.getBoundsInLocal()).getMaxX() + 1,
+                "服务名应留在弹层行内");
         Region surface = (Region) menu.getSkin().getNode();
         assertTrue(hasOpaqueFill(surface.getBackground()), "菜单表面必须不透明");
         menu.hide();

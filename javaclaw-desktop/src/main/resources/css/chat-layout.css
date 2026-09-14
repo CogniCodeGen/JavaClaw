@@ -1,0 +1,84 @@
+/* 聊天布局适配复用固定视觉基线令牌，独立承载正文与输入区的尺寸调整。 */
+.chat-root .chat-top-bar {
+    -fx-padding: 10 20 10 20;
+}
+
+.input-bar {
+    -fx-padding: 12 20 16 20;
+    -fx-spacing: 0;
+    -fx-background-color: -jc-surface-page;
+    -fx-border-width: 0;
+}
+
+.composer-card {
+    -fx-background-color: -jc-surface-card;
+    -fx-background-radius: 18;
+    -fx-border-color: -jc-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 18;
+}
+
+.composer-card:hover {
+    -fx-border-color: -jc-border-strong;
+}
+
+.composer-card:composer-focused {
+    -fx-border-color: -jc-primary-500;
+}
+
+.composer-card .composer-input,
+.composer-card .composer-input:focused,
+.composer-card .composer-input .scroll-pane,
+.composer-card .composer-input .scroll-pane .viewport,
+.composer-card .composer-input .content {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-effect: none;
+}
+
+.composer-card .composer-input {
+    -fx-min-height: 60;
+    -fx-max-height: 240;
+    -fx-padding: 12 14 4 14;
+    -fx-background-insets: 0;
+    -fx-border-width: 0;
+    -fx-prompt-text-fill: -jc-text-muted;
+}
+
+.composer-toolbar {
+    -fx-min-height: 40;
+    -fx-padding: 2 10 8 10;
+    -fx-background-color: transparent;
+}
+
+.composer-card .composer-interrupt-button {
+    -fx-min-height: 36;
+    -fx-pref-height: 36;
+    -fx-max-height: 36;
+    -fx-padding: 7 11;
+}
+
+.composer-card .composer-send-button {
+    -fx-min-width: 82;
+    -fx-pref-width: -1;
+    -fx-min-height: 36;
+    -fx-pref-height: 36;
+    -fx-max-height: 36;
+    -fx-padding: 7 16;
+    -fx-effect: none;
+}
+
+.composer-model-arrow {
+    -fx-fill: -jc-text-muted;
+}
+
+.composer-card .composer-select {
+    -fx-min-height: 36;
+    -fx-pref-height: 36;
+    -fx-max-height: 36;
+}
+
+.composer-model-service {
+    -fx-text-fill: -jc-text-muted;
+    -fx-font-size: 11px;
+}

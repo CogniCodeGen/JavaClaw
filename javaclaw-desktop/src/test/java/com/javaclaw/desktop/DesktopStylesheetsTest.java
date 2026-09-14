@@ -20,8 +20,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DesktopStylesheetsTest {
-    // 已审阅 chat-surface.css 的执行、等待和失败状态令牌变更；其余六份基线资源字节保持不变。
-    private static final String BASELINE_SHA256 = "ad98fce3c056f03c6e76c93a1b80412f03f181ddf8d65eea07b93bff5a5e093c";
+    // 固定现有七份基线的原始字节，包含已提交的状态点令牌与侧栏工作区图标；聊天布局适配独立加载。
+    private static final String BASELINE_SHA256 = "63816c6659e81267653f30ba8ae5fa306757494fc3ad6b06d74fedfb8d65465d";
 
     @Test
     void 可达视觉基线保持固定字节和级联顺序() throws Exception {

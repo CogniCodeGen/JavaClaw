@@ -137,7 +137,10 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
      * @param send 空闲时显示的发送按钮
      */
     public void setActions(Button stop, Button send) {
-        toolbar.getChildren().add(new HBox(8, stop, send));
+        HBox actions = new HBox(8, stop, send);
+        actions.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
+        actions.setMinWidth(javafx.scene.layout.Region.USE_PREF_SIZE);
+        toolbar.getChildren().add(actions);
     }
 
     /** 仅清除模型和思考覆盖，恢复项目规则，不修改其他执行字段或日常默认。 */
@@ -173,6 +176,7 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
         discard.setOnAction(event -> presenter.discard());
         repair.setOnAction(event -> repair());
         FlowPane choices = new FlowPane(8, 6, model, reasoning, more);
+        choices.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
         choices.setMinWidth(0);
         HBox.setHgrow(choices, Priority.ALWAYS);
         toolbar.setAlignment(javafx.geometry.Pos.CENTER_LEFT);

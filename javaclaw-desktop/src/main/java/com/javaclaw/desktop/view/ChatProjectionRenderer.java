@@ -10,7 +10,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
-import java.util.regex.Pattern;
 
 import com.javaclaw.api.CorePayloads;
 import com.javaclaw.api.CoreSchemas;
@@ -28,7 +27,6 @@ import com.javaclaw.protocol.CanonicalJson;
 /** 单个后台 worker 拥有的有界聊天投影缓存；缓存来源、JSON 与引用表一起更新，禁止跨作用域复用。 */
 final class ChatProjectionRenderer {
     private static final long MAX_CACHE_BYTES = 8L * 1024 * 1024;
-    private static final Pattern GRAPHEME = Pattern.compile("\\X");
     private final CanonicalJson json = new CanonicalJson();
     private final TranscriptPresenter presenter = new TranscriptPresenter(json);
     private final Map<String, CachedRow> cache = new LinkedHashMap<>();
@@ -37,10 +35,7 @@ final class ChatProjectionRenderer {
     private long itemGeneration;
     private long cachedBytes;
     private long projectedRows;
-    private String activeId = "";
-    private String activeHtml = "";
-    private String activeText = "";
-    private long parsedAt;
+    private final ChatStreamingMarkdown markdown = new ChatStreamingMarkdown();
 
     Rendered render(Snapshot snapshot, BooleanSupplier current) {
         requireCurrent(current);
@@ -48,32 +43,18 @@ final class ChatProjectionRenderer {
         Window visible = visible(snapshot);
         retainVisible(visible);
         List<ProjectedRow> rows = new ArrayList<>();
+        List<Long> sequences = new ArrayList<>();
         for (ItemEnvelope item : visible.items()) {
             requireCurrent(current);
             rows.add(item(snapshot.scope(), item));
+            sequences.add(item.sequence());
         }
         for (ItemHistoryEntry entry : visible.summaries()) {
             requireCurrent(current);
             rows.add(summary(snapshot.scope(), entry));
+            sequences.add(entry.sequence());
         }
-        if (snapshot.outgoing().isPresent()) {
-            OutgoingMessage message = snapshot.outgoing().orElseThrow();
-            addTemporary(
-                    visible.temporary().stream()
-                            .filter(value -> !value.belongsTo(message))
-                            .toList(),
-                    rows,
-                    current);
-            rows.add(outgoing(message));
-            addTemporary(
-                    visible.temporary().stream()
-                            .filter(value -> value.belongsTo(message))
-                            .toList(),
-                    rows,
-                    current);
-        } else {
-            addTemporary(visible.temporary(), rows, current);
-        }
+        Map<String, String> outgoingActions = insertOutgoing(visible, rows, sequences, current);
         requireCurrent(current);
         Map<String, DocumentReference> targets = new LinkedHashMap<>();
         Map<String, URI> links = new LinkedHashMap<>();
@@ -86,7 +67,61 @@ final class ChatProjectionRenderer {
                 snapshot.version(),
                 WebSurfaceContent.chat(rows.stream().map(ProjectedRow::content).toList(), snapshot.hasEarlier()),
                 Map.copyOf(targets),
-                Map.copyOf(links));
+                Map.copyOf(links),
+                Map.copyOf(outgoingActions));
+    }
+
+    private Map<String, String> insertOutgoing(
+            Window visible, List<ProjectedRow> rows, List<Long> sequences, BooleanSupplier current) {
+        List<ProjectedRow> previous = new ArrayList<>();
+        List<ChatProjectionOrder.Pending<ProjectedRow>> pending = new ArrayList<>();
+        for (TemporaryMessage temporary : visible.temporary()) {
+            if (visible.outgoings().stream().anyMatch(temporary::belongsTo)) {
+                continue;
+            }
+            List<ProjectedRow> group = new ArrayList<>();
+            addTemporary(List.of(temporary), group, current);
+            if (visible.outgoings().isEmpty()) {
+                previous.addAll(group);
+            } else {
+                pending.add(new ChatProjectionOrder.Pending<>(temporarySequence(temporary, visible), group));
+            }
+        }
+        Map<String, String> outgoingActions = new LinkedHashMap<>();
+        for (OutgoingMessage message : visible.outgoings()) {
+            List<ProjectedRow> group = new ArrayList<>();
+            group.add(outgoing(message));
+            if (message.status() == OutgoingMessage.Status.UNCONFIRMED) {
+                outgoingActions.put(outgoingId(message), message.id());
+            }
+            addTemporary(
+                    visible.temporary().stream()
+                            .filter(value -> value.belongsTo(message))
+                            .toList(),
+                    group,
+                    current);
+            pending.add(new ChatProjectionOrder.Pending<>(message.afterSequence(), group));
+        }
+        List<ProjectedRow> ordered = ChatProjectionOrder.merge(rows, sequences, previous, pending);
+        rows.clear();
+        rows.addAll(ordered);
+        return outgoingActions;
+    }
+
+    private static long temporarySequence(TemporaryMessage temporary, Window visible) {
+        long itemSequence = visible.items().stream()
+                .filter(item -> temporary.turnId().filter(item.turnId()::equals).isPresent())
+                .mapToLong(ItemEnvelope::sequence)
+                .max()
+                .orElse(-1);
+        long historySequence = visible.summaries().stream()
+                .filter(item -> temporary.turnId().filter(item.turnId()::equals).isPresent())
+                .mapToLong(ItemHistoryEntry::sequence)
+                .max()
+                .orElse(-1);
+        long sequence = Math.max(itemSequence, historySequence);
+        // 缺少权威序号的旧尾文只可沿首次本地提交的位置保留，不推测为较新 Turn 的回复。
+        return sequence >= 0 ? sequence : visible.outgoings().getFirst().afterSequence();
     }
 
     private void retainVisible(Window visible) {
@@ -109,9 +144,14 @@ final class ChatProjectionRenderer {
                 .collect(java.util.stream.Collectors.toSet());
         snapshot.summaries().forEach(item -> committed.add(item.id().toString()));
         List<TemporaryMessage> temporary = snapshot.temporary().stream()
-                .filter(item -> !committed.contains(item.id()) && !item.text().isEmpty())
+                .filter(item -> !committed.contains(item.id()))
+                .filter(item -> !item.text().isEmpty() || item.activity() == ChatSurface.Activity.WAITING)
                 .toList();
-        int capacity = snapshot.outgoing().isPresent() ? 499 : 500;
+        List<OutgoingMessage> outgoings = snapshot.outgoings()
+                .subList(
+                        Math.max(0, snapshot.outgoings().size() - 500),
+                        snapshot.outgoings().size());
+        int capacity = 500 - outgoings.size();
         int skipped = Math.max(0, snapshot.items().size() + snapshot.summaries().size() + temporary.size() - capacity);
         int items = Math.min(skipped, snapshot.items().size());
         skipped -= items;
@@ -120,7 +160,8 @@ final class ChatProjectionRenderer {
         return new Window(
                 snapshot.items().subList(items, snapshot.items().size()),
                 snapshot.summaries().subList(summaries, snapshot.summaries().size()),
-                temporary.subList(skipped, temporary.size()));
+                temporary.subList(skipped, temporary.size()),
+                outgoings);
     }
 
     private void prepare(Snapshot snapshot) {
@@ -130,10 +171,7 @@ final class ChatProjectionRenderer {
             cachedBytes = 0;
             indexedItems = List.of();
             presenter.replaceItems(indexedItems);
-            activeId = "";
-            activeHtml = "";
-            activeText = "";
-            parsedAt = 0;
+            markdown.clear();
         }
         if (!indexedItems.equals(snapshot.items())) {
             indexedItems = snapshot.items();
@@ -167,24 +205,7 @@ final class ChatProjectionRenderer {
                             attachment.fileName(),
                             DocumentReference.attachment(scope.workspace(), item.id(), attachment)));
         }
-        ProjectedRow rendered = row(
-                Map.of(
-                        "id",
-                        id,
-                        "title",
-                        text.title(),
-                        "style",
-                        text.styleClass(),
-                        "text",
-                        body.length() > 65_536 ? body.substring(0, 65_536) + "\n[消息较长，可查看完整消息]" : body,
-                        "html",
-                        html,
-                        "references",
-                        cards,
-                        "streaming",
-                        false),
-                targets,
-                links);
+        ProjectedRow rendered = row(presentedValues(id, text, html, cards), targets, links);
         return remember(key, item, generation, rendered, item.payload().json().length() * 2L);
     }
 
@@ -222,25 +243,30 @@ final class ChatProjectionRenderer {
                         links);
             }
         }
-        ProjectedRow rendered = row(
-                Map.of(
-                        "id",
-                        id,
-                        "title",
-                        presented.title(),
-                        "style",
-                        presented.styleClass(),
-                        "text",
-                        presented.body(),
-                        "html",
-                        html,
-                        "references",
-                        cards,
-                        "streaming",
-                        false),
-                targets,
-                links);
+        ProjectedRow rendered = row(presentedValues(id, presented, html, cards), targets, links);
         return remember(key, entry, 0, rendered, entry.summary().length() * 2L);
+    }
+
+    private static Map<String, Object> presentedValues(
+            String id, PresentedItem text, String html, List<Map<String, String>> cards) {
+        return Map.of(
+                "id", id,
+                "title", text.title(),
+                "style", text.styleClass(),
+                "text", bounded(text.body(), "消息较长，当前显示已截断"),
+                "html", html,
+                "details", bounded(text.details(), "详情较长，当前显示已截断"),
+                "collapsible", text.collapsible(),
+                "references", cards,
+                "streaming", false);
+    }
+
+    private static String bounded(String body, String notice) {
+        int end = Math.min(65_536, body.length());
+        if (end < body.length() && Character.isLowSurrogate(body.charAt(end))) {
+            end--;
+        }
+        return body.substring(0, end) + (end < body.length() ? "\n[" + notice + "]" : "");
     }
 
     private ProjectedRow row(
@@ -372,7 +398,7 @@ final class ChatProjectionRenderer {
             List<TemporaryMessage> temporaryMessages, List<ProjectedRow> messages, BooleanSupplier current) {
         for (TemporaryMessage temporary : temporaryMessages) {
             requireCurrent(current);
-            String html = activeMarkdown(temporary);
+            String html = markdown.render(temporary);
             Map<String, Object> values = new LinkedHashMap<>();
             values.put("id", temporary.id());
             values.put("title", temporary.incomplete() ? "助手 · 未完成" : "助手");
@@ -384,88 +410,22 @@ final class ChatProjectionRenderer {
                             : tail(temporary.text()));
             values.put("html", html);
             values.put("references", List.of());
-            values.put("streaming", true);
+            values.put("streaming", temporary.activity() == ChatSurface.Activity.STREAMING);
+            values.put("activity", temporary.activity().name());
             if (!html.isEmpty()) {
-                values.put("streamHtml", activeHtml);
-                values.put("streamSuffix", temporary.text().substring(activeText.length()));
+                values.put("streamHtml", markdown.parsedHtml());
+                values.put("streamSuffix", temporary.text().substring(markdown.parsedLength()));
             }
             messages.add(row(values, Map.of(), Map.of()));
         }
     }
 
     private ProjectedRow outgoing(OutgoingMessage message) {
-        var presented = TranscriptPresenter.presentOutgoing(message);
-        String text = presented.body();
-        int limit = Math.min(65_536, text.length());
-        if (limit < text.length() && Character.isLowSurrogate(text.charAt(limit))) {
-            limit--;
-        }
-        return row(
-                Map.of(
-                        "id", message.id(),
-                        "title", presented.title(),
-                        "style", presented.styleClass(),
-                        "text", text.substring(0, limit) + (limit < text.length() ? "\n[消息较长；确认后可查看完整消息]" : ""),
-                        "html", "",
-                        "references", List.of(),
-                        "streaming", false,
-                        "outgoing", message.status().name(),
-                        "sendAttempt", message.attempt()),
-                Map.of(),
-                Map.of());
+        return row(ChatOutgoingProjection.values(message, json), Map.of(), Map.of());
     }
 
-    private String activeMarkdown(TemporaryMessage message) {
-        if (message.incomplete()
-                || message.textOffsetUtf16() > 0
-                || message.text().length() > 32_768) {
-            return "";
-        }
-        long now = System.nanoTime();
-        if (!activeId.equals(message.id()) || now - parsedAt >= 200_000_000L || joinsParsedGrapheme(message.text())) {
-            activeId = message.id();
-            activeHtml = new SafeMarkdown()
-                    .render(message.text(), "active:", Map.of())
-                    .html();
-            activeText = message.text();
-            parsedAt = now;
-        }
-        if (!message.text().startsWith(activeText)) {
-            return "";
-        }
-        // Markdown 至多每 200ms 解析一次；期间的新字仍以转义原文立即可见，不能显示旧正文等待下一块。
-        String suffix = message.text().substring(activeText.length());
-        return suffix.isEmpty()
-                ? activeHtml
-                : activeHtml + "<span class=\"plain\">"
-                        + suffix.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") + "</span>";
-    }
-
-    /** 新片段若扩展已解析末簇，立即重新解析，避免把代理对、肤色或 ZWJ 组合拆在两个 DOM 区域。 */
-    private boolean joinsParsedGrapheme(String text) {
-        int boundary = activeText.length();
-        if (boundary == 0 || text.length() <= boundary || !text.startsWith(activeText)) {
-            return false;
-        }
-        int next = text.codePointAt(boundary);
-        int previous = text.codePointBefore(boundary);
-        int category = Character.getType(next);
-        boolean continuation = Character.isSurrogate(text.charAt(boundary))
-                || next == 0x200D
-                || previous == 0x200D
-                || category == Character.NON_SPACING_MARK
-                || category == Character.COMBINING_SPACING_MARK
-                || category == Character.ENCLOSING_MARK;
-        if (!continuation) {
-            return false;
-        }
-        var matcher = GRAPHEME.matcher(text);
-        while (matcher.find()) {
-            if (matcher.end() >= boundary) {
-                return matcher.end() > boundary;
-            }
-        }
-        return false;
+    private String outgoingId(OutgoingMessage message) {
+        return ChatOutgoingProjection.id(message, json);
     }
 
     private static String tail(String text) {
@@ -515,7 +475,7 @@ final class ChatProjectionRenderer {
      * @param temporary 非空的暂态正文列表
      * @param hasEarlier 是否还有更早历史
      * @param version 在页面实例内递增的请求版本，非时间戳
-     * @param outgoing 非空的本地用户发送状态，尚未进入持久历史时存在
+     * @param outgoings 非空的有序本地用户发送记录列表，由状态层与权威历史去重
      */
     record Snapshot(
             Scope scope,
@@ -524,7 +484,25 @@ final class ChatProjectionRenderer {
             List<TemporaryMessage> temporary,
             boolean hasEarlier,
             long version,
-            Optional<OutgoingMessage> outgoing) {
+            List<OutgoingMessage> outgoings) {
+        Snapshot(
+                Scope scope,
+                List<ItemEnvelope> items,
+                List<ItemHistoryEntry> summaries,
+                List<TemporaryMessage> temporary,
+                boolean hasEarlier,
+                long version,
+                Optional<OutgoingMessage> outgoing) {
+            this(
+                    scope,
+                    items,
+                    summaries,
+                    temporary,
+                    hasEarlier,
+                    version,
+                    outgoing.stream().toList());
+        }
+
         Snapshot(
                 Scope scope,
                 List<ItemEnvelope> items,
@@ -532,7 +510,7 @@ final class ChatProjectionRenderer {
                 List<TemporaryMessage> temporary,
                 boolean hasEarlier,
                 long version) {
-            this(scope, items, summaries, temporary, hasEarlier, version, Optional.empty());
+            this(scope, items, summaries, temporary, hasEarlier, version, List.of());
         }
     }
 
@@ -544,13 +522,24 @@ final class ChatProjectionRenderer {
      * @param content 最终窗口的不可变展示内容
      * @param references 窗口内文档动作及其精确目标
      * @param links 窗口内可打开的外部链接
+     * @param outgoingActions 窗口内未确认消息的展示身份到宿主发送身份映射，不发送给页面
      */
     record Rendered(
             Scope scope,
             long version,
             WebSurfaceContent content,
             Map<String, DocumentReference> references,
-            Map<String, URI> links) {
+            Map<String, URI> links,
+            Map<String, String> outgoingActions) {
+        Rendered(
+                Scope scope,
+                long version,
+                WebSurfaceContent content,
+                Map<String, DocumentReference> references,
+                Map<String, URI> links) {
+            this(scope, version, content, references, links, Map.of());
+        }
+
         String json() {
             return content.fullPayload();
         }
@@ -565,9 +554,12 @@ final class ChatProjectionRenderer {
      */
     record Statistics(int rows, long bytes, long projections) {}
 
-    /** items、summaries、temporary 均为非空列表，依次拼接后构成最多 500 条的最终窗口。 */
+    /** 所有列表非空；临时正文按 Turn 归到对应本地发送之后，最终窗口至多 500 条。 */
     private record Window(
-            List<ItemEnvelope> items, List<ItemHistoryEntry> summaries, List<TemporaryMessage> temporary) {}
+            List<ItemEnvelope> items,
+            List<ItemHistoryEntry> summaries,
+            List<TemporaryMessage> temporary,
+            List<OutgoingMessage> outgoings) {}
 
     /** content 是单行编码内容；references 与 links 是其非空、不可变的精确动作映射。 */
     private record ProjectedRow(

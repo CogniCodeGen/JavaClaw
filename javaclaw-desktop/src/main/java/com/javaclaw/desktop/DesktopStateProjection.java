@@ -133,7 +133,7 @@ final class DesktopStateProjection {
                                 Optional.empty(),
                                 false,
                                 List.of(),
-                                state.transcript().outgoing()))
+                                state.transcript().outgoings()))
                 : state;
     }
 

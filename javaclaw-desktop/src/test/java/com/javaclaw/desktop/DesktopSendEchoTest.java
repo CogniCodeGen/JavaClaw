@@ -51,6 +51,7 @@ import com.javaclaw.protocol.JsonRpcRequest;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DesktopSendEchoTest {
     private static final String MESSAGE = "发送回显必须先于服务端回执出现";
@@ -65,7 +66,7 @@ class DesktopSendEchoTest {
             FxTestSupport.run(() -> {
                 assertEquals(1, fixture.matchingArticles());
                 assertSame(fixture.composer(), fixture.scene().getFocusOwner());
-                assertEquals(MESSAGE, fixture.composer().getText());
+                assertEquals("", fixture.composer().getText());
                 assertEquals(0, fixture.server.turnStarts.get());
                 assertEquals(1, fixture.release.getCount());
                 // 用户等待时可以继续操作；迟到回执不能把焦点拉回输入框或正文。
@@ -92,6 +93,7 @@ class DesktopSendEchoTest {
             fixture.awaitNative(MESSAGE, "你 · 正在发送…");
             FxTestSupport.run(() -> {
                 assertEquals(3, fixture.summary().getItems().size());
+                assertEquals("", fixture.composer().getText());
                 assertSame(fixture.composer(), fixture.scene().getFocusOwner());
                 assertEquals(0, fixture.server.turnStarts.get());
             });
@@ -107,7 +109,7 @@ class DesktopSendEchoTest {
     }
 
     @Test
-    void 发送失败保留原草稿及未确认回显而且不抢输入焦点() throws Exception {
+    void 发送失败保留未确认消息但不恢复输入而且不抢输入焦点() throws Exception {
         try (Fixture fixture = new Fixture(true)) {
             fixture.open();
             fixture.send();
@@ -123,12 +125,92 @@ class DesktopSendEchoTest {
                     && !fixture.state.get().interaction().busy());
             fixture.awaitWeb(MESSAGE, "你 · 发送未确认");
             FxTestSupport.run(() -> {
-                assertEquals(MESSAGE, fixture.composer().getText());
+                assertEquals("", fixture.composer().getText());
                 assertSame(fixture.composer(), fixture.scene().getFocusOwner());
                 assertEquals(1, fixture.matchingArticles());
                 assertEquals(0, fixture.server.turnStarts.get());
-                assertFalse(fixture.button("sendButton").isDisabled());
+                assertTrue(fixture.button("sendButton").isDisabled());
             });
+        }
+    }
+
+    @Test
+    void 等待发送时编辑下一条草稿且成功或失败均不会清除() throws Exception {
+        for (boolean failed : List.of(false, true)) {
+            try (Fixture fixture = new Fixture(failed)) {
+                fixture.open();
+                fixture.send();
+                fixture.awaitSending();
+                FxTestSupport.run(() -> {
+                    assertEquals("", fixture.composer().getText());
+                    fixture.composer().setText("下一条独立草稿");
+                    fixture.controller.send();
+                });
+                if (failed) {
+                    fixture.release.countDown();
+                    fixture.awaitUnconfirmed();
+                } else {
+                    fixture.accept();
+                    fixture.awaitCommitted();
+                }
+                FxTestSupport.run(
+                        () -> assertEquals("下一条独立草稿", fixture.composer().getText()));
+                assertEquals(failed ? 0 : 1, fixture.server.turnStarts.get());
+            }
+        }
+    }
+
+    @Test
+    void 未确认消息仅在输入为空时恢复且保留重试来源() throws Exception {
+        try (Fixture fixture = new Fixture(true)) {
+            fixture.open();
+            fixture.send();
+            fixture.awaitSending();
+            fixture.release.countDown();
+            fixture.awaitUnconfirmed();
+            fixture.awaitWeb(MESSAGE, "发送未确认");
+            FxTestSupport.run(() -> {
+                fixture.composer().setText("下一条草稿");
+                assertTrue(Boolean.TRUE.equals(fixture.web()
+                        .getEngine()
+                        .executeScript("document.querySelector('[data-send-action=restoreSend]').disabled")));
+                fixture.composer().clear();
+                fixture.web()
+                        .getEngine()
+                        .executeScript("document.querySelector('[data-send-action=restoreSend]').click()");
+            });
+            FxTestSupport.await(
+                    () -> FxTestSupport.call(() -> fixture.composer().getText().equals(MESSAGE)));
+            FxTestSupport.run(() -> {
+                assertEquals("重试原消息", fixture.button("sendButton").getText());
+                fixture.composer().appendText("，补充说明");
+                assertEquals("发送 ↑", fixture.button("sendButton").getText());
+            });
+        }
+    }
+
+    @Test
+    void 恢复原文后点击消息卡重试同样在接纳时清空恢复草稿() throws Exception {
+        try (Fixture fixture = new Fixture(true)) {
+            fixture.open();
+            fixture.send();
+            fixture.awaitSending();
+            fixture.release.countDown();
+            fixture.awaitUnconfirmed();
+            fixture.awaitWeb(MESSAGE, "发送未确认");
+            FxTestSupport.run(() -> fixture.web()
+                    .getEngine()
+                    .executeScript("document.querySelector('[data-send-action=restoreSend]').click()"));
+            FxTestSupport.await(
+                    () -> FxTestSupport.call(() -> fixture.composer().getText().equals(MESSAGE)));
+            FxTestSupport.run(() -> fixture.web()
+                    .getEngine()
+                    .executeScript("document.querySelector('[data-send-action=retrySend]').click()"));
+            FxTestSupport.await(
+                    () -> FxTestSupport.call(() -> fixture.composer().getText().isEmpty()));
+            fixture.awaitUnconfirmed();
+            FxTestSupport.run(
+                    () -> assertEquals("发送 ↑", fixture.button("sendButton").getText()));
         }
     }
 
@@ -227,6 +309,15 @@ class DesktopSendEchoTest {
                 assertFalse(button("sendButton").isDisabled());
                 button("sendButton").fire();
             });
+        }
+
+        private void awaitUnconfirmed() {
+            FxTestSupport.await(() -> state.get()
+                            .transcript()
+                            .outgoing()
+                            .filter(value -> value.status() == OutgoingMessage.Status.UNCONFIRMED)
+                            .isPresent()
+                    && !state.get().interaction().busy());
         }
 
         private void awaitSending() {

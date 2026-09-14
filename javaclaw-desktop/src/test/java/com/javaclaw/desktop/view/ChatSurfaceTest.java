@@ -27,6 +27,7 @@ import com.javaclaw.api.TurnId;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.desktop.DesktopStylesheets;
 import com.javaclaw.desktop.FxTestSupport;
+import com.javaclaw.desktop.state.OutgoingMessage;
 import com.javaclaw.protocol.CanonicalJson;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -34,6 +35,50 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ChatSurfaceTest {
+    @Test
+    void 未确认操作只解析当前展示身份且草稿非空禁用恢复() {
+        try (Harness fixture = new Harness()) {
+            List<String> actions = new ArrayList<>();
+            var unconfirmed = new OutgoingMessage(
+                    "local:private-key", "发送原文", Optional.empty(), OutgoingMessage.Status.UNCONFIRMED);
+            FxTestSupport.run(() -> {
+                fixture.chat.onOutgoingAction((action, id) -> actions.add(action + ":" + id));
+                fixture.chat.setOutgoingAvailability(true, false);
+                fixture.chat.show(
+                        "thread", fixture.workspace, List.of(), List.of(), List.of(), false, List.of(unconfirmed));
+            });
+            fixture.await("发送未确认");
+            FxTestSupport.run(() -> {
+                assertFalse(fixture.script("document.documentElement.outerHTML").contains("private-key"));
+                assertEquals(
+                        "true",
+                        fixture.script("String(document.querySelector('[data-send-action=restoreSend]').disabled)"));
+                fixture.post("retrySend", unconfirmed.id());
+                fixture.post("retrySend", "forged");
+                assertTrue(actions.isEmpty());
+                fixture.script("document.querySelector('[data-send-action=retrySend]').click()");
+                fixture.script("document.querySelector('[data-send-action=copySend]').click()");
+                assertEquals(List.of("retrySend:" + unconfirmed.id(), "copySend:" + unconfirmed.id()), actions);
+                fixture.chat.setOutgoingAvailability(false, true);
+                assertEquals(
+                        "true",
+                        fixture.script("String(document.querySelector('[data-send-action=retrySend]').disabled)"));
+                fixture.script("document.querySelector('[data-send-action=restoreSend]').click()");
+                assertEquals("restoreSend:" + unconfirmed.id(), actions.getLast());
+            });
+            fixture.show(List.of(message("权威记录", List.of())), List.of(), List.of());
+            fixture.await("权威记录");
+            FxTestSupport.run(() -> {
+                String id = "send:"
+                        + new CanonicalJson()
+                                .encode(java.util.Map.of("send", unconfirmed.id()))
+                                .sha256();
+                fixture.post("copySend", id);
+                assertEquals(3, actions.size());
+            });
+        }
+    }
+
     @Test
     void 清空页面撤销旧链接并允许同一实例显示另一工作区的精确附件() {
         try (Harness fixture = new Harness()) {

@@ -141,6 +141,41 @@ class TranscriptStateTest {
     }
 
     @Test
+    void 多条失败各自确认且重试不覆盖较新消息或改变原顺序() {
+        OutgoingMessage second =
+                new OutgoingMessage("outgoing:two", "下一条草稿", Optional.empty(), OutgoingMessage.Status.SENDING, 8);
+        TranscriptState state = TranscriptState.empty()
+                .outgoing(outgoing())
+                .unconfirmed("outgoing:one")
+                .outgoing(second)
+                .unconfirmed(second.id());
+        assertEquals(
+                List.of("outgoing:one", "outgoing:two"),
+                state.outgoings().stream().map(OutgoingMessage::id).toList());
+        OutgoingMessage retry =
+                new OutgoingMessage("outgoing:one", "本地完整正文", Optional.empty(), OutgoingMessage.Status.SENDING, 9);
+        state = state.outgoing(retry).acknowledged(retry.id(), turnId);
+        assertEquals(second.id(), state.outgoing().orElseThrow().id());
+        assertEquals(9, state.outgoings().getFirst().attempt());
+        var committed = summary(turnId, 1, MessageRole.USER, "权威原消息");
+        var reconciled = state.committed(new ItemHistoryResult(List.of(committed), 1, false));
+        assertEquals(
+                List.of(second.id()),
+                reconciled.outgoings().stream().map(OutgoingMessage::id).toList());
+        assertEquals(
+                OutgoingMessage.Status.UNCONFIRMED,
+                reconciled.outgoing().orElseThrow().status());
+    }
+
+    @Test
+    void 多条回显快照不能包含重复发送身份() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new TranscriptState(
+                        List.of(), 0, true, Optional.empty(), false, List.of(), List.of(outgoing(), outgoing())));
+    }
+
+    @Test
     void 摘要按Turn和用户角色替换回显而非根据文本或摘要长度() {
         TranscriptState accepted = TranscriptState.empty().outgoing(outgoing()).acknowledged("outgoing:one", turnId);
         var unrelated = summary(TurnId.random(), 1, MessageRole.USER, "本地完整正文");
@@ -194,10 +229,22 @@ class TranscriptStateTest {
         OutgoingMessage compatible =
                 new OutgoingMessage("outgoing:old", "正文", Optional.empty(), OutgoingMessage.Status.SENDING);
         assertEquals(0, compatible.attempt());
+        assertEquals(Long.MAX_VALUE, compatible.afterSequence());
         assertThrows(
                 IllegalArgumentException.class,
                 () -> new OutgoingMessage(
                         "outgoing:invalid", "正文", Optional.empty(), OutgoingMessage.Status.SENDING, -1));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new OutgoingMessage(
+                        "outgoing:invalid", "正文", Optional.empty(), OutgoingMessage.Status.SENDING, 1, -1));
+        var anchored =
+                new OutgoingMessage("outgoing:anchored", "正文", Optional.empty(), OutgoingMessage.Status.SENDING, 1, 5);
+        var state = TranscriptState.empty()
+                .outgoing(anchored)
+                .unconfirmed(anchored.id())
+                .acknowledged(anchored.id(), turnId);
+        assertEquals(5, state.outgoing().orElseThrow().afterSequence());
     }
 
     @Test

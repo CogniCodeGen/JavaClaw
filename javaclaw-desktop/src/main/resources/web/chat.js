@@ -7,6 +7,9 @@
     const nodes = new Map();
     const rows = new Map();
     const dirty = new Set();
+    const expanded = new Set();
+    let outgoingReady = false;
+    let restoreAllowed = false;
     const before = document.createElement("div");
     const after = document.createElement("div");
     before.className = after.className = "chat-spacer";
@@ -31,6 +34,8 @@
     let lastDocumentHeight = 0;
     let geometry = "";
     let emojiAnchor = null;
+    let pendingRestore = null;
+    let latestSendAttempt = -1;
     function height(item) { return heights.get(item.id) || 140; }
     function sum(start, end) {
         let total = 0;
@@ -150,6 +155,114 @@
         entry.attachments = attachments;
         entry.node.append(attachments);
     }
+    function details(entry, item) {
+        if (!item.collapsible || !item.details) {
+            if (entry.details) { entry.details.remove(); entry.details = null; }
+            expanded.delete(item.id);
+            return;
+        }
+        if (!entry.details) {
+            const container = document.createElement("div");
+            container.className = "tool-details";
+            const toggle = document.createElement("button");
+            toggle.className = "tool-details-toggle";
+            const text = document.createElement("div");
+            text.className = "tool-details-body plain";
+            text.id = "details-" + item.id;
+            toggle.setAttribute("aria-controls", text.id);
+            toggle.onclick = () => {
+                const anchor = visibleAnchor();
+                if (expanded.has(item.id)) { expanded.delete(item.id); } else { rememberExpanded(item.id); }
+                detailState(entry, item.id);
+                dirty.add(item.id);
+                renderWindow(anchor, false, true);
+            };
+            container.append(toggle, text);
+            entry.details = container;
+            entry.detailsToggle = toggle;
+            entry.detailsBody = text;
+            entry.node.append(container);
+        }
+        if (entry.detailsBody.textContent !== item.details) { entry.detailsBody.textContent = item.details; }
+        detailState(entry, item.id);
+    }
+    function rememberExpanded(id) {
+        expanded.add(id);
+        while (expanded.size > 500) {
+            const oldest = expanded.values().next().value;
+            expanded.delete(oldest);
+            const entry = nodes.get(oldest);
+            if (entry && entry.details) { detailState(entry, oldest); dirty.add(oldest); }
+        }
+    }
+    function detailState(entry, id) {
+        const open = expanded.has(id);
+        entry.detailsBody.hidden = !open;
+        entry.detailsToggle.textContent = open ? "收起详情" : "展开详情";
+        entry.detailsToggle.setAttribute("aria-expanded", String(open));
+    }
+    function outgoingActions(entry, item) {
+        if (item.outgoing !== "UNCONFIRMED") {
+            if (entry.sendActions) { entry.sendActions.remove(); entry.sendActions = null; }
+            return;
+        }
+        if (!entry.sendActions) {
+            const actions = document.createElement("div");
+            actions.className = "send-actions";
+            for (const [action, label] of [["retrySend", "重试"], ["restoreSend", "恢复到输入框"], ["copySend", "复制原文"]]) {
+                const button = document.createElement("button");
+                button.dataset.sendAction = action;
+                button.textContent = label;
+                button.onclick = () => window.JavaClawSurface.post(action, item.id);
+                actions.append(button);
+            }
+            entry.sendActions = actions;
+            entry.node.append(actions);
+        }
+        outgoingAvailability(entry);
+    }
+    function outgoingAvailability(entry) {
+        if (!entry.sendActions) { return; }
+        const retry = entry.sendActions.querySelector('[data-send-action="retrySend"]');
+        const restore = entry.sendActions.querySelector('[data-send-action="restoreSend"]');
+        retry.disabled = !outgoingReady;
+        retry.title = outgoingReady ? "使用原文和原执行配置重试" : "连接就绪且当前会话空闲后可重试";
+        restore.disabled = !restoreAllowed;
+        restore.title = restoreAllowed ? "将原文恢复到输入框" : "先发送或清空当前草稿，也可复制原文";
+    }
+    window.JavaClawOutgoingAvailability = (ready, restore) => {
+        outgoingReady = ready === true;
+        restoreAllowed = restore === true;
+        nodes.forEach(outgoingAvailability);
+    };
+    function activity(entry, value) {
+        const phase = ["WAITING", "STREAMING"].includes(value) ? value : "SETTLED";
+        if (entry.activityPhase === phase && (!entry.activity || entry.activity.isConnected)) { return; }
+        entry.activityPhase = phase;
+        entry.node.dataset.activity = phase.toLowerCase();
+        if (phase === "SETTLED") {
+            if (entry.activity) { entry.activity.remove(); entry.activity = null; }
+            return;
+        }
+        if (!entry.activity || !entry.activity.isConnected) {
+            const indicator = document.createElement("span");
+            indicator.className = "model-activity";
+            indicator.setAttribute("role", "status");
+            indicator.setAttribute("aria-live", "polite");
+            const label = document.createElement("span");
+            label.className = "model-activity-label";
+            const dots = document.createElement("span");
+            dots.className = "model-activity-dots";
+            dots.setAttribute("aria-hidden", "true");
+            for (let index = 0; index < 3; index++) { dots.append(document.createElement("i")); }
+            indicator.append(label, dots);
+            entry.activity = indicator;
+            entry.body.append(indicator);
+        }
+        const label = entry.activity.querySelector(".model-activity-label");
+        label.textContent = phase === "WAITING" ? "模型正在准备回复" : "模型正在回复";
+        entry.activity.className = "model-activity model-activity-" + phase.toLowerCase();
+    }
     function create(item) {
         let entry = nodes.get(item.id);
         if (!entry) {
@@ -174,11 +287,16 @@
             const title = roleTitle(item.title);
             if (entry.role.textContent !== title) { entry.role.textContent = title; }
             body(entry, item);
+            details(entry, item);
             references(entry, item.references);
+            outgoingActions(entry, item);
+            activity(entry, item.activity);
             entry.row = item;
             if (!previous || previous.title !== item.title || previous.style !== item.style
                     || previous.html !== item.html || previous.text !== item.text
                     || previous.streamHtml !== item.streamHtml || previous.streamSuffix !== item.streamSuffix
+                    || previous.activity !== item.activity || previous.outgoing !== item.outgoing
+                    || previous.details !== item.details || previous.collapsible !== item.collapsible
                     || JSON.stringify(previous.references) !== JSON.stringify(item.references)) { dirty.add(item.id); }
         }
         return entry.node;
@@ -198,9 +316,12 @@
     }
     function remember() {
         lastAnchor = visibleAnchor();
-        window.JavaClawSurface.post("viewState", JSON.stringify({following, anchor: lastAnchor}));
+        const reading = pendingRestore || {following, anchor: lastAnchor};
+        window.JavaClawSurface.post("viewState", JSON.stringify({...reading,
+            expanded: [...expanded], sendAttempt: latestSendAttempt}));
     }
     function setFollowing(value) {
+        pendingRestore = null;
         if (following !== value) { following = value; window.JavaClawSurface.post("following", following); }
     }
     function rememberGeometry() {
@@ -215,6 +336,7 @@
         const layoutChanged = lastWidth !== window.innerWidth || lastHeight !== window.innerHeight
                 || lastDocumentHeight !== document.documentElement.scrollHeight;
         // 原生惯性属于用户输入；窗口与字体变化造成的自动夹紧不能切换跟随状态。
+        if (!layoutChanged && Math.abs(movement) > 0.5) { pendingRestore = null; }
         if (!layoutChanged && movement < -0.5) { setFollowing(false); }
         else if (!layoutChanged && movement > 0.5
                 && document.documentElement.scrollHeight - top - window.innerHeight <= 2) { setFollowing(true); }
@@ -302,9 +424,9 @@
         }
         return start;
     }
-    function renderWindow(restored = null, rearrange = false) {
+    function renderWindow(restored = null, rearrange = false, preservePosition = false) {
         rendering = true;
-        const anchor = restored || (!following ? visibleAnchor() : null);
+        const anchor = restored || (!following || preservePosition ? visibleAnchor() : null);
         if (rearrange) { invalidateLayout(); }
         const start = windowRange(anchor, rearrange);
         const end = Math.min(items.length, start + 128);
@@ -328,7 +450,7 @@
         measure();
         spacerHeight(before, sum(0, start));
         spacerHeight(after, sum(end, items.length));
-        if (following) { window.scrollTo(0, document.documentElement.scrollHeight); }
+        if (following && !preservePosition) { window.scrollTo(0, document.documentElement.scrollHeight); }
         else if (anchor && nodes.has(anchor.id)) {
             const correction = nodes.get(anchor.id).node.getBoundingClientRect().top - anchor.offset;
             if (Math.abs(correction) > 0.5) { window.scrollBy(0, correction); }
@@ -383,11 +505,15 @@
         return previousOrder.length !== items.length || previousOrder.some((id, index) => id !== items[index].id);
     }
     window.addEventListener("wheel", event => {
+        if (event.deltaY !== 0) { pendingRestore = null; }
         if (event.deltaY < 0 && window.scrollY > 0) { setFollowing(false); }
     }, {passive: true});
     window.addEventListener("keydown", event => {
         const upward = ["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey);
         const editing = event.target instanceof Element && event.target.closest("input, textarea, [contenteditable='true']");
+        if (!editing && ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
+            pendingRestore = null;
+        }
         if (upward && window.scrollY > 0 && !editing) { setFollowing(false); }
     });
     window.addEventListener("scroll", () => {
@@ -411,25 +537,40 @@
     window.JavaClawSurface.register((data, changed, saved) => {
         let restored = null;
         if (changed) {
-            nodes.clear(); rows.clear(); heights.clear(); dirty.clear(); mounted = []; items = [];
+            nodes.clear(); rows.clear(); heights.clear(); dirty.clear(); expanded.clear(); mounted = []; items = [];
             following = true; window.scrollTo(0, 0); mountedStart = 0; mountedEnd = 0; latestButton = null;
-            emojiAnchor = null;
+            emojiAnchor = null; pendingRestore = null; latestSendAttempt = -1;
             if (saved) {
                 try {
                     const state = JSON.parse(saved);
                     following = state.following !== false;
+                    latestSendAttempt = Number.isFinite(state.sendAttempt) ? state.sendAttempt : -1;
+                    if (Array.isArray(state.expanded)) {
+                        state.expanded.slice(0, 500).filter(id => typeof id === "string" && id.length <= 128)
+                                .forEach(id => expanded.add(id));
+                    }
                     if (!following && state.anchor && typeof state.anchor.id === "string"
                             && Number.isFinite(state.anchor.offset)) { restored = state.anchor; }
+                    pendingRestore = {following, anchor: restored};
                 } catch (ignored) { following = true; }
             }
             rememberGeometry();
-        } else { observeScroll(); }
-        const incoming = data.mode === "patch" ? data.upserts : data.items;
-        // 主动发送立即回到尾部；确认及后台刷新不能反复打断用户随后开始的阅读。
-        const submitted = (incoming || []).some(item => item.outgoing && (!rows.has(item.id)
-                || item.sendAttempt !== rows.get(item.id).sendAttempt));
-        if (submitted && (!changed || !saved)) { following = true; restored = null; }
+        } else if (!pendingRestore || items.length) { observeScroll(); }
+        const incoming = (data.mode === "patch" ? data.upserts : data.items) || [];
+        // 尝试号由宿主单调递增；只跟随新尝试，历史回补或窗口重挂不能把旧失败卡当成主动发送。
+        const attempt = item => Number.isFinite(item.sendAttempt) ? item.sendAttempt : 0;
+        const submitted = incoming.some(item => item.outgoing && attempt(item) > latestSendAttempt
+                && (!pendingRestore || latestSendAttempt >= 0 || item.outgoing === "SENDING"));
+        incoming.filter(item => item.outgoing).forEach(item => {
+            latestSendAttempt = Math.max(latestSendAttempt, attempt(item));
+        });
+        if (submitted) { following = true; restored = null; pendingRestore = null; }
         const reordered = applyRows(data);
+        if (pendingRestore) {
+            following = pendingRestore.following;
+            restored = pendingRestore.anchor;
+            if (items.length && (!restored || rows.has(restored.id))) { pendingRestore = null; }
+        }
         if (!items.length) {
             root.innerHTML = '<div class="welcome"><span>✦</span><strong>有什么我可以帮你的？</strong><span class="muted">对话、规划与执行，都从这里开始。</span></div>';
             nodes.clear(); mounted = []; mountedStart = 0; mountedEnd = 0; latestButton = null;

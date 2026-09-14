@@ -8,11 +8,14 @@ import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.client.CommandOptions;
+import com.javaclaw.desktop.state.OutgoingMessage;
 
-/** 输入草稿按工作区和对话保存；启动回执只清理提交时的版本，不能清除后来输入的消息。 */
+/** 草稿与已提交版本分别保存；本地接纳只迁出对应版本，回执不参与清空后来编辑的草稿。 */
 final class ComposerDrafts {
     private final Map<Scope, Submission> drafts = new HashMap<>();
     private final Map<Scope, Attempt> attempts = new HashMap<>();
+    private final Map<String, Pending> pending = new HashMap<>();
+    private final Map<Scope, Restored> restored = new HashMap<>();
     private Scope current = new Scope(Optional.empty(), Optional.empty());
     private long revision;
 
@@ -35,6 +38,7 @@ final class ComposerDrafts {
     void edited(String text) {
         drafts.put(current, new Submission(current, ++revision, text));
         attempts.remove(current);
+        restored.remove(current);
     }
 
     Submission submission(String text) {
@@ -60,7 +64,41 @@ final class ComposerDrafts {
         }
         drafts.put(submitted.scope(), new Submission(submitted.scope(), ++revision, ""));
         attempts.remove(submitted.scope());
+        restored.remove(submitted.scope());
         return current.equals(submitted.scope());
+    }
+
+    void stage(Submission submitted, String sendId, long previousAttempt) {
+        pending.put(sendId, new Pending(submitted, previousAttempt));
+    }
+
+    /** 合并后的状态也可能已失败或已确认；只有新的尝试号才证明本次提交曾被本地接纳。 */
+    boolean accepted(OutgoingMessage outgoing) {
+        Pending value = pending.get(outgoing.id());
+        if (value == null || outgoing.attempt() <= value.previousAttempt()) {
+            return false;
+        }
+        pending.remove(outgoing.id());
+        return acknowledged(value.submitted());
+    }
+
+    void finished(String sendId) {
+        pending.remove(sendId);
+    }
+
+    boolean restore(String sendId, String text) {
+        if (!submission("").text().isEmpty()) {
+            return false;
+        }
+        edited(text);
+        restored.put(current, new Restored(submission(text), sendId));
+        return true;
+    }
+
+    Optional<String> retrySource(Submission submitted) {
+        return Optional.ofNullable(restored.get(submitted.scope()))
+                .filter(value -> value.submitted().equals(submitted))
+                .map(Restored::sendId);
     }
 
     /**
@@ -88,4 +126,16 @@ final class ComposerDrafts {
      * @param options 同一次发送及其重试共用的幂等身份，不可空
      */
     private record Attempt(Submission submitted, ExecutionOverrides execution, CommandOptions options) {}
+
+    /**
+     * @param submitted 接纳前的草稿版本
+     * @param previousAttempt 此身份上次尝试号，首次发送为 -1
+     */
+    private record Pending(Submission submitted, long previousAttempt) {}
+
+    /**
+     * @param submitted 恢复后尚未编辑的草稿
+     * @param sendId 原消息的本地发送身份
+     */
+    private record Restored(Submission submitted, String sendId) {}
 }

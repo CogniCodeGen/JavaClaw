@@ -8,6 +8,7 @@ import com.javaclaw.api.ExecutionOverrides;
 import com.javaclaw.api.ReasoningPreference;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.WorkspaceId;
+import com.javaclaw.desktop.state.OutgoingMessage;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -18,6 +19,41 @@ class ComposerDraftsTest {
     private static final WorkspaceId WORKSPACE = WorkspaceId.parse("87e26312-d9c3-491b-baa7-91613bfc2dd0");
     private static final ThreadId FIRST = ThreadId.parse("a6d178a4-09b5-4bdf-bc4b-acf87f120be8");
     private static final ThreadId SECOND = ThreadId.parse("19920aa7-818f-4ec7-ae68-3f3f5a213bc4");
+
+    @Test
+    void 本地接纳清理提交版本并忽略旧失败状态() {
+        ComposerDrafts drafts = new ComposerDrafts();
+        drafts.bind(scope(FIRST), "");
+        drafts.edited("原问题");
+        var submitted = drafts.submission("原问题");
+        drafts.stage(submitted, "send-one", 4);
+        assertFalse(drafts.accepted(
+                new OutgoingMessage("send-one", "原问题", Optional.empty(), OutgoingMessage.Status.UNCONFIRMED, 4)));
+        assertEquals("原问题", drafts.submission("原问题").text());
+        assertTrue(drafts.accepted(
+                new OutgoingMessage("send-one", "原问题", Optional.empty(), OutgoingMessage.Status.SENDING, 5)));
+        assertEquals("", drafts.submission("").text());
+        drafts.edited("下一条");
+        assertFalse(drafts.accepted(
+                new OutgoingMessage("send-one", "原问题", Optional.empty(), OutgoingMessage.Status.UNCONFIRMED, 5)));
+        assertEquals("下一条", drafts.submission("下一条").text());
+    }
+
+    @Test
+    void 恢复原文不覆盖草稿且编辑才解除重试来源() {
+        ComposerDrafts drafts = new ComposerDrafts();
+        drafts.bind(scope(FIRST), "");
+        drafts.edited("下一条");
+        assertFalse(drafts.restore("send-one", "原问题"));
+        drafts.edited("");
+        assertTrue(drafts.restore("send-one", "原问题"));
+        assertEquals(Optional.of("send-one"), drafts.retrySource(drafts.submission("原问题")));
+        drafts.bind(scope(SECOND), "原问题");
+        assertEquals("原问题", drafts.bind(scope(FIRST), ""));
+        assertEquals(Optional.of("send-one"), drafts.retrySource(drafts.submission("原问题")));
+        drafts.edited("修改的问题");
+        assertTrue(drafts.retrySource(drafts.submission("修改的问题")).isEmpty());
+    }
 
     @Test
     void 首次配置完成创建对话后带回原输入草稿() {

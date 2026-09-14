@@ -7,14 +7,18 @@ import java.util.function.Consumer;
 
 import javafx.geometry.Side;
 import javafx.scene.control.Button;
+import javafx.scene.control.ContentDisplay;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.CustomMenuItem;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
+import javafx.scene.control.OverrunStyle;
 import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import javafx.scene.shape.SVGPath;
 
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderLifecycle;
@@ -27,6 +31,7 @@ final class ChatModelPicker extends Button {
     private final ContextMenu menu = new ContextMenu();
     private final TextField search = new TextField();
     private final ListView<Entry> choices = new ListView<>();
+    private final StackPane arrow = createArrow();
     private final Consumer<ProviderRef> selected;
     private final Runnable lockedAction;
     private List<ProviderEndpoint> catalog = List.of();
@@ -41,6 +46,9 @@ final class ChatModelPicker extends Button {
         setAccessibleText("选择聊天模型");
         setMinWidth(0);
         setMaxWidth(220);
+        setTextOverrun(OverrunStyle.ELLIPSIS);
+        setContentDisplay(ContentDisplay.RIGHT);
+        setGraphic(arrow);
         getStyleClass().add("composer-select");
         search.setPromptText("搜索模型或服务…");
         search.setAccessibleText("搜索已配置模型");
@@ -65,13 +73,39 @@ final class ChatModelPicker extends Button {
         render(List.of(), Optional.empty(), false);
     }
 
+    private static StackPane createArrow() {
+        SVGPath triangle = new SVGPath();
+        triangle.setContent("M 0 0 L 8 0 L 4 4 Z");
+        triangle.getStyleClass().add("composer-model-arrow");
+        StackPane graphic = new StackPane(triangle);
+        graphic.setMinSize(12, 12);
+        graphic.setPrefSize(12, 12);
+        graphic.setMaxSize(12, 12);
+        graphic.setMouseTransparent(true);
+        return graphic;
+    }
+
     void render(List<ProviderEndpoint> providers, Optional<ProviderRef> selected, boolean locked) {
         catalog = providers;
         value = selected;
         this.locked = locked;
-        setText(selected.map(this::name).orElse("选择模型") + (locked ? " · Agent 固定" : " ▾"));
-        setTooltip(new Tooltip(getText()));
+        setText(selected.map(this::name).orElse("选择模型") + (locked ? " · Agent 固定" : ""));
+        String description = selected.map(reference -> name(reference) + "\n服务：" + service(reference))
+                .orElse("选择聊天模型");
+        if (locked) {
+            description += "\n由 Agent 固定；点击查看设置";
+        }
+        setTooltip(new Tooltip(description));
+        setAccessibleText(description);
         filter();
+    }
+
+    private String service(ProviderRef reference) {
+        return catalog.stream()
+                .filter(endpoint -> endpoint.id().equals(reference.endpointId()))
+                .findFirst()
+                .map(endpoint -> endpoint.spec().displayName())
+                .orElse(reference.endpointId());
     }
 
     String name(ProviderRef reference) {
@@ -153,17 +187,38 @@ final class ChatModelPicker extends Button {
     }
 
     private final class ModelCell extends ListCell<Entry> {
+        private final Label name = new Label();
+        private final Label service = new Label();
+        private final VBox content = new VBox(2, name, service);
+
+        private ModelCell() {
+            name.setMinWidth(0);
+            name.textFillProperty().bind(textFillProperty());
+            service.setMinWidth(0);
+            service.getStyleClass().add("composer-model-service");
+            content.setMinWidth(0);
+            content.maxWidthProperty().bind(widthProperty().subtract(24));
+        }
+
         @Override
         protected void updateItem(Entry entry, boolean empty) {
             super.updateItem(entry, empty);
             if (empty || entry == null) {
                 setText(null);
+                setGraphic(null);
+                setTooltip(null);
                 setDisable(false);
                 return;
             }
             boolean active = entry.lifecycle() == ProviderLifecycle.ACTIVE;
-            setText((value.filter(entry.reference()::equals).isPresent() ? "✓ " : "") + entry.name() + " · "
-                    + entry.service() + (active ? "" : " · " + SettingsLabels.providerLifecycle(entry.lifecycle())));
+            setText(null);
+            name.setText((value.filter(entry.reference()::equals).isPresent() ? "✓ " : "") + entry.name());
+            service.setText(
+                    entry.service() + (active ? "" : " · " + SettingsLabels.providerLifecycle(entry.lifecycle())));
+            setGraphic(content);
+            setTooltip(new Tooltip(entry.name() + "\n服务：" + entry.service() + "\n模型："
+                    + entry.reference().model()));
+            setAccessibleText(name.getText() + "，" + service.getText());
             setDisable(!active);
         }
     }

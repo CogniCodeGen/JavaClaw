@@ -3,17 +3,21 @@ package com.javaclaw.desktop.shell;
 import java.net.URI;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.function.BiConsumer;
 
+import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.value.ChangeListener;
 import javafx.geometry.Orientation;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
-import javafx.scene.control.Hyperlink;
-import javafx.scene.control.Label;
-import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollBar;
 import javafx.scene.input.KeyEvent;
@@ -24,9 +28,15 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 
+import com.javaclaw.api.AgentTurn;
+import com.javaclaw.api.CorePayloads;
+import com.javaclaw.api.CoreSchemas;
 import com.javaclaw.api.DocumentReference;
 import com.javaclaw.api.ItemEnvelope;
 import com.javaclaw.api.ItemHistoryEntry;
+import com.javaclaw.api.MessageRole;
+import com.javaclaw.api.TurnId;
+import com.javaclaw.api.TurnStatus;
 import com.javaclaw.api.TurnStreamKind;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceId;
@@ -37,8 +47,10 @@ import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 import com.javaclaw.desktop.document.DocumentPreviewPane;
 import com.javaclaw.desktop.document.SdkDocumentPreviewGateway;
 import com.javaclaw.desktop.state.DesktopState;
+import com.javaclaw.desktop.state.OutgoingMessage;
 import com.javaclaw.desktop.state.TranscriptState;
 import com.javaclaw.desktop.view.ChatSurface;
+import com.javaclaw.desktop.view.PresentedItem;
 import com.javaclaw.desktop.view.TranscriptPresenter;
 import com.javaclaw.protocol.CanonicalJson;
 
@@ -49,7 +61,7 @@ final class ShellWebSurfaces implements AutoCloseable {
     private final ShellSidePanels sidePanels;
     private final VBox pending = new VBox();
     private final VBox nativeTranscript = new VBox();
-    private final ListView<SummaryRow> summary = new ListView<>();
+    private final ListView<ShellTranscriptRow> summary = new ListView<>();
     private final ListView<ItemEnvelope> legacy;
     private final TranscriptPresenter nativeFormatter = new TranscriptPresenter(new CanonicalJson());
     private final ChangeListener<Boolean> nativeVisibility = (observable, before, showing) -> {
@@ -68,9 +80,14 @@ final class ShellWebSurfaces implements AutoCloseable {
     private List<ChatSurface.TemporaryMessage> temporary = List.of();
     private List<ItemEnvelope> nativeItems = List.of();
     private List<ItemHistoryEntry> nativeHistory = List.of();
-    private List<SummaryRow> committedRows = List.of();
+    private List<ShellTranscriptRow> committedRows = List.of();
     private final HashSet<String> committedIds = new HashSet<>();
     private boolean nativeFollowing = true;
+    private String nativeScope = "empty";
+    private final Map<String, LinkedHashSet<String>> expanded = new LinkedHashMap<>(64, 0.75f, true);
+    private final BooleanProperty retryReady = new SimpleBooleanProperty();
+    private final BooleanProperty restoreAllowed = new SimpleBooleanProperty();
+    private BiConsumer<String, String> outgoingActions = (action, id) -> {};
 
     ShellWebSurfaces(
             DesktopPresenter presenter,
@@ -105,7 +122,15 @@ final class ShellWebSurfaces implements AutoCloseable {
         sidePanels.onPending(() -> selectDocument(false));
         summary.setId("transcriptSummary");
         summary.getStyleClass().addAll("message-scroll", "transcript-list");
-        summary.setCellFactory(ignored -> new SummaryCell());
+        summary.setMaxWidth(1000);
+        summary.setCellFactory(ignored -> new ShellSummaryCell(
+                this::preview,
+                () -> workspace,
+                id -> expanded.getOrDefault(nativeScope, new LinkedHashSet<>()).contains(id),
+                this::toggleDetails,
+                (action, id) -> outgoingActions.accept(action, id),
+                retryReady,
+                restoreAllowed));
         host.getChildren().clear();
         earlier.setOnAction(event -> presenter.loadEarlierTranscript());
         installNativeFollowing(presenter);
@@ -121,6 +146,44 @@ final class ShellWebSurfaces implements AutoCloseable {
         // Host 同步显露简版时补入最新快照；健康 WebView 不维护隐藏列表，也不依赖下一次服务端通知。
         nativeTranscript.visibleProperty().addListener(nativeVisibility);
         host.getChildren().add(chat.node());
+    }
+
+    void onOutgoingAction(BiConsumer<String, String> handler) {
+        outgoingActions = handler;
+        chat.onOutgoingAction(handler);
+    }
+
+    void setOutgoingAvailability(boolean ready, boolean restore) {
+        retryReady.set(ready);
+        restoreAllowed.set(restore);
+        chat.setOutgoingAvailability(ready, restore);
+    }
+
+    private void toggleDetails(String id) {
+        LinkedHashSet<String> opened = expanded.computeIfAbsent(nativeScope, ignored -> new LinkedHashSet<>());
+        while (expanded.size() > 64) {
+            expanded.remove(expanded.keySet().iterator().next());
+        }
+        if (!opened.remove(id)) {
+            opened.add(id);
+        }
+        while (opened.size() > 500) {
+            opened.remove(opened.iterator().next());
+        }
+        // 点击只改变当前行的高度；保持 ListView 当前阅读位置，不发布跟随到底部的业务意图。
+    }
+
+    private Optional<DocumentReference> fullMessage(ItemEnvelope item, PresentedItem presented) {
+        if (!CoreSchemas.MESSAGE.equals(item.schemaId()) || presented.body().length() <= 65_536) {
+            return Optional.empty();
+        }
+        MessageRole role = new CanonicalJson()
+                .decode(item.payload(), CorePayloads.Message.class)
+                .role();
+        if (role != MessageRole.USER && role != MessageRole.ASSISTANT) {
+            return Optional.empty();
+        }
+        return workspace.map(value -> DocumentReference.message(value, item.id(), "body"));
     }
 
     private void installNativeFollowing(DesktopPresenter presenter) {
@@ -162,6 +225,15 @@ final class ShellWebSurfaces implements AutoCloseable {
 
     void render(DesktopState state) {
         transcript = state.transcript();
+        nativeScope = state.threads()
+                        .selectedWorkspace()
+                        .map(Workspace::id)
+                        .map(Object::toString)
+                        .orElse("") + ":"
+                + state.threads()
+                        .selectedThread()
+                        .map(thread -> thread.id().toString())
+                        .orElse("");
         Optional<WorkspaceId> next = state.threads().selectedWorkspace().map(Workspace::id);
         if (!workspace.equals(next) || !connection.equals(state.connection().connectedAt())) {
             documents.clear();
@@ -169,20 +241,7 @@ final class ShellWebSurfaces implements AutoCloseable {
             connection = state.connection().connectedAt();
         }
         if (next.isPresent()) {
-            temporary = transcript.stream().stream()
-                    .flatMap(stream -> stream.messages().stream()
-                            .filter(message -> message.state() != TurnStreamKind.COMMITTED
-                                    || message.itemSequence()
-                                            .filter(sequence -> sequence
-                                                    > state.transcript().nextSequence())
-                                            .isPresent())
-                            .map(message -> new ChatSurface.TemporaryMessage(
-                                    message.call().messageItemId().toString(),
-                                    message.text(),
-                                    message.state() == TurnStreamKind.CLOSED,
-                                    message.textOffsetUtf16(),
-                                    Optional.of(stream.turnId()))))
-                    .toList();
+            temporary = temporaryMessages(state);
             if (nativeTranscript.isVisible()) {
                 renderNative(false);
             }
@@ -196,12 +255,93 @@ final class ShellWebSurfaces implements AutoCloseable {
                     state.transcript().history(),
                     temporary,
                     state.transcript().hasEarlier(),
-                    state.transcript().outgoing());
+                    state.transcript().outgoings());
         } else {
             temporary = List.of();
             clearNative();
             chat.clear();
         }
+    }
+
+    private static List<ChatSurface.TemporaryMessage> temporaryMessages(DesktopState state) {
+        List<ChatSurface.TemporaryMessage> messages = state.transcript().stream().stream()
+                .flatMap(stream -> stream.messages().stream()
+                        .filter(message -> visible(message, state.transcript()))
+                        .map(message -> new ChatSurface.TemporaryMessage(
+                                message.call().messageItemId().toString(),
+                                message.text(),
+                                message.state() == TurnStreamKind.CLOSED,
+                                message.textOffsetUtf16(),
+                                Optional.of(stream.turnId()),
+                                activity(state, stream.turnId(), message.state()))))
+                .filter(message -> !message.text().isEmpty() || message.activity() == ChatSurface.Activity.WAITING)
+                .toList();
+        Optional<ChatSurface.TemporaryMessage> placeholder = waitingPlaceholder(state);
+        if (placeholder.isEmpty()) {
+            return messages;
+        }
+        ArrayList<ChatSurface.TemporaryMessage> combined = new ArrayList<>(messages);
+        combined.add(placeholder.orElseThrow());
+        return List.copyOf(combined);
+    }
+
+    private static boolean visible(
+            com.javaclaw.client.facade.TurnStreamSnapshot.Message message, TranscriptState transcript) {
+        return message.state() != TurnStreamKind.COMMITTED
+                || message.itemSequence()
+                        .filter(sequence -> sequence > transcript.nextSequence())
+                        .isPresent();
+    }
+
+    private static ChatSurface.Activity activity(DesktopState state, TurnId turnId, TurnStreamKind kind) {
+        if (modelActivityBlocked(state, turnId)) {
+            return ChatSurface.Activity.SETTLED;
+        }
+        return switch (kind) {
+            case STARTED -> ChatSurface.Activity.WAITING;
+            case TEXT_DELTA -> ChatSurface.Activity.STREAMING;
+            case COMMITTED, CLOSED, TURN_FINISHED -> ChatSurface.Activity.SETTLED;
+        };
+    }
+
+    private static boolean modelActivityBlocked(DesktopState state, TurnId turnId) {
+        boolean generating = state.threads()
+                .activeTurn()
+                .filter(turn -> turn.id().equals(turnId))
+                .map(AgentTurn::status)
+                .filter(status -> status == TurnStatus.QUEUED || status == TurnStatus.RUNNING)
+                .isPresent();
+        boolean approval = state.interaction().pendingApprovals().stream()
+                .anyMatch(record -> record.request().turnId().equals(turnId));
+        boolean input = state.interaction().inputs().pendingRequests().stream()
+                .anyMatch(record -> record.request().turnId().equals(turnId));
+        return !generating || approval || input;
+    }
+
+    private static Optional<ChatSurface.TemporaryMessage> waitingPlaceholder(DesktopState state) {
+        Optional<AgentTurn> active = state.threads().activeTurn();
+        if (active.map(AgentTurn::status)
+                        .filter(status -> status == TurnStatus.QUEUED || status == TurnStatus.RUNNING)
+                        .isEmpty()
+                || active.map(AgentTurn::id)
+                        .filter(turnId -> modelActivityBlocked(state, turnId))
+                        .isPresent()) {
+            return Optional.empty();
+        }
+        AgentTurn turn = active.orElseThrow();
+        boolean currentCall = state.transcript().stream()
+                .filter(stream -> stream.turnId().equals(turn.id()))
+                .map(stream -> stream.messages().stream().anyMatch(message -> visible(message, state.transcript())))
+                .orElse(false);
+        if (currentCall) {
+            return Optional.empty();
+        }
+        return Optional.of(new ChatSurface.TemporaryMessage(
+                activityId(turn.id()), "", false, 0, Optional.of(turn.id()), ChatSurface.Activity.WAITING));
+    }
+
+    private static String activityId(TurnId turnId) {
+        return "activity:" + turnId;
     }
 
     private void renderNative(boolean revealed) {
@@ -210,10 +350,8 @@ final class ShellWebSurfaces implements AutoCloseable {
             return;
         }
         boolean itemsChanged = !nativeItems.equals(transcript.items());
-        List<SummaryRow> rows = nativeRows();
-        boolean projected = !transcript.history().isEmpty()
-                || !temporary.isEmpty()
-                || transcript.outgoing().isPresent();
+        List<ShellTranscriptRow> rows = nativeRows();
+        boolean projected = needsSummary(rows);
         boolean changed = !summary.getItems().equals(rows);
         if (changed) {
             summary.getItems().setAll(rows);
@@ -231,57 +369,110 @@ final class ShellWebSurfaces implements AutoCloseable {
         visible(latest, !transcript.following());
     }
 
-    private List<SummaryRow> nativeRows() {
+    private boolean needsSummary(List<ShellTranscriptRow> rows) {
+        return !transcript.history().isEmpty()
+                || !temporary.isEmpty()
+                || !transcript.outgoings().isEmpty()
+                || rows.stream().anyMatch(row -> row.presented().collapsible());
+    }
+
+    private List<ShellTranscriptRow> nativeRows() {
         if (!nativeItems.equals(transcript.items()) || !nativeHistory.equals(transcript.history())) {
             rebuildCommittedRows();
         }
-        List<ChatSurface.TemporaryMessage> visibleTemporary = temporary.stream()
-                .filter(item -> !item.text().isEmpty() && !committedIds.contains(item.id()))
-                .toList();
-        int capacity = transcript.outgoing().isPresent() ? 499 : 500;
+        List<ChatSurface.TemporaryMessage> visibleTemporary = nativeTemporary();
+        List<OutgoingMessage> messages = transcript
+                .outgoings()
+                .subList(
+                        Math.max(0, transcript.outgoings().size() - 500),
+                        transcript.outgoings().size());
+        int capacity = 500 - messages.size();
         int skipped = Math.max(0, committedRows.size() + visibleTemporary.size() - capacity);
         int committedSkipped = Math.min(skipped, committedRows.size());
-        ArrayList<SummaryRow> rows = new ArrayList<>(committedRows.subList(committedSkipped, committedRows.size()));
+        ArrayList<ShellTranscriptRow> rows =
+                new ArrayList<>(committedRows.subList(committedSkipped, committedRows.size()));
         visibleTemporary = visibleTemporary.subList(skipped - committedSkipped, visibleTemporary.size());
-        if (transcript.outgoing().isPresent()) {
-            var message = transcript.outgoing().orElseThrow();
-            // 上轮未提交尾文保留在新用户消息之前，只有相同 Turn 的分片才能成为它的回复。
-            visibleTemporary.stream()
-                    .filter(item -> !item.belongsTo(message))
-                    .map(ShellWebSurfaces::temporaryRow)
-                    .forEach(rows::add);
-            var presented = TranscriptPresenter.presentOutgoing(message);
-            rows.add(new SummaryRow(presented.title(), presented.body(), presented.styleClass(), Optional.empty()));
+        visibleTemporary.stream()
+                .filter(item -> messages.stream().noneMatch(item::belongsTo))
+                .map(item -> temporaryRow(item).atSequence(temporarySequence(item, messages)))
+                .forEach(rows::add);
+        for (OutgoingMessage message : messages) {
+            rows.add(new ShellTranscriptRow(
+                    message.id(),
+                    TranscriptPresenter.presentOutgoing(message),
+                    Optional.empty(),
+                    Optional.empty(),
+                    Optional.of(message),
+                    message.afterSequence()));
             visibleTemporary.stream()
                     .filter(item -> item.belongsTo(message))
-                    .map(ShellWebSurfaces::temporaryRow)
+                    .map(item -> temporaryRow(item).atSequence(message.afterSequence()))
                     .forEach(rows::add);
-        } else {
-            visibleTemporary.stream().map(ShellWebSurfaces::temporaryRow).forEach(rows::add);
+        }
+        if (!messages.isEmpty()) {
+            // 稳定排序使同一锚点的失败消息维持提交顺序，晚到历史不能把旧失败挪到新回复后面。
+            rows.sort(Comparator.comparingLong(ShellTranscriptRow::sequence));
         }
         return rows;
+    }
+
+    private List<ChatSurface.TemporaryMessage> nativeTemporary() {
+        return temporary.stream()
+                .filter(item -> (!item.text().isEmpty() || item.activity() == ChatSurface.Activity.WAITING)
+                        && !committedIds.contains(item.id()))
+                .toList();
+    }
+
+    private long temporarySequence(ChatSurface.TemporaryMessage item, List<OutgoingMessage> messages) {
+        long fallback =
+                messages.isEmpty() ? Long.MAX_VALUE : messages.getFirst().afterSequence();
+        return java.util.stream.LongStream.concat(
+                        transcript.items().stream()
+                                .filter(value -> item.turnId()
+                                        .filter(value.turnId()::equals)
+                                        .isPresent())
+                                .mapToLong(ItemEnvelope::sequence),
+                        transcript.history().stream()
+                                .filter(value -> item.turnId()
+                                        .filter(value.turnId()::equals)
+                                        .isPresent())
+                                .mapToLong(ItemHistoryEntry::sequence))
+                .max()
+                .orElse(fallback);
     }
 
     private void rebuildCommittedRows() {
         // 暂态正文变化不重新解码已提交内容；缓存只保留上次原生展示的有界历史，内容替换时整体失效。
         nativeItems = transcript.items();
         nativeHistory = transcript.history();
-        ArrayList<SummaryRow> rows = new ArrayList<>();
+        ArrayList<ShellTranscriptRow> rows = new ArrayList<>();
         committedIds.clear();
         nativeFormatter.replaceItems(nativeItems);
         nativeItems.forEach(item -> {
             committedIds.add(item.id().toString());
             var presented = nativeFormatter.present(item);
-            rows.add(new SummaryRow(presented.title(), presented.body(), presented.styleClass(), Optional.empty()));
+            rows.add(new ShellTranscriptRow(
+                    item.id().toString(),
+                    presented,
+                    Optional.empty(),
+                    fullMessage(item, presented),
+                    Optional.empty(),
+                    item.sequence()));
         });
         nativeHistory.forEach(item -> {
             if (committedIds.add(item.id().toString())) {
                 var presented = TranscriptPresenter.presentHistory(item);
-                rows.add(
-                        new SummaryRow(presented.title(), presented.body(), presented.styleClass(), Optional.of(item)));
+                rows.add(new ShellTranscriptRow(
+                        item.id().toString(),
+                        presented,
+                        Optional.of(item),
+                        item.truncated() ? item.bodyReference() : Optional.empty(),
+                        Optional.empty(),
+                        item.sequence()));
             }
         });
         committedRows = List.copyOf(rows);
+        // 导航先发布空历史，缺失 Item 不代表撤销展开；按会话及最多 500 个显式展开身份有界保存。
     }
 
     private void clearNative() {
@@ -295,18 +486,27 @@ final class ShellWebSurfaces implements AutoCloseable {
         visible(latest, false);
     }
 
-    private static SummaryRow temporaryRow(ChatSurface.TemporaryMessage item) {
+    private static ShellTranscriptRow temporaryRow(ChatSurface.TemporaryMessage item) {
         String text = item.text();
+        boolean waiting = item.activity() == ChatSurface.Activity.WAITING;
+        boolean streaming = item.activity() == ChatSurface.Activity.STREAMING;
         boolean tail = item.textOffsetUtf16() > 0 || text.length() > 32_768;
         int start = Math.max(0, text.length() - 32_768);
         if (start > 0 && Character.isLowSurrogate(text.charAt(start))) {
             start++;
         }
-        return new SummaryRow(
-                "ASSISTANT" + (item.incomplete() ? " · 未完成" : ""),
-                (tail ? "[正文较长；显示末尾，完成后可打开全文]\n" : "") + text.substring(start),
-                "message-assistant",
-                Optional.empty());
+        String title = waiting ? "助手 · 等待回复…" : streaming ? "助手 · 正在回复…" : "助手";
+        if (item.incomplete()) {
+            title += " · 未完成";
+        }
+        String body = waiting ? "模型正在准备回复…" : text.substring(start);
+        return new ShellTranscriptRow(
+                item.id(),
+                new PresentedItem(title, (tail ? "[正文较长；显示末尾，完成后可打开全文]\n" : "") + body, "message-assistant"),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Long.MAX_VALUE);
     }
 
     private void preview(DocumentReference reference) {
@@ -338,67 +538,6 @@ final class ShellWebSurfaces implements AutoCloseable {
         invalidations.close();
         chat.close();
         documents.close();
+        expanded.clear();
     }
-
-    private final class SummaryCell extends ListCell<SummaryRow> {
-        private final Label title = new Label();
-        private final Label body = new Label();
-        private final Hyperlink open = documentLink("查看完整消息");
-        private final VBox files = new VBox(4);
-        private final VBox card = new VBox(6, title, body, open, files);
-
-        private SummaryCell() {
-            title.getStyleClass().add("message-role");
-            body.setWrapText(true);
-            open.setOnAction(event -> {
-                if (getItem() != null) {
-                    getItem()
-                            .source()
-                            .filter(ItemHistoryEntry::truncated)
-                            .flatMap(ItemHistoryEntry::bodyReference)
-                            .ifPresent(ShellWebSurfaces.this::preview);
-                }
-            });
-        }
-
-        private void addFile(String label, DocumentReference reference) {
-            Hyperlink link = documentLink(label);
-            link.setOnAction(event -> preview(reference));
-            files.getChildren().add(link);
-        }
-
-        private static Hyperlink documentLink(String label) {
-            Hyperlink link = new Hyperlink(label);
-            link.getStyleClass().add("transcript-document-link");
-            return link;
-        }
-
-        @Override
-        protected void updateItem(SummaryRow row, boolean empty) {
-            super.updateItem(row, empty);
-            if (empty || row == null) {
-                setGraphic(null);
-                return;
-            }
-            title.setText(row.title());
-            body.setText(row.body().length() > 65_536 ? row.body().substring(0, 65_536) : row.body());
-            card.getStyleClass().setAll(row.style());
-            visible(
-                    open,
-                    row.source()
-                            .filter(ItemHistoryEntry::truncated)
-                            .flatMap(ItemHistoryEntry::bodyReference)
-                            .isPresent());
-            files.getChildren().clear();
-            row.source().ifPresent(item -> {
-                workspace.ifPresent(scope -> item.attachments()
-                        .forEach(attachment -> addFile(
-                                attachment.fileName(), DocumentReference.attachment(scope, item.id(), attachment))));
-                item.fileReferences().forEach(reference -> addFile("查看引用文件", reference));
-            });
-            setGraphic(card);
-        }
-    }
-    /** 原生展示行保留暂态与持久来源的区别；切简版只改变表现，不产生新的 Item。 */
-    private record SummaryRow(String title, String body, String style, Optional<ItemHistoryEntry> source) {}
 }

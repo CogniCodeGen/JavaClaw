@@ -42,7 +42,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DesktopChatLayoutTest {
     private static final String MODEL_NAME = "团队专用长名称模型 · 高精度多语言推理与编程助手 · 2026 年九月预览版";
     private static final String LONG_DRAFT = "请根据上面的对话，逐项梳理界面改进与实现约束。\n".repeat(32);
-    private static final List<WindowSize> SIZES = List.of(new WindowSize(940, 640), new WindowSize(1280, 820));
+    private static final List<WindowSize> SIZES =
+            List.of(new WindowSize(940, 640), new WindowSize(1280, 820), new WindowSize(1600, 1000));
 
     @Test
     void everyAppearanceKeepsTranscriptAndComposerInsideRealChatScene() throws Exception {
@@ -50,10 +51,15 @@ class DesktopChatLayoutTest {
                 new DesktopChatReplayFixture(3, "这里保留可阅读的聊天正文。\n\n- 输入区不遮盖消息\n- 待处理事项按需展开", false)) {
             shell.providers(List.of(provider()));
             shell.open();
-            FxTestSupport.run(() ->
-                    assertTrue(((Button) shell.control("chatModel")).getText().contains(MODEL_NAME)));
+            FxTestSupport.run(() -> {
+                Button model = (Button) shell.control("chatModel");
+                assertTrue(model.getText().contains(MODEL_NAME));
+                assertTrue(model.getTooltip().getText().contains(MODEL_NAME));
+                assertTrue(model.getTooltip().getText().contains("布局测试模型服务"));
+                assertTrue(model.getGraphic().lookup(".composer-model-arrow") instanceof javafx.scene.shape.SVGPath);
+            });
             for (WindowSize size : SIZES) {
-                shell.resize(size.width(), size.height());
+                resize(shell, size);
                 for (AppearanceTheme theme : AppearanceTheme.values()) {
                     // 每批只遍历一个主题，让真实 FX pulse 和 WebView 在批次之间处理绘制。
                     FxTestSupport.run(() -> checkTheme(shell, size, theme));
@@ -61,6 +67,29 @@ class DesktopChatLayoutTest {
                 capture(shell, size, AppearanceTheme.EMERALD);
                 capture(shell, size, AppearanceTheme.MIDNIGHT);
             }
+        }
+    }
+
+    private static void resize(DesktopChatReplayFixture shell, WindowSize size) {
+        FxTestSupport.run(() -> {
+            javafx.stage.Stage stage = (javafx.stage.Stage) shell.scene().getWindow();
+            double chromeWidth = stage.getWidth() - shell.scene().getWidth();
+            double chromeHeight = stage.getHeight() - shell.scene().getHeight();
+            // macOS 会按屏幕夹紧普通窗口尺寸；最小尺寸只约束本测试窗口，让真实 Scene 覆盖大窗布局。
+            stage.setMinWidth(size.width() + chromeWidth);
+            stage.setMinHeight(size.height() + chromeHeight);
+            stage.setWidth(size.width() + chromeWidth);
+            stage.setHeight(size.height() + chromeHeight);
+        });
+        try {
+            FxTestSupport.await(() ->
+                    FxTestSupport.call(() -> Math.abs(shell.scene().getWidth() - size.width()) < 1
+                            && Math.abs(shell.scene().getHeight() - size.height()) < 1));
+        } catch (AssertionError failure) {
+            String actual = FxTestSupport.call(
+                    () -> shell.scene().getWidth() + "x" + shell.scene().getHeight() + "，屏幕 "
+                            + javafx.stage.Screen.getPrimary().getVisualBounds());
+            throw new AssertionError("窗口尺寸未达到 " + size + "，实际 " + actual, failure);
         }
     }
 
@@ -97,6 +126,13 @@ class DesktopChatLayoutTest {
         Node transcript = shell.control("transcriptHost");
         assertInScene(shell, card, context);
         assertInScene(shell, transcript, context);
+        assertEquals(
+                Math.min(960, bounds(transcript).getWidth() - 40), bounds(card).getWidth(), 1, context);
+        assertEquals(
+                bounds(transcript).getMinX() + bounds(transcript).getWidth() / 2,
+                bounds(card).getMinX() + bounds(card).getWidth() / 2,
+                1,
+                context + " 输入区应位于正文列中心");
         assertTrue(bounds(transcript).getHeight() >= 160, context + " 正文高度不足");
         assertTrue(bounds(transcript).getMaxY() <= bounds(card).getMinY() + 1, context + " 输入区覆盖正文");
         for (String id : List.of("composer", "chatModel", "chatReasoning", "sendButton")) {
@@ -106,6 +142,13 @@ class DesktopChatLayoutTest {
         }
         assertFalse(shell.control("chatConfigurationFeedback").isManaged(), context + " 空反馈行仍占位");
         assertTrue(((Button) shell.control("chatModel")).getWidth() <= 221, context + " 长模型名挤占工具栏");
+        assertInside(
+                bounds(((Button) shell.control("chatModel")).getGraphic()),
+                bounds(shell.control("chatModel")),
+                context + " 模型箭头必须独立可见");
+        assertTrue(
+                bounds(((Button) shell.control("chatModel")).getGraphic()).getWidth() >= 10, context + " 模型箭头不能被长名称挤掉");
+        assertEquals(36, bounds(shell.control("sendButton")).getHeight(), 1, context);
         assertInScene(shell, shell.control("pendingButton"), context);
     }
 
@@ -156,6 +199,7 @@ class DesktopChatLayoutTest {
             assertTrue(shell.scene().getRoot().getStyleClass().contains(theme.cssClass()));
             assertGeometry(shell, "截图 " + theme + " " + size);
             assertShortTranscriptVisible(shell);
+            assertMessageColumnAligned(shell);
             return shell.scene().snapshot(null);
         });
         Path directory = Path.of("target", "chat-layout");
@@ -232,6 +276,20 @@ class DesktopChatLayoutTest {
                     documentHeight: document.documentElement.scrollHeight,
                     first: document.querySelector("#surface article").getBoundingClientRect().top})
                 """));
+    }
+
+    private static void assertMessageColumnAligned(DesktopChatReplayFixture shell) {
+        Bounds composer = bounds(shell.control("composerCard"));
+        double messageLeft = ((Number) shell.web()
+                        .getEngine()
+                        .executeScript("document.querySelector('#surface article').getBoundingClientRect().left"))
+                .doubleValue();
+        double messageWidth = ((Number) shell.web()
+                        .getEngine()
+                        .executeScript("document.querySelector('#surface article').getBoundingClientRect().width"))
+                .doubleValue();
+        assertEquals(composer.getMinX(), bounds(shell.web()).getMinX() + messageLeft, 1, "消息与输入区左边界应对齐");
+        assertEquals(composer.getWidth(), messageWidth, 1, "消息与输入区应共用阅读宽度");
     }
 
     private static void save(WritableImage image, Path file) throws IOException {

@@ -179,6 +179,70 @@ class WebChatIncrementalRenderingTest {
     }
 
     @Test
+    void 等待流式和结束阶段原位更新活动节点且正文重建后恢复指示器() {
+        try (Fixture fixture = open(List.of(activity("1", "", "WAITING", false)))) {
+            FxTestSupport.run(() -> {
+                assertEquals("waiting", fixture.script("document.querySelector('article').dataset.activity"));
+                assertEquals(3, fixture.number("document.querySelectorAll('.model-activity-dots i').length"));
+                assertEquals("模型正在准备回复", fixture.script("document.querySelector('.model-activity-label').textContent"));
+                assertTrue(fixture.truth("document.querySelector('.message-body > .model-activity') !== null"));
+                fixture.script("""
+                        window.activityArticle = document.querySelector('article');
+                        window.activityBody = activityArticle.querySelector('.message-body');
+                        window.waitingIndicator = activityBody.querySelector('.model-activity');
+                        """);
+                fixture.patch(List.of(activity("2", "首个正文", "STREAMING", true)), List.of(), null);
+                assertTrue(fixture.truth("activityArticle === document.querySelector('article')"));
+                assertTrue(fixture.truth("activityBody === document.querySelector('.message-body')"));
+                assertFalse(fixture.truth("waitingIndicator.isConnected"));
+                assertEquals("streaming", fixture.script("activityArticle.dataset.activity"));
+                assertEquals(
+                        "模型正在回复", fixture.script("activityBody.querySelector('.model-activity-label').textContent"));
+                assertTrue(
+                        fixture.truth("activityBody.lastElementChild.classList.contains('model-activity-streaming')"));
+                fixture.script("window.streamingIndicator = activityBody.querySelector('.model-activity')");
+                fixture.patch(List.of(activity("3", "首个正文完成", "SETTLED", false)), List.of(), null);
+                assertTrue(fixture.truth("activityArticle === document.querySelector('article')"));
+                assertTrue(fixture.truth("activityBody === document.querySelector('.message-body')"));
+                assertFalse(fixture.truth("streamingIndicator.isConnected"));
+                assertEquals("settled", fixture.script("activityArticle.dataset.activity"));
+                assertEquals(0, fixture.number("activityBody.querySelectorAll('.model-activity').length"));
+            });
+        }
+    }
+
+    @Test
+    void 活动阶段更新保留其他消息选区代码横滚与阅读位置() {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        rows.add(history());
+        IntStream.range(0, 30).forEach(index -> rows.add(plain("old-" + index, "旧消息\n".repeat(6))));
+        rows.add(activity("1", "", "WAITING", false));
+        try (Fixture fixture = open(rows)) {
+            FxTestSupport.run(() -> fixture.script("window.scrollTo(0, 0)"));
+            fixture.await("window.scrollY < 1 && !!document.querySelector('.new-messages')");
+            FxTestSupport.run(() -> {
+                fixture.script("""
+                        window.activityAnchor = document.querySelector('[data-id=history]');
+                        window.activityScroll = scrollY;
+                        window.activityCode = activityAnchor.querySelector('pre');
+                        activityCode.scrollLeft = 75;
+                        window.activityCodeOffset = activityCode.scrollLeft;
+                        const range = document.createRange();
+                        range.selectNodeContents(activityAnchor.querySelector('p'));
+                        getSelection().removeAllRanges(); getSelection().addRange(range);
+                        window.activitySelection = getSelection().toString();
+                        """);
+                fixture.patch(List.of(activity("2", "回复正文", "STREAMING", true)), List.of(), null);
+                assertTrue(fixture.truth("activityAnchor === document.querySelector('[data-id=history]')"));
+                assertEquals(fixture.script("activitySelection"), fixture.script("getSelection().toString()"));
+                assertEquals(fixture.number("activityCodeOffset"), fixture.number("activityCode.scrollLeft"));
+                assertEquals(fixture.number("activityScroll"), fixture.number("scrollY"), 1);
+                assertTrue(fixture.truth("!!document.querySelector('.new-messages')"));
+            });
+        }
+    }
+
+    @Test
     void 补丁基线或上下文错误时拒绝整次提交且完整快照可以恢复() {
         try (Fixture fixture = open(List.of(history()))) {
             FxTestSupport.run(() -> {
@@ -285,6 +349,20 @@ class WebChatIncrementalRenderingTest {
                 text,
                 "references",
                 List.of());
+    }
+
+    private static Map<String, Object> activity(String version, String text, String phase, boolean streaming) {
+        Map<String, Object> row = new LinkedHashMap<>(plain("activity", text));
+        row.put("version", version);
+        row.put("title", "ASSISTANT");
+        row.put("style", "message-assistant");
+        row.put("activity", phase);
+        row.put("streaming", streaming);
+        if (streaming) {
+            row.put("streamHtml", text.isEmpty() ? "" : "<p>首个</p>");
+            row.put("streamSuffix", text.isEmpty() ? "" : text.substring(Math.min(2, text.length())));
+        }
+        return row;
     }
 
     private static Map<String, Object> streaming(String version, String parsed, String suffix) {

@@ -344,7 +344,7 @@ class ShellChatFallbackTest {
         }
 
         private ScrollBar bar() {
-            return host.lookup("#transcriptSummary").lookupAll(".scroll-bar").stream()
+            return host.lookup("#transcriptSummary").lookupAll(".virtual-flow > .scroll-bar").stream()
                     .map(ScrollBar.class::cast)
                     .filter(bar -> bar.getOrientation() == Orientation.VERTICAL)
                     .findFirst()

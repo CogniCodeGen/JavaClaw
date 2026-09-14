@@ -15,6 +15,10 @@
 }
 
 /* ListView 只负责虚拟化，内容卡片自行表达状态。 */
+.sidebar-root .sidebar-list-scroll {
+    -fx-padding: 0 16;
+}
+
 .sidebar-list-scroll .list-cell {
     -fx-background-color: transparent;
     -fx-padding: 8 12;
@@ -40,7 +44,7 @@
 .transcript-list {
     -fx-background-color: transparent;
     -fx-border-color: transparent;
-    -fx-padding: 18 28;
+    -fx-padding: 18 20;
 }
 
 .transcript-list .list-cell,
@@ -395,7 +399,7 @@
 }
 
 .sidebar-navigation {
-    -fx-padding: 5 12 8 12;
+    -fx-padding: 5 16 8 16;
     -fx-spacing: 1;
 }
 
@@ -443,66 +447,6 @@
 .shell-toggle-button:selected {
     -fx-background-color: -jc-primary-50;
     -fx-border-color: -jc-primary-300;
-}
-
-.input-bar {
-    -fx-padding: 12 24 16 24;
-    -fx-spacing: 0;
-}
-
-.composer-card {
-    -fx-background-color: -jc-surface-card;
-    -fx-background-radius: 18;
-    -fx-border-color: -jc-border;
-    -fx-border-width: 1;
-    -fx-border-radius: 18;
-}
-
-.composer-card:hover {
-    -fx-border-color: -jc-border-strong;
-}
-
-.composer-card:composer-focused {
-    -fx-border-color: -jc-primary-500;
-}
-
-.composer-card .composer-input,
-.composer-card .composer-input:focused,
-.composer-card .composer-input .scroll-pane,
-.composer-card .composer-input .scroll-pane .viewport,
-.composer-card .composer-input .content {
-    -fx-background-color: transparent;
-    -fx-border-color: transparent;
-    -fx-effect: none;
-}
-
-.composer-card .composer-input {
-    -fx-min-height: 60;
-    -fx-pref-height: 60;
-    -fx-max-height: 240;
-    -fx-padding: 12 14 4 14;
-    -fx-background-insets: 0;
-    -fx-border-width: 0;
-    -fx-prompt-text-fill: -jc-text-muted;
-}
-
-.composer-toolbar {
-    -fx-min-height: 44;
-    -fx-padding: 2 10 8 10;
-    -fx-background-color: transparent;
-}
-
-.composer-card .composer-interrupt-button {
-    -fx-min-height: 36;
-    -fx-padding: 7 11;
-}
-
-.composer-card .composer-send-button {
-    -fx-min-width: 82;
-    -fx-pref-width: -1;
-    -fx-min-height: 38;
-    -fx-padding: 9 16;
-    -fx-effect: none;
 }
 
 .desktop-progress-panel {

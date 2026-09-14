@@ -47,6 +47,9 @@ public final class TranscriptPresenter {
      * @return 可访问文本投影
      */
     public PresentedItem present(ItemEnvelope item) {
+        if (CoreSchemas.TOOL_RESULT.equals(item.schemaId())) {
+            return toolResult(item);
+        }
         var fact = coding.format(item, codingCalls.callFor(item));
         if (fact.isPresent()) {
             return new PresentedItem(fact.get().title(), fact.get().body(), "transcript-execution-block");
@@ -54,7 +57,6 @@ public final class TranscriptPresenter {
         return switch (item.schemaId()) {
             case CoreSchemas.MESSAGE -> message(item);
             case CoreSchemas.TOOL_CALL -> toolCall(item);
-            case CoreSchemas.TOOL_RESULT -> toolResult(item);
             case CoreSchemas.APPROVAL -> approval(item);
             case CoreSchemas.ERROR -> error(item);
             default -> fallback(item);
@@ -86,10 +88,29 @@ public final class TranscriptPresenter {
                     default -> "transcript-execution-block";
                 };
         int newline = entry.summary().indexOf('\n');
-        return newline < 0
+        PresentedItem text = newline < 0
                 ? new PresentedItem(entry.kind(), entry.summary(), style)
                 : new PresentedItem(
                         entry.summary().substring(0, newline), entry.summary().substring(newline + 1), style);
+        return historyTool(entry.kind(), text);
+    }
+
+    private static PresentedItem historyTool(String kind, PresentedItem text) {
+        // 历史接口只携带摘要；类型与服务端成功标题共同决定折叠，失败和交互不能被正文标题伪装隐藏。
+        boolean call = kind.equals("tool-call") && text.title().startsWith("工具 · ");
+        boolean success = kind.equals("tool-result") && text.title().equals("工具结果 · 成功");
+        if (call || success) {
+            return new PresentedItem(
+                    text.title(),
+                    "",
+                    text.styleClass(),
+                    text.body(),
+                    !text.body().isEmpty());
+        }
+        if (kind.equals("tool-result") && text.title().equals("工具结果 · 失败或未完成")) {
+            return new PresentedItem(text.title(), text.body(), "transcript-error-block");
+        }
+        return text;
     }
 
     private static String roleLabel(MessageRole role) {
@@ -136,16 +157,31 @@ public final class TranscriptPresenter {
     private PresentedItem toolCall(ItemEnvelope item) {
         CorePayloads.ToolCall payload = json.decode(item.payload(), CorePayloads.ToolCall.class);
         return new PresentedItem(
-                "工具 · " + payload.toolName(),
-                "来源 " + payload.producerId() + " · revision " + payload.toolRevision(),
-                "transcript-execution-block");
+                "工具 · " + payload.toolName() + " · 已调用",
+                "",
+                "transcript-execution-block",
+                "来源 " + payload.producerId() + " · revision " + payload.toolRevision() + "\n调用：" + payload.callId()
+                        + "\n参数：" + payload.arguments().json(),
+                true);
     }
 
     private PresentedItem toolResult(ItemEnvelope item) {
         CorePayloads.ToolResult payload = json.decode(item.payload(), CorePayloads.ToolResult.class);
-        var fallback = coding.fallback(item);
-        String title = payload.success() ? "工具结果" : "工具结果 · 失败或未完成";
-        return new PresentedItem(title, fallback.body(), "transcript-execution-block");
+        var call = codingCalls.callFor(item);
+        String name = call.map(value -> json.decode(value.payload(), CorePayloads.ToolCall.class)
+                        .toolName())
+                .orElse("工具结果");
+        String output = coding.format(item, call)
+                .map(fact -> fact.title() + "\n" + fact.body())
+                .orElseGet(() -> coding.fallback(item).body());
+        String title = name + (payload.success() ? " · 成功" : " · 失败或未完成");
+        String metadata = "调用：" + payload.callId();
+        return new PresentedItem(
+                title,
+                payload.success() ? "" : output,
+                payload.success() ? "transcript-execution-block" : "transcript-error-block",
+                metadata + (payload.success() ? "\n" + output : ""),
+                true);
     }
 
     private PresentedItem approval(ItemEnvelope item) {

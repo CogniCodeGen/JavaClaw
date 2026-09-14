@@ -34,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DesktopSendResultTest {
     @Test
-    void 服务端接受后返回原对话Turn供输入框确认清理草稿() throws Exception {
+    void 本地接纳后服务端回执返回原对话Turn() throws Exception {
         PresenterRpcServer server = new PresenterRpcServer();
         try (DesktopPresenter presenter = new DesktopPresenter(server::client, Runnable::run, Clock.systemUTC())) {
             connect(presenter);
@@ -103,12 +103,12 @@ class DesktopSendResultTest {
             CommandOptions options = CommandOptions.create(0);
             var first = presenter.send("仅发送一次", ExecutionOverrides.empty(), options);
             assertThrows(CompletionException.class, first::join);
+            awaitReady(state);
             String outgoingId =
                     state.get().transcript().outgoing().orElseThrow().id();
             long previousAttempt =
                     state.get().transcript().outgoing().orElseThrow().attempt();
-            var recovered =
-                    presenter.send("仅发送一次", ExecutionOverrides.empty(), options).get(5, TimeUnit.SECONDS);
+            var recovered = presenter.retrySend(outgoingId).get(5, TimeUnit.SECONDS);
             assertEquals(DesktopTestFixtures.turn().id(), recovered.id());
             assertEquals(1, server.turnStarts.get());
             assertEquals(1, accepted.size());
@@ -119,6 +119,49 @@ class DesktopSendResultTest {
             assertEquals(
                     OutgoingMessage.Status.ACCEPTED,
                     state.get().transcript().outgoing().orElseThrow().status());
+        }
+    }
+
+    @Test
+    void 多条失败继续保留原文且手动重试只读取原发送载荷() throws Exception {
+        PresenterRpcServer server = new PresenterRpcServer();
+        CanonicalJson json = new CanonicalJson();
+        var submitted = new java.util.concurrent.CopyOnWriteArrayList<WriteCommand>();
+        try (DesktopPresenter presenter = new DesktopPresenter(server::client, Runnable::run, Clock.systemUTC())) {
+            AtomicReference<DesktopState> state = connect(presenter);
+            server.requestOverride = request -> {
+                if (request.method().equals("turn/start")) {
+                    submitted.add(json.decode(request.params(), WriteCommand.class));
+                    throw new IllegalStateException("模拟发送确认丢失");
+                }
+                return Optional.empty();
+            };
+            var first = presenter.send("原消息", ExecutionOverrides.empty());
+            assertThrows(CompletionException.class, first::join);
+            awaitReady(state);
+            String originalId =
+                    state.get().transcript().outgoing().orElseThrow().id();
+            var next = presenter.send("新的独立消息", ExecutionOverrides.empty());
+            assertThrows(CompletionException.class, next::join);
+            awaitReady(state);
+            var retry = presenter.retrySend(originalId);
+            assertThrows(CompletionException.class, retry::join);
+            awaitReady(state);
+            assertEquals(3, submitted.size());
+            assertEquals(submitted.get(0), submitted.get(2));
+            assertFalse(
+                    submitted.get(0).idempotencyKey().equals(submitted.get(1).idempotencyKey()));
+            assertEquals(
+                    List.of("原消息", "新的独立消息"),
+                    state.get().transcript().outgoings().stream()
+                            .map(OutgoingMessage::text)
+                            .toList());
+            assertTrue(state.get().transcript().outgoings().stream()
+                    .allMatch(message -> message.status() == OutgoingMessage.Status.UNCONFIRMED));
+            assertThrows(
+                    CompletionException.class,
+                    () -> presenter.retrySend("outgoing:unknown").join());
+            assertEquals(3, submitted.size());
         }
     }
 
@@ -201,6 +244,14 @@ class DesktopSendResultTest {
             Thread.currentThread().interrupt();
             throw new IllegalStateException(interrupted);
         }
+    }
+
+    private static void awaitReady(AtomicReference<DesktopState> state) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (state.get().interaction().busy() && System.nanoTime() < deadline) {
+            Thread.sleep(5);
+        }
+        assertFalse(state.get().interaction().busy());
     }
 
     private static AtomicReference<DesktopState> connect(DesktopPresenter presenter) throws Exception {

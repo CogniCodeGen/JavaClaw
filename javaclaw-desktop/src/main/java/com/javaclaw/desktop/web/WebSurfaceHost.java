@@ -51,8 +51,7 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
     private BiConsumer<String, String> desiredActions;
     private boolean desiredActionsBound;
     private Submission submitted;
-    // 仅保存同一上下文的有界阅读锚点；不包含正文、SDK 句柄或可执行代码。
-    private String viewState = "";
+    private final WebChatViewState chatViewState = new WebChatViewState();
     private long revision;
     private long applied = -1;
     private long generation;
@@ -164,7 +163,6 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
             return;
         }
         if (!context.equals(checked)) {
-            viewState = "";
             submitted = null;
             if (web != null) {
                 web.setVisible(false);
@@ -191,6 +189,19 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
         visible(fallback, true);
         visible(feedback, false);
         schedule();
+    }
+
+    /**
+     * 更新聊天发送操作的可用状态，不重建正文；页面重新加载后自动重放。
+     *
+     * @param ready 当前会话允许手动重试
+     * @param restoreAllowed 输入框为空，允许恢复原文
+     */
+    public void setOutgoingAvailability(boolean ready, boolean restoreAllowed) {
+        requireFx();
+        if (chatViewState.availability(ready, restoreAllowed) && this.ready && web != null && !closed) {
+            chatViewState.applyAvailability(web);
+        }
     }
 
     /** 显式重试页面，保留当前数据和上下文；重新允许一次自动恢复。 */
@@ -381,7 +392,16 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
                 schedule();
             } else if (actuallyVisible()
                     && acceptsAction(incoming)
-                    && java.util.Set.of("link", "preview", "copy", "history", "following", "select")
+                    && java.util.Set.of(
+                                    "link",
+                                    "preview",
+                                    "copy",
+                                    "history",
+                                    "following",
+                                    "select",
+                                    "retrySend",
+                                    "restoreSend",
+                                    "copySend")
                             .contains(incoming.action())) {
                 submitted.actions().accept(incoming.action(), incoming.value());
             } else if (incoming.action().equals("error")) {
@@ -441,8 +461,7 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
         if (incoming.action().equals("viewState")
                 && kind.equals("chat")
                 && matchesSubmitted(incoming)
-                && incoming.value().length() <= 2048) {
-            viewState = incoming.value();
+                && chatViewState.save(context, incoming.value())) {
             return true;
         }
         return false;
@@ -462,10 +481,12 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
         long expectedGeneration = generation;
         try {
             String identity = "(" + json.encode(Map.of("value", context)).json() + ").value";
-            String restore = "(" + json.encode(Map.of("value", viewState)).json() + ").value";
+            String restore = "("
+                    + json.encode(Map.of("value", chatViewState.get(context))).json() + ").value";
             Object accepted = web.getEngine()
                     .executeScript("window.JavaClawSurface.apply(" + identity + ',' + revision + ',' + payload + ','
                             + restore + ')');
+            chatViewState.applyAvailability(web);
             if (generation == expectedGeneration && Boolean.FALSE.equals(accepted)) {
                 submitted = previous;
                 pending = true;
@@ -553,6 +574,7 @@ public final class WebSurfaceHost extends StackPane implements AutoCloseable {
     public void close() {
         requireFx();
         closed = true;
+        chatViewState.clear();
         recoveryMenu.hide();
         pulse.stop();
         visibility.close();

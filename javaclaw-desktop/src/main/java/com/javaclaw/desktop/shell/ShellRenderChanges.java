@@ -22,16 +22,10 @@ record ShellRenderChanges(
         boolean connection = !previous.connection().equals(next.connection());
         boolean scope = selectionChanged(previous.threads(), next.threads());
         boolean turn = !previous.threads().activeTurn().equals(next.threads().activeTurn());
+        boolean activity = activityChanged(previous, next);
         boolean labels = connection
                 || scope
-                || turn
-                || !previous.interaction()
-                        .pendingApprovals()
-                        .equals(next.interaction().pendingApprovals())
-                || !previous.interaction()
-                        .inputs()
-                        .pendingRequests()
-                        .equals(next.interaction().inputs().pendingRequests())
+                || activity
                 || !previous.interaction().error().equals(next.interaction().error());
         boolean actions = connection
                 || scope
@@ -40,10 +34,21 @@ record ShellRenderChanges(
         return new ShellRenderChanges(
                 scope,
                 connection,
-                scope || connection || !previous.transcript().equals(next.transcript()),
+                scope || connection || activity || !previous.transcript().equals(next.transcript()),
                 !previous.interaction().inputs().equals(next.interaction().inputs()),
                 labels,
                 actions);
+    }
+
+    private static boolean activityChanged(DesktopState previous, DesktopState next) {
+        return !previous.threads().activeTurn().equals(next.threads().activeTurn())
+                || !previous.interaction()
+                        .pendingApprovals()
+                        .equals(next.interaction().pendingApprovals())
+                || !previous.interaction()
+                        .inputs()
+                        .pendingRequests()
+                        .equals(next.interaction().inputs().pendingRequests());
     }
 
     private static boolean selectionChanged(ThreadState previous, ThreadState next) {

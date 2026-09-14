@@ -38,10 +38,57 @@ import com.javaclaw.protocol.WriteCommand;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** 所有 UI 提交按队列串行执行；RPC 闸门制造真实迟到响应，避免直接调度掩盖导航竞争。 */
 class DesktopConversationNavigationTest {
+    @Test
+    void 输入提交仍在UI排队时切换会话不得改投新会话() throws Exception {
+        try (Fixture fixture = new Fixture()) {
+            var result = fixture.presenter.send("属于原会话的输入", com.javaclaw.api.ExecutionOverrides.empty());
+            // 保留已派发但尚未接纳的提交，先完成一次导航，制造真实的调用与UI执行之间的间隔。
+            Runnable delayedSend = fixture.ui.poll();
+            assertNotNull(delayedSend);
+            fixture.presenter.selectThread(fixture.second);
+            fixture.await(() -> fixture.selected(fixture.second)
+                    && !fixture.state().interaction().busy());
+            delayedSend.run();
+            fixture.await(result::isDone);
+            assertThrows(java.util.concurrent.CompletionException.class, result::join);
+            assertEquals(0, fixture.server.turnStarts.get());
+            assertTrue(fixture.state().transcript().outgoings().isEmpty());
+            fixture.presenter.selectThread(fixture.first);
+            fixture.await(() -> fixture.selected(fixture.first)
+                    && !fixture.state().interaction().busy());
+            assertTrue(fixture.state().transcript().outgoings().isEmpty());
+        }
+    }
+
+    @Test
+    void 重连完成后旧连接排队提交仍须拒绝且不重新发送() throws Exception {
+        try (Fixture fixture = new Fixture()) {
+            var result = fixture.presenter.send("原连接尚未接纳的输入", com.javaclaw.api.ExecutionOverrides.empty());
+            Runnable delayedSend = fixture.ui.poll();
+            assertNotNull(delayedSend);
+            var replacement = new PresenterRpcServer();
+            replacement.streamEnabled = true;
+            replacement.requestOverride = fixture::response;
+            fixture.connection.set(replacement);
+            var reconnect = fixture.presenter.reconnect();
+            fixture.await(() -> reconnect.isDone()
+                    && fixture.selected(fixture.first)
+                    && !fixture.state().interaction().busy());
+            delayedSend.run();
+            fixture.await(result::isDone);
+            assertThrows(java.util.concurrent.CompletionException.class, result::join);
+            assertEquals(0, fixture.server.turnStarts.get());
+            assertEquals(0, replacement.turnStarts.get());
+            assertTrue(fixture.state().transcript().outgoings().isEmpty());
+        }
+    }
+
     @Test
     void 重复选择正在运行的同一会话不释放订阅或丢失活动状态() throws Exception {
         try (Fixture fixture = new Fixture()) {

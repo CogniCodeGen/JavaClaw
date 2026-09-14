@@ -69,6 +69,7 @@ public final class PlatformStylesheets {
         ArrayList<String> resources = new ArrayList<>(baseline);
         resources.add("/css/management-center.css");
         resources.add("/css/desktop.css");
+        resources.add("/css/chat-layout.css");
         return List.copyOf(resources);
     }
 

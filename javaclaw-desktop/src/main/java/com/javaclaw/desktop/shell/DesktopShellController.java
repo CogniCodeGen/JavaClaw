@@ -133,6 +133,7 @@ public final class DesktopShellController implements AutoCloseable {
     private ShellWebSurfaces surfaces;
     private ShellSidePanels sidePanels;
     private ShellComposerBehavior composerBehavior;
+    private ShellComposerActions composerActions;
     private ShellStatusLabels statusLabels;
     private java.util.List<ItemEnvelope> displayedItems = java.util.List.of();
     private ManagementCenterWindow managementCenter;
@@ -141,11 +142,9 @@ public final class DesktopShellController implements AutoCloseable {
     private boolean rendering;
     private ChatConfigurationPanel executionSelection;
     private ShellWindowFocus windowFocus;
-    private final ComposerDrafts drafts = new ComposerDrafts();
     private DesktopState latestState = DesktopState.initial();
     private DesktopState renderedState;
     private boolean localError;
-    private boolean bindingDraft;
     private Optional<Instant> executionConnection = Optional.empty();
 
     /** 配置单元格与选择事件。 */
@@ -155,6 +154,9 @@ public final class DesktopShellController implements AutoCloseable {
         workspaceBox.setButtonCell(components.textCell(Workspace::name));
         threadList.setCellFactory(ignored -> {
             ListCell<ConversationThread> cell = components.textCell(ConversationThread::title);
+            cell.textProperty()
+                    .addListener((observable, before, after) ->
+                            cell.setTooltip(after == null || after.isBlank() ? null : new Tooltip(after)));
             // 选中项不变时也转发明确激活，让恢复失败的会话可重试；运行中的同会话由 Presenter 保持幂等。
             cell.setOnMouseClicked(event -> {
                 if (event.getButton() == MouseButton.PRIMARY && !cell.isEmpty()) {
@@ -193,10 +195,15 @@ public final class DesktopShellController implements AutoCloseable {
                 connectionErrorCard,
                 connectionErrorDetail,
                 statusDot);
+        composerActions = new ShellComposerActions(
+                composer,
+                () -> presenter,
+                () -> latestState,
+                () -> executionSelection,
+                this::showLocalError,
+                () -> renderActions(latestState));
         composerBehavior = new ShellComposerBehavior(composer, composerCard, sendButton, () -> {
-            if (!bindingDraft) {
-                drafts.edited(composer.getText());
-            }
+            composerActions.edited();
             if (executionSelection != null) {
                 renderActions(latestState);
             }
@@ -253,6 +260,7 @@ public final class DesktopShellController implements AutoCloseable {
         codingOutput = new CodingExecutionPanel(value);
         progressPanel.getChildren().add(2, codingOutput);
         surfaces = new ShellWebSurfaces(value, progressPanel, transcriptHost, transcriptList, sidePanels);
+        surfaces.onOutgoingAction(composerActions::outgoingAction);
         managementCenter.installShortcut(root.getScene());
         presenter.subscribe(this::render);
         presenter.connect();
@@ -288,29 +296,16 @@ public final class DesktopShellController implements AutoCloseable {
     @FXML
     public void send() {
         try {
-            if (!executionSelection.ready()) {
-                return;
-            }
-            ComposerDrafts.Submission submitted = drafts.submission(composer.getText());
-            var execution = executionSelection.execution();
-            presenter
-                    .send(submitted.text(), execution, drafts.options(submitted, execution))
-                    .thenAccept(started -> {
-                        if (submitted
-                                        .scope()
-                                        .thread()
-                                        .filter(started.threadId()::equals)
-                                        .isPresent()
-                                && drafts.acknowledged(submitted)) {
-                            composer.clear();
-                        }
-                    });
+            composerActions.send();
         } catch (RuntimeException failure) {
-            localError = true;
-            errorLabel.setText(failure.getMessage());
-            errorLabel.setVisible(true);
-            errorLabel.setManaged(true);
+            showLocalError(failure.getMessage());
         }
+    }
+
+    private void showLocalError(String message) {
+        localError = true;
+        errorLabel.setText(message);
+        visible(errorLabel, true);
     }
 
     /** 取消活动 Turn。 */
@@ -364,14 +359,16 @@ public final class DesktopShellController implements AutoCloseable {
             catalogs.render(state);
             sidePanels.render(state);
             renderPendingRegions(state);
+            if (changes.scope()) {
+                composerActions.bind(state);
+            }
+            // 清理本次被接纳的草稿先于任何正文表面更新，Web 与简版不会出现双份待发送正文。
+            composerActions.accepted(state);
             if (changes.transcript()) {
                 renderTranscript(state);
             }
             if (changes.inputs()) {
                 inputRequests.render(state.interaction().inputs());
-            }
-            if (changes.scope()) {
-                bindDraft(state);
             }
             if (changes.scope() || changes.connection()) {
                 executionSelection.bind(
@@ -418,32 +415,16 @@ public final class DesktopShellController implements AutoCloseable {
     }
 
     private void renderActions(DesktopState state) {
-        boolean ready = state.connection().status() == ConnectionState.Status.CONNECTED
-                && state.threads().selectedThread().isPresent()
-                && state.threads().activeTurn().isEmpty()
-                && !state.interaction().busy()
-                && executionSelection.ready()
-                && !composer.getText().isBlank();
-        sendButton.setDisable(!ready);
+        sendButton.setDisable(!composerActions.ready());
+        sendButton.setText(composerActions.retrySource().isPresent() ? "重试原消息" : "发送 ↑");
         interruptButton.setDisable(state.threads().activeTurn().isEmpty());
         visible(interruptButton, state.threads().activeTurn().isPresent());
         visible(sendButton, state.threads().activeTurn().isEmpty());
-        renderApprovalButtons(approvalList.getSelectionModel().getSelectedItem());
-    }
-
-    private void bindDraft(DesktopState state) {
-        var scope = new ComposerDrafts.Scope(
-                state.threads().selectedWorkspace().map(Workspace::id),
-                state.threads().selectedThread().map(ConversationThread::id));
-        String text = drafts.bind(scope, composer.getText());
-        bindingDraft = true;
-        try {
-            if (!composer.getText().equals(text)) {
-                composer.setText(text);
-            }
-        } finally {
-            bindingDraft = false;
+        if (surfaces != null) {
+            surfaces.setOutgoingAvailability(
+                    composerActions.readyForTurn(), composer.getText().isEmpty());
         }
+        renderApprovalButtons(approvalList.getSelectionModel().getSelectedItem());
     }
 
     private void chooseChatWorkspace() {
@@ -508,6 +489,7 @@ public final class DesktopShellController implements AutoCloseable {
     public void close() {
         sidePanels.close();
         composerBehavior.close();
+        composerActions.close();
         if (windowFocus != null) {
             windowFocus.close();
         }

@@ -289,13 +289,23 @@ public final class DesktopPresenter implements AutoCloseable {
      * @param message 用户消息，同一幂等身份下保持不变
      * @param execution 当前执行覆盖，同一幂等身份下保持不变
      * @param options 创建命令选项，重试必须复用且 expectedRevision 为零
-     * @return 服务端接受的原始 Turn；失败以异常完成且不确认清理草稿
+     * @return 服务端接受的原始 Turn；本地接纳由发送状态发布，失败以异常完成并保留消息区原文
      */
     public CompletableFuture<com.javaclaw.api.AgentTurn> send(
             String message, ExecutionOverrides execution, CommandOptions options) {
         String prompt = DesktopFailures.requireText(message, "message");
         ExecutionOverrides selection = Objects.requireNonNull(execution, "execution");
         return conversations.send(prompt, selection, Objects.requireNonNull(options, "options"));
+    }
+
+    /**
+     * 手动重试当前会话的一条未确认消息；始终使用原正文、执行配置和幂等身份。
+     *
+     * @param sendId 当前消息区的本地发送身份，不可空
+     * @return 服务端接受的原始 Turn；会话未就绪或记录已失效时以异常完成
+     */
+    public CompletableFuture<com.javaclaw.api.AgentTurn> retrySend(String sendId) {
+        return conversations.retrySend(DesktopFailures.requireText(sendId, "sendId"));
     }
 
     /** 请求取消当前活动 Turn。 */

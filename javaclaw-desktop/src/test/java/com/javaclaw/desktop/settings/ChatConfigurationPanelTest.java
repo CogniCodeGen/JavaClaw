@@ -43,7 +43,10 @@ class ChatConfigurationPanelTest {
             try (ChatConfigurationPanel panel = panel(gateway)) {
                 assertTrue(panel.ready());
                 assertFalse(panel.lookup("#chatConfigurationFeedback").isManaged(), "就绪时空反馈行不占输入区高度");
-                assertEquals("Fake model ▾", ((Button) panel.lookup("#chatModel")).getText());
+                assertEquals("Fake model", ((Button) panel.lookup("#chatModel")).getText());
+                assertTrue(
+                        ((Button) panel.lookup("#chatModel")).getGraphic().lookup(".composer-model-arrow")
+                                instanceof javafx.scene.shape.SVGPath);
                 assertTrue(reasoning(panel).getItems().contains(null));
                 assertTrue(reasoning(panel).getItems().contains(ReasoningPreference.NONE));
                 assertEquals(

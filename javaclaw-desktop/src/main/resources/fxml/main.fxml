@@ -80,12 +80,15 @@
                         <HBox alignment="CENTER_LEFT" spacing="8" styleClass="chat-top-bar">
                             <Button text="☰" onAction="#toggleSidebar" accessibleText="显示或隐藏会话侧栏"
                                 styleClass="shell-toggle-button" />
-                            <Label fx:id="statusDot" text="●" styleClass="chat-top-status-dot,status-idle" />
-                            <VBox spacing="4">
-                                <Label fx:id="threadTitle" text="新对话" styleClass="chat-top-title" />
-                                <Label fx:id="threadMeta" text="选择工作区，开始你的任务" styleClass="chat-top-meta" />
+                            <VBox spacing="2" minWidth="0" HBox.hgrow="ALWAYS">
+                                <HBox alignment="CENTER_LEFT" spacing="8">
+                                    <Label fx:id="statusDot" text="●" styleClass="chat-top-status-dot,status-idle" />
+                                    <Label fx:id="threadTitle" text="新对话" minWidth="0" maxWidth="Infinity"
+                                        HBox.hgrow="ALWAYS" styleClass="chat-top-title" />
+                                </HBox>
+                                <Label fx:id="threadMeta" text="选择工作区，开始你的任务" minWidth="0" maxWidth="Infinity"
+                                    styleClass="chat-top-meta" />
                             </VBox>
-                            <Region HBox.hgrow="ALWAYS" />
                             <Button fx:id="pendingButton" text="待处理" onAction="#toggleProgress"
                                 accessibleText="打开待处理事项" styleClass="shell-toggle-button" />
                         </HBox>
@@ -112,7 +115,7 @@
                 </top>
                 <center>
                     <StackPane fx:id="transcriptHost">
-                        <ListView fx:id="transcriptList" accessibleText="当前对话内容"
+                        <ListView fx:id="transcriptList" maxWidth="1000" accessibleText="当前对话内容"
                             styleClass="message-scroll,transcript-list">
                             <placeholder>
                                 <VBox alignment="CENTER" spacing="12" styleClass="welcome-panel">
@@ -125,10 +128,11 @@
                     </StackPane>
                 </center>
                 <bottom>
-                    <VBox styleClass="input-bar">
-                        <VBox fx:id="composerCard" accessibleText="消息输入与运行配置" styleClass="composer-card">
+                    <VBox alignment="CENTER" styleClass="input-bar">
+                        <VBox fx:id="composerCard" maxWidth="960" minWidth="0" accessibleText="消息输入与运行配置"
+                            styleClass="composer-card">
                             <TextArea fx:id="composer" promptText="输入消息…" accessibleText="消息输入框"
-                                prefRowCount="2" wrapText="true" minHeight="56" maxHeight="240"
+                                prefRowCount="2" wrapText="true" minHeight="60" prefHeight="60" maxHeight="240"
                                 styleClass="input-field,composer-input" />
                             <VBox fx:id="executionHost" accessibleText="独立选择 Agent、模型、推理与权限" />
                             <HBox spacing="8" alignment="CENTER_LEFT" styleClass="composer-toolbar">

@@ -141,9 +141,10 @@ class DesktopShellControllerTest {
 
         private void assertConnectedControls() {
             FxTestSupport.run(() -> {
+                assertEquals("服务已连接", label("connectionLabel").getText());
                 assertEquals(
                         "javaclaw-app-server 6.0.0-SNAPSHOT",
-                        label("connectionLabel").getText());
+                        label("connectionLabel").getTooltip().getText());
                 assertEquals("架构升级", label("threadTitle").getText());
                 assertEquals("工作区", label("threadMeta").getText());
                 assertEquals(1, list("transcriptList").getItems().size());

@@ -8,6 +8,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 import com.javaclaw.api.AgentTurn;
@@ -32,6 +33,7 @@ final class DesktopConversationCoordinator implements AutoCloseable {
     private final Consumer<Runnable> ui;
     private final ExecutorService workers;
     private final DesktopTurnStreamCoordinator streams;
+    private final DesktopSendLedger sends = new DesktopSendLedger();
     private final Supplier<JavaClawClient> client;
     private final Consumer<Workspace> workspaceCreated;
     private final AtomicLong epoch = new AtomicLong();
@@ -54,6 +56,7 @@ final class DesktopConversationCoordinator implements AutoCloseable {
         this.streams = streams;
         this.client = client;
         this.workspaceCreated = workspaceCreated;
+        store.subscribe(sends::observe);
     }
 
     void reconnecting() {
@@ -106,7 +109,8 @@ final class DesktopConversationCoordinator implements AutoCloseable {
 
     private void load(Scope scope, ConversationThread thread) {
         // 历史和活动状态共同发布，避免首次恢复尚未确认时发送第二个 Turn。
-        store.update(state -> DesktopStateProjection.busy(state, true));
+        store.update(state -> DesktopStateProjection.busy(
+                DesktopStateProjection.transcript(state, sends.project(thread, state.transcript())), true));
         workers.submit(() -> loadHistory(scope, thread));
     }
 
@@ -121,17 +125,8 @@ final class DesktopConversationCoordinator implements AutoCloseable {
             ui.accept(() -> {
                 if (current(scope, thread.id())) {
                     recoveryFailure = null;
-                    store.update(state -> DesktopTranscriptHistory.apply(
-                            state,
-                            thread,
-                            new TranscriptState(
-                                    transcript.items(),
-                                    transcript.nextSequence(),
-                                    transcript.following(),
-                                    transcript.stream(),
-                                    transcript.hasEarlier(),
-                                    transcript.history(),
-                                    state.transcript().outgoing())));
+                    store.update(
+                            state -> DesktopTranscriptHistory.apply(state, thread, sends.project(thread, transcript)));
                     store.update(state -> DesktopStateProjection.busy(state, false));
                     active.ifPresent(turn -> observe(scope, thread, turn));
                     if (transcript.nextSequence() > 0) {
@@ -145,78 +140,111 @@ final class DesktopConversationCoordinator implements AutoCloseable {
     }
 
     CompletableFuture<AgentTurn> send(String message, ExecutionOverrides execution, CommandOptions options) {
+        return submit(thread -> new DesktopSendLedger.Command(thread, message, execution, options));
+    }
+
+    CompletableFuture<AgentTurn> retrySend(String sendId) {
+        return submit(thread -> sends.retry(thread, sendId));
+    }
+
+    private CompletableFuture<AgentTurn> submit(Function<ConversationThread, DesktopSendLedger.Command> command) {
         CompletableFuture<AgentTurn> result = new CompletableFuture<>();
+        Scope expected = new Scope(epoch.get(), client.get());
+        Optional<ConversationThread> target = store.state().threads().selectedThread();
         ui.accept(() -> {
-            var state = store.state();
-            if (!connected()
-                    || state.interaction().busy()
-                    || state.threads().activeTurn().isPresent()
-                    || recoveryFailure != null && recoveryFailure.epoch() == epoch.get()
-                    || state.threads().selectedThread().isEmpty()) {
-                result.completeExceptionally(new IllegalStateException("当前对话尚未就绪，请等待加载完成后重试"));
-                return;
+            try {
+                var state = store.state();
+                // 调用方看到的目标必须在排队前冻结；迟到的提交不能把原输入转移到新会话或新连接。
+                if (!current(expected)
+                        || target.filter(thread -> state.threads()
+                                        .selectedThread()
+                                        .filter(selected -> selected.id().equals(thread.id())
+                                                && selected.workspaceId().equals(thread.workspaceId()))
+                                        .isPresent())
+                                .isEmpty()) {
+                    throw new IllegalStateException("发送目标已变化，请在原对话确认后重新发送");
+                }
+                if (!connected()
+                        || state.interaction().busy()
+                        || state.threads().activeTurn().isPresent()
+                        || recoveryFailure != null && recoveryFailure.epoch() == epoch.get()
+                        || state.threads().selectedThread().isEmpty()) {
+                    throw new IllegalStateException("当前对话尚未就绪，请等待加载完成后重试");
+                }
+                ConversationThread thread = state.threads().selectedThread().orElseThrow();
+                if (sends.sending(thread)) {
+                    throw new IllegalStateException("当前对话仍有消息正在提交，请等待结果后重试");
+                }
+                DesktopSendLedger.Command submitted = command.apply(thread);
+                Scope scope = beginSelection();
+                OutgoingMessage outgoing =
+                        sends.begin(submitted, scope.epoch(), state.transcript().nextSequence());
+                // 本地接纳与 busy 同次发布；输入框据此移出提交草稿，不能等待网络回执。
+                store.update(value -> DesktopStateProjection.busy(
+                        DesktopStateProjection.transcript(
+                                value, sends.project(thread, value.transcript()).outgoing(outgoing)),
+                        true));
+                workers.submit(() -> startTurn(scope, submitted, result));
+            } catch (RuntimeException failure) {
+                result.completeExceptionally(failure);
             }
-            ConversationThread thread = state.threads().selectedThread().orElseThrow();
-            Scope scope = beginSelection();
-            OutgoingMessage outgoing = new OutgoingMessage(
-                    outgoingId(options), message, Optional.empty(), OutgoingMessage.Status.SENDING, scope.epoch());
-            // 用户正文与发送状态同次发布，不让 RPC 排队、配置冻结或历史对账决定首次可见时间。
-            // 尝试号保留每次主动重试的跟随意图；即使失败中间帧被合并，也不能将重试视为相同内容而吞掉。
-            store.update(value -> DesktopStateProjection.busy(
-                    DesktopStateProjection.transcript(value, value.transcript().outgoing(outgoing)), true));
-            workers.submit(() -> startTurn(scope, thread, message, execution, options, result));
         });
         return result;
     }
 
-    private void startTurn(
-            Scope scope,
-            ConversationThread thread,
-            String message,
-            ExecutionOverrides execution,
-            CommandOptions options,
-            CompletableFuture<AgentTurn> result) {
+    private void startTurn(Scope scope, DesktopSendLedger.Command command, CompletableFuture<AgentTurn> result) {
+        ConversationThread thread = command.thread();
         try {
             if (!current(scope, thread.id())) {
                 throw new IllegalStateException("对话已切换，消息尚未发送");
             }
-            var payload = new CoreRpcContracts.TurnStartPayload(thread.id(), execution, message);
-            AgentTurn started = scope.client().turns().start(payload, options).turn();
+            var payload = new CoreRpcContracts.TurnStartPayload(thread.id(), command.execution(), command.text());
+            AgentTurn started =
+                    scope.client().turns().start(payload, command.options()).turn();
             if (!started.threadId().equals(thread.id())) {
                 throw new IllegalStateException("启动回执不属于发送消息的对话");
             }
-            ui.accept(() -> {
-                // 回执属于原始发送；页面是否仍选中只影响展示，不改变已被服务端接受的事实。
-                if (current(scope, thread.id())) {
-                    store.update(state -> DesktopStateProjection.transcript(
-                            state, state.transcript().acknowledged(outgoingId(options), started.id())));
-                    if (DesktopStateProjection.terminal(started.status())) {
-                        // 幂等恢复可能直接返回终态；仍需补齐权威用户消息，否则回显没有机会被历史替换。
-                        load(scope, thread);
-                    } else {
-                        observe(scope, thread, started);
-                    }
-                }
-                result.complete(started);
-                if (!DesktopStateProjection.terminal(started.status())) {
-                    refreshThreadTitle(scope, thread);
-                }
-            });
+            ui.accept(() -> accepted(scope, command, started, result));
         } catch (Exception failure) {
             ui.accept(() -> {
+                sends.unconfirmed(command);
                 if (current(scope, thread.id())) {
                     store.update(state -> DesktopStateProjection.failure(
-                            DesktopStateProjection.transcript(
-                                    state, state.transcript().unconfirmed(outgoingId(options))),
+                            DesktopStateProjection.transcript(state, sends.project(thread, state.transcript())),
                             DesktopFailures.safeMessage(failure)));
+                    // 错误可能发生在服务端提交之后；必须复核历史及活动 Turn，再允许下一条发送。
+                    load(scope, thread);
+                } else if (sameConnection(scope) && selected(thread.id())) {
+                    load(scope(), thread);
                 }
                 result.completeExceptionally(failure);
             });
         }
     }
 
-    private static String outgoingId(CommandOptions options) {
-        return "outgoing:" + options.idempotencyKey();
+    private void accepted(
+            Scope scope, DesktopSendLedger.Command command, AgentTurn started, CompletableFuture<AgentTurn> result) {
+        ConversationThread thread = command.thread();
+        // 导航只改变展示归属；即使回执迟到，原发送记录仍必须结清并保存权威 Turn 身份。
+        sends.accepted(command, started);
+        if (current(scope, thread.id())) {
+            store.update(state -> DesktopStateProjection.transcript(
+                    state,
+                    sends.project(
+                            thread,
+                            state.transcript().acknowledged(DesktopSendLedger.id(command.options()), started.id()))));
+            if (DesktopStateProjection.terminal(started.status())) {
+                load(scope, thread);
+            } else {
+                observe(scope, thread, started);
+            }
+        } else if (sameConnection(scope) && selected(thread.id())) {
+            load(scope(), thread);
+        }
+        result.complete(started);
+        if (!DesktopStateProjection.terminal(started.status())) {
+            refreshThreadTitle(scope, thread);
+        }
     }
 
     /** 标题是发送后的独立刷新，不能延迟确认、清除正文或把已接受的消息标成失败；导航失效时丢弃迟到结果。 */
@@ -348,7 +376,8 @@ final class DesktopConversationCoordinator implements AutoCloseable {
                 store.update(state -> DesktopStateProjection.selectWorkspace(state, loaded.workspace()));
                 store.update(state -> DesktopStateProjection.threadCatalog(
                         state, loaded.workspace(), loaded.threads(), Optional.of(loaded.thread())));
-                store.update(state -> DesktopTranscriptHistory.apply(state, loaded.thread(), loaded.transcript()));
+                store.update(state -> DesktopTranscriptHistory.apply(
+                        state, loaded.thread(), sends.project(loaded.thread(), loaded.transcript())));
                 active.ifPresent(turn -> observe(scope, loaded.thread(), turn));
                 result.complete(loaded.thread());
             });
