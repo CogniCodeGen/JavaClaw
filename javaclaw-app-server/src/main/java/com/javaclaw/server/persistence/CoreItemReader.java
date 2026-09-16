@@ -8,6 +8,7 @@ import com.javaclaw.api.CorePayloads;
 import com.javaclaw.api.CoreSchemas;
 import com.javaclaw.api.ItemEnvelope;
 import com.javaclaw.api.ItemId;
+import com.javaclaw.api.ItemStatus;
 import com.javaclaw.api.TurnId;
 import com.javaclaw.protocol.CanonicalJson;
 
@@ -63,6 +64,40 @@ public final class CoreItemReader {
                 }
             }
             return Optional.empty();
+        });
+    }
+
+    /**
+     * 按已授权结果核验先行、完整提交且唯一的 Core 工具调用；重复或后到身份不能用于签发浏览器预览。
+     *
+     * @param result 调用方已经验证访问权的持久结果 Item
+     * @param callId 结果中的完整调用标识
+     * @return 唯一已完成的先行调用；缺失、未完成、重复或后到时为空，不改变旧 findToolCall 的语义
+     */
+    public Optional<CorePayloads.ToolCall> findPriorToolCall(ItemEnvelope result, String callId) {
+        Objects.requireNonNull(result, "result");
+        Objects.requireNonNull(callId, "callId");
+        return execute(connection -> {
+            CorePayloads.ToolCall found = null;
+            try (var query = connection.prepareStatement(
+                    "SELECT SEQUENCE,PAYLOAD,STATUS FROM CORE.ITEM WHERE TURN_ID=? AND SCHEMA_ID=? AND PRODUCER_ID='core' ORDER BY SEQUENCE")) {
+                query.setString(1, result.turnId().toString());
+                query.setString(2, CoreSchemas.TOOL_CALL);
+                try (var rows = query.executeQuery()) {
+                    while (rows.next()) {
+                        var call = json.decode(new CanonicalPayload(rows.getString(2)), CorePayloads.ToolCall.class);
+                        if (call.callId().equals(callId)) {
+                            if (found != null
+                                    || rows.getLong(1) >= result.sequence()
+                                    || !ItemStatus.COMPLETED.name().equals(rows.getString(3))) {
+                                return Optional.empty();
+                            }
+                            found = call;
+                        }
+                    }
+                }
+            }
+            return Optional.ofNullable(found);
         });
     }
 

@@ -48,7 +48,9 @@ public final class CodingExecutionRepository {
                         FROM CORE.CODING_OPERATION o JOIN CORE.AGENT_TURN a ON a.ID=o.TURN_ID
                         LEFT JOIN CORE.CODING_COMMAND_STREAM s ON s.OPERATION_ID=o.ID
                         LEFT JOIN CORE.CODING_TERMINAL t ON t.OPERATION_ID=o.ID
-                        WHERE o.WORKSPACE_ID=? AND o.OPERATION_NAME IN ('command_run','dependencies_prepare','terminal_open')
+                        WHERE o.WORKSPACE_ID=? AND o.OPERATION_NAME IN
+                            ('command_run','dependencies_prepare','terminal_open','script_run',
+                             'system_command_run','system_shell_run')
                         """ + (threadId.isPresent() ? " AND a.THREAD_ID=?" : "")
                         + (turnId.isPresent() ? " AND o.TURN_ID=?" : "")
                         + " ORDER BY o.CREATED_AT DESC,o.ID DESC FETCH FIRST 100 ROWS ONLY";

@@ -18,6 +18,9 @@ public final class SiteClient {
                     SiteContracts.Projection, SiteContracts.SearchRequest, SiteContracts.SearchResult>
             documents;
     private final ExtensionClient extensions;
+    private final SiteAccountClient accounts;
+    private final BrowserClient browser;
+    private final SiteRegistrationClient registrations;
     private final CanonicalJson json = new CanonicalJson();
 
     /**
@@ -32,6 +35,24 @@ public final class SiteClient {
                 com.javaclaw.builtin.contracts.BuiltinExtensionIds.SITE,
                 SiteContracts.Projection.class,
                 SiteContracts.SearchResult.class);
+        accounts = new SiteAccountClient(extensions);
+        browser = new BrowserClient(extensions);
+        registrations = new SiteRegistrationClient(extensions);
+    }
+
+    /** @return 用户通过隔离浏览器登记新网站的强类型 facade */
+    public SiteRegistrationClient registrations() {
+        return registrations;
+    }
+
+    /** @return 当前 Thread 的常驻浏览器 facade */
+    public BrowserClient browser() {
+        return browser;
+    }
+
+    /** @return 网站多账号管理与密封密码保存 facade */
+    public SiteAccountClient accounts() {
+        return accounts;
     }
 
     /**

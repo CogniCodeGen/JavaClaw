@@ -46,7 +46,11 @@ final class WorkspacePatchWriter {
     }
 
     PatchResult apply(PreparedPatch patch) {
-        WorkspacePatchTransaction transaction = new WorkspacePatchTransaction(tree);
+        return apply(patch, true);
+    }
+
+    PatchResult apply(PreparedPatch patch, boolean createParents) {
+        WorkspacePatchTransaction transaction = new WorkspacePatchTransaction(tree, () -> {}, createParents);
         PatchResult result;
         try {
             for (Change change : patch.changes()) {
@@ -65,18 +69,24 @@ final class WorkspacePatchWriter {
                     tree.access().supportsExchange()
                             ? "全部文件已按摘要前提应用；修改使用原子交换，原 inode 保留于恢复目录"
                             : "全部文件已按摘要前提应用；Windows 两阶段移动保留原 inode，目标可能短暂不存在",
-                    transaction.recoveryPaths());
+                    transaction.recoveryPaths(),
+                    transaction.createdDirectories());
         } catch (IOException | RuntimeException failure) {
             boolean restored = transaction.rollback();
             result = new PatchResult(
                     restored ? Status.ROLLED_BACK : Status.RECOVERY_REQUIRED,
                     detail(failure),
-                    transaction.recoveryPaths());
+                    transaction.recoveryPaths(),
+                    transaction.createdDirectories());
         }
         try {
             transaction.close();
         } catch (IOException failure) {
-            return new PatchResult(Status.RECOVERY_REQUIRED, detail(failure), transaction.recoveryPaths());
+            return new PatchResult(
+                    Status.RECOVERY_REQUIRED,
+                    detail(failure),
+                    transaction.recoveryPaths(),
+                    transaction.createdDirectories());
         }
         return result;
     }

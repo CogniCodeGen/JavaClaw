@@ -162,10 +162,8 @@ public final class ViewSchemaRenderer {
             list.getSelectionModel().setSelectionMode(SelectionMode.SINGLE);
             if (selection == ViewSelectionMode.SINGLE) {
                 select(list, keyField, selectedKey);
-                list.getSelectionModel().selectedItemProperty().addListener((ignored, previous, row) -> {
-                    bindings.select(sourceId, row);
-                    interactions.select(sourceId, key(row, keyField));
-                });
+                new ViewSelectionBinding(
+                        list.getSelectionModel(), list.getItems(), sourceId, keyField, interactions, bindings);
             }
         } else if (control instanceof TableView<?> rawTable) {
             @SuppressWarnings("unchecked")
@@ -173,10 +171,8 @@ public final class ViewSchemaRenderer {
             table.getSelectionModel().setSelectionMode(SelectionMode.SINGLE);
             if (selection == ViewSelectionMode.SINGLE) {
                 select(table, keyField, selectedKey);
-                table.getSelectionModel().selectedItemProperty().addListener((ignored, previous, row) -> {
-                    bindings.select(sourceId, row);
-                    interactions.select(sourceId, key(row, keyField));
-                });
+                new ViewSelectionBinding(
+                        table.getSelectionModel(), table.getItems(), sourceId, keyField, interactions, bindings);
             }
         }
     }

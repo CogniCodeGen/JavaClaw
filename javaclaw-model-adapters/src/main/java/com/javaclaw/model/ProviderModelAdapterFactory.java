@@ -22,6 +22,7 @@ import com.javaclaw.runtime.ModelInvocationResult;
 /** 从强类型 ProviderEndpoint 与 Vault 引用构造实际模型 Adapter。 */
 public final class ProviderModelAdapterFactory {
     private final ProviderCredentialResolver credentials;
+    private final com.javaclaw.runtime.ModelImageResolver images;
 
     /**
      * 创建工厂。
@@ -29,7 +30,19 @@ public final class ProviderModelAdapterFactory {
      * @param credentials Secret Vault 读取边界
      */
     public ProviderModelAdapterFactory(ProviderCredentialResolver credentials) {
+        this(credentials, com.javaclaw.runtime.ModelImageResolver.unavailable());
+    }
+
+    /**
+     * 创建具备可信附件读取边界的工厂。
+     *
+     * @param credentials Vault 读取边界
+     * @param images 每次复核所有权的图片读取端口
+     */
+    public ProviderModelAdapterFactory(
+            ProviderCredentialResolver credentials, com.javaclaw.runtime.ModelImageResolver images) {
         this.credentials = Objects.requireNonNull(credentials, "credentials");
+        this.images = Objects.requireNonNull(images, "images");
     }
 
     /**
@@ -81,7 +94,7 @@ public final class ProviderModelAdapterFactory {
         };
     }
 
-    private static ModelGateway spring(ProviderEndpoint endpoint, ProviderRef reference, char[] secret) {
+    private ModelGateway spring(ProviderEndpoint endpoint, ProviderRef reference, char[] secret) {
         SpringAdapterOptions options = springOptions(endpoint.spec().options());
         SpringAiEndpointConfig config = new SpringAiEndpointConfig(
                 reference.routeKey(),
@@ -94,10 +107,13 @@ public final class ProviderModelAdapterFactory {
                 options.apiVersion(),
                 endpoint.spec().timeout(),
                 endpoint.spec().maximumRetries());
-        return SpringAiModelAdapter.builder().register(config, secret).build();
+        return SpringAiModelAdapter.builder()
+                .images(images)
+                .register(config, secret, imageSupport(endpoint, reference))
+                .build();
     }
 
-    private static ModelGateway responses(ProviderEndpoint endpoint, ProviderRef reference, char[] secret) {
+    private ModelGateway responses(ProviderEndpoint endpoint, ProviderRef reference, char[] secret) {
         ProviderAdapterOptions.OpenAiResponses options =
                 responsesOptions(endpoint.spec().options());
         ReasoningSummaryStyle summary =
@@ -117,7 +133,13 @@ public final class ProviderModelAdapterFactory {
                 endpoint.spec().timeout(),
                 endpoint.spec().maximumRetries(),
                 secret);
-        return OpenAiResponsesModelAdapter.create(config, client);
+        return OpenAiResponsesModelAdapter.create(config, client, images, imageSupport(endpoint, reference));
+    }
+
+    private static boolean imageSupport(ProviderEndpoint endpoint, ProviderRef reference) {
+        return endpoint.spec().models().stream()
+                .filter(model -> model.modelId().equals(reference.model()))
+                .anyMatch(model -> model.imageSupport() == com.javaclaw.api.ProviderImageSupport.SUPPORTED);
     }
 
     private static void validateConfiguration(ProviderEndpoint endpoint, ProviderRef reference) {

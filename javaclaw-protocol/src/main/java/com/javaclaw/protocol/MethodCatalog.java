@@ -200,6 +200,7 @@ public final class MethodCatalog {
         add(methods, "extension/list", RpcMethodKind.QUERY);
         add(methods, "extension/query", RpcMethodKind.QUERY);
         add(methods, "extension/command", RpcMethodKind.COMMAND);
+        add(methods, "extension/secret/command", RpcMethodKind.COMMAND);
         add(methods, "extension/schema/read", RpcMethodKind.QUERY);
         add(methods, "extension/view/list", RpcMethodKind.QUERY);
         add(methods, "extension/job/list", RpcMethodKind.QUERY);

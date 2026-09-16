@@ -36,7 +36,7 @@ class CodingExtensionTest {
                     .filter(ExtensionContributions.Tool.class::isInstance)
                     .map(ExtensionContributions.Tool.class::cast)
                     .toList();
-            assertEquals(12, tools.size());
+            assertEquals(24, tools.size());
             assertEquals(
                     expected,
                     started.tool(
@@ -52,7 +52,8 @@ class CodingExtensionTest {
                     .map(ExtensionContributions.Command.class::cast)
                     .findFirst()
                     .orElseThrow();
-            assertEquals(Set.of("environment/update", "toolchain/install"), commands.operations());
+            assertEquals(
+                    Set.of("environment/update", "toolchain/install", "system/registry/update"), commands.operations());
             assertFalse(commands.operations().contains("dependencies_prepare"));
             assertTrue(tools.stream().anyMatch(tool -> tool.contributionId().equals("dependencies_prepare")));
         }
@@ -79,7 +80,7 @@ class CodingExtensionTest {
     void 所有CodingSchema可加载且JSON拒绝冒充Turn权限的未知字段() {
         CanonicalJson json = new CanonicalJson();
         try (CodingExtension extension = new CodingExtension()) {
-            assertEquals(31, extension.schemas().size());
+            assertEquals(CodingSchemas.names().size(), extension.schemas().size());
             for (String name : CodingSchemas.names()) {
                 assertTrue(CodingSchemas.read(name).json().contains("\"additionalProperties\":false"));
                 assertTrue(CodingSchemas.read(name).json().contains("\"$id\":\"" + CodingSchemas.id(name) + "\""));

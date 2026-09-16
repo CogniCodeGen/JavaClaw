@@ -27,7 +27,7 @@ class CoreSchemaInitializerTest {
         assertSingleBaseline(database);
         try (Connection connection = database.open();
                 var statement = connection.createStatement()) {
-            assertEquals(77, count(connection, "INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'CORE'"));
+            assertEquals(85, count(connection, "INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'CORE'"));
             for (String table : List.of(
                     "AGENT_TURN",
                     "AGENT_ROLE",
@@ -40,7 +40,15 @@ class CoreSchemaInitializerTest {
                     "CONVERSATION_COMPLETION_HEAD",
                     "CONVERSATION_COMPLETION",
                     "CONVERSATION_EVIDENCE_EXCLUSION",
-                    "EXTENSION_JOB_CANCELLATION")) {
+                    "EXTENSION_JOB_CANCELLATION",
+                    "BROWSER_ORIGIN_PREVIEW",
+                    "BROWSER_ORIGIN_GRANT",
+                    "BROWSER_TURN_GRANT_SNAPSHOT",
+                    "BROWSER_GRANT_DECISION",
+                    "TURN_CONTINUATION",
+                    "CODING_SYSTEM_REGISTRY",
+                    "TURN_SYSTEM_ENVIRONMENT",
+                    "CODING_EXECUTION_SYSTEM_ENVIRONMENT")) {
                 assertEquals(0, count(connection, "CORE." + table));
             }
             assertEquals(1, count(connection, "CORE.ATTACHMENT_UPLOAD_QUOTA"));
@@ -86,7 +94,7 @@ class CoreSchemaInitializerTest {
             assertTrue(result.next());
             assertEquals("f".repeat(64), result.getString(1));
             assertFalse(result.next());
-            assertEquals(77, count(connection, "INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'CORE'"));
+            assertEquals(85, count(connection, "INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'CORE'"));
         }
     }
 

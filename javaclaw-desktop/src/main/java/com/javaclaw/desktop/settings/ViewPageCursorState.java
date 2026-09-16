@@ -65,4 +65,11 @@ final class ViewPageCursorState {
         pageIndexes.clear();
         history.clear();
     }
+
+    void rewind(String sourceId) {
+        cursors.remove(sourceId);
+        pageIndexes.remove(sourceId);
+        history.remove(sourceId);
+        initialSelections.remove(sourceId);
+    }
 }

@@ -7,6 +7,7 @@ import java.util.concurrent.CompletionStage;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.builtin.contracts.CodingEnvironmentContracts;
 import com.javaclaw.builtin.contracts.CodingResults;
+import com.javaclaw.builtin.contracts.CodingSystemContracts;
 import com.javaclaw.client.CommandOptions;
 import com.javaclaw.desktop.DesktopPresenter;
 import com.javaclaw.protocol.InputJobRpcContracts;
@@ -31,6 +32,21 @@ public final class SdkCodingSettingsGateway implements CodingSettingsGateway {
             return new Snapshot(
                     coding.environment(workspaceId), coding.catalog(workspaceId), coding.toolchains(workspaceId));
         });
+    }
+
+    @Override
+    public CompletionStage<SystemSnapshot> systemCommands(WorkspaceId workspaceId) {
+        return desktop.submitSettingsRequest(client -> {
+            var coding = client.builtins().coding();
+            return new SystemSnapshot(coding.systemRegistry(workspaceId), coding.systemCatalog(workspaceId));
+        });
+    }
+
+    @Override
+    public CompletionStage<CodingSystemContracts.Registry> saveSystemCommands(
+            WorkspaceId workspaceId, CodingSystemContracts.RegistryUpdate update, CommandOptions options) {
+        return desktop.submitSettingsRequest(
+                client -> client.builtins().coding().updateSystemRegistry(workspaceId, update, options));
     }
 
     @Override

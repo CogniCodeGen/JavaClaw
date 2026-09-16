@@ -205,6 +205,13 @@ final class ChatProjectionRenderer {
                             attachment.fileName(),
                             DocumentReference.attachment(scope.workspace(), item.id(), attachment)));
         }
+        text.attachments()
+                .forEach(attachment -> card(
+                        cards,
+                        targets,
+                        id + ":browser:" + attachment.digest(),
+                        attachment.fileName(),
+                        DocumentReference.attachment(scope.workspace(), item.id(), attachment)));
         ProjectedRow rendered = row(presentedValues(id, text, html, cards), targets, links);
         return remember(key, item, generation, rendered, item.payload().json().length() * 2L);
     }

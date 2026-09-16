@@ -2,6 +2,8 @@ package com.javaclaw.desktop.settings;
 
 import java.util.function.Consumer;
 
+import javafx.scene.Node;
+
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.desktop.view.ViewGraphAction;
 import com.javaclaw.desktop.view.ViewRenderSession;
@@ -17,11 +19,52 @@ final class ViewPageGraphQueries {
     private final ExtensionSettingsGateway gateway;
     private final ViewRequestEpoch requests;
     private final ViewPageLoadState loads;
+    private final ViewSchemaFeedbackPane body;
+    private final ViewPageCacheState cache;
 
     ViewPageGraphQueries(ExtensionSettingsGateway gateway, ViewRequestEpoch requests, ViewPageLoadState loads) {
+        this(gateway, requests, loads, null, null);
+    }
+
+    ViewPageGraphQueries(
+            ExtensionSettingsGateway gateway,
+            ViewRequestEpoch requests,
+            ViewPageLoadState loads,
+            ViewSchemaFeedbackPane body,
+            ViewPageCacheState cache) {
         this.gateway = gateway;
         this.requests = requests;
         this.loads = loads;
+        this.body = body;
+        this.cache = cache;
+    }
+
+    void browse(
+            WorkspaceId workspace,
+            String extension,
+            ViewRenderSession owner,
+            ViewGraphAction action,
+            Node rendered,
+            Runnable reload,
+            Consumer<Throwable> failed) {
+        try {
+            if (action.filter().isPresent()) {
+                owner.filterGraph(action);
+                reload.run();
+                return;
+            }
+            cache.loading();
+            body.showLoading(rendered, "正在读取所选节点的邻居");
+            load(workspace, extension, owner, action, failure -> {
+                if (failure == null) {
+                    reload.run();
+                } else {
+                    failed.accept(failure);
+                }
+            });
+        } catch (RuntimeException failure) {
+            failed.accept(failure);
+        }
     }
 
     void load(

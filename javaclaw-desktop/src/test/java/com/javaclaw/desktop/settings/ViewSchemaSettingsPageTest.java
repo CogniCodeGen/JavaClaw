@@ -464,14 +464,16 @@ class ViewSchemaSettingsPageTest {
         private final Deque<CompletableFuture<List<ExtensionRpcContracts.ViewDocument>>> catalogsToReturn =
                 new ArrayDeque<>();
         private final AtomicBoolean subscriptionClosed = new AtomicBoolean();
-        private List<ExtensionRpcContracts.ViewDocument> catalog = List.of(DOCUMENT);
+        List<ExtensionRpcContracts.ViewDocument> catalog = List.of(DOCUMENT);
         ViewData authoritative;
-        private CompletableFuture<ExtensionRpcContracts.CallResult> command =
+        CompletableFuture<ExtensionRpcContracts.CallResult> command =
                 CompletableFuture.completedFuture(new ExtensionRpcContracts.CallResult(new CanonicalPayload("{}"), 1));
         private Consumer<ExtensionRpcContracts.ExtensionEvent> listener = ignored -> {};
+        final List<Consumer<ExtensionRpcContracts.ExtensionEvent>> subscriptions = new ArrayList<>();
+        int subscriptionCloses;
         int loads;
         int catalogs;
-        private int executions;
+        int executions;
 
         FakeGateway(ViewData authoritative) {
             this.authoritative = authoritative;
@@ -522,7 +524,11 @@ class ViewSchemaSettingsPageTest {
                 Consumer<ExtensionRpcContracts.ExtensionEvent> eventListener) {
             assertEquals(WORKSPACE, workspaceId);
             listener = eventListener;
-            return () -> subscriptionClosed.set(true);
+            subscriptions.add(eventListener);
+            return () -> {
+                subscriptionClosed.set(true);
+                subscriptionCloses++;
+            };
         }
 
         private void emit(ExtensionRpcContracts.ExtensionEvent event) {

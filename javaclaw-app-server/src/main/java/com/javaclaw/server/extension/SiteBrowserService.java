@@ -32,12 +32,13 @@ import com.javaclaw.server.persistence.H2ManagedExtensionStore;
 import com.javaclaw.server.security.BrowserBrokerResponse;
 import com.javaclaw.server.security.grant.PrivateNetworkGrantService;
 import com.javaclaw.server.security.vault.SecretVaultService;
+import com.javaclaw.server.site.account.SiteAccountLegacyAccess;
+import com.javaclaw.server.site.account.SiteAccountService;
 
 /** Site authority、Vault、Browser Worker 与宿主 Network Broker 的安全组合服务。 */
 final class SiteBrowserService implements AutoCloseable {
     private static final ExtensionId SITE_ID = new ExtensionId(BuiltinExtensionIds.SITE);
     private static final String DOCUMENTS = "documents.";
-    private static final String LOGIN_RECEIPTS = "browser-login-receipts.";
     private static final int MAXIMUM_CREDENTIAL_BYTES = 16 * 1024;
     private static final Set<String> CONTROLLED_HEADERS = Set.of(
             "accept-encoding",
@@ -56,10 +57,13 @@ final class SiteBrowserService implements AutoCloseable {
 
     private final Optional<Runtime> runtime;
     private final CanonicalJson json;
+    private final SiteBrowserSaveReceipts receipts;
+    private Optional<SiteAccountLegacyAccess> accounts = Optional.empty();
 
     private SiteBrowserService(Optional<Runtime> runtime, CanonicalJson json) {
         this.runtime = Objects.requireNonNull(runtime, "runtime");
         this.json = Objects.requireNonNull(json, "json");
+        receipts = new SiteBrowserSaveReceipts(json);
     }
 
     static SiteBrowserService available(
@@ -77,6 +81,22 @@ final class SiteBrowserService implements AutoCloseable {
         return new SiteBrowserService(Optional.empty(), json);
     }
 
+    void bindAccounts(SiteAccountService service) {
+        if (accounts.isPresent()) {
+            throw new IllegalStateException("旧浏览器账号服务不能重复绑定");
+        }
+        accounts = Optional.of(new SiteAccountLegacyAccess(
+                service,
+                json,
+                sessionId -> runtime.ifPresent(value -> {
+                    try {
+                        value.browser().cancelLogin(sessionId);
+                    } catch (IllegalArgumentException missing) {
+                        value.loginBindings().remove(sessionId);
+                    }
+                })));
+    }
+
     boolean isAvailable() {
         return runtime.isPresent();
     }
@@ -86,6 +106,27 @@ final class SiteBrowserService implements AutoCloseable {
                 () -> new IllegalStateException("Browser Worker packaged Sandbox runtime is unavailable"));
         SiteContracts.SnapshotTask task = json.decode(invocation.request(), SiteContracts.SnapshotTask.class);
         requireAuthority(currentRuntime, invocation.workspaceId(), task.site());
+        if (accounts.isPresent()) {
+            SiteAccountLegacyAccess access = accounts.orElseThrow();
+            SiteAccountLegacyAccess.Binding binding =
+                    access.select(invocation.workspaceId(), task.site().id());
+            return access.use(
+                    binding,
+                    state -> currentRuntime
+                            .browser()
+                            .snapshot(
+                                    task,
+                                    state,
+                                    (request, body, cancellation) -> exchange(
+                                            currentRuntime,
+                                            invocation,
+                                            task.site(),
+                                            task.timeout(),
+                                            request,
+                                            body,
+                                            () -> access.require(binding)),
+                                    invocation.cancellation()));
+        }
         byte[] emptyState = new byte[0];
         if (task.site().credential().kind() != SiteContracts.CredentialKind.BROWSER_STORAGE) {
             return currentRuntime
@@ -133,6 +174,7 @@ final class SiteBrowserService implements AutoCloseable {
             return json.encode(session);
         } catch (Exception failure) {
             currentRuntime.loginBindings().remove(task.sessionId(), binding);
+            accounts.ifPresent(access -> access.release(task.sessionId()));
             throw failure;
         }
     }
@@ -168,7 +210,8 @@ final class SiteBrowserService implements AutoCloseable {
     CanonicalPayload loginSave(IsolatedServiceInvocation invocation) throws Exception {
         Runtime currentRuntime = requireLoginRuntime();
         SiteContracts.LoginSaveTask task = json.decode(invocation.request(), SiteContracts.LoginSaveTask.class);
-        Optional<SiteContracts.LoginSaveCommit> recovered = recoverSave(currentRuntime, invocation.workspaceId(), task);
+        Optional<SiteContracts.LoginSaveCommit> recovered =
+                receipts.recover(currentRuntime.documents(), invocation.workspaceId(), task);
         if (recovered.isPresent()) {
             return json.encode(recovered.orElseThrow());
         }
@@ -176,20 +219,38 @@ final class SiteBrowserService implements AutoCloseable {
         SiteContracts.Site current = requireAuthority(currentRuntime, invocation.workspaceId(), binding.site());
         String scope = "site/browser/login/save/" + invocation.workspaceId() + "/" + current.id();
         CommandIdentity identity = new CommandIdentity(scope, task.idempotencyKey(), 0, task.requestDigest());
-        CredentialMetadata credential = currentRuntime
-                .vault()
-                .recoverCredential(identity)
-                .orElseGet(() -> currentRuntime
-                        .browser()
-                        .saveLogin(
-                                task.sessionId(),
-                                state -> currentRuntime
-                                        .vault()
-                                        .create(identity, SiteContracts.BROWSER_CREDENTIAL_NAMESPACE, state)));
+        CredentialMetadata credential;
+        if (accounts.isPresent()) {
+            SiteAccountLegacyAccess access = accounts.orElseThrow();
+            credential = access.recover(task.sessionId(), identity)
+                    .orElseGet(() -> currentRuntime
+                            .browser()
+                            .saveLogin(task.sessionId(), state -> access.save(task.sessionId(), identity, state)));
+        } else {
+            credential = currentRuntime
+                    .vault()
+                    .recoverCredential(identity)
+                    .orElseGet(() -> currentRuntime
+                            .browser()
+                            .saveLogin(
+                                    task.sessionId(),
+                                    state -> currentRuntime
+                                            .vault()
+                                            .create(identity, SiteContracts.BROWSER_CREDENTIAL_NAMESPACE, state)));
+        }
         SiteContracts.LoginSession session = currentRuntime.browser().loginStatus(task.sessionId());
-        SiteContracts.LoginSaveCommit result =
-                commitSavedSite(currentRuntime, invocation.workspaceId(), current, credential, session, task);
-        currentRuntime.browser().invalidate(current.id(), result.site().authorityRevision());
+        SiteContracts.LoginSaveCommit result = receipts.commit(
+                currentRuntime.documents(),
+                invocation.workspaceId(),
+                current,
+                credential,
+                session,
+                task,
+                accounts.isPresent());
+        accounts.ifPresent(access -> access.release(task.sessionId()));
+        if (accounts.isEmpty()) {
+            currentRuntime.browser().invalidate(current.id(), result.site().authorityRevision());
+        }
         return json.encode(result);
     }
 
@@ -198,11 +259,37 @@ final class SiteBrowserService implements AutoCloseable {
         SiteContracts.LoginControlRequest request =
                 json.decode(invocation.request(), SiteContracts.LoginControlRequest.class);
         requireBinding(currentRuntime, invocation.workspaceId(), request.sessionId());
-        return json.encode(currentRuntime.browser().cancelLogin(request.sessionId()));
+        try {
+            return json.encode(currentRuntime.browser().cancelLogin(request.sessionId()));
+        } finally {
+            accounts.ifPresent(access -> access.release(request.sessionId()));
+        }
     }
 
     private SiteContracts.LoginSession beginLogin(
-            Runtime currentRuntime, IsolatedServiceInvocation invocation, SiteContracts.LoginBeginTask task) {
+            Runtime currentRuntime, IsolatedServiceInvocation invocation, SiteContracts.LoginBeginTask task)
+            throws Exception {
+        if (accounts.isPresent()) {
+            SiteAccountLegacyAccess access = accounts.orElseThrow();
+            SiteAccountLegacyAccess.Binding binding =
+                    access.begin(invocation.workspaceId(), task.site().id(), task.sessionId());
+            return access.use(
+                    binding,
+                    state -> currentRuntime
+                            .browser()
+                            .beginLogin(
+                                    task,
+                                    state,
+                                    (request, body, cancellation) -> exchange(
+                                            currentRuntime,
+                                            invocation,
+                                            task.site(),
+                                            task.timeout(),
+                                            request,
+                                            body,
+                                            () -> access.require(binding)),
+                                    invocation.cancellation()));
+        }
         if (task.site().credential().kind() != SiteContracts.CredentialKind.BROWSER_STORAGE) {
             return currentRuntime
                     .browser()
@@ -232,6 +319,7 @@ final class SiteBrowserService implements AutoCloseable {
             return Optional.of(currentRuntime.browser().loginStatus(sessionId));
         } catch (IllegalArgumentException missing) {
             currentRuntime.loginBindings().remove(sessionId);
+            accounts.ifPresent(access -> access.release(sessionId));
             return Optional.empty();
         }
     }
@@ -276,25 +364,61 @@ final class SiteBrowserService implements AutoCloseable {
             BrowserWorkerProtocol.NetworkRequest request,
             byte[] body)
             throws Exception {
+        return exchange(currentRuntime, invocation, frozen, timeout, request, body, () -> {});
+    }
+
+    private BrowserNetworkResult exchange(
+            Runtime currentRuntime,
+            IsolatedServiceInvocation invocation,
+            SiteContracts.Site frozen,
+            java.time.Duration timeout,
+            BrowserWorkerProtocol.NetworkRequest request,
+            byte[] body,
+            Runnable accountAuthority)
+            throws Exception {
+        accountAuthority.run();
         SiteContracts.Site current = requireAuthority(currentRuntime, invocation.workspaceId(), frozen);
         if (!current.allowedOrigins().contains(SiteContracts.originOf(request.uri()))) {
             throw new SecurityException("Browser request Origin is outside the current Site authority");
         }
         LinkedHashMap<String, List<String>> headers = filteredHeaders(request.headers());
-        BrowserExchangeContext context = new BrowserExchangeContext(currentRuntime, invocation, frozen, timeout);
+        BrowserExchangeContext context =
+                new BrowserExchangeContext(currentRuntime, invocation, frozen, timeout, accountAuthority);
         if (!current.origin().equals(SiteContracts.originOf(request.uri()))) {
             return broker(context, current, request, headers, body);
         }
         return switch (current.credential().kind()) {
-            case BEARER, API_KEY_HEADER ->
-                currentRuntime
-                        .vault()
-                        .use(
-                                current.credential().reference().orElseThrow(),
-                                secret -> broker(
-                                        context, current, request, authenticated(current, headers, secret), body));
+            case BEARER, API_KEY_HEADER -> credentialBroker(context, current, request, headers, body);
             case NONE, BROWSER_STORAGE -> broker(context, current, request, headers, body);
         };
+    }
+
+    private BrowserNetworkResult credentialBroker(
+            BrowserExchangeContext context,
+            SiteContracts.Site current,
+            BrowserWorkerProtocol.NetworkRequest request,
+            Map<String, List<String>> headers,
+            byte[] body)
+            throws Exception {
+        var vault = context.runtime().vault();
+        var reference = current.credential().reference().orElseThrow();
+        CredentialMetadata frozen = vault.metadata(reference).orElseThrow(() -> new SecurityException("网站凭据已撤销"));
+        // 网络等待不占用 Vault 读锁，否则并发账号注销与 Broker 的账号复核会形成锁环。
+        byte[] secret = vault.use(reference, byte[]::clone);
+        try {
+            Runnable requireCredential = () -> {
+                context.accountAuthority().run();
+                if (!vault.metadata(reference).equals(Optional.of(frozen))) {
+                    throw new SecurityException("网站凭据已在请求期间改变");
+                }
+            };
+            requireCredential.run();
+            BrowserExchangeContext checked = new BrowserExchangeContext(
+                    context.runtime(), context.invocation(), context.frozen(), context.timeout(), requireCredential);
+            return broker(checked, current, request, authenticated(current, headers, secret), body);
+        } finally {
+            Arrays.fill(secret, (byte) 0);
+        }
     }
 
     private BrowserNetworkResult broker(
@@ -323,8 +447,11 @@ final class SiteBrowserService implements AutoCloseable {
                                 context.invocation().workspaceId(),
                                 origin,
                                 addresses),
-                        () -> requireAuthority(
-                                context.runtime(), context.invocation().workspaceId(), context.frozen()));
+                        () -> {
+                            context.accountAuthority().run();
+                            requireAuthority(
+                                    context.runtime(), context.invocation().workspaceId(), context.frozen());
+                        });
         byte[] responseBody = response.body();
         try {
             BrowserWorkerProtocol.NetworkResponse metadata = new BrowserWorkerProtocol.NetworkResponse(
@@ -333,86 +460,6 @@ final class SiteBrowserService implements AutoCloseable {
         } finally {
             Arrays.fill(responseBody, (byte) 0);
         }
-    }
-
-    private Optional<SiteContracts.LoginSaveCommit> recoverSave(
-            Runtime runtime, WorkspaceId workspaceId, SiteContracts.LoginSaveTask task) throws Exception {
-        Optional<VersionedDocument> document = runtime.documents()
-                .inTransaction(SITE_ID, transaction -> transaction.get(LOGIN_RECEIPTS + workspaceId, receiptKey(task)));
-        if (document.isEmpty()) {
-            return Optional.empty();
-        }
-        StoredSaveReceipt receipt = json.decode(document.orElseThrow().payload(), StoredSaveReceipt.class);
-        if (!receipt.requestDigest().equals(task.requestDigest())) {
-            throw new IllegalArgumentException("login save idempotency key is bound to another request");
-        }
-        return Optional.of(receipt.result());
-    }
-
-    private SiteContracts.LoginSaveCommit commitSavedSite(
-            Runtime runtime,
-            WorkspaceId workspaceId,
-            SiteContracts.Site frozen,
-            CredentialMetadata credential,
-            SiteContracts.LoginSession session,
-            SiteContracts.LoginSaveTask task)
-            throws Exception {
-        return runtime.documents().inTransaction(SITE_ID, transaction -> {
-            Optional<VersionedDocument> recovered = transaction.get(LOGIN_RECEIPTS + workspaceId, receiptKey(task));
-            if (recovered.isPresent()) {
-                StoredSaveReceipt receipt = json.decode(recovered.orElseThrow().payload(), StoredSaveReceipt.class);
-                if (!receipt.requestDigest().equals(task.requestDigest())) {
-                    throw new IllegalArgumentException("login save idempotency key is bound to another request");
-                }
-                return receipt.result();
-            }
-            VersionedDocument stored = transaction
-                    .get(DOCUMENTS + workspaceId, frozen.id())
-                    .orElseThrow(() -> new SecurityException("Site no longer exists"));
-            SiteContracts.Site current = json.decode(stored.payload(), SiteContracts.Site.class);
-            requireSameAuthority(stored, current, frozen);
-            SiteContracts.Site updated = browserCredentialSite(current, credential);
-            transaction.put(DOCUMENTS + workspaceId, updated.id(), current.revision(), json.encode(updated));
-            SiteContracts.LoginSaveCommit result = new SiteContracts.LoginSaveCommit(updated, credential, session);
-            StoredSaveReceipt receipt = new StoredSaveReceipt(task.requestDigest(), result);
-            transaction.put(LOGIN_RECEIPTS + workspaceId, receiptKey(task), 0, json.encode(receipt));
-            return result;
-        });
-    }
-
-    private static SiteContracts.Site browserCredentialSite(SiteContracts.Site current, CredentialMetadata credential) {
-        return new SiteContracts.Site(
-                current.id(),
-                Math.addExact(current.revision(), 1),
-                Math.addExact(current.authorityRevision(), 1),
-                current.name(),
-                current.origin(),
-                current.allowedOrigins(),
-                new SiteContracts.SiteCredential(
-                        SiteContracts.CredentialKind.BROWSER_STORAGE,
-                        Optional.of(credential.reference()),
-                        Optional.empty()),
-                current.privateNetworkGrant(),
-                current.enabled(),
-                credential.updatedAt());
-    }
-
-    private static void requireSameAuthority(
-            VersionedDocument stored, SiteContracts.Site current, SiteContracts.Site frozen) {
-        if (stored.revision() != frozen.revision()
-                || current.revision() != frozen.revision()
-                || current.authorityRevision() != frozen.authorityRevision()
-                || !current.enabled()
-                || !current.origin().equals(frozen.origin())
-                || !current.allowedOrigins().equals(frozen.allowedOrigins())
-                || !current.credential().equals(frozen.credential())
-                || !current.privateNetworkGrant().equals(frozen.privateNetworkGrant())) {
-            throw new SecurityException("Site authority changed while Browser login was active");
-        }
-    }
-
-    private String receiptKey(SiteContracts.LoginSaveTask task) {
-        return json.encode(Map.of("idempotencyKey", task.idempotencyKey())).sha256();
     }
 
     private SiteContracts.Site requireAuthority(
@@ -490,6 +537,7 @@ final class SiteBrowserService implements AutoCloseable {
 
     @Override
     public void close() {
+        accounts.ifPresent(SiteAccountLegacyAccess::close);
         runtime.ifPresent(value -> value.browser().close());
     }
 
@@ -522,19 +570,13 @@ final class SiteBrowserService implements AutoCloseable {
             Runtime runtime,
             IsolatedServiceInvocation invocation,
             SiteContracts.Site frozen,
-            java.time.Duration timeout) {
+            java.time.Duration timeout,
+            Runnable accountAuthority) {
         private BrowserExchangeContext {
             Objects.requireNonNull(runtime, "runtime");
             Objects.requireNonNull(invocation, "invocation");
             Objects.requireNonNull(frozen, "frozen");
             Objects.requireNonNull(timeout, "timeout");
-        }
-    }
-
-    private record StoredSaveReceipt(String requestDigest, SiteContracts.LoginSaveCommit result) {
-        private StoredSaveReceipt {
-            requestDigest = Objects.requireNonNull(requestDigest, "requestDigest");
-            Objects.requireNonNull(result, "result");
         }
     }
 }

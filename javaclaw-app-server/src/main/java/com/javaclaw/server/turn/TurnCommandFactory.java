@@ -96,6 +96,7 @@ final class TurnCommandFactory {
         core.freezePromptManifest(prompt);
         core.codingEnvironments()
                 .freezeExecution(catalog.turnId(), workspace.id(), scope.root(), catalog.permissionCeiling());
+        core.systemCommands().freezeExecution(catalog.turnId(), workspace.id());
         return new AutomationExecutionSnapshot(
                 resolved.freeze(prompt.sha256(), catalog.digest()), catalog, Optional.empty());
     }
@@ -119,6 +120,7 @@ final class TurnCommandFactory {
         core.freezePromptManifest(prompt);
         core.codingEnvironments()
                 .freezeChild(catalog.turnId(), scope.workspace().id(), parent.id());
+        core.systemCommands().freezeChild(catalog.turnId(), scope.workspace().id(), parent.id());
         return new AutomationExecutionSnapshot(
                 child.freeze(prompt.sha256(), catalog.digest()), catalog, Optional.empty());
     }
@@ -138,17 +140,21 @@ final class TurnCommandFactory {
                 TurnId.random(), scope.workspace().id(), snapshot.toolCatalog(), current, new CancellationSource());
         CanonicalPayload prompt = core.promptManifest(frozen.promptManifestDigest());
         return new TurnStartRequest(
-                request.threadId(),
-                frozen,
-                scope.root(),
-                prompt,
-                catalog,
-                message,
-                snapshot.unattendedExecutionScope(),
-                Optional.of(core.codingEnvironments()
+                        request.threadId(),
+                        frozen,
+                        scope.root(),
+                        prompt,
+                        catalog,
+                        message,
+                        snapshot.unattendedExecutionScope())
+                .withCodingEnvironment(core.codingEnvironments()
                         .execution(
                                 snapshot.toolCatalog().turnId(),
-                                scope.workspace().id())));
+                                scope.workspace().id()))
+                .withSystemEnvironment(core.systemCommands()
+                        .execution(
+                                snapshot.toolCatalog().turnId(),
+                                scope.workspace().id()));
     }
 
     TurnExecutionCommand create(AgentTurn turn, CoreRpcContracts.TurnStartPayload request) {

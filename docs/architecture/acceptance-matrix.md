@@ -1,5 +1,22 @@
 # JavaClaw 6 验收矩阵
 
+## 本地文件、JShell 与系统命令增量验收
+
+2026-09-15，Coding revision 2 已接入 8 个新增文件工具、JShell、系统程序目录、直接 argv 和系统 Shell，
+沿用既有权限、审批、WorkspaceExecutionPort、原生 Sandbox 与事务提交链。SDK 与 Desktop 配置入口同步完成。
+完整命令、测试结果和五个 Runner 状态见[本地工具验收记录](../evidence/coding-local-tools-validation.md)，
+下方较早记录保留为历史证据。
+本机完整 `mvn clean verify` 通过，15 个 Reactor project 全部成功；3336 项测试记录中 3310 项执行通过、
+26 项条件跳过，0 失败、0 错误。包循环、覆盖率、Golden 和发行清单门禁均通过。
+
+| 能力 | 当前证据 | 判定 |
+|---|---|---|
+| 文件与目录 | 二进制往返、摘要冲突、目录部分变化、链接竞争、恢复材料及 DirectoryChange 事实回归 | macOS arm64 通过 |
+| JShell | JDK 25 原生 Sandbox、超时与取消；真实 JDK 21 Worker 的 9 个独立场景 | 本机通过；锁定 JDK 21 制品未验收 |
+| 系统程序与 Shell | 注册版本、入口替换、旧 Turn、依赖权限、原始 argv、Shell 管道和重定向、仅 Shell 授权 | 本机通过；其他平台未执行 |
+| 持久化与客户端 | V010 恢复、旧幂等意图、输出编码分页、固定模型 Harness、SDK 往返及 Desktop 草稿保护 | 本机自动回归通过 |
+| 平台边界 | 真实 macOS arm64 执行；Windows OEM 编码及命令行构建已实现 | 其他四个 Runner 未验收 |
+
 ## 聊天、文档与后台记忆 V3 当前验收
 
 2026-09-08，WebView 聊天、文档预览、后台任务与工作空间记忆图谱已实现，七项审查修复及退订竞争修复完成本机 `verify` 门禁。

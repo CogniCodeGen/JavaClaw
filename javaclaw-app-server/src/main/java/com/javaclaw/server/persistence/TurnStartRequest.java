@@ -9,6 +9,7 @@ import com.javaclaw.api.CorePayloads;
 import com.javaclaw.api.ResolvedTurnConfig;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.ToolCatalogSnapshot;
+import com.javaclaw.api.TurnId;
 import com.javaclaw.api.UnattendedExecutionScope;
 
 /**
@@ -22,6 +23,8 @@ import com.javaclaw.api.UnattendedExecutionScope;
  * @param message 首条用户消息
  * @param unattendedExecutionScope 无人值守来源；普通 Turn 为空
  * @param codingEnvironment 事务外准备的项目声明及精确工具链；旧内部调用可为空，由 Core 补齐
+ * @param continuedFrom 可选前序 Turn；必须已结束且属于同 Thread，消息沿用原始输入并不重复追加
+ * @param systemEnvironment 事务外发现的系统入口，旧内部调用由 Core 补齐
  */
 public record TurnStartRequest(
         ThreadId threadId,
@@ -31,11 +34,15 @@ public record TurnStartRequest(
         ToolCatalogSnapshot toolCatalog,
         CorePayloads.Message message,
         Optional<UnattendedExecutionScope> unattendedExecutionScope,
-        Optional<com.javaclaw.server.toolchain.CodingEnvironmentSelection> codingEnvironment) {
+        Optional<com.javaclaw.server.toolchain.CodingEnvironmentSelection> codingEnvironment,
+        Optional<TurnId> continuedFrom,
+        Optional<CodingSystemSelection> systemEnvironment) {
     /** 校验快照之间的摘要一致性，禁止拼接来自不同解析的配置。 */
     public TurnStartRequest {
         Objects.requireNonNull(threadId, "threadId");
         codingEnvironment = Objects.requireNonNull(codingEnvironment, "codingEnvironment");
+        continuedFrom = Objects.requireNonNull(continuedFrom, "continuedFrom");
+        systemEnvironment = Objects.requireNonNull(systemEnvironment, "systemEnvironment");
         Objects.requireNonNull(configuration, "configuration");
         executionRoot = Objects.requireNonNull(executionRoot, "executionRoot")
                 .toAbsolutePath()
@@ -77,7 +84,29 @@ public record TurnStartRequest(
                 toolCatalog,
                 message,
                 unattendedExecutionScope,
+                Optional.empty(),
+                Optional.empty(),
                 Optional.empty());
+    }
+
+    /**
+     * 绑定已经发现或继承的系统程序目录，不改变模型、权限或托管工具链。
+     *
+     * @param selection 系统程序选择
+     * @return 带有该选择的新创建参数
+     */
+    public TurnStartRequest withSystemEnvironment(CodingSystemSelection selection) {
+        return new TurnStartRequest(
+                threadId,
+                configuration,
+                executionRoot,
+                promptSnapshot,
+                toolCatalog,
+                message,
+                unattendedExecutionScope,
+                codingEnvironment,
+                continuedFrom,
+                Optional.of(selection));
     }
 
     /**
@@ -95,6 +124,28 @@ public record TurnStartRequest(
                 toolCatalog,
                 message,
                 unattendedExecutionScope,
-                Optional.of(selection));
+                Optional.of(selection),
+                continuedFrom,
+                systemEnvironment);
+    }
+
+    /**
+     * 绑定授权后重新调度的前序 Turn；持久化时仍核验终态、Thread 和原消息。
+     *
+     * @param previous 已结束的前序 Turn
+     * @return 保留新解析配置并沿用原始用户输入的参数
+     */
+    public TurnStartRequest withContinuedFrom(TurnId previous) {
+        return new TurnStartRequest(
+                threadId,
+                configuration,
+                executionRoot,
+                promptSnapshot,
+                toolCatalog,
+                message,
+                unattendedExecutionScope,
+                codingEnvironment,
+                Optional.of(previous),
+                systemEnvironment);
     }
 }

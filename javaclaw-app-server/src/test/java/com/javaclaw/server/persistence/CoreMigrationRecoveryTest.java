@@ -65,7 +65,7 @@ class CoreMigrationRecoveryTest {
         database.initialize();
         try (var connection = database.open();
                 var statement = connection.createStatement()) {
-            statement.execute("DELETE FROM CORE.SCHEMA_HISTORY WHERE VERSION = 7");
+            statement.execute("DELETE FROM CORE.SCHEMA_HISTORY WHERE VERSION >= 7");
             statement.execute("DROP TABLE CORE.EXTENSION_JOB_CANCELLATION");
             statement.execute("CREATE TABLE CORE.EXTENSION_JOB_CANCELLATION (JOB_ID VARCHAR(240) PRIMARY KEY)");
         }
@@ -75,6 +75,25 @@ class CoreMigrationRecoveryTest {
                 var rows = statement.executeQuery("SELECT MAX(VERSION) FROM CORE.SCHEMA_HISTORY")) {
             assertTrue(rows.next());
             assertEquals(6, rows.getInt(1));
+        }
+    }
+
+    @Test
+    void 浏览器授权迁移缺少快照关键列时不提交完成记录() throws Exception {
+        H2Database database = new H2Database(directory.resolve("browser/data-v6"));
+        database.initialize();
+        try (var connection = database.open();
+                var statement = connection.createStatement()) {
+            statement.execute("DELETE FROM CORE.SCHEMA_HISTORY WHERE VERSION >= 8");
+            statement.execute("DROP TABLE CORE.BROWSER_TURN_GRANT_SNAPSHOT");
+            statement.execute("CREATE TABLE CORE.BROWSER_TURN_GRANT_SNAPSHOT (TURN_ID CHAR(36) PRIMARY KEY)");
+        }
+        assertThrows(PersistenceException.class, database::initialize);
+        try (var connection = database.open();
+                var statement = connection.createStatement();
+                var rows = statement.executeQuery("SELECT MAX(VERSION) FROM CORE.SCHEMA_HISTORY")) {
+            assertTrue(rows.next());
+            assertEquals(7, rows.getInt(1));
         }
     }
 

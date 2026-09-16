@@ -149,15 +149,19 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
      * @return 仅含引用、版本和时间的元数据
      */
     public CredentialMetadata create(CommandIdentity identity, String namespace, byte[] secret) {
-        return changeListeners.afterChange(this, () -> {
-            CommandIdentity checkedIdentity = VaultChecks.requireExpectedRevision(identity, 0);
-            byte[] key = requireReadyKey();
-            try {
-                return credentialTransactions.create(checkedIdentity, namespace, secret, key, activeKeyId);
-            } finally {
-                Arrays.fill(key, (byte) 0);
-            }
-        });
+        return changeListeners.afterReferenceChange(
+                this,
+                namespace,
+                () -> {
+                    CommandIdentity checkedIdentity = VaultChecks.requireExpectedRevision(identity, 0);
+                    byte[] key = requireReadyKey();
+                    try {
+                        return credentialTransactions.create(checkedIdentity, namespace, secret, key, activeKeyId);
+                    } finally {
+                        Arrays.fill(key, (byte) 0);
+                    }
+                },
+                CredentialMetadata::reference);
     }
 
     /**
@@ -169,16 +173,24 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
      * @return 新版本的脱敏元数据
      */
     public CredentialMetadata rotate(CommandIdentity identity, CredentialRef reference, byte[] secret) {
-        return changeListeners.afterChange(this, () -> {
-            CommandIdentity checkedIdentity = Objects.requireNonNull(identity, "identity");
-            byte[] key = requireReadyKey();
-            try {
-                return credentialTransactions.rotate(
-                        checkedIdentity, Objects.requireNonNull(reference, "reference"), secret, key, activeKeyId);
-            } finally {
-                Arrays.fill(key, (byte) 0);
-            }
-        });
+        return changeListeners.afterReferenceChange(
+                this,
+                reference.namespace(),
+                () -> {
+                    CommandIdentity checkedIdentity = Objects.requireNonNull(identity, "identity");
+                    byte[] key = requireReadyKey();
+                    try {
+                        return credentialTransactions.rotate(
+                                checkedIdentity,
+                                Objects.requireNonNull(reference, "reference"),
+                                secret,
+                                key,
+                                activeKeyId);
+                    } finally {
+                        Arrays.fill(key, (byte) 0);
+                    }
+                },
+                CredentialMetadata::reference);
     }
 
     /**
@@ -227,11 +239,16 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
      * @return 可安全重放的脱敏回执
      */
     public CredentialClearReceipt clear(CommandIdentity identity, CredentialRef reference) {
-        return changeListeners.afterChange(this, () -> {
-            CommandIdentity checkedIdentity = Objects.requireNonNull(identity, "identity");
-            requireReady();
-            return credentialTransactions.clear(checkedIdentity, Objects.requireNonNull(reference, "reference"));
-        });
+        return changeListeners.afterReferenceChange(
+                this,
+                reference.namespace(),
+                () -> {
+                    CommandIdentity checkedIdentity = Objects.requireNonNull(identity, "identity");
+                    requireReady();
+                    return credentialTransactions.clear(
+                            checkedIdentity, Objects.requireNonNull(reference, "reference"));
+                },
+                CredentialClearReceipt::reference);
     }
 
     /**
@@ -260,6 +277,11 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
     /** @return Provider 与 Secret 原子复合命令的专用 Vault 边界 */
     public ProviderCredentialVault providerCredentials() {
         return providerCredentials;
+    }
+
+    /** @return 非 Provider 账号与 Secret 原子复合写入的窄端口 */
+    public ScopedCredentialVault scopedCredentials() {
+        return new ScopedCredentialVault(this, credentialTransactions, changeListeners);
     }
 
     /**
@@ -493,21 +515,7 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
     }
 
     private void cleanupPreviousKey() {
-        Optional<VaultRepository.KeyState> current = execute(connection -> repository.keyState(connection, false));
-        String previousKeyId =
-                current.map(VaultRepository.KeyState::previousKeyId).orElse(null);
-        if (previousKeyId == null) {
-            return;
-        }
-        try {
-            protector.delete(previousKeyId);
-            execute(connection -> {
-                repository.clearPreviousKey(connection, previousKeyId, clock.instant());
-                return null;
-            });
-        } catch (MasterKeyProtectionException ignored) {
-            // 状态保留 previous key id，Diagnostics 会提示，后续 refresh 或轮换前会重试。
-        }
+        VaultKeyCleanup.cleanupPrevious(protector, transactions, repository, clock);
     }
 
     private void requireNoPendingCleanup() {

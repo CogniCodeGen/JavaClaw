@@ -2,6 +2,7 @@ package com.javaclaw.protocol;
 
 import com.javaclaw.api.CorePayloads;
 import com.javaclaw.api.CoreSchemas;
+import com.javaclaw.api.DirectoryChange;
 import com.javaclaw.api.EffectReceipt;
 import com.javaclaw.api.ItemPayload;
 import com.javaclaw.api.ItemPayloadCodec;
@@ -24,6 +25,7 @@ public final class CoreItemCodecs {
         register(registry, json, CoreSchemas.TOOL_RESULT, CorePayloads.ToolResult.class);
         register(registry, json, CoreSchemas.COMMAND, CorePayloads.Command.class);
         register(registry, json, CoreSchemas.FILE_CHANGE, CorePayloads.FileChange.class);
+        register(registry, json, CoreSchemas.DIRECTORY_CHANGE, DirectoryChange.class);
         register(registry, json, CoreSchemas.APPROVAL, CorePayloads.Approval.class);
         register(registry, json, CoreSchemas.INPUT, CorePayloads.Input.class);
         register(registry, json, CoreSchemas.SUBAGENT, CorePayloads.Subagent.class);

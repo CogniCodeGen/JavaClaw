@@ -71,12 +71,24 @@ final class ManagedDocumentResource<T extends VersionedExtensionDocument> {
             Set<ContributionKind> additionalKinds,
             PermissionProfile permissionCeiling,
             ManagedDocumentBehavior<T> behavior) {
+        this(legacyDescriptor(id, displayName, additionalKinds, permissionCeiling), documentType, behavior);
+    }
+
+    /** 采用领域显式版本描述；文档与工具投影共用同一描述，防止权限升级后仍发布旧工具身份。 */
+    ManagedDocumentResource(
+            ExtensionDescriptor descriptor, Class<T> documentType, ManagedDocumentBehavior<T> behavior) {
         this.documentType = Objects.requireNonNull(documentType, "documentType");
         this.behavior = Objects.requireNonNull(behavior, "behavior");
+        this.descriptor = Objects.requireNonNull(descriptor, "descriptor");
+        presentation = new ManagedDocumentPresentation(descriptor);
+    }
+
+    private static ExtensionDescriptor legacyDescriptor(
+            String id, String displayName, Set<ContributionKind> additionalKinds, PermissionProfile permissionCeiling) {
         Set<ContributionKind> kinds = new HashSet<>(
                 Set.of(ContributionKind.QUERY, ContributionKind.COMMAND, ContributionKind.VIEW, ContributionKind.TOOL));
         kinds.addAll(Set.copyOf(additionalKinds));
-        descriptor = new ExtensionDescriptor(
+        return new ExtensionDescriptor(
                 new ExtensionId(id),
                 displayName,
                 "5.0.0",
@@ -87,7 +99,6 @@ final class ManagedDocumentResource<T extends VersionedExtensionDocument> {
                         ExtensionAvailability.OPTIONAL,
                         2,
                         Objects.requireNonNull(permissionCeiling, "permissionCeiling")));
-        presentation = new ManagedDocumentPresentation(descriptor);
     }
 
     ExtensionDescriptor descriptor() {

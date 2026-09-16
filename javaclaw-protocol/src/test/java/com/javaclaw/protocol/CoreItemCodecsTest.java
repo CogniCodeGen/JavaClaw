@@ -13,6 +13,7 @@ import com.javaclaw.api.ApprovalState;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.CorePayloads;
 import com.javaclaw.api.DecodedItemPayload;
+import com.javaclaw.api.DirectoryChange;
 import com.javaclaw.api.EffectReceipt;
 import com.javaclaw.api.EncodedItemPayload;
 import com.javaclaw.api.ItemPayload;
@@ -40,6 +41,7 @@ class CoreItemCodecsTest {
                 new CorePayloads.Command("command", List.of("git", "status"), Path.of("workspace"), Optional.of(0)),
                 new CorePayloads.FileChange(
                         Path.of("src/Main.java"), "update", Optional.of(DIGEST), Optional.of(DIGEST)),
+                new DirectoryChange(Path.of("src/generated"), "create"),
                 new CorePayloads.Approval(
                         "approval", "write", ToolRisk.WORKSPACE_WRITE, ApprovalState.APPROVED, "allowed"),
                 new CorePayloads.Input("input", "continue?", false, true),
@@ -48,7 +50,7 @@ class CoreItemCodecsTest {
                 receipt,
                 new CorePayloads.Error("MODEL", "failed", true, NOW, Map.of("provider", "test")));
 
-        assertEquals(11, registry.snapshot().size());
+        assertEquals(12, registry.snapshot().size());
         for (ItemPayload payload : payloads) {
             EncodedItemPayload encoded = registry.encode(payload);
             DecodedItemPayload.Known decoded = assertInstanceOf(

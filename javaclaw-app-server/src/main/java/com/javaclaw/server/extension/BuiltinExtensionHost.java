@@ -17,6 +17,7 @@ import com.javaclaw.api.ToolCallRequest;
 import com.javaclaw.api.ToolDescriptor;
 import com.javaclaw.api.UnattendedExecutionScope;
 import com.javaclaw.api.Workspace;
+import com.javaclaw.builtin.extensions.BuiltinCatalogMigrations;
 import com.javaclaw.extension.spi.ContributionKind;
 import com.javaclaw.extension.spi.ExtensionBundle;
 import com.javaclaw.extension.spi.ExtensionContributions;
@@ -112,7 +113,9 @@ public final class BuiltinExtensionHost implements ExtensionHost, ScheduleTarget
             }
             BuiltinExtensionRegistry.validateGlobalTools(registered.values());
             for (RegisteredExtension extension : registered.values()) {
-                ports.catalog().installBuiltIn(extension.descriptor());
+                ports.catalog()
+                        .installBuiltIn(
+                                extension.descriptor(), BuiltinCatalogMigrations.predecessors(extension.descriptor()));
                 ports.managedStore().inTransaction(extension.descriptor().id(), transaction -> null);
             }
             return new BuiltinExtensionHost(

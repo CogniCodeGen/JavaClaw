@@ -108,7 +108,7 @@ public final class JavaClawClient implements AutoCloseable {
         worktrees = new WorktreeClient(connection);
         instructions = new InstructionClient(connection);
         diagnostics = new DiagnosticsClient(connection);
-        extensions = new ExtensionClient(connection);
+        extensions = new ExtensionClient(connection, server.secretKey());
         extensionBundles = new ExtensionBundleClient(connection);
         extensionJobs = new ExtensionJobClient(connection);
         builtinExtensionManagement = new BuiltinExtensionManagementClient(connection);

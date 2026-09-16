@@ -57,6 +57,27 @@ final class BrowserWorkerLauncher implements BrowserWorkerClient.WorkerLauncher 
         }
     }
 
+    InteractiveBrowserProcess startInteractive(InteractiveStarter interactive) throws IOException {
+        if (template.privateScratch().isEmpty()) {
+            return interactive.start(template);
+        }
+        Path parent = template.privateScratch().orElseThrow().root();
+        template.withPrivateScratch(parent);
+        BrowserWorkerScratch scratch = BrowserWorkerScratch.create(parent, parentKey);
+        try {
+            InteractiveBrowserProcess launched = interactive.start(command(scratch.root(), parent));
+            launched.process().onExit().thenRunAsync(scratch::cleanupAfterExit);
+            return launched;
+        } catch (IOException | RuntimeException failure) {
+            try {
+                scratch.cleanup();
+            } catch (IOException | RuntimeException cleanup) {
+                failure.addSuppressed(cleanup);
+            }
+            throw failure;
+        }
+    }
+
     private SandboxedWorkerCommand command(Path root, Path parent) throws IOException {
         if (!template.workingDirectory().equals(parent)) {
             throw new IOException("Browser Worker scratch template cwd must equal its private root");
@@ -98,5 +119,10 @@ final class BrowserWorkerLauncher implements BrowserWorkerClient.WorkerLauncher 
     @FunctionalInterface
     interface CommandStarter {
         Process start(SandboxedWorkerCommand command) throws IOException;
+    }
+
+    @FunctionalInterface
+    interface InteractiveStarter {
+        InteractiveBrowserProcess start(SandboxedWorkerCommand command) throws IOException;
     }
 }

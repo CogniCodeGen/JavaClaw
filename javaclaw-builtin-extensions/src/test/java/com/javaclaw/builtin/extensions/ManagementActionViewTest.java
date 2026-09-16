@@ -48,7 +48,7 @@ class ManagementActionViewTest {
                 assertEquals(
                         com.javaclaw.builtin.contracts.BuiltinExtensionIds.CODING,
                         bundle.descriptor().id().value());
-                assertEquals(Set.of("environment/update", "toolchain/install"), operations);
+                assertEquals(Set.of("environment/update", "toolchain/install", "system/registry/update"), operations);
             }
             assertTrue(
                     actions.stream().allMatch(action -> operations.contains(action.command())),

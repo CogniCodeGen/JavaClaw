@@ -18,7 +18,9 @@ public record ModelContextPolicy(long windowTokens, long maximumOutputTokens, St
         }
         source = Objects.requireNonNull(source, "source");
         estimatorVersion = Objects.requireNonNull(estimatorVersion, "estimatorVersion");
-        if (source.isBlank() || !ContextTokenEstimator.VERSION.equals(estimatorVersion)) {
+        if (source.isBlank()
+                || !(ContextTokenEstimator.VERSION.equals(estimatorVersion)
+                        || "unicode-tools-v1".equals(estimatorVersion))) {
             throw new IllegalArgumentException("unsupported context policy version");
         }
     }

@@ -179,6 +179,16 @@
               "type": "null"
             }
           ]
+        },
+        "imageSupport": {
+          "enum": [
+            "UNKNOWN",
+            "SUPPORTED",
+            "UNSUPPORTED",
+            null
+          ],
+          "default": "UNKNOWN",
+          "$comment": "缺省或 null 均表示尚未声明图片输入能力，不按 Provider 或模型名称推断。"
         }
       },
       "allOf": [
@@ -198,6 +208,27 @@
               "purposes": {
                 "contains": {
                   "const": "EMBEDDING"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "imageSupport"
+            ],
+            "properties": {
+              "imageSupport": {
+                "const": "SUPPORTED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "purposes": {
+                "contains": {
+                  "const": "CHAT"
                 }
               }
             }

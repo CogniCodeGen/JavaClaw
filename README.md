@@ -179,6 +179,7 @@ Desktop 274 项单测和独立 JVM 的 54 图 Golden 全部通过。本轮修复
 
 - [代码规范](docs/coding-style.md)
 - [仓库与模块边界](docs/repository-layout.md)
+- [V6 浏览器、站点账号与当前平台限制](docs/browser-v6.md)
 - [完整架构设计](docs/architecture/full-design.md)
 - [实施清单](docs/architecture/implementation-checklist.md)
 - [威胁模型](docs/architecture/threat-model.md)

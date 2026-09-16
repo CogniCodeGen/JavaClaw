@@ -19,8 +19,8 @@ final class WindowsSandboxPaths {
 
     static Prepared prepare(WindowsSandboxRequest request) throws IOException {
         WindowsSandboxNative.requireBackend();
-        List<Path> reads = roots(request.readRoots(), "read root");
-        List<Path> writes = roots(request.writeRoots(), "write root");
+        List<Path> reads = roots(request.readRoots(), "read root", true);
+        List<Path> writes = roots(request.writeRoots(), "write root", false);
         Path workingDirectory = canonical(request.context().workingDirectory(), "working directory");
         if (!Files.isDirectory(workingDirectory) || !inside(workingDirectory, reads, writes)) {
             throw new SecurityException("Windows sandbox working directory is outside permitted roots");
@@ -67,12 +67,12 @@ final class WindowsSandboxPaths {
         }
     }
 
-    private static List<Path> roots(List<Path> source, String name) throws IOException {
+    private static List<Path> roots(List<Path> source, String name, boolean allowFiles) throws IOException {
         ArrayList<Path> result = new ArrayList<>();
         for (Path root : source) {
             Path real = canonical(root, name);
-            if (!Files.isDirectory(real)) {
-                throw new SecurityException(name + " is not a directory: " + root);
+            if (!Files.isDirectory(real) && !(allowFiles && Files.isRegularFile(real))) {
+                throw new SecurityException(name + " is not an allowed regular file or directory: " + root);
             }
             if (!result.contains(real)) {
                 result.add(real);

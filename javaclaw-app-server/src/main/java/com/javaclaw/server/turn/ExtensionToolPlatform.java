@@ -59,6 +59,8 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
     private final Clock clock;
     private final UnattendedToolGrantService unattendedGrants;
     private final Optional<McpService> mcp;
+    private volatile java.util.function.Predicate<com.javaclaw.api.TurnId> turnYield = ignored -> false;
+
     private final java.util.concurrent.atomic.AtomicReference<CollaborationToolExecutor> collaboration =
             new java.util.concurrent.atomic.AtomicReference<>();
 
@@ -122,6 +124,15 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
     }
 
     /**
+     * 绑定可信宿主的持久续接请求，不从任意工具输出推断编排权。
+     *
+     * @param requested 判断当前 Turn 是否已提交续接请求
+     */
+    public void bindTurnYield(java.util.function.Predicate<com.javaclaw.api.TurnId> requested) {
+        turnYield = Objects.requireNonNull(requested, "requested");
+    }
+
+    /**
      * 在启动恢复前绑定唯一协作服务；未绑定时不公开协作工具。
      *
      * @param service 与 RPC 共用的权威协作用例
@@ -130,6 +141,11 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
         if (!collaboration.compareAndSet(null, new CollaborationToolExecutor(service, core, json, clock))) {
             throw new IllegalStateException("协作工具服务已经绑定");
         }
+    }
+
+    @Override
+    public boolean shouldYield(com.javaclaw.api.TurnId turnId) {
+        return turnYield.test(turnId);
     }
 
     @Override
@@ -267,7 +283,7 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
         requireAllowed(descriptor, current);
         SkillTurnCeiling.requireAllowed(core, json, request);
         if (descriptor.identity().equals(CoreTools.search().identity())) {
-            return searchFrozen(request, snapshot);
+            return ToolCatalogQueries.searchFrozen(json, request, snapshot);
         }
         Optional<UnattendedToolReservation> reservation = reserveUnattended(request, descriptor, snapshot);
         if (reservation.isEmpty() && requiresApproval(descriptor, current)) {
@@ -309,11 +325,17 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
                 Optional<EffectReceipt> receipt = receipt(request, descriptor, response);
                 ToolCallResult result =
                         new ToolCallResult(request.callId(), execution.success(), response.payload(), receipt);
-                outcome = new ToolExecutionOutcome(result, List.of(), execution.facts());
+                outcome = ToolModelObservations.project(
+                        core, json, request, result, execution.facts(), turnYield.test(request.turnId()));
             }
             completeReservation(reservation, descriptor, outcome);
             return outcome;
         } catch (Exception failure) {
+            var unconfirmed = ToolModelObservations.unconfirmed(request, failure, turnYield.test(request.turnId()));
+            if (unconfirmed.isPresent()) {
+                reservation.ifPresent(value -> markUnknown(value, failure));
+                return unconfirmed.orElseThrow();
+            }
             if (reservation.isEmpty()) {
                 throw failure;
             }
@@ -361,20 +383,6 @@ public final class ExtensionToolPlatform implements ToolCatalogPort, GovernedToo
         } catch (RuntimeException ledgerFailure) {
             original.addSuppressed(ledgerFailure);
         }
-    }
-
-    private ToolExecutionOutcome searchFrozen(ToolCallRequest request, ToolCatalogSnapshot snapshot) {
-        ToolRpcContracts.SearchArguments arguments =
-                json.decode(request.arguments(), ToolRpcContracts.SearchArguments.class);
-        List<ToolDescriptor> found = ToolCatalogQueries.search(snapshot.tools(), arguments).stream()
-                .filter(tool -> !tool.identity().equals(CoreTools.search().identity()))
-                .toList();
-        ToolCallResult result = new ToolCallResult(
-                request.callId(),
-                true,
-                json.encode(new ToolRpcContracts.SearchResult(snapshot.catalogRevision(), found)),
-                Optional.empty());
-        return new ToolExecutionOutcome(result, found);
     }
 
     private PermissionProfile currentPermissions(

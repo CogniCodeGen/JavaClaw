@@ -114,7 +114,8 @@ final class WindowsProcessLauncher {
                 backend.createProcessAsUser,
                 security.token(),
                 WindowsSandboxNative.wide(arena, request.executable().toString()),
-                WindowsSandboxNative.wide(arena, WindowsCommandLine.encode(request.arguments())),
+                WindowsSandboxNative.wide(
+                        arena, WindowsCommandLine.encodeTarget(request.arguments(), request.executable())),
                 MemorySegment.NULL,
                 MemorySegment.NULL,
                 inheritHandles ? 1 : 0,

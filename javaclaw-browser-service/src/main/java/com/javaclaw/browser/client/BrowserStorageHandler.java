@@ -1,7 +1,7 @@
 package com.javaclaw.browser.client;
 
 /**
- * 在 Browser Worker 私有结果帧仍受宿主管控时消费 storage state。
+ * 在 Browser Worker 私有结果帧仍受宿主管控时消费 storage state 或用户确认捕获的凭据。
  *
  * <p>实现不得缓存、记录、编码或返回传入数组；调用结束后宿主会立即覆写该数组。该回调用于把状态直接密封进 Vault，而不是把 Cookie 暴露给 RPC 或扩展代码。
  *
@@ -10,9 +10,9 @@ package com.javaclaw.browser.client;
 @FunctionalInterface
 public interface BrowserStorageHandler<T> {
     /**
-     * 消费短生命周期 storage state。
+     * 消费短生命周期私有结果。
      *
-     * @param storageState Worker 返回的原始 JSON 字节，仅在回调期间有效
+     * @param storageState 状态操作返回 JSON；凭据捕获返回 UTF-8 用户名、单个 NUL、UTF-8 密码；仅在回调期间有效
      * @return 不含 Secret 的结果
      * @throws Exception Vault 或事务写入失败
      */

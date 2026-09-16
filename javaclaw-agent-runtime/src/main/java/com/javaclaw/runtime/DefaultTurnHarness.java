@@ -95,16 +95,23 @@ public final class DefaultTurnHarness implements TurnHarness {
         }
         if (state.phase() == TurnExecutionPhase.TOOLS_READY
                 || state.phase() == TurnExecutionPhase.TOOL_APPROVAL_RESOLVED) {
-            executeTools(state, snapshot, visibleTools, cancellation);
+            if (executeTools(state, snapshot, visibleTools, cancellation)) {
+                return complete(state);
+            }
         }
         while (true) {
             state.budget().checkpoint(cancellation);
+            if (services.tools().shouldYield(state.command().turn().id())) {
+                return complete(state);
+            }
             CommittedModelResult committed = invokeModel(state, visibleTools, capabilities, cancellation);
             acceptModelResult(state, visibleTools, committed, capabilities);
             if (committed.result().toolCalls().isEmpty()) {
                 return complete(state);
             }
-            executeTools(state, snapshot, visibleTools, cancellation);
+            if (executeTools(state, snapshot, visibleTools, cancellation)) {
+                return complete(state);
+            }
         }
     }
 
@@ -203,12 +210,13 @@ public final class DefaultTurnHarness implements TurnHarness {
         }
     }
 
-    private void executeTools(
+    private boolean executeTools(
             TurnHarnessState state,
             ToolCatalogSnapshot snapshot,
             VisibleToolCatalog visibleTools,
             CancellationToken cancellation)
             throws Exception {
+        boolean yieldTurn = services.tools().shouldYield(state.command().turn().id());
         while (!state.pendingToolCalls().isEmpty()) {
             ModelToolCall call = state.pendingToolCalls().getFirst();
             state.budget().checkpoint(cancellation);
@@ -225,8 +233,16 @@ public final class DefaultTurnHarness implements TurnHarness {
                             request,
                             state.budget().toolCalls(),
                             TurnInvocationDigests.tool(request, toolIndex));
-            ToolExecutionOutcome outcome = services.tools()
-                    .execute(request, descriptor, snapshot, state.command().effectivePermissions(), cancellation);
+            ToolExecutionOutcome outcome = yieldTurn
+                    ? skippedForContinuation(request)
+                    : services.tools()
+                            .execute(
+                                    request,
+                                    descriptor,
+                                    snapshot,
+                                    state.command().effectivePermissions(),
+                                    cancellation);
+            yieldTurn |= outcome.yieldTurn();
             validateOutcome(request, outcome);
             visibleTools.reveal(outcome.revealedTools());
             services.journal()
@@ -238,10 +254,36 @@ public final class DefaultTurnHarness implements TurnHarness {
                             visibleTools.list().stream()
                                     .map(ToolDescriptor::identity)
                                     .toList());
-            state.appendMessages(List.of(ModelMessage.tool(
-                    call.callId(), call.tool().name(), outcome.result().output().json())));
+            appendToolMessage(state, call, outcome);
             state.toolCommitted();
         }
+        return yieldTurn;
+    }
+
+    private static ToolExecutionOutcome skippedForContinuation(ToolCallRequest request) {
+        // 先给同批剩余调用提交明确的未执行结果，保留 Provider 工具调用配对，不重放任何外部动作。
+        return ToolExecutionOutcome.resultOnly(new ToolCallResult(
+                request.callId(),
+                false,
+                new com.javaclaw.api.CanonicalPayload("{\"executed\":false,\"status\":\"TURN_CONTINUED\"}"),
+                Optional.empty()));
+    }
+
+    private void appendToolMessage(TurnHarnessState state, ModelToolCall call, ToolExecutionOutcome outcome) {
+        boolean supportsImages =
+                services.models().capabilities(state.command().modelRoute()).images();
+        List<ModelImage> images = supportsImages ? outcome.images() : List.of();
+        String text = outcome.result().output().json();
+        if (!supportsImages && !outcome.images().isEmpty()) {
+            text += "\n当前模型未声明图片输入能力，本次只提供文本观察。";
+        }
+        state.appendMessages(List.of(new ModelMessage(
+                com.javaclaw.api.MessageRole.TOOL,
+                text,
+                List.of(),
+                Optional.of(call.callId()),
+                Optional.of(call.tool().name()),
+                images)));
     }
 
     private static ToolCallRequest request(TurnHarnessState state, ToolCatalogSnapshot snapshot, ModelToolCall call) {

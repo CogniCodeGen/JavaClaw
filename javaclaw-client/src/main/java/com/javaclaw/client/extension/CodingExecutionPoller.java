@@ -76,7 +76,8 @@ public final class CodingExecutionPoller {
         var request = new CodingResults.OutputRead(summary.operationId(), offset, PAGE_BYTES);
         return switch (summary.operation()) {
             case "dependencies_prepare" -> client.preparationOutput(scope.workspaceId(), request);
-            case "command_run" -> client.commandOutput(scope.workspaceId(), request);
+            case "command_run", "script_run", "system_command_run", "system_shell_run" ->
+                client.commandOutput(scope.workspaceId(), request);
             case "terminal_open" ->
                 client.terminalOutput(scope.workspaceId(), request).output();
             default -> null;
@@ -184,6 +185,9 @@ public final class CodingExecutionPoller {
                         case "dependencies_prepare" -> "依赖准备";
                         case "terminal_open" -> "终端";
                         case "command_run" -> "命令";
+                        case "script_run" -> "JShell";
+                        case "system_command_run" -> "系统程序";
+                        case "system_shell_run" -> "系统 Shell";
                         default -> "执行 · " + summary.operation();
                     };
             var fact = new CodingTranscriptFormatter.Fact(

@@ -42,6 +42,8 @@ final class HistoryStructuredSummary {
                         + value(fields, "argv") + "\n目录：" + value(fields, "workingDirectory")
                         + "\n退出码：" + fields.getOrDefault("exitCode", "运行中");
             case CoreSchemas.FILE_CHANGE -> "文件 · " + value(fields, "operation") + "\n" + value(fields, "relativePath");
+            case CoreSchemas.DIRECTORY_CHANGE ->
+                "目录 · " + value(fields, "operation") + "\n" + value(fields, "relativePath");
             case CoreSchemas.INPUT -> "输入请求\n" + value(fields, "prompt");
             case CoreSchemas.SUBAGENT -> "子会话 · " + value(fields, "state") + "\n" + value(fields, "childThreadId");
             case CoreSchemas.COMPACTION -> "上下文压缩 · " + value(fields, "strategy") + "\n" + value(fields, "summary");

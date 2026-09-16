@@ -18,6 +18,14 @@ import com.javaclaw.api.WorkspaceLifecycle;
 
 /** Workspace 行映射与 SQL。 */
 final class WorkspaceRepository {
+    void requireActive(java.sql.Connection connection, WorkspaceId workspaceId) throws java.sql.SQLException {
+        Workspace workspace = find(connection, java.util.Objects.requireNonNull(workspaceId, "workspaceId"))
+                .orElseThrow(() -> PersistenceException.invalidRequest("Workspace 不存在"));
+        if (workspace.lifecycle() != WorkspaceLifecycle.ACTIVE) {
+            throw PersistenceException.invalidRequest("已归档 Workspace 不能创建新 Thread");
+        }
+    }
+
     Workspace insert(Connection connection, String name, Path root, Instant now) throws SQLException {
         Workspace workspace = new Workspace(WorkspaceId.random(), name, root, WorkspaceLifecycle.ACTIVE, 1, now, now);
         validateFields(workspace);

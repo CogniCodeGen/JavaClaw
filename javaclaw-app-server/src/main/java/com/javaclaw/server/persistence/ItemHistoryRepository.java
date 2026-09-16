@@ -30,7 +30,7 @@ final class ItemHistoryRepository {
         boolean earlier = false;
         int bytes = 0;
         try (var statement = connection.prepareStatement("""
-                SELECT I.ID,I.TURN_ID,I.SEQUENCE,I.KIND,I.SCHEMA_ID,I.PRODUCER_ID,I.CREATED_AT,T.WORKSPACE_ID,
+                SELECT I.ID,I.TURN_ID,I.SEQUENCE,I.KIND,I.SCHEMA_ID,I.PRODUCER_ID,I.CREATED_AT,I.STATUS,I.THREAD_ID,T.WORKSPACE_ID,
                        SUBSTRING(I.PAYLOAD,1,65536) AS PREFIX, RIGHT(I.PAYLOAD,4096) AS SUFFIX,
                        CHAR_LENGTH(I.PAYLOAD) AS PAYLOAD_LENGTH
                 FROM CORE.ITEM I JOIN CORE.AGENT_THREAD T ON I.THREAD_ID=T.ID
@@ -95,7 +95,9 @@ final class ItemHistoryRepository {
                 publicMessage ? Optional.of(DocumentReference.message(workspace, id, "body")) : Optional.empty(),
                 text.truncated(),
                 row.getObject("CREATED_AT", OffsetDateTime.class).toInstant(),
-                message ? HistoryMessagePrefix.attachments(prefix, json) : List.of(),
+                message
+                        ? HistoryMessagePrefix.attachments(prefix, json)
+                        : HistoryBrowserAttachments.project(connection, row, json),
                 references);
     }
 }

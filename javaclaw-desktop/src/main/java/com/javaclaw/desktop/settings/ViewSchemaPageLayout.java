@@ -31,4 +31,12 @@ final class ViewSchemaPageLayout {
         page.getStyleClass().add("platform-page");
         return page;
     }
+
+    static void hideSelector(VBox page, boolean fixed) {
+        if (fixed) {
+            var selector = page.getChildren().get(2);
+            selector.setVisible(false);
+            selector.setManaged(false);
+        }
+    }
 }

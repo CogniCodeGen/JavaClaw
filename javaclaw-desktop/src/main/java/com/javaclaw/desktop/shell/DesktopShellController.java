@@ -66,6 +66,9 @@ public final class DesktopShellController implements AutoCloseable {
     private StackPane transcriptHost;
 
     @FXML
+    private StackPane browserHost;
+
+    @FXML
     private VBox executionHost;
 
     @FXML
@@ -135,6 +138,7 @@ public final class DesktopShellController implements AutoCloseable {
     private ShellComposerBehavior composerBehavior;
     private ShellComposerActions composerActions;
     private ShellStatusLabels statusLabels;
+    private ShellBrowserControls browserControls;
     private java.util.List<ItemEnvelope> displayedItems = java.util.List.of();
     private ManagementCenterWindow managementCenter;
     private InputRequestPanel inputRequests;
@@ -233,6 +237,8 @@ public final class DesktopShellController implements AutoCloseable {
         }
         presenter = Objects.requireNonNull(value, "presenter");
         catalogs = new ShellCatalogBindings(workspaceBox, threadList, approvalList);
+        browserControls = new ShellBrowserControls(value.browsers());
+        browserHost.getChildren().setAll(browserControls);
         managementCenter = Objects.requireNonNull(center, "center");
         executionSelection = new ChatConfigurationPanel(
                 new SdkCoreSettingsGateway(value),
@@ -376,6 +382,7 @@ public final class DesktopShellController implements AutoCloseable {
                         state.threads().selectedThread(),
                         state.connection().connectedAt());
                 codingOutput.bind(state);
+                browserControls.bind(state);
                 refreshExecutionConnection(state);
             }
             if (changes.labels() || localError) {
@@ -488,6 +495,9 @@ public final class DesktopShellController implements AutoCloseable {
     @Override
     public void close() {
         sidePanels.close();
+        if (browserControls != null) {
+            browserControls.close();
+        }
         composerBehavior.close();
         composerActions.close();
         if (windowFocus != null) {

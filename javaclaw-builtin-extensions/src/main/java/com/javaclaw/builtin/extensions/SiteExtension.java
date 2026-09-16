@@ -15,17 +15,23 @@ import com.javaclaw.builtin.contracts.BuiltinExtensionIds;
 import com.javaclaw.builtin.contracts.SiteContracts;
 import com.javaclaw.extension.spi.ContributionKind;
 import com.javaclaw.extension.spi.ExpectedRevisionBinding;
+import com.javaclaw.extension.spi.ExtensionAvailability;
 import com.javaclaw.extension.spi.ExtensionBundle;
 import com.javaclaw.extension.spi.ExtensionContext;
 import com.javaclaw.extension.spi.ExtensionContribution;
 import com.javaclaw.extension.spi.ExtensionContributions;
 import com.javaclaw.extension.spi.ExtensionDescriptor;
 import com.javaclaw.extension.spi.ExtensionExecutionContext;
+import com.javaclaw.extension.spi.ExtensionId;
 import com.javaclaw.extension.spi.ExtensionRequest;
+import com.javaclaw.extension.spi.ExtensionRequirements;
 import com.javaclaw.extension.spi.ExtensionResponse;
 import com.javaclaw.extension.spi.ExtensionSchema;
+import com.javaclaw.extension.spi.ExtensionTrust;
 import com.javaclaw.extension.spi.IsolatedServiceInvocation;
 import com.javaclaw.extension.spi.ViewAction;
+import com.javaclaw.extension.spi.ViewBinding;
+import com.javaclaw.extension.spi.ViewCommandBinding;
 import com.javaclaw.extension.spi.ViewDataSource;
 import com.javaclaw.extension.spi.ViewQueryRequest;
 import com.javaclaw.extension.spi.ViewQueryResult;
@@ -35,26 +41,43 @@ import com.javaclaw.extension.spi.ViewSelectionMode;
 /** Site 领域扩展；只发现显式启用且由 HTTPS 主机白名单约束的站点。 */
 final class SiteExtension implements ExtensionBundle {
     private final SiteDefinitionLifecycle lifecycle = new SiteDefinitionLifecycle();
-    private final ManagedDocumentResource<SiteContracts.Site> documents = new ManagedDocumentResource<>(
-            BuiltinExtensionIds.SITE,
-            "站点",
-            SiteContracts.Site.class,
-            Set.of(ContributionKind.SERVICE),
-            SitePermission.create(),
-            lifecycle);
+    private final SiteBrowserContributions browser = new SiteBrowserContributions();
+    private final ManagedDocumentResource<SiteContracts.Site> documents =
+            new ManagedDocumentResource<>(siteDescriptor(), SiteContracts.Site.class, lifecycle);
     private final SiteManagement management = new SiteManagement(documents, lifecycle);
     private final SitePublicDocuments publicDocuments = new SitePublicDocuments(documents);
+    private final SiteAccountManagement accounts = new SiteAccountManagement(documents);
+    private final SiteRegistrationContributions registration = new SiteRegistrationContributions(documents);
 
     @Override
     public ExtensionDescriptor descriptor() {
         return documents.descriptor();
     }
 
+    private static ExtensionDescriptor siteDescriptor() {
+        return new ExtensionDescriptor(
+                new ExtensionId(BuiltinExtensionIds.SITE),
+                "站点",
+                "6.0.0",
+                2,
+                Set.of(
+                        ContributionKind.QUERY,
+                        ContributionKind.COMMAND,
+                        ContributionKind.VIEW,
+                        ContributionKind.TOOL,
+                        ContributionKind.SERVICE),
+                new ExtensionRequirements(
+                        ExtensionTrust.BUILT_IN, ExtensionAvailability.OPTIONAL, 2, SitePermission.create()));
+    }
+
     @Override
     public List<ExtensionContribution> start(ExtensionContext context) {
         List<ExtensionContribution> contributions = new ArrayList<>(documents.startWithManagedWrites(context, false));
         contributions.addAll(publicDocuments.contributions());
+        contributions.addAll(browser.start(context, descriptor().revision()));
         contributions.addAll(management.contributions());
+        contributions.addAll(accounts.contributions());
+        contributions.addAll(registration.contributions());
         contributions.addAll(List.of(
                 new ExtensionContributions.Query("site.search.query", Set.of("search"), this::search),
                 new ExtensionContributions.Query(
@@ -193,6 +216,7 @@ final class SiteExtension implements ExtensionBundle {
                         documents.payloads().encode(task)));
         SiteContracts.LoginSaveCommit commit =
                 documents.payloads().decode(response, SiteContracts.LoginSaveCommit.class);
+        // 宿主已提交登录态。账号模式返回原 Site 版本，消费回执不得再次写站点或扩大其 authority。
         SiteContracts.LoginSaveResult result =
                 new SiteContracts.LoginSaveResult(SiteContracts.Projection.from(commit.site()), true, commit.session());
         return new ExtensionResponse(
@@ -202,7 +226,10 @@ final class SiteExtension implements ExtensionBundle {
     private ExtensionResponse loginViewData(ExtensionRequest request, ExtensionExecutionContext context)
             throws Exception {
         ViewQueryRequest query = documents.payloads().decode(request.payload(), ViewQueryRequest.class);
-        if (!"loginSessions".equals(query.dataSourceId()) || !query.arguments().isEmpty()) {
+        if (!"loginSessions".equals(query.dataSourceId())
+                || !Set.of("siteId").containsAll(query.arguments().keySet())
+                || query.arguments().containsKey("siteId")
+                        && query.arguments().get("siteId").isBlank()) {
             throw new IllegalArgumentException("unknown Site login view data source");
         }
         CanonicalPayload response = context.services()
@@ -214,7 +241,11 @@ final class SiteExtension implements ExtensionBundle {
                 documents.payloads().decode(response, SiteContracts.LoginSessionList.class);
         ViewQueryResult view = new ViewQueryResult(
                 query.dataSourceId(),
-                result.sessions().stream().map(documents.payloads()::encode).toList(),
+                result.sessions().stream()
+                        .filter(session -> !query.arguments().containsKey("siteId")
+                                || session.siteId().equals(query.arguments().get("siteId")))
+                        .map(documents.payloads()::encode)
+                        .toList(),
                 documents.payloads().encode(Map.of("interactiveLoginAvailable", result.interactiveLoginAvailable())),
                 "",
                 false,
@@ -250,7 +281,7 @@ final class SiteExtension implements ExtensionBundle {
         return new ViewSchema(
                 ViewSchema.CURRENT_VERSION,
                 "site.browser-login",
-                "Site 人工登录",
+                "网页登录",
                 List.of(
                         new ViewDataSource("documents", "view.list", Map.of(), List.of(), 100),
                         new ViewDataSource("loginSessions", "login.view", Map.of(), List.of(), 100)),
@@ -260,33 +291,22 @@ final class SiteExtension implements ExtensionBundle {
                                 "隔离登录边界",
                                 "登录窗口最长存在 10 分钟。所有请求仍逐跳经过 App Server Broker；Cookie 与 storage state 只会直接密封进 Vault。未通过当前平台原生验证时启动会安全拒绝。",
                                 List.of()),
-                        siteLoginTable(),
+                        siteLoginCard(),
                         loginSessionTable()));
     }
 
-    private ViewSchema.Table siteLoginTable() {
+    private ViewSchema.Card siteLoginCard() {
         ViewAction begin = new ViewAction(
                 "开始隔离登录",
                 "login.begin",
                 Map.of(),
-                Map.of(
-                        "siteId", "id",
-                        "expectedRevision", "revision",
-                        "expectedAuthorityRevision", "authorityRevision"),
+                Map.of(),
                 new ExpectedRevisionBinding.None(),
-                false);
-        return new ViewSchema.Table(
-                "login-sites",
-                "可登录 Site",
-                "documents",
-                "id",
-                List.of(
-                        new ViewSchema.Column("name", "名称", Optional.of(200)),
-                        new ViewSchema.Column("origin", "HTTPS Origin", Optional.of(300)),
-                        new ViewSchema.Column("revision", "版本", Optional.of(80)),
-                        new ViewSchema.Column("authorityRevision", "权限版本", Optional.of(90))),
-                ViewSelectionMode.SINGLE,
-                List.of(begin));
+                false,
+                new ViewCommandBinding("siteId", new ViewBinding("documents", "id")),
+                new ViewCommandBinding("expectedRevision", new ViewBinding("documents", "revision")),
+                new ViewCommandBinding("expectedAuthorityRevision", new ViewBinding("documents", "authorityRevision")));
+        return new ViewSchema.Card("login-start", "登录当前网站", "打开隔离窗口完成人工登录，再选择会话保存登录态。", List.of(begin));
     }
 
     private ViewSchema.Table loginSessionTable() {

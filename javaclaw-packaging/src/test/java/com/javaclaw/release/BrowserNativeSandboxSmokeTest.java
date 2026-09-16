@@ -95,7 +95,7 @@ class BrowserNativeSandboxSmokeTest {
         assertReceipt(image, BrowserNativeCapability.MCP_OAUTH);
     }
 
-    private static SandboxedWorkerCommand command(Path image, Path work, Path control) throws Exception {
+    static SandboxedWorkerCommand command(Path image, Path work, Path control) throws Exception {
         String executableSuffix = BrowserNativeCapability.platformId().equals("windows") ? ".exe" : "";
         Path java = image.resolve("bin/java" + executableSuffix).toRealPath();
         Path app = image.resolve("app").toRealPath();
@@ -242,7 +242,7 @@ class BrowserNativeSandboxSmokeTest {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(storageState));
     }
 
-    private static void requireBrowserImage(Path image) throws Exception {
+    static void requireBrowserImage(Path image) throws Exception {
         Path marker = image.resolve(WorkerImageAssemblerMain.IMAGE_MARKER);
         if (!Files.isRegularFile(marker)
                 || !"worker-image-v1:browser"
@@ -253,7 +253,7 @@ class BrowserNativeSandboxSmokeTest {
         }
     }
 
-    private static Path distributionRoot() {
+    static Path distributionRoot() {
         Path root = Path.of(System.getProperty("maven.multiModuleProjectDirectory", ""))
                 .toAbsolutePath()
                 .normalize();

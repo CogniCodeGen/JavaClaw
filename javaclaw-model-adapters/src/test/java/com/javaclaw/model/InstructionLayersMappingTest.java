@@ -61,7 +61,7 @@ class InstructionLayersMappingTest {
     void Provider状态绑定全部指令层并在原生压缩时重发相同层() throws Exception {
         ProviderStateCodec codec = new ProviderStateCodec();
         var opaque = codec.response(response(), LAYERS);
-        assertEquals("responses-state-v3", opaque.format());
+        assertEquals("responses-state-v4", opaque.format());
         var decoded = codec.decode(opaque);
         assertEquals(LAYERS, decoded.instructions());
         OpenAiResponsesRequestMapper mapper = new OpenAiResponsesRequestMapper(codec);

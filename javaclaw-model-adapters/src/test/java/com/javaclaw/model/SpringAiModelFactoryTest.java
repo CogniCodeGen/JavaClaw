@@ -122,6 +122,6 @@ class SpringAiModelFactoryTest {
         assertTrue(endpoint.capabilities().streaming());
         assertTrue(endpoint.capabilities().toolCalls());
         assertTrue(endpoint.capabilities().structuredOutput());
-        assertTrue(endpoint.capabilities().images());
+        org.junit.jupiter.api.Assertions.assertFalse(endpoint.capabilities().images());
     }
 }

@@ -14,14 +14,16 @@ record CodingCommandEvidence(
         String relativeCwd,
         long timeoutMillis,
         String networkMode,
+        String outputEncoding,
         Optional<MavenProjectLaunch.Evidence> maven,
+        Optional<CanonicalPayload> execution,
         Optional<CanonicalPayload> precedingPreparation) {
 
     static void store(
             CodingOperationRepository operations,
             CanonicalJson json,
             CodingInvocation invocation,
-            ManagedCommandResolver.Resolved resolved,
+            CodingResolvedCommand resolved,
             SandboxCommand command,
             String networkMode) {
         var operation =
@@ -37,7 +39,9 @@ record CodingCommandEvidence(
                 relative.isEmpty() ? "." : relative,
                 command.timeout().toMillis(),
                 networkMode,
+                resolved.outputEncoding(),
                 resolved.maven(),
+                resolved.evidence(),
                 operation.preparation());
         // 此提交只证明启动意图；后续外部副作用与最终 ToolResult 的事务不在此处伪装成原子操作。
         operations.preparation(invocation.id(), json.encode(evidence));

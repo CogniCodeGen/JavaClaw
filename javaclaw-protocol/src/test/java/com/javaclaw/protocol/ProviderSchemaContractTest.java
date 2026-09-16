@@ -16,6 +16,8 @@ import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderAdapterOptions;
 import com.javaclaw.api.ProviderAuthentication;
 import com.javaclaw.api.ProviderEndpointSpec;
+import com.javaclaw.api.ProviderImageSupport;
+import com.javaclaw.api.ProviderModelSpec;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -87,6 +89,32 @@ class ProviderSchemaContractTest {
         assertThrows(
                 ProtocolException.class,
                 () -> JSON.decode(JSON.parse(duplicateModelSpec()), ProviderEndpointSpec.class));
+    }
+
+    @Test
+    void 图片声明通过RPC编码保留且旧配置缺省为未知() throws Exception {
+        String legacy =
+                "{\"modelId\":\"model\",\"displayName\":\"Model\",\"purposes\":[\"CHAT\"],\"embeddingDimensions\":null}";
+        ProviderModelSpec before = JSON.decode(JSON.parse(legacy), ProviderModelSpec.class);
+        assertEquals(ProviderImageSupport.UNKNOWN, before.imageSupport());
+        assertEquals(
+                ProviderImageSupport.UNKNOWN,
+                JSON.decode(JSON.parse(legacy.replace("null}", "null,\"imageSupport\":null}")), ProviderModelSpec.class)
+                        .imageSupport());
+        for (ProviderImageSupport support : ProviderImageSupport.values()) {
+            ProviderModelSpec model = new ProviderModelSpec(
+                    before.modelId(), before.displayName(), before.purposes(), before.embeddingDimensions(), support);
+            assertEquals(model, JSON.decode(JSON.encode(model), ProviderModelSpec.class));
+        }
+        JsonNode property = schema().at("/$defs/providerModel/properties/imageSupport");
+        assertEquals("UNKNOWN", property.path("default").textValue());
+        assertEquals(4, property.path("enum").size());
+        assertThrows(
+                ProtocolException.class,
+                () -> JSON.decode(
+                        JSON.parse(legacy.replace("CHAT", "EMBEDDING")
+                                .replace("null}", "null,\"imageSupport\":\"SUPPORTED\"}")),
+                        ProviderModelSpec.class));
     }
 
     private static boolean schemaAccepts(JsonNode document, UriCase value) {

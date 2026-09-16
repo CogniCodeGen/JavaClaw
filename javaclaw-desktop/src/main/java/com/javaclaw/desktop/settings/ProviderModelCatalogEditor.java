@@ -27,6 +27,7 @@ import javafx.scene.layout.VBox;
 import javafx.stage.Window;
 
 import com.javaclaw.api.ProviderAdapter;
+import com.javaclaw.api.ProviderImageSupport;
 import com.javaclaw.api.ProviderModelDiscoveryCandidate;
 import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.api.ProviderModelSpec;
@@ -135,6 +136,7 @@ final class ProviderModelCatalogEditor extends VBox {
         models.getColumns().add(column("显示名称", ProviderModelSpec::displayName));
         models.getColumns().add(column("真实模型 ID", ProviderModelSpec::modelId));
         models.getColumns().add(column("用途", model -> purposeText(model.purposes())));
+        models.getColumns().add(column("图片输入", model -> ProviderImageSupportField.label(model.imageSupport())));
         models.getColumns()
                 .add(column(
                         "向量维度",
@@ -327,19 +329,27 @@ final class ProviderModelCatalogEditor extends VBox {
         private final CheckBox chat = new CheckBox("对话与工具调用");
         private final CheckBox embedding = new CheckBox("文本向量");
         private final TextField dimensions = new TextField();
+        private final ProviderImageSupportField imageSupport = new ProviderImageSupportField();
         private final Label error = new Label();
 
         private ModelFields(Object source, ProviderAdapter adapter) {
             if (source instanceof ProviderModelSpec model) {
-                initialize(model.modelId(), model.displayName(), model.purposes(), model.embeddingDimensions());
+                initialize(
+                        model.modelId(),
+                        model.displayName(),
+                        model.purposes(),
+                        model.embeddingDimensions(),
+                        model.imageSupport());
             } else if (source instanceof ProviderModelDiscoveryCandidate candidate) {
                 initialize(
                         candidate.modelId(),
                         candidate.displayName(),
                         candidate.suggestedPurposes(),
-                        candidate.embeddingDimensions());
+                        candidate.embeddingDimensions(),
+                        ProviderImageSupport.UNKNOWN);
             } else {
-                initialize("", "", Set.of(ProviderModelPurpose.CHAT), OptionalInt.empty());
+                initialize(
+                        "", "", Set.of(ProviderModelPurpose.CHAT), OptionalInt.empty(), ProviderImageSupport.UNKNOWN);
             }
             boolean chatOnly = adapter == ProviderAdapter.ANTHROPIC || adapter == ProviderAdapter.OPENAI_RESPONSES;
             embedding.setDisable(chatOnly);
@@ -348,6 +358,7 @@ final class ProviderModelCatalogEditor extends VBox {
                 chat.setSelected(true);
             }
             dimensions.disableProperty().bind(embedding.selectedProperty().not());
+            imageSupport.disableProperty().bind(chat.selectedProperty().not());
             error.getStyleClass().add("status-error");
         }
 
@@ -361,6 +372,7 @@ final class ProviderModelCatalogEditor extends VBox {
             form.addField("显示名称", displayName);
             form.addField("用途", new HBox(12, chat, embedding));
             form.addField("向量维度", dimensions);
+            form.addField("图片输入", imageSupport);
             form.addFullWidth(error);
             dialog.getDialogPane().setContent(form);
             PlatformDialogs.style(dialog, owner);
@@ -382,7 +394,10 @@ final class ProviderModelCatalogEditor extends VBox {
                     modelId.getText(),
                     effectiveDisplayName(modelId.getText(), displayName.getText()),
                     purposes,
-                    parsedDimensions);
+                    parsedDimensions,
+                    !chat.isSelected() && imageSupport.getValue() == ProviderImageSupport.SUPPORTED
+                            ? ProviderImageSupport.UNKNOWN
+                            : imageSupport.getValue());
         }
 
         private Label error() {
@@ -390,9 +405,14 @@ final class ProviderModelCatalogEditor extends VBox {
         }
 
         private void initialize(
-                String id, String name, Set<ProviderModelPurpose> purposes, OptionalInt embeddingDimensions) {
+                String id,
+                String name,
+                Set<ProviderModelPurpose> purposes,
+                OptionalInt embeddingDimensions,
+                ProviderImageSupport images) {
             modelId.setText(id);
             displayName.setText(name);
+            imageSupport.setValue(images);
             chat.setSelected(purposes.contains(ProviderModelPurpose.CHAT));
             embedding.setSelected(purposes.contains(ProviderModelPurpose.EMBEDDING));
             dimensions.setText(embeddingDimensions.isPresent() ? Integer.toString(embeddingDimensions.getAsInt()) : "");

@@ -490,7 +490,7 @@ public final class SiteContracts {
      *
      * <p>该类型包含 opaque CredentialRef，只能通过进程内 {@code IsolatedServicePort} 返回给内置 Site 扩展，不得直接返回 SDK。
      *
-     * @param site 已原子切换到新 authority revision 的 Site
+     * @param site 当前权威 Site；账号模式只更新账号 state，Site authority 和 HTTP 凭据保持原值
      * @param credential 只含 opaque 引用的 Vault 元数据
      * @param session 不含浏览内容的终态投影
      */
@@ -502,9 +502,7 @@ public final class SiteContracts {
             session = Objects.requireNonNull(session, "session");
             if (!BROWSER_CREDENTIAL_NAMESPACE.equals(credential.reference().namespace())
                     || session.state() != LoginSessionState.SAVED
-                    || !site.id().equals(session.siteId())
-                    || site.credential().kind() != CredentialKind.BROWSER_STORAGE
-                    || !site.credential().reference().orElseThrow().equals(credential.reference())) {
+                    || !site.id().equals(session.siteId())) {
                 throw new IllegalArgumentException("login save result does not match Browser credential authority");
             }
         }

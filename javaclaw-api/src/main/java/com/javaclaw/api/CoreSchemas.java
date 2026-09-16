@@ -12,6 +12,8 @@ public final class CoreSchemas {
     public static final String COMMAND = "javaclaw.core/command@1";
     /** 文件变更摘要。 */
     public static final String FILE_CHANGE = "javaclaw.core/file-change@1";
+    /** 目录创建或删除事实，不包含文件内容摘要。 */
+    public static final String DIRECTORY_CHANGE = "javaclaw.core/directory-change@1";
     /** 审批请求或决议。 */
     public static final String APPROVAL = "javaclaw.core/approval@1";
     /** 用户输入请求或结果。 */

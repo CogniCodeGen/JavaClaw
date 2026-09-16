@@ -35,6 +35,7 @@ final class PreviewSources {
     private final AttachmentService attachments;
     private final PreviewReadAuthority authority;
     private final CanonicalJson json;
+    private final BrowserPreviewSource browser;
 
     PreviewSources(
             CoreItemReader core, AttachmentService attachments, PreviewReadAuthority authority, CanonicalJson json) {
@@ -42,6 +43,7 @@ final class PreviewSources {
         this.attachments = attachments;
         this.authority = authority;
         this.json = json;
+        browser = new BrowserPreviewSource(core, authority, json);
     }
 
     Prepared prepare(DocumentReference reference, CancellationToken cancellation) throws Exception {
@@ -243,6 +245,10 @@ final class PreviewSources {
         }
         var item = authority.source(
                 reference.workspaceId(), reference.sourceItemId().orElseThrow());
+        if (CoreSchemas.TOOL_RESULT.equals(item.schemaId())) {
+            browser.require(reference, item);
+            return;
+        }
         messageText(item);
         if (!json.decode(item.payload(), CorePayloads.Message.class)
                 .attachments()

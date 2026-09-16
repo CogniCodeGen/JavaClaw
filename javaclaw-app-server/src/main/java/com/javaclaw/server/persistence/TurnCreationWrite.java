@@ -34,7 +34,9 @@ final class TurnCreationWrite {
         if (turns.hasActiveTurn(connection, request.threadId())) {
             throw PersistenceException.revisionConflict("Thread 已有活动 Turn");
         }
+        var originalInput = TurnContinuationRepository.validate(connection, request, json);
         AgentTurn turn = turns.insert(connection, request, now);
+        BrowserTurnGrantSnapshotWrite.insert(connection, turn, thread.workspaceId(), json);
         new TurnPromptRepository().insert(connection, turn.id(), request.promptSnapshot());
         new ManifestSnapshotRepository().insert(connection, request.promptSnapshot());
         new TurnToolCatalogRepository().insert(connection, turn.id(), request.toolCatalog(), json);
@@ -46,6 +48,22 @@ final class TurnCreationWrite {
                             request.unattendedExecutionScope().orElseThrow(),
                             now);
         }
+        if (originalInput.isPresent()) {
+            TurnContinuationRepository.insert(connection, turn.id(), request, originalInput.orElseThrow(), now);
+        } else {
+            appendMessage(connection, turn, request, now, json, thread);
+        }
+        return turn;
+    }
+
+    private static void appendMessage(
+            Connection connection,
+            AgentTurn turn,
+            TurnStartRequest request,
+            Instant now,
+            CanonicalJson json,
+            com.javaclaw.api.ConversationThread thread)
+            throws Exception {
         var item = new ItemRepository.ItemWrite(
                 turn.id(),
                 "message",
@@ -54,10 +72,10 @@ final class TurnCreationWrite {
                 ItemStatus.COMPLETED,
                 json.encode(request.message()),
                 now);
-        var appended = new ItemRepository(turns).append(connection, item);
+        var appended = new ItemRepository(new TurnRepository()).append(connection, item);
         if (appended.sequence() == 1 && request.message().role() == MessageRole.USER) {
-            threads.titleFromFirstMessage(connection, thread, request.message().text(), now);
+            new ThreadRepository()
+                    .titleFromFirstMessage(connection, thread, request.message().text(), now);
         }
-        return turn;
     }
 }

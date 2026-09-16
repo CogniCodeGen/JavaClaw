@@ -106,6 +106,7 @@ final class CliTurnMessages {
                         CoreSchemas.TOOL_CALL,
                         CoreSchemas.COMMAND,
                         CoreSchemas.FILE_CHANGE,
+                        CoreSchemas.DIRECTORY_CHANGE,
                         CoreSchemas.APPROVAL,
                         CoreSchemas.INPUT,
                         CoreSchemas.SUBAGENT,

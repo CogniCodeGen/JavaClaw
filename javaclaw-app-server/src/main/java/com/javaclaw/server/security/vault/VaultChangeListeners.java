@@ -2,11 +2,16 @@ package com.javaclaw.server.security.vault;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+
+import com.javaclaw.api.CredentialRef;
 
 /**
  * 在 Vault 状态提交后同步通知依赖方刷新。
@@ -16,9 +21,11 @@ import java.util.function.Supplier;
 final class VaultChangeListeners {
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
     private final List<RuntimeListener> runtimeListeners = new CopyOnWriteArrayList<>();
+    private final List<Consumer<Set<CredentialRef>>> scopedListeners = new CopyOnWriteArrayList<>();
     private final VaultRuntimeGate runtimeGate = new VaultRuntimeGate();
     private final ReentrantLock runtimeSyncLock = new ReentrantLock();
     private final BooleanSupplier runtimeRebuildAllowed;
+    private final ThreadLocal<Boolean> referenceChange = ThreadLocal.withInitial(() -> false);
 
     VaultChangeListeners(BooleanSupplier runtimeRebuildAllowed) {
         this.runtimeRebuildAllowed = Objects.requireNonNull(runtimeRebuildAllowed, "runtimeRebuildAllowed");
@@ -26,6 +33,49 @@ final class VaultChangeListeners {
 
     void add(Runnable listener) {
         listeners.add(Objects.requireNonNull(listener, "listener"));
+    }
+
+    void addScoped(Consumer<Set<CredentialRef>> listener) {
+        scopedListeners.add(Objects.requireNonNull(listener, "listener"));
+    }
+
+    <T> T afterScopedChange(Object monitor, Set<CredentialRef> references, Supplier<T> mutation) {
+        return serialize(() -> {
+            T result;
+            synchronized (monitor) {
+                result = mutation.get();
+            }
+            if (!references.isEmpty()) {
+                scopedListeners.forEach(listener -> listener.accept(references));
+            }
+            notifyRegularListeners();
+            return result;
+        });
+    }
+
+    <T> T afterReferenceChange(
+            Object monitor, String namespace, Supplier<T> mutation, Function<T, CredentialRef> reference) {
+        if (namespace.equals("provider")) {
+            referenceChange.set(true);
+            try {
+                T result = afterChange(monitor, mutation);
+                Set<CredentialRef> references = Set.of(reference.apply(result));
+                scopedListeners.forEach(listener -> listener.accept(references));
+                return result;
+            } finally {
+                referenceChange.remove();
+            }
+        }
+        return serialize(() -> {
+            T result;
+            synchronized (monitor) {
+                result = mutation.get();
+            }
+            Set<CredentialRef> references = Set.of(reference.apply(result));
+            scopedListeners.forEach(listener -> listener.accept(references));
+            notifyRegularListeners();
+            return result;
+        });
     }
 
     void addRuntime(Runnable invalidate, Runnable rebuild) {
@@ -110,6 +160,9 @@ final class VaultChangeListeners {
             VaultRuntimeGate.ChangeTicket ticket, boolean notifyRegular, boolean rebuild) {
         RuntimeException failure = runRuntimePhase(true, null);
         if (notifyRegular) {
+            if (!referenceChange.get()) {
+                scopedListeners.forEach(listener -> listener.accept(Set.of()));
+            }
             notifyRegularListeners();
         }
         if (rebuild) {

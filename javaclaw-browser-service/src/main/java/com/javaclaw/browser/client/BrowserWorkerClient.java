@@ -1,9 +1,11 @@
 package com.javaclaw.browser.client;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -18,6 +20,7 @@ import com.javaclaw.api.CancellationToken;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.browser.protocol.BrowserFrameIo;
 import com.javaclaw.browser.protocol.BrowserWorkerProtocol;
+import com.javaclaw.builtin.contracts.BrowserContracts;
 import com.javaclaw.builtin.contracts.SiteContracts;
 import com.javaclaw.nativehost.sandbox.SandboxedWorkerCommand;
 import com.javaclaw.nativehost.sandbox.SandboxedWorkerLauncher;
@@ -41,6 +44,8 @@ public final class BrowserWorkerClient implements BrowserWorkerPort {
     private final BrowserLoginSessions logins;
     private final BrowserOAuthSessions oauth;
     private final BrowserWorkerCapabilities capabilities;
+    private final InteractiveBrowserSessions interactive;
+    private final BrowserRegistrationSessions registrations;
     private volatile boolean closed;
 
     /**
@@ -70,9 +75,17 @@ public final class BrowserWorkerClient implements BrowserWorkerPort {
             BrowserWorkerCapabilities capabilities) {
         SandboxedWorkerLauncher sandbox = new SandboxedWorkerLauncher();
         SandboxedWorkerCommand checked = Objects.requireNonNull(command, "command");
-        launcher = new BrowserWorkerLauncher(checked, sandbox::start);
+        BrowserWorkerLauncher processLauncher = new BrowserWorkerLauncher(checked, sandbox::start);
+        launcher = processLauncher;
         this.timeout = timeout(timeout);
         this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
+        interactive = new InteractiveBrowserSessions(
+                () -> processLauncher.startInteractive(value -> {
+                    var lease = sandbox.startInteractive(value, Duration.ofMinutes(15));
+                    return new InteractiveBrowserProcess(lease.process(), lease::touch, lease);
+                }),
+                this.timeout);
+        registrations = new BrowserRegistrationSessions(interactive.launcher(), this.timeout);
         logins = capabilities.interactiveLogin()
                 ? new BrowserLoginSessions(launcher, controlRoot, this.timeout, json, sequence)
                 : null;
@@ -90,6 +103,13 @@ public final class BrowserWorkerClient implements BrowserWorkerPort {
         this.launcher = Objects.requireNonNull(launcher, "launcher");
         this.timeout = timeout(timeout);
         this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
+        interactive = new InteractiveBrowserSessions(
+                () -> {
+                    Process process = this.launcher.start();
+                    return new InteractiveBrowserProcess(process, () -> {}, process::destroyForcibly);
+                },
+                this.timeout);
+        registrations = new BrowserRegistrationSessions(interactive.launcher(), this.timeout);
         logins = capabilities.interactiveLogin()
                 ? new BrowserLoginSessions(this.launcher, controlRoot, this.timeout, json, sequence)
                 : null;
@@ -236,6 +256,101 @@ public final class BrowserWorkerClient implements BrowserWorkerPort {
         requireOpen();
         if (!oauthAvailable()) {
             throw new UnsupportedOperationException("OAuth Browser is not verified for this packaged native runtime");
+        }
+    }
+
+    @Override
+    public boolean interactiveAvailable() {
+        return !closed && capabilities.interactiveBrowsing();
+    }
+
+    @Override
+    public BrowserActionResult openInteractive(
+            BrowserContracts.OpenTask task,
+            byte[] storageState,
+            InteractiveBrowserNetworkExchange network,
+            CancellationToken cancellation) {
+        requireInteractive();
+        return interactive.open(task, storageState, network, cancellation);
+    }
+
+    @Override
+    public BrowserActionResult actInteractive(
+            String id, BrowserContracts.Action action, byte[] input, CancellationToken cancellation) {
+        requireInteractive();
+        return interactive.act(id, action, input, cancellation);
+    }
+
+    @Override
+    public BrowserActionResult actInteractive(
+            String id,
+            BrowserContracts.AccessLease expectedLease,
+            BrowserContracts.Action action,
+            byte[] input,
+            CancellationToken cancellation) {
+        requireInteractive();
+        return interactive.act(id, expectedLease, action, input, cancellation);
+    }
+
+    @Override
+    public BrowserContracts.SessionView updateInteractiveLease(
+            String id, BrowserContracts.AccessLease lease, CancellationToken cancellation) {
+        requireInteractive();
+        return interactive.lease(id, lease, cancellation);
+    }
+
+    @Override
+    public BrowserContracts.SessionView interactiveStatus(String id) {
+        requireInteractive();
+        return interactive.status(id);
+    }
+
+    @Override
+    public BrowserContracts.SessionView closeInteractive(String id) {
+        requireInteractive();
+        return interactive.close(id);
+    }
+
+    @Override
+    public <T> T saveInteractiveState(String id, BrowserStorageHandler<T> handler) {
+        requireInteractive();
+        return interactive.save(id, handler);
+    }
+
+    @Override
+    public <T> T captureInteractiveCredentials(
+            String id,
+            BrowserContracts.AccessLease expectedLease,
+            URI expectedOrigin,
+            BrowserContracts.CredentialsTarget target,
+            BrowserStorageHandler<T> handler) {
+        requireInteractive();
+        return interactive.capture(id, expectedLease, expectedOrigin, target, handler);
+    }
+
+    @Override
+    public List<BrowserContracts.LoginForm> prepareInteractiveCredentials(
+            String id, BrowserContracts.AccessLease expectedLease, URI expectedOrigin) {
+        requireInteractive();
+        return interactive.prepare(id, expectedLease, expectedOrigin);
+    }
+
+    @Override
+    public BrowserActionResult fillInteractiveCredentials(
+            String id,
+            BrowserContracts.AccessLease expectedLease,
+            URI expectedOrigin,
+            BrowserContracts.CredentialsTarget target,
+            byte[] credentials,
+            CancellationToken cancellation) {
+        requireInteractive();
+        return interactive.fillCredentials(id, expectedLease, expectedOrigin, target, credentials, cancellation);
+    }
+
+    private void requireInteractive() {
+        requireOpen();
+        if (!interactiveAvailable()) {
+            throw new UnsupportedOperationException("Interactive Browser is not verified for this runtime");
         }
     }
 
@@ -401,16 +516,36 @@ public final class BrowserWorkerClient implements BrowserWorkerPort {
 
     /** 终止全部活动 Worker；幂等。 */
     @Override
+    public BrowserRegistrationPort registrations() {
+        requireInteractive();
+        return registrations;
+    }
+
+    @Override
     public void close() {
         closed = true;
-        if (logins != null) {
-            logins.close();
+        try {
+            if (logins != null) {
+                logins.close();
+            }
+        } finally {
+            try {
+                if (oauth != null) {
+                    oauth.close();
+                }
+            } finally {
+                try {
+                    try {
+                        registrations.close();
+                    } finally {
+                        interactive.close();
+                    }
+                } finally {
+                    active.values().forEach(processes -> processes.forEach(BrowserWorkerClient::destroy));
+                    active.clear();
+                }
+            }
         }
-        if (oauth != null) {
-            oauth.close();
-        }
-        active.values().forEach(processes -> processes.forEach(BrowserWorkerClient::destroy));
-        active.clear();
     }
 
     private static void awaitExit(Process process) {

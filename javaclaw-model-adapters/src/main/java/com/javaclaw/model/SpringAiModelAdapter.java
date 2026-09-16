@@ -31,10 +31,15 @@ import com.javaclaw.runtime.ModelStreamEvent;
  */
 public final class SpringAiModelAdapter implements ModelGateway, AutoCloseable {
     private final Map<String, SpringAiEndpoint> endpoints;
-    private final SpringAiPromptMapper prompts = new SpringAiPromptMapper();
+    private final com.javaclaw.runtime.ModelImageResolver images;
     private final SpringAiResultMapper results = new SpringAiResultMapper(new CanonicalJsonCodec());
 
     SpringAiModelAdapter(List<SpringAiEndpoint> endpoints) {
+        this(endpoints, com.javaclaw.runtime.ModelImageResolver.unavailable());
+    }
+
+    SpringAiModelAdapter(List<SpringAiEndpoint> endpoints, com.javaclaw.runtime.ModelImageResolver images) {
+        this.images = Objects.requireNonNull(images, "images");
         Map<String, SpringAiEndpoint> index = new LinkedHashMap<>();
         for (SpringAiEndpoint endpoint : endpoints) {
             if (index.put(endpoint.id(), endpoint) != null) {
@@ -68,10 +73,16 @@ public final class SpringAiModelAdapter implements ModelGateway, AutoCloseable {
         Objects.requireNonNull(cancellation, "cancellation");
         cancellation.throwIfCancelled();
         SpringAiEndpoint endpoint = endpoint(invocation.modelId());
+        if (!endpoint.capabilities().images()
+                && invocation.messages().stream()
+                        .anyMatch(message -> !message.images().isEmpty())) {
+            throw new IllegalArgumentException("当前模型尚未声明支持图片输入");
+        }
         ChatOptions options = endpoint.options().create(invocation);
+        var prompt = new SpringAiPromptMapper(images.forTurn(turnId)).map(invocation, options);
         ChatResponse response = endpoint.capabilities().streaming()
-                ? stream(turnId, endpoint, prompts.map(invocation, options), events, cancellation)
-                : endpoint.model().call(prompts.map(invocation, options));
+                ? stream(turnId, endpoint, prompt, events, cancellation)
+                : endpoint.model().call(prompt);
         ModelInvocationResult result = results.map(invocation, response);
         publishTerminal(
                 turnId, result, events, cancellation, endpoint.capabilities().streaming());
@@ -177,8 +188,28 @@ public final class SpringAiModelAdapter implements ModelGateway, AutoCloseable {
     public static final class Builder {
         private final List<SpringAiEndpoint> endpoints = new ArrayList<>();
         private final SpringAiModelFactory factory = new SpringAiModelFactory();
+        private com.javaclaw.runtime.ModelImageResolver images = com.javaclaw.runtime.ModelImageResolver.unavailable();
 
         private Builder() {}
+
+        /**
+         * 设置可信图片读取端口，不改变任何模型的能力声明。
+         *
+         * @param resolver 附件读取边界
+         * @return 当前 Builder
+         */
+        public Builder images(com.javaclaw.runtime.ModelImageResolver resolver) {
+            images = Objects.requireNonNull(resolver, "resolver");
+            return this;
+        }
+
+        Builder register(SpringAiEndpointConfig config, char[] apiKey, boolean imageSupport) {
+            SpringAiEndpoint endpoint = factory.create(config, apiKey);
+            ModelCapabilities capabilities = new ModelCapabilities(true, true, true, imageSupport, false, false, false);
+            endpoints.add(new SpringAiEndpoint(
+                    endpoint.id(), endpoint.model(), capabilities, endpoint.options(), endpoint.resources()));
+            return this;
+        }
 
         /**
          * 注册一个 Provider 端点。
@@ -208,7 +239,7 @@ public final class SpringAiModelAdapter implements ModelGateway, AutoCloseable {
             if (endpoints.isEmpty()) {
                 throw new IllegalStateException("at least one Spring AI endpoint is required");
             }
-            return new SpringAiModelAdapter(endpoints);
+            return new SpringAiModelAdapter(endpoints, images);
         }
     }
 

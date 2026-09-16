@@ -15,6 +15,11 @@
             <artifactId>javaclaw-api</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.javaclaw</groupId>
+            <artifactId>javaclaw-protocol</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-api</artifactId>
             <scope>test</scope>

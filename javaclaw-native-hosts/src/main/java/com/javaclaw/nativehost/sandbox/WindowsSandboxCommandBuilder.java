@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.javaclaw.api.SandboxMode;
+import com.javaclaw.nativehost.ffm.WindowsCommandLine;
 import com.javaclaw.nativehost.network.SandboxNetworkAccess;
 
 /** 使用受信任 Java helper 启动 Windows AppContainer；helper 句柄关闭即终止目标 Job。 */
@@ -56,6 +57,7 @@ final class WindowsSandboxCommandBuilder implements SandboxCommandBuilder {
             result.add(controlDirectory.toString());
         }
         addRequest(result, command);
+        WindowsCommandLine.requireTransportFits(result);
         return List.copyOf(result);
     }
 

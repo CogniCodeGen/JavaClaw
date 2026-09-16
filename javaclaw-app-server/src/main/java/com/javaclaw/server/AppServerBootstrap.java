@@ -455,6 +455,7 @@ public final class AppServerBootstrap {
         AppServerExtensionBootstrap.registerManagement(
                 routes, runtime.management().mcp(), foundation.extensionCatalog(), foundation.json());
         new ExtensionRpcHandlers(runtime.extensions(), foundation.json(), events).register(routes);
+        AppServerSecretBootstrap.register(routes, foundation);
         new ExtensionBundleRpcHandlers(runtime.thirdParty(), foundation.json()).register(routes);
         new ToolRpcHandlers(
                         foundation.core(),
@@ -544,6 +545,7 @@ public final class AppServerBootstrap {
             AgentRoleService agentRoles,
             ExecutionConfigurationService executionConfigurations,
             SecretVaultService vault,
+            com.javaclaw.server.site.account.SiteAccountService siteAccounts,
             ManagedWorktreeService worktrees,
             InputRequestService inputs,
             InputLifecycleCoordinator inputLifecycle,

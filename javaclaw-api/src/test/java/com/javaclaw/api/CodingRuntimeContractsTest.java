@@ -53,7 +53,7 @@ class CodingRuntimeContractsTest {
     }
 
     @Test
-    void trustedFactChannelAdmitsOnlyCommandAndFileChangePayloads() {
+    void 可信事实通道只接受命令文件和目录变化() {
         var command = new CorePayloads.Command("operation", List.of("java", "--version"), Path.of("."), Optional.of(1));
         var commandFact = new ToolExecutionFact(command);
         assertEquals(command, commandFact.payload());
@@ -65,6 +65,14 @@ class CodingRuntimeContractsTest {
         assertEquals(change, fileFact.payload());
         assertEquals("file-change", fileFact.kind());
         assertEquals(CoreSchemas.FILE_CHANGE, fileFact.schemaId());
+        var directory = new DirectoryChange(Path.of("src/generated"), "create");
+        var directoryFact = new ToolExecutionFact(directory);
+        assertEquals(directory, directoryFact.payload());
+        assertEquals("directory-change", directoryFact.kind());
+        assertEquals(CoreSchemas.DIRECTORY_CHANGE, directoryFact.schemaId());
+        assertThrows(IllegalArgumentException.class, () -> new DirectoryChange(Path.of(".."), "create"));
+        assertThrows(IllegalArgumentException.class, () -> new DirectoryChange(Path.of("."), "delete"));
+        assertThrows(IllegalArgumentException.class, () -> new DirectoryChange(Path.of("src"), "update"));
         // 扩展文本不能借事实通道把模型上下文提升为系统消息。
         assertThrows(
                 IllegalArgumentException.class,

@@ -3,6 +3,7 @@ package com.javaclaw.nativehost.coding;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
 
@@ -47,7 +48,9 @@ public final class WorkspaceFileWorker {
 
     private static void dispatch(DataInputStream request, DataOutputStream response, WorkspaceFileTree tree)
             throws Exception {
-        switch (request.readUTF()) {
+        String operation = request.readUTF();
+        switch (operation) {
+            case "mkdir", "rmdir" -> writeDirectoryOperation(request, response, tree, operation);
             case "preview-snapshot" -> {
                 var snapshot = WorkspacePreviewSnapshot.copy(
                         tree, request.readUTF(), Path.of(request.readUTF()), request.readLong());
@@ -80,14 +83,25 @@ public final class WorkspaceFileWorker {
                         response,
                         new WorkspacePatchWriter(tree)
                                 .prepare(WorkspaceFileProtocol.readEdits(request), request.readInt()));
-            case "apply" -> {
-                var result = new WorkspacePatchWriter(tree).apply(WorkspaceFileProtocol.readPatch(request));
+            case "apply", "apply-existing-parents" -> {
+                var result = new WorkspacePatchWriter(tree)
+                        .apply(WorkspaceFileProtocol.readPatch(request), operation.equals("apply"));
                 response.writeUTF(result.status().name());
                 response.writeUTF(result.detail());
                 WorkspaceFileProtocol.writeStrings(response, result.recoveryPaths());
+                WorkspaceFileProtocol.writeStrings(response, result.createdDirectories());
             }
             default -> throw new IllegalArgumentException("unknown Workspace file operation");
         }
+    }
+
+    private static void writeDirectoryOperation(
+            DataInputStream request, DataOutputStream response, WorkspaceFileTree tree, String operation)
+            throws IOException {
+        WorkspaceDirectoryResult result = operation.equals("mkdir")
+                ? WorkspaceDirectoryOperations.mkdir(tree, request.readUTF(), request.readBoolean())
+                : WorkspaceDirectoryOperations.rmdir(tree, request.readUTF());
+        WorkspaceDirectoryFiles.write(response, result);
     }
 
     private static void writeSearchPage(DataInputStream request, DataOutputStream response, WorkspaceFileTree tree)

@@ -25,6 +25,7 @@ final class CodingPatchExecutor {
     private final CodingOperationRepository operations;
     private final AttachmentService attachments;
     private final CodingExecutionLocks locks;
+    private final CodingFileSystemExecutor fileSystem;
 
     CodingPatchExecutor(
             CanonicalJson json,
@@ -35,6 +36,11 @@ final class CodingPatchExecutor {
         this.operations = operations;
         this.attachments = attachments;
         this.locks = locks;
+        fileSystem = new CodingFileSystemExecutor(json, operations, attachments, locks);
+    }
+
+    CodingToolResult fileSystem(WorkspaceFileAccess files, CodingInvocation invocation) throws Exception {
+        return fileSystem.execute(files, invocation);
     }
 
     CodingToolResult apply(WorkspaceFileAccess files, CodingInvocation invocation) throws Exception {
@@ -124,6 +130,9 @@ final class CodingPatchExecutor {
             throws Exception {
         List<CodingResults.PatchChange> changed = new ArrayList<>();
         List<ToolExecutionFact> facts = new ArrayList<>();
+        applied.createdDirectories()
+                .forEach(path -> facts.add(
+                        new ToolExecutionFact(new com.javaclaw.api.DirectoryChange(Path.of(path), "create"))));
         boolean complete = applied.status() == WorkspaceFileAccess.Status.APPLIED;
         for (int index = 0; index < prepared.changes().size(); index++) {
             WorkspaceFileAccess.Change change = prepared.changes().get(index);

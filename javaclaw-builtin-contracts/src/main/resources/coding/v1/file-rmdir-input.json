@@ -1,0 +1,1 @@
+{"$id":"javaclaw.coding/file-rmdir-input/v1","$schema":"https://json-schema.org/draft/2020-12/schema","additionalProperties":false,"properties":{"path":{"maxLength":4096,"minLength":1,"type":"string"}},"required":["path"],"type":"object"}

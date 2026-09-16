@@ -13,7 +13,7 @@ import com.javaclaw.nativehost.network.SandboxNetworkAccess;
  *
  * @param arguments 不经 shell 的目标 argv
  * @param context 工作目录与显式环境
- * @param readRoots 只读根目录
+ * @param readRoots 只读根目录或平台批准的精确普通文件
  * @param writeRoots 可写根目录
  * @param allowDelete 是否授予删除权限
  * @param timeout 最长执行时间

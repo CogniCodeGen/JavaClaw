@@ -1,0 +1,210 @@
+{
+  "date": "2026-09-16",
+  "platform": "macOS arm64",
+  "finishedAt": "2026-09-16T11:20:07+08:00",
+  "command": "mvn clean verify",
+  "duration": "22:22",
+  "reactorProjects": 15,
+  "result": "SUCCESS",
+  "tests": {
+    "tests": 3372,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 26,
+    "passed": 3346
+  },
+  "modules": {
+    "javaclaw-protocol": {
+      "tests": 157,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-knowledge-worker": {
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-browser-service": {
+      "tests": 85,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-packaging": {
+      "tests": 98,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 3
+    },
+    "javaclaw-extension-spi": {
+      "tests": 68,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-agent-runtime": {
+      "tests": 52,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-api": {
+      "tests": 106,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-desktop": {
+      "tests": 753,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-builtin-extensions": {
+      "tests": 230,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-client": {
+      "tests": 130,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-builtin-contracts": {
+      "tests": 100,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-model-adapters": {
+      "tests": 67,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "javaclaw-native-hosts": {
+      "tests": 265,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 17
+    },
+    "javaclaw-app-server": {
+      "tests": 1252,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 6
+    }
+  },
+  "skipped": [
+    {
+      "module": "javaclaw-packaging",
+      "name": "com.javaclaw.launcher.WindowsServerSupervisorTest.reusesReachableCurrentUserPipeWithoutStartingProcess"
+    },
+    {
+      "module": "javaclaw-packaging",
+      "name": "com.javaclaw.release.BrowserNativeSandboxSmokeTest.五平台Runner只在原生Sandbox登录和OAuth私有回调成功后分别发布能力"
+    },
+    {
+      "module": "javaclaw-packaging",
+      "name": "com.javaclaw.release.BrowserInteractiveNativeSmokeTest.仅真实可见交互和跨租约页面保留成功后发布独立能力"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "name": "com.javaclaw.nativehost.sandbox.WindowsProxyIsolationTest.realAppContainerAllowsOnlyExactProxyTcpAndClosesItsLease"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "name": "com.javaclaw.nativehost.ffm.WindowsWorkspaceDirectoryTest.directoryCapabilityBlocksRenameAndCannotFollowInsertedJunction"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "name": "com.javaclaw.nativehost.ffm.WindowsWorkspaceDirectoryTest.realNativeChannelRenamesWithoutReplacementCopiesAclAndDeletesByHandle"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "name": "com.javaclaw.nativehost.ffm.WindowsWorkspaceDirectoryTest.independentChildRemainsOwnedAfterParentClosesAndTruncationIsDurable"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "name": "com.javaclaw.nativehost.ffm.WindowsAclLeaseTest.anotherProcessWaitsUntilRestorationCompletesBeforeTakingSharedRootLease"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "name": "com.javaclaw.nativehost.ffm.WindowsAclLeaseTest.deadHelperReleasesKernelLockButItsPendingMarkerPreventsSilentAclBaselineAdoption"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "name": "com.javaclaw.nativehost.sandbox.WindowsSandboxIntegrationTest.targetExit73IsNotConfusedWithTrustedHelperRestorationFailure"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "name": "com.javaclaw.nativehost.sandbox.WindowsSandboxIntegrationTest.conPtySupportsBackpressuredOutputResizeAndInput"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "name": "com.javaclaw.nativehost.sandbox.WindowsSandboxIntegrationTest.appContainerAllowsDeclaredWriteButDeniesDeleteAndEnforcesWallTimeout"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "name": "com.javaclaw.nativehost.credential.SystemMasterKeyProtectorNativeTest.currentUserCredentialFacilityStoresLoadsReplacesAndDeletesMasterKey"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "name": "com.javaclaw.nativehost.ffm.WindowsAclManagerTest.failedRestoreEvidenceRetainsOriginalIdentityAndNeverOffersPathBasedRestore"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "name": "com.javaclaw.nativehost.ffm.WindowsAclManagerTest.baselineIsDurableBeforeGrantAndOutlivesThreadScopeUntilAsynchronousRestore"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "name": "com.javaclaw.nativehost.ffm.WindowsAclManagerTest.originalAclIsRestoredOnSameObjectBeforeRenameHandlesAreReleased"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "name": "com.javaclaw.nativehost.ffm.WindowsAclManagerTest.laterGrantFailureRestoresEarlierAclAndReleasesAllAncestorPins"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "name": "com.javaclaw.nativehost.sandbox.LinuxProxyIsolationTest.realNamespaceRelayAllowsProxyAndSeccompRejectsMountedHostUnixSocket"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "name": "com.javaclaw.nativehost.transport.WindowsNamedPipeIntegrationTest.closeWakesPendingAcceptAndIsIdempotent"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "name": "com.javaclaw.nativehost.transport.WindowsNamedPipeIntegrationTest.exchangesFramedProtocolMessagesAndOwnsBothHandles"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "name": "com.javaclaw.server.coding.PublishedCodingHarnessTest.同一会话聊天准备真实NPM依赖修改断网失败修复成功保留Diff再继续聊天"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "name": "com.javaclaw.server.LocalProviderAcceptanceTest.本地兼容Provider贯通默认Profile对话Embedding记忆与Skill审核"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "name": "com.javaclaw.server.coding.PublishedToolchainArchiveTest.真实归档通过流式解包完整性证据和目录入口校验"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "name": "com.javaclaw.server.coding.PublishedToolchainArchiveTest.WindowsPython归档在任意宿主解包后同时满足Python和Pip真实入口"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "name": "com.javaclaw.server.coding.PublishedDependenciesPreparationTest.nativePackageManagersPreparePublicDependenciesBeforeSeparateOfflineRuns"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "name": "com.javaclaw.server.coding.PublishedCodingExecutionTest.真实五类发行工具链在断网沙箱中执行并运行Gradle项目任务"
+    }
+  ],
+  "sourceManifestFiles": 723,
+  "sourceChangedDuringFinalBuild": []
+}

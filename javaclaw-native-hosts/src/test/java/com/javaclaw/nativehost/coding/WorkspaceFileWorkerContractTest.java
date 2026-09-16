@@ -261,6 +261,7 @@ class WorkspaceFileWorkerContractTest {
             var paths = WorkspaceFileProtocol.readStrings(result, 200);
             assertEquals(1, paths.size());
             assertTrue(Files.isDirectory(temporary.resolve(paths.getFirst())));
+            assertTrue(WorkspaceFileProtocol.readStrings(result, 200).isEmpty());
             assertEquals(-1, result.read());
         }
         assertEquals(expected, Files.readString(temporary.resolve("value")));

@@ -18,6 +18,7 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
+import com.javaclaw.api.ProviderImageSupport;
 import com.javaclaw.api.ProviderModelDiscoveryCandidate;
 import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.api.ProviderModelSpec;
@@ -39,7 +40,7 @@ final class ProviderSetupModelForm extends VBox {
     ProviderSetupModelForm(PlatformComponentFactory components, Runnable discover) {
         super(8);
         setMinWidth(0);
-        Label instruction = new Label("选择要用于对话的模型；名称不代表能力验证，未知用途请按服务说明确认。");
+        Label instruction = new Label("选择对话模型，并按服务说明声明是否支持图片输入；目录发现不会验证或覆盖图片能力。");
         instruction.setMinWidth(0);
         instruction.setWrapText(true);
         instruction.getStyleClass().add("sec-hint");
@@ -135,8 +136,25 @@ final class ProviderSetupModelForm extends VBox {
                     choice.setWrapText(true);
                     choice.setTooltip(ProviderSetupChoices.tooltip(choice.getText()));
                     choice.setSelected(selected.containsKey(model.modelId()));
-                    choice.setOnAction(event -> select(model, choice.isSelected()));
-                    rows.getChildren().add(choice);
+                    choice.setOnAction(event -> select(models.get(model.modelId()), choice.isSelected()));
+                    ProviderImageSupportField images = new ProviderImageSupportField();
+                    images.setUserData(model.modelId());
+                    images.setValue(model.imageSupport());
+                    images.setPrefWidth(108);
+                    images.setMinWidth(108);
+                    images.setMaxWidth(108);
+                    // 搜索会重建控件；值变化必须直接同步草稿，不能依赖尚未创建的 Skin 派发 ActionEvent。
+                    images.valueProperty().addListener((ignored, before, support) -> {
+                        if (support != null) {
+                            imageSupport(model.modelId(), support);
+                        }
+                    });
+                    Label label = new Label("图片");
+                    label.setMinWidth(Region.USE_PREF_SIZE);
+                    HBox row = new HBox(8, choice, label, images);
+                    row.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+                    HBox.setHgrow(choice, Priority.ALWAYS);
+                    rows.getChildren().add(row);
                 });
         if (rows.getChildren().isEmpty()) {
             Label empty = new Label("暂无匹配模型，可以在下方手动输入模型 ID。");
@@ -152,10 +170,25 @@ final class ProviderSetupModelForm extends VBox {
         } else {
             selected.remove(model.modelId());
         }
+        refreshCurrent();
+    }
+
+    private void imageSupport(String modelId, ProviderImageSupport support) {
+        ProviderModelSpec model = models.get(modelId);
+        ProviderModelSpec updated = new ProviderModelSpec(
+                model.modelId(), model.displayName(), model.purposes(), model.embeddingDimensions(), support);
+        models.put(modelId, updated);
+        if (selected.containsKey(modelId)) {
+            selected.put(modelId, updated);
+            refreshCurrent();
+        }
+    }
+
+    private void refreshCurrent() {
         ProviderModelSpec previous = current.getValue();
         current.getItems().setAll(selected.values());
         if (previous != null && selected.containsKey(previous.modelId())) {
-            current.setValue(previous);
+            current.setValue(selected.get(previous.modelId()));
         } else if (selected.size() == 1) {
             current.setValue(selected.values().iterator().next());
         } else {

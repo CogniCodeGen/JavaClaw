@@ -49,19 +49,47 @@ public final class ExtensionCatalogRepository {
      * @param descriptor 已启动并验证的内置描述
      */
     public void installBuiltIn(ExtensionDescriptor descriptor) {
+        installBuiltIn(descriptor, List.of());
+    }
+
+    /**
+     * 安装内置 Bundle，或从发行版明确列出的历史清单执行单调升级。
+     *
+     * <p>清单按完整契约匹配；没有匹配的前驱时仍拒绝差异。升级只更新清单及其 revision，保留启停状态、 状态 revision 和托管数据。校验与条件写入属于同一事务，旧 Turn 的清单 revision
+     * 在升级后立即失效。
+     *
+     * @param descriptor 已启动并验证的目标内置清单
+     * @param predecessors 可信发行代码声明的完整历史清单，不得由外部请求提供；可为空
+     */
+    public void installBuiltIn(ExtensionDescriptor descriptor, List<ExtensionDescriptor> predecessors) {
         Objects.requireNonNull(descriptor, "descriptor");
         if (descriptor.requirements().trust() != ExtensionTrust.BUILT_IN) {
             throw new IllegalArgumentException("only built-in descriptors may be installed in-process");
         }
+        List<ExtensionDescriptor> allowed = validatePredecessors(descriptor, predecessors);
         execute(connection -> {
             Optional<StoredExtension> stored = find(connection, descriptor.id());
             if (stored.isEmpty()) {
                 insert(connection, descriptor);
             } else {
-                requireSameBundle(descriptor, stored.orElseThrow());
+                installOrUpgrade(connection, descriptor, stored.orElseThrow(), allowed);
             }
             return null;
         });
+    }
+
+    private static List<ExtensionDescriptor> validatePredecessors(
+            ExtensionDescriptor descriptor, List<ExtensionDescriptor> predecessors) {
+        List<ExtensionDescriptor> allowed = List.copyOf(predecessors);
+        for (ExtensionDescriptor previous : allowed) {
+            if (!previous.id().equals(descriptor.id())
+                    || previous.revision() >= descriptor.revision()
+                    || previous.requirements().trust() != ExtensionTrust.BUILT_IN) {
+                throw new IllegalArgumentException(
+                        "built-in predecessors must have the same identity and a lower revision");
+            }
+        }
+        return allowed;
     }
 
     /**
@@ -257,13 +285,45 @@ public final class ExtensionCatalogRepository {
         }
     }
 
-    private void requireSameBundle(ExtensionDescriptor descriptor, StoredExtension stored) {
-        if (stored.trust() != ExtensionTrust.BUILT_IN || stored.revision() != descriptor.revision()) {
+    private void installOrUpgrade(
+            java.sql.Connection connection,
+            ExtensionDescriptor descriptor,
+            StoredExtension stored,
+            List<ExtensionDescriptor> predecessors)
+            throws SQLException {
+        if (stored.trust() != ExtensionTrust.BUILT_IN) {
             throw new PersistenceException("内置扩展目录与发行版描述不一致: " + descriptor.id().value());
         }
         ExtensionDescriptor installed = decodeStoredDescriptor(descriptor.id(), stored.descriptor());
-        if (!installed.equals(descriptor)) {
+        if (!installed.id().equals(stored.id()) || installed.revision() != stored.revision()) {
+            throw new PersistenceException("内置扩展目录行身份与描述不一致: " + descriptor.id().value());
+        }
+        if (installed.equals(descriptor)) {
+            return;
+        }
+        if (!predecessors.contains(installed)) {
             throw new PersistenceException("内置扩展目录与发行版描述不一致: " + descriptor.id().value());
+        }
+        upgradeDescriptor(connection, descriptor, stored);
+    }
+
+    private void upgradeDescriptor(
+            java.sql.Connection connection, ExtensionDescriptor descriptor, StoredExtension stored)
+            throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                UPDATE CORE.EXTENSION SET REVISION = ?, DESCRIPTOR = ?, UPDATED_AT = GREATEST(UPDATED_AT, ?)
+                WHERE ID = ? AND TRUST_LEVEL = ? AND REVISION = ? AND DESCRIPTOR = ?
+                """)) {
+            statement.setLong(1, descriptor.revision());
+            statement.setString(2, json.encode(descriptor).json());
+            statement.setObject(3, Instant.now(clock).atOffset(ZoneOffset.UTC));
+            statement.setString(4, descriptor.id().value());
+            statement.setString(5, ExtensionTrust.BUILT_IN.name());
+            statement.setLong(6, stored.revision());
+            statement.setString(7, stored.descriptor());
+            if (statement.executeUpdate() != 1) {
+                throw PersistenceException.revisionConflict("内置扩展清单升级时目录已变化");
+            }
         }
     }
 

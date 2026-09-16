@@ -32,6 +32,8 @@ public final class H2ConversationContext implements ContextAssembler {
     private final ProviderStateService providerStates;
     private final ItemSchemaRegistry schemas;
     private final com.javaclaw.runtime.ModelGateway models;
+    private final AttachmentModelImages images;
+    private final com.javaclaw.protocol.CanonicalJson json = new com.javaclaw.protocol.CanonicalJson();
 
     /**
      * 创建上下文组装器。
@@ -58,6 +60,25 @@ public final class H2ConversationContext implements ContextAssembler {
             ProviderStateService providerStates,
             ItemSchemaRegistry schemas,
             com.javaclaw.runtime.ModelGateway models) {
+        this(core, providerStates, schemas, models, null);
+    }
+
+    /**
+     * 创建与实时执行共享附件投影的上下文组装器。
+     *
+     * @param core Core 查询
+     * @param providerStates 状态查询
+     * @param schemas Item codec
+     * @param models 模型能力与恢复端口
+     * @param images 图片读取边界；兼容纯文本调用时可空
+     */
+    public H2ConversationContext(
+            CoreCommandService core,
+            ProviderStateService providerStates,
+            ItemSchemaRegistry schemas,
+            com.javaclaw.runtime.ModelGateway models,
+            AttachmentModelImages images) {
+        this.images = images;
         this.models = models;
         this.core = Objects.requireNonNull(core, "core");
         this.providerStates = Objects.requireNonNull(providerStates, "providerStates");
@@ -82,12 +103,12 @@ public final class H2ConversationContext implements ContextAssembler {
                         || compacted.orElseThrow().throughSequence()
                                 >= state.orElseThrow().throughSequence())) {
             var saved = compacted.orElseThrow();
-            List<ModelMessage> delta = convert(allItems, saved.throughSequence(), cancellation);
+            List<ModelMessage> delta = convert(allItems, saved.throughSequence(), cancellation, command);
             return saved.window().append(delta, ContextTokenEstimator.messages(delta));
         }
         long afterSequence =
                 state.map(ProviderStateService.StateSnapshot::throughSequence).orElse(0L);
-        List<ModelMessage> messages = convert(allItems, afterSequence, cancellation);
+        List<ModelMessage> messages = convert(allItems, afterSequence, cancellation, command);
         long estimate = state.map(ProviderStateService.StateSnapshot::estimatedInputTokens)
                 .orElseGet(() -> estimate(command.instructions().systemInstruction())
                         + estimate(command.instructions().developerInstructions())
@@ -104,12 +125,23 @@ public final class H2ConversationContext implements ContextAssembler {
             var covered = allItems.stream()
                     .filter(item -> item.sequence() <= snapshot.throughSequence())
                     .toList();
-            return support.restoreCoveredState(command.modelRoute(), opaque, convert(covered, 0, cancellation));
+            return support.restoreCoveredState(
+                    command.modelRoute(), opaque, convert(covered, 0, cancellation, command));
         });
         return new ConversationWindow(messages, restored, estimate);
     }
 
-    private List<ModelMessage> convert(List<ItemEnvelope> items, long afterSequence, CancellationToken cancellation) {
+    private List<ModelMessage> convert(
+            List<ItemEnvelope> items,
+            long afterSequence,
+            CancellationToken cancellation,
+            TurnExecutionCommand command) {
+        var scope = new ImageScope(
+                core.workspaceForThread(command.turn().threadId()).id(),
+                command.turn().threadId(),
+                images != null
+                        && models != null
+                        && models.capabilities(command.modelRoute()).images());
         List<ModelMessage> messages = new ArrayList<>();
         List<ModelToolCall> pendingCalls = new ArrayList<>();
         Map<String, CorePayloads.ToolCall> calls = new LinkedHashMap<>();
@@ -129,7 +161,7 @@ public final class H2ConversationContext implements ContextAssembler {
                 rememberCall(call, calls, pendingCalls);
             } else {
                 flushCalls(messages, pendingCalls);
-                appendPayload(messages, calls, payload);
+                appendPayload(messages, calls, payload, item, scope);
             }
         }
         flushCalls(messages, pendingCalls);
@@ -153,25 +185,50 @@ public final class H2ConversationContext implements ContextAssembler {
         pendingCalls.add(new ModelToolCall(call.callId(), identity, call.arguments()));
     }
 
-    private static void appendPayload(
-            List<ModelMessage> messages, Map<String, CorePayloads.ToolCall> calls, ItemPayload payload) {
+    private void appendPayload(
+            List<ModelMessage> messages,
+            Map<String, CorePayloads.ToolCall> calls,
+            ItemPayload payload,
+            ItemEnvelope item,
+            ImageScope scope) {
         if (payload instanceof CorePayloads.Message message) {
-            appendMessage(messages, calls, message);
+            appendMessage(messages, calls, message, item, scope);
         } else if (payload instanceof CorePayloads.ToolResult result) {
             CorePayloads.ToolCall call = requireCall(calls, result.callId());
-            messages.add(ModelMessage.tool(
-                    result.callId(), call.toolName(), result.output().json()));
+            var projected = scope.enabled() && result.success()
+                    ? BrowserImageProjection.project(
+                            json,
+                            scope.workspace(),
+                            scope.thread(),
+                            new ToolIdentity(call.producerId(), call.toolName(), call.toolRevision()),
+                            result.output())
+                    : List.<com.javaclaw.runtime.ModelImage>of();
+            messages.add(new ModelMessage(
+                    MessageRole.TOOL,
+                    result.output().json(),
+                    List.of(),
+                    Optional.of(result.callId()),
+                    Optional.of(call.toolName()),
+                    projected));
         }
     }
 
-    private static void appendMessage(
-            List<ModelMessage> messages, Map<String, CorePayloads.ToolCall> calls, CorePayloads.Message message) {
+    private void appendMessage(
+            List<ModelMessage> messages,
+            Map<String, CorePayloads.ToolCall> calls,
+            CorePayloads.Message message,
+            ItemEnvelope item,
+            ImageScope scope) {
         if (message.role() == MessageRole.TOOL) {
             String callId = message.toolCallId().orElseThrow(() -> new PersistenceException("Tool 消息缺少 call ID"));
             messages.add(ModelMessage.tool(callId, requireCall(calls, callId).toolName(), message.text()));
             return;
         }
-        messages.add(new ModelMessage(message.role(), message.text(), List.of(), Optional.empty(), Optional.empty()));
+        var projected = scope.enabled() && message.role() == MessageRole.USER
+                ? images.message(scope.workspace(), scope.thread(), item, message)
+                : List.<com.javaclaw.runtime.ModelImage>of();
+        messages.add(new ModelMessage(
+                message.role(), message.text(), List.of(), Optional.empty(), Optional.empty(), projected));
     }
 
     private static CorePayloads.ToolCall requireCall(Map<String, CorePayloads.ToolCall> calls, String callId) {
@@ -190,8 +247,9 @@ public final class H2ConversationContext implements ContextAssembler {
     }
 
     private void verifyCurrentInput(TurnExecutionCommand command, List<ItemEnvelope> items) {
+        var inputTurn = core.originalInputTurn(command.turn().id());
         boolean found = items.stream()
-                .filter(item -> item.turnId().equals(command.turn().id()))
+                .filter(item -> item.turnId().equals(inputTurn))
                 .map(this::knownPayload)
                 .filter(CorePayloads.Message.class::isInstance)
                 .map(CorePayloads.Message.class::cast)
@@ -209,6 +267,9 @@ public final class H2ConversationContext implements ContextAssembler {
     private static long estimate(String text) {
         return ContextTokenEstimator.text(text);
     }
+
+    private record ImageScope(
+            com.javaclaw.api.WorkspaceId workspace, com.javaclaw.api.ThreadId thread, boolean enabled) {}
 
     private record IgnoredPayload() implements ItemPayload {}
 }

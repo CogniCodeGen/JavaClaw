@@ -245,6 +245,8 @@ public final class CodingOperationRepository {
                     case "command" -> new ToolExecutionFact(json.decode(fact.payload(), CorePayloads.Command.class));
                     case "file-change" ->
                         new ToolExecutionFact(json.decode(fact.payload(), CorePayloads.FileChange.class));
+                    case "directory-change" ->
+                        new ToolExecutionFact(json.decode(fact.payload(), com.javaclaw.api.DirectoryChange.class));
                     default -> throw new PersistenceException("未知 Coding 平台事实");
                 })
                 .toList();

@@ -33,8 +33,8 @@ import com.javaclaw.runtime.ProviderState;
  */
 public final class OpenAiResponsesModelAdapter
         implements ModelGateway, NativeConversationSupport, NativeCompactionSupport, AutoCloseable {
-    private static final ModelCapabilities CAPABILITIES =
-            new ModelCapabilities(true, true, false, false, true, true, true);
+    private final ModelCapabilities capabilities;
+    private final com.javaclaw.runtime.ModelImageResolver images;
 
     private final OpenAiResponsesEndpointConfig config;
     private final OpenAiResponsesTransport transport;
@@ -43,10 +43,20 @@ public final class OpenAiResponsesModelAdapter
     private final OpenAiResponsesResultMapper results;
 
     OpenAiResponsesModelAdapter(OpenAiResponsesEndpointConfig config, OpenAiResponsesTransport transport) {
+        this(config, transport, com.javaclaw.runtime.ModelImageResolver.unavailable(), false);
+    }
+
+    OpenAiResponsesModelAdapter(
+            OpenAiResponsesEndpointConfig config,
+            OpenAiResponsesTransport transport,
+            com.javaclaw.runtime.ModelImageResolver images,
+            boolean imageSupport) {
         this.config = Objects.requireNonNull(config, "config");
         this.transport = Objects.requireNonNull(transport, "transport");
+        capabilities = new ModelCapabilities(true, true, false, imageSupport, true, true, true);
+        this.images = Objects.requireNonNull(images, "images");
         states = new ProviderStateCodec();
-        requests = new OpenAiResponsesRequestMapper(states);
+        requests = new OpenAiResponsesRequestMapper(states, images);
         results = new OpenAiResponsesResultMapper(new CanonicalJsonCodec(), states);
     }
 
@@ -74,15 +84,25 @@ public final class OpenAiResponsesModelAdapter
     }
 
     static OpenAiResponsesModelAdapter create(OpenAiResponsesEndpointConfig config, OpenAIClient client) {
+        return create(config, client, com.javaclaw.runtime.ModelImageResolver.unavailable(), false);
+    }
+
+    static OpenAiResponsesModelAdapter create(
+            OpenAiResponsesEndpointConfig config,
+            OpenAIClient client,
+            com.javaclaw.runtime.ModelImageResolver images,
+            boolean imageSupport) {
         return new OpenAiResponsesModelAdapter(
                 Objects.requireNonNull(config, "config"),
-                new OfficialOpenAiResponsesTransport(Objects.requireNonNull(client, "client")));
+                new OfficialOpenAiResponsesTransport(Objects.requireNonNull(client, "client")),
+                images,
+                imageSupport);
     }
 
     @Override
     public ModelCapabilities capabilities(String modelId) {
         requireEndpoint(modelId);
-        return CAPABILITIES;
+        return capabilities;
     }
 
     @Override
@@ -113,7 +133,9 @@ public final class OpenAiResponsesModelAdapter
             CancellationToken cancellation) {
         StreamAccumulator accumulator = new StreamAccumulator(turnId, events, cancellation);
         try {
-            transport.stream(request, accumulator::accept);
+            transport.stream(
+                    new OpenAiResponsesRequestMapper(states, images.forTurn(turnId)).hydrate(request),
+                    accumulator::accept);
         } catch (StreamPublishFailure failure) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("模型流发布被中断", failure.interrupted());
@@ -169,7 +191,9 @@ public final class OpenAiResponsesModelAdapter
         requireEndpoint(request.modelId());
         cancellation.throwIfCancelled();
         ProviderStateCodec.DecodedState decoded = states.decode(request.state());
-        CompactedResponse response = transport.compact(requests.compact(config, decoded, request.messages()));
+        CompactedResponse response =
+                transport.compact(new OpenAiResponsesRequestMapper(states, images.forTurn(request.turnId()))
+                        .hydrate(requests.compact(config, decoded, request.messages())));
         // 已收到的实际 usage 必须交由 Harness 先持久化，取消只阻止下一次外部调用。
         ProviderState compacted = states.compacted(response, decoded.instructions());
         com.javaclaw.runtime.ModelUsage usage = new com.javaclaw.runtime.ModelUsage(
@@ -192,6 +216,11 @@ public final class OpenAiResponsesModelAdapter
         Objects.requireNonNull(events, "events");
         Objects.requireNonNull(cancellation, "cancellation");
         requireEndpoint(invocation.modelId());
+        if (!capabilities.images()
+                && invocation.messages().stream()
+                        .anyMatch(message -> !message.images().isEmpty())) {
+            throw new IllegalArgumentException("当前模型尚未声明支持图片输入");
+        }
         cancellation.throwIfCancelled();
     }
 

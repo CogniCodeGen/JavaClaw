@@ -39,8 +39,12 @@ final class CodingExtension implements ExtensionBundle {
             "change/list",
             "diff/read",
             "terminal/read",
-            "terminal/output");
-    private static final Set<String> COMMANDS = Set.of("environment/update", "toolchain/install");
+            "terminal/output",
+            "filesystem/result",
+            "system/registry/read",
+            "system/catalog");
+    private static final Set<String> COMMANDS =
+            Set.of("environment/update", "toolchain/install", "system/registry/update");
     private final ExtensionDescriptor descriptor = new ExtensionDescriptor(
             new ExtensionId(BuiltinExtensionIds.CODING),
             "Coding",

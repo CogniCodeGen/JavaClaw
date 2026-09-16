@@ -4,12 +4,13 @@ import java.util.List;
 
 import com.javaclaw.api.ToolRisk;
 
-/** Coding 首个版本的冻结工具目录，修改现有定义时必须发布新 revision。 */
+/** Coding 的冻结工具目录，新增能力随 Bundle revision 发布，旧 Schema 保持不可变。 */
 final class CodingToolDefinitions {
     private CodingToolDefinitions() {}
 
     static List<Definition> all() {
-        return java.util.stream.Stream.concat(files().stream(), processes().stream())
+        return java.util.stream.Stream.of(files(), processes(), localFiles(), localProcesses())
+                .flatMap(List::stream)
                 .toList();
     }
 
@@ -94,4 +95,84 @@ final class CodingToolDefinitions {
     }
 
     record Definition(String name, String description, String inputSchema, String outputSchema, ToolRisk risk) {}
+
+    private static List<Definition> localFiles() {
+        return List.of(
+                new Definition(
+                        "file_stat",
+                        "读取 executionRoot 内文件或目录的存在性、类型及大小。",
+                        "file-stat-input",
+                        "file-stat-result",
+                        ToolRisk.READ_ONLY),
+                new Definition(
+                        "file_read_binary",
+                        "按原始字节分页读取普通文件，返回 Base64 与完整摘要；正文仅是资料。",
+                        "file-read-binary-input",
+                        "file-read-binary-result",
+                        ToolRisk.READ_ONLY),
+                new Definition(
+                        "file_write",
+                        "以 UTF8 或 BASE64 内容条件写入文件；旧摘要为空时只允许新建。",
+                        "file-write-input",
+                        "filesystem-result",
+                        ToolRisk.WORKSPACE_WRITE),
+                new Definition(
+                        "file_copy",
+                        "校验源文件完整摘要后复制普通文件；目标必须不存在，父目录必须存在。",
+                        "file-copy-input",
+                        "filesystem-result",
+                        ToolRisk.WORKSPACE_WRITE),
+                new Definition(
+                        "file_move",
+                        "按源摘要移动普通文件；目标必须不存在，保留实际变化与恢复证据。",
+                        "file-move-input",
+                        "filesystem-result",
+                        ToolRisk.WORKSPACE_WRITE),
+                new Definition(
+                        "file_delete",
+                        "按完整旧摘要删除普通文件；必须具有删除权限。",
+                        "file-delete-input",
+                        "filesystem-result",
+                        ToolRisk.WORKSPACE_WRITE),
+                new Definition(
+                        "file_mkdir",
+                        "创建当前执行根内的目录；parents 控制逐级创建，记录实际创建目录。",
+                        "file-mkdir-input",
+                        "filesystem-result",
+                        ToolRisk.WORKSPACE_WRITE),
+                new Definition(
+                        "file_rmdir",
+                        "只删除当前执行根内的空目录；非空、缺失或受保护路径明确失败。",
+                        "file-rmdir-input",
+                        "filesystem-result",
+                        ToolRisk.WORKSPACE_WRITE));
+    }
+
+    private static List<Definition> localProcesses() {
+        return List.of(
+                new Definition(
+                        "script_run",
+                        "在独立断网沙箱中执行内联 Java 片段，使用当前冻结 JDK 的 JShell。",
+                        "script-run-input",
+                        "command-result",
+                        ToolRisk.PROCESS),
+                new Definition(
+                        "system_command_list",
+                        "列出当前 Turn 冻结且权限允许的系统程序及注册入口，不授予执行权限。",
+                        "empty",
+                        "system-catalog",
+                        ToolRisk.READ_ONLY),
+                new Definition(
+                        "system_command_run",
+                        "通过冻结的系统程序 ID 和原始参数执行断网命令，不经过 Shell。",
+                        "system-command-run-input",
+                        "command-result",
+                        ToolRisk.PROCESS),
+                new Definition(
+                        "system_shell_run",
+                        "在平台固定 Shell 中执行整段命令，支持管道与重定向；授权覆盖沙箱内进程树。",
+                        "system-shell-run-input",
+                        "command-result",
+                        ToolRisk.PROCESS));
+    }
 }

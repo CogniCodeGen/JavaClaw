@@ -39,6 +39,7 @@ import com.javaclaw.protocol.InputJobRpcContracts;
 public final class CodingSettingsPage implements ManagedSettingsPage {
     private final CodingSettingsGateway gateway;
     private final CodingPreparationStatus preparationStatus;
+    private final SystemCommandSettingsSection systemCommands;
     private final PlatformComponentFactory components = new PlatformComponentFactory();
     private final VBox content = components.page("编程环境");
     private final TextField name = new TextField();
@@ -73,6 +74,7 @@ public final class CodingSettingsPage implements ManagedSettingsPage {
     public CodingSettingsPage(CodingSettingsGateway gateway) {
         this.gateway = Objects.requireNonNull(gateway, "gateway");
         preparationStatus = new CodingPreparationStatus(gateway);
+        systemCommands = new SystemCommandSettingsSection(gateway);
         save = action("保存环境", ActionStyle.PRIMARY, this::save);
         refresh = action("刷新", ActionStyle.GHOST, this::reload);
         install = action("安装选中工具链", ActionStyle.SOFT, this::install);
@@ -115,12 +117,12 @@ public final class CodingSettingsPage implements ManagedSettingsPage {
 
     @Override
     public boolean dirty() {
-        return dirty;
+        return dirty || systemCommands.dirty();
     }
 
     @Override
     public boolean pending() {
-        return writing;
+        return writing || systemCommands.pending();
     }
 
     @Override
@@ -131,6 +133,7 @@ public final class CodingSettingsPage implements ManagedSettingsPage {
             return;
         }
         workspaceId = next;
+        systemCommands.bind(next);
         preparationStatus.bind(next, active);
         epoch++;
         snapshot = Optional.empty();
@@ -153,6 +156,7 @@ public final class CodingSettingsPage implements ManagedSettingsPage {
     @Override
     public void discardDraft() {
         dirty = false;
+        systemCommands.discard();
         snapshot.ifPresent(this::render);
         actions.show(ActionState.IDLE, "草稿已丢弃");
     }
@@ -161,6 +165,7 @@ public final class CodingSettingsPage implements ManagedSettingsPage {
     public void dispose() {
         deactivate();
         epoch++;
+        systemCommands.dispose();
     }
 
     private void buildLayout() {
@@ -193,7 +198,13 @@ public final class CodingSettingsPage implements ManagedSettingsPage {
         scripts.setWrapText(true);
         scripts.getStyleClass().add("sec-hint");
         dependencies.addFullWidth(scripts);
-        content.getChildren().addAll(environment, dependencies, preparationStatus.section(), installationSection());
+        content.getChildren()
+                .addAll(
+                        environment,
+                        dependencies,
+                        preparationStatus.section(),
+                        installationSection(),
+                        systemCommands.section());
     }
 
     private FormSection installationSection() {

@@ -2,7 +2,9 @@ package com.javaclaw.server.coding;
 
 import com.javaclaw.api.CancellationToken;
 import com.javaclaw.builtin.contracts.CodingEnvironmentContracts;
+import com.javaclaw.builtin.contracts.CodingFileSystemContracts;
 import com.javaclaw.builtin.contracts.CodingResults;
+import com.javaclaw.builtin.contracts.CodingSystemContracts;
 import com.javaclaw.extension.spi.ContributionKind;
 import com.javaclaw.extension.spi.ExtensionRequest;
 import com.javaclaw.extension.spi.ExtensionResponse;
@@ -50,6 +52,9 @@ final class CodingManagement {
         if (request.operation().equals("toolchain/install")) {
             return response(dependencies.toolchains().install(request, cancellation), 0);
         }
+        if (request.operation().equals("system/registry/update")) {
+            return updateSystemRegistry(request);
+        }
         if (!request.operation().equals("environment/update")) {
             throw new SecurityException("Coding 未声明此管理命令");
         }
@@ -80,9 +85,32 @@ final class CodingManagement {
             case "execution/list" -> response(commandQueries.list(request), 0);
             case "preparation/evidence" -> evidence(request);
             case "change/list", "diff/read" -> changes(request);
+            case "filesystem/result" -> filesystem(request);
+            case "system/registry/read", "system/catalog" -> systemConfiguration(request);
             case "terminal/read", "terminal/output" -> terminal(request);
             default -> throw new SecurityException("Coding 未声明此查询");
         };
+    }
+
+    private ExtensionResponse updateSystemRegistry(ExtensionRequest request) {
+        var update = dependencies.json().decode(request.payload(), CodingSystemContracts.RegistryUpdate.class);
+        var identity = new CommandIdentity(
+                "coding/system-registry-update",
+                request.idempotencyKey().orElseThrow(),
+                request.expectedRevision(),
+                dependencies.json().encode(request).sha256());
+        var saved = dependencies.core().systemCommands().update(request.workspaceId(), identity, update);
+        return response(saved, saved.revision());
+    }
+
+    private ExtensionResponse systemConfiguration(ExtensionRequest request) {
+        dependencies.json().decode(request.payload(), CodingEnvironmentContracts.Empty.class);
+        var systems = dependencies.core().systemCommands();
+        if (request.operation().equals("system/catalog")) {
+            return response(systems.catalog(request.workspaceId()), 0);
+        }
+        var registry = systems.registry(request.workspaceId());
+        return response(registry, registry.revision());
     }
 
     private ExtensionResponse environment(ExtensionRequest request) {
@@ -95,6 +123,32 @@ final class CodingManagement {
         var operation = require(request, input.resourceId(), "file_apply_patch");
         return response(
                 dependencies.json().decode(operation.result().orElseThrow(), CodingResults.PatchResult.class), 0);
+    }
+
+    private ExtensionResponse filesystem(ExtensionRequest request) {
+        var input = dependencies.json().decode(request.payload(), CodingResults.ResourceRead.class);
+        var operation = require(
+                request,
+                input.resourceId(),
+                "file_write",
+                "file_copy",
+                "file_move",
+                "file_delete",
+                "file_mkdir",
+                "file_rmdir");
+        var payload = operation.result().orElseThrow();
+        if (dependencies.json().fieldNames(payload).contains("errorCode")) {
+            var failure = dependencies.json().decode(payload, CodingResults.Failure.class);
+            return response(
+                    new CodingFileSystemContracts.FileSystemResult(
+                            operation.intent().id(),
+                            java.util.List.of(),
+                            false,
+                            java.util.Optional.of(failure.errorCode()),
+                            java.util.List.of()),
+                    0);
+        }
+        return response(dependencies.json().decode(payload, CodingFileSystemContracts.FileSystemResult.class), 0);
     }
 
     private ExtensionResponse preparation(ExtensionRequest request) {
@@ -116,8 +170,15 @@ final class CodingManagement {
 
     private ExtensionResponse output(ExtensionRequest request) {
         var input = dependencies.json().decode(request.payload(), CodingResults.OutputRead.class);
-        String name = request.operation().equals("command/output") ? "command_run" : "dependencies_prepare";
-        var operation = require(request, input.resourceId(), name);
+        var operation = request.operation().equals("command/output")
+                ? require(
+                        request,
+                        input.resourceId(),
+                        "command_run",
+                        "script_run",
+                        "system_command_run",
+                        "system_shell_run")
+                : require(request, input.resourceId(), "dependencies_prepare");
         return response(commandQueries.output(request, operation), 0);
     }
 
@@ -143,10 +204,10 @@ final class CodingManagement {
         return response(result, 0);
     }
 
-    private CodingOperationRepository.Operation require(ExtensionRequest request, String id, String operationName) {
+    private CodingOperationRepository.Operation require(ExtensionRequest request, String id, String... operationNames) {
         var operation =
                 operations.find(request.workspaceId(), id).orElseThrow(() -> new SecurityException("Coding 记录不存在"));
-        if (!operation.intent().operation().equals(operationName)) {
+        if (!java.util.Set.of(operationNames).contains(operation.intent().operation())) {
             throw new SecurityException("Coding 记录种类不匹配");
         }
         dependencies.authority().requireEvidence(operation.intent().turnId(), request.workspaceId());

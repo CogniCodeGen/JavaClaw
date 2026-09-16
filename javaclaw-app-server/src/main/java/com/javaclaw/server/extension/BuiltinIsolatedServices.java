@@ -26,6 +26,9 @@ public final class BuiltinIsolatedServices implements IsolatedServicePort, AutoC
     private final KnowledgeExtractionService knowledge;
     private final SkillResourceExecutionService skill;
     private final Optional<BrowserWorkerPort> browserWorker;
+    private Optional<com.javaclaw.server.site.account.SiteAccountService> accounts = Optional.empty();
+    private Optional<SiteInteractiveBrowserService> interactive = Optional.empty();
+    private Optional<com.javaclaw.server.turn.BrowserTurnContinuation> continuation = Optional.empty();
 
     private BuiltinIsolatedServices(
             SiteBrowserService browser,
@@ -79,6 +82,76 @@ public final class BuiltinIsolatedServices implements IsolatedServicePort, AutoC
     }
 
     /**
+     * 使用现有组合根接入账号、常驻会话和浏览器专用授权。
+     *
+     * @param host 唯一宿主服务集合
+     * @param vault 现有 Vault
+     * @param grants 现有私网授权
+     * @return 延迟启动 Worker 的领域路由
+     */
+    public static BuiltinIsolatedServices production(
+            SiteBrowserHostContext host, SecretVaultService vault, PrivateNetworkGrantService grants) {
+        var services = production(host.database(), host.attachments(), vault, grants, host.json(), host.clock());
+        services.bindSiteHost(host, grants);
+        return services;
+    }
+
+    /**
+     * 为生产和注入模型的组合根绑定同一账号宿主；重复绑定同一实例无副作用。
+     *
+     * <p>无 Worker 的路由仍可管理账号，但不会因此启动或发布浏览器能力。已有宿主不可替换，避免会话跨库或跨 Vault。
+     *
+     * @param host 当前组合根唯一的宿主服务集合
+     * @param grants 同一组合根的私网授权服务
+     */
+    public synchronized void bindSiteHost(SiteBrowserHostContext host, PrivateNetworkGrantService grants) {
+        Objects.requireNonNull(host, "host");
+        Objects.requireNonNull(grants, "grants");
+        if (accounts.isPresent()) {
+            if (accounts.orElseThrow() != host.accounts()) {
+                throw new IllegalStateException("Site 宿主已绑定其他账号服务");
+            }
+            return;
+        }
+        var turns = new com.javaclaw.server.turn.BrowserTurnContinuation(host);
+        var browserGrants =
+                new com.javaclaw.server.security.grant.BrowserGrantService(host.database(), host.json(), host.clock());
+        browser.bindAccounts(host.accounts());
+        continuation = Optional.of(turns);
+        interactive = Optional.of(
+                new SiteInteractiveBrowserService(host, browserWorker, browserGrants, grants, turns::request));
+        accounts = Optional.of(host.accounts());
+    }
+
+    /**
+     * 在 Runtime 装配完成后连接终态释放和持久续接恢复。
+     *
+     * @param dispatcher 当前宿主调度器
+     */
+    public void bindTurns(com.javaclaw.server.turn.HarnessTurnDispatcher dispatcher) {
+        dispatcher.onFinished(result -> {
+            interactive.ifPresent(service -> service.finishTurn(result.turnId()));
+            continuation.ifPresent(service -> service.finished(result));
+        });
+        continuation.ifPresent(service -> service.bind(dispatcher));
+    }
+
+    /** 在所有编排端口恢复后重读持久浏览器续接；只恢复已有授权请求。 */
+    public void recoverBrowserContinuations() {
+        continuation.ifPresent(com.javaclaw.server.turn.BrowserTurnContinuation::recoverPending);
+    }
+
+    /**
+     * 查询 Site 宿主已持久批准的编排请求，供 Thin Harness 工具边界使用。
+     *
+     * @param turn 当前 Turn
+     * @return 是否应在提交真实工具结果后结束本 Turn
+     */
+    public boolean turnYieldRequested(com.javaclaw.api.TurnId turn) {
+        return continuation.map(service -> service.requested(turn)).orElse(false);
+    }
+
+    /**
      * 创建不启用 Browser 的显式测试路由；页面调用始终安全拒绝。
      *
      * @return fail-closed 服务路由
@@ -128,6 +201,12 @@ public final class BuiltinIsolatedServices implements IsolatedServicePort, AutoC
 
     private CanonicalPayload invokeSite(IsolatedServiceInvocation invocation) throws Exception {
         return switch (invocation.serviceId()) {
+            case com.javaclaw.builtin.contracts.SiteAccountContracts.SERVICE ->
+                accounts.orElseThrow(() -> new IllegalStateException("账号宿主未配置")).invoke(invocation);
+            case com.javaclaw.builtin.contracts.BrowserCommands.SERVICE ->
+                interactive
+                        .orElseThrow(() -> new IllegalStateException("常驻浏览器宿主未配置"))
+                        .invoke(invocation);
             case SiteContracts.BROWSER_SNAPSHOT_SERVICE -> browser.snapshot(invocation);
             case SiteContracts.BROWSER_INVALIDATE_SERVICE -> browser.invalidate(invocation);
             case SiteContracts.BROWSER_LOGIN_BEGIN_SERVICE -> browser.loginBegin(invocation);
@@ -144,8 +223,27 @@ public final class BuiltinIsolatedServices implements IsolatedServicePort, AutoC
     /** 关闭并销毁全部按需 Worker。 */
     @Override
     public void close() {
-        knowledge.close();
-        browser.close();
+        closeResources(
+                () -> interactive.ifPresent(SiteInteractiveBrowserService::close), knowledge::close, browser::close);
+    }
+
+    // 登录态保存或任一 Worker 的关闭失败不能跳过其他 Worker 回收；保留最早失败及其后的清理证据。
+    static void closeResources(Runnable... resources) {
+        RuntimeException failure = null;
+        for (Runnable resource : resources) {
+            try {
+                resource.run();
+            } catch (RuntimeException cleanup) {
+                if (failure == null) {
+                    failure = cleanup;
+                } else {
+                    failure.addSuppressed(cleanup);
+                }
+            }
+        }
+        if (failure != null) {
+            throw failure;
+        }
     }
 
     /**

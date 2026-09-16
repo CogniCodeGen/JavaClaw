@@ -21,7 +21,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import com.javaclaw.api.ApprovalRequirement;
-import com.javaclaw.api.BrokerRequest;
 import com.javaclaw.api.CancellationSource;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.CredentialMetadata;
@@ -46,9 +45,9 @@ import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.server.persistence.CommandIdentity;
 import com.javaclaw.server.persistence.H2Database;
 import com.javaclaw.server.persistence.H2ManagedExtensionStore;
-import com.javaclaw.server.security.BrowserBrokerResponse;
 import com.javaclaw.server.security.grant.PrivateNetworkGrantService;
 import com.javaclaw.server.security.vault.SecretVaultService;
+import com.javaclaw.server.site.account.SiteAccountService;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -307,6 +306,10 @@ class SiteBrowserServiceTest {
     }
 
     private Fixture fixture() {
+        return fixture(temporaryDirectory);
+    }
+
+    static Fixture fixture(Path temporaryDirectory) {
         CanonicalJson json = new CanonicalJson();
         H2Database database = new H2Database(temporaryDirectory.resolve("data-v6"));
         database.initialize();
@@ -314,13 +317,14 @@ class SiteBrowserServiceTest {
         SecretVaultService vault =
                 new SecretVaultService(database, new MemoryProtector(), json, CLOCK, new SecureRandom());
         FakeBrowser browser = new FakeBrowser(json);
-        FakeBroker broker = new FakeBroker();
+        SiteBrowserTestBroker broker = new SiteBrowserTestBroker();
         SiteBrowserService service = SiteBrowserService.available(
                 browser, documents, vault, broker, new PrivateNetworkGrantService(database, json, CLOCK), json);
-        return new Fixture(json, documents, vault, browser, broker, service);
+        return new Fixture(
+                json, documents, vault, browser, broker, service, new SiteAccountService(database, vault, json, CLOCK));
     }
 
-    private static IsolatedServiceInvocation invocation(Fixture fixture, SiteContracts.Site site) {
+    static IsolatedServiceInvocation invocation(Fixture fixture, SiteContracts.Site site) {
         SiteContracts.SnapshotTask task = new SiteContracts.SnapshotTask(
                 site, URI.create("https://docs.example.com/page"), 2_000, Duration.ofSeconds(10));
         return new IsolatedServiceInvocation(
@@ -332,11 +336,11 @@ class SiteBrowserServiceTest {
                 new CancellationSource());
     }
 
-    private static IsolatedServiceInvocation invocation(Fixture fixture, Object request) {
+    static IsolatedServiceInvocation invocation(Fixture fixture, Object request) {
         return invocation(fixture.json(), WORKSPACE, request);
     }
 
-    private static IsolatedServiceInvocation invocation(CanonicalJson json, WorkspaceId workspaceId, Object request) {
+    static IsolatedServiceInvocation invocation(CanonicalJson json, WorkspaceId workspaceId, Object request) {
         return new IsolatedServiceInvocation(
                 new ExtensionId(BuiltinExtensionIds.SITE),
                 workspaceId,
@@ -353,7 +357,7 @@ class SiteBrowserServiceTest {
                         SiteContracts.LoginSessionList.class);
     }
 
-    private static SiteContracts.Site site(
+    static SiteContracts.Site site(
             long revision, long authorityRevision, SiteContracts.SiteCredential credential, boolean enabled) {
         return new SiteContracts.Site(
                 "docs",
@@ -383,7 +387,7 @@ class SiteBrowserServiceTest {
                 new ResourceLimits(64 * 1024 * 1024, 8 * 1024 * 1024, 1, 16));
     }
 
-    private static CommandIdentity identity(String method) {
+    static CommandIdentity identity(String method) {
         return new CommandIdentity(method, UUID.randomUUID().toString(), 0, "0".repeat(64));
     }
 
@@ -391,15 +395,16 @@ class SiteBrowserServiceTest {
         return value != null && Arrays.equals(value, new byte[value.length]);
     }
 
-    private record Fixture(
+    record Fixture(
             CanonicalJson json,
             H2ManagedExtensionStore documents,
             SecretVaultService vault,
             FakeBrowser browser,
-            FakeBroker broker,
-            SiteBrowserService service)
+            SiteBrowserTestBroker broker,
+            SiteBrowserService service,
+            SiteAccountService accounts)
             implements AutoCloseable {
-        private void put(SiteContracts.Site site, long expectedRevision) throws Exception {
+        void put(SiteContracts.Site site, long expectedRevision) throws Exception {
             documents.inTransaction(
                     new ExtensionId(BuiltinExtensionIds.SITE),
                     transaction ->
@@ -413,12 +418,14 @@ class SiteBrowserServiceTest {
         }
     }
 
-    private static final class FakeBrowser implements BrowserWorkerPort {
+    static final class FakeBrowser implements BrowserWorkerPort {
         private final CanonicalJson json;
-        private final AtomicReference<byte[]> observedStorage = new AtomicReference<>();
-        private List<BrowserWorkerProtocol.NetworkRequest> networkRequests = List.of();
+        final AtomicReference<byte[]> observedStorage = new AtomicReference<>();
+        List<BrowserWorkerProtocol.NetworkRequest> networkRequests = List.of();
         private final Map<String, SiteContracts.LoginSession> loginSessions = new HashMap<>();
         private boolean interactiveLogin = true;
+        String lastState;
+        byte[] savedState = "browser-login-secret".getBytes(StandardCharsets.UTF_8);
 
         private FakeBrowser(CanonicalJson json) {
             this.json = json;
@@ -431,6 +438,7 @@ class SiteBrowserServiceTest {
                 BrowserNetworkExchange network,
                 com.javaclaw.api.CancellationToken cancellation) {
             observedStorage.set(storageState);
+            lastState = new String(storageState, StandardCharsets.UTF_8);
             try {
                 for (BrowserWorkerProtocol.NetworkRequest request : networkRequests) {
                     network.exchange(request, new byte[0], cancellation);
@@ -452,6 +460,7 @@ class SiteBrowserServiceTest {
                 byte[] storageState,
                 BrowserNetworkExchange network,
                 com.javaclaw.api.CancellationToken cancellation) {
+            lastState = new String(storageState, StandardCharsets.UTF_8);
             SiteContracts.LoginSession session = new SiteContracts.LoginSession(
                     task.sessionId(),
                     task.site().id(),
@@ -477,7 +486,7 @@ class SiteBrowserServiceTest {
         @Override
         public <T> T saveLogin(String sessionId, BrowserStorageHandler<T> handler) {
             SiteContracts.LoginSession current = loginStatus(sessionId);
-            byte[] state = "browser-login-secret".getBytes(StandardCharsets.UTF_8);
+            byte[] state = savedState.clone();
             try {
                 T result = handler.handle(state);
                 loginSessions.put(
@@ -551,27 +560,6 @@ class SiteBrowserServiceTest {
 
         @Override
         public void close() {}
-    }
-
-    private static final class FakeBroker implements SiteNetworkBroker {
-        private final java.util.ArrayList<BrokerRequest> requests = new java.util.ArrayList<>();
-        private Runnable beforeRealtime = () -> {};
-        private boolean socketOpened;
-
-        @Override
-        public BrowserBrokerResponse exchange(
-                BrokerRequest request,
-                PermissionProfile permission,
-                com.javaclaw.api.CancellationToken cancellation,
-                com.javaclaw.server.security.PinnedHttpNetworkBroker.AddressAuthorization privateAuthorization,
-                com.javaclaw.server.security.PinnedHttpNetworkBroker.RealtimeAuthorization realtimeAuthorization)
-                throws Exception {
-            requests.add(request);
-            beforeRealtime.run();
-            realtimeAuthorization.authorize();
-            socketOpened = true;
-            return new BrowserBrokerResponse(200, Map.of(), "ok".getBytes(StandardCharsets.UTF_8), false);
-        }
     }
 
     private static final class MemoryProtector implements MasterKeyProtector {

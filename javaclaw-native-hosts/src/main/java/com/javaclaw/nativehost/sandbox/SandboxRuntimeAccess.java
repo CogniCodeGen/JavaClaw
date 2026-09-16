@@ -9,16 +9,32 @@ import java.util.Objects;
  *
  * <p>本类型不是模型输入，也不授予项目目录权限。调用方必须先校验清单所有权与本次命令的审批； Native Host 只负责规范化真实路径并把范围落实到 OS Sandbox，不能从 PATH 或用户 HOME 推导额外目录。
  *
- * @param readRoots 非空值列表，托管运行库的绝对只读目录
+ * @param readRoots 非空值列表，托管运行库的绝对只读目录或精确普通文件；文件不扩张为父目录
  * @param writeRoots 非空值列表，本次执行独占或已获租约的托管缓存、临时目录
  * @param executableRoots 非空值列表，允许执行的工具链文件或目录，必须位于上述访问根内
+ * @param standardInputBytes 平台批准的独立 stdin 上限，0 表示保持旧输出预算限制，最大 1048576 字节；不是模型参数
  */
-public record SandboxRuntimeAccess(List<Path> readRoots, List<Path> writeRoots, List<Path> executableRoots) {
+public record SandboxRuntimeAccess(
+        List<Path> readRoots, List<Path> writeRoots, List<Path> executableRoots, long standardInputBytes) {
     /** 复制清单并拒绝相对路径；文件存在性由执行前校验处理。 */
     public SandboxRuntimeAccess {
         readRoots = paths(readRoots);
         writeRoots = paths(writeRoots);
         executableRoots = paths(executableRoots);
+        if (standardInputBytes < 0 || standardInputBytes > 1_048_576) {
+            throw new IllegalArgumentException("trusted standard input limit is outside allowed range");
+        }
+    }
+
+    /**
+     * 创建保持旧 stdin 限额的运行时访问范围。
+     *
+     * @param readRoots 固定只读运行目录或精确普通文件
+     * @param writeRoots 固定可写缓存目录
+     * @param executableRoots 允许执行的固定文件或目录
+     */
+    public SandboxRuntimeAccess(List<Path> readRoots, List<Path> writeRoots, List<Path> executableRoots) {
+        this(readRoots, writeRoots, executableRoots, 0);
     }
 
     /** 返回不增加运行库或缓存访问的兼容配置。 */

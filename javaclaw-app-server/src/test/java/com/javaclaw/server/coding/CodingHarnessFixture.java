@@ -123,15 +123,15 @@ final class CodingHarnessFixture implements AutoCloseable {
         var configuration =
                 TurnContractFixtures.configuration(selection, TurnContractFixtures.PROMPT_SNAPSHOT, catalog);
         var request = new TurnStartRequest(
-                thread.id(),
-                configuration,
-                base.root,
-                TurnContractFixtures.PROMPT_SNAPSHOT,
-                catalog,
-                new CorePayloads.Message(MessageRole.USER, message, List.of(), Optional.empty()),
-                Optional.empty(),
-                Optional.of(
-                        base.core.codingEnvironments().frozen(base.turn.id()).inherited()));
+                        thread.id(),
+                        configuration,
+                        base.root,
+                        TurnContractFixtures.PROMPT_SNAPSHOT,
+                        catalog,
+                        new CorePayloads.Message(MessageRole.USER, message, List.of(), Optional.empty()),
+                        Optional.empty())
+                .withCodingEnvironment(
+                        base.core.codingEnvironments().frozen(base.turn.id()).inherited());
         AgentTurn turn = base.core.startTurn(base.identity("turn/start", key, request), request);
         var frozen = base.json.decode(base.core.toolCatalogSnapshot(turn.id()), ToolCatalogSnapshot.class);
         return new TurnExecutionCommand(turn, turn.provider(), "测试固定平台指令", message, permission, frozen);

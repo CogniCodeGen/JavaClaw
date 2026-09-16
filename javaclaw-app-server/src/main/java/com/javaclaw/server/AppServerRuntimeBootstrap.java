@@ -52,12 +52,37 @@ final class AppServerRuntimeBootstrap {
             AppServerBootstrap.Foundation foundation, RuntimeDependencies dependencies, StartupCloseStack startup) {
         RuntimeResources resources = ownRuntimeResources(
                 dependencies.models(), dependencies.embeddings(), dependencies.isolatedServices(), startup);
+        bindSiteHost(foundation, dependencies.isolatedServices());
         RuntimeState state = startRuntime(foundation, dependencies, startup);
+        if (dependencies.isolatedServices() instanceof BuiltinIsolatedServices builtins) {
+            state.tools().bindTurnYield(builtins::turnYieldRequested);
+            builtins.bindTurns(state.dispatcher());
+        }
         bindDeferredPorts(foundation, state);
+        if (dependencies.isolatedServices() instanceof BuiltinIsolatedServices builtins) {
+            builtins.recoverBrowserContinuations();
+        }
         AppServerBootstrap.RuntimeAssembly runtime = assembly(foundation, dependencies.mcpPorts(), resources, state);
         AppServerBootstrap.Components result = AppServerBootstrap.components(foundation, runtime);
         startup.releaseAll();
         return result;
+    }
+
+    private static void bindSiteHost(AppServerBootstrap.Foundation foundation, IsolatedServicePort services) {
+        if (services instanceof BuiltinIsolatedServices builtins) {
+            builtins.bindSiteHost(
+                    new com.javaclaw.server.extension.SiteBrowserHostContext(
+                            foundation.database(),
+                            foundation.core(),
+                            foundation.siteAccounts(),
+                            foundation.attachments(),
+                            foundation.permissionProfiles(),
+                            foundation.providers(),
+                            foundation.inputs(),
+                            foundation.json(),
+                            foundation.clock()),
+                    foundation.privateNetworkGrants());
+        }
     }
 
     private static RuntimeState startRuntime(
@@ -336,7 +361,12 @@ final class AppServerRuntimeBootstrap {
         TurnHarnessServices services = new TurnHarnessServices(
                 models,
                 new H2ConversationContext(
-                        foundation.core(), new ProviderStateService(foundation.database()), schemas, models),
+                        foundation.core(),
+                        new ProviderStateService(foundation.database()),
+                        schemas,
+                        models,
+                        new com.javaclaw.server.turn.AttachmentModelImages(
+                                foundation.core(), foundation.attachments(), foundation.json())),
                 new BudgetContextCompactor(),
                 tools,
                 tools,

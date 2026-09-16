@@ -1,6 +1,5 @@
 package com.javaclaw.server.coding;
 
-import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -18,6 +17,7 @@ import com.javaclaw.api.ToolExecutionFact;
 import com.javaclaw.api.TurnId;
 import com.javaclaw.builtin.contracts.CodingContracts;
 import com.javaclaw.builtin.contracts.CodingResults;
+import com.javaclaw.builtin.contracts.CodingScriptContracts;
 import com.javaclaw.nativehost.network.SandboxNetworkAccess;
 import com.javaclaw.nativehost.sandbox.PlatformSandboxExecutor;
 import com.javaclaw.protocol.CanonicalJson;
@@ -78,6 +78,22 @@ final class CodingProcessManager implements AutoCloseable {
                 Map.of("npm_config_offline", "true", "PIP_NO_INDEX", "1"));
     }
 
+    CodingToolResult runScript(CodingInvocation invocation) throws Exception {
+        var input = json.decode(invocation.request().arguments(), CodingScriptContracts.ScriptRun.class);
+        var summary = new CodingContracts.CommandRun(
+                List.of("jshell", "<inline>"),
+                input.workingDirectory(),
+                input.timeoutSeconds(),
+                input.maxOutputBytes());
+        return run(invocation, summary, () -> resolver.resolveScript(invocation, input));
+    }
+
+    CodingToolResult run(
+            CodingInvocation invocation, CodingContracts.CommandRun summary, CodingCommandResolution resolution)
+            throws Exception {
+        return run(invocation, summary, SandboxNetworkAccess.offline(), Map.of(), Optional.empty(), resolution);
+    }
+
     CodingToolResult run(
             CodingInvocation invocation,
             CodingContracts.CommandRun input,
@@ -94,6 +110,23 @@ final class CodingProcessManager implements AutoCloseable {
             Map<String, String> additionalEnvironment,
             Optional<java.nio.file.Path> configuration)
             throws Exception {
+        return run(
+                invocation,
+                input,
+                network,
+                additionalEnvironment,
+                configuration,
+                () -> resolver.resolve(invocation, input, SandboxMode.BATCH));
+    }
+
+    private CodingToolResult run(
+            CodingInvocation invocation,
+            CodingContracts.CommandRun input,
+            SandboxNetworkAccess network,
+            Map<String, String> additionalEnvironment,
+            Optional<java.nio.file.Path> configuration,
+            CodingCommandResolution resolution)
+            throws Exception {
         CodingCancellation cancellation = new CodingCancellation(invocation, authority);
         Running running = new Running(invocation.turn().id(), cancellation, new CompletableFuture<>());
         register(invocation.id(), running);
@@ -102,7 +135,7 @@ final class CodingProcessManager implements AutoCloseable {
             // 先注册所有者再获取资源，使并发 finish 能取消正在解析或启动的操作。
             try (var slot = locks.acquire(
                             invocation.turn().id(), invocation.turn().executionRoot());
-                    var resolved = resolver.resolve(invocation, input, SandboxMode.BATCH)) {
+                    var resolved = resolution.resolve()) {
                 cancellation.throwIfCancelled();
                 SandboxCommand command = command(resolved.command(), additionalEnvironment);
                 CodingCommandEvidence.store(
@@ -125,13 +158,13 @@ final class CodingProcessManager implements AutoCloseable {
                     var reads = new java.util.ArrayList<>(access.readRoots());
                     reads.add(configuration.orElseThrow());
                     access = new com.javaclaw.nativehost.sandbox.SandboxRuntimeAccess(
-                            reads, access.writeRoots(), access.executableRoots());
+                            reads, access.writeRoots(), access.executableRoots(), access.standardInputBytes());
                 }
                 SandboxResult result =
                         sandbox.execute(command, resolved.permission(), cancellation, access, network, observer);
                 observer.complete(result);
                 storeOutputs(invocation, result);
-                return result(invocation, input, command, result);
+                return result(invocation, input, command, result, resolved.outputEncoding());
             }
         } catch (Exception problem) {
             failure = problem;
@@ -217,7 +250,8 @@ final class CodingProcessManager implements AutoCloseable {
             CodingInvocation invocation,
             CodingContracts.CommandRun input,
             SandboxCommand command,
-            SandboxResult result) {
+            SandboxResult result,
+            String encoding) {
         CodingResults.ProcessState state = state(result);
         var summary = new CodingResults.CommandSummary(
                 invocation.id(),
@@ -228,8 +262,8 @@ final class CodingProcessManager implements AutoCloseable {
                 result.elapsed().toMillis());
         long size = (long) result.standardOutput().length + result.standardError().length;
         var output = new CodingResults.Output(
-                new String(result.standardOutput(), StandardCharsets.UTF_8),
-                new String(result.standardError(), StandardCharsets.UTF_8),
+                new String(result.standardOutput(), java.nio.charset.Charset.forName(encoding)),
+                new String(result.standardError(), java.nio.charset.Charset.forName(encoding)),
                 size,
                 size >= Math.min(invocation.permission().resources().outputBytes(), input.maxOutputBytes()));
         var fact = new CorePayloads.Command(

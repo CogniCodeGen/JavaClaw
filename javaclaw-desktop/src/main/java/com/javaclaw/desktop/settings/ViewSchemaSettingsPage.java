@@ -6,6 +6,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.BiConsumer;
+import java.util.function.BooleanSupplier;
 
 import javafx.scene.Node;
 import javafx.scene.control.ComboBox;
@@ -13,15 +15,13 @@ import javafx.scene.layout.VBox;
 
 import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceId;
-import com.javaclaw.client.RemoteRpcException;
-import com.javaclaw.desktop.DesktopNotificationSubscription;
 import com.javaclaw.desktop.component.PlatformComponentFactory;
 import com.javaclaw.desktop.view.ViewCommandInvocation;
 import com.javaclaw.desktop.view.ViewData;
 import com.javaclaw.desktop.view.ViewGraphAction;
 import com.javaclaw.desktop.view.ViewInteractionHandler;
-import com.javaclaw.desktop.view.ViewLoadRequest;
 import com.javaclaw.desktop.view.ViewPageDirection;
+import com.javaclaw.desktop.view.ViewRenderLayout;
 import com.javaclaw.desktop.view.ViewRenderSession;
 import com.javaclaw.desktop.view.ViewRequestEpoch;
 import com.javaclaw.desktop.view.ViewSchemaPolicy;
@@ -29,14 +29,11 @@ import com.javaclaw.desktop.view.ViewSchemaRenderer;
 import com.javaclaw.extension.spi.ViewSchema;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.ExtensionRpcContracts;
-import com.javaclaw.protocol.ProtocolErrorCode;
 import com.javaclaw.protocol.ViewSchemaWireCodec;
 
 /** 在统一设置中心内承载一个内置扩展的 ViewSchema v2 页面。 */
 final class ViewSchemaSettingsPage implements ManagedSettingsPage {
     private final String extensionId;
-    private final String title;
-    private final String description;
     private final Optional<String> preferredViewId;
     private final ExtensionSettingsGateway gateway;
     private final ViewSchemaWireCodec schemas = new ViewSchemaWireCodec(new CanonicalJson());
@@ -52,15 +49,18 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
     private final ViewPageGraphQueries graphQueries;
     private final Set<String> dirtyForms = new HashSet<>();
     private final ViewPageEventState events = new ViewPageEventState();
-    private DesktopNotificationSubscription eventSubscription = () -> {};
+    private final ViewPagePresentation presentation = new ViewPagePresentation();
+    private final ViewPageTargetSelection targetSelection = new ViewPageTargetSelection();
+    private final ViewPageDocumentChoice documentChoice;
+    private final ViewPageEventSubscription eventSubscription;
     private Optional<WorkspaceId> workspaceId = Optional.empty();
     private ExtensionRpcContracts.ViewDocument document;
     private ViewSchema schema;
     private ViewData data = ViewData.empty();
     private Node rendered;
     private ViewRenderSession renderSession;
-    private boolean restoringDocument;
     private boolean commandPending;
+    private long commandEpoch;
     private boolean refreshPending;
     private boolean catalogPending;
     private boolean active;
@@ -76,20 +76,23 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
             String preferredViewId,
             ExtensionSettingsGateway gateway) {
         this.extensionId = ViewSchemaPageFailures.requireText(extensionId, "extensionId");
-        this.title = ViewSchemaPageFailures.requireText(title, "title");
-        this.description = ViewSchemaPageFailures.requireText(description, "description");
+        ViewSchemaPageFailures.requireText(title, "title");
+        ViewSchemaPageFailures.requireText(description, "description");
         this.preferredViewId = Optional.ofNullable(preferredViewId)
                 .map(value -> ViewSchemaPageFailures.requireText(value, "preferredViewId"));
         this.gateway = Objects.requireNonNull(gateway, "gateway");
-        graphQueries = new ViewPageGraphQueries(gateway, requests, loads);
-        configureDocumentChoice();
+        eventSubscription =
+                new ViewPageEventSubscription(gateway, extensionId, this::extensionChanged, this::invalidateCache);
+        graphQueries = new ViewPageGraphQueries(gateway, requests, loads, body, cache);
+        documentChoice = new ViewPageDocumentChoice(documents, title, schemas, this::changeDocument);
         root = ViewSchemaPageLayout.create(title, description, documents, body);
+        body.bindDraftActions(() -> rendered, this::discardDraft);
         ViewPageReconciler.install(
                 root,
                 () -> active
                         && workspaceId.isPresent()
-                        && !commandPending
-                        && !dirty()
+                        && !operationPending()
+                        && !hasDraft()
                         && !loads.pending()
                         && !catalogPending,
                 this::refreshAuthoritativeState);
@@ -103,19 +106,20 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
     @Override
     public void activate() {
         active = true;
+        eventSubscription.activate();
         Optional.ofNullable(renderSession).ifPresent(ViewRenderSession::resume);
         if (workspaceId.isEmpty()) {
-            showScopeRequired();
+            body.showScopeRequired();
             return;
         }
-        if (commandPending || catalogPending || loads.pending()) {
+        if (operationPending() || catalogPending || loads.pending()) {
             return;
         }
         if (refreshPending) {
             refreshAfterEvent();
             return;
         }
-        if (cache.fresh() || dirty()) {
+        if (cache.fresh() || hasDraft()) {
             return;
         }
         refreshAuthoritativeState();
@@ -124,10 +128,11 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
     @Override
     public void deactivate() {
         active = false;
+        eventSubscription.deactivate();
         Optional.ofNullable(renderSession).ifPresent(ViewRenderSession::suspend);
         if (!commandPending) {
             cancelLoad();
-            renderer.cancelUploads(rendered);
+            cancelUploads();
         }
     }
 
@@ -158,58 +163,55 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
         if (workspaceId.equals(next)) {
             return;
         }
-        eventSubscription.close();
-        eventSubscription = () -> {};
+        eventSubscription.clear();
         workspaceId = next;
         invalidateCache();
         cancelLoad();
-        renderer.cancelUploads(rendered);
-        if (dirty()) {
+        cancelUploads();
+        if (hasDraft()) {
             documents.setDisable(true);
-            showDraftOverlay("工作区已不可用", "当前草稿已保留，不会发送到其他工作区。", false);
+            body.showPageDraftOverlay("工作区已不可用", "当前草稿已保留，不会发送到其他工作区。", false);
             return;
         }
         resetCatalog();
-        next.ifPresent(value -> eventSubscription = gateway.subscribe(value, extensionId, this::extensionChanged));
+        eventSubscription.workspaceChanged(next);
         if (active) {
             if (next.isPresent()) {
                 refreshAuthoritativeState();
             } else {
-                showScopeRequired();
+                body.showScopeRequired();
             }
         }
     }
 
     @Override
     public void warnUnsavedChanges() {
-        showDraftOverlay("页面存在未保存草稿", "请继续编辑，或丢弃草稿并读取服务端最新状态。", true);
+        body.showPageDraftOverlay("页面存在未保存草稿", "请继续编辑，或丢弃草稿并读取服务端最新状态。", true);
     }
 
     @Override
     public void discardDraft() {
+        if (operationPending()) {
+            return;
+        }
+        presentation.discard();
         dirtyForms.clear();
-        refreshPending = false;
-        reload();
+        presentation.changed();
+        if (workspaceId.isPresent()) {
+            reload();
+        } else {
+            resetCatalog();
+            body.showScopeRequired();
+        }
     }
 
     @Override
     public void dispose() {
         active = false;
         cancelLoad();
-        renderer.cancelUploads(rendered);
+        cancelUploads();
         eventSubscription.close();
         closeRenderSession();
-    }
-
-    /**
-     * 在扩展选择器之前插入平台拥有的强类型设置分区。
-     *
-     * <p>该入口只用于 Secret 等不能由 ViewSchema 承载的平台能力，扩展仍不能注入 JavaFX Controller。
-     *
-     * @param section 平台实现的设置节点
-     */
-    void addPlatformSection(Node section) {
-        root.getChildren().add(2, Objects.requireNonNull(section, "section"));
     }
 
     /** 平台侧资源变更后重新读取当前 Site 扩展的权威投影；已有草稿不会被覆盖。 */
@@ -218,20 +220,6 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
         if (active && !commandPending) {
             refreshAfterEvent();
         }
-    }
-
-    private void configureDocumentChoice() {
-        documents.setMaxWidth(Double.MAX_VALUE);
-        documents.setAccessibleText(title + "页面选择");
-        documents.setCellFactory(ignored -> components.detailCell(
-                value -> ViewSchemaPageFailures.documentLabel(value, schemas),
-                ExtensionRpcContracts.ViewDocument::viewId));
-        documents.setButtonCell(components.textCell(value -> ViewSchemaPageFailures.documentLabel(value, schemas)));
-        documents.valueProperty().addListener((observable, previous, selected) -> {
-            if (!restoringDocument && selected != null && !selected.equals(previous)) {
-                changeDocument(previous, selected);
-            }
-        });
     }
 
     private void loadCatalog() {
@@ -250,6 +238,7 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
             return;
         }
         catalogPending = false;
+        presentation.changed();
         if (failure != null) {
             body.showRetry("扩展页面目录读取失败", ViewSchemaPageFailures.detail(failure), this::loadCatalog);
             return;
@@ -259,39 +248,22 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
     }
 
     private void applyCatalog(List<ExtensionRpcContracts.ViewDocument> loaded) {
-        List<ExtensionRpcContracts.ViewDocument> available = List.copyOf(loaded).stream()
-                .filter(candidate -> extensionId.equals(candidate.extensionId()))
-                .sorted(java.util.Comparator.comparing(ExtensionRpcContracts.ViewDocument::viewId))
-                .toList();
-        documents.getItems().setAll(available);
+        List<ExtensionRpcContracts.ViewDocument> available = documentChoice.available(
+                loaded, extensionId, presentation.layout() == null ? Optional.empty() : preferredViewId);
         if (available.isEmpty()) {
-            resetPageState();
-            document = null;
-            schema = null;
-            documents.setDisable(true);
+            resetCatalog();
             body.showEmpty("扩展当前不可用", "该内置扩展未启用、尚未提供第 2 版页面定义，或当前工作区不可访问。");
             cache.loaded();
             return;
         }
         documents.setDisable(commandPending);
-        ExtensionRpcContracts.ViewDocument preferred = Optional.ofNullable(document)
-                .map(ExtensionRpcContracts.ViewDocument::viewId)
-                .or(() -> preferredViewId)
-                .flatMap(viewId -> available.stream()
-                        .filter(candidate -> candidate.viewId().equals(viewId))
-                        .findFirst())
-                .orElse(available.getFirst());
-        selectDocument(preferred);
+        selectDocument(documentChoice.preferred(available, document, preferredViewId));
     }
 
     private void changeDocument(
             ExtensionRpcContracts.ViewDocument previous, ExtensionRpcContracts.ViewDocument selected) {
-        if (commandPending) {
-            restoreDocument(previous);
-            return;
-        }
-        if (!canDiscardDraft()) {
-            restoreDocument(previous);
+        if (!confirmContextChange()) {
+            documentChoice.select(previous);
             return;
         }
         dirtyForms.clear();
@@ -301,18 +273,19 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
     private void selectDocument(ExtensionRpcContracts.ViewDocument selected) {
         cancelLoad();
         cache.loading();
-        resetPageState();
-        schema = null;
         try {
+            ViewSchema next = ViewSchemaPolicy.requireSupported(schemas.decode(selected.schema()));
+            if (presentation.layout() == null || !next.equals(schema)) {
+                resetPageState();
+            }
             document = Objects.requireNonNull(selected, "selected");
-            schema = ViewSchemaPolicy.requireSupported(schemas.decode(selected.schema()));
-            restoringDocument = true;
-            documents.setValue(selected);
-            restoringDocument = false;
-            body.showLoading("正在读取页面权威数据");
+            schema = next;
+            documentChoice.select(selected);
+            body.showLoading(rendered, "正在读取页面权威数据");
             load(false);
         } catch (RuntimeException failure) {
-            restoringDocument = false;
+            resetPageState();
+            schema = null;
             body.showFatal("页面无法渲染", ViewSchemaPageFailures.detail(failure));
         }
     }
@@ -320,9 +293,14 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
     private void load(boolean automatic) {
         cache.loading();
         var request = loads.begin(requests.begin(), automatic);
+        presentation.changed();
         ExtensionRpcContracts.ViewDocument selected = Objects.requireNonNull(document, "document");
         ViewSchema selectedSchema = Objects.requireNonNull(schema, "schema");
-        gateway.load(requireWorkspaceId(), selected, selectedSchema, loadRequest())
+        gateway.load(
+                        requireWorkspaceId(),
+                        selected,
+                        selectedSchema,
+                        navigation.request(renderSession == null ? Map.of() : renderSession.graphWindows()))
                 .whenComplete(
                         (loaded, failure) -> FxStateDispatcher.dispatch(() -> completeLoad(request, loaded, failure)));
     }
@@ -331,7 +309,7 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
         if (!requests.isCurrent(request.epoch())) {
             return;
         }
-        if (!loads.complete(request, dirty())) {
+        if (!loads.complete(request, hasDraft() || presentation.pending())) {
             refreshPending = true;
             return;
         }
@@ -341,6 +319,15 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
             } else {
                 body.showRetry("页面数据读取失败", ViewSchemaPageFailures.detail(failure), this::reload);
             }
+            return;
+        }
+        try {
+            if (targetSelection.advance(loaded, navigation)) {
+                load(false);
+                return;
+            }
+        } catch (RuntimeException invalidPage) {
+            body.showRetry("无法定位所选条目", ViewSchemaPageFailures.detail(invalidPage), this::reload);
             return;
         }
         applyLoaded(loaded);
@@ -355,15 +342,17 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
             return;
         }
         ViewPageFocus focus = ViewPageFocus.capture(rendered);
-        renderer.cancelUploads(rendered);
+        cancelUploads();
         data = Objects.requireNonNull(loaded, "loaded");
         dirtyForms.clear();
         if (renderSession == null || !renderSession.accepts(schema)) {
             closeRenderSession();
-            renderSession = new ViewRenderSession(Objects.requireNonNull(schema, "schema"), renderer);
+            renderSession =
+                    new ViewRenderSession(Objects.requireNonNull(schema, "schema"), renderer, presentation.layout());
         }
         renderSession.apply(data, interactions());
         loads.applied();
+        presentation.changed();
         rendered = renderSession.node();
         body.showContent(rendered);
         Optional.ofNullable(focus).ifPresent(value -> value.restore(rendered));
@@ -387,37 +376,31 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
         } else {
             dirtyForms.remove(formId);
         }
+        presentation.changed();
     }
 
     private void browseGraph(ViewGraphAction action) {
-        if (commandPending || renderSession == null || !canDiscardDraft()) {
+        if (renderSession == null || !confirmContextChange()) {
             return;
         }
         dirtyForms.clear();
-        ViewRenderSession owner = renderSession;
         loads.edited();
-        try {
-            if (action.filter().isPresent()) {
-                owner.filterGraph(action);
-                reload();
-                return;
-            }
-            cache.loading();
-            body.showLoading(rendered, "正在读取所选节点的邻居");
-            graphQueries.load(requireWorkspaceId(), extensionId, owner, action, failure -> {
-                if (failure == null) {
-                    reload();
-                } else {
-                    showDraftOverlay("图谱浏览未完成", ViewSchemaPageFailures.detail(failure), false);
-                }
-            });
-        } catch (RuntimeException failure) {
-            showDraftOverlay("图谱浏览未完成", ViewSchemaPageFailures.detail(failure), false);
-        }
+        graphQueries.browse(
+                requireWorkspaceId(),
+                extensionId,
+                renderSession,
+                action,
+                rendered,
+                this::reload,
+                failure -> body.showPageDraftOverlay("图谱浏览未完成", ViewSchemaPageFailures.detail(failure), false));
     }
 
-    private void executeCommand(ViewCommandInvocation invocation) {
-        if (commandPending) {
+    private void executeCommand(Optional<String> formId, ViewCommandInvocation invocation) {
+        if (operationPending()) {
+            return;
+        }
+        if (!presentation.commandAllowed(schema, dirtyForms, formId, invocation)) {
+            body.showPageDraftOverlay("其他分区存在未保存草稿", "请先保存或放弃其他分区的修改，再执行此操作。", true);
             return;
         }
         if (invocation.dangerous() && !ViewSchemaConfirmation.dangerous(root, invocation.operation())) {
@@ -425,8 +408,10 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
         }
         cancelLoad();
         commandPending = true;
+        presentation.changed();
         documents.setDisable(true);
         long epoch = requests.begin();
+        commandEpoch = epoch;
         body.showPending(rendered, invocation.operation());
         gateway.execute(requireWorkspaceId(), extensionId, invocation)
                 .whenComplete((result, failure) ->
@@ -435,8 +420,12 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
 
     private void completeCommand(
             long epoch, ViewCommandInvocation invocation, ExtensionRpcContracts.CallResult result, Throwable failure) {
+        if (commandEpoch != epoch) {
+            return;
+        }
         commandPending = false;
         documents.setDisable(documents.getItems().isEmpty());
+        presentation.changed();
         if (!requests.isCurrent(epoch)) {
             return;
         }
@@ -444,47 +433,38 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
             dirtyForms.clear();
             events.completed(invocation.operation(), result.revision());
             refreshPending = true;
+            presentation.succeeded(invocation, result);
+            presentation.changed();
             refreshAfterEvent();
         } else {
-            commandFailed(failure);
-        }
-    }
-
-    private void commandFailed(Throwable failure) {
-        Throwable cause = ViewSchemaPageFailures.unwrap(failure);
-        if (cause instanceof RemoteRpcException remote && remote.code() == ProtocolErrorCode.REVISION_CONFLICT) {
-            showDraftOverlay("内容已被其他操作更新", "当前草稿仍保留。重新加载会丢弃草稿并读取最新版本。", true);
-        } else {
-            showDraftOverlay("操作未完成", ViewSchemaPageFailures.detail(cause), false);
+            body.showCommandFailure(rendered, failure, () -> body.restoreContent(rendered), this::discardDraft);
         }
     }
 
     private void changePageFromUser(String sourceId, ViewPageDirection direction) {
-        if (canDiscardDraft()) {
-            dirtyForms.clear();
-            changePage(sourceId, direction);
-        }
-    }
-
-    private void changePage(String sourceId, ViewPageDirection direction) {
-        if (navigation.move(sourceId, data.source(sourceId), direction)) {
+        if (confirmContextChange() && navigation.move(sourceId, data.source(sourceId), direction)) {
             reload();
         }
     }
 
-    private void changeSelection(String sourceId, Optional<String> selectedKey) {
-        String previous = navigation.selections.get(sourceId);
+    private boolean changeSelection(String sourceId, Optional<String> selectedKey) {
+        String previous = navigation.selections.getOrDefault(
+                sourceId, data.source(sourceId).selectedKey().orElse(""));
         String next = selectedKey.orElse("");
-        if (Objects.equals(previous, next) || !canDiscardDraft()) {
-            return;
+        if (Objects.equals(previous, next)) {
+            return true;
+        }
+        if (!confirmContextChange()) {
+            return false;
         }
         navigation.selections.put(sourceId, next);
-        dirtyForms.clear();
+        targetSelection.clear();
         reload();
+        return true;
     }
 
     private void reloadFromUser() {
-        if (canDiscardDraft()) {
+        if (confirmContextChange()) {
             dirtyForms.clear();
             reload();
         }
@@ -496,7 +476,7 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
             loadCatalog();
             return;
         }
-        renderer.cancelUploads(rendered);
+        cancelUploads();
         body.showLoading(rendered, "正在读取页面权威数据");
         load(false);
     }
@@ -512,11 +492,11 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
     }
 
     private void refreshAfterEvent() {
-        if (!refreshPending || !active || commandPending || loads.pending() || catalogPending) {
+        if (!refreshPending || !active || operationPending() || loads.pending() || catalogPending) {
             return;
         }
-        if (dirty()) {
-            showDraftOverlay("服务端状态已经更新", "当前草稿仍保留，页面不会自动覆盖。丢弃草稿后将重新读取权威状态。", true);
+        if (hasDraft()) {
+            body.showPageDraftOverlay("服务端状态已经更新", "当前草稿仍保留，页面不会自动覆盖。丢弃草稿后将重新读取权威状态。", true);
             return;
         }
         if (cache.requiresCatalog() || rendered == null || body.interactionBlocked()) {
@@ -527,21 +507,19 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
         }
     }
 
-    private ViewLoadRequest loadRequest() {
-        return navigation.request(renderSession == null ? Map.of() : renderSession.graphWindows());
-    }
-
     private void cancelLoad() {
         requests.cancel();
         loads.cancel();
         catalogPending = false;
         body.restoreInteraction();
+        presentation.changed();
     }
 
     private void resetPageState() {
-        renderer.cancelUploads(rendered);
+        cancelUploads();
         closeRenderSession();
         navigation.clear();
+        targetSelection.clear();
         data = ViewData.empty();
         rendered = null;
     }
@@ -555,45 +533,68 @@ final class ViewSchemaSettingsPage implements ManagedSettingsPage {
         resetPageState();
         document = null;
         schema = null;
-        restoringDocument = true;
-        try {
-            documents.getItems().clear();
-            documents.setValue(null);
-            documents.setDisable(true);
-        } finally {
-            restoringDocument = false;
-        }
+        documentChoice.clear();
     }
 
     private WorkspaceId requireWorkspaceId() {
         return workspaceId.orElseThrow(() -> new IllegalStateException("请先在设置中心选择工作区"));
     }
 
-    private void showScopeRequired() {
-        body.showEmpty("请选择工作区", "扩展页面只会读写设置中心顶部固定的工作区。");
+    /** 配置平台拥有的固定页面布局；只能在首次加载前调用。 */
+    void configurePresentation(
+            ViewRenderLayout layout,
+            BooleanSupplier externalDirty,
+            BooleanSupplier externalPending,
+            Runnable discardExternal) {
+        presentation.configure(
+                layout, externalDirty, externalPending, discardExternal, document == null && renderSession == null);
+        eventSubscription.visibleOnly(preferredViewId.isPresent());
+        ViewSchemaPageLayout.hideSelector(root, preferredViewId.isPresent());
     }
 
-    private void showDraftOverlay(String heading, String detail, boolean offerReload) {
-        body.showDraftOverlay(
-                rendered, heading, detail, this::restoreRendered, offerReload ? this::discardDraft : null);
+    /** 聚合本页与平台分区状态；确认放弃后才允许改变当前编辑上下文。 */
+    boolean confirmContextChange() {
+        return presentation.confirm(root, pending() || catalogPending || loads.pending(), dirty(), () -> {
+            dirtyForms.clear();
+            loads.edited();
+            if (renderSession != null) {
+                applyLoaded(data);
+            }
+        });
     }
 
-    private void restoreRendered() {
-        if (rendered != null) {
-            body.showContent(rendered);
+    /** 从权威分页中定位目标行；命令成功回调内只登记目标，由统一刷新启动查询。 */
+    boolean selectSource(String sourceId, Optional<String> selectedKey) {
+        if (schema == null || !confirmContextChange()) {
+            return false;
         }
-    }
-
-    private boolean canDiscardDraft() {
-        return !dirty() || ViewSchemaConfirmation.discard(root);
-    }
-
-    private void restoreDocument(ExtensionRpcContracts.ViewDocument previous) {
-        restoringDocument = true;
-        try {
-            documents.setValue(previous);
-        } finally {
-            restoringDocument = false;
+        targetSelection.begin(schema, navigation, sourceId, selectedKey);
+        refreshPending = true;
+        if (!presentation.completing()) {
+            reload();
         }
+        return true;
+    }
+
+    /** 在本次命令清除 pending 和草稿后、权威刷新前通知平台壳。 */
+    void onCommandSucceeded(BiConsumer<ViewCommandInvocation, ExtensionRpcContracts.CallResult> listener) {
+        presentation.onSucceeded(listener);
+    }
+
+    /** 本地草稿或请求状态变化时更新平台动作；监听器不能提交业务操作。 */
+    void onStateChanged(Runnable listener) {
+        presentation.onChanged(listener);
+    }
+
+    private boolean hasDraft() {
+        return dirty() || presentation.dirty();
+    }
+
+    private boolean operationPending() {
+        return pending() || presentation.pending();
+    }
+
+    private void cancelUploads() {
+        Optional.ofNullable(renderSession).ifPresent(ViewRenderSession::cancelUploads);
     }
 }

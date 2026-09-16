@@ -3,15 +3,36 @@ package com.javaclaw.server.turn;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 
+import com.javaclaw.api.CoreTools;
 import com.javaclaw.api.PermissionProfile;
+import com.javaclaw.api.ToolCallRequest;
+import com.javaclaw.api.ToolCallResult;
+import com.javaclaw.api.ToolCatalogSnapshot;
 import com.javaclaw.api.ToolDescriptor;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.ToolRpcContracts;
+import com.javaclaw.runtime.ToolExecutionOutcome;
 
 /** 工具目录的稳定搜索和版本计算；不读取扩展或权限状态。 */
 final class ToolCatalogQueries {
     private ToolCatalogQueries() {}
+
+    static ToolExecutionOutcome searchFrozen(
+            CanonicalJson json, ToolCallRequest request, ToolCatalogSnapshot snapshot) {
+        ToolRpcContracts.SearchArguments arguments =
+                json.decode(request.arguments(), ToolRpcContracts.SearchArguments.class);
+        List<ToolDescriptor> found = search(snapshot.tools(), arguments).stream()
+                .filter(tool -> !tool.identity().equals(CoreTools.search().identity()))
+                .toList();
+        ToolCallResult result = new ToolCallResult(
+                request.callId(),
+                true,
+                json.encode(new ToolRpcContracts.SearchResult(snapshot.catalogRevision(), found)),
+                Optional.empty());
+        return new ToolExecutionOutcome(result, found);
+    }
 
     /** @return 名称、说明或标签匹配的有界稳定切片 */
     static List<ToolDescriptor> search(List<ToolDescriptor> tools, ToolRpcContracts.SearchArguments arguments) {

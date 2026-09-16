@@ -10,9 +10,7 @@ import com.javaclaw.api.AgentTurn;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.ConversationThread;
 import com.javaclaw.api.CorePayloads;
-import com.javaclaw.api.CoreSchemas;
 import com.javaclaw.api.ItemEnvelope;
-import com.javaclaw.api.ItemStatus;
 import com.javaclaw.api.ThreadExecutionIntent;
 import com.javaclaw.api.ThreadId;
 import com.javaclaw.api.TurnId;
@@ -20,7 +18,6 @@ import com.javaclaw.api.UnattendedExecutionScope;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.api.WorkspaceInstructionSettings;
-import com.javaclaw.api.WorkspaceLifecycle;
 import com.javaclaw.protocol.CanonicalJson;
 
 /** Workspace、Thread 与 Turn 的精简命令/查询服务。 */
@@ -43,6 +40,7 @@ public final class CoreCommandService {
     private final ChildTurnService childTurns;
     private final ConversationContextService contexts;
     private final CodingEnvironmentService codingEnvironments;
+    private final CodingSystemService systemCommands;
     private final WorkspaceSecurityRepository workspaceSecurity;
 
     /**
@@ -60,6 +58,7 @@ public final class CoreCommandService {
         childTurns = new ChildTurnService(database, liveBudgets, json, clock);
         contexts = new ConversationContextService(database, json);
         codingEnvironments = new CodingEnvironmentService(database, json, clock);
+        systemCommands = new CodingSystemService(database, json, clock);
         workspaceSecurity = new WorkspaceSecurityRepository(database, json, clock);
     }
 
@@ -71,6 +70,11 @@ public final class CoreCommandService {
     /** @return 项目声明准备与内部精确工具链快照服务 */
     public CodingEnvironmentService codingEnvironments() {
         return codingEnvironments;
+    }
+
+    /** @return 系统程序登记与冻结目录；配置本身不授予执行权限 */
+    public CodingSystemService systemCommands() {
+        return systemCommands;
     }
 
     /** @return 服务端冻结窗口与政策查询边界 */
@@ -226,7 +230,7 @@ public final class CoreCommandService {
             String title) {
         Objects.requireNonNull(identity, "identity").requireCreate();
         return idempotent(identity, ConversationThread.class, connection -> {
-            requireActiveWorkspace(connection, workspaceId);
+            workspaces.requireActive(connection, workspaceId);
             threads.validateParent(connection, workspaceId, parentId);
             return threads.insert(connection, workspaceId, parentId, executionIntent, title, clock.instant());
         });
@@ -298,8 +302,8 @@ public final class CoreCommandService {
                 return existing.orElseThrow();
             }
             // 原生读取不持有 H2 连接；同一幂等身份仍串行，提交时再次恢复持久响应。
-            TurnStartRequest prepared = workspaceSecurity.prepare(
-                    workspaceForThread(request.threadId()).id(), request, codingEnvironments);
+            TurnStartRequest prepared = systemCommands.prepare(workspaceSecurity.prepare(
+                    workspaceForThread(request.threadId()).id(), request, codingEnvironments));
             return idempotent(
                     identity,
                     AgentTurn.class,
@@ -435,12 +439,19 @@ public final class CoreCommandService {
      * @return 冻结用户消息
      */
     public CorePayloads.Message turnUserMessage(TurnId turnId) {
-        TurnId checked = Objects.requireNonNull(turnId, "turnId");
-        return execute(connection -> items.listByTurnAndSchema(connection, checked, CoreSchemas.MESSAGE).stream()
-                .map(item -> json.decode(item.payload(), CorePayloads.Message.class))
-                .filter(message -> message.role() == com.javaclaw.api.MessageRole.USER)
-                .findFirst()
-                .orElseThrow(() -> new PersistenceException("Turn 缺少创建时用户消息")));
+        return execute(
+                connection -> TurnInputMessages.user(connection, Objects.requireNonNull(turnId, "turnId"), json));
+    }
+
+    /**
+     * 查找实际拥有原始用户输入 Item 的 Turn；普通 Turn 返回自身。
+     *
+     * @param turnId 当前或已结束的 Turn
+     * @return 同 Thread 内的权威原始输入 Turn
+     */
+    public TurnId originalInputTurn(TurnId turnId) {
+        return execute(connection ->
+                TurnContinuationRepository.originalInputTurn(connection, Objects.requireNonNull(turnId, "turnId")));
     }
 
     /**
@@ -450,14 +461,8 @@ public final class CoreCommandService {
      * @return 最近完成的助手消息；未生成时为空
      */
     public Optional<CorePayloads.Message> turnAssistantMessage(TurnId turnId) {
-        return execute(connection ->
-                items
-                        .listByTurnAndSchema(connection, Objects.requireNonNull(turnId, "turnId"), CoreSchemas.MESSAGE)
-                        .stream()
-                        .filter(item -> item.status() == ItemStatus.COMPLETED)
-                        .map(item -> json.decode(item.payload(), CorePayloads.Message.class))
-                        .filter(message -> message.role() == com.javaclaw.api.MessageRole.ASSISTANT)
-                        .reduce((previous, current) -> current));
+        return execute(
+                connection -> TurnInputMessages.assistant(connection, Objects.requireNonNull(turnId, "turnId"), json));
     }
 
     /**
@@ -541,16 +546,6 @@ public final class CoreCommandService {
             }
             return update.apply(new LockedWorkspace(connection, current));
         });
-    }
-
-    private void requireActiveWorkspace(java.sql.Connection connection, WorkspaceId workspaceId)
-            throws java.sql.SQLException {
-        Workspace workspace = workspaces
-                .find(connection, Objects.requireNonNull(workspaceId, "workspaceId"))
-                .orElseThrow(() -> PersistenceException.invalidRequest("Workspace 不存在"));
-        if (workspace.lifecycle() != WorkspaceLifecycle.ACTIVE) {
-            throw PersistenceException.invalidRequest("已归档 Workspace 不能创建新 Thread");
-        }
     }
 
     private <T> T idempotent(CommandIdentity identity, Class<T> resultType, H2Transactions.SqlWork<T> work) {

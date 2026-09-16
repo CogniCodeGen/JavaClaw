@@ -37,6 +37,43 @@ final class MacSandboxCommandBuilder implements SandboxCommandBuilder {
                 name(), SandboxHelperCommand.wrap(command, isolated), command.environment(), 0, false);
     }
 
+    SandboxLaunchPlan buildInteractive(ValidatedSandboxCommand command) {
+        if (!Files.isExecutable(SANDBOX_EXEC)) {
+            throw new UnsupportedOperationException("macOS sandbox-exec is unavailable");
+        }
+        List<String> isolated = new ArrayList<>(List.of(SANDBOX_EXEC.toString(), "-p", interactiveProfile(command)));
+        isolated.addAll(command.argv());
+        return new SandboxLaunchPlan(
+                name(), SandboxHelperCommand.wrap(command, isolated), command.environment(), 0, false);
+    }
+
+    static String interactiveProfile(ValidatedSandboxCommand command) {
+        if (command.writeRoots().size() != 1 || !command.allowDelete()) {
+            throw new SecurityException("Interactive Worker requires an exclusive private scratch root");
+        }
+        StringBuilder result = new StringBuilder(profile(command).replace("(deny network*)\n", ""));
+        result.append("(allow mach-lookup (global-name \"com.apple.windowserver.active\")")
+                .append(" (global-name \"com.apple.coreservices.launchservicesd\"))\n");
+        // 仅供已安装独占 bootstrap namespace 的监护链使用；不允许全局 Mach 名称前缀。
+        result.append("(allow mach-register mach-lookup")
+                .append(" (local-name-prefix \"org.chromium.Chromium.MachPortRendezvousServer.\"))\n");
+        result.append("(allow iokit-open-service (iokit-registry-entry-class \"IOPMrootDomain\"))\n")
+                .append("(allow iokit-open-user-client (iokit-user-client-class \"RootDomainUserClient\"))\n");
+        appendPaths(result, "network-bind", command.writeRoots());
+        for (Path root : command.writeRoots()) {
+            appendUnixConnection(result, root);
+            macOsPathAlias(root).ifPresent(alias -> appendUnixConnection(result, alias));
+        }
+        return result.toString();
+    }
+
+    private static void appendUnixConnection(StringBuilder profile, Path root) {
+        // Seatbelt 使用路径 filter 匹配 Unix socket；remote 仅适用于 TCP/UDP endpoint。
+        profile.append("(allow network-inbound network-outbound (subpath \"")
+                .append(escape(root))
+                .append("\"))\n");
+    }
+
     @Override
     public String name() {
         return "macos-seatbelt";

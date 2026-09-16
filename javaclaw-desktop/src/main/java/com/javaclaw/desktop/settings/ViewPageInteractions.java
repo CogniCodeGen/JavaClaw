@@ -3,6 +3,7 @@ package com.javaclaw.desktop.settings;
 import java.util.Optional;
 import java.util.concurrent.CompletionStage;
 import java.util.function.BiConsumer;
+import java.util.function.BiPredicate;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -16,10 +17,10 @@ import com.javaclaw.desktop.view.ViewPageDirection;
 /** 将受限页面交互交回页面所有者；不持有 SDK、工作区或额外业务状态。 */
 record ViewPageInteractions(
         BiConsumer<String, Boolean> dirtyAction,
-        Consumer<ViewCommandInvocation> commandAction,
+        BiConsumer<Optional<String>, ViewCommandInvocation> commandAction,
         Runnable reloadAction,
         BiConsumer<String, ViewPageDirection> pageAction,
-        BiConsumer<String, Optional<String>> selectionAction,
+        BiPredicate<String, Optional<String>> selectionAction,
         Function<ViewAttachmentUploadRequest, CompletionStage<AttachmentRef>> uploadAction,
         Consumer<ViewGraphAction> graphAction)
         implements ViewInteractionHandler {
@@ -30,7 +31,12 @@ record ViewPageInteractions(
 
     @Override
     public void execute(ViewCommandInvocation invocation) {
-        commandAction.accept(invocation);
+        commandAction.accept(Optional.empty(), invocation);
+    }
+
+    @Override
+    public void executeForm(String formId, ViewCommandInvocation invocation) {
+        commandAction.accept(Optional.of(formId), invocation);
     }
 
     @Override
@@ -45,7 +51,12 @@ record ViewPageInteractions(
 
     @Override
     public void select(String sourceId, Optional<String> selectedKey) {
-        selectionAction.accept(sourceId, selectedKey);
+        selectionAction.test(sourceId, selectedKey);
+    }
+
+    @Override
+    public boolean selectRequested(String sourceId, Optional<String> selectedKey) {
+        return selectionAction.test(sourceId, selectedKey);
     }
 
     @Override

@@ -42,6 +42,7 @@ final class SiteCredentialSettingsSection {
     private final DangerZone clearZone;
     private SiteCredentialSettingsState state = SiteCredentialSettingsState.initial();
     private boolean rendering;
+    private Runnable stateChanged = () -> {};
 
     SiteCredentialSettingsSection(CoreSettingsGateway gateway, Runnable authorityRefresh) {
         presenter = new SiteCredentialSettingsPresenter(gateway, authorityRefresh);
@@ -56,7 +57,11 @@ final class SiteCredentialSettingsSection {
                 ignored -> CLEAR_CONFIRMATION.equals(clearConfirmation.getText()),
                 this::clear);
         configure();
-        presenter.subscribe(this::render);
+        presenter.subscribe(snapshot -> FxStateDispatcher.dispatch(() -> {
+            if (snapshot.epoch() == presenter.state().epoch()) {
+                render(snapshot);
+            }
+        }));
     }
 
     Node content() {
@@ -65,6 +70,15 @@ final class SiteCredentialSettingsSection {
 
     void activate() {
         presenter.reload();
+    }
+
+    void deactivate() {
+        discardDraft();
+        presenter.deactivate();
+    }
+
+    void setStateChanged(Runnable listener) {
+        stateChanged = Objects.requireNonNull(listener, "listener");
     }
 
     boolean dirty() {
@@ -94,7 +108,7 @@ final class SiteCredentialSettingsSection {
         secret.textProperty().addListener((ignored, previous, value) -> updateActions());
         clearConfirmation.textProperty().addListener((ignored, previous, value) -> updateActions());
 
-        FormSection catalog = new FormSection("网站 HTTP 凭据", "只显示网站凭据的不透明标识、版本和更新时间；密钥永远不能读取、复制或导出。");
+        FormSection catalog = new FormSection("共享 HTTP 凭据", "这里管理网站共用的凭据库；绑定在各网站的高级配置中完成。密钥不能读取、复制或导出。");
         catalog.addField("凭据", credentials);
         catalog.addField("凭据引用", reference);
         catalog.addField("版本", revision);
@@ -118,6 +132,13 @@ final class SiteCredentialSettingsSection {
         credentials.setButtonCell(components.textCell(this::credentialLabel));
         credentials.valueProperty().addListener((ignored, previous, selected) -> {
             if (!rendering && selected != null && !selected.equals(previous)) {
+                if (pending() || (dirty() && !ViewSchemaConfirmation.discard(root))) {
+                    rendering = true;
+                    credentials.setValue(previous);
+                    rendering = false;
+                    return;
+                }
+                secret.clear();
                 clearConfirmation.clear();
                 presenter.select(selected);
             }
@@ -147,8 +168,10 @@ final class SiteCredentialSettingsSection {
         boolean pending = pending();
         boolean selected = state.selected().isPresent();
         boolean hasSecret = !secret.getText().isEmpty();
-        refresh.setDisable(pending);
+        refresh.setDisable(pending || dirty());
         credentials.setDisable(pending || state.credentials().isEmpty());
+        secret.setDisable(pending);
+        clearConfirmation.setDisable(pending);
         create.setDisable(pending || !hasSecret);
         rotate.setDisable(pending || !selected || !hasSecret);
         clearZone.setActionDisabled(pending || !selected || !CLEAR_CONFIRMATION.equals(clearConfirmation.getText()));
@@ -162,6 +185,7 @@ final class SiteCredentialSettingsSection {
             ActionState result = state.message().isBlank() ? ActionState.IDLE : ActionState.SUCCESS;
             actions.show(result, state.message());
         }
+        stateChanged.run();
     }
 
     private void create() {

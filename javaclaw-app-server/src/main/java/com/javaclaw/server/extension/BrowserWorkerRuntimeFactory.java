@@ -22,6 +22,7 @@ final class BrowserWorkerRuntimeFactory {
     private static final Duration TIMEOUT = Duration.ofSeconds(45);
     private static final Duration WORKER_LIFETIME = Duration.ofMinutes(10);
     private static final String LOGIN_CAPABILITY_FILE = "browser-login-v1.capability";
+    private static final String INTERACTIVE_CAPABILITY_FILE = "browser-interactive-v1.capability";
     private static final String OAUTH_CAPABILITY_FILE = "browser-oauth-v1.capability";
     private static final String IMAGE_CAPABILITY_FILE = "worker-image-v1.capability";
     private static final String PLAYWRIGHT_VERSION_FILE = ".javaclaw-playwright-version";
@@ -45,6 +46,9 @@ final class BrowserWorkerRuntimeFactory {
                             capabilityVerified(layout.imageRoot(), LOGIN_CAPABILITY_FILE, "browser-login-v1")
                                     && displayAvailable,
                             capabilityVerified(layout.imageRoot(), OAUTH_CAPABILITY_FILE, "browser-oauth-v1")
+                                    && displayAvailable,
+                            capabilityVerified(
+                                            layout.imageRoot(), INTERACTIVE_CAPABILITY_FILE, "browser-interactive-v1")
                                     && displayAvailable)));
         } catch (IOException failure) {
             throw new IllegalStateException("Browser Worker packaged runtime layout is invalid", failure);

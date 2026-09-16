@@ -77,6 +77,11 @@ final class SiteCredentialSettingsPresenter {
         return state;
     }
 
+    /** 关闭窗口后使未完成的读取回执失效；已发出的写入由服务端继续完成，不自动重放。 */
+    void deactivate() {
+        publish(copy(SettingsLoadState.READY, "", nextEpoch()));
+    }
+
     private void submitSecret(
             char[] secret, String message, Function<char[], CompletionStage<CredentialMetadata>> operation) {
         char[] checked = Objects.requireNonNull(secret, "secret");

@@ -88,7 +88,9 @@ final class ProviderSetupCommands {
                         + '|'
                         + (model.embeddingDimensions().isPresent()
                                 ? model.embeddingDimensions().getAsInt()
-                                : ""))
+                                : "")
+                        + '|'
+                        + model.imageSupport())
                 .collect(Collectors.joining("\n"));
     }
 

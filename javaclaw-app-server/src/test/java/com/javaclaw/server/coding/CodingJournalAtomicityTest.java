@@ -128,17 +128,17 @@ class CodingJournalAtomicityTest {
                 "Journal");
         var tools = fixture.json.decode(fixture.core.toolCatalogSnapshot(fixture.turn.id()), ToolCatalogSnapshot.class);
         var request = new TurnStartRequest(
-                thread.id(),
-                fixture.core.resolvedConfig(fixture.turn.id()),
-                fixture.root,
-                fixture.core.promptSnapshot(fixture.turn.id()),
-                tools,
-                new CorePayloads.Message(MessageRole.USER, "journal", List.of(), Optional.empty()),
-                Optional.empty(),
-                Optional.of(fixture.core
+                        thread.id(),
+                        fixture.core.resolvedConfig(fixture.turn.id()),
+                        fixture.root,
+                        fixture.core.promptSnapshot(fixture.turn.id()),
+                        tools,
+                        new CorePayloads.Message(MessageRole.USER, "journal", List.of(), Optional.empty()),
+                        Optional.empty())
+                .withCodingEnvironment(fixture.core
                         .codingEnvironments()
                         .frozen(fixture.turn.id())
-                        .inherited()));
+                        .inherited());
         return fixture.core.startTurn(fixture.identity("turn/start", "journal-turn", request), request);
     }
 

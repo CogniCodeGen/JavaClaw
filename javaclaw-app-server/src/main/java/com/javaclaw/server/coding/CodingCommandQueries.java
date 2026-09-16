@@ -1,5 +1,8 @@
 package com.javaclaw.server.coding;
 
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+
 import com.javaclaw.api.AttachmentScope;
 import com.javaclaw.builtin.contracts.CodingResults;
 import com.javaclaw.extension.spi.ExtensionRequest;
@@ -38,13 +41,7 @@ final class CodingCommandQueries {
         var input = dependencies.json().decode(request.payload(), CodingResults.OutputRead.class);
         var stream = streams.find(request.workspaceId(), operation.intent().turnId(), input.resourceId());
         if (stream.isPresent()) {
-            var owner = stream.orElseThrow();
-            var page = streams.page(owner, input.offsetBytes(), input.maxBytes());
-            return new CodingResults.Output(
-                    CodingOutputText.decode(streams.prefix(owner, input.offsetBytes(), "stdout"), page.stdout()),
-                    CodingOutputText.decode(streams.prefix(owner, input.offsetBytes(), "stderr"), page.stderr()),
-                    page.nextOffsetBytes(),
-                    page.truncated());
+            return streamed(stream.orElseThrow(), input, encoding(operation));
         }
         var recorded = outputs.find(request.workspaceId(), input.resourceId());
         if (recorded.isPresent()) {
@@ -63,6 +60,35 @@ final class CodingCommandQueries {
             return new CodingResults.Output("", "", 0, false);
         }
         throw new SecurityException("命令最终输出证据不存在");
+    }
+
+    private CodingResults.Output streamed(
+            CodingCommandStreamRepository.Snapshot owner, CodingResults.OutputRead input, Charset encoding) {
+        var page = streams.page(owner, input.offsetBytes(), input.maxBytes());
+        byte[] stdoutPrefix;
+        byte[] stderrPrefix;
+        if (encoding.equals(StandardCharsets.UTF_8) || input.offsetBytes() == 0) {
+            stdoutPrefix = streams.prefix(owner, input.offsetBytes(), "stdout");
+            stderrPrefix = streams.prefix(owner, input.offsetBytes(), "stderr");
+        } else {
+            // 系统命令保留上限为 1 MiB，完整前缀可恢复 UTF-16 对齐及状态编码，游标仍按原始字节推进。
+            var prefix = streams.page(owner, 0, Math.toIntExact(input.offsetBytes()));
+            stdoutPrefix = prefix.stdout();
+            stderrPrefix = prefix.stderr();
+        }
+        return new CodingResults.Output(
+                CodingOutputText.decode(stdoutPrefix, page.stdout(), encoding),
+                CodingOutputText.decode(stderrPrefix, page.stderr(), encoding),
+                page.nextOffsetBytes(),
+                page.truncated());
+    }
+
+    private Charset encoding(CodingOperationRepository.Operation operation) {
+        return operation
+                .preparation()
+                .flatMap(payload -> dependencies.json().textField(payload, "outputEncoding"))
+                .map(Charset::forName)
+                .orElse(StandardCharsets.UTF_8);
     }
 
     private CodingResults.Output legacy(
@@ -84,9 +110,12 @@ final class CodingCommandQueries {
         }
         long end = Math.min(size, input.offsetBytes() + input.maxBytes());
         return new CodingResults.Output(
-                CodingOutputText.slice(stdout, input.offsetBytes(), end),
+                CodingOutputText.slice(stdout, input.offsetBytes(), end, encoding(operation)),
                 CodingOutputText.slice(
-                        stderr, Math.max(0, input.offsetBytes() - stdout.length), Math.max(0, end - stdout.length)),
+                        stderr,
+                        Math.max(0, input.offsetBytes() - stdout.length),
+                        Math.max(0, end - stdout.length),
+                        encoding(operation)),
                 end,
                 end < size || legacyTruncated(operation));
     }

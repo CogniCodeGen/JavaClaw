@@ -5,6 +5,7 @@ import java.util.concurrent.CompletionStage;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.builtin.contracts.CodingEnvironmentContracts;
 import com.javaclaw.builtin.contracts.CodingResults;
+import com.javaclaw.builtin.contracts.CodingSystemContracts;
 import com.javaclaw.client.CommandOptions;
 import com.javaclaw.protocol.InputJobRpcContracts;
 
@@ -17,6 +18,33 @@ public interface CodingSettingsGateway {
      * @return 在 UI 调度器上完成的完整快照
      */
     CompletionStage<Snapshot> load(WorkspaceId workspaceId);
+
+    /**
+     * 读取系统程序配置与实际可用性，不执行注册程序。
+     *
+     * @param workspaceId 当前 Workspace
+     * @return 在 UI 调度器完成的配置快照
+     */
+    CompletionStage<SystemSnapshot> systemCommands(WorkspaceId workspaceId);
+
+    /**
+     * 保存完整系统程序配置；注册不授予文件或进程权限。
+     *
+     * @param workspaceId 当前 Workspace
+     * @param update 完整注册表
+     * @param options 乐观版本及幂等身份
+     * @return 已保存的注册表
+     */
+    CompletionStage<CodingSystemContracts.Registry> saveSystemCommands(
+            WorkspaceId workspaceId, CodingSystemContracts.RegistryUpdate update, CommandOptions options);
+
+    /**
+     * 系统程序的管理快照。
+     *
+     * @param registry 用户登记及版本
+     * @param catalog 系统预设和注册入口的可用性
+     */
+    record SystemSnapshot(CodingSystemContracts.Registry registry, CodingSystemContracts.Catalog catalog) {}
 
     /**
      * 读取当前 Workspace 最近执行的权威状态；不启动项目进程。

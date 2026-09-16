@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -15,7 +16,11 @@ import com.javaclaw.api.AttachmentRef;
 import com.javaclaw.api.AttachmentScope;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.WorkspaceId;
+import com.javaclaw.builtin.contracts.SiteAccountContracts;
+import com.javaclaw.builtin.contracts.SiteRegistrationContracts;
 import com.javaclaw.client.CommandOptions;
+import com.javaclaw.client.extension.SiteAccountClient;
+import com.javaclaw.client.extension.SiteRegistrationClient;
 import com.javaclaw.client.facade.AttachmentUploadOptions;
 import com.javaclaw.desktop.DesktopNotificationSubscription;
 import com.javaclaw.desktop.DesktopPresenter;
@@ -68,6 +73,65 @@ public final class SdkExtensionSettingsGateway implements ExtensionSettingsGatew
                 Objects.requireNonNull(workspaceId, "workspaceId"),
                 requireText(extensionId, "extensionId"),
                 invocation);
+    }
+
+    @Override
+    public CompletableFuture<SiteAccountContracts.AccountProjection> setAccountCredential(
+            WorkspaceId workspaceId,
+            SiteAccountContracts.CredentialRequest request,
+            char[] username,
+            char[] password,
+            CommandOptions options) {
+        char[] ownedUsername = username.clone();
+        char[] ownedPassword = password.clone();
+        CompletableFuture<SiteAccountContracts.AccountProjection> result;
+        try {
+            result = presenter.submitSettingsRequest(client -> new SiteAccountClient(client.extensions())
+                    .setCredential(workspaceId, request, ownedUsername, ownedPassword, options));
+        } catch (RuntimeException failure) {
+            Arrays.fill(ownedUsername, '\0');
+            Arrays.fill(ownedPassword, '\0');
+            throw failure;
+        }
+        return result.whenComplete((ignored, failure) -> {
+            Arrays.fill(ownedUsername, '\0');
+            Arrays.fill(ownedPassword, '\0');
+        });
+    }
+
+    @Override
+    public CompletableFuture<SiteRegistrationContracts.Session> beginRegistration(
+            WorkspaceId workspace, SiteRegistrationContracts.BeginRequest request, CommandOptions options) {
+        return presenter.submitSettingsRequest(client -> new SiteRegistrationClient(client.extensions())
+                .begin(workspace, request, options));
+    }
+
+    @Override
+    public CompletableFuture<SiteRegistrationContracts.Session> registrationStatus(
+            WorkspaceId workspace, SiteRegistrationContracts.SessionRequest request) {
+        return presenter.submitSettingsRequest(client -> new SiteRegistrationClient(client.extensions())
+                .status(workspace, request));
+    }
+
+    @Override
+    public CompletableFuture<SiteRegistrationContracts.Session> allowRegistrationOrigin(
+            WorkspaceId workspace, SiteRegistrationContracts.OriginRequest request, CommandOptions options) {
+        return presenter.submitSettingsRequest(client -> new SiteRegistrationClient(client.extensions())
+                .allowOrigin(workspace, request, options));
+    }
+
+    @Override
+    public CompletableFuture<SiteRegistrationContracts.Session> completeRegistration(
+            WorkspaceId workspace, SiteRegistrationContracts.CompleteRequest request, CommandOptions options) {
+        return presenter.submitSettingsRequest(client -> new SiteRegistrationClient(client.extensions())
+                .complete(workspace, request, options));
+    }
+
+    @Override
+    public CompletableFuture<SiteRegistrationContracts.Session> cancelRegistration(
+            WorkspaceId workspace, SiteRegistrationContracts.SessionRequest request, CommandOptions options) {
+        return presenter.submitSettingsRequest(client -> new SiteRegistrationClient(client.extensions())
+                .cancel(workspace, request, options));
     }
 
     @Override

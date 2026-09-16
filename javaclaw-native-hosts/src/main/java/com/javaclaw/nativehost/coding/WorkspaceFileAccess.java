@@ -5,24 +5,13 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.time.Duration;
-import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
-import java.util.stream.Stream;
 
-import com.javaclaw.api.ApprovalRequirement;
 import com.javaclaw.api.CancellationToken;
-import com.javaclaw.api.FilePermission;
-import com.javaclaw.api.NetworkPermission;
 import com.javaclaw.api.PermissionProfile;
-import com.javaclaw.api.ProcessPermission;
-import com.javaclaw.api.ResourceLimits;
-import com.javaclaw.api.ToolPermission;
-import com.javaclaw.api.ToolRisk;
 import com.javaclaw.nativehost.sandbox.SandboxJavaRuntime;
 
 /**
@@ -34,9 +23,8 @@ import com.javaclaw.nativehost.sandbox.SandboxJavaRuntime;
 public final class WorkspaceFileAccess {
     static final int MAX_BYTES = 64 * 1024 * 1024;
     static final int MAX_ENTRIES = 10_000;
-    private static final Duration TIMEOUT = Duration.ofSeconds(30);
     private final Path root;
-    private final Optional<PermissionProfile> effectivePermission;
+    private final WorkspaceFilePermissionScope permissions;
 
     /**
      * 绑定已由服务端核验的真实项目目录，不接受模型指定的根。
@@ -61,7 +49,7 @@ public final class WorkspaceFileAccess {
 
     private WorkspaceFileAccess(Path frozenRoot, Optional<PermissionProfile> permission) throws IOException {
         root = Objects.requireNonNull(frozenRoot, "frozenRoot");
-        effectivePermission = permission;
+        permissions = new WorkspaceFilePermissionScope(root, permission);
         WorkspaceFileMetadata.requireFrozenRoot(root);
     }
 
@@ -335,7 +323,10 @@ public final class WorkspaceFileAccess {
         try (DataInputStream input =
                 invoke("apply", true, cancellation, output -> WorkspaceFileProtocol.writePatch(output, patch))) {
             return new PatchResult(
-                    Status.valueOf(input.readUTF()), input.readUTF(), WorkspaceFileProtocol.readStrings(input, 200));
+                    Status.valueOf(input.readUTF()),
+                    input.readUTF(),
+                    WorkspaceFileProtocol.readStrings(input, 200),
+                    WorkspaceFileProtocol.readStrings(input, 200));
         }
     }
 
@@ -355,7 +346,7 @@ public final class WorkspaceFileAccess {
                 cancellation);
     }
 
-    private DataInputStream invoke(String operation, boolean write, CancellationToken cancellation, Encoder encoder)
+    DataInputStream invoke(String operation, boolean write, CancellationToken cancellation, Encoder encoder)
             throws Exception {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(bytes)) {
@@ -369,76 +360,19 @@ public final class WorkspaceFileAccess {
     }
 
     private PermissionProfile permission(Path java, boolean write) throws IOException {
-        FilePermission files = effectivePermission
-                .map(PermissionProfile::files)
-                .orElseGet(() -> new FilePermission(List.of(root), List.of(root), true, false));
-        ResourceLimits limits = effectivePermission
-                .map(PermissionProfile::resources)
-                .orElseGet(() -> new ResourceLimits(512L * 1024 * 1024, MAX_BYTES + 1024L * 1024, 4, 128));
-        Duration timeout = effectivePermission
-                .map(value -> value.processes().maxRunTime())
-                .filter(value -> value.compareTo(TIMEOUT) < 0)
-                .orElse(TIMEOUT);
-        List<Path> reads = scopedRoots(Stream.concat(files.readRoots().stream(), files.writeRoots().stream())
-                .toList());
-        List<Path> writes = write ? scopedRoots(files.writeRoots()) : List.of();
-        if (write && writes.isEmpty()) {
-            throw new SecurityException("Workspace file operation has no effective write roots");
-        }
-        return new PermissionProfile(
-                "workspace-file-worker",
-                1,
-                new FilePermission(reads, writes, write && files.allowDelete(), false),
-                new NetworkPermission(Set.of(), Set.of(), true),
-                new ProcessPermission(Set.of(java.getFileName().toString()), false, timeout),
-                new ToolPermission(Set.of(), ToolRisk.PROCESS, ApprovalRequirement.NONE),
-                limits);
+        return permissions.permission(java, write);
     }
 
-    private void requirePathPermission(String path, boolean allowRoot, boolean write) throws IOException {
-        WorkspaceFileProtocol.requireRelative(path, allowRoot);
-        WorkspaceFileMetadata.requireVisible(path);
-        if (effectivePermission.isEmpty()) {
-            return;
-        }
-        FilePermission files = effectivePermission.orElseThrow().files();
-        List<Path> permitted = write
-                ? scopedRoots(files.writeRoots())
-                : scopedRoots(Stream.concat(files.readRoots().stream(), files.writeRoots().stream())
-                        .toList());
-        Path resolved = root.resolve(path).normalize();
-        if (permitted.stream().noneMatch(resolved::startsWith)) {
-            throw new SecurityException("Workspace path is outside the effective file permission");
-        }
+    void requirePathPermission(String path, boolean allowRoot, boolean write) throws IOException {
+        permissions.requirePathPermission(path, allowRoot, write);
     }
 
-    private void requireDeletePermission(boolean delete) {
-        if (delete
-                && effectivePermission
-                        .filter(value -> !value.files().allowDelete())
-                        .isPresent()) {
-            throw new SecurityException("Workspace file deletion is not permitted");
-        }
-    }
-
-    private List<Path> scopedRoots(List<Path> permitted) throws IOException {
-        ArrayList<Path> scoped = new ArrayList<>();
-        for (Path path : permitted) {
-            Path real = path.toRealPath();
-            if (!real.equals(path)) {
-                throw new IOException("Frozen Workspace permission root changed into a link or alias");
-            }
-            if (root.startsWith(real)) {
-                scoped.add(root);
-            } else if (real.startsWith(root)) {
-                scoped.add(real);
-            }
-        }
-        return scoped.stream().distinct().toList();
+    void requireDeletePermission(boolean delete) {
+        permissions.requireDeletePermission(delete);
     }
 
     @FunctionalInterface
-    private interface Encoder {
+    interface Encoder {
         void write(DataOutputStream output) throws IOException;
     }
 
@@ -561,17 +495,26 @@ public final class WorkspaceFileAccess {
      * @param status 补丁状态，不可空
      * @param detail 适合事实记录的有界说明，不可空
      * @param recoveryPaths 保留实际 inode 的恢复目录，规范相对路径，最多 200 项，不可空
+     * @param createdDirectories 本次实际创建且保留的父目录，不包含内部恢复目录
      */
-    public record PatchResult(Status status, String detail, List<String> recoveryPaths) {
+    public record PatchResult(
+            Status status, String detail, List<String> recoveryPaths, List<String> createdDirectories) {
         /** 校验并复制结果，恢复路径不得由模型指定。 */
         public PatchResult {
             Objects.requireNonNull(status, "status");
             Objects.requireNonNull(detail, "detail");
             recoveryPaths = List.copyOf(recoveryPaths);
-            if (recoveryPaths.size() > 200) {
+            createdDirectories = List.copyOf(createdDirectories);
+            if (recoveryPaths.size() > 200 || createdDirectories.size() > 200) {
                 throw new IllegalArgumentException("too many recovery paths");
             }
             recoveryPaths.forEach(path -> WorkspaceFileProtocol.requireRelative(path, false));
+            createdDirectories.forEach(path -> WorkspaceFileProtocol.requireRelative(path, false));
+        }
+
+        /** 构造未创建父目录的兼容回执。 */
+        public PatchResult(Status status, String detail, List<String> recoveryPaths) {
+            this(status, detail, recoveryPaths, List.of());
         }
 
         /** 构造未产生恢复目录的兼容结果。 */

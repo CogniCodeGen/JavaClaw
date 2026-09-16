@@ -314,7 +314,13 @@ public final class CodingCommandStreamRepository {
                         || !rows.getString(1).equals(owner.turnId().toString())
                         || !rows.getString(2).equals(owner.workspaceId().toString())
                         || !rows.getString(3).equals(expected)
-                        || !Set.of("command_run", "dependencies_prepare").contains(rows.getString(4))) {
+                        || !Set.of(
+                                        "command_run",
+                                        "dependencies_prepare",
+                                        "script_run",
+                                        "system_command_run",
+                                        "system_shell_run")
+                                .contains(rows.getString(4))) {
                     throw new SecurityException("命令输出归属、种类或执行阶段不匹配");
                 }
             }

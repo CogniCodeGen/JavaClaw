@@ -27,6 +27,9 @@ final class TurnInvocationDigests {
             update(digest, message.text());
             update(digest, message.toolCallId().orElse(""));
             update(digest, message.toolName().orElse(""));
+            for (ModelImage image : message.images()) {
+                updateImage(digest, image);
+            }
             for (ModelToolCall call : message.toolCalls()) {
                 updateCall(digest, call);
             }
@@ -39,6 +42,17 @@ final class TurnInvocationDigests {
             update(digest, tool.outputSchema().sha256());
         }
         return HexFormat.of().formatHex(digest.digest());
+    }
+
+    private static void updateImage(MessageDigest digest, ModelImage image) {
+        update(digest, "image-reference-v1");
+        update(digest, image.attachment().digest());
+        update(digest, image.attachment().mediaType());
+        update(digest, image.workspaceId().toString());
+        update(digest, image.threadId().toString());
+        update(digest, image.observationId());
+        update(digest, Integer.toString(image.width()));
+        update(digest, Integer.toString(image.height()));
     }
 
     static String tool(ToolCallRequest request, int toolIndex) {

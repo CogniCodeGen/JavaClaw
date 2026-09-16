@@ -14,6 +14,7 @@ import com.javaclaw.api.ProviderAuthentication;
 import com.javaclaw.api.ProviderCapabilities;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderEndpointSpec;
+import com.javaclaw.api.ProviderImageSupport;
 import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.api.ProviderModelSpec;
@@ -138,8 +139,11 @@ public final class ProviderService {
     public ProviderStatus probe(ProviderRef reference) {
         ProviderEndpoint endpoint = require(reference.endpointId(), reference.endpointRevision());
         ProviderEndpoint latest = requireLatest(reference.endpointId());
-        ProviderCapabilities capabilities =
-                capabilities(endpoint.spec().adapter(), declaredPurposes(endpoint, reference.model()));
+        Optional<ProviderModelSpec> model = declaredModel(endpoint, reference.model());
+        ProviderCapabilities capabilities = capabilities(
+                endpoint.spec().adapter(),
+                model.map(ProviderModelSpec::purposes).orElseGet(java.util.Set::of),
+                model.map(ProviderModelSpec::imageSupport).orElse(ProviderImageSupport.UNKNOWN));
         ProviderReadiness readiness = readiness(endpoint, latest, reference.model());
         Optional<String> detail =
                 switch (readiness) {
@@ -432,20 +436,32 @@ public final class ProviderService {
      */
     public static ProviderCapabilities capabilities(
             ProviderAdapter adapter, java.util.Set<ProviderModelPurpose> purposes) {
+        return capabilities(adapter, purposes, ProviderImageSupport.UNKNOWN);
+    }
+
+    /**
+     * 将精确模型的用途和图片输入声明映射为平台能力，不根据适配器类型推断图片支持。
+     *
+     * @param adapter 适配器
+     * @param purposes 精确模型的用途
+     * @param imageSupport 精确版本的图片输入声明
+     * @return 只有 CHAT 且明确 SUPPORTED 时 images 才为 true
+     */
+    public static ProviderCapabilities capabilities(
+            ProviderAdapter adapter, java.util.Set<ProviderModelPurpose> purposes, ProviderImageSupport imageSupport) {
         boolean chat = purposes.contains(ProviderModelPurpose.CHAT);
+        boolean images = chat && Objects.requireNonNull(imageSupport, "imageSupport") == ProviderImageSupport.SUPPORTED;
         return switch (Objects.requireNonNull(adapter, "adapter")) {
             case OPENAI_COMPATIBLE, ANTHROPIC, GOOGLE_GENAI ->
-                new ProviderCapabilities(purposes, chat, chat, chat, chat, false, false, false);
-            case OPENAI_RESPONSES -> new ProviderCapabilities(purposes, chat, chat, chat, chat, chat, chat, chat);
+                new ProviderCapabilities(purposes, chat, chat, chat, images, false, false, false);
+            case OPENAI_RESPONSES -> new ProviderCapabilities(purposes, chat, chat, chat, images, chat, chat, chat);
         };
     }
 
-    private static java.util.Set<ProviderModelPurpose> declaredPurposes(ProviderEndpoint endpoint, String modelId) {
+    private static Optional<ProviderModelSpec> declaredModel(ProviderEndpoint endpoint, String modelId) {
         return endpoint.spec().models().stream()
                 .filter(model -> model.modelId().equals(modelId))
-                .findFirst()
-                .map(ProviderModelSpec::purposes)
-                .orElseGet(java.util.Set::of);
+                .findFirst();
     }
 
     private static String identifier(String value) {

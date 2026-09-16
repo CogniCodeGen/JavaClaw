@@ -293,6 +293,98 @@ class BrowserWorkerRuntimeFactoryTest {
         }
     }
 
+    @Test
+    void 完整镜像中的每个目录被替换为文件都不能构造运行命令() throws Exception {
+        String javaName = platformId().equals("windows") ? "java.exe" : "java";
+        Path data = Files.createDirectories(temporaryDirectory.resolve("invalid-directory-data"));
+        for (String component : List.of("app", "browser", "lib", "driver")) {
+            Path image = temporaryDirectory.resolve("file-" + component);
+            prepareImage(image, javaName, platformId());
+            Path source = image.resolve(component);
+            Files.move(source, image.resolve(component + "-original"));
+            Files.writeString(source, "directory replaced by a file");
+            assertThrows(java.io.IOException.class, () -> BrowserWorkerRuntimeFactory.layout(image.toRealPath(), data));
+        }
+    }
+
+    @Test
+    void 驱动节点和CLI必须是普通文件而不能是可执行目录() throws Exception {
+        String javaName = platformId().equals("windows") ? "java.exe" : "java";
+        String nodeName = platformId().equals("windows") ? "node.exe" : "node";
+        Path data = Files.createDirectories(temporaryDirectory.resolve("driver-shape-data"));
+        for (String target : List.of("driver/" + nodeName, "driver/package/cli.js")) {
+            Path image = temporaryDirectory.resolve("driver-shape-" + target.hashCode());
+            prepareImage(image, javaName, platformId());
+            Files.delete(image.resolve(target));
+            Files.createDirectory(image.resolve(target));
+            assertThrows(java.io.IOException.class, () -> BrowserWorkerRuntimeFactory.layout(image.toRealPath(), data));
+        }
+    }
+
+    @Test
+    void POSIX镜像拒绝失去执行位的Java和Node() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+                Files.getFileStore(temporaryDirectory).supportsFileAttributeView("posix"));
+        String javaName = platformId().equals("windows") ? "java.exe" : "java";
+        String nodeName = platformId().equals("windows") ? "node.exe" : "node";
+        Path data = Files.createDirectories(temporaryDirectory.resolve("non-executable-data"));
+        for (String target : List.of("bin/" + javaName, "driver/" + nodeName)) {
+            Path image = temporaryDirectory.resolve("non-executable-" + target.hashCode());
+            prepareImage(image, javaName, platformId());
+            Files.setPosixFilePermissions(
+                    image.resolve(target), java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
+            assertFalse(Files.isExecutable(image.resolve(target)));
+            assertThrows(java.io.IOException.class, () -> BrowserWorkerRuntimeFactory.layout(image.toRealPath(), data));
+        }
+    }
+
+    @Test
+    void 镜像证明缺失或链接替代必须失败且损坏能力字节不会形成能力() throws Exception {
+        String javaName = platformId().equals("windows") ? "java.exe" : "java";
+        Path image = temporaryDirectory.resolve("marker-boundary-image");
+        prepareImage(image, javaName, platformId());
+        Path data = Files.createDirectories(temporaryDirectory.resolve("marker-boundary-data"));
+        Path marker = image.resolve("worker-image-v1.capability");
+        Files.delete(marker);
+        assertThrows(java.io.IOException.class, () -> BrowserWorkerRuntimeFactory.layout(image.toRealPath(), data));
+        Path target = Files.writeString(image.resolve("original-marker"), "worker-image-v1:browser");
+        Files.createSymbolicLink(marker, target.toAbsolutePath());
+        assertThrows(java.io.IOException.class, () -> BrowserWorkerRuntimeFactory.layout(image.toRealPath(), data));
+        Files.write(image.resolve("corrupt.capability"), new byte[] {(byte) 0xff});
+        assertFalse(
+                BrowserWorkerRuntimeFactory.capabilityVerified(image, "corrupt.capability", "browser-interactive-v1"));
+    }
+
+    @Test
+    @ResourceLock(Resources.SYSTEM_PROPERTIES)
+    void 可见交互证明不能被登录或OAuth证明替代且三种能力独立判定() throws Exception {
+        String property = BrowserWorkerRuntimeFactory.IMAGE_ROOT_PROPERTY;
+        String previousImage = System.getProperty(property);
+        String previousOs = System.getProperty("os.name");
+        Path image = temporaryDirectory.resolve("interactive-marker-image");
+        Path data = Files.createDirectories(temporaryDirectory.resolve("interactive-marker-data"));
+        prepareImage(image, "java", "macos");
+        try {
+            System.setProperty("os.name", "Mac OS X");
+            System.setProperty(property, image.toString());
+            try (var client = BrowserWorkerRuntimeFactory.create(data).orElseThrow()) {
+                assertTrue(client.interactiveLoginAvailable());
+                assertTrue(client.oauthAvailable());
+                assertFalse(client.interactiveAvailable());
+            }
+            Files.writeString(image.resolve("browser-interactive-v1.capability"), "browser-interactive-v1:macos");
+            Files.delete(image.resolve("browser-oauth-v1.capability"));
+            try (var client = BrowserWorkerRuntimeFactory.create(data).orElseThrow()) {
+                assertTrue(client.interactiveAvailable());
+                assertTrue(client.interactiveLoginAvailable());
+                assertFalse(client.oauthAvailable());
+            }
+        } finally {
+            restore(property, previousImage);
+            restore("os.name", previousOs);
+        }
+    }
+
     private Path incompleteImage(String name, boolean executable, boolean appDirectory, boolean browserDirectory)
             throws Exception {
         Path image = Files.createDirectories(temporaryDirectory.resolve(name));

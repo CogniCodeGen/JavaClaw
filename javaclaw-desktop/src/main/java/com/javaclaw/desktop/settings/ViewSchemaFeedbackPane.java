@@ -1,6 +1,7 @@
 package com.javaclaw.desktop.settings;
 
 import java.util.Objects;
+import java.util.function.Supplier;
 
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -10,10 +11,12 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 
+import com.javaclaw.client.RemoteRpcException;
 import com.javaclaw.desktop.component.PlatformComponentFactory;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionSize;
 import com.javaclaw.desktop.component.PlatformComponentFactory.ActionStyle;
 import com.javaclaw.desktop.component.PlatformComponentFactory.FeedbackKind;
+import com.javaclaw.protocol.ProtocolErrorCode;
 
 /** ViewSchema 页面的加载、空状态、重试和草稿遮罩容器。 */
 final class ViewSchemaFeedbackPane extends StackPane {
@@ -21,10 +24,22 @@ final class ViewSchemaFeedbackPane extends StackPane {
     private Node blocked;
     private boolean previouslyDisabled;
     private ViewPageFocus focus;
+    private Supplier<Node> currentContent;
+    private Runnable discardDraft;
     private final javafx.event.EventHandler<KeyEvent> blockedKeys = KeyEvent::consume;
 
     ViewSchemaFeedbackPane(PlatformComponentFactory components) {
         this.components = Objects.requireNonNull(components, "components");
+    }
+
+    void bindDraftActions(Supplier<Node> rendered, Runnable discard) {
+        currentContent = Objects.requireNonNull(rendered, "rendered");
+        discardDraft = Objects.requireNonNull(discard, "discard");
+    }
+
+    void showPageDraftOverlay(String heading, String detail, boolean offerReload) {
+        Node rendered = currentContent.get();
+        showDraftOverlay(rendered, heading, detail, () -> restoreContent(rendered), offerReload ? discardDraft : null);
     }
 
     void showContent(Node rendered) {
@@ -50,6 +65,10 @@ final class ViewSchemaFeedbackPane extends StackPane {
     void showEmpty(String heading, String detail) {
         restoreInteraction();
         getChildren().setAll(components.feedback(FeedbackKind.EMPTY, heading, detail));
+    }
+
+    void showScopeRequired() {
+        showEmpty("请选择工作区", "扩展页面只会读写设置中心顶部固定的工作区。");
     }
 
     void showPending(Node rendered, String operation) {
@@ -89,6 +108,21 @@ final class ViewSchemaFeedbackPane extends StackPane {
     void showFatal(String heading, String detail) {
         restoreInteraction();
         getChildren().setAll(components.feedback(FeedbackKind.ERROR, heading, detail));
+    }
+
+    void showCommandFailure(Node rendered, Throwable failure, Runnable continueEditing, Runnable reload) {
+        Throwable cause = ViewSchemaPageFailures.unwrap(failure);
+        if (cause instanceof RemoteRpcException remote && remote.code() == ProtocolErrorCode.REVISION_CONFLICT) {
+            showDraftOverlay(rendered, "内容已被其他操作更新", "当前草稿仍保留。重新加载会丢弃草稿并读取最新版本。", continueEditing, reload);
+        } else {
+            showDraftOverlay(rendered, "操作未完成", ViewSchemaPageFailures.detail(cause), continueEditing, null);
+        }
+    }
+
+    void restoreContent(Node rendered) {
+        if (rendered != null) {
+            showContent(rendered);
+        }
     }
 
     private void keepContent(Node rendered) {

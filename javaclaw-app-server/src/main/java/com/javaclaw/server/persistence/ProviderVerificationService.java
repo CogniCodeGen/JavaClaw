@@ -288,8 +288,14 @@ public final class ProviderVerificationService implements AutoCloseable {
 
     private ProviderVerificationResult unknown(
             ProviderEndpoint endpoint, ProviderRef provider, ProviderModelPurpose purpose, Instant completedAt) {
-        ProviderCapabilities capabilities =
-                ProviderService.capabilities(endpoint.spec().adapter(), java.util.Set.of(purpose));
+        ProviderCapabilities capabilities = ProviderService.capabilities(
+                endpoint.spec().adapter(),
+                java.util.Set.of(purpose),
+                endpoint.spec().models().stream()
+                        .filter(model -> model.modelId().equals(provider.model()))
+                        .findFirst()
+                        .map(com.javaclaw.api.ProviderModelSpec::imageSupport)
+                        .orElse(com.javaclaw.api.ProviderImageSupport.UNKNOWN));
         return new ProviderVerificationResult(
                 provider,
                 purpose,

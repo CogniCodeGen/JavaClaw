@@ -142,6 +142,7 @@ final class PlatformFoundationFactory {
                 management.profiles(),
                 management.bindings(),
                 core.vault(),
+                new com.javaclaw.server.site.account.SiteAccountService(database, core.vault(), json, clock),
                 management.worktrees(),
                 management.inputs(),
                 management.inputLifecycle(),

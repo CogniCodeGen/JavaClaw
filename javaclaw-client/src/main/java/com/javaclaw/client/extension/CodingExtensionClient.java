@@ -8,7 +8,9 @@ import com.javaclaw.api.TurnId;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.builtin.contracts.CodingContracts;
 import com.javaclaw.builtin.contracts.CodingEnvironmentContracts;
+import com.javaclaw.builtin.contracts.CodingFileSystemContracts;
 import com.javaclaw.builtin.contracts.CodingResults;
+import com.javaclaw.builtin.contracts.CodingSystemContracts;
 import com.javaclaw.builtin.contracts.DependencyEvidence;
 import com.javaclaw.client.CommandOptions;
 
@@ -53,6 +55,68 @@ public final class CodingExtensionClient {
      */
     public CodingResults.Output commandOutput(WorkspaceId workspaceId, CodingResults.OutputRead request) {
         return calls.query(workspaceId, "command/output", request, CodingResults.Output.class);
+    }
+
+    /**
+     * 读取已授权的文件系统变更回执，不重新访问工作区文件。
+     *
+     * @param workspaceId 证据所属 Workspace
+     * @param operationId 服务端发出的操作标识
+     * @return 文本、二进制或目录的真实变更
+     */
+    public CodingFileSystemContracts.FileSystemResult filesystemResult(WorkspaceId workspaceId, String operationId) {
+        return calls.query(
+                workspaceId,
+                "filesystem/result",
+                new CodingResults.ResourceRead(operationId),
+                CodingFileSystemContracts.FileSystemResult.class);
+    }
+
+    /**
+     * 读取系统程序注册配置；配置本身不授予执行权限。
+     *
+     * @param workspaceId 当前 Workspace
+     * @return 注册表及乐观版本
+     */
+    public CodingSystemContracts.Registry systemRegistry(WorkspaceId workspaceId) {
+        return calls.query(
+                workspaceId,
+                "system/registry/read",
+                new CodingEnvironmentContracts.Empty(),
+                CodingSystemContracts.Registry.class);
+    }
+
+    /**
+     * 查询当前系统预设与已注册程序的可用性，不执行程序。
+     *
+     * @param workspaceId 当前 Workspace
+     * @return 可用性目录；实际 Turn 使用自身冻结快照
+     */
+    public CodingSystemContracts.Catalog systemCatalog(WorkspaceId workspaceId) {
+        return calls.query(
+                workspaceId,
+                "system/catalog",
+                new CodingEnvironmentContracts.Empty(),
+                CodingSystemContracts.Catalog.class);
+    }
+
+    /**
+     * 条件保存系统程序注册表，不增加进程或文件权限。
+     *
+     * @param workspaceId 当前 Workspace
+     * @param update 完整新注册表
+     * @param options 当前版本及幂等键
+     * @return 已保存的新版本
+     */
+    public CodingSystemContracts.Registry updateSystemRegistry(
+            WorkspaceId workspaceId, CodingSystemContracts.RegistryUpdate update, CommandOptions options) {
+        return calls.commandAtRevision(
+                workspaceId,
+                "system/registry/update",
+                update,
+                options,
+                CodingSystemContracts.Registry.class,
+                Math.addExact(options.expectedRevision(), 1));
     }
 
     /**

@@ -7,7 +7,7 @@ import com.javaclaw.api.ToolDescriptor;
 /** 无网络、无模型调用的上下文估算；所有来源使用同一算法，实际账单始终以 Provider usage 为准。 */
 public final class ContextTokenEstimator {
     /** 随 Turn 冻结的估算算法版本。 */
-    public static final String VERSION = "unicode-tools-v1";
+    public static final String VERSION = "unicode-tools-images-v2";
 
     private ContextTokenEstimator() {}
 
@@ -33,6 +33,10 @@ public final class ContextTokenEstimator {
         long count = 0;
         for (ModelMessage message : messages) {
             count = Math.addExact(count, text(message.text()) + 4);
+            for (ModelImage image : message.images()) {
+                count = Math.addExact(
+                        count, 85L + 170L * ((image.width() + 511) / 512) * ((image.height() + 511) / 512));
+            }
             for (ModelToolCall call : message.toolCalls()) {
                 count = Math.addExact(
                         count, text(call.arguments().json()) + text(call.tool().name()) + 8);

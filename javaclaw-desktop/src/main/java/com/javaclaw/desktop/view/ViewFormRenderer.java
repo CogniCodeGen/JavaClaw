@@ -68,7 +68,7 @@ final class ViewFormRenderer {
         Runnable refresh = () -> refresh(context, fields, fieldBindings, data, submit, interactions);
         fields.values().forEach(state -> state.observe(refresh));
         commandBindings.observe(refresh);
-        submit.setOnAction(event -> submit(form.submit(), fields, feedback, interactions, commandBindings));
+        submit.setOnAction(event -> submit(form, fields, feedback, interactions, commandBindings));
         refresh.run();
 
         HBox actions = new HBox(10, feedback, submit);
@@ -275,7 +275,7 @@ final class ViewFormRenderer {
     }
 
     private void submit(
-            ViewAction action,
+            ViewSchema.Form form,
             Map<String, ViewFormInputState> fields,
             Label feedback,
             ViewInteractionHandler interactions,
@@ -294,10 +294,11 @@ final class ViewFormRenderer {
                 .filter(ViewFormInputState::visible)
                 .forEach(state -> arguments.put(state.field.name(), typedValue(state.field, state.input)));
         try {
-            ViewCommandInvocation invocation = commandBindings.invocation(action, Map.copyOf(arguments), Map.of());
+            ViewCommandInvocation invocation =
+                    commandBindings.invocation(form.submit(), Map.copyOf(arguments), Map.of());
             feedback.setManaged(false);
             feedback.setVisible(false);
-            interactions.execute(invocation);
+            interactions.executeForm(form.id(), invocation);
         } catch (IllegalArgumentException resolutionFailure) {
             showFeedback(feedback, resolutionFailure.getMessage());
         }

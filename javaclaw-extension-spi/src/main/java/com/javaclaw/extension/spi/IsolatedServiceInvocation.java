@@ -18,6 +18,7 @@ import com.javaclaw.api.WorkspaceId;
  * @param serviceId 组合根注册的服务标识
  * @param request 规范化请求
  * @param cancellation 协作式取消信号
+ * @param scope 平台绑定的会话、Turn 与幂等身份；宿主必须再次核验
  */
 public record IsolatedServiceInvocation(
         ExtensionId caller,
@@ -25,7 +26,8 @@ public record IsolatedServiceInvocation(
         PermissionProfile effectivePermissions,
         String serviceId,
         CanonicalPayload request,
-        CancellationToken cancellation) {
+        CancellationToken cancellation,
+        IsolatedServiceCallScope scope) {
     /** 校验调用边界。 */
     public IsolatedServiceInvocation {
         Objects.requireNonNull(caller, "caller");
@@ -34,6 +36,34 @@ public record IsolatedServiceInvocation(
         serviceId = text(serviceId);
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(cancellation, "cancellation");
+        Objects.requireNonNull(scope, "scope");
+    }
+
+    /**
+     * 保持已有单次隔离调用兼容；没有 Thread 身份的调用不能创建常驻会话。
+     *
+     * @param caller 调用扩展
+     * @param workspaceId 所有者 Workspace
+     * @param effectivePermissions 最终权限
+     * @param serviceId 服务标识
+     * @param request 业务输入
+     * @param cancellation 取消信号
+     */
+    public IsolatedServiceInvocation(
+            ExtensionId caller,
+            WorkspaceId workspaceId,
+            PermissionProfile effectivePermissions,
+            String serviceId,
+            CanonicalPayload request,
+            CancellationToken cancellation) {
+        this(
+                caller,
+                workspaceId,
+                effectivePermissions,
+                serviceId,
+                request,
+                cancellation,
+                IsolatedServiceCallScope.empty());
     }
 
     private static String text(String value) {

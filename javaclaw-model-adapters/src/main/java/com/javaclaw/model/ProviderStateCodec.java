@@ -27,7 +27,7 @@ import com.javaclaw.runtime.ProviderState;
  */
 final class ProviderStateCodec {
     static final String PROVIDER_ID = "openai-responses";
-    static final String FORMAT = "responses-state-v3";
+    static final String FORMAT = "responses-state-v4";
 
     private final JsonMapper mapper = ModelJsonMapper.create();
 
@@ -47,16 +47,13 @@ final class ProviderStateCodec {
 
     DecodedState decode(ProviderState state) {
         Objects.requireNonNull(state, "state");
-        if (!PROVIDER_ID.equals(state.providerId())
-                || !(FORMAT.equals(state.format()) || "responses-state-v2".equals(state.format()))) {
-            throw new IllegalArgumentException("Provider state identity does not match OpenAI Responses");
-        }
+        int expectedVersion = envelopeVersion(state);
         try {
             JsonNode root = mapper.readTree(state.payload().json());
             String kind = requiredText(root, "kind");
             String responseId = requiredText(root, "responseId");
             int version = requiredNode(root, "formatVersion").intValue();
-            if (version != (FORMAT.equals(state.format()) ? 3 : 2)) {
+            if (version != expectedVersion) {
                 throw new IllegalArgumentException("Provider state formatVersion does not match its envelope");
             }
             ModelInstructions instructions = decodeInstructions(requiredNode(root, "instructions"));
@@ -68,7 +65,7 @@ final class ProviderStateCodec {
             List<JsonNode> items = new ArrayList<>();
             outputs.forEach(item -> items.add(item.deepCopy()));
             List<JsonNode> inputs = new ArrayList<>();
-            if (version == 3) {
+            if (version >= 3) {
                 JsonNode replay = requiredNode(root, "inputItems");
                 if (!replay.isArray()) {
                     throw new IllegalArgumentException("Provider state replay inputs must be an array");
@@ -79,6 +76,18 @@ final class ProviderStateCodec {
         } catch (IOException failure) {
             throw new IllegalArgumentException("Provider state is not valid JSON", failure);
         }
+    }
+
+    private static int envelopeVersion(ProviderState state) {
+        if (!PROVIDER_ID.equals(state.providerId())) {
+            throw new IllegalArgumentException("Provider state identity does not match OpenAI Responses");
+        }
+        return switch (state.format()) {
+            case FORMAT -> 4;
+            case "responses-state-v3" -> 3;
+            case "responses-state-v2" -> 2;
+            default -> throw new IllegalArgumentException("Provider state format is unsupported");
+        };
     }
 
     List<ResponseInputItem> inputItems(DecodedState state) {
@@ -107,7 +116,7 @@ final class ProviderStateCodec {
             List<ResponseOutputItem> output,
             long inputTokens) {
         ObjectNode root = mapper.createObjectNode();
-        root.put("formatVersion", 3);
+        root.put("formatVersion", 4);
         root.putArray("inputItems");
         root.put("kind", kind);
         root.put("responseId", responseId);
@@ -129,7 +138,7 @@ final class ProviderStateCodec {
     ProviderState withInputs(ProviderState state, List<ResponseInputItem> inputs) {
         try {
             ObjectNode root = (ObjectNode) mapper.readTree(state.payload().json());
-            root.put("formatVersion", 3);
+            root.put("formatVersion", 4);
             ArrayNode stored = root.putArray("inputItems");
             for (ResponseInputItem input : inputs) {
                 if (input.isEasyInputMessage()

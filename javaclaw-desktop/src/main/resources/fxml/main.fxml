@@ -92,6 +92,11 @@
                             <Button fx:id="pendingButton" text="待处理" onAction="#toggleProgress"
                                 accessibleText="打开待处理事项" styleClass="shell-toggle-button" />
                         </HBox>
+                        <StackPane fx:id="browserHost">
+                            <padding>
+                                <Insets top="0" right="20" bottom="0" left="20" />
+                            </padding>
+                        </StackPane>
                         <Label fx:id="errorLabel" visible="false" managed="false" wrapText="true"
                             maxWidth="Infinity" styleClass="error-banner" />
                         <VBox fx:id="connectionErrorCard" visible="false" managed="false" spacing="10"

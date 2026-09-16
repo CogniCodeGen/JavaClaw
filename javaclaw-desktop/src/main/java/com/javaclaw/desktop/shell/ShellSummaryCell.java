@@ -18,6 +18,7 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 
 import com.javaclaw.api.DocumentReference;
+import com.javaclaw.api.ItemId;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.desktop.state.OutgoingMessage;
 
@@ -102,6 +103,13 @@ final class ShellSummaryCell extends ListCell<ShellTranscriptRow> {
                                     DocumentReference.attachment(scope, item.id(), attachment))));
             item.fileReferences().forEach(reference -> addFile("查看引用文件", reference));
         });
+        workspace
+                .get()
+                .ifPresent(scope -> row.presented()
+                        .attachments()
+                        .forEach(attachment -> addFile(
+                                attachment.fileName(),
+                                DocumentReference.attachment(scope, ItemId.parse(row.id()), attachment))));
         visible(
                 actions,
                 row.outgoing()

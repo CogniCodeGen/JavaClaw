@@ -49,8 +49,9 @@ record AppServerResources(
         failure = close(scheduleLifecycle, failure);
         failure = close(modelDiscovery, failure);
         failure = close(embeddings, failure);
-        failure = close(vault, failure);
+        // 浏览器正常关闭仍需密封最后登录态；先终结 Worker，再关闭其依赖的 Vault。
         failure = close(isolatedServices, failure);
+        failure = close(vault, failure);
         if (failure != null) {
             throw failure;
         }

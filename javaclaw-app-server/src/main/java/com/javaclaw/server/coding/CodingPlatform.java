@@ -41,6 +41,7 @@ public final class CodingPlatform implements TurnResourceFinalizer, AutoCloseabl
     private final CodingEnvironmentRepository environments;
     private final CodingFileTools files;
     private final CodingProcessManager processes;
+    private final SystemCommandResolver systemCommands;
     private final CodingTerminalManager terminals;
     private final CodingManagement management;
     private final CodingDependencyPreparer preparation;
@@ -81,6 +82,11 @@ public final class CodingPlatform implements TurnResourceFinalizer, AutoCloseabl
                 locks,
                 dependencies.authority(),
                 dependencies.sandbox());
+        systemCommands = new SystemCommandResolver(
+                dependencies.core().systemCommands(),
+                dependencies.database().dataRoot(),
+                dependencies.json(),
+                dependencies.clock());
         terminals = new CodingTerminalManager(
                 new CodingTerminalManager.Services(dependencies.json(), terminalRecords, operations),
                 resolver,
@@ -159,13 +165,7 @@ public final class CodingPlatform implements TurnResourceFinalizer, AutoCloseabl
     private GovernedExtensionResponse execute(CodingInvocation invocation) throws Exception {
         requireOpen();
         invocation.cancellation().throwIfCancelled();
-        CanonicalPayload identity = dependencies
-                .json()
-                .encode(new InvocationIdentity(
-                        invocation.request(),
-                        dependencies.json().encode(invocation.environment()).sha256(),
-                        invocation.permission(),
-                        invocation.turn().toolCatalogDigest()));
+        CanonicalPayload identity = identity(invocation);
         var intent = new CodingOperationRepository.Intent(
                 invocation.id(),
                 invocation.turn().id(),
@@ -247,10 +247,36 @@ public final class CodingPlatform implements TurnResourceFinalizer, AutoCloseabl
         if (operation.equals("command_run")) {
             return processes.run(invocation);
         }
+        if (operation.equals("script_run")) {
+            return processes.runScript(invocation);
+        }
+        if (operation.startsWith("system_")) {
+            return systemCommands.execute(invocation, processes);
+        }
         if (operation.equals("dependencies_prepare")) {
             return preparation.prepare(invocation);
         }
         throw new SecurityException("Coding 未声明此操作");
+    }
+
+    private CanonicalPayload identity(CodingInvocation invocation) {
+        var original = new InvocationIdentity(
+                invocation.request(),
+                dependencies.json().encode(invocation.environment()).sha256(),
+                invocation.permission(),
+                invocation.turn().toolCatalogDigest());
+        // 旧入口的意图编码保持原样，升级不能使已完成调用的幂等回执失配。
+        if (!invocation.request().tool().name().startsWith("system_")) {
+            return dependencies.json().encode(original);
+        }
+        String digest = dependencies
+                .json()
+                .encode(dependencies
+                        .core()
+                        .systemCommands()
+                        .frozen(invocation.turn().id()))
+                .sha256();
+        return dependencies.json().encode(new SystemInvocationIdentity(original, digest));
     }
 
     @Override
@@ -364,4 +390,6 @@ public final class CodingPlatform implements TurnResourceFinalizer, AutoCloseabl
             String environmentDigest,
             PermissionProfile permission,
             String toolCatalogDigest) {}
+
+    private record SystemInvocationIdentity(InvocationIdentity invocation, String systemEnvironmentDigest) {}
 }

@@ -91,7 +91,7 @@ final class SpringAiModelFactory {
             ChatModel model,
             SpringAiEndpoint.OptionsFactory options,
             AutoCloseable resources) {
-        ModelCapabilities capabilities = new ModelCapabilities(true, true, true, true, false, false, false);
+        ModelCapabilities capabilities = new ModelCapabilities(true, true, true, false, false, false, false);
         return new SpringAiEndpoint(config.endpointId(), model, capabilities, options, resources);
     }
 

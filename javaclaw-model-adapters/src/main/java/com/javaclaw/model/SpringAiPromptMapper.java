@@ -16,23 +16,68 @@ import com.javaclaw.runtime.ModelMessage;
 
 /** 将冻结层映射为 Spring AI Prompt；其统一消息模型没有 developer role，只在此边界按固定顺序合并。 */
 final class SpringAiPromptMapper {
+    private final ModelImageTransport images;
+
+    SpringAiPromptMapper() {
+        this(com.javaclaw.runtime.ModelImageResolver.unavailable());
+    }
+
+    SpringAiPromptMapper(com.javaclaw.runtime.ModelImageResolver resolver) {
+        images = new ModelImageTransport(resolver);
+    }
+
     Prompt map(ModelInvocation invocation, ChatOptions options) {
         List<Message> messages = new ArrayList<>();
         String merged = AdapterInstructionMapping.merged(invocation.instructions());
         if (!merged.isBlank()) {
             messages.add(new SystemMessage(merged));
         }
-        invocation.messages().stream().map(this::mapMessage).forEach(messages::add);
+        List<Message> observations = new ArrayList<>();
+        for (ModelMessage message : invocation.messages()) {
+            if (message.role() != com.javaclaw.api.MessageRole.TOOL) {
+                messages.addAll(observations);
+                observations.clear();
+            }
+            messages.add(mapMessage(message));
+            if (message.role() == com.javaclaw.api.MessageRole.TOOL
+                    && !message.images().isEmpty()) {
+                observations.add(user("工具 " + message.toolCallId().orElseThrow() + " 的图片观察", message));
+            }
+        }
+        // 同批 tool response 必须完整回填后再插入观察消息，否则 Provider 会拒绝未配对调用。
+        messages.addAll(observations);
         return new Prompt(messages, options);
     }
 
     private Message mapMessage(ModelMessage message) {
         return switch (message.role()) {
             case SYSTEM -> new SystemMessage(message.text());
-            case USER -> new UserMessage(message.text());
+            case USER -> user(message.text(), message);
             case ASSISTANT -> assistant(message);
             case TOOL -> toolResponse(message);
         };
+    }
+
+    private UserMessage user(String text, ModelMessage message) {
+        if (message.images().isEmpty()) {
+            return new UserMessage(text);
+        }
+        List<org.springframework.ai.content.Media> media = message.images().stream()
+                .map(image -> org.springframework.ai.content.Media.builder()
+                        .mimeType(org.springframework.util.MimeType.valueOf(
+                                image.attachment().mediaType()))
+                        .data(images.bytes(image))
+                        .id(image.observationId())
+                        .name("Observation")
+                        .build())
+                .toList();
+        String identities = message.images().stream()
+                .map(com.javaclaw.runtime.ModelImage::observationId)
+                .collect(java.util.stream.Collectors.joining(", "));
+        return UserMessage.builder()
+                .text(text + "\n图片观察身份：" + identities)
+                .media(media)
+                .build();
     }
 
     private AssistantMessage assistant(ModelMessage message) {

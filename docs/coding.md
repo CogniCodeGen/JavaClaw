@@ -29,9 +29,45 @@ JavaClaw 使用现有 Thread 和 Turn 完成问答、项目检查、修改与运
 结束后撤销联网租约，再启动新的断网测试进程。缺少工具链、权限、系统组件或兼容版本时会返回实际失败。
 完成后可继续在同一会话提问，命令失败本身也不要求另建会话。
 
+## 本地文件、Java 片段与系统程序
+
+Coding revision 2 在原有读取、搜索、文本补丁和托管命令上增加以下工具。新工具仍需要当前 Turn 的工具授权与
+对应文件或进程权限；升级不会改写用户权限，也不会启用已停用的扩展。
+
+| 用途 | 工具和约束 |
+|---|---|
+| 检查文件 | `file_stat` 返回存在性、类型和大小；`file_read_binary` 返回 Base64、完整 SHA-256 与字节游标 |
+| 写入文件 | `file_write` 接收 UTF-8 或 Base64；省略旧摘要只允许新建，提供旧摘要才允许条件覆盖 |
+| 复制、移动、删除 | `file_copy`、`file_move` 校验源摘要且目标必须不存在；`file_delete` 同时要求删除权限 |
+| 目录 | `file_mkdir` 可显式创建父目录；`file_rmdir` 仅删除空目录，缺失或非空均失败 |
+| Java 片段 | `script_run` 执行内联 Java，使用冻结的托管 JDK 21 或 25，单独要求 `jshell` 进程权限 |
+| 系统程序 | `system_command_list` 列出本 Turn 冻结且权限允许的程序；`system_command_run` 按程序 ID 与原始参数执行 |
+| 系统 Shell | `system_shell_run` 将整段命令交给固定 `/bin/sh` 或 Windows `cmd.exe`，支持引号、管道和重定向 |
+
+文件路径限定当前 `executionRoot`，拒绝路径逃逸、链接、`.git`、执行根本身及内部恢复目录。新文件写操作要求
+父目录已经存在。二进制单页及直接写入最多 1 MiB，完整摘要扫描最多 64 MiB，一次变更前后内容累计最多 16 MiB；
+有效权限可以进一步收窄。目录与文件事实分开记录，部分失败也保留已发生的变化和恢复位置。
+
+`script_run` 的 `source` 最多 64 KiB UTF-8；默认 `workingDirectory` 为 `.`、超时 30 秒、输出 64 KiB。
+每次调用创建独立 JShell，会话间不保留变量。表达式值写 stdout，编译诊断与运行异常写 stderr；首次明确错误后
+停止后续片段。主动退出只报告实际退出码，不代表后面的片段执行完成。应用自身的运行时无需增加 JShell 模块。
+
+在 Workspace 的“编程环境 → 系统程序”登记额外程序：填写唯一 ID、绝对入口、输出编码和可选依赖读取目录。
+`system.` 前缀保留给系统预设，Windows 按大小写不敏感检查冲突。登记不授予权限：例如执行 `system.echo`
+还需在进程权限中允许 `system.echo`；自定义程序使用自己的登记 ID，依赖目录也须已有读取授权。
+不会因登记入口而开放整个父目录或宿主 HOME。保存只影响之后新建的普通 Turn，当前 Turn 保留原快照；
+入口替换或删除会导致旧调用拒绝执行。旧 Turn 缺少快照时不能静默取得新增系统能力。
+
+托管开发环境供 `command_run` 和 JShell 使用。系统 Shell 使用固定系统 PATH 和私有 HOME/TMP；登记程序通过
+目录返回的冻结绝对路径调用。Shell 单独要求 `system.sh` 或 `system.cmd` 权限，授权覆盖沙箱内整个进程树，
+不逐条审批子命令。正文最多 4096 个 UTF-16 单元；Windows 使用 `/d /s /c` 禁用 AutoRun。
+首版直接 argv 入口最多 199 个参数，沿用既有命令事实的非空白参数约束；需要空参数时可以在 Shell 中显式使用引号。
+三个新执行入口均断网、归属于当前 Turn，最长请求 3600 秒、最多输出 1 MiB，并受实际权限和剩余预算限制。
+
 ## 查看输出与取消
 
-Desktop 的会话进度侧栏显示运行中命令、依赖准备和终端的只读输出；转录保留命令状态、退出码、文件 Diff 及恢复目录。
+Desktop 的会话进度侧栏显示运行中命令、JShell、系统程序、Shell、依赖准备和终端的只读输出；
+转录保留命令状态、退出码、文件 Diff、目录变化及恢复目录。
 “编程环境”的“准备状态”显示最近准备记录。输出有界，界面保留尾部；通过会话原有取消入口取消整个 Turn。
 首版没有人工终端 stdin 输入框，模型的受治理终端工具仍属于当前 Turn。
 
@@ -50,8 +86,15 @@ Ctrl-C、交互提示中的 `/cancel` 和取消确认规则见 [CLI 使用说明
 `output()`。传入 `CodingResults.OutputRead(resourceId, offsetBytes, maxBytes)`，使用响应的 `nextOffsetBytes`
 继续分页；不要用字符串长度推算字节游标。末页无新字节时停止追页，运行中稍后再查询。
 目录过滤与资源 ID 不授予额外权限；SDK 仍由服务端校验读取范围。未知状态或 Schema 保留文本，不当作执行成功。
+JShell、系统程序和 Shell 均使用 `commandOutput`；`filesystemResult` 查询新增文件操作事实。
+`systemRegistry`、`updateSystemRegistry` 和 `systemCatalog` 提供登记管理与当前机器目录查询，不执行项目命令。
+输出保留原始字节：POSIX 默认 UTF-8，Windows 系统工具使用冻结的系统输出代码页，登记程序使用指定编码。
+字节游标与显示字符长度无关；混合编码输出不进行猜测性转换。
 
 ## 当前验证范围
+
+2026-09-15 新增本地文件、JShell 和系统命令的测试及平台边界见
+[本地工具验证记录](evidence/coding-local-tools-validation.md)。下面保留原依赖准备验收结果。
 
 截至 2026-09-07，本机 macOS arm64 的公开依赖准备与后续断网验证结果如下：
 

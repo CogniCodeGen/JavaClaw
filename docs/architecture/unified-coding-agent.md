@@ -33,11 +33,17 @@ flowchart LR
 
 ## 文件与外部副作用
 
-`file_list`、`file_read`、`file_search` 和 `file_apply_patch` 只接受相对路径。Native Hosts 的固定 Worker 在
+`file_list`、`file_read`、`file_search`、`file_apply_patch` 及 revision 2 新增的 stat、二进制读写、复制、移动、
+删除和目录操作只接受相对路径。Native Hosts 的固定 Worker 在
 操作系统沙箱内执行文件访问。POSIX 逐段打开固定目录句柄，Windows 使用 `NtCreateFile` 的 `RootDirectory`
 和 `OBJ_DONT_REPARSE`；读取、列举、搜索与摘要均相对于仍持有的父目录完成，不将验证后的路径重新打开。
 Windows ACL 在同一对象句柄上读取、设置和恢复。文件扫描、返回条数、字节和运行时间都有上限。
-UTF-8 分页保留完整字符边界；二进制不作为文本修改。
+UTF-8 分页保留完整字符边界；二进制通过独立 Base64 契约处理，不进入文本补丁。
+
+新文件操作复用补丁的字节变更执行器、执行根锁、目录句柄、摘要条件、备份与恢复证据。直接写入及二进制分页
+上限 1 MiB，摘要扫描上限 64 MiB，变更前后累计内容上限 16 MiB，并受有效权限收窄。新增 `FileSystemResult`
+区分目录、文本和二进制，原 `PatchResult` 形状不变。独立 `DirectoryChange` 记录显式目录修改和补丁自动创建
+父目录的事实；部分失败不得抹掉已经发生的变化。新文件写入口不隐式创建父目录，空目录删除同样记录恢复证据。
 
 补丁使用完整目标 SHA-256 或不存在条件，不执行模糊匹配。全部目标预检完成后，原内容、新内容和完整 Diff
 进入 Attachment 内容寻址存储。POSIX 修改使用 macOS `renameatx_np(RENAME_SWAP)` 或 Linux
@@ -46,7 +52,8 @@ UTF-8 分页保留完整字符边界；二进制不作为文本修改。
 目标暂时不存在，**Windows 尚未满足原方案的单次原子替换要求**。所有平台的摘要预检均不是 SHA-256 原子 CAS。
 恢复目录保留旧 inode、提案和操作记录，`recoveryPaths` 回执公开位置；文件工具排除并拒绝直接修改这些内部目录。
 当前没有自动清理恢复目录；完整 Workspace 命令写权限也不保证恶意项目脚本无法删除该目录，平台 CAS 中的原始备份独立保留。
-移动在底层表现为有条件删除和创建，面向 SDK 的回执合并成移动记录。已应用事实由平台生成，不由扩展生成。
+移动在底层表现为有条件删除和创建，旧补丁回执保留合并后的移动记录；新文件系统回执分别保留实际删除与创建，
+便于表达部分失败。已应用事实由平台生成，不由扩展生成。
 
 执行根租约协调 JavaClaw 内部写入，不能锁住用户编辑器。回退先核对当前文件是否仍匹配本次写入摘要，
 POSIX 交换后再次检查实际捕获的 inode；外部编辑发生在最后检查与交换之间时立即保留双方材料并报告
@@ -60,9 +67,25 @@ H2 回滚不撤销文件修改；副作用已开始但结果或事实提交无�
 
 ## 命令和终端
 
-命令输入为逻辑可执行标识、argv、相对 cwd 和有限时限；不拼接 Shell、不从宿主 PATH 查找用户命令。
+托管命令输入为逻辑可执行标识、argv、相对 cwd 和有限时限；不拼接 Shell、不从宿主 PATH 查找用户命令。
 `ManagedCommandResolver` 将目录中已安装的精确版本解析为固定入口、必要运行库、解释器与缓存，平台批准的
 `SandboxRuntimeAccess` 单独提供托管运行环境。模型不能通过参数增加文件根。
+
+`script_run` 使用冻结 JDK 的 `java --add-modules jdk.jshell --source 21` 启动受审阅 Worker 资源。
+资源经摘要校验发布到服务器私有只读目录，用户源码仅经有界 stdin 传入；输入的 64 KiB 预算与输出预算独立，
+旧进程入口保留原有 stdin 限制。Worker 使用本地 JShell 引擎、源码切片、编译诊断和运行异常检查，首次明确错误
+即停止；每次进程独立。主应用模块不链接 `jdk.compiler` 或 `jdk.jshell`，逻辑 `jshell` 进程权限先于 JDK 解析。
+
+`system_command_run` 根据本 Turn 冻结目录把逻辑程序 ID 映射到绝对入口；`system_shell_run` 把原始命令交给
+固定 `/bin/sh` 或服务启动环境确定的 `System32/cmd.exe`。Windows 禁用 AutoRun，平台不拆词推断子命令授权。
+系统预设和 Workspace 显式登记与托管开发环境分开。登记依赖读取目录须已有文件授权，不自动开放入口父目录。
+Shell 采用固定系统 PATH、私有 HOME/TMP 和清理后的环境；登记程序通过冻结绝对路径访问。
+Shell 进程权限覆盖整个沙箱进程树，注册表不是跨平台子命令逐条授权器。
+
+托管命令、JShell、系统程序与 Shell 的解析结果统一进入 `CodingProcessManager`，保留原调用、审批身份、
+实际 argv、输出编码及执行证据。三类新增入口固定 OFFLINE，共用进程槽、执行根锁、撤权监视和进程树清理。
+系统目录冻结平台、登记版本、真实入口与文件身份/摘要；启动前复验，变化拒绝。该检查不具备原子执行保证。
+系统目录发现位于独立 `server.system` 基础包，由持久化与 Coding 执行层共同使用；持久化层不依赖执行层。
 
 Maven 由冻结 JDK 直接启动发行版 ClassWorlds 入口。服务端安全读取 `-f` / `--file` 指定项目及执行根内的
 `.mvn` 祖先，确定 `maven.multiModuleProjectDirectory`，并读取有界的 `.mvn/jvm.config`。首版接受明确的无引号
@@ -76,7 +99,9 @@ PTY 创建成功只表示会话已启动。
 batch 输出由 Native Hosts 在共享字节预算内同步观察，stdout/stderr 使用同一提交顺序的原始字节游标。
 `CODING_COMMAND_STREAM` 和 `CODING_COMMAND_CHUNK` 保存冻结上限、观察状态及 CAS 引用；最终完整输出仍保留在既有
 命令回执中。执行中的查询不要求模型工具已经返回，也不启动新的项目进程。迟到帧不能越过 Turn、操作或输出流的终态。
-batch 与 PTY 均按原始字节推进游标，读取前至多取三个前缀字节完成 UTF-8 跨页解码；中文和 emoji 只在完整字符
+batch 与 PTY 均按原始字节推进游标，UTF-8 读取前至多取三个前缀字节；非 UTF-8 系统输出使用有界完整前缀
+恢复解码状态。POSIX 默认 UTF-8，Windows 系统输出代码页在目录中冻结，登记程序可指定编码；不猜测混合编码。
+中文和 emoji 只在完整字符
 到齐的页面输出。`terminal/output` 不将状态说明伪装为进程字节，未知结果由执行摘要说明；工具读取及元数据仍提供
 未知原因。Turn 已终结但没有确认退出的执行显示未知，已有真实退出则保留其状态及退出码。
 
@@ -141,6 +166,10 @@ macOS 使用 Seatbelt，Linux 使用独立 network namespace 与受控 IPC relay
 
 保留全部 V001 原文及 checksum；V002 增加容量与上下文账本，V003 增加 Coding 环境、执行、终端、工具链与网络授权。
 V004 增加 batch 输出流与分块账本，已有 V001–V003 原文保持不变。
+V010 增加 Workspace 系统程序登记、Turn 系统目录快照及执行快照；保留已有 V001–V009 原文和 checksum。
+普通新 Turn 冻结当前登记；子任务、继续执行及自动化沿用原始快照，缺少快照的历史 Turn 不获得新增系统能力。
+Coding descriptor 升至 revision 2，仅精确匹配已知 revision 1 描述时自动迁移，保留启停状态和用户权限；
+原 Coding v1 DTO、Schema 和 PatchResult 保持不变，新能力使用独立 Schema。
 有序 migration 在执行前登记 pending checksum，DDL 部分完成后重复验证与续建，验证成功才登记版本。
 程序拒绝高于自身支持范围的数据库。继续使用 data-v6，不读取 data-v5；回退使用升级前备份，不承诺旧二进制读取升级数据。
 

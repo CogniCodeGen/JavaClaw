@@ -56,6 +56,31 @@ public final class HarnessTurnDispatcher implements AwaitableTurnDispatcher, Aut
     private final LifecycleCoordinator lifecycle;
     private final CanonicalJson json;
     private final Map<TurnId, Execution> executions = new ConcurrentHashMap<>();
+    private final java.util.List<java.util.function.Consumer<TurnExecutionResult>> finishedListeners =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /**
+     * 注册租约释放后的终态通知，供宿主业务编排续接；监听器失败不改变已提交的 Turn。
+     *
+     * @param listener 接收真实累计用量的宿主监听器
+     */
+    public void onFinished(java.util.function.Consumer<TurnExecutionResult> listener) {
+        finishedListeners.add(Objects.requireNonNull(listener, "listener"));
+    }
+
+    /**
+     * 从持久 journal 读取已结束 Turn 的累计结果，不启动模型调用。
+     *
+     * @param turnId 终态 Turn
+     * @return 真实持久用量和终态
+     */
+    public TurnExecutionResult terminalResult(TurnId turnId) {
+        AgentTurn turn = core.findTurn(turnId).orElseThrow();
+        if (!isTerminal(turn.status())) {
+            throw new IllegalStateException("Turn 尚未结束");
+        }
+        return recoverTerminal(turn);
+    }
 
     /**
      * 创建调度器并接管模型网关的关闭责任。
@@ -335,6 +360,20 @@ public final class HarnessTurnDispatcher implements AwaitableTurnDispatcher, Aut
             finishWorktree(command.turn());
             executions.remove(command.turn().id(), execution);
             execution.closeLease();
+            notifyFinished(execution);
+        }
+    }
+
+    private void notifyFinished(Execution execution) {
+        TurnExecutionResult result = execution.completion().getNow(null);
+        if (result != null) {
+            for (var listener : finishedListeners) {
+                try {
+                    listener.accept(result);
+                } catch (RuntimeException failure) {
+                    LOGGER.warn("Turn {} 终态监听失败", result.turnId(), failure);
+                }
+            }
         }
     }
 

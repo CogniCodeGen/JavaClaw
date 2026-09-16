@@ -46,8 +46,10 @@ final class SandboxPolicyValidator {
             throw new SecurityException("PermissionProfile does not allow PTY sessions");
         }
         requireNetworkBroker(checkedPermission);
-        if (checkedCommand.standardInput().length
-                > checkedPermission.resources().outputBytes()) {
+        long inputLimit = runtimeAccess.standardInputBytes() == 0
+                ? checkedPermission.resources().outputBytes()
+                : runtimeAccess.standardInputBytes();
+        if (checkedCommand.standardInput().length > inputLimit) {
             throw new SecurityException("sandbox standard input exceeds the configured byte limit");
         }
         Path executable = executable(checkedCommand, checkedPermission);
@@ -57,7 +59,7 @@ final class SandboxPolicyValidator {
         if (!Files.isDirectory(workingDirectory) || !insideAny(workingDirectory, projectReadRoots, projectWriteRoots)) {
             throw new SecurityException("sandbox working directory is outside permitted roots");
         }
-        List<Path> readRoots = merge(projectReadRoots, realRoots(runtimeAccess.readRoots(), "runtime read root"));
+        List<Path> readRoots = merge(projectReadRoots, runtimeReadRoots(runtimeAccess.readRoots()));
         List<Path> writeRoots = merge(projectWriteRoots, realRoots(runtimeAccess.writeRoots(), "runtime write root"));
         Duration timeout =
                 minimum(checkedCommand.timeout(), checkedPermission.processes().maxRunTime());
@@ -131,6 +133,20 @@ final class SandboxPolicyValidator {
             Path real = root.toRealPath();
             if (!Files.isDirectory(real)) {
                 throw new SecurityException(name + " is not a directory: " + root);
+            }
+            if (!result.contains(real)) {
+                result.add(real);
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private static List<Path> runtimeReadRoots(List<Path> roots) throws IOException {
+        ArrayList<Path> result = new ArrayList<>();
+        for (Path root : roots) {
+            Path real = root.toRealPath();
+            if (!Files.isDirectory(real) && !Files.isRegularFile(real)) {
+                throw new SecurityException("runtime read root is not a regular file or directory: " + root);
             }
             if (!result.contains(real)) {
                 result.add(real);

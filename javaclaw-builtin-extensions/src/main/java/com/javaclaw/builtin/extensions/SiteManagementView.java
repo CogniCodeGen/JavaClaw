@@ -38,7 +38,7 @@ final class SiteManagementView {
         return new ViewSchema(
                 ViewSchema.CURRENT_VERSION,
                 extensionId + ".management",
-                "Site 管理",
+                "网站管理",
                 dataSources(),
                 List.of(
                         new ViewSchema.Card(
@@ -47,10 +47,11 @@ final class SiteManagementView {
                                 "Workspace 由当前请求隐式绑定。凭据与私网授权只绑定已有资源的精确版本；Origin 变化会清除旧绑定并立即使旧 Browser 会话失效。",
                                 List.of()),
                         sitesTable(),
-                        form("site-create", "新建 Site", SiteManagement.NEW_SOURCE, true),
-                        form("site-edit", "编辑 Site", SiteManagement.EDIT_SOURCE, false),
+                        form("site-create", "新建网站", SiteManagement.NEW_SOURCE, true),
+                        form("site-edit", "网站信息", SiteManagement.EDIT_SOURCE, false),
                         credentialForm(),
-                        privateNetworkForm()));
+                        privateNetworkForm(),
+                        siteActions()));
     }
 
     static SiteEditor editor(SiteContracts.Site site) {
@@ -98,37 +99,36 @@ final class SiteManagementView {
     }
 
     private static ViewSchema.Table sitesTable() {
-        ViewAction clearCredential = new ViewAction(
-                "清除凭据",
-                SiteManagement.CREDENTIAL_CLEAR,
-                Map.of(),
-                Map.of("siteId", "id", "expectedAuthorityRevision", "authorityRevision"),
-                new ExpectedRevisionBinding.RowField("revision"),
-                true);
-        ViewAction clearPrivateNetwork = new ViewAction(
-                "清除私网授权",
-                SiteManagement.PRIVATE_NETWORK_CLEAR,
-                Map.of(),
-                Map.of("siteId", "id", "expectedAuthorityRevision", "authorityRevision"),
-                new ExpectedRevisionBinding.RowField("revision"),
-                true);
-        ViewAction delete = new ViewAction(
-                "删除", "delete", Map.of(), Map.of("id", "id"), new ExpectedRevisionBinding.RowField("revision"), true);
         return new ViewSchema.Table(
                 "sites",
-                "Site",
+                "网站",
                 "documents",
                 "id",
                 List.of(
                         new ViewSchema.Column("name", "名称", Optional.of(200)),
-                        new ViewSchema.Column("origin", "主 Origin", Optional.of(300)),
-                        new ViewSchema.Column("enabled", "启用", Optional.of(80)),
-                        new ViewSchema.Column("hasCredential", "已配置凭据", Optional.of(110)),
-                        new ViewSchema.Column("hasPrivateGrant", "私网授权", Optional.of(100)),
-                        new ViewSchema.Column("revision", "版本", Optional.of(80)),
-                        new ViewSchema.Column("authorityRevision", "权限版本", Optional.of(90))),
+                        new ViewSchema.Column("origin", "网址", Optional.of(300)),
+                        new ViewSchema.Column("enabled", "启用", Optional.of(80))),
                 ViewSelectionMode.SINGLE,
-                List.of(clearCredential, clearPrivateNetwork, delete));
+                List.of());
+    }
+
+    private static ViewSchema.Card siteActions() {
+        ViewAction delete = new ViewAction(
+                "删除网站",
+                "delete",
+                Map.of(),
+                Map.of(),
+                new ExpectedRevisionBinding.SourceRevision(SiteManagement.EDIT_SOURCE),
+                true,
+                new ViewCommandBinding("id", new ViewBinding(SiteManagement.EDIT_SOURCE, "id")));
+        return new ViewSchema.Card(
+                "site-actions",
+                "危险操作",
+                "仅操作当前选中的网站；清除绑定或删除前需要确认。",
+                List.of(
+                        authorityAction("清除凭据", SiteManagement.CREDENTIAL_CLEAR, true),
+                        authorityAction("清除私网授权", SiteManagement.PRIVATE_NETWORK_CLEAR, true),
+                        delete));
     }
 
     private static ViewSchema.Form credentialForm() {
@@ -210,9 +210,9 @@ final class SiteManagementView {
     private static ViewSchema.Form form(String id, String title, String source, boolean create) {
         ViewAction save = create
                 ? new ViewAction(
-                        "创建 Site", SiteManagement.CREATE, Map.of(), Map.of(), new ExpectedRevisionBinding.None(), false)
+                        "创建网站", SiteManagement.CREATE, Map.of(), Map.of(), new ExpectedRevisionBinding.None(), false)
                 : new ViewAction(
-                        "保存 Site",
+                        "保存网站",
                         SiteManagement.UPDATE,
                         Map.of(),
                         Map.of(),

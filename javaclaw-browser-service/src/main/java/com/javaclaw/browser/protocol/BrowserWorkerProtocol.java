@@ -66,12 +66,12 @@ public final class BrowserWorkerProtocol {
             requireVersion(version);
             positive(id, "id");
             operation = text(operation, "operation");
-            if (!Set.of(SNAPSHOT, LOGIN, OAUTH).contains(operation)) {
+            if (!Set.of(SNAPSHOT, LOGIN, OAUTH, InteractiveBrowserProtocol.OPEN, BrowserRegistrationProtocol.OPEN).contains(operation)) {
                 throw new IllegalArgumentException("unsupported Browser Worker operation");
             }
             Objects.requireNonNull(payload, "payload");
             bytes(sensitiveStateBytes, MAXIMUM_STATE_BYTES, "sensitiveStateBytes");
-            if (OAUTH.equals(operation) && sensitiveStateBytes != 0) {
+            if ((OAUTH.equals(operation) || BrowserRegistrationProtocol.OPEN.equals(operation)) && sensitiveStateBytes != 0) {
                 throw new IllegalArgumentException("OAuth Browser command cannot contain sensitive state bytes");
             }
         }

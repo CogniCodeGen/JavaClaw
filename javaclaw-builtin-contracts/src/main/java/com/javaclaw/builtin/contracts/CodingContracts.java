@@ -12,7 +12,7 @@ public final class CodingContracts {
     /** Coding 扩展唯一来源。 */
     public static final String EXTENSION_ID = "com.javaclaw.coding";
     /** Coding 工具与业务 Schema 的首个不可变版本。 */
-    public static final long REVISION = 1;
+    public static final long REVISION = 2;
 
     private CodingContracts() {}
 

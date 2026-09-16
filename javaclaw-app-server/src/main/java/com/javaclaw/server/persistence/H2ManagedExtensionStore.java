@@ -58,6 +58,24 @@ public final class H2ManagedExtensionStore implements ManagedExtensionStore {
         return transactions.execute(connection -> executeWork(connection, extensionId, schema, work));
     }
 
+    /**
+     * 在宿主已拥有的同库事务内写入扩展文档，用于 Vault 与账号状态的原子提交。
+     *
+     * @param extensionId 已初始化的内置扩展
+     * @param connection 宿主拥有的事务连接；本方法不提交或关闭它
+     * @param work 不能逸出回调的扩展写入
+     * @param <T> 不含 Secret 的结果
+     * @return 本次写入结果
+     * @throws Exception 连接无事务或领域写入失败
+     */
+    public <T> T inExistingTransaction(ExtensionId extensionId, Connection connection, TransactionWork<T> work)
+            throws Exception {
+        if (Objects.requireNonNull(connection, "connection").getAutoCommit()) {
+            throw new IllegalArgumentException("复合扩展写入需要宿主事务");
+        }
+        return executeWork(connection, extensionId, schemas.ensureInitialized(extensionId), work);
+    }
+
     @Override
     public ExtensionResponse inCommand(
             ExtensionId extensionId,

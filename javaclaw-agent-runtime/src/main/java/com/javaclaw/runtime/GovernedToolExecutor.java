@@ -10,6 +10,16 @@ import com.javaclaw.api.ToolDescriptor;
 @FunctionalInterface
 public interface GovernedToolExecutor {
     /**
+     * 查询可信宿主是否已持久提交当前 Turn 的续接请求，供崩溃恢复和模型调用前检查。
+     *
+     * @param turnId 当前 Turn
+     * @return 应结束本轮并把尚未执行的调用记为未执行时为真
+     */
+    default boolean shouldYield(com.javaclaw.api.TurnId turnId) {
+        return false;
+    }
+
+    /**
      * 执行工具；实现必须在副作用前重新检查 enabled、revision、撤权与 PermissionProfile。
      *
      * @param request 已匹配冻结目录的请求

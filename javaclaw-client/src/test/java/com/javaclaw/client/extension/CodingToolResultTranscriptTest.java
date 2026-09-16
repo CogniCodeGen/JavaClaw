@@ -65,7 +65,7 @@ class CodingToolResultTranscriptTest {
                 .format(result, Optional.of(call(turn, "run", "command_run", "other.extension", 1)))
                 .isEmpty());
         assertTrue(formatter
-                .format(result, Optional.of(call(turn, "run", "command_run", CodingContracts.EXTENSION_ID, 2)))
+                .format(result, Optional.of(call(turn, "run", "command_run", CodingContracts.EXTENSION_ID, 3)))
                 .isEmpty());
         assertTrue(formatter
                 .format(result, Optional.of(call(turn, "run", "future_command", CodingContracts.EXTENSION_ID, 1)))
@@ -106,13 +106,34 @@ class CodingToolResultTranscriptTest {
     @Test
     void 未知Coding修订回退保留原始正文且有界而不按旧契约解释() {
         var value = result(turn, "future", java.util.Map.of("future", "x".repeat(20000)), true);
-        var future = call(turn, "future", "command_run", CodingContracts.EXTENSION_ID, 2);
+        var future = call(turn, "future", "command_run", CodingContracts.EXTENSION_ID, 3);
         assertTrue(formatter.format(value, Optional.of(future)).isEmpty());
         var fallback = formatter.fallback(value);
         assertTrue(fallback.body().startsWith("{\"future\":"));
         assertTrue(fallback.body().length() < 16500);
         assertTrue(fallback.body().contains("截断"));
         assertEquals("a�[31mb�31mc", new CodingTranscriptFormatter.Fact("", "a\u001b[31mb\u009b31mc").body());
+    }
+
+    @Test
+    void 新执行工具仅在新目录版本中显示且目录事实不冒充文件内容() {
+        for (String name : List.of("script_run", "system_command_run", "system_shell_run")) {
+            var output = result(turn, name, command(), true);
+            assertTrue(formatter
+                    .format(output, Optional.of(call(turn, name, name, CodingContracts.EXTENSION_ID, 1)))
+                    .isEmpty());
+            assertTrue(formatter
+                    .format(output, Optional.of(call(turn, name, name, CodingContracts.EXTENSION_ID, 2)))
+                    .isPresent());
+        }
+        var directory = item(
+                turn,
+                1,
+                CoreSchemas.DIRECTORY_CHANGE,
+                new com.javaclaw.api.DirectoryChange(java.nio.file.Path.of("docs"), "create"));
+        var fact = formatter.format(directory).orElseThrow();
+        assertEquals("目录 · create", fact.title());
+        assertEquals("docs", fact.body());
     }
 
     private ItemEnvelope call(TurnId owner, String id, String name, String producer, long revision) {

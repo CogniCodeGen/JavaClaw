@@ -139,17 +139,27 @@ final class VaultCredentialTransactions {
             PreparedProviderCredentialMutation prepared,
             Class<T> resultType,
             AtomicCredentialCommit<T> work) {
+        return commitAll(identity, java.util.List.of(prepared), resultType, work);
+    }
+
+    <T> T commitAll(
+            CommandIdentity identity,
+            java.util.List<PreparedProviderCredentialMutation> prepared,
+            Class<T> resultType,
+            AtomicCredentialCommit<T> work) {
         T result = execute(connection -> {
             Optional<CanonicalPayload> replay = commands.recover(connection, identity);
             if (replay.isPresent()) {
                 return json.decode(replay.orElseThrow(), resultType);
             }
-            apply(connection, prepared);
+            for (PreparedProviderCredentialMutation candidate : prepared) {
+                apply(connection, candidate);
+            }
             T committed = Objects.requireNonNull(work, "work").commit(connection);
             commands.record(connection, identity, json.encode(committed), clock.instant());
             return committed;
         });
-        prepared.committed();
+        prepared.forEach(PreparedProviderCredentialMutation::committed);
         return result;
     }
 

@@ -40,7 +40,24 @@ public final class CodingSchemas {
             "output-read-input",
             "failure",
             "dependency-evidence",
-            "execution-list");
+            "execution-list",
+            "file-stat-input",
+            "file-stat-result",
+            "file-read-binary-input",
+            "file-read-binary-result",
+            "file-write-input",
+            "file-copy-input",
+            "file-move-input",
+            "file-delete-input",
+            "file-mkdir-input",
+            "file-rmdir-input",
+            "filesystem-result",
+            "script-run-input",
+            "system-registry",
+            "system-registry-update-input",
+            "system-catalog",
+            "system-command-run-input",
+            "system-shell-run-input");
 
     private CodingSchemas() {}
 

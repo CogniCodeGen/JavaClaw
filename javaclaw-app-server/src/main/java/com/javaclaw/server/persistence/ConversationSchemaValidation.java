@@ -17,6 +17,9 @@ final class ConversationSchemaValidation {
                                 "SELECT TURN_ID,WORKSPACE_ID,THREAD_ID,COMPLETION_SEQUENCE,LAST_ITEM_SEQUENCE,COMPLETED_AT"
                                         + " FROM CORE.CONVERSATION_COMPLETION WHERE 1=0");
                     case 7 -> List.of("SELECT JOB_ID,REQUESTED_AT FROM CORE.EXTENSION_JOB_CANCELLATION WHERE 1=0");
+                    case 9 ->
+                        List.of("SELECT TURN_ID,PREVIOUS_TURN_ID,ORIGINAL_INPUT_TURN_ID,THREAD_ID,CREATED_AT"
+                                + " FROM CORE.TURN_CONTINUATION WHERE 1=0");
                     default -> List.of();
                 };
         for (String query : queries) {

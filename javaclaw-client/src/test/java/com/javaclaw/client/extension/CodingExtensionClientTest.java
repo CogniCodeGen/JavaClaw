@@ -10,7 +10,9 @@ import org.junit.jupiter.api.Test;
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.builtin.contracts.CodingContracts;
 import com.javaclaw.builtin.contracts.CodingEnvironmentContracts;
+import com.javaclaw.builtin.contracts.CodingFileSystemContracts;
 import com.javaclaw.builtin.contracts.CodingResults;
+import com.javaclaw.builtin.contracts.CodingSystemContracts;
 import com.javaclaw.builtin.contracts.DependencyEvidence;
 import com.javaclaw.client.CommandOptions;
 import com.javaclaw.client.RpcClientConnection;
@@ -94,6 +96,31 @@ class CodingExtensionClientTest {
 
     private static RpcClientConnection connection(ScriptedExtensionConnection script) {
         return new RpcClientConnection(script, new CanonicalJson(), ignored -> {});
+    }
+
+    @Test
+    void 系统程序登记和文件事实通过管理RPC往返且登记使用乐观版本() throws IOException {
+        var registration = new CodingSystemContracts.Registration("custom.echo", "/bin/echo", List.of(), "UTF-8");
+        var registry = new CodingSystemContracts.Registry(4, List.of(registration));
+        var catalog = new CodingSystemContracts.Catalog("macos-aarch64", 4, List.of());
+        var saved = new CodingSystemContracts.Registry(5, List.of());
+        var update = new CodingSystemContracts.RegistryUpdate(List.of());
+        var filesystem =
+                new CodingFileSystemContracts.FileSystemResult("file-1", List.of(), true, Optional.empty(), List.of());
+        var options = new CommandOptions("registry-save", 4);
+        var script = new ScriptedExtensionConnection(WORKSPACE);
+        script.expectQuery(EXTENSION, "system/registry/read", new CodingEnvironmentContracts.Empty(), registry, 4);
+        script.expectQuery(EXTENSION, "system/catalog", new CodingEnvironmentContracts.Empty(), catalog, 0);
+        script.expectQuery(EXTENSION, "filesystem/result", new CodingResults.ResourceRead("file-1"), filesystem, 0);
+        script.expectCommand(EXTENSION, "system/registry/update", update, options, saved, 5);
+        try (RpcClientConnection connection = connection(script)) {
+            var coding = new CodingExtensionClient(new ExtensionClient(connection));
+            assertEquals(registry, coding.systemRegistry(WORKSPACE));
+            assertEquals(catalog, coding.systemCatalog(WORKSPACE));
+            assertEquals(filesystem, coding.filesystemResult(WORKSPACE, "file-1"));
+            assertEquals(saved, coding.updateSystemRegistry(WORKSPACE, update, options));
+        }
+        script.assertExhausted();
     }
 
     @Test

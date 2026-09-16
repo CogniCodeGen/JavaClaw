@@ -137,6 +137,7 @@
     {"name": "extension/list", "kind": "query", "paramsSchema": "extension-v3.schema.json#/$defs/empty", "resultSchema": "extension-v3.schema.json#/$defs/listResult"},
     {"name": "extension/query", "kind": "query", "paramsSchema": "extension-v3.schema.json#/$defs/callPayload", "resultSchema": "extension-v3.schema.json#/$defs/callResult"},
     {"name": "extension/command", "kind": "command", "paramsSchema": "extension-v3.schema.json#/$defs/command", "resultSchema": "extension-v3.schema.json#/$defs/callResult"},
+    {"name": "extension/secret/command", "kind": "command", "paramsSchema": "extension-secret-v1.schema.json#/$defs/command", "resultSchema": "extension-v3.schema.json#/$defs/callResult"},
     {"name": "extension/schema/read", "kind": "query", "paramsSchema": "extension-v3.schema.json#/$defs/schemaReadParams", "resultSchema": "extension-v3.schema.json#/$defs/schemaResult"},
     {"name": "extension/view/list", "kind": "query", "paramsSchema": "extension-v3.schema.json#/$defs/viewListParams", "resultSchema": "extension-v3.schema.json#/$defs/viewListResult"},
     {"name": "extension/job/list", "kind": "query", "paramsSchema": "input-job-v3.schema.json#/$defs/jobListPayload", "resultSchema": "input-job-v3.schema.json#/$defs/jobListResult"},

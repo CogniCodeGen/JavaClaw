@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import com.javaclaw.builtin.contracts.CodingContracts;
+import com.javaclaw.builtin.contracts.CodingFileSystemContracts;
 import com.javaclaw.builtin.contracts.CodingResults;
 import com.javaclaw.nativehost.coding.WorkspaceFileAccess;
 import com.javaclaw.protocol.CanonicalJson;
@@ -28,8 +29,37 @@ final class CodingFileTools {
             case "file_read" -> read(files, invocation);
             case "file_search" -> search(files, invocation);
             case "file_apply_patch" -> patches.apply(files, invocation);
+            case "file_stat" -> stat(files, invocation);
+            case "file_read_binary" -> binary(files, invocation);
+            case "file_write", "file_copy", "file_move", "file_delete", "file_mkdir", "file_rmdir" ->
+                patches.fileSystem(files, invocation);
             default -> throw new IllegalArgumentException("未知文件操作");
         };
+    }
+
+    private CodingToolResult stat(WorkspaceFileAccess files, CodingInvocation invocation) throws Exception {
+        var input = json.decode(invocation.request().arguments(), CodingFileSystemContracts.FileStat.class);
+        var entry = files.stat(input.path(), invocation.cancellation())
+                .map(value -> new CodingResults.FileEntry(
+                        value.path(),
+                        value.directory() ? CodingResults.EntryKind.DIRECTORY : CodingResults.EntryKind.FILE,
+                        value.size()));
+        return CodingToolResult.value(new CodingFileSystemContracts.FileStatResult(entry));
+    }
+
+    private CodingToolResult binary(WorkspaceFileAccess files, CodingInvocation invocation) throws Exception {
+        var input = json.decode(invocation.request().arguments(), CodingFileSystemContracts.FileReadBinary.class);
+        var page = files.read(
+                input.path(), input.offsetBytes(), input.maxBytes(), 64 * 1024 * 1024, invocation.cancellation());
+        long next = page.offsetBytes() + page.content().length;
+        return CodingToolResult.value(new CodingFileSystemContracts.FileReadBinaryResult(
+                page.path(),
+                java.util.Base64.getEncoder().encodeToString(page.content()),
+                page.sha256(),
+                page.sizeBytes(),
+                page.offsetBytes(),
+                next,
+                next < page.sizeBytes()));
     }
 
     private CodingToolResult list(WorkspaceFileAccess files, CodingInvocation invocation) throws Exception {

@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 
 import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.builtin.contracts.CodingEnvironmentContracts;
+import com.javaclaw.builtin.contracts.CodingSystemContracts;
 import com.javaclaw.client.CommandOptions;
 import com.javaclaw.desktop.DesktopTestFixtures;
 import com.javaclaw.desktop.FxTestSupport;
@@ -84,6 +85,57 @@ class CodingSettingsPageTest {
         });
     }
 
+    @Test
+    void 系统程序草稿参与离页保护且保存仅调用配置SDK() {
+        Gateway gateway = new Gateway();
+        FxTestSupport.run(() -> {
+            CodingSettingsPage page = new CodingSettingsPage(gateway);
+            VBox root = mount(page);
+            page.workspaceChanged(Optional.of(DesktopTestFixtures.workspace()));
+            ((TextField) root.lookup("#codingSystemId")).setText("git");
+            ((TextField) root.lookup("#codingSystemPath")).setText("/opt/tools/git");
+            assertTrue(page.dirty());
+            ((Button) root.lookup("#codingSystemSave")).fire();
+            assertEquals(1, gateway.systemRegistry.revision());
+            assertEquals(
+                    "/opt/tools/git",
+                    gateway.systemRegistry.registrations().getFirst().path());
+            assertFalse(page.dirty());
+            assertEquals(0, gateway.jobReads);
+            ComboBox<?> selector = (ComboBox<?>) root.lookup("#codingSystemSelected");
+            selector.getSelectionModel().selectFirst();
+            ((Button) root.lookup("#codingSystemRemove")).fire();
+            assertTrue(gateway.systemRegistry.registrations().isEmpty());
+            page.dispose();
+        });
+    }
+
+    @Test
+    void 系统程序异步旧作用域响应和无效草稿不会写入新工作区() {
+        Gateway gateway = new Gateway();
+        gateway.systemLoad = new CompletableFuture<>();
+        FxTestSupport.run(() -> {
+            CodingSettingsPage page = new CodingSettingsPage(gateway);
+            VBox root = mount(page);
+            page.workspaceChanged(Optional.of(DesktopTestFixtures.workspace()));
+            assertTrue(page.pending());
+            page.workspaceChanged(Optional.empty());
+            gateway.systemLoad.complete(new CodingSettingsGateway.SystemSnapshot(
+                    gateway.systemRegistry, new CodingSystemContracts.Catalog("macos", 0, List.of())));
+            assertTrue(((Button) root.lookup("#codingSystemSave")).isDisabled());
+            gateway.systemLoad = null;
+            page.workspaceChanged(Optional.of(DesktopTestFixtures.workspace()));
+            ((TextField) root.lookup("#codingSystemId")).setText("relative");
+            ((TextField) root.lookup("#codingSystemPath")).setText("relative/path");
+            ((Button) root.lookup("#codingSystemSave")).fire();
+            assertTrue(page.dirty());
+            assertEquals(0, gateway.systemRegistry.revision());
+            page.discardDraft();
+            assertFalse(page.dirty());
+            page.dispose();
+        });
+    }
+
     private static VBox mount(CodingSettingsPage page) {
         VBox root = new VBox(page.content());
         page.actionContent().ifPresent(root.getChildren()::add);
@@ -94,6 +146,25 @@ class CodingSettingsPageTest {
     }
 
     private static final class Gateway implements CodingSettingsGateway {
+        private CodingSystemContracts.Registry systemRegistry = new CodingSystemContracts.Registry(0, List.of());
+        private CompletableFuture<SystemSnapshot> systemLoad;
+
+        @Override
+        public CompletionStage<SystemSnapshot> systemCommands(WorkspaceId workspaceId) {
+            return systemLoad != null
+                    ? systemLoad
+                    : CompletableFuture.completedFuture(new SystemSnapshot(
+                            systemRegistry,
+                            new CodingSystemContracts.Catalog("macos", systemRegistry.revision(), List.of())));
+        }
+
+        @Override
+        public CompletionStage<CodingSystemContracts.Registry> saveSystemCommands(
+                WorkspaceId workspaceId, CodingSystemContracts.RegistryUpdate update, CommandOptions options) {
+            systemRegistry = new CodingSystemContracts.Registry(options.expectedRevision() + 1, update.registrations());
+            return CompletableFuture.completedFuture(systemRegistry);
+        }
+
         private final CodingEnvironmentContracts.ToolchainRef reference = new CodingEnvironmentContracts.ToolchainRef(
                 CodingEnvironmentContracts.ToolchainKind.JDK, "25", "a".repeat(64));
         private CodingEnvironmentContracts.EnvironmentSpec spec = new CodingEnvironmentContracts.EnvironmentSpec(

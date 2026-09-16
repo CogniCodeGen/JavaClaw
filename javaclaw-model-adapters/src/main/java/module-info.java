@@ -15,6 +15,8 @@ module com.javaclaw.model.adapters {
     requires spring.ai.anthropic;
     requires spring.ai.google.genai;
     requires spring.ai.model;
+    requires spring.ai.commons;
+    requires spring.core;
     requires spring.ai.openai;
 
     exports com.javaclaw.model;

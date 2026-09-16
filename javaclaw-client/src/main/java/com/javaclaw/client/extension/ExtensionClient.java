@@ -10,11 +10,15 @@ import com.javaclaw.client.RpcClientConnection;
 import com.javaclaw.extension.spi.ViewQueryResult;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.ExtensionRpcContracts;
+import com.javaclaw.protocol.ExtensionSecretRpcContracts;
+import com.javaclaw.protocol.SessionKeyInfo;
+import com.javaclaw.protocol.SessionSecretSealer;
 
 /** Protocol v3 通用 Extension 目录、调用、schema 与页面 facade。 */
 public final class ExtensionClient {
     private final RpcClientConnection connection;
     private final CanonicalJson json = new CanonicalJson();
+    private final Optional<SessionKeyInfo> sessionKey;
 
     /**
      * 创建 facade。
@@ -23,6 +27,38 @@ public final class ExtensionClient {
      */
     public ExtensionClient(RpcClientConnection connection) {
         this.connection = Objects.requireNonNull(connection, "connection");
+        sessionKey = Optional.empty();
+    }
+
+    /**
+     * 创建支持密封管理命令的已初始化 facade。
+     *
+     * @param connection 当前连接
+     * @param sessionKey initialize 返回的会话公钥
+     */
+    public ExtensionClient(RpcClientConnection connection, SessionKeyInfo sessionKey) {
+        this.connection = Objects.requireNonNull(connection, "connection");
+        this.sessionKey = Optional.of(Objects.requireNonNull(sessionKey, "sessionKey"));
+    }
+
+    /**
+     * 在进入 JSON-RPC 前密封秘密并调用宿主注册的扩展领域操作。
+     *
+     * @param call 不含秘密的领域元数据
+     * @param secret 调用方拥有的短生命周期字符，返回后须清零
+     * @param options 幂等身份与精确资源版本
+     * @return 不含秘密的领域回执
+     */
+    public ExtensionRpcContracts.CallResult secretCommand(
+            ExtensionRpcContracts.CallPayload call, char[] secret, CommandOptions options) {
+        String purpose = ExtensionSecretRpcContracts.purpose(call, options.expectedRevision());
+        var sealed = SessionSecretSealer.seal(
+                sessionKey.orElseThrow(() -> new IllegalStateException("SDK 未绑定会话公钥")), purpose, secret);
+        return connection.command(
+                ExtensionSecretRpcContracts.METHOD,
+                new ExtensionSecretRpcContracts.Payload(call, sealed),
+                options,
+                ExtensionRpcContracts.CallResult.class);
     }
 
     /**

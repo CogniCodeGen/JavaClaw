@@ -181,7 +181,8 @@ public final class TranscriptPresenter {
                 payload.success() ? "" : output,
                 payload.success() ? "transcript-execution-block" : "transcript-error-block",
                 metadata + (payload.success() ? "\n" + output : ""),
-                true);
+                true,
+                BrowserToolAttachments.from(json, payload, call));
     }
 
     private PresentedItem approval(ItemEnvelope item) {

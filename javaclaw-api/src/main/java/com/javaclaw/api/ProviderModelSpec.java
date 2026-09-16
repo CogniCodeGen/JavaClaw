@@ -11,9 +11,14 @@ import java.util.Set;
  * @param displayName 用户可见名称
  * @param purposes 模型用途；至少包含一项
  * @param embeddingDimensions Embedding 输出维度；使用 Provider 默认值时为空
+ * @param imageSupport 图片输入声明；旧配置缺省为 UNKNOWN
  */
 public record ProviderModelSpec(
-        String modelId, String displayName, Set<ProviderModelPurpose> purposes, OptionalInt embeddingDimensions) {
+        String modelId,
+        String displayName,
+        Set<ProviderModelPurpose> purposes,
+        OptionalInt embeddingDimensions,
+        ProviderImageSupport imageSupport) {
     /** 复制用途并校验模型配置。 */
     public ProviderModelSpec {
         modelId = Preconditions.boundedText(modelId, "modelId", 1_000);
@@ -23,6 +28,10 @@ public record ProviderModelSpec(
             throw new IllegalArgumentException("model purposes must not be empty");
         }
         embeddingDimensions = Objects.requireNonNull(embeddingDimensions, "embeddingDimensions");
+        imageSupport = imageSupport == null ? ProviderImageSupport.UNKNOWN : imageSupport;
+        if (imageSupport == ProviderImageSupport.SUPPORTED && !purposes.contains(ProviderModelPurpose.CHAT)) {
+            throw new IllegalArgumentException("图片输入需要 CHAT 用途");
+        }
         if (embeddingDimensions.isPresent()) {
             int dimensions = embeddingDimensions.getAsInt();
             if (!purposes.contains(ProviderModelPurpose.EMBEDDING)) {
@@ -32,6 +41,19 @@ public record ProviderModelSpec(
                 throw new IllegalArgumentException("embeddingDimensions must be between 1 and 65536");
             }
         }
+    }
+
+    /**
+     * 兼容未记录图片能力的模型配置，不根据 Provider 或模型名猜测能力。
+     *
+     * @param modelId 原生模型标识
+     * @param displayName 展示名称
+     * @param purposes 模型用途
+     * @param embeddingDimensions 向量维度
+     */
+    public ProviderModelSpec(
+            String modelId, String displayName, Set<ProviderModelPurpose> purposes, OptionalInt embeddingDimensions) {
+        this(modelId, displayName, purposes, embeddingDimensions, ProviderImageSupport.UNKNOWN);
     }
 
     /**

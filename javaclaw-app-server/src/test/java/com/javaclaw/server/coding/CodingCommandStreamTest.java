@@ -1,5 +1,6 @@
 package com.javaclaw.server.coding;
 
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -206,6 +207,58 @@ class CodingCommandStreamTest {
             }
             assertEquals("你🙂", out.toString());
             assertEquals("错🧪", err.toString());
+        }
+    }
+
+    @Test
+    void 新执行入口保留冻结编码且系统输出跨通道逐字节分页不丢字符() throws Exception {
+        try (var fixture = new CodingStreamingFixture(directory)) {
+            for (String kind : java.util.List.of("script_run", "system_command_run", "system_shell_run")) {
+                fixture.prepare(kind, kind, fixture.base.turn.id());
+                fixture.operations.preparation(kind, fixture.base.json.parse("{\"outputEncoding\":\"GBK\"}"));
+                var owner = fixture.streams.create(fixture.base.workspace.id(), fixture.base.turn.id(), kind, 100);
+                fixture.operations.start(kind);
+                byte[] stdout = "中文".getBytes(Charset.forName("GBK"));
+                byte[] stderr = "错误".getBytes(Charset.forName("GBK"));
+                for (int index = 0; index < stdout.length; index++) {
+                    owner = fixture.streams.append(owner, "stdout", new byte[] {stdout[index]});
+                    owner = fixture.streams.append(owner, "stderr", new byte[] {stderr[index]});
+                }
+                var out = new StringBuilder();
+                var err = new StringBuilder();
+                for (long offset = 0; offset < owner.outputBytes(); offset++) {
+                    var page = fixture.output("command/output", kind, offset, 1);
+                    assertEquals(offset + 1, page.nextOffsetBytes());
+                    out.append(page.stdout());
+                    err.append(page.stderr());
+                }
+                assertEquals("中文", out.toString());
+                assertEquals("错误", err.toString());
+            }
+        }
+    }
+
+    @Test
+    void 文件预检失败查询保留实际错误并报告零变更() throws Exception {
+        try (var fixture = new CodingStreamingFixture(directory)) {
+            fixture.prepare("missing", "file_write", fixture.base.turn.id());
+            fixture.operations.finish(
+                    "missing",
+                    fixture.base.json.encode(new com.javaclaw.builtin.contracts.CodingResults.Failure(
+                            "FILE_DIGEST_CONFLICT", "摘要冲突", "missing", true)),
+                    java.util.List.of(),
+                    false);
+            var result = fixture.base.json.decode(
+                    fixture.query(
+                            "filesystem/result",
+                            new com.javaclaw.builtin.contracts.CodingResults.ResourceRead("missing"),
+                            Optional.of(fixture.base.turn.threadId()),
+                            Optional.of(fixture.base.turn.id())),
+                    com.javaclaw.builtin.contracts.CodingFileSystemContracts.FileSystemResult.class);
+            assertFalse(result.complete());
+            assertEquals(Optional.of("FILE_DIGEST_CONFLICT"), result.failureCode());
+            assertEquals(java.util.List.of(), result.changes());
+            assertEquals(java.util.List.of(), result.recoveryPaths());
         }
     }
 

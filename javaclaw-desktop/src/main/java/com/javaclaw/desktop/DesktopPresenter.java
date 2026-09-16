@@ -87,6 +87,11 @@ public final class DesktopPresenter implements AutoCloseable {
         });
     }
 
+    /** @return 复用当前连接和 UI 调度器的浏览器领域边界 */
+    public DesktopBrowserGateway browsers() {
+        return new SdkDesktopBrowserGateway(this);
+    }
+
     /** @return 当前 Desktop 共享的配置失效通知源，随 Presenter 关闭 */
     public DesktopConfigurationEvents configurationEvents() {
         return configurationEvents;

@@ -28,9 +28,33 @@ import com.javaclaw.runtime.ModelToolCall;
 final class OpenAiResponsesRequestMapper {
     private final JsonMapper mapper = ModelJsonMapper.create();
     private final ProviderStateCodec states;
+    private final ResponsesImageMapping images;
 
     OpenAiResponsesRequestMapper(ProviderStateCodec states) {
+        this(states, com.javaclaw.runtime.ModelImageResolver.unavailable());
+    }
+
+    OpenAiResponsesRequestMapper(ProviderStateCodec states, com.javaclaw.runtime.ModelImageResolver resolver) {
         this.states = states;
+        images = new ResponsesImageMapping(resolver);
+    }
+
+    ResponseCreateParams hydrate(ResponseCreateParams request) {
+        List<ResponseInputItem> input = request.input().orElseThrow().asResponse().stream()
+                .map(item -> images.hydrate(item, ResponseInputItem.class))
+                .toList();
+        return request.toBuilder()
+                .input(ResponseCreateParams.Input.ofResponse(input))
+                .build();
+    }
+
+    ResponseCompactParams hydrate(ResponseCompactParams request) {
+        List<ResponseInputItem> input = request.input().orElseThrow().asResponseInputItems().stream()
+                .map(item -> images.hydrate(item, ResponseInputItem.class))
+                .toList();
+        return request.toBuilder()
+                .input(ResponseCompactParams.Input.ofResponseInputItems(input))
+                .build();
     }
 
     ResponseCreateParams initial(OpenAiResponsesEndpointConfig config, ModelInvocation invocation) {
@@ -100,6 +124,10 @@ final class OpenAiResponsesRequestMapper {
     }
 
     private void append(ModelMessage message, List<ResponseInputItem> target) {
+        if (!message.images().isEmpty()) {
+            target.add(images.message(message));
+            return;
+        }
         switch (message.role()) {
             case SYSTEM -> target.add(easy(message.text(), EasyInputMessage.Role.SYSTEM));
             case USER -> target.add(easy(message.text(), EasyInputMessage.Role.USER));

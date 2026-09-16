@@ -30,7 +30,7 @@ import com.javaclaw.api.PermissionProfileRef;
 import com.javaclaw.api.ProcessPermission;
 import com.javaclaw.api.ProviderRef;
 import com.javaclaw.api.ResourceLimits;
-import com.javaclaw.api.ToolIdentity;
+import com.javaclaw.api.ToolDescriptor;
 import com.javaclaw.api.ToolPermission;
 import com.javaclaw.api.ToolRisk;
 import com.javaclaw.api.TurnBudget;
@@ -483,7 +483,12 @@ class SiteBrowserToolIntegrationTest {
                 case 2 ->
                     result(new ModelToolCall(
                             "snapshot",
-                            new ToolIdentity(BuiltinExtensionIds.SITE, SNAPSHOT_TOOL, 1),
+                            invocation.tools().stream()
+                                    .map(ToolDescriptor::identity)
+                                    .filter(identity -> BuiltinExtensionIds.SITE.equals(identity.producerId())
+                                            && SNAPSHOT_TOOL.equals(identity.name()))
+                                    .findFirst()
+                                    .orElseThrow(),
                             snapshotArguments()));
                 default -> complete();
             };

@@ -61,6 +61,57 @@ public final class SandboxedWorkerLauncher {
         return builder.start();
     }
 
+    /**
+     * 验证当前平台可见 Worker 的额外原生 IPC 前置条件；成功不代表浏览器或网络 Broker 验收通过。
+     *
+     * @throws IOException macOS 私有 namespace 不可用或实例隔离断言失败
+     */
+    public static void verifyInteractiveIsolation() throws IOException {
+        if (System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("mac")) {
+            com.javaclaw.nativehost.ffm.MacBootstrapNamespace.verifyIsolation();
+        }
+    }
+
+    /**
+     * 验证常驻可见 Worker 的整树回收发布前置条件。
+     *
+     * <p>现有 Linux PID namespace 与 Windows Job Object 是可复用的内核边界，但尚无本轮常驻链的真实 逃逸后代回收证据。macOS 仅靠 ProcessHandle
+     * 观察也不能证明任意后代回收，因此三平台均明确拒绝发布。 不接受环境变量、能力文件或普通 Worker 测试代替这项证明。
+     *
+     * @throws IOException 当前平台尚未完成常驻可见进程树证明；不会启动目标或扩大原生权限
+     */
+    public static void verifyInteractiveProcessContainment() throws IOException {
+        throw new IOException(
+                "INTERACTIVE_TREE_CONTAINMENT_UNVERIFIED: resident browser process-tree proof is required");
+    }
+
+    /**
+     * 启动由可信宿主续期的可见交互 Worker；原生 GUI/IPC 前置条件失败时不启动目标。
+     *
+     * <p>需要独占 private scratch。idleTimeout 是独立墙钟闲置期限，command.lifetime 继续限定原有执行资源预算； 不通过放宽普通 Worker
+     * 描述获得常驻能力。页面后台流量不得调用续期方法。
+     *
+     * @param command 已冻结镜像、执行根和实例 scratch 的描述
+     * @param idleTimeout 1 秒至 15 分钟，只有可信宿主动作可续期
+     * @return 独占管道、监护进程树和原生租约的句柄
+     * @throws IOException 原生隔离、私有 IPC 或监护启动失败
+     */
+    public SandboxedWorkerLease startInteractive(SandboxedWorkerCommand command, java.time.Duration idleTimeout)
+            throws IOException {
+        SandboxedWorkerCommand checked = Objects.requireNonNull(command, "command");
+        java.time.Duration idle = Objects.requireNonNull(idleTimeout, "idleTimeout");
+        if (idle.compareTo(java.time.Duration.ofSeconds(1)) < 0
+                || idle.compareTo(java.time.Duration.ofMinutes(15)) > 0) {
+            throw new IllegalArgumentException("Worker idle timeout must be between 1 second and 15 minutes");
+        }
+        if (checked.privateScratch().isEmpty()) {
+            throw new SecurityException("Interactive Worker requires exclusive private scratch");
+        }
+        verifyInteractiveIsolation();
+        verifyInteractiveProcessContainment();
+        return SandboxResidentWorkerLauncher.start(validate(checked), idle);
+    }
+
     private static ValidatedSandboxCommand validate(SandboxedWorkerCommand worker) throws IOException {
         Path executable = Path.of(worker.argv().getFirst()).toRealPath();
         PermissionProfile permission = new PermissionProfile(

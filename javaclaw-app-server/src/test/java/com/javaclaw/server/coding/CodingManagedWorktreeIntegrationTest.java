@@ -162,7 +162,7 @@ class CodingManagedWorktreeIntegrationTest {
             PermissionProfile permission,
             PermissionProfileRef reference) {
         var descriptor = new ToolDescriptor(
-                new ToolIdentity(CodingContracts.EXTENSION_ID, "file_list", 1),
+                new ToolIdentity(CodingContracts.EXTENSION_ID, "file_list", CodingContracts.REVISION),
                 "Read bounded directory",
                 fixture.json.parse("{\"type\":\"object\"}"),
                 fixture.json.parse("{\"type\":\"object\"}"),

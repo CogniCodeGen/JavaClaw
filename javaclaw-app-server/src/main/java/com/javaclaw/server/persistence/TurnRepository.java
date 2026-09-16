@@ -117,6 +117,8 @@ final class TurnRepository {
         new TurnContextRepository(json).freeze(connection, turn.id(), turn.provider());
         CodingEnvironmentRepository.freeze(
                 connection, turn, request.codingEnvironment().orElseThrow(), now);
+        new CodingSystemRepository(json, java.time.Clock.fixed(now, java.time.ZoneOffset.UTC))
+                .freeze(connection, turn, request.systemEnvironment().orElseThrow(), now);
         return turn;
     }
 
@@ -132,9 +134,10 @@ final class TurnRepository {
         if (next == TurnStatus.COMPLETED && hasCancellation(connection, turnId)) {
             throw new TurnCancelledException("Turn 已收到持久化取消请求");
         }
+        // 墙钟回拨只影响事件时刻；Turn 更新时间保持单调，不修改创建时间或预算起点。
         try (PreparedStatement statement = connection.prepareStatement("""
                 UPDATE CORE.AGENT_TURN
-                SET STATUS = ?, REVISION = REVISION + 1, ERROR_CODE = ?, UPDATED_AT = ?
+                SET STATUS = ?, REVISION = REVISION + 1, ERROR_CODE = ?, UPDATED_AT = GREATEST(UPDATED_AT, ?)
                 WHERE ID = ? AND STATUS = ?
                 """)) {
             statement.setString(1, next.name());
@@ -174,8 +177,9 @@ final class TurnRepository {
             throw new PersistenceException("终态 Turn 不能取消");
         }
         insertCancellation(connection, turnId, reason, now);
+        // 取消意图仍记录真实墙钟，仅防止 Turn 展示快照的更新时间倒退。
         try (PreparedStatement statement = connection.prepareStatement("""
-                UPDATE CORE.AGENT_TURN SET REVISION = REVISION + 1, UPDATED_AT = ?
+                UPDATE CORE.AGENT_TURN SET REVISION = REVISION + 1, UPDATED_AT = GREATEST(UPDATED_AT, ?)
                 WHERE ID = ? AND REVISION = ?
                 """)) {
             statement.setObject(1, at(now));

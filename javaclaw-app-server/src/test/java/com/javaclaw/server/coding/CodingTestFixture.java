@@ -102,7 +102,7 @@ final class CodingTestFixture implements AutoCloseable {
                 ThreadExecutionIntent.WORKSPACE,
                 "Coding " + suffix);
         var descriptor = new com.javaclaw.api.ToolDescriptor(
-                new ToolIdentity(CodingContracts.EXTENSION_ID, "command_run", 1),
+                new ToolIdentity(CodingContracts.EXTENSION_ID, "command_run", CodingContracts.REVISION),
                 "测试冻结的 Coding 能力",
                 json.parse("{\"type\":\"object\"}"),
                 json.parse("{\"type\":\"object\"}"),
@@ -148,19 +148,6 @@ final class CodingTestFixture implements AutoCloseable {
                 identity("permissionProfile/clone", "clone", Map.of()),
                 new PermissionProfileRef(PermissionProfileService.STANDARD_PROFILE_ID, 1),
                 "coding-test");
-        var tools = Set.of(
-                "file_list",
-                "file_read",
-                "file_search",
-                "file_apply_patch",
-                "command_run",
-                "terminal_open",
-                "terminal_read",
-                "terminal_write",
-                "terminal_signal",
-                "terminal_resize",
-                "terminal_close",
-                "dependencies_prepare");
         var updated = new PermissionProfile(
                 cloned.id(),
                 2,
@@ -169,10 +156,26 @@ final class CodingTestFixture implements AutoCloseable {
                         ? cloned.network()
                         : new com.javaclaw.api.NetworkPermission(repositories, Set.of(443), true),
                 new ProcessPermission(
-                        Set.of("java", "javac", "python", "node", "mvn", "gradle", "npm", "pnpm", "pip"),
+                        Set.of(
+                                "java",
+                                "javac",
+                                "python",
+                                "node",
+                                "mvn",
+                                "gradle",
+                                "npm",
+                                "pnpm",
+                                "pip",
+                                "jshell",
+                                "system.sh",
+                                "system.cmd",
+                                "system.echo",
+                                "system.cat",
+                                "system.ls",
+                                "system.whoami"),
                         true,
                         Duration.ofSeconds(repositories.isEmpty() ? 30 : 600)),
-                new ToolPermission(tools, ToolRisk.PROCESS, ApprovalRequirement.NONE),
+                new ToolPermission(toolNames(), ToolRisk.PROCESS, ApprovalRequirement.NONE),
                 new ResourceLimits(1024L * 1024 * 1024, 1024 * 1024, 16, 256));
         return profiles.update(
                 new CommandIdentity(
@@ -183,11 +186,39 @@ final class CodingTestFixture implements AutoCloseable {
                 updated);
     }
 
+    private static Set<String> toolNames() {
+        return Set.of(
+                "file_list",
+                "file_read",
+                "file_search",
+                "file_apply_patch",
+                "file_stat",
+                "file_read_binary",
+                "file_write",
+                "file_copy",
+                "file_move",
+                "file_delete",
+                "file_mkdir",
+                "file_rmdir",
+                "script_run",
+                "system_command_list",
+                "system_command_run",
+                "system_shell_run",
+                "command_run",
+                "terminal_open",
+                "terminal_read",
+                "terminal_write",
+                "terminal_signal",
+                "terminal_resize",
+                "terminal_close",
+                "dependencies_prepare");
+    }
+
     ToolCallRequest request(AgentTurn owner, String name, Object arguments, String callId) {
         return new ToolCallRequest(
                 owner.id(),
                 callId,
-                new ToolIdentity(CodingContracts.EXTENSION_ID, name, 1),
+                new ToolIdentity(CodingContracts.EXTENSION_ID, name, CodingContracts.REVISION),
                 json.encode(arguments),
                 "effect-" + callId,
                 1);

@@ -73,6 +73,38 @@ class ViewSchemaRendererBoundaryTest {
         });
     }
 
+    @Test
+    void 拒绝选择同步恢复列表表格及原命令目标() {
+        FxTestSupport.run(() -> {
+            RecordingInteractions interactions = new RecordingInteractions();
+            interactions.allowSelection = false;
+            Node page = new ViewSchemaRenderer().render(schema(), data(), interactions);
+            @SuppressWarnings("unchecked")
+            ListView<Map<String, Object>> list = nodes(page, ListView.class).getFirst();
+            @SuppressWarnings("unchecked")
+            TableView<Map<String, Object>> table = nodes(page, TableView.class).getFirst();
+            for (var selection : List.of(list.getSelectionModel(), table.getSelectionModel())) {
+                Map<String, Object> original = selection.getSelectedItem();
+                int requests = interactions.selectionRequests;
+                selection.select(0);
+                assertEquals(requests + 1, interactions.selectionRequests, "一次选择被拒绝不能再次请求草稿确认");
+                assertEquals(original, selection.getSelectedItem());
+                assertEquals(1, selection.getSelectedIndex());
+                assertEquals(List.of(original), selection.getSelectedItems());
+                selection.clearAndSelect(0);
+                assertEquals(original, selection.getSelectedItem());
+                assertEquals(1, selection.getSelectedIndex());
+                assertEquals(List.of(original), selection.getSelectedItems());
+                selection.clearSelection();
+                assertEquals(original, selection.getSelectedItem());
+            }
+            button(page, "运行").fire();
+            assertEquals("two", interactions.commands.getFirst().arguments().get("recordId"));
+            assertEquals(2, interactions.commands.getFirst().expectedRevision());
+            assertEquals(Optional.empty(), interactions.selection);
+        });
+    }
+
     private static ViewSchema schema() {
         ViewAction run = new ViewAction(
                 "运行",
@@ -180,6 +212,8 @@ class ViewSchemaRendererBoundaryTest {
     private static final class RecordingInteractions implements ViewInteractionHandler {
         private final List<ViewCommandInvocation> commands = new ArrayList<>();
         private Optional<String> selection = Optional.empty();
+        private boolean allowSelection = true;
+        private int selectionRequests;
 
         @Override
         public void dirty(String formId, boolean dirty) {}
@@ -198,6 +232,16 @@ class ViewSchemaRendererBoundaryTest {
         @Override
         public void select(String sourceId, Optional<String> selectedKey) {
             selection = selectedKey;
+        }
+
+        @Override
+        public boolean selectRequested(String sourceId, Optional<String> selectedKey) {
+            selectionRequests++;
+            if (!allowSelection) {
+                return false;
+            }
+            select(sourceId, selectedKey);
+            return true;
         }
 
         @Override

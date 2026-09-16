@@ -2,18 +2,47 @@ package com.javaclaw.client.extension;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import com.javaclaw.api.CorePayloads;
 import com.javaclaw.api.CoreSchemas;
+import com.javaclaw.api.DirectoryChange;
 import com.javaclaw.api.ItemEnvelope;
 import com.javaclaw.builtin.contracts.CodingContracts;
+import com.javaclaw.builtin.contracts.CodingFileSystemContracts;
 import com.javaclaw.builtin.contracts.CodingResults;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.ProtocolException;
 
 /** Coding 和既有 Core 执行事实的纯文本投影；不执行终端转义序列、命令或 Diff。 */
 public final class CodingTranscriptFormatter {
+    private static final Set<String> ORIGINAL_TOOLS = Set.of(
+            "file_list",
+            "file_read",
+            "file_search",
+            "file_apply_patch",
+            "command_run",
+            "dependencies_prepare",
+            "terminal_open",
+            "terminal_read",
+            "terminal_write",
+            "terminal_signal",
+            "terminal_resize",
+            "terminal_close");
+    private static final Set<String> LOCAL_TOOLS = Set.of(
+            "file_stat",
+            "file_read_binary",
+            "file_write",
+            "file_copy",
+            "file_move",
+            "file_delete",
+            "file_mkdir",
+            "file_rmdir",
+            "script_run",
+            "system_command_list",
+            "system_command_run",
+            "system_shell_run");
     private final CanonicalJson json;
 
     /**
@@ -59,6 +88,10 @@ public final class CodingTranscriptFormatter {
             case CoreSchemas.COMMAND -> Optional.of(command(json.decode(item.payload(), CorePayloads.Command.class)));
             case CoreSchemas.FILE_CHANGE ->
                 Optional.of(change(json.decode(item.payload(), CorePayloads.FileChange.class)));
+            case CoreSchemas.DIRECTORY_CHANGE ->
+                Optional.of(directory(json.decode(item.payload(), DirectoryChange.class)));
+            case CodingFileSystemContracts.RESULT_SCHEMA ->
+                Optional.of(filesystem(json.decode(item.payload(), CodingFileSystemContracts.FileSystemResult.class)));
             case CodingResults.COMMAND_SCHEMA ->
                 Optional.of(command(json.decode(item.payload(), CodingResults.CommandResult.class)));
             case CodingResults.PATCH_SCHEMA ->
@@ -76,7 +109,7 @@ public final class CodingTranscriptFormatter {
      *
      * @param item 当前结果或普通事实
      * @param associatedCall 同 Turn 中位于结果之前的唯一 Core ToolCall；缺少时不解释工具输出
-     * @return 已知 Coding v1 输出的纯文本投影；身份或输出契约不匹配时为空
+     * @return 已知 Coding revision 及工具组合的纯文本投影；身份或输出契约不匹配时为空
      */
     public Optional<Fact> format(ItemEnvelope item, Optional<ItemEnvelope> associatedCall) {
         Objects.requireNonNull(associatedCall, "associatedCall");
@@ -97,7 +130,7 @@ public final class CodingTranscriptFormatter {
             var call = json.decode(callItem.payload(), CorePayloads.ToolCall.class);
             var result = json.decode(item.payload(), CorePayloads.ToolResult.class);
             if (!CodingContracts.EXTENSION_ID.equals(call.producerId())
-                    || call.toolRevision() != CodingContracts.REVISION
+                    || !knownTool(call.toolRevision(), call.toolName())
                     || !call.callId().equals(result.callId())) {
                 return Optional.empty();
             }
@@ -108,11 +141,20 @@ public final class CodingTranscriptFormatter {
         }
     }
 
+    private static boolean knownTool(long revision, String name) {
+        return (revision == 1 && ORIGINAL_TOOLS.contains(name))
+                || (revision == CodingContracts.REVISION
+                        && (ORIGINAL_TOOLS.contains(name) || LOCAL_TOOLS.contains(name)));
+    }
+
     private Optional<Fact> codingOutput(String name, CorePayloads.ToolResult result) {
         try {
             return switch (name) {
-                case "command_run" ->
+                case "command_run", "script_run", "system_command_run", "system_shell_run" ->
                     Optional.of(command(json.decode(result.output(), CodingResults.CommandResult.class)));
+                case "file_write", "file_copy", "file_move", "file_delete", "file_mkdir", "file_rmdir" ->
+                    Optional.of(
+                            filesystem(json.decode(result.output(), CodingFileSystemContracts.FileSystemResult.class)));
                 case "file_apply_patch" ->
                     Optional.of(patch(json.decode(result.output(), CodingResults.PatchResult.class)));
                 case "dependencies_prepare" ->
@@ -124,7 +166,7 @@ public final class CodingTranscriptFormatter {
                         "terminal_resize",
                         "terminal_close" ->
                     Optional.of(terminal(json.decode(result.output(), CodingResults.TerminalResult.class)));
-                case "file_list", "file_read", "file_search" ->
+                case "file_list", "file_read", "file_search", "file_stat", "file_read_binary", "system_command_list" ->
                     result.success()
                             ? Optional.empty()
                             : Optional.of(failure(json.decode(result.output(), CodingResults.Failure.class)));
@@ -154,6 +196,24 @@ public final class CodingTranscriptFormatter {
                 "文件 · " + value.operation(),
                 value.relativePath() + "\n" + value.beforeDigest().orElse("新建") + " → "
                         + value.afterDigest().orElse("已删除"));
+    }
+
+    private static Fact directory(DirectoryChange value) {
+        return new Fact("目录 · " + value.operation(), value.relativePath().toString());
+    }
+
+    private static Fact filesystem(CodingFileSystemContracts.FileSystemResult value) {
+        String body = value.changes().stream()
+                .map(change -> change.kind() + " · " + change.operation() + " " + change.path()
+                        + change.textDiff().map(diff -> "\n" + diff).orElse(""))
+                .collect(Collectors.joining("\n"));
+        return new Fact(
+                value.complete() ? "文件系统修改" : "文件系统修改 · 未完成",
+                body
+                        + value.failureCode().map(code -> "\n错误：" + code).orElse("")
+                        + (value.recoveryPaths().isEmpty()
+                                ? ""
+                                : "\n保留原文件的恢复目录：\n" + String.join("\n", value.recoveryPaths())));
     }
 
     private static Fact command(CodingResults.CommandResult value) {

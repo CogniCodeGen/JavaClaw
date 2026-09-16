@@ -1,7 +1,11 @@
 package com.javaclaw.browser.client;
 
+import java.net.URI;
+import java.util.List;
+
 import com.javaclaw.api.CancellationToken;
 import com.javaclaw.api.CanonicalPayload;
+import com.javaclaw.builtin.contracts.BrowserContracts;
 import com.javaclaw.builtin.contracts.SiteContracts;
 
 /**
@@ -11,6 +15,174 @@ import com.javaclaw.builtin.contracts.SiteContracts;
  * 私有管道，且不得出现在返回值、日志或 Artifact 中。
  */
 public interface BrowserWorkerPort extends AutoCloseable {
+    /** @return 用户主动网站登记边界；未通过原生可见浏览器验证时明确拒绝 */
+    default BrowserRegistrationPort registrations() {
+        throw new UnsupportedOperationException("Browser registration is unavailable");
+    }
+
+    /**
+     * 创建 Thread 独占的可见浏览器；窗口跨 Turn 保留，所有网络须有当前租约。
+     *
+     * @param task 会话所有权与初始租约
+     * @param storageState Vault 解密状态，只进入私有帧
+     * @param network 每次请求重新授权的宿主 Broker
+     * @param cancellation 启动取消信号
+     * @return 初始脱敏页面
+     */
+    default BrowserActionResult openInteractive(
+            BrowserContracts.OpenTask task,
+            byte[] storageState,
+            InteractiveBrowserNetworkExchange network,
+            CancellationToken cancellation) {
+        throw new UnsupportedOperationException("Interactive Browser is unavailable");
+    }
+
+    /**
+     * 在已有会话中串行执行一个动作；不得自动重放业务操作。
+     *
+     * @param sessionId 宿主已核验的会话
+     * @param action 受限页面动作
+     * @param privateInput 上传或秘密填充的私有字节，其他操作必须为空
+     * @param cancellation 动作取消信号
+     * @return 脱敏观察与可选附件
+     */
+    default BrowserActionResult actInteractive(
+            String sessionId, BrowserContracts.Action action, byte[] privateInput, CancellationToken cancellation) {
+        throw new UnsupportedOperationException("Interactive Browser is unavailable");
+    }
+
+    /**
+     * 在 Worker 执行瞬间重新核验冻结租约，阻断接管后迟到的模型操作。
+     *
+     * @param sessionId 目标会话
+     * @param expectedLease 提交时的可信租约
+     * @param action 受限页面动作
+     * @param privateInput 私有上传字节
+     * @param cancellation 取消信号
+     * @return 当前租约下的脱敏观察
+     */
+    default BrowserActionResult actInteractive(
+            String sessionId,
+            BrowserContracts.AccessLease expectedLease,
+            BrowserContracts.Action action,
+            byte[] privateInput,
+            CancellationToken cancellation) {
+        throw new UnsupportedOperationException("Interactive Browser is unavailable");
+    }
+
+    /**
+     * 更新控制权或来源授权；代次须递增，失效后禁止网络。
+     *
+     * @param sessionId 目标会话
+     * @param lease 宿主授权的新租约
+     * @param cancellation 控制操作取消信号
+     * @return 更新后的会话状态
+     */
+    default BrowserContracts.SessionView updateInteractiveLease(
+            String sessionId, BrowserContracts.AccessLease lease, CancellationToken cancellation) {
+        throw new UnsupportedOperationException("Interactive Browser is unavailable");
+    }
+
+    /** @param sessionId 会话标识 @return 不执行页面脚本的会话状态 */
+    default BrowserContracts.SessionView interactiveStatus(String sessionId) {
+        throw new UnsupportedOperationException("Interactive Browser is unavailable");
+    }
+
+    /** @param sessionId 会话标识 @return 关闭后的状态；终止整棵进程树 */
+    default BrowserContracts.SessionView closeInteractive(String sessionId) {
+        throw new UnsupportedOperationException("Interactive Browser is unavailable");
+    }
+
+    /** @return 当前镜像是否具备经过验证的常驻可见浏览器能力 */
+    default boolean interactiveAvailable() {
+        return false;
+    }
+
+    /**
+     * 只向私有回调交付当前 Context 的含 IndexedDB 登录状态。
+     *
+     * @param sessionId 已核验保存授权的会话
+     * @param handler 验证保存 lease 并密封状态的回调
+     * @param <T> 非敏感回执类型
+     * @return 回调结果
+     */
+    default <T> T saveInteractiveState(String sessionId, BrowserStorageHandler<T> handler) {
+        throw new UnsupportedOperationException("Interactive Browser is unavailable");
+    }
+
+    /**
+     * 用户在人工接管中明确确认后，私有捕获其选中的用户名和密码输入。
+     *
+     * @param sessionId 已核验保存授权的会话
+     * @param expectedLease 用户操作冻结的 HUMAN 租约
+     * @param expectedOrigin 账号站点的精确 HTTPS Origin
+     * @param target 用户选中的输入引用
+     * @param handler 接收 UTF-8 用户名、单个 NUL、UTF-8 密码的密封回调；不得记录原文
+     * @param <T> 非敏感回执类型
+     * @return 回调结果
+     */
+    default <T> T captureInteractiveCredentials(
+            String sessionId,
+            BrowserContracts.AccessLease expectedLease,
+            URI expectedOrigin,
+            BrowserContracts.CredentialsTarget target,
+            BrowserStorageHandler<T> handler) {
+        throw new UnsupportedOperationException("Interactive Browser is unavailable");
+    }
+
+    /**
+     * 用户明确请求后枚举当前页登录表单；不读取或返回输入值，不作为模型工具。
+     *
+     * @param sessionId 目标会话
+     * @param expectedLease 用户操作冻结的 HUMAN 租约
+     * @param expectedOrigin 用户确认的精确 HTTPS Origin
+     * @return 同页面同表单的字段描述与当前引用
+     */
+    default List<BrowserContracts.LoginForm> prepareInteractiveCredentials(
+            String sessionId, BrowserContracts.AccessLease expectedLease, URI expectedOrigin) {
+        throw new UnsupportedOperationException("Interactive Browser is unavailable");
+    }
+
+    /**
+     * 填充宿主解密的单个秘密字段；值不进入普通 DTO。
+     *
+     * @param sessionId 目标会话
+     * @param target 当前输入引用
+     * @param secret UTF-8 私有值
+     * @param cancellation 取消信号
+     * @return 不含秘密的页面观察
+     */
+    default BrowserActionResult fillInteractiveSecret(
+            String sessionId, BrowserContracts.Target target, byte[] secret, CancellationToken cancellation) {
+        return actInteractive(
+                sessionId,
+                new BrowserContracts.Action(
+                        BrowserContracts.Operation.FILL_SECRET, target, BrowserContracts.ActionInput.text("")),
+                secret,
+                cancellation);
+    }
+
+    /**
+     * 在同一 actor 命令内校验两个当前引用并填入凭据，避免第一次填写使第二个引用失效。
+     *
+     * @param sessionId 目标会话
+     * @param expectedLease 宿主冻结的 ASSISTANT 租约
+     * @param expectedOrigin 账号站点的精确 HTTPS Origin
+     * @param target 当前用户名与密码引用
+     * @param credentials UTF-8 用户名、单个 NUL、UTF-8 密码；最大 64 KiB，不进入普通 DTO
+     * @param cancellation 取消信号
+     * @return 不含凭据的页面观察
+     */
+    default BrowserActionResult fillInteractiveCredentials(
+            String sessionId,
+            BrowserContracts.AccessLease expectedLease,
+            URI expectedOrigin,
+            BrowserContracts.CredentialsTarget target,
+            byte[] credentials,
+            CancellationToken cancellation) {
+        throw new UnsupportedOperationException("Interactive Browser is unavailable");
+    }
+
     /**
      * 执行一个受 Site authority 约束的页面快照。
      *

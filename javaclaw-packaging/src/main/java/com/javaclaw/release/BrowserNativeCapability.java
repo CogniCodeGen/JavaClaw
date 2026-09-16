@@ -14,6 +14,7 @@ import java.util.Set;
 
 /** 真实原生 Browser smoke 的分项能力回执；任一失败路径必须先移除对应旧回执。 */
 enum BrowserNativeCapability {
+    INTERACTIVE_BROWSER("browser-interactive-v1.capability", "browser-interactive-v1", ".browser-interactive-"),
     INTERACTIVE_LOGIN("browser-login-v1.capability", "browser-login-v1", ".browser-login-"),
     MCP_OAUTH("browser-oauth-v1.capability", "browser-oauth-v1", ".browser-oauth-");
 

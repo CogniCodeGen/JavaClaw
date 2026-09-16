@@ -125,7 +125,7 @@ class OpenAiResponsesModelAdapterTest {
                 current.providerId(),
                 "responses-state-v2",
                 new com.javaclaw.api.CanonicalPayload(
-                        current.payload().json().replace("\"formatVersion\":3", "\"formatVersion\":2")));
+                        current.payload().json().replace("\"formatVersion\":4", "\"formatVersion\":2")));
         var restored = adapter.restoreCoveredState(
                 "responses-main", legacy, List.of(user, ModelMessage.assistant("完成", List.of())));
         adapter.invokeContinuing(
@@ -143,7 +143,7 @@ class OpenAiResponsesModelAdapterTest {
                         .path("content")
                         .asText());
         assertTrue(input.get(1).isReasoning());
-        assertEquals("responses-state-v3", restored.format());
+        assertEquals("responses-state-v4", restored.format());
     }
 
     @Test

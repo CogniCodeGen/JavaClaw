@@ -75,6 +75,20 @@ public final class PreviewReadAuthority {
     }
 
     /**
+     * 验证来源归属后返回其权威 Thread，供领域附件校验所有权。
+     *
+     * @param workspaceId 当前 Workspace
+     * @param itemId 持久来源 Item
+     * @return 来源 Turn 所属 Thread
+     */
+    public com.javaclaw.api.ThreadId sourceThread(WorkspaceId workspaceId, ItemId itemId) {
+        ItemEnvelope item = source(workspaceId, itemId);
+        return core.findTurn(item.turnId())
+                .orElseThrow(() -> new SecurityException("来源 Turn 不存在"))
+                .threadId();
+    }
+
+    /**
      * 验证 Workspace 存在且未因原生恢复处于安全锁定状态。
      *
      * @param id Workspace ID

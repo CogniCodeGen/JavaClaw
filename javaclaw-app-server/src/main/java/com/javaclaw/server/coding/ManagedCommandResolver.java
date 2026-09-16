@@ -1,6 +1,7 @@
 package com.javaclaw.server.coding;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -20,6 +21,8 @@ import com.javaclaw.api.SandboxCommand;
 import com.javaclaw.api.SandboxMode;
 import com.javaclaw.builtin.contracts.CodingContracts;
 import com.javaclaw.builtin.contracts.CodingEnvironmentContracts.ToolchainKind;
+import com.javaclaw.builtin.contracts.CodingScriptContracts;
+import com.javaclaw.nativehost.coding.JShellScriptSource;
 import com.javaclaw.nativehost.sandbox.SandboxRuntimeAccess;
 import com.javaclaw.server.toolchain.CodingToolchainCatalog;
 
@@ -44,7 +47,61 @@ final class ManagedCommandResolver {
     Resolved resolve(CodingInvocation invocation, CodingContracts.CommandRun input, SandboxMode mode) throws Exception {
         String name = input.argv().getFirst();
         requirePermission(invocation.permission(), name, mode);
-        List<ToolchainKind> required = required(name);
+        CodingToolchainPort.Lease lease = acquire(invocation, required(name));
+        try {
+            return command(invocation, input, mode, lease);
+        } catch (Exception failure) {
+            lease.close();
+            throw failure;
+        }
+    }
+
+    CodingResolvedCommand resolveScript(CodingInvocation invocation, CodingScriptContracts.ScriptRun input)
+            throws Exception {
+        requirePermission(invocation.permission(), "jshell", SandboxMode.BATCH);
+        CodingToolchainPort.Lease lease = acquire(invocation, List.of(ToolchainKind.JDK));
+        try {
+            CodingDataBoundary.requireOutside(invocation.turn().executionRoot(), invocation.permission(), managedRoot);
+            var source = JShellScriptSource.materialize(managedRoot.getParent());
+            var launcher = new CodingContracts.CommandRun(
+                    List.of(
+                            "java",
+                            "--add-modules",
+                            "jdk.jshell",
+                            "--source",
+                            "21",
+                            source.path().toString()),
+                    input.workingDirectory(),
+                    input.timeoutSeconds(),
+                    input.maxOutputBytes());
+            Resolved resolved = command(invocation, launcher, SandboxMode.BATCH, lease);
+            byte[] bytes = input.source().getBytes(StandardCharsets.UTF_8);
+            var original = resolved.command();
+            var launched = new SandboxCommand(
+                    original.id(),
+                    original.argv(),
+                    original.workingDirectory(),
+                    original.environment(),
+                    bytes,
+                    original.mode(),
+                    original.timeout());
+            var reads = new ArrayList<>(resolved.access().readRoots());
+            reads.add(source.path().getParent());
+            var access = new SandboxRuntimeAccess(
+                    reads,
+                    resolved.access().writeRoots(),
+                    resolved.access().executableRoots(),
+                    CodingScriptContracts.MAX_SOURCE_BYTES);
+            var jdk = lease.installations().get(ToolchainKind.JDK).artifact().reference();
+            return new CodingScriptCommand(resolved, launched, access, source.sha256(), bytes, jdk);
+        } catch (Exception failure) {
+            lease.close();
+            throw failure;
+        }
+    }
+
+    private CodingToolchainPort.Lease acquire(CodingInvocation invocation, List<ToolchainKind> required)
+            throws Exception {
         compatibility.accept(invocation.turn().id(), required);
         var references = required.stream()
                 .map(kind -> invocation.environment().spec().toolchains().stream()
@@ -52,13 +109,7 @@ final class ManagedCommandResolver {
                         .findFirst()
                         .orElseThrow(() -> new IllegalStateException("TOOLCHAIN_MISSING: " + kind)))
                 .toList();
-        CodingToolchainPort.Lease lease = toolchains.acquire(invocation.workspaceId(), references);
-        try {
-            return command(invocation, input, mode, lease);
-        } catch (Exception failure) {
-            lease.close();
-            throw failure;
-        }
+        return toolchains.acquire(invocation.workspaceId(), references);
     }
 
     private Resolved command(
@@ -411,7 +462,7 @@ final class ManagedCommandResolver {
             CodingToolchainPort.Lease lease,
             Path cacheRoot,
             Optional<MavenProjectLaunch.Evidence> maven)
-            implements AutoCloseable {
+            implements CodingResolvedCommand {
         Resolved(
                 SandboxCommand command,
                 PermissionProfile permission,

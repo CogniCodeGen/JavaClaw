@@ -21,6 +21,7 @@ import com.javaclaw.nativehost.coding.WorkspaceFileAccess.Snapshot;
 final class WorkspacePatchTransaction implements AutoCloseable {
     private final WorkspaceFileTree tree;
     private final Runnable beforeExchange;
+    private final boolean createParents;
     private final Map<String, WorkspaceDirectoryAccess> parents = new LinkedHashMap<>();
     private final List<Mutation> mutations = new ArrayList<>();
     private final List<String> created = new ArrayList<>();
@@ -35,8 +36,13 @@ final class WorkspacePatchTransaction implements AutoCloseable {
 
     /** 包内故障注入在最终预检后、原子交换前运行；生产固定 Worker 使用无操作回调。 */
     WorkspacePatchTransaction(WorkspaceFileTree tree, Runnable beforeExchange) {
+        this(tree, beforeExchange, true);
+    }
+
+    WorkspacePatchTransaction(WorkspaceFileTree tree, Runnable beforeExchange, boolean createParents) {
         this.tree = tree;
         this.beforeExchange = beforeExchange;
+        this.createParents = createParents;
     }
 
     void apply(Change change) throws IOException {
@@ -145,6 +151,10 @@ final class WorkspacePatchTransaction implements AutoCloseable {
         return recoveryPath == null ? List.of() : List.of(recoveryPath);
     }
 
+    List<String> createdDirectories() {
+        return List.copyOf(created);
+    }
+
     private WorkspaceDirectoryAccess parentDirectory(String relative) throws IOException {
         WorkspaceDirectoryAccess existing = parents.get(relative);
         if (existing != null) {
@@ -175,6 +185,9 @@ final class WorkspacePatchTransaction implements AutoCloseable {
         try {
             return parent.directory(leaf);
         } catch (NoSuchFileException missing) {
+            if (!createParents || created.size() >= 200) {
+                throw missing;
+            }
             parent.createDirectory(leaf);
             created.add(relative);
             return parent.directory(leaf);

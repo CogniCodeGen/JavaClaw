@@ -4,6 +4,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -29,22 +30,28 @@ class DesktopWorkspaceCreationTest {
         PresenterRpcServer server = new PresenterRpcServer();
         AtomicReference<CoreRpcContracts.WorkspaceCreatePayload> submitted = new AtomicReference<>();
         AtomicReference<Workspace> created = new AtomicReference<>();
+        ConcurrentLinkedQueue<Runnable> ui = new ConcurrentLinkedQueue<>();
         respondToCreation(server, submitted, created);
-        try (DesktopPresenter presenter = new DesktopPresenter(server::client, Runnable::run, Clock.systemUTC())) {
+        // Presenter 和 Store 的契约是单个 UI 队列；直接执行会使创建回执与目录失效重读在两个 RPC 线程并发写状态。
+        try (DesktopPresenter presenter = new DesktopPresenter(server::client, ui::add, Clock.systemUTC())) {
             AtomicReference<DesktopState> state = new AtomicReference<>();
             presenter.subscribe(state::set);
             presenter.connect();
-            await(() -> state.get().connection().status() == ConnectionState.Status.CONNECTED
-                    && state.get().transcript().nextSequence() > 0);
+            await(
+                    ui,
+                    () -> state.get().connection().status() == ConnectionState.Status.CONNECTED
+                            && state.get().transcript().nextSequence() > 0);
             String name = "自定义中文项目 Alpha 2026";
             Path directory = Path.of("/tmp/directory-name-is-different");
             presenter.createWorkspace(name, directory, ExecutionOverrides.empty());
-            await(() -> state.get()
-                    .threads()
-                    .selectedWorkspace()
-                    .map(Workspace::name)
-                    .filter(name::equals)
-                    .isPresent());
+            await(
+                    ui,
+                    () -> state.get()
+                            .threads()
+                            .selectedWorkspace()
+                            .map(Workspace::name)
+                            .filter(name::equals)
+                            .isPresent());
             assertEquals(name, submitted.get().name());
             assertEquals(directory, submitted.get().root());
             assertEquals(
@@ -92,9 +99,13 @@ class DesktopWorkspaceCreationTest {
         };
     }
 
-    private static void await(BooleanSupplier condition) throws Exception {
+    private static void await(ConcurrentLinkedQueue<Runnable> ui, BooleanSupplier condition) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (!condition.getAsBoolean() && System.nanoTime() < deadline) {
+            Runnable action;
+            while ((action = ui.poll()) != null) {
+                action.run();
+            }
             Thread.sleep(5);
         }
         assertTrue(condition.getAsBoolean(), "工作区创建结果未在限定时间内返回主界面");

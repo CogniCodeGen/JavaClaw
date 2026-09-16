@@ -1,6 +1,7 @@
 package com.javaclaw.desktop.view;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -24,7 +25,9 @@ public final class ViewRenderSession implements AutoCloseable {
     private final ViewGraphRenderer graphs = new ViewGraphRenderer(new PlatformComponentFactory());
     private final Map<String, ViewGraphRenderer.GraphView> graphViews = new LinkedHashMap<>();
     private final Map<String, ViewGraphWindow> windows = new LinkedHashMap<>();
-    private final VBox root;
+    private final Map<String, Node> renderedNodes = new LinkedHashMap<>();
+    private final ViewRenderLayout layout;
+    private final Node root;
     private boolean closed;
 
     /**
@@ -32,9 +35,21 @@ public final class ViewRenderSession implements AutoCloseable {
      * @param renderer 原生组件工厂
      */
     public ViewRenderSession(ViewSchema schema, ViewSchemaRenderer renderer) {
+        this(schema, renderer, null);
+    }
+
+    /**
+     * @param schema 已通过平台策略的声明式页面
+     * @param renderer 原生组件工厂
+     * @param layout 平台拥有的布局；为空时沿用默认平铺布局
+     */
+    public ViewRenderSession(ViewSchema schema, ViewSchemaRenderer renderer, ViewRenderLayout layout) {
         this.schema = ViewSchemaPolicy.requireSupported(schema);
         this.renderer = Objects.requireNonNull(renderer, "renderer");
-        root = new PlatformComponentFactory().page(schema.title());
+        this.layout = layout;
+        root = layout == null
+                ? new PlatformComponentFactory().page(schema.title())
+                : Objects.requireNonNull(layout.node(), "layout.node");
         for (ViewSchema.Node node : schema.nodes()) {
             if (node instanceof ViewSchema.Graph graph && schema.graphBrowsing().containsKey(graph.id())) {
                 windows.put(
@@ -65,10 +80,9 @@ public final class ViewRenderSession implements AutoCloseable {
         if (closed) {
             throw new IllegalStateException("页面会话已关闭");
         }
-        renderer.cancelUploads(root);
+        cancelUploads();
         ViewCommandBindingResolver bindings = new ViewCommandBindingResolver(schema, data);
-        ArrayList<Node> nodes = new ArrayList<>();
-        nodes.add(root.getChildren().getFirst());
+        renderedNodes.clear();
         for (ViewSchema.Node definition : schema.nodes()) {
             if (definition instanceof ViewSchema.Graph graph) {
                 var view = graphViews.computeIfAbsent(
@@ -78,19 +92,33 @@ public final class ViewRenderSession implements AutoCloseable {
                     windows.get(graph.id()).observe(data);
                 }
                 view.apply(data, interactions);
-                nodes.add(view.node());
+                renderedNodes.put(definition.id(), view.node());
             } else {
-                nodes.add(renderer.renderNode(definition, data, interactions, bindings));
+                renderedNodes.put(definition.id(), renderer.renderNode(definition, data, interactions, bindings));
             }
         }
+        if (layout != null) {
+            layout.apply(schema, Collections.unmodifiableMap(new LinkedHashMap<>(renderedNodes)), data);
+            return;
+        }
+        VBox flat = (VBox) root;
+        ArrayList<Node> nodes = new ArrayList<>();
+        nodes.add(flat.getChildren().getFirst());
+        nodes.addAll(renderedNodes.values());
         for (int index = 0; index < nodes.size(); index++) {
-            if (index >= root.getChildren().size()) {
-                root.getChildren().add(nodes.get(index));
-            } else if (root.getChildren().get(index) != nodes.get(index)) {
-                root.getChildren().set(index, nodes.get(index));
+            if (index >= flat.getChildren().size()) {
+                flat.getChildren().add(nodes.get(index));
+            } else if (flat.getChildren().get(index) != nodes.get(index)) {
+                flat.getChildren().set(index, nodes.get(index));
             }
         }
-        root.getChildren().remove(nodes.size(), root.getChildren().size());
+        flat.getChildren().remove(nodes.size(), flat.getChildren().size());
+    }
+
+    /** 取消全部已渲染节点的上传，包括未挂载到可见布局的折叠内容。 */
+    public void cancelUploads() {
+        renderedNodes.values().forEach(renderer::cancelUploads);
+        renderer.cancelUploads(root);
     }
 
     /** @return 当前会话的受限图谱窗口副本，用于下一次只读查询 */
@@ -144,11 +172,16 @@ public final class ViewRenderSession implements AutoCloseable {
     public void close() {
         if (!closed) {
             closed = true;
-            renderer.cancelUploads(root);
+            cancelUploads();
             graphViews.values().forEach(ViewGraphRenderer.GraphView::close);
             graphViews.clear();
             windows.clear();
-            root.getChildren().clear();
+            renderedNodes.clear();
+            if (layout != null) {
+                layout.close();
+            } else {
+                ((VBox) root).getChildren().clear();
+            }
         }
     }
 }

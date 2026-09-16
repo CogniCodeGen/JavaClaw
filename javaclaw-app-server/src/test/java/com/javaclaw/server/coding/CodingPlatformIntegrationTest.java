@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import org.junit.jupiter.api.AfterEach;
@@ -41,6 +42,48 @@ class CodingPlatformIntegrationTest {
         if (fixture != null) {
             fixture.close();
         }
+    }
+
+    @Test
+    void 升级后旧四字段意图仍回放已完成回执而不重新读取目录() throws Exception {
+        var arguments = new CodingContracts.FileList(".", Optional.empty(), 10);
+        var request = fixture.request(fixture.turn, "file_list", arguments, "old-identity");
+        var environment = new com.javaclaw.server.persistence.CodingEnvironmentRepository(
+                        fixture.database, fixture.json, fixture.clock)
+                .frozen(fixture.turn.id());
+        var currentPermission = fixture.profiles.resolveForExecution(
+                fixture.permission.id(), fixture.permission.version(), fixture.workspace, fixture.root, true);
+        var effectivePermission =
+                com.javaclaw.api.PermissionResolver.intersect(List.of(fixture.permission, currentPermission));
+        String id = "coding-"
+                + fixture.json
+                        .encode(Map.of("turnId", fixture.turn.id(), "callId", request.callId()))
+                        .sha256();
+        var oldIdentity = fixture.json.encode(Map.of(
+                "request",
+                request,
+                "environmentDigest",
+                fixture.json.encode(environment).sha256(),
+                "permission",
+                effectivePermission,
+                "toolCatalogDigest",
+                fixture.turn.toolCatalogDigest()));
+        var operations = new CodingOperationRepository(fixture.database, fixture.json, fixture.clock);
+        operations.prepare(new CodingOperationRepository.Intent(
+                id,
+                fixture.turn.id(),
+                fixture.workspace.id(),
+                request.callId(),
+                "file_list",
+                fixture.root,
+                oldIdentity));
+        var recorded = new CodingResults.FileListResult(List.of(), Optional.empty());
+        operations.finish(id, fixture.json.encode(recorded), List.of(), true);
+        Files.writeString(fixture.root.resolve("created-after-result.txt"), "保留此后用户创建的文件");
+        var replayed = fixture.invoke("file_list", arguments, request.callId());
+        assertTrue(replayed.success());
+        assertEquals(recorded, fixture.json.decode(replayed.response().payload(), CodingResults.FileListResult.class));
+        assertTrue(Files.exists(fixture.root.resolve("created-after-result.txt")));
     }
 
     @Test

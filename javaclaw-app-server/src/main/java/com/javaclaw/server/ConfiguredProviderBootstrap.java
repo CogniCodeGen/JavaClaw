@@ -17,7 +17,10 @@ final class ConfiguredProviderBootstrap {
             AppServerBootstrap.Foundation foundation, ProviderCredentialResolver credentials) {
         Objects.requireNonNull(foundation, "foundation");
         ProviderCredentialResolver checkedCredentials = Objects.requireNonNull(credentials, "credentials");
-        ProviderModelAdapterFactory modelAdapters = new ProviderModelAdapterFactory(checkedCredentials);
+        ProviderModelAdapterFactory modelAdapters = new ProviderModelAdapterFactory(
+                checkedCredentials,
+                new com.javaclaw.server.turn.AttachmentModelImages(
+                        foundation.core(), foundation.attachments(), foundation.json()));
         ProviderEmbeddingAdapterFactory embeddingAdapters = new ProviderEmbeddingAdapterFactory(checkedCredentials);
         try (StartupCloseStack startup = new StartupCloseStack()) {
             AppServerBootstrap.ownFoundation(startup, foundation);
@@ -40,12 +43,18 @@ final class ConfiguredProviderBootstrap {
                             embeddingAdapters::create,
                             AppServerBootstrap.modelDiscovery(foundation, checkedCredentials),
                             BuiltinIsolatedServices.production(
-                                    foundation.database(),
-                                    foundation.attachments(),
+                                    new com.javaclaw.server.extension.SiteBrowserHostContext(
+                                            foundation.database(),
+                                            foundation.core(),
+                                            foundation.siteAccounts(),
+                                            foundation.attachments(),
+                                            foundation.permissionProfiles(),
+                                            foundation.providers(),
+                                            foundation.inputs(),
+                                            foundation.json(),
+                                            foundation.clock()),
                                     foundation.vault(),
-                                    foundation.privateNetworkGrants(),
-                                    foundation.json(),
-                                    foundation.clock()),
+                                    foundation.privateNetworkGrants()),
                             AppServerBootstrap.productionMcpPorts(foundation)),
                     startup);
         }

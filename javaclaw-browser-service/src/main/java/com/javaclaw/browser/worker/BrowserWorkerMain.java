@@ -27,6 +27,14 @@ public final class BrowserWorkerMain {
                 BrowserFrameIo.readJson(System.in, json, BrowserWorkerProtocol.Command.class);
         byte[] storageState = BrowserFrameIo.readBinary(
                 System.in, command.sensitiveStateBytes(), BrowserWorkerProtocol.MAXIMUM_STATE_BYTES);
+        if (com.javaclaw.browser.protocol.InteractiveBrowserProtocol.OPEN.equals(command.operation())) {
+            try {
+                InteractiveWorkerLoop.run(command, storageState, System.in, System.out, json);
+            } finally {
+                Arrays.fill(storageState, (byte) 0);
+            }
+            return;
+        }
         BrowserNetworkChannel network = new BrowserNetworkChannel(command.id(), System.in, System.out, json);
         try (BrowserRequestHandler handler =
                         new BrowserRequestHandler(new PlaywrightBrowserSession(Clock.systemUTC(), network), json);

@@ -23,7 +23,10 @@ final class CoreMigrationRunner {
             new Migration(4, "command stream", "/db/core/V004__v6_command_stream.sql"),
             new Migration(5, "turn stream", "/db/core/V005__v6_turn_stream.sql"),
             new Migration(6, "conversation evidence", "/db/core/V006__v6_completion_evidence.sql"),
-            new Migration(7, "job cancellation", "/db/core/V007__v6_job_cancellation.sql"));
+            new Migration(7, "job cancellation", "/db/core/V007__v6_job_cancellation.sql"),
+            new Migration(8, "browser grants", "/db/core/V008__v6_browser_grants.sql"),
+            new Migration(9, "turn continuation", "/db/core/V009__v6_turn_continuation.sql"),
+            new Migration(10, "system commands", "/db/core/V010__v6_system_commands.sql"));
 
     void migrate(Connection connection) throws SQLException {
         Map<Integer, String> installed = installed(connection);
@@ -83,6 +86,12 @@ final class CoreMigrationRunner {
             validateCommandStreams(connection);
         }
         new ConversationSchemaValidation().validate(connection, migration.version());
+        if (migration.version() == 10) {
+            new CodingSystemSchemaValidation().validate(connection);
+        }
+        if (migration.version() == 8) {
+            new BrowserGrantSchemaValidation().validate(connection);
+        }
         try (var statement = connection.prepareStatement("""
             INSERT INTO CORE.SCHEMA_HISTORY (VERSION, DESCRIPTION, CHECKSUM, INSTALLED_AT)
             VALUES (?, ?, ?, CURRENT_TIMESTAMP)
