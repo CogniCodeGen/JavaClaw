@@ -29,15 +29,15 @@ import com.javaclaw.server.persistence.IdempotentCommandStore;
 import com.javaclaw.server.persistence.PersistenceException;
 
 /**
- * 以系统凭据封装主密钥、以 H2 保存 AES-256-GCM 密文的本地 Secret Vault。
+ * 通过主密钥持久化端口管理密钥、以 H2 保存 AES-256-GCM 密文的本地 Secret Vault。
  *
  * <p>Vault 状态和 Secret 操作在同一实例锁内串行，主密钥轮换不会与读取或写入交错。Secret 明文仅在调用栈内短暂存在，服务在 callback 返回后立即清零；callback
- * 不得保留数组引用。系统凭据设施不可用时服务保留管理状态，但所有 Secret 操作均 fail closed。
+ * 不得保留数组引用。主密钥存储不可用时服务保留管理状态，但所有 Secret 操作均 fail closed。
  *
  * <p><b>并发不变量：</b>监听回调只在 Vault 实例锁外同步执行。这样既保证方法返回前运行时已看到新状态，也避免与 Provider Registry 的刷新锁形成 AB/BA 死锁。安全重建失败不会反向回滚已提交的
  * Vault 变更，但会保持运行时门闩关闭并向调用方报告失败。
  *
- * <p>主密钥先写入系统凭据，再在单个 H2 事务中重加密全部记录并切换 active key。旧 key id 会留在 {@code PREVIOUS_KEY_ID}，直至系统包装确认删除，因此崩溃恢复不会丢失唯一可解密的主密钥。
+ * <p>主密钥先由持久化端口保存，再在单个 H2 事务中重加密全部记录并切换 active key。旧 key id 会留在 {@code PREVIOUS_KEY_ID}，直至旧主密钥确认删除，因此崩溃恢复不会丢失唯一可解密的主密钥。
  */
 public final class SecretVaultService implements CredentialAvailabilityPort, CredentialVaultPort, AutoCloseable {
     private static final String KEY_PREFIX = "vault-";
@@ -62,10 +62,10 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
     /**
      * 打开或创建当前安装的 Vault。
      *
-     * <p>系统凭据设施失败不会阻止 App Server 启动；状态会变为 {@link VaultState#LOCKED}。
+     * <p>主密钥存储失败不会阻止 App Server 启动；状态会变为 {@link VaultState#LOCKED}。
      *
-     * @param database 已初始化 V001 baseline 的 data-v6 数据库
-     * @param protector 当前操作系统的用户级主密钥保护器
+     * @param database 已完成有序迁移的 data-v6 数据库
+     * @param protector 主密钥持久化端口；生产使用本地数据库，显式注入的实现保持独立
      * @param json 规范 JSON codec，用于持久幂等回执
      * @param clock 平台时钟
      * @param random 加密安全随机源
@@ -103,7 +103,7 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
     }
 
     /**
-     * 系统凭据设施恢复后重新尝试解封主密钥。
+     * 主密钥存储恢复后重新尝试加载主密钥。
      *
      * @return 刷新后的脱敏状态
      */
@@ -373,7 +373,7 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
             cleanupPreviousKey();
             return new VaultManagementResult(receipt, true);
         } catch (MasterKeyProtectionException failure) {
-            throw new VaultException("系统凭据设施拒绝轮换 Vault 主密钥", failure);
+            throw new VaultException("主密钥存储拒绝轮换 Vault 主密钥", failure);
         } finally {
             Arrays.fill(oldKey, (byte) 0);
             Arrays.fill(newKey, (byte) 0);
@@ -432,7 +432,7 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
             cleanupPreviousKey();
             return new VaultManagementResult(receipt, true);
         } catch (MasterKeyProtectionException failure) {
-            throw new VaultException("系统凭据设施拒绝重置 Vault", failure);
+            throw new VaultException("主密钥存储拒绝重置 Vault", failure);
         } finally {
             Arrays.fill(newKey, (byte) 0);
             if (!committed) {
@@ -441,7 +441,7 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
         }
     }
 
-    /** 清零进程内主密钥；系统凭据包装与 H2 密文保持不变。 */
+    /** 清零进程内主密钥；持久化主密钥与 H2 密文保持不变。 */
     @Override
     public void close() {
         changeListeners.afterConditionalChange(this, this::closeLocked, Boolean::booleanValue);
@@ -524,7 +524,7 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
         VaultRepository.KeyState state = execute(connection ->
                 repository.keyState(connection, false).orElseThrow(() -> new VaultException("Vault key state 不存在")));
         if (state.previousKeyId() != null) {
-            throw new VaultException("旧 Vault 主密钥包装尚未清理，拒绝再次轮换");
+            throw new VaultException("旧 Vault 主密钥尚未清理，拒绝再次轮换");
         }
     }
 
@@ -536,7 +536,7 @@ public final class SecretVaultService implements CredentialAvailabilityPort, Cre
     void requireReady() {
         requireOpen();
         if (!ready()) {
-            throw new VaultException("Secret Vault 已锁定");
+            throw VaultException.locked(lockReason);
         }
     }
 

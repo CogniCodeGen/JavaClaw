@@ -29,12 +29,12 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 class ProviderImageSupportTest {
     @Test
-    void 新发现默认未知且选择模型前的图片声明会进入最终配置() {
+    void 新发现默认未知且下方详情的图片声明会进入最终配置() {
         FxTestSupport.run(() -> {
             ProviderSetupModelForm form = form();
             assertEquals(ProviderImageSupport.UNKNOWN, images(form).getValue());
-            images(form).setValue(ProviderImageSupport.SUPPORTED);
             choice(form).fire();
+            images(form).setValue(ProviderImageSupport.SUPPORTED);
             assertEquals(
                     ProviderImageSupport.SUPPORTED,
                     form.selectedModels().getFirst().imageSupport());
@@ -90,7 +90,7 @@ class ProviderImageSupportTest {
     }
 
     private static CheckBox choice(ProviderSetupModelForm form) {
-        return (CheckBox) form.lookup(".check-box");
+        return ProviderSetupWizardFxTest.modelChoice(form, "model");
     }
 
     private static ProviderModelDiscoveryCandidate candidate() {

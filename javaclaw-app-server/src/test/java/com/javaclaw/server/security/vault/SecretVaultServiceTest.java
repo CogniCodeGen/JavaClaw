@@ -346,6 +346,25 @@ class SecretVaultServiceTest {
     }
 
     @Test
+    void 锁定异常只暴露稳定脱敏原因() {
+        assertEquals(
+                "Secret Vault 已锁定：主密钥存储不可用",
+                VaultException.locked(VaultLockReason.SYSTEM_CREDENTIAL_UNAVAILABLE)
+                        .getMessage());
+        assertEquals(
+                "Secret Vault 已锁定：找不到持久化主密钥",
+                VaultException.locked(VaultLockReason.MASTER_KEY_MISSING).getMessage());
+        assertEquals(
+                "Secret Vault 已锁定：持久化主密钥无效或无法加载",
+                VaultException.locked(VaultLockReason.MASTER_KEY_INVALID).getMessage());
+        assertEquals(
+                "Secret Vault 已关闭",
+                VaultException.locked(VaultLockReason.CLOSED).getMessage());
+        assertEquals(
+                "Secret Vault 已锁定", VaultException.locked(VaultLockReason.NONE).getMessage());
+    }
+
+    @Test
     void 无效主密钥和系统读取失败映射为明确锁定原因() {
         FakeProtector invalid = new FakeProtector();
         try (SecretVaultService ignored = vault(invalid)) {
@@ -353,6 +372,11 @@ class SecretVaultServiceTest {
         }
         try (SecretVaultService restarted = vault(invalid)) {
             assertEquals(VaultLockReason.MASTER_KEY_INVALID, restarted.status().reason());
+            VaultException failure = assertThrows(
+                    VaultException.class,
+                    () -> restarted.create(
+                            identity("credential/create", 0), "provider", "secret".getBytes(StandardCharsets.UTF_8)));
+            assertEquals("Secret Vault 已锁定：持久化主密钥无效或无法加载", failure.getMessage());
         }
 
         FakeProtector unavailable = new FakeProtector();
@@ -363,6 +387,32 @@ class SecretVaultServiceTest {
             assertEquals(
                     VaultLockReason.SYSTEM_CREDENTIAL_UNAVAILABLE,
                     restarted.status().reason());
+            VaultException failure = assertThrows(
+                    VaultException.class,
+                    () -> restarted.create(
+                            identity("credential/create", 0), "provider", "secret".getBytes(StandardCharsets.UTF_8)));
+            assertEquals("Secret Vault 已锁定：主密钥存储不可用", failure.getMessage());
+        }
+    }
+
+    @Test
+    void Provider候选暴露期间主密钥变化时拒绝使用旧候选() {
+        FakeProtector protector = new FakeProtector();
+        byte[] secret = "candidate-secret".getBytes(StandardCharsets.UTF_8);
+        try (SecretVaultService vault = vault(protector);
+                PreparedProviderCredentialMutation candidate =
+                        vault.providerCredentials().prepare(Optional.empty(), 0, secret)) {
+            VaultException failure = assertThrows(
+                    VaultException.class,
+                    () -> vault.providerCredentials().expose(candidate, () -> {
+                        vault.rotateMasterKey(identity("vault/masterKey/rotate", 0));
+                        return vault.use(candidate.metadata().reference(), SecretVaultServiceTest::text);
+                    }));
+
+            assertEquals("Vault 主密钥已变化，请重新提交 Provider Secret", failure.getMessage());
+            assertEquals(0, vault.status().credentialCount());
+        } finally {
+            Arrays.fill(secret, (byte) 0);
         }
     }
 

@@ -30,6 +30,7 @@ flowchart LR
 | 工具在 Turn 内替换 schema | 冻结 ID/revision/schema hash，执行前复核 | revision 冲突 |
 | 用户撤权后仍执行 | enabled 与权限实时复核，快照只能缩小权限 | 权限拒绝 |
 | Secret 在本地 RPC 被旁路读取 | 会话 X25519 密封、Vault 仅写 API、AES-GCM AAD、脱敏通知与诊断 | Vault 锁定或请求拒绝 |
+| 数据库或备份副本泄露 | 主密钥与密文统一存于本地 H2；现有私有数据根、文件权限和备份访问控制承担保密边界，不提供独立钥匙串隔离 | 持有完整数据库可恢复凭据，不能将密文存储解释为数据库副本不可解密 |
 | Provider Secret 写入或 Adapter 替换失败 | `provider/credential/*` 先验证候选 Adapter；Vault 密文、Secret 元数据 revision、Provider 新 revision 与幂等回执在同一 H2 事务提交；Vault 变化串行化并先关闭 runtime epoch gate，Adapter lease 获取后复核 epoch | 候选构造或 H2 提交失败时保留旧 revision；提交后交换或重建异常时 gate 保持关闭并等待权威重建 |
 | 配置探测意外产生模型费用 | 非计费探测与真实 round-trip 分离，计费验证要求显式确认 | 拒绝计费调用 |
 | Prompt 优化静默改写 Role | 正常受预算 Harness Turn 只生成 Draft，采纳时复核 Role revision | 保留 Draft 或 revision 冲突 |

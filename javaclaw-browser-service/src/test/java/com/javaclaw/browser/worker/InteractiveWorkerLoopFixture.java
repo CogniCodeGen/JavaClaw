@@ -73,6 +73,24 @@ final class InteractiveWorkerLoopFixture implements AutoCloseable {
         });
     }
 
+    void startRegistration(Supplier<Playwright> factory) {
+        var task = RegistrationBrowserActorTest.task(Instant.now().plusSeconds(60));
+        var initial = new BrowserWorkerProtocol.Command(
+                BrowserWorkerProtocol.VERSION,
+                1,
+                com.javaclaw.browser.protocol.BrowserRegistrationProtocol.OPEN,
+                json.encode(task),
+                0);
+        Thread.ofVirtual().name("registration-loop-fixture").start(() -> {
+            try (workerOutput) {
+                RegistrationWorkerLoop.run(initial, workerInput, workerOutput, json, factory);
+                ended.complete(null);
+            } catch (Exception failure) {
+                ended.completeExceptionally(failure);
+            }
+        });
+    }
+
     BrowserContracts.Observation opened() throws Exception {
         try (Packet packet = receive()) {
             assertEquals(1, packet.frame().id());
@@ -122,6 +140,10 @@ final class InteractiveWorkerLoopFixture implements AutoCloseable {
         } catch (Exception failure) {
             readFailure = failure;
         }
+    }
+
+    boolean stopped() {
+        return ended.isDone();
     }
 
     void awaitStopped() throws Exception {

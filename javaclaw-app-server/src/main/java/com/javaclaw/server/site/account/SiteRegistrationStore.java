@@ -36,8 +36,11 @@ public final class SiteRegistrationStore {
     private final Clock clock;
 
     SiteRegistrationStore(
-            H2ManagedExtensionStore store, SiteAccountDocuments documents, ScopedCredentialVault secrets,
-            CanonicalJson json, Clock clock) {
+            H2ManagedExtensionStore store,
+            SiteAccountDocuments documents,
+            ScopedCredentialVault secrets,
+            CanonicalJson json,
+            Clock clock) {
         this.store = store;
         this.documents = documents;
         this.secrets = secrets;
@@ -45,16 +48,25 @@ public final class SiteRegistrationStore {
         this.clock = clock;
     }
 
-    /** @param identity 完整幂等身份 @return 已提交脱敏结果，恢复不访问 Worker 或解密秘密 */
+    /**
+     * @param identity 完整幂等身份
+     * @return 已提交脱敏结果，恢复不访问 Worker 或解密秘密
+     */
     public Optional<Session> recover(CommandIdentity identity) {
         return secrets.recover(identity, Session.class);
     }
 
-    /** @param workspace 可信 Workspace @param sessionId 登记 UUID @return 同 Workspace 的持久会话状态 */
+    /**
+     * @param workspace 可信 Workspace
+     * @param sessionId 登记 UUID
+     * @return 同 Workspace 的持久会话状态
+     */
     public Optional<Session> read(WorkspaceId workspace, String sessionId) {
         try {
-            return store.inTransaction(SITE, tx -> tx.get(collection(workspace), sessionId)
-                    .map(value -> json.decode(value.payload(), Session.class)));
+            return store.inTransaction(
+                    SITE,
+                    tx -> tx.get(collection(workspace), sessionId)
+                            .map(value -> json.decode(value.payload(), Session.class)));
         } catch (RuntimeException failure) {
             throw failure;
         } catch (Exception failure) {
@@ -62,9 +74,17 @@ public final class SiteRegistrationStore {
         }
     }
 
-    /** @param workspace 可信 Workspace @param identity 命令身份 @param session 非敏感会话 @return 原子保存或恢复的状态 */
+    /**
+     * @param workspace 可信 Workspace
+     * @param identity 命令身份
+     * @param session 非敏感会话
+     * @return 原子保存或恢复的状态
+     */
     public Session record(WorkspaceId workspace, CommandIdentity identity, Session session) {
-        return secrets.commit(identity, List.of(), Session.class,
+        return secrets.commit(
+                identity,
+                List.of(),
+                Session.class,
                 connection -> store.inExistingTransaction(SITE, connection, tx -> write(tx, workspace, session)));
     }
 
@@ -79,15 +99,20 @@ public final class SiteRegistrationStore {
      * @return 原子提交后的登记结果
      */
     public synchronized Session complete(
-            WorkspaceId workspace, SiteRegistrationContracts.CompleteRequest request,
-            SiteRegistrationContracts.WorkerStatus status, CommandIdentity identity,
-            byte[] state, byte[] credentials, Runnable requireCurrent) {
+            WorkspaceId workspace,
+            SiteRegistrationContracts.CompleteRequest request,
+            SiteRegistrationContracts.WorkerStatus status,
+            CommandIdentity identity,
+            byte[] state,
+            byte[] credentials,
+            Runnable requireCurrent) {
         List<Mutation> mutations = new ArrayList<>();
         try {
             Optional<Session> recovered = recover(identity);
             if (recovered.isPresent()) {
                 return recovered.orElseThrow();
             }
+            validateConfirmation(request, status);
             SiteAccountSecretBytes.validateStorage(state);
             if (credentials.length > 0) {
                 SiteAccountSecretBytes.validate(credentials);
@@ -97,10 +122,14 @@ public final class SiteRegistrationStore {
             }
             Mutation browser = secrets.prepare(SiteContracts.BROWSER_CREDENTIAL_NAMESPACE, Optional.empty(), state);
             mutations.add(browser);
-            Optional<Mutation> password = credentials.length == 0 ? Optional.empty()
+            Optional<Mutation> password = credentials.length == 0
+                    ? Optional.empty()
                     : Optional.of(secrets.prepare(SiteAccountContracts.LOGIN_NAMESPACE, Optional.empty(), credentials));
             password.ifPresent(mutations::add);
-            return secrets.commit(identity, mutations, Session.class,
+            return secrets.commit(
+                    identity,
+                    mutations,
+                    Session.class,
                     connection -> store.inExistingTransaction(SITE, connection, tx -> {
                         requireCurrent.run();
                         return create(tx, workspace, request, status, browser, password);
@@ -113,11 +142,20 @@ public final class SiteRegistrationStore {
     }
 
     private Session create(
-            ExtensionTransaction tx, WorkspaceId workspace, SiteRegistrationContracts.CompleteRequest request,
-            SiteRegistrationContracts.WorkerStatus status, Mutation state, Optional<Mutation> password) {
+            ExtensionTransaction tx,
+            WorkspaceId workspace,
+            SiteRegistrationContracts.CompleteRequest request,
+            SiteRegistrationContracts.WorkerStatus status,
+            Mutation state,
+            Optional<Mutation> password) {
         Session previous = tx.get(collection(workspace), request.sessionId())
-                .map(value -> json.decode(value.payload(), Session.class)).orElseThrow();
-        if (previous.state() != SiteRegistrationContracts.State.ACTIVE) {
+                .map(value -> json.decode(value.payload(), Session.class))
+                .orElseThrow();
+        if (previous.state() != SiteRegistrationContracts.State.ACTIVE
+                || previous.access().generation() != request.expectedGeneration()
+                || !previous.access().allowedOrigins().equals(status.access().allowedOrigins())
+                || !previous.access().expiresAt().equals(status.access().expiresAt())
+                || !previous.access().expiresAt().isAfter(clock.instant())) {
             throw new IllegalStateException("登记会话已结束");
         }
         URI uri = status.page().uri().orElseThrow(() -> new IllegalStateException("当前页面没有可保存地址"));
@@ -126,26 +164,84 @@ public final class SiteRegistrationStore {
         String siteId = "site-" + stable(request.sessionId() + ":site");
         String accountId = stable(request.sessionId() + ":account");
         SiteContracts.Site site = new SiteContracts.Site(
-                siteId, 1, 1, request.name(), origin, java.util.Set.of(origin),
-                SiteContracts.SiteCredential.none(), Optional.empty(), true, clock.instant());
+                siteId,
+                1,
+                1,
+                request.name(),
+                origin,
+                status.access().allowedOrigins(),
+                SiteContracts.SiteCredential.none(),
+                Optional.empty(),
+                true,
+                clock.instant());
         tx.put("documents." + workspace, site.id(), 0, json.encode(site));
-        documents.migrate(tx, workspace, site);
-        SiteAccountDocuments.Account account = new SiteAccountDocuments.Account(
-                accountId, siteId, 1, 1, 1, site.authorityRevision(), "默认账号", true,
-                password.map(Mutation::metadata), Optional.of(state.metadata()), clock.instant());
-        documents.write(tx, workspace, account, 0);
-        documents.setDefault(tx, workspace, siteId, Optional.of(accountId));
-        tx.put("registration-addresses." + workspace, siteId, 0,
+        createDefaultAccount(tx, workspace, site, accountId, state, password);
+        tx.put(
+                "registration-addresses." + workspace,
+                siteId,
+                0,
                 json.encode(Map.of("uri", uri, "title", status.page().title())));
-        String originKey = json.encode(origin).sha256();
+        String originKey = json.encode(Map.of("origin", origin)).sha256();
         String origins = "registration-origins." + workspace;
-        long revision = tx.get(origins, originKey).map(VersionedDocument::revision).orElse(0L);
+        long revision =
+                tx.get(origins, originKey).map(VersionedDocument::revision).orElse(0L);
         tx.put(origins, originKey, revision, json.encode(Map.of("siteId", siteId, "origin", origin)));
-        Session completed = new Session(request.sessionId(), SiteRegistrationContracts.State.COMPLETED,
-                status.access(), status.page(), Optional.of(new SiteRegistrationContracts.Completed(siteId, accountId, origin)));
+        Session completed = new Session(
+                request.sessionId(),
+                SiteRegistrationContracts.State.COMPLETED,
+                status.access(),
+                status.page(),
+                Optional.of(new SiteRegistrationContracts.Completed(siteId, accountId, origin)));
         write(tx, workspace, completed);
         tx.appendEvent("site.registration.completed", json.encode(Map.of("workspaceId", workspace, "siteId", siteId)));
         return completed;
+    }
+
+    private void createDefaultAccount(
+            ExtensionTransaction tx,
+            WorkspaceId workspace,
+            SiteContracts.Site site,
+            String accountId,
+            Mutation state,
+            Optional<Mutation> password) {
+        documents.migrate(tx, workspace, site);
+        SiteAccountDocuments.Account account = new SiteAccountDocuments.Account(
+                accountId,
+                site.id(),
+                1,
+                1,
+                1,
+                site.authorityRevision(),
+                "默认账号",
+                true,
+                password.map(Mutation::metadata),
+                Optional.of(state.metadata()),
+                clock.instant());
+        documents.write(tx, workspace, account, 0);
+        documents.setDefault(tx, workspace, site.id(), Optional.of(accountId));
+    }
+
+    private static void validateConfirmation(
+            SiteRegistrationContracts.CompleteRequest request, SiteRegistrationContracts.WorkerStatus status) {
+        if (!request.sessionId().equals(status.sessionId())
+                || status.state() != SiteRegistrationContracts.State.ACTIVE
+                || request.expectedGeneration() != status.access().generation()
+                || request.expectedPageRevision() != status.page().pageRevision()) {
+            throw new SecurityException("登记保存确认与实际页面或授权代次不一致");
+        }
+        URI origin =
+                SiteContracts.originOf(status.page().uri().orElseThrow(() -> new IllegalStateException("当前页面没有可保存地址")));
+        if (!status.access().allowedOrigins().contains(origin)) {
+            throw new SecurityException("登记页面尚未得到用户授权");
+        }
+        request.credentialId().ifPresent(id -> {
+            boolean owned = status.page().candidates().stream()
+                    .anyMatch(candidate ->
+                            candidate.id().equals(id) && candidate.origin().equals(origin));
+            if (!owned) {
+                throw new SecurityException("密码候选不属于当前网站页面");
+            }
+        });
     }
 
     private void requireNewOrigin(ExtensionTransaction tx, WorkspaceId workspace, URI origin) {
@@ -153,7 +249,9 @@ public final class SiteRegistrationStore {
         while (true) {
             List<VersionedDocument> page = tx.list("documents." + workspace, cursor, 500);
             for (VersionedDocument value : page) {
-                if (json.decode(value.payload(), SiteContracts.Site.class).origin().equals(origin)) {
+                if (json.decode(value.payload(), SiteContracts.Site.class)
+                        .origin()
+                        .equals(origin)) {
                     throw new IllegalStateException("该来源已存在网站，请选择已有网站管理账号");
                 }
             }
@@ -165,7 +263,9 @@ public final class SiteRegistrationStore {
     }
 
     private Session write(ExtensionTransaction tx, WorkspaceId workspace, Session session) {
-        long revision = tx.get(collection(workspace), session.sessionId()).map(VersionedDocument::revision).orElse(0L);
+        long revision = tx.get(collection(workspace), session.sessionId())
+                .map(VersionedDocument::revision)
+                .orElse(0L);
         tx.put(collection(workspace), session.sessionId(), revision, json.encode(session));
         return session;
     }

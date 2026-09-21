@@ -3,6 +3,7 @@ package com.javaclaw.desktop.settings;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 import javafx.geometry.Side;
@@ -28,7 +29,7 @@ import com.javaclaw.api.ReasoningPreference;
 import com.javaclaw.api.Workspace;
 import com.javaclaw.desktop.component.PlatformStylesheets;
 
-/** 聊天区仅常驻模型、思考和更多设置；选择先保存并预览，再允许发送。 模型新增和使用捕获当前工作区及对话，后台完成不会改写其他页面的草稿。 */
+/** 聊天区仅常驻模型、思考和更多设置；选择先保存并预览，再允许发送。 模型新增交给管理中心，模型使用保留当前工作区及对话的明确作用域。 */
 public final class ChatConfigurationPanel extends VBox implements AutoCloseable {
     private final CoreSettingsGateway gateway;
     private final ChatConfigurationPresenter presenter;
@@ -44,13 +45,14 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
     private final HBox toolbar = new HBox(8);
     private final FlowPane feedback = new FlowPane(8, 4, status, repair, retry, discard);
     private final Runnable manage;
+    private final Runnable add;
     private final Runnable chooseWorkspace;
     private final Runnable createThread;
     private Runnable listener = () -> {};
     private boolean rendering;
 
     /**
-     * 创建复用现有样式的聊天配置工具栏，并订阅共享配置变更。
+     * 创建聊天配置工具栏；兼容入口将添加模型交给模型管理页面。
      *
      * @param gateway 共享 SDK 配置边界
      * @param manage 打开模型管理
@@ -59,11 +61,30 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
      */
     public ChatConfigurationPanel(
             CoreSettingsGateway gateway, Runnable manage, Runnable chooseWorkspace, Runnable createThread) {
+        this(gateway, manage, manage, chooseWorkspace, createThread);
+    }
+
+    /**
+     * 创建聊天配置工具栏，并区分模型管理与开始新增的导航意图。
+     *
+     * @param gateway 共享 SDK 配置边界
+     * @param manage 打开模型管理
+     * @param add 在统一设置页面开始新增；不得直接修改聊天模型
+     * @param chooseWorkspace 工作区选择入口
+     * @param createThread 在当前工作区创建空对话
+     */
+    public ChatConfigurationPanel(
+            CoreSettingsGateway gateway,
+            Runnable manage,
+            Runnable add,
+            Runnable chooseWorkspace,
+            Runnable createThread) {
         super(6);
-        this.gateway = gateway;
-        this.manage = manage;
-        this.chooseWorkspace = chooseWorkspace;
-        this.createThread = createThread;
+        this.gateway = Objects.requireNonNull(gateway, "gateway");
+        this.manage = Objects.requireNonNull(manage, "manage");
+        this.add = Objects.requireNonNull(add, "add");
+        this.chooseWorkspace = Objects.requireNonNull(chooseWorkspace, "chooseWorkspace");
+        this.createThread = Objects.requireNonNull(createThread, "createThread");
         presenter = new ChatConfigurationPresenter(gateway);
         model = new ChatModelPicker(this::selectModel, this::addModel, manage, this::restoreProject, this::showMore);
         configure();
@@ -296,7 +317,7 @@ public final class ChatConfigurationPanel extends VBox implements AutoCloseable 
     }
 
     private void addModel() {
-        ProviderSetupWizard.show(getScene().getWindow(), gateway, target(), presenter::refresh);
+        add.run();
     }
 
     private ProviderSetupTarget target() {

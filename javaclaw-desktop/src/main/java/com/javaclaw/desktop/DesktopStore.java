@@ -22,6 +22,13 @@ final class DesktopStore {
         checked.accept(state);
     }
 
+    DesktopNotificationSubscription observe(Consumer<DesktopState> listener) {
+        Consumer<DesktopState> checked = Objects.requireNonNull(listener, "listener");
+        listeners.add(checked);
+        checked.accept(state);
+        return () -> listeners.remove(checked);
+    }
+
     void update(UnaryOperator<DesktopState> change) {
         DesktopState next =
                 Objects.requireNonNull(Objects.requireNonNull(change, "change").apply(state), "next");

@@ -21,7 +21,7 @@ final class ProviderModelUseDialog {
     private final Runnable used;
     private final Dialog<Void> dialog = new Dialog<>();
     private final ProviderSetupWorkspacePicker picker;
-    private final Label status = new Label("将模型用于目标对话，并记为新对话的默认模型。");
+    private final Label status = new Label("将模型用于所选工作区的目标对话，并记为新对话的最近选择；不修改项目默认模型。");
     private final Button use;
     private boolean applying;
 
@@ -72,9 +72,6 @@ final class ProviderModelUseDialog {
             Runnable used) {
         ProviderModelUseDialog action = new ProviderModelUseDialog(owner, gateway, target, model, completed, used);
         action.dialog.show();
-        if (target.workspaceId().isPresent()) {
-            action.use.fire();
-        }
     }
 
     private void apply() {
@@ -93,7 +90,7 @@ final class ProviderModelUseDialog {
             applying = false;
             updateActions();
             if (failure != null) {
-                status.setText("模型已保存，应用失败，可重试：" + SettingsFailures.message(failure));
+                status.setText("模型已保存，应用未完成。请检查连接后重试。");
                 return;
             }
             completed.run();

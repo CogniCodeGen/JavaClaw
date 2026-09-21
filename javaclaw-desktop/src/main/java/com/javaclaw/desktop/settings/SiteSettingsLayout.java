@@ -52,6 +52,7 @@ final class SiteSettingsLayout implements ViewRenderLayout {
     private final TitledPane accounts = section("账号与登录", "site-accounts");
     private final TitledPane advanced = section("高级配置", "site-advanced");
     private TitledPane expanded = basic;
+    private final Button registerAddress;
     private final Button create;
     private final Button cancelCreate;
     private final Button discard;
@@ -63,10 +64,12 @@ final class SiteSettingsLayout implements ViewRenderLayout {
 
     SiteSettingsLayout(SiteSettingsActions actions, Node accountContent, Node loginContent) {
         this.actions = Objects.requireNonNull(actions, "actions");
-        create = button("新建网站", ActionStyle.PRIMARY, this::beginCreate);
+        registerAddress = button("添加地址", ActionStyle.PRIMARY, actions.dialogs().registerAddress());
+        create = button("新建网站", ActionStyle.SOFT, this::beginCreate);
         cancelCreate = button("取消新建", ActionStyle.GHOST, this::cancelCreate);
         discard = button("放弃修改", ActionStyle.GHOST, this::discardChanges);
-        manageCredentials = button("管理共享凭据", ActionStyle.SOFT, actions.manageCredentials());
+        manageCredentials = button("管理共享凭据", ActionStyle.SOFT, actions.dialogs().manageCredentials());
+        registerAddress.setId("site-register-address");
         create.setId("site-new");
         cancelCreate.setId("site-cancel-new");
         discard.setId("site-discard");
@@ -86,7 +89,7 @@ final class SiteSettingsLayout implements ViewRenderLayout {
         HBox.setHgrow(spacer, Priority.ALWAYS);
         root.getChildren()
                 .addAll(
-                        new HBox(8, create, cancelCreate, spacer, discard),
+                        new HBox(8, registerAddress, create, cancelCreate, spacer, discard),
                         catalog,
                         selectedName,
                         empty,
@@ -135,6 +138,7 @@ final class SiteSettingsLayout implements ViewRenderLayout {
     /** 页面状态变化只更新动作可用性，不重建表单或清空秘密。 */
     void refreshActions() {
         boolean pending = actions.pending().getAsBoolean();
+        registerAddress.setDisable(!supported || pending);
         create.setDisable(!supported || pending);
         cancelCreate.setDisable(pending);
         discard.setDisable(pending || !actions.dirty().getAsBoolean());
@@ -254,7 +258,7 @@ final class SiteSettingsLayout implements ViewRenderLayout {
         table.setMinHeight(height);
         table.setPrefHeight(height);
         table.setMaxHeight(240);
-        Label placeholder = new Label("暂无网站，点击“新建网站”开始配置。");
+        Label placeholder = new Label("暂无网站，点击“添加地址”在浏览器中登记，或“新建网站”手动配置。");
         placeholder.setWrapText(true);
         placeholder.getStyleClass().add("sec-hint");
         table.setPlaceholder(placeholder);

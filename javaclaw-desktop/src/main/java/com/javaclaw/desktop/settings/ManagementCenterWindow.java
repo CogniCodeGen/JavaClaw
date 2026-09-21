@@ -10,7 +10,10 @@ import java.util.Set;
 
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
+import javafx.scene.Node;
 import javafx.scene.Scene;
+import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
@@ -31,6 +34,7 @@ import com.javaclaw.desktop.DesktopNotificationSubscription;
 import com.javaclaw.desktop.DesktopStylesheets;
 import com.javaclaw.desktop.appearance.DesktopAppearanceManager;
 import com.javaclaw.desktop.component.ManagementPageShell;
+import com.javaclaw.desktop.component.PlatformDialogs;
 
 /** 单实例、非阻塞的 JavaClaw 6 设置与管理中心窗口。 */
 public final class ManagementCenterWindow {
@@ -77,6 +81,7 @@ public final class ManagementCenterWindow {
     private boolean activePageActivated;
     private boolean restoringSelection;
     private boolean scopeWriteAvailable;
+    private Alert pendingNotice;
 
     /**
      * 创建设置与管理中心协调器；窗口在第一次打开时才创建。
@@ -144,7 +149,7 @@ public final class ManagementCenterWindow {
     /**
      * 打开或聚焦设置中心并导航到指定页面。
      *
-     * <p>若当前页面存在未保存草稿，统一离页保护优先，导航请求不会丢弃草稿。
+     * <p>当前操作未完成时先阻止离页，再检查未保存草稿；导航请求不会中断操作或丢弃草稿。
      *
      * @param owner 主窗口
      * @param pageKey {@link #destinations()} 中的平台页面 key
@@ -167,6 +172,22 @@ public final class ManagementCenterWindow {
         stage.toFront();
     }
 
+    /**
+     * 打开统一模型设置页并开始新增；离页受阻或既有草稿尚未完成时保留原页面与草稿。
+     *
+     * @param owner 主窗口
+     */
+    public void showProviderCreation(Window owner) {
+        show(owner, "providers");
+        if (selected != null
+                && selected.key().equals("providers")
+                && activePage instanceof ProviderSettingsPage providerPage
+                && !activePage.dirty()) {
+            // 首次目录读取由页面排队新增意图；真正的保存中、结果未知等状态仍由页面拒绝覆盖。
+            providerPage.beginCreate();
+        }
+    }
+
     private static Destination destination(String pageKey) {
         String checked = Objects.requireNonNull(pageKey, "pageKey").strip();
         return DESTINATIONS.stream()
@@ -184,10 +205,9 @@ public final class ManagementCenterWindow {
         return stage != null && stage.isShowing();
     }
 
-    /** 关闭窗口；存在未保存草稿时保留窗口并显示统一离页提示。 */
+    /** 关闭窗口；操作未完成或存在未保存草稿时保留窗口并显示统一离页提示。 */
     public void close() {
-        if (activePage != null && activePage.dirty()) {
-            activePage.warnUnsavedChanges();
+        if (!mayLeavePage()) {
             return;
         }
         if (stage != null) {
@@ -197,6 +217,9 @@ public final class ManagementCenterWindow {
 
     /** 释放页面订阅并销毁窗口；仅由 Desktop 进程关闭调用。 */
     public void dispose() {
+        if (pendingNotice != null) {
+            pendingNotice.close();
+        }
         configurationSubscription.close();
         deactivatePage();
         if (pages != null) {
@@ -211,11 +234,11 @@ public final class ManagementCenterWindow {
     }
 
     private void returnToChat() {
-        if (stage == null) {
+        if (stage == null || !mayLeavePage()) {
             return;
         }
         Window owner = stage.getOwner();
-        // 成功应用模型后只隐藏窗口，保留其他页面的草稿；再次打开时按原独立作用域恢复有效缓存。
+        // 成功应用模型并通过离页保护后隐藏窗口；再次打开时按原独立作用域恢复有效缓存。
         stage.hide();
         if (owner instanceof Stage mainStage) {
             mainStage.toFront();
@@ -246,9 +269,8 @@ public final class ManagementCenterWindow {
         ManagementWindowPreferences restored = preferences.load();
         restoreBounds(restored.bounds());
         stage.setOnCloseRequest(event -> {
-            if (activePage != null && activePage.dirty()) {
+            if (!mayLeavePage()) {
                 event.consume();
-                activePage.warnUnsavedChanges();
             }
         });
         stage.setOnHidden(event -> {
@@ -299,7 +321,9 @@ public final class ManagementCenterWindow {
         } finally {
             restoringSelection = false;
         }
-        if (pages == null || filtered.isEmpty() || (activePage != null && activePage.dirty())) {
+        if (pages == null
+                || filtered.isEmpty()
+                || (activePage != null && (activePage.pending() || activePage.dirty()))) {
             restoreSelection();
             return;
         }
@@ -316,8 +340,7 @@ public final class ManagementCenterWindow {
         if (restoringSelection || destination == null || destination.equals(selected)) {
             return;
         }
-        if (activePage != null && activePage.dirty()) {
-            activePage.warnUnsavedChanges();
+        if (!mayLeavePage()) {
             restoreSelection();
             return;
         }
@@ -326,13 +349,42 @@ public final class ManagementCenterWindow {
         navigation.getSelectionModel().select(destination);
         activePage = pages.resolve(destination.key());
         scope.bind(activePage);
-        ScrollPane scroller = pageScrollers.computeIfAbsent(destination.key(), ignored -> scroll(activePage.content()));
-        shell.showPage(destination.title(), scroller);
+        Node viewport = activePage.ownsViewport()
+                ? activePage.content()
+                : pageScrollers.computeIfAbsent(destination.key(), ignored -> scroll(activePage.content()));
+        shell.showPage(destination.title(), viewport);
         shell.setActionContent(activePage.actionContent());
         updatePageInteraction();
         if (stage.isShowing()) {
             activatePage();
         }
+    }
+
+    private boolean mayLeavePage() {
+        if (activePage == null) {
+            return true;
+        }
+        // 未确认写入必须优先于脏草稿检查，不能让离页提示覆盖页面的在途或回执恢复状态。
+        if (activePage.pending()) {
+            showPendingNotice();
+            return false;
+        }
+        if (activePage.dirty()) {
+            activePage.warnUnsavedChanges();
+            return false;
+        }
+        return true;
+    }
+
+    private void showPendingNotice() {
+        if (pendingNotice != null && pendingNotice.isShowing()) {
+            return;
+        }
+        pendingNotice = new Alert(Alert.AlertType.INFORMATION, "请等待当前操作完成；保存结果尚未确认时，请先在当前页面查询结果。", ButtonType.OK);
+        pendingNotice.setTitle("操作尚未完成");
+        pendingNotice.setHeaderText("暂时无法离开当前页面");
+        PlatformDialogs.style(pendingNotice, stage);
+        pendingNotice.show();
     }
 
     private void scopeAvailabilityChanged(boolean available) {

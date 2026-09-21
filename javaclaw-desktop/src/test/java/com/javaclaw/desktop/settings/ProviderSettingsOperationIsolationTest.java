@@ -24,8 +24,11 @@ class ProviderSettingsOperationIsolationTest {
         presenter.reload();
         ProviderEndpoint original = presenter.state().selected().orElseThrow();
         ProviderDraft before = presenter.state().draft();
-        presenter.replaceSecret("temporary".toCharArray());
+        char[] callerSecret = "temporary".toCharArray();
+        presenter.replaceSecret(callerSecret);
 
+        assertTrue(allZero(callerSecret));
+        assertFalse(allZero(gateway.lastProviderSecret));
         presenter.select(gateway.second);
         presenter.createDraft();
         presenter.updateDraft(before.withLifecycle(ProviderLifecycle.DISABLED));
@@ -39,6 +42,7 @@ class ProviderSettingsOperationIsolationTest {
         assertEquals(1, gateway.reads);
         assertEquals(0, gateway.updates);
         gateway.binding.complete(gateway.bound);
+        assertTrue(allZero(gateway.lastProviderSecret));
         assertFalse(presenter.state().pending());
         assertEquals(gateway.bound.provider(), presenter.state().selected().orElseThrow());
         presenter.select(gateway.second);
@@ -69,6 +73,15 @@ class ProviderSettingsOperationIsolationTest {
         assertEquals(original, presenter.state().baseline());
         presenter.updateDraft(original);
         assertFalse(presenter.state().dirty(), "失败后应恢复可编辑，不能永久锁住表单");
+    }
+
+    private static boolean allZero(char[] value) {
+        for (char character : value) {
+            if (character != '\0') {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static final class Gateway extends TestCoreSettingsGateway {

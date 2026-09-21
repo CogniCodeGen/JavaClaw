@@ -4,6 +4,8 @@ import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.util.Objects;
+import java.util.function.Consumer;
+import java.util.function.Function;
 
 import com.javaclaw.extension.spi.LoginStartupPort;
 import com.javaclaw.nativehost.credential.MasterKeyProtector;
@@ -34,6 +36,7 @@ import com.javaclaw.server.persistence.ProviderService;
 import com.javaclaw.server.security.grant.PrivateNetworkGrantService;
 import com.javaclaw.server.security.grant.SecurityGrantAuditService;
 import com.javaclaw.server.security.grant.UnattendedToolGrantService;
+import com.javaclaw.server.security.vault.DatabaseMasterKeyProtector;
 import com.javaclaw.server.security.vault.SecretVaultService;
 
 /** 创建 App Server 基础服务并执行启动恢复，避免主组合根堆积具体初始化细节。 */
@@ -41,21 +44,44 @@ final class PlatformFoundationFactory {
     private PlatformFoundationFactory() {}
 
     /**
+     * 使用新格式的本地数据库保管主密钥；拒绝旧数据库，不访问系统凭据。
+     *
+     * @param dataRoot data-v6 根目录
+     * @param clock 平台时钟
+     * @param loginStartup 用户登录启动项端口
+     * @return 已完成启动恢复的基础服务
+     */
+    static AppServerBootstrap.Foundation createLocal(Path dataRoot, Clock clock, LoginStartupPort loginStartup) {
+        return createUsing(
+                dataRoot, clock, H2Database::initializeLocalVault, DatabaseMasterKeyProtector::new, loginStartup);
+    }
+
+    /**
      * 按依赖顺序创建 data-v6 基础服务。
      *
      * @param dataRoot data-v6 根目录
      * @param clock 平台时钟
-     * @param masterKeys 系统主密钥封装端口
+     * @param masterKeys 显式主密钥持久化端口；测试及健康检查注入保持原语义
      * @param loginStartup 用户登录启动项端口
      * @return 已完成启动恢复的基础服务
      */
     static AppServerBootstrap.Foundation create(
             Path dataRoot, Clock clock, MasterKeyProtector masterKeys, LoginStartupPort loginStartup) {
+        Objects.requireNonNull(masterKeys, "masterKeys");
+        return createUsing(dataRoot, clock, H2Database::initialize, ignored -> masterKeys, loginStartup);
+    }
+
+    private static AppServerBootstrap.Foundation createUsing(
+            Path dataRoot,
+            Clock clock,
+            Consumer<H2Database> initialize,
+            Function<H2Database, MasterKeyProtector> masterKeys,
+            LoginStartupPort loginStartup) {
         Clock requiredClock = Objects.requireNonNull(clock, "clock");
         CanonicalJson json = new CanonicalJson();
         H2Database database = new H2Database(dataRoot);
-        database.initialize();
-        CoreServices core = coreServices(database, json, requiredClock, masterKeys);
+        initialize.accept(database);
+        CoreServices core = coreServices(database, json, requiredClock, masterKeys.apply(database));
         ManagementServices management = managementServices(database, json, requiredClock, core);
         return foundation(
                 database, json, requiredClock, Objects.requireNonNull(loginStartup, "loginStartup"), core, management);

@@ -1,0 +1,723 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "provider-configuration-v1.schema.json",
+  "title": "Provider 完整配置与草稿目录预览",
+  "$defs": {
+    "connection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "displayName",
+        "adapter",
+        "baseUri",
+        "authentication",
+        "timeout",
+        "maximumRetries",
+        "options"
+      ],
+      "properties": {
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "adapter": {
+          "enum": [
+            "OPENAI_COMPATIBLE",
+            "ANTHROPIC",
+            "GOOGLE_GENAI",
+            "OPENAI_RESPONSES"
+          ]
+        },
+        "baseUri": {
+          "oneOf": [
+            {
+              "$ref": "provider-v3.schema.json#/$defs/httpApiRootUri"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "authentication": {
+          "enum": [
+            "API_KEY",
+            "NONE"
+          ]
+        },
+        "timeout": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 40
+        },
+        "maximumRetries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "options": {
+          "$ref": "provider-v3.schema.json#/$defs/providerAdapterOptions"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "adapter": {
+                "const": "OPENAI_COMPATIBLE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "options": {
+                "properties": {
+                  "adapter": {
+                    "const": "OPENAI_COMPATIBLE"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "adapter": {
+                "const": "ANTHROPIC"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "options": {
+                "properties": {
+                  "adapter": {
+                    "const": "ANTHROPIC"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "adapter": {
+                "const": "GOOGLE_GENAI"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "options": {
+                "properties": {
+                  "adapter": {
+                    "const": "GOOGLE_GENAI"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "adapter": {
+                "const": "OPENAI_RESPONSES"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "options": {
+                "properties": {
+                  "adapter": {
+                    "const": "OPENAI_RESPONSES"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "adapter": {
+                "const": "GOOGLE_GENAI"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "baseUri": {
+                "oneOf": [
+                  {
+                    "$ref": "provider-v3.schema.json#/$defs/googleApiRootUri"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "authentication": {
+                "const": "API_KEY"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "baseUri": {
+                "oneOf": [
+                  {
+                    "$ref": "provider-v3.schema.json#/$defs/apiKeyApiRootUri"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "authentication": {
+                "const": "NONE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "adapter": {
+                "const": "OPENAI_COMPATIBLE"
+              },
+              "baseUri": {
+                "$ref": "provider-v3.schema.json#/$defs/httpApiRootUri"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "credentialChange": {
+      "enum": [
+        "KEEP",
+        "REPLACE",
+        "CLEAR"
+      ]
+    },
+    "configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "providerId",
+        "expectedRevision",
+        "connection",
+        "models",
+        "lifecycle",
+        "credentialChange",
+        "credentialExpectedRevision"
+      ],
+      "properties": {
+        "providerId": {
+          "$ref": "provider-v3.schema.json#/$defs/identifier"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "connection": {
+          "$ref": "#/$defs/connection"
+        },
+        "models": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1000,
+          "items": {
+            "$ref": "provider-v3.schema.json#/$defs/providerModel"
+          }
+        },
+        "lifecycle": {
+          "enum": [
+            "ACTIVE",
+            "DISABLED"
+          ]
+        },
+        "credentialChange": {
+          "$ref": "#/$defs/credentialChange"
+        },
+        "credentialExpectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "providerId",
+        "providerRevision",
+        "credentialRevision"
+      ],
+      "properties": {
+        "providerId": {
+          "$ref": "provider-v3.schema.json#/$defs/identifier"
+        },
+        "providerRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "credentialRevision": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "previewRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "draftId",
+        "generation",
+        "connection",
+        "source",
+        "credentialChange"
+      ],
+      "properties": {
+        "draftId": {
+          "$ref": "provider-v3.schema.json#/$defs/identifier"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "connection": {
+          "$ref": "#/$defs/connection"
+        },
+        "source": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/source"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "credentialChange": {
+          "$ref": "#/$defs/credentialChange"
+        }
+      }
+    },
+    "savePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "configuration",
+        "secret"
+      ],
+      "properties": {
+        "configuration": {
+          "$ref": "#/$defs/configuration"
+        },
+        "secret": {
+          "oneOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "credential-v3.schema.json#/$defs/sealedSecret"
+                },
+                {
+                  "properties": {
+                    "purpose": {
+                      "const": "provider/configuration/save"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "configuration": {
+                "properties": {
+                  "credentialChange": {
+                    "const": "REPLACE"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "secret": {
+                "type": "object"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "secret": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "previewPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request",
+        "secret"
+      ],
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/previewRequest"
+        },
+        "secret": {
+          "oneOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "credential-v3.schema.json#/$defs/sealedSecret"
+                },
+                {
+                  "properties": {
+                    "purpose": {
+                      "const": "provider/model/preview/start"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "request": {
+                "properties": {
+                  "credentialChange": {
+                    "const": "REPLACE"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "secret": {
+                "type": "object"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "secret": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "saveCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "payload"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "payload": {
+          "$ref": "#/$defs/savePayload"
+        }
+      }
+    },
+    "previewCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "payload"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "payload": {
+          "$ref": "#/$defs/previewPayload"
+        }
+      }
+    },
+    "configurationResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "credential"
+      ],
+      "properties": {
+        "provider": {
+          "$ref": "provider-v3.schema.json#/$defs/provider"
+        },
+        "credential": {
+          "oneOf": [
+            {
+              "$ref": "credential-v3.schema.json#/$defs/credentialMetadata"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "resultQuery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "expectedRevision",
+        "requestDigest"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requestDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "resultResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result"
+      ],
+      "properties": {
+        "result": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/configurationResult"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "previewResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "draftId",
+        "generation",
+        "candidates",
+        "truncated",
+        "discoveredAt"
+      ],
+      "properties": {
+        "draftId": {
+          "$ref": "provider-v3.schema.json#/$defs/identifier"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "candidates": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "$ref": "provider-v3.schema.json#/$defs/providerModelDiscoveryCandidate"
+          }
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "discoveredAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "previewOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operationId",
+        "revision",
+        "draftId",
+        "generation",
+        "state",
+        "result",
+        "failureCode",
+        "createdAt",
+        "updatedAt"
+      ],
+      "properties": {
+        "operationId": {
+          "$ref": "provider-v3.schema.json#/$defs/uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "draftId": {
+          "$ref": "provider-v3.schema.json#/$defs/identifier"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "state": {
+          "enum": [
+            "RUNNING",
+            "SUCCEEDED",
+            "FAILED",
+            "CANCELLED"
+          ]
+        },
+        "result": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/previewResult"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "failureCode": {
+          "oneOf": [
+            {
+              "$ref": "provider-v3.schema.json#/$defs/identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "SUCCEEDED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/previewResult"
+              },
+              "failureCode": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "FAILED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "type": "null"
+              },
+              "failureCode": {
+                "$ref": "provider-v3.schema.json#/$defs/identifier"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "RUNNING",
+                  "CANCELLED"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "type": "null"
+              },
+              "failureCode": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

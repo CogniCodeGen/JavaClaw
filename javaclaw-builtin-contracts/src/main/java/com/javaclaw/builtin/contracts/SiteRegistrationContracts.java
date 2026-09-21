@@ -27,7 +27,11 @@ public final class SiteRegistrationContracts {
         FAILED
     }
 
-    /** @param operation 登记命令或查询名 @param payload 脱敏参数 @param idempotencyKey 写操作幂等键；查询为空 */
+    /**
+     * @param operation 登记命令或查询名
+     * @param payload 脱敏参数
+     * @param idempotencyKey 写操作幂等键；查询为空
+     */
     public record ServiceRequest(String operation, CanonicalPayload payload, Optional<String> idempotencyKey) {
         /** 校验完整路由参数。 */
         public ServiceRequest {
@@ -54,7 +58,11 @@ public final class SiteRegistrationContracts {
         }
     }
 
-    /** @param sessionId 登记 UUID @param expectedGeneration 用户看到的授权代次 @param origin 明确追加的精确 HTTPS 来源 */
+    /**
+     * @param sessionId 登记 UUID
+     * @param expectedGeneration 用户看到的授权代次
+     * @param origin 明确追加的精确 HTTPS 来源
+     */
     public record OriginRequest(String sessionId, long expectedGeneration, URI origin) {
         /** 来源不得包含路径、查询或片段。 */
         public OriginRequest {
@@ -88,7 +96,11 @@ public final class SiteRegistrationContracts {
         }
     }
 
-    /** @param id 临时候选身份 @param origin 密码所属精确来源 @param label 不含用户名密码值的描述 */
+    /**
+     * @param id 临时候选身份
+     * @param origin 密码所属精确来源
+     * @param label 不含用户名密码值的描述
+     */
     public record CredentialCandidate(String id, URI origin, String label) {
         /** 候选只传身份和脱敏描述。 */
         public CredentialCandidate {
@@ -98,7 +110,12 @@ public final class SiteRegistrationContracts {
         }
     }
 
-    /** @param generation 授权代次 @param allowedOrigins 已授权来源 @param pendingOrigins 被阻断来源 @param expiresAt 到期时刻 */
+    /**
+     * @param generation 授权代次
+     * @param allowedOrigins 已授权来源
+     * @param pendingOrigins 被阻断来源
+     * @param expiresAt 到期时刻
+     */
     public record Access(long generation, Set<URI> allowedOrigins, Set<URI> pendingOrigins, Instant expiresAt) {
         /** 固定来源集合，发现来源不会自动授权。 */
         public Access {
@@ -109,7 +126,12 @@ public final class SiteRegistrationContracts {
         }
     }
 
-    /** @param pageRevision 当前页面版本；尚未读取为零 @param uri 去掉查询和片段的地址 @param title 页面标题 @param candidates 密码候选 */
+    /**
+     * @param pageRevision 当前页面版本；尚未读取为零
+     * @param uri 去掉查询和片段的地址
+     * @param title 页面标题
+     * @param candidates 密码候选
+     */
     public record Page(long pageRevision, Optional<URI> uri, String title, List<CredentialCandidate> candidates) {
         /** 不接受带查询、片段或用户信息的可展示地址。 */
         public Page {
@@ -139,7 +161,11 @@ public final class SiteRegistrationContracts {
         }
     }
 
-    /** @param siteId 新网站 ID @param accountId 新默认账号 ID @param origin 保存网站的精确来源 */
+    /**
+     * @param siteId 新网站 ID
+     * @param accountId 新默认账号 ID
+     * @param origin 保存网站的精确来源
+     */
     public record Completed(String siteId, String accountId, URI origin) {
         /** 不携带 Vault 引用或秘密。 */
         public Completed {
@@ -149,7 +175,13 @@ public final class SiteRegistrationContracts {
         }
     }
 
-    /** @param sessionId 登记 UUID @param state 会话状态 @param access 授权边界 @param page 脱敏页面 @param completed 已提交结果 */
+    /**
+     * @param sessionId 登记 UUID
+     * @param state 会话状态
+     * @param access 授权边界
+     * @param page 脱敏页面
+     * @param completed 已提交结果
+     */
     public record Session(String sessionId, State state, Access access, Page page, Optional<Completed> completed) {
         /** 完成状态必须带持久保存结果，其他状态不得伪造完成。 */
         public Session {
@@ -164,7 +196,12 @@ public final class SiteRegistrationContracts {
         }
     }
 
-    /** @param sessionId 登记 UUID @param state Worker 状态 @param access Worker 当前租约 @param page 脱敏页面 */
+    /**
+     * @param sessionId 登记 UUID
+     * @param state Worker 状态
+     * @param access Worker 当前租约
+     * @param page 脱敏页面
+     */
     public record WorkerStatus(String sessionId, State state, Access access, Page page) {
         /** Worker 不能自行宣布数据库已完成登记。 */
         public WorkerStatus {
@@ -178,7 +215,12 @@ public final class SiteRegistrationContracts {
         }
     }
 
-    /** @param sessionId 宿主 UUID @param workspaceId 唯一 Workspace @param initialUri 用户输入地址 @param lease 人工短期租约 */
+    /**
+     * @param sessionId 宿主 UUID
+     * @param workspaceId 唯一 Workspace
+     * @param initialUri 用户输入地址
+     * @param lease 人工短期租约
+     */
     public record WorkerTask(
             String sessionId, WorkspaceId workspaceId, URI initialUri, BrowserContracts.AccessLease lease) {
         /** 独立登记 Context 不具有 Thread 或助手执行身份。 */
@@ -194,7 +236,10 @@ public final class SiteRegistrationContracts {
         }
     }
 
-    /** @param value HTTPS 地址 @return 去查询与片段后的可展示地址 */
+    /**
+     * @param value HTTPS 地址
+     * @return 去查询与片段后的可展示地址
+     */
     public static URI displayUri(URI value) {
         URI checked = https(value);
         // 保留原始转义，避免把路径中的 %2F 或 %3F 误改成新的路径/查询分隔符。

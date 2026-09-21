@@ -27,7 +27,7 @@ class CoreSchemaInitializerTest {
         assertSingleBaseline(database);
         try (Connection connection = database.open();
                 var statement = connection.createStatement()) {
-            assertEquals(85, count(connection, "INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'CORE'"));
+            assertEquals(86, count(connection, "INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'CORE'"));
             for (String table : List.of(
                     "AGENT_TURN",
                     "AGENT_ROLE",
@@ -94,7 +94,7 @@ class CoreSchemaInitializerTest {
             assertTrue(result.next());
             assertEquals("f".repeat(64), result.getString(1));
             assertFalse(result.next());
-            assertEquals(85, count(connection, "INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'CORE'"));
+            assertEquals(86, count(connection, "INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'CORE'"));
         }
     }
 

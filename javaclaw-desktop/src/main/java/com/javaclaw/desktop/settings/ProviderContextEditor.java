@@ -25,6 +25,7 @@ final class ProviderContextEditor extends VBox {
     private final Button save;
     private Optional<com.javaclaw.api.ModelContextLimits> rendered = Optional.empty();
     private Runnable stateChanged = () -> {};
+    private boolean rendering;
 
     ProviderContextEditor(ProviderContextSettingsGateway gateway, Runnable saved) {
         presenter = new ProviderContextPresenter(gateway, saved);
@@ -46,6 +47,8 @@ final class ProviderContextEditor extends VBox {
         getChildren().addAll(model, section, new javafx.scene.layout.HBox(8, save, discard), status);
         setSpacing(8);
         presenter.subscribe(this::render);
+        window.textProperty().addListener((ignored, before, value) -> edited());
+        output.textProperty().addListener((ignored, before, value) -> edited());
     }
 
     void bind(Optional<ProviderRef> provider) {
@@ -66,6 +69,11 @@ final class ProviderContextEditor extends VBox {
         return presenter.state().pending();
     }
 
+    /** 只有未决保存阻止离页；容量读取只禁用当前字段。 */
+    boolean saving() {
+        return presenter.state().saving();
+    }
+
     void onStateChanged(Runnable listener) {
         stateChanged = Objects.requireNonNull(listener, "listener");
     }
@@ -76,6 +84,9 @@ final class ProviderContextEditor extends VBox {
 
     /** 模型表格先询问容量草稿是否允许切换，拒绝时保留原模型和输入字段。 */
     boolean allowModelChange() {
+        if (saving()) {
+            return false;
+        }
         if (dirty()) {
             warnUnsavedChanges();
             return false;
@@ -92,28 +103,46 @@ final class ProviderContextEditor extends VBox {
     }
 
     private void resetFields() {
-        window.setText(rendered.map(value -> text(value.contextWindowTokens())).orElse(""));
-        output.setText(rendered.map(value -> text(value.maximumOutputTokens())).orElse(""));
+        rendering = true;
+        try {
+            window.setText(
+                    rendered.map(value -> text(value.contextWindowTokens())).orElse(""));
+            output.setText(
+                    rendered.map(value -> text(value.maximumOutputTokens())).orElse(""));
+        } finally {
+            rendering = false;
+        }
+    }
+
+    private void edited() {
+        if (!rendering) {
+            stateChanged.run();
+        }
     }
 
     private void render(ProviderContextPresenter.State state) {
-        if (!rendered.equals(state.limits())) {
-            rendered = state.limits();
-            window.setText(state.limits()
-                    .map(value -> text(value.contextWindowTokens()))
+        rendering = true;
+        try {
+            if (!rendered.equals(state.limits())) {
+                rendered = state.limits();
+                window.setText(state.limits()
+                        .map(value -> text(value.contextWindowTokens()))
+                        .orElse(""));
+                output.setText(state.limits()
+                        .map(value -> text(value.maximumOutputTokens()))
+                        .orElse(""));
+            }
+            boolean disabled = state.pending() || state.limits().isEmpty();
+            window.setDisable(disabled);
+            output.setDisable(disabled);
+            save.setDisable(disabled);
+            model.setText(state.provider()
+                    .map(value -> value.model() + " · 版本 " + value.endpointRevision())
                     .orElse(""));
-            output.setText(state.limits()
-                    .map(value -> text(value.maximumOutputTokens()))
-                    .orElse(""));
+            status.setText(state.message());
+        } finally {
+            rendering = false;
         }
-        boolean disabled = state.pending() || state.limits().isEmpty();
-        window.setDisable(disabled);
-        output.setDisable(disabled);
-        save.setDisable(disabled);
-        model.setText(state.provider()
-                .map(value -> value.model() + " · 版本 " + value.endpointRevision())
-                .orElse(""));
-        status.setText(state.message());
         stateChanged.run();
     }
 

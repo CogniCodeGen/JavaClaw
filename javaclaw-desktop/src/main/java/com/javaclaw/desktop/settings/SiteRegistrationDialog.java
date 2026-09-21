@@ -13,6 +13,7 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.VBox;
 import javafx.util.StringConverter;
@@ -43,14 +44,17 @@ final class SiteRegistrationDialog {
     private final Button refresh;
     private final Button finish;
     private final FormSection registration = new FormSection("登记网站", "在新打开的隔离浏览器中登录，完成后一次保存网站和默认账号。");
-    private final FormSection access = new FormSection("额外访问来源", "需要其他登录来源时，请核对后手动输入并允许；发现的来源不会自动获得授权。");
+    private final FormSection access = new FormSection("额外访问来源", "需要其他登录来源时，请核对后手动允许。明确允许的来源会随网站保存；发现的来源不会自动获得授权。");
     private boolean rendering;
     private boolean nameEdited;
     private boolean choiceEdited;
     private boolean disposed;
 
-    SiteRegistrationDialog(ExtensionSettingsGateway gateway, WorkspaceId workspace,
-            Consumer<SiteRegistrationContracts.Completed> completed, Runnable changed) {
+    SiteRegistrationDialog(
+            ExtensionSettingsGateway gateway,
+            WorkspaceId workspace,
+            Consumer<SiteRegistrationContracts.Completed> completed,
+            Runnable changed) {
         this.changed = Objects.requireNonNull(changed, "changed");
         presenter = new SiteRegistrationPresenter(gateway, workspace, value -> {
             dispose();
@@ -107,10 +111,12 @@ final class SiteRegistrationDialog {
         origin.setPromptText("https://login.example.com");
         origin.setAccessibleText("本次登记额外允许的 HTTPS 来源");
         credentials.setAccessibleText("保存的密码候选");
+        credentials.setMinWidth(0);
         credentials.setMaxWidth(Double.MAX_VALUE);
         configureChoices();
         for (Label label : List.of(current, status, origins)) {
             label.setWrapText(true);
+            label.setMinWidth(0);
         }
         registration.addField("网站地址", address);
         registration.addFullWidth(begin);
@@ -122,7 +128,14 @@ final class SiteRegistrationDialog {
         access.addFullWidth(origins);
         access.addField("额外来源", origin);
         access.addFullWidth(allow);
-        dialog.getDialogPane().setContent(new VBox(12, registration, access));
+        VBox body = new VBox(12, registration, access);
+        body.setMinWidth(0);
+        ScrollPane scroll = new ScrollPane(body);
+        scroll.setFitToWidth(true);
+        scroll.setMinWidth(0);
+        scroll.setMinHeight(0);
+        scroll.setPrefViewportHeight(440);
+        dialog.getDialogPane().setContent(scroll);
         configureListeners();
     }
 
@@ -155,11 +168,6 @@ final class SiteRegistrationDialog {
             }
             updateActions();
         });
-        dialog.setOnCloseRequest(event -> {
-            if (presenter.pending()) {
-                event.consume();
-            }
-        });
         dialog.setOnHidden(event -> {
             presenter.close();
             disposed = true;
@@ -172,14 +180,17 @@ final class SiteRegistrationDialog {
         rendering = true;
         snapshot.session().ifPresent(session -> {
             SiteRegistrationContracts.Page page = session.page();
-            current.setText(page.uri().map(URI::toString).orElse("等待浏览器页面…")
+            String waiting = session.access().pendingOrigins().isEmpty() ? "等待浏览器页面…" : "当前页面尚未加载，请在下方核对待授权来源。";
+            current.setText(page.uri().map(URI::toString).orElse(waiting)
                     + (page.title().isBlank() ? "" : "\n" + page.title()));
             if (!nameEdited) {
-                name.setText(page.title().isBlank() ? page.uri().map(URI::getHost).orElse("") : page.title());
+                String suggestion =
+                        page.title().isBlank() ? page.uri().map(URI::getHost).orElse("") : page.title();
+                name.setText(suggestion.substring(0, Math.min(200, suggestion.length())));
             }
             renderCandidates(page);
-            origins.setText("已允许：" + displayOrigins(session.access().allowedOrigins())
-                    + "\n等待授权：" + displayOrigins(session.access().pendingOrigins()));
+            origins.setText("已允许：" + displayOrigins(session.access().allowedOrigins()) + "\n等待授权："
+                    + displayOrigins(session.access().pendingOrigins()));
         });
         rendering = false;
         updateActions();
@@ -190,7 +201,9 @@ final class SiteRegistrationDialog {
         List<CredentialChoice> choices = new ArrayList<>();
         choices.add(new CredentialChoice(Optional.empty(), "只保存登录态（不保存密码）"));
         Optional<URI> currentOrigin = page.uri().map(SiteContracts::originOf);
-        page.candidates().stream().filter(candidate -> currentOrigin.filter(candidate.origin()::equals).isPresent())
+        page.candidates().stream()
+                .filter(candidate ->
+                        currentOrigin.filter(candidate.origin()::equals).isPresent())
                 .map(candidate -> new CredentialChoice(Optional.of(candidate.id()), candidate.label()))
                 .forEach(choices::add);
         if (credentials.getItems().equals(choices)) {
@@ -198,8 +211,8 @@ final class SiteRegistrationDialog {
         }
         CredentialChoice previous = credentials.getValue();
         credentials.getItems().setAll(choices);
-        if (choiceEdited && choices.contains(previous)) {
-            credentials.setValue(previous);
+        if (choiceEdited) {
+            credentials.setValue(choices.contains(previous) ? previous : null);
         } else if (choices.size() <= 2) {
             credentials.setValue(choices.getLast());
         } else {
@@ -218,27 +231,35 @@ final class SiteRegistrationDialog {
         var snapshot = presenter.state();
         boolean editing = snapshot.phase() == SiteRegistrationPresenter.Phase.EDITING;
         boolean retry = snapshot.phase() == SiteRegistrationPresenter.Phase.START_FAILED;
-        boolean active = snapshot.phase() == SiteRegistrationPresenter.Phase.ACTIVE && !snapshot.reading();
+        boolean active = snapshot.phase() == SiteRegistrationPresenter.Phase.ACTIVE;
+        boolean canSubmit = active && !snapshot.reading();
         begin.setText(retry ? "重试启动" : "打开隔离浏览器");
         begin.setDisable(!(editing || retry) || address.getText().isBlank());
         address.setDisable(!editing);
         name.setDisable(!active);
         credentials.setDisable(!active);
         origin.setDisable(!active);
-        allow.setDisable(!active || origin.getText().isBlank());
+        allow.setDisable(!canSubmit || origin.getText().isBlank());
         refresh.setDisable(snapshot.session().isEmpty() || presenter.pending() || snapshot.reading());
-        updateFinish(active);
-        dialog.getDialogPane().lookupButton(ButtonType.CLOSE).setDisable(presenter.pending());
+        updateFinish(canSubmit);
+        // 关闭始终可用；迟到启动由 Presenter 取消，未知保存由宿主确认，窗口不重放写操作。
+        dialog.getDialogPane().lookupButton(ButtonType.CLOSE).setDisable(false);
     }
 
     private void updateFinish(boolean active) {
-        boolean pageReady = presenter.state().session().filter(session -> session.page().pageRevision() > 0)
-                .filter(session -> session.page().uri().isPresent()).isPresent();
+        boolean pageReady = presenter
+                .state()
+                .session()
+                .filter(session -> session.page().pageRevision() > 0)
+                .filter(session -> session.page().uri().isPresent())
+                .isPresent();
         finish.setDisable(!active || !pageReady || name.getText().isBlank() || credentials.getValue() == null);
     }
 
     private static String displayOrigins(java.util.Set<URI> values) {
-        return values.isEmpty() ? "无" : values.stream().map(URI::toString).sorted().collect(java.util.stream.Collectors.joining("、"));
+        return values.isEmpty()
+                ? "无"
+                : values.stream().map(URI::toString).sorted().collect(java.util.stream.Collectors.joining("、"));
     }
 
     private static Button button(String label, ActionStyle style, Runnable action) {

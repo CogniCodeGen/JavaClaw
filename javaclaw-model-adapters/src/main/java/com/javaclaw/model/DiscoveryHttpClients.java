@@ -8,6 +8,7 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
+import com.anthropic.backends.AnthropicBackend;
 import okhttp3.Interceptor;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -85,7 +86,13 @@ final class DiscoveryHttpClients {
     private static Response enforceResponsePolicy(Response response) throws IOException {
         if (response.isRedirect()) {
             response.close();
-            throw new IOException("Provider model discovery redirect is not allowed");
+            throw new ProviderModelPreviewException(ProviderModelPreviewException.Code.INVALID_ADDRESS);
+        }
+        try {
+            ProviderModelPreviewException.requireSupportedStatus(response.code());
+        } catch (ProviderModelPreviewException failure) {
+            response.close();
+            throw failure;
         }
         ResponseBody body = response.body();
         if (body == null) {
@@ -188,11 +195,13 @@ final class DiscoveryHttpClients {
     private static final class AnthropicHttpClient implements com.anthropic.core.http.HttpClient {
         private final OkHttpClient client;
         private final String baseUrl;
+        private final AnthropicBackend backend;
         private final CancellationToken cancellation;
 
         private AnthropicHttpClient(OkHttpClient client, String baseUrl, CancellationToken cancellation) {
             this.client = client;
             this.baseUrl = stripTrailingSlash(Objects.requireNonNull(baseUrl, "baseUrl"));
+            backend = AnthropicBackend.builder().baseUrl(this.baseUrl).build();
             this.cancellation = cancellation;
         }
 
@@ -201,11 +210,13 @@ final class DiscoveryHttpClients {
                 com.anthropic.core.http.HttpRequest request, com.anthropic.core.RequestOptions options) {
             Objects.requireNonNull(options, "options");
             try {
+                // SDK 在底层 Backend 补充协议版本；替换传输后仍需执行该步骤，保留显式版本及上层已应用的鉴权。
+                com.anthropic.core.http.HttpRequest prepared = backend.prepareRequest(request);
                 Request outbound = request(
-                        resolvedUrl(request.url()),
-                        request.method().name(),
-                        request.headers().names(),
-                        request.headers()::values,
+                        resolvedUrl(prepared.url()),
+                        prepared.method().name(),
+                        prepared.headers().names(),
+                        prepared.headers()::values,
                         false);
                 return new AnthropicResponse(client.newCall(outbound).execute());
             } catch (IOException failure) {
@@ -222,7 +233,11 @@ final class DiscoveryHttpClients {
 
         @Override
         public void close() {
-            DiscoveryHttpClients.close(client);
+            try {
+                backend.close();
+            } finally {
+                DiscoveryHttpClients.close(client);
+            }
         }
 
         private String resolvedUrl(String requestUrl) {

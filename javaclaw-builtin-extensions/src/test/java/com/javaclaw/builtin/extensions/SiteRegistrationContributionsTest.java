@@ -75,6 +75,29 @@ class SiteRegistrationContributionsTest {
     }
 
     @Test
+    void 已提交登记返回新网站版本用于资源通知而查询仍可恢复结果() throws Exception {
+        try (SiteExtension extension = new SiteExtension()) {
+            var started = support.start(extension);
+            var active = session();
+            var completed = new SiteRegistrationContracts.Session(
+                    SESSION,
+                    SiteRegistrationContracts.State.COMPLETED,
+                    active.access(),
+                    active.page(),
+                    Optional.of(new SiteRegistrationContracts.Completed("new-site", "default-account", ORIGIN)));
+            support.service = (caller, service, payload) -> support.payloads.encode(completed);
+            var result = started.command(request("registration.complete", Optional.of("complete-key"), 0));
+            assertEquals(1, result.revision());
+            assertEquals(completed, support.decode(result, SiteRegistrationContracts.Session.class));
+            assertEquals(
+                    completed,
+                    support.decode(
+                            started.query(request("registration.status", Optional.empty(), 0)),
+                            SiteRegistrationContracts.Session.class));
+        }
+    }
+
+    @Test
     void 聊天和其他Workspace不能借用设置页登记入口() throws Exception {
         try (SiteExtension extension = new SiteExtension()) {
             var started = support.start(extension);

@@ -64,7 +64,7 @@ import com.javaclaw.protocol.DiagnosticsRpcContracts;
 import com.javaclaw.protocol.InitializeResult;
 
 /** 通过当前 DesktopPresenter 会话执行 SDK 请求的管理中心网关。 */
-public final class SdkCoreSettingsGateway extends SdkRoleExecutionSettingsGateway
+public final class SdkCoreSettingsGateway extends SdkProviderConfigurationSettingsGateway
         implements CoreSettingsGateway, McpSettingsGateway, InstructionSettingsGateway, BundleSettingsGateway {
     private final DesktopPresenter desktop;
 

@@ -39,6 +39,19 @@ public interface ProviderCredentialMutationPort {
     <T> T expose(Prepared candidate, Supplier<T> work);
 
     /**
+     * 在 Vault 锁内核对现存凭据版本并提交保留该凭据的 Provider 配置。
+     *
+     * <p>调用方必须先持有 Provider 写锁；回调结束前不释放 Vault 锁，防止重置或轮换使检查结果过期。
+     *
+     * @param reference 当前 Provider 已绑定的凭据
+     * @param expectedRevision 用户编辑时读取的精确凭据版本
+     * @param work 只写 Provider 与命令回执的提交动作
+     * @param <T> 脱敏提交结果类型
+     * @return 提交结果
+     */
+    <T> T retained(CredentialRef reference, long expectedRevision, Supplier<T> work);
+
+    /**
      * 在同一 H2 事务中提交 Vault、Provider 版本和幂等结果。
      *
      * @param identity 命令身份

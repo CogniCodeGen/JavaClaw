@@ -55,9 +55,14 @@ final class RegistrationCredentials implements AutoCloseable {
                 if (source.frame() != source.page().mainFrame() || arguments.length != 3) {
                     return null;
                 }
-                URI origin = com.javaclaw.builtin.contracts.SiteContracts.originOf(URI.create(source.frame().url()));
-                if (allowed.test(origin) && arguments[0] instanceof String key && arguments[1] instanceof String user
-                        && arguments[2] instanceof String secret && capture(origin, key, user, secret)) {
+                URI origin = com.javaclaw.builtin.contracts.SiteContracts.originOf(
+                        com.javaclaw.builtin.contracts.SiteRegistrationContracts.displayUri(
+                                URI.create(source.frame().url())));
+                if (allowed.test(origin)
+                        && arguments[0] instanceof String key
+                        && arguments[1] instanceof String user
+                        && arguments[2] instanceof String secret
+                        && capture(origin, key, user, secret)) {
                     changed.run();
                 }
             } catch (IllegalArgumentException ignored) {
@@ -69,8 +74,7 @@ final class RegistrationCredentials implements AutoCloseable {
     }
 
     boolean capture(URI origin, String documentForm, String username, String password) {
-        if (documentForm.length() > 100 || username.isEmpty() || password.isEmpty()
-                || username.indexOf('\0') >= 0 || password.indexOf('\0') >= 0) {
+        if (!validInput(documentForm, username, password)) {
             return false;
         }
         byte[] bytes = (username + '\0' + password).getBytes(StandardCharsets.UTF_8);
@@ -89,12 +93,26 @@ final class RegistrationCredentials implements AutoCloseable {
             if (previous != null) {
                 previous.close();
             }
-            candidates.put(key, new Candidate(new CredentialCandidate(UUID.randomUUID().toString(), origin,
-                    "本次输入的登录表单 " + (previous == null ? candidates.size() + 1 : index(key))), bytes.clone()));
+            candidates.put(
+                    key,
+                    new Candidate(
+                            new CredentialCandidate(
+                                    UUID.randomUUID().toString(),
+                                    origin,
+                                    "本次输入的登录表单 " + (previous == null ? candidates.size() + 1 : index(key))),
+                            bytes.clone()));
             return true;
         } finally {
             Arrays.fill(bytes, (byte) 0);
         }
+    }
+
+    private static boolean validInput(String documentForm, String username, String password) {
+        return documentForm.length() <= 100
+                && !username.isEmpty()
+                && !password.isEmpty()
+                && username.indexOf('\0') < 0
+                && password.indexOf('\0') < 0;
     }
 
     private int index(String key) {
@@ -109,8 +127,10 @@ final class RegistrationCredentials implements AutoCloseable {
         if (id.isEmpty()) {
             return new byte[0];
         }
-        Candidate candidate = candidates.values().stream().filter(value -> value.description().id().equals(id.orElseThrow()))
-                .findFirst().orElseThrow(() -> new IllegalStateException("BROWSER_CREDENTIAL_TARGET_CHANGED"));
+        Candidate candidate = candidates.values().stream()
+                .filter(value -> value.description().id().equals(id.orElseThrow()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("BROWSER_CREDENTIAL_TARGET_CHANGED"));
         if (!candidate.description().origin().equals(origin)) {
             throw new IllegalStateException("BROWSER_CREDENTIAL_TARGET_CHANGED");
         }
@@ -121,8 +141,8 @@ final class RegistrationCredentials implements AutoCloseable {
         String result = value;
         for (Candidate candidate : candidates.values()) {
             for (String secret : new String(candidate.bytes(), StandardCharsets.UTF_8).split("\u0000")) {
-                result = result.replace(secret, "REDACTED").replace(java.net.URLEncoder.encode(secret, StandardCharsets.UTF_8),
-                        "REDACTED");
+                result = result.replace(secret, "REDACTED")
+                        .replace(java.net.URLEncoder.encode(secret, StandardCharsets.UTF_8), "REDACTED");
             }
         }
         return result;

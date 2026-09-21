@@ -102,36 +102,36 @@ public final class SdkExtensionSettingsGateway implements ExtensionSettingsGatew
     @Override
     public CompletableFuture<SiteRegistrationContracts.Session> beginRegistration(
             WorkspaceId workspace, SiteRegistrationContracts.BeginRequest request, CommandOptions options) {
-        return presenter.submitSettingsRequest(client -> new SiteRegistrationClient(client.extensions())
-                .begin(workspace, request, options));
+        return presenter.submitSettingsRequest(
+                client -> new SiteRegistrationClient(client.extensions()).begin(workspace, request, options));
     }
 
     @Override
     public CompletableFuture<SiteRegistrationContracts.Session> registrationStatus(
             WorkspaceId workspace, SiteRegistrationContracts.SessionRequest request) {
-        return presenter.submitSettingsRequest(client -> new SiteRegistrationClient(client.extensions())
-                .status(workspace, request));
+        return presenter.submitSettingsRequest(
+                client -> new SiteRegistrationClient(client.extensions()).status(workspace, request));
     }
 
     @Override
     public CompletableFuture<SiteRegistrationContracts.Session> allowRegistrationOrigin(
             WorkspaceId workspace, SiteRegistrationContracts.OriginRequest request, CommandOptions options) {
-        return presenter.submitSettingsRequest(client -> new SiteRegistrationClient(client.extensions())
-                .allowOrigin(workspace, request, options));
+        return presenter.submitSettingsRequest(
+                client -> new SiteRegistrationClient(client.extensions()).allowOrigin(workspace, request, options));
     }
 
     @Override
     public CompletableFuture<SiteRegistrationContracts.Session> completeRegistration(
             WorkspaceId workspace, SiteRegistrationContracts.CompleteRequest request, CommandOptions options) {
-        return presenter.submitSettingsRequest(client -> new SiteRegistrationClient(client.extensions())
-                .complete(workspace, request, options));
+        return presenter.submitSettingsRequest(
+                client -> new SiteRegistrationClient(client.extensions()).complete(workspace, request, options));
     }
 
     @Override
     public CompletableFuture<SiteRegistrationContracts.Session> cancelRegistration(
             WorkspaceId workspace, SiteRegistrationContracts.SessionRequest request, CommandOptions options) {
-        return presenter.submitSettingsRequest(client -> new SiteRegistrationClient(client.extensions())
-                .cancel(workspace, request, options));
+        return presenter.submitSettingsRequest(
+                client -> new SiteRegistrationClient(client.extensions()).cancel(workspace, request, options));
     }
 
     @Override

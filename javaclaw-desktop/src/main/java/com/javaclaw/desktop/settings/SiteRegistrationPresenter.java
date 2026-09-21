@@ -21,7 +21,17 @@ import com.javaclaw.protocol.ProtocolErrorCode;
 
 /** 登记窗口的 FX 状态机；只读轮询可以取消，写操作不自动重放，完成不明时只查询原会话。 */
 final class SiteRegistrationPresenter {
-    enum Phase { EDITING, STARTING, START_FAILED, ACTIVE, AUTHORIZING, COMMITTING, CANCELLING, UNKNOWN, TERMINAL }
+    enum Phase {
+        EDITING,
+        STARTING,
+        START_FAILED,
+        ACTIVE,
+        AUTHORIZING,
+        COMMITTING,
+        CANCELLING,
+        UNKNOWN,
+        TERMINAL
+    }
 
     /** @param phase 本地交互阶段 @param session 脱敏会话 @param message 用户状态说明 @param reading 是否正在查询 */
     record Snapshot(Phase phase, Optional<Session> session, String message, boolean reading) {}
@@ -35,12 +45,16 @@ final class SiteRegistrationPresenter {
     private Consumer<Snapshot> listener = ignored -> {};
     private Snapshot state = new Snapshot(Phase.EDITING, Optional.empty(), "输入网址，在隔离浏览器中完成登录后点击完成添加。", false);
     private SiteRegistrationContracts.BeginRequest beginning;
+    private SiteRegistrationContracts.OriginRequest pendingOrigin;
     private CompletableFuture<?> reading;
     private long epoch;
+    private long lastOriginGrantPageRevision = -1;
     private boolean closed;
     private boolean delivered;
 
-    SiteRegistrationPresenter(ExtensionSettingsGateway gateway, WorkspaceId workspace,
+    SiteRegistrationPresenter(
+            ExtensionSettingsGateway gateway,
+            WorkspaceId workspace,
             Consumer<SiteRegistrationContracts.Completed> completed) {
         this.gateway = Objects.requireNonNull(gateway, "gateway");
         this.workspace = Objects.requireNonNull(workspace, "workspace");
@@ -72,8 +86,7 @@ final class SiteRegistrationPresenter {
             if (beginning == null) {
                 beginning = new SiteRegistrationContracts.BeginRequest(URI.create(address.strip()));
             }
-            write(Phase.STARTING, "正在打开隔离浏览器…",
-                    () -> gateway.beginRegistration(workspace, beginning, beginIdentity));
+            write(Phase.STARTING, "正在打开隔离浏览器…", () -> gateway.beginRegistration(workspace, beginning, beginIdentity));
         } catch (IllegalArgumentException invalid) {
             publish(Phase.EDITING, "请输入不含用户名密码的 HTTPS 地址。", false);
         }
@@ -87,8 +100,11 @@ final class SiteRegistrationPresenter {
             Session session = state.session().orElseThrow();
             var request = new SiteRegistrationContracts.OriginRequest(
                     session.sessionId(), session.access().generation(), URI.create(address.strip()));
+            pendingOrigin = request;
             CommandOptions identity = CommandOptions.create(0);
-            write(Phase.AUTHORIZING, "正在允许明确输入的来源…",
+            write(
+                    Phase.AUTHORIZING,
+                    "正在允许明确输入的来源…",
                     () -> gateway.allowRegistrationOrigin(workspace, request, identity));
         } catch (IllegalArgumentException invalid) {
             publish(Phase.ACTIVE, "请输入精确 HTTPS 来源，不包含路径、查询、片段或通配符。", false);
@@ -102,10 +118,16 @@ final class SiteRegistrationPresenter {
         Session session = state.session().orElseThrow();
         try {
             validateCredential(session, credential);
-            var request = new SiteRegistrationContracts.CompleteRequest(session.sessionId(),
-                    session.access().generation(), session.page().pageRevision(), credential, name);
+            var request = new SiteRegistrationContracts.CompleteRequest(
+                    session.sessionId(),
+                    session.access().generation(),
+                    session.page().pageRevision(),
+                    credential,
+                    name);
             CommandOptions identity = CommandOptions.create(0);
-            write(Phase.COMMITTING, "正在保存网站、默认账号和登录态…",
+            write(
+                    Phase.COMMITTING,
+                    "正在保存网站、默认账号和登录态…",
                     () -> gateway.completeRegistration(workspace, request, identity));
         } catch (IllegalArgumentException invalid) {
             publish(Phase.ACTIVE, "请检查网站名称、当前页面和所选密码候选。", false);
@@ -121,24 +143,32 @@ final class SiteRegistrationPresenter {
         publish(state.phase(), state.message(), true);
         try {
             Session current = state.session().orElseThrow();
-            var request = gateway.registrationStatus(workspace,
-                    new SiteRegistrationContracts.SessionRequest(current.sessionId()));
+            var request = gateway.registrationStatus(
+                    workspace, new SiteRegistrationContracts.SessionRequest(current.sessionId()));
             reading = request;
-            request.whenComplete((value, failure) -> FxStateDispatcher.dispatch(
-                    () -> readCompleted(requestEpoch, value, failure)));
+            request.whenComplete(
+                    (value, failure) -> FxStateDispatcher.dispatch(() -> readCompleted(requestEpoch, value, failure)));
         } catch (RuntimeException failure) {
             readCompleted(requestEpoch, null, failure);
         }
     }
 
     void cancel() {
-        if (closed || pending() || state.phase() == Phase.UNKNOWN || state.session().isEmpty()) {
+        if (closed
+                || pending()
+                || state.phase() == Phase.UNKNOWN
+                || state.session().isEmpty()) {
             return;
         }
         Session session = state.session().orElseThrow();
         if (session.state() == State.ACTIVE) {
-            write(Phase.CANCELLING, "正在关闭隔离浏览器并清理临时输入…", () -> gateway.cancelRegistration(
-                    workspace, new SiteRegistrationContracts.SessionRequest(session.sessionId()), cancelIdentity));
+            write(
+                    Phase.CANCELLING,
+                    "正在关闭隔离浏览器并清理临时输入…",
+                    () -> gateway.cancelRegistration(
+                            workspace,
+                            new SiteRegistrationContracts.SessionRequest(session.sessionId()),
+                            cancelIdentity));
         }
     }
 
@@ -147,7 +177,8 @@ final class SiteRegistrationPresenter {
         if (closed) {
             return;
         }
-        boolean uncertain = state.phase() == Phase.COMMITTING || state.phase() == Phase.UNKNOWN;
+        boolean uncertain =
+                state.phase() == Phase.COMMITTING || (state.phase() == Phase.UNKNOWN && pendingOrigin == null);
         closed = true;
         stopRead();
         if (!uncertain) {
@@ -165,8 +196,10 @@ final class SiteRegistrationPresenter {
         long requestEpoch = epoch;
         publish(phase, message, false);
         try {
-            operation.get().whenComplete((value, failure) -> FxStateDispatcher.dispatch(
-                    () -> writeCompleted(requestEpoch, phase, value, failure)));
+            operation
+                    .get()
+                    .whenComplete((value, failure) ->
+                            FxStateDispatcher.dispatch(() -> writeCompleted(requestEpoch, phase, value, failure)));
         } catch (RuntimeException failure) {
             writeCompleted(requestEpoch, phase, null, failure);
         }
@@ -180,10 +213,14 @@ final class SiteRegistrationPresenter {
             return;
         }
         if (failure == null) {
+            if (action == Phase.AUTHORIZING && value != null) {
+                lastOriginGrantPageRevision = value.page().pageRevision();
+            }
             accept(value, false);
         } else if (action == Phase.STARTING) {
             publish(Phase.START_FAILED, "启动未确认；重试将恢复同一次启动，不会重复打开浏览器。", false);
         } else if (knownRejection(failure)) {
+            pendingOrigin = null;
             publish(Phase.ACTIVE, "请求已拒绝，请刷新后检查页面或授权状态。", false);
             refresh();
         } else {
@@ -206,19 +243,37 @@ final class SiteRegistrationPresenter {
     }
 
     private void accept(Session value, boolean uncertain) {
-        if (value == null || state.session().filter(old -> !old.sessionId().equals(value.sessionId())).isPresent()) {
+        if (value == null
+                || state.session()
+                        .filter(old -> !old.sessionId().equals(value.sessionId()))
+                        .isPresent()) {
             publish(Phase.UNKNOWN, "会话身份未确认，保留原会话等待查询。", false);
             schedule();
             return;
         }
+        if (uncertain && originConfirmed(value)) {
+            uncertain = false;
+            lastOriginGrantPageRevision = value.page().pageRevision();
+        }
+        if (!uncertain || value.state() != State.ACTIVE) {
+            pendingOrigin = null;
+        }
         Phase phase = value.state() == State.ACTIVE ? (uncertain ? Phase.UNKNOWN : Phase.ACTIVE) : Phase.TERMINAL;
-        state = new Snapshot(phase, Optional.of(value), message(value.state(), uncertain), false);
+        state = new Snapshot(phase, Optional.of(value), message(value, uncertain), false);
         listener.accept(state);
         if (value.state() == State.COMPLETED && !delivered) {
             delivered = true;
             completed.accept(value.completed().orElseThrow());
         }
         schedule();
+    }
+
+    private boolean originConfirmed(Session session) {
+        // 只有原会话已提升授权代次并包含本次来源，才能以状态事实解除授权未知；保存未知不走此恢复分支。
+        return pendingOrigin != null
+                && session.state() == State.ACTIVE
+                && session.access().generation() > pendingOrigin.expectedGeneration()
+                && session.access().allowedOrigins().contains(pendingOrigin.origin());
     }
 
     private void publish(Phase phase, String message, boolean loading) {
@@ -245,8 +300,8 @@ final class SiteRegistrationPresenter {
     private void cleanup(Session session) {
         if (session.state() == State.ACTIVE) {
             try {
-                gateway.cancelRegistration(workspace,
-                        new SiteRegistrationContracts.SessionRequest(session.sessionId()), cancelIdentity);
+                gateway.cancelRegistration(
+                        workspace, new SiteRegistrationContracts.SessionRequest(session.sessionId()), cancelIdentity);
             } catch (RuntimeException ignored) {
                 // 连接中断后仍由宿主到期清理；UI 不以新幂等身份重复提交取消。
             }
@@ -254,10 +309,12 @@ final class SiteRegistrationPresenter {
     }
 
     private static void validateCredential(Session session, Optional<String> credential) {
-        URI origin = SiteContracts.originOf(session.page().uri().orElseThrow(
-                () -> new IllegalArgumentException("当前页面尚未就绪")));
-        if (credential.isPresent() && session.page().candidates().stream().noneMatch(candidate ->
-                candidate.id().equals(credential.orElseThrow()) && candidate.origin().equals(origin))) {
+        URI origin = SiteContracts.originOf(
+                session.page().uri().orElseThrow(() -> new IllegalArgumentException("当前页面尚未就绪")));
+        if (credential.isPresent()
+                && session.page().candidates().stream()
+                        .noneMatch(candidate -> candidate.id().equals(credential.orElseThrow())
+                                && candidate.origin().equals(origin))) {
             throw new IllegalArgumentException("所选密码候选不属于当前页面来源");
         }
     }
@@ -267,17 +324,31 @@ final class SiteRegistrationPresenter {
         if (!(cause instanceof RemoteRpcException remote)) {
             return false;
         }
-        return remote.code() == ProtocolErrorCode.INVALID_PARAMS || remote.code() == ProtocolErrorCode.REVISION_CONFLICT
+        return remote.code() == ProtocolErrorCode.INVALID_PARAMS
+                || remote.code() == ProtocolErrorCode.REVISION_CONFLICT
                 || remote.code() == ProtocolErrorCode.PERMISSION_DENIED;
     }
 
-    private static String message(State state, boolean uncertain) {
-        return switch (state) {
-            case ACTIVE -> uncertain ? "仍在确认操作结果；只查询状态，不会重复提交。" : "请在浏览器中完成登录，再点击完成添加。";
+    private String message(Session session, boolean uncertain) {
+        return switch (session.state()) {
+            case ACTIVE -> activeMessage(session, uncertain);
             case COMPLETED -> "网站与默认账号已添加。";
             case CANCELLED -> "已取消添加，临时登录输入已清理。";
             case EXPIRED -> "登记会话已到期，请重新添加。";
-            case FAILED -> "登记未完成，临时会话已结束。";
+            case FAILED -> "本次添加已结束，请重新打开浏览器添加。";
         };
+    }
+
+    private String activeMessage(Session session, boolean uncertain) {
+        if (uncertain) {
+            return "仍在确认操作结果；只查询状态，不会重复提交。";
+        }
+        if (session.page().pageRevision() == lastOriginGrantPageRevision) {
+            return "来源已允许，请在浏览器中刷新页面或继续登录。";
+        }
+        if (session.page().uri().isEmpty() && !session.access().pendingOrigins().isEmpty()) {
+            return "页面正在等待来源授权，请在下方“额外访问来源”核对并允许所需来源。";
+        }
+        return "请在浏览器中完成登录，再点击完成添加。";
     }
 }

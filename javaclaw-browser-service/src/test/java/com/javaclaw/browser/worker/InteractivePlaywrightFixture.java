@@ -6,6 +6,7 @@ import java.lang.reflect.Proxy;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -15,10 +16,13 @@ import com.microsoft.playwright.BrowserContext;
 import com.microsoft.playwright.BrowserType;
 import com.microsoft.playwright.Download;
 import com.microsoft.playwright.ElementHandle;
+import com.microsoft.playwright.Frame;
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Mouse;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.Playwright;
+import com.microsoft.playwright.Route;
+import com.microsoft.playwright.options.BindingCallback;
 import com.microsoft.playwright.options.Cookie;
 import com.microsoft.playwright.options.FilePayload;
 import com.microsoft.playwright.options.ServiceWorkerPolicy;
@@ -31,11 +35,18 @@ final class InteractivePlaywrightFixture {
     final BrowserType type = proxy(BrowserType.class, this::typeCall);
     final Playwright playwright = proxy(Playwright.class, this::playwrightCall);
     Consumer<Page> onPage;
+    Consumer<Route> route;
+    Consumer<FakePage> createdPage = ignored -> {};
     boolean headless = true;
     boolean indexedDb;
     ServiceWorkerPolicy serviceWorkers;
     int closes;
     int contextCloses;
+    boolean connected = true;
+    String storage = "{\"cookies\":[],\"origins\":[{\"indexedDB\":[]}]}";
+    Runnable beforeStorage = () -> {};
+    final Map<String, BindingCallback> bindings = new LinkedHashMap<>();
+    final List<String> scripts = new ArrayList<>();
     final List<Cookie> cookies = new ArrayList<>();
 
     private Object playwrightCall(Object target, Method method, Object[] args) {
@@ -59,7 +70,7 @@ final class InteractivePlaywrightFixture {
 
     private Object browserCall(Object target, Method method, Object[] args) {
         return switch (method.getName()) {
-            case "isConnected" -> true;
+            case "isConnected" -> connected;
             case "newContext" -> {
                 serviceWorkers = ((Browser.NewContextOptions) args[0]).serviceWorkers;
                 yield context;
@@ -77,26 +88,44 @@ final class InteractivePlaywrightFixture {
                 pages.stream().filter(page -> !page.closed).forEach(page -> page.page.close());
                 yield null;
             }
+            case "route" -> {
+                route = (Consumer<Route>) args[1];
+                yield null;
+            }
             case "onPage" -> {
                 onPage = (Consumer<Page>) args[0];
+                yield null;
+            }
+            case "exposeBinding" -> {
+                bindings.put((String) args[0], (BindingCallback) args[1]);
+                yield null;
+            }
+            case "addInitScript" -> {
+                scripts.add((String) args[0]);
                 yield null;
             }
             case "newPage" -> {
                 FakePage page = new FakePage();
                 pages.add(page);
+                createdPage.accept(page);
                 onPage.accept(page.page);
                 yield page.page;
             }
             case "cookies" -> cookies;
             case "storageState" -> {
                 indexedDb = ((BrowserContext.StorageStateOptions) args[0]).indexedDB;
-                yield "{\"cookies\":[],\"origins\":[{\"indexedDB\":[]}]}";
+                beforeStorage.run();
+                yield storage;
             }
             default -> defaultValue(method.getReturnType());
         };
     }
 
     static final class FakePage {
+        final Frame frame =
+                proxy(Frame.class, (target, method, args) -> method.getName().equals("url") ? this.uri : null);
+        Consumer<Frame> onNavigated = ignored -> {};
+        Runnable navigation = () -> {};
         final Locator locator = proxy(Locator.class, this::locatorCall);
         final Mouse mouse = proxy(Mouse.class, this::mouseCall);
         final Page page = proxy(Page.class, this::pageCall);
@@ -143,10 +172,12 @@ final class InteractivePlaywrightFixture {
                 case "navigate" -> {
                     uri = (String) args[0];
                     dom++;
+                    onNavigated.accept(frame);
+                    navigation.run();
                     yield null;
                 }
                 case "querySelectorAll" -> elements((String) args[0]);
-                case "evaluate" -> List.of(1280, 900, 0, scroll, 2);
+                case "evaluate" -> pageEvaluate(args);
                 case "screenshot" -> screenshot((Page.ScreenshotOptions) args[0]);
                 default -> pageOther(method, args);
             };
@@ -154,6 +185,13 @@ final class InteractivePlaywrightFixture {
 
         @SuppressWarnings("unchecked")
         private Object pageOther(Method method, Object[] args) {
+            if (method.getName().equals("mainFrame")) {
+                return frame;
+            }
+            if (method.getName().equals("onFrameNavigated")) {
+                onNavigated = (Consumer<Frame>) args[0];
+                return null;
+            }
             if (method.getName().equals("waitForTimeout")) {
                 java.util.concurrent.locks.LockSupport.parkNanos(1_000_000);
                 return null;
@@ -163,6 +201,12 @@ final class InteractivePlaywrightFixture {
                 onDownload = (Consumer<Download>) args[0];
             }
             return method.getName().equals("title") ? body : defaultValue(method.getReturnType());
+        }
+
+        private Object pageEvaluate(Object[] args) {
+            return "() => [location.href, document.title]".equals(args[0])
+                    ? List.of(uri, body)
+                    : List.of(1280, 900, 0, scroll, 2);
         }
 
         private List<ElementHandle> elements(String selector) {
@@ -283,6 +327,25 @@ final class InteractivePlaywrightFixture {
             }
             return defaultValue(method.getReturnType());
         }
+    }
+
+    BindingCallback.Source source(FakePage page) {
+        return new BindingCallback.Source() {
+            @Override
+            public BrowserContext context() {
+                return context;
+            }
+
+            @Override
+            public Page page() {
+                return page.page;
+            }
+
+            @Override
+            public Frame frame() {
+                return page.frame;
+            }
+        };
     }
 
     @SuppressWarnings("unchecked")

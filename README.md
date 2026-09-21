@@ -112,10 +112,16 @@ SDK 内部凭据表示则随 Adapter generation 生命周期存在。Vault 变�
 Provider 与推理默认值。该入口只接受这两个字段；模型按 Role 固定值、显式 spawn 值、子智能体默认值、父模型解析，
 权限、审批与预算仍受父任务上限约束。缺省值不产生独立额度，更新只影响新的子任务。
 
-模型目录发现使用 session-owned 的 `provider/model/discovery/start|read|cancel` 临时操作，最长 30 秒、最多 1000 条，
-不执行推理也不持久化结果；页面、RPC session 或 App Server 关闭会取消真实 HTTP 调用。目录读取拒绝 redirect；使用
-`API_KEY` 的自定义地址必须为 HTTPS，仅显式 loopback 可用 HTTP，`NONE` 只允许自定义 OpenAI-compatible 地址且不能
-绑定 CredentialRef。首次设置按“禁用连接壳 → 凭据 → 模型用途 → 启用”恢复，确定性幂等键不包含 Secret，ID 冲突不覆盖。
+模型设置采用“连接服务 → 选择模型”两步弹窗。填写地址和 API Key 后点击“下一步：获取模型”，可以搜索、多选，
+按名称或模型 ID 勾选后在列表下方配置用途；手动添加默认收起。只有最后点击“保存模型”才一次写入服务、密钥和模型目录；此前取消不会写入。
+“保存后启用”默认勾选，成功后显示保存结果及“关闭”按钮，仅更新服务列表，不改变当前对话或 Workspace 的模型。编辑时默认保留已有密钥与模型属性，
+更换地址或协议须重新输入密钥；切换无鉴权须确认最终保存时清除原密钥。纯向量服务可保存，但不出现在聊天模型菜单。
+容量、默认向量绑定、本地检查、显式联网验证和归档在“高级管理”中独立执行。详见[模型配置](docs/provider-configuration.md)。
+
+已保存版本的目录发现仍使用 `provider/model/discovery/start|read|cancel`。新增草稿入口
+`provider/model/preview/start|read|cancel` 不写数据库、Vault 或运行时注册表，两类操作共用每会话 4 个、全局 64 个额度，
+最长 30 秒、最多 1000 条，不执行推理；页面、RPC session 或 App Server 关闭会取消真实 HTTP 调用。目录读取拒绝 redirect；
+`API_KEY` 自定义地址必须为 HTTPS，仅显式 loopback 可用 HTTP，`NONE` 只允许自定义 OpenAI-compatible 地址。
 
 通用语义由 Spring AI Adapter 统一，OpenAI Responses 的 reasoning summary、opaque state 与原生 compaction 使用专用
 Adapter。JavaClaw 不使用 Spring AI 的自动工具循环；审批、Sandbox、预算和 EffectReceipt 始终由 Harness 控制。
@@ -125,6 +131,11 @@ revision、Provider 新 revision 与幂等回执在同一 H2 事务提交，成�
 候选构造或 H2 提交失败时旧 revision 和路由保持不变；数据库提交后的激活异常不能回滚 H2，而必须保持 fail closed。
 非计费配置探测和可能计费的模型 round-trip 分开呈现，后者必须由用户显式确认。Prompt 优化通过正常、受预算的 Harness Turn 生成
 Draft；只有用户显式采纳且 revision 仍匹配时才会更新可编辑的 Agent Role。
+
+API Key 等凭据密文及主密钥统一保存在本地 `data-v6/javaclaw.mv.db`，不访问系统钥匙串。
+本地密钥库仅支持新建数据库及其后续重启；旧库不升级、不导入，启动时会提示改用全新的数据目录。
+新库沿用已有建表和版本校验机制。数据库副本包含解密材料，应随完整数据目录受访问权限保护；备份恢复须保持主密钥
+与密文匹配。详见[本地密钥库](docs/local-vault.md)。
 
 没有有效 Provider 配置或 Vault 处于锁定状态时，App Server 仍可启动并提供管理能力，但依赖模型或 Secret 的操作
 会 fail closed，不会回退到环境变量或假模型。

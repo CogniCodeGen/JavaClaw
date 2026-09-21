@@ -7,7 +7,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
 import javafx.scene.Scene;
-import javafx.scene.control.Button;
 import javafx.scene.control.ListView;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
@@ -94,36 +93,6 @@ class ProviderSettingsDraftProtectionTest {
         });
     }
 
-    @Test
-    void 模型服务保存中锁定列表和编辑字段并在失败后恢复原草稿() {
-        FxTestSupport.run(() -> {
-            Fixture fixture = new Fixture();
-            try {
-                TextField name = fixture.root.lookupAll(".text-field").stream()
-                        .filter(TextField.class::isInstance)
-                        .map(TextField.class::cast)
-                        .filter(field -> "用户可见名称".equals(field.getPromptText()))
-                        .findFirst()
-                        .orElseThrow();
-                name.setText("尚未保存的名称");
-                fixture.save().fire();
-
-                assertTrue(fixture.page.pending());
-                assertTrue(name.isDisabled());
-                assertTrue(fixture.providers().isDisabled());
-                fixture.gateway.write.completeExceptionally(new IllegalStateException("本地写入失败"));
-
-                assertFalse(fixture.page.pending());
-                assertFalse(name.isDisabled());
-                assertFalse(fixture.providers().isDisabled());
-                assertEquals("尚未保存的名称", name.getText());
-                assertTrue(fixture.page.dirty());
-            } finally {
-                fixture.page.dispose();
-            }
-        });
-    }
-
     private static final class Fixture {
         private final Gateway gateway = new Gateway();
         private final ProviderSettingsPage page = new ProviderSettingsPage(gateway);
@@ -138,24 +107,15 @@ class ProviderSettingsDraftProtectionTest {
         }
 
         private ListView<?> providers() {
-            return (ListView<?>) root.lookup(".platform-data-list");
+            return (ListView<?>) root.lookup("#providerServicesList");
         }
 
         private TableView<?> models() {
-            return (TableView<?>) root.lookup(".platform-data-table");
+            return (TableView<?>) root.lookup("#providerModelsTable");
         }
 
         private TextField capacity() {
             return (TextField) root.lookup("#providerContextWindowTokens");
-        }
-
-        private Button save() {
-            return root.lookupAll(".button").stream()
-                    .filter(Button.class::isInstance)
-                    .map(Button.class::cast)
-                    .filter(button -> button.getText().equals("保存模型服务"))
-                    .findFirst()
-                    .orElseThrow();
         }
     }
 

@@ -97,6 +97,23 @@ class ProviderEndpointPreviewTest {
         assertTrue(preview.contains("Responses：不支持"));
     }
 
+    @Test
+    void Anthropic自定义根地址按Sdk实际规则追加版本前缀() {
+        String preview = ProviderEndpointPreview.describe(
+                draft(ProviderAdapter.ANTHROPIC, "https://gateway.example.test/anthropic/", ""));
+
+        assertTrue(preview.contains("https://gateway.example.test/anthropic/v1/models"));
+        assertTrue(preview.contains("https://gateway.example.test/anthropic/v1/messages"));
+    }
+
+    @Test
+    void Anthropic误填版本段如实预览Sdk路径不静默改写地址() {
+        String preview = ProviderEndpointPreview.describe(
+                draft(ProviderAdapter.ANTHROPIC, "https://gateway.example.test/v1", ""));
+
+        assertTrue(preview.contains("https://gateway.example.test/v1/v1/messages"));
+    }
+
     private static ProviderDraft draft(ProviderAdapter adapter, String baseUri, String apiVersion) {
         ProviderDraft empty = ProviderDraft.empty();
         return new ProviderDraft(

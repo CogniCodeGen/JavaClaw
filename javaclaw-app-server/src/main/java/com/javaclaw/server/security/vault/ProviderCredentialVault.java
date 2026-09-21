@@ -93,6 +93,21 @@ public final class ProviderCredentialVault implements ProviderCredentialMutation
         }
     }
 
+    @Override
+    public <T> T retained(CredentialRef reference, long expectedRevision, Supplier<T> work) {
+        CredentialRef checked = requireProviderReference(reference);
+        Supplier<T> commit = Objects.requireNonNull(work, "work");
+        synchronized (vault) {
+            vault.requireReady();
+            var current =
+                    vault.metadata(checked).orElseThrow(() -> PersistenceException.revisionConflict("Provider 凭据已不存在"));
+            if (expectedRevision < 1 || current.revision() != expectedRevision) {
+                throw PersistenceException.revisionConflict("Provider 凭据 revision 已改变");
+            }
+            return commit.get();
+        }
+    }
+
     /**
      * 在一个 H2 事务中提交候选 Vault 行、关联业务写入和幂等回执。
      *

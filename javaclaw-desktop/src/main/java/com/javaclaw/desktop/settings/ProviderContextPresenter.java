@@ -14,7 +14,7 @@ final class ProviderContextPresenter {
     private final ProviderContextSettingsGateway gateway;
     private final Runnable saved;
     private Consumer<State> listener = ignored -> {};
-    private State state = new State(Optional.empty(), Optional.empty(), false, "请在模型目录中选择对话模型", 0);
+    private State state = new State(Optional.empty(), Optional.empty(), false, false, "请在模型目录中选择对话模型", 0);
 
     ProviderContextPresenter(ProviderContextSettingsGateway gateway, Runnable saved) {
         this.gateway = Objects.requireNonNull(gateway, "gateway");
@@ -27,7 +27,7 @@ final class ProviderContextPresenter {
     }
 
     void bind(Optional<ProviderRef> provider) {
-        if (state.provider().equals(provider)) {
+        if (state.saving() || state.provider().equals(provider)) {
             return;
         }
         long epoch = state.epoch() + 1;
@@ -35,6 +35,7 @@ final class ProviderContextPresenter {
                 provider,
                 Optional.empty(),
                 provider.isPresent(),
+                false,
                 provider.isPresent() ? "正在读取模型容量…" : "请先保存模型服务并选择对话模型",
                 epoch));
         provider.ifPresent(reference -> gateway.modelContextLimits(reference).whenComplete((value, failure) -> {
@@ -42,6 +43,7 @@ final class ProviderContextPresenter {
                 publish(new State(
                         provider,
                         Optional.ofNullable(value),
+                        false,
                         false,
                         failure == null ? "容量以 token 为单位；留空表示未知" : SettingsFailures.message(failure),
                         epoch));
@@ -57,7 +59,7 @@ final class ProviderContextPresenter {
             ProviderRef reference = state.provider().orElseThrow();
             ModelContextLimits limits = new ModelContextLimits(reference, parse(window), parse(output));
             long epoch = state.epoch();
-            publish(new State(state.provider(), state.limits(), true, "正在保存模型容量…", epoch));
+            publish(new State(state.provider(), state.limits(), true, true, "正在保存模型容量…", epoch));
             gateway.updateModelContextLimits(limits, CommandOptions.create(reference.endpointRevision()))
                     .whenComplete((value, failure) -> {
                         if (state.epoch() != epoch) {
@@ -68,16 +70,23 @@ final class ProviderContextPresenter {
                                     Optional.of(value.provider()),
                                     Optional.of(value),
                                     false,
+                                    false,
                                     "模型容量已保存；新任务使用版本 " + value.provider().endpointRevision(),
                                     epoch));
                             saved.run();
                         } else {
                             publish(new State(
-                                    state.provider(), state.limits(), false, SettingsFailures.message(failure), epoch));
+                                    state.provider(),
+                                    state.limits(),
+                                    false,
+                                    false,
+                                    SettingsFailures.message(failure),
+                                    epoch));
                         }
                     });
         } catch (IllegalArgumentException failure) {
-            publish(new State(state.provider(), state.limits(), false, "请填写有效的 token 容量，输出不能超过窗口", state.epoch()));
+            publish(new State(
+                    state.provider(), state.limits(), false, false, "请填写有效的 token 容量，输出不能超过窗口", state.epoch()));
         }
     }
 
@@ -94,10 +103,21 @@ final class ProviderContextPresenter {
         listener.accept(next);
     }
 
+    /**
+     * 容量编辑快照；读取允许切换模型，未决写入必须保留原请求身份直到回执。
+     *
+     * @param provider 当前精确模型，可为空
+     * @param limits 已读取的容量，可为空
+     * @param pending 是否正在读取或保存
+     * @param saving 是否存在尚未收到回执的容量写入
+     * @param message 当前状态说明
+     * @param epoch 请求代次，切换只读请求时使旧结果失效
+     */
     record State(
             Optional<ProviderRef> provider,
             Optional<ModelContextLimits> limits,
             boolean pending,
+            boolean saving,
             String message,
             long epoch) {}
 }

@@ -2,7 +2,11 @@ package com.javaclaw.browser.client;
 
 import com.javaclaw.builtin.contracts.SiteRegistrationContracts;
 
-/** 登记私有结果的宿主密封回调；秘密只在回调期间有效，不得写入普通 DTO、日志或 Artifact。 */
+/**
+ * 登记私有结果的宿主密封回调；秘密只在回调期间有效，不得写入普通 DTO、日志或 Artifact。
+ *
+ * @param <T> 不包含秘密的持久提交回执
+ */
 @FunctionalInterface
 public interface BrowserRegistrationHandler<T> {
     /**

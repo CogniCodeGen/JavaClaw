@@ -13,7 +13,7 @@ import com.javaclaw.builtin.contracts.SiteContracts;
  * @param dirty 当前页面是否有草稿
  * @param pending 是否有不允许切换的操作
  * @param discard 丢弃草稿并刷新权威状态
- * @param manageCredentials 打开共享凭据窗口
+ * @param dialogs 打开网站登记和共享凭据窗口
  * @param selected 接收本次权威网站选择
  * @param accountsExpanded 通知账号与登录分区是否展开
  */
@@ -22,6 +22,9 @@ record SiteSettingsActions(
         BooleanSupplier dirty,
         BooleanSupplier pending,
         Runnable discard,
-        Runnable manageCredentials,
+        Dialogs dialogs,
         Consumer<Optional<SiteContracts.Projection>> selected,
-        Consumer<Boolean> accountsExpanded) {}
+        Consumer<Boolean> accountsExpanded) {
+    /** @param registerAddress 打开网站登记窗口 @param manageCredentials 打开共享凭据窗口 */
+    record Dialogs(Runnable registerAddress, Runnable manageCredentials) {}
+}

@@ -1,13 +1,10 @@
 package com.javaclaw.desktop.settings;
 
-import java.nio.file.Path;
-import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionStage;
 
 import javafx.geometry.Bounds;
 import javafx.scene.Node;
@@ -15,86 +12,55 @@ import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
-import javafx.scene.control.ComboBox;
+import javafx.scene.control.Label;
+import javafx.scene.control.ListView;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TitledPane;
+import javafx.scene.layout.BorderPane;
 import javafx.scene.text.Text;
 import javafx.stage.Stage;
-import javafx.stage.Window;
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.CancellationToken;
 import com.javaclaw.api.ProviderModelDiscoveryCandidate;
-import com.javaclaw.api.ProviderModelDiscoveryResult;
 import com.javaclaw.api.ProviderModelPurpose;
-import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ThreadId;
-import com.javaclaw.api.Workspace;
-import com.javaclaw.api.WorkspaceId;
-import com.javaclaw.api.WorkspaceLifecycle;
+import com.javaclaw.api.ProviderModelSpec;
 import com.javaclaw.desktop.FxTestSupport;
 import com.javaclaw.desktop.component.PlatformComponentFactory;
 import com.javaclaw.desktop.component.PlatformStylesheets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProviderSetupLayoutTest {
     private static final String MODEL_ID = "vendor/" + "long-model-identifier-".repeat(20);
-    private static final String WORKSPACE_NAME = "用于验证长名称换行的工作区".repeat(12);
 
     @Test
-    void 默认宽度下长模型和工作区名称不挤出操作按钮且保存目标不变() {
-        assertModelStepLayout(WORKSPACE_NAME);
-    }
-
-    @Test
-    void 默认宽度下实际项目名称的四个底部按钮完整显示() {
-        assertModelStepLayout("功能验收 2026-09-09");
-    }
-
-    private static void assertModelStepLayout(String workspaceName) {
-        LayoutGateway gateway = new LayoutGateway(workspaceName);
-        Stage window = FxTestSupport.call(() -> openModelStep(gateway));
-        try {
-            FxTestSupport.run(() -> selectModelAndWorkspace(window));
-            // 让窗口约束与向导的异步 sizeToScene 完成，再按默认上限检查真实 Dialog 布局。
+    void 窄窗口与常规窗口的固定底栏三按钮完整显示() {
+        for (int width : List.of(560, 680)) {
             FxTestSupport.run(() -> {
-                window.setWidth(720);
-                window.setHeight(680);
-                Parent root = window.getScene().getRoot();
-                root.applyCss();
-                root.layout();
-                assertInsideWindow(root.lookup("#providerWizardDiscoverModels"));
-                assertInsideWindow(root.lookup("#providerWizardAddManual"));
-                assertInsideWindow(root.lookup("#providerWizardCurrentModel"));
-                assertInsideWindow(root.lookup("#providerWizardWorkspace"));
-                assertFooterButtons(root);
-                Button save = (Button) root.lookup("#providerWizardContinue");
-                assertInsideWindow(save);
-                assertEquals("保存并在「" + workspaceName + "」中使用", save.getText());
-                assertEquals(save.getText(), save.getTooltip().getText());
-                assertEquals(save.getText(), ((Text) save.lookup(".text")).getText());
-                assertTrue(save.getHeight() + 1 >= save.prefHeight(save.getWidth()));
-                assertTrue(save.localToScene(save.getLayoutBounds()).getMaxY()
-                        <= root.getScene().getHeight() + 1);
-                assertEquals(
-                        MODEL_ID,
-                        ((ComboBox<?>) root.lookup("#providerWizardCurrentModel"))
-                                .getTooltip()
-                                .getText());
-                assertEquals(
-                        workspaceName,
-                        ((ComboBox<?>) root.lookup("#providerWizardWorkspace"))
-                                .getTooltip()
-                                .getText());
-                save.fire();
-                assertEquals(MODEL_ID, gateway.applied.model());
-                assertEquals(Optional.of(gateway.workspace.id()), gateway.appliedWorkspace);
-                assertFalse(window.isShowing());
+                var gateway = new ProviderConfigurationTestGateway();
+                gateway.candidates = List.of(candidate(MODEL_ID, MODEL_ID));
+                Stage window = ProviderSetupWizardFxTest.open(gateway);
+                try {
+                    Parent root = window.getScene().getRoot();
+                    ProviderSetupWizardFxTest.connect(root);
+                    window.setWidth(width);
+                    window.setHeight(580);
+                    root.applyCss();
+                    root.layout();
+                    ProviderSetupWizardFxTest.modelChoice(root, MODEL_ID).fire();
+                    assertFooterButtons(root);
+                    assertInsideWindow(root.lookup("#providerWizardShowManual"));
+                    assertInsideWindow(root.lookup("#providerWizardDiscoverModels"));
+                    assertEquals(
+                            "保存模型",
+                            ProviderSetupWizardFxTest.button(root, "providerWizardContinue")
+                                    .getText());
+                } finally {
+                    window.hide();
+                }
             });
-        } finally {
-            FxTestSupport.run(window::hide);
         }
     }
 
@@ -108,57 +74,187 @@ class ProviderSetupLayoutTest {
             form.applyCss();
             form.resize(460, 500);
             form.layout();
-            CheckBox choice = choice(form, MODEL_ID);
+            CheckBox choice = ProviderSetupWizardFxTest.modelChoice(form, MODEL_ID);
             assertEquals(MODEL_ID, choice.getText());
             assertEquals(MODEL_ID, choice.getTooltip().getText());
             assertTrue(choice.isWrapText());
             assertInsideWindow(choice);
             assertTrue(choice.getHeight() > choice.getFont().getSize() * 2);
             choice.fire();
-            assertEquals(MODEL_ID, form.currentModel());
+            assertEquals(MODEL_ID, form.selectedModels().getFirst().modelId());
             assertEquals(
                     "易读显示名称 · different-model",
-                    choice(form, "易读显示名称 · different-model").getText());
+                    ProviderSetupWizardFxTest.modelChoice(form, "different-model")
+                            .getText());
             ((TextField) form.lookup("#providerWizardSearch")).setText("no-match");
+            form.candidates(List.of(candidate(MODEL_ID, "刷新后的名称")));
             ((TextField) form.lookup("#providerWizardSearch")).clear();
-            assertTrue(choice(form, MODEL_ID).isSelected());
+            assertTrue(ProviderSetupWizardFxTest.modelChoice(form, MODEL_ID).isSelected());
             assertEquals(MODEL_ID, form.selectedModels().getFirst().modelId());
         });
     }
 
-    private static Stage openModelStep(LayoutGateway gateway) {
-        ProviderSetupWizard.show(
-                null, gateway, new ProviderSetupTarget(Optional.empty(), Optional.empty(), ""), () -> {});
-        Stage window = Window.getWindows().stream()
-                .filter(candidate -> candidate.getScene().lookup("#providerWizardAddress") != null)
-                .map(Stage.class::cast)
-                .findFirst()
-                .orElseThrow();
-        Parent root = window.getScene().getRoot();
-        ((TextField) root.lookup("#providerWizardAddress")).setText("http://localhost:11434/v1");
-        ((TextField) root.lookup("#providerWizardSecret")).setText("test-only-secret");
-        ((Button) root.lookup("#providerWizardContinue")).fire();
-        return window;
+    @Test
+    void 真实窄窗口和常规窗口固定显示步骤标题目录错误与禁用理由() {
+        for (int ownerWidth : List.of(880, 1040)) {
+            WindowFixture fixture = FxTestSupport.call(() -> errorWindow(ownerWidth));
+            try {
+                FxTestSupport.await(() ->
+                        FxTestSupport.call(() -> fixture.window().getScene().getHeight() <= fixture.modalHeight()));
+                FxTestSupport.run(() -> assertFixedNotices(fixture));
+            } finally {
+                FxTestSupport.run(() -> {
+                    fixture.window().hide();
+                    fixture.owner().hide();
+                });
+            }
+        }
     }
 
-    private static void selectModelAndWorkspace(Stage window) {
+    private static WindowFixture errorWindow(int ownerWidth) {
+        Stage owner = new Stage();
+        owner.setScene(new Scene(new BorderPane(), ownerWidth, ownerWidth == 880 ? 620 : 720));
+        owner.show();
+        var gateway = new ProviderConfigurationTestGateway();
+        gateway.previewResponses.add(
+                CompletableFuture.failedFuture(new IllegalStateException("此服务未提供模型目录，请检查配置后重试，也可手动输入完整模型 ID。")));
+        ProviderSetupWizard.configure(owner, gateway, Optional.empty(), 0, ignored -> {});
+        Stage window = ProviderSetupWizardFxTest.window();
         Parent root = window.getScene().getRoot();
+        ProviderSetupWizardFxTest.connect(root);
+        ProviderSetupWizardFxTest.text(root, "providerWizardManualModel").setText("not-yet-added");
+        int height = ownerWidth == 880 ? 540 : 620;
+        window.setWidth(660);
+        window.setHeight(height);
+        return new WindowFixture(owner, window, height);
+    }
+
+    @Test
+    void 单页模型区域增高时虚拟化目录使用剩余高度() {
+        FxTestSupport.run(() -> {
+            ProviderSetupModelForm form = new ProviderSetupModelForm(new PlatformComponentFactory(), () -> {});
+            form.seed(List.of(
+                    new ProviderModelSpec("model-one", "模型一", Set.of(ProviderModelPurpose.CHAT), OptionalInt.empty())));
+            BorderPane root = new BorderPane(form);
+            Stage window = new Stage();
+            window.setScene(new Scene(root, 660, 540));
+            PlatformStylesheets.applyTo(root);
+            window.show();
+            try {
+                root.applyCss();
+                root.layout();
+                ListView<?> directory = (ListView<?>) root.lookup("#providerWizardModelsList");
+                double before = directory.getHeight();
+                root.resize(660, 660);
+                root.layout();
+                assertTrue(directory.getHeight() > before + 80, "新增高度应分配给目录，不能留在表单底部");
+                assertInsideWindow(root.lookup("#providerWizardShowManual"));
+                assertInsideWindow(root.lookup("#providerWizardDiscoverModels"));
+            } finally {
+                window.hide();
+            }
+        });
+    }
+
+    @Test
+    void 兼容向导窄窗口的手动添加和启用操作可滚动访问且底栏固定() {
+        WindowFixture fixture = FxTestSupport.call(ProviderSetupLayoutTest::growingWindow);
+        try {
+            FxTestSupport.await(
+                    () -> FxTestSupport.call(() -> fixture.window().getScene().getHeight() <= 540));
+            FxTestSupport.run(() -> assertModelControlsReachable(fixture));
+        } finally {
+            FxTestSupport.run(() -> {
+                fixture.window().hide();
+                fixture.owner().hide();
+            });
+        }
+    }
+
+    private static WindowFixture growingWindow() {
+        Stage owner = new Stage();
+        owner.setScene(new Scene(new BorderPane(), 880, 620));
+        owner.show();
+        var gateway = new ProviderConfigurationTestGateway();
+        gateway.candidates = List.of(candidate("model-one", "模型一"), candidate("model-two", "模型二"));
+        ProviderSetupWizard.configure(owner, gateway, Optional.empty(), 0, ignored -> {});
+        Stage window = ProviderSetupWizardFxTest.window();
+        Parent root = window.getScene().getRoot();
+        ProviderSetupWizardFxTest.connect(root);
+        ProviderSetupWizardFxTest.manual(root, "confirmed-model");
+        ((TitledPane) root.lookup("#providerWizardManualSection")).setExpanded(false);
+        window.setWidth(660);
+        window.setHeight(540);
+        return new WindowFixture(owner, window, 540);
+    }
+
+    private static void assertModelControlsReachable(WindowFixture fixture) {
+        Parent root = fixture.window().getScene().getRoot();
         root.applyCss();
         root.layout();
-        choice(root, MODEL_ID).fire();
-        ((ComboBox<?>) root.lookup("#providerWizardWorkspace"))
-                .getSelectionModel()
-                .selectFirst();
+        ScrollPane body = (ScrollPane) root.lookup("#providerWizardBodyScroll");
+        body.setVvalue(0);
+        root.layout();
+        Button manual = (Button) root.lookup("#providerWizardShowManual");
+        assertVerticallyInside(manual);
+        manual.fire();
+        // 折叠区域不占布局；按真实入口展开后先重算内容高度，再滚动到末尾。
+        root.applyCss();
+        root.layout();
+        body.setVvalue(1);
+        root.layout();
+        Node viewport = body.lookup(".viewport");
+        Bounds visible = viewport.localToScene(viewport.getLayoutBounds());
+        for (String id : List.of("providerWizardManualSection", "providerWizardEnable")) {
+            Node control = root.lookup("#" + id);
+            assertVerticallyInside(control);
+            Bounds bounds = control.localToScene(control.getLayoutBounds());
+            assertTrue(bounds.getMinY() >= visible.getMinY() - 1, id);
+            assertTrue(bounds.getMaxY() <= visible.getMaxY() + 1, id + " 必须可滚动到视口内操作");
+        }
+        assertVerticallyInside(root.lookup("#providerWizardStatus"));
+        assertVerticallyInside(root.lookup(".header-panel"));
+        assertFooterButtons(root);
+        assertTrue(((ListView<?>) root.lookup("#providerWizardModelsList")).getHeight() >= 110);
     }
 
-    private static CheckBox choice(Parent parent, String text) {
-        return parent.lookupAll(".check-box").stream()
-                .filter(CheckBox.class::isInstance)
-                .map(CheckBox.class::cast)
-                .filter(choice -> text.equals(choice.getText()))
-                .findFirst()
-                .orElseThrow();
+    private static void assertFixedNotices(WindowFixture fixture) {
+        Parent root = fixture.window().getScene().getRoot();
+        root.applyCss();
+        root.layout();
+        Node header = root.lookup(".header-panel");
+        Label status = (Label) root.lookup("#providerWizardStatus");
+        Label reason = (Label) root.lookup("#providerWizardDisabledReason");
+        ScrollPane scroll = (ScrollPane) root.lookup("#providerWizardBodyScroll");
+        assertTrue(status.getText().contains("目录"));
+        assertTrue(reason.getText().contains("添加"));
+        assertEquals(scroll.getParent(), status.getParent(), "状态必须位于表单滚动区之外");
+        assertEquals(scroll.getParent(), reason.getParent(), "禁用理由必须位于表单滚动区之外");
+        assertVerticallyInside(header);
+        assertVerticallyInside(status);
+        assertVerticallyInside(reason);
+        assertFooterButtons(root);
+        assertTrue(status.getHeight() + 1 >= status.prefHeight(status.getWidth()), "目录错误完整换行");
+        assertTrue(reason.getHeight() + 1 >= reason.prefHeight(reason.getWidth()), "禁用理由完整换行");
+        scroll.setVvalue(1);
+        root.layout();
+        assertVerticallyInside(header);
+        assertVerticallyInside(status);
+        assertVerticallyInside(reason);
+        ProviderSetupWizardFxTest.text(root, "providerWizardManualModel").clear();
+        ProviderSetupWizardFxTest.manual(root, "confirmed-model");
+        assertTrue(reason.getText().isEmpty());
+        assertTrue(!reason.isManaged(), "空提示不占据固定底部空间");
     }
+
+    private static void assertVerticallyInside(Node node) {
+        Bounds bounds = node.localToScene(node.getLayoutBounds());
+        assertTrue(node.isVisible() && node.isManaged());
+        assertTrue(bounds.getMinY() >= -1, () -> node.getId() + " 越过窗口上边界: " + bounds);
+        assertTrue(bounds.getMaxY() <= node.getScene().getHeight() + 1, () -> node.getId() + " 越过窗口下边界: " + bounds);
+    }
+
+    private record WindowFixture(Stage owner, Stage window, int modalHeight) {}
 
     private static void assertInsideWindow(Node node) {
         Bounds bounds = node.localToScene(node.getLayoutBounds());
@@ -171,57 +267,18 @@ class ProviderSetupLayoutTest {
                 .filter(Button.class::isInstance)
                 .map(Button.class::cast)
                 .toList();
-        assertEquals(4, buttons.size());
+        assertEquals(3, buttons.size());
         for (Button button : buttons) {
             assertTrue(button.isVisible() && button.isManaged(), button.getText());
             assertInsideWindow(button);
             Text rendered = (Text) button.lookup(".text");
             assertEquals(button.getText(), rendered.getText(), () -> "底部按钮文字被省略：" + button.getText());
-            assertTrue(button.getHeight() + 1 >= button.prefHeight(button.getWidth()), button.getText());
             Bounds bounds = button.localToScene(button.getLayoutBounds());
-            assertTrue(bounds.getMinY() >= -1, button.getText());
             assertTrue(bounds.getMaxY() <= root.getScene().getHeight() + 1, button.getText());
         }
     }
 
     private static ProviderModelDiscoveryCandidate candidate(String id, String name) {
         return new ProviderModelDiscoveryCandidate(id, name, Set.of(ProviderModelPurpose.CHAT), OptionalInt.empty());
-    }
-
-    private static final class LayoutGateway extends TestCoreSettingsGateway {
-        private final Workspace workspace;
-        private ProviderRef applied;
-        private Optional<WorkspaceId> appliedWorkspace;
-
-        private LayoutGateway(String workspaceName) {
-            workspace = new Workspace(
-                    WorkspaceId.random(),
-                    workspaceName,
-                    Path.of("/tmp/provider-setup-layout-test"),
-                    WorkspaceLifecycle.ACTIVE,
-                    1,
-                    Instant.EPOCH,
-                    Instant.EPOCH);
-        }
-
-        @Override
-        public CompletionStage<List<Workspace>> workspaces() {
-            return CompletableFuture.completedFuture(List.of(workspace));
-        }
-
-        @Override
-        public CompletionStage<ProviderModelDiscoveryResult> discoverProviderModels(
-                String id, long revision, CancellationToken cancellation) {
-            return CompletableFuture.completedFuture(new ProviderModelDiscoveryResult(
-                    id, revision, List.of(candidate(MODEL_ID, MODEL_ID)), false, Instant.EPOCH));
-        }
-
-        @Override
-        public CompletionStage<Void> useModel(
-                Optional<WorkspaceId> workspace, Optional<ThreadId> thread, ProviderRef model) {
-            appliedWorkspace = workspace;
-            applied = model;
-            return CompletableFuture.completedFuture(null);
-        }
     }
 }

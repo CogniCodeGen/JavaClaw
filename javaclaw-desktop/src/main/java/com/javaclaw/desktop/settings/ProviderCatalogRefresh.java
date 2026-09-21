@@ -1,5 +1,7 @@
 package com.javaclaw.desktop.settings;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 import com.javaclaw.api.ProviderEndpoint;
@@ -24,6 +26,14 @@ final class ProviderCatalogRefresh {
                     before.epoch());
         }
         return copy(before, catalog, SettingsLoadState.READY, "模型服务已更新；目录已刷新，当前草稿和保存版本保持不变。", before.epoch());
+    }
+
+    static List<ProviderEndpoint> replace(List<ProviderEndpoint> current, ProviderEndpoint updated) {
+        ArrayList<ProviderEndpoint> result = new ArrayList<>(current);
+        result.removeIf(provider -> provider.id().equals(updated.id()));
+        result.add(updated);
+        result.sort(Comparator.comparing(ProviderEndpoint::id));
+        return List.copyOf(result);
     }
 
     private static ProviderSettingsState copy(

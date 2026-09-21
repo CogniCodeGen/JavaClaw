@@ -6,212 +6,306 @@ import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.CompletionStage;
 
 import org.junit.jupiter.api.Test;
 
+import com.javaclaw.api.CredentialRef;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderAuthentication;
+import com.javaclaw.api.ProviderCredentialChange;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.ProviderModelPreviewResult;
 import com.javaclaw.api.ProviderModelPurpose;
 import com.javaclaw.api.ProviderModelSpec;
 import com.javaclaw.api.ProviderReasoningSummary;
-import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ThreadId;
-import com.javaclaw.api.WorkspaceId;
+import com.javaclaw.api.VaultLockReason;
+import com.javaclaw.api.VaultState;
+import com.javaclaw.api.VaultStatus;
+import com.javaclaw.client.RemoteRpcException;
+import com.javaclaw.protocol.JsonRpcError;
+import com.javaclaw.protocol.ProtocolErrorCode;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProviderSetupWorkflowTest {
-    private static final ProviderSetupTarget TARGET =
-            new ProviderSetupTarget(Optional.of(WorkspaceId.random()), Optional.of(ThreadId.random()), "项目 A");
-    private static final List<ProviderModelSpec> MODELS = List.of(model("model-a"), model("model-b"));
+    static final List<ProviderModelSpec> MODELS = List.of(new ProviderModelSpec(
+            "embedding-only", "独立向量模型", Set.of(ProviderModelPurpose.EMBEDDING), OptionalInt.of(768)));
 
     @Test
-    void 保存并使用按顺序绑定密钥启用多模型并应用保存返回的精确版本() {
-        ApplyingGateway gateway = new ApplyingGateway();
+    void 下一步和目录预览零写入且最后一次保存完整向量配置不应用模型() {
+        ProviderConfigurationTestGateway gateway = new ProviderConfigurationTestGateway();
         ProviderSetupWorkflow workflow = new ProviderSetupWorkflow(gateway, "new-provider");
         char[] secret = "temporary-key".toCharArray();
-
         workflow.connect(draft(ProviderAuthentication.API_KEY), secret)
                 .toCompletableFuture()
                 .join();
         workflow.discover().toCompletableFuture().join();
-        ProviderRef reference = workflow.save(MODELS, "model-b", true, TARGET)
-                .toCompletableFuture()
-                .join();
-
+        assertEquals(0, gateway.saved.size());
+        assertEquals(0, gateway.preparations);
+        assertEquals(0, gateway.providerCredentialSetCalls);
+        assertTrue(workflow.endpoint().isEmpty());
+        var result = workflow.save(MODELS, true).toCompletableFuture().join();
+        assertEquals(MODELS, result.provider().spec().models());
+        assertEquals(ProviderLifecycle.ACTIVE, result.provider().lifecycle());
+        assertEquals(ProviderCredentialChange.REPLACE, gateway.configuration.credentialChange());
+        assertEquals(1, gateway.preparations);
+        assertEquals(1, gateway.saved.size());
+        assertEquals(0, gateway.uses);
         assertArrayEquals(new char[secret.length], secret);
-        assertArrayEquals(new char[gateway.lastProviderSecret.length], gateway.lastProviderSecret);
-        assertEquals(ProviderLifecycle.DISABLED, gateway.lastProviderCreateLifecycle);
-        assertEquals(new ProviderRef("new-provider", 3, "model-b"), reference);
-        assertEquals(reference, gateway.applied);
-        assertEquals(TARGET, gateway.target);
-        assertEquals(1, gateway.providerCredentialSetCalls);
-        assertEquals(0, gateway.providerVerificationCalls);
-        assertEquals(2, workflow.endpoint().orElseThrow().spec().models().size());
+        assertArrayEquals(new char[gateway.submittedSecret.length], gateway.submittedSecret);
         assertFalse(workflow.pending());
     }
 
     @Test
-    void 密钥失败后重试从已保存连接继续且不重复创建连接() {
-        ApplyingGateway gateway = new ApplyingGateway();
-        ProviderSetupWorkflow workflow = new ProviderSetupWorkflow(gateway, "retry-key-provider");
-        gateway.nextFailure = new IllegalStateException("凭据库暂不可用");
-
-        assertThrows(
-                CompletionException.class,
-                () -> workflow.connect(draft(ProviderAuthentication.API_KEY), "key".toCharArray())
-                        .toCompletableFuture()
-                        .join());
-        assertEquals(1, workflow.endpoint().orElseThrow().revision());
-        workflow.connect(draft(ProviderAuthentication.API_KEY), "key".toCharArray())
-                .toCompletableFuture()
-                .join();
-
-        assertEquals(
-                1,
-                gateway.providers.stream()
-                        .filter(value -> value.id().equals("retry-key-provider"))
-                        .count());
-        assertEquals(2, workflow.endpoint().orElseThrow().revision());
-        assertEquals(2, gateway.providerCredentialSetCalls);
-    }
-
-    @Test
-    void 应用失败重试只应用同一模型版本而不重复保存或绑定密钥() {
-        ApplyingGateway gateway = new ApplyingGateway();
-        ProviderSetupWorkflow workflow = connected(gateway);
-        gateway.applyFailure = new IllegalStateException("对话创建暂不可用");
-
-        assertThrows(
-                CompletionException.class,
-                () -> workflow.save(MODELS, "model-a", true, TARGET)
-                        .toCompletableFuture()
-                        .join());
-        ProviderEndpoint saved = workflow.endpoint().orElseThrow();
-        ProviderRef reference = workflow.save(MODELS, "model-a", true, TARGET)
-                .toCompletableFuture()
-                .join();
-
-        assertEquals(saved.revision(), reference.endpointRevision());
-        assertEquals(saved, workflow.endpoint().orElseThrow());
-        assertEquals(1, gateway.providerCredentialSetCalls);
-        assertEquals(2, gateway.applyCalls);
-        assertTrue(workflow.phase().contains("模型已保存"));
-    }
-
-    @Test
-    void 目录失败可手填并保存且仅保存不应用模型() {
-        ApplyingGateway gateway = new ApplyingGateway();
-        ProviderSetupWorkflow workflow = connected(gateway);
-        gateway.discoveryResponses.add(CompletableFuture.failedFuture(new IllegalStateException("目录不支持")));
-
-        assertThrows(
-                CompletionException.class,
-                () -> workflow.discover().toCompletableFuture().join());
-        ProviderRef saved = workflow.save(MODELS, "model-a", false, TARGET)
-                .toCompletableFuture()
-                .join();
-
-        assertEquals("model-a", saved.model());
-        assertEquals(ProviderLifecycle.ACTIVE, workflow.endpoint().orElseThrow().lifecycle());
-        assertEquals(0, gateway.applyCalls);
-        assertFalse(workflow.pending());
-    }
-
-    @Test
-    void 缺工作区先保留已保存模型补充目标后不重复保存() {
-        ApplyingGateway gateway = new ApplyingGateway();
-        ProviderSetupWorkflow workflow = connected(gateway);
-        ProviderSetupTarget missing = new ProviderSetupTarget(Optional.empty(), Optional.empty(), "");
-
-        assertThrows(
-                CompletionException.class,
-                () -> workflow.save(MODELS, "model-a", true, missing)
-                        .toCompletableFuture()
-                        .join());
-        long revision = workflow.endpoint().orElseThrow().revision();
-        ProviderRef applied = workflow.save(MODELS, "model-a", true, TARGET)
-                .toCompletableFuture()
-                .join();
-
-        assertEquals(revision, applied.endpointRevision());
-        assertEquals(1, gateway.applyCalls);
-    }
-
-    @Test
-    void 多模型未指定当前模型时拒绝保存并保留连接版本() {
-        ApplyingGateway gateway = new ApplyingGateway();
-        ProviderSetupWorkflow workflow = connected(gateway);
-        long before = workflow.endpoint().orElseThrow().revision();
-
-        assertThrows(
-                CompletionException.class,
-                () -> workflow.save(MODELS, "", true, TARGET)
-                        .toCompletableFuture()
-                        .join());
-
-        assertEquals(before, workflow.endpoint().orElseThrow().revision());
-        assertEquals(0, gateway.applyCalls);
-        assertFalse(workflow.pending());
-    }
-
-    @Test
-    void 无鉴权连接无需密钥且关闭时取消目录读取() {
-        ApplyingGateway gateway = new ApplyingGateway();
-        ProviderSetupWorkflow workflow = new ProviderSetupWorkflow(gateway, "local-provider");
+    void 新建无鉴权使用KEEP且可保存为禁用服务() {
+        var gateway = new ProviderConfigurationTestGateway();
+        var workflow = new ProviderSetupWorkflow(gateway);
         workflow.connect(draft(ProviderAuthentication.NONE), new char[0])
                 .toCompletableFuture()
                 .join();
-        CompletableFuture<com.javaclaw.api.ProviderModelDiscoveryResult> pending = new CompletableFuture<>();
-        gateway.discoveryResponses.add(pending);
+        workflow.discover().toCompletableFuture().join();
+        workflow.save(MODELS, false).toCompletableFuture().join();
+        assertEquals(ProviderCredentialChange.KEEP, gateway.previews.getFirst().credentialChange());
+        assertEquals(ProviderCredentialChange.KEEP, gateway.configuration.credentialChange());
+        assertEquals(ProviderLifecycle.DISABLED, gateway.configuration.lifecycle());
+        assertEquals(0, gateway.vaultStatusCalls);
+    }
+
+    @Test
+    void 编辑无鉴权配置不发清除凭据意图() {
+        var gateway = new ProviderConfigurationTestGateway();
+        var source = source(gateway, ProviderAuthentication.NONE, Optional.empty());
+        var workflow = new ProviderSetupWorkflow(gateway, source, 0);
+        workflow.connect(ProviderDraft.from(source), new char[0])
+                .toCompletableFuture()
+                .join();
+        workflow.save(MODELS, true).toCompletableFuture().join();
+        assertEquals(ProviderCredentialChange.KEEP, gateway.configuration.credentialChange());
+        assertEquals(source.revision(), gateway.configuration.expectedRevision());
+    }
+
+    @Test
+    void 目录失败仍可手动保存且读取中不锁住编辑() {
+        var gateway = new ProviderConfigurationTestGateway();
+        var workflow = connected(gateway);
+        var read = new CompletableFuture<ProviderModelPreviewResult>();
+        gateway.previewResponses.add(read);
         workflow.discover();
-        assertTrue(workflow.pending());
+        assertTrue(workflow.previewing());
+        assertFalse(workflow.pending());
+        read.completeExceptionally(new IllegalStateException("目录不支持"));
+        workflow.save(MODELS, true).toCompletableFuture().join();
+        assertEquals(1, gateway.saved.size());
+        assertTrue(gateway.cancellations.getFirst().isCancelled());
+    }
 
-        workflow.close();
+    @Test
+    void 保存前取消读取且旧预览结果不进入当前草稿() {
+        var gateway = new ProviderConfigurationTestGateway();
+        var workflow = connected(gateway);
+        var response = new CompletableFuture<ProviderModelPreviewResult>();
+        gateway.previewResponses.add(response);
+        var reading = workflow.discover();
+        workflow.save(MODELS, true).toCompletableFuture().join();
+        response.complete(gateway.previewResult(gateway.previews.getFirst()));
+        assertThrows(
+                CompletionException.class, () -> reading.toCompletableFuture().join());
+        assertTrue(gateway.cancellations.getFirst().isCancelled());
+    }
 
-        assertTrue(gateway.discoveryCancellations.getFirst().isCancelled());
+    @Test
+    void 旧服务器能力不足时不退回分阶段保存并清空输入数组() {
+        var gateway = new ProviderConfigurationTestGateway();
+        gateway.supported = CompletableFuture.completedFuture(false);
+        var workflow = new ProviderSetupWorkflow(gateway);
+        char[] secret = "secret".toCharArray();
+        assertThrows(
+                CompletionException.class,
+                () -> workflow.connect(draft(ProviderAuthentication.API_KEY), secret)
+                        .toCompletableFuture()
+                        .join());
+        assertArrayEquals(new char[secret.length], secret);
+        assertEquals(0, gateway.saved.size());
         assertEquals(0, gateway.providerCredentialSetCalls);
     }
 
     @Test
-    void 未填写必需密钥时不创建连接也不保留临时字符() {
-        ApplyingGateway gateway = new ApplyingGateway();
-        ProviderSetupWorkflow workflow = new ProviderSetupWorkflow(gateway, "missing-key-provider");
-
+    void 已有密钥默认保留且改变目的地址要求替换() {
+        var gateway = new ProviderConfigurationTestGateway();
+        var source =
+                source(gateway, ProviderAuthentication.API_KEY, Optional.of(new CredentialRef("provider", "existing")));
+        var workflow = new ProviderSetupWorkflow(gateway, source, 4);
+        workflow.connect(ProviderDraft.from(source), new char[0])
+                .toCompletableFuture()
+                .join();
+        workflow.save(MODELS, true).toCompletableFuture().join();
+        assertEquals(ProviderCredentialChange.KEEP, gateway.configuration.credentialChange());
+        assertEquals(4, gateway.configuration.credentialExpectedRevision());
+        var changed = new ProviderSetupWorkflow(gateway, source, 4);
+        ProviderDraft other = draft(ProviderAuthentication.API_KEY);
         assertThrows(
                 CompletionException.class,
-                () -> workflow.connect(draft(ProviderAuthentication.API_KEY), new char[0])
-                        .toCompletableFuture()
-                        .join());
-
-        assertTrue(workflow.endpoint().isEmpty());
-        assertEquals(1, gateway.providers.size());
-        assertFalse(workflow.pending());
+                () -> changed.connect(other, new char[0]).toCompletableFuture().join());
+        changed.connect(other, "replacement".toCharArray())
+                .toCompletableFuture()
+                .join();
+        changed.save(MODELS, true).toCompletableFuture().join();
+        assertEquals(ProviderCredentialChange.REPLACE, gateway.configuration.credentialChange());
     }
 
-    private static ProviderSetupWorkflow connected(ApplyingGateway gateway) {
-        ProviderSetupWorkflow workflow = new ProviderSetupWorkflow(gateway, "new-provider");
+    @Test
+    void 改无鉴权必须确认且清除只随最终保存发生() {
+        var gateway = new ProviderConfigurationTestGateway();
+        var source =
+                source(gateway, ProviderAuthentication.API_KEY, Optional.of(new CredentialRef("provider", "existing")));
+        var workflow = new ProviderSetupWorkflow(gateway, source, 2);
+        var draft = draft(ProviderAuthentication.NONE);
+        assertThrows(
+                CompletionException.class,
+                () -> workflow.connect(draft, new char[0]).toCompletableFuture().join());
+        workflow.connect(draft, new char[0], false, true).toCompletableFuture().join();
+        assertEquals(0, gateway.saved.size());
+        workflow.save(MODELS, true).toCompletableFuture().join();
+        assertEquals(ProviderCredentialChange.CLEAR, gateway.configuration.credentialChange());
+        assertTrue(gateway.committed.provider().spec().credential().isEmpty());
+    }
+
+    @Test
+    void 版本冲突是明确失败保留非秘密草稿而替换密钥必须重输() {
+        var gateway = new ProviderConfigurationTestGateway();
+        var workflow = connected(gateway);
+        gateway.saveResponses.add(CompletableFuture.failedFuture(new RemoteRpcException(
+                new JsonRpcError(ProtocolErrorCode.REVISION_CONFLICT, "版本冲突", Optional.empty()))));
+        assertThrows(
+                CompletionException.class,
+                () -> workflow.save(MODELS, true).toCompletableFuture().join());
+        assertFalse(workflow.unknown());
+        assertFalse(workflow.pending());
+        assertTrue(workflow.needsSecretInput());
+        assertThrows(
+                CompletionException.class,
+                () -> workflow.save(MODELS, true).toCompletableFuture().join());
+        assertEquals(1, gateway.preparations);
+        assertEquals(0, gateway.queried.size());
+    }
+
+    @Test
+    void 保存结果未知仅查询同一密文回执且缺失回执不自动重放() {
+        var gateway = new ProviderConfigurationTestGateway();
+        var workflow = connected(gateway);
+        gateway.saveResponses.add(CompletableFuture.failedFuture(new IllegalStateException("连接中断")));
+        assertThrows(
+                CompletionException.class,
+                () -> workflow.save(MODELS, true).toCompletableFuture().join());
+        assertTrue(workflow.unknown());
+        assertFalse(workflow.needsSecretInput());
+        assertTrue(workflow.checkResult().toCompletableFuture().join().isEmpty());
+        assertTrue(workflow.unknown());
+        assertThrows(
+                CompletionException.class,
+                () -> workflow.save(MODELS, true).toCompletableFuture().join());
+        gateway.committed = gateway.result(gateway.configuration);
+        assertTrue(workflow.checkResult().toCompletableFuture().join().isPresent());
+        assertFalse(workflow.unknown());
+        assertFalse(workflow.needsSecretInput());
+        assertEquals(1, gateway.preparations);
+        assertEquals(1, gateway.saved.size());
+        assertSame(gateway.saved.getFirst(), gateway.queried.getFirst());
+        assertSame(gateway.saved.getFirst(), gateway.queried.getLast());
+    }
+
+    @Test
+    void 密钥库锁定刷新只发生于最终提交且失败不留空服务() {
+        var gateway = new ProviderConfigurationTestGateway();
+        gateway.vaultStatus = new VaultStatus(
+                VaultState.LOCKED, VaultLockReason.MASTER_KEY_MISSING, 0, false, java.time.Instant.EPOCH);
+        gateway.refreshedVaultStatus = gateway.vaultStatus;
+        var workflow = connected(gateway);
+        assertEquals(0, gateway.vaultStatusCalls);
+        assertThrows(
+                CompletionException.class,
+                () -> workflow.save(MODELS, true).toCompletableFuture().join());
+        assertEquals(1, gateway.vaultRefreshCalls);
+        assertEquals(0, gateway.preparations);
+        assertEquals(0, gateway.saved.size());
+        assertTrue(workflow.endpoint().isEmpty());
+    }
+
+    @Test
+    void 关闭窗口取消目录并拒绝继续保存() {
+        var gateway = new ProviderConfigurationTestGateway();
+        var workflow = connected(gateway);
+        gateway.previewResponses.add(new CompletableFuture<>());
+        workflow.discover();
+        workflow.close();
+        assertTrue(gateway.cancellations.getFirst().isCancelled());
+        assertThrows(
+                CompletionException.class,
+                () -> workflow.save(MODELS, true).toCompletableFuture().join());
+        assertEquals(0, gateway.preparations);
+    }
+
+    @Test
+    void 会话在密封任务完成前失效时不向新会话提交旧请求() {
+        var gateway = new ProviderConfigurationTestGateway();
+        var pending = new CompletableFuture<com.javaclaw.client.facade.PreparedProviderConfiguration>();
+        gateway.preparationResponse = pending;
+        var workflow = new ProviderSetupWorkflow(gateway);
+        workflow.connect(draft(ProviderAuthentication.NONE), new char[0])
+                .toCompletableFuture()
+                .join();
+        var saving = workflow.save(MODELS, true);
+        gateway.invalidated.run();
+        var payload = new com.javaclaw.protocol.ProviderConfigurationRpcContracts.SavePayload(
+                gateway.configuration, Optional.empty());
+        pending.complete(new com.javaclaw.client.facade.PreparedProviderConfiguration(
+                payload, com.javaclaw.client.CommandOptions.create(0)));
+        assertThrows(
+                CompletionException.class, () -> saving.toCompletableFuture().join());
+        assertEquals(0, gateway.saved.size());
+        assertFalse(workflow.unknown());
+        assertFalse(workflow.pending());
+        workflow.close();
+        assertTrue(gateway.subscriptionClosed);
+    }
+
+    @Test
+    void 会话失效取消读取清理草稿密钥并禁止重新预览或提交() {
+        var gateway = new ProviderConfigurationTestGateway();
+        var workflow = connected(gateway);
+        gateway.previewResponses.add(new CompletableFuture<>());
+        workflow.discover();
+        gateway.invalidated.run();
+        assertTrue(gateway.cancellations.getFirst().isCancelled());
+        assertFalse(workflow.supported());
+        assertThrows(
+                CompletionException.class,
+                () -> workflow.discover().toCompletableFuture().join());
+        assertThrows(
+                CompletionException.class,
+                () -> workflow.save(MODELS, true).toCompletableFuture().join());
+        assertEquals(0, gateway.preparations);
+        assertEquals(0, gateway.saved.size());
+    }
+
+    static ProviderSetupWorkflow connected(ProviderConfigurationTestGateway gateway) {
+        var workflow = new ProviderSetupWorkflow(gateway, "new-provider");
         workflow.connect(draft(ProviderAuthentication.API_KEY), "temporary-key".toCharArray())
                 .toCompletableFuture()
                 .join();
         return workflow;
     }
 
-    private static ProviderModelSpec model(String id) {
-        return new ProviderModelSpec(id, id, Set.of(ProviderModelPurpose.CHAT), OptionalInt.empty());
-    }
-
-    private static ProviderDraft draft(ProviderAuthentication authentication) {
+    static ProviderDraft draft(ProviderAuthentication authentication) {
         return new ProviderDraft(
                 "",
-                "我的模型服务",
+                "模型服务",
                 ProviderAdapter.OPENAI_COMPATIBLE,
                 "http://localhost:11434/v1",
                 authentication,
@@ -226,24 +320,23 @@ class ProviderSetupWorkflowTest {
                 ProviderLifecycle.DISABLED);
     }
 
-    private static final class ApplyingGateway extends TestCoreSettingsGateway {
-        private ProviderRef applied;
-        private ProviderSetupTarget target;
-        private RuntimeException applyFailure;
-        private int applyCalls;
-
-        @Override
-        public CompletionStage<Void> useModel(
-                Optional<WorkspaceId> workspace, Optional<ThreadId> thread, ProviderRef model) {
-            applyCalls++;
-            applied = model;
-            target = new ProviderSetupTarget(workspace, thread, "项目 A");
-            if (applyFailure != null) {
-                RuntimeException failure = applyFailure;
-                applyFailure = null;
-                return CompletableFuture.failedFuture(failure);
-            }
-            return CompletableFuture.completedFuture(null);
-        }
+    private static ProviderEndpoint source(
+            ProviderConfigurationTestGateway gateway, ProviderAuthentication auth, Optional<CredentialRef> credential) {
+        var original = gateway.providers.getFirst();
+        var draft = draft(auth);
+        var spec = new com.javaclaw.api.ProviderEndpointSpec(
+                draft.displayName(),
+                draft.adapter(),
+                Optional.of(java.net.URI.create("https://existing.example/v1")),
+                auth,
+                MODELS,
+                credential,
+                java.time.Duration.ofSeconds(60),
+                0,
+                draft.toSpec().options());
+        var value = new ProviderEndpoint(
+                original.id(), 3, ProviderLifecycle.DISABLED, spec, original.createdAt(), original.updatedAt());
+        gateway.providers.set(0, value);
+        return value;
     }
 }

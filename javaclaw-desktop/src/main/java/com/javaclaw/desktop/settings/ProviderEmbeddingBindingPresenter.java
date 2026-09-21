@@ -2,6 +2,7 @@ package com.javaclaw.desktop.settings;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Consumer;
 
@@ -29,8 +30,11 @@ final class ProviderEmbeddingBindingPresenter {
     }
 
     CompletionStage<Boolean> reload() {
+        if (state.saving()) {
+            return CompletableFuture.completedFuture(false);
+        }
         long epoch = state.epoch() + 1;
-        publish(new ProviderEmbeddingBindingState(state.binding(), true, "正在读取默认向量模型…", epoch));
+        publish(new ProviderEmbeddingBindingState(state.binding(), true, false, "正在读取默认向量模型…", epoch));
         return gateway.embeddingBinding().handle((binding, failure) -> {
             boolean current = epoch == state.epoch();
             completeReload(epoch, binding, failure);
@@ -39,6 +43,9 @@ final class ProviderEmbeddingBindingPresenter {
     }
 
     void bind(ProviderEndpoint endpoint, ProviderModelSpec model) {
+        if (state.pending()) {
+            return;
+        }
         ProviderEndpoint selected = Objects.requireNonNull(endpoint, "endpoint");
         ProviderModelSpec selectedModel = Objects.requireNonNull(model, "model");
         if (!selectedModel.supports(ProviderModelPurpose.EMBEDDING)) {
@@ -46,7 +53,7 @@ final class ProviderEmbeddingBindingPresenter {
         }
         long expectedRevision = state.binding().map(EmbeddingBinding::revision).orElse(0L);
         long epoch = state.epoch() + 1;
-        publish(new ProviderEmbeddingBindingState(state.binding(), true, "正在更新默认向量模型…", epoch));
+        publish(new ProviderEmbeddingBindingState(state.binding(), true, true, "正在更新默认向量模型…", epoch));
         ProviderRef reference = new ProviderRef(selected.id(), selected.revision(), selectedModel.modelId());
         gateway.bindEmbedding(reference, CommandOptions.create(expectedRevision))
                 .whenComplete((binding, failure) -> completeBind(epoch, binding, failure));
@@ -67,10 +74,10 @@ final class ProviderEmbeddingBindingPresenter {
         loaded = failure == null;
         if (failure != null) {
             publish(new ProviderEmbeddingBindingState(
-                    Optional.empty(), false, "向量模型绑定读取失败：" + SettingsFailures.message(failure), epoch));
+                    Optional.empty(), false, false, "向量模型绑定读取失败：" + SettingsFailures.message(failure), epoch));
             return;
         }
-        publish(new ProviderEmbeddingBindingState(binding, false, "", epoch));
+        publish(new ProviderEmbeddingBindingState(binding, false, false, "", epoch));
     }
 
     private void completeBind(long epoch, EmbeddingBinding binding, Throwable failure) {
@@ -79,10 +86,10 @@ final class ProviderEmbeddingBindingPresenter {
         }
         if (failure != null) {
             publish(new ProviderEmbeddingBindingState(
-                    state.binding(), false, "默认向量模型更新失败：" + SettingsFailures.message(failure), epoch));
+                    state.binding(), false, false, "默认向量模型更新失败：" + SettingsFailures.message(failure), epoch));
             return;
         }
-        publish(new ProviderEmbeddingBindingState(Optional.of(binding), false, "默认向量模型已更新", epoch));
+        publish(new ProviderEmbeddingBindingState(Optional.of(binding), false, false, "默认向量模型已更新", epoch));
     }
 
     private void publish(ProviderEmbeddingBindingState next) {

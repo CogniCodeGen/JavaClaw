@@ -80,7 +80,7 @@ class ProviderSettingsPageConfigurationRefreshTest {
         }
 
         private long revision() {
-            ListView<?> list = (ListView<?>) root.lookup(".platform-data-list");
+            ListView<?> list = (ListView<?>) root.lookup("#providerServicesList");
             return ((ProviderEndpoint) list.getItems().getFirst()).revision();
         }
     }

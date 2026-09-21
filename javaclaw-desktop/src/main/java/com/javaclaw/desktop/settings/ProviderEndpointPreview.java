@@ -29,6 +29,10 @@ final class ProviderEndpointPreview {
     }
 
     private static String requestBase(ProviderDraft draft, String base) {
+        if (draft.adapter() == ProviderAdapter.ANTHROPIC) {
+            // Anthropic SDK 始终追加 /v1，保留实际结果以便发现误填的重复版本段。
+            return append(base, "v1");
+        }
         if (draft.adapter() != ProviderAdapter.GOOGLE_GENAI || draft.baseUri().isBlank()) {
             return base;
         }
@@ -40,7 +44,7 @@ final class ProviderEndpointPreview {
     private static String defaultBase(ProviderDraft draft) {
         return switch (draft.adapter()) {
             case OPENAI_COMPATIBLE, OPENAI_RESPONSES -> "https://api.openai.com/v1";
-            case ANTHROPIC -> "https://api.anthropic.com/v1";
+            case ANTHROPIC -> "https://api.anthropic.com";
             case GOOGLE_GENAI ->
                 "https://generativelanguage.googleapis.com/"
                         + (draft.apiVersion().isBlank()

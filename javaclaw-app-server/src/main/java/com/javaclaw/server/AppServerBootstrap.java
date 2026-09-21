@@ -14,7 +14,6 @@ import com.javaclaw.model.ProviderCredentialResolver;
 import com.javaclaw.model.ProviderEmbeddingAdapterFactory;
 import com.javaclaw.model.ProviderModelDiscoveryAdapter;
 import com.javaclaw.nativehost.credential.MasterKeyProtector;
-import com.javaclaw.nativehost.credential.SystemMasterKeyProtector;
 import com.javaclaw.nativehost.startup.UserLoginStartup;
 import com.javaclaw.nativehost.tray.LauncherSupervisorProbe;
 import com.javaclaw.protocol.CanonicalJson;
@@ -52,6 +51,7 @@ import com.javaclaw.server.persistence.PermissionProfileService;
 import com.javaclaw.server.persistence.PromptOptimizationRepository;
 import com.javaclaw.server.persistence.ProviderCredentialService;
 import com.javaclaw.server.persistence.ProviderModelDiscoveryService;
+import com.javaclaw.server.persistence.ProviderModelPreviewService;
 import com.javaclaw.server.persistence.ProviderService;
 import com.javaclaw.server.persistence.ProviderVerificationService;
 import com.javaclaw.server.persistence.RolloutCommandService;
@@ -68,10 +68,6 @@ import com.javaclaw.server.rpc.PermissionPresetRpcHandlers;
 import com.javaclaw.server.rpc.PermissionProfileRpcHandlers;
 import com.javaclaw.server.rpc.PromptOptimizationRpcHandlers;
 import com.javaclaw.server.rpc.PromptPreviewRpcHandlers;
-import com.javaclaw.server.rpc.ProviderCredentialRpcHandlers;
-import com.javaclaw.server.rpc.ProviderEmbeddingBindingRpcHandlers;
-import com.javaclaw.server.rpc.ProviderModelDiscoveryRpcHandlers;
-import com.javaclaw.server.rpc.ProviderVerificationRpcHandlers;
 import com.javaclaw.server.rpc.RpcRouter;
 import com.javaclaw.server.rpc.SecurityGrantRpcHandlers;
 import com.javaclaw.server.rpc.ToolRpcHandlers;
@@ -94,15 +90,15 @@ public final class AppServerBootstrap {
     /**
      * 从 data-v6 Provider 配置建立真实模型注册表。
      *
-     * <p>凭据只在模型调用边界从 Vault 解封；Vault 锁定或引用失效时会安全拒绝调用，不会回退环境变量。
+     * <p>主密钥和凭据密文保存在新格式的本地 H2；不升级旧库，也不访问系统钥匙串。凭据只在模型调用边界从 Vault 解封；Vault 锁定或引用失效时会安全拒绝调用，不会回退环境变量。
      *
      * @param dataRoot 必须以 {@code data-v6} 结尾
      * @param clock 平台时钟
      * @return 可关闭组件
      */
     public static Components create(Path dataRoot, Clock clock) {
-        Foundation foundation = foundation(
-                dataRoot, clock, SystemMasterKeyProtector.create(dataRoot), UserLoginStartup.fromSystemProperties());
+        Foundation foundation =
+                PlatformFoundationFactory.createLocal(dataRoot, clock, UserLoginStartup.fromSystemProperties());
         return createConfigured(foundation, new VaultProviderCredentialResolver(foundation.vault()));
     }
 
@@ -130,8 +126,8 @@ public final class AppServerBootstrap {
      * @return 可关闭组件
      */
     public static Components create(Path dataRoot, Clock clock, ProviderCredentialResolver credentials) {
-        Foundation foundation = foundation(
-                dataRoot, clock, SystemMasterKeyProtector.create(dataRoot), UserLoginStartup.fromSystemProperties());
+        Foundation foundation =
+                PlatformFoundationFactory.createLocal(dataRoot, clock, UserLoginStartup.fromSystemProperties());
         return createConfigured(foundation, credentials);
     }
 
@@ -373,17 +369,7 @@ public final class AppServerBootstrap {
 
     private static void registerProviderRoutes(
             RpcRouter.Builder routes, Foundation foundation, RuntimeAssembly runtime) {
-        new ProviderCredentialRpcHandlers(foundation.providerCredentials(), foundation.json()).register(routes);
-        new ProviderEmbeddingBindingRpcHandlers(foundation.embeddingBinding(), foundation.json()).register(routes);
-        new com.javaclaw.server.rpc.ProviderContextRpcHandlers(
-                        new com.javaclaw.server.persistence.ProviderContextService(
-                                foundation.database(), foundation.providers(), foundation.json(), foundation.clock()),
-                        foundation.json())
-                .register(routes);
-        new ProviderModelDiscoveryRpcHandlers(runtime.management().providerModelDiscovery(), foundation.json())
-                .register(routes);
-        new ProviderVerificationRpcHandlers(runtime.management().providerVerification(), foundation.json())
-                .register(routes);
+        ProviderBusinessBootstrap.register(routes, foundation, runtime.management());
     }
 
     private static void registerRoleRoutes(RpcRouter.Builder routes, Foundation foundation) {
@@ -584,12 +570,14 @@ public final class AppServerBootstrap {
             BuiltinIsolatedServices.Availability workers,
             ScheduleLifecycleCoordinator scheduleLifecycle,
             ProviderModelDiscoveryService providerModelDiscovery,
+            ProviderModelPreviewService providerModelPreview,
             ProviderVerificationService providerVerification) {
         RuntimeManagement {
             Objects.requireNonNull(mcp, "mcp");
             Objects.requireNonNull(workers, "workers");
             Objects.requireNonNull(scheduleLifecycle, "scheduleLifecycle");
             Objects.requireNonNull(providerModelDiscovery, "providerModelDiscovery");
+            Objects.requireNonNull(providerModelPreview, "providerModelPreview");
             Objects.requireNonNull(providerVerification, "providerVerification");
         }
     }

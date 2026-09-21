@@ -5,6 +5,7 @@ import java.time.Clock;
 import java.util.List;
 
 import javafx.application.Platform;
+import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
@@ -45,9 +46,10 @@ class ManagementCenterSearchTest {
 
     @Test
     void 搜索标题优先于说明且清空后恢复原目录顺序() {
-        FxTestSupport.run(() -> {
-            try (Fixture fixture = new Fixture()) {
-                List<?> original = List.copyOf(fixture.navigation.getItems());
+        Fixture fixture = FxTestSupport.call(Fixture::new);
+        try {
+            List<?> original = FxTestSupport.call(() -> List.copyOf(fixture.navigation.getItems()));
+            FxTestSupport.run(() -> {
                 assertTitleMatch(fixture, "定时任务", "schedule");
                 assertTitleMatch(fixture, "记忆", "memory");
                 assertTitleMatch(fixture, "技能", "skill");
@@ -55,6 +57,10 @@ class ManagementCenterSearchTest {
                 fixture.search.setText("  AGENT  ");
                 fixture.assertFirst("roles");
                 fixture.assertPage("Agent Studio");
+            });
+            // SDK 的失败回执仍异步完成；搜索导航在页面读取期间应受保护，先等待读取结束再验证下一次导航。
+            FxTestSupport.await(() -> FxTestSupport.call(fixture::pageReadComplete));
+            FxTestSupport.run(() -> {
                 fixture.search.setText("任务");
                 fixture.assertFirst("jobs");
                 assertTrue(fixture.indexOf("schedule") < fixture.indexOf("unattended-grants"));
@@ -66,8 +72,10 @@ class ManagementCenterSearchTest {
                 fixture.search.clear();
                 assertEquals(original, fixture.navigation.getItems());
                 fixture.assertPage("后台任务");
-            }
-        });
+            });
+        } finally {
+            FxTestSupport.run(fixture::close);
+        }
     }
 
     @Test
@@ -171,6 +179,11 @@ class ManagementCenterSearchTest {
 
         private void assertFirst(String key) {
             assertEquals(0, indexOf(key));
+        }
+
+        private boolean pageReadComplete() {
+            return window.getScene().getRoot().lookupAll(".platform-action-bar .progress-indicator").stream()
+                    .noneMatch(Node::isVisible);
         }
 
         private void assertPage(String title) {

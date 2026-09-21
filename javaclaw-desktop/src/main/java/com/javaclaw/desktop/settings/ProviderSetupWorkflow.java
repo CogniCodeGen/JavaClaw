@@ -11,25 +11,50 @@ import java.util.function.Consumer;
 
 import com.javaclaw.api.CancellationSource;
 import com.javaclaw.api.ProviderAuthentication;
+import com.javaclaw.api.ProviderConfiguration;
+import com.javaclaw.api.ProviderConfigurationResult;
+import com.javaclaw.api.ProviderConfigurationSource;
+import com.javaclaw.api.ProviderConnectionSpec;
+import com.javaclaw.api.ProviderCredentialChange;
 import com.javaclaw.api.ProviderEndpoint;
-import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
-import com.javaclaw.api.ProviderModelDiscoveryResult;
+import com.javaclaw.api.ProviderModelPreviewRequest;
+import com.javaclaw.api.ProviderModelPreviewResult;
 import com.javaclaw.api.ProviderModelSpec;
-import com.javaclaw.api.ProviderRef;
+import com.javaclaw.client.CommandOptions;
+import com.javaclaw.client.RemoteRpcException;
+import com.javaclaw.client.facade.PreparedProviderConfiguration;
+import com.javaclaw.desktop.DesktopNotificationSubscription;
+import com.javaclaw.protocol.ProtocolErrorCode;
 
 /**
- * 两步配置的可恢复 SDK 工作流。每个完成阶段立即保存权威版本，重试不会重复绑定密钥或升级已保存模型。
+ * 统一配置的临时草稿与一次原子保存；目录读取仅预览，不创建连接壳或轮换凭据。
  *
- * <p>调用和完成回调均在 JavaFX 调度器；只取消目录读取，已发出的写操作必须完成，关闭窗口不得中断其状态确认。
+ * <p>调用与回调沿 CoreSettingsGateway 的 JavaFX 单线程约定串行执行。只有此工作流保留可清零的临时密钥。读取可取消且按代次拒绝迟到结果；写入结果不明时只查询同一密封请求，禁止再次密封和自动重放。
  */
-final class ProviderSetupWorkflow {
+final class ProviderSetupWorkflow implements AutoCloseable {
     private final CoreSettingsGateway gateway;
     private final String providerId;
-    private final CancellationSource cancellation = new CancellationSource();
+    private final String draftId = UUID.randomUUID().toString();
+    private final Optional<ProviderEndpoint> source;
+    private final long credentialRevision;
+    private DesktopNotificationSubscription sessionSubscription;
+    private long sessionGeneration;
+    private boolean sessionInvalidated;
     private Consumer<String> progress = ignored -> {};
+    private ProviderConnectionSpec connection;
+    private ProviderCredentialChange credentialChange;
     private ProviderEndpoint endpoint;
+    private char[] secret = new char[0];
+    private char[] pendingSecret = new char[0];
+    private CancellationSource previewCancellation = new CancellationSource();
+    private PreparedProviderConfiguration prepared;
     private boolean pending;
+    private boolean previewing;
+    private boolean unknown;
+    private boolean closed;
+    private ProviderConfigurationCapability capability = ProviderConfigurationCapability.CHECKING;
+    private long generation;
     private String phase = "";
 
     ProviderSetupWorkflow(CoreSettingsGateway gateway) {
@@ -37,8 +62,77 @@ final class ProviderSetupWorkflow {
     }
 
     ProviderSetupWorkflow(CoreSettingsGateway gateway, String providerId) {
+        this(gateway, providerId, Optional.empty(), 0);
+    }
+
+    ProviderSetupWorkflow(CoreSettingsGateway gateway, ProviderEndpoint endpoint, long credentialRevision) {
+        this(gateway, endpoint.id(), Optional.of(endpoint), credentialRevision);
+    }
+
+    private ProviderSetupWorkflow(
+            CoreSettingsGateway gateway,
+            String providerId,
+            Optional<ProviderEndpoint> source,
+            long credentialRevision) {
         this.gateway = Objects.requireNonNull(gateway, "gateway");
         this.providerId = Objects.requireNonNull(providerId, "providerId");
+        this.source = source;
+        this.credentialRevision = credentialRevision;
+        source.ifPresent(value -> connection = ProviderConnectionSpec.from(value.spec()));
+        observeSession();
+    }
+
+    private void observeSession() {
+        long current = ++sessionGeneration;
+        sessionSubscription = gateway.onProviderConfigurationSessionInvalidated(this::invalidateSession);
+        gateway.providerConfigurationSupported().whenComplete((supported, failure) -> {
+            if (!closed && current == sessionGeneration) {
+                capability = sessionInvalidated
+                        ? ProviderConfigurationCapability.DISCONNECTED
+                        : failure != null
+                                ? ProviderConfigurationCapability.FAILED
+                                : Boolean.TRUE.equals(supported)
+                                        ? ProviderConfigurationCapability.AVAILABLE
+                                        : ProviderConfigurationCapability.UNSUPPORTED;
+                report(supported() ? unknown ? "已重新连接，请查询原保存结果。" : "填写连接配置并选择模型，最后一次保存。" : capability.message());
+            }
+        });
+    }
+
+    ProviderConfigurationCapability capability() {
+        return capability;
+    }
+
+    boolean hasPreparedSecret() {
+        return secret.length > 0;
+    }
+
+    void connectionDestinationChanged() {
+        cancelPreview();
+        clearSecret();
+    }
+
+    CompletionStage<Void> reconnect() {
+        if (pending || closed) {
+            return CompletableFuture.failedFuture(new IllegalStateException("当前操作尚未结束"));
+        }
+        capability = ProviderConfigurationCapability.CHECKING;
+        report("正在重新连接 App Server…");
+        return gateway.reconnect().handle((result, failure) -> {
+            if (closed) {
+                return null;
+            }
+            if (failure != null) {
+                capability = ProviderConfigurationCapability.DISCONNECTED;
+                report(capability.message());
+            } else {
+                // 重建观察者与能力状态；原密封请求保持不变，未知结果仍只查询原回执。
+                sessionSubscription.close();
+                sessionInvalidated = false;
+                observeSession();
+            }
+            return null;
+        });
     }
 
     void onProgress(Consumer<String> listener) {
@@ -57,131 +151,302 @@ final class ProviderSetupWorkflow {
         return pending;
     }
 
-    CompletionStage<Void> connect(ProviderDraft draft, char[] secret) {
-        char[] temporary = Objects.requireNonNull(secret, "secret").clone();
-        Arrays.fill(secret, '\0');
-        if (pending) {
-            Arrays.fill(temporary, '\0');
-            return CompletableFuture.failedFuture(new IllegalStateException("请等待当前配置步骤完成"));
-        }
+    boolean previewing() {
+        return previewing;
+    }
+
+    boolean unknown() {
+        return unknown;
+    }
+
+    boolean needsSecretInput() {
+        return credentialChange == ProviderCredentialChange.REPLACE
+                && secret.length == 0
+                && !pending
+                && !unknown
+                && endpoint == null;
+    }
+
+    boolean supported() {
+        return capability == ProviderConfigurationCapability.AVAILABLE;
+    }
+
+    boolean capabilityKnown() {
+        return capability != ProviderConfigurationCapability.CHECKING;
+    }
+
+    CompletionStage<Void> connect(ProviderDraft draft, char[] entered) {
+        return connect(draft, entered, false, false);
+    }
+
+    CompletionStage<Void> connect(ProviderDraft draft, char[] entered, boolean replace, boolean clearConfirmed) {
+        Objects.requireNonNull(entered, "entered");
         try {
-            ProviderEndpointSpec requested = draft.toSpec();
-            requireSecret(requested, temporary);
-            pending = true;
-            return ensureConnection(requested)
-                    .thenCompose(ignored -> ensureCredential(temporary))
-                    .whenComplete((ignored, failure) -> {
-                        Arrays.fill(temporary, '\0');
-                        pending = false;
-                    });
-        } catch (RuntimeException invalid) {
-            Arrays.fill(temporary, '\0');
-            pending = false;
-            return CompletableFuture.failedFuture(invalid);
-        }
-    }
-
-    CompletionStage<ProviderModelDiscoveryResult> discover() {
-        if (pending || endpoint == null) {
-            return CompletableFuture.failedFuture(new IllegalStateException("请先完成连接服务"));
-        }
-        pending = true;
-        report("正在获取模型列表…");
-        return gateway.discoverProviderModels(endpoint.id(), endpoint.revision(), cancellation)
-                .whenComplete((result, failure) -> pending = false);
-    }
-
-    CompletionStage<ProviderRef> save(
-            List<ProviderModelSpec> models, String currentModel, boolean use, ProviderSetupTarget target) {
-        if (pending || endpoint == null) {
-            return CompletableFuture.failedFuture(new IllegalStateException("请先完成连接服务"));
-        }
-        if (models.isEmpty()
-                || models.stream().noneMatch(model -> model.modelId().equals(currentModel))) {
-            return CompletableFuture.failedFuture(new IllegalArgumentException("请选择至少一个模型，并指定当前使用的模型"));
-        }
-        pending = true;
-        return saveModels(models)
-                .thenCompose(saved -> {
-                    ProviderRef reference = new ProviderRef(saved.id(), saved.revision(), currentModel);
-                    return use ? apply(reference, target) : CompletableFuture.completedFuture(reference);
-                })
-                .whenComplete((result, failure) -> pending = false);
-    }
-
-    void close() {
-        cancellation.cancel("模型配置窗口已关闭");
-    }
-
-    private CompletionStage<ProviderEndpoint> ensureConnection(ProviderEndpointSpec requested) {
-        if (endpoint != null) {
-            return CompletableFuture.completedFuture(endpoint);
-        }
-        report("正在保存连接…");
-        ProviderEndpointSpec shell = ProviderSetupCommands.connectionShell(requested);
-        return gateway.createProvider(
-                        providerId,
-                        shell,
-                        ProviderLifecycle.DISABLED,
-                        ProviderSetupCommands.createShell(providerId, shell))
-                .thenApply(saved -> {
-                    endpoint = saved;
-                    return saved;
-                });
-    }
-
-    private CompletionStage<Void> ensureCredential(char[] secret) {
-        if (endpoint.spec().authentication() == ProviderAuthentication.NONE
-                || endpoint.spec().credential().isPresent()) {
+            requireEditable();
+            ProviderConnectionSpec requested = ProviderConnectionSpec.from(
+                    draft.withCredential(Optional.empty()).toSpec());
+            if (connection != null && !sameCredentialDestination(connection, requested)) {
+                clearSecret();
+            }
+            if (entered.length > 0) {
+                clearSecret();
+                secret = entered.clone();
+            }
+            credentialChange = credentialChange(requested, replace, clearConfirmed);
+            connection = requested;
+            cancelPreview();
+            report("连接草稿已准备，尚未保存。");
             return CompletableFuture.completedFuture(null);
+        } catch (RuntimeException failure) {
+            return CompletableFuture.failedFuture(failure);
+        } finally {
+            Arrays.fill(entered, '\0');
         }
-        report("正在保存 API Key…");
-        return gateway.setProviderCredential(
-                        endpoint,
-                        0,
-                        secret,
-                        ProviderSetupCommands.configureCredential(endpoint.id(), endpoint.revision(), 0))
-                .thenAccept(binding -> endpoint = binding.provider());
     }
 
-    private CompletionStage<ProviderEndpoint> saveModels(List<ProviderModelSpec> models) {
-        if (endpoint.lifecycle() == ProviderLifecycle.ACTIVE
-                && endpoint.spec().models().equals(models)) {
-            return CompletableFuture.completedFuture(endpoint);
+    CompletionStage<ProviderModelPreviewResult> discover() {
+        try {
+            requireEditable();
+            if (connection == null || credentialChange == null) {
+                throw new IllegalStateException("请先填写连接配置");
+            }
+            cancelPreview();
+            CancellationSource cancellation = previewCancellation;
+            long current = generation;
+            var request = new ProviderModelPreviewRequest(
+                    draftId,
+                    current,
+                    connection,
+                    source.map(
+                            value -> new ProviderConfigurationSource(value.id(), value.revision(), credentialRevision)),
+                    credentialChange);
+            previewing = true;
+            report("正在读取模型目录；仍可手动配置模型。");
+            char[] copy = secret.clone();
+            return preview(request, copy, cancellation).handle((result, failure) -> {
+                Arrays.fill(copy, '\0');
+                if (closed || generation != current || cancellation.isCancelled()) {
+                    throw new java.util.concurrent.CancellationException("已丢弃旧目录预览");
+                }
+                previewing = false;
+                if (failure != null) {
+                    throw new java.util.concurrent.CompletionException(failure);
+                }
+                if (!draftId.equals(result.draftId()) || result.generation() != current) {
+                    throw new IllegalStateException("模型目录预览不属于当前草稿");
+                }
+                return result;
+            });
+        } catch (RuntimeException failure) {
+            previewing = false;
+            return CompletableFuture.failedFuture(failure);
         }
-        report("正在保存并启用模型…");
-        ProviderEndpointSpec spec =
-                ProviderDraft.from(endpoint).withModels(models).toSpec();
-        return gateway.updateProvider(
-                        endpoint.id(),
-                        spec,
-                        ProviderLifecycle.ACTIVE,
-                        ProviderSetupCommands.finish(
-                                endpoint.id(), endpoint.revision(), spec, ProviderLifecycle.ACTIVE))
-                .thenApply(saved -> {
-                    endpoint = saved;
-                    return saved;
-                });
     }
 
-    private CompletionStage<ProviderRef> apply(ProviderRef reference, ProviderSetupTarget target) {
-        report("模型已保存，正在应用到聊天…");
-        if (target.workspaceId().isEmpty()) {
-            return CompletableFuture.failedFuture(new IllegalStateException("模型已保存，请选择或创建工作区后继续使用"));
+    CompletionStage<ProviderConfigurationResult> save(List<ProviderModelSpec> models, boolean enabled) {
+        try {
+            requireEditable();
+            if (connection == null || credentialChange == null || models.isEmpty()) {
+                throw new IllegalArgumentException("请完成连接配置并选择至少一个模型");
+            }
+            requireReplacementSecret();
+            var configuration = new ProviderConfiguration(
+                    providerId,
+                    source.map(ProviderEndpoint::revision).orElse(0L),
+                    connection,
+                    List.copyOf(models),
+                    enabled ? ProviderLifecycle.ACTIVE : ProviderLifecycle.DISABLED,
+                    credentialChange,
+                    credentialRevision);
+            cancelPreview();
+            pending = true;
+            report("正在一次保存完整配置…");
+            char[] submitted = secret.clone();
+            pendingSecret = submitted;
+            clearSecret();
+            var ready = vaultReady(submitted);
+            return ready.thenCompose(ignored -> {
+                        if (closed || sessionInvalidated) {
+                            throw new IllegalStateException("连接会话已失效，未提交配置");
+                        }
+                        return gateway.prepareProviderConfiguration(
+                                configuration, submitted, CommandOptions.create(configuration.expectedRevision()));
+                    })
+                    .whenComplete((value, failure) -> {
+                        Arrays.fill(submitted, '\0');
+                        pendingSecret = new char[0];
+                    })
+                    .thenCompose(value -> {
+                        if (closed || sessionInvalidated) {
+                            throw new IllegalStateException("连接会话已失效，配置尚未提交");
+                        }
+                        prepared = value;
+                        return gateway.saveProviderConfiguration(value);
+                    })
+                    .handle((result, failure) -> saved(result, failure));
+        } catch (RuntimeException failure) {
+            clearSecret();
+            pending = false;
+            return CompletableFuture.failedFuture(failure);
         }
-        return gateway.useModel(target.workspaceId(), target.threadId(), reference)
-                .thenApply(ignored -> reference);
     }
 
-    private void requireSecret(ProviderEndpointSpec spec, char[] secret) {
-        boolean bound = endpoint != null && endpoint.spec().credential().isPresent();
-        if (spec.authentication() == ProviderAuthentication.API_KEY && !bound && secret.length == 0) {
-            throw new IllegalArgumentException("请输入 API Key；本地无鉴权服务可在高级设置中选择无鉴权");
+    private CompletionStage<ProviderModelPreviewResult> preview(
+            ProviderModelPreviewRequest request, char[] copy, CancellationSource cancellation) {
+        try {
+            return gateway.previewProviderModels(request, copy, cancellation);
+        } catch (RuntimeException failure) {
+            Arrays.fill(copy, '\0');
+            throw failure;
         }
+    }
+
+    private CompletionStage<Void> vaultReady(char[] submitted) {
+        try {
+            return credentialChange == ProviderCredentialChange.REPLACE
+                    ? ProviderVaultReadiness.ensureReady(gateway)
+                    : CompletableFuture.completedFuture(null);
+        } catch (RuntimeException failure) {
+            Arrays.fill(submitted, '\0');
+            throw failure;
+        }
+    }
+
+    CompletionStage<Optional<ProviderConfigurationResult>> checkResult() {
+        if (!unknown || prepared == null || pending || closed) {
+            return CompletableFuture.failedFuture(new IllegalStateException("没有待确认的配置保存"));
+        }
+        pending = true;
+        report("正在查询原保存回执；不会再次提交。");
+        return queryReceipt().handle((result, failure) -> {
+            pending = false;
+            if (closed) {
+                return Optional.<ProviderConfigurationResult>empty();
+            }
+            if (failure != null || result.isEmpty()) {
+                report("保存结果尚未确认，请继续查询原回执；草稿已锁定。");
+                return Optional.<ProviderConfigurationResult>empty();
+            }
+            accept(result.orElseThrow());
+            return result;
+        });
+    }
+
+    private CompletionStage<Optional<ProviderConfigurationResult>> queryReceipt() {
+        try {
+            return gateway.providerConfigurationResult(prepared);
+        } catch (RuntimeException failure) {
+            return CompletableFuture.failedFuture(failure);
+        }
+    }
+
+    private void invalidateSession() {
+        sessionInvalidated = true;
+        capability = ProviderConfigurationCapability.DISCONNECTED;
+        Arrays.fill(pendingSecret, '\0');
+        cancelPreview();
+        clearSecret();
+        report("连接会话已失效，临时密钥已清除。填写内容已保留；已提交请求只能查询原回执。");
+    }
+
+    void cancelPreview() {
+        previewCancellation.cancel("模型连接草稿已改变或读取已取消");
+        previewCancellation = new CancellationSource();
+        generation++;
+        previewing = false;
+    }
+
+    private ProviderConfigurationResult saved(ProviderConfigurationResult result, Throwable failure) {
+        pending = false;
+        if (failure == null) {
+            accept(result);
+            return result;
+        }
+        unknown = prepared != null && !knownRejection(failure);
+        if (!unknown) {
+            prepared = null;
+        }
+        report(unknown ? "保存结果尚未确认，只能查询原回执。" : "保存未完成，配置草稿仍保留；替换密钥需重新输入。");
+        throw new java.util.concurrent.CompletionException(failure);
+    }
+
+    private void accept(ProviderConfigurationResult result) {
+        endpoint = result.provider();
+        unknown = false;
+        report("完整配置已保存。");
+    }
+
+    private ProviderCredentialChange credentialChange(
+            ProviderConnectionSpec requested, boolean replace, boolean clearConfirmed) {
+        boolean bound = source.flatMap(value -> value.spec().credential()).isPresent();
+        if (requested.authentication() == ProviderAuthentication.NONE) {
+            if (bound && !clearConfirmed) {
+                throw new IllegalArgumentException("切换无鉴权将清除已有密钥，请先明确确认");
+            }
+            clearSecret();
+            return bound ? ProviderCredentialChange.CLEAR : ProviderCredentialChange.KEEP;
+        }
+        boolean changed = source.map(
+                        value -> !sameCredentialDestination(ProviderConnectionSpec.from(value.spec()), requested))
+                .orElse(false);
+        if (secret.length > 0) {
+            return ProviderCredentialChange.REPLACE;
+        }
+        if (bound && !replace && !changed) {
+            if (credentialRevision < 1) {
+                throw new IllegalStateException("已有密钥元数据尚未读取，请刷新后重试");
+            }
+            return ProviderCredentialChange.KEEP;
+        }
+        throw new IllegalArgumentException(changed ? "更改地址或协议后必须输入替换密钥" : "请输入 API Key，或明确选择无鉴权");
+    }
+
+    private void requireEditable() {
+        if (closed || pending || unknown) {
+            throw new IllegalStateException("保存期间或结果未确认时不能更改配置");
+        }
+        if (!supported()) {
+            throw new IllegalStateException(capability.message());
+        }
+    }
+
+    private void requireReplacementSecret() {
+        if (credentialChange == ProviderCredentialChange.REPLACE && secret.length == 0) {
+            throw new IllegalArgumentException("请重新输入 API Key");
+        }
+    }
+
+    private static boolean sameCredentialDestination(ProviderConnectionSpec first, ProviderConnectionSpec second) {
+        return first.adapter() == second.adapter()
+                && first.baseUri().equals(second.baseUri())
+                && first.authentication() == second.authentication();
+    }
+
+    private static boolean knownRejection(Throwable failure) {
+        Throwable cause = SettingsFailures.unwrap(failure);
+        return cause instanceof RemoteRpcException remote && remote.code() != ProtocolErrorCode.INTERNAL_ERROR;
     }
 
     private void report(String value) {
         phase = value;
         progress.accept(value);
+    }
+
+    private void clearSecret() {
+        Arrays.fill(secret, '\0');
+        secret = new char[0];
+    }
+
+    @Override
+    public void close() {
+        if (closed) {
+            return;
+        }
+        // 页面销毁只释放临时输入和读取，不撤销已发出的写请求，也不清除原密文提交身份。
+        closed = true;
+        sessionSubscription.close();
+        Arrays.fill(pendingSecret, '\0');
+        cancelPreview();
+        clearSecret();
     }
 }

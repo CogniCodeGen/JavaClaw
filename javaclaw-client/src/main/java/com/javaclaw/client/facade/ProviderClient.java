@@ -75,6 +75,11 @@ public final class ProviderClient {
                 com.javaclaw.api.ModelContextLimits.class);
     }
 
+    /** @return 当前会话的草稿预览与完整配置业务入口 */
+    public ProviderConfigurationClient configuration() {
+        return new ProviderConfigurationClient(connection, sessionKey);
+    }
+
     /** @return 每个 Provider 的最新版本 */
     public List<ProviderEndpoint> list() {
         return connection

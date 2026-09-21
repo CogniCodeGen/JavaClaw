@@ -35,6 +35,17 @@ public final class BrowserWorkerMain {
             }
             return;
         }
+        if (com.javaclaw.browser.protocol.BrowserRegistrationProtocol.OPEN.equals(command.operation())) {
+            try {
+                if (storageState.length != 0) {
+                    throw new IllegalArgumentException("Registration cannot import existing browser state");
+                }
+                RegistrationWorkerLoop.run(command, System.in, System.out, json);
+            } finally {
+                Arrays.fill(storageState, (byte) 0);
+            }
+            return;
+        }
         BrowserNetworkChannel network = new BrowserNetworkChannel(command.id(), System.in, System.out, json);
         try (BrowserRequestHandler handler =
                         new BrowserRequestHandler(new PlaywrightBrowserSession(Clock.systemUTC(), network), json);

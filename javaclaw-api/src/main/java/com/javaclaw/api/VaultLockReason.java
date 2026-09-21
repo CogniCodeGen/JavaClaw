@@ -4,11 +4,11 @@ package com.javaclaw.api;
 public enum VaultLockReason {
     /** Vault 正常可用。 */
     NONE,
-    /** 当前系统没有可用的用户级凭据设施。 */
+    /** 主密钥持久化端口不可用；保留历史枚举名以兼容既有线协议。 */
     SYSTEM_CREDENTIAL_UNAVAILABLE,
-    /** H2 引用的主密钥包装不存在。 */
+    /** H2 引用的持久化主密钥不存在。 */
     MASTER_KEY_MISSING,
-    /** 主密钥包装损坏或无法解封。 */
+    /** 持久化主密钥损坏或无法加载。 */
     MASTER_KEY_INVALID,
     /** Vault 已关闭，不能继续使用内存中的主密钥。 */
     CLOSED

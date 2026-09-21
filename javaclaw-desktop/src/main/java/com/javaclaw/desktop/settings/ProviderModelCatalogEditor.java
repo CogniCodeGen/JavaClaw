@@ -12,6 +12,7 @@ import java.util.function.Consumer;
 
 import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.event.ActionEvent;
+import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
@@ -84,6 +85,18 @@ final class ProviderModelCatalogEditor extends VBox {
         VBox.setVgrow(models, Priority.ALWAYS);
     }
 
+    void readOnly() {
+        for (Node control : List.of(discoverButton, addManual, edit, remove, candidates, addCandidate)) {
+            control.setVisible(false);
+            control.setManaged(false);
+        }
+    }
+
+    Node embeddingAction() {
+        ((HBox) bindEmbedding.getParent()).getChildren().remove(bindEmbedding);
+        return bindEmbedding;
+    }
+
     void render(ProviderModelCatalogState value, boolean canDiscover, boolean canEdit, boolean bindingAvailable) {
         state = Objects.requireNonNull(value, "value");
         canBind = bindingAvailable;
@@ -130,6 +143,7 @@ final class ProviderModelCatalogEditor extends VBox {
     }
 
     private void configureTable() {
+        models.setId("providerModelsTable");
         models.getStyleClass().add("platform-data-table");
         models.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
         models.setPrefHeight(180);

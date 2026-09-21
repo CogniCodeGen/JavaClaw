@@ -84,6 +84,11 @@ class TestCoreSettingsGateway extends TestRoleExecutionSettingsGateway {
     RuntimeException nextProviderCreateResponseFailure;
     char[] lastProviderSecret;
     RuntimeException nextFailure;
+    VaultStatus vaultStatus = new VaultStatus(VaultState.READY, VaultLockReason.NONE, 0, false, NOW);
+    VaultStatus refreshedVaultStatus = vaultStatus;
+    int vaultStatusCalls;
+    int vaultRefreshCalls;
+    int vaultResetCalls;
 
     TestCoreSettingsGateway() {
         providers.add(TestCoreSettingsFixtures.provider(
@@ -419,13 +424,24 @@ class TestCoreSettingsGateway extends TestRoleExecutionSettingsGateway {
 
     @Override
     public CompletionStage<VaultStatus> vaultStatus() {
-        return completed(new VaultStatus(
-                VaultState.READY, VaultLockReason.NONE, credential.stream().count(), false, NOW));
+        vaultStatusCalls++;
+        return completed(currentVaultStatus());
     }
 
     @Override
     public CompletionStage<VaultStatus> refreshVault() {
-        return vaultStatus();
+        vaultRefreshCalls++;
+        vaultStatus = refreshedVaultStatus;
+        return completed(currentVaultStatus());
+    }
+
+    private VaultStatus currentVaultStatus() {
+        return new VaultStatus(
+                vaultStatus.state(),
+                vaultStatus.reason(),
+                credential.stream().count(),
+                vaultStatus.oldKeyCleanupPending(),
+                vaultStatus.checkedAt());
     }
 
     @Override
@@ -436,6 +452,7 @@ class TestCoreSettingsGateway extends TestRoleExecutionSettingsGateway {
 
     @Override
     public CompletionStage<VaultManagementReceipt> resetVault(String confirmation, CommandOptions options) {
+        vaultResetCalls++;
         long count = credential.stream().count();
         credential = Optional.empty();
         return completed(new VaultManagementReceipt(VaultManagementAction.VAULT_RESET, count, NOW));

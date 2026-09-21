@@ -52,7 +52,7 @@ final class DiscoveryRequestBudget {
         long elapsed = nanoTime.getAsLong() - startedNanos;
         long remaining = timeoutNanos - elapsed;
         if (remaining <= 0) {
-            throw new IOException("Provider model discovery timeout exceeded");
+            throw new java.net.SocketTimeoutException("Provider model discovery timeout exceeded");
         }
         long remainingMillis = Math.max(1L, TimeUnit.NANOSECONDS.toMillis(remaining));
         return Math.toIntExact(Math.min(Integer.MAX_VALUE, remainingMillis));

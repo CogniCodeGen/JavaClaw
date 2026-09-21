@@ -93,11 +93,10 @@ public record ProviderSettingsState(
     /** @return 当前首次配置进度的用户可读说明 */
     String setupMessage() {
         return switch (setupPhase()) {
-            case CONNECTION -> "第 1/4 步：保存禁用的连接壳；模型和凭据不会在此步写入。";
-            case CREDENTIAL -> "第 2/4 步：配置访问密钥；无鉴权兼容端点会自动跳过。";
-            case MODELS -> draft.models().isEmpty() ? "第 3/4 步：读取模型目录或手工添加模型，并确认每个模型的用途。" : "第 4/4 步：保存模型目录并启用此模型服务。";
-            case ENABLE -> "第 4/4 步：确认配置后启用此模型服务。";
-            case COMPLETE -> "配置完成；新Agent可以显式引用这个精确版本。";
+            case CONNECTION -> "点击“添加服务”，在当前页面配置连接和模型。";
+            case CREDENTIAL, MODELS -> "此服务配置尚未完整，点击“编辑”补全并统一保存。";
+            case ENABLE -> "此服务已禁用，可在编辑时选择保存后启用。";
+            case COMPLETE -> "配置完成；使用模型是独立操作。";
         };
     }
 }

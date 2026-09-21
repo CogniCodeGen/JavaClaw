@@ -77,7 +77,8 @@ final class InteractiveBrowserNetwork {
     }
 
     java.util.Set<URI> pendingOrigins() {
-        return denied.stream().filter(origin -> !lease.get().allowedOrigins().contains(origin))
+        return denied.stream()
+                .filter(origin -> !lease.get().allowedOrigins().contains(origin))
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 

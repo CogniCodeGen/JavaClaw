@@ -46,7 +46,10 @@ public final class SiteRegistrationClient {
      */
     public SiteRegistrationContracts.Session status(
             WorkspaceId workspace, SiteRegistrationContracts.SessionRequest request) {
-        return json.decode(extensions.query(call(workspace, "registration.status", request)).payload(),
+        return json.decode(
+                extensions
+                        .query(call(workspace, "registration.status", request))
+                        .payload(),
                 SiteRegistrationContracts.Session.class);
     }
 
@@ -95,13 +98,18 @@ public final class SiteRegistrationClient {
         if (checked.expectedRevision() != 0) {
             throw new IllegalArgumentException("网站登记命令 expected revision 必须为零");
         }
-        return json.decode(extensions.command(call(workspace, operation, request), checked).payload(),
+        return json.decode(
+                extensions.command(call(workspace, operation, request), checked).payload(),
                 SiteRegistrationContracts.Session.class);
     }
 
     private ExtensionRpcContracts.CallPayload call(WorkspaceId workspace, String operation, Object request) {
-        return new ExtensionRpcContracts.CallPayload(BuiltinExtensionIds.SITE,
-                Objects.requireNonNull(workspace, "workspace"), Optional.empty(), Optional.empty(), operation,
+        return new ExtensionRpcContracts.CallPayload(
+                BuiltinExtensionIds.SITE,
+                Objects.requireNonNull(workspace, "workspace"),
+                Optional.empty(),
+                Optional.empty(),
+                operation,
                 json.encode(Objects.requireNonNull(request, "request")));
     }
 }

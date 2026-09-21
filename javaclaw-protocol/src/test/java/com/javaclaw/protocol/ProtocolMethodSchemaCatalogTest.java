@@ -49,7 +49,7 @@ class ProtocolMethodSchemaCatalogTest {
         }
 
         assertEquals(javaMethods, resourceMethods);
-        assertEquals(176, resourceOrder.size());
+        assertEquals(181, resourceOrder.size());
         assertEquals(
                 resourceOrder,
                 MethodCatalog.methods().stream().map(RpcMethod::name).toList());

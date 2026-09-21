@@ -129,12 +129,31 @@ public final class MethodCatalog {
         add(methods, "provider/embeddingBinding/read", RpcMethodKind.QUERY);
         add(methods, "provider/embeddingBinding/update", RpcMethodKind.COMMAND);
         addContextMethods(methods);
+        addProviderConfigurationMethods(methods);
         add(methods, "provider/credential/set", RpcMethodKind.COMMAND);
         add(methods, "provider/credential/clear", RpcMethodKind.COMMAND);
         add(methods, "provider/status", RpcMethodKind.QUERY);
         add(methods, "provider/probe", RpcMethodKind.QUERY);
         add(methods, ProviderVerificationRpcContracts.METHOD, RpcMethodKind.COMMAND);
         addPermissionProfileMethods(methods);
+    }
+
+    private static void addProviderConfigurationMethods(Map<String, RpcMethod> methods) {
+        for (String name : List.of(
+                ProviderConfigurationRpcContracts.SAVE_METHOD,
+                ProviderConfigurationRpcContracts.RESULT_METHOD,
+                ProviderConfigurationRpcContracts.PREVIEW_START_METHOD,
+                ProviderConfigurationRpcContracts.PREVIEW_READ_METHOD,
+                ProviderConfigurationRpcContracts.PREVIEW_CANCEL_METHOD)) {
+            RpcMethodKind kind = name.equals(ProviderConfigurationRpcContracts.RESULT_METHOD)
+                            || name.equals(ProviderConfigurationRpcContracts.PREVIEW_READ_METHOD)
+                    ? RpcMethodKind.QUERY
+                    : RpcMethodKind.COMMAND;
+            methods.put(
+                    name,
+                    new RpcMethod(
+                            name, kind, java.util.Optional.of(ProviderConfigurationRpcContracts.CAPABILITY), false));
+        }
     }
 
     private static void addContextMethods(Map<String, RpcMethod> methods) {

@@ -12,6 +12,17 @@ public interface ManagedSettingsPage {
     Node content();
 
     /**
+     * 声明页面是否自行管理可用视口和内部滚动区域。
+     *
+     * <p>默认由管理中心包装滚动容器；返回 true 的页面直接填满内容区，避免再次嵌套整页滚动。
+     *
+     * @return 页面是否负责视口布局
+     */
+    default boolean ownsViewport() {
+        return false;
+    }
+
+    /**
      * 返回固定在管理中心底部的页面动作栏。
      *
      * <p>页面没有顶层提交动作时返回空；嵌套资源分区的局部动作不应移入此槽位。
@@ -43,7 +54,7 @@ public interface ManagedSettingsPage {
      */
     default void workspaceChanged(Optional<Workspace> workspace) {}
 
-    /** @return 是否有不应被 Workspace 切换中断的写操作 */
+    /** @return 是否存在不应被离页、关闭或 Workspace 切换中断的操作，包括保存结果尚未确认 */
     default boolean pending() {
         return false;
     }

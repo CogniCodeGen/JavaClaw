@@ -28,6 +28,7 @@ public final class BuiltinIsolatedServices implements IsolatedServicePort, AutoC
     private final Optional<BrowserWorkerPort> browserWorker;
     private Optional<com.javaclaw.server.site.account.SiteAccountService> accounts = Optional.empty();
     private Optional<SiteInteractiveBrowserService> interactive = Optional.empty();
+    private Optional<SiteRegistrationService> registration = Optional.empty();
     private Optional<com.javaclaw.server.turn.BrowserTurnContinuation> continuation = Optional.empty();
 
     private BuiltinIsolatedServices(
@@ -120,6 +121,13 @@ public final class BuiltinIsolatedServices implements IsolatedServicePort, AutoC
         continuation = Optional.of(turns);
         interactive = Optional.of(
                 new SiteInteractiveBrowserService(host, browserWorker, browserGrants, grants, turns::request));
+        registration = Optional.of(new SiteRegistrationService(
+                host.accounts().registrations(),
+                browserWorker,
+                new SiteRegistrationNetwork(
+                        grants, new PinnedHttpNetworkBroker()::exchangeBrowserSingleHop, host.clock()),
+                host.json(),
+                host.clock()));
         accounts = Optional.of(host.accounts());
     }
 
@@ -201,6 +209,10 @@ public final class BuiltinIsolatedServices implements IsolatedServicePort, AutoC
 
     private CanonicalPayload invokeSite(IsolatedServiceInvocation invocation) throws Exception {
         return switch (invocation.serviceId()) {
+            case com.javaclaw.builtin.contracts.SiteRegistrationContracts.SERVICE ->
+                registration
+                        .orElseThrow(() -> new IllegalStateException("网站登记宿主未配置"))
+                        .invoke(invocation);
             case com.javaclaw.builtin.contracts.SiteAccountContracts.SERVICE ->
                 accounts.orElseThrow(() -> new IllegalStateException("账号宿主未配置")).invoke(invocation);
             case com.javaclaw.builtin.contracts.BrowserCommands.SERVICE ->
@@ -224,7 +236,10 @@ public final class BuiltinIsolatedServices implements IsolatedServicePort, AutoC
     @Override
     public void close() {
         closeResources(
-                () -> interactive.ifPresent(SiteInteractiveBrowserService::close), knowledge::close, browser::close);
+                () -> registration.ifPresent(SiteRegistrationService::close),
+                () -> interactive.ifPresent(SiteInteractiveBrowserService::close),
+                knowledge::close,
+                browser::close);
     }
 
     // 登录态保存或任一 Worker 的关闭失败不能跳过其他 Worker 回收；保留最早失败及其后的清理证据。

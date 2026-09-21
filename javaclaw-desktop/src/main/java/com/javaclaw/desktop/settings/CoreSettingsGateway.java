@@ -62,7 +62,8 @@ import com.javaclaw.protocol.DiagnosticsRpcContracts;
  *
  * <p>所有 CompletionStage 必须在 JavaFX 调度器上完成；实现不得让页面直接访问 App Server Service、H2 或传输层。
  */
-public interface CoreSettingsGateway extends ProviderContextSettingsGateway, ChatConfigurationGateway {
+public interface CoreSettingsGateway
+        extends ProviderContextSettingsGateway, ChatConfigurationGateway, ProviderConfigurationSettingsGateway {
     /** @return 最新 Provider 目录 */
     CompletionStage<List<ProviderEndpoint>> providers();
 

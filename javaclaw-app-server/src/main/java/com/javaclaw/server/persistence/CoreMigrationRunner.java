@@ -26,7 +26,8 @@ final class CoreMigrationRunner {
             new Migration(7, "job cancellation", "/db/core/V007__v6_job_cancellation.sql"),
             new Migration(8, "browser grants", "/db/core/V008__v6_browser_grants.sql"),
             new Migration(9, "turn continuation", "/db/core/V009__v6_turn_continuation.sql"),
-            new Migration(10, "system commands", "/db/core/V010__v6_system_commands.sql"));
+            new Migration(10, "system commands", "/db/core/V010__v6_system_commands.sql"),
+            new Migration(11, "local vault", "/db/core/V011__v6_local_vault.sql"));
 
     void migrate(Connection connection) throws SQLException {
         Map<Integer, String> installed = installed(connection);
@@ -91,6 +92,9 @@ final class CoreMigrationRunner {
         }
         if (migration.version() == 8) {
             new BrowserGrantSchemaValidation().validate(connection);
+        }
+        if (migration.version() == 11) {
+            new LocalVaultSchemaValidation().validate(connection);
         }
         try (var statement = connection.prepareStatement("""
             INSERT INTO CORE.SCHEMA_HISTORY (VERSION, DESCRIPTION, CHECKSUM, INSTALLED_AT)

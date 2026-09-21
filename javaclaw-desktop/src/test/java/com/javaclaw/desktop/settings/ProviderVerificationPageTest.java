@@ -141,7 +141,7 @@ class ProviderVerificationPageTest {
         try {
             FxTestSupport.run(() -> {
                 assertFalse(fixture.page.dirty());
-                assertTrue(fixture.page.pending());
+                assertFalse(fixture.page.pending(), "容量读取只禁用相关控件，不阻止离页");
                 assertTrue(fixture.chatButton().isDisabled());
                 assertTrue(fixture.chatStatus().contains("请稍候"));
                 assertFalse(fixture.chatStatus().contains("草稿"));
@@ -151,7 +151,7 @@ class ProviderVerificationPageTest {
             FxTestSupport.await(
                     () -> FxTestSupport.call(() -> !fixture.chatButton().isDisabled()));
             FxTestSupport.run(() -> {
-                assertFalse(fixture.embeddingButton().isDisabled());
+                assertTrue(fixture.embeddingButton().isDisabled(), "当前目录行只声明对话用途");
                 fixture.confirmAndSend(ProviderModelPurpose.CHAT);
                 fixture.assertRequest(ProviderModelPurpose.CHAT);
                 assertTrue(fixture.page.pending());
@@ -185,7 +185,12 @@ class ProviderVerificationPageTest {
     void 向量验证使用独立模型和用途并显示向量校验结果() {
         Fixture fixture = FxTestSupport.call(Fixture::new);
         try {
-            FxTestSupport.run(fixture.gateway::completeContext);
+            FxTestSupport.run(() -> {
+                fixture.gateway.completeContext();
+                ((TableView<?>) fixture.root.lookup("#providerModelsTable"))
+                        .getSelectionModel()
+                        .select(1);
+            });
             FxTestSupport.await(
                     () -> FxTestSupport.call(() -> !fixture.embeddingButton().isDisabled()));
             FxTestSupport.run(() -> {
@@ -209,18 +214,13 @@ class ProviderVerificationPageTest {
     }
 
     @Test
-    void 真实连接草稿阻止验证并提示保存草稿() {
+    void 容量草稿阻止验证并提示保存草稿() {
         Fixture fixture = FxTestSupport.call(Fixture::new);
         try {
             FxTestSupport.run(() -> {
                 fixture.gateway.completeContext();
-                TextField name = fixture.root.lookupAll(".text-field").stream()
-                        .filter(TextField.class::isInstance)
-                        .map(TextField.class::cast)
-                        .filter(field -> "用户可见名称".equals(field.getPromptText()))
-                        .findFirst()
-                        .orElseThrow();
-                name.setText("尚未保存的连接名称");
+                TextField capacity = (TextField) fixture.root.lookup("#providerContextWindowTokens");
+                capacity.setText("65536");
                 fixture.assertDraftBlocksVerification();
                 fixture.page.discardDraft();
                 assertFalse(fixture.page.dirty());
@@ -252,7 +252,7 @@ class ProviderVerificationPageTest {
             page.activate();
             root.applyCss();
             root.layout();
-            ((TableView<?>) root.lookup(".platform-data-table"))
+            ((TableView<?>) root.lookup("#providerModelsTable"))
                     .getSelectionModel()
                     .selectFirst();
         }

@@ -22,8 +22,10 @@ public final class BrowserRegistrationProtocol {
         /** 拒绝不符合两个独立预算的私有载荷。 */
         public PrivateResult {
             java.util.Objects.requireNonNull(status, "status");
-            if (stateBytes < 1 || stateBytes > BrowserWorkerProtocol.MAXIMUM_STATE_BYTES
-                    || credentialBytes < 0 || credentialBytes > MAXIMUM_CREDENTIAL_BYTES) {
+            if (stateBytes < 1
+                    || stateBytes > BrowserWorkerProtocol.MAXIMUM_STATE_BYTES
+                    || credentialBytes < 0
+                    || credentialBytes > MAXIMUM_CREDENTIAL_BYTES) {
                 throw new IllegalArgumentException("registration private frame exceeds limit");
             }
         }

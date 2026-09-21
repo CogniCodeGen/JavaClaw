@@ -19,10 +19,15 @@ final class RegistrationStorage {
         CanonicalJson json = new CanonicalJson();
         Map<?, ?> state = json.decode(json.parse(input), Map.class);
         List<?> cookies = array(state, "cookies").stream()
-                .filter(value -> value instanceof Map<?, ?> cookie && cookieMatches(cookie, origin.getHost())).toList();
+                .filter(value -> value instanceof Map<?, ?> cookie && cookieMatches(cookie, origin.getHost()))
+                .toList();
         List<?> origins = array(state, "origins").stream()
-                .filter(value -> value instanceof Map<?, ?> stored && origin.toString().equals(stored.get("origin"))).toList();
-        byte[] bytes = json.encode(Map.of("cookies", cookies, "origins", origins)).json().getBytes(StandardCharsets.UTF_8);
+                .filter(value ->
+                        value instanceof Map<?, ?> stored && origin.toString().equals(stored.get("origin")))
+                .toList();
+        byte[] bytes = json.encode(Map.of("cookies", cookies, "origins", origins))
+                .json()
+                .getBytes(StandardCharsets.UTF_8);
         if (bytes.length > BrowserWorkerProtocol.MAXIMUM_STATE_BYTES) {
             java.util.Arrays.fill(bytes, (byte) 0);
             throw new IllegalArgumentException("Browser registration state exceeds limit");
@@ -44,7 +49,8 @@ final class RegistrationStorage {
         }
         String normalized = host.toLowerCase(java.util.Locale.ROOT);
         String checked = domain.toLowerCase(java.util.Locale.ROOT);
-        return checked.startsWith(".") ? normalized.equals(checked.substring(1)) || normalized.endsWith(checked)
+        return checked.startsWith(".")
+                ? normalized.equals(checked.substring(1)) || normalized.endsWith(checked)
                 : normalized.equals(checked);
     }
 }

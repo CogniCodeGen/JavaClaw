@@ -1,0 +1,17 @@
+capture=javafx.scene.Scene.snapshot
+os.name=Mac OS X
+os.arch=aarch64
+javafx.version=26.0.2
+window.logical.width=880.0
+window.logical.height=620.0
+scene.logical.width=880.0
+scene.logical.height=592.0
+window.outputScaleX=2.0
+window.outputScaleY=2.0
+window.renderScaleX=2.0
+window.renderScaleY=2.0
+snapshot.pixel.width=880
+snapshot.pixel.height=592
+modelForm.logical.width=602.0
+modelForm.logical.height=-0.0
+coverage=Only this native window and its observed scale; other platforms and DPI are not implied.

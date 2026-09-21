@@ -20,14 +20,26 @@ final class VisibleBrowserContext implements AutoCloseable {
     VisibleBrowserContext(Supplier<Playwright> factory, byte[] storageState, boolean downloads) {
         playwright = factory.get();
         try {
-            browser = playwright.chromium().launch(new BrowserType.LaunchOptions()
-                    .setHeadless(false).setTimeout(20_000)
-                    .setDownloadsPath(Path.of(System.getProperty("java.io.tmpdir")))
-                    .setArgs(List.of("--disable-background-networking", "--disable-component-update", "--disable-sync",
-                            "--disable-default-apps", "--no-first-run", "--no-default-browser-check", "--disable-quic",
-                            "--force-webrtc-ip-handling-policy=disable_non_proxied_udp")));
-            Browser.NewContextOptions options = new Browser.NewContextOptions().setViewportSize(1280, 900)
-                    .setAcceptDownloads(downloads).setIgnoreHTTPSErrors(false).setServiceWorkers(ServiceWorkerPolicy.BLOCK);
+            browser = playwright
+                    .chromium()
+                    .launch(new BrowserType.LaunchOptions()
+                            .setHeadless(false)
+                            .setTimeout(20_000)
+                            .setDownloadsPath(Path.of(System.getProperty("java.io.tmpdir")))
+                            .setArgs(List.of(
+                                    "--disable-background-networking",
+                                    "--disable-component-update",
+                                    "--disable-sync",
+                                    "--disable-default-apps",
+                                    "--no-first-run",
+                                    "--no-default-browser-check",
+                                    "--disable-quic",
+                                    "--force-webrtc-ip-handling-policy=disable_non_proxied_udp")));
+            Browser.NewContextOptions options = new Browser.NewContextOptions()
+                    .setViewportSize(1280, 900)
+                    .setAcceptDownloads(downloads)
+                    .setIgnoreHTTPSErrors(false)
+                    .setServiceWorkers(ServiceWorkerPolicy.BLOCK);
             if (storageState.length > 0) {
                 options.setStorageState(new String(storageState, StandardCharsets.UTF_8));
             }

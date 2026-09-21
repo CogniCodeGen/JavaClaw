@@ -84,6 +84,10 @@ public final class ExtensionRpcHandlers {
     }
 
     private void publishInvalidation(ExtensionRpcContracts.CallPayload call, ExtensionResponse response) {
+        if (SiteRegistrationEvents.handles(call)) {
+            SiteRegistrationEvents.completed(call, response, json).ifPresent(events::publish);
+            return;
+        }
         if (response.revision() < 1) {
             LOGGER.error(
                     "Extension {} command {} returned no resource revision; invalidation was not published",

@@ -49,6 +49,18 @@ public final class FormSection extends VBox {
     }
 
     /**
+     * 追加必填性随上下文变化的字段，不标记固定的必填或可选状态。
+     *
+     * @param label 字段名称
+     * @param editor 输入或选择控件
+     * @param help 简短帮助文本，可为空
+     * @return 供业务校验更新行内反馈的句柄
+     */
+    public FieldHandle addConditionalField(String label, Node editor, String help) {
+        return addField(label, editor, FieldRequirement.UNMARKED, help);
+    }
+
+    /**
      * 追加必填字段，并返回可更新行内错误的句柄。
      *
      * @param label 字段名称

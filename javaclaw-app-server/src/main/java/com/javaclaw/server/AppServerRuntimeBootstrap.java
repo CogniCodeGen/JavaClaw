@@ -27,6 +27,7 @@ import com.javaclaw.server.persistence.ExtensionJobSupervisor;
 import com.javaclaw.server.persistence.H2ModelEventSink;
 import com.javaclaw.server.persistence.H2TurnJournal;
 import com.javaclaw.server.persistence.ProviderModelDiscoveryService;
+import com.javaclaw.server.persistence.ProviderModelPreviewService;
 import com.javaclaw.server.persistence.ProviderStateService;
 import com.javaclaw.server.persistence.ProviderVerificationService;
 import com.javaclaw.server.security.PinnedHttpNetworkBroker;
@@ -115,6 +116,8 @@ final class AppServerRuntimeBootstrap {
         DefaultTurnHarness harness = harness(foundation, dependencies.models(), schemas, journal, tools, coding);
         ProviderVerificationService providerVerification = providerVerification(foundation, dependencies, startup);
         ProviderModelDiscoveryService modelDiscovery = startup.own(dependencies.modelDiscovery());
+        ProviderModelPreviewService modelPreview =
+                startup.own(ProviderBusinessBootstrap.preview(foundation, modelDiscovery));
         HarnessTurnDispatcher dispatcher =
                 startup.own(dispatcher(foundation, dependencies.models(), journal, harness, tools));
         bindMcpInteractions(foundation, dependencies.mcpPorts(), harness);
@@ -130,6 +133,7 @@ final class AppServerRuntimeBootstrap {
                 tools,
                 dispatcher,
                 modelDiscovery,
+                modelPreview,
                 providerVerification,
                 journal,
                 jobs,
@@ -305,6 +309,7 @@ final class AppServerRuntimeBootstrap {
                         resources.workerAvailability(),
                         state.scheduleLifecycle(),
                         state.modelDiscovery(),
+                        state.modelPreview(),
                         state.providerVerification()),
                 new AppServerResources(
                         state.jobs(),
@@ -316,7 +321,7 @@ final class AppServerRuntimeBootstrap {
                         foundation.approvals(),
                         state.extensions(),
                         state.scheduleLifecycle(),
-                        state.modelDiscovery(),
+                        () -> AppServerResources.closeInOrder(state.modelPreview(), state.modelDiscovery()),
                         resources.embeddings(),
                         foundation.vault(),
                         resources.services()));
@@ -472,6 +477,7 @@ final class AppServerRuntimeBootstrap {
             ExtensionToolPlatform tools,
             HarnessTurnDispatcher dispatcher,
             ProviderModelDiscoveryService modelDiscovery,
+            ProviderModelPreviewService modelPreview,
             ProviderVerificationService providerVerification,
             H2TurnJournal journal,
             ExtensionJobSupervisor jobs,

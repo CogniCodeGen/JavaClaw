@@ -1,364 +1,329 @@
 package com.javaclaw.desktop.settings;
 
-import java.nio.file.Path;
-import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
-import java.util.OptionalInt;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import javafx.scene.Node;
+import javafx.application.Platform;
 import javafx.scene.Parent;
-import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
-import javafx.scene.control.ComboBox;
-import javafx.scene.control.PasswordField;
+import javafx.scene.control.DialogPane;
+import javafx.scene.control.Label;
+import javafx.scene.control.ListView;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TitledPane;
+import javafx.stage.Stage;
 import javafx.stage.Window;
 import org.junit.jupiter.api.Test;
 
-import com.javaclaw.api.ProviderModelDiscoveryCandidate;
-import com.javaclaw.api.ProviderModelPurpose;
-import com.javaclaw.api.ProviderModelSpec;
-import com.javaclaw.api.ProviderRef;
-import com.javaclaw.api.ThreadId;
-import com.javaclaw.api.Workspace;
-import com.javaclaw.api.WorkspaceId;
-import com.javaclaw.api.WorkspaceLifecycle;
+import com.javaclaw.api.ProviderConfigurationResult;
+import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.ProviderModelPreviewResult;
+import com.javaclaw.client.RemoteRpcException;
 import com.javaclaw.desktop.FxTestSupport;
-import com.javaclaw.desktop.component.PlatformComponentFactory;
+import com.javaclaw.protocol.JsonRpcError;
+import com.javaclaw.protocol.ProtocolErrorCode;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProviderSetupWizardFxTest {
     @Test
-    void 应用回执到达前锁定工作区选择且失败后允许保持模型版本重试() {
+    void 下一步只预览且最终保存不应用入口工作区并可取消启用() {
         FxTestSupport.run(() -> {
-            ApplyingGateway gateway = new ApplyingGateway();
-            gateway.pendingApply = new CompletableFuture<>();
+            var gateway = new ProviderConfigurationTestGateway();
+            AtomicInteger completed = new AtomicInteger();
             AtomicInteger used = new AtomicInteger();
             ProviderSetupWizard.show(
                     null,
                     gateway,
-                    new ProviderSetupTarget(Optional.empty(), Optional.empty(), ""),
-                    () -> {},
+                    new ProviderSetupTarget(Optional.empty(), Optional.empty(), "入口"),
+                    completed::incrementAndGet,
                     used::incrementAndGet);
-            Window window = wizardWindow();
-            Parent root = window.getScene().getRoot();
+            Stage window = window();
             try {
-                fillConnection(root);
+                Parent root = window.getScene().getRoot();
+                connect(root);
+                assertEquals(0, gateway.saved.size());
+                assertEquals(0, gateway.providerCredentialSetCalls);
+                assertEquals("", text(root, "providerWizardSecret").getText());
+                assertNull(root.lookup("#providerWizardWorkspace"));
+                assertNull(root.lookup("#providerWizardCurrentModel"));
+                manual(root, "manual-model");
+                ((CheckBox) root.lookup("#providerWizardEnable")).setSelected(false);
                 button(root, "providerWizardContinue").fire();
-                text(root, "providerWizardManualModel").setText("pending-model");
-                button(root, "providerWizardAddManual").fire();
-                ComboBox<?> selector = (ComboBox<?>) root.lookup("#providerWizardWorkspace");
-                selector.getSelectionModel().selectFirst();
-                Workspace selected = (Workspace) selector.getValue();
-
-                button(root, "providerWizardContinue").fire();
-
-                assertTrue(selector.isDisabled());
-                assertWorkspaceActionsDisabled(root);
-                assertEquals(Optional.of(selected.id()), gateway.appliedWorkspace);
+                assertEquals(ProviderLifecycle.DISABLED, gateway.configuration.lifecycle());
+                assertEquals(1, gateway.saved.size());
+                assertEquals(1, completed.get());
                 assertEquals(0, used.get());
-                ProviderRef saved = gateway.applied;
-                gateway.pendingApply.completeExceptionally(new IllegalStateException("应用暂未完成"));
-                assertTrue(window.isShowing());
-                assertFalse(selector.isDisabled());
-                gateway.pendingApply = null;
-                button(root, "providerWizardContinue").fire();
-                assertEquals(saved, gateway.applied);
-                assertEquals(1, used.get());
-                assertFalse(window.isShowing());
+                assertEquals(0, gateway.uses);
+                closeSaved(window, root);
             } finally {
-                if (gateway.pendingApply != null) {
-                    gateway.pendingApply.completeExceptionally(new IllegalStateException("测试结束"));
-                }
                 window.hide();
             }
         });
     }
 
     @Test
-    void 两步窗口保存并使用精确模型后返回调用页且清除密钥控件() {
+    void 目录读取期间仍可手动保存并取消迟到目录() {
         FxTestSupport.run(() -> {
-            ApplyingGateway gateway = new ApplyingGateway();
-            AtomicInteger completed = new AtomicInteger();
-            ProviderSetupTarget target =
-                    new ProviderSetupTarget(Optional.of(WorkspaceId.random()), Optional.of(ThreadId.random()), "项目 A");
-            ProviderSetupWizard.show(null, gateway, target, completed::incrementAndGet);
-            Window window = wizardWindow();
+            var gateway = new ProviderConfigurationTestGateway();
+            var response = new CompletableFuture<ProviderModelPreviewResult>();
+            gateway.previewResponses.add(response);
+            Stage window = open(gateway);
+            try {
+                Parent root = window.getScene().getRoot();
+                connect(root);
+                expandManual(root);
+                assertFalse(text(root, "providerWizardManualModel").isDisabled());
+                manual(root, "manual-during-preview");
+                button(root, "providerWizardContinue").fire();
+                response.complete(gateway.previewResult(gateway.previews.getFirst()));
+                assertEquals(
+                        "manual-during-preview",
+                        gateway.configuration.models().getFirst().modelId());
+                assertTrue(gateway.cancellations.getFirst().isCancelled());
+                closeSaved(window, root);
+            } finally {
+                window.hide();
+            }
+        });
+    }
+
+    @Test
+    void 保存等待回执时锁住上下文和关闭且失败保留非秘密模型草稿() {
+        FxTestSupport.run(() -> {
+            var gateway = new ProviderConfigurationTestGateway();
+            var response = new CompletableFuture<ProviderConfigurationResult>();
+            gateway.saveResponses.add(response);
+            Stage window = open(gateway);
+            try {
+                Parent root = window.getScene().getRoot();
+                connect(root);
+                manual(root, "retained-model");
+                button(root, "providerWizardContinue").fire();
+                assertTrue(button(root, "providerWizardBack").isDisabled());
+                assertTrue(text(root, "providerWizardManualModel").isDisabled());
+                // 模拟系统标题栏关闭请求；Stage.close() 是宿主强制隐藏，绕过 JavaFX 用户关闭事件。
+                window.fireEvent(new javafx.stage.WindowEvent(window, javafx.stage.WindowEvent.WINDOW_CLOSE_REQUEST));
+                assertTrue(window.isShowing());
+                response.completeExceptionally(new RemoteRpcException(
+                        new JsonRpcError(ProtocolErrorCode.REVISION_CONFLICT, "版本冲突", Optional.empty())));
+                assertFalse(button(root, "providerWizardBack").isDisabled());
+                assertEquals("返回填写密钥", button(root, "providerWizardContinue").getText());
+                String failure = ((Label) root.lookup("#providerWizardStatus")).getText();
+                assertTrue(failure.contains("尚未保存"));
+                assertTrue(failure.contains("版本冲突"));
+                button(root, "providerWizardContinue").fire();
+                assertEquals(failure, ((Label) root.lookup("#providerWizardStatus")).getText());
+                assertEquals(1, gateway.saved.size());
+                assertEquals("", text(root, "providerWizardSecret").getText());
+                text(root, "providerWizardSecret").setText("retry-key");
+                button(root, "providerWizardContinue").fire();
+                button(root, "providerWizardContinue").fire();
+                assertEquals(
+                        "retained-model",
+                        gateway.configuration.models().getFirst().modelId());
+                assertEquals(2, gateway.saved.size());
+                closeSaved(window, root);
+            } finally {
+                window.hide();
+            }
+        });
+    }
+
+    @Test
+    void 密钥库失败保留原因且刷新与迟到目录不会掩盖未保存状态() {
+        FxTestSupport.run(() -> {
+            var gateway = new ProviderConfigurationTestGateway();
+            gateway.vaultStatus = new com.javaclaw.api.VaultStatus(
+                    com.javaclaw.api.VaultState.LOCKED,
+                    com.javaclaw.api.VaultLockReason.MASTER_KEY_MISSING,
+                    0,
+                    false,
+                    java.time.Instant.EPOCH);
+            gateway.refreshedVaultStatus = gateway.vaultStatus;
+            var preview = new CompletableFuture<ProviderModelPreviewResult>();
+            gateway.previewResponses.add(preview);
+            Stage window = open(gateway);
+            try {
+                Parent root = window.getScene().getRoot();
+                connect(root);
+                manual(root, "retained-after-vault-failure");
+                button(root, "providerWizardContinue").fire();
+                String failure = ((Label) root.lookup("#providerWizardStatus")).getText();
+                assertTrue(failure.startsWith("尚未保存："));
+                assertEquals("返回填写密钥", button(root, "providerWizardContinue").getText());
+                assertEquals(0, gateway.preparations);
+                assertEquals(0, gateway.saved.size());
+                preview.complete(gateway.previewResult(gateway.previews.getFirst()));
+                assertEquals(failure, ((Label) root.lookup("#providerWizardStatus")).getText());
+                button(root, "providerWizardDiscoverModels").fire();
+                assertEquals(1, gateway.previews.size());
+                assertEquals(failure, ((Label) root.lookup("#providerWizardStatus")).getText());
+                assertEquals("下一步：获取模型", button(root, "providerWizardContinue").getText());
+                assertEquals("", text(root, "providerWizardSecret").getText());
+            } finally {
+                window.hide();
+            }
+        });
+    }
+
+    @Test
+    void 未确认回执只查询同一请求且取消按钮保持禁用() {
+        FxTestSupport.run(() -> {
+            var gateway = new ProviderConfigurationTestGateway();
+            gateway.saveResponses.add(CompletableFuture.failedFuture(new IllegalStateException("连接断开")));
+            Stage window = open(gateway);
+            try {
+                Parent root = window.getScene().getRoot();
+                connect(root);
+                manual(root, "unknown-model");
+                button(root, "providerWizardContinue").fire();
+                assertEquals("查询保存结果", button(root, "providerWizardContinue").getText());
+                assertTrue(((DialogPane) root).lookupButton(ButtonType.CANCEL).isDisabled());
+                button(root, "providerWizardContinue").fire();
+                assertEquals(1, gateway.saved.size());
+                assertEquals(2, gateway.queried.size());
+                gateway.committed = gateway.result(gateway.configuration);
+                button(root, "providerWizardContinue").fire();
+                closeSaved(window, root);
+                assertEquals(1, gateway.saved.size());
+            } finally {
+                window.hide();
+            }
+        });
+    }
+
+    @Test
+    void 取消放弃确认保留窗口与草稿再次确认才清理并关闭() {
+        FxTestSupport.run(() -> {
+            var gateway = new ProviderConfigurationTestGateway();
+            Stage window = open(gateway);
             Parent root = window.getScene().getRoot();
-            fillConnection(root);
-
-            button(root, "providerWizardContinue").fire();
-
-            assertEquals("", ((PasswordField) root.lookup("#providerWizardSecret")).getText());
-            text(root, "providerWizardManualModel").setText("my-chat-model");
-            button(root, "providerWizardAddManual").fire();
-            assertTrue(button(root, "providerWizardContinue").getText().contains("项目 A"));
-            button(root, "providerWizardContinue").fire();
-
-            assertEquals("my-chat-model", gateway.applied.model());
-            assertEquals(3, gateway.applied.endpointRevision());
-            assertEquals(1, completed.get());
-            assertFalse(window.isShowing());
+            try {
+                text(root, "providerWizardAddress").setText("http://localhost:11434/v1");
+                text(root, "providerWizardSecret").setText("unsaved-key");
+                dismissConfirmation(false);
+                ((Button) ((DialogPane) root).lookupButton(ButtonType.CANCEL)).fire();
+                assertTrue(window.isShowing());
+                assertEquals("unsaved-key", text(root, "providerWizardSecret").getText());
+                dismissConfirmation(true);
+                ((Button) ((DialogPane) root).lookupButton(ButtonType.CANCEL)).fire();
+                assertFalse(window.isShowing());
+                assertEquals("", text(root, "providerWizardSecret").getText());
+                assertEquals(0, gateway.saved.size());
+            } finally {
+                window.hide();
+            }
         });
     }
 
     @Test
-    void 无工作区保存后保留弹窗并在补选工作区后接续应用() {
+    void 能力协商尚未完成或不支持时禁用下一步并解释原因() {
         FxTestSupport.run(() -> {
-            ApplyingGateway gateway = new ApplyingGateway();
-            AtomicInteger completed = new AtomicInteger();
-            ProviderSetupWizard.show(
-                    null,
-                    gateway,
-                    new ProviderSetupTarget(Optional.empty(), Optional.empty(), ""),
-                    completed::incrementAndGet);
-            Window window = wizardWindow();
-            Parent root = window.getScene().getRoot();
-            fillConnection(root);
-            button(root, "providerWizardContinue").fire();
-            text(root, "providerWizardManualModel").setText("my-chat-model");
-            button(root, "providerWizardAddManual").fire();
-
-            button(root, "providerWizardContinue").fire();
-
-            assertTrue(window.isShowing());
-            assertEquals(0, completed.get());
-            ComboBox<?> selector = (ComboBox<?>) root.lookup("#providerWizardWorkspace");
-            selector.getSelectionModel().selectFirst();
-            button(root, "providerWizardContinue").fire();
-
-            assertEquals(3, gateway.applied.endpointRevision());
-            assertEquals(1, completed.get());
-            assertFalse(window.isShowing());
+            var gateway = new ProviderConfigurationTestGateway();
+            var capability = new CompletableFuture<Boolean>();
+            gateway.supported = capability;
+            Stage window = open(gateway);
+            try {
+                Parent root = window.getScene().getRoot();
+                assertTrue(button(root, "providerWizardContinue").isDisabled());
+                capability.complete(false);
+                assertTrue(button(root, "providerWizardContinue").isDisabled());
+                assertTrue(((javafx.scene.control.Label) root.lookup("#providerWizardDisabledReason"))
+                        .getText()
+                        .contains("升级"));
+                assertEquals(0, gateway.saved.size());
+            } finally {
+                window.hide();
+            }
         });
     }
 
-    @Test
-    void 搜索不丢失多选模型且目录未知用途明确展示() {
-        FxTestSupport.run(() -> {
-            ProviderSetupModelForm form = new ProviderSetupModelForm(new PlatformComponentFactory(), () -> {});
-            new Scene(form);
-            form.candidates(List.of(
-                    new ProviderModelDiscoveryCandidate("model-a", "模型 A", Set.of(), OptionalInt.empty()),
-                    new ProviderModelDiscoveryCandidate(
-                            "model-b", "模型 B", Set.of(ProviderModelPurpose.CHAT), OptionalInt.empty())));
-            form.applyCss();
-            form.layout();
-            List<CheckBox> choices = descendants(form).stream()
-                    .filter(CheckBox.class::isInstance)
-                    .map(CheckBox.class::cast)
-                    .toList();
-            assertTrue(choices.getFirst().getText().contains("用途未知"));
-            choices.forEach(CheckBox::fire);
-
-            text(form, "providerWizardSearch").setText("no-match");
-            text(form, "providerWizardSearch").clear();
-
-            assertEquals(2, form.selectedModels().size());
-            assertTrue(descendants(form).stream()
-                    .filter(CheckBox.class::isInstance)
-                    .map(CheckBox.class::cast)
-                    .allMatch(CheckBox::isSelected));
-            assertEquals(
-                    List.of("model-a", "model-b"),
-                    form.selectedModels().stream()
-                            .map(ProviderModelSpec::modelId)
-                            .toList());
-        });
+    static Stage open(ProviderConfigurationTestGateway gateway) {
+        ProviderSetupWizard.configure(null, gateway, Optional.empty(), 0, ignored -> {});
+        return window();
     }
 
-    @Test
-    void 仅保存不返回聊天且已配置模型成功使用后才触发返回回调() {
-        FxTestSupport.run(() -> {
-            ApplyingGateway gateway = new ApplyingGateway();
-            AtomicInteger completed = new AtomicInteger();
-            AtomicInteger used = new AtomicInteger();
-            ProviderSetupTarget target =
-                    new ProviderSetupTarget(Optional.of(WorkspaceId.random()), Optional.empty(), "目标项目");
-            ProviderSetupWizard.show(null, gateway, target, completed::incrementAndGet, used::incrementAndGet);
-            Window window = wizardWindow();
-            Parent root = window.getScene().getRoot();
-            fillConnection(root);
-            button(root, "providerWizardContinue").fire();
-            text(root, "providerWizardManualModel").setText("saved-only-model");
-            button(root, "providerWizardAddManual").fire();
-
-            button(root, "providerWizardSaveOnly").fire();
-
-            assertFalse(window.isShowing());
-            assertEquals(1, completed.get());
-            assertEquals(0, used.get());
-            ProviderSetupWizard.useModel(
-                    null,
-                    gateway,
-                    target,
-                    new ProviderRef("provider-main", 1, "fake-model"),
-                    completed::incrementAndGet,
-                    used::incrementAndGet);
-            assertEquals(2, completed.get());
-            assertEquals(1, used.get());
-        });
-    }
-
-    @Test
-    void 应用失败保留模型选择和窗口再次点击只重试应用() {
-        FxTestSupport.run(() -> {
-            ApplyingGateway gateway = new ApplyingGateway();
-            gateway.failApply = true;
-            AtomicInteger completed = new AtomicInteger();
-            AtomicInteger used = new AtomicInteger();
-            ProviderSetupWizard.show(
-                    null,
-                    gateway,
-                    new ProviderSetupTarget(Optional.of(WorkspaceId.random()), Optional.of(ThreadId.random()), "目标项目"),
-                    completed::incrementAndGet,
-                    used::incrementAndGet);
-            Window window = wizardWindow();
-            Parent root = window.getScene().getRoot();
-            fillConnection(root);
-            button(root, "providerWizardContinue").fire();
-            text(root, "providerWizardManualModel").setText("retry-model");
-            button(root, "providerWizardAddManual").fire();
-
-            button(root, "providerWizardContinue").fire();
-
-            assertTrue(window.isShowing());
-            assertEquals(0, completed.get());
-            assertEquals(0, used.get());
-            ProviderRef saved = gateway.applied;
-            button(root, "providerWizardContinue").fire();
-            assertEquals(saved, gateway.applied);
-            assertEquals(2, gateway.applyCalls);
-            assertEquals(1, gateway.providerCredentialSetCalls);
-            assertFalse(window.isShowing());
-            assertEquals(1, completed.get());
-            assertEquals(1, used.get());
-        });
-    }
-
-    @Test
-    void 在窗口内创建工作区后固定新目标并允许继续使用模型() {
-        FxTestSupport.run(() -> {
-            ApplyingGateway gateway = new ApplyingGateway();
-            ProviderSetupWorkspacePicker picker = new ProviderSetupWorkspacePicker(
-                    null, gateway, new ProviderSetupTarget(Optional.empty(), Optional.empty(), ""));
-            Path root = Path.of("/tmp/wizard-workspace-test");
-
-            var name = picker.nameDialog(root);
-            assertEquals("wizard-workspace-test", name.getEditor().getText());
-            name.show();
-            name.getEditor().setText("  自定义研究项目  ");
-            ((Button) name.getDialogPane().lookupButton(ButtonType.OK)).fire();
-            picker.createWorkspace(name.getResult(), root);
-
-            assertEquals("自定义研究项目", picker.target().workspaceName());
-            assertEquals(root, gateway.created.root());
-            assertEquals(gateway.created.id(), picker.target().workspaceId().orElseThrow());
-            assertTrue(picker.target().threadId().isEmpty());
-            assertFalse(picker.pending());
-        });
-    }
-
-    @Test
-    void 创建工作区取消命名或输入空白不会采用目录名悄悄创建() {
-        FxTestSupport.run(() -> {
-            ApplyingGateway gateway = new ApplyingGateway();
-            ProviderSetupWorkspacePicker picker = new ProviderSetupWorkspacePicker(
-                    null, gateway, new ProviderSetupTarget(Optional.empty(), Optional.empty(), ""));
-            Path root = Path.of("/tmp/wizard-workspace-test");
-            var name = picker.nameDialog(root);
-            name.show();
-            name.getEditor().setText("   ");
-            assertTrue(name.getDialogPane().lookupButton(ButtonType.OK).isDisable());
-            ((Button) name.getDialogPane().lookupButton(ButtonType.CANCEL)).fire();
-            assertTrue(Optional.ofNullable(name.getResult()).isEmpty());
-            picker.createWorkspace("   ", root);
-            assertTrue(picker.target().workspaceId().isEmpty());
-            assertTrue(Optional.ofNullable(gateway.created).isEmpty());
-            assertFalse(picker.pending());
-        });
-    }
-
-    private static void fillConnection(Parent root) {
-        text(root, "providerWizardAddress").setText("http://localhost:11434/v1");
-        text(root, "providerWizardSecret").setText("temporary-key");
-    }
-
-    private static void assertWorkspaceActionsDisabled(Parent root) {
-        List<Button> actions = descendants(root).stream()
-                .filter(Button.class::isInstance)
-                .map(Button.class::cast)
-                .filter(button -> Set.of("创建工作区", "刷新工作区").contains(button.getText()))
-                .toList();
-        assertEquals(2, actions.size());
-        assertTrue(actions.stream().allMatch(Button::isDisabled));
-    }
-
-    private static Window wizardWindow() {
+    static Stage window() {
         return Window.getWindows().stream()
-                .filter(window -> window.getScene().lookup("#providerWizardAddress") != null)
+                .filter(value -> value.getScene() != null && value.getScene().lookup("#providerWizardAddress") != null)
+                .map(Stage.class::cast)
                 .findFirst()
                 .orElseThrow();
     }
 
-    private static TextField text(Parent root, String id) {
+    static void connect(Parent root) {
+        text(root, "providerWizardAddress").setText("http://localhost:11434/v1");
+        text(root, "providerWizardSecret").setText("temporary-key");
+        button(root, "providerWizardContinue").fire();
+    }
+
+    static void manual(Parent root, String model) {
+        expandManual(root);
+        text(root, "providerWizardManualModel").setText(model);
+        button(root, "providerWizardAddManual").fire();
+    }
+
+    static void expandManual(Parent root) {
+        ((TitledPane) root.lookup("#providerWizardManualSection")).setExpanded(true);
+        root.applyCss();
+        root.layout();
+    }
+
+    static void closeSaved(Stage window, Parent root) {
+        assertTrue(window.isShowing(), "保存后明确展示结果，由用户关闭");
+        assertTrue(root.lookup("#providerWizardCompletion").isVisible());
+        assertTrue(
+                ((Label) root.lookup("#providerWizardSavedSummary")).getText().contains("已保存 1 个模型"));
+        assertEquals("关闭", button(root, "providerWizardContinue").getText());
+        assertFalse(button(root, "providerWizardBack").isVisible());
+        button(root, "providerWizardContinue").fire();
+        assertFalse(window.isShowing());
+    }
+
+    static TextField text(Parent root, String id) {
         return (TextField) root.lookup("#" + id);
     }
 
-    private static Button button(Parent root, String id) {
+    static Button button(Parent root, String id) {
         return (Button) root.lookup("#" + id);
     }
 
-    private static List<Node> descendants(Parent parent) {
-        return parent.getChildrenUnmodifiable().stream()
-                .flatMap(child -> child instanceof Parent nested
-                        ? java.util.stream.Stream.concat(
-                                java.util.stream.Stream.of(child), descendants(nested).stream())
-                        : java.util.stream.Stream.of(child))
-                .toList();
+    @SuppressWarnings("unchecked")
+    static CheckBox modelChoice(Parent root, String id) {
+        ListView<String> directory = (ListView<String>) root.lookup("#providerWizardModelsList");
+        directory.scrollTo(id);
+        root.applyCss();
+        root.layout();
+        directory.layout();
+        return directory.lookupAll(".check-box").stream()
+                .filter(CheckBox.class::isInstance)
+                .map(CheckBox.class::cast)
+                .filter(choice ->
+                        id.equals(choice.getText()) || choice.getText().endsWith(" · " + id))
+                .findFirst()
+                .orElseThrow();
     }
 
-    private static final class ApplyingGateway extends TestCoreSettingsGateway {
-        private ProviderRef applied;
-        private Workspace created;
-        private boolean failApply;
-        private int applyCalls;
-        private Optional<WorkspaceId> appliedWorkspace = Optional.empty();
-        private CompletableFuture<Void> pendingApply;
-
-        @Override
-        public CompletionStage<Void> useModel(
-                Optional<WorkspaceId> workspace, Optional<ThreadId> thread, ProviderRef model) {
-            applied = model;
-            appliedWorkspace = workspace;
-            applyCalls++;
-            if (failApply) {
-                failApply = false;
-                return CompletableFuture.failedFuture(new IllegalStateException("对话暂不可用"));
-            }
-            return pendingApply == null ? CompletableFuture.completedFuture(null) : pendingApply;
-        }
-
-        @Override
-        public CompletionStage<Workspace> createModelWorkspace(String name, Path root) {
-            Instant now = Instant.now();
-            created = new Workspace(WorkspaceId.random(), name, root, WorkspaceLifecycle.ACTIVE, 1, now, now);
-            return CompletableFuture.completedFuture(created);
-        }
-
-        @Override
-        public CompletionStage<List<Workspace>> workspaces() {
-            return CompletableFuture.completedFuture(workspaceSettings.catalog);
-        }
+    private static void dismissConfirmation(boolean discard) {
+        Platform.runLater(() -> {
+            List<Window> windows = List.copyOf(Window.getWindows());
+            DialogPane confirmation = windows.stream()
+                    .filter(value -> value.getScene() != null)
+                    .map(value -> value.getScene().getRoot())
+                    .filter(DialogPane.class::isInstance)
+                    .map(DialogPane.class::cast)
+                    .filter(pane -> "配置尚未保存".equals(pane.getHeaderText()))
+                    .findFirst()
+                    .orElseThrow();
+            ((Button) confirmation.lookupButton(discard ? ButtonType.OK : ButtonType.CANCEL)).fire();
+        });
     }
 }

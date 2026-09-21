@@ -243,6 +243,7 @@ public final class DesktopShellController implements AutoCloseable {
         executionSelection = new ChatConfigurationPanel(
                 new SdkCoreSettingsGateway(value),
                 () -> managementCenter.show(root.getScene().getWindow(), "providers"),
+                () -> managementCenter.showProviderCreation(root.getScene().getWindow()),
                 this::chooseChatWorkspace,
                 this::newThread);
         executionHost.getChildren().setAll(executionSelection);

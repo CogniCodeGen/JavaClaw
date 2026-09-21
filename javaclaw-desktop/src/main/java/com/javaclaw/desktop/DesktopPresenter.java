@@ -137,6 +137,12 @@ public final class DesktopPresenter implements AutoCloseable {
         store.subscribe(listener);
     }
 
+    /** @param listener 临时配置的非阻塞 UI 回调 @return 关闭后释放的连接状态订阅，不关闭共享会话 */
+    public DesktopNotificationSubscription observeConnection(Consumer<ConnectionState> listener) {
+        Objects.requireNonNull(listener, "listener");
+        return store.observe(state -> listener.accept(state.connection()));
+    }
+
     /**
      * 订阅当前及后续重连会话的强类型服务端通知。
      *

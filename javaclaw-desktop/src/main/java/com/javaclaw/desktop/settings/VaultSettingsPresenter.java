@@ -41,7 +41,7 @@ public final class VaultSettingsPresenter {
         gateway.vaultStatus().whenComplete((status, failure) -> completeStatus(epoch, status, failure, ""));
     }
 
-    /** 系统凭据设施恢复后重新尝试解封主密钥。 */
+    /** 本地数据库恢复可用后重新尝试加载主密钥。 */
     public void refresh() {
         long epoch = state.epoch() + 1;
         publish(new VaultSettingsState(

@@ -33,25 +33,30 @@ final class BrowserRegistrationSessions implements BrowserRegistrationPort, Auto
     }
 
     @Override
-    public synchronized WorkerStatus begin(SiteRegistrationContracts.WorkerTask task,
-            InteractiveBrowserNetworkExchange network, CancellationToken cancellation) {
+    public synchronized WorkerStatus begin(
+            SiteRegistrationContracts.WorkerTask task,
+            InteractiveBrowserNetworkExchange network,
+            CancellationToken cancellation) {
         cancellation.throwIfCancelled();
         if (closed || entries.containsKey(task.sessionId()) || activeCount() >= 8) {
             throw new IllegalStateException("Browser registration cannot start");
         }
-        if (!task.lease().active(Instant.now()) || task.lease().expiresAt().isAfter(Instant.now().plusSeconds(900))) {
+        if (!task.lease().active(Instant.now())
+                || task.lease().expiresAt().isAfter(Instant.now().plusSeconds(900))) {
             throw new IllegalArgumentException("Browser registration lease exceeds deadline");
         }
         try {
-            Entry entry = new Entry(task, new InteractiveBrowserConnection(launcher.start(), task.lease(), network, timeout));
+            Entry entry =
+                    new Entry(task, new InteractiveBrowserConnection(launcher.start(), task.lease(), network, timeout));
             entries.put(task.sessionId(), entry);
-            try (Packet packet = entry.connection.open(BrowserRegistrationProtocol.OPEN, task, new byte[0], cancellation)) {
-                entry.accept(json.decode(packet.frame().payload(), WorkerStatus.class));
-                expireAtDeadline(entry);
+            expireAtDeadline(entry);
+            try (Packet packet =
+                    entry.connection.open(BrowserRegistrationProtocol.OPEN, task, new byte[0], cancellation)) {
+                entry.accept(statusReply(packet));
                 trimHistory();
                 return entry.status;
             } catch (RuntimeException failure) {
-                entry.stop(State.FAILED);
+                entry.stop(Instant.now().isBefore(entry.lease.expiresAt()) ? State.FAILED : State.EXPIRED);
                 throw failure;
             }
         } catch (IOException failure) {
@@ -66,9 +71,9 @@ final class BrowserRegistrationSessions implements BrowserRegistrationPort, Auto
             if (entry.expiredOrTerminal()) {
                 return entry.status;
             }
-            try (Packet packet = entry.connection.call(InteractiveBrowserProtocol.STATUS, Map.of(), new byte[0],
-                    InteractiveBrowserConnection.NONE)) {
-                entry.accept(json.decode(packet.frame().payload(), WorkerStatus.class));
+            try (Packet packet = entry.connection.call(
+                    InteractiveBrowserProtocol.STATUS, Map.of(), new byte[0], InteractiveBrowserConnection.NONE)) {
+                entry.accept(statusReply(packet));
                 return entry.status;
             } catch (RuntimeException failure) {
                 entry.stop(Instant.now().isBefore(entry.lease.expiresAt()) ? State.FAILED : State.EXPIRED);
@@ -82,14 +87,16 @@ final class BrowserRegistrationSessions implements BrowserRegistrationPort, Auto
         Entry entry = require(id);
         synchronized (entry) {
             entry.requireActive();
-            if (lease.mode() != BrowserContracts.ControlMode.HUMAN || lease.generation() <= entry.lease.generation()
+            if (lease.mode() != BrowserContracts.ControlMode.HUMAN
+                    || lease.generation() <= entry.lease.generation()
                     || !lease.expiresAt().equals(entry.lease.expiresAt())) {
                 throw new IllegalArgumentException("Registration lease must preserve HUMAN mode and deadline");
             }
             entry.lease = lease;
             entry.connection.lease(lease);
-            try (Packet packet = entry.connection.call(InteractiveBrowserProtocol.LEASE, lease, new byte[0], cancellation)) {
-                entry.accept(json.decode(packet.frame().payload(), WorkerStatus.class));
+            try (Packet packet =
+                    entry.connection.call(InteractiveBrowserProtocol.LEASE, lease, new byte[0], cancellation)) {
+                entry.accept(statusReply(packet));
                 return entry.status;
             } catch (RuntimeException failure) {
                 entry.stop(State.FAILED);
@@ -99,16 +106,16 @@ final class BrowserRegistrationSessions implements BrowserRegistrationPort, Auto
     }
 
     @Override
-    public <T> T complete(String id, SiteRegistrationContracts.CompleteRequest request,
-            BrowserRegistrationHandler<T> handler) {
+    public <T> T complete(
+            String id, SiteRegistrationContracts.CompleteRequest request, BrowserRegistrationHandler<T> handler) {
         Entry entry = require(id);
         synchronized (entry) {
             entry.requireActive();
             if (!id.equals(request.sessionId()) || request.expectedGeneration() != entry.lease.generation()) {
                 throw new IllegalArgumentException("Registration confirmation belongs to another lease");
             }
-            try (Packet packet = entry.connection.call(BrowserRegistrationProtocol.COMPLETE, request, new byte[0],
-                    InteractiveBrowserConnection.NONE)) {
+            try (Packet packet = entry.connection.call(
+                    BrowserRegistrationProtocol.COMPLETE, request, new byte[0], InteractiveBrowserConnection.NONE)) {
                 return save(entry, request, packet, handler);
             } catch (RuntimeException failure) {
                 entry.stop(State.FAILED);
@@ -119,7 +126,10 @@ final class BrowserRegistrationSessions implements BrowserRegistrationPort, Auto
         }
     }
 
-    private <T> T save(Entry entry, SiteRegistrationContracts.CompleteRequest request, Packet packet,
+    private <T> T save(
+            Entry entry,
+            SiteRegistrationContracts.CompleteRequest request,
+            Packet packet,
             BrowserRegistrationHandler<T> handler) {
         var result = json.decode(packet.frame().payload(), BrowserRegistrationProtocol.PrivateResult.class);
         entry.accept(result.status());
@@ -127,7 +137,8 @@ final class BrowserRegistrationSessions implements BrowserRegistrationPort, Auto
         byte[] state = new byte[0];
         byte[] credentials = new byte[0];
         try {
-            if (result.stateBytes() + result.credentialBytes() != combined.length
+            if (result.status().state() != State.ACTIVE
+                    || result.stateBytes() + result.credentialBytes() != combined.length
                     || result.status().page().pageRevision() != request.expectedPageRevision()
                     || (result.credentialBytes() > 0) != request.credentialId().isPresent()) {
                 throw new IllegalArgumentException("Registration private result identity mismatch");
@@ -146,6 +157,13 @@ final class BrowserRegistrationSessions implements BrowserRegistrationPort, Auto
             Arrays.fill(state, (byte) 0);
             Arrays.fill(credentials, (byte) 0);
         }
+    }
+
+    private WorkerStatus statusReply(Packet packet) {
+        if (packet.frame().binaryBytes() != 0) {
+            throw new BrowserWorkerException("Registration status cannot contain private data");
+        }
+        return json.decode(packet.frame().payload(), WorkerStatus.class);
     }
 
     @Override
@@ -168,7 +186,9 @@ final class BrowserRegistrationSessions implements BrowserRegistrationPort, Auto
     }
 
     private long activeCount() {
-        return entries.values().stream().filter(entry -> entry.status.state() == State.ACTIVE).count();
+        return entries.values().stream()
+                .filter(entry -> entry.status.state() == State.ACTIVE)
+                .count();
     }
 
     private void trimHistory() {
@@ -182,19 +202,27 @@ final class BrowserRegistrationSessions implements BrowserRegistrationPort, Auto
 
     private static void expireAtDeadline(Entry entry) {
         Thread.ofVirtual().name("browser-registration-deadline").start(() -> {
+            State terminal = State.EXPIRED;
             try {
                 Duration remaining = Duration.between(Instant.now(), entry.lease.expiresAt());
                 if (remaining.isPositive()) {
                     Thread.sleep(remaining);
                 }
-                // 截止回收不等待业务锁，避免阻塞中的 Broker 或持久化让 Worker 延长生命周期。
-                entry.connection.close();
-                synchronized (entry) {
-                    entry.expiredOrTerminal();
-                }
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
+                terminal = State.FAILED;
+            }
+            try {
+                // 截止回收不等待业务锁，避免阻塞中的 Broker 或持久化让 Worker 延长生命周期。
                 entry.connection.close();
+            } catch (RuntimeException cleanupFailure) {
+                // 原生监护保留失败证据；FAILED 明确表示无法确认回收，不得伪造正常到期。
+                terminal = State.FAILED;
+            }
+            synchronized (entry) {
+                if (entry.status.state() == State.ACTIVE || terminal == State.FAILED) {
+                    entry.stop(terminal);
+                }
             }
         });
     }
@@ -216,19 +244,25 @@ final class BrowserRegistrationSessions implements BrowserRegistrationPort, Auto
         private Entry(SiteRegistrationContracts.WorkerTask task, InteractiveBrowserConnection connection) {
             this.connection = connection;
             lease = task.lease();
-            status = new WorkerStatus(task.sessionId(), State.ACTIVE,
-                    new SiteRegistrationContracts.Access(lease.generation(), lease.allowedOrigins(), java.util.Set.of(),
-                            lease.expiresAt()),
+            status = new WorkerStatus(
+                    task.sessionId(),
+                    State.ACTIVE,
+                    new SiteRegistrationContracts.Access(
+                            lease.generation(), lease.allowedOrigins(), java.util.Set.of(), lease.expiresAt()),
                     new SiteRegistrationContracts.Page(0, Optional.empty(), "", List.of()));
         }
 
         private void accept(WorkerStatus next) {
-            if (!next.sessionId().equals(status.sessionId()) || next.access().generation() != lease.generation()
+            if (!next.sessionId().equals(status.sessionId())
+                    || next.access().generation() != lease.generation()
                     || !next.access().allowedOrigins().equals(lease.allowedOrigins())
                     || !next.access().expiresAt().equals(lease.expiresAt())) {
                 throw new BrowserWorkerException("Registration reply identity mismatch");
             }
             status = next;
+            if (status.state() != State.ACTIVE) {
+                stop(status.state());
+            }
         }
 
         private boolean expiredOrTerminal() {
@@ -245,8 +279,14 @@ final class BrowserRegistrationSessions implements BrowserRegistrationPort, Auto
         }
 
         private void stop(State terminal) {
-            status = new WorkerStatus(status.sessionId(), terminal, status.access(), status.page());
-            connection.close();
+            State ending = status.state() == State.FAILED ? State.FAILED : terminal;
+            status = new WorkerStatus(status.sessionId(), ending, status.access(), status.page());
+            try {
+                connection.close();
+            } catch (RuntimeException cleanupFailure) {
+                status = new WorkerStatus(status.sessionId(), State.FAILED, status.access(), status.page());
+                throw cleanupFailure;
+            }
         }
     }
 }

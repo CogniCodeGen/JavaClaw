@@ -43,7 +43,7 @@ final class SpringAiModelFactory {
                 OpenAiChatOptions.builder().model(config.model()).build();
         ChatModel model = OpenAiChatModel.builder()
                 .openAiClient(client)
-                .openAiClientAsync(client.async())
+                .openAiClientAsync(OpenAiStreamingClient.wrap(client.async()))
                 .options(defaults)
                 .build();
         return endpoint(config, model, invocation -> openAiOptions(config, invocation), client::close);

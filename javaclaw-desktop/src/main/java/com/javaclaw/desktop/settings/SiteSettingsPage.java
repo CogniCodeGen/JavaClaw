@@ -5,8 +5,10 @@ import java.util.Optional;
 import javafx.scene.Node;
 
 import com.javaclaw.api.Workspace;
+import com.javaclaw.api.WorkspaceId;
 import com.javaclaw.builtin.contracts.BuiltinExtensionIds;
 import com.javaclaw.builtin.contracts.SiteContracts;
+import com.javaclaw.builtin.contracts.SiteRegistrationContracts;
 import com.javaclaw.desktop.view.ViewCommandInvocation;
 import com.javaclaw.protocol.CanonicalJson;
 import com.javaclaw.protocol.ExtensionRpcContracts;
@@ -14,6 +16,9 @@ import com.javaclaw.protocol.ExtensionRpcContracts;
 /** 网站设置只拥有一个权威选择；声明式配置、账号与隔离登录共享草稿和作用域保护。 */
 final class SiteSettingsPage implements ManagedSettingsPage {
     private final ViewSchemaSettingsPage views;
+    private final ExtensionSettingsGateway extensions;
+    private Optional<WorkspaceId> workspace = Optional.empty();
+    private SiteRegistrationDialog registration;
     private final SiteCredentialSettingsSection credentials;
     private final SiteAccountSettingsSection accounts;
     private final SiteLoginSettingsSection login;
@@ -23,6 +28,7 @@ final class SiteSettingsPage implements ManagedSettingsPage {
     private boolean accountsExpanded;
 
     SiteSettingsPage(CoreSettingsGateway core, ExtensionSettingsGateway extensions) {
+        this.extensions = extensions;
         views = new ViewSchemaSettingsPage(
                 BuiltinExtensionIds.SITE,
                 "网站会话",
@@ -39,7 +45,7 @@ final class SiteSettingsPage implements ManagedSettingsPage {
                         this::dirty,
                         this::pending,
                         this::discardDraft,
-                        this::manageCredentials,
+                        new SiteSettingsActions.Dialogs(this::registerAddress, this::manageCredentials),
                         this::selectedSite,
                         this::accountsExpanded),
                 accounts.content(),
@@ -48,12 +54,12 @@ final class SiteSettingsPage implements ManagedSettingsPage {
         views.onCommandSucceeded(this::commandSucceeded);
         views.onStateChanged(this::viewStateChanged);
         accounts.setContextGuard(
-                () -> views.dirty() || credentials.dirty(),
-                () -> views.pending() || credentials.pending() || login.pending(),
+                () -> views.dirty() || credentials.dirty() || registrationDirty(),
+                () -> views.pending() || credentials.pending() || login.pending() || registrationPending(),
                 views::confirmContextChange);
         login.setContextGuard(
-                () -> views.dirty() || accounts.dirty() || credentials.dirty(),
-                () -> views.pending() || accounts.pending() || credentials.pending());
+                () -> views.dirty() || accounts.dirty() || credentials.dirty() || registrationDirty(),
+                () -> views.pending() || accounts.pending() || credentials.pending() || registrationPending());
         accounts.setStateChanged(this::accountStateChanged);
         credentials.setStateChanged(this::viewStateChanged);
         login.onStateChanged(this::viewStateChanged);
@@ -81,6 +87,7 @@ final class SiteSettingsPage implements ManagedSettingsPage {
     @Override
     public void deactivate() {
         active = false;
+        disposeRegistration();
         credentialDialog.dispose();
         accounts.deactivate();
         login.deactivate();
@@ -99,6 +106,11 @@ final class SiteSettingsPage implements ManagedSettingsPage {
 
     @Override
     public void workspaceChanged(Optional<Workspace> workspace) {
+        Optional<WorkspaceId> next = workspace.map(Workspace::id);
+        if (!this.workspace.equals(next)) {
+            disposeRegistration();
+            this.workspace = next;
+        }
         credentialDialog.dispose();
         accounts.workspaceChanged(workspace);
         login.workspaceChanged(workspace);
@@ -107,6 +119,9 @@ final class SiteSettingsPage implements ManagedSettingsPage {
 
     @Override
     public void warnUnsavedChanges() {
+        if (registrationDirty()) {
+            registration.warnUnsavedChanges();
+        }
         if (accounts.dirty()) {
             accounts.warnUnsavedChanges();
         }
@@ -127,6 +142,7 @@ final class SiteSettingsPage implements ManagedSettingsPage {
     @Override
     public void dispose() {
         active = false;
+        disposeRegistration();
         credentialDialog.dispose();
         accounts.dispose();
         login.dispose();
@@ -134,14 +150,15 @@ final class SiteSettingsPage implements ManagedSettingsPage {
     }
 
     private boolean platformDirty() {
-        return accounts.dirty() || credentials.dirty() || login.dirty();
+        return accounts.dirty() || credentials.dirty() || login.dirty() || registrationDirty();
     }
 
     private boolean platformPending() {
-        return accounts.pending() || credentials.pending() || login.pending();
+        return accounts.pending() || credentials.pending() || login.pending() || registrationPending();
     }
 
     private void discardPlatformDrafts() {
+        disposeRegistration();
         credentials.discardDraft();
         accounts.discardDraft();
         login.discardDraft();
@@ -160,6 +177,42 @@ final class SiteSettingsPage implements ManagedSettingsPage {
         } else {
             accounts.deactivate();
             login.deactivate();
+        }
+    }
+
+    private boolean registrationDirty() {
+        return registration != null && registration.dirty();
+    }
+
+    private boolean registrationPending() {
+        return registration != null && registration.pending();
+    }
+
+    private void registerAddress() {
+        if (!active || workspace.isEmpty() || !views.confirmContextChange()) {
+            return;
+        }
+        WorkspaceId target = workspace.orElseThrow();
+        registration = new SiteRegistrationDialog(
+                extensions, target, result -> registrationCompleted(target, result), this::viewStateChanged);
+        registration.show(content());
+    }
+
+    private void registrationCompleted(WorkspaceId target, SiteRegistrationContracts.Completed result) {
+        if (active && workspace.filter(target::equals).isPresent()) {
+            registration = null;
+            accounts.invalidateCache();
+            login.invalidateCache();
+            layout.created();
+            views.selectSource("documents", Optional.of(result.siteId()));
+        }
+    }
+
+    private void disposeRegistration() {
+        SiteRegistrationDialog previous = registration;
+        registration = null;
+        if (previous != null) {
+            previous.dispose();
         }
     }
 

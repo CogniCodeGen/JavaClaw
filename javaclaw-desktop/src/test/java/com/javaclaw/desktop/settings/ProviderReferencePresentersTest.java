@@ -50,7 +50,7 @@ class ProviderReferencePresentersTest {
     }
 
     @Test
-    void 向量绑定忽略过期响应并呈现读取和写入失败() {
+    void 向量绑定忽略过期读取且未决写入拒绝重入并呈现失败() {
         TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
         ArrayDeque<CompletableFuture<Optional<EmbeddingBinding>>> loads = new ArrayDeque<>();
         CompletableFuture<Optional<EmbeddingBinding>> staleLoad = new CompletableFuture<>();
@@ -58,9 +58,9 @@ class ProviderReferencePresentersTest {
         loads.add(staleLoad);
         loads.add(failedLoad);
         ArrayDeque<CompletableFuture<EmbeddingBinding>> writes = new ArrayDeque<>();
-        CompletableFuture<EmbeddingBinding> staleWrite = new CompletableFuture<>();
+        CompletableFuture<EmbeddingBinding> firstWrite = new CompletableFuture<>();
         CompletableFuture<EmbeddingBinding> failedWrite = new CompletableFuture<>();
-        writes.add(staleWrite);
+        writes.add(firstWrite);
         writes.add(failedWrite);
         ProviderEmbeddingBindingPresenter presenter = new ProviderEmbeddingBindingPresenter(overrides(
                 gateway,
@@ -80,9 +80,16 @@ class ProviderReferencePresentersTest {
         ProviderModelSpec model = embedding.spec().models().getFirst();
         presenter.bind(embedding, model);
         presenter.bind(embedding, model);
-        staleWrite.complete(new EmbeddingBinding(reference(embedding, model.modelId()), 1, embedding.updatedAt()));
+        presenter.reload();
         assertTrue(presenter.state().pending());
+        assertTrue(presenter.state().saving());
+        assertEquals(1, writes.size(), "未决写入不能被另一个写入替换");
+        firstWrite.complete(new EmbeddingBinding(reference(embedding, model.modelId()), 1, embedding.updatedAt()));
+        assertFalse(presenter.state().pending());
+        assertFalse(presenter.state().saving());
+        presenter.bind(embedding, model);
         failedWrite.completeExceptionally(new IllegalStateException("binding update unavailable"));
+        assertFalse(presenter.state().saving());
         assertTrue(presenter.state().message().contains("默认向量模型更新失败"));
     }
 

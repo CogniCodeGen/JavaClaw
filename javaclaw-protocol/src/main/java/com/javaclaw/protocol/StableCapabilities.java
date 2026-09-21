@@ -19,6 +19,7 @@ public final class StableCapabilities {
             "core.security-grants",
             "core.typed-settings",
             ProviderContextRpcContracts.CAPABILITY,
+            ProviderConfigurationRpcContracts.CAPABILITY,
             "extension.job-supervisor",
             "extension.view-schema-v2");
     private static final Set<String> WITH_MCP = with(BASE, MCP_2026_07_28);

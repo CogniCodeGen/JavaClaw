@@ -10,16 +10,18 @@ import com.javaclaw.api.EmbeddingBinding;
  *
  * @param binding 当前精确绑定
  * @param pending 是否正在读取或写入
+ * @param saving 是否存在尚未收到回执的默认向量模型写入
  * @param message 状态或错误
  * @param epoch 请求代次
  */
-record ProviderEmbeddingBindingState(Optional<EmbeddingBinding> binding, boolean pending, String message, long epoch) {
+record ProviderEmbeddingBindingState(
+        Optional<EmbeddingBinding> binding, boolean pending, boolean saving, String message, long epoch) {
     ProviderEmbeddingBindingState {
         binding = Objects.requireNonNull(binding, "binding");
         message = Objects.requireNonNullElse(message, "");
     }
 
     static ProviderEmbeddingBindingState initial() {
-        return new ProviderEmbeddingBindingState(Optional.empty(), false, "", 0);
+        return new ProviderEmbeddingBindingState(Optional.empty(), false, false, "", 0);
     }
 }

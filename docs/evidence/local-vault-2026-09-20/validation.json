@@ -1,0 +1,458 @@
+{
+  "generatedAt": "2026-09-20T11:34:25.673127+00:00",
+  "scope": "本地 H2 主密钥存储；仅支持全新数据库，不升级旧库、不导入或访问系统钥匙串",
+  "platform": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "javaVersion": "25"
+  },
+  "commands": {
+    "mvn spotless:apply": "passed",
+    "mvn spotless:check checkstyle:check": "passed",
+    "mvn clean verify": "passed"
+  },
+  "focusedTests": {
+    "tests": 209,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 1
+  },
+  "fullVerifyFinished": "2026-09-20T19:34:05+08:00",
+  "fullVerifyDuration": "21:40 min",
+  "previousVerify": "主动中断以补充 H2 错误日志保护；最终从头重跑",
+  "logs": {
+    "format": "/tmp/javaclaw-local-vault-format.log",
+    "style": "/tmp/javaclaw-local-vault-style.log",
+    "focused": "/tmp/javaclaw-local-vault-focused.log",
+    "verify": "/tmp/javaclaw-local-vault-verify.log"
+  },
+  "oldCoreSqlUnchanged": true,
+  "oldCoreSqlSha256": {
+    "javaclaw-app-server/src/main/resources/db/core/V001__v6_baseline.sql": "a90d5cd6010ad472c2cf026e9e9a6f4d507a88167395ca7d663f098bf665fcef",
+    "javaclaw-app-server/src/main/resources/db/core/V001__v6_mcp.sql": "d6c2b3babf73355e02067d8a1966c6f53af6c42577b21adf5fbeb8686f8a99e1",
+    "javaclaw-app-server/src/main/resources/db/core/V003__v6_coding_execution.sql": "4c354df4ad1f925141da74e68af6c10aa657ebf86495e041d3982683cb09f2a8",
+    "javaclaw-app-server/src/main/resources/db/core/V001__v6_configuration.sql": "96e4b4b8f1316a81c96baa585437ce7c64c8c1be07ddc7733d886e054db4546c",
+    "javaclaw-app-server/src/main/resources/db/core/V001__v6_extensions.sql": "0e7b7e681476390651f7f581389b6973f969f303f2030861243eb29a7b4773f0",
+    "javaclaw-app-server/src/main/resources/db/core/V010__v6_system_commands.sql": "489d54a9173a3e3a4db6ec73be27404c18ea103bbb44d6a3472b4f37ed4d2a05",
+    "javaclaw-app-server/src/main/resources/db/core/V002__v6_context_runtime.sql": "b105776787c98b0c29d53f420b282c7fc7bda52eb2cffd5323940e7404fde5bc",
+    "javaclaw-app-server/src/main/resources/db/core/V006__v6_completion_evidence.sql": "87657d6f9db73cb61bbb4a5660e035f3c2c99eff302a78e668d6da23805d0ce8",
+    "javaclaw-app-server/src/main/resources/db/core/V009__v6_turn_continuation.sql": "45c8602f4a0b62275a48e3d063ff79bbf74eeca060441b1d268428880a057543",
+    "javaclaw-app-server/src/main/resources/db/core/V004__v6_command_stream.sql": "034d4960fb04a7cb8433f742f58a73c55d9edd6b1f52864019628fe3a7044540",
+    "javaclaw-app-server/src/main/resources/db/core/V005__v6_turn_stream.sql": "26ffbc43269207b6586590be6760f337f9504f39ead00dd6b5664f32746c9a98",
+    "javaclaw-app-server/src/main/resources/db/core/V008__v6_browser_grants.sql": "af4e049f66dd453d916c7fe04f4eaa724f64b3a2ac3df528b5e8bd9fe8fd1293",
+    "javaclaw-app-server/src/main/resources/db/core/V001__v6_collaboration.sql": "2d7d0e9ba9c3b015737066ddb69eb43b4b624e81e3c166ec7dcae5bce82bdd91",
+    "javaclaw-app-server/src/main/resources/db/core/V007__v6_job_cancellation.sql": "28cbc4cb3344556a0ccc75246c2c8a15562dc71408b3b31a853ed144a8bd1a78"
+  },
+  "totals": {
+    "tests": 3601,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 26
+  },
+  "modules": [
+    {
+      "module": "javaclaw-agent-runtime",
+      "tests": 52,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "coverage": {
+        "branch": {
+          "covered": 308,
+          "missed": 60
+        },
+        "line": {
+          "covered": 877,
+          "missed": 56
+        }
+      }
+    },
+    {
+      "module": "javaclaw-api",
+      "tests": 116,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "coverage": {
+        "branch": {
+          "covered": 985,
+          "missed": 204
+        },
+        "line": {
+          "covered": 2332,
+          "missed": 149
+        }
+      }
+    },
+    {
+      "module": "javaclaw-app-server",
+      "tests": 1356,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 6,
+      "coverage": {
+        "branch": {
+          "covered": 8994,
+          "missed": 2187
+        },
+        "line": {
+          "covered": 30020,
+          "missed": 2729
+        }
+      }
+    },
+    {
+      "module": "javaclaw-browser-service",
+      "tests": 108,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "coverage": {
+        "branch": {
+          "covered": 991,
+          "missed": 377
+        },
+        "line": {
+          "covered": 2806,
+          "missed": 536
+        }
+      }
+    },
+    {
+      "module": "javaclaw-builtin-contracts",
+      "tests": 108,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "coverage": {
+        "branch": {
+          "covered": 929,
+          "missed": 357
+        },
+        "line": {
+          "covered": 2461,
+          "missed": 545
+        }
+      }
+    },
+    {
+      "module": "javaclaw-builtin-extensions",
+      "tests": 235,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "coverage": {
+        "branch": {
+          "covered": 1755,
+          "missed": 664
+        },
+        "line": {
+          "covered": 8881,
+          "missed": 859
+        }
+      }
+    },
+    {
+      "module": "javaclaw-client",
+      "tests": 139,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "coverage": {
+        "branch": {
+          "covered": 597,
+          "missed": 240
+        },
+        "line": {
+          "covered": 2268,
+          "missed": 353
+        }
+      }
+    },
+    {
+      "module": "javaclaw-desktop",
+      "tests": 811,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "coverage": {
+        "branch": {
+          "covered": 7455,
+          "missed": 2442
+        },
+        "line": {
+          "covered": 22609,
+          "missed": 2761
+        }
+      }
+    },
+    {
+      "module": "javaclaw-extension-spi",
+      "tests": 68,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "coverage": {
+        "branch": {
+          "covered": 570,
+          "missed": 115
+        },
+        "line": {
+          "covered": 1304,
+          "missed": 69
+        }
+      }
+    },
+    {
+      "module": "javaclaw-knowledge-worker",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "coverage": {
+        "branch": {
+          "covered": 23,
+          "missed": 7
+        },
+        "line": {
+          "covered": 75,
+          "missed": 8
+        }
+      }
+    },
+    {
+      "module": "javaclaw-model-adapters",
+      "tests": 73,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "coverage": {
+        "branch": {
+          "covered": 432,
+          "missed": 150
+        },
+        "line": {
+          "covered": 1515,
+          "missed": 185
+        }
+      }
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "tests": 265,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 17,
+      "coverage": {
+        "branch": {
+          "covered": 1389,
+          "missed": 559
+        },
+        "line": {
+          "covered": 3772,
+          "missed": 894
+        }
+      }
+    },
+    {
+      "module": "javaclaw-packaging",
+      "tests": 98,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 3,
+      "coverage": {
+        "branch": {
+          "covered": 354,
+          "missed": 112
+        },
+        "line": {
+          "covered": 838,
+          "missed": 174
+        }
+      }
+    },
+    {
+      "module": "javaclaw-protocol",
+      "tests": 163,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "coverage": {
+        "branch": {
+          "covered": 683,
+          "missed": 145
+        },
+        "line": {
+          "covered": 2319,
+          "missed": 220
+        }
+      }
+    }
+  ],
+  "skippedTests": [
+    {
+      "module": "javaclaw-app-server",
+      "class": "com.javaclaw.server.coding.PublishedCodingHarnessTest",
+      "test": "同一会话聊天准备真实NPM依赖修改断网失败修复成功保留Diff再继续聊天"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "class": "com.javaclaw.server.LocalProviderAcceptanceTest",
+      "test": "本地兼容Provider贯通默认Profile对话Embedding记忆与Skill审核"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "class": "com.javaclaw.server.coding.PublishedToolchainArchiveTest",
+      "test": "真实归档通过流式解包完整性证据和目录入口校验"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "class": "com.javaclaw.server.coding.PublishedToolchainArchiveTest",
+      "test": "WindowsPython归档在任意宿主解包后同时满足Python和Pip真实入口"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "class": "com.javaclaw.server.coding.PublishedDependenciesPreparationTest",
+      "test": "nativePackageManagersPreparePublicDependenciesBeforeSeparateOfflineRuns"
+    },
+    {
+      "module": "javaclaw-app-server",
+      "class": "com.javaclaw.server.coding.PublishedCodingExecutionTest",
+      "test": "真实五类发行工具链在断网沙箱中执行并运行Gradle项目任务"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.sandbox.WindowsProxyIsolationTest",
+      "test": "realAppContainerAllowsOnlyExactProxyTcpAndClosesItsLease"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsWorkspaceDirectoryTest",
+      "test": "directoryCapabilityBlocksRenameAndCannotFollowInsertedJunction"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsWorkspaceDirectoryTest",
+      "test": "realNativeChannelRenamesWithoutReplacementCopiesAclAndDeletesByHandle"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsWorkspaceDirectoryTest",
+      "test": "independentChildRemainsOwnedAfterParentClosesAndTruncationIsDurable"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclLeaseTest",
+      "test": "anotherProcessWaitsUntilRestorationCompletesBeforeTakingSharedRootLease"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclLeaseTest",
+      "test": "deadHelperReleasesKernelLockButItsPendingMarkerPreventsSilentAclBaselineAdoption"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.sandbox.WindowsSandboxIntegrationTest",
+      "test": "targetExit73IsNotConfusedWithTrustedHelperRestorationFailure"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.sandbox.WindowsSandboxIntegrationTest",
+      "test": "conPtySupportsBackpressuredOutputResizeAndInput"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.sandbox.WindowsSandboxIntegrationTest",
+      "test": "appContainerAllowsDeclaredWriteButDeniesDeleteAndEnforcesWallTimeout"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.credential.SystemMasterKeyProtectorNativeTest",
+      "test": "currentUserCredentialFacilityStoresLoadsReplacesAndDeletesMasterKey"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclManagerTest",
+      "test": "failedRestoreEvidenceRetainsOriginalIdentityAndNeverOffersPathBasedRestore"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclManagerTest",
+      "test": "baselineIsDurableBeforeGrantAndOutlivesThreadScopeUntilAsynchronousRestore"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclManagerTest",
+      "test": "originalAclIsRestoredOnSameObjectBeforeRenameHandlesAreReleased"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.ffm.WindowsAclManagerTest",
+      "test": "laterGrantFailureRestoresEarlierAclAndReleasesAllAncestorPins"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.sandbox.LinuxProxyIsolationTest",
+      "test": "realNamespaceRelayAllowsProxyAndSeccompRejectsMountedHostUnixSocket"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.transport.WindowsNamedPipeIntegrationTest",
+      "test": "closeWakesPendingAcceptAndIsIdempotent"
+    },
+    {
+      "module": "javaclaw-native-hosts",
+      "class": "com.javaclaw.nativehost.transport.WindowsNamedPipeIntegrationTest",
+      "test": "exchangesFramedProtocolMessagesAndOwnsBothHandles"
+    },
+    {
+      "module": "javaclaw-packaging",
+      "class": "com.javaclaw.launcher.WindowsServerSupervisorTest",
+      "test": "reusesReachableCurrentUserPipeWithoutStartingProcess"
+    },
+    {
+      "module": "javaclaw-packaging",
+      "class": "com.javaclaw.release.BrowserNativeSandboxSmokeTest",
+      "test": "五平台Runner只在原生Sandbox登录和OAuth私有回调成功后分别发布能力"
+    },
+    {
+      "module": "javaclaw-packaging",
+      "class": "com.javaclaw.release.BrowserInteractiveNativeSmokeTest",
+      "test": "仅真实可见交互和跨租约页面保留成功后发布独立能力"
+    }
+  ],
+  "sourceSha256": {
+    "javaclaw-api/src/main/java/com/javaclaw/api/VaultLockReason.java": "66bc5ad01a5d9d1e4372c9cb5bee0b55832e5134783555decfb6c53420e84507",
+    "javaclaw-app-server/src/main/java/com/javaclaw/server/AppServerBootstrap.java": "3e04409d85bb6d779878c69ade6c34e20da87080b9ef9b5d39d498fade1d86db",
+    "javaclaw-app-server/src/main/java/com/javaclaw/server/PlatformFoundationFactory.java": "50ae65e238a2facbb528872e12bbd7a1f64fae2ba5ae388a68ba89c57574bb01",
+    "javaclaw-app-server/src/main/java/com/javaclaw/server/persistence/CoreMigrationRunner.java": "ca05da5a31b0abe54c6d306dc3a8556d02d4a11a009b91efbee426f5e9f909f2",
+    "javaclaw-app-server/src/main/java/com/javaclaw/server/persistence/H2Database.java": "af8c6340aba52a87f588d76ac7afe979ec69f6b5f4b626f4fe32a4102dc1783c",
+    "javaclaw-app-server/src/main/java/com/javaclaw/server/persistence/LocalVaultSchemaValidation.java": "8b35a70682aa240c7acb912837da3a000b77041be72df7d27ee825b5d76a6338",
+    "javaclaw-app-server/src/main/java/com/javaclaw/server/security/vault/DatabaseMasterKeyProtector.java": "a80428e63b5863bce07456e0a73f19809ef7e77a2e570e93231bb8f8d08057c2",
+    "javaclaw-app-server/src/main/java/com/javaclaw/server/security/vault/LocalMasterKeyRepository.java": "6c3e6706d8d71d36d8f5ce36b0f34d108653bdb5db476230c6cb4cafed7a7575",
+    "javaclaw-app-server/src/main/java/com/javaclaw/server/security/vault/SecretVaultService.java": "0dc711745b55f474d66fb47f7de07af41fb220a8b8f6e0bdeb9389e15cf55302",
+    "javaclaw-app-server/src/main/java/com/javaclaw/server/security/vault/VaultException.java": "f7357d005c9bffc630101f8cd136decc657cac9bb521bc57764d534458ad9c1a",
+    "javaclaw-app-server/src/main/java/com/javaclaw/server/security/vault/VaultKeyCleanup.java": "ff7da645b12fd623ea83407574160d59aeb14546864e3531af36db5851bfb6fe",
+    "javaclaw-app-server/src/main/resources/db/core/V011__v6_local_vault.sql": "81c51ec46f38e6b55fbea391d4134fae750b7bd444ff4c5b8ab6ad33deb9146e",
+    "javaclaw-app-server/src/test/java/com/javaclaw/server/LocalVaultFoundationTest.java": "01566e7028152bbe4126ff11221f5038b10d32a577c02e05f553893c9300e9c2",
+    "javaclaw-app-server/src/test/java/com/javaclaw/server/persistence/CodingSystemMigrationTest.java": "1bbcb8cc7ba9330bec1df66e2828894b11ead88a12901c5035746d5e1de5639c",
+    "javaclaw-app-server/src/test/java/com/javaclaw/server/persistence/CoreSchemaInitializerTest.java": "0542fe3ead1e54d90a0ffb643eb5ba5b17211e59732b704afbe91e4d49420a52",
+    "javaclaw-app-server/src/test/java/com/javaclaw/server/persistence/LocalVaultDatabaseInitializationTest.java": "6a5f02782361bed7aed6e249b5411cb2c885b74aa89fdfe0b0a875d76538ac19",
+    "javaclaw-app-server/src/test/java/com/javaclaw/server/persistence/LocalVaultMigrationTest.java": "7631cd45022c16233283fe22bf2350407d47cb3a0fd1c28b9fbc9d02b67189a1",
+    "javaclaw-app-server/src/test/java/com/javaclaw/server/security/vault/DatabaseMasterKeyProtectorTest.java": "e3dabf76957a1a60a406d50a91a6ba9ebad2ee7601c8e75b2201d19ea3c14465",
+    "javaclaw-app-server/src/test/java/com/javaclaw/server/security/vault/DatabaseVaultFixture.java": "2b487ee572b979be38a46cfe6caee488fb308033d62e376840f62b6e1a8ebc97",
+    "javaclaw-app-server/src/test/java/com/javaclaw/server/security/vault/DatabaseVaultPersistenceTest.java": "dc1f4d67eae5b7870646f4db34a52acebd35f7b2a93c90bd313e691c4d378ca7",
+    "javaclaw-app-server/src/test/java/com/javaclaw/server/security/vault/SecretVaultServiceTest.java": "d55cffb489136e3ab2dd666031cba16c19b2173b29428725ed648822cf9022ac",
+    "javaclaw-desktop/src/main/java/com/javaclaw/desktop/settings/ProviderVaultReadiness.java": "805c2d6187405af4d345b1a55415b6b012d116aa06cb72c04c76f23b95b01de8",
+    "javaclaw-desktop/src/main/java/com/javaclaw/desktop/settings/SettingsLabels.java": "e16c5baf2a84128f1e0fb4e9e711a3f21fe3b7c53e0fb57fcef11d30f4f2730d",
+    "javaclaw-desktop/src/main/java/com/javaclaw/desktop/settings/VaultSettingsPage.java": "b998c389529b70e9ee29b8fe4cd9c71bd00c1dfe91397eeb9f7dcc25c04fbb9c",
+    "javaclaw-desktop/src/main/java/com/javaclaw/desktop/settings/VaultSettingsPresenter.java": "b0886368e17d4d52ebdf75abdfcfb05358092ce9dc8c13b34daa6c7dfe10738e",
+    "javaclaw-native-hosts/src/main/java/com/javaclaw/nativehost/credential/MasterKeyProtector.java": "db9af8ddef8b7d32c1bc2a192d1c0ad1ee75a696c9ed92c161230dc2cbd01ed6"
+  },
+  "limitations": [
+    "仅在 macOS arm64、JDK 25 验证；其余目标 Runner 未验证。",
+    "没有升级或迁移用户数据库，没有调用付费模型。",
+    "主密钥与密文同库，数据库副本包含解密材料。",
+    "旧库及未完成 V011 的残缺新库拒绝启动，需新的空数据目录。"
+  ]
+}

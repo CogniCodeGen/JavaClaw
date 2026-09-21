@@ -238,6 +238,7 @@ public final class ProviderSettingsPresenter {
      * @param secret PasswordField 临时字符；无论提交与否，本方法返回前都会清零调用方数组
      */
     public void replaceSecret(char[] secret) {
+        char[] owned = null;
         try {
             ProviderEndpoint selected = requireSelected();
             if (state.dirty()) {
@@ -248,18 +249,23 @@ public final class ProviderSettingsPresenter {
                 failLocal(new IllegalArgumentException("密钥不能为空"));
                 return;
             }
+            owned = secret.clone();
             long credentialRevision = selected.spec().credential().isPresent()
                     ? state.credential()
                             .orElseThrow(() -> new IllegalStateException("密钥元数据尚未读取"))
                             .revision()
                     : 0;
-            publishSaving(credentialRevision == 0 ? "正在创建并绑定密钥…" : "正在原子轮换密钥…");
+            publishSaving(credentialRevision == 0 ? "正在检查密钥库并创建密钥…" : "正在检查密钥库并轮换密钥…");
             CommandOptions options = state.setupPhase() == ProviderSetupPhase.CREDENTIAL
                     ? ProviderSetupCommands.configureCredential(selected.id(), selected.revision(), credentialRevision)
                     : CommandOptions.create(selected.revision());
-            gateway.setProviderCredential(selected, credentialRevision, secret, options)
+            ProviderVaultReadiness.setCredential(gateway, selected, credentialRevision, owned, options)
                     .whenComplete(this::completeCredentialBinding);
+            owned = null;
         } finally {
+            if (owned != null) {
+                Arrays.fill(owned, '\0');
+            }
             if (secret != null) {
                 Arrays.fill(secret, '\0');
             }
@@ -425,9 +431,9 @@ public final class ProviderSettingsPresenter {
     private void loadCredential(long epoch, CredentialRef reference) {
         gateway.credential(reference).whenComplete((metadata, failure) -> {
             if (failure != null) {
-                publishCredential(epoch, Optional.empty(), "密钥元数据读取失败：" + SettingsFailures.message(failure));
+                publishCredential(epoch, Optional.empty(), "密钥状态读取失败，请检查连接后刷新。");
             } else {
-                publishCredential(epoch, metadata, metadata.isEmpty() ? "CredentialRef 已失效" : "");
+                publishCredential(epoch, metadata, metadata.isEmpty() ? "已存密钥不可用，请重新配置。" : "");
             }
         });
     }
@@ -454,7 +460,7 @@ public final class ProviderSettingsPresenter {
             publishFailure(failure);
             return;
         }
-        List<ProviderEndpoint> catalog = replace(state.providers(), endpoint);
+        List<ProviderEndpoint> catalog = ProviderCatalogRefresh.replace(state.providers(), endpoint);
         ProviderDraft draft = ProviderDraft.from(endpoint);
         publish(new ProviderSettingsState(
                 SettingsLoadState.READY,
@@ -493,7 +499,7 @@ public final class ProviderSettingsPresenter {
             publishFailure(failure);
             return;
         }
-        List<ProviderEndpoint> catalog = replace(state.providers(), binding.provider());
+        List<ProviderEndpoint> catalog = ProviderCatalogRefresh.replace(state.providers(), binding.provider());
         ProviderDraft draft = ProviderDraft.from(binding.provider());
         publish(new ProviderSettingsState(
                 SettingsLoadState.READY,
@@ -513,7 +519,7 @@ public final class ProviderSettingsPresenter {
             publishFailure(failure);
             return;
         }
-        List<ProviderEndpoint> catalog = replace(state.providers(), result.provider());
+        List<ProviderEndpoint> catalog = ProviderCatalogRefresh.replace(state.providers(), result.provider());
         ProviderDraft draft = ProviderDraft.from(result.provider());
         publish(new ProviderSettingsState(
                 SettingsLoadState.READY,
@@ -580,14 +586,6 @@ public final class ProviderSettingsPresenter {
             throw new IllegalArgumentException("模型服务标识只能包含字母、数字、点、下划线和连字符");
         }
         return normalized;
-    }
-
-    private static List<ProviderEndpoint> replace(List<ProviderEndpoint> current, ProviderEndpoint updated) {
-        java.util.ArrayList<ProviderEndpoint> result = new java.util.ArrayList<>(current);
-        result.removeIf(provider -> provider.id().equals(updated.id()));
-        result.add(updated);
-        result.sort(java.util.Comparator.comparing(ProviderEndpoint::id));
-        return List.copyOf(result);
     }
 
     private void publish(ProviderSettingsState next) {

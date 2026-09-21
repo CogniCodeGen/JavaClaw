@@ -117,12 +117,30 @@ Prompt 优化通过受预算的普通 Harness Turn 生成 Draft，发起前显�
 严格 UTF-8 TOML、单文件最多 1 MiB、显示差异与摘要；未知模型必须明确映射，不监听文件或自动覆盖运行时配置。
 Codex portable 只导出允许的可移植字段，JavaClaw lossless 保留受控扩展；运行权威仍在 H2，文件不是第二配置源。
 
-模型目录发现只能读取已保存的精确 Provider revision，不执行推理，也不持久化远端结果。它通过 session-owned 的
-`provider/model/discovery/start|read|cancel` 操作提供最长 30 秒、最多 1000 条的有界读取；页面、RPC session 或服务关闭
-会取消真实 HTTP 调用，所有 redirect 均被拒绝。`API_KEY` 自定义地址只允许 HTTPS 或显式 loopback HTTP；`NONE` 仅允许
-自定义 OpenAI-compatible 地址且不得绑定 CredentialRef。首次配置按“禁用连接壳、凭据、模型用途、启用”四步恢复，
-使用不含 Secret 的确定性幂等键，已有不同内容的相同 ID 不会被覆盖。厂商 SDK 与目录解析留在
-`javaclaw-model-adapters`，App Server 只负责有界协调和安全校验，Desktop 仍通过 SDK 使用。
+已保存目录发现 `provider/model/discovery/start|read|cancel` 仍只读取精确 Provider revision，不执行推理或持久化远端结果。
+新增 `core.provider-configuration.v1` 能力提供 `provider/model/preview/start|read|cancel` 草稿读取：连接草稿、编辑来源双版本
+和明确的 KEEP/REPLACE/CLEAR 意图构成请求。已有密钥由服务端根据精确来源解析，不接受客户端任意 CredentialRef；
+临时密钥仅用于本操作，清零后关闭。草稿不伪造 Provider 版本，不写数据库、Vault 或运行时注册表。
+Provider 业务只依赖只读 `ProviderModelPreviewCredentialPort`，由 Vault 实现包适配；凭据版本核对与材料读取在同一
+Vault 锁内完成。Provider 业务包不依赖 Vault 实现包，网络调用仍在 Provider 与 Vault 锁外执行。
+两类读取共用全局 64、每 session 4 的容量账本，保持最长 30 秒、最多 1000 条、网络请求次数和响应大小限制；
+终态保留期间仍占额度，页面、RPC session 或服务关闭会取消真实 HTTP 调用。全部 redirect 被拒绝；`API_KEY` 自定义地址
+只允许 HTTPS 或显式 loopback HTTP；`NONE` 仅允许自定义 OpenAI-compatible 地址。厂商 SDK 与目录解析留在
+`javaclaw-model-adapters`，App Server 负责有界协调，Desktop 只通过 Presenter 和 SDK 使用业务接口。
+
+`provider/configuration/save` 原子提交完整连接、模型、启停状态和凭据意图。新建期望版本为 0，编辑校验 Provider 与
+Credential 两个期望版本；保留密钥时在 Provider → Vault 锁顺序下核验凭据版本并提交。候选 Adapter 继续在事务前准备，
+Vault 变更、Provider 新版本、容量继承和 `COMMAND_RESULT` 回执同事务提交后才激活；失败释放候选，保留旧版本。
+`provider/configuration/result` 只按原方法、幂等键、期望版本和请求摘要查询已有回执表，不新增表。
+SDK 为最终提交冻结完整密文请求与身份，预览和保存采用独立密封用途，维持一次性 envelope 反重放。
+结果不明时只能查原回执；未找到仍是未知，不能自动重新密封另发保存。旧 Provider RPC/DTO 和分阶段接口保持原语义。
+
+Desktop 的两步配置弹窗只在最后保存写入；搜索、刷新和返回连接页保留模型属性与用户选择。临时秘密由工作流可清零缓冲区
+持有，保存、取消、关闭或会话失效时清理；普通状态和日志不承载秘密。提交期间锁定上下文，取消/关闭/Esc 共用草稿保护。
+保存仅刷新并选中列表服务，不调用 useModel 或静默升级已有对话的精确引用；未知用途必须显式选择。
+模型列表只承担名称/ID 搜索及勾选，下方详情绑定同一选择草稿，手动添加默认折叠。保存成功进入只读结果页，显示真实
+模型数量与启停状态，并提供关闭及 Esc；不再次提交。明确失败保留原始原因，秘密已清理时返回连接页补录；旧目录回执
+不能覆盖保存失败状态。这些交互属于 Desktop Provider 业务，仍使用既有 SDK 命令与回执，不新增框架机制或服务端接口。
 
 内置 Role 文本有固定公开源码 commit、原文 SHA-256、模板 SHA-256 和改编说明，见
 [Prompt 来源](prompt-provenance.md)。角色名称不证明源仓库存在相同正文；空模板不作为已实现行为证据。
@@ -133,12 +151,18 @@ Codex portable 只导出允许的可移植字段，JavaClaw lossless 保留受�
 候选构造或 H2 提交失败时活动 Adapter 与原 revision 保持不变；提交后的激活或清理异常不能回滚 H2，运行时必须保持
 fail closed 并交由下一次权威重建恢复。
 
-Secret Vault 在 H2 中只保存 AES-256-GCM 密文、随机 nonce、版本和元数据；AAD 绑定版本域、namespace、opaque
-CredentialRef ID 与 Secret revision。主密钥由 macOS Keychain、Windows 系统凭据设施或 Linux Secret Service 封装。
+Secret Vault 的凭据记录在 H2 中保存 AES-256-GCM 密文、随机 nonce、版本和元数据；AAD 绑定版本域、namespace、opaque
+CredentialRef ID 与 Secret revision。生产主密钥由同一 H2 数据库的本地存储端口保存，不访问系统钥匙串。
+本地存储仅支持新建数据库及其后续重启；生产组合根在初始化前只读检查已有库，旧版本明确拒绝，不执行升级或凭据导入。
+新库通过既有建表机制应用 V011 本地主密钥表；历史 SQL/checksum 和通用 schema 执行器保持原语义，不增加迁移状态表。
+主密钥与密文位于同一数据库，完整数据库副本包含解密材料；保密边界依赖现有私有数据目录、文件权限与备份访问控制。
+H2 连接关闭原始文件和终端 SQL 跟踪，避免驱动错误消息包含主密钥字节；后端只向上层抛出不带底层异常链的脱敏失败。
+本地主密钥缺失时保持锁定，不回退系统或静默生成替代密钥。主密钥轮换仍先准备候选，再原子提交密文、活动指针和幂等回执，
+最后清理本地旧主密钥。测试与健康检查的显式保护器注入保持原语义。
 连接初始化协商会话级 X25519 公钥，PasswordField 内容必须密封后才进入 JSON-RPC。面向 SDK/RPC 的管理 API 只能写入、
 轮换、清除和查看“已配置”状态，不提供读取、复制或导出；服务端只在受控 callback 中解封。Vault 变化串行化，并在
 修改前关闭运行时 epoch gate；调用取得 Adapter lease 后仍要复核 epoch，防止旧 generation 在并发变化中重新进入。
-运行时重建失败时 gate 保持关闭。系统凭据设施不可用时进入 `VaultState.LOCKED` 并 fail closed。
+运行时重建失败时 gate 保持关闭。主密钥存储不可用时进入 `VaultState.LOCKED` 并 fail closed。既有 `SYSTEM_CREDENTIAL_UNAVAILABLE` 线协议标识保留，表示主密钥持久化端口不可用。
 
 ## 5. 模型边界
 

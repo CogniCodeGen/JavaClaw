@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -58,6 +59,15 @@ final class LocalDiscoveryServer implements AutoCloseable {
     static LocalDiscoveryServer sequence(List<String> jsonPages) throws IOException {
         return new LocalDiscoveryServer(
                 jsonPages.stream().map(page -> Response.json(page, false)).toList());
+    }
+
+    static LocalDiscoveryServer failure(int status) throws IOException {
+        byte[] body = "{\"error\":{\"message\":\"secret remote detail\"}}".getBytes(StandardCharsets.UTF_8);
+        return new LocalDiscoveryServer(List.of(new Response(
+                Integer.toString(status),
+                List.of("Content-Type: application/json", "Content-Length: " + body.length),
+                body,
+                false)));
     }
 
     static LocalDiscoveryServer blocking() throws IOException {
@@ -111,6 +121,14 @@ final class LocalDiscoveryServer implements AutoCloseable {
     boolean authorizationPresent(int index) {
         return headers.get(index).stream()
                 .anyMatch(line -> line.toLowerCase(Locale.ROOT).startsWith("authorization:"));
+    }
+
+    Optional<String> header(int index, String name) {
+        String prefix = name.toLowerCase(Locale.ROOT) + ":";
+        return headers.get(index).stream()
+                .filter(line -> line.toLowerCase(Locale.ROOT).startsWith(prefix))
+                .map(line -> line.substring(prefix.length()).strip())
+                .findFirst();
     }
 
     boolean awaitPeerClosed() throws InterruptedException {

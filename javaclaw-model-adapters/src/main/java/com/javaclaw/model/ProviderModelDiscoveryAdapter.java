@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 
@@ -25,9 +26,11 @@ import com.javaclaw.api.CancellationToken;
 import com.javaclaw.api.ProviderAdapter;
 import com.javaclaw.api.ProviderAdapterOptions;
 import com.javaclaw.api.ProviderAuthentication;
+import com.javaclaw.api.ProviderConnectionSpec;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderModelDiscoveryCandidate;
 import com.javaclaw.api.ProviderModelDiscoveryResult;
+import com.javaclaw.api.ProviderModelPreviewResult;
 import com.javaclaw.api.ProviderModelPurpose;
 
 /** 使用厂商官方 SDK 读取模型元数据，不执行推理。 */
@@ -62,7 +65,7 @@ public final class ProviderModelDiscoveryAdapter {
         checkedCancellation.throwIfCancelled();
         DiscoveryPage page;
         if (checked.spec().authentication() == ProviderAuthentication.NONE) {
-            page = discover(checked, new char[0], checkedCancellation);
+            page = discover(ProviderConnectionSpec.from(checked.spec()), new char[0], checkedCancellation);
         } else {
             CredentialMaterial material = checked.spec()
                     .credential()
@@ -71,7 +74,7 @@ public final class ProviderModelDiscoveryAdapter {
             try (material) {
                 char[] secret = material.copy();
                 try {
-                    page = discover(checked, secret, checkedCancellation);
+                    page = discover(ProviderConnectionSpec.from(checked.spec()), secret, checkedCancellation);
                 } finally {
                     Arrays.fill(secret, '\0');
                 }
@@ -81,20 +84,57 @@ public final class ProviderModelDiscoveryAdapter {
                 checked.id(), checked.revision(), page.candidates(), page.truncated(), clock.instant());
     }
 
-    private DiscoveryPage discover(ProviderEndpoint endpoint, char[] secret, CancellationToken cancellation) {
-        return switch (endpoint.spec().adapter()) {
-            case OPENAI_COMPATIBLE, OPENAI_RESPONSES -> openAi(endpoint, secret, cancellation);
-            case ANTHROPIC -> anthropic(endpoint, secret, cancellation);
-            case GOOGLE_GENAI -> google(endpoint, secret, cancellation);
+    /**
+     * 直接读取连接草稿目录，不建立或伪造持久化 Provider。
+     *
+     * <p>材料所有权属于调用方；本方法仅借用并清零其独立副本。临时结果不包含凭据、服务端响应正文或已保存版本引用。
+     *
+     * @param draftId 客户端草稿标识
+     * @param generation 草稿代次
+     * @param connection 已校验的连接配置
+     * @param material API Key 材料；无鉴权时必须为空
+     * @param cancellation 协作式取消信号
+     * @return 最多 1000 条的临时候选
+     */
+    public ProviderModelPreviewResult preview(
+            String draftId,
+            long generation,
+            ProviderConnectionSpec connection,
+            Optional<CredentialMaterial> material,
+            CancellationToken cancellation) {
+        Objects.requireNonNull(connection, "connection");
+        Objects.requireNonNull(material, "material");
+        Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
+        if ((connection.authentication() == ProviderAuthentication.API_KEY) != material.isPresent()) {
+            throw new IllegalArgumentException("preview credential does not match authentication");
+        }
+        char[] secret = material.map(CredentialMaterial::copy).orElseGet(() -> new char[0]);
+        try {
+            DiscoveryPage page = discover(connection, secret, cancellation);
+            return new ProviderModelPreviewResult(
+                    draftId, generation, page.candidates(), page.truncated(), clock.instant());
+        } catch (RuntimeException failure) {
+            cancellation.throwIfCancelled();
+            throw ProviderModelPreviewException.classify(failure);
+        } finally {
+            Arrays.fill(secret, '\0');
+        }
+    }
+
+    private DiscoveryPage discover(ProviderConnectionSpec connection, char[] secret, CancellationToken cancellation) {
+        return switch (connection.adapter()) {
+            case OPENAI_COMPATIBLE, OPENAI_RESPONSES -> openAi(connection, secret, cancellation);
+            case ANTHROPIC -> anthropic(connection, secret, cancellation);
+            case GOOGLE_GENAI -> google(connection, secret, cancellation);
         };
     }
 
-    private DiscoveryPage openAi(ProviderEndpoint endpoint, char[] secret, CancellationToken cancellation) {
-        Duration timeout = discoveryTimeout(endpoint);
-        OpenAiDiscoveryOptions options = openAiOptions(endpoint.spec().options());
+    private DiscoveryPage openAi(ProviderConnectionSpec connection, char[] secret, CancellationToken cancellation) {
+        Duration timeout = discoveryTimeout(connection);
+        OpenAiDiscoveryOptions options = openAiOptions(connection.options());
         OpenAIClient client = OpenAiSdkClientFactory.discovery(
-                endpoint.spec().baseUri(),
-                endpoint.spec().authentication(),
+                connection.baseUri(),
+                connection.authentication(),
                 options.organization(),
                 options.project(),
                 timeout,
@@ -102,7 +142,7 @@ public final class ProviderModelDiscoveryAdapter {
                 cancellation);
         try {
             List<com.openai.models.models.Model> models = client.models().list().data();
-            Set<ProviderModelPurpose> purposes = endpoint.spec().adapter() == ProviderAdapter.OPENAI_RESPONSES
+            Set<ProviderModelPurpose> purposes = connection.adapter() == ProviderAdapter.OPENAI_RESPONSES
                     ? Set.of(ProviderModelPurpose.CHAT)
                     : Set.of();
             LinkedHashMap<String, ProviderModelDiscoveryCandidate> candidates = new LinkedHashMap<>();
@@ -119,16 +159,16 @@ public final class ProviderModelDiscoveryAdapter {
         }
     }
 
-    private DiscoveryPage anthropic(ProviderEndpoint endpoint, char[] secret, CancellationToken cancellation) {
-        String baseUrl = endpoint.spec().baseUri().map(Object::toString).orElse("https://api.anthropic.com");
+    private DiscoveryPage anthropic(ProviderConnectionSpec connection, char[] secret, CancellationToken cancellation) {
+        String baseUrl = connection.baseUri().map(Object::toString).orElse("https://api.anthropic.com");
         com.anthropic.core.http.HttpClient transport =
-                DiscoveryHttpClients.anthropic(discoveryTimeout(endpoint), baseUrl, cancellation);
+                DiscoveryHttpClients.anthropic(discoveryTimeout(connection), baseUrl, cancellation);
         AnthropicOkHttpClient.Builder builder = AnthropicOkHttpClient.builder()
                 .apiKey(requiredSecret(secret))
                 .addInterceptor(ignored -> transport)
-                .timeout(discoveryTimeout(endpoint))
+                .timeout(discoveryTimeout(connection))
                 .maxRetries(0);
-        endpoint.spec().baseUri().ifPresent(uri -> builder.baseUrl(uri.toString()));
+        connection.baseUri().ifPresent(uri -> builder.baseUrl(uri.toString()));
         AnthropicClient client = builder.build();
         try {
             var page = client.models()
@@ -164,14 +204,13 @@ public final class ProviderModelDiscoveryAdapter {
         }
     }
 
-    private DiscoveryPage google(ProviderEndpoint endpoint, char[] secret, CancellationToken cancellation) {
-        ProviderAdapterOptions.GoogleGenAi options =
-                googleOptions(endpoint.spec().options());
+    private DiscoveryPage google(ProviderConnectionSpec connection, char[] secret, CancellationToken cancellation) {
+        ProviderAdapterOptions.GoogleGenAi options = googleOptions(connection.options());
         HttpOptions.Builder http = HttpOptions.builder()
-                .timeout(Math.toIntExact(discoveryTimeout(endpoint).toMillis()));
-        endpoint.spec().baseUri().ifPresent(uri -> http.baseUrl(uri.toString()));
+                .timeout(Math.toIntExact(discoveryTimeout(connection).toMillis()));
+        connection.baseUri().ifPresent(uri -> http.baseUrl(uri.toString()));
         options.apiVersion().ifPresent(http::apiVersion);
-        okhttp3.OkHttpClient httpClient = DiscoveryHttpClients.google(discoveryTimeout(endpoint), cancellation);
+        okhttp3.OkHttpClient httpClient = DiscoveryHttpClients.google(discoveryTimeout(connection), cancellation);
         com.google.genai.types.ClientOptions clientOptions = com.google.genai.types.ClientOptions.builder()
                 .customHttpClient(httpClient)
                 .build();
@@ -257,9 +296,11 @@ public final class ProviderModelDiscoveryAdapter {
     }
 
     static Duration discoveryTimeout(ProviderEndpoint endpoint) {
-        return endpoint.spec().timeout().compareTo(MAXIMUM_TIMEOUT) < 0
-                ? endpoint.spec().timeout()
-                : MAXIMUM_TIMEOUT;
+        return discoveryTimeout(ProviderConnectionSpec.from(endpoint.spec()));
+    }
+
+    private static Duration discoveryTimeout(ProviderConnectionSpec connection) {
+        return connection.timeout().compareTo(MAXIMUM_TIMEOUT) < 0 ? connection.timeout() : MAXIMUM_TIMEOUT;
     }
 
     private static String requiredSecret(char[] secret) {

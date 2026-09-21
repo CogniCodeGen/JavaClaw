@@ -12,10 +12,15 @@ public interface BrowserRegistrationPort {
      * @param cancellation 启动取消信号
      * @return 已打开的脱敏会话
      */
-    SiteRegistrationContracts.WorkerStatus begin(SiteRegistrationContracts.WorkerTask task,
-            InteractiveBrowserNetworkExchange network, CancellationToken cancellation);
+    SiteRegistrationContracts.WorkerStatus begin(
+            SiteRegistrationContracts.WorkerTask task,
+            InteractiveBrowserNetworkExchange network,
+            CancellationToken cancellation);
 
-    /** @param sessionId 登记身份 @return 实际向 Worker 查询的当前状态，不使用页面缓存代替 */
+    /**
+     * @param sessionId 登记身份
+     * @return 实际向 Worker 查询的当前状态，不使用页面缓存代替
+     */
     SiteRegistrationContracts.WorkerStatus status(String sessionId);
 
     /**
@@ -24,8 +29,8 @@ public interface BrowserRegistrationPort {
      * @param cancellation 更新取消信号
      * @return Worker 确认的当前授权与页面
      */
-    SiteRegistrationContracts.WorkerStatus updateLease(String sessionId, BrowserContracts.AccessLease lease,
-            CancellationToken cancellation);
+    SiteRegistrationContracts.WorkerStatus updateLease(
+            String sessionId, BrowserContracts.AccessLease lease, CancellationToken cancellation);
 
     /**
      * @param sessionId 登记身份
@@ -34,9 +39,12 @@ public interface BrowserRegistrationPort {
      * @param <T> 非敏感回执类型
      * @return 一次回调的结果；失败不自动重放，完成后回收进程树
      */
-    <T> T complete(String sessionId, SiteRegistrationContracts.CompleteRequest request,
-            BrowserRegistrationHandler<T> handler);
+    <T> T complete(
+            String sessionId, SiteRegistrationContracts.CompleteRequest request, BrowserRegistrationHandler<T> handler);
 
-    /** @param sessionId 登记身份 @return 已取消的状态；终止进程树并丢弃全部临时秘密 */
+    /**
+     * @param sessionId 登记身份
+     * @return 已取消的状态；终止进程树并丢弃全部临时秘密
+     */
     SiteRegistrationContracts.WorkerStatus cancel(String sessionId);
 }

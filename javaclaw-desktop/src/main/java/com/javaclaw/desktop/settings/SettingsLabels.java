@@ -254,7 +254,7 @@ final class SettingsLabels {
     static String vaultLockReason(VaultLockReason value) {
         return switch (value) {
             case NONE -> "无";
-            case SYSTEM_CREDENTIAL_UNAVAILABLE -> "系统凭据服务不可用";
+            case SYSTEM_CREDENTIAL_UNAVAILABLE -> "主密钥存储不可用";
             case MASTER_KEY_MISSING -> "找不到主密钥";
             case MASTER_KEY_INVALID -> "主密钥无效或无法解锁";
             case CLOSED -> "密钥库已关闭";

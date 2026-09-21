@@ -7,7 +7,7 @@ import com.javaclaw.nativehost.credential.MasterKeyProtectionException;
 import com.javaclaw.nativehost.credential.MasterKeyProtector;
 import com.javaclaw.server.persistence.H2Transactions;
 
-/** 清理无引用主密钥以及轮换后已退役的主密钥包装。 */
+/** 清理无引用主密钥以及轮换后已退役的持久化主密钥。 */
 final class VaultKeyCleanup {
     private VaultKeyCleanup() {}
 

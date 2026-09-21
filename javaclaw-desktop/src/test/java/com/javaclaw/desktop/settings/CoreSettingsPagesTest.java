@@ -35,8 +35,6 @@ import com.javaclaw.api.ApprovalRequirement;
 import com.javaclaw.api.CanonicalPayload;
 import com.javaclaw.api.CoreTools;
 import com.javaclaw.api.PrivateNetworkPurpose;
-import com.javaclaw.api.ProviderAdapter;
-import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderLifecycle;
 import com.javaclaw.api.ToolIdentity;
 import com.javaclaw.api.ToolRisk;
@@ -55,68 +53,41 @@ import com.javaclaw.desktop.FxTestSupport;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CoreSettingsPagesTest {
     @Test
-    void provider页完成配置Secret探测与归档闭环() {
+    void provider页统一配置后选中精确结果并保留探测归档独立入口() {
         FxTestSupport.run(() -> {
-            TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
+            ProviderConfigurationTestGateway gateway = new ProviderConfigurationTestGateway();
             ProviderSettingsPage page = new ProviderSettingsPage(gateway);
             Parent root = attach(page);
-
-            assertTrue(button(root, "手工添加模型").isDisabled());
-            createProviderThroughWizard(root, gateway);
-            assertEquals(2, gateway.providers.size());
-            assertFalse(page.dirty());
-            assertEquals(ProviderLifecycle.ACTIVE, gateway.providers.getLast().lifecycle());
-            assertEquals(1, gateway.providerCredentialSetCalls);
-            assertEquals(
-                    "initial-chat-model",
-                    gateway.providers.getLast().spec().models().getFirst().modelId());
-            nodes(root, ListView.class).stream()
-                    .filter(list -> list.getItems().contains(gateway.providers.getLast()))
-                    .findFirst()
-                    .orElseThrow()
-                    .getSelectionModel()
-                    .selectLast();
-            assertTrue(labels(root).stream().anyMatch(value -> value.startsWith("provider-")));
-            assertTrue(labels(root).contains("已安全配置"));
-            fieldByPrompt(root, "用户可见名称").setText("Secondary");
-            combo(root, ProviderAdapter.class).setValue(ProviderAdapter.OPENAI_COMPATIBLE);
-            fieldByPrompt(root, "官方默认地址可留空；自定义地址必须是 HTTP(S)").setText("https://secondary.example.test/v1");
-            button(root, "保存模型服务").fire();
-            assertFalse(page.dirty());
-            ProviderEndpoint saved = gateway.providers.getLast();
-            assertEquals("Secondary", saved.spec().displayName());
-            assertEquals(
-                    URI.create("https://secondary.example.test/v1"),
-                    saved.spec().baseUri().orElseThrow());
-            button(root, "轮换").fire();
-            PasswordField secret = password(root, "providerSecretInput");
-            assertTrue(secret.getText().isEmpty());
-            secret.setText("temporary-secret");
-            button(root, "写入密钥").fire();
-            assertEquals(2, gateway.providerCredentialSetCalls);
-            assertTrue(secret.getText().isEmpty());
-            assertTrue(labels(root).contains("已安全配置"));
-            assertFalse(button(root, "手工添加模型").isDisabled());
-            completeModelDialog("chat-model", "Chat Model");
-            button(root, "手工添加模型").fire();
-            combo(root, ProviderLifecycle.class).setValue(ProviderLifecycle.ACTIVE);
-            button(root, "保存模型服务").fire();
-            button(root, "本地检查").fire();
-            assertTrue(labels(root).stream().anyMatch(value -> value.contains("可以使用")));
-
-            fieldByPrompt(root, "60").setText("not-a-number");
-            button(root, "保存模型服务").fire();
-            assertTrue(page.dirty());
-            button(root, "放弃更改").fire();
-            button(root, "清除").fire();
-            assertEquals(1, gateway.providerCredentialClearCalls);
-            confirmNextDangerDialog("归档当前模型服务");
-            button(root, "归档当前模型服务").fire();
-            assertEquals(ProviderLifecycle.ARCHIVED, gateway.providers.getLast().lifecycle());
+            try {
+                createProviderThroughEditor(root, gateway);
+                assertEquals(2, gateway.providers.size());
+                assertFalse(page.dirty());
+                assertEquals(
+                        ProviderLifecycle.ACTIVE, gateway.providers.getLast().lifecycle());
+                assertEquals(0, gateway.providerCredentialSetCalls);
+                assertEquals(1, gateway.saved.size());
+                assertEquals(0, gateway.uses);
+                assertEquals(
+                        "initial-chat-model",
+                        gateway.providers.getLast().spec().models().getFirst().modelId());
+                var services = (ListView<?>) root.lookup("#providerServicesList");
+                assertEquals(
+                        gateway.providers.getLast(),
+                        services.getSelectionModel().getSelectedItem());
+                button(root, "本地检查").fire();
+                assertTrue(labels(root).stream().anyMatch(value -> value.contains("可以使用")));
+                confirmNextDangerDialog("归档当前模型服务");
+                button(root, "归档当前模型服务").fire();
+                assertEquals(
+                        ProviderLifecycle.ARCHIVED, gateway.providers.getLast().lifecycle());
+            } finally {
+                page.dispose();
+            }
         });
     }
 
@@ -397,27 +368,21 @@ class CoreSettingsPagesTest {
         return root;
     }
 
-    private static void createProviderThroughWizard(Parent root, TestCoreSettingsGateway gateway) {
-        button(root, "添加模型").fire();
-        Window window = Window.getWindows().stream()
-                .filter(value -> value.getScene().lookup("#providerWizardAddress") != null)
-                .findFirst()
-                .orElseThrow();
-        Parent wizard = window.getScene().getRoot();
-        try {
-            ((TextField) wizard.lookup("#providerWizardAddress")).setText("https://initial.example.test/v1");
-            PasswordField secret = (PasswordField) wizard.lookup("#providerWizardSecret");
-            secret.setText("initial-secret");
-            ((Button) wizard.lookup("#providerWizardContinue")).fire();
-            assertEquals(ProviderLifecycle.DISABLED, gateway.lastProviderCreateLifecycle);
-            assertTrue(secret.getText().isEmpty());
-            ((TextField) wizard.lookup("#providerWizardManualModel")).setText("initial-chat-model");
-            ((Button) wizard.lookup("#providerWizardAddManual")).fire();
-            ((Button) wizard.lookup("#providerWizardSaveOnly")).fire();
-            assertFalse(window.isShowing());
-        } finally {
-            window.hide();
-        }
+    private static void createProviderThroughEditor(Parent root, ProviderConfigurationTestGateway gateway) {
+        button(root, "添加服务").fire();
+        root.applyCss();
+        root.layout();
+        assertTrue(root.lookup("#providerConfigurationEditor") != null);
+        ((TextField) root.lookup("#providerWizardAddress")).setText("https://initial.example.test/v1");
+        PasswordField secret = (PasswordField) root.lookup("#providerWizardSecret");
+        secret.setText("initial-secret");
+        ((Button) root.lookup("#providerWizardDiscoverModels")).fire();
+        assertEquals(1, gateway.previews.size());
+        assertEquals(0, gateway.saved.size());
+        assertTrue(secret.getText().isEmpty());
+        ProviderSetupWizardFxTest.manual(root, "initial-chat-model");
+        ((Button) root.lookup("#providerConfigurationSave")).fire();
+        assertNull(root.lookup("#providerConfigurationEditor"));
     }
 
     private static void confirmNextDangerDialog(String actionLabel) {
@@ -433,34 +398,6 @@ class CoreSettingsPagesTest {
                 .filter(button -> actionLabel.equals(button.getText()))
                 .findFirst()
                 .ifPresent(Button::fire));
-    }
-
-    private static void completeModelDialog(String modelId, String displayName) {
-        Platform.runLater(() -> Window.getWindows().stream()
-                .map(Window::getScene)
-                .filter(Objects::nonNull)
-                .map(Scene::getRoot)
-                .filter(DialogPane.class::isInstance)
-                .map(DialogPane.class::cast)
-                .findFirst()
-                .ifPresent(dialog -> {
-                    setLabeledText(dialog, "真实模型 ID", modelId);
-                    setLabeledText(dialog, "显示名称", displayName);
-                    ((Button) dialog.lookupButton(javafx.scene.control.ButtonType.OK)).fire();
-                }));
-    }
-
-    private static void setLabeledText(DialogPane dialog, String label, String value) {
-        dialog.lookupAll(".label").stream()
-                .filter(Label.class::isInstance)
-                .map(Label.class::cast)
-                .filter(candidate -> label.equals(candidate.getText()))
-                .map(Label::getLabelFor)
-                .filter(TextField.class::isInstance)
-                .map(TextField.class::cast)
-                .findFirst()
-                .orElseThrow()
-                .setText(value);
     }
 
     @SuppressWarnings("unchecked")

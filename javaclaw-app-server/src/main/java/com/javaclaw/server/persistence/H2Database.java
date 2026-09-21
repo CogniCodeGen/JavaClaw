@@ -21,7 +21,7 @@ import com.javaclaw.nativehost.ManagedRuntimeDirectory;
  */
 public final class H2Database {
     /** 当前 data-v6 Core schema 版本。 */
-    public static final int CORE_SCHEMA_VERSION = 10;
+    public static final int CORE_SCHEMA_VERSION = 11;
 
     private static final List<String> DATABASE_FILES = List.of(
             "javaclaw.mv.db",
@@ -33,6 +33,7 @@ public final class H2Database {
             "javaclaw.mv.db.newFile",
             "javaclaw.mv.db.tempFile",
             "javaclaw.h2.db");
+    private static final String LOCAL_VAULT_REQUIRED = "当前版本仅支持全新创建的本地密钥数据库，不升级旧数据库；请使用新的空 data-v6 目录。";
 
     private final Path dataRoot;
     private final String jdbcUrl;
@@ -50,8 +51,10 @@ public final class H2Database {
             throw new IllegalArgumentException("data root must end with data-v6");
         }
         this.dataRoot = normalized;
+        // 主密钥同库保存后，驱动错误也可能包含绑定值；关闭原始 SQL 跟踪，诊断只走服务端脱敏异常。
         jdbcUrl = "jdbc:h2:file:" + normalized.resolve("javaclaw").toString()
-                + ";AUTO_SERVER=FALSE;DB_CLOSE_ON_EXIT=FALSE;LOCK_TIMEOUT=10000";
+                + ";AUTO_SERVER=FALSE;DB_CLOSE_ON_EXIT=FALSE;LOCK_TIMEOUT=10000"
+                + ";TRACE_LEVEL_FILE=0;TRACE_LEVEL_SYSTEM_OUT=0";
     }
 
     /** 初始化目录、校验原始 V001 并应用有序前向迁移。 */
@@ -61,6 +64,56 @@ public final class H2Database {
             new CoreSchemaInitializer(this).initialize();
         } catch (IOException failure) {
             throw new PersistenceException("无法创建 data-v6 目录", failure);
+        }
+    }
+
+    /**
+     * 初始化生产使用的本地 Vault 数据库；已有数据库必须已经安装当前完整 Schema。
+     *
+     * <p>旧库在任何 DDL、可写连接或目录写入探针之前被拒绝。预检只读取 Schema 元数据，不读取主密钥；确认版本后仍由既有初始化器校验历史摘要。 只读预检与正常打开是两个阶段，不提供针对外部文件替换的原子保证。
+     *
+     * @throws PersistenceException 发现旧版、不完整或无法只读检查的数据库
+     */
+    public void initializeLocalVault() {
+        try {
+            if (hasDatabaseFiles()) {
+                requireLocalVaultSchema();
+            }
+        } catch (IOException | SQLException failure) {
+            throw new PersistenceException(LOCAL_VAULT_REQUIRED, failure);
+        }
+        initialize();
+    }
+
+    private boolean hasDatabaseFiles() throws IOException {
+        if (Files.isSymbolicLink(dataRoot)) {
+            throw new IOException("data-v6 必须是普通目录，不能是符号链接");
+        }
+        for (String filename : DATABASE_FILES) {
+            try {
+                Files.readAttributes(dataRoot.resolve(filename), BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                return true;
+            } catch (NoSuchFileException missing) {
+                // 辅助文件也代表既存数据库材料；只在全部不存在时允许创建新库。
+            }
+        }
+        return false;
+    }
+
+    private void requireLocalVaultSchema() throws SQLException {
+        requireRegularDatabaseFiles();
+        String readOnlyUrl = jdbcUrl + ";IFEXISTS=TRUE;ACCESS_MODE_DATA=r";
+        try (Connection connection = DriverManager.getConnection(readOnlyUrl, "sa", "");
+                var statement = connection.createStatement();
+                var rows =
+                        statement.executeQuery("SELECT COUNT(*),MIN(VERSION),MAX(VERSION) FROM CORE.SCHEMA_HISTORY")) {
+            if (!rows.next()
+                    || rows.getInt(1) != CORE_SCHEMA_VERSION
+                    || rows.getInt(2) != 1
+                    || rows.getInt(3) != CORE_SCHEMA_VERSION) {
+                throw new PersistenceException(LOCAL_VAULT_REQUIRED);
+            }
+            new LocalVaultSchemaValidation().validate(connection);
         }
     }
 

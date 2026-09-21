@@ -63,8 +63,11 @@ final class InteractiveBrowserConnection implements AutoCloseable {
                 task.sessionId(), task.owner(), BrowserContracts.SessionState.OPEN, task.lease(), List.of());
     }
 
-    InteractiveBrowserConnection(InteractiveBrowserProcess process, BrowserContracts.AccessLease lease,
-            InteractiveBrowserNetworkExchange network, Duration timeout) {
+    InteractiveBrowserConnection(
+            InteractiveBrowserProcess process,
+            BrowserContracts.AccessLease lease,
+            InteractiveBrowserNetworkExchange network,
+            Duration timeout) {
         this.process = process;
         this.currentLease = lease;
         this.network = network;
@@ -86,11 +89,7 @@ final class InteractiveBrowserConnection implements AutoCloseable {
                         process.process().getOutputStream(),
                         json,
                         new BrowserWorkerProtocol.Command(
-                                BrowserWorkerProtocol.VERSION,
-                                id,
-                                operation,
-                                json.encode(task),
-                                state.length));
+                                BrowserWorkerProtocol.VERSION, id, operation, json.encode(task), state.length));
                 BrowserFrameIo.writeBinary(
                         process.process().getOutputStream(), state, BrowserWorkerProtocol.MAXIMUM_STATE_BYTES);
             }
@@ -155,6 +154,7 @@ final class InteractiveBrowserConnection implements AutoCloseable {
 
     private Packet await(long id, CompletableFuture<Packet> future, CancellationToken token) {
         long deadline = System.nanoTime() + timeout.toNanos();
+        boolean delivered = false;
         try {
             while (true) {
                 if (token.isCancelled()) {
@@ -175,6 +175,7 @@ final class InteractiveBrowserConnection implements AutoCloseable {
                                         ? "包含登录凭据或经过人工接管的会话仅提供文本观察；新建无凭据会话可使用截图"
                                         : code);
                     }
+                    delivered = true;
                     return packet;
                 } catch (TimeoutException waiting) {
                     // 短轮询只用于取消，不会重新发送命令。
@@ -188,6 +189,10 @@ final class InteractiveBrowserConnection implements AutoCloseable {
             throw new BrowserWorkerException("BROWSER_ACTION_UNCONFIRMED");
         } finally {
             pending.remove(id);
+            if (!delivered) {
+                // 取消可与私有回复同时到达；未交给调用者的缓冲区必须由等待者回收，不能遗留在已完成 Future。
+                future.thenAccept(Packet::close);
+            }
         }
     }
 

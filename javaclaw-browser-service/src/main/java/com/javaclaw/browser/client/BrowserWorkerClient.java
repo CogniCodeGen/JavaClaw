@@ -514,13 +514,14 @@ public final class BrowserWorkerClient implements BrowserWorkerPort {
         }
     }
 
-    /** 终止全部活动 Worker；幂等。 */
+    /** 返回与常驻浏览器共享原生门禁的 Workspace 登记入口。 */
     @Override
     public BrowserRegistrationPort registrations() {
         requireInteractive();
         return registrations;
     }
 
+    /** 终止全部活动 Worker，包括未保存的登记窗口；幂等。 */
     @Override
     public void close() {
         closed = true;

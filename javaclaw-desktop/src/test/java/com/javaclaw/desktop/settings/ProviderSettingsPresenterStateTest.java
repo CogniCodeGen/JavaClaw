@@ -8,6 +8,9 @@ import org.junit.jupiter.api.Test;
 import com.javaclaw.api.ProviderEndpoint;
 import com.javaclaw.api.ProviderEndpointSpec;
 import com.javaclaw.api.ProviderLifecycle;
+import com.javaclaw.api.VaultLockReason;
+import com.javaclaw.api.VaultState;
+import com.javaclaw.api.VaultStatus;
 import com.javaclaw.client.CommandOptions;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -123,6 +126,46 @@ class ProviderSettingsPresenterStateTest {
     }
 
     @Test
+    void 密钥库锁定时刷新后仍失败会保留表单并给出恢复路径() {
+        TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
+        gateway.vaultStatus = vault(VaultState.LOCKED, VaultLockReason.MASTER_KEY_INVALID);
+        gateway.refreshedVaultStatus = gateway.vaultStatus;
+        ProviderSettingsPresenter presenter = new ProviderSettingsPresenter(gateway);
+        presenter.reload();
+        char[] secret = "temporary-secret".toCharArray();
+
+        presenter.replaceSecret(secret);
+
+        assertTrue(allZero(secret));
+        assertEquals(SettingsLoadState.ERROR, presenter.state().phase());
+        assertTrue(presenter.state().message().contains("主密钥无效或无法解锁"));
+        assertTrue(presenter.state().message().contains("管理中心 → 安全与连接 → 密钥库"));
+        assertEquals(0, gateway.providerCredentialSetCalls);
+        assertEquals(1, gateway.vaultRefreshCalls);
+        assertEquals(0, gateway.vaultResetCalls);
+        assertTrue(presenter.state().selected().isPresent());
+    }
+
+    @Test
+    void 密钥库刷新解封后提交并清零异步拥有的Secret() {
+        TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
+        gateway.vaultStatus = vault(VaultState.LOCKED, VaultLockReason.SYSTEM_CREDENTIAL_UNAVAILABLE);
+        gateway.refreshedVaultStatus = vault(VaultState.READY, VaultLockReason.NONE);
+        ProviderSettingsPresenter presenter = new ProviderSettingsPresenter(gateway);
+        presenter.reload();
+        char[] secret = "temporary-secret".toCharArray();
+
+        presenter.replaceSecret(secret);
+
+        assertTrue(allZero(secret));
+        assertTrue(allZero(gateway.lastProviderSecret));
+        assertEquals(SettingsLoadState.READY, presenter.state().phase());
+        assertEquals(1, gateway.providerCredentialSetCalls);
+        assertEquals(1, gateway.vaultRefreshCalls);
+        assertEquals(0, gateway.vaultResetCalls);
+    }
+
+    @Test
     void 首次配置恢复检测同标识不同内容并拒绝覆盖() {
         TestCoreSettingsGateway gateway = new TestCoreSettingsGateway();
         ProviderSettingsPresenter presenter = new ProviderSettingsPresenter(gateway, () -> "provider-main");
@@ -196,6 +239,10 @@ class ProviderSettingsPresenterStateTest {
                 draft.apiVersion(),
                 draft.reasoningSummary(),
                 draft.lifecycle());
+    }
+
+    private static VaultStatus vault(VaultState state, VaultLockReason reason) {
+        return new VaultStatus(state, reason, 0, false, java.time.Instant.EPOCH);
     }
 
     private static boolean allZero(char[] value) {

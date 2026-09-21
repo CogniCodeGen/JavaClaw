@@ -21,7 +21,7 @@ class CodingSystemMigrationTest {
         database.initialize();
         try (var connection = database.open();
                 var statement = connection.createStatement()) {
-            statement.execute("DELETE FROM CORE.SCHEMA_HISTORY WHERE VERSION=10");
+            statement.execute("DELETE FROM CORE.SCHEMA_HISTORY WHERE VERSION>=10");
             statement.execute("DROP TABLE CORE.TURN_SYSTEM_ENVIRONMENT");
             try (var pending = connection.prepareStatement("INSERT INTO CORE.SCHEMA_MIGRATION_PENDING VALUES (10,?)")) {
                 pending.setString(1, checksum());
@@ -33,8 +33,8 @@ class CodingSystemMigrationTest {
                 var statement = connection.createStatement();
                 var rows = statement.executeQuery("SELECT COUNT(*),MAX(VERSION) FROM CORE.SCHEMA_HISTORY")) {
             assertTrue(rows.next());
-            assertEquals(10, rows.getInt(1));
-            assertEquals(10, rows.getInt(2));
+            assertEquals(H2Database.CORE_SCHEMA_VERSION, rows.getInt(1));
+            assertEquals(H2Database.CORE_SCHEMA_VERSION, rows.getInt(2));
             new CodingSystemSchemaValidation().validate(connection);
         }
     }
@@ -45,7 +45,7 @@ class CodingSystemMigrationTest {
         database.initialize();
         try (var connection = database.open();
                 var statement = connection.createStatement()) {
-            statement.execute("DELETE FROM CORE.SCHEMA_HISTORY WHERE VERSION=10");
+            statement.execute("DELETE FROM CORE.SCHEMA_HISTORY WHERE VERSION>=10");
             statement.execute("ALTER TABLE CORE.TURN_SYSTEM_ENVIRONMENT DROP COLUMN CATALOG_DIGEST");
         }
         assertThrows(PersistenceException.class, database::initialize);

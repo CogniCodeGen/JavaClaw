@@ -91,7 +91,7 @@ public final class VaultSettingsPage implements ManagedSettingsPage {
         status.addField("旧主密钥清理", cleanup);
         status.addField("检查时间", checkedAt);
         status.addField("最近管理动作", receipt);
-        FormSection masterKey = new FormSection("主密钥管理", "轮换和重置必须由 JavaClaw 服务完成安全提交和危险确认，桌面端不直接访问系统凭据。");
+        FormSection masterKey = new FormSection("主密钥管理", "主密钥和凭据密文保存在本地数据库；轮换和重置由服务端完成，桌面端不直接读取密钥。");
         Label rotationHint = new Label("轮换会重新加密全部记录，但不会改变凭据引用或业务版本。");
         rotationHint.setWrapText(true);
         rotationHint.getStyleClass().add("sec-hint");

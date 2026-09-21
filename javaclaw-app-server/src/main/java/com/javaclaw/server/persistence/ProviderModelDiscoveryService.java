@@ -30,13 +30,12 @@ import com.javaclaw.model.ProviderModelDiscoveryAdapter;
  * <p>操作与结果均不持久化。连接关闭会取消并删除该连接拥有的所有操作；终态只短暂保留，既允许本地 RPC 读取结果，也防止无人读取的结果无限占用内存。
  */
 public final class ProviderModelDiscoveryService implements AutoCloseable {
-    private static final int MAXIMUM_OPERATIONS = 64;
-    private static final int MAXIMUM_OPERATIONS_PER_SESSION = 4;
     private static final int MAXIMUM_CANCEL_MEMOS_PER_OPERATION = 8;
     private static final Duration TERMINAL_RETENTION = Duration.ofSeconds(30);
     private static final Duration READ_TERMINAL_RETENTION = Duration.ofSeconds(1);
 
     private final Object lock = new Object();
+    private final ProviderModelOperationCapacity capacity = new ProviderModelOperationCapacity();
     private final ProviderService providers;
     private final DiscoveryPort discovery;
     private final Clock clock;
@@ -101,16 +100,20 @@ public final class ProviderModelDiscoveryService implements AutoCloseable {
                 }
                 return prior.entry().snapshot();
             }
-            requireCapacity(checkedOwner);
             ProviderEndpoint endpoint =
                     providers.requireDiscoverable(checkedRequest.endpointId(), checkedRequest.endpointRevision());
             Instant now = clock.instant();
             OperationEntry entry =
                     new OperationEntry(UUID.randomUUID().toString(), checkedOwner, commandKey, endpoint, now);
+            capacity.acquire(checkedOwner);
             operations.put(entry.id(), entry);
             starts.put(commandKey, new StartMemo(checkedIdentity.requestDigest(), entry));
-            Future<?> future = workers.submit(() -> execute(entry));
-            entry.attach(future);
+            try {
+                entry.attach(workers.submit(() -> execute(entry)));
+            } catch (RuntimeException failure) {
+                remove(entry);
+                throw failure;
+            }
             return entry.snapshot();
         }
     }
@@ -250,16 +253,8 @@ public final class ProviderModelDiscoveryService implements AutoCloseable {
         return entry;
     }
 
-    private void requireCapacity(String owner) {
-        if (operations.size() >= MAXIMUM_OPERATIONS) {
-            throw PersistenceException.invalidRequest("Provider model discovery capacity is exhausted");
-        }
-        long sessionCount = operations.values().stream()
-                .filter(entry -> entry.owner().equals(owner))
-                .count();
-        if (sessionCount >= MAXIMUM_OPERATIONS_PER_SESSION) {
-            throw PersistenceException.invalidRequest("Provider model discovery session capacity is exhausted");
-        }
+    ProviderModelOperationCapacity capacity() {
+        return capacity;
     }
 
     private void scheduleRemoval(OperationEntry entry, Duration delay) {
@@ -271,7 +266,9 @@ public final class ProviderModelDiscoveryService implements AutoCloseable {
 
     private void remove(OperationEntry entry) {
         synchronized (lock) {
-            operations.remove(entry.id(), entry);
+            if (operations.remove(entry.id(), entry)) {
+                capacity.release(entry.owner());
+            }
             StartMemo memo = starts.get(entry.commandKey());
             if (memo != null && memo.entry() == entry) {
                 starts.remove(entry.commandKey());

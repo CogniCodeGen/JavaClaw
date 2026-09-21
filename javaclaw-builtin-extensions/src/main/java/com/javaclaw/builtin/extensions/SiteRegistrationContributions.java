@@ -63,8 +63,8 @@ final class SiteRegistrationContributions {
                         documents.payloads().encode(task),
                         context.cancellation(),
                         IsolatedServiceCallScope.from(request)));
-        documents.payloads().decode(response, SiteRegistrationContracts.Session.class);
-        return new ExtensionResponse(response, 0);
+        var session = documents.payloads().decode(response, SiteRegistrationContracts.Session.class);
+        return new ExtensionResponse(response, session.completed().isPresent() ? 1 : 0);
     }
 
     private static void requireSettings(ExtensionRequest request, ExtensionExecutionContext context) {
