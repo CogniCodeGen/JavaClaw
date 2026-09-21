@@ -1,5 +1,6 @@
 package com.javaclaw.framework.springai;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaclaw.config.AgentConfig;
 import com.javaclaw.framework.spi.ModelTier;
 import com.javaclaw.platform.data.DataRoot;
@@ -9,8 +10,9 @@ import com.sun.net.httpserver.HttpServer;
 import io.micrometer.observation.ObservationRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
@@ -25,6 +27,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Real HTTP acceptance for the OpenAI-compatible chat and embedding adapters. */
@@ -51,15 +54,11 @@ class SpringAiModelFactoryLocalFixtureTest {
         context = ApplicationContexts.createRoot(
                 new DataRoot(temporaryDirectory.resolve("data")));
         AgentConfig config = context.getBean(AgentConfig.class);
-        String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/v1";
-        configureTier(config, baseUrl);
         config.setRagEnabled(true);
-        config.setRagEmbeddingBaseUrl(baseUrl);
         config.setRagEmbeddingApiKey("fixture-key");
         config.setRagEmbeddingModelName("fixture-embedding");
         config.setRagEmbeddingDimensions(3);
         config.setModelRequestTimeoutSeconds(5);
-        factory = new SpringAiModelFactory(config, ObservationRegistry.NOOP);
     }
 
     @AfterEach
@@ -69,8 +68,15 @@ class SpringAiModelFactoryLocalFixtureTest {
         if (server != null) server.stop(0);
     }
 
-    @Test
-    void chatAndEmbeddingCompleteAgainstTheLocalOpenAiCompatibleEndpoint() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"/v1", "/v1/"})
+    void chatAndEmbeddingCompleteAgainstTheLocalOpenAiCompatibleEndpoint(String basePath)
+            throws Exception {
+        AgentConfig config = context.getBean(AgentConfig.class);
+        String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort() + basePath;
+        configureTier(config, baseUrl);
+        config.setRagEmbeddingBaseUrl(baseUrl);
+        factory = new SpringAiModelFactory(config, ObservationRegistry.NOOP);
         SpringAiModelRegistry registry = new SpringAiModelRegistry();
         factory.install("fixture-workspace", registry);
 
@@ -78,6 +84,7 @@ class SpringAiModelFactoryLocalFixtureTest {
                 .call(new Prompt("E2E local model prompt"));
         double[] embedding = factory.createEmbeddingProvider()
                 .embed("E2E local embedding input", Duration.ofSeconds(5));
+        var chatRequest = context.getBean(ObjectMapper.class).readTree(chatBody.get());
 
         assertAll(
                 () -> assertEquals("E2E local model response",
@@ -87,6 +94,8 @@ class SpringAiModelFactoryLocalFixtureTest {
                 () -> assertEquals(1, chatRequests.get()),
                 () -> assertEquals(1, embeddingRequests.get()),
                 () -> assertEquals("Bearer fixture-key", authorization.get()),
+                () -> assertFalse(chatRequest.path("stream").asBoolean(false)),
+                () -> assertFalse(chatRequest.has("stream_options")),
                 () -> assertTrue(chatBody.get().contains("E2E local model prompt"), chatBody.get()),
                 () -> assertTrue(embeddingBody.get().contains("E2E local embedding input"),
                         embeddingBody.get()));
@@ -110,8 +119,11 @@ class SpringAiModelFactoryLocalFixtureTest {
     private void respond(HttpExchange exchange) throws IOException {
         authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
         String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        String path = exchange.getRequestURI().getPath();
+        boolean post = exchange.getRequestMethod().equals("POST");
+        int status = 200;
         String response;
-        if (exchange.getRequestURI().getPath().endsWith("/embeddings")) {
+        if (post && path.equals("/v1/embeddings")) {
             embeddingRequests.incrementAndGet();
             embeddingBody.set(body);
             response = """
@@ -119,7 +131,7 @@ class SpringAiModelFactoryLocalFixtureTest {
                     "embedding":[0.1,0.2,0.3]}],"model":"fixture-embedding",
                     "usage":{"prompt_tokens":1,"total_tokens":1}}
                     """;
-        } else {
+        } else if (post && path.equals("/v1/chat/completions")) {
             chatRequests.incrementAndGet();
             chatBody.set(body);
             response = """
@@ -128,10 +140,15 @@ class SpringAiModelFactoryLocalFixtureTest {
                     "content":"E2E local model response"},"finish_reason":"stop"}],
                     "usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}
                     """;
+        } else {
+            status = 404;
+            response = """
+                    {"error":{"message":"Unexpected fixture route","type":"not_found"}}
+                    """;
         }
         byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json");
-        exchange.sendResponseHeaders(200, bytes.length);
+        exchange.sendResponseHeaders(status, bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();
     }

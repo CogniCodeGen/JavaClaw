@@ -1,5 +1,8 @@
 package com.javaclaw.infrastructure.settings;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.EmbeddingSettings;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.ModelSettings;
 import com.javaclaw.application.settings.ModelSettingsApplicationService.ProbeResult;
@@ -25,6 +28,8 @@ import java.util.UUID;
 /** 通过共享 HTTP 网关或当前工作区 EmbeddingGateway 探测模型连接。 */
 public final class HttpModelSettingsProbeAdapter implements ModelSettingsProbePort {
 
+    private static final String MODEL_ENDPOINT_GUIDANCE =
+            "请检查 Base URL 和 API 路径（OpenAI 兼容服务通常需包含 /v1）";
     private final HttpGateway http;
     private final JsonCodec json;
     private final EmbeddingRuntimeProbePort runtimeEmbedding;
@@ -70,11 +75,31 @@ public final class HttpModelSettingsProbeAdapter implements ModelSettingsProbePo
             return request.build();
         }, HttpRetryPolicy.none());
         long elapsed = elapsedMillis(started);
-        if (response.statusCode() >= 200 && response.statusCode() < 400) {
-            return new ProbeResult(true,
-                    "✓ 连接正常 · " + settings.modelName() + " · " + elapsed + "ms");
+        if (!response.isSuccessful()) {
+            return new ProbeResult(false, "连接异常 (HTTP " + response.statusCode() + ")；"
+                    + MODEL_ENDPOINT_GUIDANCE);
         }
-        return new ProbeResult(false, "连接异常 (HTTP " + response.statusCode() + ")");
+        JsonNode body;
+        try {
+            body = json.mapper().reader()
+                    .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+                    .readTree(response.bodyText());
+        } catch (JsonProcessingException invalidJson) {
+            return new ProbeResult(false, "模型接口未返回有效 JSON；" + MODEL_ENDPOINT_GUIDANCE);
+        }
+        if (body == null || body.isMissingNode() || body.isNull()) {
+            return new ProbeResult(false, "模型接口响应为空；" + MODEL_ENDPOINT_GUIDANCE);
+        }
+        if (body.has("error")) {
+            return new ProbeResult(false, "模型接口返回错误；" + MODEL_ENDPOINT_GUIDANCE);
+        }
+        String provider = new DefaultModelProviderCatalog().normalizeId(settings.provider());
+        if (("openai".equals(provider) || "dashscope".equals(provider))
+                && !body.path("data").isArray()) {
+            return new ProbeResult(false, "模型接口响应缺少 data 模型列表；" + MODEL_ENDPOINT_GUIDANCE);
+        }
+        return new ProbeResult(true,
+                "✓ 模型列表接口可达（尚未验证聊天调用） · " + elapsed + "ms");
     }
 
     @Override

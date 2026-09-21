@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class HttpModelSettingsProbeAdapterTest {
@@ -33,7 +34,10 @@ class HttpModelSettingsProbeAdapterTest {
     private AtomicReference<String> embeddingAuthorization;
     private AtomicReference<String> modelAuthorization;
     private AtomicReference<String> modelMethod;
+    private AtomicReference<URI> modelUri;
     private AtomicInteger embeddingRequests;
+    private int modelStatus;
+    private String modelResponse;
 
     @BeforeEach
     void setUp() {
@@ -41,7 +45,10 @@ class HttpModelSettingsProbeAdapterTest {
         embeddingAuthorization = new AtomicReference<>();
         modelAuthorization = new AtomicReference<>();
         modelMethod = new AtomicReference<>();
+        modelUri = new AtomicReference<>();
         embeddingRequests = new AtomicInteger();
+        modelStatus = 200;
+        modelResponse = "{\"object\":\"list\",\"data\":[{\"id\":\"chat-model\"}]}";
         tasks = new ManagedTaskExecutor();
         runtime = new FakeRuntimeEmbedding();
         adapter = new HttpModelSettingsProbeAdapter(
@@ -59,9 +66,78 @@ class HttpModelSettingsProbeAdapterTest {
         var result = adapter.probeModel(model("model-key"));
 
         assertTrue(result.succeeded());
-        assertTrue(result.message().contains("chat-model"));
+        assertTrue(result.message().contains("模型列表接口可达"));
+        assertTrue(result.message().contains("尚未验证聊天调用"));
         assertEquals("GET", modelMethod.get());
         assertEquals("Bearer model-key", modelAuthorization.get());
+        assertEquals(URI.create(baseUrl() + "/models"), modelUri.get());
+    }
+
+    @Test
+    void modelProbeRejectsErrorsEvenWhenTheServerReturnsHttp200() throws Exception {
+        for (String response : new String[] {
+                "{\"error\":\"Unexpected endpoint; secret-response-marker\"}",
+                "{\"error\":{\"message\":\"secret-response-marker\"},\"data\":[]}"}) {
+            modelResponse = response;
+
+            var result = adapter.probeModel(model("secret-api-key"));
+
+            assertFalse(result.succeeded());
+            assertTrue(result.message().contains("模型接口返回错误"));
+            assertTrue(result.message().contains("/v1"));
+            assertFalse(result.message().contains("secret-response-marker"));
+            assertFalse(result.message().contains("secret-api-key"));
+        }
+    }
+
+    @Test
+    void openAiCompatibleModelProbesRequireADataArray() throws Exception {
+        for (String provider : new String[] {"OpenAI", "dashscope", "百炼"}) {
+            for (String response : new String[] {"{}", "{\"data\":{}}", "{\"data\":null}"}) {
+                modelResponse = response;
+
+                var result = adapter.probeModel(model(provider, "model-key"));
+
+                assertFalse(result.succeeded());
+                assertTrue(result.message().contains("data 模型列表"));
+            }
+        }
+    }
+
+    @Test
+    void modelProbeRejectsHtmlAndInvalidJsonWithoutExposingTheBody() throws Exception {
+        for (String response : new String[] {"<html>secret-response-marker</html>",
+                "{\"data\":[]", "{\"data\":[]} secret-response-marker"}) {
+            modelResponse = response;
+
+            var result = adapter.probeModel(model("model-key"));
+
+            assertFalse(result.succeeded());
+            assertTrue(result.message().contains("有效 JSON"));
+            assertFalse(result.message().contains("secret-response-marker"));
+        }
+    }
+
+    @Test
+    void modelProbeRejectsRedirectsAndOtherNonSuccessStatuses() throws Exception {
+        for (int status : new int[] {301, 302, 401, 500}) {
+            modelStatus = status;
+
+            var result = adapter.probeModel(model("model-key"));
+
+            assertFalse(result.succeeded());
+            assertTrue(result.message().contains("HTTP " + status));
+        }
+    }
+
+    @Test
+    void nonOpenAiProvidersKeepTheirOwnJsonResponseShape() throws Exception {
+        modelResponse = "{\"models\":[]}";
+
+        var result = adapter.probeModel(model("ollama", "not-needed"));
+
+        assertTrue(result.succeeded());
+        assertNull(modelAuthorization.get());
     }
 
     @Test
@@ -96,7 +172,11 @@ class HttpModelSettingsProbeAdapterTest {
     }
 
     private ModelSettings model(String key) {
-        return new ModelSettings("OpenAI", baseUrl(), "chat-model", key, false, 4096,
+        return model("OpenAI", key);
+    }
+
+    private ModelSettings model(String provider, String key) {
+        return new ModelSettings(provider, baseUrl(), "chat-model", key, false, 4096,
                 "HTTP_2", 10, 120, 30, 30, 15, 15, 5, 0.92, 4.0, 2);
     }
 
@@ -112,8 +192,9 @@ class HttpModelSettingsProbeAdapterTest {
     private HttpResult send(HttpRequest request) throws java.io.IOException {
         if (request.uri().getPath().endsWith("/models")) {
             modelMethod.set(request.method());
+            modelUri.set(request.uri());
             modelAuthorization.set(request.headers().firstValue("Authorization").orElse(null));
-            return response(request.uri(), 200, "{}");
+            return response(request.uri(), modelStatus, modelResponse);
         }
         embeddingRequests.incrementAndGet();
         embeddingAuthorization.set(
